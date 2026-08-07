@@ -96,9 +96,21 @@ eliminação é overhead do modo dev/GC — registrar e seguir para a Fase 1.
 > removido: CSS órfão do espelho em global.css (.run-modal/.perm-picker…,
 > separar do vivo exige varredura própria) e `cursorPush` não-lido no
 > ConstellationMap (pré-existente, provado por stash).
-> PRÓXIMO PASSO: commit 1 (MainContext + createMainContext, com sub-objeto
-> ctx.phase) — receita no mapa; `taskRuns`/`killRunSessions` já não
-> existem para entrar no contexto.
+> ESTADO 3 (2026-08-07, mesma data): **commit 1 FEITO** (d0b48ea).
+> `src/main/mainContext.ts` novo — interface MainContext com o contrato
+> completo (19 stores/serviços, 8 reatribuíveis, 31 Maps/Sets, 16 funções
+> de closure, ctx.push) + PhaseApi com as 8 assinaturas da máquina de
+> fases (advancePhase SYNC POR CONTRATO gravado no tipo). O objeto ctx
+> nasce no index logo após o hub (varredura de declarações por agente
+> Opus): getter para reatribuível e para const declarada DEPOIS do ponto
+> de construção (referência direta daria TDZ), delegação arrow para
+> função e para ctx.phase — zero movimentação, zero comportamento; o
+> typecheck valida os shapes todos. Consumidor nenhum ainda (`void ctx`).
+> Verde: typecheck (node+web) + as 5 suítes (35+25+14+11+8).
+> PRÓXIMO PASSO: commit 3 do mapa — phaseEngine.ts ANTES do mcpApi
+> (riscos mapeados: advancePhase sync, TDZ do MAX_PARALLEL_RUNS, poller
+> misto, gateDeathLog via recordGateDeath) — OU commit 4 (mcpApi/ por
+> domínio) usando ctx.phase; o mapa sanciona as duas ordens.
 
 Âncoras reais (index.ts de hoje): bindUiSender :463 · mcpPaneArgs :3988 ·
 armPane :4062 · recovery de boot :6797–6943 · completeMissionMerge :7344 ·
