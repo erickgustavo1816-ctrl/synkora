@@ -113,6 +113,14 @@ import {
   qaRuntimeHarnessFailedNote,
   qaRuntimeHarnessStartedNote
 } from './phasePrompts'
+import type {
+  DevPaneSpec,
+  LiveGateWait,
+  MissionWatch,
+  PendingUserQuestion,
+  PhaseWatch,
+  RunPhase
+} from './phaseTypes'
 import {
   SECURITY_POLICY_VERSION,
   requiresManualSecurityValidation,
@@ -6387,14 +6395,7 @@ app.whenReady().then(async () => {
     zap(join(project.path, '.synkora', 'missions', `${short}.PLAN.md`))
   }
 
-  // Gate de integração pendente por missão (espelho do phaseWatches de tarefa).
-  interface MissionWatch {
-    projectId: string
-    missionId: string
-    marker: string
-    logFile: string
-    paneId: string
-  }
+  // Gate de integração pendente por missão (tipo em phaseTypes.ts).
   const missionWatches = new Map<string, MissionWatch>()
   const integrationDrainTimers = new Map<string, NodeJS.Timeout>()
   const integrationDraining = new Set<string>()
@@ -10701,63 +10702,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
   // cria <id>.done ao concluir; cada gate cria <id>.<fase>.verdict contendo
   // "aprovada" ou "reprovada: motivo". O main vigia, abre/fecha os panes das
   // fases, devolve feedback ao pane do dev nos retries e faz o merge no final.
-  type RunPhase = 'dev' | 'review' | 'qa'
-  interface DevPaneSpec {
-    /** id do pane definido pelo MAIN (o hub conhece cada pane pelo id) */
-    paneId: string
-    kind: 'claude' | 'codex'
-    seatId: string
-    model?: string
-    cwd: string
-    cliArgs?: string[]
-    initialPrompt: string
-    /** persona de SUBAGENTE do ajudante (delegate.agent) — claude via
-     *  --append-system-prompt; codex vai por -c developer_instructions */
-    appendSystemPrompt?: string
-    logFile: string
-    title: string
-    role: RunPhase | 'ajudante'
-    /** missão dona do pane — o mapa da aba Panes agrupa por aqui */
-    missionId?: string
-    /** pane que delegou (ajudante) — o mapa pendura o card no dev certo */
-    delegatorPaneId?: string
-  }
-  interface PhaseWatch {
-    projectId: string
-    taskId: string
-    phase: RunPhase
-    /** seat/modelo/effort do DEV (os gates resolvem o próprio pela política do qa) */
-    devSeatId: string
-    devModel?: string
-    devEffort?: string
-    cwd: string
-    worktree: TaskWorktree | null
-    logFile: string
-    marker: string
-    paneId?: string
-    /** Instante do registro. O poller de 3s NÃO pode soltar um watch recém-
-     * criado por divergência de status: o preparePhasePane registra o watch
-     * ANTES do tasks.update para 'execucao' e há awaits (skill sync ~0,7s+)
-     * entre os dois — corrida real 2026-08-06: o tick caiu na janela, deletou
-     * o watch em silêncio e o report(done) do dev ficou recusado para sempre
-     * com o card preso em execucao/dev/pending. */
-    createdAt: number
-    /** Fotografia persistida no card e copiada aqui para recusar qualquer
-     * alteracao feita por review/QA, inclusive depois de um restart. */
-    gateBaselineFingerprint?: string
-    gateStartedAt?: string
-    /** Snapshot criado pelo guard de report e validado por diagnóstico antes
-     * de a chamada poder avançar para review/QA. */
-    devSnapshot?: {
-      head: string
-      tree: string
-      fingerprint: string
-      baseHead?: string
-    }
-    /** Última re-abertura automática por push perdido (CHECK 17) — teto de
-     * 1 tentativa a cada 2min para nunca virar loop de respawn. */
-    lastOpenLostRetryAt?: number
-  }
+  // RunPhase / DevPaneSpec / PhaseWatch moram em phaseTypes.ts (commit 0).
   const livePaneSpecs = new Map<
     string,
     { projectId: string; taskId: string; spec: DevPaneSpec }
@@ -10780,7 +10725,6 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
   // PERSISTIDAS (fix 2026-08-06, célula 🔴 do mapa de retomada confirmada ao
   // vivo na M02d: a pergunta que pediu o restart foi apagada pelo próprio
   // restart) — o boot reidrata e a aba volta a pulsar até o dono ver.
-  type PendingUserQuestion = { projectId: string; missionKey: string; question: string; at: string }
   const userQuestionsFile = join(app.getPath('userData'), 'user-questions.json')
   const pendingUserQuestions = new Map<string, PendingUserQuestion>(
     Object.entries(
@@ -11864,16 +11808,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
   // re-verifica só a lista pendente + o delta SHA-provado desde o head que
   // reprovou. Espelho exato do dev-vivo da F6.7. Entrada com pane morto
   // (fechado na mão/restart) cai sozinha no caminho antigo (spawn novo).
-  interface LiveGateWait {
-    phase: 'review' | 'qa'
-    paneId: string
-    rejectedHead?: string
-    rejectedReason: string
-    rejectedAt: string
-    /** gateNotes no instante da reprovação — waiver NOVO legitima rodada com
-     *  head idêntico (o juiz pode anular pontos sem exigir commit). */
-    gateNotesAtRejection?: string
-  }
+  // Tipo LiveGateWait em phaseTypes.ts.
   const liveGateWaits = new Map<string, LiveGateWait>()
   // Crash-loop de gate: 3 mortes SEM veredito em 60s suspendem a reabertura
   // automática por 5min (precedente do Board: 3 mortes/30s). Caso real 05/08
