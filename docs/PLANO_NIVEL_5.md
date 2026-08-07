@@ -76,8 +76,29 @@ eliminação é overhead do modo dev/GC — registrar e seguir para a Fase 1.
 > ctx.phase → 3 phaseEngine antes do mcpApi) e
 > docs/FASE1_SOLDA_PHASEPROMPTS.md. Pendência cosmética anotada: comentários
 > PT-BR duplicados entre index e phasePrompts (podar nos commits da região).
-> PRÓXIMO PASSO: commit 0 (phaseTypes.ts) + commit 0.5 (matar headless
-> morto) — receita completa no mapa.
+>
+> ESTADO 2 (2026-08-07, mesma data): **commits 0 e 0.5 FEITOS**. Commit 0
+> (b6784ce): `src/main/phaseTypes.ts` novo — RunPhase, DevPaneSpec,
+> PhaseWatch, MissionWatch, PendingUserQuestion e LiveGateWait saem do
+> closure (docstrings junto; zero comportamento). Commit 0.5 (a1899d2): a
+> máquina HEADLESS morta caiu INTEIRA — o mapa contava ~400 linhas olhando
+> só o main; o fecho transitivo real levou preload (API tasks.run*,
+> onRunEvent/onRunLive/onFeedback, TaskRunSnapshot) e renderer
+> (RunPanel.tsx deletado, taskRuns do store, espelhos `run:<taskId>` em
+> Board/PanesView/panesNodes/ConstellationMap/Universe, devMock): **−1108
+> linhas** em 11 arquivos (main −439), corte do renderer por agente Opus
+> com revisão linha a linha. Vivos preservados: badge de fase via
+> taskPhaseView, setPhaseSeat, celebrações por hub:event/paneActivity, e o
+> canal `tasks:feedback` morreu junto (único emissor era o runSink morto).
+> Verde nos dois commits: typecheck (node+web) + orchestrator-flow 35 +
+> mission-verification 25 + integration-queue 14 + pane-permissions 11 +
+> stall-attribution 8. index 19324→18832 linhas. Resto anotado e NÃO
+> removido: CSS órfão do espelho em global.css (.run-modal/.perm-picker…,
+> separar do vivo exige varredura própria) e `cursorPush` não-lido no
+> ConstellationMap (pré-existente, provado por stash).
+> PRÓXIMO PASSO: commit 1 (MainContext + createMainContext, com sub-objeto
+> ctx.phase) — receita no mapa; `taskRuns`/`killRunSessions` já não
+> existem para entrar no contexto.
 
 Âncoras reais (index.ts de hoje): bindUiSender :463 · mcpPaneArgs :3988 ·
 armPane :4062 · recovery de boot :6797–6943 · completeMissionMerge :7344 ·
