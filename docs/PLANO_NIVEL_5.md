@@ -67,6 +67,18 @@ eliminação é overhead do modo dev/GC — registrar e seguir para a Fase 1.
 
 ## Fase 1 (5a parte 1) — MainContext + extração por menor acoplamento
 
+> ESTADO (2026-08-07, branch `nivel5-fase1`): **primeiro corte FEITO** — o
+> passo 2 (phasePrompts.ts) foi executado por agentes Opus com prova de
+> equivalência (5810 comparações, 0 divergências) e soldado (commit 647f711;
+> typecheck + 68 asserções verdes; index 19448→19324 linhas). Mapas da obra
+> em docs/FASE1_MAPA_MAINCONTEXT.md (inclui a ordem REVISADA: commit 0
+> phaseTypes → 0.5 remoção do headless morto ~400 linhas → 1 MainContext com
+> ctx.phase → 3 phaseEngine antes do mcpApi) e
+> docs/FASE1_SOLDA_PHASEPROMPTS.md. Pendência cosmética anotada: comentários
+> PT-BR duplicados entre index e phasePrompts (podar nos commits da região).
+> PRÓXIMO PASSO: commit 0 (phaseTypes.ts) + commit 0.5 (matar headless
+> morto) — receita completa no mapa.
+
 Âncoras reais (index.ts de hoje): bindUiSender :463 · mcpPaneArgs :3988 ·
 armPane :4062 · recovery de boot :6797–6943 · completeMissionMerge :7344 ·
 syncBoard :10263 · preparePhasePane :10949 · construtores de prompt
