@@ -111,6 +111,9 @@ eliminação é overhead do modo dev/GC — registrar e seguir para a Fase 1.
 > (riscos mapeados: advancePhase sync, TDZ do MAX_PARALLEL_RUNS, poller
 > misto, gateDeathLog via recordGateDeath) — OU commit 4 (mcpApi/ por
 > domínio) usando ctx.phase; o mapa sanciona as duas ordens.
+> HANDOFF da sessão em **docs/HANDOFF_FASE1.md** — a próxima sessão lê
+> ELE primeiro (pendências não-código: boot de validação do dono, push
+> dos 5 commits locais, mão alheia em bundledSkillRevision/skillsLibrary).
 
 Âncoras reais (index.ts de hoje): bindUiSender :463 · mcpPaneArgs :3988 ·
 armPane :4062 · recovery de boot :6797–6943 · completeMissionMerge :7344 ·
