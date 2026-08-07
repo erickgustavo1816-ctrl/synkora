@@ -473,13 +473,6 @@ export type MaestroLiveEvent =
   | { type: 'phase'; phase: 'dev' | 'review' | 'qa' }
   | { type: 'exit' }
 
-export interface TaskRunSnapshot {
-  taskId: string
-  status: 'running' | 'done' | 'error'
-  phase: 'dev' | 'review' | 'qa'
-  events: MaestroEvent[]
-}
-
 /** Telemetria viva de um pane, lida dos JSONL de sessão do próprio CLI. */
 export interface PaneStats {
   model?: string
@@ -910,19 +903,6 @@ const api = {
       ipcRenderer.on('panes:open', listener)
       return () => ipcRenderer.removeListener('panes:open', listener)
     },
-    onFeedback: (
-      cb: (projectId: string, taskId: string, text: string, spec: DevPaneSpec) => void
-    ): (() => void) => {
-      const listener = (
-        _e: IpcRendererEvent,
-        projectId: string,
-        taskId: string,
-        text: string,
-        spec: DevPaneSpec
-      ): void => cb(projectId, taskId, text, spec)
-      ipcRenderer.on('tasks:feedback', listener)
-      return () => ipcRenderer.removeListener('tasks:feedback', listener)
-    },
     onPaneClose: (
       cb: (projectId: string, taskId: string, role: 'dev' | 'review' | 'qa') => void
     ): (() => void) => {
@@ -947,21 +927,6 @@ const api = {
       ipcRenderer.on('panes:closeById', listener)
       return () => ipcRenderer.removeListener('panes:closeById', listener)
     },
-    runPermission: (taskId: string, requestId: string, choice: PermissionChoice): Promise<void> =>
-      ipcRenderer.invoke('tasks:runPermission', taskId, requestId, choice),
-    runInterrupt: (taskId: string): Promise<void> =>
-      ipcRenderer.invoke('tasks:runInterrupt', taskId),
-    runSend: (taskId: string, message: string): Promise<boolean> =>
-      ipcRenderer.invoke('tasks:runSend', taskId, message),
-    runHandoff: (
-      taskId: string
-    ): Promise<{
-      cwd: string
-      kind: PaneKind
-      seatId: string
-      cliArgs: string[]
-      title: string
-    } | null> => ipcRenderer.invoke('tasks:runHandoff', taskId),
     // Troca de CONTA da fase ativa (dev/review/qa) sem perder contexto: o main
     // mata o pane da fase, transplanta a conversa quando é claude→claude (o
     // pane renasce via resume) e reabre o pane sozinho — codex/cross-CLI
@@ -972,22 +937,7 @@ const api = {
       taskId: string,
       choice: { seatId: string; model?: string; effort?: string }
     ): Promise<{ ok: boolean; msg: string }> =>
-      ipcRenderer.invoke('tasks:setPhaseSeat', projectId, taskId, choice),
-    runClose: (taskId: string): Promise<void> => ipcRenderer.invoke('tasks:runClose', taskId),
-    runState: (projectId: string): Promise<TaskRunSnapshot[]> =>
-      ipcRenderer.invoke('tasks:runState', projectId),
-    onRunEvent: (cb: (taskId: string, evt: MaestroEvent) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, taskId: string, evt: MaestroEvent): void =>
-        cb(taskId, evt)
-      ipcRenderer.on('taskrun:event', listener)
-      return () => ipcRenderer.removeListener('taskrun:event', listener)
-    },
-    onRunLive: (cb: (taskId: string, evt: MaestroLiveEvent) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, taskId: string, evt: MaestroLiveEvent): void =>
-        cb(taskId, evt)
-      ipcRenderer.on('taskrun:live', listener)
-      return () => ipcRenderer.removeListener('taskrun:live', listener)
-    }
+      ipcRenderer.invoke('tasks:setPhaseSeat', projectId, taskId, choice)
   },
   panes: {
     /** Snapshot dos panes gerenciados ainda vivos no processo principal.

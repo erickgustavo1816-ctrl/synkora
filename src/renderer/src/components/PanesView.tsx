@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useStore, type PaneActivity } from '../store'
+import { useStore } from '../store'
 import TerminalPane from './TerminalPane'
-import RunPanel from './RunPanel'
 import PaneChrome, { ZERO_STATS } from './PaneChrome'
 import PhaseSeatModal from './PhaseSeatModal'
 import ConstellationMap from './ConstellationMap'
@@ -161,11 +160,8 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
   const project = useStore((s) => s.projects.find((p) => p.id === projectId))
   const panes = useStore((s) => s.panesByProject[projectId] ?? NO_PANES)
   const closePane = useStore((s) => s.closePane)
-  const taskRuns = useStore((s) => s.taskRuns)
   const tasks = useStore((s) => s.tasks)
   const missions = useStore((s) => s.missions)
-  const closeRun = useStore((s) => s.closeRun)
-  const handoffRun = useStore((s) => s.handoffRun)
   const paneAttention = useStore((s) => s.paneAttention)
   const clearPaneAttention = useStore((s) => s.clearPaneAttention)
   const paneStats = useStore((s) => s.paneStats)
@@ -230,55 +226,24 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
     return () => obs.disconnect()
   }, [])
 
-  const projectTaskIds = useMemo(
-    () => new Set(tasks.filter((task) => task.projectId === projectId).map((task) => task.id)),
-    [tasks, projectId]
-  )
-  const projectTaskRuns = useMemo(
-    () => Object.fromEntries(Object.entries(taskRuns).filter(([taskId]) => projectTaskIds.has(taskId))),
-    [taskRuns, projectTaskIds]
-  )
-  const runIds = useMemo(() => Object.keys(projectTaskRuns), [projectTaskRuns])
-
-  // O mapa trabalha com paneIds reais e com espelhos `run:<taskId>`. Estes
-  // últimos não publicam paneActivity/paneAttention: o estado vivo deles mora
-  // em taskRuns. Unificar aqui faz o universo contar, colorir e animar os dois
-  // tipos a partir da mesma fonte sem inventar atividade visual.
-  const mapActivity = useMemo<Record<string, PaneActivity>>(() => {
-    const out: Record<string, PaneActivity> = { ...paneActivity }
-    for (const [taskId, run] of Object.entries(projectTaskRuns)) {
-      out[`run:${taskId}`] =
-        run.status === 'running' ? 'run' : run.status === 'error' ? 'dead' : 'idle'
-    }
-    return out
-  }, [paneActivity, projectTaskRuns])
-  const mapAttention = useMemo<Record<string, boolean>>(() => {
-    const out: Record<string, boolean> = { ...paneAttention }
-    for (const [taskId, run] of Object.entries(projectTaskRuns)) {
-      out[`run:${taskId}`] = !!run.perm
-    }
-    return out
-  }, [paneAttention, projectTaskRuns])
-
   const nodes = useMemo(
     () =>
       buildNodes({
         panes,
-        runTaskIds: runIds,
         tasks,
         missions: missions.filter((m) => m.projectId === projectId),
-        paneActivity: mapActivity,
-        paneAttention: mapAttention
+        paneActivity,
+        paneAttention
       }),
-    [panes, runIds, tasks, missions, projectId, mapActivity, mapAttention]
+    [panes, tasks, missions, projectId, paneActivity, paneAttention]
   )
 
   // Nó ancorado que deixou de existir (missão integrada/arquivada, último pane
   // fechado): volta ao mapa em vez de deixar um palco fantasma.
   const activeNode: PaneNode | null = nodes.find((n) => n.id === anchored) ?? null
-  // RunPanel pode encerrar fora do closePane, e uma preferência antiga pode
-  // apontar para outro nó. Em ambos os casos `expanded` esconderia o canvas
-  // inteiro; só é válido se continuar sendo uma folha do nó ativo.
+  // Uma preferência antiga pode apontar para outro nó — nesse caso `expanded`
+  // esconderia o canvas inteiro; só é válido se continuar sendo uma folha do
+  // nó ativo.
   useEffect(() => {
     if (expanded && !activeNode?.paneIds.includes(expanded)) {
       setPanesUi(projectId, { expanded: null })
@@ -1067,13 +1032,13 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
             nodes={nodes}
             anchored={anchored}
             openedPaneId={expanded}
-            itemActivity={mapActivity}
-            itemAttention={mapAttention}
+            itemActivity={paneActivity}
+            itemAttention={paneAttention}
             onAnchor={anchor}
             onOpenPane={openPaneFromMap}
             onOpenBoard={() => setUniverseTab(projectId, 'board')}
             missionsAtivas={missionsAtivas}
-            panesAtivos={panes.length + runIds.length}
+            panesAtivos={panes.length}
           />
         )}
       </div>
@@ -1131,69 +1096,6 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
 
         <div ref={floorRef} className={`stage-floor${expanded ? ' has-expanded' : ''}`}>
           {/* ————— DECK: LISTA PLANA, POSIÇÃO FIXA NO JSX ————— */}
-          {runIds.map((taskId) => {
-            const run = taskRuns[taskId]
-            const task = tasks.find((t) => t.id === taskId)
-            const dept = task ? DEPT_BY_KEY[task.department] : undefined
-            const id = `run:${taskId}`
-            const runBaseBox = boxForPane(id)
-            const runBox =
-              expanded === id ? { x: 0, y: 0, w: stageBox.w, h: stageBox.h } : runBaseBox
-            const visible = isPaneVisible(id)
-            const compactTitle = !!runBox && runBox.w < 320
-            const badge =
-              run.status === 'running'
-                ? run.phase === 'qa'
-                  ? '🔎 QA'
-                  : run.phase === 'review'
-                    ? '🧐 revisão'
-                    : '▶ executando'
-                : run.status === 'done'
-                  ? '✓ concluída'
-                  : '✗ falhou'
-            return (
-              <div
-                key={id}
-                className={`pane term-window run-pane${run.perm ? ' needs-perm' : ''}${
-                  expanded === id ? ' expanded' : ''
-                }${compactTitle ? ' compact-title' : ''}${
-                  dockDraggingId === id ? ' dock-source' : ''
-                }`}
-                style={tileStyle(id, dept && deptHueVar(dept.key))}
-                aria-hidden={visible ? undefined : true}
-                inert={visible ? undefined : true}
-              >
-                <PaneChrome
-                  role={run.phase}
-                  kind="claude"
-                  deptHue={dept && deptHueVar(dept.key)}
-                  seatName={task?.runSeat}
-                  model={task?.runModel}
-                  title={task?.title ?? 'tarefa'}
-                  focused={expanded === id}
-                  onToggleFocus={() => toggleExpand(id)}
-                  onMakeColumn={() => spanPane(id, 'x')}
-                  onMakeRow={() => spanPane(id, 'y')}
-                  onDragStart={(e) => startPaneDock(e, id)}
-                  onClose={() => void closeRun(taskId)}
-                  closeTitle="Encerrar executor (transcript fica em .synkora/runs)"
-                  details={<span className={`pane-task-badge run-${run.status}`}>{badge}</span>}
-                >
-                  <button
-                    className="term-btn ghost-dim"
-                    data-tip="Assumir no TERMINAL DE VERDADE: abre o CLI na mesma conversa, dentro do worktree — digite e use / à vontade (o pipeline automático para)"
-                    onClick={() => void handoffRun(projectId, taskId)}
-                  >
-                    ▣<span className="btn-label">terminal</span>
-                  </button>
-                </PaneChrome>
-                <div className="run-pane-body">
-                  <RunPanel taskId={taskId} />
-                </div>
-              </div>
-            )
-          })}
-
           {panes.map((pane) => {
             const seat = pane.seatId ? seats.find((s) => s.id === pane.seatId) : undefined
             // por PANE: dev, ajudantes e gate dividem o taskId — antes a atenção

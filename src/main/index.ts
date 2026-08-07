@@ -72,8 +72,7 @@ import {
   repairWorktrees,
   snapshotProblemFor,
   snapshotTaskWorktree,
-  taskWorktreeDescriptor,
-  type TaskWorktree
+  taskWorktreeDescriptor
 } from './worktree'
 import { MissionStore, type Mission, type NewMission } from './missions'
 import { IntegrationQueueStore, type IntegrationQueueTicketView } from './integrationQueue'
@@ -474,8 +473,6 @@ const progressHeadlessActivities = new Map<
 >()
 const progressMaestroTurnTokens = new WeakMap<MaestroBackend, number>()
 let progressHeadlessActivityToken = 0
-// Preenchido no whenReady — mata os executores de tarefa ao fechar o app.
-let killRunSessions: () => void = () => {}
 let abortVoiceRequests: () => void = () => {}
 // Janela única: o último WebContents que falou com o Maestro recebe os eventos.
 let uiSender: Electron.WebContents | null = null
@@ -4434,11 +4431,6 @@ app.whenReady().then(async () => {
     for (const pane of hub.panesOf(id)) {
       if (ptys.has(pane.paneId)) ptys.kill(pane.paneId)
       if (uiSender && !uiSender.isDestroyed()) uiSender.send('panes:closeById', id, pane.paneId)
-    }
-    for (const [tid, run] of taskRuns) {
-      if (run.projectId !== id) continue
-      run.session?.kill()
-      taskRuns.delete(tid)
     }
     for (const [tid, watch] of phaseWatches) {
       if (watch.projectId === id) phaseWatches.delete(tid)
@@ -10273,37 +10265,10 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     emit({ kind: 'ok', text: `modelo do maestro: ${model || 'padrão do seat'}` })
   })
 
-  // ————— F3: EXECUÇÃO HEADLESS DE TAREFAS —————
-  // "▶ executar" não abre mais um pane TUI: roda uma sessão headless (a mesma
-  // infra do painel do Maestro) por tarefa. Aprovações viram UI, o transcript
-  // vai para .synkora/runs/<taskId>.md e o board vive em .synkora/BOARD.md —
-  // o Maestro lê os dois e sabe TUDO que acontece em cada execução.
-
-  interface TaskRun {
-    taskId: string
-    projectId: string
-    /** null enquanto o dev roda no pane TUI — os gates criam a sessão headless */
-    session: MaestroBackend | null
-    status: 'running' | 'done' | 'error'
-    /** dev = implementando · review = gate 1 (código) · qa = gate 2 (validação) */
-    phase: 'dev' | 'review' | 'qa'
-    seatId: string
-    model?: string
-    lastSay: string
-    /** onde o executor roda: worktree da tarefa ou o projeto direto (sem git) */
-    cwd: string
-    worktree: TaskWorktree | null
-    costUsd: number
-    /** sessão do CLI (claude uuid · codex-thread:<id>) — permite assumir no TUI */
-    sessionId?: string
-    events: MaestroEvent[]
-    logFile: string
-  }
-  const taskRuns = new Map<string, TaskRun>()
-  killRunSessions = () => {
-    for (const r of taskRuns.values()) r.session?.kill()
-    taskRuns.clear()
-  }
+  // A máquina de execução HEADLESS da F3 (o "espelho") morreu no commit 0.5
+  // da Fase 1: o pipeline inteiro roda em panes TUI reais desde a F3.5 e o
+  // taskRuns nunca mais recebia .set() — código morto provado no mapa
+  // (docs/FASE1_MAPA_MAINCONTEXT.md, "ACHADO DE OURO").
 
   const STATUS_LABEL: Record<string, string> = {
     backlog: 'Backlog',
@@ -10363,14 +10328,8 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
             lines.push(`- [PLANO]${mt ? ` [missão: ${mt}]` : ''} ${t.title} — ${st}`)
             continue
           }
-          const run = taskRuns.get(t.id)
-          const runInfo = run
-            ? run.status === 'running'
-              ? ` — EXECUTOR ATIVO · transcript: .synkora/runs/${t.id}.md`
-              : ` — executor ${run.status === 'done' ? 'concluiu' : 'falhou'} · transcript: .synkora/runs/${t.id}.md`
-            : ''
           lines.push(
-            `- [${t.department}]${mt ? ` [missão: ${mt}]` : ''} ${t.title} (${t.type}, ${t.effort})${runInfo}`
+            `- [${t.department}]${mt ? ` [missão: ${mt}]` : ''} ${t.title} (${t.type}, ${t.effort})`
           )
           if (t.description) lines.push(`  ${t.description.replace(/\s+/g, ' ').slice(0, 300)}`)
         }
@@ -10388,195 +10347,6 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     scheduleProgressSnapshot()
   }
 
-  function appendRunLog(run: TaskRun, line: string): void {
-    try {
-      ensureProjectRuntimeWritable(run.projectId)
-      appendFileSync(run.logFile, redactSensitiveText(line) + '\n', 'utf-8')
-    } catch {
-      // transcript é best-effort
-    }
-  }
-
-  function runEmit(run: TaskRun, evt: MaestroEvent): void {
-    run.events = [...run.events, evt].slice(-400)
-    const prefix =
-      evt.kind === 'say'
-        ? 'executor> '
-        : evt.kind === 'tool'
-          ? '[tool] '
-          : evt.kind === 'out'
-            ? '  ↳ '
-            : evt.kind === 'err'
-              ? '✗ '
-              : evt.kind === 'ask'
-                ? '⛭ '
-                : ''
-    appendRunLog(run, prefix + evt.text)
-    if (uiSender && !uiSender.isDestroyed()) uiSender.send('taskrun:event', run.taskId, evt)
-  }
-
-  function runLive(run: TaskRun, evt: unknown): void {
-    if (uiSender && !uiSender.isDestroyed()) uiSender.send('taskrun:live', run.taskId, evt)
-  }
-
-  function runSink(run: TaskRun): (evt: SessionEvent) => void {
-    return (evt) => {
-      switch (evt.type) {
-        case 'init':
-          run.sessionId = evt.sessionId
-          break
-        case 'session-id':
-          run.sessionId = evt.sessionId
-          break
-        case 'delta':
-          runLive(run, { type: 'delta', text: evt.text })
-          break
-        case 'thinking':
-          runLive(run, { type: 'thinking' })
-          break
-        case 'text': {
-          runLive(run, { type: 'flush' })
-          run.lastSay = evt.text
-          // O veredito do QA é protocolo interno — não polui o espelho.
-          const clean = evt.text.replace(/<verdict>[\s\S]*?<\/verdict>/i, '').trim()
-          if (clean) runEmit(run, { kind: 'say', text: clean })
-          break
-        }
-        case 'tool':
-          runEmit(run, {
-            kind: 'tool',
-            text: toolLabel(evt.name, evt.input),
-            detail: JSON.stringify(evt.input, null, 2).slice(0, 2000)
-          })
-          break
-        case 'tool-result':
-          runEmit(run, { kind: 'out', text: `${evt.isError ? '✗ ' : ''}${evt.text}` })
-          break
-        case 'permission':
-          // Aprovação do executor: aparece na UI (card/modal) para o humano decidir.
-          runLive(run, evt)
-          break
-        case 'permission-cancel':
-          runLive(run, evt)
-          break
-        case 'limit':
-          runEmit(run, { kind: 'err', text: evt.text })
-          break
-        case 'result': {
-          // Custo real por fase (claude reporta USD; contexto vale p/ ambos).
-          if (evt.costUsd) run.costUsd += evt.costUsd
-          if (evt.contextTokens) {
-            runEmit(run, {
-              kind: 'out',
-              text: `fase ${run.phase}: ~${Math.round(evt.contextTokens / 1000)}k tokens de contexto${run.costUsd ? ` · ~$${run.costUsd.toFixed(2)} acumulado` : ''}`
-            })
-          }
-          if (evt.isError && evt.errorText) runEmit(run, { kind: 'err', text: evt.errorText })
-          if (evt.isError) {
-            run.status = 'error'
-            runLive(run, { type: 'turn-end', status: 'error' })
-            syncBoard(run.projectId)
-            break
-          }
-          const task = tasks.get(run.taskId)
-          if (!task) {
-            run.status = 'done'
-            runLive(run, { type: 'turn-end', status: 'done' })
-            break
-          }
-          if (run.phase === 'dev') {
-            // Dev terminou → gate 1: revisão de código.
-            runEmit(run, { kind: 'ok', text: 'executor concluiu — gate 1: revisão de código' })
-            emitLog(run.projectId, {
-              kind: 'log',
-              tag: task.department,
-              text: `✔ dev terminou "${task.title}" — revisor entrando (transcript: .synkora/runs/${task.id}.md)`
-            })
-            startGateRun(run, task, 'review')
-          } else {
-            const m = run.lastSay.match(/<verdict>\s*(aprovada|reprovada)\s*:?\s*([\s\S]*?)<\/verdict>/i)
-            const approved = m?.[1]?.toLowerCase() === 'aprovada'
-            const reason = m?.[2]?.trim() ?? ''
-            if (!m) {
-              run.status = 'done'
-              runLive(run, { type: 'turn-end', status: 'done' })
-              runEmit(run, {
-                kind: 'out',
-                text: `${run.phase === 'review' ? 'revisor' : 'QA'} terminou sem veredito explícito — decisão manual`
-              })
-            } else if (!approved) {
-              // Reprovada: com harness auto e ciclos sobrando, o feedback
-              // volta DIRETO para o dev (no pane vivo, ou num pane novo).
-              run.status = 'done'
-              runLive(run, { type: 'turn-end', status: 'done' })
-              const who = run.phase === 'review' ? 'revisor' : 'QA'
-              const cycles = task.cycles ?? 0
-              const retryLimit = retryLimitForTask(task)
-              runEmit(run, { kind: 'err', text: `${who} reprovou: ${reason || 'sem motivo'}` })
-              if (cycles < retryLimit) {
-                tasks.update(run.taskId, { cycles: cycles + 1, feedback: reason || 'sem motivo' })
-                emitLog(run.projectId, {
-                  kind: 'log',
-                  tag: task.department,
-                  text: `↩ ${who} reprovou "${task.title}" — ciclo ${cycles + 1}/${retryLimit}: devolvendo o feedback ao dev`
-                })
-                const spec = preparePhasePane(
-                  run.projectId,
-                  run.taskId,
-                  'dev',
-                  run.seatId,
-                  run.model,
-                  undefined,
-                  reason || 'sem motivo'
-                )
-                if (spec) {
-                  const marker = phaseWatches.get(run.taskId)?.marker ?? ''
-                  const feedbackMsg =
-                    `A tarefa foi REPROVADA no gate (${who}): ${reason || 'sem motivo'}. ` +
-                    `Corrija isso e, quando estiver 100% resolvido, recrie o arquivo "${marker}" com o conteúdo done.`
-                  if (uiSender && !uiSender.isDestroyed())
-                    uiSender.send('tasks:feedback', run.projectId, run.taskId, feedbackMsg, spec)
-                }
-              } else {
-                tasks.update(run.taskId, {
-                  status: 'backlog',
-                  feedback: reason || 'sem motivo',
-                  activePhase: 'dev',
-                  phaseState: 'interrupted'
-                })
-                emitLog(run.projectId, {
-                  kind: 'err',
-                  text: `${who} reprovou "${task.title}": ${reason || 'sem motivo'} — ciclos esgotados (${retryLimit}) · voltou ao orquestrador`
-                })
-              }
-            } else if (run.phase === 'review') {
-              // Gate 1 ok → gate 2: QA valida de verdade.
-              tasks.update(run.taskId, { status: 'qa' })
-              runEmit(run, { kind: 'ok', text: `revisor aprovou${reason ? ` · ${reason}` : ''} — gate 2: QA` })
-              emitLog(run.projectId, { kind: 'log', tag: 'maestro', text: `revisor aprovou "${task.title}" — QA validando` })
-              startGateRun(run, task, 'qa')
-            } else {
-              // Gate 2 ok → merge (se worktree) e concluída.
-              finishApproved(run, task, reason)
-            }
-            if (uiSender && !uiSender.isDestroyed())
-              uiSender.send('tasks:changed', run.projectId)
-          }
-          syncBoard(run.projectId)
-          break
-        }
-        case 'fatal':
-          run.status = 'error'
-          runEmit(run, { kind: 'err', text: evt.text })
-          runLive(run, { type: 'turn-end', status: 'error' })
-          syncBoard(run.projectId)
-          break
-        default:
-          break
-      }
-    }
-  }
-
   const DEPT_NAME: Record<string, string> = {
     front: 'front-end',
     back: 'back-end',
@@ -10585,118 +10355,6 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     research: 'research'
   }
 
-  // Gates automáticos: review (gate 1, olhar de tech lead no diff) e qa
-  // (gate 2, valida critérios + testes) — seat/modelo pela política do dept
-  // 'qa' (fallback: seat do dev). Rodam no MESMO cwd do dev (worktree).
-  function startGateRun(run: TaskRun, task: Task, gate: 'review' | 'qa'): void {
-    run.session?.kill()
-    run.phase = gate
-    run.status = 'running'
-    run.lastSay = ''
-    const pol = policies.get(run.projectId)['qa']
-    const slot = task.effort === 'pesada' ? pol?.heavy : pol?.light
-    const seat = (slot?.seatId ? seats.get(slot.seatId) : undefined) ?? seats.get(run.seatId)
-    if (!seat) {
-      run.status = 'error'
-      runEmit(run, { kind: 'err', text: `sem seat disponível para o gate de ${gate}` })
-      runLive(run, { type: 'turn-end', status: 'error' })
-      return
-    }
-    seats.preseed(seat)
-    const planTask = planTaskForWorkTask(task)
-    const gateRisk = assessMissionRisk({
-      declaredRisk: planTask?.plan?.risk,
-      surfaces: planTask?.plan?.riskSurfaces,
-      texts: [task.title, task.description, task.briefing, ...(task.quests ?? [])]
-    })
-    const personaShort =
-      gate === 'review'
-        ? 'Você é o revisor de código deste projeto. Responda em PT-BR.'
-        : 'Você é o QA deste projeto. Responda em PT-BR.'
-    const gateSystemPrompt =
-      personaShort +
-      securityPromptForRole(gate === 'review' ? 'review' : 'qa', gateRisk.surfaces)
-    const gateSystemPromptFile =
-      seat.cli === 'claude'
-        ? persistTrustedSystemPrompt(
-            `legacy-${task.id}-${gate}.system.md`,
-            gateSystemPrompt
-          )
-        : undefined
-    if (seat.cli === 'claude' && !gateSystemPromptFile) {
-      run.status = 'error'
-      runEmit(run, {
-        kind: 'err',
-        text: `gate ${gate} bloqueado: não foi possível materializar sua política de sistema`
-      })
-      runLive(run, { type: 'turn-end', status: 'error' })
-      return
-    }
-    const opts = {
-      cwd: run.cwd,
-      configDir: seats.configDirOf(seat),
-      systemPromptFile: gateSystemPromptFile,
-      model: slot?.model || undefined,
-      permissionMode: 'plan',
-      sandbox: 'read-only',
-      approvalPolicy: 'never'
-    }
-    run.session =
-      seat.cli === 'codex'
-        ? new CodexSession(opts, gateSystemPrompt, runSink(run))
-        : new MaestroSession(opts, runSink(run))
-    if (run.session instanceof MaestroSession) run.session.personaSent = true
-    appendRunLog(run, `\n— GATE ${gate.toUpperCase()} —`)
-    runEmit(run, { kind: 'cmd', text: `gate ${gate} — ${seat.name}` })
-    runLive(run, { type: 'phase', phase: gate })
-    const verdictRule =
-      'TERMINE sua resposta com exatamente um veredito neste formato: <verdict>aprovada</verdict> ou <verdict>reprovada: motivo curto</verdict>'
-    run.session.send(
-      gate === 'review'
-        ? `Você é o REVISOR de código deste projeto (gate 1). A tarefa "${task.title}" acabou de ser implementada por outro agente neste diretório. ` +
-            `Critérios de aceite: ${task.description || 'sem descrição'}. ` +
-            `O transcript da implementação está em ${run.logFile} — leia-o e revise as MUDANÇAS (git status/diff no diretório atual, incluindo arquivos novos) com olhar de tech lead: correção, qualidade, aderência aos critérios e ao estilo do projeto. ` +
-            `Não rode suites de teste longas (isso é do QA). Reprove só por problema real. ${verdictRule}`
-        : `Você é o QA deste projeto (gate 2). A tarefa "${task.title}" foi implementada e já passou na revisão de código. ` +
-            `Critérios de aceite: ${task.description || 'sem descrição — use o bom senso'}. ` +
-            `O transcript está em ${run.logFile}. Confira os critérios um a um sem editar arquivos; a validação automatizada do harness executa os testes declarados separadamente. ` +
-            `Seja criterioso mas justo. ${verdictRule}`
-    )
-  }
-
-  // Aprovada nos dois gates: integra a branch da tarefa (merge assistido) e conclui.
-  function finishApproved(run: TaskRun, task: Task, reason: string): void {
-    const project = projects.get(run.projectId)
-    run.status = 'done'
-    if (run.worktree && project) {
-      runEmit(run, { kind: 'cmd', text: `merge — integrando ${run.worktree.branch}` })
-      codeIntelligence?.invalidateWorktreeNow(run.worktree.dir)
-      const res = mergeTaskWorktree(project.path, run.worktree, `task: ${task.title}`)
-      if (res.ok) {
-        tasks.update(run.taskId, { status: 'done' })
-        runEmit(run, { kind: 'ok', text: `QA aprovou${reason ? ` · ${reason}` : ''} — ${res.detail} — tarefa CONCLUÍDA` })
-        emitLog(run.projectId, { kind: 'ok', text: `"${task.title}" aprovada e integrada (${res.detail})` })
-        run.worktree = null
-      } else {
-        // merge falhou: tarefa fica em QA, branch preservada para o humano.
-        runEmit(run, { kind: 'err', text: `QA aprovou, mas o merge falhou: ${res.detail}` })
-        emitLog(run.projectId, { kind: 'err', text: `"${task.title}" aprovada, merge falhou: ${res.detail}` })
-      }
-    } else {
-      tasks.update(run.taskId, { status: 'done' })
-      runEmit(run, {
-        kind: 'ok',
-        text: `QA aprovou${reason ? ` · ${reason}` : ''} — tarefa CONCLUÍDA${run.worktree ? '' : ' (sem git: mudanças direto no projeto)'}`
-      })
-      emitLog(run.projectId, { kind: 'ok', text: `QA aprovou "${task.title}" — concluída` })
-    }
-    runLive(run, { type: 'turn-end', status: 'done' })
-  }
-
-  // Dev roda num PANE TUI REAL (decisão do usuário: ver o CLI de verdade, ao
-  // vivo, com / à vontade). O main prepara worktree + transcript e detecta a
-  // conclusão por um ARQUIVO-MARCADOR que o executor cria ao terminar — aí os
-  // gates automáticos (review/QA/merge) disparam como sessões headless.
   // TODAS as fases rodam em PANES TUI REAIS (decisão do usuário): dev, revisão
   // e QA são o CLI de verdade, ao vivo. A orquestração é por ARQUIVOS: o dev
   // cria <id>.done ao concluir; cada gate cria <id>.<fase>.verdict contendo
@@ -10904,9 +10562,6 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         .map((task) => task.id)
     )
     for (const taskId of missionTaskIds) {
-      const run = taskRuns.get(taskId)
-      run?.session?.kill()
-      taskRuns.delete(taskId)
       const watch = phaseWatches.get(taskId)
       phaseWatches.delete(taskId)
       if (watch) {
@@ -13979,87 +13634,6 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       return spec
     }
   )
-
-  ipcMain.handle(
-    'tasks:runPermission',
-    (e, taskId: string, requestId: string, choice: PermissionChoice) => {
-      bindUiSender(e.sender)
-      const run = taskRuns.get(taskId)
-      const info = run?.session?.answerPermission(requestId, choice)
-      if (run && info) {
-        const verdict = choice === 'deny' ? '✗ negado' : '✓ permitido'
-        runEmit(run, { kind: 'ask', text: `${verdict} — ${info.toolName} ${info.description}`.trim() })
-      }
-    }
-  )
-
-  ipcMain.handle('tasks:runInterrupt', (e, taskId: string) => {
-    bindUiSender(e.sender)
-    taskRuns.get(taskId)?.session?.interrupt()
-  })
-
-  ipcMain.handle('tasks:runSend', (e, taskId: string, message: string) => {
-    bindUiSender(e.sender)
-    const run = taskRuns.get(taskId)
-    if (!run?.session?.alive) return false
-    run.status = 'running'
-    runEmit(run, { kind: 'cmd', text: message })
-    run.session.send(message)
-    return true
-  })
-
-  // Assumir no terminal: mata o headless e devolve os dados para o renderer
-  // abrir um TUI REAL na MESMA conversa (resume) e no MESMO worktree.
-  ipcMain.handle('tasks:runHandoff', (e, taskId: string) => {
-    bindUiSender(e.sender)
-    const run = taskRuns.get(taskId)
-    if (!run) return null
-    const seat = seats.get(run.seatId)
-    const kind = seat?.cli ?? 'claude'
-    run.session?.kill()
-    taskRuns.delete(taskId)
-    appendRunLog(run, `\n↪ assumido no terminal pelo usuário: ${new Date().toISOString()}`)
-    syncBoard(run.projectId)
-    const task = tasks.get(taskId)
-    emitLog(run.projectId, {
-      kind: 'log',
-      tag: 'maestro',
-      text: `▣ "${task?.title ?? taskId}" assumida no terminal — o pipeline automático parou; mova o card quando terminar`
-    })
-    let cliArgs: string[] = []
-    if (run.sessionId) {
-      cliArgs =
-        kind === 'codex'
-          ? ['resume', run.sessionId.replace('codex-thread:', '')]
-          : ['--resume', run.sessionId]
-    }
-    return {
-      cwd: run.cwd,
-      kind,
-      seatId: run.seatId,
-      cliArgs,
-      title: task?.title ?? 'tarefa'
-    }
-  })
-
-  ipcMain.handle('tasks:runClose', (e, taskId: string) => {
-    bindUiSender(e.sender)
-    const run = taskRuns.get(taskId)
-    if (run) {
-      run.session?.kill()
-      taskRuns.delete(taskId)
-      appendRunLog(run, `\nEncerrado: ${new Date().toISOString()}`)
-      syncBoard(run.projectId)
-    }
-  })
-
-  ipcMain.handle('tasks:runState', (e, projectId: string) => {
-    bindUiSender(e.sender)
-    syncBoard(projectId)
-    return [...taskRuns.values()]
-      .filter((r) => r.projectId === projectId)
-      .map((r) => ({ taskId: r.taskId, status: r.status, phase: r.phase, events: r.events }))
-  })
 
   // Clipboard de imagem: prints colados viram PNG em .synkora/attachments do
   // projeto (o path entra no prompt e o agente lê a imagem pelo caminho).
@@ -19253,7 +18827,6 @@ app.on('window-all-closed', () => {
   for (const s of maestroSessions.values()) s.kill()
   maestroSessions.clear()
   progressHeadlessActivities.clear()
-  killRunSessions()
   ptys.killAll()
   app.quit()
 })

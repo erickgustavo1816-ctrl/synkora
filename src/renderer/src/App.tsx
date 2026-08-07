@@ -26,11 +26,8 @@ export default function App(): React.JSX.Element {
   const appendMaestroEvent = useStore((s) => s.appendMaestroEvent)
   const setMaestroCtx = useStore((s) => s.setMaestroCtx)
   const handleMaestroLive = useStore((s) => s.handleMaestroLive)
-  const handleRunEvent = useStore((s) => s.handleRunEvent)
-  const handleRunLive = useStore((s) => s.handleRunLive)
   const openDevPane = useStore((s) => s.openDevPane)
   const closeTaskPane = useStore((s) => s.closeTaskPane)
-  const applyTaskFeedback = useStore((s) => s.applyTaskFeedback)
   const setTaskAttention = useStore((s) => s.setTaskAttention)
   const setPaneStats = useStore((s) => s.setPaneStats)
   const closePane = useStore((s) => s.closePane)
@@ -49,8 +46,6 @@ export default function App(): React.JSX.Element {
     const offEvent = window.synkora.maestro.onEvent(appendMaestroEvent)
     const offCtx = window.synkora.maestro.onCtx(setMaestroCtx)
     const offLive = window.synkora.maestro.onLive(handleMaestroLive)
-    const offRunEvent = window.synkora.tasks.onRunEvent(handleRunEvent)
-    const offRunLive = window.synkora.tasks.onRunLive(handleRunLive)
     const offPaneOpen = window.synkora.tasks.onPaneOpen((projectId, taskId, spec) => {
       // blip fraquinho de marco: o ouvido sabe que um gate entrou sem olhar
       if (spec.role === 'review') playSoftBlip('review')
@@ -77,7 +72,6 @@ export default function App(): React.JSX.Element {
       console.error('[panes] falha ao reidratar panes vivos', error)
     })
     const offPaneClose = window.synkora.tasks.onPaneClose(closeTaskPane)
-    const offFeedback = window.synkora.tasks.onFeedback(applyTaskFeedback)
     const offAttention = window.synkora.tasks.onAttention((taskId, paneId) => {
       // plim SÓ na transição para "esperando" — repetição do evento não re-toca
       const s = useStore.getState()
@@ -137,16 +131,13 @@ export default function App(): React.JSX.Element {
       offEvent()
       offCtx()
       offLive()
-      offRunEvent()
-      offRunLive()
       offPaneOpen()
       offHubSound()
       offPaneClose()
-      offFeedback()
       offAttention()
       offUserQuestion()
     }
-  }, [bridgeOk, loadProjects, loadSeats, loadSettings, openProject, setUniverseTab, setMissionTab, appendMaestroEvent, setMaestroCtx, handleMaestroLive, handleRunEvent, handleRunLive, openDevPane, closeTaskPane, applyTaskFeedback, setTaskAttention, setPaneStats, closePane])
+  }, [bridgeOk, loadProjects, loadSeats, loadSettings, openProject, setUniverseTab, setMissionTab, appendMaestroEvent, setMaestroCtx, handleMaestroLive, openDevPane, closeTaskPane, setTaskAttention, setPaneStats, closePane])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {

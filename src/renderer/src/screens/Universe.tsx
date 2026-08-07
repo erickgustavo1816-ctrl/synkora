@@ -120,9 +120,7 @@ function FreeAgentModal({
 export default function Universe({ projectId }: Props): React.JSX.Element {
   const project = useStore((s) => s.projects.find((p) => p.id === projectId))
   const seats = useStore((s) => s.seats)
-  const paneCount = useStore(
-    (s) => (s.panesByProject[projectId] ?? NO_PANES).length + Object.keys(s.taskRuns).length
-  )
+  const paneCount = useStore((s) => (s.panesByProject[projectId] ?? NO_PANES).length)
 
   const tab = useStore((s) => s.universeTabByProject[projectId] ?? 'board')
   const setTab = useStore((s) => s.setUniverseTab)

@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import RunPanel from './RunPanel'
 import PaneChrome, { ZERO_STATS } from './PaneChrome'
 import TerminalPane from './TerminalPane'
 import ProjectGeneral from './ProjectGeneral'
@@ -565,9 +564,7 @@ function TaskModal({
   const removeTask = useStore((s) => s.removeTask)
   const seats = useStore((s) => s.seats)
   const policies = useStore((s) => s.policies)
-  const run = useStore((s) => s.taskRuns[task.id])
   const runTask = useStore((s) => s.runTask)
-  const handoffRun = useStore((s) => s.handoffRun)
   const missionTitle = useStore((s) =>
     task.missionId ? s.missions.find((m) => m.id === task.missionId)?.title : undefined
   )
@@ -628,59 +625,6 @@ function TaskModal({
     // dispara os gates automáticos de revisão/QA/merge.
     void runTask(projectId, task.id, seat.id, execModel.trim() || undefined, execEffort || undefined)
     onClose()
-  }
-
-  // Execução em andamento (ou terminada e ainda aberta): o modal é o espelho
-  // do executor — tudo que ele faz aparece aqui, aprovações incluídas.
-  if (run) {
-    const runPhase = PHASE_META[run.phase]
-    const runInterrupted = run.status === 'error' || task.phaseState === 'interrupted'
-    const statusBadge =
-      run.status === 'done'
-        ? '✓ concluída'
-        : `${runInterrupted ? '⏸' : '▶'} ${runPhase.label} ${runPhase.step}${
-            runInterrupted ? ' · interrompida' : ''
-          }`
-    return createPortal(
-      <div className="overlay" onClick={onClose}>
-        <div
-          className="task-modal run-modal"
-          style={{ ['--dept-hue' as string]: deptHueVar(dept.key) }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="task-modal-head">
-            <span className="task-dept">
-              {dept.icon} {dept.name}
-            </span>
-            <span
-              className={`lock-badge ${
-                run.status === 'done'
-                  ? 'run-done'
-                  : `task-phase-badge phase-${run.phase}${runInterrupted ? ' interrupted' : ''}`
-              }`}
-            >
-              {statusBadge}
-            </span>
-            <button
-              className="btn ghost"
-              data-tip="Assumir no TERMINAL DE VERDADE: abre o CLI na mesma conversa, dentro do worktree — digite e use / à vontade (o pipeline automático para)"
-              onClick={() => {
-                void handoffRun(projectId, task.id)
-                onClose()
-              }}
-            >
-              ▣ terminal
-            </button>
-            <button className="pane-close dark-close" onClick={onClose}>
-              ×
-            </button>
-          </div>
-          <div className="task-modal-title readonly">{task.title}</div>
-          <RunPanel taskId={task.id} />
-        </div>
-      </div>,
-      document.body
-    )
   }
 
   // Tarefa CONCLUÍDA: modal de RESUMO, não de edição — o que foi feito, por
@@ -818,7 +762,7 @@ function TaskModal({
   // Estado de QA sem pane vivo: após reinício/crash, o orquestrador precisa
   // retomar somente este gate. Não confundir o QA da tarefa com a fila serial
   // de integração da missão, que só existe depois de o plano inteiro concluir.
-  if (task.status === 'qa' && !run) {
+  if (task.status === 'qa') {
     return createPortal(
       <div className="overlay" onClick={onClose}>
         <div
@@ -1412,8 +1356,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   }
 
   const loadPolicies = useStore((s) => s.loadPolicies)
-  const taskRuns = useStore((s) => s.taskRuns)
-  const loadTaskRuns = useStore((s) => s.loadTaskRuns)
   const taskAttention = useStore((s) => s.taskAttention)
   const maestroBypass = useStore((s) => s.maestroBypass)
   const toggleBypass = useStore((s) => s.toggleBypass)
@@ -1424,9 +1366,8 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     void loadTasks(projectId)
     void loadMaestroLog(projectId)
     void loadPolicies(projectId)
-    void loadTaskRuns(projectId)
     void loadMissions(projectId)
-  }, [projectId, loadTasks, loadMaestroLog, loadPolicies, loadTaskRuns, loadMissions])
+  }, [projectId, loadTasks, loadMaestroLog, loadPolicies, loadMissions])
 
   // Missões mudaram no main (criada pelo PM, integrada, sync…) → recarrega.
   useEffect(() => {
@@ -2375,14 +2316,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                     )
                   }
                   const dept = DEPT_BY_KEY[task.department]
-                  const run = taskRuns[task.id]
                   const live = livePaneOf(task.id)
                   const phaseView = taskPhaseView(task, live)
                   // atenção de pane morto não pisca mais: ninguém vai responder à
                   // aprovação de um processo encerrado
-                  const attention =
-                    Boolean(run?.perm) || (Boolean(taskAttention[task.id]) && live !== undefined)
-                  const locked = live !== undefined || run?.status === 'running'
+                  const attention = Boolean(taskAttention[task.id]) && live !== undefined
+                  const locked = live !== undefined
                   return (
                     <div
                       key={task.id}

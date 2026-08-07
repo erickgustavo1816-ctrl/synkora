@@ -398,15 +398,6 @@ export type MaestroLiveEvent =
   | { type: 'phase'; phase: 'dev' | 'review' | 'qa' }
   | { type: 'exit' }
 
-// Execução headless de uma tarefa (F3): espelho do executor no board.
-export interface TaskRunView {
-  status: 'running' | 'done' | 'error'
-  phase: 'dev' | 'review' | 'qa'
-  events: MaestroEvent[]
-  stream: string
-  perm: MaestroPermRequest | null
-}
-
 /** Estado vivo de um pane: saída fluindo / ocioso aguardando / processo morto. */
 export type PaneActivity = 'run' | 'idle' | 'dead'
 
@@ -547,8 +538,6 @@ interface SynkoraState {
   maestroCapsLoading: boolean
   maestroCapsKey: string | null
   loadMaestroCaps: (projectId: string, seatId?: string) => Promise<MaestroCaps | null>
-  taskRuns: Record<string, TaskRunView>
-  loadTaskRuns: (projectId: string) => Promise<void>
   runTask: (
     projectId: string,
     taskId: string,
@@ -558,7 +547,6 @@ interface SynkoraState {
   ) => Promise<void>
   openDevPane: (projectId: string, taskId: string, spec: DevPaneSpec) => void
   closeTaskPane: (projectId: string, taskId: string, role: 'dev' | 'review' | 'qa') => void
-  applyTaskFeedback: (projectId: string, taskId: string, text: string, spec: DevPaneSpec) => void
   /** pane de tarefa pediu aprovação → card pulsa até o usuário interagir */
   taskAttention: Record<string, boolean>
   setTaskAttention: (taskId: string, paneId?: string) => void
@@ -575,13 +563,6 @@ interface SynkoraState {
   loadAskQuestions: (projectId: string) => Promise<void>
   noteUserQuestion: (projectId: string, missionKey: string, question: string) => void
   clearAskQuestion: (projectId: string, missionKey: string) => void
-  handleRunEvent: (taskId: string, evt: MaestroEvent) => void
-  handleRunLive: (taskId: string, evt: MaestroLiveEvent) => void
-  answerRunPerm: (taskId: string, choice: PermissionChoice) => Promise<void>
-  sendToRun: (taskId: string, message: string) => Promise<void>
-  interruptRun: (taskId: string) => Promise<void>
-  handoffRun: (projectId: string, taskId: string) => Promise<void>
-  closeRun: (taskId: string) => Promise<void>
   handleMaestroLive: (evt: MaestroLiveEvent) => void
   sendMaestro: (projectId: string, message: string, seatId?: string) => Promise<void>
   answerMaestroPerm: (projectId: string, choice: PermissionChoice) => Promise<void>
@@ -897,21 +878,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
     }
   },
 
-  taskRuns: {},
-
-  loadTaskRuns: async (projectId) => {
-    const snaps = await window.synkora.tasks.runState(projectId)
-    // Resposta ATRASADA de um projeto que já não é o ativo sobrescrevia o
-    // estado global do universo VISÍVEL (troca rápida no rail deixava o board
-    // com os dados do outro, de forma permanente).
-    if (get().openProjectId !== projectId) return
-    const runs: Record<string, TaskRunView> = {}
-    for (const s of snaps) {
-      runs[s.taskId] = { status: s.status, phase: s.phase, events: s.events, stream: '', perm: null }
-    }
-    set({ taskRuns: runs })
-  },
-
   // Dev roda num PANE TUI DE VERDADE: o main prepara worktree+transcript e
   // devolve a spec. Como esta ação partiu do usuário, mostramos o pane aberto.
   runTask: async (projectId, taskId, seatId, model, effort) => {
@@ -1010,113 +976,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
       delete taskAttention[pane.taskId]
       return { paneAttention, taskAttention }
     }),
-
-  // Feedback de reprovação: digitado DIRETO no pane vivo do dev; se o pane
-  // foi fechado, reabre um novo já com o feedback no prompt.
-  applyTaskFeedback: (projectId, taskId, text, spec) => {
-    const panes = get().panesByProject[projectId] ?? []
-    const pane = panes.find((p) => p.taskId === taskId && (p.role ?? 'dev') === 'dev')
-    if (pane) {
-      window.synkora.pty.write(pane.id, text.replace(/\s+/g, ' ').trim() + '\r')
-    } else {
-      get().openDevPane(projectId, taskId, spec)
-    }
-  },
-
-  handleRunEvent: (taskId, evt) =>
-    set((s) => {
-      const run =
-        s.taskRuns[taskId] ??
-        ({ status: 'running', phase: 'dev', events: [], stream: '', perm: null } as TaskRunView)
-      return {
-        taskRuns: {
-          ...s.taskRuns,
-          [taskId]: { ...run, events: [...run.events, evt].slice(-400) }
-        }
-      }
-    }),
-
-  handleRunLive: (taskId, evt) =>
-    set((s) => {
-      const run =
-        s.taskRuns[taskId] ??
-        ({ status: 'running', phase: 'dev', events: [], stream: '', perm: null } as TaskRunView)
-      if (evt.type === 'phase') {
-        return { taskRuns: { ...s.taskRuns, [taskId]: { ...run, phase: evt.phase, status: 'running' } } }
-      }
-      switch (evt.type) {
-        case 'delta':
-          return { taskRuns: { ...s.taskRuns, [taskId]: { ...run, stream: run.stream + evt.text } } }
-        case 'flush':
-          return { taskRuns: { ...s.taskRuns, [taskId]: { ...run, stream: '' } } }
-        case 'permission': {
-          const { type: _t, ...perm } = evt
-          return { taskRuns: { ...s.taskRuns, [taskId]: { ...run, perm } } }
-        }
-        case 'permission-cancel':
-          return run.perm?.requestId === evt.requestId
-            ? { taskRuns: { ...s.taskRuns, [taskId]: { ...run, perm: null } } }
-            : {}
-        case 'turn-end':
-          return {
-            taskRuns: {
-              ...s.taskRuns,
-              [taskId]: { ...run, stream: '', perm: null, status: evt.status ?? run.status }
-            }
-          }
-        default:
-          return {}
-      }
-    }),
-
-  answerRunPerm: async (taskId, choice) => {
-    const perm = get().taskRuns[taskId]?.perm
-    if (!perm) return
-    set((s) => ({
-      taskRuns: { ...s.taskRuns, [taskId]: { ...s.taskRuns[taskId], perm: null } }
-    }))
-    await window.synkora.tasks.runPermission(taskId, perm.requestId, choice)
-  },
-
-  sendToRun: async (taskId, message) => {
-    set((s) => ({
-      taskRuns: { ...s.taskRuns, [taskId]: { ...s.taskRuns[taskId], status: 'running' } }
-    }))
-    await window.synkora.tasks.runSend(taskId, message)
-  },
-
-  interruptRun: async (taskId) => {
-    await window.synkora.tasks.runInterrupt(taskId)
-  },
-
-  // ▣ assumir no terminal: mata o headless e abre um TUI REAL na mesma
-  // conversa (resume) dentro do worktree da tarefa — / à vontade.
-  handoffRun: async (projectId, taskId) => {
-    const info = await window.synkora.tasks.runHandoff(taskId)
-    if (!info) return
-    set((s) => {
-      const runs = { ...s.taskRuns }
-      delete runs[taskId]
-      return { taskRuns: runs }
-    })
-    get().addPane(projectId, info.kind, {
-      seatId: info.seatId,
-      taskId,
-      cwd: info.cwd,
-      cliArgs: info.cliArgs.length ? info.cliArgs : undefined,
-      title: `▣ ${info.title.slice(0, 30)}${info.title.length > 30 ? '…' : ''}`
-    })
-    get().setUniverseTab(projectId, 'panes')
-  },
-
-  closeRun: async (taskId) => {
-    await window.synkora.tasks.runClose(taskId)
-    set((s) => {
-      const runs = { ...s.taskRuns }
-      delete runs[taskId]
-      return { taskRuns: runs }
-    })
-  },
 
   sendMaestro: async (projectId, message, seatId) => {
     // Steering: mandar DURANTE um turno não pode apagar o stream em andamento.
@@ -1471,7 +1330,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
       void get().loadTasks(id)
       void get().loadPolicies(id)
       void get().loadMaestroLog(id)
-      void get().loadTaskRuns(id)
       void get().loadMissions(id)
     }
   },

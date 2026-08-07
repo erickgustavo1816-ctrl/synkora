@@ -5,8 +5,7 @@ import {
   type NodeOffset,
   type Pane,
   type PaneActivity,
-  type Task,
-  type TaskRunView
+  type Task
 } from '../store'
 import { deptHueOf } from '../departments'
 import {
@@ -305,7 +304,7 @@ interface Props {
   /** Pane individual aberto no palco; permite ao botão de recentralizar voltar
    *  ao card exato sem transformar a câmera em acompanhamento automático. */
   openedPaneId: string | null
-  /** Estado unificado: panes reais + espelhos `run:<taskId>`. */
+  /** Estado dos panes reais. */
   itemActivity: Record<string, PaneActivity>
   itemAttention: Record<string, boolean>
   onAnchor: (nodeId: string) => void
@@ -350,9 +349,8 @@ interface Fx {
   kind: 'done' | 'alert' | 'birth'
 }
 
-function compactOperation(lines?: string[], stream?: string): string | null {
-  const candidates = lines?.length ? lines : stream?.split(/\r?\n/)
-  const line = candidates
+function compactOperation(lines?: string[]): string | null {
+  const line = lines
     ?.map((value) => value.replace(/\s+/g, ' ').trim())
     .filter(Boolean)
     .at(-1)
@@ -364,12 +362,9 @@ function satelliteStatus(
   sat: MapSatellite,
   activity: PaneActivity | undefined,
   asking: boolean,
-  run: TaskRunView | undefined,
   operation: string | null
 ): string {
-  if (asking) return run?.perm?.description || 'aguardando sua permissão'
-  if (run?.status === 'error') return 'execução interrompida'
-  if (run?.status === 'done') return 'execução concluída'
+  if (asking) return 'aguardando sua permissão'
   if (activity === 'dead') return 'processo encerrado'
   if (activity === 'run' && operation) return operation
   if (activity === 'run') {
@@ -404,7 +399,6 @@ export default function ConstellationMap({
   const paneAttention = useStore((s) => s.paneAttention)
   const paneLastLines = useStore((s) => s.paneLastLines)
   const paneModel = useStore((s) => s.paneModel)
-  const taskRuns = useStore((s) => s.taskRuns)
   const missions = useStore((s) => s.missions)
   const tasks = useStore((s) => s.tasks)
   const panes = useStore((s) => s.panesByProject[projectId])
@@ -1107,8 +1101,8 @@ export default function ConstellationMap({
   }, [placed, missions, fire, shock, cx, cy])
 
   // ---- TRANSIÇÕES DE ITEM: início, morte e pedido de permissão ------------
-  // O mapa recebe uma visão unificada de panes e espelhos run:; o COMPONENTE
-  // precisa da borda (antes ≠ agora) para disparar cada efeito uma única vez.
+  // O COMPONENTE precisa da borda (antes ≠ agora) para disparar cada efeito
+  // uma única vez.
   const prevPane = useRef<{
     act: Record<string, string>
     ask: Record<string, boolean>
@@ -1154,26 +1148,6 @@ export default function ConstellationMap({
     }
   }, [itemActivity, itemAttention, fire, shock])
 
-  // TaskRun possui conclusão semântica (diferente de pane run→idle, que é só
-  // uma pausa de telemetria). Só ele ganha o retorno verde/vermelho no fio.
-  const prevTaskRunStatus = useRef<Record<string, TaskRunView['status']> | null>(null)
-  useEffect(() => {
-    const now = Object.fromEntries(
-      Object.entries(taskRuns).map(([taskId, run]) => [taskId, run.status])
-    ) as Record<string, TaskRunView['status']>
-    const before = prevTaskRunStatus.current
-    prevTaskRunStatus.current = now
-    if (!before) return
-    for (const [taskId, status] of Object.entries(now)) {
-      if (status === 'running' || before[taskId] === status) continue
-      const sat = satsRef.current.find((candidate) => candidate.id === `run:${taskId}`)
-      if (!sat) continue
-      const kind: Fx['kind'] = status === 'done' ? 'done' : 'alert'
-      fire(sat.id, kind)
-      shock(sat.x, sat.y, status === 'done' ? 145 : 6, status === 'done' ? 0.9 : 1.05)
-    }
-  }, [taskRuns, fire, shock])
-
   // ---- HUB: eventos reais de orquestração --------------------------------
   // Ninguém mais consome esse canal no renderer. É a única fonte com semântica
   // explícita de "isto terminou" — o resto do store é estado, não evento.
@@ -1209,9 +1183,7 @@ export default function ConstellationMap({
       const seen = new Map<Department, { dept: Department; hue: number; count: number }>()
       for (const id of node.paneIds) {
         if (itemActivity[id] !== 'run') continue
-        const taskId = id.startsWith('run:')
-          ? id.slice(4)
-          : paneList.find((p) => p.id === id)?.taskId
+        const taskId = paneList.find((p) => p.id === id)?.taskId
         const dept = taskId ? tasks.find((t) => t.id === taskId)?.department : undefined
         if (!dept) continue
         const cur = seen.get(dept)
@@ -2094,21 +2066,18 @@ export default function ConstellationMap({
         const act = itemActivity[sat.id]
         const asking = itemAttention[sat.id]
         const satFx = fx[sat.id]
-        const taskRun = sat.id.startsWith('run:') ? taskRuns[sat.id.slice(4)] : undefined
-        const operation = compactOperation(paneLastLines[sat.id], taskRun?.stream)
-        const status = satelliteStatus(sat, act, asking, taskRun, operation)
+        const operation = compactOperation(paneLastLines[sat.id])
+        const status = satelliteStatus(sat, act, asking, operation)
         const stats = paneStats[sat.id]
         const model = paneModel[sat.id]
         const meta = stats
           ? `↓ ${fmtTokens(stats.inputTokens)} · ↑ ${fmtTokens(stats.outputTokens)}`
-          : taskRun
-            ? `${taskRun.phase.toUpperCase()} · ${taskRun.events.length} eventos`
-            : model
-              ? prettyModel(model)
-              : SAT_ROLE_LABEL[sat.role]
-        const stateTone = asking || taskRun?.status === 'error' || act === 'dead'
+          : model
+            ? prettyModel(model)
+            : SAT_ROLE_LABEL[sat.role]
+        const stateTone = asking || act === 'dead'
           ? 'error'
-          : taskRun?.status === 'done' || satFx?.kind === 'done'
+          : satFx?.kind === 'done'
             ? 'done'
             : act === 'run'
               ? 'run'

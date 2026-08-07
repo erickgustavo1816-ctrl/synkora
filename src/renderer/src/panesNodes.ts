@@ -79,8 +79,6 @@ export function missionOfPane(pane: Pane, tasks: Task[], missions: Mission[]): s
 
 interface BuildInput {
   panes: Pane[]
-  /** ids de execução de tarefa (panes-espelho `run:<taskId>`) */
-  runTaskIds: string[]
   tasks: Task[]
   missions: Mission[]
   paneActivity: Record<string, PaneActivity>
@@ -94,7 +92,6 @@ interface BuildInput {
  */
 export function buildNodes({
   panes,
-  runTaskIds,
   tasks,
   missions,
   paneActivity,
@@ -132,10 +129,6 @@ export function buildNodes({
       continue
     }
     place(pane.id, missionOfPane(pane, tasks, missions))
-  }
-  for (const taskId of runTaskIds) {
-    const task = tasks.find((t) => t.id === taskId)
-    place(`run:${taskId}`, task?.missionId ?? null)
   }
 
   // ORDEM DENTRO DO NÓ = ORDEM DE CRIAÇÃO, e ponto.
@@ -195,7 +188,7 @@ export function buildNodes({
 export type SatelliteRole = 'dev' | 'review' | 'qa' | 'ajudante' | 'livre'
 
 export interface MapSatellite {
-  /** paneId real ou `run:<taskId>` (pane-espelho de execução) */
+  /** paneId real */
   id: string
   /** nó (missão/geral/órfãos) dono do satélite */
   nodeId: string
@@ -220,18 +213,6 @@ export function satellitesOf(node: PaneNode, panes: Pane[], tasks: Task[]): MapS
   const short = (s: string): string => (s.length > 26 ? `${s.slice(0, 25)}…` : s)
 
   for (const id of node.paneIds) {
-    if (id.startsWith('run:')) {
-      const task = taskOf(id.slice(4))
-      sats.push({
-        id,
-        nodeId: node.id,
-        role: 'dev',
-        label: short(task?.title ?? 'execução'),
-        dept: task?.department,
-        taskId: task?.id
-      })
-      continue
-    }
     const pane = paneOf(id)
     if (!pane || pane.role === 'maestro') continue
     const task = taskOf(pane.taskId)
@@ -251,14 +232,12 @@ export function satellitesOf(node: PaneNode, panes: Pane[], tasks: Task[]): MapS
         taskId: task?.id
       })
     } else if (pane.role === 'review' || pane.role === 'qa') {
-      // fio primário no DEV da mesma tarefa (pane vivo ou espelho run:);
-      // o triângulo fecha no orquestrador
+      // fio primário no DEV da mesma tarefa; o triângulo fecha no orquestrador
       const devSat = task
-        ? (node.paneIds.find((x) => x === `run:${task.id}`) ??
-          node.paneIds.find((x) => {
+        ? node.paneIds.find((x) => {
             const p = paneOf(x)
             return p?.taskId === task.id && p.role === 'dev'
-          }))
+          })
         : undefined
       sats.push({
         id,

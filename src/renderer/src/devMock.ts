@@ -536,8 +536,6 @@ export function installDevMock(): void {
   let dataCb: ((id: string, data: string) => void) | null = null
   let maestroCb: ((evt: MaestroEvent) => void) | null = null
   let liveCb: ((evt: MaestroLiveEvent) => void) | null = null
-  let runEventCb: ((taskId: string, evt: MaestroEvent) => void) | null = null
-  let runLiveCb: ((taskId: string, evt: MaestroLiveEvent) => void) | null = null
   let ctxCb: ((tokens: number) => void) | null = null
   let mockCtx = 87_000
 
@@ -928,31 +926,12 @@ export function installDevMock(): void {
       onPaneOpen: () => () => undefined,
       onPaneClose: () => () => undefined,
       onPaneCloseById: () => () => undefined,
-      onFeedback: () => () => undefined,
       onAttention: () => () => undefined,
-      runPermission: async () => undefined,
-      runInterrupt: async () => undefined,
-      runHandoff: async () => null,
       // Troca de conta de fase exige PTY/worktree reais — não existe no preview.
       setPhaseSeat: async () => ({
         ok: false,
         msg: 'preview do browser: sem panes reais para trocar de conta'
-      }),
-      runSend: async () => true,
-      runClose: async () => undefined,
-      runState: async () => [],
-      onRunEvent: (cb) => {
-        runEventCb = cb
-        return () => {
-          runEventCb = null
-        }
-      },
-      onRunLive: (cb) => {
-        runLiveCb = cb
-        return () => {
-          runLiveCb = null
-        }
-      }
+      })
     },
     panes: {
       // Browser preview não mantém PTYs fora do renderer.
