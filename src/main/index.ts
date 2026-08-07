@@ -120,6 +120,7 @@ import type {
   PhaseWatch,
   RunPhase
 } from './phaseTypes'
+import type { MainContext } from './mainContext'
 import {
   SECURITY_POLICY_VERSION,
   requiresManualSecurityValidation,
@@ -3835,6 +3836,170 @@ app.whenReady().then(async () => {
       if (uiSender && !uiSender.isDestroyed()) uiSender.send('hub:event', evt)
     }
   })
+
+  // ————— MainContext (Fase 1, commit 1 — docs/FASE1_MAPA_MAINCONTEXT.md) ————
+  // Contrato explícito do estado do main para os módulos da cirurgia
+  // (phaseEngine, mcpApi/, ipc/). ZERO movimentação: o objeto só EXPÕE o que
+  // já existe. Getters cobrem as variáveis reatribuídas em runtime e as
+  // consts declaradas DEPOIS deste ponto (referência direta daria TDZ na
+  // construção); funções entram por delegação, imune à ordem de declaração;
+  // ctx.phase delega para a máquina de fases (advancePhase segue SYNC POR
+  // CONTRATO). Consumidores chegam nos commits 3–5.
+  const ctx: MainContext = {
+    projects,
+    seats,
+    tasks,
+    missions,
+    integrationQueue,
+    backlog,
+    maestro,
+    policies,
+    settings,
+    ptys,
+    mailbox,
+    skillsLib,
+    synVoice,
+    blackbox,
+    mainStalls,
+    sessionStats,
+    helperCompletions,
+    maestroSessions,
+    helperSkillLeases,
+    paneTokens,
+    paneMcpFiles,
+    paneSessions,
+    paneStatusNotes,
+    helperReported,
+    helperSeen,
+    voiceRequests,
+    materializedPlanningSkillsByProject,
+    get hub() {
+      return hub
+    },
+    get uiSender() {
+      return uiSender
+    },
+    get mainWindow() {
+      return mainWindow
+    },
+    get mcpPort() {
+      return mcpPort
+    },
+    get mcpServerHandle() {
+      return mcpServerHandle
+    },
+    get codeIntelligence() {
+      return codeIntelligence
+    },
+    get internalMcpState() {
+      return internalMcpState
+    },
+    get paneStartupMetrics() {
+      return paneStartupMetrics
+    },
+    get expiredSeats() {
+      return expiredSeats
+    },
+    get baselineVerificationRuns() {
+      return baselineVerificationRuns
+    },
+    get finalVerificationRuns() {
+      return finalVerificationRuns
+    },
+    get missionWatches() {
+      return missionWatches
+    },
+    get integrationDrainTimers() {
+      return integrationDrainTimers
+    },
+    get integrationDraining() {
+      return integrationDraining
+    },
+    get surveyAborts() {
+      return surveyAborts
+    },
+    get testServerPanes() {
+      return testServerPanes
+    },
+    get livePaneSpecs() {
+      return livePaneSpecs
+    },
+    get closingPaneIds() {
+      return closingPaneIds
+    },
+    get paneEverSpawned() {
+      return paneEverSpawned
+    },
+    get phaseWatches() {
+      return phaseWatches
+    },
+    get phaseLaunches() {
+      return phaseLaunches
+    },
+    get phaseLaunchCapacity() {
+      return phaseLaunchCapacity
+    },
+    get pendingUserQuestions() {
+      return pendingUserQuestions
+    },
+    get liveGateWaits() {
+      return liveGateWaits
+    },
+    get gateDeathLog() {
+      return gateDeathLog
+    },
+    get gateCooldownUntil() {
+      return gateCooldownUntil
+    },
+    get bootRespawnsPending() {
+      return bootRespawnsPending
+    },
+    get phaseMarkersProcessing() {
+      return phaseMarkersProcessing
+    },
+    get pendingPtyPreparations() {
+      return pendingPtyPreparations
+    },
+    get mcpCatalogServedByPane() {
+      return mcpCatalogServedByPane
+    },
+    get mcpPaneFirstContact() {
+      return mcpPaneFirstContact
+    },
+    get seenMcpTokens() {
+      return seenMcpTokens
+    },
+    syncBoard: (...args) => syncBoard(...args),
+    emitLog: (...args) => emitLog(...args),
+    scheduleProgressSnapshot: () => scheduleProgressSnapshot(),
+    ensureProjectRuntimeWritable: (...args) => ensureProjectRuntimeWritable(...args),
+    projectModeOf: (...args) => projectModeOf(...args),
+    projectPlanOf: (...args) => projectPlanOf(...args),
+    externalPlaywrightForPane: () => externalPlaywrightForPane(),
+    bypassOn: (...args) => bypassOn(...args),
+    maestroPaneId: (...args) => maestroPaneId(...args),
+    orchPaneId: (...args) => orchPaneId(...args),
+    unregisterPane: (...args) => unregisterPane(...args),
+    cleanPaneMcpFile: (...args) => cleanPaneMcpFile(...args),
+    codeIntelligenceSession: (...args) => codeIntelligenceSession(...args),
+    persistUserQuestions: () => persistUserQuestions(),
+    abortVoiceRequests: () => abortVoiceRequests(),
+    releasePaneSkillLease: (...args) => releasePaneSkillLease(...args),
+    push: (channel, ...args) => {
+      if (uiSender && !uiSender.isDestroyed()) uiSender.send(channel, ...args)
+    },
+    phase: {
+      preparePhasePane: (...args) => preparePhasePane(...args),
+      advancePhase: (...args) => advancePhase(...args),
+      retryOrBacklog: (...args) => retryOrBacklog(...args),
+      openGatePane: (...args) => openGatePane(...args),
+      finalizeTask: (...args) => finalizeTask(...args),
+      openPhasePane: (...args) => openPhasePane(...args),
+      closePhasePane: (...args) => closePhasePane(...args),
+      terminateTaskPhasePane: (...args) => terminateTaskPhasePane(...args)
+    }
+  }
+  void ctx // consumidores entram nos commits 3–5 (phaseEngine, mcpApi, ipc)
 
   // Bypass de permissões é o PADRÃO (fluxo reto, como no overclock);
   // o toggle 🛡 religa as aprovações por projeto.
