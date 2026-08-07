@@ -1,0 +1,521 @@
+{
+  "schemaVersion": 2,
+  "benchmark": "pane-startup",
+  "generatedAt": "2026-07-31T20:30:01.792Z",
+  "environment": {
+    "synkora": "0.1.0",
+    "node": "v24.13.0",
+    "platform": "win32",
+    "arch": "x64",
+    "claude": "2.1.220 (Claude Code)",
+    "codex": "codex-cli 0.146.0",
+    "git": "41f1a26",
+    "dirty": true
+  },
+  "definitions": {
+    "livre": "PTY + primeiro frame + primeira mensagem, sem MCP externo",
+    "maestro": "mesmo caminho de terminal do Maestro/orquestrador, sem MCP externo",
+    "estrito": "readiness MCP stdio externo (initialize + initialized + tools/list) + PTY + primeiro frame + primeira mensagem",
+    "syntheticFrame": "marcador determinístico emitido por um shell dentro do PTY; não é uma TUI de agente",
+    "runtimeTrace": "eventos reais do app; external_mcp_available é identificado como inferido no próprio log",
+    "windowsIsolation": "cada lote roda em subprocesso para conter falha nativa do backend ConPTY DLL"
+  },
+  "runtime": {
+    "available": true,
+    "fileFound": true,
+    "traces": 0,
+    "invalidLines": 0,
+    "groups": {}
+  },
+  "synthetic": {
+    "externalMode": "local",
+    "framing": "json-lines",
+    "counts": [
+      1,
+      8,
+      32
+    ],
+    "matrix": {
+      "livre": {
+        "1": {
+          "panes": 1,
+          "completed": 1,
+          "failures": 0,
+          "crashed": false,
+          "batchMs": 204.227,
+          "metrics": {
+            "externalReadyMs": null,
+            "externalSpawnToInitializeMs": null,
+            "externalSpawnToToolsListMs": null,
+            "spawnStartedMs": {
+              "n": 1,
+              "min": 0,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "spawnReturnedMs": {
+              "n": 1,
+              "min": 8.497,
+              "median": 8.497,
+              "p95": 8.497,
+              "max": 8.497
+            },
+            "spawnDurationMs": {
+              "n": 1,
+              "min": 8.496,
+              "median": 8.496,
+              "p95": 8.496,
+              "max": 8.496
+            },
+            "firstFrameMs": {
+              "n": 1,
+              "min": 145.454,
+              "median": 145.454,
+              "p95": 145.454,
+              "max": 145.454
+            },
+            "firstMessageMs": {
+              "n": 1,
+              "min": 145.455,
+              "median": 145.455,
+              "p95": 145.455,
+              "max": 145.455
+            },
+            "agentFirstOutputMs": {
+              "n": 1,
+              "min": 145.983,
+              "median": 145.983,
+              "p95": 145.983,
+              "max": 145.983
+            }
+          }
+        },
+        "8": {
+          "panes": 8,
+          "completed": 0,
+          "failures": 8,
+          "crashed": true,
+          "errorCategory": "native-process-crash",
+          "exitCode": 3221225477,
+          "signal": null,
+          "batchMs": 302.401,
+          "metrics": {
+            "externalReadyMs": null,
+            "externalSpawnToInitializeMs": null,
+            "externalSpawnToToolsListMs": null,
+            "spawnStartedMs": null,
+            "spawnReturnedMs": null,
+            "spawnDurationMs": null,
+            "firstFrameMs": null,
+            "firstMessageMs": null,
+            "agentFirstOutputMs": null
+          }
+        },
+        "32": {
+          "panes": 32,
+          "completed": 32,
+          "failures": 0,
+          "crashed": false,
+          "batchMs": 848.727,
+          "metrics": {
+            "externalReadyMs": null,
+            "externalSpawnToInitializeMs": null,
+            "externalSpawnToToolsListMs": null,
+            "spawnStartedMs": {
+              "n": 32,
+              "min": 0,
+              "median": 0,
+              "p95": 0.001,
+              "max": 0.001
+            },
+            "spawnReturnedMs": {
+              "n": 32,
+              "min": 3.115,
+              "median": 4.114,
+              "p95": 5.151,
+              "max": 8.225
+            },
+            "spawnDurationMs": {
+              "n": 32,
+              "min": 3.114,
+              "median": 4.113,
+              "p95": 5.15,
+              "max": 8.225
+            },
+            "firstFrameMs": {
+              "n": 32,
+              "min": 593.05,
+              "median": 655.151,
+              "p95": 720.219,
+              "max": 729.413
+            },
+            "firstMessageMs": {
+              "n": 32,
+              "min": 593.051,
+              "median": 655.151,
+              "p95": 720.219,
+              "max": 729.414
+            },
+            "agentFirstOutputMs": {
+              "n": 32,
+              "min": 597.285,
+              "median": 660.141,
+              "p95": 725.073,
+              "max": 731.445
+            }
+          }
+        }
+      },
+      "maestro": {
+        "1": {
+          "panes": 1,
+          "completed": 1,
+          "failures": 0,
+          "crashed": false,
+          "batchMs": 215.536,
+          "metrics": {
+            "externalReadyMs": null,
+            "externalSpawnToInitializeMs": null,
+            "externalSpawnToToolsListMs": null,
+            "spawnStartedMs": {
+              "n": 1,
+              "min": 0,
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "spawnReturnedMs": {
+              "n": 1,
+              "min": 7.227,
+              "median": 7.227,
+              "p95": 7.227,
+              "max": 7.227
+            },
+            "spawnDurationMs": {
+              "n": 1,
+              "min": 7.227,
+              "median": 7.227,
+              "p95": 7.227,
+              "max": 7.227
+            },
+            "firstFrameMs": {
+              "n": 1,
+              "min": 146.538,
+              "median": 146.538,
+              "p95": 146.538,
+              "max": 146.538
+            },
+            "firstMessageMs": {
+              "n": 1,
+              "min": 146.538,
+              "median": 146.538,
+              "p95": 146.538,
+              "max": 146.538
+            },
+            "agentFirstOutputMs": {
+              "n": 1,
+              "min": 147.091,
+              "median": 147.091,
+              "p95": 147.091,
+              "max": 147.091
+            }
+          }
+        },
+        "8": {
+          "panes": 8,
+          "completed": 8,
+          "failures": 0,
+          "crashed": false,
+          "batchMs": 310.062,
+          "metrics": {
+            "externalReadyMs": null,
+            "externalSpawnToInitializeMs": null,
+            "externalSpawnToToolsListMs": null,
+            "spawnStartedMs": {
+              "n": 8,
+              "min": 0,
+              "median": 0,
+              "p95": 0.001,
+              "max": 0.001
+            },
+            "spawnReturnedMs": {
+              "n": 8,
+              "min": 3.089,
+              "median": 4.031,
+              "p95": 7.795,
+              "max": 8.239
+            },
+            "spawnDurationMs": {
+              "n": 8,
+              "min": 3.089,
+              "median": 4.031,
+              "p95": 7.795,
+              "max": 8.239
+            },
+            "firstFrameMs": {
+              "n": 8,
+              "min": 197.126,
+              "median": 210.755,
+              "p95": 223.863,
+              "max": 225.66
+            },
+            "firstMessageMs": {
+              "n": 8,
+              "min": 197.126,
+              "median": 210.756,
+              "p95": 223.863,
+              "max": 225.66
+            },
+            "agentFirstOutputMs": {
+              "n": 8,
+              "min": 197.783,
+              "median": 211.452,
+              "p95": 225.138,
+              "max": 227.288
+            }
+          }
+        },
+        "32": {
+          "panes": 32,
+          "completed": 0,
+          "failures": 32,
+          "crashed": true,
+          "errorCategory": "native-process-crash",
+          "exitCode": 3221225477,
+          "signal": null,
+          "batchMs": 794.488,
+          "metrics": {
+            "externalReadyMs": null,
+            "externalSpawnToInitializeMs": null,
+            "externalSpawnToToolsListMs": null,
+            "spawnStartedMs": null,
+            "spawnReturnedMs": null,
+            "spawnDurationMs": null,
+            "firstFrameMs": null,
+            "firstMessageMs": null,
+            "agentFirstOutputMs": null
+          }
+        }
+      },
+      "estrito": {
+        "1": {
+          "panes": 1,
+          "completed": 1,
+          "failures": 0,
+          "crashed": false,
+          "batchMs": 614.401,
+          "metrics": {
+            "externalReadyMs": {
+              "n": 1,
+              "min": 212.001,
+              "median": 212.001,
+              "p95": 212.001,
+              "max": 212.001
+            },
+            "externalSpawnToInitializeMs": {
+              "n": 1,
+              "min": 201.094,
+              "median": 201.094,
+              "p95": 201.094,
+              "max": 201.094
+            },
+            "externalSpawnToToolsListMs": {
+              "n": 1,
+              "min": 206.673,
+              "median": 206.673,
+              "p95": 206.673,
+              "max": 206.673
+            },
+            "spawnStartedMs": {
+              "n": 1,
+              "min": 412.728,
+              "median": 412.728,
+              "p95": 412.728,
+              "max": 412.728
+            },
+            "spawnReturnedMs": {
+              "n": 1,
+              "min": 419.529,
+              "median": 419.529,
+              "p95": 419.529,
+              "max": 419.529
+            },
+            "spawnDurationMs": {
+              "n": 1,
+              "min": 6.801,
+              "median": 6.801,
+              "p95": 6.801,
+              "max": 6.801
+            },
+            "firstFrameMs": {
+              "n": 1,
+              "min": 552.714,
+              "median": 552.714,
+              "p95": 552.714,
+              "max": 552.714
+            },
+            "firstMessageMs": {
+              "n": 1,
+              "min": 552.715,
+              "median": 552.715,
+              "p95": 552.715,
+              "max": 552.715
+            },
+            "agentFirstOutputMs": {
+              "n": 1,
+              "min": 553.166,
+              "median": 553.166,
+              "p95": 553.166,
+              "max": 553.166
+            }
+          }
+        },
+        "8": {
+          "panes": 8,
+          "completed": 8,
+          "failures": 0,
+          "crashed": false,
+          "batchMs": 837.471,
+          "metrics": {
+            "externalReadyMs": {
+              "n": 8,
+              "min": 247.17,
+              "median": 263.819,
+              "p95": 275.797,
+              "max": 278.356
+            },
+            "externalSpawnToInitializeMs": {
+              "n": 8,
+              "min": 219.655,
+              "median": 238.019,
+              "p95": 259.193,
+              "max": 259.251
+            },
+            "externalSpawnToToolsListMs": {
+              "n": 8,
+              "min": 225.894,
+              "median": 248.693,
+              "p95": 265.551,
+              "max": 266.876
+            },
+            "spawnStartedMs": {
+              "n": 8,
+              "min": 501.834,
+              "median": 543.062,
+              "p95": 564.728,
+              "max": 569.128
+            },
+            "spawnReturnedMs": {
+              "n": 8,
+              "min": 509.324,
+              "median": 546.979,
+              "p95": 568.141,
+              "max": 572.332
+            },
+            "spawnDurationMs": {
+              "n": 8,
+              "min": 3.204,
+              "median": 3.848,
+              "p95": 6.428,
+              "max": 7.489
+            },
+            "firstFrameMs": {
+              "n": 8,
+              "min": 701.029,
+              "median": 725.694,
+              "p95": 752.779,
+              "max": 757.682
+            },
+            "firstMessageMs": {
+              "n": 8,
+              "min": 701.029,
+              "median": 725.694,
+              "p95": 752.78,
+              "max": 757.683
+            },
+            "agentFirstOutputMs": {
+              "n": 8,
+              "min": 701.978,
+              "median": 726.386,
+              "p95": 753.657,
+              "max": 758.603
+            }
+          }
+        },
+        "32": {
+          "panes": 32,
+          "completed": 32,
+          "failures": 0,
+          "crashed": false,
+          "batchMs": 1957.949,
+          "metrics": {
+            "externalReadyMs": {
+              "n": 32,
+              "min": 412.228,
+              "median": 511.654,
+              "p95": 557.843,
+              "max": 565.784
+            },
+            "externalSpawnToInitializeMs": {
+              "n": 32,
+              "min": 259.876,
+              "median": 424.382,
+              "p95": 527.739,
+              "max": 531.185
+            },
+            "externalSpawnToToolsListMs": {
+              "n": 32,
+              "min": 281.025,
+              "median": 434.713,
+              "p95": 539.285,
+              "max": 546.933
+            },
+            "spawnStartedMs": {
+              "n": 32,
+              "min": 1154.117,
+              "median": 1211.714,
+              "p95": 1365.99,
+              "max": 1378.211
+            },
+            "spawnReturnedMs": {
+              "n": 32,
+              "min": 1162.782,
+              "median": 1216.679,
+              "p95": 1369.601,
+              "max": 1382
+            },
+            "spawnDurationMs": {
+              "n": 32,
+              "min": 2.36,
+              "median": 4.693,
+              "p95": 5.994,
+              "max": 11.679
+            },
+            "firstFrameMs": {
+              "n": 32,
+              "min": 1565.012,
+              "median": 1773.852,
+              "p95": 1810.849,
+              "max": 1814.712
+            },
+            "firstMessageMs": {
+              "n": 32,
+              "min": 1565.013,
+              "median": 1773.853,
+              "p95": 1810.849,
+              "max": 1814.712
+            },
+            "agentFirstOutputMs": {
+              "n": 32,
+              "min": 1565.879,
+              "median": 1775.307,
+              "p95": 1812.961,
+              "max": 1817.48
+            }
+          }
+        }
+      }
+    }
+  }
+}

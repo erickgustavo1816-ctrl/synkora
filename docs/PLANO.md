@@ -22,7 +22,7 @@ Plano visual completo (diagramas + wireframes): https://claude.ai/code/artifact/
 | Estado | JSON stores em userData + Zustand (decisão F2: better-sqlite3 exigiria build nativo/VS Build Tools; JSON aguenta a escala e a troca fica contida na camada de store) |
 | Agentes | Adapters por CLI (login, headless, parse de eventos, rate limit) |
 | Isolamento | git worktree por tarefa |
-| Voz | Whisper em modo *translate* (PT-BR falado → EN escrito); resposta em PT-BR via instrução no CLAUDE.md |
+| Voz | **SynVoice**: ditado literal PT-BR/inglês técnico com inserção direta; botão clique-clique, atalho liga/desliga por tecla/mouse ou segure-para-falar; OpenAI `gpt-transcribe` automático ou modelos STT do OpenRouter |
 
 Referência de arquitetura/código: https://github.com/eneskirca/nodeterm (Electron, panes de terminal, status de agentes).
 
@@ -80,7 +80,7 @@ QA pega defeito de comportamento. Decisão do usuário em 2026-07-21.
 - **F2 universo:** departamentos, board kanban, PM decompõe pedido em tarefas (atribuição manual). Gate: pedido → tarefas no board.
 - **F3 harness:** dispatcher, worktrees, runs headless, QA gate, merge. Gate: feature completa sem digitar em terminal.
 - **F4 skills:** biblioteca versionada + injeção automática + pipeline de planejamento. Gate: planejar o app de celular dentro do Synkora.
-- **F5 voz:** push-to-talk, Whisper translate, respostas PT-BR, notificações. Gate: ditar tarefa falando e receber resumo em PT-BR.
+- **F5 voz:** SynVoice global, gravação por botão, atalho liga/desliga ou tecla mantida pressionada, transcrição literal e inserção direta sem enviar Enter. Gate: ditar para qualquer painel/campo e editar o resultado no próprio destino.
 
 ## Riscos
 
@@ -94,6 +94,6 @@ QA pega defeito de comportamento. Decisão do usuário em 2026-07-21.
 
 1. Nome: **Synkora**.
 2. Layout: **grid fixo** no MVP (canvas livre é ideia futura).
-3. Voz: **via API** (Groq/OpenAI) primeiro; Whisper local avaliado depois.
+3. Voz: **via API**; OpenAI `gpt-transcribe` é o padrão de máxima precisão e OpenRouter oferece escolha restrita ao catálogo de transcrição. Processamento local pode ser avaliado depois.
 4. Grok: adapter previsto na arquitetura, implementação futura.
 5. Cadeia de comando: **Maestro** como única porta de entrada; leads de departamento automáticos, com atalho direto pelo painel da área.

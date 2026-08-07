@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore, type MaestroEvent } from '../store'
-import { DEPT_BY_KEY } from '../departments'
+import { deptHueVar } from '../departments'
 
 // Peças compartilhadas do "espelho de sessão" (painel do Maestro, modal de
 // tarefa e panes de execução): linha de log, seletor de permissão e o painel
@@ -47,7 +47,7 @@ export function MaestroLine({
   }
   if (evt.kind === 'out') return <div className="m-line out">↳ {evt.text}</div>
   if (evt.kind === 'ask') return <div className="m-line ask">⛭ {evt.text}</div>
-  const hue = evt.tag && evt.tag !== 'maestro' ? DEPT_BY_KEY[evt.tag].hue : undefined
+  const hue = evt.tag && evt.tag !== 'maestro' ? deptHueVar(evt.tag) : undefined
   return (
     <div className="m-line">
       <span
@@ -191,7 +191,7 @@ export default function RunPanel({ taskId }: { taskId: string }): React.JSX.Elem
         ) : (
           <button
             className="btn ghost"
-            title="Encerra a sessão do executor (o transcript fica em .synkora/runs)"
+            data-tip="Encerra a sessão do executor (o transcript fica em .synkora/runs)"
             onClick={() => void closeRun(taskId)}
           >
             encerrar executor

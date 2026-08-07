@@ -1,6 +1,11 @@
 node_modules/
 out/
 dist/
+# saída do electron-builder (instalador + app descompactado)
+release/
 *.log
 .DS_Store
 *.local
+# área de trabalho de sessões de depuração (evidências preservadas, frames de
+# vídeo, saídas de bench) — nunca é código do produto
+.tmp/

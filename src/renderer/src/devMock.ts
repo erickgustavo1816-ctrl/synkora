@@ -1,16 +1,495 @@
 import type {
   MaestroEvent,
   MaestroLiveEvent,
+  Mission,
   NewTask,
+  ProgressOverlaySnapshot,
   Seat,
+  ServicesSnapshot,
+  SynVoiceConfig,
+  SynVoiceModel,
+  SynVoiceOverlayState,
+  SynVoiceProvider,
   SynkoraApi,
+  SynkoraSettings,
   Task
 } from '../../preload/index'
 
 // Mock do bridge para desenvolver a UI num browser comum (sem Electron).
 // No app real o preload injeta window.synkora antes e este arquivo não faz nada.
 export function installDevMock(): void {
+  const view = new URLSearchParams(window.location.search).get('view')
+  if (view === 'progress-overlay') {
+    if (typeof window.synkoraProgressOverlay !== 'undefined') return
+    const progressScenario = new URLSearchParams(window.location.search).get('scenario')
+    let snapshot: ProgressOverlaySnapshot = {
+      revision: 1,
+      generatedAt: new Date().toISOString(),
+      totals: {
+        projects: 3,
+        activeProjects: 2,
+        activeMissions: 3,
+        activeCards: 1,
+        activeCoordinators: 3,
+        attentionMissions: 1,
+        attentionProjects: 0,
+        recentCompletions: 1
+      },
+      projects: [
+        {
+          id: 'mock-2',
+          name: 'Synkora',
+          mode: 'existing',
+          missing: false,
+          state: 'attention',
+          tone: 'attention',
+          label: 'precisa de atenção',
+          coordinators: [
+            {
+              id: 'orchestrator:mission-radar',
+              projectId: 'mock-2',
+              missionId: 'mission-radar',
+              role: 'orchestrator',
+              roleLabel: 'Orquestrador',
+              label: 'acompanhando a revisão',
+              detail: 'Criar radar de andamento',
+              tone: 'running',
+              updatedAt: new Date().toISOString()
+            },
+            {
+              id: 'maestro:mock-2',
+              projectId: 'mock-2',
+              role: 'maestro',
+              roleLabel: 'Maestro',
+              label: 'decidindo como resolver uma integração bloqueada',
+              detail: 'Melhorar integração paralela',
+              tone: 'running',
+              updatedAt: new Date().toISOString()
+            }
+          ],
+          activeMissions: [
+            {
+              id: 'mission-radar',
+              projectId: 'mock-2',
+              title: 'Criar radar de andamento',
+              state: 'reviewing',
+              tone: 'running',
+              label: 'revisando o trabalho',
+              detail: 'Validar janela flutuante',
+              updatedAt: new Date().toISOString(),
+              progress: { done: 3, total: 5, active: 1 },
+              activeCards: [
+                {
+                  id: 'card-radar-review',
+                  title: 'Validar janela flutuante em tamanhos diferentes',
+                  phase: 'review',
+                  phaseLabel: 'em revisão',
+                  interrupted: false,
+                  tone: 'running',
+                  note: 'lendo o diff da janela flutuante',
+                  updatedAt: new Date().toISOString()
+                }
+              ]
+            },
+            {
+              id: 'mission-queue',
+              projectId: 'mock-2',
+              title: 'Melhorar integração paralela',
+              state: 'blocked',
+              tone: 'attention',
+              label: 'integração bloqueada',
+              detail: 'o Maestro está decidindo como resolver o conflito',
+              updatedAt: new Date(Date.now() - 90_000).toISOString(),
+              progress: { done: 4, total: 4, active: 0 },
+              activeCards: [],
+              queue: { state: 'blocked', position: 1, total: 2, owner: 'maestro' }
+            }
+          ],
+          recentCompletions: []
+        },
+        {
+          id: 'mock-1',
+          name: 'App Fitness',
+          mode: 'greenfield',
+          missing: false,
+          state: 'planning',
+          tone: 'waiting',
+          label: 'missões em preparação',
+          coordinators: [
+            {
+              id: 'maestro:mock-1',
+              projectId: 'mock-1',
+              role: 'maestro',
+              roleLabel: 'Maestro',
+              label: 'acompanhando o projeto e suas missões',
+              tone: 'running',
+              updatedAt: new Date().toISOString()
+            }
+          ],
+          masterPlan: {
+            status: 'in_progress',
+            label: 'projeto em construção',
+            done: 8,
+            active: 1,
+            total: 24,
+            currentWave: 'onda-3'
+          },
+          activeMissions: [
+            {
+              id: 'mission-app',
+              projectId: 'mock-1',
+              title: 'Tela inicial e autenticação',
+              state: 'awaiting_approval',
+              tone: 'attention',
+              label: 'aguardando sua aprovação',
+              detail: 'o plano da missão está pronto para revisão',
+              updatedAt: new Date(Date.now() - 180_000).toISOString(),
+              progress: { done: 0, total: 0, active: 0 },
+              activeCards: []
+            }
+          ],
+          recentCompletions: [
+            {
+              id: 'mission-done',
+              projectId: 'mock-1',
+              title: 'Definir identidade visual',
+              state: 'completed',
+              tone: 'success',
+              label: 'concluída',
+              updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
+              completedAt: new Date(Date.now() - 3_600_000).toISOString(),
+              progress: { done: 0, total: 0, active: 0 },
+              activeCards: []
+            }
+          ]
+        },
+        {
+          id: 'mock-idle',
+          name: 'Site antigo',
+          mode: 'existing',
+          missing: false,
+          state: 'idle',
+          tone: 'idle',
+          label: 'sem missão em andamento',
+          coordinators: [],
+          activeMissions: [],
+          recentCompletions: []
+        }
+      ]
+    }
+    if (progressScenario === 'empty') {
+      snapshot = {
+        revision: 2,
+        generatedAt: new Date().toISOString(),
+        totals: {
+          projects: snapshot.projects.length,
+          activeProjects: 0,
+          activeMissions: 0,
+          activeCards: 0,
+          activeCoordinators: 0,
+          attentionMissions: 0,
+          attentionProjects: 0,
+          recentCompletions: 0
+        },
+        projects: snapshot.projects.map((project) => ({
+          ...project,
+          state: 'idle',
+          tone: 'idle',
+          label: 'sem missão em andamento',
+          coordinators: [],
+          activeMissions: [],
+          recentCompletions: [],
+          masterPlan: undefined
+        }))
+      }
+    } else if (progressScenario === 'many') {
+      const source = snapshot.projects[0]
+      const missionSources = source.activeMissions
+      const activeMissions = Array.from({ length: 14 }, (_, index) => {
+        const original = missionSources[index % missionSources.length]
+        return {
+          ...original,
+          id: 'many-mission-' + index,
+          title: 'Missão simultânea ' + (index + 1),
+          updatedAt: new Date(Date.now() - index * 12_000).toISOString(),
+          activeCards: original.activeCards.map((card, cardIndex) => ({
+            ...card,
+            id: 'many-card-' + index + '-' + cardIndex
+          }))
+        }
+      })
+      snapshot = {
+        revision: 3,
+        generatedAt: new Date().toISOString(),
+        totals: {
+          projects: 1,
+          activeProjects: 1,
+          activeMissions: activeMissions.length,
+          activeCards: activeMissions.reduce(
+            (total, mission) => total + mission.activeCards.length,
+            0
+          ),
+          activeCoordinators: source.coordinators.length,
+          attentionMissions: activeMissions.filter((mission) => mission.tone === 'attention').length,
+          attentionProjects: 1,
+          recentCompletions: 0
+        },
+        projects: [{
+          ...source,
+          activeMissions,
+          recentCompletions: []
+        }]
+      }
+    } else if (progressScenario === 'history') {
+      const source = snapshot.projects[1]
+      const completedSource = source.recentCompletions[0]
+      const recentCompletions = Array.from({ length: 12 }, (_, index) => ({
+        ...completedSource,
+        id: 'history-mission-' + index,
+        title: 'Entrega concluída ' + (index + 1),
+        updatedAt: new Date(Date.now() - index * 60_000).toISOString(),
+        completedAt: new Date(Date.now() - index * 60_000).toISOString()
+      }))
+      snapshot = {
+        revision: 4,
+        generatedAt: new Date().toISOString(),
+        totals: {
+          projects: 1,
+          activeProjects: 0,
+          activeMissions: 0,
+          activeCards: 0,
+          activeCoordinators: 0,
+          attentionMissions: 0,
+          attentionProjects: 0,
+          recentCompletions: recentCompletions.length
+        },
+        projects: [{
+          ...source,
+          state: 'idle',
+          tone: 'idle',
+          label: 'sem missão em andamento',
+          coordinators: [],
+          activeMissions: [],
+          recentCompletions,
+          masterPlan: undefined
+        }]
+      }
+    }
+    const listeners = new Set<(next: ProgressOverlaySnapshot) => void>()
+    const modeListeners = new Set<(next: { compact: boolean }) => void>()
+    const historyListeners = new Set<(next: { clearedAt: string | null }) => void>()
+    let compact = false
+    let historyClearedAt: string | null = null
+    window.synkoraProgressOverlay = {
+      getState: async () => ({ snapshot, compact, historyClearedAt }),
+      resize: () => undefined,
+      command: (command) => {
+        if (command === 'compact' || command === 'expand') {
+          compact = command === 'compact'
+          for (const listener of modeListeners) listener({ compact })
+          return
+        }
+        if (command === 'clear-history') {
+          historyClearedAt = snapshot.generatedAt
+          for (const listener of historyListeners) listener({ clearedAt: historyClearedAt })
+        }
+      },
+      onSnapshot: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      onMode: (listener) => {
+        modeListeners.add(listener)
+        return () => modeListeners.delete(listener)
+      },
+      onHistory: (listener) => {
+        historyListeners.add(listener)
+        return () => historyListeners.delete(listener)
+      }
+    }
+    return
+  }
+  if (view === 'synvoice-overlay') {
+    if (typeof window.synkoraOverlay !== 'undefined') return
+    const voiceScenario = new URLSearchParams(window.location.search).get('scenario')
+    let overlayState: SynVoiceOverlayState = {
+      stage: 'idle',
+      elapsed: 0,
+      level: 0,
+      bands: Array.from({ length: 13 }, () => 0),
+      configured: true,
+      status: 'Clique para falar',
+      activationMode: 'toggle',
+      activationLabel: 'Mouse 5 (Lateral)'
+    }
+    if (voiceScenario === 'recording') {
+      overlayState = {
+        ...overlayState,
+        stage: 'recording',
+        elapsed: 83_000,
+        level: 0.62,
+        bands: [0.2, 0.48, 0.73, 0.35, 0.88, 0.56, 0.95, 0.42, 0.7, 0.3, 0.82, 0.5, 0.24],
+        status: 'Ouvindo'
+      }
+    } else if (voiceScenario === 'processing') {
+      overlayState = { ...overlayState, stage: 'processing', status: 'Transcrevendo o áudio' }
+    } else if (voiceScenario === 'inserted') {
+      overlayState = { ...overlayState, stage: 'inserted', status: 'Texto inserido no destino' }
+    }
+    const voiceHistory = voiceScenario === 'history'
+      ? [
+          {
+            text: 'Revise o painel do SynVoice e deixe os controles bem alinhados.',
+            at: new Date(Date.now() - 45_000).toISOString()
+          },
+          {
+            text: 'Esta é uma fala propositalmente muito longa para validar que a prévia termina com reticências sem aumentar o cartão nem escapar da largura disponível no mini painel.',
+            at: new Date(Date.now() - 120_000).toISOString()
+          },
+          {
+            text: 'Criar os testes focados do histórico.',
+            at: new Date(Date.now() - 300_000).toISOString()
+          },
+          {
+            text: 'SynkoraSuperLongWordWithoutNaturalBreaksNeedsToStayInsideTheCardAtEveryWidth',
+            at: new Date(Date.now() - 600_000).toISOString()
+          }
+        ]
+      : []
+    const listeners = new Set<(state: SynVoiceOverlayState) => void>()
+    window.synkoraOverlay = {
+    getState: async () => overlayState,
+    prepareInteraction: () => undefined,
+    history: async () => voiceHistory,
+    historyCopy: async (index) => Boolean(voiceHistory[index]),
+    setHistoryOpen: () => undefined,
+    command: (command) => {
+        if (command !== 'toggle') return
+        overlayState = overlayState.stage === 'recording'
+          ? { ...overlayState, stage: 'processing', status: 'Transcrevendo' }
+          : { ...overlayState, stage: 'recording', elapsed: 0, status: 'Ouvindo' }
+        for (const listener of listeners) listener(overlayState)
+      },
+      showTooltip: () => undefined,
+      hideTooltip: () => undefined,
+      onState: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      }
+    }
+    return
+  }
   if (typeof window.synkora !== 'undefined') return
+
+  let appSettings: SynkoraSettings = {
+    codeIntelligenceMode: 'automatic',
+    mcpProtocolMode: 'auto',
+    externalServicePreparation: 'automatic',
+    imageProvider: 'codex',
+    openrouterKeyConfigured: false,
+    githubTokenConfigured: false,
+    terminalFontSize: 13,
+    terminalLineHeight: 1.25,
+    terminalFontFamily: 'Cascadia Code'
+  }
+
+  const servicesSnapshot = (): ServicesSnapshot => ({
+    generatedAt: Date.now(),
+    codeIntelligence: {
+      mode: appSettings.codeIntelligenceMode,
+      state: appSettings.codeIntelligenceMode === 'off' ? 'off' : 'active',
+      processCount: appSettings.codeIntelligenceMode === 'off' ? 0 : 1,
+      languages: ['TypeScript', 'JavaScript'],
+      servers: appSettings.codeIntelligenceMode === 'off'
+        ? []
+        : [{
+            kind: 'typescript-native',
+            name: 'TypeScript Language Server',
+            version: '7.0.2',
+            running: true,
+            activeQueries: 0,
+            openDocuments: 3
+          }],
+      telemetry: { starts: 1, restarts: 0, evictions: 0, failures: 0, requests: 142, reuses: 141 }
+    },
+    internalMcp: { state: 'ready', protocol: 'dual-era', port: 43117 },
+    codexProbe: {
+      state: 'ready',
+      seats: [{
+        seatId: 'codex-seat',
+        seatName: 'Codex',
+        state: 'ready',
+        checkedAt: Date.now(),
+        version: '0.146.0',
+        featurePresent: true,
+        featureEnabled: false,
+        capability: false,
+        reason: 'fallback legado seguro'
+      }]
+    },
+    externalServices: {
+      preparation: appSettings.externalServicePreparation,
+      state: 'available',
+      checkedAt: Date.now(),
+      playwright: { available: true, availability: 'on-demand', version: '0.0.78' }
+    },
+    paneStartup: {
+      primaryMilestone: 'agent_first_output',
+      windowSize: 128,
+      samples: 18,
+      p50Ms: 784,
+      p95Ms: 1310,
+      milestones: {
+        terminal_first_frame: { samples: 18, p50Ms: 110, p95Ms: 184 },
+        external_mcp_available: { samples: 12, p50Ms: 232, p95Ms: 401 },
+        agent_first_output: { samples: 18, p50Ms: 784, p95Ms: 1310 }
+      }
+    }
+  })
+
+  let voiceProvider: SynVoiceProvider = 'openai'
+  const voiceConfigured: Record<SynVoiceProvider, boolean> = { openai: true, openrouter: false }
+  const voiceSelectedModel: Record<SynVoiceProvider, string | null> = {
+    openai: null,
+    openrouter: null
+  }
+  let voiceCustomVocabulary = ['Synkora']
+  const voiceCancelled = new Set<string>()
+  const voiceModelCatalog: Record<SynVoiceProvider, SynVoiceModel[]> = {
+    openai: [
+      { id: 'gpt-transcribe', name: 'GPT Transcribe', description: 'Máxima precisão.', recommended: true },
+      { id: 'gpt-4o-transcribe', name: 'GPT-4o Transcribe', description: 'Alta qualidade.' },
+      { id: 'gpt-4o-mini-transcribe', name: 'GPT-4o Mini Transcribe', description: 'Mais econômico.' }
+    ],
+    openrouter: [
+      { id: 'openai/gpt-4o-transcribe', name: 'OpenAI: GPT-4o Transcribe', description: 'Alta precisão.', recommended: true },
+      { id: 'deepgram/nova-3', name: 'Deepgram: Nova-3', description: 'Modelo de transcrição.' },
+      { id: 'mistralai/voxtral-mini-transcribe', name: 'Mistral: Voxtral Mini Transcribe', description: 'Modelo multilíngue.' }
+    ]
+  }
+  const voiceConfig = (): SynVoiceConfig => {
+    const providers = {
+      openai: {
+        configured: voiceConfigured.openai,
+        source: voiceConfigured.openai ? ('secure-storage' as const) : ('none' as const),
+        model: voiceSelectedModel.openai ?? 'gpt-transcribe',
+        selectedModel: voiceSelectedModel.openai
+      },
+      openrouter: {
+        configured: voiceConfigured.openrouter,
+        source: voiceConfigured.openrouter ? ('secure-storage' as const) : ('none' as const),
+        model: voiceSelectedModel.openrouter ?? 'openai/gpt-4o-transcribe',
+        selectedModel: voiceSelectedModel.openrouter
+      }
+    }
+    return {
+      provider: voiceProvider,
+      ...providers[voiceProvider],
+      customVocabulary: [...voiceCustomVocabulary],
+      secureStorageAvailable: true,
+      providers
+    }
+  }
 
   const projects = [
     {
@@ -120,7 +599,199 @@ export function installDevMock(): void {
     return created
   }
 
+  const missions: Mission[] = [
+    {
+      id: 'mission-1',
+      projectId: 'mock-1',
+      title: 'Tela de perfil',
+      goal: 'Perfil do usuário com foto, metas e histórico.',
+      scope: 'src/screens/profile',
+      status: 'ativa',
+      branch: 'mission/abc12345',
+      baseBranch: 'main',
+      createdAt: '2026-07-22T09:00:00.000Z',
+      updatedAt: '2026-07-22T09:00:00.000Z'
+    }
+  ]
+
   const api: SynkoraApi = {
+    skills: {
+      list: async () => [
+        {
+          id: 'frontend-design',
+          kind: 'skill',
+          depts: ['front'],
+          group: 'direção estética',
+          repo: 'anthropics/skills',
+          summary: 'Direção estética oficial da Anthropic — a skill de design mais instalada.',
+          hint: 'Use when building or restyling any user-facing screen.',
+          defaultFor: ['front'],
+          installed: true,
+          sha: 'abc1234def',
+          installedAt: '2026-07-29T12:00:00.000Z',
+          updateAvailable: true
+        },
+        {
+          id: 'better-ui',
+          kind: 'skill',
+          depts: ['front'],
+          group: 'polish & micro-interações',
+          repo: 'jakubkrehel/skills',
+          summary: 'Polimento com valores exatos: press states, springs, focus rings.',
+          hint: 'Use when polishing components/micro-interactions.',
+          defaultFor: ['front'],
+          installed: true,
+          sha: 'bbb1234def',
+          installedAt: '2026-07-29T12:00:00.000Z',
+          updateAvailable: false
+        },
+        {
+          id: 'ui-reviewer',
+          kind: 'agent',
+          depts: ['front'],
+          group: 'subagentes especializados',
+          repo: 'mock/agents',
+          summary: 'Subagente de crítica de UI (mock do preview).',
+          hint: 'Delegate UI critiques to this specialist.',
+          installed: true,
+          sha: 'ccc1234def',
+          installedAt: '2026-07-29T12:00:00.000Z',
+          updateAvailable: false
+        },
+        {
+          id: 'emil-design-eng',
+          kind: 'skill',
+          depts: ['front'],
+          group: 'animação',
+          repo: 'emilkowalski/skills',
+          summary: 'Animação de interface do Emil Kowalski: easing, duração, propósito.',
+          hint: 'Use when adding or reviewing interface animations.',
+          installed: false,
+          updateAvailable: false
+        }
+      ],
+      install: async () => ({ ok: false, msg: 'preview: sem instalação no browser' }),
+      installMany: async () => ({ ok: false, msg: 'preview: sem instalação no browser' }),
+      addCustom: async () => ({ ok: false, msg: 'preview: sem instalação no browser' }),
+      addCustomAgent: async () => ({ ok: false, msg: 'preview: sem instalação no browser' }),
+      remove: async () => ({ ok: false, msg: 'preview: sem instalação no browser' }),
+      update: async () => ({ ok: false, msg: 'preview: sem instalação no browser' }),
+      check: async () => 0,
+      exportLib: async () => ({ ok: false, msg: 'preview: sem export no browser' }),
+      importLib: async () => ({ ok: false, msg: 'preview: sem import no browser' }),
+      onChanged: () => () => undefined
+    },
+    blackbox: {
+      exportDiagnostics: async () => ({ ok: false, msg: 'preview: sem diagnóstico no browser' }),
+      tail: async () => []
+    },
+    backlog: {
+      listVersions: async () => [],
+      createVersion: async () => null,
+      updateVersion: async () => null,
+      removeVersion: async () => 'mock: versão removida',
+      releaseVersion: async () => 'mock: sem git no preview',
+      listItems: async () => [],
+      createItem: async () => null,
+      updateItem: async () => null,
+      removeItem: async () => undefined,
+      onChanged: () => () => undefined
+    },
+    missions: {
+      list: async (projectId: string) => missions.filter((m) => m.projectId === projectId),
+      create: async (projectId: string, input) => {
+        const now = new Date().toISOString()
+        const m: Mission = {
+          id: `mission-${Date.now()}`,
+          projectId,
+          title: input.title,
+          goal: input.goal,
+          scope: input.scope,
+          status: 'ativa',
+          branch: 'mission/mock1234',
+          baseBranch: 'main',
+          createdAt: now,
+          updatedAt: now
+        }
+        missions.push(m)
+        return m
+      },
+      update: async (id, patch) => {
+        const m = missions.find((x) => x.id === id)
+        if (m) Object.assign(m, patch, { updatedAt: new Date().toISOString() })
+        return m ?? null
+      },
+      integrate: async () => 'missão na fila de integração #1 (mock)',
+      remove: async (id: string) => {
+        const i = missions.findIndex((m) => m.id === id)
+        if (i >= 0) missions.splice(i, 1)
+        return true
+      },
+      confirmOrchestrator: async (_projectId: string, missionId: string, choice) => {
+        const m = missions.find((x) => x.id === missionId)
+        if (!m) return false
+        Object.assign(m, {
+          seatId: choice.seatId,
+          model: choice.model,
+          effort: choice.effort,
+          pendingOrchestrator: undefined,
+          updatedAt: new Date().toISOString()
+        })
+        return true
+      },
+      setOrchestratorSeat: async (_projectId: string, missionId: string, choice) => {
+        const m = missions.find((x) => x.id === missionId)
+        if (!m) return { ok: false, msg: 'missão não encontrada' }
+        Object.assign(m, {
+          seatId: choice.seatId,
+          model: choice.model,
+          effort: choice.effort,
+          updatedAt: new Date().toISOString()
+        })
+        return { ok: true, msg: 'conta trocada (mock)' }
+      },
+      paneSpec: async () => null,
+      onChanged: () => () => undefined
+    },
+    files: {
+      listDocs: async () => [
+        { path: '.synkora/CONTEXT.md', name: 'CONTEXT.md', group: 'synkora', mtime: Date.now(), size: 4200 },
+        { path: 'docs/PLANO.md', name: 'PLANO.md', group: 'docs', mtime: Date.now() - 86_400_000, size: 9000 },
+        { path: 'README.md', name: 'README.md', group: 'projeto', mtime: Date.now() - 3 * 86_400_000, size: 1200 }
+      ],
+      readDoc: async (_projectId: string, relPath: string) => ({
+        content: `# ${relPath}\n\nConteúdo **mockado** do viewer.\n\n- item 1\n- item 2\n\n\`\`\`ts\nconst ok = true\n\`\`\``,
+        mtime: Date.now()
+      }),
+      terminalLinks: async (_projectId, _paneId, text) => {
+        const links: Array<{ start: number; length: number; text: string }> = []
+        const known = /\.synkora[\\/]CONTEXT\.md|docs[\\/]PLANO\.md|README\.md/gu
+        let match: RegExpExecArray | null
+        while ((match = known.exec(text))) {
+          links.push({ start: match.index, length: match[0].length, text: match[0] })
+        }
+        return links
+      },
+      openTerminalFile: async (_projectId, paneId, candidate) => {
+        const path = candidate.replace(/\\/g, '/')
+        if (!['.synkora/CONTEXT.md', 'docs/PLANO.md', 'README.md'].includes(path)) {
+          return { ok: false as const, error: 'arquivo indisponível no mock' }
+        }
+        return {
+          ok: true as const,
+          action: 'markdown' as const,
+          paneId,
+          root: 'project' as const,
+          path,
+          name: path.split('/').at(-1) ?? path,
+          displayPath: candidate
+        }
+      },
+      readTerminalDoc: async (_projectId, _paneId, _root, relPath) => ({
+        content: `# ${relPath}\n\nArquivo aberto a partir do terminal (mock).`,
+        mtime: Date.now()
+      })
+    },
     projects: {
       list: async () => [...projects],
       create: async (name: string, path: string) => {
@@ -131,7 +802,19 @@ export function installDevMock(): void {
       remove: async (id: string) => {
         const i = projects.findIndex((p) => p.id === id)
         if (i >= 0) projects.splice(i, 1)
-      }
+      },
+      setPhoto: async (id: string) => projects.find((p) => p.id === id) ?? null,
+      removePhoto: async (id: string) => projects.find((p) => p.id === id) ?? null,
+      rename: async (id: string, name: string) => {
+        const p = projects.find((x) => x.id === id)
+        if (p) p.name = name
+        return p ?? null
+      },
+      relocate: async (id: string) => ({
+        ok: true,
+        project: projects.find((p) => p.id === id)
+      }),
+      onFlowChanged: () => () => undefined
     },
     seats: {
       list: async () => [...seats],
@@ -147,10 +830,31 @@ export function installDevMock(): void {
         seats.push(seat)
         return seat
       },
+      rename: async (id: string, name: string) => {
+        const s = seats.find((x) => x.id === id)
+        if (s) s.name = name
+      },
       remove: async (id: string) => {
         const i = seats.findIndex((s) => s.id === id)
         if (i >= 0) seats.splice(i, 1)
-      }
+      },
+      usage: async () => ({
+        at: Date.now(),
+        account: 'erick@example.com',
+        plan: 'MAX',
+        meters: [
+          { label: 'sessão', pct: 23, mode: 'used' as const, severity: 0.23, reset: '14:00' },
+          {
+            label: 'semana (geral)',
+            pct: 41,
+            mode: 'used' as const,
+            severity: 0.41,
+            reset: '25/07 09:00'
+          }
+        ],
+        lines: []
+      }),
+      onChanged: () => () => undefined
     },
     tasks: {
       onChanged: () => () => undefined,
@@ -166,13 +870,74 @@ export function installDevMock(): void {
         if (i >= 0) tasks.splice(i, 1)
       },
       run: async () => null,
+      // F5.7 — plano da missão: o mock só troca o status/lanes localmente.
+      approvePlan: async (id: string, lanes) => {
+        const t = tasks.find((x) => x.id === id)
+        if (t && t.kind === 'plan' && t.plan) {
+          t.plan = { ...t.plan, lanes, approvedAt: new Date().toISOString() }
+          t.status = 'execucao'
+          t.updatedAt = new Date().toISOString()
+        }
+        return t
+      },
+      stopPlan: async (id: string) => {
+        const t = tasks.find((x) => x.id === id)
+        if (t && t.kind === 'plan' && t.status === 'execucao') {
+          t.status = 'backlog'
+          t.updatedAt = new Date().toISOString()
+        }
+        return t
+      },
+      resolvePlanSecurityValidation: async (
+        id: string,
+        decision: 'approved' | 'waived',
+        evidence: string
+      ) => {
+        const t = tasks.find((x) => x.id === id)
+        if (t?.plan?.manualSecurityValidationRequired) {
+          const workTasks = tasks.filter(
+            (candidate) =>
+              candidate.missionId === t.missionId &&
+              candidate.kind !== 'plan' &&
+              (candidate.planId === t.id || (!candidate.planId && !t.plan?.executionMode))
+          )
+          if (
+            t.status !== 'execucao' ||
+            workTasks.length === 0 ||
+            workTasks.some((candidate) => candidate.status !== 'done') ||
+            (t.plan.expectedCards !== undefined && workTasks.length < t.plan.expectedCards)
+          ) {
+            throw new Error(
+              'A validação fica disponível depois que todos os cards previstos estiverem concluídos.'
+            )
+          }
+          t.plan = {
+            ...t.plan,
+            manualSecurityValidation: {
+              required: true,
+              status: decision,
+              actor: 'user',
+              resolvedAt: new Date().toISOString(),
+              evidence
+            }
+          }
+          t.updatedAt = new Date().toISOString()
+        }
+        return t
+      },
       onPaneOpen: () => () => undefined,
       onPaneClose: () => () => undefined,
+      onPaneCloseById: () => () => undefined,
       onFeedback: () => () => undefined,
       onAttention: () => () => undefined,
       runPermission: async () => undefined,
       runInterrupt: async () => undefined,
       runHandoff: async () => null,
+      // Troca de conta de fase exige PTY/worktree reais — não existe no preview.
+      setPhaseSeat: async () => ({
+        ok: false,
+        msg: 'preview do browser: sem panes reais para trocar de conta'
+      }),
       runSend: async () => true,
       runClose: async () => undefined,
       runState: async () => [],
@@ -189,7 +954,35 @@ export function installDevMock(): void {
         }
       }
     },
+    panes: {
+      // Browser preview não mantém PTYs fora do renderer.
+      live: async () => [],
+      // Spec plausível (o app RECUSA abrir agente livre com spec nula — sem
+      // armamento ele viraria um CLI cru na branch base); no preview o pane só
+      // imprime o aviso do mock.
+      freeSpec: async (_projectId: string, seatId: string) => ({
+        paneId: `free-${seatId}-${Math.random().toString(16).slice(2, 8)}`,
+        cliArgs: [],
+        appendSystemPrompt: '(persona do agente livre — mock)'
+      }),
+      testServerSpec: async (
+        _projectId: string,
+        _target: { missionId?: string; versionId?: string },
+        port?: number
+      ) => ({
+        ok: true,
+        paneId: `testsrv-${Math.random().toString(16).slice(2, 8)}`,
+        cwd: 'C:\\mock\\worktree',
+        command: `npm run dev${port ? ` -- --port ${port}` : ''}`,
+        title: '▶ teste (mock)'
+      }),
+      portsInUse: async (_projectId: string) =>
+        '5174 = QA do card "tela de exemplo" · 2057 (pedida) = servidor de teste do dono'
+    },
     maestro: {
+      pendingQuestions: async () => [],
+      questionSeen: async () => true,
+      onUserQuestion: () => () => undefined,
       onEvent: (cb) => {
         maestroCb = cb
         return () => {
@@ -334,8 +1127,16 @@ export function installDevMock(): void {
         model: null,
         effort: null,
         sessionId: 'mock-session',
-        autopilot: false
+        bypass: true,
+        sensitiveBypassOk: false,
+        seatId: 's1',
+        version: 'v0.1'
       }),
+      setSeat: async () => undefined,
+      getReviewer: async () => ({ seatId: null, model: null, effort: null }),
+      setReviewer: async () => undefined,
+      paneSpec: async () => null,
+      setVersion: async () => undefined,
       setEffort: async (_projectId: string, effort: string) => {
         maestroCb?.({ kind: 'ok', text: `effort do maestro: ${effort || 'padrão do modelo'}` })
       },
@@ -349,26 +1150,39 @@ export function installDevMock(): void {
         }
       },
       reset: async () => undefined,
+      cleanup: async () => '🧹 0 arquivo(s) sem uso removido(s) do .synkora (mock)',
       setModel: async (_projectId: string, model: string) => {
         maestroCb?.({ kind: 'ok', text: `modelo do maestro: ${model}` })
       }
     },
+    perf: {
+      reportStall: () => undefined
+    },
     harness: {
-      setAutopilot: async () => undefined
+      setBypass: async () => undefined,
+      setSensitiveBypass: async () => undefined
+    },
+    projectPlan: {
+      get: async () => null
+    },
+    hub: {
+      onEvent: () => () => undefined,
+      onCommunication: () => () => undefined
     },
     policies: {
       get: async () => ({}),
-      set: async () => undefined
+      set: async () => undefined,
+      onChanged: () => () => undefined
     },
     catalog: {
       get: async (cli: 'claude' | 'codex') =>
         cli === 'claude'
           ? {
               models: [
-                { id: 'fable', label: 'fable — Claude Fable 5 (máximo, 1M ctx)' },
-                { id: 'opus', label: 'opus — Claude Opus 4.8' },
-                { id: 'sonnet', label: 'sonnet — Claude Sonnet 5' },
-                { id: 'haiku', label: 'haiku — Claude Haiku 4.5 (leve)' }
+                { id: 'fable', label: 'fable — o mais capaz' },
+                { id: 'opus[1m]', label: 'opus — equilíbrio do dia a dia (1M ctx)' },
+                { id: 'sonnet', label: 'sonnet — eficiente para rotina' },
+                { id: 'haiku', label: 'haiku — o mais rápido' }
               ],
               efforts: ['low', 'medium', 'high', 'xhigh', 'max']
             }
@@ -384,10 +1198,122 @@ export function installDevMock(): void {
               efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']
             }
     },
+    cli: {
+      status: async () => [
+        { cli: 'claude' as const, version: '2.1.219', state: 'current' as const, checkedAt: 0 },
+        { cli: 'codex' as const, version: '0.145.0', state: 'current' as const, checkedAt: 0 }
+      ],
+      update: async () => [
+        { cli: 'claude' as const, version: '2.1.219', state: 'current' as const, checkedAt: 0 },
+        { cli: 'codex' as const, version: '0.145.0', state: 'current' as const, checkedAt: 0 }
+      ],
+      onStatus: () => () => undefined
+    },
+    // usage mock: barras de exemplo p/ ver o tooltip no browser
+    settings: {
+        get: async () => ({ ...appSettings }),
+        set: async (patch) => {
+          appSettings = { ...appSettings, ...patch }
+          return { ...appSettings }
+        },
+        setSecret: async (name, _value) => {
+          const masked = '••••••••'
+          appSettings = name === 'openrouterKey'
+            ? { ...appSettings, openrouterKeyConfigured: true, openrouterKeyMasked: masked }
+            : { ...appSettings, githubTokenConfigured: true, githubTokenMasked: masked }
+          return { ...appSettings }
+        },
+        clearSecret: async (name) => {
+          if (name === 'openrouterKey') {
+            const { openrouterKeyMasked: _masked, ...next } = appSettings
+            appSettings = { ...next, openrouterKeyConfigured: false }
+          } else {
+            const { githubTokenMasked: _masked, ...next } = appSettings
+            appSettings = { ...next, githubTokenConfigured: false }
+          }
+          return { ...appSettings }
+        }
+      },
+    services: {
+      get: async () => servicesSnapshot(),
+      restart: async () => servicesSnapshot()
+    },
+    progress: {
+      ready: () => undefined,
+      openOverlay: async () => undefined,
+      getSnapshot: async () => ({
+        revision: 1,
+        generatedAt: new Date().toISOString(),
+        totals: {
+          projects: projects.length,
+          activeProjects: 1,
+          activeMissions: 2,
+          activeCards: 1,
+          activeCoordinators: 1,
+          attentionMissions: 1,
+          attentionProjects: 0,
+          recentCompletions: 0
+        },
+        projects: []
+      }),
+      onSnapshot: () => () => undefined,
+      onOpenTarget: () => () => undefined
+    },
+    voice: {
+      getConfig: async () => voiceConfig(),
+      setProvider: async (provider) => {
+        voiceProvider = provider
+        return voiceConfig()
+      },
+      setModel: async (provider, model) => {
+        voiceSelectedModel[provider] = model
+        return voiceConfig()
+      },
+      setCustomVocabulary: async (terms) => {
+        voiceCustomVocabulary = [...terms]
+        return voiceConfig()
+      },
+      listModels: async (provider) => voiceModelCatalog[provider],
+      setApiKey: async (provider, key) => {
+        voiceConfigured[provider] = Boolean(key)
+        return voiceConfig()
+      },
+      openApiKeys: async () => undefined,
+      transcribe: async (request) => {
+        await new Promise((resolve) => setTimeout(resolve, 900))
+        if (voiceCancelled.delete(request.requestId)) throw new Error('Transcrição cancelada.')
+        return {
+          text: 'Crie uma nova tarefa no Synkora e envie para o painel do Maestro.',
+          languages: ['pt'],
+          model: voiceConfig().model
+        }
+      },
+      cancel: (requestId) => {
+        voiceCancelled.add(requestId)
+      },
+      history: async () => [],
+      historyCopy: async () => false,
+      captureExternalTarget: async () => null,
+      discardExternalTarget: () => undefined,
+      openOverlay: async () => undefined,
+      isOverlayDetached: async () => false,
+      publishOverlayState: () => undefined,
+      onOverlayCommand: () => () => undefined,
+      onOverlayVisibility: () => () => undefined,
+      setGlobalActivation: () => undefined,
+      onGlobalActivation: () => () => undefined,
+      showNotice: () => undefined
+    },
+    pathForFile: () => '',
+    attachments: {
+      import: async () => []
+    },
     clipboard: {
       hasImage: () => false,
-      saveImage: async () => null
+      saveImage: async () => null,
+      readText: async () => ''
     },
+    host: { platform: 'win32', windowsBuild: 26200 },
     pickFolder: async () => 'C:\\dev\\novo-projeto',
     pty: {
       create: async (opts: { id: string }) => {
@@ -396,20 +1322,29 @@ export function installDevMock(): void {
           dataCb?.(
             id,
             '\x1b[38;5;111m✦ Synkora\x1b[0m · preview de UI no browser\r\n' +
-              '\x1b[90mTerminais reais só rodam dentro do Electron (npm run dev).\x1b[0m\r\n'
+              '\x1b[90mTerminais reais só rodam dentro do Electron (npm run dev).\x1b[0m\r\n' +
+              '\x1b[90m中 🧪 Arquivo de exemplo: \x1b[0mdocs\\PLANO.md\r\n'
           )
         }, 80)
+        return true
       },
       write: () => undefined,
       resize: () => undefined,
-      kill: () => undefined,
+    kill: () => undefined,
+    markStartupRequest: () => undefined,
+    markFirstFrame: () => undefined,
       onData: (cb) => {
         dataCb = cb
         return () => {
           dataCb = null
         }
       },
-      onExit: () => () => undefined
+      onExit: () => () => undefined,
+      onReset: () => () => undefined,
+      onLastLines: () => () => undefined,
+      onStats: () => () => undefined,
+      onEffort: () => () => undefined,
+      onModel: () => () => undefined
     }
   }
 

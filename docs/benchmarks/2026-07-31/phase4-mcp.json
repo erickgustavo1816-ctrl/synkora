@@ -1,0 +1,269 @@
+{
+  "schemaVersion": 1,
+  "benchmark": "synkora-mcp-dual-era",
+  "generatedAt": "2026-08-03T19:41:26.313Z",
+  "packages": {
+    "server": "2.0.0",
+    "node": "2.0.0",
+    "client": "2.0.0"
+  },
+  "protocols": {
+    "legacy": "2025-11-25",
+    "modern": "2026-07-28",
+    "simultaneous": true,
+    "legacyMethods": [
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "tools/call"
+    ],
+    "modernMethods": [
+      "server/discover",
+      "tools/list",
+      "tools/call"
+    ]
+  },
+  "cache": {
+    "ttlMs": 300000,
+    "scope": "private",
+    "secondListRequests": 0
+  },
+  "authentication": {
+    "missingRejected": true,
+    "invalidRejected": true,
+    "revokedRejected": true,
+    "crossPaneBoundToBearer": true,
+    "identityArgumentsIgnored": true,
+    "hostRejected": true,
+    "originRejected": true,
+    "exactPathRequired": true
+  },
+  "catalogs": {
+    "livre": {
+      "count": 22,
+      "sha256": "c0019c6eca727360888322212cc81dcca6f48248c6744479d91d38dbd6d91eed",
+      "names": [
+        "board_status",
+        "code_diagnostics",
+        "code_definition",
+        "code_references",
+        "code_symbols",
+        "code_hover",
+        "code_implementations",
+        "code_call_hierarchy",
+        "report",
+        "list_seats",
+        "list_skills",
+        "delegate",
+        "list_helpers",
+        "helper_output",
+        "helper_send",
+        "helper_close",
+        "generate_image",
+        "integrate_mission",
+        "notify_maestro",
+        "register_direct_mission",
+        "notify_pane",
+        "list_panes"
+      ]
+    },
+    "dev": {
+      "count": 22,
+      "sha256": "c0019c6eca727360888322212cc81dcca6f48248c6744479d91d38dbd6d91eed",
+      "names": [
+        "board_status",
+        "code_diagnostics",
+        "code_definition",
+        "code_references",
+        "code_symbols",
+        "code_hover",
+        "code_implementations",
+        "code_call_hierarchy",
+        "report",
+        "list_seats",
+        "list_skills",
+        "delegate",
+        "list_helpers",
+        "helper_output",
+        "helper_send",
+        "helper_close",
+        "generate_image",
+        "integrate_mission",
+        "notify_maestro",
+        "register_direct_mission",
+        "notify_pane",
+        "list_panes"
+      ]
+    },
+    "review": {
+      "count": 9,
+      "sha256": "5eb685e2b67c4095c30aef1d64148998581f50ca6f7d92a360edb1344565dbbd",
+      "names": [
+        "board_status",
+        "code_diagnostics",
+        "code_definition",
+        "code_references",
+        "code_symbols",
+        "code_hover",
+        "code_implementations",
+        "code_call_hierarchy",
+        "report"
+      ]
+    },
+    "qa": {
+      "count": 9,
+      "sha256": "5eb685e2b67c4095c30aef1d64148998581f50ca6f7d92a360edb1344565dbbd",
+      "names": [
+        "board_status",
+        "code_diagnostics",
+        "code_definition",
+        "code_references",
+        "code_symbols",
+        "code_hover",
+        "code_implementations",
+        "code_call_hierarchy",
+        "report"
+      ]
+    },
+    "ajudante": {
+      "count": 22,
+      "sha256": "c0019c6eca727360888322212cc81dcca6f48248c6744479d91d38dbd6d91eed",
+      "names": [
+        "board_status",
+        "code_diagnostics",
+        "code_definition",
+        "code_references",
+        "code_symbols",
+        "code_hover",
+        "code_implementations",
+        "code_call_hierarchy",
+        "report",
+        "list_seats",
+        "list_skills",
+        "delegate",
+        "list_helpers",
+        "helper_output",
+        "helper_send",
+        "helper_close",
+        "generate_image",
+        "integrate_mission",
+        "notify_maestro",
+        "register_direct_mission",
+        "notify_pane",
+        "list_panes"
+      ]
+    },
+    "pm": {
+      "count": 33,
+      "sha256": "10672f645e5727b9b56b591d9f6a893967bf0e8ae0f96fc5df4287cd5ce9432f",
+      "names": [
+        "board_status",
+        "code_diagnostics",
+        "code_definition",
+        "code_references",
+        "code_symbols",
+        "code_hover",
+        "code_implementations",
+        "code_call_hierarchy",
+        "report",
+        "list_seats",
+        "list_skills",
+        "delegate",
+        "list_helpers",
+        "helper_output",
+        "helper_send",
+        "helper_close",
+        "generate_image",
+        "save_project_plan",
+        "record_planning_skill_use",
+        "approve_project_plan",
+        "start_project_mission",
+        "guide_integration_resolution",
+        "queue_missions",
+        "create_mission",
+        "release_version",
+        "set_release_hold",
+        "remove_backlog_item",
+        "archive_mission",
+        "integrate_mission",
+        "notify_maestro",
+        "register_direct_mission",
+        "notify_pane",
+        "list_panes"
+      ]
+    },
+    "orchestrator": {
+      "count": 28,
+      "sha256": "52e7176fd6e72db52566378935480ac317fc06ade0e91241d47fa982ca7345e2",
+      "names": [
+        "board_status",
+        "create_tasks",
+        "update_task",
+        "code_diagnostics",
+        "code_definition",
+        "code_references",
+        "code_symbols",
+        "code_hover",
+        "code_implementations",
+        "code_call_hierarchy",
+        "report",
+        "list_seats",
+        "list_skills",
+        "delegate",
+        "list_helpers",
+        "helper_output",
+        "helper_send",
+        "helper_close",
+        "generate_image",
+        "create_plan",
+        "run_task",
+        "delete_task",
+        "conclude_plan",
+        "integrate_mission",
+        "notify_maestro",
+        "register_direct_mission",
+        "notify_pane",
+        "list_panes"
+      ]
+    }
+  },
+  "concurrency": {
+    "clients": 32,
+    "legacy": 16,
+    "modern": 16
+  },
+  "cancellation": {
+    "abortMs": 41.753,
+    "disconnectDisposition": "rejected"
+  },
+  "timings": {
+    "legacy": {
+      "connect": {
+        "samples": 30,
+        "medianMs": 4.281,
+        "p95Ms": 7.539,
+        "maxMs": 9.069
+      },
+      "listTools": {
+        "samples": 30,
+        "medianMs": 3.116,
+        "p95Ms": 7.475,
+        "maxMs": 8.156
+      }
+    },
+    "modern": {
+      "connect": {
+        "samples": 30,
+        "medianMs": 2.085,
+        "p95Ms": 4.368,
+        "maxMs": 7.166
+      },
+      "listTools": {
+        "samples": 30,
+        "medianMs": 2.83,
+        "p95Ms": 5.156,
+        "maxMs": 7.56
+      }
+    }
+  }
+}

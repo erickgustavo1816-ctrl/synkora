@@ -1,0 +1,92 @@
+# Empacotamento do Synkora (electron-builder).
+#
+# Roda DEPOIS do `npm run build` (electron-vite), que produz `out/`:
+#   npm run dist        → instalador NSIS
+#   npm run dist:dir    → só a pasta descompactada (validação rápida, sem instalador)
+#
+# O appId é o que o Windows usa como AppUserModelID — é ele que amarra a janela
+# ao app na barra de tarefas e faz o ícone valer em atalho fixado. O main
+# repete esse mesmo id em `app.setAppUserModelId()`; se um mudar, o outro
+# precisa mudar junto, senão o Windows trata a janela como de outro app.
+appId: dev.synkora.app
+productName: Synkora
+copyright: Copyright © 2026 Erick
+afterPack: scripts/after-pack.cjs
+
+directories:
+  buildResources: build
+  output: release
+
+# `out/` é o build do electron-vite (main, preload e renderer). As dependências
+# de produção entram sozinhas; devDependencies ficam de fora.
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+  # Não excluir `*.d.ts` globalmente: o runtime nativo do TypeScript 7 carrega
+  # as bibliotecas `lib.*.d.ts` ao lado de tsc/tsc.exe. `src/` já fica fora
+  # porque apenas `out/**` e as dependências de produção entram no pacote.
+  - 'node_modules/@typescript/typescript-*/lib/*.d.ts'
+  # Browsers nunca são baixados/embutidos silenciosamente. O MCP usa o canal
+  # Chrome do sistema; caches locais não podem contaminar um release.
+  - '!**/node_modules/playwright/.local-browsers{,/**}'
+  - '!**/node_modules/playwright-core/.local-browsers{,/**}'
+
+# NÃO EMPACOTAR O NODE-PTY DENTRO DO ASAR. Os binários nativos (.node) e,
+# principalmente, a `conpty.dll` do ConPTY v2 são carregados por caminho de
+# disco (LoadLibraryW) — dentro do asar esse caminho não existe e o pane morre
+# no spawn. O curinga cobre tanto `@lydell/node-pty` quanto o pacote da
+# plataforma (`@lydell/node-pty-win32-x64`), que é onde os binários moram.
+asarUnpack:
+  - '**/node_modules/@lydell/node-pty*/**'
+  # O browser MCP é iniciado como processo stdio separado. Seu entrypoint e
+  # as dependências Playwright precisam existir como paths reais para o
+  # `process.execPath` com ELECTRON_RUN_AS_NODE, inclusive offline.
+  - '**/node_modules/@playwright/mcp/**'
+  - '**/node_modules/playwright/**'
+  - '**/node_modules/playwright-core/**'
+  # TypeScript 7 expõe o LSP pelo executável nativo da plataforma. O binário
+  # não pode permanecer virtual dentro do ASAR: o Code Intelligence Manager
+  # precisa iniciá-lo diretamente, sem npm/npx nem download no primeiro uso.
+  - '**/node_modules/typescript/**'
+  - '**/node_modules/@typescript/typescript-*/**'
+
+# O main procura o ícone em `process.resourcesPath` quando empacotado
+# (resolveAppIcon em src/main/index.ts) — este `extraResources` é o que põe o
+# arquivo lá. O `win.icon` abaixo é outra coisa: é o ícone embutido no .exe.
+extraResources:
+  - from: build/icon.ico
+    to: icon.ico
+
+# Os prebuilds do node-pty dispensam compilação; deixar o rebuild ligado só
+# convidaria o node-gyp para uma festa que o projeto evita de propósito.
+npmRebuild: false
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+  # Sem assinatura de código: o SmartScreen vai avisar na primeira execução.
+  # É o esperado para build local; assinar exige certificado EV.
+  signAndEditExecutable: true
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Synkora
+  artifactName: ${productName}-${version}-setup.${ext}
+
+# Linux é bônus (o app tem dependências fortes de Windows — ConPTY, PATH do
+# registro): fica configurado, mas não é alvo testado.
+linux:
+  icon: build/icon.png
+  category: Development
+  target:
+    - AppImage
+
+# macOS ficaria de fora até existir um build/icon.icns — o gerador
+# (scripts/make-icon.mjs) hoje produz .ico e .png, não .icns.

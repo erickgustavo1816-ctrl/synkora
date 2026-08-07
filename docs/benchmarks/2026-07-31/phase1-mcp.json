@@ -1,0 +1,1120 @@
+{
+  "schemaVersion": 2,
+  "benchmark": "synkora-mcp-streamable-http-stateless",
+  "generatedAt": "2026-07-31T20:27:38.491Z",
+  "options": {
+    "rounds": 30,
+    "concurrency": [
+      1,
+      8,
+      32
+    ],
+    "profiles": [
+      "livre",
+      "maestro-pm",
+      "orquestrador",
+      "estrito"
+    ],
+    "external": true
+  },
+  "metadata": {
+    "repository": {
+      "name": "synkora",
+      "version": "0.1.0",
+      "source": "src/main/mcpServer.ts",
+      "sourceSha256": "9af02bf755e711485696c17fdc0541f0e8f83eb1d6ae86346bae902512f76cef",
+      "git": {
+        "commit": "41f1a2657f8e36f87ad48878e9ce713f874f858f",
+        "branch": "main",
+        "dirty": true
+      }
+    },
+    "runtime": {
+      "node": "v24.13.0",
+      "v8": "13.6.233.17-node.37",
+      "platform": "win32",
+      "release": "10.0.26200",
+      "arch": "x64",
+      "logicalCpus": 32,
+      "cpuModel": "13th Gen Intel(R) Core(TM) i9-13900K",
+      "totalMemoryBytes": 34053365760,
+      "freeMemoryBytesAtStart": 15046311936
+    },
+    "packages": {
+      "@modelcontextprotocol/sdk": "1.29.0",
+      "zod": "4.4.3",
+      "typescript": "7.0.2",
+      "electron": "43.1.1"
+    },
+    "localClients": {
+      "claude": "2.1.220 (Claude Code)",
+      "codex": "codex-cli 0.146.0"
+    }
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "transport": "Streamable HTTP stateless",
+    "requestedProtocolVersion": "2025-06-18",
+    "negotiatedProtocolVersion": "2025-06-18",
+    "serverInfo": {
+      "name": "synkora",
+      "version": "1.0.0"
+    }
+  },
+  "profiles": [
+    {
+      "id": "livre",
+      "label": "Agente livre",
+      "identity": {
+        "role": "livre",
+        "mission": false,
+        "strict": false,
+        "strictScope": null
+      },
+      "catalog": {
+        "expectedAs": null,
+        "matchesExpected": null,
+        "count": 17,
+        "names": [
+          "board_status",
+          "create_tasks",
+          "update_task",
+          "report",
+          "list_seats",
+          "list_skills",
+          "delegate",
+          "list_helpers",
+          "helper_output",
+          "helper_send",
+          "helper_close",
+          "generate_image",
+          "integrate_mission",
+          "notify_maestro",
+          "register_direct_mission",
+          "notify_pane",
+          "list_panes"
+        ],
+        "responseBytes": 13968,
+        "payloadBytes": 13901
+      },
+      "warmup": {
+        "rounds": 3,
+        "finalInitializeMs": 3.458,
+        "finalToolsListMs": 5.556
+      },
+      "scenarios": [
+        {
+          "concurrency": 1,
+          "batches": 30,
+          "clients": 30,
+          "requestsPerClient": 3,
+          "initializeMs": {
+            "samples": 30,
+            "min": 1.477,
+            "median": 1.969,
+            "p95": 3.45,
+            "max": 4.055,
+            "mean": 2.134
+          },
+          "toolsListMs": {
+            "samples": 30,
+            "min": 1.971,
+            "median": 2.521,
+            "p95": 4.947,
+            "max": 5.188,
+            "mean": 2.778
+          },
+          "clientTotalMs": {
+            "samples": 30,
+            "min": 5.099,
+            "median": 6.775,
+            "p95": 10.299,
+            "max": 12.287,
+            "mean": 7.32
+          },
+          "batchWallMs": {
+            "samples": 30,
+            "min": 5.102,
+            "median": 6.778,
+            "p95": 10.303,
+            "max": 12.289,
+            "mean": 7.325
+          },
+          "initializeResponseBytes": {
+            "samples": 30,
+            "min": 185,
+            "median": 185,
+            "p95": 185,
+            "max": 185,
+            "mean": 185
+          },
+          "toolsListResponseBytes": {
+            "samples": 30,
+            "min": 13968,
+            "median": 13968,
+            "p95": 13968,
+            "max": 13968,
+            "mean": 13968
+          },
+          "toolsPayloadBytes": {
+            "samples": 30,
+            "min": 13901,
+            "median": 13901,
+            "p95": 13901,
+            "max": 13901,
+            "mean": 13901
+          },
+          "toolCount": {
+            "min": 17,
+            "max": 17,
+            "distinct": [
+              17
+            ]
+          }
+        },
+        {
+          "concurrency": 8,
+          "batches": 30,
+          "clients": 240,
+          "requestsPerClient": 3,
+          "initializeMs": {
+            "samples": 240,
+            "min": 4.615,
+            "median": 11.31,
+            "p95": 20.609,
+            "max": 22.669,
+            "mean": 12.914
+          },
+          "toolsListMs": {
+            "samples": 240,
+            "min": 3.524,
+            "median": 18.36,
+            "p95": 23.447,
+            "max": 23.802,
+            "mean": 17.436
+          },
+          "clientTotalMs": {
+            "samples": 240,
+            "min": 33.235,
+            "median": 42.324,
+            "p95": 51.128,
+            "max": 54.051,
+            "mean": 43.426
+          },
+          "batchWallMs": {
+            "samples": 30,
+            "min": 38.909,
+            "median": 45.628,
+            "p95": 53.172,
+            "max": 54.511,
+            "mean": 45.445
+          },
+          "initializeResponseBytes": {
+            "samples": 240,
+            "min": 185,
+            "median": 185,
+            "p95": 185,
+            "max": 185,
+            "mean": 185
+          },
+          "toolsListResponseBytes": {
+            "samples": 240,
+            "min": 13968,
+            "median": 13968,
+            "p95": 13968,
+            "max": 13968,
+            "mean": 13968
+          },
+          "toolsPayloadBytes": {
+            "samples": 240,
+            "min": 13901,
+            "median": 13901,
+            "p95": 13901,
+            "max": 13901,
+            "mean": 13901
+          },
+          "toolCount": {
+            "min": 17,
+            "max": 17,
+            "distinct": [
+              17
+            ]
+          }
+        },
+        {
+          "concurrency": 32,
+          "batches": 30,
+          "clients": 960,
+          "requestsPerClient": 3,
+          "initializeMs": {
+            "samples": 960,
+            "min": 14.132,
+            "median": 48.637,
+            "p95": 71.359,
+            "max": 75.539,
+            "mean": 51.401
+          },
+          "toolsListMs": {
+            "samples": 960,
+            "min": 17.517,
+            "median": 65.594,
+            "p95": 93.436,
+            "max": 119.178,
+            "mean": 69.296
+          },
+          "clientTotalMs": {
+            "samples": 960,
+            "min": 113.619,
+            "median": 175.27,
+            "p95": 214.152,
+            "max": 222.969,
+            "mean": 174.706
+          },
+          "batchWallMs": {
+            "samples": 30,
+            "min": 153.773,
+            "median": 177.78,
+            "p95": 214.166,
+            "max": 223.512,
+            "mean": 179.2
+          },
+          "initializeResponseBytes": {
+            "samples": 960,
+            "min": 185,
+            "median": 185,
+            "p95": 185,
+            "max": 185,
+            "mean": 185
+          },
+          "toolsListResponseBytes": {
+            "samples": 960,
+            "min": 13968,
+            "median": 13968,
+            "p95": 13968,
+            "max": 13968,
+            "mean": 13968
+          },
+          "toolsPayloadBytes": {
+            "samples": 960,
+            "min": 13901,
+            "median": 13901,
+            "p95": 13901,
+            "max": 13901,
+            "mean": 13901
+          },
+          "toolCount": {
+            "min": 17,
+            "max": 17,
+            "distinct": [
+              17
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "maestro-pm",
+      "label": "Maestro / PM",
+      "identity": {
+        "role": "maestro",
+        "mission": false,
+        "strict": false,
+        "strictScope": null
+      },
+      "catalog": {
+        "expectedAs": null,
+        "matchesExpected": null,
+        "count": 20,
+        "names": [
+          "board_status",
+          "update_task",
+          "report",
+          "list_seats",
+          "list_skills",
+          "delegate",
+          "list_helpers",
+          "helper_output",
+          "helper_send",
+          "helper_close",
+          "generate_image",
+          "create_mission",
+          "release_version",
+          "remove_backlog_item",
+          "archive_mission",
+          "integrate_mission",
+          "notify_maestro",
+          "register_direct_mission",
+          "notify_pane",
+          "list_panes"
+        ],
+        "responseBytes": 13493,
+        "payloadBytes": 13426
+      },
+      "warmup": {
+        "rounds": 3,
+        "finalInitializeMs": 1.373,
+        "finalToolsListMs": 1.688
+      },
+      "scenarios": [
+        {
+          "concurrency": 1,
+          "batches": 30,
+          "clients": 30,
+          "requestsPerClient": 3,
+          "initializeMs": {
+            "samples": 30,
+            "min": 1.105,
+            "median": 1.156,
+            "p95": 3.761,
+            "max": 5.928,
+            "mean": 1.498
+          },
+          "toolsListMs": {
+            "samples": 30,
+            "min": 1.5,
+            "median": 1.59,
+            "p95": 2.809,
+            "max": 6.05,
+            "mean": 1.847
+          },
+          "clientTotalMs": {
+            "samples": 30,
+            "min": 3.794,
+            "median": 4.011,
+            "p95": 9.657,
+            "max": 10.355,
+            "mean": 5.057
+          },
+          "batchWallMs": {
+            "samples": 30,
+            "min": 3.797,
+            "median": 4.014,
+            "p95": 9.66,
+            "max": 10.358,
+            "mean": 5.062
+          },
+          "initializeResponseBytes": {
+            "samples": 30,
+            "min": 185,
+            "median": 185,
+            "p95": 185,
+            "max": 185,
+            "mean": 185
+          },
+          "toolsListResponseBytes": {
+            "samples": 30,
+            "min": 13493,
+            "median": 13493,
+            "p95": 13493,
+            "max": 13493,
+            "mean": 13493
+          },
+          "toolsPayloadBytes": {
+            "samples": 30,
+            "min": 13426,
+            "median": 13426,
+            "p95": 13426,
+            "max": 13426,
+            "mean": 13426
+          },
+          "toolCount": {
+            "min": 20,
+            "max": 20,
+            "distinct": [
+              20
+            ]
+          }
+        },
+        {
+          "concurrency": 8,
+          "batches": 30,
+          "clients": 240,
+          "requestsPerClient": 3,
+          "initializeMs": {
+            "samples": 240,
+            "min": 7.657,
+            "median": 8.928,
+            "p95": 15.836,
+            "max": 24.968,
+            "mean": 10.844
+          },
+          "toolsListMs": {
+            "samples": 240,
+            "min": 11.755,
+            "median": 16.136,
+            "p95": 20.968,
+            "max": 24.778,
+            "mean": 15.736
+          },
+          "clientTotalMs": {
+            "samples": 240,
+            "min": 29.796,
+            "median": 35.958,
+            "p95": 48.124,
+            "max": 48.814,
+            "mean": 37.958
+          },
+          "batchWallMs": {
+            "samples": 30,
+            "min": 33.87,
+            "median": 38.493,
+            "p95": 48.526,
+            "max": 49.03,
+            "mean": 39.092
+          },
+          "initializeResponseBytes": {
+            "samples": 240,
+            "min": 185,
+            "median": 185,
+            "p95": 185,
+            "max": 185,
+            "mean": 185
+          },
+          "toolsListResponseBytes": {
+            "samples": 240,
+            "min": 13493,
+            "median": 13493,
+            "p95": 13493,
+            "max": 13493,
+            "mean": 13493
+          },
+          "toolsPayloadBytes": {
+            "samples": 240,
+            "min": 13426,
+            "median": 13426,
+            "p95": 13426,
+            "max": 13426,
+            "mean": 13426
+          },
+          "toolCount": {
+            "min": 20,
+            "max": 20,
+            "distinct": [
+              20
+            ]
+          }
+        },
+        {
+          "concurrency": 32,
+          "batches": 30,
+          "clients": 960,
+          "requestsPerClient": 3,
+          "initializeMs": {
+            "samples": 960,
+            "min": 36.331,
+            "median": 45.554,
+            "p95": 87.045,
+            "max": 108.864,
+            "mean": 52.389
+          },
+          "toolsListMs": {
+            "samples": 960,
+            "min": 52.856,
+            "median": 64.699,
+            "p95": 101.34,
+            "max": 118.383,
+            "mean": 69.814
+          },
+          "clientTotalMs": {
+            "samples": 960,
+            "min": 138.706,
+            "median": 165.392,
+            "p95": 259.638,
+            "max": 272.002,
+            "mean": 171.203
+          },
+          "batchWallMs": {
+            "samples": 30,
+            "min": 142.631,
+            "median": 168.251,
+            "p95": 246.575,
+            "max": 273.572,
+            "mean": 174.526
+          },
+          "initializeResponseBytes": {
+            "samples": 960,
+            "min": 185,
+            "median": 185,
+            "p95": 185,
+            "max": 185,
+            "mean": 185
+          },
+          "toolsListResponseBytes": {
+            "samples": 960,
+            "min": 13493,
+            "median": 13493,
+            "p95": 13493,
+            "max": 13493,
+            "mean": 13493
+          },
+          "toolsPayloadBytes": {
+            "samples": 960,
+            "min": 13426,
+            "median": 13426,
+            "p95": 13426,
+            "max": 13426,
+            "mean": 13426
+          },
+          "toolCount": {
+            "min": 20,
+            "max": 20,
+            "distinct": [
+              20
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "orquestrador",
+      "label": "Orquestrador de missão",
+      "identity": {
+        "role": "maestro",
+        "mission": true,
+        "strict": false,
+        "strictScope": null
+      },
+      "catalog": {
+        "expectedAs": null,
+        "matchesExpected": null,
+        "count": 21,
+        "names": [
+          "board_status",
+          "create_tasks",
+          "update_task",
+          "report",
+          "list_seats",
+          "list_skills",
+          "delegate",
+          "list_helpers",
+          "helper_output",
+          "helper_send",
+          "helper_close",
+          "generate_image",
+          "create_plan",
+          "run_task",
+          "delete_task",
+          "conclude_plan",
+          "integrate_mission",
+          "notify_maestro",
+          "register_direct_mission",
+          "notify_pane",
+          "list_panes"
+        ],
+        "responseBytes": 17864,
+        "payloadBytes": 17797
+      },
+      "warmup": {
+        "rounds": 3,
+        "finalInitializeMs": 1.523,
+        "finalToolsListMs": 2.112
+      },
+      "scenarios": [
+        {
+          "concurrency": 1,
+          "batches": 30,
+          "clients": 30,
+          "requestsPerClient": 3,
+          "initializeMs": {
+            "samples": 30,
+            "min": 1.286,
+            "median": 1.508,
+            "p95": 5.377,
+            "max": 9.674,
+            "mean": 2.291
+          },
+          "toolsListMs": {
+            "samples": 30,
+            "min": 1.819,
+            "median": 2.333,
+            "p95": 4.103,
+            "max": 8.049,
+            "mean": 2.852
+          },
+          "clientTotalMs": {
+            "samples": 30,
+            "min": 4.64,
+            "median": 7.06,
+            "p95": 12.857,
+            "max": 17.938,
+            "mean": 7.798
+          },
+          "batchWallMs": {
+            "samples": 30,
+            "min": 4.642,
+            "median": 7.065,
+            "p95": 12.861,
+            "max": 17.943,
+            "mean": 7.802
+          },
+          "initializeResponseBytes": {
+            "samples": 30,
+            "min": 185,
+            "median": 185,
+            "p95": 185,
+            "max": 185,
+            "mean": 185
+          },
+          "toolsListResponseBytes": {
+            "samples": 30,
+            "min": 17864,
+            "median": 17864,
+            "p95": 17864,
+            "max": 17864,
+            "mean": 17864
+          },
+          "toolsPayloadBytes": {
+            "samples": 30,
+            "min": 17797,
+            "median": 17797,
+            "p95": 17797,
+            "max": 17797,
+            "mean": 17797
+          },
+          "toolCount": {
+            "min": 21,
+            "max": 21,
+            "distinct": [
+              21
+            ]
+          }
+        },
+        {
+          "concurrency": 8,
+          "batches": 30,
+          "clients": 240,
+          "requestsPerClient": 3,
+          "initializeMs": {
+            "samples": 240,
+            "min": 9.094,
+            "median": 15.194,
+            "p95": 28.014,
+            "max": 37.554,
+            "mean": 15.549
+          },
+          "toolsListMs": {
+            "samples": 240,
+            "min": 14.643,
+            "median": 21.146,
+            "p95": 31.356,
+            "max": 35.794,
+            "mean": 22.035
+          },
+          "clientTotalMs": {
+            "samples": 240,
+            "min": 38.946,
+            "median": 51.603,
+            "p95": 76.156,
+            "max": 78.123,
+            "mean": 54.517
+          },
+          "batchWallMs": {
+            "samples": 30,
+            "min": 40.01,
+            "median": 52.764,
+            "p95": 76.445,
+            "max": 78.295,
+            "mean": 55.976
+          },
+          "initializeResponseBytes": {
+            "samples": 240,
+            "min": 185,
+            "median": 185,
+            "p95": 185,
+            "max": 185,
+            "mean": 185
+          },
+          "toolsListResponseBytes": {
+            "samples": 240,
+            "min": 17864,
+            "median": 17864,
+            "p95": 17864,
+            "max": 17864,
+            "mean": 17864
+          },
+          "toolsPayloadBytes": {
+            "samples": 240,
+            "min": 17797,
+            "median": 17797,
+            "p95": 17797,
+            "max": 17797,
+            "mean": 17797
+          },
+          "toolCount": {
+            "min": 21,
+            "max": 21,
+            "distinct": [
+              21
+            ]
+          }
+        },
+        {
+          "concurrency": 32,
+          "batches": 30,
+          "clients": 960,
+          "requestsPerClient": 3,
+          "initializeMs": {
+            "samples": 960,
+            "min": 44.109,
+            "median": 60.669,
+            "p95": 87.321,
+            "max": 121.158,
+            "mean": 64.738
+          },
+          "toolsListMs": {
+            "samples": 960,
+            "min": 68.51,
+            "median": 81.497,
+            "p95": 127.583,
+            "max": 149.192,
+            "mean": 87.986
+          },
+          "clientTotalMs": {
+            "samples": 960,
+            "min": 165.659,
+            "median": 206.163,
+            "p95": 270.008,
+            "max": 286.447,
+            "mean": 214.399
+          },
+          "batchWallMs": {
+            "samples": 30,
+            "min": 174.362,
+            "median": 209.646,
+            "p95": 272.512,
+            "max": 287.273,
+            "mean": 217.983
+          },
+          "initializeResponseBytes": {
+            "samples": 960,
+            "min": 185,
+            "median": 185,
+            "p95": 185,
+            "max": 185,
+            "mean": 185
+          },
+          "toolsListResponseBytes": {
+            "samples": 960,
+            "min": 17864,
+            "median": 17864,
+            "p95": 17864,
+            "max": 17864,
+            "mean": 17864
+          },
+          "toolsPayloadBytes": {
+            "samples": 960,
+            "min": 17797,
+            "median": 17797,
+            "p95": 17797,
+            "max": 17797,
+            "mean": 17797
+          },
+          "toolCount": {
+            "min": 21,
+            "max": 21,
+            "distinct": [
+              21
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "estrito",
+      "label": "Execução estrita",
+      "identity": {
+        "role": "dev",
+        "mission": false,
+        "strict": true,
+        "strictScope": "política do cliente/pane; o catálogo MCP interno deve ser igual ao perfil livre"
+      },
+      "catalog": {
+        "expectedAs": "livre",
+        "matchesExpected": true,
+        "count": 17,
+        "names": [
+          "board_status",
+          "create_tasks",
+          "update_task",
+          "report",
+          "list_seats",
+          "list_skills",
+          "delegate",
+          "list_helpers",
+          "helper_output",
+          "helper_send",
+          "helper_close",
+          "generate_image",
+          "integrate_mission",
+          "notify_maestro",
+          "register_direct_mission",
+          "notify_pane",
+          "list_panes"
+        ],
+        "responseBytes": 13968,
+        "payloadBytes": 13901
+      },
+      "warmup": {
+        "rounds": 3,
+        "finalInitializeMs": 1.195,
+        "finalToolsListMs": 1.604
+      },
+      "scenarios": [
+        {
+          "concurrency": 1,
+          "batches": 30,
+          "clients": 30,
+          "requestsPerClient": 3,
+          "initializeMs": {
+            "samples": 30,
+            "min": 1.093,
+            "median": 1.162,
+            "p95": 5.135,
+            "max": 6.042,
+            "mean": 1.65
+          },
+          "toolsListMs": {
+            "samples": 30,
+            "min": 1.507,
+            "median": 1.583,
+            "p95": 5.674,
+            "max": 9.177,
+            "mean": 2.119
+          },
+          "clientTotalMs": {
+            "samples": 30,
+            "min": 3.824,
+            "median": 4.082,
+            "p95": 8.809,
+            "max": 17.12,
+            "mean": 5.117
+          },
+          "batchWallMs": {
+            "samples": 30,
+            "min": 3.826,
+            "median": 4.084,
+            "p95": 8.812,
+            "max": 17.123,
+            "mean": 5.12
+          },
+          "initializeResponseBytes": {
+            "samples": 30,
+            "min": 185,
+            "median": 185,
+            "p95": 185,
+            "max": 185,
+            "mean": 185
+          },
+          "toolsListResponseBytes": {
+            "samples": 30,
+            "min": 13968,
+            "median": 13968,
+            "p95": 13968,
+            "max": 13968,
+            "mean": 13968
+          },
+          "toolsPayloadBytes": {
+            "samples": 30,
+            "min": 13901,
+            "median": 13901,
+            "p95": 13901,
+            "max": 13901,
+            "mean": 13901
+          },
+          "toolCount": {
+            "min": 17,
+            "max": 17,
+            "distinct": [
+              17
+            ]
+          }
+        },
+        {
+          "concurrency": 8,
+          "batches": 30,
+          "clients": 240,
+          "requestsPerClient": 3,
+          "initializeMs": {
+            "samples": 240,
+            "min": 7.973,
+            "median": 9.578,
+            "p95": 20.216,
+            "max": 21.733,
+            "mean": 11.277
+          },
+          "toolsListMs": {
+            "samples": 240,
+            "min": 11.945,
+            "median": 17.108,
+            "p95": 28.345,
+            "max": 31.335,
+            "mean": 17.44
+          },
+          "clientTotalMs": {
+            "samples": 240,
+            "min": 33.42,
+            "median": 38.972,
+            "p95": 55.844,
+            "max": 60.246,
+            "mean": 40.86
+          },
+          "batchWallMs": {
+            "samples": 30,
+            "min": 34.564,
+            "median": 40.011,
+            "p95": 57.622,
+            "max": 60.634,
+            "mean": 42.723
+          },
+          "initializeResponseBytes": {
+            "samples": 240,
+            "min": 185,
+            "median": 185,
+            "p95": 185,
+            "max": 185,
+            "mean": 185
+          },
+          "toolsListResponseBytes": {
+            "samples": 240,
+            "min": 13968,
+            "median": 13968,
+            "p95": 13968,
+            "max": 13968,
+            "mean": 13968
+          },
+          "toolsPayloadBytes": {
+            "samples": 240,
+            "min": 13901,
+            "median": 13901,
+            "p95": 13901,
+            "max": 13901,
+            "mean": 13901
+          },
+          "toolCount": {
+            "min": 17,
+            "max": 17,
+            "distinct": [
+              17
+            ]
+          }
+        },
+        {
+          "concurrency": 32,
+          "batches": 30,
+          "clients": 960,
+          "requestsPerClient": 3,
+          "initializeMs": {
+            "samples": 960,
+            "min": 36.342,
+            "median": 45.633,
+            "p95": 72.557,
+            "max": 83.618,
+            "mean": 50.098
+          },
+          "toolsListMs": {
+            "samples": 960,
+            "min": 55.008,
+            "median": 63.356,
+            "p95": 94.871,
+            "max": 101.168,
+            "mean": 69.077
+          },
+          "clientTotalMs": {
+            "samples": 960,
+            "min": 140.632,
+            "median": 163.905,
+            "p95": 218.203,
+            "max": 232.36,
+            "mean": 168.867
+          },
+          "batchWallMs": {
+            "samples": 30,
+            "min": 144.045,
+            "median": 168.272,
+            "p95": 220.36,
+            "max": 232.886,
+            "mean": 171.954
+          },
+          "initializeResponseBytes": {
+            "samples": 960,
+            "min": 185,
+            "median": 185,
+            "p95": 185,
+            "max": 185,
+            "mean": 185
+          },
+          "toolsListResponseBytes": {
+            "samples": 960,
+            "min": 13968,
+            "median": 13968,
+            "p95": 13968,
+            "max": 13968,
+            "mean": 13968
+          },
+          "toolsPayloadBytes": {
+            "samples": 960,
+            "min": 13901,
+            "median": 13901,
+            "p95": 13901,
+            "max": 13901,
+            "mean": 13901
+          },
+          "toolCount": {
+            "min": 17,
+            "max": 17,
+            "distinct": [
+              17
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "external": {
+    "source": "runtime-dependency",
+    "mode": "mcp-stdio-readiness",
+    "packageVersion": "0.0.78",
+    "totalReadyMs": 206.593,
+    "timedOut": false,
+    "ready": true,
+    "protocolVersion": "2025-06-18",
+    "serverInfo": {
+      "name": "Playwright",
+      "version": "1.62.0-alpha-1783623505000"
+    },
+    "initializeMs": 195.714,
+    "initializeResponseBytes": 168,
+    "toolsListMs": 6.42,
+    "toolsListResponseBytes": 18510,
+    "toolsPayloadBytes": 18466,
+    "toolCount": 24,
+    "toolNames": [
+      "browser_close",
+      "browser_resize",
+      "browser_console_messages",
+      "browser_handle_dialog",
+      "browser_evaluate",
+      "browser_file_upload",
+      "browser_drop",
+      "browser_find",
+      "browser_fill_form",
+      "browser_press_key",
+      "browser_type",
+      "browser_navigate",
+      "browser_navigate_back",
+      "browser_network_requests",
+      "browser_network_request",
+      "browser_run_code_unsafe",
+      "browser_take_screenshot",
+      "browser_snapshot",
+      "browser_click",
+      "browser_drag",
+      "browser_hover",
+      "browser_select_option",
+      "browser_tabs",
+      "browser_wait_for"
+    ],
+    "stderrBytes": 0,
+    "error": null
+  }
+}

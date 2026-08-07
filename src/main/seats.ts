@@ -1,5 +1,6 @@
 import { app } from 'electron'
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { cp } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
@@ -13,7 +14,7 @@ export interface Seat {
   createdAt: string
 }
 
-export type SeatStatus = 'logado' | 'pendente'
+export type SeatStatus = 'logado' | 'pendente' | 'expirado'
 
 export interface SeatWithStatus extends Seat {
   status: SeatStatus
@@ -26,6 +27,7 @@ export class SeatStore {
   private file = join(app.getPath('userData'), 'seats.json')
   private seatsRoot = join(app.getPath('userData'), 'seats')
   private seats: Seat[] = []
+  private preparations = new Map<string, Promise<void>>()
 
   constructor() {
     if (existsSync(this.file)) {
@@ -35,6 +37,9 @@ export class SeatStore {
         this.seats = []
       }
     }
+    // Repara/completa seeds antigos em background. O disco pode trabalhar,
+    // mas a janela do app nunca fica bloqueada esperando cópia de executável.
+    for (const seat of this.seats) void this.prepare(seat)
   }
 
   private persist(): void {
@@ -45,13 +50,16 @@ export class SeatStore {
     return join(this.seatsRoot, seat.id)
   }
 
-  private statusOf(seat: Seat): SeatStatus {
+  /** Arquivo de credencial do CLI deste seat (heurística de login + mtime). */
+  credentialFile(seat: Seat): string {
     const dir = this.configDirOf(seat)
+    return seat.cli === 'claude' ? join(dir, '.credentials.json') : join(dir, 'auth.json')
+  }
+
+  private statusOf(seat: Seat): SeatStatus {
     // Heurística de login: o CLI grava as credenciais no config dir na
     // primeira autenticação. Se o arquivo não existir, o login está pendente.
-    const credFile =
-      seat.cli === 'claude' ? join(dir, '.credentials.json') : join(dir, 'auth.json')
-    return existsSync(credFile) ? 'logado' : 'pendente'
+    return existsSync(this.credentialFile(seat)) ? 'logado' : 'pendente'
   }
 
   list(): SeatWithStatus[] {
@@ -69,10 +77,43 @@ export class SeatStore {
   create(name: string, cli: SeatCli): SeatWithStatus {
     const seat: Seat = { id: randomUUID(), name, cli, createdAt: new Date().toISOString() }
     mkdirSync(this.configDirOf(seat), { recursive: true })
-    this.preseed(seat)
     this.seats.push(seat)
     this.persist()
+    // Copiar os artefatos do sandbox Codex pode envolver centenas de MB. Isso
+    // nunca deve bloquear o clique em "criar" nem o event loop do Electron.
+    // O preparo começa em background e o spawn do terminal aguarda a mesma
+    // Promise por `prepare`, sem corrida nem cópia duplicada.
+    void this.prepare(seat)
     return { ...seat, status: 'pendente', configDir: this.configDirOf(seat) }
+  }
+
+  /** Versão não bloqueante do preseed, coalescida por seat. */
+  prepare(seat: Seat): Promise<void> {
+    if (seat.cli !== 'codex') return Promise.resolve()
+    const running = this.preparations.get(seat.id)
+    if (running) return running
+
+    const source = join(homedir(), '.codex')
+    const target = this.configDirOf(seat)
+    const operation = (async (): Promise<void> => {
+      mkdirSync(target, { recursive: true })
+      for (const dir of ['.sandbox', '.sandbox-bin', '.sandbox-secrets']) {
+        const from = join(source, dir)
+        const to = join(target, dir)
+        if (!existsSync(from)) continue
+        try {
+          // `force:false` conserva o que já terminou e completa uma eventual
+          // cópia parcial deixada por fechamento do app.
+          await cp(from, to, { recursive: true, force: false, errorOnExist: false })
+        } catch {
+          // Sem os artefatos o Codex tenta o setup normal; melhor tentar do
+          // que impedir o seat de abrir.
+        }
+      }
+    })().finally(() => this.preparations.delete(seat.id))
+
+    this.preparations.set(seat.id, operation)
+    return operation
   }
 
   // O Codex no Windows tenta montar o sandbox em todo CODEX_HOME novo e o
@@ -81,21 +122,18 @@ export class SeatStore {
   // vez no ~/.codex padrão (e os usuários de sandbox são da máquina, não do
   // diretório), copiamos os artefatos para o seat e o setup é pulado.
   preseed(seat: Seat): void {
-    if (seat.cli !== 'codex') return
-    const source = join(homedir(), '.codex')
-    const target = this.configDirOf(seat)
-    for (const dir of ['.sandbox', '.sandbox-bin', '.sandbox-secrets']) {
-      const from = join(source, dir)
-      const to = join(target, dir)
-      if (existsSync(from) && !existsSync(to)) {
-        try {
-          cpSync(from, to, { recursive: true })
-        } catch {
-          // Sem os artefatos o Codex tenta o setup normal; melhor tentar do
-          // que impedir o seat de abrir.
-        }
-      }
-    }
+    // Compatibilidade para os chamadores que só pedem um best-effort. O
+    // trabalho pesado é sempre assíncrono; caminhos que precisam do seed antes
+    // do spawn (como pty:create) usam `await prepare(seat)`.
+    void this.prepare(seat)
+  }
+
+  rename(id: string, name: string): Seat | undefined {
+    const seat = this.seats.find((s) => s.id === id)
+    if (!seat || !name.trim()) return seat
+    seat.name = name.trim()
+    this.persist()
+    return seat
   }
 
   // Remove só o registro; o diretório com as credenciais fica preservado

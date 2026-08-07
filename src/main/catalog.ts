@@ -14,11 +14,15 @@ export interface Catalog {
 }
 
 const CLAUDE_FALLBACK_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+// Fallback só entra quando o handshake não responde. Sem NÚMERO DE VERSÃO nos
+// rótulos de propósito: os aliases apontam sempre para o modelo mais novo da
+// linha, e rótulo datado aqui envelhece e mente (era "Opus 4.8" com o Opus 5
+// já lançado).
 const CLAUDE_MODELS: CatalogModel[] = [
-  { id: 'fable', label: 'fable — Claude Fable 5 (máximo, 1M ctx)' },
-  { id: 'opus', label: 'opus — Claude Opus 4.8' },
-  { id: 'sonnet', label: 'sonnet — Claude Sonnet 5' },
-  { id: 'haiku', label: 'haiku — Claude Haiku 4.5 (leve)' }
+  { id: 'fable', label: 'fable — o mais capaz (tarefas longas e difíceis)' },
+  { id: 'opus[1m]', label: 'opus — equilíbrio do dia a dia (1M ctx)' },
+  { id: 'sonnet', label: 'sonnet — eficiente para tarefas de rotina' },
+  { id: 'haiku', label: 'haiku — o mais rápido (respostas curtas)' }
 ]
 
 const cache = new Map<string, Promise<Catalog>>()
@@ -173,6 +177,13 @@ async function codexCatalog(configDir?: string): Promise<Catalog> {
     models: [{ id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' }],
     efforts: ['minimal', 'low', 'medium', 'high']
   }
+}
+
+/** Esquece as listas já consultadas — o próximo `getCatalog` pergunta ao CLI
+ *  de novo. Chamado depois de todo update de CLI: modelo novo (ex.: Opus 5)
+ *  só existe no handshake da versão nova, e o cache é eterno por processo. */
+export function clearCatalogCache(): void {
+  cache.clear()
 }
 
 export function getCatalog(cli: 'claude' | 'codex', configDir?: string): Promise<Catalog> {

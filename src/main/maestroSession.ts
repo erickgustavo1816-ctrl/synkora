@@ -11,6 +11,8 @@ import { freshWindowsPath } from './winPath'
 export interface MaestroSessionOpts {
   cwd: string
   configDir?: string
+  /** Claude: trusted persona/policy injected above the user turn. */
+  systemPromptFile?: string
   resumeSessionId?: string
   model?: string
   effort?: string
@@ -79,6 +81,10 @@ export type SessionEvent =
       type: 'result'
       isError: boolean
       errorText?: string
+      /* texto final do turno — comandos locais (ex.: /usage) respondem por
+         mensagem assistant SINTÉTICA e o texto só aparece aqui, não em
+         <local-command-stdout> (sondado 2026-07-23) */
+      resultText?: string
       contextTokens?: number
       contextWindow?: number
       fastModeState?: string
@@ -190,6 +196,14 @@ export class MaestroSession {
       ...(process.env as Record<string, string>),
       PATH: freshWindowsPath()
     }
+    // App lançado de dentro de uma sessão do Claude Code: os marcadores
+    // CLAUDE_CODE_*/CLAUDECODE herdados fazem o CLI filho rodar como "child
+    // session" SEM salvar transcript (sondado no 2.1.218) — o que mata o
+    // --resume e a telemetria. Limpar sempre, como o pty.ts faz.
+    for (const k of Object.keys(env)) {
+      if (/^CLAUDE_CODE_/i.test(k)) delete env[k]
+    }
+    delete env['CLAUDECODE']
     if (opts.configDir) env['CLAUDE_CONFIG_DIR'] = opts.configDir
 
     const args = [
@@ -206,6 +220,8 @@ export class MaestroSession {
       'stdio'
     ]
     if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId)
+    if (opts.systemPromptFile)
+      args.push('--append-system-prompt-file', opts.systemPromptFile)
     if (opts.model) args.push('--model', opts.model)
     if (opts.effort) args.push('--effort', opts.effort)
     if (opts.permissionMode) args.push('--permission-mode', opts.permissionMode)
@@ -269,6 +285,7 @@ export class MaestroSession {
     return (
       this.opts.cwd === opts.cwd &&
       (this.opts.configDir ?? '') === (opts.configDir ?? '') &&
+      (this.opts.systemPromptFile ?? '') === (opts.systemPromptFile ?? '') &&
       (this.opts.model ?? '') === (opts.model ?? '') &&
       (this.opts.effort ?? '') === (opts.effort ?? '') &&
       Boolean(this.opts.fastMode) === Boolean(opts.fastMode)
@@ -556,6 +573,7 @@ export class MaestroSession {
           type: 'result',
           isError: Boolean(evt.is_error),
           errorText: evt.is_error ? (evt.result ?? 'erro sem detalhe') : undefined,
+          resultText: typeof evt.result === 'string' && evt.result.trim() ? evt.result : undefined,
           contextTokens,
           fastModeState: evt.fast_mode_state,
           costUsd: evt.total_cost_usd

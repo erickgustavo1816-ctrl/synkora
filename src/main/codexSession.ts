@@ -76,7 +76,7 @@ const CODEX_TUI_ONLY = new Map<string, string>([
   ['/clear', 'use o /clear do Synkora (mesmo efeito)'],
   ['/quit', 'o painel vive embutido — feche o projeto para encerrá-lo'],
   ['/exit', 'o painel vive embutido — feche o projeto para encerrá-lo'],
-  ['/logout', 'login/logout é por seat, na Home do Synkora'],
+  ['/logout', 'login/logout é por seat, em Configurações › Minhas contas'],
   ['/resume', 'a thread é retomada automaticamente ao voltar para o projeto'],
   ['/model', 'use o /model do Synkora (mesma lista real do Codex)'],
   ['/approvals', 'use /permissions'],
@@ -676,7 +676,8 @@ export class CodexSession {
       threadId: this.threadId,
       input: [{ type: 'text', text }]
     }
-    if (this.opts.model) params['model'] = this.opts.model
+    // id em minúsculas: "GPT-5.6-Luna" (display name vazado) dá 400 na API
+    if (this.opts.model) params['model'] = this.opts.model.toLowerCase()
     if (this.opts.effort) params['effort'] = this.opts.effort
     if (this.opts.approvalPolicy) params['approvalPolicy'] = this.opts.approvalPolicy
     if (this.fastTier) params['serviceTier'] = 'priority'

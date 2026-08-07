@@ -11,6 +11,10 @@ export interface PolicySlot {
 export interface DeptPolicy {
   heavy?: PolicySlot
   light?: PolicySlot
+  /** skills instaladas na função (F4 injeta no prompt do executor) */
+  skills?: string[]
+  /** subagentes especializados da função (F4) */
+  agents?: string[]
 }
 
 export type ProjectPolicies = Partial<Record<Department, DeptPolicy>>
