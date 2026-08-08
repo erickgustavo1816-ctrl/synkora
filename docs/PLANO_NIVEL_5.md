@@ -495,6 +495,47 @@ bloco. Nunca "aproveitar e refatorar" fora do mapa.
 > revisão adversarial do diff c5a+c5b contra o plano — desfecho no próximo
 > ESTADO. Depois: validação AO VIVO do dono (critério §1.3: advancePhase:*
 > some do ranking de stalls no bbwatch).
+>
+> ESTADO 7 (2026-08-08, mesma sessão): **F2-c5c + F2-c5d FEITOS** (0cc0535 ·
+> a1ada85) — os dois agentes Opus entregaram e o resultado foi integrado.
+> c5c (MATRIZ §5.3, escrita por agente em worktree isolado e integrada após
+> conferência): phase-verdict-races 9→18 — `pauseGitTrip` pausa a n-ésima
+> viagem gitOff (filtrada por cwd) e injeta o concorrente NA janela do
+> await; casos 1+2 (2º entrante recusado durante a pausa), 5 (pausa do
+> plano no meio — leitura tardia honrada), 6 (card removido → throw +
+> rollback), 6.1 do mapa (COM contraprova viva do bug latente sem o
+> parâmetro rejectingGate), 7 parcial (zero commits na pausa; veredito = UM
+> commit), 9 (R7 com artefato REAL em disco), 10 (R2 superseded), 11 (R9
+> fallback síncrono), 13 (cards diferentes nunca se serializam). Fidelidade
+> do harness consertada pelo agente: realGitApi ganhou reviewEvidence (sem
+> ele TODO gate com artefato era invalidado por acidente do stub) e o
+> fixture roda ensureSynkoraGitExcludes como a produção. Casos 3/4/8 NÃO
+> alcançáveis pelo fecho compilado (moram em mcpApi/board, ipc/pty,
+> mcpApi/code) — cobertos pela validação ao vivo; mapa de cobertura no
+> cabeçalho do arquivo. c5d (REVISÃO ADVERSARIAL — veredito APPROVED WITH
+> FIXES; 7/7 equivalências semânticas conferidas, zero await esquecido,
+> zero vazamento de lock): F1 🔴 o await novo do sha256 (R11) abria janela
+> ANTES do acquire no report — re-check de vigência pós-await (a defesa do
+> poller, agora simétrica); F3 as 2 cicatrizes sobreviventes que mentiam
+> (engine + index) reescritas; F4 o retryOrBacklog da rodada vazia agora é
+> AGUARDADO dentro da cadeia do token; F5 o prefixo do finalizeTask tira
+> fingerprint + status --porcelain do main (senão advancePhase:finalize
+> seguiria no ranking e o critério §1.3 daria falso negativo); + higienes
+> (acceptance à prova de throw pós-acquire, releitura do securityReview na
+> fotografia única, ordem sagrada no poller, TDZ do code.ts, leitura
+> pré-await de gates documentada). DÉBITOS REGISTRADOS (fora do gate da
+> fase): test-harness-lifecycle VERMELHO (26 falhas) — dano PRÉ-EXISTENTE
+> da Fase 1 (âncoras apontam para index.ts; implementações migraram) que
+> inclui as âncoras que guardavam a ordem R7/R8 — re-apontar ou aposentar,
+> decisão com o dono; gateVerdictFacts faz 2 varreduras de árvore por
+> viagem (fingerprint explícito + o interno do snapshotProblemFor) — R10
+> cumprido em viagens, não em custo de worker; probes antigos usam o
+> contrato velho do codeReportGuard (sondas descartáveis). **O QUE FALTA
+> PARA FECHAR A FASE 2**: validação AO VIVO do dono — uma missão com gates
+> atravessando dev→review→QA e `node scripts/bbwatch.mjs --grep stall`
+> provando que advancePhase:* sumiu do ranking (critério §1.3), zero
+> `phase-advance-without-lock`, contenções raras e explicadas. PUSH segue
+> pendente (decisão do dono).
 
 - Hoje `advancePhase` é SYNC POR CONTRATO (comentário-âncora em :10855; a
   cicatriz do "[object Promise]"): a fotografia atômica é garantida por
