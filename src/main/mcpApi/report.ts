@@ -8,16 +8,19 @@
  * detach → advancePhase → rollback. readReviewEvidence viaja junto: divide
  * o guard de rodada e o chunk autenticado do diff.
  *
- * CONTRATOS INTOCÁVEIS (verbatim do literal):
- * - report devolve string SÍNCRONO no caminho do veredito — advancePhase é
- *   SYNC POR CONTRATO (a cicatriz do "[object Promise]").
- * - A transação: phaseWatches.detach ANTES do advancePhase; falha/recusa
- *   re-indexa com phaseWatches.set (rollback) — nunca reordenar.
- * - Fase 2 (F2-c4): a transação começa ANTES do detach com o try-acquire
- *   SÍNCRONO do PhaseTransitionLock (ordem sagrada acquire → detach →
- *   unlink). Falha de acquire = rodada anterior fechando; recusa com receita,
- *   nada é consumido. O advancePhase assume o release; os caminhos que
- *   recusam/rolam de volta ANTES de chamá-lo soltam explicitamente.
+ * CONTRATOS (reescritos no F2-c5 — a barreira síncrona morreu):
+ * - report é ASYNC no caminho do veredito desde a Fase 2: advancePhase
+ *   devolve Promise<boolean> e é SEMPRE aguardado. A CICATRIZ do
+ *   "[object Promise]" (2026-08-05) segue a régua — um await esquecido
+ *   reabre o modo de falha; o McpApi.report sempre aceitou Promise<string>
+ *   e o handler MCP sempre fez await.
+ * - A transação: acquire SÍNCRONO do PhaseTransitionLock → detach → unlink
+ *   (ordem sagrada §3.2 — nunca reordenar, nunca await entre os três).
+ *   Falha de acquire = rodada anterior fechando; recusa com receita, nada é
+ *   consumido. A atomicidade do veredito vem da SERIALIZAÇÃO por card.
+ * - Desfazer: o advancePhase solta o lock nos desfechos normais; no THROW a
+ *   posse volta para cá e ctx.phase.rollbackVerdictTransaction re-indexa o
+ *   watch (createdAt renovado; cede ao watch novo — R2) e SÓ ENTÃO solta.
  * - A anotação positional de securityReview segue a do literal.
  */
 import { dirname, join } from 'path'
@@ -130,7 +133,7 @@ export function buildReportApi(
       }
       return ctx.phase.readReviewArtifactChunk(watch, offset, maxBytes)
     },
-    report: (
+    report: async (
       id,
       content,
       summary,
@@ -433,7 +436,9 @@ export function buildReportApi(
       ) {
         return 'report recusado: a evidência privada do patch grande ainda não foi aberta. Use read_review_evidence ao menos uma vez e combine os trechos relevantes com a inspeção de TODOS os changed paths fornecidos pelo harness; nenhum receipt ou veredito foi consumido.'
       }
-      const boundArtifactProblem = blockedReport ? undefined : ctx.phase.reviewArtifactProblem(watch)
+      const boundArtifactProblem = blockedReport
+        ? undefined
+        : await ctx.phase.reviewArtifactProblem(watch)
       if (boundArtifactProblem) {
         const transitionToken = ctx.phaseTransitions.acquire(watch.taskId, {
           label: `report:${watch.phase}:artifact-invalid`,
@@ -447,14 +452,22 @@ export function buildReportApi(
         } catch {
           // marcador nem chegou a existir
         }
-        const advanced = ctx.phase.advancePhase(
-          watch,
-          content,
-          undefined,
-          sanitizedVerificationEvidence,
-          undefined,
-          transitionToken
-        )
+        // F2-c5: a MESMA transação do call site principal — o buraco
+        // pré-existente (throw aqui perdia o watch) fecha nesta obra (§4.4).
+        let advanced = false
+        try {
+          advanced = await ctx.phase.advancePhase(
+            watch,
+            content,
+            undefined,
+            sanitizedVerificationEvidence,
+            undefined,
+            transitionToken
+          )
+        } catch (error) {
+          ctx.phase.rollbackVerdictTransaction(watch, transitionToken)
+          return `report preservado: não foi possível persistir a transação da fase (${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 240)}). Nenhum receipt foi consumido; tente novamente.`
+        }
         return advanced
           ? `veredito invalidado antes de consumir receipts: ${boundArtifactProblem}`
           : `artefato imutável inválido e pipeline preservado: ${boundArtifactProblem}`
@@ -784,13 +797,14 @@ export function buildReportApi(
       }
       const acceptance = prepareSkillUsageAcceptance()
       if (!acceptance) {
-        phaseWatches.set(watch.taskId, watch)
-        ctx.phaseTransitions.release(watch.taskId, transitionToken)
+        // recusa ANTES do advancePhase: o rollback re-indexa (createdAt
+        // renovado) e solta o lock na ordem set→release
+        ctx.phase.rollbackVerdictTransaction(watch, transitionToken)
         return 'report recusado: o ledger persistido desta rodada não corresponde ao plano ativo; reabra somente esta fase'
       }
       let advanced = false
       try {
-        advanced = ctx.phase.advancePhase(
+        advanced = await ctx.phase.advancePhase(
           watch,
           patchNote ? `${content}${patchNote}` : content,
           normalizedSecurityReview,
@@ -802,10 +816,9 @@ export function buildReportApi(
         // TaskStore só publica a nova fotografia depois de o JSON atômico
         // pousar. Reindexar o watch torna o mesmo report repetível sem receipt
         // aplicado, pane órfão ou fase que avançou apenas em memória.
-        // (F2-c4: o advancePhase já soltou o lock no finally do throw — no
-        // contrato SYNC este set roda na MESMA pilha, sem janela; a ordem
-        // set→release do §8.2 do mapa é revisitada no c5.)
-        phaseWatches.set(watch.taskId, watch)
+        // F2-c5 (§8.2): no throw a posse do lock volta para cá — o rollback
+        // re-indexa (ou cede ao watch novo, R2) e SÓ ENTÃO solta.
+        ctx.phase.rollbackVerdictTransaction(watch, transitionToken)
         return `report preservado: não foi possível persistir a transação da fase (${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 240)}). Nenhum receipt foi consumido; tente novamente.`
       }
       return advanced

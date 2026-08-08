@@ -267,25 +267,36 @@ test('baseline: dev done com gate review — transação persiste e retorna true
   const task = h.createTask({ gates: ['review'] })
   const watch = h.watchFor(task, 'dev', { devSnapshot: { ...fixture.facts } })
   const token = h.enterTransition(task, watch)
+  // F2-c5: com o advancePhase AGUARDADO, a continuação (openGatePane) corre
+  // antes dos asserts e no harness ela falha por design (ctx fake sem
+  // worktree de fase) — a TRANSAÇÃO do dev é provada pela PRIMEIRA gravação.
+  const commits = []
+  h.tasks.onMutation = (_prev, next) => {
+    if (next.id === task.id) {
+      commits.push({
+        status: next.status,
+        activePhase: next.activePhase,
+        phaseState: next.phaseState,
+        dev: next.verification?.dev
+      })
+    }
+  }
 
-  const advanced = h.engine.advancePhase(watch, 'done', undefined, undefined, h.acceptance(), token)
+  const advanced = await h.engine.advancePhase(watch, 'done', undefined, undefined, h.acceptance(), token)
 
   assert.equal(advanced, true)
-  // RELEASE NO SETTLE (F2-c4): logo após o retorno SYNC a continuação
-  // (openGatePane) ainda está em voo — o card segue EM TRANSIÇÃO para o
-  // resto do app; o lock só solta quando a cadeia inteira settla.
-  assert.equal(h.engine.phaseTransitions.isLocked(task.id), true)
-  const after = h.tasks.get(task.id)
-  assert.equal(after.status, 'execucao')
-  assert.equal(after.activePhase, 'review')
-  assert.equal(after.phaseState, 'pending')
-  assert.equal(after.verification.dev.head, fixture.facts.head)
-  assert.equal(after.verification.dev.baseHead, fixture.facts.baseHead)
-  assert.equal(after.verification.dev.fingerprint, fixture.facts.fingerprint)
-  assert.ok(Array.isArray(after.verification.dev.changedPaths))
+  const verdictCommit = commits[0]
+  assert.equal(verdictCommit.status, 'execucao')
+  assert.equal(verdictCommit.activePhase, 'review')
+  assert.equal(verdictCommit.phaseState, 'pending')
+  assert.equal(verdictCommit.dev.head, fixture.facts.head)
+  assert.equal(verdictCommit.dev.baseHead, fixture.facts.baseHead)
+  assert.equal(verdictCommit.dev.fingerprint, fixture.facts.fingerprint)
+  assert.ok(Array.isArray(verdictCommit.dev.changedPaths))
   assert.ok(h.events.hub.some((e) => e.kind === 'report' && /dev concluiu/.test(e.text)))
   assert.equal(h.engine.phaseWatches.has(task.id), false)
   await settle()
+  // release no SETTLE da cadeia: com a continuação já morta, o lock soltou
   assert.equal(h.engine.phaseTransitions.isLocked(task.id), false)
   assert.ok(!h.events.blackbox.some((e) => e.event === 'phase-advance-without-lock'))
 })
@@ -302,7 +313,7 @@ test('baseline: dev done com fotografia DERIVADA (drift) devolve false e re-inde
   const watch = h.watchFor(task, 'dev', { devSnapshot: staleFacts })
   const token = h.enterTransition(task, watch)
 
-  const advanced = h.engine.advancePhase(watch, 'done', undefined, undefined, undefined, token)
+  const advanced = await h.engine.advancePhase(watch, 'done', undefined, undefined, undefined, token)
 
   assert.equal(advanced, false)
   // invariante do mapa do veredito: todo return false re-indexa o watch
@@ -331,7 +342,7 @@ test('baseline: review REPROVADA limpa (readonly provado) grava gateRound e volt
   })
   const token = h.enterTransition(task, watch)
 
-  const advanced = h.engine.advancePhase(
+  const advanced = await h.engine.advancePhase(
     watch,
     'reprovada: falta tratar o caso vazio',
     undefined,
@@ -377,8 +388,24 @@ test('baseline: review APROVADA transiciona para QA na mesma transação', async
     gateStartedAt: new Date().toISOString()
   })
   const token = h.enterTransition(task, watch)
+  // F2-c5: com o advancePhase AGUARDADO, a continuação (openGatePane) já
+  // corre antes do assert — e no harness ela falha por design (ctx fake sem
+  // worktree de fase) e estaciona o card em 'interrupted'. A TRANSAÇÃO do
+  // recordGate é provada pela PRIMEIRA gravação persistida do veredito.
+  const commits = []
+  h.tasks.onMutation = (_prev, next) => {
+    if (next.id === task.id) {
+      commits.push({
+        status: next.status,
+        activePhase: next.activePhase,
+        phaseState: next.phaseState,
+        reviewVerdict: next.verification?.review?.verdict,
+        gateRound: next.gateRound
+      })
+    }
+  }
 
-  const advanced = h.engine.advancePhase(
+  const advanced = await h.engine.advancePhase(
     watch,
     'aprovada: código coerente com o contrato',
     undefined,
@@ -388,12 +415,14 @@ test('baseline: review APROVADA transiciona para QA na mesma transação', async
   )
 
   assert.equal(advanced, true)
+  const verdictCommit = commits[0]
+  assert.equal(verdictCommit.reviewVerdict, 'approved')
+  assert.equal(verdictCommit.status, 'qa')
+  assert.equal(verdictCommit.activePhase, 'qa')
+  assert.equal(verdictCommit.phaseState, 'pending')
+  assert.equal(verdictCommit.gateRound, undefined)
   const after = h.tasks.get(task.id)
   assert.equal(after.verification.review.verdict, 'approved')
-  assert.equal(after.status, 'qa')
-  assert.equal(after.activePhase, 'qa')
-  assert.equal(after.phaseState, 'pending')
-  assert.equal(after.gateRound, undefined)
   await settle()
   assert.equal(h.engine.phaseTransitions.isLocked(task.id), false)
 })
@@ -417,7 +446,7 @@ test('baseline: gate que ESCREVEU (fingerprint divergente) tem o veredito invali
   // head deixa de bater (worktree sujo): a fotografia imutável quebra.
   writeFileSync(join(fixture.root, 'app.txt'), 'gate escreveu aqui\n', 'utf-8')
 
-  const advanced = h.engine.advancePhase(
+  const advanced = await h.engine.advancePhase(
     watch,
     'aprovada: tudo certo',
     undefined,
@@ -482,7 +511,7 @@ test('c4: segundo entrante é RECUSADO com contenda auditada; sem posse, advance
   // anomalia auditável, nunca um throw que brickaria o veredito
   h.engine.phaseWatches.set(task.id, watch)
   h.engine.phaseWatches.detach(task.id)
-  const advanced = h.engine.advancePhase(watch, 'done', undefined, undefined, h.acceptance())
+  const advanced = await h.engine.advancePhase(watch, 'done', undefined, undefined, h.acceptance())
   assert.equal(advanced, true)
   assert.ok(h.events.blackbox.some((e) => e.event === 'phase-advance-without-lock'))
   // o dono continua sendo o holder (o wrapper sem token não solta nada)

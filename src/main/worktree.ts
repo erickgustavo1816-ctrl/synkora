@@ -84,10 +84,13 @@ export interface DevSnapshotFacts {
 }
 
 /** Checagens da FOTOGRAFIA IMUTÁVEL da entrega numa passada só — uma viagem ao
- * worker via gitOff em vez de cinco, e chamável SÍNCRONA onde o chamador é
- * deliberadamente sync (advancePhase, a barreira síncrona do veredito: uma
- * Promise ali vira "[object Promise]" e invalida todo gate — bug real
- * 2026-08-05). Devolve o problema em PT-BR (o texto viaja ao usuário no
+ * worker via gitOff em vez de cinco. Fase 2 (F2-c5): o advancePhase virou
+ * ASSÍNCRONO e a atomicidade do veredito vem da SERIALIZAÇÃO por card
+ * (PhaseTransitionLock), não mais da sincronicidade — este corpo roda no
+ * WORKER dentro de gateVerdictFacts/quarantineAndRevalidate. A cicatriz
+ * continua valendo a cada await esquecido: uma Promise não-aguardada tratada
+ * como string de problema vira "[object Promise]" e invalida todo gate (bug
+ * real 2026-08-05). Devolve o problema em PT-BR (o texto viaja ao usuário no
  * veredito) ou undefined quando a fotografia segue exata. */
 export function snapshotProblemFor(
   cwd: string,

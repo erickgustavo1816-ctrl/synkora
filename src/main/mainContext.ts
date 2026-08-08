@@ -78,15 +78,20 @@ export interface PhaseApi {
     feedback?: string,
     launchToken?: PhaseLaunchToken
   ): Promise<DevPaneSpec | null>
-  /** SYNC POR CONTRATO (barreira síncrona do veredito — a cicatriz do
-   *  "[object Promise]"): NUNCA transformar em Promise<boolean>.
-   *  Arity COMPLETA (fix do commit 3): o tipo antigo parava em securityReview
-   *  e um consumidor via ctx.phase droparia verificationEvidence/acceptance
-   *  em silêncio — os call sites reais do report passam 4 e 5 argumentos.
-   *  Fase 2 (F2-c4): `token` é a posse do PhaseTransitionLock adquirida pelo
-   *  ENTRANTE (report/poller) — o advancePhase assume o release (imediato nos
-   *  desfechos sem continuação; no settle da cadeia quando dispara
-   *  openGatePane/retryOrBacklog/finalizeTask). Chamada sem posse emite
+  /** ASSÍNCRONO POR SERIALIZAÇÃO (Fase 2, F2-c5): a atomicidade do veredito
+   *  vem do PhaseTransitionLock (lock por card), não mais da sincronicidade —
+   *  a barreira síncrona morreu aqui. A CICATRIZ do "[object Promise]"
+   *  (2026-08-05) continua a régua: todo consumidor DEVE `await` — uma
+   *  Promise não-aguardada tratada como valor volta a ser possível a cada
+   *  await esquecido, e o typecheck de Promise<boolean> é o que força os call
+   *  sites. Arity COMPLETA (fix do commit 3): o tipo antigo parava em
+   *  securityReview e um consumidor via ctx.phase droparia
+   *  verificationEvidence/acceptance em silêncio.
+   *  `token` é a posse adquirida pelo ENTRANTE (report/poller) — o
+   *  advancePhase assume o release nos desfechos normais (imediato ou no
+   *  settle da cadeia de continuação); no THROW a posse volta ao call site,
+   *  que faz rollback + release via rollbackVerdictTransaction (§8.2 do
+   *  mapa: o release vem DEPOIS do re-index). Chamada sem posse emite
    *  `phase-advance-without-lock` na caixa-preta, nunca lança. */
   advancePhase(
     watch: PhaseWatch,
@@ -98,16 +103,32 @@ export interface PhaseApi {
       commitRuntime: () => boolean
     },
     token?: PhaseTransitionToken
-  ): boolean
-  retryOrBacklog(watch: PhaseWatch, who: string, motivo: string): Promise<void>
+  ): Promise<boolean>
+  /** Rollback padrão do caminho de THROW do veredito (F2-c5): re-indexa o
+   *  watch com createdAt renovado (§7.4) — a menos que o registry já tenha um
+   *  watch NOVO do card (R2: o novo vence e o artefato do velho é limpo) — e
+   *  SÓ ENTÃO solta o lock. Idempotente; token errado/velho é no-op. */
+  rollbackVerdictTransaction(watch: PhaseWatch, token?: PhaseTransitionToken): void
+  /** `rejectingGate` viaja por PARÂMETRO (F2-c5, §6.1 do mapa): o gate
+   *  reprovador é calculado DENTRO do lock — re-consultar liveGateWaits após
+   *  awaits deixava um onExit apagar a espera e a evidência do gate reprovador
+   *  não era zerada (a memoização poderia "aprovar" o que reprovou). */
+  retryOrBacklog(
+    watch: PhaseWatch,
+    who: string,
+    motivo: string,
+    rejectingGate?: 'review' | 'qa'
+  ): Promise<void>
   openGatePane(watch: PhaseWatch, phase: 'review' | 'qa'): Promise<boolean>
   finalizeTask(watch: PhaseWatch, task: Task, approvedBy: string): Promise<void>
   openPhasePane(watchSpec: DevPaneSpec, projectId: string, taskId: string): void
   closePhasePane(projectId: string, taskId: string, role: RunPhase): void
   terminateTaskPhasePane(projectId: string, taskId: string, role: RunPhase): void
   // ——— superfície extra do engine consumida pelo mcpApi (commit 4a) ———
-  /** Valida o artefato imutável do review (hash/tamanho/containment). */
-  reviewArtifactProblem(watch: PhaseWatch): string | undefined
+  /** Valida o artefato imutável do review (hash/tamanho/containment).
+   *  Async desde o F2-c5 (R11): o sha256 de patch grande roda no worker via
+   *  gitOff('reviewArtifactIdentity') — era o único I/O pesado sem caminho. */
+  reviewArtifactProblem(watch: PhaseWatch): Promise<string | undefined>
   /** Remove o artefato do storage privado (fim de rodada/veredito). */
   cleanupReviewArtifact(watch: PhaseWatch): void
   /** Chunk autenticado do diff SHA-pinado servido ao reviewer. */

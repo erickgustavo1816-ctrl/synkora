@@ -9,15 +9,20 @@
  * do MainContext até os commits 4–5 (mcpApi/, ipc/) consumirem ctx.phase.
  *
  * Contratos que este módulo NÃO pode quebrar:
- * - advancePhase é SYNC POR CONTRATO (barreira síncrona do veredito — a
- *   cicatriz do "[object Promise]"): nunca virar Promise<boolean>.
+ * - advancePhase é ASSÍNCRONO POR SERIALIZAÇÃO desde a Fase 2 (F2-c5,
+ *   docs/FASE2_PLANO.md §4): a atomicidade do veredito vem do
+ *   PhaseTransitionLock por card, não mais da sincronicidade — o git do
+ *   veredito viaja ao worker em 1-2 pacotes (gateVerdictFacts/
+ *   quarantineAndRevalidate/reviewArtifactIdentity via gitOff). A CICATRIZ
+ *   do "[object Promise]" (2026-08-05) segue a régua: todo await esquecido
+ *   reabre o modo de falha — Promise tratada como valor invalida veredito.
  * - Fase 2 (F2-c4, docs/FASE2_PLANO.md §3): toda TRANSIÇÃO de card roda sob o
  *   PhaseTransitionLock (phaseTransitions) — aquisição SÓ nos pontos de
  *   entrada (report/poller/boot/reseat/recover), ordem síncrona sagrada
  *   acquire → detach → unlink, e "quem SEGURA O LOCK deleta o watch". O
- *   advancePhase é o dono do release a partir da chamada; continuações
- *   (openGatePane/retryOrBacklog/finalizeTask) herdam o token via
- *   chainContinuation e o release acontece no settle da cadeia.
+ *   advancePhase é o dono do release nos desfechos normais (imediato ou no
+ *   settle da cadeia via chainContinuation); no THROW a posse volta ao call
+ *   site, que re-indexa e SÓ ENTÃO solta (rollbackVerdictTransaction, §8.2).
  * - MAX_PARALLEL_RUNS declarado ANTES de qualquer consumidor (no index a
  *   const vinha DEPOIS do poller e vivia de hoisting — aqui é export de
  *   módulo, sem TDZ).
@@ -46,9 +51,7 @@ import {
   isExecutableProjectPath,
   isWorktreeClean,
   mergeTaskWorktree,
-  quarantineUntrackedNew,
   removeWorktreeAndBranch,
-  snapshotProblemFor,
   taskWorktreeDescriptor
 } from './worktree'
 import { type Mission } from './missions'
@@ -358,13 +361,17 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     }
   }
 
-  function reviewArtifactProblem(watch: PhaseWatch): string | undefined {
+  /** F2-c5 (R11): o sha256 do patch privado (o artefato existe para reviews
+   *  de ~120k) roda no WORKER — era o único I/O pesado do veredito sem
+   *  caminho para fora do main. As comparações ficam aqui; só a identidade
+   *  viaja. */
+  async function reviewArtifactProblem(watch: PhaseWatch): Promise<string | undefined> {
     const artifact = watch.reviewArtifact
     if (!artifact) return undefined
     const storageProblem = reviewArtifactStorageProblem(watch)
     if (storageProblem) return storageProblem
     try {
-      const identity = reviewArtifactIdentity(artifact.privatePath)
+      const identity = await gitOff('reviewArtifactIdentity', artifact.privatePath)
       if (identity.sha256 !== artifact.sha256) return 'hash do artefato imutável mudou'
       return undefined
     } catch {
@@ -472,6 +479,43 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       count++
     }
     return count
+  }
+  /** Re-indexação de ROLLBACK (F2-c5): renova createdAt (§7.4 — um watch
+   *  devolvido com a graça vencida seria julgado stale pelo poller, que MATA
+   *  o pane) e respeita R2 — se o registry já tem um watch NOVO deste card
+   *  (reciclo/re-prepare aterrissou durante os awaits), o novo vence: este
+   *  não re-indexa e o artefato de review dele é limpo para não vazar. */
+  function reindexWatchForRollback(watch: PhaseWatch): void {
+    const current = phaseWatches.get(watch.taskId)
+    if (current && current !== watch) {
+      cleanupReviewArtifact(watch)
+      blackbox.record({
+        cat: 'phase',
+        event: 'phase-rollback-superseded',
+        actor: 'harness',
+        ids: {
+          projectId: watch.projectId,
+          taskId: watch.taskId,
+          phase: watch.phase,
+          role: watch.phase
+        },
+        reason:
+          'o registry já tem um watch NOVO deste card — o rollback não re-indexou a rodada velha (R2) e o artefato dela foi limpo'
+      })
+      return
+    }
+    watch.createdAt = Date.now()
+    phaseWatches.set(watch.taskId, watch)
+  }
+  /** Rollback padrão do caminho de THROW do veredito (call sites do report e
+   *  do poller): re-indexa (ou cede ao watch novo, R2) e SÓ ENTÃO solta o
+   *  lock — a ordem set→release do §8.2 do mapa. */
+  function rollbackVerdictTransaction(
+    watch: PhaseWatch,
+    token?: PhaseTransitionToken
+  ): void {
+    reindexWatchForRollback(watch)
+    if (token) phaseTransitions.release(watch.taskId, token)
   }
 
   function terminateTaskPhasePane(
@@ -1950,11 +1994,20 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
   // Reprovação: com ciclos proporcionais sobrando, o feedback volta DIRETO
   // para o dev. Esgotado o limite, o card volta ao ORQUESTRADOR; só uma dúvida
   // real de produto deve interromper o usuário.
-  async function retryOrBacklog(watch: PhaseWatch, who: string, motivo: string): Promise<void> {
+  async function retryOrBacklog(
+    watch: PhaseWatch,
+    who: string,
+    motivo: string,
+    rejectingGateParam?: 'review' | 'qa'
+  ): Promise<void> {
     const task = tasks.get(watch.taskId)
     if (!task) return
     const cycles = task.cycles ?? 0
     const retryLimit = retryLimitForTask(task)
+    // LEITURA TARDIA OBRIGATÓRIA (§7.8 do mapa da Fase 2): o plano pausado
+    // pelo dono no MEIO do veredito tem que ser lido AQUI, depois dos awaits
+    // do chamador — "otimizar" lendo no topo do veredito ignoraria o "pare
+    // AGORA" e um pane novo nasceria depois da pausa.
     const planTask = planTaskForWorkTask(task)
     // Reprovação NÃO apaga evidência de gate JÁ APROVADA (item 21,
     // 2026-08-06: o reset varria review/qa e a memoização por head nunca
@@ -1962,11 +2015,14 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     // Seguro por construção: o memo só vale quando snapshotHead === head da
     // entrega nova; evidência velha de head diferente simplesmente não casa.
     // Zera: dev, activeGate e a evidência do PRÓPRIO gate que reprovou.
+    // O gate reprovador viaja por PARÂMETRO desde o F2-c5 (§6.1 do mapa):
+    // re-consultar liveGateWaits aqui — depois dos awaits do veredito —
+    // deixava um onExit apagar a espera e a evidência do gate reprovador não
+    // era zerada (a memoização por head poderia "aprovar" o que reprovou).
     const priorVerification = task.verification ?? { contractVersion: 1 as const }
     const rejectingGate =
-      watch.phase === 'review' || watch.phase === 'qa'
-        ? watch.phase
-        : liveGateWaits.get(watch.taskId)?.phase
+      rejectingGateParam ??
+      (watch.phase === 'review' || watch.phase === 'qa' ? watch.phase : undefined)
     const resetVerification = {
       ...priorVerification,
       dev: undefined,
@@ -2875,6 +2931,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
   async function openGatePane(watch: PhaseWatch, phase: 'review' | 'qa'): Promise<boolean> {
     const task = tasks.get(watch.taskId)
     if (!task) return false
+    // LEITURA TARDIA OBRIGATÓRIA (§7.8): a pausa do dono no meio do veredito
+    // é lida AQUI, na continuação — nunca antecipar para o topo do veredito.
     const planTask = planTaskForWorkTask(task)
     if (planTask?.status === 'backlog' && planTask.plan?.approvedAt) {
       tasks.update(watch.taskId, {
@@ -2928,7 +2986,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           void retryOrBacklog(
             watch,
             phase === 'review' ? 'revisor' : 'QA',
-            `rodada vazia: o done não trouxe NENHUM commit novo desde o head reprovado ${wait.rejectedHead.slice(0, 12)} — a lista da reprovação não foi executada (provável falha de entrega da lista, não do dev). Lista vigente: ${wait.rejectedReason}`
+            `rodada vazia: o done não trouxe NENHUM commit novo desde o head reprovado ${wait.rejectedHead.slice(0, 12)} — a lista da reprovação não foi executada (provável falha de entrega da lista, não do dev). Lista vigente: ${wait.rejectedReason}`,
+            phase
           )
           return true
         }
@@ -3203,40 +3262,44 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       commitRuntime: () => boolean
     },
     token?: PhaseTransitionToken
-  ): boolean {
-    // Fase 0 (atribuição de stall): wrapper fino e SÍNCRONO — o contrato SYNC
-    // do veredito (comentário-âncora no Inner) fica intacto: wrap de função
-    // sync devolve sync.
-    // Fase 2 (F2-c4): o advancePhase é o DONO do release do lock a partir da
-    // chamada — imediato nos desfechos sem continuação (incluindo throw: no
-    // c4 o rollback do call site roda na MESMA pilha síncrona, sem janela;
-    // revisitar a ordem set→release no c5, §8.2 do mapa) e no SETTLE da
-    // cadeia quando o Inner dispara continuação. O call site só solta quando
-    // recusa/rola de volta ANTES de chamar aqui.
+  ): Promise<boolean> {
+    // Fase 0 (atribuição de stall): mainStalls.wrap fecha Promise no settle —
+    // a duração medida passa a incluir as viagens ao worker (que é o que se
+    // quer medir DEPOIS da Fase 2: espera de worker é duração de operação,
+    // não stall do main).
+    // Fase 2 (F2-c5): o advancePhase é o DONO do release nos desfechos
+    // NORMAIS — imediato quando não há continuação, no SETTLE da cadeia
+    // quando o Inner dispara openGatePane/retryOrBacklog/finalizeTask. No
+    // THROW a posse volta ao call site, que re-indexa o watch e SÓ ENTÃO
+    // solta (rollbackVerdictTransaction — a ordem set→release do §8.2; se o
+    // release viesse aqui, um entrante poderia adquirir entre o release e o
+    // set do rollback e ver o card "livre" no meio do desfazer).
     let chained = false
     const chainContinuation = (continuation: Promise<unknown>): void => {
       chained = true
       if (token) {
         void continuation.finally(() => phaseTransitions.release(watch.taskId, token))
+      } else {
+        void continuation
       }
     }
-    try {
-      return mainStalls.wrap(`advancePhase:${watch.phase}`, watch.taskId.slice(0, 8), () =>
-        advancePhaseInner(
-          watch,
-          content,
-          securityReview,
-          verificationEvidence,
-          acceptance,
-          token,
-          chainContinuation
-        )
+    const run = mainStalls.wrap(`advancePhase:${watch.phase}`, watch.taskId.slice(0, 8), () =>
+      advancePhaseInner(
+        watch,
+        content,
+        securityReview,
+        verificationEvidence,
+        acceptance,
+        token,
+        chainContinuation
       )
-    } finally {
+    )
+    return run.then((advanced) => {
       if (!chained && token) phaseTransitions.release(watch.taskId, token)
-    }
+      return advanced
+    })
   }
-  function advancePhaseInner(
+  async function advancePhaseInner(
     watch: PhaseWatch,
     content: string,
     securityReview?: SecurityReviewRecord,
@@ -3249,7 +3312,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     chainContinuation: (continuation: Promise<unknown>) => void = (continuation) => {
       void continuation
     }
-  ): boolean {
+  ): Promise<boolean> {
     // TRIPWIRE DE CONTRATO (Fase 2, §3.2 do plano): todo caminho de veredito
     // entra aqui SOB o lock do card. Chamada sem posse é anomalia auditável
     // (o critério de pronto exige zero) — nunca um throw que brickaria o
@@ -3304,9 +3367,9 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
             pane.taskId === watch.taskId && pane.role === 'ajudante'
         )
     ) {
-      // Última barreira síncrona: cobre a corrida entre diagnósticos async e
-      // o snapshot, tanto no report MCP quanto no marcador `.done`.
-      phaseWatches.set(watch.taskId, watch)
+      // Barreira do prefixo SÍNCRONO do veredito (antes do 1º await): cobre a
+      // corrida entre diagnósticos async e o snapshot, no report e no poller.
+      reindexWatchForRollback(watch)
       if (watch.paneId) {
         hub.notifyPane(
           watch.paneId,
@@ -3336,7 +3399,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       )
       if (!snapshotStillExact) {
         watch.devSnapshot = undefined
-        phaseWatches.set(watch.taskId, watch)
+        reindexWatchForRollback(watch)
         if (watch.paneId) {
           hub.notifyPane(
             watch.paneId,
@@ -3409,7 +3472,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         (changedPaths === undefined || changedPaths.some(isExecutableProjectPath))
       ) {
         watch.devSnapshot = undefined
-        phaseWatches.set(watch.taskId, watch)
+        reindexWatchForRollback(watch)
         if (watch.paneId) {
           hub.notifyPane(
             watch.paneId,
@@ -3547,24 +3610,36 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     }
     // review/qa: parse do veredito e fecha o pane do gate.
     const finishedAt = new Date().toISOString()
-    let finalFingerprint = gitVisibleWorktreeFingerprint(watch.cwd)
     const baselineFingerprint = watch.gateBaselineFingerprint
-    const latestForSnapshot = tasks.get(watch.taskId) ?? task
-    // SYNC de propósito: advancePhase é a barreira síncrona do veredito — a
-    // versão async (taskSnapshotProblem/gitOff) NÃO pode ser usada aqui: a
-    // Promise não-aguardada invalidava TODO veredito como "[object Promise]"
-    // (bug real 2026-08-05, primeiro gate pós-gitWorker).
-    const devFacts = latestForSnapshot.verification?.dev
+    // Fatos que ALIMENTAM as viagens ao worker (argumentos), lidos antes dos
+    // awaits — sob o lock nenhum outro entrante grava verification.dev. A
+    // fotografia de DECISÃO é a releitura única DEPOIS do último await (R4).
+    const preVerdictTask = tasks.get(watch.taskId) ?? task
+    const preDevFacts = preVerdictTask.verification?.dev
+    const requireCodeBase = preVerdictTask.deliverable === 'code'
     const snapFacts = {
-      head: devFacts?.head,
-      tree: devFacts?.tree,
-      fingerprint: devFacts?.fingerprint,
-      baseHead: devFacts?.baseHead
+      head: preDevFacts?.head,
+      tree: preDevFacts?.tree,
+      fingerprint: preDevFacts?.fingerprint,
+      baseHead: preDevFacts?.baseHead
     }
-    let snapshotProblem = watch.worktree
-      ? snapshotProblemFor(watch.cwd, snapFacts, latestForSnapshot.deliverable === 'code')
-      : undefined
-    const artifactProblem = reviewArtifactProblem(watch)
+    // A BARREIRA SÍNCRONA DO VEREDITO MORREU AQUI (Fase 2, F2-c5 — reescrita
+    // da cicatriz de 2026-08-05): o git do preâmbulo viaja ao worker em UMA
+    // viagem (gateVerdictFacts) + UMA de quarentena quando ela dispara, e a
+    // atomicidade passa a vir da SERIALIZAÇÃO por card (PhaseTransitionLock),
+    // nunca mais da sincronicidade. A cicatriz do "[object Promise]" segue a
+    // régua: todo resultado do worker é AGUARDADO — um await esquecido reabre
+    // exatamente aquele modo de falha (Promise tratada como valor).
+    const gateFacts = watch.worktree
+      ? await gitOff('gateVerdictFacts', watch.cwd, snapFacts, requireCodeBase)
+      : {
+          fingerprint: await gitOff('gitVisibleWorktreeFingerprint', watch.cwd),
+          snapshotProblem: undefined,
+          head: undefined
+        }
+    let finalFingerprint = gateFacts.fingerprint
+    let snapshotProblem = gateFacts.snapshotProblem
+    const artifactProblem = await reviewArtifactProblem(watch)
     if (artifactProblem) {
       snapshotProblem = snapshotProblem
         ? `${snapshotProblem}; ${artifactProblem}`
@@ -3578,27 +3653,26 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     if (
       watch.worktree &&
       (snapshotProblem || baselineFingerprint !== finalFingerprint) &&
-      gitHead(watch.cwd) === devFacts?.head
+      gateFacts.head === preDevFacts?.head
     ) {
       const quarantineProject = projects.get(watch.projectId)
-      const moved = quarantineProject
-        ? quarantineUntrackedNew(
+      const revalidation = quarantineProject
+        ? await gitOff(
+            'quarantineAndRevalidate',
             watch.cwd,
             join(
               quarantineProject.path,
               '.synkora',
               'quarantine',
               `${watch.taskId.slice(0, 8)}-${finishedAt.replace(/[:.]/g, '-')}`
-            )
+            ),
+            snapFacts,
+            requireCodeBase
           )
-        : []
-      if (moved.length > 0) {
-        finalFingerprint = gitVisibleWorktreeFingerprint(watch.cwd)
-        snapshotProblem = snapshotProblemFor(
-          watch.cwd,
-          snapFacts,
-          latestForSnapshot.deliverable === 'code'
-        )
+        : { moved: [] as string[], fingerprint: undefined, snapshotProblem: undefined }
+      if (revalidation.moved.length > 0) {
+        finalFingerprint = revalidation.fingerprint
+        snapshotProblem = revalidation.snapshotProblem
         blackbox.record({
           cat: 'phase',
           event: 'gate-evidence-quarantined',
@@ -3610,19 +3684,27 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
             phase: watch.phase,
             role: watch.phase
           },
-          evidence: moved.slice(0, 8).join(', ') + (moved.length > 8 ? ` +${moved.length - 8}` : ''),
-          reason: `${moved.length} arquivo(s) untracked de evidência movidos para .synkora/quarantine — o commit julgado está intacto e o veredito segue válido`
+          evidence:
+            revalidation.moved.slice(0, 8).join(', ') +
+            (revalidation.moved.length > 8 ? ` +${revalidation.moved.length - 8}` : ''),
+          reason: `${revalidation.moved.length} arquivo(s) untracked de evidência movidos para .synkora/quarantine — o commit julgado está intacto e o veredito segue válido`
         })
         hub.publish({
           projectId: watch.projectId,
           missionId: task.missionId,
           kind: 'info',
           quiet: true,
-          text: `evidência de gate em caminho git-visível foi movida para quarentena em "${task.title}" (${moved.length} arquivo(s)) — nada integrável mudou`,
+          text: `evidência de gate em caminho git-visível foi movida para quarentena em "${task.title}" (${revalidation.moved.length} arquivo(s)) — nada integrável mudou`,
           actor: 'harness'
         })
       }
     }
+    // RELEITURA ÚNICA (R4): a fotografia da DECISÃO. Daqui até o commit do
+    // recordGate não há mais await nem releitura do card — as 4 releituras
+    // antigas enxergavam o mesmo estado por sorte síncrona; agora a sorte é
+    // regra: uma leitura, um estado, um commit.
+    const latestForSnapshot = tasks.get(watch.taskId) ?? task
+    const devFacts = latestForSnapshot.verification?.dev
     const boundToDevSnapshot = Boolean(
       !watch.worktree ||
         (latestForSnapshot.verification?.dev?.fingerprint &&
@@ -3656,13 +3738,13 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       }
       const project = projects.get(watch.projectId)
       if (!project) {
-        phaseWatches.set(watch.taskId, watch)
+        reindexWatchForRollback(watch)
         return false
       }
       try {
         persistSecurityReview(project.path, securityReview)
       } catch {
-        phaseWatches.set(watch.taskId, watch)
+        reindexWatchForRollback(watch)
         if (watch.paneId) {
           hub.notifyPane(
             watch.paneId,
@@ -3712,9 +3794,12 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       wasReadonly = readonly,
       transition?: 'dev' | 'qa' | 'finalize',
       consumeAcceptance = false,
-      nextGateRound?: Task['gateRound']
+      nextGateRound?: Task['gateRound'],
+      extraPatch?: TaskUpdatePatch
     ): void => {
-      const latest = tasks.get(watch.taskId)
+      // R4 (F2-c5): o commit usa a FOTOGRAFIA ÚNICA lida após o último await
+      // — reler aqui abriria a janela "decidiu sobre A, gravou sobre B".
+      const latest = latestForSnapshot
       const verification = latest?.verification ?? { contractVersion: 1 as const }
       const phaseSessions = { ...(latest?.phaseSessions ?? {}) }
       if (transition === 'qa') delete phaseSessions.qa
@@ -3767,6 +3852,10 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
                 phaseSessions
               }
             : {}),
+        // R8 (F2-c5): o desfecho ilegível gravava DOIS tasks.update em
+        // sequência — com awaits no caminho, o estado intermediário ficaria
+        // persistido observável; o extra entra no MESMO patch.
+        ...(extraPatch ?? {}),
         verification: {
           ...verification,
           activeGate: undefined,
@@ -3812,9 +3901,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       if (consumeAcceptance) commitRuntimeAcceptance()
     }
     if (!readonly) {
-      cleanupReviewArtifact(watch)
-      terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
-      liveGateWaits.delete(watch.taskId)
       const reason = snapshotProblem
         ? `a fotografia imutável deixou de ser válida: ${snapshotProblem}`
         : !boundToDevSnapshot
@@ -3822,7 +3908,13 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           : baselineFingerprint && finalFingerprint
             ? `${watch.phase} alterou arquivos visíveis ao Git; gates são somente leitura`
             : `não foi possível provar que o gate ${watch.phase} permaneceu somente leitura`
+      // R7 (F2-c5): o COMMIT vem antes dos efeitos destrutivos — um throw no
+      // recordGate deixava artefato apagado e pane morto com a promessa
+      // "tente novamente" quebrada (o rollback re-indexava um watch sem nada).
       recordGate('invalid', reason, false, 'dev')
+      cleanupReviewArtifact(watch)
+      terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
+      liveGateWaits.delete(watch.taskId)
       // UM AVISO SÓ (ordem do dono, 2026-08-07: "tá avisando 2 vezes, não
       // quero mais"): a injeção ACIONÁVEL é a do retryOrBacklog (reprovação
       // com PASSO 1/2) — este evento fica quiet: EVENTS.md/UI registram, o
@@ -3836,7 +3928,12 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         quiet: true
       })
       chainContinuation(
-        retryOrBacklog(watch, watch.phase === 'review' ? 'revisor' : 'QA', reason)
+        retryOrBacklog(
+          watch,
+          watch.phase === 'review' ? 'revisor' : 'QA',
+          reason,
+          watch.phase === 'qa' ? 'qa' : 'review'
+        )
       )
       return true
     }
@@ -3849,16 +3946,25 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     const motivo = (m?.[2] ?? '').trim() || 'sem motivo'
     const who = watch.phase === 'review' ? 'revisor' : 'QA'
     if (!m) {
+      // R7+R8 (F2-c5): UMA gravação (o patch extra entra no mesmo commit do
+      // veredito) e ela vem ANTES dos efeitos destrutivos.
+      recordGate(
+        'invalid',
+        `veredito ilegível: ${content.slice(0, 120)}`,
+        readonly,
+        undefined,
+        false,
+        undefined,
+        {
+          status: watch.phase === 'qa' ? 'qa' : 'execucao',
+          feedback: `veredito ilegível do ${who}: ${content.slice(0, 120)}`,
+          activePhase: watch.phase,
+          phaseState: 'interrupted'
+        }
+      )
       cleanupReviewArtifact(watch)
       terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
       liveGateWaits.delete(watch.taskId)
-      recordGate('invalid', `veredito ilegível: ${content.slice(0, 120)}`)
-      tasks.update(watch.taskId, {
-        status: watch.phase === 'qa' ? 'qa' : 'execucao',
-        feedback: `veredito ilegível do ${who}: ${content.slice(0, 120)}`,
-        activePhase: watch.phase,
-        phaseState: 'interrupted'
-      })
       emitLog(watch.projectId, {
         kind: 'err',
         text: `veredito ilegível do ${who} em "${task.title}" — somente o gate ${watch.phase} precisa ser reaberto`
@@ -3875,7 +3981,10 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       // passada" morria com o pane — um gate novo re-legislava do zero (r5 do
       // caso real). A lista + placar persistem no card e um spawn fresco os
       // herda como a lista da instituição, não da conversa.
-      const prevRound = task.gateRound?.phase === watch.phase ? task.gateRound : undefined
+      const prevRound =
+        latestForSnapshot.gateRound?.phase === watch.phase
+          ? latestForSnapshot.gateRound
+          : undefined
       const score = parseGateScore(motivo)
       const roundScores = [
         ...(prevRound?.scores ?? []).slice(-8),
@@ -3889,7 +3998,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         scores: roundScores,
         ...(verificationEvidence ? { verificationEvidence } : {}),
         gateNotesAtRejection: JSON.stringify(
-          (tasks.get(watch.taskId) ?? task).gateNotes?.[watch.phase] ?? ''
+          latestForSnapshot.gateNotes?.[watch.phase] ?? ''
         )
       }
       recordGate('rejected', motivo, readonly, 'dev', true, nextGateRound)
@@ -3897,7 +4006,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       maybeAlarmGateLoop(watch, task, roundScores)
       // GATE VIVO: a reprovação limpa deixa o pane do gate ABERTO em espera;
       // o próximo done do dev recicla esta mesma conversa com o delta.
-      const gatePhase = watch.phase
+      const gatePhase = watch.phase === 'qa' ? ('qa' as const) : ('review' as const)
       if (watch.paneId && ptys.has(watch.paneId)) {
         liveGateWaits.set(watch.taskId, {
           phase: gatePhase,
@@ -3906,7 +4015,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           rejectedReason: motivo,
           rejectedAt: finishedAt,
           gateNotesAtRejection: JSON.stringify(
-            tasks.get(watch.taskId)?.gateNotes?.[watch.phase] ?? ''
+            latestForSnapshot.gateNotes?.[watch.phase] ?? ''
           )
         })
         hub.notifyPane(
@@ -3919,12 +4028,12 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
       }
       hub.publish({ projectId: watch.projectId, missionId: task.missionId, kind: 'report', text: `${who} REPROVOU "${task.title}": ${motivo}`, actor: who })
-      chainContinuation(retryOrBacklog(watch, who, motivo))
+      chainContinuation(retryOrBacklog(watch, who, motivo, gatePhase))
       return true
     } else if (watch.phase === 'review' && gates.includes('qa')) {
       // MEMOIZAÇÃO (2026-08-06): QA já aprovado para ESTE MESMO head (estado
       // que regrediu e voltou) não re-roda — segue direto para a conclusão.
-      const qaEvidence = (tasks.get(watch.taskId) ?? task).verification?.qa
+      const qaEvidence = latestForSnapshot.verification?.qa
       const qaAlreadyApproved = Boolean(
         devFacts?.head &&
           qaEvidence?.verdict === 'approved' &&
@@ -4207,8 +4316,31 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
               // já sumiu
             }
             phaseWatches.detach(taskId)
-            // o advancePhase assume o release (imediato ou no settle da cadeia)
-            advancePhase(watch, content, undefined, undefined, undefined, transitionToken)
+            // F2-c5: AGUARDADO — o advancePhase assume o release nos desfechos
+            // normais; no throw a posse volta para cá e o rollback re-indexa
+            // antes de soltar (a mesma transação do report). O retorno segue
+            // ignorado: o marcador já foi consumido e um `false` deixa o card
+            // esperando nova entrega (redelivery-accepted cobre — decisão
+            // documentada no plano §7).
+            try {
+              await advancePhase(watch, content, undefined, undefined, undefined, transitionToken)
+            } catch (error) {
+              rollbackVerdictTransaction(watch, transitionToken)
+              blackbox.record({
+                cat: 'phase',
+                event: 'phase-marker-verdict-failed',
+                actor: 'harness',
+                ids: {
+                  projectId: watch.projectId,
+                  taskId,
+                  phase: watch.phase,
+                  role: watch.phase
+                },
+                err: error instanceof Error ? error.message : String(error),
+                reason:
+                  'o veredito via marcador falhou ao persistir — o watch foi re-indexado; o dev reporta de novo (redelivery-accepted)'
+              })
+            }
           } finally {
             phaseMarkersProcessing.delete(taskId)
           }
@@ -4238,6 +4370,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     phaseLaunchCapacity,
     phaseTransitions,
     phaseOccupancy,
+    rollbackVerdictTransaction,
     liveGateWaits,
     gateDeathLog,
     gateCooldownUntil,

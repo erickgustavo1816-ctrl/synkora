@@ -3495,7 +3495,9 @@ app.whenReady().then(async () => {
       recoverFinalizingTask: (...args) => recoverFinalizingTask(...args),
       closeLiveGateWait: (...args) => closeLiveGateWait(...args),
       drainPendingRespawns: (...args) => drainPendingRespawns(...args),
-      phaseOccupancy: (...args) => phaseEngine.phaseOccupancy(...args)
+      phaseOccupancy: (...args) => phaseEngine.phaseOccupancy(...args),
+      rollbackVerdictTransaction: (...args) =>
+        phaseEngine.rollbackVerdictTransaction(...args)
     }
   }
   // consumidores do ctx: phaseEngine (commit 3); mcpApi/ipc nos commits 4–5
