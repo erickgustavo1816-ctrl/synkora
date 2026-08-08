@@ -1,44 +1,60 @@
-# HANDOFF — Fase 1 da cirurgia do índice (pós-commits 6a–6f: engines de missão/maestro)
+# HANDOFF — Fase 1 da cirurgia do índice (pós-commits 7a–7c: paneLifecycle)
 
-Atualizado 2026-08-08 (2ª sessão do dia), fim da sessão que executou o
-commit 6 em 6 fatias: engines de missão/maestro + ipc/maestro + ipc/missions.
-A PRÓXIMA SESSÃO lê este arquivo PRIMEIRO, depois o ESTADO 7 da Fase 1 em
-docs/PLANO_NIVEL_5.md e os mapas das varreduras
-(docs/FASE1_MAPA_MISSIONENGINE.md · docs/FASE1_MAPA_MAESTROENGINE.md).
+Atualizado 2026-08-08 (2ª sessão do dia, rodada 2 — após o boot de validação
+dos 6a–6f pelo dono). A sessão executou o commit 6 (engines de missão/
+maestro, 6 fatias) E o commit 7 (paneLifecycle, 3 fatias). A PRÓXIMA SESSÃO
+lê este arquivo PRIMEIRO, depois os ESTADOS 7–8 da Fase 1 em
+docs/PLANO_NIVEL_5.md e os mapas (docs/FASE1_MAPA_MISSIONENGINE.md ·
+docs/FASE1_MAPA_MAESTROENGINE.md · docs/FASE1_MAPA_PANELIFECYCLE.md).
 
 ## ONDE A OBRA ESTÁ + PRÓXIMO PASSO (leia isto e os blocos da data)
 
-- index.ts: 19.448 (pré-obra) → **8.225 linhas (−58%)**. Módulos novos desta
-  sessão: cliSessionTransplant.ts (73L puro) · maestroEngine.ts (555L) ·
-  ipc/maestro.ts (641L, 18 handlers) · missionEngine.ts (2.247L) ·
-  ipc/missions.ts (610L, 8 handlers). Commits 6a a0f541f · 6b 423ac81 ·
-  6c 1951d33 · 6d eac1547 · 6e 55ca27e · 6f 277c50b — cada um verde
+- index.ts: 19.448 (pré-obra) → **6.658 linhas (−66%)**. Módulos novos da
+  sessão: cliSessionTransplant.ts (73L) · maestroEngine.ts (555L) ·
+  ipc/maestro.ts (641L) · missionEngine.ts (2.247L) · ipc/missions.ts (610L)
+  · paneLifecycle.ts (687L) · ipc/pty.ts (954L) · ipc/panes.ts (244L).
+  Commits: 6a a0f541f · 6b 423ac81 · 6c 1951d33 · 6d eac1547 · 6e 55ca27e ·
+  6f 277c50b · 7a 757ecd3 · 7b 4a29e4a · 7c e55a57d — cada um verde
   (typecheck + 39/25/14/14/8).
-- O que RESTA no index, por dono: panes/pty (paneLifecycle.ts futuro:
-  pty:create 793L + panes:freeSpec/live/portsInUse/testServerSpec +
-  livePaneSpecs/closingPaneIds/paneEverSpawned + bindUiSender/asserts +
-  armPane/mcpPaneArgs + staggerPaneSpawn) · boot/recovery · overlays
-  (SynVoice/ANDAMENTO) · verificação de plano · helpers de projeto ·
-  crash/perf (2 handlers de module scope, ficam por desenho).
-- **PRÓXIMO PASSO RECOMENDADO: paneLifecycle.ts** (o último grande corte da
-  Fase 1) — varredura própria antes do corte, nos moldes das anteriores.
-- Fatos das varreduras que a próxima obra precisa saber: ordem de construção
-  no index é mission → maestro → phase (PhaseEngineExtras consome
-  missionWorkspacePath/ensureMissionWorktree do missionEngine);
-  maestroSessions/killMaestroSession FICARAM no index (window-all-closed roda
-  fora do whenReady); o teto de resume é escrito no pty:create e lido no
-  maestroEngine via chave `maestro-<key>` do maestroStore (preservar o
-  prefixo em qualquer refatoração do pty:create); missionWatches está MORTO
-  (sem .set() — candidato a card de higiene, nunca dentro da cirurgia);
-  missionEngine com ~2,2k linhas é débito registrado (partição futura:
-  missionLifecycle × integrationQueueEngine).
-- Pendências do dono: PUSH (28 commits locais) e BOOT DE VALIDAÇÃO cobrindo
-  os commits 6a–6f (o último boot validado foi pós-commit 5).
+- **MARCO: todos os 136 handlers de IPC vivem em src/main/ipc/** — no index
+  ficam só crash:renderer/perf:renderer-stall (module scope, por desenho).
+- **ORDEM DE CONSTRUÇÃO OBRIGATÓRIA no index: paneLifecycle → mission →
+  maestro → phase.** O phaseEngine desestrutura ctx.livePaneSpecs/
+  closingPaneIds NA CONSTRUÇÃO — inverter é TDZ de CRASH DE BOOT (não é
+  erro de typecheck). Comentário-âncora no index e no cabeçalho do módulo.
+- O que RESTA no index, por dono: boot/recovery · overlays (SynVoice/
+  ANDAMENTO) + asserts de sender (pertencem ao futuro corte de overlays) ·
+  verificação de plano · helpers de projeto/closure compartilhados
+  (unregisterPane, cleanPaneMcpFile, bindUiSender, sweepProjectFiles…) ·
+  construção do ctx/engines/mcpApi/hub.
+- **PRÓXIMO PASSO: boot de validação do dono cobrindo 7a–7c.** Depois, a
+  Fase 1 só tem cortes MENORES (overlays + asserts; verificação de plano) —
+  decisão do dono entre continuar aparando ou encerrar a Fase 1 e abrir a
+  Fase 2 (veredito sem barreira síncrona, CHECK 1 núcleo).
+- Invariantes que o commit 7 espalhou por módulos (não "consertar"): a
+  corrida armPane×cleanPaneMcpFile agora vive em 3 lugares — armPane grava
+  paneMcpFiles (paneLifecycle), pty:create RE-GRAVA no spawn (ipc/pty),
+  pty:kill NUNCA desarma e o desarme é só no onExit sob guard de geração
+  (ipc/pty); o selo `maestro-<key>` (4 escritores no ipc/pty, leitor no
+  maestroEngine via maestroStore); pty:create NUNCA se fatia (4 closures
+  capturam token/statsWatchHandle/preparationTicket/lastMaestroCtx).
+- Fatos herdados do commit 6 que seguem valendo: maestroSessions/
+  killMaestroSession no index (window-all-closed fora do whenReady);
+  missionWatches MORTO (card de higiene, nunca na cirurgia); débitos —
+  missionEngine ~2,2k (partição missionLifecycle × integrationQueueEngine),
+  ipc/pty ~950L dominado por um handler (partição do pty:create em obra
+  própria), ipc/guards.ts descartado por ora (bindUiSender escreve uiSender
+  e é extra de 11 módulos).
+- Pendências do dono: PUSH (33 commits locais) e o boot de validação acima.
 - Regras vivas inalteradas: app parado para editar src · cada commit verde
   (typecheck + 5 suítes: orchestrator-flow 39 · mission-verification 25 ·
   integration-queue 14 · pane-permissions 14 · stall-attribution 8) ·
   commits `fase1:` sem acentos · agentes Opus sob liberação do dono por
-  sessão · git add por caminho explícito.
+  sessão · git add por caminho explícito · scripts de corte por ÂNCORA com
+  validação grep=1× e guarda anti-sobreposição · higiene de imports por
+  DIFF de órfãos (só os novos; sujeira pré-existente fica) · lição nova:
+  substituição regex quebra SHORTHAND de objeto e argumento posicional —
+  conferir depois do subst (dois casos reais pagos no commit 7).
 
 ## SESSÃO 2 DE 2026-08-08 — como o commit 6 foi feito (para replicar no paneLifecycle)
 

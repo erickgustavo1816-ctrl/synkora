@@ -251,6 +251,46 @@ eliminação é overhead do modo dev/GC — registrar e seguir para a Fase 1.
 > doc da varredura). PRÓXIMO: paneLifecycle.ts (pty:create 793L + guards
 > + livePaneSpecs/closingPaneIds/paneEverSpawned + ipc/panes) — último
 > grande corte da Fase 1; boot de validação do dono cobre 6a–6f antes.
+>
+> ESTADO 8 (2026-08-08, mesma sessão, pós-boot de validação dos 6a–6f):
+> **PANELIFECYCLE EXTRAÍDO em 3 commits** (7a 757ecd3 · 7b 4a29e4a ·
+> 7c e55a57d), todos verdes (typecheck node+web + 39/25/14/14/8).
+> Varredura Opus única (docs/FASE1_MAPA_PANELIFECYCLE.md) com o ACHADO
+> ESTRUTURAL que mudou o desenho: o domínio de pane é FUNDAÇÃO, não folha
+> — phase/mission/mcpApi/ipc consomem 8 símbolos dele e ele consome só 4
+> de volta (todos dentro de handlers IPC). Separando engine × IPC, a
+> ordem de construção virou **paneLifecycle → mission → maestro → phase**
+> com ZERO arrow late-bound no engine. Módulos novos: paneLifecycle.ts
+> (687L: armPane/mcpPaneArgs, estado vivo, encerramento, servidor de
+> teste, tickHelperOpenWatchdog) · ipc/pty.ts (954L: pty:create INTEIRO —
+> as 4 closures token/statsWatchHandle/preparationTicket/lastMaestroCtx
+> proíbem fatiar — + write/resize/kill/startup) · ipc/panes.ts (244L).
+> Risco 🔴 pago: o phaseEngine desestrutura ctx.livePaneSpecs/
+> closingPaneIds NA CONSTRUÇÃO — o paneLifecycle nasce ANTES de todos
+> (comentário-âncora no index e no cabeçalho do módulo; TDZ seria crash
+> de boot, não erro de typecheck). Invariantes preservados verbatim: a
+> corrida armPane×cleanPaneMcpFile (re-grave no spawn + pty:kill nunca
+> desarma + desarme só no onExit sob guard de geração — agora em 3
+> módulos, comentários contam a história) e o selo `maestro-<key>` (os 4
+> escritores viajaram juntos no ipc/pty; o leitor no maestroEngine não
+> mudou). ipc/guards.ts do mapa antigo foi DESCARTADO por ora
+> (bindUiSender escreve uiSender — exigiria state-accessor — e é extra de
+> 11 módulos; os asserts pertencem ao futuro corte de overlays). Lição
+> mecânica nova: substituição regex em corpo verbatim QUEBRA shorthand de
+> objeto (`mcpPort,` → `ctx.mcpPort,`) — conferir todo `{ ...shorthand }`
+> e argumento posicional após o subst. Higiene: 35 imports órfãos novos
+> removidos (diff contra 0cd958b). index.ts 8225→6658;
+> **19448 (pré-obra) → 6658 = −66%**. MARCO: todos os 136 handlers de
+> IPC vivem em src/main/ipc/ — no index ficam só crash:renderer/
+> perf:renderer-stall (module scope, por desenho). Restam no index:
+> boot/recovery · overlays (SynVoice/ANDAMENTO) + asserts de sender ·
+> verificação de plano · helpers de projeto/closure compartilhados ·
+> construção dos engines/ctx/mcpApi. DÉBITO: ipc/pty.ts ~950L dominado
+> por um handler (partição futura do pty:create em obra própria);
+> restante do débito do ESTADO 7 segue. PRÓXIMO: boot de validação do
+> dono cobrindo 7a–7c; depois a Fase 1 entra em cortes MENORES
+> (overlays/verificação de plano) ou encerra e abre a Fase 2 (veredito
+> sem barreira síncrona) — decisão do dono.
 
 Âncoras reais (index.ts de hoje): bindUiSender :463 · mcpPaneArgs :3988 ·
 armPane :4062 · recovery de boot :6797–6943 · completeMissionMerge :7344 ·
