@@ -167,6 +167,13 @@ test('PaneMailbox.waitFor (long-poll F3): resolve imediato com caixa cheia, acor
     assert.ok(Date.now() - t0 < 3000, 'acordou pelo post, não pelo teto')
     // teto vence com a caixa vazia de outro endereço
     assert.equal(await box.waitFor('task:outro:qa', 80), false)
+    // hasWaiters: o nudge só é digitado quando NINGUÉM espera o endereço
+    assert.equal(box.hasWaiters('task:t9:dev'), false)
+    const held = box.waitFor('task:t9:dev', 3000)
+    assert.equal(box.hasWaiters('task:t9:dev'), true)
+    box.post('task:t9:dev', { text: 'acorda', at: '2026-08-08T10:02:00Z' })
+    assert.equal(await held, true)
+    assert.equal(box.hasWaiters('task:t9:dev'), false) // post acordou e limpou
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

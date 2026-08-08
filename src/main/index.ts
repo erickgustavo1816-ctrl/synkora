@@ -3218,15 +3218,37 @@ app.whenReady().then(async () => {
     '[synkora] 📬 mensagem nova no seu correio — ela chega no resultado da sua PRÓXIMA tool; parado? chame check_messages'
   const mailboxNudgeAt = new Map<string, number>()
   function nudgeMailbox(paneId: string, retried = false): void {
-    const last = mailboxNudgeAt.get(paneId) ?? 0
-    if (Date.now() - last < 20_000) {
+    // Re-checagem VIVA a cada tentativa (inclusive re-agendadas): pendência
+    // já drenada (carona/check) ou espera armada nesse meio-tempo = nada a
+    // digitar — o post acorda quem espera sozinho.
+    const identity = hub.identityByPane(paneId)
+    if (!identity || !ptys.has(paneId)) return
+    const key = mailboxKeyOf(identity, paneId)
+    if (mailbox.pending(key) === 0) return
+    if (mailbox.hasWaiters(key)) {
       blackbox.record({
         cat: 'msg',
         event: 'mailbox-nudge',
         actor: 'harness',
         ids: { paneId },
-        detail: { outcome: 'throttled' }
+        detail: { outcome: 'skipped-waiter-armed' }
       })
+      return
+    }
+    const since = Date.now() - (mailboxNudgeAt.get(paneId) ?? 0)
+    if (since < 20_000) {
+      // Throttle NUNCA engole sinal (caso real 22:52: a 2ª mensagem em <20s
+      // só não ficou órfã porque havia long-poll): re-agenda UMA vez para o
+      // fim da janela; a re-chegada re-checa pendência/espera do zero.
+      if (!retried) setTimeout(() => nudgeMailbox(paneId, true), 20_000 - since + 500)
+      else
+        blackbox.record({
+          cat: 'msg',
+          event: 'mailbox-nudge',
+          actor: 'harness',
+          ids: { paneId },
+          detail: { outcome: 'throttled' }
+        })
       return
     }
     // O nudge é a ÚNICA digitação do correio — e teclado respeita o composer
@@ -3278,7 +3300,13 @@ app.whenReady().then(async () => {
     deliverToMailbox: (paneId, line, meta) => {
       const identity = hub.identityByPane(paneId)
       if (!identity) return false
-      mailbox.post(mailboxKeyOf(identity, paneId), {
+      const key = mailboxKeyOf(identity, paneId)
+      // ANTES do post (que acorda e remove os waiters): alguém já espera
+      // este endereço? Então o próprio post o acorda — nenhum aviso é
+      // digitado (o desenho que o dono pediu: "não teria que o Synkora
+      // avisar"; o 📬 fica só para pane sem espera armada).
+      const someoneWaiting = mailbox.hasWaiters(key)
+      mailbox.post(key, {
         text: line,
         at: new Date().toISOString(),
         sourcePaneId: meta.sourcePaneId,
@@ -3286,7 +3314,15 @@ app.whenReady().then(async () => {
         correlationId: meta.correlationId,
         dedupKey: meta.key
       })
-      nudgeMailbox(paneId)
+      if (someoneWaiting)
+        blackbox.record({
+          cat: 'msg',
+          event: 'mailbox-nudge',
+          actor: 'harness',
+          ids: { paneId },
+          detail: { outcome: 'skipped-waiter-armed' }
+        })
+      else nudgeMailbox(paneId)
       return true
     },
     composerBusy: (paneId) => ptys.composerBusy(paneId),

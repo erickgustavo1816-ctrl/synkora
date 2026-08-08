@@ -88,7 +88,12 @@ export function buildMailboxApi(
         },
         reason: `${messages.length} mensagem(ns) drenadas via check_messages`
       })
-      return formatInboxBlock(messages).trim()
+      // Caso real 2026-08-08: o delegador drenou a 1ª resposta e DESLIGOU a
+      // espera — a 2ª chegou para ninguém. O lembrete mora no ponto exato.
+      return (
+        formatInboxBlock(messages).trim() +
+        '\n\n(esperando MAIS alguma resposta? volte ao loop: chame check_messages de novo — ela segura ~45s por chamada — ou re-arme seu waiter)'
+      )
     }
   }
 }

@@ -671,8 +671,12 @@ export function buildHelpersApi(
               ? [helperContract, agentPersona, helperSecurityBlock].filter(Boolean).join('\n\n')
               : undefined,
           // Só o PEDIDO fica visível — o contrato/skills viajam invisíveis no
-          // system prompt (canais acima).
-          initialPrompt: opts.prompt,
+          // system prompt (canais acima). A linha de fecho fica NO TURNO de
+          // propósito (caso real 2026-08-08, 1º teste pós-mudança: com a
+          // instrução só no system prompt, um ajudante imprimiu a resposta e
+          // encerrou SEM chamar report — instrução de AÇÃO FINAL precisa
+          // morar perto do pedido).
+          initialPrompt: `${opts.prompt}\n\n(When finished, deliver via MCP: call the synkora tool "report" with status "done" and a short summary — full contract in your system instructions. Printing the answer here does NOT deliver it.)`,
           logFile: helperLogFile,
           title: `🤝 ${opts.title ?? agentDef?.id ?? 'ajudante'}`,
           role: 'ajudante',

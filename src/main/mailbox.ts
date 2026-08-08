@@ -114,6 +114,15 @@ export class PaneMailbox {
     })
   }
 
+  /** F3: há espera armada neste endereço (long-poll do check_messages ou
+   *  GET /mail-wait — os dois registram aqui)? Quem espera é acordado pelo
+   *  PRÓPRIO post; o nudge de teclado fica só para pane sem espera nenhuma
+   *  (reclamação do dono, 2026-08-08: o 📬 foi digitado no MESMO segundo de
+   *  um long-poll pendurado). */
+  hasWaiters(key: string): boolean {
+    return (this.waiters.get(key)?.size ?? 0) > 0
+  }
+
   private wake(key: string): void {
     const set = this.waiters.get(key)
     if (!set) return
