@@ -102,7 +102,10 @@ export interface PhaseApi {
       skillUsage: NonNullable<Task['skillUsage']>
       commitRuntime: () => boolean
     },
-    token?: PhaseTransitionToken
+    token?: PhaseTransitionToken,
+    /** Fotografia do dev POR VALOR (F2-c5b, §7.10): vem do codeReportGuard
+     *  do PRÓPRIO entrante — o campo watch.devSnapshot virou fallback. */
+    devSnapshot?: PhaseWatch['devSnapshot']
   ): Promise<boolean>
   /** Rollback padrão do caminho de THROW do veredito (F2-c5): re-indexa o
    *  watch com createdAt renovado (§7.4) — a menos que o registry já tenha um

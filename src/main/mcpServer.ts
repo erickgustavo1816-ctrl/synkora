@@ -19,6 +19,7 @@ import type { Hub, PaneIdentity } from './hub'
 import type { CodeQuery } from './codeIntelligence/types'
 import type { SecurityReviewInput } from './securityReview'
 import type { GateVerificationEvidence } from './gateVerificationEvidence'
+import type { PhaseWatch } from './phaseTypes'
 import type {
   MissionExecutionMode,
   MissionRiskLevel,
@@ -237,7 +238,8 @@ export interface McpApi {
     securityReview?: SecurityReviewInput,
     suggestedPatch?: string,
     skillApplications?: string[],
-    verificationEvidence?: GateVerificationEvidence
+    verificationEvidence?: GateVerificationEvidence,
+    devSnapshot?: PhaseWatch['devSnapshot']
   ) => string | Promise<string>
   /** Entrega somente a instrucao ja selecionada pelo receipt deste pane. */
   activateSkill: (id: PaneIdentity, receiptId: string) => Promise<string>
@@ -250,9 +252,13 @@ export interface McpApi {
   /** Inteligência de código compartilhada; erros viram fallback compacto em
    *  vez de falha de protocolo, para o pane continuar utilizável sem LSP. */
   codeQuery: (id: PaneIdentity, query: CodeQuery) => Promise<string>
-  /** Mensagem curta que bloqueia report(done), ou undefined quando o report
-   *  pode seguir (tarefa não-código, diagnóstico atual ou LSP indisponível). */
-  codeReportGuard: (id: PaneIdentity) => Promise<string | undefined>
+  /** Guard do report(done): `blocked` traz a mensagem curta que o bloqueia;
+   *  sem `blocked`, o report pode seguir e `devSnapshot` carrega a fotografia
+   *  POR VALOR até o advancePhase (F2-c5b, §7.10 — dois guards concorrentes
+   *  deixam de contaminar a decisão um do outro pelo campo compartilhado). */
+  codeReportGuard: (
+    id: PaneIdentity
+  ) => Promise<{ blocked?: string; devSnapshot?: PhaseWatch['devSnapshot'] }>
   /** um OU vários ajudantes numa chamada (lote = uma rodada de modelo só) */
   delegateMany: (id: PaneIdentity, list: DelegateOpts[]) => Promise<string>
   /** biblioteca pesquisável; nunca despeja o catálogo inteiro no contexto. */
@@ -867,9 +873,11 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       if (!gate && status !== 'done' && !devEnvironmentalBlock) {
         return text('status inválido: ajudante só aceita done; DEV aceita bloqueada apenas por falta de capacidade visual')
       }
+      let guardSnapshot: PhaseWatch['devSnapshot']
       if (status === 'done') {
-        const blocked = await api.codeReportGuard(identity)
-        if (blocked) return text(blocked)
+        const guard = await api.codeReportGuard(identity)
+        if (guard.blocked) return text(guard.blocked)
+        guardSnapshot = guard.devSnapshot
       }
       const content = status === 'done' ? 'done' : reason ? `${status}: ${reason}` : status
       return text(
@@ -880,7 +888,8 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
           securityReview,
           suggestedPatch,
           skillApplications,
-          verificationEvidence
+          verificationEvidence,
+          guardSnapshot
         )
       )
     }

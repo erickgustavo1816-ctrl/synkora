@@ -97,7 +97,9 @@ function api() {
       }
       return JSON.stringify({ paneId: id.paneId, cwd: id.cwd, operation: query.operation })
     },
-    codeReportGuard: async () => undefined,
+    // F2-c5b: o guard devolve OBJETO — blocked bloqueia; devSnapshot viaja
+    // por valor até o advancePhase (contrato novo do McpApi)
+    codeReportGuard: async () => ({}),
     activateSkill: async (id, receiptId) => JSON.stringify({
       paneId: id.paneId,
       phase: id.phase,

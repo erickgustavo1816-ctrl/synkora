@@ -30,7 +30,7 @@ import {
   validateGateVerificationEvidence,
   type GateVerificationEvidence
 } from '../gateVerificationEvidence'
-import { type MissionWatch } from '../phaseTypes'
+import { type MissionWatch, type PhaseWatch } from '../phaseTypes'
 import { requiresManualSecurityValidation } from '../securityPolicy'
 import {
   normalizeSecurityReview,
@@ -140,7 +140,8 @@ export function buildReportApi(
       securityReview: SecurityReviewInput | undefined,
       suggestedPatch?: string,
       skillApplications?: string[],
-      verificationEvidence?: GateVerificationEvidence
+      verificationEvidence?: GateVerificationEvidence,
+      devSnapshot?: PhaseWatch['devSnapshot']
     ) => {
       // Report cru atravessa MCP e pode acabar em task.feedback, transcript,
       // EVENTS e notificações. Sanitizamos uma vez na fronteira para nenhum
@@ -810,7 +811,8 @@ export function buildReportApi(
           normalizedSecurityReview,
           sanitizedVerificationEvidence,
           acceptance,
-          transitionToken
+          transitionToken,
+          devSnapshot
         )
       } catch (error) {
         // TaskStore só publica a nova fotografia depois de o JSON atômico

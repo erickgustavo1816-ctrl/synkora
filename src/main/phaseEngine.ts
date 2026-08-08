@@ -38,7 +38,6 @@ import { type SeatCli } from './seats'
 import { type Task, type TaskGateEvidence, type TaskUpdatePatch } from './tasks'
 import {
   alignWorktreeFromSnapshot,
-  changedWorktreeFiles,
   createTaskWorktree,
   currentBranch,
   ensureSynkoraGitExcludes,
@@ -206,7 +205,9 @@ export interface PhaseEngineExtras {
     opts?: { strictMcp?: boolean; configDir?: string; sensitive?: boolean }
   ): { paneId: string; cliArgs: string[] }
   /** Late-bound: o mcpApi nasce depois do engine. */
-  codeReportGuard(identity: PaneIdentity): Promise<string | undefined>
+  codeReportGuard(
+    identity: PaneIdentity
+  ): Promise<{ blocked?: string; devSnapshot?: PhaseWatch['devSnapshot'] }>
 }
 
 export type PhaseEngine = ReturnType<typeof createPhaseEngine>
@@ -3261,7 +3262,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       skillUsage: NonNullable<Task['skillUsage']>
       commitRuntime: () => boolean
     },
-    token?: PhaseTransitionToken
+    token?: PhaseTransitionToken,
+    devSnapshot?: PhaseWatch['devSnapshot']
   ): Promise<boolean> {
     // Fase 0 (atribuição de stall): mainStalls.wrap fecha Promise no settle —
     // a duração medida passa a incluir as viagens ao worker (que é o que se
@@ -3291,6 +3293,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         verificationEvidence,
         acceptance,
         token,
+        devSnapshot,
         chainContinuation
       )
     )
@@ -3309,6 +3312,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       commitRuntime: () => boolean
     },
     token?: PhaseTransitionToken,
+    devSnapshotParam?: PhaseWatch['devSnapshot'],
     chainContinuation: (continuation: Promise<unknown>) => void = (continuation) => {
       void continuation
     }
@@ -3388,16 +3392,22 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       // O report encerra o executor imediatamente. A fotografia abaixo ainda
       // se protege contra filhos/background tardios, mas não deixamos o mesmo
       // CLI continuar operando enquanto review e QA já estão abertos.
-      const snapshot = watch.devSnapshot
-      const snapshotStillExact = Boolean(
-        !watch.worktree ||
-          (snapshot &&
-            gitHead(watch.cwd) === snapshot.head &&
-            gitTree(watch.cwd, snapshot.head) === snapshot.tree &&
-            isWorktreeClean(watch.cwd) === true &&
-            gitVisibleWorktreeFingerprint(watch.cwd) === snapshot.fingerprint)
-      )
-      if (!snapshotStillExact) {
+      // F2-c5b (§7.10): a fotografia chega POR VALOR do codeReportGuard do
+      // PRÓPRIO entrante — o campo compartilhado é só fallback (testes).
+      const snapshot = devSnapshotParam ?? watch.devSnapshot
+      const mission = task.missionId ? missions.get(task.missionId) : undefined
+      const project = projects.get(watch.projectId)
+      // UMA viagem ao worker (devDeliveryFacts — R10): re-checagem da
+      // fotografia (head/tree/limpo/fingerprint), fingerprint efetivo e
+      // changedPaths contra a base. Era o git síncrono que congelava o main
+      // em toda entrega do dev.
+      const delivery = await gitOff('devDeliveryFacts', watch.cwd, snapshot, {
+        hasWorktree: Boolean(watch.worktree),
+        baseRef: snapshot?.baseHead ?? (mission ? mission.branch : undefined),
+        branchProbePath:
+          !snapshot?.baseHead && !mission && project ? project.path : undefined
+      })
+      if (!delivery.snapshotStillExact) {
         watch.devSnapshot = undefined
         reindexWatchForRollback(watch)
         if (watch.paneId) {
@@ -3408,23 +3418,17 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         }
         return false
       }
-      const mission = task.missionId ? missions.get(task.missionId) : undefined
-      const project = projects.get(watch.projectId)
-      const baseRef =
-        snapshot?.baseHead ??
-        (mission
-          ? mission.branch
-          : project
-            ? currentBranch(project.path)
-            : undefined)
-      const changedPaths = baseRef ? changedWorktreeFiles(watch.cwd, baseRef) : undefined
+      const changedPaths = delivery.changedPaths
+      // RELEITURA ÚNICA (R4): a fotografia da DECISÃO do ramo dev — depois do
+      // await acima, nenhuma releitura até o commit.
+      const latestDelivery = tasks.get(watch.taskId) ?? task
       // ENTREGA VAZIA (plano de estabilização 02/08, frente 3a): dev reportou
       // done sem NENHUM commit novo sobre a base (head == baseHead). Abrir um
       // gate aqui produziria um diff imutável degenerado (base..base = vazio)
       // e um reviewer cego — o caso real de 01/08. Vira estado explícito para
       // o orquestrador decidir, nunca um gate sem objeto.
       if (
-        task.deliverable === 'code' &&
+        latestDelivery.deliverable === 'code' &&
         watch.worktree &&
         snapshot?.head &&
         snapshot.baseHead &&
@@ -3467,7 +3471,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         return true
       }
       if (
-        task.deliverable === 'non_code' &&
+        latestDelivery.deliverable === 'non_code' &&
         watch.worktree &&
         (changedPaths === undefined || changedPaths.some(isExecutableProjectPath))
       ) {
@@ -3491,7 +3495,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       // estado se confundiu no meio. Entrega NOVA (head diferente) roda os
       // gates completos como sempre.
       const headNow = snapshot?.head
-      const priorV = task.verification
+      const priorV = latestDelivery.verification
       const reviewMemo =
         headNow &&
         priorV?.review?.verdict === 'approved' &&
@@ -3544,8 +3548,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       // REVIEW/QA nunca dividem uma árvore gravável com o autor. A conversa e
       // o handoff ficam persistidos, mas o processo escritor morre antes de o
       // gate nascer; uma reprovação reabre o mesmo card sobre esta fotografia.
-      const latestBeforeGate = tasks.get(watch.taskId) ?? task
-      const phaseSessions = { ...(latestBeforeGate.phaseSessions ?? {}) }
+      const phaseSessions = { ...(latestDelivery.phaseSessions ?? {}) }
       if (next) delete phaseSessions[next]
       tasks.update(watch.taskId, {
         ...(acceptance ? { skillUsage: acceptance.skillUsage } : {}),
@@ -3556,13 +3559,15 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         phaseResume: undefined,
         phaseSessions,
         verification: {
-          ...(task.verification ?? { contractVersion: 1 as const }),
+          ...(latestDelivery.verification ?? { contractVersion: 1 as const }),
           dev: {
             reportedAt,
             head: snapshot?.head,
             tree: snapshot?.tree,
             baseHead: snapshot?.baseHead,
-            fingerprint: snapshot?.fingerprint ?? gitVisibleWorktreeFingerprint(watch.cwd),
+            // pré-calculado na viagem devDeliveryFacts — o fingerprint nunca
+            // mais roda "no meio" do objeto de patch (R10/§4.1 do plano)
+            fingerprint: delivery.fingerprint,
             changedPaths,
             ...(verificationEvidence ? { verificationEvidence } : {})
           },
@@ -4228,6 +4233,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         void (async () => {
           try {
             let content = ''
+            let guardSnapshot: PhaseWatch['devSnapshot']
             try {
               content = readFileSync(watch.marker, 'utf-8')
             } catch {
@@ -4272,7 +4278,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
                 )
                 return
               }
-              const blocked = await codeReportGuard(identity)
+              const guard = await codeReportGuard(identity)
               try {
                 ensureProjectRuntimeWritable(watch.projectId)
               } catch {
@@ -4282,20 +4288,21 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
                 )
                 return
               }
-              if (blocked) {
+              if (guard.blocked) {
                 try {
                   unlinkSync(watch.marker)
                 } catch {
                   // marcador já sumiu
                 }
                 try {
-                  appendFileSync(watch.logFile, `\n[guard] ${blocked}\n`, 'utf-8')
+                  appendFileSync(watch.logFile, `\n[guard] ${guard.blocked}\n`, 'utf-8')
                 } catch {
                   // transcript é best-effort; a trava e o aviso continuam valendo
                 }
-                hub.notifyPane(identity.paneId, `[synkora] conclusão bloqueada: ${blocked}`)
+                hub.notifyPane(identity.paneId, `[synkora] conclusão bloqueada: ${guard.blocked}`)
                 return
               }
+              guardSnapshot = guard.devSnapshot
             }
             // Re-check de VIGÊNCIA (mesmo objeto): cobre a rodada que FECHOU
             // por completo durante o await do guard (report venceu, watch novo
@@ -4323,7 +4330,15 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
             // esperando nova entrega (redelivery-accepted cobre — decisão
             // documentada no plano §7).
             try {
-              await advancePhase(watch, content, undefined, undefined, undefined, transitionToken)
+              await advancePhase(
+                watch,
+                content,
+                undefined,
+                undefined,
+                undefined,
+                transitionToken,
+                guardSnapshot
+              )
             } catch (error) {
               rollbackVerdictTransaction(watch, transitionToken)
               blackbox.record({
