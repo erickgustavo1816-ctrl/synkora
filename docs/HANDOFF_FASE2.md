@@ -7,9 +7,8 @@
    > primeiro (seção "PRÓXIMA SESSÃO"). A Fase 2 está concluída e validada.
    > Tarefas, na ordem: (1) triagem da travadinha residual de abrir projeto
    > pelo journal (bbwatch --grep stall); (2) começar a FASE 5 — zero
-   > digitação entre agentes (correio MCP); (3) se sobrar, sonda do
-   > SynVoice mais rápido. Agentes Opus [liberados / não]. App [aberto /
-   > fechado]. Push [feito / pendente].
+   > digitação entre agentes (correio MCP). Agentes Opus [liberados / não].
+   > App [aberto / fechado]. Push [feito / pendente].
 1. **ONDE ESTAMOS**: FASE 2 CONCLUÍDA — commits c1…c5d todos verdes, matriz
    de corridas ligada (races 18), revisão adversarial aplicada, e o dono
    VALIDOU AO VIVO ("melhorou bastante; nada se compara ao que estava
@@ -38,21 +37,11 @@
    (WAITER em background acorda pane ocioso sem digitar) e R13 (long-poll
    de check_messages para gates read-only) — falta sondar o equivalente
    CODEX antes de generalizar (regra: sonda antes de afirmar).
-4. **TAREFA 3 (se sobrar) — SYNVOICE MAIS RÁPIDO** (pedido do dono
-   2026-08-08: a transcrição demora perceptível após soltar a gravação;
-   "poderia ser quase instantâneo"). Diagnóstico honesto: o fluxo atual é
-   NÃO-STREAMING (grava tudo → sobe o arquivo → espera o modelo processar o
-   clipe inteiro → texto) — a espera é majoritariamente da OpenAI, mas o
-   DESENHO amplifica. Três degraus, sondar antes de mexer (synVoice.ts):
-   (a) BARATO: conferir/trocar o modelo para o transcribe MINI (mais
-   rápido) + `stream=true` no /v1/audio/transcriptions (o texto começa a
-   chegar antes do fim do processamento — corta a latência percebida);
-   (b) MÉDIO: transcrição em STREAMING DURANTE a gravação via Realtime
-   API/WebSocket — ao soltar o botão o texto já está ~pronto (é o único
-   caminho para "quase instantâneo"); custo: reescrever o fluxo de captura
-   para chunks + WS no main, mais pontos de falha; (c) descartar por ora:
-   modelo local (whisper.cpp) — qualidade/manutenção não compensam. Regra
-   viva: sondar a API real com a chave do dono ANTES de prometer números.
+4. **DESCARTADO (decisão do dono, 2026-08-08)**: melhoria de latência do
+   SynVoice — "deixa do jeito que tá, é um pouco de tempo só de demora".
+   Não reinvestigar sem pedido novo; se voltar, os degraus avaliados eram
+   stream no /audio/transcriptions · transcrição via Realtime durante a
+   gravação · modelo mini.
 3. **DÉBITOS REGISTRADOS na revisão (decisão do dono, fora do gate)**:
    (a) `test:harness-lifecycle` está VERMELHO (26 falhas) desde a FASE 1 —
    as âncoras leem src/main/index.ts e as implementações migraram para
