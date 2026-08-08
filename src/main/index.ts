@@ -3206,18 +3206,52 @@ app.whenReady().then(async () => {
       `[synkora] MUDANÇA DE ETAPA (instrução autoritativa): ${instruction}`
     )
   }
-  // CORREIO MCP (CHECK 15 F1): payload de pane MCP-armado vai para a caixa
-  // postal durável e chega de carona no resultado da próxima tool; o
+  // CORREIO MCP (CHECK 15 F1 → F5-F2): payload de pane MCP-armado vai para a
+  // caixa postal durável e chega de carona no resultado da próxima tool; o
   // terminal só recebe o aviso curto abaixo. Pane sem identidade (shell/
-  // teste) segue no caminho antigo de injeção.
+  // teste) segue no caminho antigo de injeção. Desde o F2 a decisão mora no
+  // HUB (hasMailbox/deliverToMailbox) — entrega de correio é IMEDIATA, sem
+  // as guardas de teclado, e o desfecho auditado é 'mailboxed' (o
+  // delivery-injected falso do F1 morreu).
   const mailbox = new PaneMailbox(join(app.getPath('userData'), 'mailboxes.json'))
   const MAILBOX_NUDGE =
     '[synkora] 📬 mensagem nova no seu correio — ela chega no resultado da sua PRÓXIMA tool; parado? chame check_messages'
   const mailboxNudgeAt = new Map<string, number>()
-  function nudgeMailbox(paneId: string): void {
+  function nudgeMailbox(paneId: string, retried = false): void {
     const last = mailboxNudgeAt.get(paneId) ?? 0
-    if (Date.now() - last < 20_000) return
+    if (Date.now() - last < 20_000) {
+      blackbox.record({
+        cat: 'msg',
+        event: 'mailbox-nudge',
+        actor: 'harness',
+        ids: { paneId },
+        detail: { outcome: 'throttled' }
+      })
+      return
+    }
+    // O nudge é a ÚNICA digitação do correio — e teclado respeita o composer
+    // do humano (digitar por cima corrompe; a mensagem em si já está segura
+    // na caixa e chega de carona mesmo sem nudge).
+    if (ptys.composerBusy(paneId)) {
+      if (!retried) setTimeout(() => nudgeMailbox(paneId, true), 2500)
+      else
+        blackbox.record({
+          cat: 'msg',
+          event: 'mailbox-nudge',
+          actor: 'harness',
+          ids: { paneId },
+          detail: { outcome: 'skipped-composer-busy' }
+        })
+      return
+    }
     mailboxNudgeAt.set(paneId, Date.now())
+    blackbox.record({
+      cat: 'msg',
+      event: 'mailbox-nudge',
+      actor: 'harness',
+      ids: { paneId },
+      detail: { outcome: 'typed' }
+    })
     ptys.inject(paneId, MAILBOX_NUDGE, () => {})
   }
 
@@ -3236,35 +3270,24 @@ app.whenReady().then(async () => {
       return ptys.has(maestroPaneId(pid)) ? maestroPaneId(pid) : undefined
     },
     alive: (paneId) => ptys.has(paneId),
-    inject: (paneId, text, onSubmitted) => {
-      // CHECK 15 F1: pane com identidade MCP recebe o PAYLOAD pelo correio
-      // (durável, com carona) e só o aviso curto pelo teclado — a mensagem
-      // digitada + Enter (composer sujo, fatiamento, ring do ConPTY) morre
-      // aqui. Sem identidade = injeção clássica intacta.
+    // F5-F2: inject voltou a ser SÓ o teclado clássico (pane sem identidade).
+    // O desvio de correio saiu daqui — quem decide é o hub, ANTES das guardas
+    // de teclado, via hasMailbox/deliverToMailbox abaixo.
+    inject: (paneId, text, onSubmitted) => ptys.inject(paneId, text, onSubmitted),
+    hasMailbox: (paneId) => Boolean(hub.identityByPane(paneId)),
+    deliverToMailbox: (paneId, line, meta) => {
       const identity = hub.identityByPane(paneId)
-      if (identity) {
-        mailbox.post(mailboxKeyOf(identity, paneId), {
-          text,
-          at: new Date().toISOString()
-        })
-        blackbox.record({
-          cat: 'msg',
-          event: 'mailbox-post',
-          actor: 'harness',
-          ids: {
-            paneId,
-            projectId: identity.projectId,
-            missionId: identity.missionId,
-            taskId: identity.taskId,
-            role: identity.role
-          },
-          detail: { line: text.slice(0, 400) }
-        })
-        nudgeMailbox(paneId)
-        onSubmitted(true)
-        return true
-      }
-      return ptys.inject(paneId, text, onSubmitted)
+      if (!identity) return false
+      mailbox.post(mailboxKeyOf(identity, paneId), {
+        text: line,
+        at: new Date().toISOString(),
+        sourcePaneId: meta.sourcePaneId,
+        kind: meta.kind,
+        correlationId: meta.correlationId,
+        dedupKey: meta.key
+      })
+      nudgeMailbox(paneId)
+      return true
     },
     composerBusy: (paneId) => ptys.composerBusy(paneId),
     onDelivery: (paneId, status, line, meta) => {
@@ -3274,7 +3297,10 @@ app.whenReady().then(async () => {
         : undefined
       blackbox.record({
         cat: 'msg',
-        event: `delivery-${status}`,
+        // 'mailboxed' fica com o nome que a validação F1 procura no journal
+        // (mailbox-post); delivery-injected volta a significar SÓ digitação
+        // real no teclado (o falso positivo do F1 morreu no F2).
+        event: status === 'mailboxed' ? 'mailbox-post' : `delivery-${status}`,
         ids: {
           paneId,
           projectId: identity?.projectId,
@@ -3291,7 +3317,7 @@ app.whenReady().then(async () => {
       })
       const context = identity ?? sourceIdentity
       if (
-        status === 'injected' &&
+        (status === 'injected' || status === 'mailboxed') &&
         meta.sourcePaneId &&
         context &&
         uiSender &&

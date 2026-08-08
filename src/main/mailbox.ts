@@ -20,6 +20,14 @@ export interface MailboxMessage {
   text: string
   at: string
   urgent?: boolean
+  /** F2 — meta causal fim-a-fim: viaja com a mensagem até a leitura. */
+  sourcePaneId?: string
+  kind?: string
+  correlationId?: string
+  /** F2 — coalescência por FATO: mensagens com a mesma chave não-entregues
+   *  colapsam na mais nova (a semântica do `key` da fila do hub), em vez do
+   *  dedup cego por texto idêntico do F1. */
+  dedupKey?: string
 }
 
 const BOX_CAP = 60
@@ -51,9 +59,20 @@ export class PaneMailbox {
     this.pruneOld()
   }
 
-  /** Posta no endereço; texto idêntico ainda não entregue coalesce (dedup F1). */
+  /** Posta no endereço. Coalescência: mesma dedupKey não-entregue colapsa na
+   *  versão MAIS NOVA (fato atualizado substitui o velho — F2); sem dedupKey,
+   *  texto idêntico coalesce (dedup F1). */
   post(key: string, message: MailboxMessage): 'posted' | 'coalesced' {
     const box = this.data[key] ?? []
+    if (message.dedupKey) {
+      const i = box.findIndex((m) => m.dedupKey === message.dedupKey)
+      if (i >= 0) {
+        box[i] = { ...message, urgent: box[i].urgent || message.urgent }
+        this.data[key] = box
+        this.persist()
+        return 'coalesced'
+      }
+    }
     const dup = box.find((m) => m.text === message.text)
     if (dup) {
       dup.at = message.at
