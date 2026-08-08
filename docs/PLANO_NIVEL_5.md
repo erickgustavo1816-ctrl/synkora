@@ -690,6 +690,26 @@ eles extremamente rápida" (memória `feedback-zero-digitacao-entre-agentes`).
 > próxima missão real (nenhuma missão rodou desde F6.10 — journals 07-08
 > zerados de mailbox-*), e o F3 (aposentar o nudge via waiter claude +
 > long-poll check_messages, agora com os dois lados sondados).
+>
+> ESTADO F5-3 (2026-08-08, mesma sessão, após "bora, continua" do dono):
+> **TRAVADINHA DA ABERTURA APLICADA** — `missionWorkspaceReadout`
+> (worktree.ts, no registry do gitWorker) agrupa excludes + hasGitCommit +
+> isExpectedWorktree numa viagem única; missions:paneSpec usa com guarda
+> anti-janela-de-await e maestro:paneSpec manda o excludes por gitOff
+> (suíte mission-worktree 27→29). **F3a APLICADO** — check_messages vira
+> LONG-POLL (PaneMailbox.waitFor + McpApi.waitForMail; teto 45s dentro do
+> provado; tool_timeout_sec=300 nos panes codex; prompts ensinam o ciclo;
+> prefixo [synkora] embutido removido de 11 textos). **F3b APLICADO** —
+> endpoint GET /mail-wait (auth bearer, teto 10min, close() drena
+> pendurados) + env SYNKORA_MAIL_WAIT_URL + buildIdleWaiterHint(cli) no
+> devContract/orquestrador/PM (claude = waiter curl em background; codex =
+> loop de check_messages). **VALIDADO em sonda**: W6 com codex REAL =
+> `longpoll-mail-read` (check_messages segurada 12s, mensagem chegou no
+> meio, o modelo leu); smoke do curl exato do prompt = pendurado até o post
+> e MAIL na hora. Suítes novas: test:mail-wait (2) + mailbox-delivery (10).
+> O NUDGE 📬 CONTINUA como rede (auditado; "nunca remover a rede inteira")
+> — aposentá-lo é decisão do dono APÓS a validação ao vivo de
+> waiter+long-poll numa missão real.
 
 ## Nota de estado — spec MCP 2026-07-28 (verificado em sonda, 2026-08-07)
 

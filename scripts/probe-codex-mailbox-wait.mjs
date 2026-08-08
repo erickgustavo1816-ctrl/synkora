@@ -50,6 +50,8 @@ const identities = new Map()
 const codeQueryCalls = []
 let callDelayMs = 0
 let callMarker = 'MAIL-SAYS-NONE'
+let mailArrivesInMs = 0
+let mailReady = false
 const base = {
   hub: { identityByToken: (token) => identities.get(token) },
   // opcionais chamados com `?.` e checados por truthiness: o stub genérico do
@@ -57,7 +59,20 @@ const base = {
   // (provado no W1: content[1].text virou Promise e o zod recusou).
   drainInboxFor: () => '',
   noteCatalogServed: () => {},
-  checkMessages: () => 'no mail (probe)',
+  // W6 — long-poll do check_messages: waitForMail segura até mailArrivesInMs
+  // (0 = resolve vazio na hora) e o checkMessages devolve o marcador DEPOIS
+  // da "chegada" — espelho fiel do contrato novo do F3a.
+  waitForMail: (_id, timeoutMs) => {
+    if (!mailArrivesInMs) return Promise.resolve(false)
+    const wait = Math.min(mailArrivesInMs, timeoutMs)
+    return new Promise((res) =>
+      setTimeout(() => {
+        mailReady = mailArrivesInMs <= timeoutMs
+        res(mailReady)
+      }, wait)
+    )
+  },
+  checkMessages: () => (mailReady ? `[synkora inbox] 1. ${callMarker}` : 'no mail (probe)'),
   boardStatus: () => JSON.stringify({ probe: true }),
   report: () => 'report registrado (sonda)',
   codeQuery: (_id, query) => {
@@ -205,6 +220,31 @@ await longpollRun('W1-baseline', 0)
 await longpollRun('W2-45s', 45_000)
 await longpollRun('W3-75s', 75_000)
 await longpollRun('W4-75s-timeout300', 75_000, ['-c', 'mcp_servers.synkora.tool_timeout_sec=300'])
+
+// W6 — F3a de ponta a ponta com codex real: check_messages SEGURADA pelo
+// servidor (mensagem "chega" 12s depois da chamada) — o modelo espera a tool
+// e lê o correio que não existia quando chamou.
+if (wants('W6')) {
+  newIdentity('W6')
+  mailArrivesInMs = 12_000
+  mailReady = false
+  callMarker = 'MAIL-SAYS-W6-LONGPOLL'
+  const run = await runExec(
+    [...gateArgs(), ...codexMcpArgs(port), '-m', MODEL],
+    'Call the MCP tool "check_messages" from the server "synkora" exactly once. It may HOLD the response for a while — that is normal, wait for it. Print exactly the mail text you received between BEGIN and END. If it says no mail, print exactly NO-MAIL. Then stop.',
+    'W6-check-messages-longpoll',
+    240_000
+  )
+  run.gotMarker = run.stdout.includes('MAIL-SAYS-W6-LONGPOLL')
+  run.verdict = run.gotMarker
+    ? 'longpoll-mail-read'
+    : run.stdout.includes('NO-MAIL')
+      ? 'no-mail'
+      : 'inconclusive'
+  results.runs.push(run)
+  console.log(`[probe] W6: ${run.verdict} (${run.durationMs}ms)`)
+  mailArrivesInMs = 0
+}
 
 // W5a — catálogo com unified_exec ligado (headless, barato)
 if (wants('W5a')) {
