@@ -15,6 +15,7 @@ import { join } from 'path'
 import { existsSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { FREE_AGENT_PERSONA } from '../maestro'
+import { buildIdleWaiterHint } from '../phasePrompts'
 import { createVersionWorktree } from '../worktree'
 import {
   activeQaRuntimes,
@@ -221,17 +222,21 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
       if (seat.cli === 'claude') cliArgs.push('--effort', effort)
       else cliArgs.push('-c', `model_reasoning_effort="${effort}"`)
     }
+    // F5-F3b: o agente livre também aprende a esperar SEM digitação (waiter
+    // claude / long-poll codex) — era o único papel sem o hint (teste real
+    // 2026-08-08: o livre pollou list_helpers/helper_output em loop).
+    const freePersona = `${FREE_AGENT_PERSONA}${buildIdleWaiterHint(seat.cli)}`
     if (seat.cli === 'codex') {
       // persona invisível do codex VALIDADA em PTY real (2026-07-24, sonda
       // BANANA123): -c developer_instructions="…" injeta developer
       // instructions sem aparecer na conversa — os dois CLIs iguais.
       // Valor vira string TOML de uma linha (\n escapado).
-      cliArgs.push('-c', codexDeveloperInstructions(FREE_AGENT_PERSONA))
+      cliArgs.push('-c', codexDeveloperInstructions(freePersona))
     }
     return {
       paneId: armed.paneId,
       cliArgs,
-      appendSystemPrompt: seat.cli === 'claude' ? FREE_AGENT_PERSONA : undefined
+      appendSystemPrompt: seat.cli === 'claude' ? freePersona : undefined
     }
   })
 

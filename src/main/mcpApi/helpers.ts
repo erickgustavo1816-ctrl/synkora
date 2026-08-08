@@ -189,11 +189,20 @@ export function buildHelpersApi(
         if (activeHelpers + list.length > limit)
           return `o modo ${EXECUTION_MODE_LABEL[executionMode]} permite no máximo ${limit} ajudante(s) simultâneo(s) por card; já há ${activeHelpers} e esta chamada pediu ${list.length}. Reduza para blocos realmente independentes.`
       } else {
+        // AGENTE LIVRE paraleliza de verdade (teste real do dono, 2026-08-08:
+        // pediu 2 pesquisas em panes diferentes e o teto hardcoded de 1
+        // serializou tudo — contradizia a persona "paraleliza igual qualquer
+        // agente do sistema" e o próprio delegate em lote). Paridade com o
+        // teto do modo deep; os demais panes sem card (PM em tarefa solta)
+        // seguem com 1.
+        const limit = id.role === 'livre' ? 4 : 1
         const activeHelpers = hub
           .panesOf(id.projectId)
           .filter((pane) => pane.role === 'ajudante' && pane.delegatorPaneId === id.paneId).length
-        if (activeHelpers + list.length > 1)
-          return 'este pane já possui seu único ajudante; encerre ou aguarde o atual antes de abrir outro'
+        if (activeHelpers + list.length > limit)
+          return limit === 1
+            ? 'este pane já possui seu único ajudante; encerre ou aguarde o atual antes de abrir outro'
+            : `o agente livre permite no máximo ${limit} ajudantes simultâneos; já há ${activeHelpers} e esta chamada pediu ${list.length}. Para 2+ ajudantes numa tacada, use UMA chamada delegate com o array helpers.`
       }
       const helperReservationKey = id.taskId ? `task:${id.taskId}` : `pane:${id.paneId}`
       if (!helperSpawnReservations.tryAcquire(helperReservationKey))
@@ -522,10 +531,18 @@ export function buildHelpersApi(
           releasePaneSkillLease(helperPaneId)
           return { ok: false, msg: 'não foi possível registrar o plano rastreável do ajudante' }
         }
+        // projectId OBRIGATÓRIO no scope (bug real 2026-08-08, teste do dono):
+        // o guard do activate_skill compara scope.projectId — sem o campo,
+        // TODO ajudante com skills era recusado ("este pane não possui um
+        // plano ativo de skills") e o report(done), que exige os receipts,
+        // virava beco sem saída. Fases e maestro sempre gravaram; só o
+        // ajudante esquecia.
         skillPlanScopes.set(helperPaneId, {
           phase: 'helper',
           phaseRun: helperPhaseRun,
-          agentIds: []
+          agentIds: [],
+          projectId: id.projectId,
+          missionId: id.missionId
         })
         if (!helperParentStillActive()) {
           releasePaneSkillLease(helperPaneId)
@@ -698,8 +715,9 @@ export function buildHelpersApi(
         }
         if (anyOk)
           results.push(
-            `Trabalham no mesmo diretório. Você será avisado com "[synkora] ajudante concluiu" quando cada um reportar done (ou morrer sem reportar). ` +
-              `VOCÊ TEM CONTROLE TOTAL: list_helpers (estado), helper_output (ler a saída), helper_send (responder prompts/escolher opções), helper_close (encerrar).`
+            `Trabalham no mesmo diretório. Você será avisado no seu CORREIO quando cada um reportar done (ou morrer sem reportar). ` +
+              `DELEGOU, NÃO ASSISTE (regra do dono, teste real 2026-08-08: um delegador pollou list_helpers/helper_output 23x e queimou ~3M tokens à toa): NÃO fique chamando list_helpers/helper_output em loop para acompanhar — espere SEM digitação (claude: waiter em background no /mail-wait; codex: loop de check_messages, que segura ~45s por chamada) e aja quando o report chegar. ` +
+              `helper_output é para DEPOIS do report (ler a entrega) ou diagnóstico pontual de ajudante travado — nunca acompanhamento contínuo. Controle: list_helpers (estado), helper_send (responder prompts/escolher opções), helper_close (encerrar).`
           )
         return results.join('\n')
       } finally {
