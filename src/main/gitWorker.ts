@@ -3,6 +3,7 @@ import * as worktree from './worktree'
 import * as reviewDiff from './reviewDiff'
 import * as workspaceSkills from './workspaceSkills'
 import * as skillPackageSecurity from './skillPackageSecurity'
+import * as reviewEvidence from './reviewEvidence'
 
 // WORKER DE GIT (task #2, 2026-08-04): as "travadas" do app eram o MAIN
 // congelado em execFileSync de git (spawn 1-2s, transição 2-3,5s, merge
@@ -28,7 +29,9 @@ const registry: Record<string, unknown> = {
   ...worktree,
   ...reviewDiff,
   ...workspaceSkills,
-  ...skillPackageSecurity
+  ...skillPackageSecurity,
+  // Fase 2 (R11): a identidade sha256 do artefato de review sai do main.
+  ...reviewEvidence
 }
 
 interface GitWorkerRequest {

@@ -4,6 +4,7 @@ import type * as worktreeApi from './worktree'
 import type * as reviewDiffApi from './reviewDiff'
 import type * as workspaceSkillsApi from './workspaceSkills'
 import type * as skillPackageSecurityApi from './skillPackageSecurity'
+import type * as reviewEvidenceApi from './reviewEvidence'
 
 // PONTE ASSÍNCRONA DO GIT (task #2, 2026-08-04): tira o git do main thread.
 // `gitOff('fn', ...args)` executa a função exportada de worktree.ts/
@@ -16,7 +17,8 @@ import type * as skillPackageSecurityApi from './skillPackageSecurity'
 type GitApi = typeof worktreeApi &
   typeof reviewDiffApi &
   typeof workspaceSkillsApi &
-  typeof skillPackageSecurityApi
+  typeof skillPackageSecurityApi &
+  typeof reviewEvidenceApi
 
 interface PendingCall {
   resolve: (value: unknown) => void
@@ -35,10 +37,17 @@ function loadSyncFallback(): Promise<GitApi> {
       import('./worktree'),
       import('./reviewDiff'),
       import('./workspaceSkills'),
-      import('./skillPackageSecurity')
+      import('./skillPackageSecurity'),
+      import('./reviewEvidence')
     ]).then(
-      ([worktree, reviewDiff, workspaceSkills, skillPackageSecurity]) =>
-        ({ ...worktree, ...reviewDiff, ...workspaceSkills, ...skillPackageSecurity }) as GitApi
+      ([worktree, reviewDiff, workspaceSkills, skillPackageSecurity, reviewEvidence]) =>
+        ({
+          ...worktree,
+          ...reviewDiff,
+          ...workspaceSkills,
+          ...skillPackageSecurity,
+          ...reviewEvidence
+        }) as GitApi
     )
   }
   return syncFallback

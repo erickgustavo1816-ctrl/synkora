@@ -15,6 +15,7 @@
 // harness antes de provar a mudança. A matriz de 13 corridas liga no F2-c5.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import Module, { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -408,6 +409,20 @@ test('baseline: gate que ESCREVEU (fingerprint divergente) tem o veredito invali
   assert.equal(after.activePhase, 'dev')
   fixture.git('checkout', '--', '.')
   await settle()
+})
+
+test('pacote reviewArtifactIdentity (reviewEvidence, worker-elegível) confere sha256 e bytes', (t) => {
+  const reviewEvidence = require(join(COMPILED, 'reviewEvidence.js'))
+  const dir = mkdtempSync(join(tmpdir(), 'synkora-artifact-identity-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const file = join(dir, 'patch.review.patch')
+  const content = 'diff --git a/x b/x\n+linha um\n+linha dois — çãé\n'
+  writeFileSync(file, content, 'utf-8')
+
+  const identity = reviewEvidence.reviewArtifactIdentity(file)
+
+  assert.equal(identity.sha256, createHash('sha256').update(Buffer.from(content, 'utf-8')).digest('hex'))
+  assert.equal(identity.bytes, Buffer.byteLength(content, 'utf-8'))
 })
 
 test('harness: nenhuma continuação deixou rejeição órfã no ar', async () => {

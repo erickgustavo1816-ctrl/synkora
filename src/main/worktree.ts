@@ -164,6 +164,110 @@ export function quarantineUntrackedNew(cwd: string, quarantineDir: string): stri
   }
 }
 
+// ————————————————————————————————————————————————————————————————————————
+// PACOTES DE FATOS DO VEREDITO (Fase 2 do nível 5, docs/FASE2_PLANO.md §4.1):
+// o advancePhase assíncrono consome ESTAS funções via gitOff — os fatos de
+// cada ramo viajam ao worker numa viagem só (o mesmo racional que criou o
+// snapshotProblemFor: "uma viagem em vez de cinco"). Conversão 1:1 viraria
+// 6-7 round-trips serializados no worker único (risco R10 do mapa
+// FASE2_MAPA_VEREDITO). Sem consumidor até o F2-c5 — comportamento zero.
+
+/** Preâmbulo do veredito de GATE numa viagem: fingerprint final da árvore,
+ * problema de fotografia (fonte única snapshotProblemFor) e head atual (a
+ * condição de entrada da quarentena de evidência). */
+export interface GateVerdictFacts {
+  fingerprint: ReturnType<typeof gitVisibleWorktreeFingerprint>
+  snapshotProblem: string | undefined
+  head: ReturnType<typeof gitHead>
+}
+
+export function gateVerdictFacts(
+  cwd: string,
+  snap: DevSnapshotFacts,
+  requireBase: boolean
+): GateVerdictFacts {
+  return {
+    fingerprint: gitVisibleWorktreeFingerprint(cwd),
+    snapshotProblem: snapshotProblemFor(cwd, snap, requireBase),
+    head: gitHead(cwd)
+  }
+}
+
+/** Quarentena de evidência + REVALIDAÇÃO na mesma viagem (a 2ª e última do
+ * ramo de gate — só dispara quando há divergência com head intacto).
+ * `fingerprint`/`snapshotProblem` só têm significado quando `moved` não é
+ * vazio; sem nada movido, o chamador mantém os valores da 1ª viagem. */
+export interface QuarantineRevalidation {
+  moved: string[]
+  fingerprint: ReturnType<typeof gitVisibleWorktreeFingerprint>
+  snapshotProblem: string | undefined
+}
+
+export function quarantineAndRevalidate(
+  cwd: string,
+  quarantineDir: string,
+  snap: DevSnapshotFacts,
+  requireBase: boolean
+): QuarantineRevalidation {
+  const moved = quarantineUntrackedNew(cwd, quarantineDir)
+  if (moved.length === 0) {
+    return { moved, fingerprint: undefined, snapshotProblem: undefined }
+  }
+  return {
+    moved,
+    fingerprint: gitVisibleWorktreeFingerprint(cwd),
+    snapshotProblem: snapshotProblemFor(cwd, snap, requireBase)
+  }
+}
+
+/** Fatos da entrega do DEV numa viagem: re-checagem da fotografia
+ * (head/tree/limpo/fingerprint contra o devSnapshot), fingerprint EFETIVO da
+ * entrega e paths mudados contra a base. `baseRef` explícito (baseHead da
+ * fotografia ou branch da missão) vence; sem ele, a branch atual de
+ * `branchProbePath` (o caminho do PROJETO — tarefa solta). Fotografia
+ * INCOMPLETA (sem head/tree/fingerprint) conta como drift — mais estrito que
+ * o inline antigo no caso exótico de snapshot parcial, de propósito. */
+export interface DevDeliveryFacts {
+  snapshotStillExact: boolean
+  fingerprint: ReturnType<typeof gitVisibleWorktreeFingerprint>
+  baseRef: string | undefined
+  changedPaths: ReturnType<typeof changedWorktreeFiles> | undefined
+}
+
+export function devDeliveryFacts(
+  cwd: string,
+  snapshot: { head?: string; tree?: string; fingerprint?: string } | undefined,
+  opts: { hasWorktree: boolean; baseRef?: string; branchProbePath?: string }
+): DevDeliveryFacts {
+  let fingerprintNow: ReturnType<typeof gitVisibleWorktreeFingerprint>
+  let fingerprintScanned = false
+  const currentFingerprint = (): ReturnType<typeof gitVisibleWorktreeFingerprint> => {
+    if (!fingerprintScanned) {
+      fingerprintScanned = true
+      fingerprintNow = gitVisibleWorktreeFingerprint(cwd)
+    }
+    return fingerprintNow
+  }
+  const snapshotStillExact = Boolean(
+    !opts.hasWorktree ||
+      (snapshot?.head &&
+        snapshot.tree &&
+        snapshot.fingerprint &&
+        gitHead(cwd) === snapshot.head &&
+        gitTree(cwd, snapshot.head) === snapshot.tree &&
+        isWorktreeClean(cwd) === true &&
+        currentFingerprint() === snapshot.fingerprint)
+  )
+  const baseRef =
+    opts.baseRef ?? (opts.branchProbePath ? currentBranch(opts.branchProbePath) : undefined)
+  return {
+    snapshotStillExact,
+    fingerprint: snapshot?.fingerprint ?? currentFingerprint(),
+    baseRef,
+    changedPaths: baseRef ? changedWorktreeFiles(cwd, baseRef) : undefined
+  }
+}
+
 export interface TaskWorktreeSnapshot {
   ok: boolean
   detail: string

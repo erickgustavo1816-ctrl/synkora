@@ -1,8 +1,29 @@
 import { createHash } from 'crypto'
-import { closeSync, openSync, readSync } from 'fs'
+import { closeSync, openSync, readSync, statSync } from 'fs'
 import type { PhaseWatch } from './phaseTypes'
 
 export const REVIEW_EVIDENCE_CHUNK_BYTES = 32 * 1024
+
+/** Identidade do artefato imutável do review: sha256 + tamanho, lidos em
+ * blocos de 1MiB. Extraída do closure do phaseEngine na Fase 2 (risco R11 do
+ * mapa FASE2_MAPA_VEREDITO): patch de review grande (~120k é o caso que
+ * justificou o artefato) custa um sha256 inteiro — módulo puro, elegível ao
+ * gitWorker via gitOff('reviewArtifactIdentity'). */
+export function reviewArtifactIdentity(path: string): { sha256: string; bytes: number } {
+  const hash = createHash('sha256')
+  const fd = openSync(path, 'r')
+  const chunk = Buffer.allocUnsafe(1024 * 1024)
+  try {
+    for (;;) {
+      const read = readSync(fd, chunk, 0, chunk.byteLength, null)
+      if (read === 0) break
+      hash.update(chunk.subarray(0, read))
+    }
+  } finally {
+    closeSync(fd)
+  }
+  return { sha256: hash.digest('hex'), bytes: statSync(path).size }
+}
 
 type ReviewArtifact = NonNullable<PhaseWatch['reviewArtifact']>
 

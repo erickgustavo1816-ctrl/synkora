@@ -53,7 +53,8 @@ import {
 import { type GateVerificationEvidence } from './gateVerificationEvidence'
 import {
   buildReviewEvidenceChunkManifest,
-  readAuthenticatedReviewEvidenceChunk
+  readAuthenticatedReviewEvidenceChunk,
+  reviewArtifactIdentity
 } from './reviewEvidence'
 import {
   buildAgentsBlock,
@@ -87,13 +88,10 @@ import { ensureProjectSecurityBaseline } from './projectSecurityBaseline'
 import { redactSensitiveText } from './securityRedaction'
 import {
   appendFileSync,
-  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
-  openSync,
   readFileSync,
-  readSync,
   readdirSync,
   rmSync,
   statSync,
@@ -101,7 +99,7 @@ import {
   writeFileSync
 } from 'fs'
 import { GIT_CHECKPOINT_MARKER, gitOff, gitOffWithCheckpoint } from './gitAsync'
-import { createHash, randomUUID } from 'crypto'
+import { randomUUID } from 'crypto'
 import { type PaneIdentity } from './hub'
 import { type SkillDef } from './skillsLibrary'
 import {
@@ -261,22 +259,9 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     research: 'research'
   }
 
-  function reviewArtifactIdentity(path: string): { sha256: string; bytes: number } {
-    const hash = createHash('sha256')
-    const fd = openSync(path, 'r')
-    const chunk = Buffer.allocUnsafe(1024 * 1024)
-    try {
-      for (;;) {
-        const read = readSync(fd, chunk, 0, chunk.byteLength, null)
-        if (read === 0) break
-        hash.update(chunk.subarray(0, read))
-      }
-    } finally {
-      closeSync(fd)
-    }
-    return { sha256: hash.digest('hex'), bytes: statSync(path).size }
-  }
-
+  // reviewArtifactIdentity extraído para reviewEvidence.ts na Fase 2 (R11):
+  // módulo puro, elegível ao worker — o sha256 de patch grande sai do main
+  // no F2-c5 via gitOff('reviewArtifactIdentity').
   const reviewEvidenceRoot = join(app.getPath('userData'), 'review-evidence')
   let sweptReviewArtifacts = false
   function removeAllReviewArtifacts(): void {

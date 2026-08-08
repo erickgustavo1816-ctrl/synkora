@@ -18,8 +18,10 @@ import {
   changedWorktreeFiles,
   createMissionWorktree,
   createVersionWorktree,
+  devDeliveryFacts,
   ensureSynkoraGitExcludes,
   executableProjectPathKind,
+  gateVerdictFacts,
   gitHeadContainsMessage,
   gitHistoryContainsMessage,
   gitVisibleWorktreeFingerprint,
@@ -28,6 +30,7 @@ import {
   isExpectedVersionWorktree,
   isExecutableProjectPath,
   mergeTaskWorktree,
+  quarantineAndRevalidate,
   removeWorktreeAndBranch,
   resolveMissionWorkspace,
   snapshotTaskWorktree
@@ -782,4 +785,79 @@ test('release journal is discardable only while both exact pre-CAS snapshots sta
     isExactCleanPreCasSnapshot(source.dir, sourceHead, root, targetHead, targetBranch),
     false
   )
+})
+
+// ——— Fase 2: pacotes de fatos do veredito (docs/FASE2_PLANO.md §4.1) ———
+
+function deliveryFixture(t, prefix) {
+  const root = initializeRepository(t, prefix)
+  const baseHead = git(root, ['rev-parse', 'HEAD'])
+  writeFileSync(join(root, 'feature.txt'), 'entrega\n', 'utf8')
+  git(root, ['add', 'feature.txt'])
+  git(root, ['commit', '-m', 'entrega'])
+  const head = git(root, ['rev-parse', 'HEAD'])
+  const tree = git(root, ['show', '-s', '--format=%T', head])
+  const fingerprint = gitVisibleWorktreeFingerprint(root)
+  return { root, facts: { head, tree, fingerprint, baseHead } }
+}
+
+test('gateVerdictFacts entrega fingerprint+fotografia+head numa viagem', (t) => {
+  const { root, facts } = deliveryFixture(t, 'synkora-gate-facts-')
+
+  const clean = gateVerdictFacts(root, facts, true)
+  assert.equal(clean.snapshotProblem, undefined)
+  assert.equal(clean.head, facts.head)
+  assert.equal(clean.fingerprint, facts.fingerprint)
+
+  writeFileSync(join(root, 'feature.txt'), 'gate escreveu\n', 'utf8')
+  const dirty = gateVerdictFacts(root, facts, true)
+  assert.ok(/não commitados/.test(dirty.snapshotProblem))
+  assert.equal(dirty.head, facts.head)
+  assert.notEqual(dirty.fingerprint, facts.fingerprint)
+})
+
+test('quarantineAndRevalidate move untracked novo e devolve a revalidação junto', (t) => {
+  const { root, facts } = deliveryFixture(t, 'synkora-quarantine-facts-')
+  const quarantineDir = initializeWorktreesDirectory(t, 'synkora-quarantine-dir-')
+
+  const noop = quarantineAndRevalidate(root, quarantineDir, facts, true)
+  assert.deepEqual(noop.moved, [])
+  assert.equal(noop.fingerprint, undefined)
+  assert.equal(noop.snapshotProblem, undefined)
+
+  writeFileSync(join(root, 'evidencia.png'), 'screenshot\n', 'utf8')
+  const swept = quarantineAndRevalidate(root, quarantineDir, facts, true)
+  assert.deepEqual(swept.moved, ['evidencia.png'])
+  assert.equal(swept.snapshotProblem, undefined)
+  assert.equal(swept.fingerprint, facts.fingerprint)
+  assert.equal(existsSync(join(root, 'evidencia.png')), false)
+  assert.equal(existsSync(join(quarantineDir, 'evidencia.png')), true)
+})
+
+test('devDeliveryFacts re-checa a fotografia e resolve base+changedPaths', (t) => {
+  const { root, facts } = deliveryFixture(t, 'synkora-dev-facts-')
+  const snapshot = { head: facts.head, tree: facts.tree, fingerprint: facts.fingerprint }
+
+  const exact = devDeliveryFacts(root, snapshot, { hasWorktree: true, baseRef: facts.baseHead })
+  assert.equal(exact.snapshotStillExact, true)
+  assert.equal(exact.fingerprint, facts.fingerprint)
+  assert.equal(exact.baseRef, facts.baseHead)
+  assert.ok(exact.changedPaths.includes('feature.txt'))
+
+  writeFileSync(join(root, 'feature.txt'), 'drift depois da fotografia\n', 'utf8')
+  const drifted = devDeliveryFacts(root, snapshot, { hasWorktree: true, baseRef: facts.baseHead })
+  assert.equal(drifted.snapshotStillExact, false)
+  git(root, ['checkout', '--', '.'])
+
+  // fotografia INCOMPLETA conta como drift (mais estrito que o inline antigo)
+  const partial = devDeliveryFacts(root, { head: facts.head }, { hasWorktree: true })
+  assert.equal(partial.snapshotStillExact, false)
+
+  // sem worktree a fotografia não se aplica; a base sai da branch do projeto
+  const loose = devDeliveryFacts(root, undefined, {
+    hasWorktree: false,
+    branchProbePath: root
+  })
+  assert.equal(loose.snapshotStillExact, true)
+  assert.equal(typeof loose.baseRef, 'string')
 })
