@@ -1,9 +1,35 @@
-# HANDOFF — Fase 1 da cirurgia do índice (pós-commit 3)
+# HANDOFF — Fase 1 da cirurgia do índice (pós-commits 3, 4 e 5)
 
-Atualizado 2026-08-08, fim da sessão do commit 3 (phaseEngine.ts). A PRÓXIMA
-SESSÃO lê este arquivo PRIMEIRO, depois docs/FASE1_MAPA_MAINCONTEXT.md (a
-receita) e o bloco ESTADO da Fase 1 em docs/PLANO_NIVEL_5.md (o ESTADO 4 tem
-o desfecho desta sessão).
+Atualizado 2026-08-08, fim da sessão que executou os commits 3 (phaseEngine),
+4 (mcpApi/, 4 partes) e 5 (ipc/, 5 fatias). A PRÓXIMA SESSÃO lê este arquivo
+PRIMEIRO, depois docs/FASE1_MAPA_MAINCONTEXT.md (a receita) e os ESTADOS 4–6
+da Fase 1 em docs/PLANO_NIVEL_5.md.
+
+## ONDE A OBRA ESTÁ + PRÓXIMO PASSO (leia isto e os blocos da data)
+
+- index.ts: 19.448 (pré-obra) → **11.768 linhas (−39%)**. Módulos novos:
+  phaseEngine.ts (4.1k) · mcpApi/ (9 arquivos) · ipc/ (12 arquivos, 100 dos
+  138 handlers).
+- O que RESTA no index, por dono: engines de missão/maestro (~createMissionImpl,
+  startMissionIntegration, integração/fila, ensureSession/preparePlanningRun,
+  survey) + seus 26 handlers de IPC (maestro 18, missions 8) · panes/pty
+  (paneLifecycle.ts futuro: pty:create 793L + livePaneSpecs/closingPaneIds/
+  paneEverSpawned + guards) · boot/recovery · overlays (SynVoice/ANDAMENTO)
+  · armPane/mcpPaneArgs · verificação de plano · helpers de projeto.
+- **PRÓXIMO PASSO RECOMENDADO: extração dos engines de missão/maestro**
+  (missionEngine.ts / maestroEngine.ts nos moldes do phaseEngine: varredura
+  Opus → corte por âncora → extras tipadas), levando ipc/missions.ts e
+  ipc/maestro.ts JUNTO — as extras desses dois domínios de IPC (21/22
+  entradas) só ficam pequenas com os engines extraídos; foi por isso que
+  ficaram de fora do commit 5. Alternativa sancionada: paneLifecycle.ts
+  primeiro (pty + guards.ts). As duas ordens funcionam.
+- Pendências do dono: PUSH (21 commits locais) e BOOT DE VALIDAÇÃO cobrindo
+  os commits 4–5 (o último boot validado foi pós-commit 3).
+- Regras vivas inalteradas: app parado para editar src · cada commit verde
+  (typecheck + 5 suítes: orchestrator-flow 39 · mission-verification 25 ·
+  integration-queue 14 · pane-permissions 14 · stall-attribution 8) ·
+  commits `fase1:` sem acentos · agentes Opus sob liberação do dono por
+  sessão · git add por caminho explícito.
 
 ## SESSÃO DE 2026-08-08 — o que mudou desde o texto abaixo
 
