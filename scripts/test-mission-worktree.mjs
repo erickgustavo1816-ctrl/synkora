@@ -30,6 +30,7 @@ import {
   isExpectedVersionWorktree,
   isExecutableProjectPath,
   mergeTaskWorktree,
+  missionWorkspaceReadout,
   quarantineAndRevalidate,
   removeWorktreeAndBranch,
   resolveMissionWorkspace,
@@ -154,6 +155,46 @@ test('resolver de missão nunca transforma Git incompleto em execução direta',
     resolveMissionWorkspace(root, missionId, 'mission/errada', mission.dir),
     undefined
   )
+})
+
+test('leitura agrupada do paneSpec: healthy so com isolamento exato; divergencia cai no caminho lento', (t) => {
+  const root = initializeRepository(t, 'synkora-readout-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-readout-wt-')
+  const missionId = 'readout-mission-1'
+  const mission = createMissionWorktree(root, worktrees, missionId)
+  assert.ok(mission)
+
+  const healthy = missionWorkspaceReadout(root, missionId, mission.branch, mission.dir)
+  assert.equal(healthy.healthy, true)
+  assert.equal(healthy.workspace, mission.dir)
+  assert.equal(healthy.excludesError, undefined)
+
+  // divergências viram healthy:false SEM erro (o chamador promove/repara)
+  assert.equal(missionWorkspaceReadout(root, missionId).healthy, false)
+  assert.equal(
+    missionWorkspaceReadout(root, missionId, 'mission/errada', mission.dir).healthy,
+    false
+  )
+  assert.equal(
+    missionWorkspaceReadout(root, 'outra-missao-id', mission.branch, mission.dir).healthy,
+    false
+  )
+
+  // pasta sem commit git: fast path recusa (o caminho lento decide git init)
+  const plain = initializeWorktreesDirectory(t, 'synkora-readout-plain-')
+  assert.equal(missionWorkspaceReadout(plain, missionId).healthy, false)
+})
+
+test('leitura agrupada carrega o erro legivel de .synkora versionado', (t) => {
+  const root = initializeRepository(t, 'synkora-readout-tracked-')
+  mkdirSync(join(root, '.synkora'))
+  writeFileSync(join(root, '.synkora', 'BOARD.md'), 'versionado\n', 'utf8')
+  git(root, ['add', '.synkora/BOARD.md'])
+  git(root, ['commit', '-m', 'track synkora'])
+
+  const readout = missionWorkspaceReadout(root, 'qualquer-missao')
+  assert.equal(readout.healthy, false)
+  assert.match(readout.excludesError ?? '', /\.synkora já contém arquivos versionados/)
 })
 
 test('reconhece marcador literal de integração no histórico Git', (t) => {

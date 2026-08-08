@@ -15,6 +15,7 @@ import { ipcMain } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { ensureSynkoraGitExcludes } from '../worktree'
+import { gitOff } from '../gitAsync'
 import { ensureProjectSecurityBaseline } from '../projectSecurityBaseline'
 import { ensureGreenfieldProjectPlan } from '../projectPlan'
 import { redactSensitiveText } from '../securityRedaction'
@@ -427,7 +428,10 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
     // respawnar as fases que o reinício interrompeu — o renderer está de pé.
     ctx.phase.drainPendingRespawns(projectId)
     try {
-      ensureSynkoraGitExcludes(project.path)
+      // Fora do main (triagem 2026-08-08): os 2 gits do excludes pesavam
+      // ~junto com o baseline no stall de abertura (ipc:maestro:paneSpec
+      // ~194ms no journal). O handler já é async; a viagem é barata.
+      await gitOff('ensureSynkoraGitExcludes', project.path)
     } catch {
       return null
     }

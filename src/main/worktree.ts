@@ -1129,6 +1129,43 @@ export function resolveMissionWorkspace(
   return isExpectedWorktree(projectPath, worktree, branch) ? worktree : undefined
 }
 
+/** Leitura AGRUPADA do caminho quente do missions:paneSpec (triagem
+ * 2026-08-08, ESTADO 9 do PLANO_NIVEL_5.md): ~18 execFileSync de git
+ * (excludes + hasGitCommit + isExpectedWorktree, com duplicações entre
+ * ensureMissionWorktree e missionWorkspacePath) viravam ~450ms de MAIN
+ * PARADO por missão na abertura do projeto. Esta função roda tudo numa
+ * ÚNICA viagem ao gitWorker (gitOff). `healthy:false` = qualquer
+ * divergência do estado saudável — o chamador cai no caminho completo
+ * SÍNCRONO de sempre (promoção/reparo, raro); comportamento idêntico. */
+export interface MissionWorkspaceReadout {
+  healthy: boolean
+  workspace?: string
+  /** ensureSynkoraGitExcludes recusou (.synkora versionado): o chamador
+   *  publica o erro legível e não abre o pane — mesmo contrato de hoje. */
+  excludesError?: string
+}
+
+export function missionWorkspaceReadout(
+  projectPath: string,
+  missionId: string,
+  branch?: string,
+  worktree?: string
+): MissionWorkspaceReadout {
+  try {
+    ensureSynkoraGitExcludes(projectPath)
+  } catch (error) {
+    return {
+      healthy: false,
+      excludesError: error instanceof Error ? error.message : String(error)
+    }
+  }
+  if (!hasGitCommit(projectPath)) return { healthy: false }
+  const expectedBranch = `mission/${missionId.slice(0, 8)}`
+  if (!branch || !worktree || branch !== expectedBranch) return { healthy: false }
+  if (!isExpectedWorktree(projectPath, worktree, branch)) return { healthy: false }
+  return { healthy: true, workspace: worktree }
+}
+
 /** Worktree de MISSÃO: branch mission/<id8> onde as tarefas da missão nascem
  *  e mergeiam — a main só vê a missão na integração final. */
 export function missionWorktreeDescriptor(baseDir: string, missionId: string): TaskWorktree {

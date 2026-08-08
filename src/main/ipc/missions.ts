@@ -18,6 +18,7 @@ import { ipcMain } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, unlinkSync } from 'fs'
 import { ensureSynkoraGitExcludes, removeWorktreeAndBranch } from '../worktree'
+import { gitOff } from '../gitAsync'
 import { type NewMission } from '../missions'
 import { assessMissionRisk } from '../orchestratorFlow'
 import { missionPersona } from '../maestro'
@@ -465,16 +466,34 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     }
     // pasta do projeto sumiu (renomeada fora do app) — relocar antes de abrir
     if (!existsSync(project.path)) return null
-    try {
-      ensureSynkoraGitExcludes(project.path)
-    } catch (error) {
+    // TRAVADINHA DA ABERTURA (triagem 2026-08-08, ESTADO 9): o caminho quente
+    // rodava ~18 execFileSync de git NO MAIN (~450ms por missão — culpado
+    // nomeado pelo journal: ipc:missions:paneSpec ×3 num stall de ~1,5s). A
+    // leitura agrupada viaja UMA vez pelo gitWorker; qualquer divergência cai
+    // no caminho completo síncrono de sempre (promoção/reparo, raro).
+    const readout = await gitOff(
+      'missionWorkspaceReadout',
+      project.path,
+      mission.id,
+      mission.branch,
+      mission.worktree
+    )
+    // Janela de await: revalida o estado que as guardas do topo checaram.
+    {
+      const fresh = missions.get(missionId)
+      if (!fresh || fresh.projectId !== projectId) return null
+      if (fresh.status === 'concluida' || fresh.status === 'arquivada') return null
+      if (fresh.pendingOrchestrator || fresh.status === 'integrando') return null
+      mission = fresh
+    }
+    if (readout.excludesError) {
       // Mesmo guard mudo do missions:remove (02/08): sem esta mensagem o
       // orquestrador simplesmente NÃO abria e nada explicava o porquê.
       hub.publish({
         projectId,
         missionId,
         kind: 'error',
-        text: `não abri o orquestrador de "${mission.title}": ${error instanceof Error ? error.message : String(error)}`,
+        text: `não abri o orquestrador de "${mission.title}": ${readout.excludesError}`,
         actor: 'harness',
         urgent: true
       })
@@ -503,19 +522,25 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         return null
       }
     }
-    const before = mission.branch
-    mission = ensureMissionWorktree(missionId) ?? mission
-    if (mission.branch && mission.branch !== before) {
-      hub.publish({
-        projectId,
-        kind: 'info',
-        text: `missão "${mission.title}" promovida: agora tem branch própria (${mission.branch})`,
-        actor: 'harness',
-        quiet: true
-      })
-      emitMissionsChanged(projectId)
+    let missionCwd: string | undefined
+    if (readout.healthy) {
+      // fast path: missão saudável — zero git no main.
+      missionCwd = readout.workspace
+    } else {
+      const before = mission.branch
+      mission = ensureMissionWorktree(missionId) ?? mission
+      if (mission.branch && mission.branch !== before) {
+        hub.publish({
+          projectId,
+          kind: 'info',
+          text: `missão "${mission.title}" promovida: agora tem branch própria (${mission.branch})`,
+          actor: 'harness',
+          quiet: true
+        })
+        emitMissionsChanged(projectId)
+      }
+      missionCwd = missionWorkspacePath(project.path, mission)
     }
-    const missionCwd = missionWorkspacePath(project.path, mission)
     if (!missionCwd) {
       hub.publish({
         projectId,
