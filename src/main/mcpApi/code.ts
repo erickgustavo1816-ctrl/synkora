@@ -200,11 +200,6 @@ export function buildCodeApi(
           fingerprint: snapshot.fingerprint
         }
       }
-      // Sucesso devolve a fotografia POR VALOR; drift devolve o bloqueio.
-      const settleGuard = (): { blocked?: string; devSnapshot?: PhaseWatch['devSnapshot'] } => {
-        const drift = snapshotDrift()
-        return drift ? { blocked: drift } : { devSnapshot: preparedSnapshot }
-      }
       const snapshotDrift = (): string | undefined => {
         if (!preparedSnapshot) return undefined
         if (
@@ -217,6 +212,11 @@ export function buildCodeApi(
           return 'Conclusão bloqueada: arquivos mudaram durante a validação da fotografia. Tudo foi preservado; confira a diferença e reporte done novamente.'
         }
         return undefined
+      }
+      // Sucesso devolve a fotografia POR VALOR; drift devolve o bloqueio.
+      const settleGuard = (): { blocked?: string; devSnapshot?: PhaseWatch['devSnapshot'] } => {
+        const drift = snapshotDrift()
+        return drift ? { blocked: drift } : { devSnapshot: preparedSnapshot }
       }
       const baseRef = mission
         ? mission.branch

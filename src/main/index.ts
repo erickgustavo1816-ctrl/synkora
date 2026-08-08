@@ -3332,8 +3332,10 @@ app.whenReady().then(async () => {
   // já existe. Getters cobrem as variáveis reatribuídas em runtime e as
   // consts declaradas DEPOIS deste ponto (referência direta daria TDZ na
   // construção); funções entram por delegação, imune à ordem de declaração;
-  // ctx.phase delega para a máquina de fases (advancePhase segue SYNC POR
-  // CONTRATO). Consumidores chegam nos commits 3–5.
+  // ctx.phase delega para a máquina de fases — advancePhase é ASSÍNCRONO
+  // desde o F2-c5 (Promise<boolean>; atomicidade por SERIALIZAÇÃO via
+  // PhaseTransitionLock; a cicatriz do "[object Promise]" exige await em
+  // todo consumidor). Consumidores chegam nos commits 3–5.
   const ctx: MainContext = {
     projects,
     seats,

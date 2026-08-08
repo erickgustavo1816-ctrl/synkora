@@ -537,8 +537,11 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
 
   // git no WORKER (task #2): o fingerprint varre a árvore inteira — era parte
   // do stall de abrir gate. As checagens moram em worktree.snapshotProblemFor
-  // (fonte única): aqui viajam ao worker numa chamada só; advancePhase — sync
-  // por contrato — chama a mesma função direto no main.
+  // (fonte única): aqui viajam ao worker numa chamada só. Desde o F2-c5 o
+  // advancePhase também é ASYNC (serialização por card) e consome o MESMO
+  // corpo pelo worker via gateVerdictFacts/quarantineAndRevalidate — ninguém
+  // mais o chama direto no main; a cicatriz do "[object Promise]" segue a
+  // régua de todo await.
   async function taskSnapshotProblem(task: Task, cwd: string): Promise<string | undefined> {
     const dev = task.verification?.dev
     return gitOff(
@@ -2659,7 +2662,11 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           evidence.finalFingerprint !== devEvidence?.fingerprint
         )
       })
-      const currentFingerprint = gitVisibleWorktreeFingerprint(watch.cwd)
+      // F5 da revisão do c5: o fingerprint (varredura completa — o custo
+      // dominante) sai do main também aqui — o finalize roda como
+      // CONTINUAÇÃO do veredito e o prefixo síncrono dele contava no span
+      // advancePhase:* do ranking de stalls.
+      const currentFingerprint = await gitOff('gitVisibleWorktreeFingerprint', watch.cwd)
       const snapshotProblem = await taskSnapshotProblem(latestTask, watch.cwd)
       if (
         !devEvidence?.head ||
@@ -2716,6 +2723,9 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         'gitVisibleWorktreeFingerprint',
         watch.worktree.dir
       )
+      // status --porcelain também sai do main (F5); gitHead/gitTree abaixo
+      // são rev-parse baratos e ficam síncronos de propósito.
+      const sourceCleanNow = await gitOff('isWorktreeClean', watch.worktree.dir)
       const receiptMatchesSnapshot = Boolean(
         !existingReceipt ||
           (existingReceipt.sourceHead === approvedDevSnapshot?.head &&
@@ -2732,7 +2742,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         sourceFingerprintNow !== approvedFingerprint ||
         gitHead(watch.worktree.dir) !== approvedDevSnapshot.head ||
         gitTree(watch.worktree.dir, approvedDevSnapshot.head) !== approvedDevSnapshot.tree ||
-        isWorktreeClean(watch.worktree.dir) !== true ||
+        sourceCleanNow !== true ||
         !receiptMatchesSnapshot
       ) {
         tasks.update(watch.taskId, {
@@ -2984,7 +2994,11 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
             },
             reason: `done sem commit novo desde o head reprovado ${wait.rejectedHead.slice(0, 12)} — rodada não aberta; gate segue em espera`
           })
-          void retryOrBacklog(
+          // AGUARDADO (F4 da revisão do c5): este retryOrBacklog re-registra
+          // o watch dev do card — precisa terminar DENTRO da cadeia do token
+          // do veredito, senão o release do settle solta o lock com a
+          // re-indexação ainda em voo e um report novo concorre com ela.
+          await retryOrBacklog(
             watch,
             phase === 'review' ? 'revisor' : 'QA',
             `rodada vazia: o done não trouxe NENHUM commit novo desde o head reprovado ${wait.rejectedHead.slice(0, 12)} — a lista da reprovação não foi executada (provável falha de entrega da lista, não do dev). Lista vigente: ${wait.rejectedReason}`,
@@ -3382,6 +3396,10 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       }
       return false
     }
+    // Leitura PRÉ-await DELIBERADA (nota da revisão do c5): gates/uiWork são
+    // o contrato de roteamento do card no INSTANTE em que o veredito entrou —
+    // sob o lock, update_task do renderer é sanitizado (hasActivePane) e a
+    // mudança legítima de gates chega pela PRÓXIMA rodada, nunca no meio.
     const configuredGates = task.gates ?? ['review', 'qa']
     const taskUiWork = classifyTaskUiWork(task)
     const gates =
@@ -3768,7 +3786,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       // 'security-gate' — o humano nunca mais é perguntado sobre segurança;
       // segue decidindo apenas produto e integração.
       if (watch.phase === 'review' && readonly && securityReview.verdict === 'approved') {
-        const workTask = tasks.get(watch.taskId)
+        // R4: a fotografia única — nunca reler entre o último await e o commit
+        const workTask = latestForSnapshot
         const securityPlanTask = workTask ? planTaskForWorkTask(workTask) : undefined
         const pendingValidation =
           securityPlanTask?.plan &&
@@ -4317,12 +4336,14 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
               projectId: watch.projectId
             })
             if (!transitionToken) return
+            // ordem sagrada §3.2: acquire → detach → unlink (alinhada ao
+            // report na revisão do c5; mesma pilha síncrona, mesmo efeito)
+            phaseWatches.detach(taskId)
             try {
               unlinkSync(watch.marker)
             } catch {
               // já sumiu
             }
-            phaseWatches.detach(taskId)
             // F2-c5: AGUARDADO — o advancePhase assume o release nos desfechos
             // normais; no throw a posse volta para cá e o rollback re-indexa
             // antes de soltar (a mesma transação do report). O retorno segue

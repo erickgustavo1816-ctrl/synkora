@@ -440,6 +440,13 @@ export function buildReportApi(
       const boundArtifactProblem = blockedReport
         ? undefined
         : await ctx.phase.reviewArtifactProblem(watch)
+      // Re-check de VIGÊNCIA pós-await (F1 da revisão adversarial do c5): o
+      // sha256 do artefato virou viagem ao worker e abriu janela ANTES do
+      // acquire — um run_task/re-prepare nesse meio cria um watch NOVO que o
+      // detach abaixo apagaria (a mesma defesa que o poller sempre teve).
+      // Daqui até o acquire a pilha é síncrona — a janela fecha aqui.
+      if (phaseWatches.get(watch.taskId) !== watch)
+        return 'sua rodada já FECHOU (o veredito foi processado) — nada a fazer agora: fique em silêncio no modo espera; se houver próxima rodada, ela chega NESTA conversa com as instruções. Não emita segundo relatório nem adendos.'
       if (boundArtifactProblem) {
         const transitionToken = ctx.phaseTransitions.acquire(watch.taskId, {
           label: `report:${watch.phase}:artifact-invalid`,
@@ -796,7 +803,15 @@ export function buildReportApi(
           patchNote = ''
         }
       }
-      const acceptance = prepareSkillUsageAcceptance()
+      // Qualquer falha entre o acquire e o advancePhase re-indexa e solta —
+      // "o lock SEMPRE solta no settle" (§3.3); um throw aqui deixaria o card
+      // bricado até o restart.
+      let acceptance: ReturnType<typeof prepareSkillUsageAcceptance>
+      try {
+        acceptance = prepareSkillUsageAcceptance()
+      } catch {
+        acceptance = undefined
+      }
       if (!acceptance) {
         // recusa ANTES do advancePhase: o rollback re-indexa (createdAt
         // renovado) e solta o lock na ordem set→release
