@@ -351,6 +351,29 @@ bloco. Nunca "aproveitar e refatorar" fora do mapa.
 
 ## Fase 2 (5a parte 2) — veredito sem barreira síncrona (CHECK 1 núcleo)
 
+> ESTADO 1 (2026-08-08): **PLANO FORMAL ESCRITO — aguarda aprovação do dono
+> antes de qualquer código.** Varredura por 2 agentes Opus em paralelo com
+> revisão por amostragem (4/4 checagens de cada mapa conferidas no código):
+> `docs/FASE2_MAPA_VEREDITO.md` (caminhada do advancePhaseInner, 5 desfechos,
+> transação do report, riscos R1–R13) e `docs/FASE2_MAPA_CONCORRENTES.md`
+> (66 sites de phaseWatches em 12 módulos, poller/boot, 11 interleavings,
+> tabela de 22 entrantes). O plano em **docs/FASE2_PLANO.md**: primitiva
+> `PhaseTransitionLock` (try-acquire síncrono + fila de espera, token Symbol,
+> sem estado em disco), 3 regras de ouro (aquisição só em ponto de entrada;
+> acquire→detach→unlink síncronos; quem SEGURA O LOCK deleta o watch),
+> conversão com git CONSOLIDADO em 1-2 viagens ao worker (devDeliveryFacts/
+> gateVerdictFacts — nunca 1:1, R10), 5 correções de transação embutidas
+> (R7/R8/§6.1/§7.4/§7.10), harness de corrida contra o engine REAL
+> (precedentes store-atomicity + mission-worktree), matriz de 13 casos
+> (incl. 2 vereditos simultâneos + veredito × boot + fallback síncrono) e
+> fatiamento em 5 commits (c4 SERIALIZA sem mudar comportamento; c5
+> DESSINCRONIZA). Achados que mudaram o desenho: os 2 blocos `bloqueada` do
+> report ficam FORA do advancePhase e entram no lock; `recoverFinalizingTask`
+> muta o card com watch sintético (lock por taskId, nunca por watch); 3
+> buracos JÁ existentes hoje (§7.1/§7.9/§7.10); bug latente da memoização ×
+> onExit (§6.1); divergência doc×código: `phase-watch-repaired` não existe
+> mais em src.
+
 - Hoje `advancePhase` é SYNC POR CONTRATO (comentário-âncora em :10855; a
   cicatriz do "[object Promise]"): a fotografia atômica é garantida por
   sincronicidade, e o git síncrono no main é o stall de toda transição.
