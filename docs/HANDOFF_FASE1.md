@@ -1,13 +1,20 @@
-# HANDOFF — Fase 1 da cirurgia do índice (pós-commits 7a–7c: paneLifecycle)
+# HANDOFF — Fase 1 da cirurgia do índice — ✅ CONCLUÍDA (2026-08-08)
 
-Atualizado 2026-08-08 (2ª sessão do dia, rodada 2 — após o boot de validação
-dos 6a–6f pelo dono). A sessão executou o commit 6 (engines de missão/
-maestro, 6 fatias) E o commit 7 (paneLifecycle, 3 fatias). A PRÓXIMA SESSÃO
-lê este arquivo PRIMEIRO, depois os ESTADOS 7–8 da Fase 1 em
-docs/PLANO_NIVEL_5.md e os mapas (docs/FASE1_MAPA_MISSIONENGINE.md ·
-docs/FASE1_MAPA_MAESTROENGINE.md · docs/FASE1_MAPA_PANELIFECYCLE.md).
+**A FASE 1 ESTÁ FECHADA** por decisão do dono, após o boot de validação dos
+commits 7a–7c ("boot limpo, pode fechar"). Este arquivo vira REGISTRO
+HISTÓRICO da obra: o placar final e a decisão de encerramento estão no
+**ESTADO 9** de docs/PLANO_NIVEL_5.md — leia ELE primeiro. A próxima obra do
+nível 5 é a **Fase 2 (veredito sem barreira síncrona, CHECK 1 núcleo)**, que
+exige plano próprio + teste de corrida novo ANTES de qualquer linha; os
+mapas das varreduras (FASE1_MAPA_MISSIONENGINE/MAESTROENGINE/PANELIFECYCLE)
+seguem sendo a referência de onde cada coisa mora.
 
-## ONDE A OBRA ESTÁ + PRÓXIMO PASSO (leia isto e os blocos da data)
+Placar: index.ts 19.448 → **6.658 (−66%)** · 136 handlers de IPC em
+src/main/ipc/ (16 módulos) · engines phase/mission/maestro/paneLifecycle ·
+mcpApi/ em 9 módulos · 19 commits de código verdes · 3 boots de validação
+limpos. Pendência do dono no fechamento: PUSH (34 commits locais).
+
+## Estado no fechamento (era o "ONDE A OBRA ESTÁ" da última rodada)
 
 - index.ts: 19.448 (pré-obra) → **6.658 linhas (−66%)**. Módulos novos da
   sessão: cliSessionTransplant.ts (73L) · maestroEngine.ts (555L) ·

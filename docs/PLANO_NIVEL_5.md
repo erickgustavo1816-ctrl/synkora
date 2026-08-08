@@ -291,6 +291,34 @@ eliminação é overhead do modo dev/GC — registrar e seguir para a Fase 1.
 > dono cobrindo 7a–7c; depois a Fase 1 entra em cortes MENORES
 > (overlays/verificação de plano) ou encerra e abre a Fase 2 (veredito
 > sem barreira síncrona) — decisão do dono.
+>
+> ESTADO 9 (2026-08-08): **FASE 1 CONCLUÍDA — decisão do dono após o boot
+> de validação dos 7a–7c ("boot limpo, pode fechar")**. Placar final da
+> cirurgia: index.ts 19.448 → **6.658 linhas (−66%)** em 19 commits de
+> código verdes + registros, TODOS com typecheck node+web + as 5 suítes
+> (39/25/14/14/8) e ZERO regressão de comportamento reportada nos 3 boots
+> de validação (pós-commit 3, pós-6a–6f, pós-7a–7c). Módulos nascidos na
+> obra: phaseTypes · mainContext (MainContext + PhaseApi) · phasePrompts ·
+> phaseEngine (4.114L) · mcpApi/ (9 módulos) · ipc/ (16 módulos, 136
+> handlers = TODOS os de renderer) · cliSessionTransplant · maestroEngine
+> · missionEngine (2.253L) · paneLifecycle — mais a máquina headless morta
+> removida (−1.108L, commit 0.5). O que o index AINDA é (por desenho, não
+> por dívida): boot/recovery, overlays (SynVoice/ANDAMENTO) + asserts de
+> sender, verificação de plano, helpers compartilhados do closure e a
+> COSTURA de construção (ctx → paneLifecycle → mission → maestro → phase →
+> mcpApi → registro de IPC → createWindow) — a ordem é contrato, com
+> comentários-âncora. DÉBITOS que ficam para obras próprias (registrados,
+> nunca "aproveitar e refatorar"): partição do missionEngine
+> (missionLifecycle × integrationQueueEngine) · partição do pty:create
+> dentro do ipc/pty · corte de overlays + asserts (ipc/guards.ts renasce
+> lá, se fizer sentido) · verificação de plano · missionWatches morto
+> (card de higiene) · sujeira de imports pré-obra anotada. PRÓXIMA OBRA
+> DO NÍVEL 5: **Fase 2 — veredito sem barreira síncrona (CHECK 1
+> núcleo)**, agora com o terreno preparado: advancePhase vive no
+> phaseEngine com contrato SYNC explícito no PhaseApi, e a conversão a
+> lock-por-card tem os call sites todos mapeados pelos módulos. Exige
+> plano próprio + teste novo de corrida (2 vereditos simultâneos + 
+> veredito × boot) antes de qualquer linha.
 
 Âncoras reais (index.ts de hoje): bindUiSender :463 · mcpPaneArgs :3988 ·
 armPane :4062 · recovery de boot :6797–6943 · completeMissionMerge :7344 ·
