@@ -200,7 +200,6 @@ export interface PhaseEngineExtras {
     projectId: string
   ): Array<{ file: string; relativePath: string; record: HelperRecoveryRecord }>
   harnessPortsInUse(projectId: string): PortUseEntry[]
-  codexDeveloperInstructions(value: string): string
   armPane(
     identity: Omit<PaneIdentity, 'paneId'> & { paneId?: string },
     cli: SeatCli,

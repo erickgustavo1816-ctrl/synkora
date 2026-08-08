@@ -98,7 +98,6 @@ export interface HelpersApiExtras {
   helperSpawnReservations: HelperSpawnReservationRegistry
   helperOpenWatchdog: HelperOpenWatchdog
   plannedHelperAssignments: Map<string, { parentPhaseRun: string; agentId: string }>
-  codexDeveloperInstructions(value: string): string
   securityWaiverOptions(projectId: string): { sensitiveWaiverAllowed: boolean }
   planTaskForWorkTask(task: Task): Task | undefined
 }
@@ -148,7 +147,6 @@ export function buildHelpersApi(
     helperSpawnReservations,
     helperOpenWatchdog,
     plannedHelperAssignments,
-    codexDeveloperInstructions,
     securityWaiverOptions,
     planTaskForWorkTask
   } = extras
@@ -622,16 +620,10 @@ export function buildHelpersApi(
           if (seat.cli === 'claude') helperArgs.push('--effort', opts.effort)
           else helperArgs.push('-c', `model_reasoning_effort="${opts.effort}"`)
         }
-        // contrato + persona do subagente no codex: string TOML de uma linha
-        // (mesma serialização validada do agente livre)
-        if (seat.cli === 'codex') {
-          helperArgs.push(
-            '-c',
-            codexDeveloperInstructions(
-              [helperContract, agentPersona, helperSecurityBlock].filter(Boolean).join('\n\n')
-            )
-          )
-        }
+        // contrato + persona no codex: viajam pelo PROFILE por pane (o
+        // ipc/pty leva o appendSystemPrompt do spec ao developer_instructions
+        // do profile — ajudante é method-governed; F5, sonda P1–P3, sem o
+        // teto de argv do -c inline).
         // Criação sempre usa o UUID completo. O fallback curto existe só
         // para LEITURA de transcripts legados e nunca pode receber saída de
         // um helper novo com o mesmo prefixo de oito caracteres.
@@ -666,10 +658,9 @@ export function buildHelpersApi(
           model,
           cwd: id.cwd,
           cliArgs: helperArgs,
-          appendSystemPrompt:
-            seat.cli === 'claude'
-              ? [helperContract, agentPersona, helperSecurityBlock].filter(Boolean).join('\n\n')
-              : undefined,
+          appendSystemPrompt: [helperContract, agentPersona, helperSecurityBlock]
+            .filter(Boolean)
+            .join('\n\n'),
           // Só o PEDIDO fica visível — o contrato/skills viajam invisíveis no
           // system prompt (canais acima). A linha de fecho fica NO TURNO de
           // propósito (caso real 2026-08-08, 1º teste pós-mudança: com a

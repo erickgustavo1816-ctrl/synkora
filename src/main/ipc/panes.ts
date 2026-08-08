@@ -34,14 +34,13 @@ import type { PaneLifecycleEngine } from '../paneLifecycle'
 export interface PanesIpcExtras {
   engine: PaneLifecycleEngine
   bindUiSender(sender: Electron.WebContents): void
-  codexDeveloperInstructions(value: string): string
   /** missionEngine — worktree provado antes do servidor de teste. */
   ensureMissionWorktree(missionId: string): Mission | undefined
 }
 
 export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void {
   const { projects, seats, tasks, backlog, blackbox, hub, projectModeOf, projectPlanOf } = ctx
-  const { engine, bindUiSender, codexDeveloperInstructions, ensureMissionWorktree } = extras
+  const { engine, bindUiSender, ensureMissionWorktree } = extras
   const {
     livePaneSpecs,
     closingPaneIds,
@@ -226,17 +225,15 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
     // claude / long-poll codex) — era o único papel sem o hint (teste real
     // 2026-08-08: o livre pollou list_helpers/helper_output em loop).
     const freePersona = `${FREE_AGENT_PERSONA}${buildIdleWaiterHint(seat.cli)}`
-    if (seat.cli === 'codex') {
-      // persona invisível do codex VALIDADA em PTY real (2026-07-24, sonda
-      // BANANA123): -c developer_instructions="…" injeta developer
-      // instructions sem aparecer na conversa — os dois CLIs iguais.
-      // Valor vira string TOML de uma linha (\n escapado).
-      cliArgs.push('-c', codexDeveloperInstructions(freePersona))
-    }
+    // Persona invisível nos dois CLIs por UM canal: appendSystemPrompt.
+    // Claude → --append-system-prompt-file; codex livre NÃO é
+    // method-governed (sem profile), então o ipc/pty aplica o fallback
+    // -c developer_instructions inline (mesma serialização validada da
+    // sonda BANANA123) — comportamento idêntico ao antigo, caminho único.
     return {
       paneId: armed.paneId,
       cliArgs,
-      appendSystemPrompt: seat.cli === 'claude' ? freePersona : undefined
+      appendSystemPrompt: freePersona
     }
   })
 

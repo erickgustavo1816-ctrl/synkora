@@ -49,7 +49,6 @@ export interface MaestroIpcExtras {
   ): { paneId: string; cliArgs: string[] }
   /** Late-bound: let do index. */
   releasePaneSkillPlan(paneId: string): void
-  codexDeveloperInstructions(value: string): string
   projectLifecycleOf(projectId: string): string
 }
 
@@ -83,7 +82,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
     staggerPaneSpawn,
     armPane,
     releasePaneSkillPlan,
-    codexDeveloperInstructions,
     projectLifecycleOf
   } = extras
   const {
@@ -537,11 +535,13 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
       if (state.tuiSessionId) cliArgs.push('--resume', state.tuiSessionId)
       else initialPrompt = resumeSkippedIntro
     } else {
-      // Diferente do primeiro prompt, developer_instructions sobrevive a /new
-      // e tambem vale ao retomar uma thread Codex existente.
-      cliArgs.push('-c', codexDeveloperInstructions(personaWithPlanning))
+      // Persona pelo PROFILE por pane (F5, sonda P1–P3): appendSystemPrompt →
+      // developer_instructions do profile no ipc/pty (maestro é
+      // method-governed). Mata o teto de argv do -c inline; como o -c, o
+      // profile sobrevive a /new e vale ao retomar uma thread existente.
+      appendSystemPrompt = personaWithPlanning
       if (state.tuiSessionId) {
-      // -c são flags globais: podem vir antes do subcomando resume
+      // flags globais (-p) podem vir antes do subcomando resume
       cliArgs.push('resume', state.tuiSessionId)
     } else {
       const discoveryStarted = Boolean(

@@ -53,7 +53,6 @@ export interface MissionsIpcExtras {
   ): { paneId: string; cliArgs: string[] }
   /** Late-bound: let do index. */
   releasePaneSkillPlan(paneId: string): void
-  codexDeveloperInstructions(value: string): string
 }
 
 export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras): void {
@@ -83,7 +82,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     staggerPaneSpawn,
     armPane,
     releasePaneSkillPlan,
-    codexDeveloperInstructions
   } = extras
   const { maestroResumeOverBudget, skipMaestroResume, preparePlanningRun } = extras.maestroEngine
   const {
@@ -645,16 +643,16 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       : goalRich
       ? 'Your VERY FIRST output — before ANY tool call — is a 2-3 line introduction (PT-BR) as the orchestrator of this mission: restate the mission goal and scope you were given. ONLY THEN read your mission PLAN.md notebook if it exists (.synkora/missions/<id>.PLAN.md — your own persistent notebook, not the master plan nor the briefing; if missing, say "o caderno PLAN.md desta missão ainda não existe — normal em missão nova", NEVER the ambiguous "o plano não existe"). If the goal is already clear enough to plan, STUDY the project now and propose the plan via create_plan (the user reads and approves it on the board); if not, ask what is missing. NEVER create work cards before the plan is approved.'
       : 'Your VERY FIRST output — before ANY tool call — is a 1-2 line introduction (PT-BR) inviting the user to explain the mission: it was created with only a short title/goal and they will explain what they want HERE, in their next message. Then read your mission PLAN.md notebook if it exists (.synkora/missions/<id>.PLAN.md — your own persistent notebook; if missing, say "o caderno PLAN.md desta missão ainda não existe — normal em missão nova"). Do NOT guess the scope, do NOT open a detailed questionnaire and do NOT propose any plan yet — wait for their explanation first.'
-    if (seat.cli === 'claude') {
-      appendSystemPrompt = personaWithPlanning
-      if (state.tuiSessionId) cliArgs.push('--resume', state.tuiSessionId)
-      else initialPrompt = introPrompt
-    } else {
-      // Mantem o papel do orquestrador inclusive apos /new e em resume.
-      cliArgs.push('-c', codexDeveloperInstructions(personaWithPlanning))
-      if (state.tuiSessionId) cliArgs.push('resume', state.tuiSessionId)
-      else initialPrompt = introPrompt
-    }
+    // Persona pelos canais POR ARQUIVO nos dois CLIs (F5, sonda P1–P3):
+    // claude via --append-system-prompt-file; codex via PROFILE por pane
+    // (o ipc/pty leva o appendSystemPrompt ao developer_instructions do
+    // profile — maestro é method-governed). Mata o risco do teto de argv da
+    // F6.4 (missionPersona ~27KB + goal rico estourava o -c inline); o
+    // profile sobrevive a /new e vale no resume, como o -c valia.
+    appendSystemPrompt = personaWithPlanning
+    if (state.tuiSessionId)
+      cliArgs.push(...(seat.cli === 'claude' ? ['--resume', state.tuiSessionId] : ['resume', state.tuiSessionId]))
+    else initialPrompt = introPrompt
     return {
       paneId,
       kind: seat.cli,

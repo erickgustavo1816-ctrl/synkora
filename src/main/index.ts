@@ -259,16 +259,6 @@ import {
   type TerminalFileRoot
 } from './terminalFileLinks'
 
-/** Codex recebe personas como developer instructions persistentes no processo.
- *  Isso mantem o papel correto inclusive depois de /new e em sessoes retomadas. */
-function codexDeveloperInstructions(value: string): string {
-  const toml = value
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\r?\n/g, '\\n')
-  return `developer_instructions="${toml}"`
-}
-
 const ptys = new PtyManager()
 // Runtime do QA entra no guardião de job objects: crash sujo do app não deixa
 // mais a árvore órfã (fix E5×Q4 do mapa de retomada, 2026-08-06).
@@ -5735,7 +5725,6 @@ app.whenReady().then(async () => {
     skillPlanScopes,
     storedHelperRecoveries,
     harnessPortsInUse,
-    codexDeveloperInstructions,
     armPane,
     codeReportGuard: (identity) => mcpApi.codeReportGuard(identity)
   })
@@ -5936,7 +5925,6 @@ app.whenReady().then(async () => {
       helperSpawnReservations,
       helperOpenWatchdog,
       plannedHelperAssignments,
-      codexDeveloperInstructions,
       securityWaiverOptions,
       planTaskForWorkTask
     }),
@@ -6719,7 +6707,6 @@ app.whenReady().then(async () => {
     staggerPaneSpawn,
     armPane,
     releasePaneSkillPlan: (paneId) => releasePaneSkillPlan(paneId),
-    codexDeveloperInstructions,
     projectLifecycleOf
   })
   registerMissionsIpc(ctx, {
@@ -6731,7 +6718,6 @@ app.whenReady().then(async () => {
     staggerPaneSpawn,
     armPane,
     releasePaneSkillPlan: (paneId) => releasePaneSkillPlan(paneId),
-    codexDeveloperInstructions
   })
   registerPtyIpc(ctx, {
     engine: paneLifecycle,
@@ -6749,7 +6735,6 @@ app.whenReady().then(async () => {
   registerPanesIpc(ctx, {
     engine: paneLifecycle,
     bindUiSender,
-    codexDeveloperInstructions,
     ensureMissionWorktree
   })
 
