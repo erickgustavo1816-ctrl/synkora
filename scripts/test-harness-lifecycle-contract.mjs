@@ -17,6 +17,17 @@ import {
 } from '../src/main/reviewEvidence.ts'
 import { SkillRuntime } from '../src/main/skillRuntime.ts'
 
+// APOSENTADORIA (2026-08-09, decisao registrada no HANDOFF_FASE2 item 3a e
+// executada na fase 5): 26 testes de ANCORA TEXTUAL no src/main/index.ts
+// morreram quando a Fase 1 moveu as implementacoes para phaseEngine/mcpApi/
+// ipc (a ordem R7/R8 e o rollback do report viraram rollbackVerdictTransaction).
+// A cobertura substituta e COMPORTAMENTAL, com o engine real:
+// test:phase-verdict-races (18) + test:phase-transition-lock (9) +
+// test:orchestrator-flow (39) + test:codex-skill-isolation (7).
+// Ficam aqui apenas os testes comportamentais (TaskStore real, reader
+// privado, sanitizador, reservas de helper) - nunca reintroduzir grep de
+// texto sobre o index como contrato.
+
 const root = resolve(import.meta.dirname, '..')
 const indexPath = join(root, 'src', 'main', 'index.ts')
 const indexSource = readFileSync(indexPath, 'utf8')
@@ -126,145 +137,6 @@ test('callback tardio de runtime antigo nunca remove a geracao nova', () => {
   assert.doesNotMatch(runtimeSource, /runtimes\.delete\(taskId\)/)
 })
 
-test('autor e helpers morrem depois do snapshot aceito e antes do gate', () => {
-  const advance = namedImplementation('advancePhaseInner')
-  const persisted = advance.indexOf('tasks.update(watch.taskId', advance.indexOf('latestBeforeGate'))
-  const receiptInSameCommit = advance.indexOf('skillUsage: acceptance.skillUsage', persisted)
-  const runtimeStamp = advance.indexOf('commitRuntimeAcceptance()', persisted)
-  const closeHelpers = advance.indexOf('terminateTaskHelpers(', persisted)
-  const closeDev = advance.indexOf("terminateTaskPhasePane(watch.projectId, watch.taskId, 'dev')", closeHelpers)
-  const openGate = advance.indexOf('if (next) void openGatePane', closeDev)
-  assert.ok(persisted >= 0 && persisted < receiptInSameCommit)
-  assert.ok(receiptInSameCommit < runtimeStamp)
-  assert.ok(persisted < closeHelpers && closeHelpers < closeDev && closeDev < openGate)
-
-  const retry = namedImplementation('retryOrBacklog')
-  assert.match(retry, /task\.phaseSessions\?\.dev \|\| cycles < retryLimit/)
-  assert.match(retry, /preparePhasePane\([\s\S]*'dev'/)
-})
-
-test('veredito e receipts pousam juntos antes do stamp efemero e do fechamento', () => {
-  const advance = namedImplementation('advancePhaseInner')
-  const recordStart = advance.indexOf('const recordGate = (')
-  const recordEnd = advance.indexOf('\n    if (!readonly)', recordStart)
-  const recordGate = advance.slice(recordStart, recordEnd)
-  const patch = recordGate.indexOf('const workTaskPatch: TaskUpdatePatch')
-  const receipt = recordGate.indexOf('skillUsage: acceptance.skillUsage', patch)
-  const evidence = recordGate.indexOf('gateHistory:', patch)
-  const round = recordGate.indexOf('nextGateRound', patch)
-  const atomicSecurityCommit = recordGate.indexOf('tasks.updateMany([', evidence)
-  const securityAudit = recordGate.indexOf("event: 'security-gate-validated'", atomicSecurityCommit)
-  const runtime = recordGate.indexOf('commitRuntimeAcceptance()', atomicSecurityCommit)
-  assert.ok(patch >= 0)
-  assert.ok(receipt > patch && evidence > patch && round > patch)
-  assert.ok(atomicSecurityCommit > receipt && atomicSecurityCommit > evidence)
-  assert.ok(securityAudit > atomicSecurityCommit, 'blackbox de segurança só nasce após o commit')
-  assert.ok(runtime > atomicSecurityCommit && runtime > securityAudit)
-
-  const reportStart = indexSource.indexOf('report: (')
-  const reportEnd = indexSource.indexOf('\n    delegateMany:', reportStart)
-  const report = indexSource.slice(reportStart, reportEnd)
-  assert.match(report, /prepareSkillUsageAcceptance/)
-  assert.match(report, /try\s*\{[\s\S]*advancePhase\(/)
-  assert.match(report, /catch \(error\)[\s\S]*phaseWatches\.set\(watch\.taskId, watch\)/)
-})
-
-test('activate_skill entrega o pacote somente depois do ledger e do stamp transacionais', () => {
-  const start = indexSource.indexOf('activateSkill: async (id, receiptId) => {')
-  const end = indexSource.indexOf('\n    readReviewEvidence:', start)
-  const handler = indexSource.slice(start, end)
-  const resolve = handler.indexOf('skillRuntime.resolve(input)')
-  const materialize = handler.indexOf('materializeActivationTree(', resolve)
-  const ledgerValidation = handler.indexOf("ledgerReceipt.status === 'planned'", materialize)
-  const transaction = handler.indexOf('skillRuntime.activateAfterDurableCommit(input', ledgerValidation)
-  const audit = handler.indexOf("event: 'skill-activated'", transaction)
-  const delivery = handler.indexOf('`SKILL ACTIVATED', audit)
-
-  assert.ok(resolve >= 0 && resolve < materialize)
-  assert.ok(materialize < ledgerValidation && ledgerValidation < transaction)
-  assert.ok(transaction < audit && audit < delivery)
-  assert.doesNotMatch(
-    handler.slice(0, transaction),
-    /skillRuntime\.activate\(input\)/,
-    'o runtime não pode ser carimbado antes do commit durável'
-  )
-})
-
-test('bloqueio ambiental interrompe a rodada sem falsificar receipts aplicados', () => {
-  const reportStart = indexSource.indexOf('report: (')
-  const reportEnd = indexSource.indexOf('\n    delegateMany:', reportStart)
-  assert.notEqual(reportStart, -1)
-  assert.notEqual(reportEnd, -1)
-  const report = indexSource.slice(reportStart, reportEnd)
-  const blockedStart = report.indexOf("/^\\s*bloqueada\\b/i.test(content)")
-  const blockedEnd = report.indexOf("let normalizedSecurityReview", blockedStart)
-  const blocked = report.slice(blockedStart, blockedEnd)
-  assert.doesNotMatch(blocked, /acceptSkillUsage\(\)/)
-  assert.match(blocked, /terminateTaskPhasePane/)
-})
-
-test('evidencia verificada e sanitizada atravessa advancePhase e persiste no card', () => {
-  const reportStart = indexSource.indexOf('report: (')
-  const reportEnd = indexSource.indexOf('\n    delegateMany:', reportStart)
-  const report = indexSource.slice(reportStart, reportEnd)
-  const advance = namedImplementation('advancePhaseInner')
-  assert.match(report, /sanitizedVerificationEvidence/)
-  assert.match(report, /advancePhase\([\s\S]*sanitizedVerificationEvidence/)
-  assert.match(advance, /dev:\s*\{[\s\S]*verificationEvidence/)
-  assert.match(advance, /const gateEvidence:[\s\S]*verificationEvidence/)
-  assert.match(advance, /gateHistory:\s*\[\.\.\.\(verification\.gateHistory \?\? \[\]\), gateEvidence\]\.slice\(-24\)/)
-  assert.match(advance, /\[watch\.phase\]: gateEvidence/)
-})
-
-test('QA aprovada com securityReview é recusada antes de alterar plano, gate ou receipt', () => {
-  const reportStart = indexSource.indexOf('report: (')
-  const reportEnd = indexSource.indexOf('\n    delegateMany:', reportStart)
-  const report = indexSource.slice(reportStart, reportEnd)
-  const qaBoundary = report.indexOf(
-    "securityReview &&\n        (id.role !== 'review' || id.phase !== 'review' || watch.phase !== 'review')"
-  )
-  const refusal = report.indexOf(
-    'Nenhum receipt, veredito ou plano foi alterado.',
-    qaBoundary
-  )
-  const skillScope = report.indexOf('const skillScope =', qaBoundary)
-  const normalization = report.indexOf('let normalizedSecurityReview', qaBoundary)
-  const phaseAdvance = report.indexOf('advanced = advancePhase(', qaBoundary)
-
-  assert.ok(qaBoundary >= 0, 'a fronteira MCP deve rejeitar securityReview vindo do QA')
-  assert.ok(refusal > qaBoundary)
-  assert.ok(qaBoundary < skillScope && qaBoundary < normalization && qaBoundary < phaseAdvance)
-
-  const advance = namedImplementation('advancePhaseInner')
-  const internalBoundary = advance.indexOf("if (securityReview && watch.phase !== 'review')")
-  const artifactWrite = advance.indexOf('persistSecurityReview(', internalBoundary)
-  assert.ok(internalBoundary >= 0 && internalBoundary < artifactWrite)
-  assert.match(
-    advance,
-    /if \(watch\.phase === 'review' && readonly && securityReview\.verdict === 'approved'\)/
-  )
-  assert.doesNotMatch(
-    advance,
-    /tasks\.update\(securityPlanTask\.id/,
-    'o plano jamais pode ser aprovado numa escrita lateral fora da transação do gate'
-  )
-})
-
-test('runtime_control recusa pane QA stale e revalida depois do spawn', () => {
-  const runtimeStart = indexSource.indexOf('runtimeControl: async (id, action, port) => {')
-  const runtimeEnd = indexSource.indexOf('\n    askUser:', runtimeStart)
-  assert.notEqual(runtimeStart, -1)
-  assert.notEqual(runtimeEnd, -1)
-  const runtime = indexSource.slice(runtimeStart, runtimeEnd)
-  assert.match(runtime, /currentWatch\?\.phase\s*===\s*'qa'/)
-  assert.match(runtime, /currentWatch\.paneId\s*===\s*id\.paneId/)
-  assert.match(runtime, /paneBrowserAvailable/)
-  const start = runtime.indexOf('await startQaRuntime')
-  assert.ok(start >= 0)
-  assert.ok(runtime.indexOf('if (!isCurrentQaRound())', start) > start)
-  assert.match(runtime.slice(start), /stopQaRuntime\(id\.taskId\)/)
-})
-
 test('preparacao assincrona de PTY falha fechada quando a geracao muda', () => {
   const identity = {}
   const spec = {}
@@ -289,45 +161,6 @@ test('preparacao assincrona de PTY falha fechada quando a geracao muda', () => {
   assert.equal(ptyPreparationCanContinue({ ...baseline, phaseStillActive: false }), false)
 })
 
-test('encerramento invalida ticket antes do retorno de seats.prepare', () => {
-  const terminate = namedImplementation('terminatePaneNow')
-  const handlerStart = indexSource.indexOf("ipcMain.handle('pty:create'")
-  const handlerEnd = indexSource.indexOf("ipcMain.on('pty:write'", handlerStart)
-  assert.notEqual(handlerStart, -1)
-  assert.notEqual(handlerEnd, -1)
-  const handler = indexSource.slice(handlerStart, handlerEnd)
-  assert.match(terminate, /pendingPtyPreparations\.delete\(paneId\)/)
-  assert.match(handler, /ptyPreparationCanContinue/)
-  assert.match(handler, /currentIdentity:\s*hub\.identityByPane\(req\.id\)/)
-  assert.match(handler, /currentToken:\s*paneTokens\.get\(req\.id\)/)
-  assert.match(handler, /currentSpec:\s*livePaneSpecs\.get\(req\.id\)/)
-  assert.match(handler, /watch\.paneId\s*===\s*req\.id/)
-})
-
-test('helper sem PTY recebe um unico retry e depois perde todo o armamento', () => {
-  const watchdog = new HelperOpenWatchdog()
-  watchdog.arm('helper-1', 1_000)
-  assert.deepEqual(watchdog.due(30_999, 30_000), [])
-  assert.deepEqual(watchdog.due(31_000, 30_000), [
-    { paneId: 'helper-1', action: 'retry' }
-  ])
-  assert.equal(watchdog.has('helper-1'), true)
-  assert.deepEqual(watchdog.due(60_999, 30_000), [])
-  assert.deepEqual(watchdog.due(61_000, 30_000), [
-    { paneId: 'helper-1', action: 'expire' }
-  ])
-  assert.equal(watchdog.has('helper-1'), false)
-
-  watchdog.arm('helper-2', 0)
-  watchdog.acknowledge('helper-2')
-  assert.deepEqual(watchdog.due(90_000, 30_000), [])
-
-  const armedAt = indexSource.indexOf('helperOpenWatchdog.arm(armed.paneId)')
-  const openedAt = indexSource.indexOf("uiSender.send('panes:open'", armedAt)
-  assert.ok(armedAt >= 0 && openedAt > armedAt)
-  assert.match(indexSource, /helperOpenWatchdog\.due[\s\S]*helper-open-retried[\s\S]*helper-open-expired[\s\S]*rollbackFailedPaneSpawn/)
-})
-
 test('duas delegacoes concorrentes disputam atomicamente um unico slot', async () => {
   const reservations = new HelperSpawnReservationRegistry()
   const attempt = async () => {
@@ -343,33 +176,6 @@ test('duas delegacoes concorrentes disputam atomicamente um unico slot', async (
   const results = await Promise.all([attempt(), attempt()])
   assert.equal(results.filter(Boolean).length, 1)
   assert.equal(reservations.has('task:card-1'), false)
-})
-
-test('spawn de helper revalida delegador e card depois dos awaits', () => {
-  const delegateStart = indexSource.indexOf('delegateMany: async (id, list) => {')
-  const delegateEnd = indexSource.indexOf('\n    listSeats:', delegateStart)
-  assert.notEqual(delegateStart, -1)
-  assert.notEqual(delegateEnd, -1)
-  const delegate = indexSource.slice(delegateStart, delegateEnd)
-  const finalAwait = delegate.indexOf('await prepareSkillPlanInputs')
-  const parentCheck = delegate.indexOf('if (!helperParentStillActive())', finalAwait)
-  const arm = delegate.indexOf('armed = armPane', finalAwait)
-  const secondCheck = delegate.indexOf('if (!helperParentStillActive())', parentCheck + 1)
-  const publish = delegate.indexOf('hub.publish', arm)
-
-  assert.match(delegate, /helperSpawnReservations\.tryAcquire/)
-  assert.match(delegate, /helperSpawnReservations\.release/)
-  assert.ok(finalAwait < parentCheck && parentCheck < arm)
-  assert.ok(arm < secondCheck && secondCheck < publish)
-  assert.match(delegate, /current\.taskId\s*!==\s*id\.taskId/)
-  assert.match(delegate, /task\.status\s*!==\s*'done'/)
-  assert.match(delegate, /activeDevWatch\?\.phase\s*!==\s*'dev'/)
-  assert.match(delegate, /activeDevWatch\.paneId\s*!==\s*id\.paneId/)
-  assert.match(delegate, /watch\?\.phase\s*===\s*'dev'/)
-  assert.match(delegate, /watch\.paneId\s*===\s*id\.paneId/)
-  assert.match(delegate, /const plannedAgentId = parentScope\?\.agentIds\[0\]/)
-  assert.match(delegate, /const requestedAgentId = opts\.agent \?\? plannedAgentId/)
-  assert.match(delegate, /skillsLib\.agentBody\(requestedAgentId\)/)
 })
 
 /** Encontra o fim de um bloco sem ser enganado por strings ou comentarios. */
@@ -1019,127 +825,6 @@ test('interrupcao fecha apenas a rodada ativa e conserva receipts das fases ante
   assert.equal(interruptActiveSkillUsage(interrupted), interrupted)
 })
 
-test('handler tasks:update usa o sanitizador e nunca encaminha o patch bruto', () => {
-  const handler = ipcHandler('tasks:update')
-  assert.match(handler, /sanitizeRendererTaskPatch\s*\(/)
-  assert.match(handler, /hasActivePane/)
-  assert.doesNotMatch(handler, /tasks\.update\s*\(\s*id\s*,\s*patch\s*\)/)
-})
-
-test('create e update recusam mais de uma técnica ou persona antes de persistir', () => {
-  const createStart = indexSource.indexOf('createTasks: (id, items) => {')
-  const updateStart = indexSource.indexOf('updateTask: (id, taskId, patch: TaskPatch) => {')
-  assert.notEqual(createStart, -1)
-  assert.notEqual(updateStart, -1)
-  const create = indexSource.slice(createStart, updateStart)
-  const update = indexSource.slice(updateStart, indexSource.indexOf('\n    runTask:', updateStart))
-
-  assert.match(create, /item\.skills\?\.length[\s\S]*>\s*1/)
-  assert.match(create, /item\.agents\?\.length[\s\S]*>\s*1/)
-  assert.match(create, /item\.deliverable\s*===\s*'code'[\s\S]*typeof item\.affectsUi\s*!==\s*'boolean'/)
-  assert.ok(create.indexOf('overloadedSkillPlans') < create.indexOf('tasks.createMany'))
-  assert.match(create, /item\.briefing\?\.length[\s\S]*>\s*6000/)
-  assert.match(update, /patch\.skills\?\.length[\s\S]*>\s*1/)
-  assert.match(update, /patch\.agents\?\.length[\s\S]*>\s*1/)
-  assert.match(update, /requestedDeliverable\s*===\s*'code'[\s\S]*typeof \(patch\.affectsUi \?\? t0\.affectsUi\)\s*!==\s*'boolean'/)
-  assert.ok(update.indexOf('patch.skills?.length') < update.indexOf('tasks.update(taskId'))
-  assert.match(update, /patch\.briefing\?\.length[\s\S]*>\s*6000/)
-
-  const prepare = namedImplementation('preparePhasePaneInner')
-  assert.match(prepare, /routedExplicitSkillIds\.length\s*>\s*1/)
-  assert.match(prepare, /routedExplicitAgentIds\.length\s*>\s*1/)
-  assert.match(prepare, /card legado possui mais de uma skill técnica ou persona/)
-})
-
-test('planejamento novo falha fechado e somente execução legada marcada pode criar cards', () => {
-  const approve = ipcHandler('tasks:planApprove')
-  const evidenceGuard = approve.indexOf('isVerifiedTaskPlanPlanningMethod(task.plan)')
-  const approvalMutation = approve.indexOf("tasks.update(taskId, { status: 'execucao', plan })")
-  assert.notEqual(evidenceGuard, -1)
-  assert.notEqual(approvalMutation, -1)
-  assert.ok(evidenceGuard < approvalMutation, 'receipt precisa ser validado antes de aprovar')
-  assert.match(approve, /planningEvidenceRequired:\s*true/)
-  assert.match(
-    approve,
-    /planningEvidenceState\s*===\s*'legacy_unverified'[\s\S]*Boolean\(task\.plan\.approvedAt\)/
-  )
-
-  const createStart = indexSource.indexOf('createTasks: (id, items) => {')
-  const updateStart = indexSource.indexOf('updateTask: (id, taskId, patch: TaskPatch) => {')
-  assert.notEqual(createStart, -1)
-  assert.notEqual(updateStart, -1)
-  const create = indexSource.slice(createStart, updateStart)
-  const legacyGuard = create.indexOf("planningEvidenceState === 'legacy_unverified'")
-  const verifiedGuard = create.indexOf('isVerifiedTaskPlanPlanningMethod(approvedPlan.plan)')
-  const createMutation = create.indexOf('tasks.createMany')
-  assert.notEqual(legacyGuard, -1)
-  assert.notEqual(verifiedGuard, -1)
-  assert.notEqual(createMutation, -1)
-  assert.ok(legacyGuard < createMutation)
-  assert.ok(verifiedGuard < createMutation)
-  assert.match(create, /legacyPlanningPlan[\s\S]*!approvedPlan\.plan\.planningMethod/)
-  assert.match(
-    create,
-    /!isVerifiedTaskPlanPlanningMethod\(approvedPlan\.plan\)\s*&&\s*!legacyPlanningPlan/
-  )
-})
-
-test('create_plan relê estado após awaits e reaproveita o mesmo card sem grafo antigo', () => {
-  const createPlan = mcpApiImplementation('createPlan')
-  const asynchronousCatalog = createPlan.indexOf('await agentModelPool')
-  const receipt = createPlan.indexOf('preparePlanningArtifactEvidence')
-  const rereadMission = createPlan.indexOf('const currentMission = missions.get', receipt)
-  const rereadPlans = createPlan.indexOf('const currentExisting = tasks', rereadMission)
-  const linkedCardsCas = createPlan.indexOf('currentLinkedCardState !== initialLinkedCardState')
-  const linkedCardsGuard = createPlan.indexOf('currentLinkedCards.some', linkedCardsCas)
-  const target = createPlan.indexOf('currentRunningPlan ?? currentExisting.find', linkedCardsGuard)
-  const mutation = createPlan.indexOf('tasks.update(proposed.id', target)
-  const create = createPlan.indexOf('tasks.createMany', mutation)
-
-  assert.ok(asynchronousCatalog >= 0)
-  assert.ok(receipt > asynchronousCatalog)
-  assert.ok(rereadMission > receipt && rereadPlans > rereadMission)
-  assert.ok(linkedCardsCas > rereadPlans && linkedCardsGuard > linkedCardsCas)
-  assert.ok(target > linkedCardsGuard && mutation > target && create > mutation)
-  assert.match(createPlan, /currentPlanState\s*!==\s*initialPlanState/)
-  assert.match(createPlan, /status:\s*'backlog'[\s\S]*title:\s*input\.title[\s\S]*plan/)
-  assert.doesNotMatch(
-    createPlan,
-    /tasks\.update\(runningPlan\.id,\s*\{\s*status:\s*'backlog'/,
-    'a pausa não pode ser um commit separado antes do upsert'
-  )
-})
-
-test('grandfathering do plano mestre depende de marker one-shot fora do workspace', () => {
-  const migrationLoop = indexSource.indexOf('for (const project of projects.list())')
-  const planLoad = indexSource.indexOf('const plan = loadProjectPlan(project.path)', migrationLoop)
-  const stamp = indexSource.indexOf('projects.migratePlanningTrust(project.id, legacyApproval)', planLoad)
-  assert.ok(migrationLoop >= 0 && planLoad > migrationLoop && stamp > planLoad)
-  assert.match(indexSource.slice(migrationLoop, stamp + 100), /planningTrustVersion/)
-
-  const validationCalls = [...indexSource.matchAll(/requireTrustedEvidence:\s*true/g)]
-  assert.ok(validationCalls.length >= 4)
-  assert.ok(
-    validationCalls.every((match) =>
-      indexSource.slice(match.index, match.index + 180).includes('trustedLegacyApproval')
-    ),
-    'toda fronteira de produção precisa cruzar o legacy com o control-plane'
-  )
-
-  const setEvidenceStart = projectsSource.indexOf('setPlanningEvidence(')
-  const setEvidenceEnd = projectsSource.indexOf('\n  migratePlanningTrust(', setEvidenceStart)
-  const setEvidence = projectsSource.slice(setEvidenceStart, setEvidenceEnd)
-  assert.match(setEvidence, /else delete updated\.legacyPlanningApproval/)
-  const migrateStart = projectsSource.indexOf('migratePlanningTrust(')
-  const migrateEnd = projectsSource.indexOf('\n  remove(', migrateStart)
-  const migrate = projectsSource.slice(migrateStart, migrateEnd)
-  assert.match(migrate, /planningTrustVersion[\s\S]*>=\s*PROJECT_PLAN_TRUST_CONTRACT_VERSION/)
-  assert.ok(
-    migrate.indexOf('persistJsonStore(this.file, next)') < migrate.indexOf('this.projects = next'),
-    'o marker control-plane precisa pousar no disco antes de virar autoridade em memória'
-  )
-})
-
 test('TaskStore migra evidência de planejamento sem promover proposta nova inválida', (t) => {
   const harnessDirectory = mkdtempSync(join(tmpdir(), 'synkora-planning-evidence-migration-'))
   const userData = join(harnessDirectory, 'user-data')
@@ -1223,54 +908,6 @@ test('TaskStore migra evidência de planejamento sem promover proposta nova inv�
   assert.equal(isVerifiedTaskPlanPlanningMethod(verified?.plan), true)
 })
 
-test('receipts stale, foreign ou não ativados são recusados antes de qualquer artefato', () => {
-  const guard = namedImplementation('preparePlanningArtifactEvidence')
-  assert.match(guard, /hub\.identityByPane\(id\.paneId\)/)
-  assert.match(guard, /scope\.projectId\s*!==\s*id\.projectId/)
-  assert.match(guard, /scope\.missionId\s*!==\s*id\.missionId/)
-  assert.match(guard, /phaseRun:\s*scope\.phaseRun/)
-  assert.match(guard, /skillRuntime\.guardReport/)
-  assert.match(guard, /receipt\.skillId\s*!==\s*SYNKORA_PLANNING_STANDARD_ID/)
-  assert.match(guard, /receipt\.operation\s*!==\s*'plan'/)
-  assert.match(guard, /!receipt\.activatedAt/)
-
-  for (const [method, firstMutation] of [
-    ['createPlan', /tasks\.(?:update|createMany)\s*\(/],
-    ['saveProjectPlan', /saveProjectPlanDraft\s*\(/],
-    ['createMission', /createMissionImpl\s*\(/]
-  ]) {
-    const body = mcpApiImplementation(method)
-    const preparation = body.indexOf('preparePlanningArtifactEvidence')
-    const refusal = body.indexOf('if (!planningEvidence.ok)')
-    const mutation = body.search(firstMutation)
-    assert.notEqual(preparation, -1, `${method} não prepara evidence`)
-    assert.notEqual(refusal, -1, `${method} não falha fechado`)
-    assert.notEqual(mutation, -1, `${method} não contém mutação esperada`)
-    assert.ok(preparation < refusal, `${method} testa erro antes de preparar evidence`)
-    assert.ok(refusal < mutation, `${method} pode mutar antes de recusar receipt inválido`)
-  }
-})
-
-test('lista fechada de reprovação nunca é truncada silenciosamente', () => {
-  const advance = namedImplementation('advancePhaseInner')
-  assert.doesNotMatch(advance, /trim\(\)\.slice\(0,\s*(?:1500|2000)\)/)
-  const mcpSource = readFileSync(join(root, 'src', 'main', 'mcpServer.ts'), 'utf8')
-  const reportSchema = mcpSource.slice(
-    mcpSource.indexOf("server.registerTool(\n    'report'"),
-    mcpSource.indexOf("server.registerTool(\n    'status_note'")
-  )
-  assert.match(reportSchema, /reason:\s*z[\s\S]*?\.max\(4000\)/)
-})
-
-test('nova rodada de skill anexa recibos completos e conserva o historico anterior', () => {
-  const body = namedImplementation('preparePhasePaneInner')
-  assert.match(body, /receiptId\s*:\s*receipt\.receiptId/)
-  assert.match(body, /version\s*:\s*receipt\.version/)
-  assert.match(body, /fingerprint\s*:\s*receipt\.fingerprint/)
-  assert.match(body, /history\s*:\s*\[[\s\S]*\.\.\.priorHistory[\s\S]*usageRun[\s\S]*\]/)
-  assert.match(body, /run\.phaseRun\s*!==\s*phaseRun/)
-})
-
 test('release do plano ativo persiste interrupted na rodada exata antes de apagar receipts', () => {
   const body = namedImplementation('releasePaneSkillPlan')
   assert.match(body, /scope\.taskId/)
@@ -1280,163 +917,6 @@ test('release do plano ativo persiste interrupted na rodada exata antes de apaga
   assert.ok(
     body.indexOf('tasks.update') < body.indexOf('skillRuntime.release'),
     'interrupcao deve ser persistida antes de o ledger volatil ser liberado'
-  )
-})
-
-test('panes vivos recebem receipts novos e o bloco renovado antes de cada novo report', () => {
-  const renew = namedImplementation('renewLivePaneSkillRun')
-  const retry = namedImplementation('retryOrBacklog')
-  const gate = namedImplementation('openGatePane')
-
-  assert.match(renew, /const phaseRun = randomUUID\(\)/)
-  assert.match(renew, /skillRuntime\.replacePanePlan/)
-  assert.match(renew, /commit:[\s\S]*tasks\.update\(taskId,[\s\S]*skillUsage/)
-  assert.doesNotMatch(renew, /skillRuntime\.release[\s\S]*skillRuntime\.planPane/)
-  assert.match(renew, /receiptId:\s*receipt\.receiptId/)
-  assert.match(renew, /version:\s*receipt\.version/)
-  assert.match(renew, /fingerprint:\s*receipt\.fingerprint/)
-  assert.match(retry, /renewLivePaneSkillRun[\s\S]*renewedSkillsBlock/)
-  assert.match(gate, /renewLivePaneSkillRun[\s\S]*buildGateRecyclePrompt\(\{[\s\S]*renewedSkillsBlock/)
-  const renewalCall = gate.indexOf('await renewLivePaneSkillRun')
-  const waitRelease = gate.indexOf('liveGateWaits.delete(watch.taskId)', renewalCall)
-  assert.ok(
-    renewalCall >= 0 && waitRelease > renewalCall,
-    'o wait antigo permanece autoritativo ate a troca duravel da rodada terminar'
-  )
-})
-
-test('persona selecionada exige conclusao do helper na mesma phaseRun', () => {
-  assert.match(indexSource, /const plannedHelperAssignments = new Map/)
-  assert.match(indexSource, /const completedPlannedAgentsByPhaseRun = new Map/)
-  assert.match(
-    indexSource,
-    /plannedHelperAssignments\.set\(armed\.paneId,[\s\S]*parentPhaseRun:\s*parentScope\.phaseRun[\s\S]*agentId:\s*agentDef\.id/
-  )
-  assert.match(
-    indexSource,
-    /acceptedHelperReport[\s\S]*completedPlannedAgentsByPhaseRun\.set/
-  )
-  assert.match(
-    indexSource,
-    /requiredAgentId[\s\S]*completedPlannedAgentsByPhaseRun[\s\S]*nenhum ajudante com essa persona concluiu/
-  )
-})
-
-test('renovacao revalida o pane depois do await e nunca ressuscita receipt ativo', () => {
-  const renew = namedImplementation('renewLivePaneSkillRun')
-  const retry = namedImplementation('retryOrBacklog')
-  const cleanupAwait = renew.search(/await\s+gitOff\(\s*['"]removePrivateSkillPlan['"]/)
-  const identityCheckpoint = renew.indexOf('const renewedIdentity = hub.identityByPane')
-  const replacement = renew.indexOf('skillRuntime.replacePanePlan')
-  const persistence = renew.indexOf('tasks.update(taskId', replacement)
-
-  assert.notEqual(cleanupAwait, -1)
-  assert.notEqual(identityCheckpoint, -1)
-  assert.notEqual(persistence, -1)
-  assert.ok(persistence < cleanupAwait, 'a fotografia nova deve ser durável antes do swap/cleanup')
-  assert.ok(cleanupAwait < identityCheckpoint, 'checkpoint deve ocorrer depois do await vulneravel')
-  assert.doesNotMatch(renew, /const interruptedUsage = interruptActiveSkillUsage/)
-  assert.match(renew, /!ptys\.has\(paneId\)/)
-  assert.match(renew, /renewedScope\?\.phaseRun\s*!==\s*phaseRun/)
-  assert.match(renew, /releasePaneSkillPlan\(paneId\)/)
-  assert.match(retry, /renewedPlanDelivery[\s\S]*===\s*'dead'[\s\S]*preparePhasePane/)
-})
-
-test('remocao encerra/desregistra panes antes de apagar task e worktree', () => {
-  const remove = namedImplementation('removeTaskCascade')
-  const terminate = namedImplementation('terminateTaskPhasePane')
-  const terminateNow = namedImplementation('terminatePaneNow')
-  const terminatePosition = remove.indexOf('terminateTaskPhasePane')
-  const stateRemovalPosition = remove.indexOf('tasks.remove')
-  const worktreeRemovalPosition = remove.indexOf('removeWorktreeAndBranch')
-
-  assert.notEqual(terminatePosition, -1, 'removeTaskCascade precisa encerrar as fases')
-  assert.notEqual(stateRemovalPosition, -1)
-  assert.notEqual(worktreeRemovalPosition, -1)
-  assert.ok(terminatePosition < stateRemovalPosition, 'pane deve cair antes do estado')
-  assert.ok(stateRemovalPosition < worktreeRemovalPosition, 'estado deve cair antes do worktree')
-  assert.match(remove, /liveGateWaits/)
-  assert.match(remove, /candidate\.taskId\s*===\s*task\.id/)
-  assert.match(remove, /pane\.role\s*===\s*'ajudante'[\s\S]*helperCompletions\.discard/)
-  assert.match(remove, /pane\.role\s*===\s*'ajudante'[\s\S]*terminatePaneNow/)
-  assert.match(terminate, /terminatePaneNow\s*\(/)
-  assert.ok(
-    terminateNow.indexOf('unregisterPane') < terminateNow.indexOf('ptys.kill'),
-    'desregistro deve preceder o kill para onExit nao simular crash'
-  )
-})
-
-test('reconciliador de watch obsoleto encerra tambem o PTY que ainda estiver vivo', () => {
-  const conditionStart = indexSource.indexOf(
-    'if (!task || (task.status !== activeStatus && !existsSync(watch.marker)))'
-  )
-  assert.notEqual(conditionStart, -1, 'ramo de reconciliacao de watch obsoleto nao encontrado')
-  const openingBrace = indexSource.indexOf('{', conditionStart)
-  const staleBranch = balancedBlock(indexSource, openingBrace)
-  assert.match(
-    staleBranch,
-    /terminate(?:TaskPhasePane|PaneNow)\s*\(/,
-    'watch obsoleto com PTY vivo precisa encerrar a fase, nao apenas esquecer o registro'
-  )
-})
-
-test('crash do dev encerra o helper do mesmo card antes da retomada', () => {
-  const terminateHelpers = namedImplementation('terminateTaskHelpers')
-  assert.match(terminateHelpers, /pane\.role\s*===\s*'ajudante'/)
-  assert.match(terminateHelpers, /pane\.taskId\s*===\s*taskId/)
-  assert.match(terminateHelpers, /helperCompletions\.discard/)
-  assert.match(terminateHelpers, /updateStoredHelperStatus[\s\S]*'interrupted'/)
-  assert.match(terminateHelpers, /terminatePaneNow/)
-
-  const crashBranch = indexSource.slice(
-    indexSource.indexOf("if (watch.phase === 'review' || watch.phase === 'qa')"),
-    indexSource.indexOf("if (!sender.isDestroyed()) sender.send('tasks:changed'", 0)
-  )
-  assert.match(crashBranch, /else\s*\{[\s\S]*terminateTaskHelpers[\s\S]*status:\s*'backlog'/)
-})
-
-test('encerramento deliberado de QA sempre derruba o runtime separado', () => {
-  const terminateNow = namedImplementation('terminatePaneNow')
-  const terminatePhase = namedImplementation('terminateTaskPhasePane')
-  const closeWait = namedImplementation('closeLiveGateWait')
-  const remove = namedImplementation('removeTaskCascade')
-
-  assert.match(terminateNow, /terminatingRole\s*===\s*'qa'[\s\S]*stopQaRuntime/)
-  assert.ok(
-    terminateNow.indexOf('stopQaRuntime') < terminateNow.indexOf('unregisterPane'),
-    'runtime deve cair antes de a identidade do QA ser apagada'
-  )
-  assert.match(terminatePhase, /role\s*===\s*'qa'[\s\S]*stopQaRuntime\(taskId\)/)
-  assert.match(closeWait, /wait\.phase\s*===\s*'qa'[\s\S]*stopQaRuntime\(taskId\)/)
-  assert.match(remove, /\['dev', 'review', 'qa'\][\s\S]*terminateTaskPhasePane/)
-  const prepare = namedImplementation('preparePhasePaneInner')
-  assert.match(
-    prepare,
-    /blockForMissingFrontendStandard[\s\S]*phase\s*===\s*'qa'[\s\S]*stopQaRuntime\(taskId\)/
-  )
-  assert.match(
-    prepare,
-    /phase-prepare-cancelled[\s\S]*return null/
-  )
-})
-
-test('ruling publicado durante o preparo reconstrói o prompt antes de armar o gate', () => {
-  const prepare = namedImplementation('preparePhasePaneInner')
-  assert.match(
-    prepare,
-    /const assemblePhasePrompt[\s\S]*gateNotes:\s*currentGateNotes[\s\S]*buildPhasePrompt/
-  )
-  assert.match(
-    prepare,
-    /currentTaskBeforeArm\.gateNotes[\s\S]*prompt\s*=\s*assemblePhasePrompt\([\s\S]*currentTaskBeforeArm\.gateNotes/
-  )
-  assert.ok(
-    prepare.indexOf("event: 'phase-prompt-refreshed'") < prepare.indexOf('armed = armPane('),
-    'o refresh da decisão precisa ocorrer antes de publicar a identidade do pane'
-  )
-  assert.match(
-    prepare,
-    /latestBase\s*===\s*latestDelivered\?\.head[\s\S]*!latestRulingChanged[\s\S]*return null/
   )
 })
 
