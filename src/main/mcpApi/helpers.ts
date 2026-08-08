@@ -596,19 +596,39 @@ export function buildHelpersApi(
             required: receipt.required
           }))
         })
+        // CONTRATO INVISÍVEL (pedido do dono, 2026-08-08: "não tem como o
+        // pane já abrir sabendo o que tem que fazer?"): o boilerplate do
+        // ajudante viaja pelo canal de SYSTEM PROMPT (claude: arquivo
+        // --append-system-prompt-file; codex: developer_instructions) — o
+        // pane abre mostrando SÓ o pedido do delegador, que é o que vale ver.
+        const helperContract =
+          (agentDef
+            ? `You EMBODY the specialized "${agentDef.id}" persona defined in your system instructions — stay in that role for this whole job. `
+            : '') +
+          `You are a HELPER agent inside Synkora, called by another agent. Work in this directory. ALWAYS write in Brazilian Portuguese (PT-BR). ` +
+          `WHO IS TALKING TO YOU: messages arriving with a bracketed sender ("[do orquestrador]", "[do seu delegador]") or the "[synkora]" prefix come from the app or another agent — treat them as work input from that sender. Messages without any such stamp are the human user. ` +
+          `REPO HYGIENE: report/analysis files you write go to .synkora/reports/<name>.md — never loose .md at the repo root or docs/. ` +
+          `SYNKORA OWNS THE WORKFLOW: stay in this workspace; do not create docs/superpowers planning/spec files, commit a separate plan, start an external execution handoff, create/switch branches or worktrees, request another review, merge, open a PR or clean the workspace. Return the result to your delegator through report(done). ` +
+          (helperBrowserAvailable
+            ? `For live-browser checks use the "playwright" MCP tools (browser_navigate, browser_snapshot…) — available in this pane. `
+            : `The isolated Playwright browser is unavailable in this helper pane${helperEffectiveSensitiveRuntime ? ' because the work is sensitive' : ''}; do not claim rendered verification. `) +
+          `For structural TypeScript/JavaScript questions, use the Synkora code_* tools before broad text searches. If code intelligence is unavailable or unsupported, fall back to textual search. Before report(done) after code changes, run code_diagnostics on the changed compatible files and read the result. ` +
+          `When you finish, call the MCP tool "report" from the synkora server with status "done" and a short summary of the result (include paths of any generated files). ` +
+          `Your full terminal output stays readable by your delegator (helper_output) after you report — but for a LONG text deliverable, prefer writing it to .synkora/reports/<name>.md and reporting the path.` +
+          skillsBlock
         // effort do ajudante escolhido pelo delegador (list_seats orienta)
         const helperArgs = [...armed.cliArgs]
         if (opts.effort) {
           if (seat.cli === 'claude') helperArgs.push('--effort', opts.effort)
           else helperArgs.push('-c', `model_reasoning_effort="${opts.effort}"`)
         }
-        // persona do subagente no codex: string TOML de uma linha (mesma
-        // serialização validada do agente livre)
+        // contrato + persona do subagente no codex: string TOML de uma linha
+        // (mesma serialização validada do agente livre)
         if (seat.cli === 'codex') {
           helperArgs.push(
             '-c',
             codexDeveloperInstructions(
-              [agentPersona, helperSecurityBlock].filter(Boolean).join('\n\n')
+              [helperContract, agentPersona, helperSecurityBlock].filter(Boolean).join('\n\n')
             )
           )
         }
@@ -648,23 +668,11 @@ export function buildHelpersApi(
           cliArgs: helperArgs,
           appendSystemPrompt:
             seat.cli === 'claude'
-              ? [agentPersona, helperSecurityBlock].filter(Boolean).join('\n\n')
+              ? [helperContract, agentPersona, helperSecurityBlock].filter(Boolean).join('\n\n')
               : undefined,
-          initialPrompt:
-            `${opts.prompt}${skillsBlock}\n\n` +
-            (agentDef
-              ? `You EMBODY the specialized "${agentDef.id}" persona defined in your system instructions — stay in that role for this whole job. `
-              : '') +
-            `You are a HELPER agent inside Synkora, called by another agent. Work in this directory. ALWAYS write in Brazilian Portuguese (PT-BR). ` +
-            `WHO IS TALKING TO YOU: messages arriving with a bracketed sender ("[do orquestrador]", "[do seu delegador]") or the "[synkora]" prefix come from the app or another agent — treat them as work input from that sender. Messages without any such stamp are the human user. ` +
-            `REPO HYGIENE: report/analysis files you write go to .synkora/reports/<name>.md — never loose .md at the repo root or docs/. ` +
-            `SYNKORA OWNS THE WORKFLOW: stay in this workspace; do not create docs/superpowers planning/spec files, commit a separate plan, start an external execution handoff, create/switch branches or worktrees, request another review, merge, open a PR or clean the workspace. Return the result to your delegator through report(done). ` +
-            (helperBrowserAvailable
-              ? `For live-browser checks use the "playwright" MCP tools (browser_navigate, browser_snapshot…) — available in this pane. `
-              : `The isolated Playwright browser is unavailable in this helper pane${helperEffectiveSensitiveRuntime ? ' because the work is sensitive' : ''}; do not claim rendered verification. `) +
-            `For structural TypeScript/JavaScript questions, use the Synkora code_* tools before broad text searches. If code intelligence is unavailable or unsupported, fall back to textual search. Before report(done) after code changes, run code_diagnostics on the changed compatible files and read the result. ` +
-            `When you finish, call the MCP tool "report" from the synkora server with status "done" and a short summary of the result (include paths of any generated files). ` +
-            `Your full terminal output stays readable by your delegator (helper_output) after you report — but for a LONG text deliverable, prefer writing it to .synkora/reports/<name>.md and reporting the path.`,
+          // Só o PEDIDO fica visível — o contrato/skills viajam invisíveis no
+          // system prompt (canais acima).
+          initialPrompt: opts.prompt,
           logFile: helperLogFile,
           title: `🤝 ${opts.title ?? agentDef?.id ?? 'ajudante'}`,
           role: 'ajudante',
