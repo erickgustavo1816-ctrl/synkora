@@ -408,6 +408,22 @@ bloco. Nunca "aproveitar e refatorar" fora do mapa.
 > typecheck + 39/25/14/14/8 + 9 + 6. PRÓXIMO: F2-c3 — pacotes de fatos git
 > no worktree.ts (devDeliveryFacts/gateVerdictFacts/quarantineAndRevalidate)
 > + extração do reviewArtifactIdentity para reviewEvidence.ts + registry.
+>
+> ESTADO 4 (2026-08-08): **F2-c3 FEITO** (646fe98): worktree.ts ganha os 3
+> pacotes de fatos do veredito (gateVerdictFacts · quarantineAndRevalidate —
+> fingerprint/snapshotProblem só valem com moved>0 · devDeliveryFacts — com
+> a divergência DOCUMENTADA: fotografia incompleta conta como drift, mais
+> estrito que o inline antigo); reviewArtifactIdentity movido do closure do
+> phaseEngine para reviewEvidence.ts (import síncrono, comportamento
+> idêntico) e reviewEvidence entra no registry do gitWorker + GitApi +
+> fallback síncrono do gitAsync. Sem consumidor via gitOff até o c5.
+> Órfãos do corte removidos (closeSync/openSync/readSync/createHash do
+> phaseEngine). Testes: mission-worktree 24→27 (os 3 pacotes com fixture
+> git real) e phase-verdict-races 6→7 (identidade sha256 via módulo
+> compilado). Verde: typecheck + 39/25/14/14/8 + 9 + 7 + 27. PRÓXIMO:
+> F2-c4 — SERIALIZAR: lock ligado em todos os entrantes da tabela §3.3 do
+> plano com advancePhase AINDA sync (comportamento idêntico; recusas e
+> contagens já testáveis).
 
 - Hoje `advancePhase` é SYNC POR CONTRATO (comentário-âncora em :10855; a
   cicatriz do "[object Promise]"): a fotografia atômica é garantida por
