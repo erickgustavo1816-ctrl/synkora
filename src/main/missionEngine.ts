@@ -2149,6 +2149,22 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         .map((task) => task.id)
     )
     for (const taskId of missionTaskIds) {
+      // F2-c4 (§5.3 do mapa da Fase 2): card em TRANSIÇÃO não entra na parada
+      // em lote — apagar o watch/marcador sob um veredito em voo perderia a
+      // rodada. Os chamadores pré-checam e recusam a operação inteira; este
+      // continue é o cinto contra a corrida entre a checagem e a execução.
+      if (ctx.phaseTransitions.isLocked(taskId)) {
+        blackbox.record({
+          cat: 'phase',
+          event: 'mission-stop-skipped-transition',
+          actor: 'harness',
+          ids: { projectId, missionId, taskId },
+          reason: `card em transição sob ${
+            ctx.phaseTransitions.holderLabel(taskId) ?? '?'
+          } — a parada da missão pulou este card; o veredito em voo decide o estado dele`
+        })
+        continue
+      }
       // phaseWatches/livePaneSpecs em CALL TIME via ctx: os aliases do index
       // nascem no createPhaseEngine, DEPOIS deste engine — destructurar na
       // construção seria TDZ.

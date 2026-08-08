@@ -247,7 +247,16 @@ function createHarness(t, fixture) {
     },
     commitRuntime: () => true
   })
-  return { engine, ctx, tasks, events, projectId, createTask, watchFor, acceptance }
+  // F2-c4: entra na transação como um entrante REAL — ordem sagrada
+  // acquire → detach (o set arma o watch antes, como o preparePhasePane).
+  const enterTransition = (task, watch, label = 'test:report') => {
+    engine.phaseWatches.set(task.id, watch)
+    const token = engine.phaseTransitions.acquire(task.id, { label, projectId })
+    assert.ok(token, 'harness: acquire do entrante de teste falhou com o card livre')
+    engine.phaseWatches.detach(task.id)
+    return token
+  }
+  return { engine, ctx, tasks, events, projectId, createTask, watchFor, acceptance, enterTransition }
 }
 
 // ——————————————————— BASELINE (fluxos atuais, sync) ———————————————————
@@ -257,12 +266,15 @@ test('baseline: dev done com gate review — transação persiste e retorna true
   const h = createHarness(t, fixture)
   const task = h.createTask({ gates: ['review'] })
   const watch = h.watchFor(task, 'dev', { devSnapshot: { ...fixture.facts } })
-  h.engine.phaseWatches.set(task.id, watch)
-  h.engine.phaseWatches.detach(task.id)
+  const token = h.enterTransition(task, watch)
 
-  const advanced = h.engine.advancePhase(watch, 'done', undefined, undefined, h.acceptance())
+  const advanced = h.engine.advancePhase(watch, 'done', undefined, undefined, h.acceptance(), token)
 
   assert.equal(advanced, true)
+  // RELEASE NO SETTLE (F2-c4): logo após o retorno SYNC a continuação
+  // (openGatePane) ainda está em voo — o card segue EM TRANSIÇÃO para o
+  // resto do app; o lock só solta quando a cadeia inteira settla.
+  assert.equal(h.engine.phaseTransitions.isLocked(task.id), true)
   const after = h.tasks.get(task.id)
   assert.equal(after.status, 'execucao')
   assert.equal(after.activePhase, 'review')
@@ -274,6 +286,8 @@ test('baseline: dev done com gate review — transação persiste e retorna true
   assert.ok(h.events.hub.some((e) => e.kind === 'report' && /dev concluiu/.test(e.text)))
   assert.equal(h.engine.phaseWatches.has(task.id), false)
   await settle()
+  assert.equal(h.engine.phaseTransitions.isLocked(task.id), false)
+  assert.ok(!h.events.blackbox.some((e) => e.event === 'phase-advance-without-lock'))
 })
 
 test('baseline: dev done com fotografia DERIVADA (drift) devolve false e re-indexa o watch', async (t) => {
@@ -286,15 +300,16 @@ test('baseline: dev done com fotografia DERIVADA (drift) devolve false e re-inde
   fixture.git('add', '.')
   fixture.git('commit', '-q', '-m', 'drift')
   const watch = h.watchFor(task, 'dev', { devSnapshot: staleFacts })
-  h.engine.phaseWatches.set(task.id, watch)
-  h.engine.phaseWatches.detach(task.id)
+  const token = h.enterTransition(task, watch)
 
-  const advanced = h.engine.advancePhase(watch, 'done')
+  const advanced = h.engine.advancePhase(watch, 'done', undefined, undefined, undefined, token)
 
   assert.equal(advanced, false)
   // invariante do mapa do veredito: todo return false re-indexa o watch
   assert.equal(h.engine.phaseWatches.has(task.id), true)
   assert.equal(watch.devSnapshot, undefined)
+  // desfecho sem continuação: o wrapper solta o lock ainda na pilha síncrona
+  assert.equal(h.engine.phaseTransitions.isLocked(task.id), false)
   const after = h.tasks.get(task.id)
   assert.equal(after.activePhase, 'dev')
   await settle()
@@ -314,10 +329,16 @@ test('baseline: review REPROVADA limpa (readonly provado) grava gateRound e volt
     gateBaselineFingerprint: fixture.facts.fingerprint,
     gateStartedAt: new Date().toISOString()
   })
-  h.engine.phaseWatches.set(task.id, watch)
-  h.engine.phaseWatches.detach(task.id)
+  const token = h.enterTransition(task, watch)
 
-  const advanced = h.engine.advancePhase(watch, 'reprovada: falta tratar o caso vazio')
+  const advanced = h.engine.advancePhase(
+    watch,
+    'reprovada: falta tratar o caso vazio',
+    undefined,
+    undefined,
+    undefined,
+    token
+  )
 
   assert.equal(advanced, true)
   const after = h.tasks.get(task.id)
@@ -337,6 +358,8 @@ test('baseline: review REPROVADA limpa (readonly provado) grava gateRound e volt
   assert.equal(after.gateRound.phase, 'review')
   assert.ok(/caso vazio/.test(JSON.stringify(after.gateRound)))
   await settle()
+  // o retryOrBacklog (continuação) settlou — o lock soltou com a cadeia
+  assert.equal(h.engine.phaseTransitions.isLocked(task.id), false)
 })
 
 test('baseline: review APROVADA transiciona para QA na mesma transação', async (t) => {
@@ -353,15 +376,15 @@ test('baseline: review APROVADA transiciona para QA na mesma transação', async
     gateBaselineFingerprint: fixture.facts.fingerprint,
     gateStartedAt: new Date().toISOString()
   })
-  h.engine.phaseWatches.set(task.id, watch)
-  h.engine.phaseWatches.detach(task.id)
+  const token = h.enterTransition(task, watch)
 
   const advanced = h.engine.advancePhase(
     watch,
     'aprovada: código coerente com o contrato',
     undefined,
     undefined,
-    h.acceptance()
+    h.acceptance(),
+    token
   )
 
   assert.equal(advanced, true)
@@ -372,6 +395,7 @@ test('baseline: review APROVADA transiciona para QA na mesma transação', async
   assert.equal(after.phaseState, 'pending')
   assert.equal(after.gateRound, undefined)
   await settle()
+  assert.equal(h.engine.phaseTransitions.isLocked(task.id), false)
 })
 
 test('baseline: gate que ESCREVEU (fingerprint divergente) tem o veredito invalidado', async (t) => {
@@ -388,13 +412,19 @@ test('baseline: gate que ESCREVEU (fingerprint divergente) tem o veredito invali
     gateBaselineFingerprint: fixture.facts.fingerprint,
     gateStartedAt: new Date().toISOString()
   })
-  h.engine.phaseWatches.set(task.id, watch)
-  h.engine.phaseWatches.detach(task.id)
+  const token = h.enterTransition(task, watch)
   // o "gate" escreve num arquivo RASTREADO — a árvore visível ao git muda e o
   // head deixa de bater (worktree sujo): a fotografia imutável quebra.
   writeFileSync(join(fixture.root, 'app.txt'), 'gate escreveu aqui\n', 'utf-8')
 
-  const advanced = h.engine.advancePhase(watch, 'aprovada: tudo certo')
+  const advanced = h.engine.advancePhase(
+    watch,
+    'aprovada: tudo certo',
+    undefined,
+    undefined,
+    undefined,
+    token
+  )
 
   assert.equal(advanced, true)
   const after = h.tasks.get(task.id)
@@ -409,6 +439,7 @@ test('baseline: gate que ESCREVEU (fingerprint divergente) tem o veredito invali
   assert.equal(after.activePhase, 'dev')
   fixture.git('checkout', '--', '.')
   await settle()
+  assert.equal(h.engine.phaseTransitions.isLocked(task.id), false)
 })
 
 test('pacote reviewArtifactIdentity (reviewEvidence, worker-elegível) confere sha256 e bytes', (t) => {
@@ -423,6 +454,61 @@ test('pacote reviewArtifactIdentity (reviewEvidence, worker-elegível) confere s
 
   assert.equal(identity.sha256, createHash('sha256').update(Buffer.from(content, 'utf-8')).digest('hex'))
   assert.equal(identity.bytes, Buffer.byteLength(content, 'utf-8'))
+})
+
+// ——————————————————— F2-c4: serialização por card ———————————————————
+
+test('c4: segundo entrante é RECUSADO com contenda auditada; sem posse, advancePhase emite a anomalia e nunca lança', async (t) => {
+  const fixture = gitFixture(t)
+  const h = createHarness(t, fixture)
+  const task = h.createTask({ gates: ['review'] })
+  const watch = h.watchFor(task, 'dev', { devSnapshot: { ...fixture.facts } })
+  const holder = h.engine.phaseTransitions.acquire(task.id, {
+    label: 'test:holder',
+    projectId: h.projectId
+  })
+  assert.ok(holder)
+  // try-acquire de um segundo entrante falha e a contenda vai à caixa-preta
+  assert.equal(
+    h.engine.phaseTransitions.acquire(task.id, { label: 'test:second', projectId: h.projectId }),
+    undefined
+  )
+  assert.ok(
+    h.events.blackbox.some(
+      (e) => e.event === 'phase-transition-contention' && /test:second/.test(e.reason)
+    )
+  )
+  // tripwire: veredito SEM posse (lock de outro dono) segue funcionando —
+  // anomalia auditável, nunca um throw que brickaria o veredito
+  h.engine.phaseWatches.set(task.id, watch)
+  h.engine.phaseWatches.detach(task.id)
+  const advanced = h.engine.advancePhase(watch, 'done', undefined, undefined, h.acceptance())
+  assert.equal(advanced, true)
+  assert.ok(h.events.blackbox.some((e) => e.event === 'phase-advance-without-lock'))
+  // o dono continua sendo o holder (o wrapper sem token não solta nada)
+  assert.equal(h.engine.phaseTransitions.holderLabel(task.id), 'test:holder')
+  h.engine.phaseTransitions.release(task.id, holder)
+  await settle()
+})
+
+test('c4: phaseOccupancy soma card em transição e nunca conta watch+lock em dobro', async (t) => {
+  const fixture = gitFixture(t)
+  const h = createHarness(t, fixture)
+  const task = h.createTask({ gates: ['review'] })
+  const watch = h.watchFor(task, 'dev', { devSnapshot: { ...fixture.facts } })
+  assert.equal(h.engine.phaseOccupancy(h.projectId), 0)
+  // card em transição (lock tomado, watch detached) ocupa 1 vaga do teto
+  const token = h.enterTransition(task, watch)
+  assert.equal(h.engine.phaseOccupancy(h.projectId), 1)
+  // o próprio entrante se exclui da conta (respawn de boot, §7.6)
+  assert.equal(h.engine.phaseOccupancy(h.projectId, task.id), 0)
+  // watch re-indexado com o lock ainda vivo (rollback): conta UMA vez
+  h.engine.phaseWatches.set(task.id, watch)
+  assert.equal(h.engine.phaseOccupancy(h.projectId), 1)
+  h.engine.phaseWatches.detach(task.id)
+  h.engine.phaseTransitions.release(task.id, token)
+  assert.equal(h.engine.phaseOccupancy(h.projectId), 0)
+  await settle()
 })
 
 test('harness: nenhuma continuação deixou rejeição órfã no ar', async () => {

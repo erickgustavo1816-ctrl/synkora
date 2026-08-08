@@ -3427,6 +3427,9 @@ app.whenReady().then(async () => {
     get phaseLaunchCapacity() {
       return phaseLaunchCapacity
     },
+    get phaseTransitions() {
+      return phaseTransitions
+    },
     get pendingUserQuestions() {
       return pendingUserQuestions
     },
@@ -3491,7 +3494,8 @@ app.whenReady().then(async () => {
       taskIntegrationMarker: (...args) => taskIntegrationMarker(...args),
       recoverFinalizingTask: (...args) => recoverFinalizingTask(...args),
       closeLiveGateWait: (...args) => closeLiveGateWait(...args),
-      drainPendingRespawns: (...args) => drainPendingRespawns(...args)
+      drainPendingRespawns: (...args) => drainPendingRespawns(...args),
+      phaseOccupancy: (...args) => phaseEngine.phaseOccupancy(...args)
     }
   }
   // consumidores do ctx: phaseEngine (commit 3); mcpApi/ipc nos commits 4–5
@@ -3694,6 +3698,21 @@ app.whenReady().then(async () => {
    *  marcadores e worktree/branch (best-effort). Compartilhado entre o IPC
    *  tasks:remove e a tool MCP delete_task do orquestrador (F5.7). */
   function removeTaskCascade(task: Task): boolean {
+    // F2-c4 (§7.11 do mapa): remover o card no meio de um veredito faria o
+    // advancePhase continuar contra um card inexistente (throw → rollback de
+    // watch fantasma) e o worktree sumiria sob um finalize em voo. Recusa.
+    if (phaseTransitions.isLocked(task.id)) {
+      blackbox.record({
+        cat: 'task',
+        event: 'task-remove-refused-transition',
+        actor: 'harness',
+        ids: { projectId: task.projectId, missionId: task.missionId, taskId: task.id },
+        reason: `card em transição sob ${
+          phaseTransitions.holderLabel(task.id) ?? '?'
+        } — exclusão recusada; repita em segundos`
+      })
+      return false
+    }
     const project = projects.get(task.projectId)
     if (project) {
       try {
@@ -5195,9 +5214,11 @@ app.whenReady().then(async () => {
       for (const ent of readdirSync(runsDir)) {
         const full = join(runsDir, ent)
         if (/\.(done|verdict)$/.test(ent)) {
-          // marcador de fase COM watch ativo é o fallback do report — fica
+          // marcador de fase COM watch ativo é o fallback do report — fica;
+          // card em TRANSIÇÃO (F2-c4, §8.4 do mapa) também: o watch está
+          // detached mas o .done ainda não foi consumido pelo veredito.
           const tid = ent.replace(/\.(done|(review|qa)\.verdict|verdict)$/i, '')
-          if (!phaseWatches.has(tid)) zap(full)
+          if (!phaseWatches.has(tid) && !phaseTransitions.isLocked(tid)) zap(full)
         } else if (ent.startsWith('helper-')) {
           const short = ent.replace(/^helper-/, '').replace(/\..*$/, '')
           if (liveHelperShorts.has(short)) continue
@@ -5255,6 +5276,42 @@ app.whenReady().then(async () => {
   // tool set_phase_executor (orquestrador POR ORDEM do dono, CHECK 6
   // 2026-08-07) passam pelo MESMO caminho — transplante/resume/carimbo/evento.
   async function setPhaseExecutorImpl(
+    projectId: string,
+    taskId: string,
+    choice: { seatId: string; model?: string; effort?: string },
+    swapActor: 'user' | 'maestro',
+    ownerOrder?: string
+  ): Promise<{ ok: boolean; msg: string }> {
+    // Guards baratos ANTES do lock: não se espera na fila por um pedido
+    // inválido. O Inner re-lê o card SOB o lock — o estado pode ter mudado
+    // enquanto a troca esperava a transição fechar.
+    const pending = tasks.get(taskId)
+    if (!pending || pending.projectId !== projectId)
+      return { ok: false, msg: 'card não encontrado' }
+    if (pending.kind === 'plan' || pending.status === 'done')
+      return { ok: false, msg: 'este card não tem fase executável para trocar de conta' }
+    if (!choice?.seatId || !seats.get(choice.seatId))
+      return { ok: false, msg: 'escolha uma conta válida' }
+    // F2-c4 (§3.3 do plano da Fase 2): troca de executor é ORDEM DO DONO —
+    // ESPERA a transição em voo fechar (waitAndAcquire), nunca recusa nem
+    // some. O span lock-wait separa a fila do trabalho real no ranking da
+    // Fase 0 (senão a espera viraria "duração da troca" e poluiria o mapa).
+    const transitionToken = await mainStalls.wrap(
+      'advancePhase:lock-wait',
+      taskId.slice(0, 8),
+      () =>
+        phaseTransitions.waitAndAcquire(taskId, {
+          label: swapActor === 'user' ? 'reseat:user' : 'reseat:maestro',
+          projectId
+        })
+    )
+    try {
+      return await setPhaseExecutorLocked(projectId, taskId, choice, swapActor, ownerOrder)
+    } finally {
+      phaseTransitions.release(taskId, transitionToken)
+    }
+  }
+  async function setPhaseExecutorLocked(
     projectId: string,
     taskId: string,
     choice: { seatId: string; model?: string; effort?: string },
@@ -5620,6 +5677,7 @@ app.whenReady().then(async () => {
     phaseWatches,
     phaseLaunches,
     phaseLaunchCapacity,
+    phaseTransitions,
     liveGateWaits,
     gateDeathLog,
     gateCooldownUntil,

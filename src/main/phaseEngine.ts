@@ -11,6 +11,13 @@
  * Contratos que este módulo NÃO pode quebrar:
  * - advancePhase é SYNC POR CONTRATO (barreira síncrona do veredito — a
  *   cicatriz do "[object Promise]"): nunca virar Promise<boolean>.
+ * - Fase 2 (F2-c4, docs/FASE2_PLANO.md §3): toda TRANSIÇÃO de card roda sob o
+ *   PhaseTransitionLock (phaseTransitions) — aquisição SÓ nos pontos de
+ *   entrada (report/poller/boot/reseat/recover), ordem síncrona sagrada
+ *   acquire → detach → unlink, e "quem SEGURA O LOCK deleta o watch". O
+ *   advancePhase é o dono do release a partir da chamada; continuações
+ *   (openGatePane/retryOrBacklog/finalizeTask) herdam o token via
+ *   chainContinuation e o release acontece no settle da cadeia.
  * - MAX_PARALLEL_RUNS declarado ANTES de qualquer consumidor (no index a
  *   const vinha DEPOIS do poller e vivia de hoisting — aqui é export de
  *   módulo, sem TDZ).
@@ -80,6 +87,7 @@ import {
   qaRuntimeHarnessStartedNote
 } from './phasePrompts'
 import { type DevPaneSpec, type LiveGateWait, type PhaseWatch, type RunPhase } from './phaseTypes'
+import { PhaseTransitionLock, type PhaseTransitionToken } from './phaseTransitionLock'
 import { type MainContext } from './mainContext'
 import { requiresManualSecurityValidation, securityPromptForRole } from './securityPolicy'
 import { manualSecurityValidationOf } from './manualSecurityValidation'
@@ -432,6 +440,39 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
   const phaseWatches = new PhaseWatchRegistry()
   const phaseLaunches = new PhaseLaunchGuard()
   const phaseLaunchCapacity = new PhaseLaunchCapacityGuard()
+  // LOCK DE TRANSIÇÃO POR CARD (Fase 2, docs/FASE2_PLANO.md §3): a partir do
+  // F2-c4 todo entrante de veredito/transição adquire ANTES do detach — a
+  // idempotência "quem chega primeiro deleta o watch" vira "quem SEGURA O
+  // LOCK deleta o watch". Contenda real (alguém recusado/esperando) é
+  // exatamente a corrida que o lock existe para pegar — vai à caixa-preta.
+  const phaseTransitions = new PhaseTransitionLock((info) => {
+    blackbox.record({
+      cat: 'phase',
+      event: 'phase-transition-contention',
+      actor: 'harness',
+      ids: { projectId: info.projectId, taskId: info.taskId },
+      reason: `${info.waiterLabel} ${
+        info.refused ? 'foi recusado' : 'entrou na fila'
+      } — o card está em transição sob ${info.holderLabel}`
+    })
+  })
+  /** Ocupação REAL do projeto (§7.6 do mapa): fases com watch + cards em
+   *  transição (lock tomado, watch detached). Card com watch E lock conta UMA
+   *  vez; `excludeTaskId` tira o próprio card do entrante que já segura o
+   *  lock (respawn de boot) para não se contar como ocupação. */
+  function phaseOccupancy(projectId: string, excludeTaskId?: string): number {
+    let count = 0
+    for (const watch of phaseWatches.values()) {
+      if (watch.projectId === projectId && watch.taskId !== excludeTaskId) count++
+    }
+    for (const held of phaseTransitions.snapshot()) {
+      if (held.projectId !== projectId) continue
+      if (held.taskId === excludeTaskId) continue
+      if (phaseWatches.has(held.taskId)) continue
+      count++
+    }
+    return count
+  }
 
   function terminateTaskPhasePane(
     projectId: string,
@@ -1830,12 +1871,24 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       mission?.seatId ??
       maestro.get(projectId).seatId
     if (!seatId || !seats.get(seatId)) return
+    // Fase 2 (§3.3): card em transição não respawna — o veredito em voo manda
+    // no desfecho; o drain é "uma tentativa por boot", perder a vez é barato.
+    const transitionToken = phaseTransitions.acquire(taskId, {
+      label: 'boot:respawn',
+      projectId
+    })
+    if (!transitionToken) return
     const launchToken = phaseLaunches.reserve(taskId)
-    if (!launchToken) return
-    const active = [...phaseWatches.values()].filter((w) => w.projectId === projectId).length
+    if (!launchToken) {
+      phaseTransitions.release(taskId, transitionToken)
+      return
+    }
+    // ocupação soma cards em transição (§7.6), excluindo o próprio lock acima
+    const active = phaseOccupancy(projectId, taskId)
     const capacityToken = phaseLaunchCapacity.reserve(projectId, active, MAX_PARALLEL_RUNS)
     if (!capacityToken) {
       phaseLaunches.release(taskId, launchToken)
+      phaseTransitions.release(taskId, transitionToken)
       return
     }
     try {
@@ -1870,6 +1923,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     } finally {
       phaseLaunches.release(taskId, launchToken)
       phaseLaunchCapacity.release(projectId, capacityToken)
+      phaseTransitions.release(taskId, transitionToken)
     }
   }
   function drainPendingRespawns(projectId: string): void {
@@ -2179,6 +2233,43 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
   }
 
   async function recoverFinalizingTask(task: Task): Promise<boolean> {
+    // Fase 2 (§3.3): este caminho muta o card com watch SINTÉTICO que nunca
+    // entra no registry — por isso o lock é chaveado por taskId. Adquire como
+    // ENTRANTE (boot `void` ou run_task {finalize}); o finalizeTask disparado
+    // no fim roda SOB este token e o release acontece no settle da cadeia
+    // (mesmo padrão chainContinuation do advancePhase).
+    const transitionToken = phaseTransitions.acquire(task.id, {
+      label: 'finalize:recover',
+      projectId: task.projectId
+    })
+    if (!transitionToken) {
+      blackbox.record({
+        cat: 'recovery',
+        event: 'finalize-recover-refused-transition',
+        actor: 'harness',
+        ids: { projectId: task.projectId, missionId: task.missionId, taskId: task.id },
+        reason: `card em transição sob ${
+          phaseTransitions.holderLabel(task.id) ?? '?'
+        } — a recuperação não compete com um veredito em voo; repita em segundos`
+      })
+      return false
+    }
+    let chained = false
+    const chainContinuation = (continuation: Promise<unknown>): void => {
+      chained = true
+      void continuation.finally(() => phaseTransitions.release(task.id, transitionToken))
+    }
+    try {
+      return await recoverFinalizingTaskInner(task, chainContinuation)
+    } finally {
+      if (!chained) phaseTransitions.release(task.id, transitionToken)
+    }
+  }
+
+  async function recoverFinalizingTaskInner(
+    task: Task,
+    chainContinuation: (continuation: Promise<unknown>) => void
+  ): Promise<boolean> {
     const project = projects.get(task.projectId)
     if (!project) return false
     let mission = task.missionId ? missions.get(task.missionId) : undefined
@@ -2428,7 +2519,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           : join(project.path, '.synkora', 'runs', `${task.id}.${phase}.verdict`),
       createdAt: Date.now()
     }
-    void finalizeTask(watch, task, 'gates já aprovados antes do reinício')
+    chainContinuation(finalizeTask(watch, task, 'gates já aprovados antes do reinício'))
     return true
   }
 
@@ -2447,9 +2538,10 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           pane.role === 'ajudante')
       ) {
         if (pane.role === 'ajudante') ptys.flushLogOf(pane.paneId)
-        if (ptys.has(pane.paneId)) ptys.kill(pane.paneId)
-        if (ctx.uiSender && !ctx.uiSender.isDestroyed())
-          ctx.uiSender.send('panes:closeById', watch.projectId, pane.paneId)
+        // terminatePaneNow desregistra ANTES do kill (F2-c4, nota da tabela
+        // §3.3): o kill cru deixava a identidade viva e o onExit reinterpretava
+        // o encerramento deliberado do finalize como crash de fase.
+        terminatePaneNow(watch.projectId, pane.paneId)
       }
     }
     const project = projects.get(watch.projectId)
@@ -3109,14 +3201,40 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     acceptance?: {
       skillUsage: NonNullable<Task['skillUsage']>
       commitRuntime: () => boolean
-    }
+    },
+    token?: PhaseTransitionToken
   ): boolean {
     // Fase 0 (atribuição de stall): wrapper fino e SÍNCRONO — o contrato SYNC
     // do veredito (comentário-âncora no Inner) fica intacto: wrap de função
     // sync devolve sync.
-    return mainStalls.wrap(`advancePhase:${watch.phase}`, watch.taskId.slice(0, 8), () =>
-      advancePhaseInner(watch, content, securityReview, verificationEvidence, acceptance)
-    )
+    // Fase 2 (F2-c4): o advancePhase é o DONO do release do lock a partir da
+    // chamada — imediato nos desfechos sem continuação (incluindo throw: no
+    // c4 o rollback do call site roda na MESMA pilha síncrona, sem janela;
+    // revisitar a ordem set→release no c5, §8.2 do mapa) e no SETTLE da
+    // cadeia quando o Inner dispara continuação. O call site só solta quando
+    // recusa/rola de volta ANTES de chamar aqui.
+    let chained = false
+    const chainContinuation = (continuation: Promise<unknown>): void => {
+      chained = true
+      if (token) {
+        void continuation.finally(() => phaseTransitions.release(watch.taskId, token))
+      }
+    }
+    try {
+      return mainStalls.wrap(`advancePhase:${watch.phase}`, watch.taskId.slice(0, 8), () =>
+        advancePhaseInner(
+          watch,
+          content,
+          securityReview,
+          verificationEvidence,
+          acceptance,
+          token,
+          chainContinuation
+        )
+      )
+    } finally {
+      if (!chained && token) phaseTransitions.release(watch.taskId, token)
+    }
   }
   function advancePhaseInner(
     watch: PhaseWatch,
@@ -3126,8 +3244,32 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     acceptance?: {
       skillUsage: NonNullable<Task['skillUsage']>
       commitRuntime: () => boolean
+    },
+    token?: PhaseTransitionToken,
+    chainContinuation: (continuation: Promise<unknown>) => void = (continuation) => {
+      void continuation
     }
   ): boolean {
+    // TRIPWIRE DE CONTRATO (Fase 2, §3.2 do plano): todo caminho de veredito
+    // entra aqui SOB o lock do card. Chamada sem posse é anomalia auditável
+    // (o critério de pronto exige zero) — nunca um throw que brickaria o
+    // veredito.
+    if (!token || !phaseTransitions.owns(watch.taskId, token)) {
+      blackbox.record({
+        cat: 'phase',
+        event: 'phase-advance-without-lock',
+        actor: 'harness',
+        ids: {
+          projectId: watch.projectId,
+          taskId: watch.taskId,
+          phase: watch.phase,
+          role: watch.phase
+        },
+        reason: token
+          ? 'advancePhase chamado com token que não é o dono atual do lock deste card'
+          : 'advancePhase chamado sem token de transição — entrante fora da tabela §3.3'
+      })
+    }
     const task = tasks.get(watch.taskId)
     if (!task) return false
     let runtimeAcceptanceCommitted = false
@@ -3386,14 +3528,16 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       if (watch.paneId) ptys.reapVisualsOf(watch.paneId)
       terminateTaskHelpers(watch.projectId, watch.taskId, 'entrega congelada para gates independentes')
       terminateTaskPhasePane(watch.projectId, watch.taskId, 'dev')
-      if (next) void openGatePane(watch, next)
+      if (next) chainContinuation(openGatePane(watch, next))
       else
-        void finalizeTask(
-          watch,
-          task,
-          reviewMemo || qaMemo
-            ? 'gates já aprovados para esta mesma entrega (memoização por head)'
-            : 'sem gates — decisão do Maestro'
+        chainContinuation(
+          finalizeTask(
+            watch,
+            task,
+            reviewMemo || qaMemo
+              ? 'gates já aprovados para esta mesma entrega (memoização por head)'
+              : 'sem gates — decisão do Maestro'
+          )
         )
       if (!next) {
         if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
@@ -3691,7 +3835,9 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         actor: 'harness',
         quiet: true
       })
-      void retryOrBacklog(watch, watch.phase === 'review' ? 'revisor' : 'QA', reason)
+      chainContinuation(
+        retryOrBacklog(watch, watch.phase === 'review' ? 'revisor' : 'QA', reason)
+      )
       return true
     }
     const m = content.match(/^\s*(aprovada|reprovada)\s*:?\s*([\s\S]*)$/i)
@@ -3773,7 +3919,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
       }
       hub.publish({ projectId: watch.projectId, missionId: task.missionId, kind: 'report', text: `${who} REPROVOU "${task.title}": ${motivo}`, actor: who })
-      void retryOrBacklog(watch, who, motivo)
+      chainContinuation(retryOrBacklog(watch, who, motivo))
       return true
     } else if (watch.phase === 'review' && gates.includes('qa')) {
       // MEMOIZAÇÃO (2026-08-06): QA já aprovado para ESTE MESMO head (estado
@@ -3798,7 +3944,9 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           reason: 'QA já aprovou este mesmo head — indo direto para a conclusão'
         })
         hub.publish({ projectId: watch.projectId, missionId: task.missionId, kind: 'report', text: `revisor aprovou "${task.title}" — QA já havia aprovado este mesmo commit; concluindo sem refazer`, actor: 'review' })
-        void finalizeTask(watch, task, 'aprovada pelo revisor (QA memoizado para o mesmo head)')
+        chainContinuation(
+          finalizeTask(watch, task, 'aprovada pelo revisor (QA memoizado para o mesmo head)')
+        )
         if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
         syncBoard(watch.projectId)
         return true
@@ -3809,14 +3957,14 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       liveGateWaits.delete(watch.taskId)
       emitLog(watch.projectId, { kind: 'log', tag: 'maestro', text: `🧐 revisor aprovou "${task.title}" — 🔎 QA entrando (pane real)` })
       hub.publish({ projectId: watch.projectId, missionId: task.missionId, kind: 'report', text: `revisor aprovou "${task.title}" — QA entrando`, actor: 'review' })
-      void openGatePane(watch, 'qa')
+      chainContinuation(openGatePane(watch, 'qa'))
       return true
     } else {
       recordGate('approved', motivo, readonly, 'finalize', true)
       cleanupReviewArtifact(watch)
       terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
       liveGateWaits.delete(watch.taskId)
-      void finalizeTask(watch, task, `aprovada pelo ${who}`)
+      chainContinuation(finalizeTask(watch, task, `aprovada pelo ${who}`))
     }
     if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
     syncBoard(watch.projectId)
@@ -3839,6 +3987,10 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       // meio) — status divergente em watch RECÉM-criado é preparação em curso,
       // nunca staleness. E soltar um watch NUNCA é silencioso: sem o evento na
       // caixa-preta, o report(done) recusado virou mistério de 10 minutos.
+      // Card em TRANSIÇÃO (lock tomado) nunca é julgado stale nem "pane
+      // perdido": um rollback re-indexado com createdAt vencido viraria fogo
+      // amigo do terminatePaneNow (§7.4 do mapa da Fase 2).
+      if (phaseTransitions.isLocked(taskId)) continue
       if (!task || (task.status !== activeStatus && !existsSync(watch.marker))) {
         if (task && Date.now() - watch.createdAt < PHASE_WATCH_GRACE_MS) continue
         phaseWatches.delete(taskId)
@@ -4036,14 +4188,27 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
                 return
               }
             }
+            // Re-check de VIGÊNCIA (mesmo objeto): cobre a rodada que FECHOU
+            // por completo durante o await do guard (report venceu, watch novo
+            // ou nenhum). A POSSE abaixo cobre a rodada EM VOO (report ainda
+            // dentro da transação segura o lock e este acquire falha) — é ela
+            // que substitui a identidade por referência como garantia (§3.2
+            // regra 3 do plano; o caso rollback-de-mesmo-objeto §7.1 morre no
+            // c5 com o lock atravessando os awaits do veredito).
             if (phaseWatches.get(taskId) !== watch) return
+            const transitionToken = phaseTransitions.acquire(taskId, {
+              label: 'poller:done',
+              projectId: watch.projectId
+            })
+            if (!transitionToken) return
             try {
               unlinkSync(watch.marker)
             } catch {
               // já sumiu
             }
             phaseWatches.detach(taskId)
-            advancePhase(watch, content)
+            // o advancePhase assume o release (imediato ou no settle da cadeia)
+            advancePhase(watch, content, undefined, undefined, undefined, transitionToken)
           } finally {
             phaseMarkersProcessing.delete(taskId)
           }
@@ -4071,6 +4236,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     phaseWatches,
     phaseLaunches,
     phaseLaunchCapacity,
+    phaseTransitions,
+    phaseOccupancy,
     liveGateWaits,
     gateDeathLog,
     gateCooldownUntil,

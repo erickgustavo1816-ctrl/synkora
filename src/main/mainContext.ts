@@ -46,6 +46,10 @@ import type {
   PhaseLaunchCapacityGuard,
   PhaseLaunchToken
 } from './phaseLaunchGuard'
+import type {
+  PhaseTransitionLock,
+  PhaseTransitionToken
+} from './phaseTransitionLock'
 import type { MaestroEvent } from './maestro'
 import type { SecurityReviewRecord } from './securityReview'
 import type { GateVerificationEvidence } from './gateVerificationEvidence'
@@ -78,7 +82,12 @@ export interface PhaseApi {
    *  "[object Promise]"): NUNCA transformar em Promise<boolean>.
    *  Arity COMPLETA (fix do commit 3): o tipo antigo parava em securityReview
    *  e um consumidor via ctx.phase droparia verificationEvidence/acceptance
-   *  em silêncio — os call sites reais do report passam 4 e 5 argumentos. */
+   *  em silêncio — os call sites reais do report passam 4 e 5 argumentos.
+   *  Fase 2 (F2-c4): `token` é a posse do PhaseTransitionLock adquirida pelo
+   *  ENTRANTE (report/poller) — o advancePhase assume o release (imediato nos
+   *  desfechos sem continuação; no settle da cadeia quando dispara
+   *  openGatePane/retryOrBacklog/finalizeTask). Chamada sem posse emite
+   *  `phase-advance-without-lock` na caixa-preta, nunca lança. */
   advancePhase(
     watch: PhaseWatch,
     content: string,
@@ -87,7 +96,8 @@ export interface PhaseApi {
     acceptance?: {
       skillUsage: NonNullable<Task['skillUsage']>
       commitRuntime: () => boolean
-    }
+    },
+    token?: PhaseTransitionToken
   ): boolean
   retryOrBacklog(watch: PhaseWatch, who: string, motivo: string): Promise<void>
   openGatePane(watch: PhaseWatch, phase: 'review' | 'qa'): Promise<boolean>
@@ -111,6 +121,11 @@ export interface PhaseApi {
   closeLiveGateWait(projectId: string, taskId: string, reason: string): void
   /** Drena os respawns LAZY anotados pelo recovery de boot (projeto aberto). */
   drainPendingRespawns(projectId: string): void
+  /** Ocupação REAL do projeto para o teto MAX_PARALLEL_RUNS (§7.6 do mapa da
+   *  Fase 2): fases com watch + cards em TRANSIÇÃO (lock tomado com o watch
+   *  detached) — um veredito em voo não pode furar o teto em 1. Card com
+   *  watch E lock (rollback/continuação re-indexada) conta UMA vez. */
+  phaseOccupancy(projectId: string, excludeTaskId?: string): number
 }
 
 export interface MainContext {
@@ -180,6 +195,9 @@ export interface MainContext {
   readonly phaseWatches: Map<string, PhaseWatch> & { detach(taskId: string): boolean }
   readonly phaseLaunches: PhaseLaunchGuard
   readonly phaseLaunchCapacity: PhaseLaunchCapacityGuard
+  /** Lock de transição por card (Fase 2, docs/FASE2_PLANO.md §3): "sem watch"
+   *  deixou de significar "card livre" — quem pergunta consulta isLocked. */
+  readonly phaseTransitions: PhaseTransitionLock
   readonly pendingUserQuestions: Map<string, PendingUserQuestion>
   readonly liveGateWaits: Map<string, LiveGateWait>
   readonly gateDeathLog: Map<string, number[]>

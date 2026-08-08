@@ -183,6 +183,16 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     const norm = (p: string): string => p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
     const clash = projects.list().find((p) => p.id !== id && norm(p.path) === norm(newPath))
     if (clash) return { ok: false, error: `essa pasta já é o universo "${clash.name}"` }
+    // F2-c4 (§5.4 do mapa da Fase 2): relocar no meio de um veredito faria o
+    // cwd do watch em voo sumir sob o advancePhase. Gesto raro e explícito do
+    // dono — recusar com receita é trivial e correto.
+    if (ctx.phaseTransitions.lockedCount(id) > 0) {
+      return {
+        ok: false,
+        error:
+          'há um veredito de fase fechando neste projeto agora — aguarde alguns segundos e tente relocar de novo'
+      }
+    }
     const oldPath = project.path
     // 1. derruba tudo que roda no projeto (panes no cwd velho ficariam zumbis)
     killMaestroSession(id)

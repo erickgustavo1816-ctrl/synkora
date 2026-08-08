@@ -247,6 +247,24 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
             })
             return mission
           }
+          // F2-c4 (§5.3 do mapa da Fase 2): arquivar com veredito em voo
+          // perderia a rodada — recusa ANTES de qualquer mutação, com receita.
+          const inTransition = tasks
+            .list(mission.projectId)
+            .filter(
+              (t) => t.missionId === mission.id && ctx.phaseTransitions.isLocked(t.id)
+            )
+          if (inTransition.length > 0) {
+            hub.publish({
+              projectId: mission.projectId,
+              kind: 'error',
+              text: `não arquivei "${mission.title}": há veredito de fase fechando em ${inTransition
+                .map((t) => `"${t.title}"`)
+                .join(', ')} — aguarde alguns segundos e tente de novo`,
+              actor: 'harness'
+            })
+            return mission
+          }
         }
         const planError = transitionLinkedProjectPlanMission(
           mission.projectId,
@@ -318,6 +336,23 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     if (!mission || mission.status !== 'arquivada') return false
     const project = projects.get(mission.projectId)
     if (!project) return false
+    // F2-c4 (§5.3): exclusão com veredito em voo em card da missão — recusa
+    // com receita antes de qualquer mutação (missão arquivada raramente tem
+    // transição viva; o caso é corrida real de segundos).
+    const inTransition = tasks
+      .list(mission.projectId)
+      .filter((t) => t.missionId === missionId && ctx.phaseTransitions.isLocked(t.id))
+    if (inTransition.length > 0) {
+      hub.publish({
+        projectId: mission.projectId,
+        kind: 'error',
+        text: `não excluí a missão "${mission.title}": há veredito de fase fechando em ${inTransition
+          .map((t) => `"${t.title}"`)
+          .join(', ')} — aguarde alguns segundos e tente de novo`,
+        actor: 'harness'
+      })
+      return false
+    }
     try {
       ensureSynkoraGitExcludes(project.path)
     } catch (error) {

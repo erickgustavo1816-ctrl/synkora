@@ -590,7 +590,33 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
           if (gateWait && gateWait.paneId === identity.paneId)
             ctx.liveGateWaits.delete(identity.taskId)
           const watch = ctx.phaseWatches.get(identity.taskId)
-          if (watch && watch.phase === identity.phase) {
+          // F2-c4 (§7.7 do mapa da Fase 2): com o veredito do card em
+          // processamento (lock tomado — ex.: rollback re-indexou o watch com
+          // a continuação em voo), o onExit só REGISTRA e deixa a decisão
+          // para o dono do lock; mutar aqui devolveria o card ao backlog por
+          // baixo de um report que respondeu "preservado".
+          if (
+            watch &&
+            watch.phase === identity.phase &&
+            ctx.phaseTransitions.isLocked(identity.taskId)
+          ) {
+            blackbox.record({
+              cat: 'pane',
+              event: 'pane-exit-during-transition',
+              actor: 'harness',
+              ids: {
+                projectId: identity.projectId,
+                missionId: identity.missionId,
+                taskId: identity.taskId,
+                paneId: identity.paneId,
+                phase: identity.phase,
+                role: identity.role
+              },
+              reason: `pane morreu com o card em transição sob ${
+                ctx.phaseTransitions.holderLabel(identity.taskId) ?? '?'
+              } — nenhuma mutação; o dono do lock decide o desfecho`
+            })
+          } else if (watch && watch.phase === identity.phase) {
             ctx.phaseWatches.delete(identity.taskId)
             const task = tasks.get(identity.taskId)
             if (task && task.status !== 'done') {

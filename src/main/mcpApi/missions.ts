@@ -145,6 +145,16 @@ export function buildMissionsApi(
       if (queued?.state === 'merging') {
         return `não arquivei a missão "${m.title}": ela está no instante de merge da cabeça da fila`
       }
+      // F2-c4 (§5.3): veredito em voo em card da missão — recusa com receita
+      // ANTES de qualquer mutação (transition/cancel/stop).
+      const inTransition = ctx.tasks
+        .list(id.projectId)
+        .filter((t) => t.missionId === m.id && ctx.phaseTransitions.isLocked(t.id))
+      if (inTransition.length > 0) {
+        return `não arquivei a missão "${m.title}": há veredito de fase fechando em ${inTransition
+          .map((t) => `"${t.title}"`)
+          .join(', ')} — aguarde alguns segundos e chame archive_mission de novo`
+      }
       const planError = transitionLinkedProjectPlanMission(id.projectId, m.id, 'archive')
       if (planError) return `não arquivei a missão: ${planError}`
       if (queued) integrationQueue.cancel(m.id)

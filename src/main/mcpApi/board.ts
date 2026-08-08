@@ -1246,12 +1246,14 @@ export function buildBoardApi(
       }
       if (phaseWatches.has(taskId))
         return 'já existe uma fase rodando para este card — não abri outro pane'
+      // F2-c4 (§7.5/§7.9 do mapa): card em TRANSIÇÃO parece livre (watch
+      // detached) — a recusa com receita fecha o run_task no meio do veredito.
+      if (ctx.phaseTransitions.isLocked(taskId))
+        return 'a rodada anterior deste card ainda está fechando (veredito em processamento) — aguarde alguns segundos ou o evento de conclusão e chame run_task de novo'
       const launchToken = phaseLaunches.reserve(taskId)
       if (!launchToken)
         return 'este card já está sendo preparado por outra chamada — não abri outro pane'
-      const activeAtReservation = [...phaseWatches.values()].filter(
-        (watch) => watch.projectId === id.projectId
-      ).length
+      const activeAtReservation = ctx.phase.phaseOccupancy(id.projectId, taskId)
       const capacityToken = phaseLaunchCapacity.reserve(
         id.projectId,
         activeAtReservation,
@@ -1481,9 +1483,7 @@ export function buildBoardApi(
           })
         }
       }
-      const running = Array.from(phaseWatches.values()).filter(
-        (w) => w.projectId === id.projectId
-      ).length
+      const running = ctx.phase.phaseOccupancy(id.projectId, taskId)
       if (running >= MAX_PARALLEL_RUNS)
         return `limite de ${MAX_PARALLEL_RUNS} execuções paralelas atingido — aguarde um evento de conclusão e chame run_task de novo`
       // Executor: lane do plano (contrato do usuário) > política do dept >
@@ -1528,9 +1528,7 @@ export function buildBoardApi(
       ) {
         return 'o plano/card mudou ou foi pausado enquanto a fase era preparada; nenhum pane foi aberto'
       }
-      const activeBeforeSpawn = [...phaseWatches.values()].filter(
-        (watch) => watch.projectId === id.projectId
-      ).length
+      const activeBeforeSpawn = ctx.phase.phaseOccupancy(id.projectId, taskId)
       if (activeBeforeSpawn >= MAX_PARALLEL_RUNS)
         return `limite de ${MAX_PARALLEL_RUNS} execuções paralelas atingido antes do spawn — tente novamente quando uma fase terminar`
       const spec = await ctx.phase.preparePhasePane(
@@ -1659,8 +1657,10 @@ export function buildBoardApi(
         return 'só cards AUTO (criados por você no modo plano) podem ser removidos — cards do usuário são dele'
       if (task.status === 'execucao' || task.status === 'qa')
         return 'card em execução/QA — aguarde o pipeline terminar (ou o evento de erro) antes de remover'
+      if (ctx.phaseTransitions.isLocked(taskId))
+        return 'não removi o card: há um veredito de fase fechando nele agora — aguarde alguns segundos e chame delete_task de novo'
       if (!removeTaskCascade(task))
-        return 'não removi o card: .synkora está rastreado pelo Git; retire o runtime do versionamento antes da limpeza'
+        return 'não removi o card: .synkora está rastreado pelo Git (retire o runtime do versionamento) ou uma transição de fase começou neste instante — corrija/aguarde e tente de novo'
       hub.publish({
         projectId: id.projectId,
         missionId: id.missionId,

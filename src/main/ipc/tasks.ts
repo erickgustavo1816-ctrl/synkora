@@ -155,8 +155,12 @@ export function registerTasksIpc(ctx: MainContext, extras: TasksIpcExtras): void
     // quem move card auto é o pipeline/orquestrador.
     if (before && (before.kind === 'plan' || before.auto)) return before
     if (!before) return undefined
+    // F2-c4 (§5.12 do mapa da Fase 2): card em TRANSIÇÃO (lock tomado, watch
+    // detached) conta como pane ativo — o kanban não move card por baixo do
+    // veredito em processamento.
     const hasActivePane =
       phaseWatches.has(id) ||
+      ctx.phaseTransitions.isLocked(id) ||
       hub
         .panesOf(before.projectId)
         .some(

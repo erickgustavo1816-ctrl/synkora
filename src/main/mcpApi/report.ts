@@ -13,6 +13,11 @@
  *   SYNC POR CONTRATO (a cicatriz do "[object Promise]").
  * - A transação: phaseWatches.detach ANTES do advancePhase; falha/recusa
  *   re-indexa com phaseWatches.set (rollback) — nunca reordenar.
+ * - Fase 2 (F2-c4): a transação começa ANTES do detach com o try-acquire
+ *   SÍNCRONO do PhaseTransitionLock (ordem sagrada acquire → detach →
+ *   unlink). Falha de acquire = rodada anterior fechando; recusa com receita,
+ *   nada é consumido. O advancePhase assume o release; os caminhos que
+ *   recusam/rolam de volta ANTES de chamá-lo soltam explicitamente.
  * - A anotação positional de securityReview segue a do literal.
  */
 import { dirname, join } from 'path'
@@ -430,6 +435,12 @@ export function buildReportApi(
       }
       const boundArtifactProblem = blockedReport ? undefined : ctx.phase.reviewArtifactProblem(watch)
       if (boundArtifactProblem) {
+        const transitionToken = ctx.phaseTransitions.acquire(watch.taskId, {
+          label: `report:${watch.phase}:artifact-invalid`,
+          projectId: watch.projectId
+        })
+        if (!transitionToken)
+          return 'a rodada anterior deste card ainda está fechando — aguarde alguns segundos e reporte de novo; nenhum receipt ou veredito foi consumido'
         phaseWatches.detach(watch.taskId)
         try {
           unlinkSync(watch.marker)
@@ -440,7 +451,9 @@ export function buildReportApi(
           watch,
           content,
           undefined,
-          sanitizedVerificationEvidence
+          sanitizedVerificationEvidence,
+          undefined,
+          transitionToken
         )
         return advanced
           ? `veredito invalidado antes de consumir receipts: ${boundArtifactProblem}`
@@ -521,102 +534,125 @@ export function buildReportApi(
         (watch.phase === 'review' || watch.phase === 'qa') &&
         blockedReport
       ) {
-        const blockedTask = tasks.get(watch.taskId)
-        ctx.phase.cleanupReviewArtifact(watch)
-        phaseWatches.delete(watch.taskId)
-        try {
-          unlinkSync(watch.marker)
-        } catch {
-          // marcador nem chegou a existir
-        }
-        try {
-          appendFileSync(watch.logFile, `\n[report ${id.role}] ${content}\n`, 'utf-8')
-        } catch {
-          // transcript é best-effort
-        }
-        stopQaRuntime(watch.taskId)
-        liveGateWaits.delete(watch.taskId)
-        ctx.phase.terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
-        tasks.update(watch.taskId, {
-          status: watch.phase === 'qa' ? 'qa' : 'execucao',
-          activePhase: watch.phase,
-          phaseState: 'interrupted'
-          // feedback INTOCADO: bloqueio ambiental não é lista de correção
+        // F2-c4: `bloqueada` fica FORA do advancePhase mas É transição de
+        // card — sem o lock, ele protegeria só metade das saídas do gate.
+        const transitionToken = ctx.phaseTransitions.acquire(watch.taskId, {
+          label: 'report:bloqueada-gate',
+          projectId: watch.projectId
         })
-        blackbox.record({
-          cat: 'phase',
-          event: 'gate-blocked-environment',
-          actor: id.role,
-          ids: {
+        if (!transitionToken)
+          return 'a rodada anterior deste card ainda está fechando — aguarde alguns segundos e reporte bloqueada de novo'
+        try {
+          const blockedTask = tasks.get(watch.taskId)
+          ctx.phase.cleanupReviewArtifact(watch)
+          phaseWatches.delete(watch.taskId)
+          try {
+            unlinkSync(watch.marker)
+          } catch {
+            // marcador nem chegou a existir
+          }
+          try {
+            appendFileSync(watch.logFile, `\n[report ${id.role}] ${content}\n`, 'utf-8')
+          } catch {
+            // transcript é best-effort
+          }
+          stopQaRuntime(watch.taskId)
+          liveGateWaits.delete(watch.taskId)
+          ctx.phase.terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
+          tasks.update(watch.taskId, {
+            status: watch.phase === 'qa' ? 'qa' : 'execucao',
+            activePhase: watch.phase,
+            phaseState: 'interrupted'
+            // feedback INTOCADO: bloqueio ambiental não é lista de correção
+          })
+          blackbox.record({
+            cat: 'phase',
+            event: 'gate-blocked-environment',
+            actor: id.role,
+            ids: {
+              projectId: watch.projectId,
+              missionId: blockedTask?.missionId,
+              taskId: watch.taskId,
+              paneId: id.paneId,
+              phase: watch.phase,
+              role: watch.phase
+            },
+            reason: content.slice(0, 400)
+          })
+          hub.publish({
             projectId: watch.projectId,
             missionId: blockedTask?.missionId,
-            taskId: watch.taskId,
-            paneId: id.paneId,
-            phase: watch.phase,
-            role: watch.phase
-          },
-          reason: content.slice(0, 400)
-        })
-        hub.publish({
-          projectId: watch.projectId,
-          missionId: blockedTask?.missionId,
-          kind: 'error',
-          urgent: true,
-          text: `gate ${watch.phase} de "${blockedTask?.title ?? watch.taskId}" BLOQUEADO POR AMBIENTE (não é defeito do produto — NÃO repasse nada ao dev): ${content.slice(0, 400)}. Corrija o ambiente se estiver ao seu alcance e reabra SÓ o gate com run_task {id: "${watch.taskId}", phase: "${watch.phase}"} — a reabertura tenta subir o runtime de novo. Se o bloqueio persistir na segunda tentativa, escale ao USUÁRIO com UMA pergunta objetiva`,
-          actor: 'harness'
-        })
-        if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
-        syncBoard(watch.projectId)
-        return 'bloqueio ambiental registrado — o gate fechou SEM contar ciclo e nada foi ao dev; o orquestrador reabre o gate após o ambiente ser corrigido'
+            kind: 'error',
+            urgent: true,
+            text: `gate ${watch.phase} de "${blockedTask?.title ?? watch.taskId}" BLOQUEADO POR AMBIENTE (não é defeito do produto — NÃO repasse nada ao dev): ${content.slice(0, 400)}. Corrija o ambiente se estiver ao seu alcance e reabra SÓ o gate com run_task {id: "${watch.taskId}", phase: "${watch.phase}"} — a reabertura tenta subir o runtime de novo. Se o bloqueio persistir na segunda tentativa, escale ao USUÁRIO com UMA pergunta objetiva`,
+            actor: 'harness'
+          })
+          if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+          syncBoard(watch.projectId)
+          return 'bloqueio ambiental registrado — o gate fechou SEM contar ciclo e nada foi ao dev; o orquestrador reabre o gate após o ambiente ser corrigido'
+        } finally {
+          ctx.phaseTransitions.release(watch.taskId, transitionToken)
+        }
       }
       if (watch.phase === 'dev' && blockedReport) {
         if (!evidenceUiWork || watch.browserAvailable !== false) {
           return 'bloqueio recusado: DEV só pode usar bloqueada quando uma entrega de UI ficou sem browser/runtime autorizado'
         }
-        const blockedTask = tasks.get(watch.taskId)
-        phaseWatches.delete(watch.taskId)
-        try {
-          unlinkSync(watch.marker)
-        } catch {
-          // marcador nem chegou a existir
-        }
-        try {
-          appendFileSync(watch.logFile, `\n[report dev bloqueada] ${content}\n`, 'utf-8')
-        } catch {
-          // transcript é best-effort
-        }
-        ctx.phase.terminateTaskPhasePane(watch.projectId, watch.taskId, 'dev')
-        tasks.update(watch.taskId, {
-          status: 'backlog',
-          activePhase: 'dev',
-          phaseState: 'interrupted',
-          feedback: `bloqueio ambiental de validação visual: ${content.slice(0, 400)}`
+        // F2-c4: mesmo racional do bloco `bloqueada` do gate — é transição.
+        const transitionToken = ctx.phaseTransitions.acquire(watch.taskId, {
+          label: 'report:bloqueada-dev',
+          projectId: watch.projectId
         })
-        blackbox.record({
-          cat: 'phase',
-          event: 'dev-ui-blocked-environment',
-          actor: 'dev',
-          ids: {
+        if (!transitionToken)
+          return 'a rodada anterior deste card ainda está fechando — aguarde alguns segundos e reporte bloqueada de novo'
+        try {
+          const blockedTask = tasks.get(watch.taskId)
+          phaseWatches.delete(watch.taskId)
+          try {
+            unlinkSync(watch.marker)
+          } catch {
+            // marcador nem chegou a existir
+          }
+          try {
+            appendFileSync(watch.logFile, `\n[report dev bloqueada] ${content}\n`, 'utf-8')
+          } catch {
+            // transcript é best-effort
+          }
+          ctx.phase.terminateTaskPhasePane(watch.projectId, watch.taskId, 'dev')
+          tasks.update(watch.taskId, {
+            status: 'backlog',
+            activePhase: 'dev',
+            phaseState: 'interrupted',
+            feedback: `bloqueio ambiental de validação visual: ${content.slice(0, 400)}`
+          })
+          blackbox.record({
+            cat: 'phase',
+            event: 'dev-ui-blocked-environment',
+            actor: 'dev',
+            ids: {
+              projectId: watch.projectId,
+              missionId: blockedTask?.missionId,
+              taskId: watch.taskId,
+              paneId: id.paneId,
+              phase: 'dev',
+              role: 'dev'
+            },
+            reason: content.slice(0, 400)
+          })
+          hub.publish({
             projectId: watch.projectId,
             missionId: blockedTask?.missionId,
-            taskId: watch.taskId,
-            paneId: id.paneId,
-            phase: 'dev',
-            role: 'dev'
-          },
-          reason: content.slice(0, 400)
-        })
-        hub.publish({
-          projectId: watch.projectId,
-          missionId: blockedTask?.missionId,
-          kind: 'error',
-          urgent: true,
-          text: `DEV de UI bloqueado por falta de browser/runtime em "${blockedTask?.title ?? watch.taskId}". O trabalho foi preservado, nenhum receipt foi marcado como aplicado e a fase ficou interrompida para correção da capacidade.`,
-          actor: 'harness'
-        })
-        if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
-        syncBoard(watch.projectId)
-        return 'bloqueio ambiental do DEV registrado — trabalho preservado, rodada interrompida e nenhum receipt aplicado'
+            kind: 'error',
+            urgent: true,
+            text: `DEV de UI bloqueado por falta de browser/runtime em "${blockedTask?.title ?? watch.taskId}". O trabalho foi preservado, nenhum receipt foi marcado como aplicado e a fase ficou interrompida para correção da capacidade.`,
+            actor: 'harness'
+          })
+          if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+          syncBoard(watch.projectId)
+          return 'bloqueio ambiental do DEV registrado — trabalho preservado, rodada interrompida e nenhum receipt aplicado'
+        } finally {
+          ctx.phaseTransitions.release(watch.taskId, transitionToken)
+        }
       }
       let normalizedSecurityReview: SecurityReviewRecord | undefined
       if (watch.phase === 'review') {
@@ -690,6 +726,14 @@ export function buildReportApi(
           // transcript é best-effort
         }
       }
+      // F2-c4: try-acquire SÍNCRONO abre a transação — ordem sagrada
+      // acquire → detach → unlink (regra de ouro §3.2 do plano da Fase 2).
+      const transitionToken = ctx.phaseTransitions.acquire(watch.taskId, {
+        label: `report:${watch.phase}`,
+        projectId: watch.projectId
+      })
+      if (!transitionToken)
+        return 'a rodada anterior deste card ainda está fechando — aguarde alguns segundos e reporte de novo; nenhum receipt ou veredito foi consumido'
       phaseWatches.detach(watch.taskId)
       try {
         unlinkSync(watch.marker)
@@ -741,6 +785,7 @@ export function buildReportApi(
       const acceptance = prepareSkillUsageAcceptance()
       if (!acceptance) {
         phaseWatches.set(watch.taskId, watch)
+        ctx.phaseTransitions.release(watch.taskId, transitionToken)
         return 'report recusado: o ledger persistido desta rodada não corresponde ao plano ativo; reabra somente esta fase'
       }
       let advanced = false
@@ -750,12 +795,16 @@ export function buildReportApi(
           patchNote ? `${content}${patchNote}` : content,
           normalizedSecurityReview,
           sanitizedVerificationEvidence,
-          acceptance
+          acceptance,
+          transitionToken
         )
       } catch (error) {
         // TaskStore só publica a nova fotografia depois de o JSON atômico
         // pousar. Reindexar o watch torna o mesmo report repetível sem receipt
         // aplicado, pane órfão ou fase que avançou apenas em memória.
+        // (F2-c4: o advancePhase já soltou o lock no finally do throw — no
+        // contrato SYNC este set roda na MESMA pilha, sem janela; a ordem
+        // set→release do §8.2 do mapa é revisitada no c5.)
         phaseWatches.set(watch.taskId, watch)
         return `report preservado: não foi possível persistir a transação da fase (${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 240)}). Nenhum receipt foi consumido; tente novamente.`
       }
