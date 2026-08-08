@@ -116,6 +116,8 @@ import { buildMissionsApi } from './mcpApi/missions'
 import { buildHelpersApi } from './mcpApi/helpers'
 import { buildBoardApi } from './mcpApi/board'
 import { buildReportApi } from './mcpApi/report'
+import { registerVoiceIpc } from './ipc/voice'
+import { registerProgressIpc } from './ipc/progress'
 import { registerSkillsIpc } from './ipc/skills'
 import { registerMiscIpc } from './ipc/misc'
 import {
@@ -533,7 +535,7 @@ const progressLiveIdleTimers = new Map<string, NodeJS.Timeout>()
 
 const PROGRESS_COORDINATOR_ACTIVE_MS = 4_000
 
-interface ProgressOverlayPreferences {
+export interface ProgressOverlayPreferences {
   x: number
   y: number
   width?: number
@@ -575,8 +577,8 @@ type SynVoiceOverlayStage =
   | 'recording'
   | 'processing'
   | 'inserted'
-type SynVoiceOverlayCommand = 'toggle' | 'attach' | 'open-settings'
-interface SynVoiceOverlayState {
+export type SynVoiceOverlayCommand = 'toggle' | 'attach' | 'open-settings'
+export interface SynVoiceOverlayState {
   stage: SynVoiceOverlayStage
   elapsed: number
   level: number
@@ -587,7 +589,7 @@ interface SynVoiceOverlayState {
   activationLabel: string
 }
 
-interface SynVoiceOverlayTooltipRequest {
+export interface SynVoiceOverlayTooltipRequest {
   text: string
   anchor: { left: number; top: number; width: number; height: number }
 }
@@ -599,7 +601,7 @@ interface SynVoiceOverlayPreferences {
   height?: number
 }
 
-type SynVoiceNoticeTone = 'error' | 'warning' | 'info'
+export type SynVoiceNoticeTone = 'error' | 'warning' | 'info'
 
 const SYNVOICE_WAVE_BAND_COUNT = 13
 const SYNVOICE_PREPARED_TARGET_TTL_MS = 30_000
@@ -2833,534 +2835,6 @@ app.whenReady().then(async () => {
     voiceRequests.clear()
   }
 
-  // RADAR DE ANDAMENTO: a mini recebe apenas um retrato sanitizado. Caminhos,
-  // prompts, transcripts e a API privilegiada do app nunca atravessam esta ponte.
-  ipcMain.on('progress:renderer-ready', (event) => {
-    try {
-      assertMainRendererSender(event)
-      mainProgressRendererReady = true
-      deliverProgressOpenTarget()
-    } catch {
-      // Um frame secundário não pode consumir a navegação pendente.
-    }
-  })
-  ipcMain.handle('progress:overlay-open', (event) => {
-    assertMainRendererSender(event)
-    toggleProgressOverlay()
-  })
-  ipcMain.handle('progress:get-snapshot', (event) => {
-    assertMainRendererSender(event)
-    return refreshProgressSnapshot()
-  })
-  ipcMain.handle('progress:overlay-get-state', (event) => {
-    assertProgressOverlaySender(event)
-    const preferences = loadProgressOverlayPreferences()
-    return {
-      snapshot: refreshProgressSnapshot(),
-      compact: preferences.compact,
-      historyClearedAt: preferences.historyClearedAt ?? null
-    }
-  })
-  ipcMain.on('progress:overlay-command', (event, value: unknown) => {
-    try {
-      assertProgressOverlaySender(event)
-      if (!value || typeof value !== 'object') return
-      const input = value as {
-        command?: unknown
-        projectId?: unknown
-        missionId?: unknown
-      }
-      const allowed = new Set([
-        'close',
-        'compact',
-        'expand',
-        'clear-history',
-        'open-main',
-        'open-target'
-      ])
-      if (typeof input.command !== 'string' || !allowed.has(input.command)) return
-      if (input.command === 'close') {
-        hideProgressOverlay()
-        return
-      }
-      if (input.command === 'compact' || input.command === 'expand') {
-        setProgressOverlayCompact(input.command === 'compact')
-        return
-      }
-      if (input.command === 'open-main') {
-        showMainWindow()
-        return
-      }
-      if (input.command === 'clear-history') {
-        const preferences = loadProgressOverlayPreferences()
-        // O corte representa exatamente o retrato que estava visível. Uma
-        // conclusão criada depois dele reaparece quando o snapshot chegar.
-        const clearedAt = latestProgressSnapshot.generatedAt
-        progressOverlayPreferences = { ...preferences, historyClearedAt: clearedAt }
-        persistProgressOverlayPreferences()
-        event.sender.send('progress:overlay-history-changed', { clearedAt })
-        return
-      }
-      if (
-        typeof input.projectId !== 'string' ||
-        input.projectId.length === 0 ||
-        input.projectId.length > 200
-      ) return
-      const project = projects.get(input.projectId)
-      if (!project) return
-      let missionId: string | undefined
-      if (input.missionId !== undefined) {
-        if (
-          typeof input.missionId !== 'string' ||
-          input.missionId.length === 0 ||
-          input.missionId.length > 200
-        ) return
-        const mission = missions.get(input.missionId)
-        if (!mission || mission.projectId !== project.id) return
-        missionId = mission.id
-      }
-      showMainWindow()
-      deliverProgressOpenTarget({
-        projectId: project.id,
-        ...(missionId ? { missionId } : {})
-      })
-    } catch {
-      // Somente a janela autenticada pode navegar para um projeto real.
-    }
-  })
-
-  // Alça de redimensionamento própria do overlay expandido (janela
-  // transparente não tem resize nativo no Windows): o renderer manda o
-  // tamanho-alvo durante o arraste e o main aplica com os mesmos limites de
-  // sempre, mantendo o canto superior esquerdo parado. O evento 'resize'
-  // da janela persiste os bounds como antes.
-  ipcMain.on('progress:overlay-resize', (event, value: unknown) => {
-    try {
-      assertProgressOverlaySender(event)
-      const win = progressOverlayWindow
-      if (!win || win.isDestroyed()) return
-      if (loadProgressOverlayPreferences().compact) return
-      if (!value || typeof value !== 'object') return
-      const input = value as { width?: unknown; height?: unknown }
-      const width = Number(input.width)
-      const height = Number(input.height)
-      if (!Number.isFinite(width) || !Number.isFinite(height)) return
-      const bounds = win.getBounds()
-      const display = progressOverlayDisplayNear(
-        bounds.x,
-        bounds.y,
-        bounds.width,
-        bounds.height
-      )
-      const size = progressOverlayExpandedSize(
-        width,
-        height,
-        display.workArea.width,
-        display.workArea.height
-      )
-      if (size.width === bounds.width && size.height === bounds.height) return
-      win.setBounds({ x: bounds.x, y: bounds.y, ...size })
-    } catch {
-      // redimensionar é conveniência; nunca derruba o overlay
-    }
-  })
-
-  ipcMain.handle('voice:overlay-open', (e) => {
-    assertMainVoiceSender(e)
-    toggleSynVoiceOverlay()
-  })
-  ipcMain.handle('voice:overlay-get-state', (e) => {
-    assertOverlayVoiceSender(e)
-    return latestSynVoiceOverlayState
-  })
-  ipcMain.on('voice:overlay-prepare-interaction', (e) => {
-    try {
-      assertOverlayVoiceSender(e)
-      prepareSynVoiceExternalTarget()
-    } catch {
-      // Apenas a mini autenticada pode preparar o destino externo.
-    }
-  })
-  ipcMain.on('voice:overlay-tooltip-show', (e, value: unknown) => {
-    try {
-      assertOverlayVoiceSender(e)
-      const request = normalizeSynVoiceTooltipRequest(value)
-      if (!request || !synVoiceDetached) return
-      void showSynVoiceOverlayTooltip(request).catch(() => hideSynVoiceOverlayTooltip())
-    } catch {
-      hideSynVoiceOverlayTooltip()
-    }
-  })
-  ipcMain.on('voice:overlay-tooltip-hide', (e) => {
-    try {
-      assertOverlayVoiceSender(e)
-      hideSynVoiceOverlayTooltip()
-    } catch {
-      // Uma janela sem a identidade do mini não controla seus pop-ups.
-    }
-  })
-  ipcMain.handle('voice:overlay-is-detached', (e) => {
-    assertMainVoiceSender(e)
-    return synVoiceDetached
-  })
-  ipcMain.on('voice:overlay-state', (e, value: unknown) => {
-    try {
-      assertMainVoiceSender(e)
-      const next = normalizeSynVoiceOverlayState(value)
-      if (!next) return
-      const previousStage = latestSynVoiceOverlayState.stage
-      latestSynVoiceOverlayState = next
-      if (synVoiceOverlayWindow && !synVoiceOverlayWindow.isDestroyed()) {
-        synVoiceOverlayWindow.webContents.send('voice:overlay-state-changed', next)
-      }
-      if (
-        previousStage !== next.stage &&
-        (next.stage === 'idle' || next.stage === 'inserted')
-      ) prepareSynVoiceExternalTarget()
-    } catch {
-      // Estado vindo de outra janela é ignorado.
-    }
-  })
-  // Banquinho no MINI destacado (2026-08-06): a janela do mini é FIXA
-  // (255×72) — abrir as falas cresce a PRÓPRIA janela para baixo (sobe se
-  // estourar a área útil) e fechar restaura a altura original.
-  ipcMain.handle('voice:overlay-history', (e) => {
-    assertOverlayVoiceSender(e)
-    return [...voiceHistory]
-  })
-  ipcMain.handle('voice:overlay-history-copy', (e, index: number) => {
-    assertOverlayVoiceSender(e)
-    const entry = voiceHistory[Math.trunc(index)]
-    if (!entry) return false
-    clipboard.writeText(entry.text)
-    return true
-  })
-  ipcMain.on('voice:overlay-history-open', (e, open: unknown) => {
-    try {
-      assertOverlayVoiceSender(e)
-      if (!synVoiceOverlayWindow || synVoiceOverlayWindow.isDestroyed()) return
-      setSynVoiceOverlayHistoryOpen(open === true)
-    } catch {
-      // janela morrendo no meio do gesto — nada a redimensionar
-    }
-  })
-
-  ipcMain.on('voice:overlay-command', (e, value: unknown) => {
-    try {
-      assertOverlayVoiceSender(e)
-      hideSynVoiceOverlayTooltip()
-      const allowed = new Set<SynVoiceOverlayCommand>([
-        'toggle', 'attach', 'open-settings'
-      ])
-      if (typeof value !== 'string' || !allowed.has(value as SynVoiceOverlayCommand)) return
-      const command = value as SynVoiceOverlayCommand
-      const busy = latestSynVoiceOverlayState.stage === 'requesting' ||
-        latestSynVoiceOverlayState.stage === 'recording' ||
-        latestSynVoiceOverlayState.stage === 'processing'
-      if (busy && command !== 'toggle') return
-      if (command === 'attach') {
-        setSynVoiceOverlayHistoryOpen(false)
-        synVoiceOverlayWindow?.hide()
-        setSynVoiceDetached(false)
-        showMainWindow()
-        return
-      }
-      if (command === 'open-settings' || !latestSynVoiceOverlayState.configured) {
-        setSynVoiceOverlayHistoryOpen(false)
-        showMainWindow()
-        mainWindow?.webContents.send('voice:overlay-command-received', 'open-settings')
-        return
-      }
-      if (synVoiceOverlayCommandInFlight) return
-      synVoiceOverlayCommandInFlight = true
-      void (async () => {
-        try {
-          if (latestSynVoiceOverlayState.stage === 'recording') {
-            await restoreSynVoiceTarget(synVoiceActiveOverlayTargetToken)
-          } else if (
-            latestSynVoiceOverlayState.stage !== 'requesting' &&
-            latestSynVoiceOverlayState.stage !== 'processing'
-          ) {
-            const prepared = takePreparedSynVoiceTarget()
-            synVoicePendingOverlayTarget = prepared
-            if (prepared) await restoreSynVoiceTarget(await prepared)
-          }
-          mainWindow?.webContents.send('voice:overlay-command-received', 'toggle')
-        } finally {
-          synVoiceOverlayCommandInFlight = false
-        }
-      })()
-    } catch {
-      // Comando vindo de outra janela é ignorado.
-    }
-  })
-
-  ipcMain.on('voice:show-notice', (e, value: unknown) => {
-    try {
-      assertMainVoiceSender(e)
-      if (!value || typeof value !== 'object') return
-      const input = value as { message?: unknown; tone?: unknown }
-      const message = safeSynVoicePopupText(input.message, 280)
-      if (!message) return
-      const tone: SynVoiceNoticeTone =
-        input.tone === 'warning' || input.tone === 'info' ? input.tone : 'error'
-      void showSynVoiceNotice(message, tone).catch(() => hideSynVoiceNotice())
-    } catch {
-      // Avisos só podem ser disparados pelo renderer principal autenticado.
-    }
-  })
-
-  ipcMain.on('voice:global-activation-config', (e, value: unknown) => {
-    try {
-      assertMainVoiceSender(e)
-      if (!synVoiceDetached || value === null) {
-        synVoiceGlobalActivation.stop()
-        return
-      }
-      void synVoiceGlobalActivation.configure(
-        value as GlobalActivationBinding,
-        (activationEvent) => {
-          if (!synVoiceDetached || !mainWindow || mainWindow.isDestroyed()) return
-          mainWindow.webContents.send('voice:global-activation-event', activationEvent)
-        }
-      ).catch(() => undefined)
-    } catch {
-      synVoiceGlobalActivation.stop()
-    }
-  })
-
-  ipcMain.handle('voice:external-begin', async (e) => {
-    assertMainVoiceSender(e)
-    const pendingOverlayTarget = synVoicePendingOverlayTarget
-    synVoicePendingOverlayTarget = null
-    if (pendingOverlayTarget) {
-      const token = await pendingOverlayTarget
-      if (token) {
-        synVoiceActiveOverlayTargetToken = token
-        return token
-      }
-    }
-    if (
-      synVoiceDetached &&
-      synVoiceOverlayWindow &&
-      !synVoiceOverlayWindow.isDestroyed() &&
-      synVoiceOverlayWindow.isFocused()
-    ) {
-      const prepared = takePreparedSynVoiceTarget()
-      if (prepared) {
-        const token = await prepared
-        if (token) {
-          synVoiceActiveOverlayTargetToken = token
-          return token
-        }
-      }
-    }
-    return synVoiceExternalInput.capture(e.sender.id)
-  })
-  ipcMain.on('voice:external-discard', (e, token: unknown) => {
-    try {
-      assertMainVoiceSender(e)
-      if (typeof token === 'string') {
-        synVoiceExternalInput.discard(token)
-        if (synVoiceActiveOverlayTargetToken === token) synVoiceActiveOverlayTargetToken = null
-      }
-    } catch {
-      // Token vindo de outra janela é ignorado.
-    }
-  })
-
-  ipcMain.handle('voice:getConfig', (e) => {
-    assertMainVoiceSender(e)
-    return synVoice.getConfig()
-  })
-  ipcMain.handle('voice:setProvider', (e, provider: SynVoiceProvider) => {
-    assertMainVoiceSender(e)
-    return synVoice.setProvider(provider)
-  })
-  ipcMain.handle('voice:setModel', async (e, provider: SynVoiceProvider, model: string | null) => {
-    assertMainVoiceSender(e)
-    return synVoice.setModel(provider, model)
-  })
-  ipcMain.handle('voice:setCustomVocabulary', (e, terms: unknown) => {
-    assertMainVoiceSender(e)
-    return synVoice.setCustomVocabulary(terms)
-  })
-  ipcMain.handle('voice:listModels', async (e, provider: SynVoiceProvider) => {
-    assertMainVoiceSender(e)
-    return synVoice.listModels(provider)
-  })
-  ipcMain.handle('voice:setApiKey', (e, provider: SynVoiceProvider, key: string | null) => {
-    assertMainVoiceSender(e)
-    if (key !== null && typeof key !== 'string') throw new Error('Chave da API inválida.')
-    return synVoice.setApiKey(provider, key)
-  })
-  ipcMain.handle('voice:openApiKeys', (e, provider: SynVoiceProvider) => {
-    assertMainVoiceSender(e)
-    return shell.openExternal(synVoice.getApiKeysUrl(provider))
-  })
-  // Banquinho do SynVoice: as últimas 4 falas transcritas, persistidas — o
-  // caso real é falar, transcrever, e o destino não estava focado: o texto se
-  // perdia e era preciso falar tudo de novo. Só TEXTO + hora; áudio nunca é
-  // retido (contrato de privacidade do SynVoice intacto).
-  const voiceHistoryFile = join(app.getPath('userData'), 'synvoice-history.json')
-  type VoiceHistoryEntry = { text: string; at: string }
-  const voiceHistory: VoiceHistoryEntry[] = loadJsonStore<VoiceHistoryEntry[]>(
-    voiceHistoryFile,
-    () => [],
-    (v): v is VoiceHistoryEntry[] =>
-      Array.isArray(v) &&
-      v.every(
-        (entry) =>
-          typeof entry === 'object' &&
-          entry !== null &&
-          typeof (entry as VoiceHistoryEntry).text === 'string' &&
-          typeof (entry as VoiceHistoryEntry).at === 'string'
-      )
-  )
-  const rememberVoiceTranscript = (rawText: string): void => {
-    const text = rawText.trim()
-    if (!text) return
-    voiceHistory.unshift({ text: text.slice(0, 4000), at: new Date().toISOString() })
-    voiceHistory.splice(4)
-    try {
-      persistJsonStore(voiceHistoryFile, voiceHistory)
-    } catch {
-      // histórico é rede de conforto — a transcrição em si já foi entregue
-    }
-  }
-  ipcMain.handle('voice:history', (e) => {
-    assertMainVoiceSender(e)
-    return [...voiceHistory]
-  })
-  ipcMain.handle('voice:historyCopy', (e, index: number) => {
-    assertMainVoiceSender(e)
-    const entry = voiceHistory[Math.trunc(index)]
-    if (!entry) return false
-    clipboard.writeText(entry.text)
-    return true
-  })
-
-  ipcMain.handle(
-    'voice:transcribe',
-    async (
-      e,
-      request: {
-        requestId: string
-        audio: Uint8Array | ArrayBuffer
-        mimeType: string
-        durationMs: number
-        externalTargetToken?: string | null
-      }
-    ) => {
-      assertMainVoiceSender(e)
-      const externalRequested = Object.prototype.hasOwnProperty.call(
-        request ?? {},
-        'externalTargetToken'
-      )
-      const externalTargetToken = typeof request?.externalTargetToken === 'string'
-        ? request.externalTargetToken
-        : null
-      const releaseExternalTarget = (): void => {
-        if (externalTargetToken) {
-          synVoiceExternalInput.discard(externalTargetToken)
-          if (synVoiceActiveOverlayTargetToken === externalTargetToken) {
-            synVoiceActiveOverlayTargetToken = null
-          }
-        }
-      }
-      if (
-        externalRequested &&
-        request?.externalTargetToken !== null &&
-        typeof request?.externalTargetToken !== 'string'
-      ) {
-        releaseExternalTarget()
-        throw new Error('Destino externo inválido.')
-      }
-      const requestId = String(request?.requestId ?? '')
-      if (!/^[a-zA-Z0-9-]{8,80}$/.test(requestId)) {
-        releaseExternalTarget()
-        throw new Error('Identificador de transcrição inválido.')
-      }
-      if (voiceRequests.size > 0) {
-        releaseExternalTarget()
-        throw new Error('Já existe uma transcrição do SynVoice em andamento.')
-      }
-      const controller = new AbortController()
-      const senderId = e.sender.id
-      voiceRequests.set(requestId, { controller, senderId })
-      const abortOnDestroyed = (): void => controller.abort()
-      e.sender.once('destroyed', abortOnDestroyed)
-      try {
-        const byteLength =
-          request.audio instanceof Uint8Array || request.audio instanceof ArrayBuffer
-            ? request.audio.byteLength
-            : 0
-        if (byteLength <= 0 || byteLength > 20 * 1024 * 1024) {
-          throw new Error('O tamanho da gravação é inválido.')
-        }
-        const audio =
-          request.audio instanceof Uint8Array
-            ? request.audio
-            : request.audio instanceof ArrayBuffer
-              ? new Uint8Array(request.audio)
-              : new Uint8Array()
-        const transcript = await synVoice.transcribe(
-          {
-            audio,
-            mimeType: String(request.mimeType ?? ''),
-            durationMs: Number(request.durationMs)
-          },
-          controller.signal
-        )
-        if (controller.signal.aborted) throw new Error('Transcrição cancelada.')
-        // Banquinho do SynVoice (pedido do usuário, 2026-08-06): TODA fala
-        // transcrita entra no histórico ANTES de qualquer entrega — destino
-        // perdido/sem foco nunca mais custa falar tudo de novo.
-        if (!isNoSpeechTranscript(transcript.text)) rememberVoiceTranscript(transcript.text)
-        if (!externalRequested) return transcript
-        if (isNoSpeechTranscript(transcript.text)) {
-          return { ...transcript, delivery: 'none' as const }
-        }
-        const safeText = safeExternalTranscript(transcript.text)
-        if (!safeText) return { ...transcript, delivery: 'none' as const }
-
-        let delivery: 'inserted' | 'clipboard' | 'uncertain' = 'clipboard'
-        if (externalTargetToken) {
-          const insertionMode = safeText.length >= SYNVOICE_ATOMIC_PASTE_THRESHOLD
-            ? 'paste' as const
-            : 'unicode' as const
-          if (insertionMode === 'paste') clipboard.writeText(safeText)
-          const result = await synVoiceExternalInput.commit(
-            senderId,
-            externalTargetToken,
-            safeText,
-            controller.signal,
-            insertionMode
-          )
-          if (result === 'inserted') delivery = 'inserted'
-          else if (result === 'uncertain') delivery = 'uncertain'
-          else if (!controller.signal.aborted) clipboard.writeText(safeText)
-        } else {
-          if (controller.signal.aborted) throw new Error('Transcrição cancelada.')
-          clipboard.writeText(safeText)
-        }
-        return { ...transcript, delivery }
-      } finally {
-        releaseExternalTarget()
-        e.sender.removeListener('destroyed', abortOnDestroyed)
-        if (voiceRequests.get(requestId)?.controller === controller) voiceRequests.delete(requestId)
-      }
-    }
-  )
-  ipcMain.on('voice:cancel', (e, requestId: string) => {
-    try {
-      assertMainVoiceSender(e)
-      const active = voiceRequests.get(String(requestId))
-      if (active?.senderId === e.sender.id) active.controller.abort()
-    } catch {
-      // Mensagem de uma origem não confiável: negar silenciosamente.
-    }
-  })
 
   // BIBLIOTECA DE SKILLS (F4): catálogo curado instalado da fonte (GitHub)
   // em userData/skills/lib. Execução usa plano mínimo + árvore privada por
@@ -13154,6 +12628,94 @@ app.whenReady().then(async () => {
   // closure ja foi declarado: zero TDZ). NUNCA registrar no import.
   registerSkillsIpc(ctx)
   registerMiscIpc(ctx, { bindUiSender, assertMainRendererSender, ensureBypassAccepted })
+  registerVoiceIpc(ctx, {
+    assertMainVoiceSender,
+    assertOverlayVoiceSender,
+    prepareSynVoiceExternalTarget,
+    takePreparedSynVoiceTarget,
+    restoreSynVoiceTarget,
+    normalizeSynVoiceOverlayState,
+    isNoSpeechTranscript,
+    safeExternalTranscript,
+    showMainWindow,
+    setSynVoiceDetached,
+    safeSynVoicePopupText,
+    normalizeSynVoiceTooltipRequest,
+    hideSynVoiceOverlayTooltip,
+    showSynVoiceOverlayTooltip,
+    hideSynVoiceNotice,
+    showSynVoiceNotice,
+    setSynVoiceOverlayHistoryOpen,
+    toggleSynVoiceOverlay,
+    synVoiceExternalInput,
+    synVoiceGlobalActivation,
+    SYNVOICE_ATOMIC_PASTE_THRESHOLD,
+    state: {
+      get synVoiceOverlayWindow() {
+        return synVoiceOverlayWindow
+      },
+      get synVoicePendingOverlayTarget() {
+        return synVoicePendingOverlayTarget
+      },
+      set synVoicePendingOverlayTarget(v) {
+        synVoicePendingOverlayTarget = v
+      },
+      get synVoiceActiveOverlayTargetToken() {
+        return synVoiceActiveOverlayTargetToken
+      },
+      set synVoiceActiveOverlayTargetToken(v) {
+        synVoiceActiveOverlayTargetToken = v
+      },
+      get synVoiceOverlayCommandInFlight() {
+        return synVoiceOverlayCommandInFlight
+      },
+      set synVoiceOverlayCommandInFlight(v) {
+        synVoiceOverlayCommandInFlight = v
+      },
+      get latestSynVoiceOverlayState() {
+        return latestSynVoiceOverlayState
+      },
+      set latestSynVoiceOverlayState(v) {
+        latestSynVoiceOverlayState = v
+      },
+      get synVoiceDetached() {
+        return synVoiceDetached
+      }
+    }
+  })
+  registerProgressIpc(ctx, {
+    assertMainRendererSender,
+    assertProgressOverlaySender,
+    deliverProgressOpenTarget,
+    hideProgressOverlay,
+    toggleProgressOverlay,
+    loadProgressOverlayPreferences,
+    persistProgressOverlayPreferences,
+    progressOverlayDisplayNear,
+    refreshProgressSnapshot,
+    setProgressOverlayCompact,
+    showMainWindow,
+    state: {
+      get progressOverlayWindow() {
+        return progressOverlayWindow
+      },
+      get progressOverlayPreferences() {
+        return progressOverlayPreferences
+      },
+      set progressOverlayPreferences(v) {
+        progressOverlayPreferences = v
+      },
+      get mainProgressRendererReady() {
+        return mainProgressRendererReady
+      },
+      set mainProgressRendererReady(v) {
+        mainProgressRendererReady = v
+      },
+      get latestProgressSnapshot() {
+        return latestProgressSnapshot
+      }
+    }
+  })
 
   // Fase 0: criação da janela é etapa medida do boot
   mainStalls.wrap('boot:createWindow', undefined, () => createWindow())
