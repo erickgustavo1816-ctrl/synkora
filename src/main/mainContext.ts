@@ -48,6 +48,7 @@ import type {
 } from './phaseLaunchGuard'
 import type { MaestroEvent } from './maestro'
 import type { SecurityReviewRecord } from './securityReview'
+import type { GateVerificationEvidence } from './gateVerificationEvidence'
 import type { ProjectPlan } from './projectPlan'
 import type {
   DevPaneSpec,
@@ -74,11 +75,19 @@ export interface PhaseApi {
     launchToken?: PhaseLaunchToken
   ): Promise<DevPaneSpec | null>
   /** SYNC POR CONTRATO (barreira síncrona do veredito — a cicatriz do
-   *  "[object Promise]"): NUNCA transformar em Promise<boolean>. */
+   *  "[object Promise]"): NUNCA transformar em Promise<boolean>.
+   *  Arity COMPLETA (fix do commit 3): o tipo antigo parava em securityReview
+   *  e um consumidor via ctx.phase droparia verificationEvidence/acceptance
+   *  em silêncio — os call sites reais do report passam 4 e 5 argumentos. */
   advancePhase(
     watch: PhaseWatch,
     content: string,
-    securityReview?: SecurityReviewRecord
+    securityReview?: SecurityReviewRecord,
+    verificationEvidence?: GateVerificationEvidence,
+    acceptance?: {
+      skillUsage: NonNullable<Task['skillUsage']>
+      commitRuntime: () => boolean
+    }
   ): boolean
   retryOrBacklog(watch: PhaseWatch, who: string, motivo: string): Promise<void>
   openGatePane(watch: PhaseWatch, phase: 'review' | 'qa'): Promise<boolean>
@@ -148,7 +157,11 @@ export interface MainContext {
   >
   readonly closingPaneIds: Set<string>
   readonly paneEverSpawned: Set<string>
-  readonly phaseWatches: Map<string, PhaseWatch>
+  /** PhaseWatchRegistry do phaseEngine (tipo estrutural para não criar ciclo
+   *  de import): delete() limpa o artefato de review; detach() remove só a
+   *  indexação durante a transação do report — advancePhase continua dono do
+   *  artefato até aceitar ou restaurar a rodada. */
+  readonly phaseWatches: Map<string, PhaseWatch> & { detach(taskId: string): boolean }
   readonly phaseLaunches: PhaseLaunchGuard
   readonly phaseLaunchCapacity: PhaseLaunchCapacityGuard
   readonly pendingUserQuestions: Map<string, PendingUserQuestion>
