@@ -16,6 +16,7 @@ import { join } from 'path'
 import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { ensureSynkoraGitExcludes } from '../worktree'
 import { gitOff } from '../gitAsync'
+import { buildIdleWaiterHint } from '../phasePrompts'
 import { ensureProjectSecurityBaseline } from '../projectSecurityBaseline'
 import { ensureGreenfieldProjectPlan } from '../projectPlan'
 import { redactSensitiveText } from '../securityRedaction'
@@ -495,7 +496,7 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
       })
       return null
     }
-    const personaWithPlanning = `${basePersona}${planningRun.skillBlock}`
+    const personaWithPlanning = `${basePersona}${planningRun.skillBlock}${buildIdleWaiterHint(seat.cli)}`
     let armed: ReturnType<typeof armPane>
     try {
       armed = armPane(

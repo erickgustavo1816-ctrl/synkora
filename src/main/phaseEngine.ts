@@ -72,6 +72,7 @@ import {
   buildBrowserHint,
   buildClosedListBlock,
   buildDevContract,
+  buildIdleWaiterHint,
   buildExecutionProfileBlock,
   buildGateRecyclePrompt,
   buildPhasePrompt,
@@ -1460,6 +1461,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       executionMode,
       executionProfileBlock,
       browserHint,
+      idleWaiterHint: buildIdleWaiterHint(seat.cli),
       marker
     })
     // Quests são checklist, não contagem de ajudantes. A política persistida

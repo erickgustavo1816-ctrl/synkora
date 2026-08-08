@@ -1670,6 +1670,15 @@ function isMcpPath(url: string | undefined): boolean {
   }
 }
 
+function isPath(url: string | undefined, pathname: string): boolean {
+  if (!url) return false
+  try {
+    return new URL(url, 'http://127.0.0.1').pathname === pathname
+  } catch {
+    return false
+  }
+}
+
 function identityForRequest(api: McpApi, context: McpRequestContext): PaneIdentity {
   const authInfo = context.authInfo
   const identity = authInfo ? api.hub.identityByToken(authInfo.token) : undefined
@@ -1701,8 +1710,47 @@ export function startMcpServer(api: McpApi, preferredPort = 0): Promise<McpServe
     })
   })
 
+  // F5-F3b — WAITER de background (R12): GET /mail-wait segura a resposta até
+  // o correio do pane receber mensagem (ou até o teto). Um pane claude COM
+  // shell arma `curl` disto em background e ENCERRA o turno; quando a
+  // resposta volta, a notificação de background task ACORDA o agente com zero
+  // digitação — ele então drena via check_messages. As respostas penduradas
+  // são rastreadas para o close() do app não esperar o teto.
+  const MAIL_WAIT_LONGPOLL_MS = 600_000
+  const pendingMailWaits = new Set<ServerResponse>()
+  async function handleMailWait(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405).end()
+      return
+    }
+    const token = bearerToken(req.headers.authorization)
+    const identity = token ? api.hub.identityByToken(token) : undefined
+    if (!token || !identity) {
+      res.writeHead(401).end('token do Synkora inválido ou pane encerrado')
+      return
+    }
+    pendingMailWaits.add(res)
+    res.once('close', () => pendingMailWaits.delete(res))
+    const arrived = (await api.waitForMail?.(identity, MAIL_WAIT_LONGPOLL_MS)) ?? false
+    pendingMailWaits.delete(res)
+    if (res.writableEnded) return
+    if (arrived) {
+      res
+        .writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+        .end('MAIL — você tem mensagem nova: chame a tool mcp__synkora__check_messages agora')
+    } else {
+      res
+        .writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+        .end('TIMEOUT — nenhuma mensagem no intervalo; re-arme o waiter se continuar esperando')
+    }
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!validateHost(req, res) || !validateOrigin(req, res)) return
+    if (isPath(req.url, '/mail-wait')) {
+      await handleMailWait(req, res)
+      return
+    }
     if (!isMcpPath(req.url)) {
       res.writeHead(404).end()
       return
@@ -1746,6 +1794,16 @@ export function startMcpServer(api: McpApi, preferredPort = 0): Promise<McpServe
         port: addr.port,
         close: () => {
           if (closePromise) return closePromise
+          // long-polls pendurados (/mail-wait) seguram o httpServer.close até
+          // o teto de 10min — responde e encerra todos antes de fechar.
+          for (const pending of [...pendingMailWaits]) {
+            try {
+              if (!pending.writableEnded) pending.writeHead(200).end('TIMEOUT — o app está fechando')
+            } catch {
+              // resposta já morta
+            }
+          }
+          pendingMailWaits.clear()
           const closeHttp = new Promise<void>((resolveClose, rejectClose) => {
             httpServer.close((error) => {
               if (error) rejectClose(error)

@@ -22,6 +22,7 @@ import { gitOff } from '../gitAsync'
 import { type NewMission } from '../missions'
 import { assessMissionRisk } from '../orchestratorFlow'
 import { missionPersona } from '../maestro'
+import { buildIdleWaiterHint } from '../phasePrompts'
 import { ensureProjectSecurityBaseline } from '../projectSecurityBaseline'
 import { requiresManualSecurityValidation } from '../securityPolicy'
 import { migrateCliSessionBetweenSeats } from '../cliSessionTransplant'
@@ -618,7 +619,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     const plansDir = join(project.path, '.synkora', 'missions')
     mkdirSync(plansDir, { recursive: true })
     const planFile = join(plansDir, `${missionId.slice(0, 8)}.PLAN.md`)
-    const personaWithPlanning = `${missionPersona(mission, planFile)}${planningRun.skillBlock}`
+    const personaWithPlanning = `${missionPersona(mission, planFile)}${planningRun.skillBlock}${buildIdleWaiterHint(seat.cli)}`
     const cliArgs = [...armed.cliArgs]
     // Effort do orquestrador (validado: claude tem --effort low..max; codex
     // usa a chave de config). No codex o -c é global e PRECISA vir antes do

@@ -66,7 +66,8 @@
     "test:merge-repair": "tsc --outDir .tmp/merge-repair-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/worktree.ts src/main/winPath.ts src/main/reviewDiff.ts && node scripts/test-merge-repair.mjs",
     "test:code-intelligence:compile": "tsc --noEmit --target ES2022 --module Node16 --moduleResolution Node16 --strict --esModuleInterop --skipLibCheck --types node src/main/codeIntelligence/acceptance.test.ts",
     "test:code-intelligence": "node scripts/run-code-intelligence-acceptance.mjs",
-    "test:mailbox-delivery": "tsc --outDir .tmp/mailbox-delivery-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/hub.ts src/main/mailbox.ts src/main/securityRedaction.ts src/main/jsonStore.ts && node --test scripts/test-mailbox-delivery.mjs"
+    "test:mailbox-delivery": "tsc --outDir .tmp/mailbox-delivery-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/hub.ts src/main/mailbox.ts src/main/securityRedaction.ts src/main/jsonStore.ts && node --test scripts/test-mailbox-delivery.mjs",
+    "test:mail-wait": "node --experimental-strip-types --test scripts/test-mail-wait.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.12",

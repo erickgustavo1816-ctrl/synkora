@@ -304,6 +304,14 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
     // Pane registrado no hub → bearer token do MCP vai pelo env (codex lê
     // via bearer_token_env_var; inofensivo para os demais).
     if (token) extraEnv['SYNKORA_TOKEN'] = token
+    // F5-F3b — WAITER de background (R12, claude-only): o agente arma um
+    // `curl` deste endpoint em background e o término (mensagem chegou)
+    // ACORDA o turno com zero digitação. A URL vai no env de todo pane com
+    // token (inofensivo onde não usada; codex espera via long-poll do
+    // check_messages — sonda W5: lá não existe acordar pós-turno).
+    if (token && ctx.mcpPort) {
+      extraEnv['SYNKORA_MAIL_WAIT_URL'] = `http://127.0.0.1:${ctx.mcpPort}/mail-wait`
+    }
     // CORRIDA REAL (maestro da Luma nasceu com "MCP config file not found"):
     // remount do pane reusa o MESMO id — o kill do pty antigo roda
     // cleanPaneMcpFile e apaga o arquivo que o armPane acabou de (re)gravar

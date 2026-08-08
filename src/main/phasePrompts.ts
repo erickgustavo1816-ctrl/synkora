@@ -300,6 +300,8 @@ export interface DevContractInput {
   executionMode: MissionExecutionMode
   executionProfileBlock: string
   browserHint: string
+  /** F5-F3b: espera sem digitação, por CLI (buildIdleWaiterHint) */
+  idleWaiterHint?: string
   /** caminho do marcador de fallback (.done) */
   marker: string
 }
@@ -319,6 +321,7 @@ export function buildDevContract({
   executionMode,
   executionProfileBlock,
   browserHint,
+  idleWaiterHint = '',
   marker
 }: DevContractInput): string {
   return (
@@ -344,7 +347,8 @@ export function buildDevContract({
     ` HANDOFF FILE (mandatory — the user's rule 2026-08-06: conversations above the cost ceiling are NOT resumed, only your files survive): maintain ".synkora/HANDOFF.md" in this workspace and REWRITE it at every milestone — after finishing a quest, right before every report(done), and after applying a rejection round. Content, short and factual: what is DONE, key decisions taken (and why), what remains, the exact next step. It costs you seconds with hot context; it is how a successor session rebuilds your entire context without replaying the conversation.` +
     ` When the task is 100% complete, call the MCP tool "report" from the synkora server with status "done" and a short summary — that triggers the automatic review and QA. ` +
     `AFTER report(done) the harness FREEZES the delivered commit and closes this writer before opening REVIEW/QA; your session, transcript and HANDOFF survive. If a gate rejects, the same card reopens at the rejection list (the conversation is resumed when the provider can do so safely; otherwise the preserved transcript/HANDOFF restores context). Fix the class and report done again; the quality loop has no artificial round limit. If you believe a rejection point is WRONG or unfair, state your case briefly via notify_maestro before reporting and let the orchestrator judge it; fix what it upholds and skip what it waives. ` +
-    `FALLBACK (only if the synkora tools are unavailable): create the file "${marker}" containing done.`
+    idleWaiterHint +
+    ` FALLBACK (only if the synkora tools are unavailable): create the file "${marker}" containing done.`
   )
 }
 
@@ -435,6 +439,16 @@ export function buildQaDeliverySnapshotBlock(delivered?: DeliveredSnapshotRef): 
 // injetada no reviewer COM A ANÁLISE EM CURSO cruzou com o veredito e
 // gerou um segundo relatório por fora — duas listas circulando enquanto o
 // dev corrigia a primeira).
+/** F5-F3b — espera SEM digitação, por CLI (sondas R12/R13 claude ·
+ * W2–W5 codex): claude com shell arma o WAITER de background no endpoint
+ * /mail-wait (o término acorda o turno sozinho — R12); codex não tem acordar
+ * pós-turno (W5) e espera DENTRO do turno via long-poll do check_messages. */
+export function buildIdleWaiterHint(cli: 'claude' | 'codex'): string {
+  return cli === 'claude'
+    ? ` IDLE WAITER (zero-typing wake-up): when you end a turn WAITING on coordination (gate verdict, orchestrator triage, helper result), first arm ONE background shell task: curl -s -m 660 -H "Authorization: Bearer $SYNKORA_TOKEN" "$SYNKORA_MAIL_WAIT_URL" — it completes the moment mail arrives (waits up to 10min) and its completion WAKES you automatically; then call mcp__synkora__check_messages and act on what arrived. Output TIMEOUT = nothing came; re-arm only if you are still waiting. Never busy-poll in the foreground; never arm more than one waiter at a time.`
+    : ` WAITING WITHOUT TYPING: to wait on coordination (gate verdict, orchestrator triage, helper result), call check_messages in a loop — with an empty box it HOLDS the response ~45s per call and returns the moment something arrives. Each call is one cheap wait; never busy-poll the filesystem or the board.`
+}
+
 export function buildAtomicRoundRule(phase: PhaseKind): string {
   return (
     phase === 'dev'
