@@ -373,6 +373,23 @@ bloco. Nunca "aproveitar e refatorar" fora do mapa.
 > buracos JÁ existentes hoje (§7.1/§7.9/§7.10); bug latente da memoização ×
 > onExit (§6.1); divergência doc×código: `phase-watch-repaired` não existe
 > mais em src.
+>
+> ESTADO 2 (2026-08-08): **PLANO APROVADO pelo dono ("Vamos para a F2") e
+> F2-c1 FEITO** (5f43b80): src/main/phaseTransitionLock.ts (puro, molde do
+> phaseLaunchGuard — try-acquire síncrono com token Symbol, fila FIFO com
+> TRANSFERÊNCIA de posse no mesmo tick do release, isLocked/holderLabel/
+> lockedCount(projectId)/snapshot, onContention que nunca lança) + suíte
+> test:phase-transition-lock (9 asserções). Verde: typecheck node+web +
+> 39/25/14/14/8 + 9. ESPIGA DO F2-c2 POSITIVA na mesma data: o fecho de
+> imports do phaseEngine (65 módulos) compila limpo com
+> `tsc --noCheck --module node16` para .tmp/ — o harness de corrida usa esse
+> emit + stub de electron E de ./gitAsync via Module._load (precedente
+> test-store-atomicity; o stub do gitAsync é o gate controlável que pausa o
+> veredito em cada await). PRÓXIMO: F2-c2 — ctx fake mínimo + fixture git +
+> baseline dos fluxos atuais. Fora da fase, mesma data: patch do empacotado
+> portado da main (e944325 — userData próprio %LOCALAPPDATA%\Synkora +
+> origem file:/// do microfone, sondada em probe-file-media-origin +
+> aviso de captura negada); o SynVoice do instalado foi validado pelo dono.
 
 - Hoje `advancePhase` é SYNC POR CONTRATO (comentário-âncora em :10855; a
   cicatriz do "[object Promise]"): a fotografia atômica é garantida por
