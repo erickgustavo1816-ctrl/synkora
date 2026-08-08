@@ -719,7 +719,13 @@ function trustedRendererOrigin(rawOrigin: string): boolean {
   try {
     const devUrl = !app.isPackaged ? process.env['ELECTRON_RENDERER_URL'] : undefined
     if (devUrl) return new URL(rawOrigin).origin === new URL(devUrl).origin
-    return rawOrigin === 'file://' || rawOrigin === 'null'
+    // SONDADO em binário real (2026-08-08, probe-file-media-origin): o
+    // Chromium serializa a origem de página file: como "file:///" (barra
+    // extra) — comparar com o literal "file://" NEGAVA o microfone só no
+    // empacotado e o SynVoice morria mudo. Aceita qualquer origem cujo parse
+    // dê protocolo file: (e nada além de file:/null).
+    if (rawOrigin === 'null') return true
+    return new URL(rawOrigin).protocol === 'file:'
   } catch {
     return false
   }
@@ -2170,6 +2176,19 @@ function toggleProgressOverlay(): void {
     return
   }
   showProgressOverlay()
+}
+
+// INSTALADO ≠ DEV (decisão do dono, 2026-08-08): o app EMPACOTADO tem
+// userData PRÓPRIO em %LOCALAPPDATA%\Synkora — instalar nunca herda os dados
+// do `npm run dev` (o name "synkora" resolvia a MESMA pasta em %APPDATA%,
+// case-insensitive no Windows, e o instalado abria com os stores do dev).
+// Precisa rodar ANTES do single-instance lock, do crashReporter e de qualquer
+// store; sessionData acompanha explícito (cache/Local Storage juntos). Efeito
+// colateral desejado: locks separados = dev e instalado podem rodar JUNTOS.
+if (app.isPackaged) {
+  const packagedData = join(process.env['LOCALAPPDATA'] ?? app.getPath('appData'), 'Synkora')
+  app.setPath('userData', packagedData)
+  app.setPath('sessionData', packagedData)
 }
 
 // O app NÃO pode morrer sozinho em silêncio (aconteceu em campo): erros não

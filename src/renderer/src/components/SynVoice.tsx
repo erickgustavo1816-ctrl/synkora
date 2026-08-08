@@ -1007,7 +1007,9 @@ export default function SynVoice(): React.JSX.Element {
       stopStream()
       if (cancelledRef.current) return
       pushToTalkHeldRef.current = false
-      completeSilently()
+      // Falha real de captura NUNCA volta a "pronto" (custou um diagnóstico:
+      // o empacotado negava o microfone e o botão parecia simplesmente morto).
+      completeSilently('SynVoice sem acesso ao microfone — verifique a permissão de áudio')
     }
   }, [clearTimers, completeSilently, config, finishRecording, microphoneDeviceId, pushToTalkBinding.label, startMeter, stopRecording, stopStream])
 
