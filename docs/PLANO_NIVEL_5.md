@@ -177,6 +177,37 @@ eliminação é overhead do modo dev/GC — registrar e seguir para a Fase 1.
 > como paneLifecycle.ts, levando livePaneSpecs/closingPaneIds/
 > paneEverSpawned). Cerca viva: register<X>Ipc(ctx) chamados do whenReady,
 > NUNCA no import (senão a instrumentação da Fase 0 morre em silêncio).
+>
+> ESTADO 6 (2026-08-08, mesma data): **COMMIT 5 FEITO em 5 fatias**
+> (afd600e/ee61115/aa21558/d2e90cf/69a9260), todas verdes (typecheck
+> node+web + 39/25/14/14/8). Nasce src/main/ipc/ com 12 módulos e 100 dos
+> 138 handlers extraídos: skills (ilha perfeita, zero extras) + misc
+> (catalog/cli/policies/seats/blackbox/clipboard/attachments/dialog) →
+> voice (26 + banquinho de histórico privado) + progress → files/settings/
+> services/harness/projectPlan → projects/backlog → tasks. Descoberta da
+> varredura que virou a espinha do desenho: o renderer (único cliente de
+> ipcMain) só nasce no boot:createWindow — um BLOCO ÚNICO de registro
+> imediatamente antes dele é funcionalmente idêntico à ordem antiga e
+> zera TODO risco de TDZ; a cerca da Fase 0 está gravada no comentário do
+> bloco. Padrões novos: extras.state com getters/setters para lets do
+> closure que handlers LEEM E ESCREVEM (voice/progress/settings — escrita
+> textual `state.x = v` aciona o setter, corpo verbatim); mcpApi LAZY via
+> getMcpApi() no projectPlan; tipos locais do overlay exportados do index
+> (type-only import de '../index'). PhaseApi cresceu 2× na rodada:
+> closeLiveGateWait + drainPendingRespawns (5e). Guards
+> (bindUiSender/asserts) FICARAM no index passados por extras — o
+> ipc/guards.ts do mapa fica para a obra do paneLifecycle, dona real do
+> sender-binding. DECISÃO DE ESCOPO: ipc/maestro (18) e ipc/missions (8)
+> ficam para a EXTRAÇÃO DOS ENGINES de maestro/missões — as extras deles
+> (22/21 entradas com preparePlanningRun/MaestroBackend/ensureSession)
+> seriam refeitas por inteiro; extrair junto é o caminho sem retrabalho.
+> panes/pty (10, ~1000L) reservado ao paneLifecycle.ts; crash/perf (2,
+> module scope) ficam por desenho. index.ts 13420→11768 na rodada;
+> **19448 (pré-obra) → 11768 = −39%**. Restam no index: 38 registros de
+> IPC + boot/recovery + engines de missão/maestro + pty/paneLifecycle.
+> PRÓXIMO: extração dos engines de missão/maestro (leva ipc/maestro e
+> ipc/missions junto) OU paneLifecycle.ts (pty + guards.ts) — as duas
+> ordens funcionam; o boot de validação do dono cobre esta rodada antes.
 
 Âncoras reais (index.ts de hoje): bindUiSender :463 · mcpPaneArgs :3988 ·
 armPane :4062 · recovery de boot :6797–6943 · completeMissionMerge :7344 ·

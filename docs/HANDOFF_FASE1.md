@@ -45,15 +45,37 @@ o desfecho desta sessão).
   literal — TDZ na desestruturação); Sets de handshake humano por
   referência; transação do report (detach → advancePhase sync → rollback)
   conferida linha a linha no módulo.
-- **PRÓXIMO PASSO: commit 5 — ipc/<domínio>.ts** (ilhas primeiro: skills,
-  voice, seats/settings/policies/catalog/cli/services/clipboard/files/
-  attachments/dialog; depois backlog, projects, tasks/missions/maestro;
-  **pty POR ÚLTIMO como paneLifecycle.ts**, levando livePaneSpecs/
-  closingPaneIds/paneEverSpawned). Cerca viva: módulos exportam
-  `register<X>Ipc(ctx)` CHAMADOS do whenReady — NUNCA registrar no import
-  (a instrumentação de stall da Fase 0 cobre só handlers registrados depois
-  de instrumentIpcMain). Guards de sender (bindUiSender etc.) → ipc/guards.ts
-  único, conforme o mapa.
+- **COMMIT 5 FEITO na mesma data em 5 fatias** (afd600e/ee61115/aa21558/
+  d2e90cf/69a9260): src/main/ipc/ com 12 módulos, 100 dos 138 handlers
+  extraídos. Detalhe no ESTADO 6 do PLANO_NIVEL_5.md. O que a PRÓXIMA
+  sessão precisa saber antes de continuar:
+  1. **Bloco único de registro** antes do `boot:createWindow` — TODA chamada
+     `register<X>Ipc(ctx, extras)` mora ali (âncora: comentário "REGISTRO
+     DOS MODULOS DE IPC"). O renderer só nasce no createWindow, então
+     registrar tarde = registrar cedo, e todo símbolo do closure já foi
+     declarado (zero TDZ). NUNCA registrar no import.
+  2. **Padrão state-accessor** (voice/progress/settings): lets do closure
+     lidos E escritos por handlers viajam como `extras.state` com getters/
+     setters no call site — corpo verbatim, escrita `state.x = v` aciona o
+     setter. Reusar para qualquer domínio futuro com o mesmo problema.
+  3. **PENDENTES DO COMMIT 5, com racional**: ipc/maestro (18 handlers) e
+     ipc/missions (8) ficam para a EXTRAÇÃO DOS ENGINES de maestro/missões
+     — as extras deles (22/21 entradas: preparePlanningRun, MaestroBackend,
+     ensureSession, missionsWithIntegration…) seriam interfaces gigantes
+     refeitas por inteiro na extração; fazer junto é o caminho sem
+     retrabalho. panes/pty (10 handlers, ~1000L, pty:create com 793L) é do
+     **paneLifecycle.ts**, que também leva livePaneSpecs/closingPaneIds/
+     paneEverSpawned e o ipc/guards.ts (bindUiSender + asserts — hoje ficam
+     no index, passados por extras). crash/perf (2 handlers de module
+     scope) ficam onde estão: movê-los mudaria o momento de registro sem
+     ganho.
+  4. Tipos locais do overlay (SynVoiceOverlayState & cia) estão EXPORTADOS
+     do index para import type de '../index' — migram de vez na obra do
+     overlay/paneLifecycle.
+  5. O script da obra (cut-ipc.mjs, scratchpad da sessão de 2026-08-08) tem
+     as três lições mecânicas gravadas: fechamento duplo `})` OU `)` de
+     arrow, guard anti-sobreposição de ranges, e inserção no bloco de
+     registro APÓS o fechamento da última chamada multiline.
 - Nota de ambiente: no boot de validação o claude atualizou 2.1.224→2.1.226
   — a sonda do CHECK 14 (MCP first-turn) foi feita na 2.1.224; re-sondar
   no próximo resume de fase ao vivo.
