@@ -106,6 +106,11 @@ export interface PhaseApi {
   taskIntegrationMarker(task: Task): string
   /** Retoma merge/finalize interrompido sobre os gates já aprovados. */
   recoverFinalizingTask(task: Task): Promise<boolean>
+  // ——— superfície extra do engine consumida pelo ipc/ (commit 5e) ———
+  /** Fecha um gate VIVO em espera (higiene do mapa + kill do pane). */
+  closeLiveGateWait(projectId: string, taskId: string, reason: string): void
+  /** Drena os respawns LAZY anotados pelo recovery de boot (projeto aberto). */
+  drainPendingRespawns(projectId: string): void
 }
 
 export interface MainContext {
