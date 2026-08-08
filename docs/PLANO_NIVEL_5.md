@@ -208,6 +208,49 @@ eliminação é overhead do modo dev/GC — registrar e seguir para a Fase 1.
 > PRÓXIMO: extração dos engines de missão/maestro (leva ipc/maestro e
 > ipc/missions junto) OU paneLifecycle.ts (pty + guards.ts) — as duas
 > ordens funcionam; o boot de validação do dono cobre esta rodada antes.
+>
+> ESTADO 7 (2026-08-08, sessão seguinte): **ENGINES DE MISSÃO/MAESTRO
+> EXTRAÍDOS em 6 commits** (6a a0f541f · 6b 423ac81 · 6c 1951d33 ·
+> 6d eac1547 · 6e 55ca27e · 6f 277c50b), todos verdes (typecheck node+web
+> + 39/25/14/14/8). Varredura por DOIS agentes Opus em paralelo (mapas
+> novos: docs/FASE1_MAPA_MISSIONENGINE.md e
+> docs/FASE1_MAPA_MAESTROENGINE.md — âncoras conferidas 1× por grep) →
+> corte por script com localização 100% POR ÂNCORA (números de linha nunca
+> entraram nos scripts; scratchpad cut-maestro-engine/cut-ipc-maestro/
+> cut-mission-engine/cut-ipc-missions.mjs). Módulos novos:
+> cliSessionTransplant.ts (73L, módulo PURO — tira o transplante da
+> MaestroApi e desacopla setPhaseExecutorImpl do engine) ·
+> maestroEngine.ts (555L: sessão de fundo/emissores/sessionSink/
+> ensureSession, /estudar, teto de resume, preparePlanningRun, perguntas
+> do ask_user) · ipc/maestro.ts (641L, 18 handlers, engine viaja nas
+> extras) · missionEngine.ts (2.247L: região contígua de missões + fila
+> de integração + stopMissionExecution + tickMissionWatches) ·
+> ipc/missions.ts (610L, 8 handlers). ACHADOS das varreduras que valem
+> reler: ZERO crossings maestro→missão (a costura real é toda nos IPC,
+> concentrada no missions:paneSpec — 3 membros do maestroEngine via
+> extras); PhaseApi NÃO cresceu e mainContext.ts NÃO mudou nesta rodada
+> inteira; missionWatches está MORTO (nenhum .set() em src/main — resíduo
+> do gate de integração aposentado na F6.1; movido como está, remoção é
+> card de higiene separado); ordem de construção obrigatória
+> mission → maestro → phase (PhaseEngineExtras consome
+> missionWorkspacePath/ensureMissionWorktree). Armadilhas pagas:
+> maestroSessions/killMaestroSession FICAM no index (window-all-closed
+> fora do whenReady); teto de resume é ESCRITO no pty:create e LIDO no
+> engine (costura por chave `maestro-<key>` — anotada no cabeçalho);
+> shadowing de `ctx` em maestroResumeOverBudget exigiu destructure em vez
+> de substituição; versionIsolation*/releaseVersionImpl ficam (domínio
+> VERSÃO, extras do ipc/backlog); staggerPaneSpawn/armPane ficam
+> (paneLifecycle futuro). Higiene: 19 imports órfãos criados pela rodada
+> removidos (diff de órfãos contra bb4a02e — sujeira pré-existente NÃO
+> foi tocada). index.ts 11768→8225 na rodada; **19448 (pré-obra) → 8225 =
+> −58%**. Restam no index: 15 registros de IPC (pty/panes + crash/perf)
+> + boot/recovery + armPane/mcpPaneArgs + verificação de plano + overlays
+> + helpers de projeto. DÉBITO REGISTRADO: missionEngine nasce com ~2,2k
+> linhas (acima da régua de código limpo; partição futura sugerida:
+> missionLifecycle × integrationQueueEngine — costura fina já mapeada no
+> doc da varredura). PRÓXIMO: paneLifecycle.ts (pty:create 793L + guards
+> + livePaneSpecs/closingPaneIds/paneEverSpawned + ipc/panes) — último
+> grande corte da Fase 1; boot de validação do dono cobre 6a–6f antes.
 
 Âncoras reais (index.ts de hoje): bindUiSender :463 · mcpPaneArgs :3988 ·
 armPane :4062 · recovery de boot :6797–6943 · completeMissionMerge :7344 ·

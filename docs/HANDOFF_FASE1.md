@@ -1,35 +1,76 @@
-# HANDOFF — Fase 1 da cirurgia do índice (pós-commits 3, 4 e 5)
+# HANDOFF — Fase 1 da cirurgia do índice (pós-commits 6a–6f: engines de missão/maestro)
 
-Atualizado 2026-08-08, fim da sessão que executou os commits 3 (phaseEngine),
-4 (mcpApi/, 4 partes) e 5 (ipc/, 5 fatias). A PRÓXIMA SESSÃO lê este arquivo
-PRIMEIRO, depois docs/FASE1_MAPA_MAINCONTEXT.md (a receita) e os ESTADOS 4–6
-da Fase 1 em docs/PLANO_NIVEL_5.md.
+Atualizado 2026-08-08 (2ª sessão do dia), fim da sessão que executou o
+commit 6 em 6 fatias: engines de missão/maestro + ipc/maestro + ipc/missions.
+A PRÓXIMA SESSÃO lê este arquivo PRIMEIRO, depois o ESTADO 7 da Fase 1 em
+docs/PLANO_NIVEL_5.md e os mapas das varreduras
+(docs/FASE1_MAPA_MISSIONENGINE.md · docs/FASE1_MAPA_MAESTROENGINE.md).
 
 ## ONDE A OBRA ESTÁ + PRÓXIMO PASSO (leia isto e os blocos da data)
 
-- index.ts: 19.448 (pré-obra) → **11.768 linhas (−39%)**. Módulos novos:
-  phaseEngine.ts (4.1k) · mcpApi/ (9 arquivos) · ipc/ (12 arquivos, 100 dos
-  138 handlers).
-- O que RESTA no index, por dono: engines de missão/maestro (~createMissionImpl,
-  startMissionIntegration, integração/fila, ensureSession/preparePlanningRun,
-  survey) + seus 26 handlers de IPC (maestro 18, missions 8) · panes/pty
-  (paneLifecycle.ts futuro: pty:create 793L + livePaneSpecs/closingPaneIds/
-  paneEverSpawned + guards) · boot/recovery · overlays (SynVoice/ANDAMENTO)
-  · armPane/mcpPaneArgs · verificação de plano · helpers de projeto.
-- **PRÓXIMO PASSO RECOMENDADO: extração dos engines de missão/maestro**
-  (missionEngine.ts / maestroEngine.ts nos moldes do phaseEngine: varredura
-  Opus → corte por âncora → extras tipadas), levando ipc/missions.ts e
-  ipc/maestro.ts JUNTO — as extras desses dois domínios de IPC (21/22
-  entradas) só ficam pequenas com os engines extraídos; foi por isso que
-  ficaram de fora do commit 5. Alternativa sancionada: paneLifecycle.ts
-  primeiro (pty + guards.ts). As duas ordens funcionam.
-- Pendências do dono: PUSH (21 commits locais) e BOOT DE VALIDAÇÃO cobrindo
-  os commits 4–5 (o último boot validado foi pós-commit 3).
+- index.ts: 19.448 (pré-obra) → **8.225 linhas (−58%)**. Módulos novos desta
+  sessão: cliSessionTransplant.ts (73L puro) · maestroEngine.ts (555L) ·
+  ipc/maestro.ts (641L, 18 handlers) · missionEngine.ts (2.247L) ·
+  ipc/missions.ts (610L, 8 handlers). Commits 6a a0f541f · 6b 423ac81 ·
+  6c 1951d33 · 6d eac1547 · 6e 55ca27e · 6f 277c50b — cada um verde
+  (typecheck + 39/25/14/14/8).
+- O que RESTA no index, por dono: panes/pty (paneLifecycle.ts futuro:
+  pty:create 793L + panes:freeSpec/live/portsInUse/testServerSpec +
+  livePaneSpecs/closingPaneIds/paneEverSpawned + bindUiSender/asserts +
+  armPane/mcpPaneArgs + staggerPaneSpawn) · boot/recovery · overlays
+  (SynVoice/ANDAMENTO) · verificação de plano · helpers de projeto ·
+  crash/perf (2 handlers de module scope, ficam por desenho).
+- **PRÓXIMO PASSO RECOMENDADO: paneLifecycle.ts** (o último grande corte da
+  Fase 1) — varredura própria antes do corte, nos moldes das anteriores.
+- Fatos das varreduras que a próxima obra precisa saber: ordem de construção
+  no index é mission → maestro → phase (PhaseEngineExtras consome
+  missionWorkspacePath/ensureMissionWorktree do missionEngine);
+  maestroSessions/killMaestroSession FICARAM no index (window-all-closed roda
+  fora do whenReady); o teto de resume é escrito no pty:create e lido no
+  maestroEngine via chave `maestro-<key>` do maestroStore (preservar o
+  prefixo em qualquer refatoração do pty:create); missionWatches está MORTO
+  (sem .set() — candidato a card de higiene, nunca dentro da cirurgia);
+  missionEngine com ~2,2k linhas é débito registrado (partição futura:
+  missionLifecycle × integrationQueueEngine).
+- Pendências do dono: PUSH (28 commits locais) e BOOT DE VALIDAÇÃO cobrindo
+  os commits 6a–6f (o último boot validado foi pós-commit 5).
 - Regras vivas inalteradas: app parado para editar src · cada commit verde
   (typecheck + 5 suítes: orchestrator-flow 39 · mission-verification 25 ·
   integration-queue 14 · pane-permissions 14 · stall-attribution 8) ·
   commits `fase1:` sem acentos · agentes Opus sob liberação do dono por
   sessão · git add por caminho explícito.
+
+## SESSÃO 2 DE 2026-08-08 — como o commit 6 foi feito (para replicar no paneLifecycle)
+
+- **Varredura em 2 agentes Opus PARALELOS** (um por domínio, cada um mapeando
+  a fronteira com o outro) → relatórios em docs/ com ranges + âncoras regex
+  conferidas 1× + extras tipadas + riscos. Reconciliação: zero conflito de
+  faixas; a costura mission↔maestro é toda nos IPC (missions:paneSpec).
+- **Scripts de corte por ÂNCORA, nunca por número de linha** (scratchpad da
+  sessão: cut-maestro-engine.mjs, cut-ipc-maestro.mjs, cut-mission-engine.mjs,
+  cut-ipc-missions.mjs + check-orphan-imports.mjs). Cada script valida toda
+  âncora (grep = 1×) e aborta em sobreposição de ranges.
+- **Substituições não-verbatim autorizadas** (precedente phaseEngine):
+  uiSender→ctx.uiSender · codeIntelligence→ctx.codeIntelligence ·
+  releaseSkillLease→ctx.releasePaneSkillLease · drainPendingRespawns→
+  ctx.phase.drainPendingRespawns (1×, maestro:paneSpec). Todo o resto
+  verbatim; estado nasce nos engines com aliases desestruturados no index.
+- **Padrão dos módulos ipc com engine**: extras.engine (o engine inteiro) +
+  destructure no registerXxxIpc — corpo dos handlers fica textualmente
+  intacto. ipc/missions recebe também `maestroEngine` (Pick de 3 membros).
+- **Armadilhas pagas** (não redescobrir): imports do projectPlan têm ALIAS
+  (completeProjectMission as completeStoredProjectMission etc.);
+  maestroResumeOverBudget tem `const ctx = st.tuiContextTokens ?? 0` que
+  SOMBREIA o MainContext — por isso maestro/blackbox são desestruturados no
+  factory, nunca substituídos por regex; MaestroSession/CodexSession são
+  importados como VALOR no ipc/maestro (instanceof no maestro:send);
+  stopMissionExecution lê ctx.phaseWatches/ctx.livePaneSpecs em CALL TIME
+  (os aliases nascem no createPhaseEngine, depois do missionEngine — TDZ se
+  desestruturar na construção).
+- **Higiene de imports por diff de órfãos**: check-orphan-imports.mjs rodado
+  no index atual E no index de bb4a02e — só os órfãos NOVOS (19) foram
+  removidos; a sujeira pré-existente (basename, nativeImage, GATE_DEATH_LIMIT,
+  MAX_PARALLEL_RUNS…) ficou anotada e intocada, fora do mapa desta obra.
 
 ## SESSÃO DE 2026-08-08 — o que mudou desde o texto abaixo
 
