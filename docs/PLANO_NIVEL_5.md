@@ -462,6 +462,39 @@ bloco. Nunca "aproveitar e refatorar" fora do mapa.
 > fatos do c3, regras de frescor (§4.3), R7/R8/§6.1/§7.4/§7.10, PhaseApi
 > `Promise<boolean>`, report async, poller await, cicatrizes reescritas e a
 > matriz de 13 corridas ligada no harness (gate beforeCall do stub).
+>
+> ESTADO 6 (2026-08-08, mesma sessão): **F2-c5a + F2-c5b FEITOS** (a28503c ·
+> f0eb122) — **O CORTE DA FASE: a barreira síncrona do veredito morreu.**
+> c5a (ramo GATE + infra async): PhaseApi.advancePhase → Promise<boolean>
+> (typecheck forçou os call sites); o preâmbulo do gate viaja ao worker em
+> UMA viagem (gateVerdictFacts) + quarentena numa 2ª só quando dispara
+> (quarantineAndRevalidate) + sha256 do artefato via
+> gitOff('reviewArtifactIdentity') (R11); RELEITURA ÚNICA pós-awaits
+> (latestForSnapshot alimenta recordGate/prevRound/gateNotes/qaEvidence —
+> R4); rejectingGate por PARÂMETRO até o retryOrBacklog (§6.1);
+> comentário-âncora de leitura TARDIA do planTask (§7.8);
+> reindexWatchForRollback (renova createdAt §7.4 + cede ao watch novo R2 com
+> phase-rollback-superseded e limpeza do artefato velho); R7 (recordGate
+> ANTES dos efeitos destrutivos nos desfechos inválido/ilegível) e R8
+> (ilegível numa gravação só via extraPatch do recordGate); call site A do
+> report ganhou a transação do B; POSSE NO THROW: o advancePhase NÃO solta —
+> o call site re-indexa e SÓ ENTÃO solta (rollbackVerdictTransaction no
+> PhaseApi, §8.2), poller incluído (catch + evento
+> phase-marker-verdict-failed); report.ts async ponta a ponta; as 5
+> cicatrizes REESCRITAS (mainContext, phaseEngine ×2, report.ts,
+> worktree.ts). c5b (ramo DEV + §7.10): devDeliveryFacts numa viagem (eram
+> até 7 chamadas git síncronas — o stall de toda entrega); fingerprint do
+> patch PRÉ-calculado; releitura única latestDelivery; devSnapshot POR VALOR
+> — codeReportGuard devolve { blocked?, devSnapshot? } e a fotografia viaja
+> guard → report/poller → advancePhase como argumento (o campo compartilhado
+> virou fallback; guards concorrentes não contaminam mais a decisão um do
+> outro). Verde nos dois: typecheck + 39/25/14/14/8 + 9 + 9 + 27 +
+> mcp-protocol 5 + mcp-dual-era 32 clients (stub do dual-era atualizado ao
+> contrato novo do guard). EM VOO (delegado a 2 agentes Opus, liberados pelo
+> dono nesta sessão): matriz §5.3 de corridas no harness (gate beforeCall) +
+> revisão adversarial do diff c5a+c5b contra o plano — desfecho no próximo
+> ESTADO. Depois: validação AO VIVO do dono (critério §1.3: advancePhase:*
+> some do ranking de stalls no bbwatch).
 
 - Hoje `advancePhase` é SYNC POR CONTRATO (comentário-âncora em :10855; a
   cicatriz do "[object Promise]"): a fotografia atômica é garantida por
