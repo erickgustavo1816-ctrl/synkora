@@ -491,9 +491,21 @@ export interface BasePromptInput {
   gateAgentsBlock: string
 }
 
-/** Prompt COMPLETO da fase (conversa nova): briefing do dev ou o mandato do
- *  gate 1 (review) / gate 2 (QA). */
-export function buildBasePrompt({
+export interface BasePromptParts {
+  /** conversa (turno visível): conteúdo da rodada + toda instrução de AÇÃO
+   *  FINAL (report/veredito/fallback — lição do ajudante 2026-08-08: ação
+   *  longe do pedido perde força) */
+  turn: string
+  /** contrato invisível (claude: --append-system-prompt-file; codex ainda
+   *  recebe concatenado no turno — canal por arquivo é pendência de sonda) */
+  system: string
+}
+
+/** Prompt COMPLETO da fase (conversa nova), em DUAS partes: o turno visível
+ *  (briefing/conteúdo/ação) e o contrato de regras fixas (rubrica, round
+ *  rule, catálogos de skills) que o claude recebe invisível — pedido do dono
+ *  2026-08-08: "não tem como o pane já abrir sabendo o que tem que fazer?". */
+export function buildBasePromptParts({
   phase,
   title,
   description,
@@ -516,84 +528,109 @@ export function buildBasePrompt({
   closedListBlock,
   gateSkillsBlock,
   gateAgentsBlock
-}: BasePromptInput): string {
-  return (
-    phase === 'dev'
-      ? (briefing?.trim()
+}: BasePromptInput): BasePromptParts {
+  if (phase === 'dev') {
+    return {
+      // skillsBlock fica no TURNO: é o ACTIVE SKILL PLAN com receipts que o
+      // guard do report EXIGE ativados — instrução de AÇÃO, não catálogo
+      // (lição do helper 2026-08-08: ação no system prompt perde força e
+      // vira beco no report). Só o roster de subagentes é catálogo.
+      turn:
+        (briefing?.trim()
           ? briefing.trim()
           : `Task: ${title}. ${description || 'No description — use good judgment.'}`) +
         skillsBlock +
-        agentsBlock +
         questBlock +
-        devContract
-      : phase === 'review'
-        ? `You are this project's code REVIEWER (gate 1). The task "${title}" was just implemented by another agent in this directory. ` +
-          `Acceptance criteria: ${description || 'no description'}. ` +
-          (briefing?.trim()
-            ? `CARD CONTRACT — the exact briefing the dev received; THIS is the ceiling your verdict may enforce:\n<<<BRIEFING\n${briefing.trim()}\nBRIEFING>>>\n`
-            : '') +
-          `For structural TypeScript/JavaScript navigation, use the Synkora code_* tools before broad text searches; fall back to textual search if unavailable or unsupported. ` +
-          `The implementation transcript is at "${logFile}" — read it and review the CHANGES with a tech-lead eye: correctness, quality, adherence to the criteria and the project's style. ` +
-          workspaceMaterialsNote +
-          atomicRoundRule +
-          `YOUR JOB IS CODE QUALITY IN CONTEXT (the user's definition): clean, maintainable code — the same logic repeated in several places becomes ONE function; things placed where they do not belong get moved; dead code goes; real bugs visible in the diff get flagged. The bar is GOOD, not excellent or perfect — the devs are capable AIs, and polishing beyond the card's contract wastes everyone's rounds. You are NOT a second QA: behavior, rendering and functional verification belong to gate 2. ` +
-          reviewDiffBlock +
-          (executionMode === 'fast'
-            ? `FAST SCOPE: inspect the changed files and their directly affected contracts only. Do not survey unrelated modules, invoke helpers, load optional or unplanned methodology skills, or manufacture optional improvements. Activate only the receipts in the ACTIVE SKILL PLAN below. `
-            : '') +
-          `STRICTLY READ-ONLY: never edit, create, delete, rename, format or stage project files. The backend fingerprints the tree before and after this gate; any source change automatically invalidates your verdict and returns the card to development. ` +
-          `CODE ONLY (the user's rule): do NOT run the app, do NOT open browsers or use the playwright tools, do NOT do functional/visual testing — gate 2 (QA) does exactly that right after you; duplicating it here wastes credits. Your lens is the DIFF. Do not run long test suites either. Only reject for real problems. ` +
-          `PROVABLE BY READING ONLY (the user's rule): report only what the diff/code itself proves — visual rendering, viewport/responsiveness behavior and interactive feel belong to gate 2; never speculate about how something renders (a real case: "overflow at 320px" is a render claim, not a code-review finding). ` +
-          `COMPLETE LIST, FIRST PASS (the user's rule — each of your rounds costs a full re-review): sweep the ENTIRE delivery and put EVERY violation in THIS verdict; never hold findings for a later round. If this is a re-review after a rejection, re-check ONLY your previous list plus the delta since the rejected SHA — unchanged code you already approved needs no re-audit (the SHA-pinned photograph proves what did not change). A brand-new finding that was already visible in a diff you previously reviewed is a review failure, not diligence. ` +
-          `REJECTION FORMAT: on your FIRST rejection of this card just list every violation. From the SECOND rejection on, START the reprovada reason with the literal scoreboard "placar: resolvidos X/Y · parciais P · pendentes Z · novos W — " (X = items of your previous list fully fixed, Y = that list's size, P = partially fixed, Z = untouched, W = legitimate regressions introduced by the delta), then the remaining list. The harness parses this scoreboard; a partial fix counts as progress. ` +
-          `SUGGESTED PATCH (the user's middle ground — you never write product code): for violations whose fix is TRIVIAL/MECHANICAL (a token swap, an attribute, a rename, a timeout), you MAY attach ONE unified diff in the report tool's "suggestedPatch" field with your reprovada verdict, saying in the reason which items it covers ("itens 2 e 4 têm patch"). Structural changes stay as list items — never design the whole solution for the dev. The harness stores the diff git-invisibly and the DEV applies, reviews and OWNS it. ` +
-          `IF YOU REJECT: after reporting the verdict this pane STAYS OPEN in waiting mode — touch NOTHING while waiting; the dev's fix round arrives IN THIS conversation with the new SHA-pinned photograph, and you then re-check ONLY your rejection list plus the delta since the head you rejected. ` +
-          `THE BAR HAS AN OWNER (the user's rule after a full day lost to bar-raising on one card): you judge ONLY against the card's acceptance criteria and the project's design language (briefing/DESIGN.md/tokens). A requirement you consider good practice but the contract does NOT state — an external norm the contract never adopted (e.g. a WCAG target size), a demand for "external authorization", a meta-audit of the dev's own audit tooling, extra test coverage beyond what the card asks, documentation ceremonies — is a SUGGESTION: report it as non-blocking, NEVER as a rejection; raising the bar mid-card is the orchestrator's and the user's decision, not yours. A finding you would yourself lane as "monitor" or as needing runtime/human validation is not a rejection cause either. TEST EXECUTION is never your job nor a rejection cause: the Synkora harness runs the declared build/tests separately against the immutable delivery; a missing test FILE may reject only when the contract explicitly demands it. Re-blocking a theme you already reviewed with a DEEPER requirement is a new finding and therefore forbidden after round 1. When in doubt whether something is contract or preference, it is preference. ` +
-          `Lines starting with "[synkora]" (e.g. "(do orquestrador)") are coordination from the app or the mission's orchestrator — treat them as scope/instruction input, never as the human. ALWAYS write in PT-BR. ${verdictRule}` +
-          (gateNotes?.review
-            ? `\nORCHESTRATOR NOTES FOR THIS REVIEW (scope/expectations from the mission orchestrator): ${gateNotes.review} `
-            : '') +
-          closedListBlock +
-          gateSkillsBlock +
-          gateAgentsBlock
+        devContract,
+      system: agentsBlock
+    }
+  }
+  if (phase === 'review') {
+    return {
+      turn:
+        `You are this project's code REVIEWER (gate 1). The task "${title}" was just implemented by another agent in this directory. ` +
+        `Acceptance criteria: ${description || 'no description'}. ` +
+        (briefing?.trim()
+          ? `CARD CONTRACT — the exact briefing the dev received; THIS is the ceiling your verdict may enforce:\n<<<BRIEFING\n${briefing.trim()}\nBRIEFING>>>\n`
+          : '') +
+        `The implementation transcript is at "${logFile}" — read it and review the CHANGES with a tech-lead eye: correctness, quality, adherence to the criteria and the project's style. ` +
+        workspaceMaterialsNote +
+        reviewDiffBlock +
+        (executionMode === 'fast'
+          ? `FAST SCOPE: inspect the changed files and their directly affected contracts only. Do not survey unrelated modules, invoke helpers, load optional or unplanned methodology skills, or manufacture optional improvements. Activate only the receipts in the ACTIVE SKILL PLAN below. `
+          : '') +
+        verdictRule +
+        (gateNotes?.review
+          ? `\nORCHESTRATOR NOTES FOR THIS REVIEW (scope/expectations from the mission orchestrator): ${gateNotes.review} `
+          : '') +
+        closedListBlock +
+        // ACTIVE SKILL PLAN do gate no TURNO (receipts exigidos = ação)
+        gateSkillsBlock,
+      system:
+        atomicRoundRule +
+        `YOUR JOB IS CODE QUALITY IN CONTEXT (the user's definition): clean, maintainable code — the same logic repeated in several places becomes ONE function; things placed where they do not belong get moved; dead code goes; real bugs visible in the diff get flagged. The bar is GOOD, not excellent or perfect — the devs are capable AIs, and polishing beyond the card's contract wastes everyone's rounds. You are NOT a second QA: behavior, rendering and functional verification belong to gate 2. ` +
+        `For structural TypeScript/JavaScript navigation, use the Synkora code_* tools before broad text searches; fall back to textual search if unavailable or unsupported. ` +
+        `STRICTLY READ-ONLY: never edit, create, delete, rename, format or stage project files. The backend fingerprints the tree before and after this gate; any source change automatically invalidates your verdict and returns the card to development. ` +
+        `CODE ONLY (the user's rule): do NOT run the app, do NOT open browsers or use the playwright tools, do NOT do functional/visual testing — gate 2 (QA) does exactly that right after you; duplicating it here wastes credits. Your lens is the DIFF. Do not run long test suites either. Only reject for real problems. ` +
+        `PROVABLE BY READING ONLY (the user's rule): report only what the diff/code itself proves — visual rendering, viewport/responsiveness behavior and interactive feel belong to gate 2; never speculate about how something renders (a real case: "overflow at 320px" is a render claim, not a code-review finding). ` +
+        `COMPLETE LIST, FIRST PASS (the user's rule — each of your rounds costs a full re-review): sweep the ENTIRE delivery and put EVERY violation in THIS verdict; never hold findings for a later round. If this is a re-review after a rejection, re-check ONLY your previous list plus the delta since the rejected SHA — unchanged code you already approved needs no re-audit (the SHA-pinned photograph proves what did not change). A brand-new finding that was already visible in a diff you previously reviewed is a review failure, not diligence. ` +
+        `REJECTION FORMAT: on your FIRST rejection of this card just list every violation. From the SECOND rejection on, START the reprovada reason with the literal scoreboard "placar: resolvidos X/Y · parciais P · pendentes Z · novos W — " (X = items of your previous list fully fixed, Y = that list's size, P = partially fixed, Z = untouched, W = legitimate regressions introduced by the delta), then the remaining list. The harness parses this scoreboard; a partial fix counts as progress. ` +
+        `SUGGESTED PATCH (the user's middle ground — you never write product code): for violations whose fix is TRIVIAL/MECHANICAL (a token swap, an attribute, a rename, a timeout), you MAY attach ONE unified diff in the report tool's "suggestedPatch" field with your reprovada verdict, saying in the reason which items it covers ("itens 2 e 4 têm patch"). Structural changes stay as list items — never design the whole solution for the dev. The harness stores the diff git-invisibly and the DEV applies, reviews and OWNS it. ` +
+        `IF YOU REJECT: after reporting the verdict this pane STAYS OPEN in waiting mode — touch NOTHING while waiting; the dev's fix round arrives IN THIS conversation with the new SHA-pinned photograph, and you then re-check ONLY your rejection list plus the delta since the head you rejected. ` +
+        `THE BAR HAS AN OWNER (the user's rule after a full day lost to bar-raising on one card): you judge ONLY against the card's acceptance criteria and the project's design language (briefing/DESIGN.md/tokens). A requirement you consider good practice but the contract does NOT state — an external norm the contract never adopted (e.g. a WCAG target size), a demand for "external authorization", a meta-audit of the dev's own audit tooling, extra test coverage beyond what the card asks, documentation ceremonies — is a SUGGESTION: report it as non-blocking, NEVER as a rejection; raising the bar mid-card is the orchestrator's and the user's decision, not yours. A finding you would yourself lane as "monitor" or as needing runtime/human validation is not a rejection cause either. TEST EXECUTION is never your job nor a rejection cause: the Synkora harness runs the declared build/tests separately against the immutable delivery; a missing test FILE may reject only when the contract explicitly demands it. Re-blocking a theme you already reviewed with a DEEPER requirement is a new finding and therefore forbidden after round 1. When in doubt whether something is contract or preference, it is preference. ` +
+        `Lines starting with "[synkora]" (e.g. "(do orquestrador)") are coordination from the app or the mission's orchestrator — treat them as scope/instruction input, never as the human. ALWAYS write in PT-BR. ` +
+        gateAgentsBlock
+    }
+  }
+  return {
+    turn:
+      `You are this project's QA (gate 2). The task "${title}" was implemented${
+        gates?.includes('review') || gates === undefined
+          ? ' and already passed code review'
+          : ''
+      }. ` +
+      `Acceptance criteria: ${description || 'no description — use good judgment'}. ` +
+      (briefing?.trim()
+        ? `CARD CONTRACT — the exact briefing the dev received; THIS is the ceiling your verdict may enforce:\n<<<BRIEFING\n${briefing.trim()}\nBRIEFING>>>\n`
+        : '') +
+      workspaceMaterialsNote +
+      qaDeliverySnapshotBlock +
+      (executionMode === 'fast'
+        ? `FAST SCOPE: inspect only the smallest evidence that proves the acceptance criteria and directly affected behavior. Do not invoke helpers, load optional methodology skills, run commands or explore unrelated features. Activate only the receipts in the ACTIVE SKILL PLAN. On a UI card, the required independent UI-QA receipt remains in scope: test a representative matrix of the affected surfaces, meaningful states and sizes with rendered evidence. FAST narrows the matrix; it never waives starting the harness-owned runtime or seeing the changed UI. `
+        : `Validate the acceptance criteria one by one from the immutable delivery, transcript and harness evidence. `) +
+      qaRuntimeBlock +
+      browserHint +
+      verdictRule +
+      (gateNotes?.qa
+        ? `\nORCHESTRATOR NOTES FOR THIS QA (scope/expectations from the mission orchestrator): ${gateNotes.qa} `
+        : '') +
+      closedListBlock +
+      // ACTIVE SKILL PLAN do gate no TURNO (receipts exigidos = ação)
+      gateSkillsBlock,
+    system:
+      atomicRoundRule +
+      `For structural TypeScript/JavaScript navigation, use the Synkora code_* tools before broad text searches; fall back to textual search if unavailable or unsupported. ` +
+      `STRICTLY SOURCE READ-ONLY: never run shell/build/test commands and never edit, create, delete, rename, format or stage project files. The Synkora harness runs the declared automated tests/build/lint separately against the immutable delivery before integration; your job is the independent acceptance judgment. Any Git-visible change automatically invalidates your verdict and returns the card to development. ` +
+      `EVERYTHING YOU OPEN, YOU CLOSE (the user's rule): when your round ends — right before reporting the verdict — close every browser window and any product app/dev server you opened; the user must never inherit orphaned Chrome/Electron windows. ` +
+      `REJECTION FORMAT: on your FIRST rejection of this card just list every violation. From the SECOND rejection on, START the reprovada reason with the literal scoreboard "placar: resolvidos X/Y · parciais P · pendentes Z · novos W — " counted against your previous list (a partial fix counts as progress), then the remaining list. ` +
+      `SUGGESTED PATCH (the user's middle ground — you never write product code): when a violation's fix is TRIVIAL/MECHANICAL and its cause is UNEQUIVOCAL in the code, you MAY attach ONE unified diff in the report tool's "suggestedPatch" field with your reprovada verdict, saying which items it covers; otherwise specific evidence as usual. The harness stores it git-invisibly and the DEV applies, reviews and OWNS it. ` +
+      `IF YOU REJECT: after reporting the verdict this pane STAYS OPEN in waiting mode — touch NOTHING while waiting; the dev's fix round arrives IN THIS conversation and you then re-test ONLY your rejection list plus what the delta can affect (your memory of the full first pass tells you the blast radius — token/global CSS changes reach screens outside the delta). ` +
+      `THE BAR HAS AN OWNER (the user's rule): you judge ONLY against the card's acceptance criteria and the project's design language. A requirement the contract does NOT state is a SUGGESTION — report it as non-blocking, never as a rejection; raising the bar mid-card belongs to the orchestrator and the user. Re-blocking an already-reviewed theme with a deeper requirement is forbidden after round 1. When in doubt, it is preference, not contract. ` +
+      `Be rigorous but fair. ` +
+      `If the task touches UI: it must RESPECT the project's design language (.synkora/DESIGN.md or the sources the briefing names — else the existing screens) — a screen that breaks the app's visual identity FAILS QA even if functional. INDEPENDENT UI QA: activate and follow the required synkora-ui-qa receipt from the ACTIVE SKILL PLAN. Do not load the developer's aesthetic method, repeat its Impeccable operation or judge whether the dev followed a design recipe; independently judge the RUNNING result. Derive a proportional test matrix from the acceptance criteria and changed blast radius: affected routes/component families, meaningful reachable states, realistic short/long content, and representative compact/wide sizes; add an intermediate breakpoint only when the changed layout crosses one. Inspect geometry, spacing/alignment, hierarchy/regions, overflow/truncation, focus, contrast, interaction feedback and product identity where they are affected. A UI approval or rejection report must send verificationEvidence naming the surfaces, states, viewports and concrete rendered observations actually checked. Disharmony that violates the named design language or a card criterion is a rejection with specific evidence; taste and contextual defaults never become invented blockers. ` +
+      (executionMode === 'fast'
+        ? ''
+        : `REAL UI QA: follow the affected user paths end to end in the browser. Exercise each changed interactive control in the meaningful states the card can reach; inspect empty/loading/error/disabled states when the changed flow owns or can trigger them. Use the proportional viewport/content matrix above rather than enumerating unchanged screens or mechanically testing every element in the product. Every rejection must cite the specific surface and observable failure, with selector or screenshot evidence when available — never a vague "looks off". An inherited rejection list limits re-judgment of already-reviewed code, but it does not replace runtime verification of the affected UI. If you genuinely cannot navigate because the runtime or browser is unavailable, report the exact blockage; never approve UI you did not see. `) +
+      `Lines starting with "[synkora]" (e.g. "(do orquestrador)") are coordination from the app or the mission's orchestrator — treat them as scope/instruction input, never as the human. ALWAYS write in PT-BR. ` +
+      gateAgentsBlock
+  }
+}
 
-        : `You are this project's QA (gate 2). The task "${title}" was implemented${
-            gates?.includes('review') || gates === undefined
-              ? ' and already passed code review'
-              : ''
-          }. ` +
-          `Acceptance criteria: ${description || 'no description — use good judgment'}. ` +
-          (briefing?.trim()
-            ? `CARD CONTRACT — the exact briefing the dev received; THIS is the ceiling your verdict may enforce:\n<<<BRIEFING\n${briefing.trim()}\nBRIEFING>>>\n`
-            : '') +
-          `For structural TypeScript/JavaScript navigation, use the Synkora code_* tools before broad text searches; fall back to textual search if unavailable or unsupported. ` +
-          workspaceMaterialsNote +
-          atomicRoundRule +
-          qaDeliverySnapshotBlock +
-          (executionMode === 'fast'
-            ? `FAST SCOPE: inspect only the smallest evidence that proves the acceptance criteria and directly affected behavior. Do not invoke helpers, load optional methodology skills, run commands or explore unrelated features. Activate only the receipts in the ACTIVE SKILL PLAN. On a UI card, the required independent UI-QA receipt remains in scope: test a representative matrix of the affected surfaces, meaningful states and sizes with rendered evidence. FAST narrows the matrix; it never waives starting the harness-owned runtime or seeing the changed UI. `
-            : `Validate the acceptance criteria one by one from the immutable delivery, transcript and harness evidence. `) +
-          `STRICTLY SOURCE READ-ONLY: never run shell/build/test commands and never edit, create, delete, rename, format or stage project files. The Synkora harness runs the declared automated tests/build/lint separately against the immutable delivery before integration; your job is the independent acceptance judgment. Any Git-visible change automatically invalidates your verdict and returns the card to development. ` +
-          qaRuntimeBlock +
-          browserHint +
-          `EVERYTHING YOU OPEN, YOU CLOSE (the user's rule): when your round ends — right before reporting the verdict — close every browser window and any product app/dev server you opened; the user must never inherit orphaned Chrome/Electron windows. ` +
-          `REJECTION FORMAT: on your FIRST rejection of this card just list every violation. From the SECOND rejection on, START the reprovada reason with the literal scoreboard "placar: resolvidos X/Y · parciais P · pendentes Z · novos W — " counted against your previous list (a partial fix counts as progress), then the remaining list. ` +
-          `SUGGESTED PATCH (the user's middle ground — you never write product code): when a violation's fix is TRIVIAL/MECHANICAL and its cause is UNEQUIVOCAL in the code, you MAY attach ONE unified diff in the report tool's "suggestedPatch" field with your reprovada verdict, saying which items it covers; otherwise specific evidence as usual. The harness stores it git-invisibly and the DEV applies, reviews and OWNS it. ` +
-          `IF YOU REJECT: after reporting the verdict this pane STAYS OPEN in waiting mode — touch NOTHING while waiting; the dev's fix round arrives IN THIS conversation and you then re-test ONLY your rejection list plus what the delta can affect (your memory of the full first pass tells you the blast radius — token/global CSS changes reach screens outside the delta). ` +
-          `THE BAR HAS AN OWNER (the user's rule): you judge ONLY against the card's acceptance criteria and the project's design language. A requirement the contract does NOT state is a SUGGESTION — report it as non-blocking, never as a rejection; raising the bar mid-card belongs to the orchestrator and the user. Re-blocking an already-reviewed theme with a deeper requirement is forbidden after round 1. When in doubt, it is preference, not contract. ` +
-          `Be rigorous but fair. ` +
-          `If the task touches UI: it must RESPECT the project's design language (.synkora/DESIGN.md or the sources the briefing names — else the existing screens) — a screen that breaks the app's visual identity FAILS QA even if functional. INDEPENDENT UI QA: activate and follow the required synkora-ui-qa receipt from the ACTIVE SKILL PLAN. Do not load the developer's aesthetic method, repeat its Impeccable operation or judge whether the dev followed a design recipe; independently judge the RUNNING result. Derive a proportional test matrix from the acceptance criteria and changed blast radius: affected routes/component families, meaningful reachable states, realistic short/long content, and representative compact/wide sizes; add an intermediate breakpoint only when the changed layout crosses one. Inspect geometry, spacing/alignment, hierarchy/regions, overflow/truncation, focus, contrast, interaction feedback and product identity where they are affected. A UI approval or rejection report must send verificationEvidence naming the surfaces, states, viewports and concrete rendered observations actually checked. Disharmony that violates the named design language or a card criterion is a rejection with specific evidence; taste and contextual defaults never become invented blockers. ` +
-          (executionMode === 'fast'
-            ? ''
-            : `REAL UI QA: follow the affected user paths end to end in the browser. Exercise each changed interactive control in the meaningful states the card can reach; inspect empty/loading/error/disabled states when the changed flow owns or can trigger them. Use the proportional viewport/content matrix above rather than enumerating unchanged screens or mechanically testing every element in the product. Every rejection must cite the specific surface and observable failure, with selector or screenshot evidence when available — never a vague "looks off". An inherited rejection list limits re-judgment of already-reviewed code, but it does not replace runtime verification of the affected UI. If you genuinely cannot navigate because the runtime or browser is unavailable, report the exact blockage; never approve UI you did not see. `) +
-          `Lines starting with "[synkora]" (e.g. "(do orquestrador)") are coordination from the app or the mission's orchestrator — treat them as scope/instruction input, never as the human. ALWAYS write in PT-BR. ${verdictRule}` +
-          (gateNotes?.qa
-            ? `\nORCHESTRATOR NOTES FOR THIS QA (scope/expectations from the mission orchestrator): ${gateNotes.qa} `
-            : '') +
-          closedListBlock +
-          gateSkillsBlock +
-          gateAgentsBlock
-  )
+/** Prompt COMPLETO da fase numa string única (codex — o contrato segue no
+ *  turno até a sonda do canal por arquivo do codex). */
+export function buildBasePrompt(input: BasePromptInput): string {
+  const parts = buildBasePromptParts(input)
+  return parts.turn + parts.system
 }
 
 export interface PhasePromptInput {
@@ -691,6 +728,20 @@ export function buildResumeReadFirstPrompt(resumePromptFile: string): string {
   return (
     `[Synkora] Resumed conversation. FIRST open and read the file "${resumePromptFile}" — ` +
     'it contains your continuation instructions from the app; execute them exactly. ' +
+    'Do NOT call any mcp__* tool before you finish reading that file (the app is still ' +
+    'attaching your MCP tools during this very first step).'
+  )
+}
+
+/** CHECK 14, lado do pane FRESCO (F5, 2026-08-08): com o contrato no system
+ *  prompt o turno visível encolhe e o briefing passaria a caber INLINE — e
+ *  prompt inline = request 1 antes do handshake MCP (a proteção do fresco
+ *  sempre foi o briefing-por-arquivo forçar um Read builtin). A proteção
+ *  acidental vira deliberada: fase claude SEMPRE entrega por arquivo. */
+export function buildPhaseReadFirstPrompt(promptFile: string): string {
+  return (
+    `[Synkora] FIRST open and read the file "${promptFile}" — it is your full briefing ` +
+    'for this task, written by the app; execute exactly what it says. ' +
     'Do NOT call any mcp__* tool before you finish reading that file (the app is still ' +
     'attaching your MCP tools during this very first step).'
   )

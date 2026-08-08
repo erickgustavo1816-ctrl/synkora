@@ -68,7 +68,8 @@ import {
 import {
   buildAgentsBlock,
   buildAtomicRoundRule,
-  buildBasePrompt,
+  buildBasePromptParts,
+  buildPhaseReadFirstPrompt,
   buildBrowserHint,
   buildClosedListBlock,
   buildDevContract,
@@ -1483,11 +1484,16 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     // gerou um segundo relatório por fora — duas listas circulando enquanto o
     // dev corrigia a primeira).
     const atomicRoundRule = buildAtomicRoundRule(phase)
+    // CONTRATO INVISÍVEL (pedido do dono, 2026-08-08): pane de fase CLAUDE
+    // recebe as regras fixas (rubrica do gate, atomicRoundRule, catálogos de
+    // skills/subagentes, devContract não — instrução de ação fica no turno)
+    // pelo system prompt por arquivo; o turno visível é o CONTEÚDO da rodada.
+    // Codex segue com tudo no turno (canal por arquivo é pendência de sonda).
     const assemblePhasePrompt = (
       currentGateNotes: typeof task.gateNotes,
       currentTaskFeedback: typeof task.feedback
     ): string => {
-      const basePrompt = buildBasePrompt({
+      const parts = buildBasePromptParts({
         phase,
         title: task.title,
         description: task.description,
@@ -1511,6 +1517,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         gateSkillsBlock: phase === 'dev' ? '' : skillsBlock,
         gateAgentsBlock: ''
       })
+      phaseSystemContract = seat.cli === 'claude' ? parts.system : ''
+      const basePrompt = seat.cli === 'claude' ? parts.turn : parts.turn + parts.system
 
       return buildPhasePrompt({
         phase,
@@ -1541,6 +1549,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     // delta; o briefing completo fica para conversa genuinamente nova. A
     // autocura de resume-fail (respawn sem --resume com o MESMO prompt) é
     // coberta pela instrução de ler o transcript preservado.
+    let phaseSystemContract = ''
     let prompt = assemblePhasePrompt(task.gateNotes, task.feedback)
 
     // Checkpoint transacional: os awaits acima nao autorizam ressuscitar um
@@ -1759,6 +1768,41 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       } catch {
         // sem disco: segue inline — comportamento antigo, janela conhecida
       }
+    } else if (seat.cli === 'claude') {
+      // CHECK 14, pane FRESCO: com o contrato no system prompt o turno
+      // encolheu e passaria a caber inline — e inline = request 1 antes do
+      // handshake MCP. A proteção do briefing-por-arquivo (Read builtin
+      // consome o request 1) era acidental e dependia dos 8KB do pty; agora
+      // é deliberada e vale para TODO spawn de fase claude.
+      try {
+        const phasePromptDir = join(cwd, '.synkora')
+        mkdirSync(phasePromptDir, { recursive: true })
+        const phasePromptFile = join(
+          phasePromptDir,
+          `prompt-phase-${armed.paneId.replace(/[^A-Za-z0-9._-]/g, '_')}.md`
+        )
+        // BOM: mesma lição do prompt-<paneId>.md do pty (PS 5.1 sem BOM
+        // decodifica UTF-8 como ANSI); o Read do claude ignora BOM.
+        writeFileSync(phasePromptFile, '﻿' + prompt, 'utf-8')
+        deliveredPrompt = buildPhaseReadFirstPrompt(phasePromptFile)
+        blackbox.record({
+          cat: 'phase',
+          event: 'phase-prompt-via-file',
+          actor: 'harness',
+          ids: {
+            projectId,
+            missionId: task.missionId,
+            taskId,
+            paneId: armed.paneId,
+            phase,
+            role: phase
+          },
+          reason:
+            'briefing do pane fresco entregue por arquivo (read-first) para o handshake MCP vencer o request 1'
+        })
+      } catch {
+        // sem disco: segue inline — o caminho >8KB do pty ainda cobre briefing grande
+      }
     }
     const spec: DevPaneSpec = {
       paneId: armed.paneId,
@@ -1767,7 +1811,12 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       model: model || undefined,
       cwd,
       cliArgs,
-      appendSystemPrompt: seat.cli === 'claude' ? securityBlock : undefined,
+      // contrato de fase invisível + bloco de segurança — os dois no canal
+      // por arquivo do claude (F5, 2026-08-08)
+      appendSystemPrompt:
+        seat.cli === 'claude'
+          ? [phaseSystemContract, securityBlock].filter(Boolean).join('\n\n')
+          : undefined,
       initialPrompt: deliveredPrompt,
       logFile,
       title: `${PHASE_ICON[phase]} ${task.title.slice(0, 28)}${task.title.length > 28 ? '…' : ''}`,
