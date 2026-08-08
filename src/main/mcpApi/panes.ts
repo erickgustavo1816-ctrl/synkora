@@ -365,9 +365,13 @@ export function buildPanesApi(
       const redirectNote = redirected
         ? ` (o paneId informado estava MORTO; reencaminhei ao pane ATUAL do mesmo card/papel: ${paneId})`
         : ''
-      return delivered === 'injected'
-        ? `ENTREGUE AGORA — a linha "[synkora]" já apareceu no terminal do pane${redirectNote}`
-        : `na fila (composer do pane ocupado ou outra injeção em curso) — entra no terminal em segundos, não reenvie${redirectNote}`
+      // Retorno HONESTO por via de entrega (F5-F2): o F1 dizia "apareceu no
+      // terminal" para mensagem que foi ao correio.
+      return delivered === 'mailboxed'
+        ? `ENTREGUE NO CORREIO do pane — chega no resultado da PRÓXIMA tool dele (e no check_messages); aviso 📬 dado no terminal. Não reenvie${redirectNote}`
+        : delivered === 'injected'
+          ? `ENTREGUE AGORA — a linha "[synkora]" já apareceu no terminal do pane${redirectNote}`
+          : `na fila (composer do pane ocupado ou outra injeção em curso) — entra no terminal em segundos, não reenvie${redirectNote}`
     }
   }
 }

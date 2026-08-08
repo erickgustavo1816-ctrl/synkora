@@ -127,7 +127,8 @@ export function buildHelpersApi(
     externalPlaywrightForPane,
     unregisterPane,
     cleanPaneMcpFile,
-    releasePaneSkillLease
+    releasePaneSkillLease,
+    blackbox
   } = ctx
   // hub é atribuído 1× antes do mcpApi nascer — capturar é seguro.
   const hub = ctx.hub
@@ -904,19 +905,35 @@ export function buildHelpersApi(
       // ("1", "y") vai crua para não quebrar a seleção.
       const from =
         id.role === 'maestro' ? (id.missionId ? 'do orquestrador' : 'do Maestro') : 'do seu delegador'
-      const delivered = hub.notifyPaneNow(
-        paneId,
-        message.trim().length > 20 ? `[${from}] ${message}` : message,
-        {
-          sourcePaneId: id.paneId,
-          kind: 'delegate',
-          correlationId: randomUUID()
-        }
-      )
+      const isRawPickerReply = message.trim().length <= 20
+      if (isRawPickerReply) {
+        // TECLADO CRU obrigatório (F5-F2, bug real do F1): resposta de picker
+        // desviada para a mailbox nunca chega ao seletor do TUI — e pelo hub
+        // ela ainda ganharia o prefixo "[synkora] ", que também quebra a
+        // seleção. É a exceção AUDITADA de digitação entre agentes.
+        const submitted = ptys.inject(paneId, message, () => {})
+        blackbox.record({
+          cat: 'msg',
+          event: 'helper-send-raw-keystroke',
+          actor: id.role,
+          ids: { paneId, projectId: id.projectId, missionId: id.missionId },
+          detail: { line: message, sourcePaneId: id.paneId }
+        })
+        return submitted
+          ? 'tecla enviada CRUA ao TUI do ajudante (resposta de picker) — leia a reação com helper_output em alguns segundos'
+          : 'o pane desse ajudante morreu durante o envio'
+      }
+      const delivered = hub.notifyPaneNow(paneId, `[${from}] ${message}`, {
+        sourcePaneId: id.paneId,
+        kind: 'delegate',
+        correlationId: randomUUID()
+      })
       if (delivered === 'dead') return 'o pane desse ajudante morreu durante o envio'
-      return delivered === 'injected'
-        ? 'enviado — leia a reação com helper_output em alguns segundos'
-        : 'na fila do ajudante — leia a reação com helper_output em alguns segundos'
+      return delivered === 'mailboxed'
+        ? 'no correio do ajudante — chega no resultado da próxima tool dele; leia a reação com helper_output'
+        : delivered === 'injected'
+          ? 'enviado — leia a reação com helper_output em alguns segundos'
+          : 'na fila do ajudante — leia a reação com helper_output em alguns segundos'
     },
     helperClose: (id, paneId) => {
       const h = hub.identityByPane(paneId)
