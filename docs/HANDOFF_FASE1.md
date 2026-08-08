@@ -2,7 +2,7 @@
 
 ## PRÓXIMA SESSÃO (pós-clear) — leia isto primeiro
 
-1. **PENDÊNCIA DO DONO: PUSH** — 35 commits locais na `nivel5-fase1` à
+1. **PENDÊNCIA DO DONO: PUSH** — 34 commits locais na `nivel5-fase1` à
    frente de origin (ele decide quando; nada bloqueia).
 2. **PRÓXIMA OBRA: Fase 2 — veredito sem barreira síncrona (CHECK 1
    núcleo).** É cirurgia de comportamento, não de movimentação: PLANO
