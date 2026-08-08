@@ -3,6 +3,7 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
 import { redactSensitiveStrings } from './securityRedaction'
+import type { PlanningMethodEvidence } from './skillRuntime'
 
 // Missões (F3.8): a unidade de trabalho do universo. Cada missão tem seu
 // PRÓPRIO orquestrador (pane TUI), suas tarefas e — com git — sua própria
@@ -48,6 +49,8 @@ export interface Mission {
   pendingIntegrationApproval?: boolean
   /** versão do backlog a que esta missão pertence (escopo de release) */
   versionId?: string
+  /** Receipt do método que estruturou esta missão pontual. */
+  planningMethod?: PlanningMethodEvidence
   /** Momento real da conclusão. `updatedAt` pode mudar depois por manutenção
    *  e não deve fazer uma missão antiga parecer recém-concluída no radar. */
   completedAt?: string
@@ -63,11 +66,12 @@ export interface NewMission {
   model?: string
   effort?: string
   versionId?: string
+  planningMethod?: PlanningMethodEvidence
   pendingOrchestrator?: boolean
 }
 
 export class MissionStore {
-  private file = join(app.getPath('userData'), 'missions.json')
+  private readonly file = join(app.getPath('userData'), 'missions.json')
   private missions: Mission[] = []
 
   constructor() {
@@ -87,8 +91,10 @@ export class MissionStore {
     ))
   }
 
-  private persist(): void {
-    persistJsonStore(this.file, this.missions)
+  /** O arquivo pousa antes de a fotografia viva mudar. */
+  private commit(next: Mission[]): void {
+    persistJsonStore(this.file, next)
+    this.missions = next
   }
 
   list(projectId: string): Mission[] {
@@ -112,13 +118,13 @@ export class MissionStore {
       model: input.model,
       effort: input.effort,
       versionId: input.versionId,
+      planningMethod: input.planningMethod,
       pendingOrchestrator: input.pendingOrchestrator || undefined,
       status: 'ativa',
       createdAt: now,
       updatedAt: now
     }
-    this.missions.push(mission)
-    this.persist()
+    this.commit([...this.missions, mission])
     return mission
   }
 
@@ -142,8 +148,7 @@ export class MissionStore {
       createdAt: now,
       updatedAt: now
     }
-    this.missions.push(mission)
-    this.persist()
+    this.commit([...this.missions, mission])
     return mission
   }
 
@@ -153,14 +158,19 @@ export class MissionStore {
     id: string,
     choice: { seatId?: string; model?: string; effort?: string }
   ): Mission | undefined {
-    const mission = this.missions.find((m) => m.id === id)
-    if (!mission) return undefined
-    mission.seatId = choice.seatId
-    mission.model = choice.model
-    mission.effort = choice.effort
-    mission.pendingOrchestrator = undefined
-    mission.updatedAt = new Date().toISOString()
-    this.persist()
+    const index = this.missions.findIndex((m) => m.id === id)
+    if (index < 0) return undefined
+    const mission: Mission = {
+      ...this.missions[index],
+      seatId: choice.seatId,
+      model: choice.model,
+      effort: choice.effort,
+      pendingOrchestrator: undefined,
+      updatedAt: new Date().toISOString()
+    }
+    const next = [...this.missions]
+    next[index] = mission
+    this.commit(next)
     return mission
   }
 
@@ -180,23 +190,29 @@ export class MissionStore {
       >
     >
   ): Mission | undefined {
-    const mission = this.missions.find((m) => m.id === id)
-    if (!mission) return undefined
+    const index = this.missions.findIndex((m) => m.id === id)
+    if (index < 0) return undefined
+    const current = this.missions[index]
     const now = new Date().toISOString()
-    const wasCompleted = mission.status === 'concluida'
-    const previousUpdatedAt = mission.updatedAt
-    Object.assign(mission, redactSensitiveStrings(patch), { updatedAt: now })
+    const wasCompleted = current.status === 'concluida'
+    const previousUpdatedAt = current.updatedAt
+    const mission: Mission = {
+      ...current,
+      ...redactSensitiveStrings(patch),
+      updatedAt: now
+    }
     if (patch.status === 'concluida' && !wasCompleted) mission.completedAt = now
     else if (mission.status === 'concluida' && !mission.completedAt) {
       mission.completedAt = previousUpdatedAt
     }
     if (patch.status && patch.status !== 'concluida') delete mission.completedAt
-    this.persist()
+    const next = [...this.missions]
+    next[index] = mission
+    this.commit(next)
     return mission
   }
 
   remove(id: string): void {
-    this.missions = this.missions.filter((m) => m.id !== id)
-    this.persist()
+    this.commit(this.missions.filter((m) => m.id !== id))
   }
 }

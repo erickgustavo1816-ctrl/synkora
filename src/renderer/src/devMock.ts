@@ -1142,7 +1142,9 @@ export function installDevMock(): void {
       setSensitiveBypass: async () => undefined
     },
     projectPlan: {
-      get: async () => null
+      get: async () => null,
+      approve: async () => 'mock: roadmap aprovado pelo usuário',
+      startMission: async (_projectId, itemId) => `mock: missão ${itemId} aberta pelo usuário`
     },
     hub: {
       onEvent: () => () => undefined,

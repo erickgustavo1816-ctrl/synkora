@@ -18,6 +18,7 @@ import { dirname, isAbsolute, join, relative, sep } from 'path'
 import type { Hub, PaneIdentity } from './hub'
 import type { CodeQuery } from './codeIntelligence/types'
 import type { SecurityReviewInput } from './securityReview'
+import type { GateVerificationEvidence } from './gateVerificationEvidence'
 import type {
   MissionExecutionMode,
   MissionRiskLevel,
@@ -86,6 +87,7 @@ export interface DelegateOpts {
   title?: string
   /** skills da biblioteca a injetar no workspace deste ajudante (ids de list_skills) */
   skills?: string[]
+  affectsUi?: boolean
   /** SUBAGENTE especializado da biblioteca: o ajudante nasce COM essa persona
    *  (id de list_skills com tipo=subagente; ausente = ajudante genérico) */
   agent?: string
@@ -100,6 +102,7 @@ export interface TaskPatch {
   gates?: ('review' | 'qa')[]
   quests?: string[]
   skills?: string[]
+  affectsUi?: boolean
   agents?: string[]
   delegation?: TaskDelegationMode
   deliverable?: TaskDeliverableKind
@@ -118,6 +121,7 @@ export interface NewTaskInput {
   gates?: ('review' | 'qa')[]
   quests?: string[]
   skills?: string[]
+  affectsUi?: boolean
   agents?: string[]
   delegation?: TaskDelegationMode
   deliverable: TaskDeliverableKind
@@ -133,6 +137,7 @@ export interface NewMissionInput {
   scope?: string
   /** nome da VERSÃO do app a que a missão pertence (ex.: "v1.1") */
   version?: string
+  skillApplications: string[]
 }
 
 export interface ProjectPlanScopeInput {
@@ -181,15 +186,12 @@ export interface SaveProjectPlanInput {
   roadmapMode?: 'merge' | 'replace'
   roadmap?: ProjectPlanMissionInput[]
   roadmapMeta?: ProjectPlanRoadmapMetaInput
+  planningStage: PlanningSkillStage
+  planningContribution: string
+  skillApplications: string[]
 }
 
 export type PlanningSkillStage = 'discovery' | 'scope' | 'decisions' | 'roadmap' | 'review'
-
-export interface PlanningSkillUseInput {
-  skillId: string
-  stage: PlanningSkillStage
-  contribution: string
-}
 
 /** F5.7 — card de PLANO da missão (proposta do orquestrador). */
 export interface PlanLaneInput {
@@ -217,6 +219,8 @@ export interface NewPlanInput {
     waveId: string
     dependsOn: string[]
   }>
+  /** Receipt obrigatório do método de planejamento desta rodada. */
+  skillApplications: string[]
 }
 
 /** Implementada em index.ts — as tools delegam para o harness real. */
@@ -231,7 +235,17 @@ export interface McpApi {
     content: string,
     summary?: string,
     securityReview?: SecurityReviewInput,
-    suggestedPatch?: string
+    suggestedPatch?: string,
+    skillApplications?: string[],
+    verificationEvidence?: GateVerificationEvidence
+  ) => string | Promise<string>
+  /** Entrega somente a instrucao ja selecionada pelo receipt deste pane. */
+  activateSkill: (id: PaneIdentity, receiptId: string) => Promise<string>
+  /** Gate review lê somente o spool SHA-pinado da própria rodada. */
+  readReviewEvidence: (
+    id: PaneIdentity,
+    offset: number,
+    maxBytes?: number
   ) => string | Promise<string>
   /** Inteligência de código compartilhada; erros viram fallback compacto em
    *  vez de falha de protocolo, para o pane continuar utilizável sem LSP. */
@@ -241,14 +255,16 @@ export interface McpApi {
   codeReportGuard: (id: PaneIdentity) => Promise<string | undefined>
   /** um OU vários ajudantes numa chamada (lote = uma rodada de modelo só) */
   delegateMany: (id: PaneIdentity, list: DelegateOpts[]) => Promise<string>
-  /** biblioteca de skills: estado por função (para carimbar cards/ajudantes) */
-  listSkills: (id: PaneIdentity) => string
-  /** PM define o kit ★ padrão de uma função do projeto (policies.skills/agents) */
-  setDefaultSkills: (
+  /** biblioteca pesquisável; nunca despeja o catálogo inteiro no contexto. */
+  listSkills: (
     id: PaneIdentity,
-    dept: (typeof DEPARTMENTS)[number],
-    skills?: string[],
-    agents?: string[]
+    filter?: {
+      query?: string
+      kind?: 'skill' | 'agent'
+      department?: (typeof DEPARTMENTS)[number]
+      installedOnly?: boolean
+      limit?: number
+    }
   ) => string
   notifyMaestro: (id: PaneIdentity, text: string) => string
   /** Maestro/orquestrador → pergunta dirigida ao USUÁRIO: a aba do board
@@ -279,8 +295,6 @@ export interface McpApi {
   createMission: (id: PaneIdentity, input: NewMissionInput) => string
   /** PM persiste/revisa o mapa macro do projeto sem criar missões reais. */
   saveProjectPlan: (id: PaneIdentity, input: SaveProjectPlanInput) => string
-  /** PM registra, depois do uso real, qual skill de planejamento contribuiu e como. */
-  recordPlanningSkillUse: (id: PaneIdentity, input: PlanningSkillUseInput) => string
   /** Registra o aval explícito do usuário para o roadmap atual. */
   approveProjectPlan: (id: PaneIdentity) => string
   /** Abre uma missão pronta da onda autorizada do roadmap aprovado. */
@@ -403,6 +417,16 @@ const securityReviewSchema = z.object({
   recommendedNextStep: z.string().min(1).max(1_200)
 })
 
+const gateVerificationEvidenceSchema = z
+  .object({
+    summary: z.string().min(8).max(2000),
+    surfaces: z.array(z.string().min(1).max(240)).min(1).max(24).optional(),
+    states: z.array(z.string().min(1).max(240)).min(1).max(24).optional(),
+    viewports: z.array(z.string().min(1).max(120)).min(1).max(12).optional(),
+    observations: z.array(z.string().min(1).max(600)).min(1).max(32)
+  })
+  .strict()
+
 function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   // SEM cacheHints de tools/list (CHECK 14, 2026-08-07): o hint de cache da
   // spec 2026-07-28 estava anunciado sem nenhum cliente validado usando — e
@@ -487,6 +511,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                 .describe('2-4 frases terminando nos critérios de aceite'),
               briefing: z
                 .string()
+                .max(6000)
                 .optional()
                 .describe(
                   'YOU write the executor prompt, IN ENGLISH: instruct the dev like a tech lead — project context, what to do, what NOT to do, acceptance criteria. Becomes the literal pane prompt. Mention tools (generate_image, delegate) ONLY if this task needs them.'
@@ -529,19 +554,23 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                 .describe(
                   'checklist do card (PT-BR). Vários itens continuam sendo um checklist; não significam ajudantes nem ondas.'
                 ),
+              affectsUi: z
+                .boolean()
+                .optional()
+                .describe('REQUIRED for every code card, regardless of department: true when it changes any user-visible surface (including SSR/HTML/CSS); false for purely technical work. Omit only for non_code.'),
               skills: z
                 .array(z.string())
-                .max(4)
+                .max(1)
                 .optional()
                 .describe(
-                  'library skills to inject into THIS card\'s workspace — EXACT ids from list_skills, installed ones only. Pick 1-3 that genuinely fit the work (e.g. a UI-polish skill for a visual card); omit when none applies. Unknown/uninstalled ids are ignored with a warning.'
+                  'at most ONE concrete technical method for this card, using an exact installed id from list_skills. UI direction is routed automatically; never stamp aesthetic stacks.'
                 ),
               agents: z
                 .array(z.string())
-                .max(3)
+                .max(1)
                 .optional()
                 .describe(
-                  'specialized SUBAGENTS from the library made available to this card (ids from list_skills with tipo=subagente, installed only). A claude executor can then delegate focused work to them in-pane (Task tool). Omit when none fits; ignored on codex executors.'
+                  'at most ONE installed specialist persona for a concrete independent subproblem. The dev opens it through delegate.agent; omit when no such subproblem exists.'
                 )
             })
           )
@@ -562,19 +591,27 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
         title: z.string().optional(),
         description: z.string().optional(),
         effort: z.enum(['leve', 'pesada']).optional(),
-        briefing: z.string().optional().describe('novo briefing do executor (prompt do pane)'),
+        briefing: z
+          .string()
+          .max(6000)
+          .optional()
+          .describe('novo briefing completo do executor (prompt do pane; máximo 6000 caracteres)'),
         gates: z.array(z.enum(['review', 'qa'])).optional(),
         quests: z.array(z.string().max(200)).max(12).optional(),
+        affectsUi: z
+          .boolean()
+          .optional()
+          .describe('obrigatorio ao ajustar qualquer card code: declare se altera superficie visivel'),
         skills: z
           .array(z.string())
-          .max(4)
+          .max(1)
           .optional()
-          .describe('skills da biblioteca para o workspace deste card (ids exatos do list_skills)'),
+          .describe('no máximo uma técnica concreta; direção visual é roteada automaticamente'),
         agents: z
           .array(z.string())
-          .max(3)
+          .max(1)
           .optional()
-          .describe('subagentes da biblioteca disponíveis para este card (ids do list_skills, tipo=subagente)'),
+          .describe('no máximo um especialista para subproblema independente'),
         deliverable: z.enum(['code', 'non_code']).optional(),
         delegation: z.enum(['none', 'optional', 'parallel']).optional(),
         gateNotes: z
@@ -734,13 +771,42 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   )
 
   server.registerTool(
+    'activate_skill',
+    {
+      description:
+        'Ativa UMA skill já selecionada no ACTIVE SKILL PLAN deste pane. Informe somente o receiptId fornecido pelo Synkora; a ferramenta valida pane/fase/rodada e devolve a instrução exata com o playbook escolhido.',
+      inputSchema: {
+        receiptId: z.string().min(1).max(160)
+      }
+    },
+    async ({ receiptId }) => text(await api.activateSkill(identity, receiptId))
+  )
+
+  server.registerTool(
+    'read_review_evidence',
+    {
+      description:
+        'Lê um bloco autenticado do patch grande SHA-pinado e privado desta rodada de REVIEW. Comece em offset 0; use nextOffset para consultar blocos adicionais quando necessário e combine com a leitura dos changed paths na árvore entregue. Não aceita path nem acessa evidência de outro pane.',
+      inputSchema: {
+        offset: z.number().int().min(0).default(0),
+        maxBytes: z.number().int().min(1024).max(65536).optional()
+      }
+    },
+    async ({ offset, maxBytes }) => text(await api.readReviewEvidence(identity, offset, maxBytes))
+  )
+
+  server.registerTool(
     'report',
     {
       description:
-        'Reporta o resultado do seu trabalho ao Synkora. dev/ajudante: status "done" quando 100% concluído. revisor/QA: "aprovada" ou "reprovada" com motivo — ou "bloqueada" quando um problema de AMBIENTE do harness (runtime que não subiu, browser indisponível) impediu a validação: bloqueio não é defeito do produto, não conta ciclo e não vai ao dev; o orquestrador corrige o ambiente e reabre o gate. É isto que move a tarefa no pipeline.',
+        'Reporta o resultado do seu trabalho ao Synkora. dev/ajudante: status "done" quando 100% concluído; DEV de UI também pode usar "bloqueada" quando o pane não recebeu browser/runtime autorizado, sem fingir evidência visual. revisor/QA: "aprovada" ou "reprovada" com motivo — ou "bloqueada" quando um problema de AMBIENTE do harness impediu a validação. Bloqueio não afirma aplicação das skills. É isto que move a tarefa no pipeline.',
       inputSchema: {
         status: z.enum(['done', 'aprovada', 'reprovada', 'bloqueada']),
-        reason: z.string().optional().describe('obrigatório quando reprovada/bloqueada: o motivo, curto'),
+        reason: z
+          .string()
+          .max(4000)
+          .optional()
+          .describe('obrigatório quando reprovada/bloqueada: lista completa e fechada, sem itens omitidos'),
         summary: z.string().optional().describe('resumo de 1-2 frases do que foi feito'),
         suggestedPatch: z
           .string()
@@ -749,6 +815,18 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
           .describe(
             'SÓ gates, junto de "reprovada": unified diff de correções TRIVIAIS/MECÂNICAS (token, atributo, rename, timeout) dos itens que você indicar no motivo. O harness grava em .synkora/reports/ (git-invisível) e o DEV aplica e assume a autoria. Mudança estrutural NUNCA vira patch — continua como item de lista.'
           ),
+        skillApplications: z
+          .array(z.string().min(1).max(160))
+          .max(16)
+          .optional()
+          .describe(
+            'receiptIds REQUIRED do ACTIVE SKILL PLAN que foram ativados e aplicados nesta entrega/veredito. Omita em bloqueada: bloqueio ambiental interrompe a rodada e não afirma aplicação.'
+          ),
+        verificationEvidence: gateVerificationEvidenceSchema
+          .optional()
+          .describe(
+            'Evidencia estruturada do que foi realmente verificado. Obrigatoria em aprovacao de gate e em entrega/veredito de UI: summary + observations; UI tambem exige surfaces, states e viewports.'
+          ),
         securityReview: securityReviewSchema
           .optional()
           .describe(
@@ -756,7 +834,15 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
           )
       }
     },
-    async ({ status, reason, summary, securityReview, suggestedPatch }) => {
+    async ({
+      status,
+      reason,
+      summary,
+      securityReview,
+      suggestedPatch,
+      skillApplications,
+      verificationEvidence
+    }) => {
       const gate = identity.role === 'review' || identity.role === 'qa'
       if (identity.role === 'maestro') {
         return text('status inválido: o Maestro não conclui trabalho pela tool report')
@@ -764,18 +850,39 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       if (gate && status === 'done') {
         return text('status inválido: Reviewer/QA só aceitam aprovada, reprovada ou bloqueada')
       }
-      if (gate && (status === 'reprovada' || status === 'bloqueada') && !reason?.trim()) {
+      if ((status === 'reprovada' || status === 'bloqueada') && !reason?.trim()) {
         return text('status inválido: reprovada/bloqueada precisa informar o motivo')
       }
-      if (!gate && status !== 'done') {
-        return text('status inválido: executor/ajudante só aceita done')
+      if (gate && status !== 'bloqueada' && !verificationEvidence) {
+        return text(
+          'status inválido: aprovada/reprovada precisa informar verificationEvidence com a evidência realmente verificada'
+        )
+      }
+      if (status === 'bloqueada' && skillApplications?.length) {
+        return text(
+          'status inválido: bloqueada não aceita skillApplications porque nenhuma aplicação concluída está sendo afirmada'
+        )
+      }
+      const devEnvironmentalBlock = identity.role === 'dev' && status === 'bloqueada'
+      if (!gate && status !== 'done' && !devEnvironmentalBlock) {
+        return text('status inválido: ajudante só aceita done; DEV aceita bloqueada apenas por falta de capacidade visual')
       }
       if (status === 'done') {
         const blocked = await api.codeReportGuard(identity)
         if (blocked) return text(blocked)
       }
       const content = status === 'done' ? 'done' : reason ? `${status}: ${reason}` : status
-      return text(await api.report(identity, content, summary, securityReview, suggestedPatch))
+      return text(
+        await api.report(
+          identity,
+          content,
+          summary,
+          securityReview,
+          suggestedPatch,
+          skillApplications,
+          verificationEvidence
+        )
+      )
     }
   )
 
@@ -828,21 +935,33 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     'list_skills',
     {
       description:
-        'Lista a BIBLIOTECA do Synkora: SKILLS (tipo=skill) e SUBAGENTES especializados (tipo=subagente), com id, funções, quando usar e se está instalado. Consulte antes de carimbar um card (create_tasks.skills/.agents) ou aconselhar/abrir ajudantes (delegate.skills/.agent): ids EXATOS, instalados, e só o que encaixa no trabalho.'
+        'Pesquisa a BIBLIOTECA do Synkora sem despejar o catálogo inteiro: filtre por função, tipo ou texto. Retorna ids exatos, quando usar e estado de instalação para seleção deliberada.',
+      inputSchema: {
+        query: z.string().trim().max(120).optional().describe('necessidade ou termo curto, ex.: acessibilidade, postgres, planejamento'),
+        kind: z.enum(['skill', 'agent']).optional().describe('skill ou subagente especializado'),
+        department: z.enum(DEPARTMENTS).optional().describe('função do trabalho'),
+        installedOnly: z.boolean().optional().describe('padrão true; use false apenas para descobrir algo que o usuário pode instalar'),
+        limit: z.number().int().min(1).max(20).optional().describe('padrão 16; refine a consulta em vez de ampliar contexto')
+      }
     },
-    async () => text(api.listSkills(identity))
+    async ({ query, kind, department, installedOnly, limit }) =>
+      text(api.listSkills(identity, { query, kind, department, installedOnly, limit }))
   )
 
   server.registerTool(
     'delegate',
     {
       description:
-        'Abre pane(s) com OUTRO(s) agente(s) para te ajudar em paralelo (quests independentes, varredura pesada, copy, testes). Para 2+ ajudantes use o campo "helpers" e abra TODOS numa chamada SÓ — escrever os briefings em rodadas separadas desperdiça minutos. O ajudante trabalha no MESMO diretório; você é avisado quando ele reportar done. ESCOLHA LIVREMENTE seat/modelo/effort — chame list_seats para ver o catálogo real e case a força do modelo com o trabalho (não use um modelo caro para trabalho mecânico, nem um fraco para raciocínio profundo).',
+        'Abre UM pane com outro agente para um bloco independente que compensa o custo de coordenação. Cada card mantém no máximo um ajudante; ele trabalha no MESMO diretório e você é avisado quando reportar done. ESCOLHA deliberadamente seat/modelo/effort — chame list_seats e case a força do modelo com o trabalho.',
       inputSchema: {
+        affectsUi: z
+          .boolean()
+          .optional()
+          .describe('true somente se o subproblema altera uma superficie visivel'),
         prompt: z
           .string()
           .optional()
-          .describe('instrução completa para o ajudante (ajudante ÚNICO — para vários, use "helpers")'),
+          .describe('instrução completa para o único ajudante'),
         dept: z
           .enum(DEPARTMENTS)
           .optional()
@@ -859,9 +978,9 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
         title: z.string().optional().describe('título curto do pane'),
         skills: z
           .array(z.string())
-          .max(4)
+          .max(1)
           .optional()
-          .describe('skills da biblioteca para este ajudante (ids exatos do list_skills; siga o conselho do orquestrador)'),
+          .describe('no máximo uma técnica concreta; o roteador completa o contrato da fase quando aplicável'),
         agent: z
           .string()
           .optional()
@@ -871,6 +990,10 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
         helpers: z
           .array(
             z.object({
+              affectsUi: z
+                .boolean()
+                .optional()
+                .describe('true somente se este subproblema altera uma superficie visivel'),
               prompt: z.string().describe('instrução completa deste ajudante'),
               dept: z.enum(DEPARTMENTS).optional().describe('política de seat/modelo do departamento'),
               seatId: z.string().optional().describe('seat escolhido (veja list_seats)'),
@@ -879,9 +1002,9 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
               title: z.string().optional().describe('título curto do pane'),
               skills: z
                 .array(z.string())
-                .max(4)
+                .max(1)
                 .optional()
-                .describe('skills da biblioteca deste ajudante (ids exatos do list_skills)'),
+                .describe('no máximo uma técnica concreta para este ajudante'),
               agent: z
                 .string()
                 .optional()
@@ -889,10 +1012,10 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
             })
           )
           .min(1)
-          .max(8)
+          .max(1)
           .optional()
           .describe(
-            'VÁRIOS ajudantes numa chamada SÓ (o caminho RÁPIDO): todos os briefings de uma vez em vez de uma chamada por ajudante'
+            'Formato alternativo para um único ajudante; arrays com mais de um item são recusados'
           )
       }
     },
@@ -908,13 +1031,14 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                 model: opts.model,
                 effort: opts.effort,
                 title: opts.title,
+                affectsUi: opts.affectsUi,
                 skills: opts.skills,
                 agent: opts.agent
               }
             ]
           : []
       if (!list.length)
-        return text('informe "prompt" (um ajudante) ou "helpers" (vários numa chamada só)')
+        return text('informe "prompt" ou "helpers" com exatamente um ajudante')
       return text(await api.delegateMany(identity, list))
     }
   )
@@ -1061,7 +1185,11 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
             )
             .min(1)
             .max(8)
-            .describe('funções que trabalharão no plano — inclua "qa" para customizar os gates')
+            .describe('funções que trabalharão no plano — inclua "qa" para customizar os gates'),
+          skillApplications: z
+            .array(z.string().min(1).max(160))
+            .length(1)
+            .describe('receiptId obrigatório do ACTIVE PLANNING METHOD ativado nesta rodada')
         }
       },
       async (input) => text(await api.createPlan(identity, input))
@@ -1215,41 +1343,29 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
             .optional()
             .describe(
               'missões futuras em ordem lógica, agrupadas em ondas; até 200 por chamada. Para mapas de 50–150 missões, prefira lotes com roadmapMode=merge e roadmapMeta.complete=false até o lote final'
-            )
+            ),
+          planningStage: z
+            .enum(['discovery', 'scope', 'decisions', 'roadmap', 'review'])
+            .describe('etapa concreta desta gravação do plano'),
+          planningContribution: z
+            .string()
+            .min(1)
+            .max(1000)
+            .describe('resultado concreto que o método produziu nesta revisão'),
+          skillApplications: z
+            .array(z.string().min(1).max(160))
+            .length(1)
+            .describe('receiptId obrigatório do ACTIVE PLANNING METHOD ativado nesta rodada')
         }
       },
       async (input) => text(api.saveProjectPlan(identity, input))
     )
 
     server.registerTool(
-      'record_planning_skill_use',
-      {
-        description:
-          'Registra no plano mestre uma skill de PLANEJAMENTO que você REALMENTE acabou de aplicar. Chame somente DEPOIS de ler/aplicar a skill — nunca para prometer uso futuro nem para enfeitar a lista. Informe a contribuição concreta que ela produziu nesta etapa; o backend valida se a skill está instalada e é de planejamento.',
-        inputSchema: {
-          skillId: z
-            .string()
-            .min(1)
-            .max(120)
-            .describe('id exato da skill instalada que foi aplicada'),
-          stage: z
-            .enum(['discovery', 'scope', 'decisions', 'roadmap', 'review'])
-            .describe('etapa do plano em que a skill foi aplicada'),
-          contribution: z
-            .string()
-            .min(1)
-            .max(2000)
-            .describe('resultado concreto gerado pela skill para este plano, não uma descrição genérica')
-        }
-      },
-      async (input) => text(api.recordPlanningSkillUse(identity, input))
-    )
-
-    server.registerTool(
       'approve_project_plan',
       {
         description:
-          'Registra que o usuário APROVOU EXPLICITAMENTE o plano mestre mostrado a ele. Nunca chame por inferência, silêncio ou apenas porque o rascunho parece pronto. Sem esta aprovação, nenhuma missão planejada abre.',
+          'SOLICITA ao dono a aprovação do plano mestre. Esta tool NUNCA aprova o roadmap: o status só muda quando o usuário abre o Mapa e clica em “aprovar roadmap”.',
         inputSchema: {}
       },
       async () => text(api.approveProjectPlan(identity))
@@ -1259,7 +1375,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       'start_project_mission',
       {
         description:
-          'Abre UMA missão PRONTA da onda atual do roadmap aprovado e a vincula ao plano. Exige autorização explícita do usuário e dependências concluídas. Uma autorização para abrir a onda pode gerar N chamadas — uma por item pronto — para iniciar missões independentes em paralelo. Use o id estável exibido em PROJECT_PLAN.md/board_status.',
+          'SOLICITA ao dono a abertura de UMA missão pronta do roadmap. Esta tool NUNCA cria a missão: cada item só abre quando o usuário confirma o alvo específico no Mapa.',
         inputSchema: {
           itemId: z.string().min(1).max(40).describe('id do item do roadmap, ex.: M01-fundacao')
         }
@@ -1318,7 +1434,11 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
           version: z
             .string()
             .optional()
-            .describe('nome da VERSÃO do app (ex.: "v1.1") — a missão integra na branch da versão, não na main')
+            .describe('nome da VERSÃO do app (ex.: "v1.1") — a missão integra na branch da versão, não na main'),
+          skillApplications: z
+            .array(z.string().min(1).max(160))
+            .length(1)
+            .describe('receiptId obrigatório do ACTIVE PLANNING METHOD ativado nesta rodada')
         }
       },
       async (input) => text(api.createMission(identity, input))
@@ -1328,7 +1448,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       'release_version',
       {
         description:
-          'SOBE uma versão para a main: merge da branch version/<nome> (onde as missões da versão acumularam) na branch base. SÓ com aval explícito do usuário. A versão vira a ATUAL na main.',
+          'SOLICITA ao dono o release de uma versão. Esta tool NUNCA faz merge nem publica: o release só acontece quando o usuário abre a versão e confirma “subir agora” no aplicativo.',
         inputSchema: {
           version: z.string().describe('nome da versão a subir (ex.: "v1.1")')
         }
@@ -1357,7 +1477,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       'remove_backlog_item',
       {
         description:
-          'Remove um ITEM de backlog ABERTO (pendente/em-missão, de versão não lançada). Use quando o usuário mandar limpar/descartar um item. Lembre: versão NUNCA sobe com item pendente — ou vira missão e é feito, ou é removido.',
+          'SOLICITA ao dono a remoção de um item aberto. Esta tool NUNCA apaga: o item só sai quando o usuário confirma o alvo específico na aba Versões.',
         inputSchema: {
           item: z.string().describe('id do item OU trecho do título (único)')
         }
@@ -1377,9 +1497,8 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       async ({ mission }) => text(api.archiveMission(identity, mission))
     )
 
-    // (set_default_skills MORREU em 2026-07-30 — decisão do usuário: sem
-    // kit/★; todo executor e gate recebe TODAS as instaladas da função e a
-    // IA escolhe. A api setDefaultSkills segue no index, dormente.)
+    // set_default_skills não existe: kit persistente mistura métodos entre
+    // tarefas. O roteador escolhe uma técnica por fase e por necessidade.
   }
 
   server.registerTool(
@@ -1398,7 +1517,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     'set_phase_executor',
     {
       description:
-        'Troca a CONTA (seat) e/ou o modelo e/ou o effort do executor de uma fase de card — SOMENTE com ordem EXPLÍCITA do dono, dita agora no seu pane ou deixada registrada com antecedência ("quando o QA abrir, roda na conta X com opus high"). A troca re-carimba o card (vira o novo contrato — não re-imponha a lane), preserva a conversa quando possível (mesma conta, ou claude→claude por transplante) e o pane respawna imediatamente. NUNCA use por iniciativa própria: limite estourando SEM ordem do dono = ask_user e ESPERE a resposta. ownerOrder leva a ordem VERBATIM do dono e é auditada na caixa-preta.',
+        'SOLICITA ao dono uma troca de conta/modelo/effort para uma fase. A tool NUNCA altera o executor nem respawna o pane: a mudança só acontece pelo controle humano do próprio card. Sem ordem explícita, use ask_user e espere.',
       inputSchema: {
         taskId: z.string().describe('id do card'),
         seat: z.string().describe('conta destino: NOME exato do list_seats (ou id)'),

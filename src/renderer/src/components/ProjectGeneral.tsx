@@ -14,7 +14,7 @@ import type { SkillState } from '../../../preload/index'
 // Skills/subagentes da função NESTE projeto (F4): só os INSTALADOS aparecem
 // (a biblioteca completa, com instalar/atualizar/remover, mora em Configurações —
 // vale para todos os universos). SEM ★/kit (decisão do usuário, 2026-07-30):
-// todo executor e gate recebe TODAS as instaladas da função e escolhe
+// a biblioteca mostra disponibilidade; o roteador escolhe um plano mínimo
 // sozinho — este painel é só o retrato do que a função tem disponível.
 function SkillsPanel({
   dept,
@@ -34,8 +34,8 @@ function SkillsPanel({
         className="func-section-title"
         data-tip={
           kind === 'skill'
-            ? 'Skills INSTALADAS desta função (a biblioteca completa fica em Configurações — vale para a máquina toda).\nTODAS entram automaticamente em todo executor e gate da função — a IA lê o menu e escolhe.'
-            : 'SUBAGENTES especializados INSTALADOS desta função (biblioteca em Configurações).\nTODOS entram automaticamente nos executores da função (claude, via Task tool) — a IA escolhe;\nem ajudantes, o orquestrador aconselha o especialista e o dev abre com delegate.agent.'
+            ? 'Skills DISPONÍVEIS para esta função (a biblioteca completa fica em Configurações).\nO roteador escolhe apenas as necessárias para cada fase; disponibilidade não significa injeção automática.'
+            : 'SUBAGENTES especializados DISPONÍVEIS para esta função.\nSó entram quando o card ou uma delegação os pede explicitamente; o roteador limita a um especialista compatível.'
         }
       >
         {kind === 'skill' ? 'skills instaladas' : 'subagentes instalados'}

@@ -2,8 +2,8 @@ import { app } from 'electron'
 import AdmZip from 'adm-zip'
 import { execFileSync } from 'child_process'
 import { TextDecoder } from 'node:util'
+import { createHash } from 'node:crypto'
 import {
-  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -13,19 +13,20 @@ import {
   statSync,
   writeFileSync
 } from 'fs'
-import { dirname, join, resolve, sep } from 'path'
+import { dirname, join, relative, resolve, sep } from 'path'
 import { freshWindowsPath } from './winPath'
 import type { Department } from './tasks'
-import { bundledBodySha } from './bundledSkillRevision'
+import { bundledPackageSha } from './bundledSkillRevision'
+import { buildSynkoraImpeccableActivation } from './impeccableAdapter'
 import {
   selectInstalledIdsForDepartment,
-  selectInstalledManualOnlyIdsToPrune,
   selectInstalledPlanningIds
 } from './skillsRouting'
 import {
-  isManagedWorkspaceSkillCopy,
   managedWorkspaceSkillContentsMatch,
-  MANAGED_WORKSPACE_SKILL_MARKER
+  MANAGED_WORKSPACE_SKILL_MARKER,
+  pruneUnrequestedManagedWorkspaceAgents,
+  syncManagedWorkspaceAgentCopy
 } from './workspaceSkills'
 // A cópia pesada (syncManagedWorkspaceSkillCopies), a poda e o scan de
 // supply-chain do caminho de EXECUÇÃO viajam pelo gitWorker via gitOff —
@@ -58,9 +59,9 @@ import {
 // ————————————————————————————————————————————————————————————————————————
 // BIBLIOTECA DE SKILLS (F4): catálogo CURADO por função + skills CUSTOM do
 // usuário (URL do GitHub), instaladas da FONTE (sem git binário) para
-// userData/skills/lib e injetadas POR WORKSPACE na execução. Sondado em
-// binário real (2026-07-29): claude lê <cwd>/.claude/skills; codex lê
-// <cwd>/.agents/skills e .codex/skills; AMBOS rejeitam SKILL.md com BOM.
+// userData/skills/lib. Panes de execução recebem árvores PRIVADAS por receipt;
+// as roots autodetectadas ficam restritas ao único método-base de planejamento
+// do Maestro/orquestrador. AMBOS os CLIs rejeitam SKILL.md com BOM.
 //
 // ORÇAMENTO DE REDE (o rate limit anônimo do GitHub é 60 req/h e o usuário
 // BATEU nele instalando a curadoria uma a uma — 2 requests POR SKILL):
@@ -115,10 +116,21 @@ export interface SkillDef {
    *  automaticamente em toda execução da função. Evita que workflows externos
    *  de git/review/merge disputem o pipeline gerenciado pelo Synkora. */
   manualOnly?: boolean
+  /** Fases nas quais o pacote foi validado pelo Synkora. Ausente significa
+   * apenas DEV/ajudante; gates read-only exigem declaracao explicita. */
+  allowedPhases?: Array<'planning' | 'dev' | 'review' | 'qa' | 'helper'>
+  /** Capacidades materiais exigidas pelo playbook, usadas para impedir que um
+   * gate receba uma skill impossivel de executar. */
+  requiresCapabilities?: Array<'read' | 'write' | 'shell' | 'browser' | 'subagents' | 'network'>
+  /** Adaptacao auditada pelo produto para evitar workflows concorrentes. */
+  adapter?: 'synkora-native' | 'impeccable-operation'
   /** SUBAGENTE EMBUTIDO do Synkora (criado in-house com a metodologia da
    *  skill de criação): o corpo do agent.md vive AQUI — instala sem rede,
    *  nunca tem update (a "fonte" é o próprio app). source é ignorado. */
   bundledBody?: string
+  /** Recursos do pacote embutido, relativos a raiz. Mantem SKILL.md curto e
+   *  permite disclosure progressivo sem depender de download externo. */
+  bundledFiles?: Record<string, string>
 }
 
 export interface SkillState {
@@ -132,6 +144,9 @@ export interface SkillState {
   requires?: string[]
   defaultFor?: Department[]
   manualOnly?: boolean
+  allowedPhases?: SkillDef['allowedPhases']
+  requiresCapabilities?: SkillDef['requiresCapabilities']
+  adapter?: SkillDef['adapter']
   /** skill adicionada pelo usuário (fora da curadoria) */
   custom?: boolean
   installed: boolean
@@ -141,6 +156,22 @@ export interface SkillState {
   supplyChainFindings?: number
   licenseFiles?: string[]
   updateAvailable: boolean
+}
+
+export interface SkillActivationPackage {
+  id: string
+  operation: string
+  version: string
+  fingerprint: string
+  sourceFingerprint: string
+  content: string
+  loadedReferences: string[]
+}
+
+export interface SkillActivationIdentity {
+  id: string
+  version: string
+  fingerprint: string
 }
 
 interface InstalledInfo {
@@ -160,6 +191,53 @@ interface SkillsManifest {
   /** skills adicionadas pelo usuário (persistem junto do estado) */
   custom?: SkillDef[]
   lastCheckAt?: string
+}
+
+function bundledPackageEntries(def: SkillDef): Array<[string, string]> {
+  if (!def.bundledBody) return []
+  const rootEntry = def.kind === 'agent' ? 'agent.md' : 'SKILL.md'
+  return [[rootEntry, def.bundledBody], ...Object.entries(def.bundledFiles ?? {})]
+}
+
+function safeBundledDestination(root: string, relativePath: string): string {
+  const normalized = relativePath.replace(/\\/g, '/')
+  if (
+    !normalized ||
+    normalized.startsWith('/') ||
+    /^[A-Za-z]:/.test(normalized) ||
+    normalized.split('/').some((part) => part === '..' || part === '')
+  ) {
+    throw new Error(`caminho invalido em pacote embutido: ${relativePath}`)
+  }
+  const destination = resolve(root, ...normalized.split('/'))
+  const resolvedRoot = resolve(root)
+  if (destination !== resolvedRoot && !destination.startsWith(resolvedRoot + sep)) {
+    throw new Error(`caminho escapou do pacote embutido: ${relativePath}`)
+  }
+  return destination
+}
+
+function writeBundledPackage(root: string, def: SkillDef): void {
+  const seen = new Set<string>()
+  for (const [relativePath, content] of bundledPackageEntries(def)) {
+    const key = relativePath.replace(/\\/g, '/').toLocaleLowerCase('en-US')
+    if (seen.has(key)) throw new Error(`arquivo duplicado em pacote embutido: ${relativePath}`)
+    seen.add(key)
+    const destination = safeBundledDestination(root, relativePath)
+    mkdirSync(dirname(destination), { recursive: true })
+    writeFileSync(destination, content, 'utf-8')
+  }
+}
+
+function listPackageFiles(root: string, current = root): string[] {
+  const out: string[] = []
+  for (const entry of readdirSync(current, { withFileTypes: true })) {
+    const absolute = join(current, entry.name)
+    if (entry.isDirectory()) out.push(...listPackageFiles(root, absolute))
+    else if (entry.isFile()) out.push(relative(root, absolute).replace(/\\/g, '/'))
+    else throw new Error(`entrada nao regular no pacote embutido: ${entry.name}`)
+  }
+  return out.sort()
 }
 
 const CHECK_TTL_MS = 24 * 60 * 60 * 1000
@@ -463,18 +541,27 @@ export class SkillsLibrary {
     return this.defs.find((d) => d.id === id)
   }
 
+  definitions(): SkillDef[] {
+    return [...this.defs]
+  }
+
   /** Prova os bytes e a árvore mínima do pacote app-owned, não só o manifest. */
   bundledPackageMatches(id: string): boolean {
     const def = this.byId(id)
     if (!def?.bundledBody) return false
-    const requiredEntry = def.kind === 'agent' ? 'agent.md' : 'SKILL.md'
     const directory = join(this.libDir, id)
     try {
-      const entries = readdirSync(directory).sort()
-      return (
-        entries.length === 1 &&
-        entries[0] === requiredEntry &&
-        readFileSync(join(directory, requiredEntry), 'utf8') === def.bundledBody
+      const expected = bundledPackageEntries(def)
+        .map(([path]) => path.replace(/\\/g, '/'))
+        .sort()
+      const actual = listPackageFiles(directory)
+      if (expected.length !== actual.length) return false
+      for (let index = 0; index < expected.length; index++) {
+        if (expected[index] !== actual[index]) return false
+      }
+      return bundledPackageEntries(def).every(
+        ([path, content]) =>
+          readFileSync(safeBundledDestination(directory, path), 'utf8') === content
       )
     } catch {
       return false
@@ -508,14 +595,14 @@ export class SkillsLibrary {
    *  cache de 10 min — a avaliação é por conteúdo (fingerprint) e 5s fazia
    *  cada spawn re-escanear a biblioteca inteira. O scan em si (até 250
    *  arquivos/30MB) roda no gitWorker; o estado da classe muda AQUI no main. */
-  private async installedForExecution(id: string): Promise<InstalledInfo | undefined> {
+  private async installedForExecution(id: string, forceAssessment = false): Promise<InstalledInfo | undefined> {
     const installed = this.data.installed[id]
     if (!installed) return undefined
     const def = this.byId(id)
     // Conteúdo app-owned é identidade, não apenas um pacote sem achado crítico.
     if (def?.bundledBody && !this.bundledPackageMatches(id)) return undefined
     const cached = this.executionAssessmentCache.get(id)
-    if (cached && Date.now() - cached.verifiedAt < 600_000) {
+    if (!forceAssessment && cached && Date.now() - cached.verifiedAt < 600_000) {
       return cached.assessment.decision !== 'block' ? installed : undefined
     }
     try {
@@ -556,6 +643,9 @@ export class SkillsLibrary {
         requires: d.requires,
         defaultFor: d.defaultFor,
         manualOnly: d.manualOnly,
+        allowedPhases: d.allowedPhases,
+        requiresCapabilities: d.requiresCapabilities,
+        adapter: d.adapter,
         custom: this.isCustom(d.id) || undefined,
         installed: Boolean(inst),
         sha: inst?.sha,
@@ -569,7 +659,65 @@ export class SkillsLibrary {
   }
 
   installedIds(): string[] {
-    return this.defs.filter((d) => this.isEligibleInstalled(d.id)).map((d) => d.id)
+    return this.defs.filter((d) => this.isSelectable(d.id)).map((d) => d.id)
+  }
+
+  /** Congela a identidade do pacote antes de emitir receipts. */
+  async activationIdentity(id: string): Promise<SkillActivationIdentity | undefined> {
+    const def = this.byId(id)
+    if (!def || def.kind !== 'skill') return undefined
+    const installed = await this.installedForExecution(id, true)
+    if (!installed) return undefined
+    return {
+      id,
+      version: installed.sha,
+      fingerprint: installed.supplyChain?.fingerprint ?? installed.sha
+    }
+  }
+
+  /** Copia a árvore integral para uma raiz privada do pane, fora da descoberta
+   * automática de Claude/Codex. A identidade esperada fecha a janela de update. */
+  async materializeActivationTree(
+    id: string,
+    runtimeRoot: string,
+    paneId: string,
+    phaseRun: string,
+    expectedVersion: string,
+    expectedFingerprint: string,
+    adapterContent?: string
+  ): Promise<string | undefined> {
+    const identity = await this.activationIdentity(id)
+    if (
+      !identity ||
+      identity.version !== expectedVersion ||
+      identity.fingerprint !== expectedFingerprint
+    ) {
+      return undefined
+    }
+    try {
+      const privateRoot = await gitOff(
+        'materializePrivateSkillPackage',
+        join(this.libDir, id),
+        runtimeRoot,
+        paneId,
+        phaseRun,
+        id,
+        id === 'impeccable' ? adapterContent : undefined
+      )
+      if (id !== 'impeccable') {
+        const snapshot = await gitOff('assessSkillPackage', privateRoot)
+        if (snapshot.decision === 'block' || snapshot.fingerprint !== expectedFingerprint) {
+          await gitOff('removePrivateSkillPlan', runtimeRoot, paneId, phaseRun, id)
+          return undefined
+        }
+      }
+      return privateRoot
+    } catch {
+      await gitOff('removePrivateSkillPlan', runtimeRoot, paneId, phaseRun, id).catch(
+        () => undefined
+      )
+      return undefined
+    }
   }
 
   /** Reavalia em lote pacotes instalados SEM assessment persistido (legado
@@ -588,6 +736,14 @@ export class SkillsLibrary {
     return Boolean(this.data.installed[id])
   }
 
+  /** Elegibilidade síncrona para menus/carimbos; a execução ainda revalida
+   * os bytes assincronamente antes de emitir o receipt. */
+  isSelectable(id: string): boolean {
+    const def = this.byId(id)
+    if (!def || !this.isEligibleInstalled(id)) return false
+    return !def.bundledBody || this.bundledPackageMatches(id)
+  }
+
   /** Total bruto de instaladas, SEM filtro de elegibilidade — para detectar
    *  divergência "biblioteca cheia × menu vazio" (auditoria 2026-08-04). */
   installedRawCount(): number {
@@ -597,27 +753,99 @@ export class SkillsLibrary {
   /** Padrão da função: itens marcados defaultFor E instalados. */
   defaultIdsFor(dept: Department, kind: 'skill' | 'agent' = 'skill'): string[] {
     return this.defs
-      .filter((d) => d.kind === kind && d.defaultFor?.includes(dept) && this.isEligibleInstalled(d.id))
+      .filter((d) => d.kind === kind && d.defaultFor?.includes(dept) && this.isSelectable(d.id))
       .map((d) => d.id)
   }
 
-  /** TODAS as instaladas de uma função — o MENU completo que o executor lê
-   *  no SKILL GATE antes de agir (pedido do usuário, 2026-07-30: metadata é
-   *  barata, progressive disclosure; o corpo só carrega quando invocada). */
+  /** TODAS as elegíveis de uma função para UI/busca. O executor nunca recebe
+   * este conjunto inteiro; skillsRouting escolhe um plano mínimo por fase. */
   installedIdsForDept(dept: Department, kind: 'skill' | 'agent' = 'skill'): string[] {
     return selectInstalledIdsForDepartment(
       this.defs,
-      (id) => this.isEligibleInstalled(id),
+      (id) => this.isSelectable(id),
       dept,
       kind
     )
   }
 
-  /** Skills de PLANEJAMENTO instaladas — injetadas no workspace do PM e dos
+  /** Carrega a instrucao exata selecionada pelo roteador. O chamador fornece
+   * somente id + operacao provenientes de um receipt; texto livre nunca vira
+   * caminho. A resposta nao inclui paths locais nem metadados sensiveis. */
+  async loadActivationPackage(
+    id: string,
+    operation: string
+  ): Promise<SkillActivationPackage | undefined> {
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(operation)) return undefined
+    const def = this.byId(id)
+    if (!def || def.kind !== 'skill') return undefined
+    const installed = await this.installedForExecution(id, true)
+    if (!installed) return undefined
+    const root = join(this.libDir, id)
+    const rootFile = join(root, 'SKILL.md')
+    if (!existsSync(rootFile)) return undefined
+
+    const referenceNames: string[] = []
+    if (id === 'impeccable') {
+      referenceNames.push(`reference/${operation}.md`)
+    } else if (id === 'synkora-frontend-standard') {
+      referenceNames.push(
+        ['adapt', 'harden'].includes(operation)
+          ? 'references/responsive-content.md'
+          : 'references/composition.md'
+      )
+      referenceNames.push('references/evidence.md')
+    } else if (id === 'synkora-ui-qa') {
+      referenceNames.push('references/visual-review.md', 'references/runtime-checks.md')
+    }
+
+    try {
+      const chunks = id === 'impeccable' ? [] : [readFileSync(rootFile, 'utf8')]
+      const loadedReferences: string[] = []
+      for (const name of [...new Set(referenceNames)]) {
+        const file = safeBundledDestination(root, name)
+        if (!existsSync(file)) {
+          if (id === 'impeccable') return undefined
+          continue
+        }
+        const reference = readFileSync(file, 'utf8')
+        if (id === 'impeccable') {
+          const adapted = buildSynkoraImpeccableActivation(operation, reference)
+          if (!adapted) return undefined
+          chunks.push(adapted)
+        } else {
+          chunks.push(`\n\n--- selected reference: ${name} ---\n\n${reference}`)
+        }
+        loadedReferences.push(name)
+      }
+      const content = chunks.join('')
+      if (Buffer.byteLength(content, 'utf8') > 768 * 1024) return undefined
+      const sourceFingerprint = installed.supplyChain?.fingerprint ?? installed.sha
+      const fingerprint = createHash('sha256')
+        .update(sourceFingerprint)
+        .update('\0')
+        .update(operation)
+        .update('\0')
+        .update(content)
+        .digest('hex')
+      return {
+        id,
+        operation,
+        version: installed.sha,
+        fingerprint,
+        sourceFingerprint,
+        content,
+        loadedReferences
+      }
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Um método-base de PLANEJAMENTO instalado — injetado no workspace do PM e dos
    *  orquestradores no spawn do pane (a persona manda consultá-las antes de
    *  planejar). */
   orchestratorPlanningIds(): string[] {
-    return selectInstalledPlanningIds(this.defs, (id) => this.isEligibleInstalled(id))
+    return selectInstalledPlanningIds(this.defs, (id) => this.isSelectable(id))
   }
 
   /** Corpo (sem frontmatter) de um SUBAGENTE instalado — vira o system
@@ -688,7 +916,7 @@ export class SkillsLibrary {
 
   /** Baixa UMA skill/subagente a partir de um tree já em mãos (0 requests
    *  core). Subagente = ARQUIVO ÚNICO .md (source.path aponta o arquivo);
-   *  vira lib/<id>/agent.md e é injetado como .claude/agents/<id>.md. */
+   *  vira lib/<id>/agent.md; a persona só nasce por delegate.agent. */
   private async downloadOne(def: SkillDef, headSha: string, files: TreeFile[]): Promise<{ ok: boolean; msg: string }> {
     if (def.kind === 'agent') {
       const f = files.find((x) => x.path === def.source.path)
@@ -807,11 +1035,7 @@ export class SkillsLibrary {
           // Skill embutida grava SKILL.md (spec: pasta=name + frontmatter);
           // subagente embutido segue em agent.md. UTF-8 SEM BOM sempre (o BOM
           // quebra o parse de frontmatter nos DOIS CLIs — lição F6.0).
-          writeFileSync(
-            join(staging, d.kind === 'agent' ? 'agent.md' : 'SKILL.md'),
-            d.bundledBody,
-            'utf-8'
-          )
+          writeBundledPackage(staging, d)
           const assessment = assessSkillPackage(staging)
           const blocked = skillPackageBlockMessage(assessment)
           if (blocked) {
@@ -823,7 +1047,11 @@ export class SkillsLibrary {
           rmSync(dest, { recursive: true, force: true })
           renameSync(staging, dest)
           this.data.installed[d.id] = {
-            sha: bundledBodySha(d.bundledBody),
+            sha: bundledPackageSha(
+              d.bundledBody,
+              d.bundledFiles,
+              d.kind === 'agent' ? 'agent.md' : 'SKILL.md'
+            ),
             installedAt: new Date().toISOString(),
             supplyChain: assessment
           }
@@ -1335,10 +1563,9 @@ export class SkillsLibrary {
   }
 
   /**
-   * Injeta as skills no WORKSPACE da execução: copia da lib para
-   * <cwd>/.claude/skills/<id> e <cwd>/.agents/skills/<id> (os DOIS sempre —
-   * dev claude pode abrir ajudante codex no MESMO worktree). Idempotente.
-   * Chamar ANTES do spawn do pane. ASYNC (task skills-off-main, 2026-08-05):
+   * Compatibilidade de workspace usada pelo método-base do Maestro. Panes de
+   * execução passam ids=[] para podar cópias antigas e recebem conteúdo por
+   * árvore privada/receipt. ASYNC (task skills-off-main, 2026-08-05):
    * o fast path continua síncrono (~0ms); a cópia real, a poda e o scan de
    * supply-chain rodam no gitWorker — o main não congela mais 1-4s no spawn.
    * A cadeia serializa chamadas concorrentes (mesma atomicidade de antes).
@@ -1407,50 +1634,48 @@ export class SkillsLibrary {
     // bloqueado não pode deixar uma cópia gerenciada antiga no workspace.
     // (Id do curto-circuito não reentra na varredura da lib: a decisão dele
     // já está persistida e é não-block por definição do check acima.)
+    const executionReady = new Set(fastPath)
     for (const id of expandedIds) {
-      if (!fastPath.has(id)) await this.installedForExecution(id)
+      if (fastPath.has(id)) continue
+      if (await this.installedForExecution(id)) executionReady.add(id)
     }
 
-    const eligibleInstalled = new Set(
-      Object.keys(this.data.installed).filter((id) => this.isEligibleInstalled(id))
+    const activeSkillIds = new Set(
+      [...executionReady].filter((id) => this.byId(id)?.kind === 'skill')
+    )
+    const activeAgentIds = new Set(
+      [...executionReady].filter((id) => this.byId(id)?.kind === 'agent')
     )
     // A poda só REMOVE pasta cujo marcador Synkora tem id IGUAL ao próprio
     // nome e fora do conjunto elegível — pasta com nome de instalada elegível
     // nunca é removível, e pasta local (sem marcador nosso) nunca é tocada.
     // Reler os ~2×N marcadores em TODO sync era o custo do sync de 0 skills
     // (353ms medidos); o pré-filtro só chama a poda com candidato REAL.
-    if (hasManagedPruneCandidate(workspaceSkillRoots, eligibleInstalled)) {
+    if (hasManagedPruneCandidate(workspaceSkillRoots, activeSkillIds)) {
       // Candidato REAL confirmado pelo pré-filtro barato: o rm recursivo
       // roda no worker (main livre).
       await gitOff(
-        'pruneUninstalledManagedWorkspaceSkills',
+        'pruneUnrequestedManagedWorkspaceSkills',
         workspaceSkillRoots,
-        eligibleInstalled
+        activeSkillIds
       )
     }
 
     // Uma escolha manual vale para aquela execução, não para todas as sessões
     // futuras no mesmo cwd. Retiramos somente cópias marcadas pelo Synkora (ou
     // cópias antigas ainda idênticas à biblioteca); conteúdo customizado fica.
-    for (const id of selectInstalledManualOnlyIdsToPrune(
-      this.defs,
-      (candidate) => this.isEligibleInstalled(candidate),
-      requested
-    )) {
-      const src = join(this.libDir, id)
-      for (const dest of [
-        join(cwd, '.claude', 'skills', id),
-        join(cwd, '.agents', 'skills', id)
-      ]) {
-        try {
-          if (isManagedWorkspaceSkillCopy(src, dest, id)) {
-            rmSync(dest, { recursive: true, force: true })
-          }
-        } catch {
-          // Limpeza de contexto é best-effort; nunca bloqueia a skill pedida.
-        }
-      }
-    }
+    const libraryAgentSources = Object.fromEntries(
+      this.defs
+        .filter((def) => def.kind === 'agent')
+        .map((def) => [def.id, join(this.libDir, def.id, 'agent.md')])
+        .filter(([, source]) => existsSync(source))
+    )
+    await gitOff(
+      'pruneUnrequestedManagedWorkspaceAgents',
+      join(cwd, '.claude', 'agents'),
+      activeAgentIds,
+      libraryAgentSources
+    )
 
     for (const id of expandedIds) {
       const def = this.byId(id)
@@ -1479,8 +1704,18 @@ export class SkillsLibrary {
             continue
           }
           const dest = join(cwd, '.claude', 'agents', `${id}.md`)
-          mkdirSync(dirname(dest), { recursive: true })
-          cpSync(srcFile, dest)
+          if (
+            !(await gitOff(
+              'syncManagedWorkspaceAgentCopy',
+              srcFile,
+              dest,
+              id,
+              this.data.installed[id]?.sha
+            ))
+          ) {
+            missing.push(id)
+            continue
+          }
           injected.push(def)
           continue
         }

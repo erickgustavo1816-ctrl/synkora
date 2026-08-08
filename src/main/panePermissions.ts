@@ -9,10 +9,14 @@ export interface PanePermissionContext {
    * audited Synkora MCP tools are allowlisted separately.
    */
   sensitive?: boolean
+  /** Pane de tarefa cujo método só pode entrar por activate_skill/receipt. */
+  receiptGoverned?: boolean
 }
 
 export const SYNKORA_READ_ONLY_GATE_TOOLS = [
   'report',
+  'activate_skill',
+  'read_review_evidence',
   // check_messages (CHECK 15, 2026-08-07): drena o correio MCP do pane —
   // leitura do próprio estado no harness, nunca do produto.
   'check_messages',
@@ -67,8 +71,37 @@ export function paneExternalMcpCapabilities(profile: PaneAccessProfile): {
     // de escrita dos gates segue no backend (fingerprint antes/depois
     // invalida o veredito).
     browser: profile === 'write' || profile === 'qa-read-only',
-    testRunner: profile === 'write' || profile === 'qa-read-only'
+    // The upstream Playwright Test MCP also exposes generator/planner tools
+    // that write files. A read-only QA receives only the isolated browser;
+    // test authoring remains a writer/helper capability.
+    testRunner: profile === 'write'
   }
+}
+
+export interface PaneBrowserAvailabilityInput {
+  sensitive: boolean
+  sensitiveAutoOk: boolean
+  strict: boolean
+  mcpReady: boolean
+  browserConfigured: boolean
+}
+
+export function effectiveSensitiveAccess(sensitive: boolean, sensitiveAutoOk: boolean): boolean {
+  return sensitive && !sensitiveAutoOk
+}
+
+/** Fonte única para o que o prompt pode prometer e o MCP pode realmente expor. */
+export function paneBrowserAvailable(
+  profile: PaneAccessProfile,
+  input: PaneBrowserAvailabilityInput
+): boolean {
+  return Boolean(
+    input.strict &&
+      input.mcpReady &&
+      input.browserConfigured &&
+      !effectiveSensitiveAccess(input.sensitive, input.sensitiveAutoOk) &&
+      paneExternalMcpCapabilities(profile).browser
+  )
 }
 
 /** Desliga servidores MCP persistidos no CODEX_HOME do seat. O Synkora é
@@ -151,6 +184,39 @@ export function panePermissionArgs(
   profile: PaneAccessProfile = 'write',
   context: PanePermissionContext = {}
 ): string[] {
+  const claudeSkillIsolation = [
+    '--disable-slash-commands',
+    '--disallowedTools',
+    'Skill,Agent,Task'
+  ]
+  const codexSkillIsolation = [
+    '--disable',
+    'multi_agent',
+    '--disable',
+    'apps',
+    '--disable',
+    'browser_use',
+    '--disable',
+    'browser_use_external',
+    '--disable',
+    'browser_use_full_cdp_access',
+    '--disable',
+    'in_app_browser',
+    '--disable',
+    'computer_use',
+    '--disable',
+    'image_generation',
+    '--disable',
+    'skill_search',
+    '--disable',
+    'skill_mcp_dependency_install',
+    '--disable',
+    'plugins',
+    '--disable',
+    'remote_plugin',
+    '--disable',
+    'hooks'
+  ]
   if (profile !== 'write') {
     if (cli === 'codex') {
       // O sandbox read-only do codex lê o disco inteiro sem prompt — gates
@@ -177,6 +243,10 @@ export function panePermissionArgs(
         '--disable',
         'image_generation',
         '--disable',
+        'skill_search',
+        '--disable',
+        'skill_mcp_dependency_install',
+        '--disable',
         'plugins',
         '--disable',
         'remote_plugin',
@@ -186,8 +256,12 @@ export function panePermissionArgs(
     }
     const allowedTools = [
       'mcp__synkora__report',
+      'mcp__synkora__activate_skill',
+      'mcp__synkora__read_review_evidence',
       // correio MCP (CHECK 15): drenagem explícita da caixa do pane.
       'mcp__synkora__check_messages',
+      // O prompt de gate exige notas vivas no radar também no Claude.
+      'mcp__synkora__status_note',
       // Leitura de coordenação: o QA consulta o board antes de validar (caso
       // real 2026-08-04: gate parado num prompt de permissão para
       // board_status — "era para estar em bypass"). Ambas são read-only.
@@ -205,7 +279,7 @@ export function panePermissionArgs(
       // runtime_control: agência do QA sobre o runtime do harness (retry/
       // porta) — "o que uma pessoa normal faria", sem escalar.
       ...(profile === 'qa-read-only' && context.sensitive !== true
-        ? ['mcp__playwright', 'mcp__playwright-test', 'mcp__synkora__runtime_control']
+        ? ['mcp__playwright', 'mcp__synkora__runtime_control']
         : [])
     ]
     return [
@@ -213,6 +287,7 @@ export function panePermissionArgs(
       // O login do seat continua no CLAUDE_CONFIG_DIR e o MCP Synkora entra
       // explicitamente por --mcp-config/--strict-mcp-config.
       '--setting-sources=',
+      ...claudeSkillIsolation,
       // Sem settings, a preferência salva do Chrome não é lida e o CLI abre o
       // diálogo "Claude in Chrome extension detected" — gate nascia PARADO
       // num prompt (validação ao vivo, 02/08). Gate read-only nunca usa o
@@ -221,7 +296,7 @@ export function panePermissionArgs(
       // SEM plan mode (ele bloqueia o report — sonda 5). A cerca de escrita é
       // o catálogo: nenhuma ferramenta de mutação existe na sessão.
       '--tools',
-      'Read,Grep,Glob,Skill',
+      'Read,Grep,Glob',
       '--allowedTools',
       allowedTools.join(','),
       // BYPASS LIGADO VALE SEMPRE — também nos GATES (caso real 2026-08-06:
@@ -246,6 +321,7 @@ export function panePermissionArgs(
     if (cli === 'claude') {
       return [
         '--setting-sources=',
+        ...(context.receiptGoverned ? claudeSkillIsolation : []),
         '--no-chrome',
         '--permission-mode',
         'manual'
@@ -273,6 +349,10 @@ export function panePermissionArgs(
       '--disable',
       'image_generation',
       '--disable',
+      'skill_search',
+      '--disable',
+      'skill_mcp_dependency_install',
+      '--disable',
       'plugins',
       '--disable',
       'remote_plugin',
@@ -282,7 +362,16 @@ export function panePermissionArgs(
   }
   const effectiveBypass = bypass
   if (cli === 'claude') {
-    return ['--permission-mode', effectiveBypass ? 'bypassPermissions' : 'acceptEdits']
+    return [
+      ...(context.receiptGoverned
+        ? ['--setting-sources=', ...claudeSkillIsolation, '--no-chrome']
+        : []),
+      '--permission-mode',
+      effectiveBypass ? 'bypassPermissions' : 'acceptEdits'
+    ]
   }
-  return effectiveBypass ? ['--dangerously-bypass-approvals-and-sandbox'] : []
+  return [
+    ...(context.receiptGoverned ? codexSkillIsolation : []),
+    ...(effectiveBypass ? ['--dangerously-bypass-approvals-and-sandbox'] : [])
+  ]
 }

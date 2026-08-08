@@ -177,6 +177,37 @@ export interface Task {
   quests?: string[]
   /** skills da biblioteca carimbadas para este card (F4) */
   skills?: string[]
+  /** o card altera uma superficie visivel; declarado pelo plano quando aplicavel */
+  affectsUi?: boolean
+  /** plano efetivo da fase atual/mais recente, com uso comprovado por receipt */
+  skillUsage?: {
+    phase: 'dev' | 'review' | 'qa'
+    phaseRun: string
+    updatedAt: string
+    runStatus?: 'active' | 'completed' | 'interrupted'
+    skills: Array<{
+      receiptId?: string
+      id: string
+      operation: string
+      version?: string
+      fingerprint?: string
+      status: 'planned' | 'activated' | 'applied'
+    }>
+    history?: Array<{
+      phase: 'dev' | 'review' | 'qa'
+      phaseRun: string
+      updatedAt: string
+      runStatus?: 'active' | 'completed' | 'interrupted'
+      skills: Array<{
+        receiptId?: string
+        id: string
+        operation: string
+        version?: string
+        fingerprint?: string
+        status: 'planned' | 'activated' | 'applied'
+      }>
+    }>
+  }
   /** subagentes da biblioteca disponíveis neste card (F4) */
   agents?: string[]
   delegation?: TaskDelegationMode
@@ -686,7 +717,11 @@ interface SynkoraState {
     id: string,
     lanes: PlanLane[],
     seenRevision?: string
-  ) => Promise<{ staleRevision: true; currentRevision: string } | undefined>
+  ) => Promise<
+    | { staleRevision: true; currentRevision: string }
+    | { planningEvidenceRequired: true }
+    | undefined
+  >
   /** F5.7 — pausa o plano em execução (volta ao backlog) */
   stopPlan: (id: string) => Promise<void>
   resolvePlanSecurityValidation: (
@@ -1432,6 +1467,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
   approvePlan: async (id, lanes, seenRevision) => {
     const updated = await window.synkora.tasks.approvePlan(id, lanes, seenRevision)
     if (updated && 'staleRevision' in updated) return updated
+    if (updated && 'planningEvidenceRequired' in updated) return updated
     if (updated) set((s) => ({ tasks: s.tasks.map((t) => (t.id === id ? updated : t)) }))
     return undefined
   },

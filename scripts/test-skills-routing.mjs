@@ -12,15 +12,32 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { CURATED_SKILLS } from '../src/main/skillsCatalog.ts'
+import { buildSynkoraImpeccableActivation } from '../src/main/impeccableAdapter.ts'
 import {
+  classifyTaskUiWork,
+  detectImpeccableOperation,
+  IMPECCABLE_SKILL_ID,
+  isUiSurfaceWork,
+  missingMandatoryUiPhaseSkills,
+  selectPhaseSkillPlan,
   selectInstalledIdsForDepartment,
   selectInstalledManualOnlyIdsToPrune,
-  selectInstalledPlanningIds
+  selectInstalledPlanningIds,
+  SYNKORA_PLANNING_STANDARD_ID,
+  SYNKORA_FRONTEND_STANDARD_ID,
+  SYNKORA_REVIEW_STANDARD_ID,
+  SYNKORA_RUNTIME_QA_ID,
+  SYNKORA_UI_QA_ID
 } from '../src/main/skillsRouting.ts'
 import {
   managedWorkspaceSkillContentsMatch,
+  MANAGED_WORKSPACE_AGENT_MARKER_SUFFIX,
   MANAGED_WORKSPACE_SKILL_MARKER,
-  pruneUninstalledManagedWorkspaceSkills,
+  materializePrivateSkillPackage,
+  pruneUnrequestedManagedWorkspaceAgents,
+  pruneUnrequestedManagedWorkspaceSkills,
+  removePrivateSkillPlan,
+  syncManagedWorkspaceAgentCopy,
   syncManagedWorkspaceSkillCopies,
   WorkspaceSkillLeaseRegistry
 } from '../src/main/workspaceSkills.ts'
@@ -51,6 +68,346 @@ const PLANNING_IDS = [
   'before-you-build',
   'roadmap-planning'
 ]
+
+const ROUTING_DEFS = [
+  {
+    id: SYNKORA_PLANNING_STANDARD_ID,
+    kind: 'skill',
+    depts: ['research'],
+    group: 'planejamento',
+    orchestratorDefault: true,
+    allowedPhases: ['planning'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_REVIEW_STANDARD_ID,
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'review nativo',
+    allowedPhases: ['review'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_RUNTIME_QA_ID,
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'qa nativo',
+    allowedPhases: ['qa'],
+    requiresCapabilities: ['read', 'browser'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_FRONTEND_STANDARD_ID,
+    kind: 'skill',
+    depts: ['front', 'design', 'qa'],
+    group: 'contrato do produto',
+    allowedPhases: ['dev', 'qa', 'helper'],
+    requiresCapabilities: ['read']
+  },
+  {
+    id: IMPECCABLE_SKILL_ID,
+    kind: 'skill',
+    depts: ['front', 'design'],
+    group: 'polish & micro-interações',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'browser']
+  },
+  {
+    id: SYNKORA_UI_QA_ID,
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'revisão de interface',
+    defaultFor: ['qa'],
+    allowedPhases: ['qa'],
+    requiresCapabilities: ['read', 'browser']
+  },
+  {
+    id: 'better-layout',
+    kind: 'skill',
+    depts: ['front'],
+    group: 'layout · tipografia · cor',
+    defaultFor: ['front']
+  },
+  {
+    id: 'react-best-practices',
+    kind: 'skill',
+    depts: ['front'],
+    group: 'react & next',
+    defaultFor: ['front']
+  },
+  {
+    id: 'typescript-advanced-types',
+    kind: 'skill',
+    depts: ['back'],
+    group: 'typescript & python',
+    defaultFor: ['back']
+  },
+  {
+    id: 'webapp-testing',
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'teste ao vivo (browser)',
+    defaultFor: ['qa']
+  },
+  {
+    id: 'better-accessibility',
+    kind: 'skill',
+    depts: ['front', 'qa'],
+    group: 'acessibilidade & microcopy'
+  },
+  {
+    id: 'code-review',
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'review de código (gate)',
+    defaultFor: ['qa']
+  },
+  {
+    id: 'code-review-and-quality',
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'review de código (gate)'
+  },
+  {
+    id: 'differential-review',
+    kind: 'skill',
+    depts: ['cyber'],
+    group: 'review de segurança'
+  },
+  {
+    id: 'ui-ux-designer',
+    kind: 'agent',
+    depts: ['front', 'design'],
+    group: 'subagentes especializados'
+  },
+  {
+    id: 'frontend-developer',
+    kind: 'agent',
+    depts: ['front'],
+    group: 'subagentes especializados'
+  }
+]
+
+const ROUTING_INSTALLED = new Set(ROUTING_DEFS.map((def) => def.id))
+const route = (patch) =>
+  selectPhaseSkillPlan({
+    defs: ROUTING_DEFS,
+    isInstalled: (id) => ROUTING_INSTALLED.has(id),
+    department: 'front',
+    phase: 'dev',
+    taskText: '',
+    executionMode: 'standard',
+    delegationMode: 'optional',
+    ...patch
+  })
+
+test('roteia somente operações visuais seguras do Impeccable', () => {
+  const cases = [
+    {
+      expected: 'layout',
+      text: 'Reorganize o header da tela, alinhe os filtros e corrija o espaçamento do layout.'
+    },
+    {
+      expected: 'adapt',
+      text: 'Adapte o calendário da interface para mobile e tablet com breakpoints responsivos.'
+    },
+    {
+      expected: 'harden',
+      text: 'A tela precisa suportar texto longo com ellipsis, overflow e estados vazios.'
+    },
+    {
+      expected: 'typeset',
+      text: 'Corrija a tipografia da página, a fonte, a altura de linha e a escala tipográfica.'
+    },
+    {
+      expected: 'polish',
+      text: 'Faça o polimento visual da interface e deixe os componentes mais harmônicos.'
+    }
+  ]
+
+  for (const { expected, text } of cases) {
+    assert.equal(detectImpeccableOperation(text), expected)
+    const selected = route({ taskText: text })
+    assert.deepEqual(selected.skillIds.slice(0, 2), [
+      SYNKORA_FRONTEND_STANDARD_ID,
+      IMPECCABLE_SKILL_ID
+    ])
+    assert.equal(selected.impeccableOperation, expected)
+    assert.ok(selected.skillIds.length <= 3)
+  }
+})
+
+test('near-misses técnicos não ativam skill visual', () => {
+  const cases = [
+    { department: 'back', text: 'Harden the API authentication endpoint.' },
+    { department: 'data', text: 'Adapt the warehouse schema for the new ingestion job.' },
+    { department: 'back', text: 'Typeset the TypeScript generic types used by the service.' },
+    { department: 'research', text: 'Polish the wording of the final research report.' },
+    { department: 'front', text: 'Refactor the data adapter and its TypeScript types; no user interface changes.' }
+  ]
+
+  for (const item of cases) {
+    const selected = route({ ...item, uiCard: false })
+    assert.ok(!selected.skillIds.includes(SYNKORA_FRONTEND_STANDARD_ID), item.text)
+    assert.ok(!selected.skillIds.includes(IMPECCABLE_SKILL_ID), item.text)
+    assert.ok(selected.skillIds.length <= 1, item.text)
+    assert.deepEqual(selected.agentIds, [], item.text)
+    assert.equal(selected.impeccableOperation, undefined, item.text)
+  }
+})
+
+test('cada departamento não visual recebe no máximo uma técnica-base curada', () => {
+  for (const department of ['back', 'copy', 'cyber', 'data', 'research']) {
+    const selected = selectPhaseSkillPlan({
+      defs: CURATED_SKILLS,
+      isInstalled: () => true,
+      department,
+      phase: 'dev',
+      taskText: 'Implementar a entrega descrita no card.',
+      uiCard: false,
+      executionMode: 'standard',
+      delegationMode: 'none'
+    })
+    assert.equal(selected.skillIds.length, 1, department)
+    assert.deepEqual(selected.agentIds, [], department)
+    assert.equal(selected.impeccableOperation, undefined, department)
+  }
+})
+
+test('skill explícita vence fallback e o plano limita método, técnica e agente', () => {
+  const selected = route({
+    taskText: 'Ajuste o layout da tela e seus componentes.',
+    explicitSkillIds: ['better-layout', 'better-accessibility', 'react-best-practices'],
+    explicitAgentIds: ['ui-ux-designer', 'frontend-developer']
+  })
+
+  assert.deepEqual(selected.skillIds, [
+    SYNKORA_FRONTEND_STANDARD_ID,
+    IMPECCABLE_SKILL_ID,
+    'better-accessibility'
+  ])
+  assert.deepEqual(selected.agentIds, ['ui-ux-designer'])
+  assert.equal(selected.impeccableOperation, 'layout')
+})
+
+test('defaultFor é somente fallback e método visual concorrente não entra', () => {
+  const selected = route({
+    taskText: 'Ajuste o layout da interface.',
+    explicitSkillIds: []
+  })
+
+  assert.deepEqual(selected.skillIds, [
+    SYNKORA_FRONTEND_STANDARD_ID,
+    IMPECCABLE_SKILL_ID,
+    'react-best-practices'
+  ])
+  assert.equal(selected.skillIds.includes('better-layout'), false)
+})
+
+test('FAST e delegation none nunca expõem agentes', () => {
+  for (const patch of [
+    { executionMode: 'fast' },
+    { executionMode: 'deep', delegationMode: 'none' }
+  ]) {
+    const selected = route({
+      taskText: 'Corrija o espaçamento da tela.',
+      explicitAgentIds: ['ui-ux-designer'],
+      ...patch
+    })
+    assert.deepEqual(selected.agentIds, [])
+  }
+})
+
+test('DEV e QA usam planos separados; QA não herda Impeccable nem agente', () => {
+  const common = {
+    taskText: 'Ajuste o layout responsivo da tela e valide no navegador.',
+    uiCard: true,
+    explicitSkillIds: ['impeccable', 'webapp-testing'],
+    explicitAgentIds: ['ui-ux-designer']
+  }
+  const dev = route({ ...common, phase: 'dev' })
+  const qa = route({ ...common, phase: 'qa' })
+
+  assert.deepEqual(dev.skillIds, [SYNKORA_FRONTEND_STANDARD_ID, IMPECCABLE_SKILL_ID])
+  assert.deepEqual(dev.agentIds, ['ui-ux-designer'])
+  assert.deepEqual(qa.skillIds, [
+    SYNKORA_FRONTEND_STANDARD_ID,
+    SYNKORA_UI_QA_ID
+  ])
+  assert.deepEqual(qa.agentIds, [])
+  assert.equal(qa.impeccableOperation, undefined)
+  assert.equal(qa.uiOperation, undefined)
+
+  const qaWithOnlyDevMethod = route({
+    ...common,
+    phase: 'qa',
+    explicitSkillIds: ['impeccable']
+  })
+  assert.deepEqual(qaWithOnlyDevMethod.skillIds, [
+    SYNKORA_FRONTEND_STANDARD_ID,
+    SYNKORA_UI_QA_ID
+  ])
+})
+
+test('QA de UI falha fechado sem contrato e sem revisor independente', () => {
+  assert.deepEqual(
+    missingMandatoryUiPhaseSkills([], 'front', 'dev'),
+    [SYNKORA_FRONTEND_STANDARD_ID, IMPECCABLE_SKILL_ID]
+  )
+  assert.deepEqual(
+    missingMandatoryUiPhaseSkills([], 'front', 'qa'),
+    [SYNKORA_FRONTEND_STANDARD_ID, SYNKORA_UI_QA_ID]
+  )
+  assert.deepEqual(
+    missingMandatoryUiPhaseSkills([SYNKORA_FRONTEND_STANDARD_ID], 'design', 'qa'),
+    [SYNKORA_UI_QA_ID]
+  )
+  assert.deepEqual(
+    missingMandatoryUiPhaseSkills(
+      [SYNKORA_FRONTEND_STANDARD_ID, SYNKORA_UI_QA_ID],
+      'front',
+      'qa'
+    ),
+    []
+  )
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'back', 'qa', false), [SYNKORA_RUNTIME_QA_ID])
+
+  const fastQa = route({
+    phase: 'qa',
+    uiCard: true,
+    executionMode: 'fast',
+    taskText: 'Valide a tela responsiva.',
+    explicitSkillIds: ['webapp-testing']
+  })
+  assert.deepEqual(fastQa.skillIds, [SYNKORA_FRONTEND_STANDARD_ID, SYNKORA_UI_QA_ID])
+  assert.deepEqual(fastQa.agentIds, [])
+})
+
+test('REVIEW usa allowlist curta e só soma a lente cyber quando o risco exige', () => {
+  const normal = route({
+    phase: 'review',
+    taskText: 'Revise o diff.',
+    explicitSkillIds: ['code-review-and-quality', 'impeccable']
+  })
+  const sensitive = route({
+    phase: 'review',
+    taskText: 'Revise o diff de autenticação.',
+    explicitSkillIds: [],
+    securitySensitive: true
+  })
+
+  assert.deepEqual(normal.skillIds, [SYNKORA_REVIEW_STANDARD_ID])
+  assert.deepEqual(normal.agentIds, [])
+  assert.deepEqual(sensitive.skillIds, [SYNKORA_REVIEW_STANDARD_ID])
+
+  const devOnlyStamp = route({
+    phase: 'review',
+    taskText: 'Revise o diff.',
+    explicitSkillIds: ['impeccable']
+  })
+  assert.deepEqual(devOnlyStamp.skillIds, [SYNKORA_REVIEW_STANDARD_ID])
+})
 
 test('o catálogo contém as 13 skills permitidas do Superpowers com paths exatos', () => {
   const byId = new Map(CURATED_SKILLS.map((skill) => [skill.id, skill]))
@@ -184,7 +541,7 @@ test('skill app-owned repara bytes adulterados mesmo com marcador e versão atua
   assert.equal(managedWorkspaceSkillContentsMatch(source, destination), true)
 })
 
-test('desinstalação poda apenas cópias marcadas pelo Synkora', (t) => {
+test('workspace expõe exatamente a união ativa e poda apenas cópias marcadas', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'synkora-skill-prune-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const roots = [join(root, '.claude', 'skills'), join(root, '.agents', 'skills')]
@@ -217,12 +574,270 @@ test('desinstalação poda apenas cópias marcadas pelo Synkora', (t) => {
     id: 'outro-id'
   })
 
-  assert.deepEqual(pruneUninstalledManagedWorkspaceSkills(roots, new Set(['kept'])), ['removed'])
+  assert.deepEqual(pruneUnrequestedManagedWorkspaceSkills(roots, new Set(['kept'])), ['removed'])
   assert.equal(existsSync(removedClaude), false)
   assert.equal(existsSync(removedAgents), false)
   assert.equal(existsSync(kept), true)
   assert.equal(existsSync(local), true)
   assert.equal(existsSync(forged), true)
+})
+
+test('pacote privado materializa a arvore completa fora de .claude e .agents', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-private-skill-tree-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const source = join(root, 'library', 'ui-contract')
+  const cwd = join(root, 'workspace')
+  const runtimeRoot = join(root, 'private-runtime')
+  mkdirSync(join(source, 'references', 'nested'), { recursive: true })
+  mkdirSync(cwd, { recursive: true })
+  writeFileSync(join(source, 'SKILL.md'), 'contrato raiz\n', 'utf8')
+  writeFileSync(join(source, 'references', 'layout.md'), 'regras de layout\n', 'utf8')
+  writeFileSync(
+    join(source, 'references', 'nested', 'evidence.md'),
+    'evidencia visual\n',
+    'utf8'
+  )
+
+  const destination = materializePrivateSkillPackage(
+    source,
+    runtimeRoot,
+    'pane-ui-01',
+    'run-ui-01',
+    'ui-contract'
+  )
+
+  assert.equal(
+    destination,
+    join(runtimeRoot, 'pane-ui-01', 'run-ui-01', 'ui-contract').replace(/\\/g, '/')
+  )
+  assert.equal(readFileSync(join(destination, 'SKILL.md'), 'utf8'), 'contrato raiz\n')
+  assert.equal(
+    readFileSync(join(destination, 'references', 'layout.md'), 'utf8'),
+    'regras de layout\n'
+  )
+  assert.equal(
+    readFileSync(join(destination, 'references', 'nested', 'evidence.md'), 'utf8'),
+    'evidencia visual\n'
+  )
+  assert.equal(existsSync(join(cwd, '.claude')), false)
+  assert.equal(existsSync(join(cwd, '.agents')), false)
+})
+
+test('remocao de pacote privado e limitada ao pane encerrado', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-private-skill-pane-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const source = join(root, 'library', 'ui-contract')
+  const cwd = join(root, 'workspace')
+  const runtimeRoot = join(root, 'private-runtime')
+  mkdirSync(source, { recursive: true })
+  mkdirSync(cwd, { recursive: true })
+  writeFileSync(join(source, 'SKILL.md'), 'contrato\n', 'utf8')
+
+  const paneA = materializePrivateSkillPackage(
+    source,
+    runtimeRoot,
+    'pane-a',
+    'run-a',
+    'ui-contract'
+  )
+  const paneB = materializePrivateSkillPackage(
+    source,
+    runtimeRoot,
+    'pane-b',
+    'run-b',
+    'ui-contract'
+  )
+  const runtimeSentinel = join(runtimeRoot, 'local.txt')
+  writeFileSync(runtimeSentinel, 'nao pertence ao pane\n', 'utf8')
+
+  assert.equal(removePrivateSkillPlan(runtimeRoot, 'pane-a'), true)
+  assert.equal(existsSync(paneA), false)
+  assert.equal(readFileSync(join(paneB, 'SKILL.md'), 'utf8'), 'contrato\n')
+  assert.equal(readFileSync(runtimeSentinel, 'utf8'), 'nao pertence ao pane\n')
+})
+
+test('geracoes e skills privadas sao removidas sem afetar vizinhas validas', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-private-skill-generation-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const source = join(root, 'library', 'contract')
+  const runtimeRoot = join(root, 'private-runtime')
+  mkdirSync(source, { recursive: true })
+  writeFileSync(join(source, 'SKILL.md'), 'contrato\n', 'utf8')
+
+  const oldSkill = materializePrivateSkillPackage(
+    source,
+    runtimeRoot,
+    'pane-shared',
+    'run-old',
+    'skill-a'
+  )
+  const currentA = materializePrivateSkillPackage(
+    source,
+    runtimeRoot,
+    'pane-shared',
+    'run-current',
+    'skill-a'
+  )
+  const currentB = materializePrivateSkillPackage(
+    source,
+    runtimeRoot,
+    'pane-shared',
+    'run-current',
+    'skill-b'
+  )
+
+  assert.equal(
+    removePrivateSkillPlan(runtimeRoot, 'pane-shared', 'run-old'),
+    true
+  )
+  assert.equal(existsSync(oldSkill), false)
+  assert.equal(readFileSync(join(currentA, 'SKILL.md'), 'utf8'), 'contrato\n')
+  assert.equal(readFileSync(join(currentB, 'SKILL.md'), 'utf8'), 'contrato\n')
+
+  assert.equal(
+    removePrivateSkillPlan(runtimeRoot, 'pane-shared', 'run-current', 'skill-b'),
+    true
+  )
+  assert.equal(existsSync(currentB), false)
+  assert.equal(readFileSync(join(currentA, 'SKILL.md'), 'utf8'), 'contrato\n')
+})
+
+test('path traversal e recusado sem escrever ou remover fora da raiz privada', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-private-skill-traversal-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const source = join(root, 'library', 'ui-contract')
+  const cwd = join(root, 'workspace')
+  const runtimeRoot = join(root, 'private-runtime')
+  const sentinel = join(root, 'sentinel.txt')
+  mkdirSync(source, { recursive: true })
+  mkdirSync(cwd, { recursive: true })
+  writeFileSync(join(source, 'SKILL.md'), 'contrato\n', 'utf8')
+  writeFileSync(sentinel, 'intacto\n', 'utf8')
+
+  for (const [paneId, phaseRun, id] of [
+    ['../escape', 'run', 'ui-contract'],
+    ['pane', '../escape', 'ui-contract'],
+    ['pane', 'run', '../escape'],
+    ['pane/filho', 'run', 'ui-contract'],
+    ['C:\\escape', 'run', 'ui-contract']
+  ]) {
+    assert.throws(
+      () => materializePrivateSkillPackage(source, runtimeRoot, paneId, phaseRun, id),
+      /identidade inv.lida/
+    )
+  }
+  for (const paneId of ['../escape', 'pane/filho', 'C:\\escape']) {
+    assert.equal(removePrivateSkillPlan(runtimeRoot, paneId), false)
+  }
+  assert.equal(removePrivateSkillPlan(runtimeRoot, 'pane', '../escape'), false)
+  assert.equal(removePrivateSkillPlan(runtimeRoot, 'pane', 'run', '../escape'), false)
+  assert.equal(removePrivateSkillPlan(runtimeRoot, 'pane', undefined, 'ui-contract'), false)
+
+  assert.equal(readFileSync(sentinel, 'utf8'), 'intacto\n')
+  assert.equal(existsSync(join(root, 'escape')), false)
+})
+
+test('agents gerenciados obedecem à mesma fronteira exata sem tocar em arquivo local', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-agent-prune-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const library = join(root, 'library')
+  const agentRoot = join(root, 'project', '.claude', 'agents')
+  mkdirSync(library, { recursive: true })
+  mkdirSync(agentRoot, { recursive: true })
+
+  const managedSource = join(library, 'managed.md')
+  const managedDestination = join(agentRoot, 'managed.md')
+  const keptSource = join(library, 'kept.md')
+  const keptDestination = join(agentRoot, 'kept.md')
+  const localDestination = join(agentRoot, 'local.md')
+  writeFileSync(managedSource, 'managed agent\n', 'utf8')
+  writeFileSync(keptSource, 'kept agent\n', 'utf8')
+  writeFileSync(localDestination, 'local agent\n', 'utf8')
+
+  assert.equal(syncManagedWorkspaceAgentCopy(managedSource, managedDestination, 'managed', 'v1'), true)
+  assert.equal(syncManagedWorkspaceAgentCopy(keptSource, keptDestination, 'kept', 'v1'), true)
+  assert.equal(existsSync(`${managedDestination}${MANAGED_WORKSPACE_AGENT_MARKER_SUFFIX}`), true)
+
+  assert.deepEqual(
+    pruneUnrequestedManagedWorkspaceAgents(
+      agentRoot,
+      new Set(['kept']),
+      { managed: managedSource, kept: keptSource }
+    ),
+    ['managed']
+  )
+  assert.equal(existsSync(managedDestination), false)
+  assert.equal(existsSync(`${managedDestination}${MANAGED_WORKSPACE_AGENT_MARKER_SUFFIX}`), false)
+  assert.equal(existsSync(keptDestination), true)
+  assert.equal(readFileSync(localDestination, 'utf8'), 'local agent\n')
+})
+
+test('sidecar orfao e removido sem tocar em arquivo local novo', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-agent-orphan-sidecar-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const agentRoot = join(root, 'project', '.claude', 'agents')
+  const orphanDestination = join(agentRoot, 'removed.md')
+  const orphanMarker = `${orphanDestination}${MANAGED_WORKSPACE_AGENT_MARKER_SUFFIX}`
+  mkdirSync(agentRoot, { recursive: true })
+  writeFileSync(
+    orphanMarker,
+    `${JSON.stringify({ managedBy: 'synkora', id: 'removed', contentSha: 'sha-antigo' })}\n`,
+    'utf8'
+  )
+  assert.deepEqual(
+    pruneUnrequestedManagedWorkspaceAgents(agentRoot, new Set(), {}),
+    []
+  )
+  assert.equal(existsSync(orphanMarker), false)
+
+  writeFileSync(orphanDestination, 'criado depois pelo projeto\n', 'utf8')
+  assert.deepEqual(
+    pruneUnrequestedManagedWorkspaceAgents(agentRoot, new Set(), {}),
+    []
+  )
+  assert.equal(readFileSync(orphanDestination, 'utf8'), 'criado depois pelo projeto\n')
+  assert.equal(existsSync(orphanMarker), false)
+})
+
+test('agent gerenciado editado localmente nunca e sobrescrito nem apagado', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-agent-local-edit-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const source = join(root, 'library', 'ui-reviewer.md')
+  const agentRoot = join(root, 'project', '.claude', 'agents')
+  const destination = join(agentRoot, 'ui-reviewer.md')
+  mkdirSync(join(root, 'library'), { recursive: true })
+  writeFileSync(source, 'versao da biblioteca\n', 'utf8')
+  assert.equal(syncManagedWorkspaceAgentCopy(source, destination, 'ui-reviewer', 'v1'), true)
+
+  writeFileSync(destination, 'edicao local divergente\n', 'utf8')
+  writeFileSync(source, 'nova versao da biblioteca\n', 'utf8')
+
+  assert.equal(syncManagedWorkspaceAgentCopy(source, destination, 'ui-reviewer', 'v2'), false)
+  assert.equal(readFileSync(destination, 'utf8'), 'edicao local divergente\n')
+  assert.deepEqual(
+    pruneUnrequestedManagedWorkspaceAgents(
+      agentRoot,
+      new Set(),
+      { 'ui-reviewer': source }
+    ),
+    []
+  )
+  assert.equal(readFileSync(destination, 'utf8'), 'edicao local divergente\n')
+})
+
+test('colisão com agent local homônimo é preservada e nunca ganha marcador', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-agent-collision-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const source = join(root, 'library', 'ui-reviewer.md')
+  const destination = join(root, 'project', '.claude', 'agents', 'ui-reviewer.md')
+  mkdirSync(join(root, 'library'), { recursive: true })
+  mkdirSync(join(root, 'project', '.claude', 'agents'), { recursive: true })
+  writeFileSync(source, 'library version\n', 'utf8')
+  writeFileSync(destination, 'project local version\n', 'utf8')
+
+  assert.equal(syncManagedWorkspaceAgentCopy(source, destination, 'ui-reviewer', 'v1'), false)
+  assert.equal(readFileSync(destination, 'utf8'), 'project local version\n')
+  assert.equal(existsSync(`${destination}${MANAGED_WORKSPACE_AGENT_MARKER_SUFFIX}`), false)
 })
 
 test('leases preservam a união das skills de panes paralelos até cada pane encerrar', () => {
@@ -253,28 +868,119 @@ test('leases preservam a união das skills de panes paralelos até cada pane enc
   assert.equal(leases.release('inexistente'), undefined)
 })
 
-test('o Maestro recebe toda skill instalada classificada como planejamento', () => {
+test('o catálogo mantém métodos externos de planejamento somente para uso manual', () => {
+  const catalogPlanning = CURATED_SKILLS.filter(
+    (skill) => skill.kind === 'skill' && skill.group.toLocaleLowerCase('pt-BR') === 'planejamento'
+  )
+
+  assert.deepEqual(catalogPlanning.map((skill) => skill.id), PLANNING_IDS)
+  assert.ok(catalogPlanning.every((skill) => skill.manualOnly === true))
+  assert.deepEqual(selectInstalledPlanningIds(CURATED_SKILLS, () => true), [])
+
+  const automaticallyRouted = new Set(
+    selectInstalledIdsForDepartment(CURATED_SKILLS, () => true, 'research')
+  )
+  for (const id of PLANNING_IDS) assert.equal(automaticallyRouted.has(id), false, id)
+})
+
+test('o Maestro usa apenas o standard nativo mesmo com métodos externos instalados', () => {
   const defs = [
-    { id: 'old-flag', kind: 'skill', depts: ['research'], group: 'planejamento' },
-    { id: 'future', kind: 'skill', depts: ['research'], group: 'Planejamento' },
-    { id: 'missing', kind: 'skill', depts: ['research'], group: 'planejamento' },
-    { id: 'debug', kind: 'skill', depts: ['back'], group: 'debugging' },
-    { id: 'planner-agent', kind: 'agent', depts: ['research'], group: 'planejamento' }
+    {
+      id: SYNKORA_PLANNING_STANDARD_ID,
+      kind: 'skill',
+      depts: ['research'],
+      group: 'planejamento',
+      orchestratorDefault: true,
+      allowedPhases: ['planning'],
+      adapter: 'synkora-native'
+    },
+    {
+      id: 'writing-plans',
+      kind: 'skill',
+      depts: ['research'],
+      group: 'planejamento',
+      manualOnly: true
+    },
+    {
+      id: 'brainstorming',
+      kind: 'skill',
+      depts: ['research'],
+      group: 'planejamento',
+      manualOnly: true,
+      orchestratorDefault: true
+    },
+    {
+      id: 'future-planner',
+      kind: 'skill',
+      depts: ['research'],
+      group: 'planejamento',
+      manualOnly: true,
+      orchestratorDefault: true
+    }
   ]
-  const installed = new Set(['old-flag', 'future', 'debug', 'planner-agent'])
+
+  const installed = new Set(defs.map((skill) => skill.id))
   assert.deepEqual(
     selectInstalledPlanningIds(defs, (id) => installed.has(id)),
-    ['old-flag', 'future']
+    [SYNKORA_PLANNING_STANDARD_ID]
+  )
+
+  installed.delete('writing-plans')
+  installed.delete('brainstorming')
+  assert.deepEqual(
+    selectInstalledPlanningIds(defs, (id) => installed.has(id)),
+    [SYNKORA_PLANNING_STANDARD_ID]
   )
 })
 
-test('o catálogo real entrega ao Maestro todas as oito skills de planejamento', () => {
-  const catalogPlanning = CURATED_SKILLS.filter(
-    (skill) => skill.kind === 'skill' && skill.group.toLocaleLowerCase('pt-BR') === 'planejamento'
-  ).map((skill) => skill.id)
+test('planejamento falha fechado quando o standard nativo não está disponível', () => {
+  const externalOnly = [
+    {
+      id: 'writing-plans',
+      kind: 'skill',
+      depts: ['research'],
+      group: 'planejamento',
+      manualOnly: true,
+      orchestratorDefault: true
+    },
+    {
+      id: 'brainstorming',
+      kind: 'skill',
+      depts: ['research'],
+      group: 'planejamento',
+      manualOnly: true
+    }
+  ]
+  assert.deepEqual(selectInstalledPlanningIds(externalOnly, () => true), [])
 
-  assert.deepEqual(catalogPlanning, PLANNING_IDS)
-  assert.deepEqual(selectInstalledPlanningIds(CURATED_SKILLS, () => true), PLANNING_IDS)
+  const nativeNotInstalled = [
+    ...externalOnly,
+    {
+      id: SYNKORA_PLANNING_STANDARD_ID,
+      kind: 'skill',
+      depts: ['research'],
+      group: 'planejamento',
+      allowedPhases: ['planning'],
+      adapter: 'synkora-native'
+    }
+  ]
+  assert.deepEqual(
+    selectInstalledPlanningIds(nativeNotInstalled, (id) => id !== SYNKORA_PLANNING_STANDARD_ID),
+    []
+  )
+
+  const externalImpersonatingNative = [
+    ...externalOnly,
+    {
+      id: SYNKORA_PLANNING_STANDARD_ID,
+      kind: 'skill',
+      depts: ['research'],
+      group: 'planejamento',
+      allowedPhases: ['planning'],
+      adapter: 'impeccable-operation'
+    }
+  ]
+  assert.deepEqual(selectInstalledPlanningIds(externalImpersonatingNative, () => true), [])
 })
 
 test('front-end também recebe os métodos de implementação, depuração e revisão aplicáveis', () => {
@@ -322,4 +1028,259 @@ test('as personas impedem que Superpowers crie um segundo fluxo de execução', 
   assert.match(personaSource, /do not reopen the old roadmap implicitly/)
   assert.match(personaSource, /WINDOWS VISUAL COMPANION/)
   assert.match(personaSource, /Program Files\\\\Git\\\\bin\\\\bash\.exe/)
+})
+
+test('classificador distingue superficie visual de trabalho tecnico no front', () => {
+  assert.equal(isUiSurfaceWork('front', 'Corrija o layout responsivo da tela de tarefas.'), true)
+  assert.equal(isUiSurfaceWork('design', 'Refine o header e o menu mobile.'), true)
+  assert.equal(
+    isUiSurfaceWork('front', 'Refine o visual, a harmonia e a responsividade do frontend.'),
+    true
+  )
+  assert.equal(
+    isUiSurfaceWork('front', 'Refactor the data adapter and TypeScript types; no user interface changes.'),
+    false
+  )
+  assert.equal(
+    isUiSurfaceWork('front', 'Atualize o pipeline de build, sem alteracao na interface.'),
+    false
+  )
+  assert.equal(isUiSurfaceWork('front', 'Refactor only the adapter; no visual changes.'), false)
+  assert.equal(isUiSurfaceWork('front', 'Refatore adapter e tipos, sem mudança visual.'), false)
+  assert.equal(
+    isUiSurfaceWork(
+      'front',
+      'Corrigir header Authorization no adapter; sem mudanças visuais.'
+    ),
+    false
+  )
+  assert.equal(
+    isUiSurfaceWork('front', 'Atualizar table types no adapter; no UI changes.'),
+    false
+  )
+  assert.equal(
+    isUiSurfaceWork('front', 'Ajustar Dialog protocol RPC no client, sem interface.'),
+    false
+  )
+  assert.equal(
+    isUiSurfaceWork('front', 'Ajuste o espaçamento do header. Sem alterações na UI fora do header.'),
+    true
+  )
+  assert.equal(
+    isUiSurfaceWork('front', 'Fix the header spacing. No UI changes outside the header.'),
+    true
+  )
+  assert.equal(isUiSurfaceWork('back', 'Implemente o endpoint da pagina.'), false)
+  assert.equal(
+    isUiSurfaceWork(
+      'back',
+      'Renderize o template SSR e altere HTML, CSS e o header responsivo.'
+    ),
+    true
+  )
+  assert.equal(
+    isUiSurfaceWork('back', 'A API devolve os dados usados pelo formulário, sem mudança visual.'),
+    false
+  )
+  assert.equal(
+    isUiSurfaceWork(
+      'back',
+      'Parser de HTML: processar HTML de terceiros no servidor, backend-only, sem mudanças visuais.'
+    ),
+    false
+  )
+  assert.equal(
+    isUiSurfaceWork('back', 'Minificador CSS no pipeline, sem alterações visuais.'),
+    false
+  )
+  assert.equal(
+    isUiSurfaceWork('back', 'Corrigir o header Authorization da API, backend-only; no UI changes.'),
+    false
+  )
+  assert.equal(
+    isUiSurfaceWork('back', 'Corrigir o layout binário do protocolo no servidor, sem interface.'),
+    false
+  )
+  assert.equal(
+    isUiSurfaceWork('back', 'Ajustar o dialog do protocolo RPC server-only; no visual changes.'),
+    false
+  )
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'front', 'qa', false), [
+    SYNKORA_RUNTIME_QA_ID
+  ])
+})
+
+test('classificacao usa escopo visual real e ignora feedback operacional do card', () => {
+  const technicalFront = {
+    department: 'front',
+    title: 'Refatorar adapter',
+    description: 'Sem mudança visual',
+    affectsUi: false,
+    feedback: 'retomar o mesmo card depois de reabrir o pane'
+  }
+  assert.equal(classifyTaskUiWork(technicalFront), false)
+  assert.equal(classifyTaskUiWork(technicalFront, 'corrigir overflow e layout responsivo'), true)
+  assert.equal(
+    classifyTaskUiWork({
+      department: 'back',
+      title: 'Renderizar template SSR',
+      description: 'A entrega altera HTML e CSS visíveis',
+      affectsUi: true
+    }),
+    true
+  )
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'back', 'dev', true), [
+    SYNKORA_FRONTEND_STANDARD_ID,
+    IMPECCABLE_SKILL_ID
+  ])
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'back', 'qa', true), [
+    SYNKORA_FRONTEND_STANDARD_ID,
+    SYNKORA_UI_QA_ID
+  ])
+})
+
+test('adapter Impeccable fecha uma unica operacao e neutraliza handoffs', () => {
+  const adapted = buildSynkoraImpeccableActivation(
+    'layout',
+    'When a sub-agent tool is available, delegate the assessment.\nWhen done, hand off to `/impeccable polish`.\nKeep the spacing rhythm.'
+  )
+  assert.ok(adapted)
+  assert.match(adapted, /closed, operation-scoped technique/)
+  assert.match(adapted, /Apply only \*\*layout\*\*/)
+  assert.doesNotMatch(adapted, /\/impeccable polish/)
+  assert.doesNotMatch(adapted, /When a sub-agent tool|delegate the assessment/)
+  assert.match(adapted, /Do not spawn or delegate/)
+  assert.match(adapted, /Repeated cards and rows use one anatomy/)
+  assert.doesNotMatch(adapted, /Go all out|Routing:|context\.mjs|new-work\.md|craft-floor/)
+  assert.equal(buildSynkoraImpeccableActivation('overdrive', 'x'), undefined)
+})
+
+test('operacao visual pondera a intencao dominante em briefings mistos', () => {
+  assert.equal(
+    detectImpeccableOperation(
+      'Corrigir layout e hierarquia do painel\nTambem garantir mobile, overflow e acabamento harmonico.'
+    ),
+    'layout'
+  )
+  assert.equal(
+    detectImpeccableOperation(
+      'Adaptar calendario para mobile e tablet\nPreservar alinhamento, texto longo e harmonia.'
+    ),
+    'adapt'
+  )
+  assert.equal(
+    detectImpeccableOperation(
+      'operation: harden\nAjustar layout e tipografia apenas quando necessario para evitar overflow.'
+    ),
+    'harden'
+  )
+})
+
+test('taxonomia escolhe uma tecnica contextual por funcao e por QA', () => {
+  const contextual = (department, taskText, phase = 'dev') =>
+    selectPhaseSkillPlan({
+      defs: [...ROUTING_DEFS, ...CURATED_SKILLS],
+      isInstalled: () => true,
+      department,
+      phase,
+      taskText,
+      uiCard: false,
+      executionMode: 'standard',
+      delegationMode: 'none'
+    }).skillIds
+
+  assert.deepEqual(contextual('back', 'Investigue a regressao e prove a causa raiz.'), ['diagnosing-bugs'])
+  assert.deepEqual(contextual('back', 'Desenhe os endpoints REST desta API.'), ['api-design-principles'])
+  assert.deepEqual(contextual('copy', 'Escreva uma sequencia de emails de onboarding.'), ['email-sequence'])
+  assert.deepEqual(contextual('cyber', 'Audite prompt injection no recurso de LLM.'), ['prompt-injection-defense'])
+  assert.deepEqual(contextual('data', 'Crie um dashboard de KPIs com filtros.'), ['build-dashboard'])
+  assert.deepEqual(contextual('research', 'Compare concorrentes e posicionamento.'), ['competitive-brief'])
+  assert.deepEqual(contextual('back', 'Valide os endpoints e status HTTP.', 'qa'), [SYNKORA_RUNTIME_QA_ID])
+})
+
+test('nova superfície recebe layout; polish fica reservado ao acabamento', () => {
+  const creation = route({
+    taskText: 'Implementar uma nova tela de calendário de reservas para a equipe.'
+  })
+  assert.equal(creation.impeccableOperation, 'layout')
+
+  const finish = route({
+    taskText: 'Refine o acabamento e faça o polimento visual do componente aprovado.'
+  })
+  assert.equal(finish.impeccableOperation, 'polish')
+})
+
+test('fase e capacidades são barreiras executáveis, não metadados decorativos', () => {
+  const qaWithoutBrowser = route({
+    phase: 'qa',
+    department: 'back',
+    uiCard: false,
+    taskText: 'Validar o endpoint entregue.',
+    availableCapabilities: ['read']
+  })
+  assert.deepEqual(qaWithoutBrowser.skillIds, [])
+  assert.deepEqual(qaWithoutBrowser.incompatibilities, [
+    {
+      id: SYNKORA_RUNTIME_QA_ID,
+      reason: 'capability',
+      missingCapabilities: ['browser']
+    }
+  ])
+
+  const uiDevWithoutBrowser = route({
+    taskText: 'Criar uma nova tela responsiva.',
+    availableCapabilities: ['read', 'write', 'shell']
+  })
+  assert.equal(uiDevWithoutBrowser.skillIds.includes(SYNKORA_FRONTEND_STANDARD_ID), true)
+  assert.equal(uiDevWithoutBrowser.skillIds.includes(IMPECCABLE_SKILL_ID), false)
+  assert.deepEqual(uiDevWithoutBrowser.incompatibilities, [
+    {
+      id: IMPECCABLE_SKILL_ID,
+      reason: 'capability',
+      missingCapabilities: ['browser']
+    }
+  ])
+
+  const helperWithoutBrowser = route({
+    phase: 'helper',
+    taskText: 'Ajustar o layout da tela.',
+    explicitAgentIds: ['ui-ux-designer'],
+    availableCapabilities: ['read', 'write', 'shell']
+  })
+  assert.equal(helperWithoutBrowser.skillIds.includes(SYNKORA_FRONTEND_STANDARD_ID), true)
+  assert.equal(helperWithoutBrowser.skillIds.includes(IMPECCABLE_SKILL_ID), false)
+  assert.deepEqual(helperWithoutBrowser.agentIds, [])
+  assert.equal(
+    helperWithoutBrowser.incompatibilities.some(
+      (issue) =>
+        issue.id === IMPECCABLE_SKILL_ID && issue.missingCapabilities?.includes('browser')
+    ),
+    true
+  )
+})
+
+test('técnica específica vence o diagnóstico genérico em pedidos combinados', () => {
+  const defs = [...ROUTING_DEFS, ...CURATED_SKILLS]
+  const choose = (taskText) =>
+    selectPhaseSkillPlan({
+      defs,
+      isInstalled: () => true,
+      department: 'back',
+      phase: 'dev',
+      taskText,
+      uiCard: false,
+      executionMode: 'standard',
+      delegationMode: 'none'
+    }).skillIds
+
+  assert.deepEqual(choose('Corrigir falha de autorização OAuth no refresh token.'), ['oauth'])
+  assert.deepEqual(choose('Investigar erro no schema Postgres e na política RLS.'), [
+    'supabase-postgres-best-practices'
+  ])
+  assert.deepEqual(choose('Corrigir bug no webhook e no contrato da API.'), [
+    'api-design-principles'
+  ])
+  assert.deepEqual(choose('Resolver regressão de segurança e autorização RBAC.'), [
+    'security-best-practices'
+  ])
 })

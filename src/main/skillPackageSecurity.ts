@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 
-export const SKILL_PACKAGE_SECURITY_VERSION = 1 as const
+export const SKILL_PACKAGE_SECURITY_VERSION = 2 as const
 
 export type SkillPackageDecision = 'allow' | 'review' | 'block'
 export type SkillPackageFindingSeverity = 'review' | 'critical'
@@ -101,13 +101,13 @@ function normalizedPath(root: string, file: string): string | undefined {
   return rel.replace(/\\/g, '/')
 }
 
-function collectTextFiles(root: string): {
-  files: Array<{ path: string; file: string }>
+function collectPackageFiles(root: string): {
+  files: Array<{ path: string; file: string; scanText: boolean }>
   findings: SkillPackageFinding[]
 } {
   const absoluteRoot = resolve(root)
   const queue = [absoluteRoot]
-  const result: Array<{ path: string; file: string }> = []
+  const result: Array<{ path: string; file: string; scanText: boolean }> = []
   const findings: SkillPackageFinding[] = []
   let totalBytes = 0
   let limitRecorded = false
@@ -127,14 +127,30 @@ function collectTextFiles(root: string): {
     }
     for (const entry of entries) {
       const file = join(directory, entry.name)
-      if (entry.isSymbolicLink()) continue
+      if (entry.isSymbolicLink()) {
+        findings.push({
+          id: 'symbolic-link',
+          severity: 'critical',
+          path: normalizedPath(absoluteRoot, file) ?? entry.name,
+          message: 'pacote contem link simbolico; a origem real nao pode ser congelada com seguranca'
+        })
+        continue
+      }
       if (entry.isDirectory()) {
         queue.push(file)
         continue
       }
-      if (!entry.isFile()) continue
+      if (!entry.isFile()) {
+        findings.push({
+          id: 'unsupported-package-entry',
+          severity: 'critical',
+          path: normalizedPath(absoluteRoot, file) ?? entry.name,
+          message: 'pacote contem entrada que nao e arquivo regular'
+        })
+        continue
+      }
       const path = normalizedPath(absoluteRoot, file)
-      if (!path || !TEXT_FILE.test(path)) continue
+      if (!path) continue
       if (result.length >= MAX_SCAN_FILES) {
         if (!limitRecorded) {
           findings.push({
@@ -179,7 +195,7 @@ function collectTextFiles(root: string): {
         continue
       }
       totalBytes += size
-      result.push({ path, file })
+      result.push({ path, file, scanText: TEXT_FILE.test(path) })
     }
   }
   return {
@@ -200,7 +216,7 @@ export function assessSkillPackage(directory: string): SkillPackageAssessment {
   const findings: SkillPackageFinding[] = []
   const licenseFiles: string[] = []
   const collected = existsSync(root)
-    ? collectTextFiles(root)
+    ? collectPackageFiles(root)
     : {
         files: [],
         findings: [
@@ -237,6 +253,7 @@ export function assessSkillPackage(directory: string): SkillPackageAssessment {
       // inteira ficou fora dos menus). O arquivo continua no fingerprint.
       continue
     }
+    if (!candidate.scanText) continue
     const text = content.toString('utf8')
     for (const rule of CONTENT_RULES) {
       if (!rule.pattern.test(text)) continue

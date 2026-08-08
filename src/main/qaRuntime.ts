@@ -18,9 +18,13 @@ import { spawn, execFile, type ChildProcess } from 'child_process'
 import { createServer } from 'net'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
+import { RuntimeOwnershipRegistry } from './runtimeOwnership'
 
 interface QaRuntimeEntry {
   proc: ChildProcess
+  guardName: string
+  guardReleased: boolean
+  killRequested: boolean
   cwd: string
   script: string
   url?: string
@@ -32,7 +36,9 @@ interface QaRuntimeEntry {
   cleanTail: string
 }
 
-const runtimes = new Map<string, QaRuntimeEntry>()
+const runtimes = new RuntimeOwnershipRegistry<QaRuntimeEntry>()
+const latestStartRequest = new Map<string, number>()
+let startRequestGeneration = 0
 
 // GUARDA DE PROCESSO EXTERNO (fix E5×Q4 do mapa de retomada, 2026-08-06): o
 // runtime entra num job object do guardião do PtyManager — crash sujo do app
@@ -47,7 +53,16 @@ let processGuard: QaRuntimeGuard | undefined
 export function setQaRuntimeGuard(guard: QaRuntimeGuard): void {
   processGuard = guard
 }
-const guardNameOf = (taskId: string): string => `qa-runtime-${taskId.slice(0, 8)}`
+function beginStartRequest(taskId: string): number {
+  startRequestGeneration += 1
+  latestStartRequest.set(taskId, startRequestGeneration)
+  return startRequestGeneration
+}
+
+function invalidateStartRequest(taskId: string): void {
+  startRequestGeneration += 1
+  latestStartRequest.set(taskId, startRequestGeneration)
+}
 
 const RUNTIME_SCRIPT_PRIORITY = ['dev', 'preview', 'serve', 'start'] as const
 const LOCAL_URL_RE = /(https?:\/\/(?:localhost|127\.0\.0\.1):\d+\/?[^\s'"]*)/i
@@ -168,6 +183,29 @@ function killTree(proc: ChildProcess): void {
   }
 }
 
+/** Libera somente a geração capturada. Callbacks antigos nunca tocam no
+ * runtime que a substituiu, mas ainda fecham seu próprio job/processo. */
+function releaseQaRuntimeEntry(
+  taskId: string,
+  entry: QaRuntimeEntry,
+  terminate: boolean
+): void {
+  runtimes.deleteIfCurrent(taskId, entry)
+  if (!entry.guardReleased) {
+    entry.guardReleased = true
+    processGuard?.unguard(entry.guardName)
+  }
+  if (terminate && !entry.killRequested) {
+    entry.killRequested = true
+    killTree(entry.proc)
+  }
+}
+
+function stopCurrentQaRuntime(taskId: string): void {
+  const entry = runtimes.get(taskId)
+  if (entry) releaseQaRuntimeEntry(taskId, entry, true)
+}
+
 /**
  * Sobe o runtime e espera a URL local aparecer no stdout (vite/electron-vite a
  * imprimem). TIMEOUT ADAPTATIVO (caso real 2026-08-06: vite frio ficou 60s+
@@ -183,7 +221,7 @@ function startQaRuntimeAttempt(
   script: string,
   port?: number
 ): Promise<{ url?: string; error?: string }> {
-  stopQaRuntime(taskId)
+  stopCurrentQaRuntime(taskId)
   // Worktree sem node_modules: sem o bootstrap, o script resolveria binários
   // pelo PATH herdado (o electron-vite do PRÓPRIO Synkora vazou num caso
   // real) ou morreria — instalação pelo lockfile primeiro.
@@ -213,11 +251,20 @@ function startQaRuntimeAttempt(
       error: error instanceof Error ? error.message : String(error)
     })
   }
-  const entry: QaRuntimeEntry = { proc, cwd, script, outputTail: '', cleanTail: '' }
+  const entry: QaRuntimeEntry = {
+    proc,
+    guardName: runtimes.nextGuardName('qa-runtime', taskId.slice(0, 8)),
+    guardReleased: false,
+    killRequested: false,
+    cwd,
+    script,
+    outputTail: '',
+    cleanTail: ''
+  }
   runtimes.set(taskId, entry)
   // shell:true → o pid é o do shell; filhos (npm/vite) herdam a membership do
   // job porque o assign acontece antes de eles nascerem.
-  if (proc.pid) processGuard?.guard(guardNameOf(taskId), proc.pid)
+  if (proc.pid) processGuard?.guard(entry.guardName, proc.pid)
   return new Promise((resolve) => {
     const HARD_CAP_MS = 300_000
     const SILENCE_MS = 45_000
@@ -229,7 +276,7 @@ function startQaRuntimeAttempt(
       settled = true
       clearInterval(watchdog)
       if (!result.url) {
-        stopQaRuntime(taskId)
+        releaseQaRuntimeEntry(taskId, entry, true)
       }
       resolve(result)
     }
@@ -266,8 +313,7 @@ function startQaRuntimeAttempt(
     proc.stdout?.on('data', onChunk)
     proc.stderr?.on('data', onChunk)
     proc.on('exit', (code) => {
-      runtimes.delete(taskId)
-      processGuard?.unguard(guardNameOf(taskId))
+      releaseQaRuntimeEntry(taskId, entry, false)
       // Porta ocupada por runtime IRMÃO (caso real 2026-08-07: produto com
       // strictPort pinado serializou os QAs visuais e o erro cru não dizia
       // QUEM segurava a 5174) — nomeia o dono para o veredito/orquestrador.
@@ -284,7 +330,7 @@ function startQaRuntimeAttempt(
       })
     })
     proc.on('error', (error) => {
-      runtimes.delete(taskId)
+      releaseQaRuntimeEntry(taskId, entry, false)
       finish({ error: error.message })
     })
   })
@@ -318,18 +364,26 @@ export async function startQaRuntime(
   script: string,
   port?: number
 ): Promise<{ url?: string; error?: string }> {
+  const requestGeneration = beginStartRequest(taskId)
   let result = await startQaRuntimeAttempt(taskId, cwd, script, port)
+  if (latestStartRequest.get(taskId) !== requestGeneration) {
+    return { error: 'inicialização substituída por uma solicitação mais recente' }
+  }
   let retries = 0
   while (
     !result.url &&
     result.error &&
     /Port \d+ is already in use/i.test(result.error) &&
-    retries < 2
+    retries < 2 &&
+    latestStartRequest.get(taskId) === requestGeneration
   ) {
     retries++
     const free = await findFreePort()
-    if (!free) break
+    if (!free || latestStartRequest.get(taskId) !== requestGeneration) break
     result = await startQaRuntimeAttempt(taskId, cwd, script, free)
+    if (latestStartRequest.get(taskId) !== requestGeneration) {
+      return { error: 'inicialização substituída por uma solicitação mais recente' }
+    }
   }
   return result
 }
@@ -350,13 +404,8 @@ export function qaRuntimeOf(taskId: string): { url?: string; cwd: string } | und
 }
 
 export function stopQaRuntime(taskId: string): void {
-  const entry = runtimes.get(taskId)
-  if (!entry) return
-  runtimes.delete(taskId)
-  // 1ª camada: fechar o job mata a árvore NO KERNEL (kill-on-close);
-  // killTree segue como cinto (guardião morto/posix/nascidos pré-assign).
-  processGuard?.unguard(guardNameOf(taskId))
-  killTree(entry.proc)
+  invalidateStartRequest(taskId)
+  stopCurrentQaRuntime(taskId)
 }
 
 export function stopAllQaRuntimes(): void {

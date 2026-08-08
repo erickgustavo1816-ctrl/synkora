@@ -17,6 +17,8 @@ import type {
 import type { ProjectAdapterDetection } from './projectAdapters'
 import type { ManualSecurityValidation } from './manualSecurityValidation'
 import type { SecurityReviewRecord } from './securityReview'
+import type { GateVerificationEvidence } from './gateVerificationEvidence'
+import type { PlanningMethodEvidence } from './skillRuntime'
 import { redactSensitiveStrings } from './securityRedaction'
 
 // Funções enxutas (decisão do usuário, 2026-07-23): só existe função quando
@@ -88,6 +90,12 @@ export interface TaskPlan {
   expectedCards?: number
   /** Grafo tipado dos cards/ondas; ausente apenas em planos legados. */
   workItems?: PlanWorkItem[]
+  /** Receipt do metodo nativo que produziu esta proposta. Planos novos sem
+   * esta evidencia nunca podem gerar cards de trabalho. */
+  planningMethod?: PlanningMethodEvidence
+  /** Migração explícita: approved legado pode terminar o que já começou;
+   * proposta nova só chega a verified com receipt nativo válido. */
+  planningEvidenceState?: 'receipt_required' | 'verified' | 'legacy_unverified'
   /** conclusão escrita pelo orquestrador quando o plano termina (markdown) */
   conclusion?: string
   /** ISO de quando o usuário aprovou (status backlog→execucao) */
@@ -97,6 +105,28 @@ export interface TaskPlan {
   executionHead?: string
   /** Evidencia persistida da fotografia inicial e da validacao conjunta. */
   verification?: PlanVerificationState
+}
+
+function isStructurallyValidPlanningMethod(
+  evidence: PlanningMethodEvidence | undefined
+): boolean {
+  return Boolean(
+    evidence?.contractVersion === 1 &&
+      evidence.skillId === 'synkora-planning-standard' &&
+      evidence.operation === 'plan' &&
+      evidence.receiptId?.trim() &&
+      evidence.version?.trim() &&
+      evidence.fingerprint?.trim() &&
+      evidence.phaseRun?.trim() &&
+      evidence.appliedAt?.trim()
+  )
+}
+
+export function isVerifiedTaskPlanPlanningMethod(plan: TaskPlan | undefined): boolean {
+  return Boolean(
+    plan?.planningEvidenceState === 'verified' &&
+      isStructurallyValidPlanningMethod(plan.planningMethod)
+  )
 }
 
 export interface PlanVerificationCheckpoint extends VerificationCheckpoint {
@@ -127,6 +157,8 @@ export interface TaskGateEvidence {
   reason?: string
   /** Evidência estruturada e sanitizada; opcional em tarefas legadas. */
   securityReview?: SecurityReviewRecord
+  /** Matriz/observações realmente verificadas nesta rodada. */
+  verificationEvidence?: GateVerificationEvidence
 }
 
 /** Livro-caixa tecnico do card: prova a ordem dev -> gates e impede que um
@@ -142,6 +174,8 @@ export interface TaskVerification {
     baseHead?: string
     fingerprint?: string
     changedPaths?: string[]
+    /** Evidência visual estruturada da entrega, quando o card toca UI. */
+    verificationEvidence?: GateVerificationEvidence
   }
   activeGate?: {
     phase: 'review' | 'qa'
@@ -150,6 +184,8 @@ export interface TaskVerification {
   }
   review?: TaskGateEvidence
   qa?: TaskGateEvidence
+  /** Histórico limitado das rodadas; os slots acima são apenas o resumo atual. */
+  gateHistory?: TaskGateEvidence[]
 }
 
 /** Ponte persistida entre um pane de fase e a conversa real do CLI. O
@@ -205,6 +241,26 @@ export type TaskIntegrationReceipt =
   | TaskIntegrationPreparing
   | TaskIntegrationPrepared
 
+export interface TaskSkillUsageRun {
+  phase: 'dev' | 'review' | 'qa'
+  phaseRun: string
+  updatedAt: string
+  runStatus?: 'active' | 'completed' | 'interrupted'
+  skills: Array<{
+    receiptId?: string
+    id: string
+    operation: string
+    version?: string
+    fingerprint?: string
+    status: 'planned' | 'activated' | 'applied'
+  }>
+}
+
+export interface TaskSkillUsage extends TaskSkillUsageRun {
+  /** Historico seguro por rodada; nunca inclui corpo, prompt ou path local. */
+  history?: TaskSkillUsageRun[]
+}
+
 export interface Task {
   id: string
   projectId: string
@@ -246,6 +302,12 @@ export interface Task {
   /** skills da BIBLIOTECA carimbadas pelo orquestrador para ESTE card — o
    *  harness injeta no workspace do run (F4). Ausente = padrão da função. */
   skills?: string[]
+  /** True when the card changes a user-visible surface. Orchestrated
+   * front/design cards declare it; legacy/manual cards use safe inference. */
+  affectsUi?: boolean
+  /** Plano efetivo escolhido pelo roteador nesta fase, separado dos carimbos
+   * do card. Permite ao dono ver planejada -> ativada -> aplicada. */
+  skillUsage?: TaskSkillUsage
   /** notas do orquestrador ANEXADAS ao prompt do gate no spawn (review/qa) —
    *  instrução de gate viaja no briefing, nunca perseguindo o pane. */
   gateNotes?: { review?: string; qa?: string }
@@ -268,6 +330,10 @@ export interface Task {
       head?: string
       at: string
     }[]
+    /** Evidência sanitizada que originou esta lista fechada. */
+    verificationEvidence?: GateVerificationEvidence
+    /** Snapshot das notas usado para distinguir waiver novo de delta vazio. */
+    gateNotesAtRejection?: string
   }
   /** SUBAGENTES da biblioteca carimbados para este card (dev claude invoca
    *  via Task tool; injetados em .claude/agents do workspace) */
@@ -326,6 +392,7 @@ export interface NewTask {
   missionId?: string
   quests?: string[]
   skills?: string[]
+  affectsUi?: boolean
   agents?: string[]
   delegation?: TaskDelegationMode
   deliverable?: TaskDeliverableKind
@@ -358,6 +425,8 @@ export type TaskUpdatePatch = Partial<
     | 'missionId'
     | 'quests'
     | 'skills'
+    | 'affectsUi'
+    | 'skillUsage'
     | 'agents'
     | 'delegation'
     | 'deliverable'
@@ -374,6 +443,124 @@ export type TaskUpdatePatch = Partial<
     | 'auto'
   >
 >
+
+export type RendererTaskPatch = Partial<
+  Pick<Task, 'title' | 'description' | 'department' | 'type' | 'effort' | 'status'>
+>
+
+export type RendererTaskPatchResult =
+  | { ok: true; patch: RendererTaskPatch }
+  | {
+      ok: false
+      reason: 'invalid_patch' | 'forbidden_field' | 'invalid_value' | 'active_pane'
+    }
+
+const RENDERER_TASK_FIELDS = new Set([
+  'title',
+  'description',
+  'department',
+  'type',
+  'effort',
+  'status'
+])
+const TASK_DEPARTMENTS = new Set<Department>([
+  'front',
+  'back',
+  'qa',
+  'design',
+  'research',
+  'copy',
+  'cyber',
+  'data'
+])
+const TASK_TYPES = new Set<TaskType>(['feature', 'bug'])
+const TASK_EFFORTS = new Set<TaskEffort>(['leve', 'pesada'])
+const TASK_STATUSES = new Set<TaskStatus>(['backlog', 'execucao', 'qa', 'done'])
+
+/**
+ * Fronteira autoritativa do renderer. Campos de verificacao, receipts, fases,
+ * automacao e identidade de execucao pertencem ao harness e nunca atravessam
+ * o IPC de edicao generico. Um pane vivo exige cancelamento explicito antes
+ * de qualquer edicao ou mudanca de coluna.
+ */
+export function sanitizeRendererTaskPatch(
+  value: unknown,
+  options: { hasActivePane: boolean }
+): RendererTaskPatchResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, reason: 'invalid_patch' }
+  }
+  const raw = value as Record<string, unknown>
+  const keys = Object.keys(raw)
+  if (keys.some((key) => !RENDERER_TASK_FIELDS.has(key))) {
+    return { ok: false, reason: 'forbidden_field' }
+  }
+  if (options.hasActivePane && keys.length > 0) {
+    return { ok: false, reason: 'active_pane' }
+  }
+
+  const patch: RendererTaskPatch = {}
+  if ('title' in raw) {
+    if (typeof raw.title !== 'string' || !raw.title.trim()) {
+      return { ok: false, reason: 'invalid_value' }
+    }
+    patch.title = raw.title.trim()
+  }
+  if ('description' in raw) {
+    if (typeof raw.description !== 'string') return { ok: false, reason: 'invalid_value' }
+    patch.description = raw.description
+  }
+  if ('department' in raw) {
+    if (typeof raw.department !== 'string' || !TASK_DEPARTMENTS.has(raw.department as Department)) {
+      return { ok: false, reason: 'invalid_value' }
+    }
+    patch.department = raw.department as Department
+  }
+  if ('type' in raw) {
+    if (typeof raw.type !== 'string' || !TASK_TYPES.has(raw.type as TaskType)) {
+      return { ok: false, reason: 'invalid_value' }
+    }
+    patch.type = raw.type as TaskType
+  }
+  if ('effort' in raw) {
+    if (typeof raw.effort !== 'string' || !TASK_EFFORTS.has(raw.effort as TaskEffort)) {
+      return { ok: false, reason: 'invalid_value' }
+    }
+    patch.effort = raw.effort as TaskEffort
+  }
+  if ('status' in raw) {
+    if (typeof raw.status !== 'string' || !TASK_STATUSES.has(raw.status as TaskStatus)) {
+      return { ok: false, reason: 'invalid_value' }
+    }
+    patch.status = raw.status as TaskStatus
+  }
+  return { ok: true, patch }
+}
+
+/** Fecha uma rodada de receipts que perdeu o pane sem fingir conclusao. */
+export function interruptActiveSkillUsage(
+  usage: TaskSkillUsage | undefined,
+  updatedAt = new Date().toISOString()
+): TaskSkillUsage | undefined {
+  if (!usage || usage.runStatus === 'completed' || usage.runStatus === 'interrupted') {
+    return usage
+  }
+  const currentRun: TaskSkillUsageRun = {
+    phase: usage.phase,
+    phaseRun: usage.phaseRun,
+    updatedAt: usage.updatedAt,
+    runStatus: usage.runStatus,
+    skills: usage.skills
+  }
+  let matched = false
+  const history = (usage.history?.length ? usage.history : [currentRun]).map((run) => {
+    if (run.phaseRun !== usage.phaseRun) return run
+    matched = true
+    return { ...run, updatedAt, runStatus: 'interrupted' as const }
+  })
+  if (!matched) history.push({ ...currentRun, updatedAt, runStatus: 'interrupted' })
+  return { ...usage, updatedAt, runStatus: 'interrupted', history }
+}
 
 type StoredTask = Omit<Partial<Task>, 'status'> & {
   id: string
@@ -418,11 +605,28 @@ export class TaskStore {
     // 'analise' foi extinto — vira backlog (feedback continua no card).
     this.tasks = raw.map((stored) => {
       const t = redactSensitiveStrings(stored)
+      const status = t.status === 'analise' ? 'backlog' : t.status
+      const plan = t.plan
+        ? {
+            ...t.plan,
+            planningEvidenceState:
+              t.plan.planningEvidenceState ??
+              (isStructurallyValidPlanningMethod(t.plan.planningMethod)
+                ? 'verified'
+                : status === 'execucao' ||
+                    status === 'qa' ||
+                    status === 'done' ||
+                    Boolean(t.plan.approvedAt)
+                  ? 'legacy_unverified'
+                  : 'receipt_required')
+          }
+        : undefined
       return {
         ...t,
-        status: t.status === 'analise' ? 'backlog' : t.status,
+        status,
         type: t.type ?? 'feature',
-        effort: t.effort ?? 'leve'
+        effort: t.effort ?? 'leve',
+        plan
       }
     }) as Task[]
     // Promove a fotografia migrada usando escrita atômica + backup.
@@ -431,6 +635,14 @@ export class TaskStore {
 
   private persist(): void {
     persistJsonStore(this.file, this.tasks)
+  }
+
+  /** Commit transacional: o arquivo atomico pousa antes de a fotografia viva
+   * mudar. Se o disco falhar, leitores e retries continuam vendo o estado
+   * anterior em vez de um card meio-avancado apenas na memoria. */
+  private commit(next: Task[]): void {
+    persistJsonStore(this.file, next)
+    this.tasks = next
   }
 
   list(projectId: string): Task[] {
@@ -461,6 +673,7 @@ export class TaskStore {
         missionId: item.missionId,
         quests: item.quests,
         skills: item.skills,
+        affectsUi: item.affectsUi,
         agents: item.agents,
         delegation: item.delegation,
         deliverable: item.deliverable,
@@ -475,8 +688,7 @@ export class TaskStore {
         updatedAt: now
       }
     })
-    this.tasks.push(...created)
-    this.persist()
+    this.commit([...this.tasks, ...created])
     try {
       this.onCreate?.(created)
     } catch {
@@ -489,17 +701,24 @@ export class TaskStore {
     id: string,
     patch: TaskUpdatePatch
   ): Task | undefined {
-    const task = this.tasks.find((t) => t.id === id)
+    const index = this.tasks.findIndex((t) => t.id === id)
+    const task = index >= 0 ? this.tasks[index] : undefined
     if (!task) return undefined
     const prev = { ...task }
-    Object.assign(task, redactSensitiveStrings(patch), { updatedAt: new Date().toISOString() })
-    this.persist()
+    const nextTask = {
+      ...task,
+      ...redactSensitiveStrings(patch),
+      updatedAt: new Date().toISOString()
+    }
+    const next = [...this.tasks]
+    next[index] = nextTask
+    this.commit(next)
     try {
-      this.onMutation?.(prev, task)
+      this.onMutation?.(prev, nextTask)
     } catch {
       // observador nunca interrompe o store
     }
-    return task
+    return nextTask
   }
 
   /** Aplica um pequeno conjunto relacionado em uma única persistência. Se
@@ -507,28 +726,34 @@ export class TaskStore {
   updateMany(updates: readonly { id: string; patch: TaskUpdatePatch }[]): Task[] | undefined {
     const ids = new Set(updates.map((update) => update.id))
     if (ids.size !== updates.length) return undefined
-    const targets = updates.map((update) => this.tasks.find((task) => task.id === update.id))
-    if (targets.some((task) => !task)) return undefined
+    const indexes = updates.map((update) => this.tasks.findIndex((task) => task.id === update.id))
+    if (indexes.some((index) => index < 0)) return undefined
     const now = new Date().toISOString()
-    const previous = targets.map((target) => ({ ...(target as Task) }))
-    for (const [index, target] of targets.entries()) {
-      Object.assign(target as Task, redactSensitiveStrings(updates[index].patch), { updatedAt: now })
-    }
-    this.persist()
+    const previous = indexes.map((index) => ({ ...this.tasks[index] }))
+    const changed = updates.map((update, index) => ({
+      ...this.tasks[indexes[index]],
+      ...redactSensitiveStrings(update.patch),
+      updatedAt: now
+    }))
+    const next = [...this.tasks]
+    indexes.forEach((taskIndex, index) => {
+      next[taskIndex] = changed[index]
+    })
+    this.commit(next)
     try {
-      for (const [index, target] of targets.entries()) {
-        this.onMutation?.(previous[index], target as Task)
+      for (const [index, target] of changed.entries()) {
+        this.onMutation?.(previous[index], target)
       }
     } catch {
       // observador nunca interrompe o store
     }
-    return targets as Task[]
+    return changed
   }
 
   remove(id: string): void {
     const removed = this.tasks.find((t) => t.id === id)
-    this.tasks = this.tasks.filter((t) => t.id !== id)
-    this.persist()
+    const next = this.tasks.filter((t) => t.id !== id)
+    this.commit(next)
     if (removed) {
       try {
         this.onRemove?.(removed)

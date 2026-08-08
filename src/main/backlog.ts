@@ -72,43 +72,66 @@ export function cmpVersionTriples(
   return 0
 }
 
+interface BacklogData {
+  versions: Version[]
+  items: BacklogItem[]
+}
+
 export class BacklogStore {
   private readonly file: string
-  private data: { versions: Version[]; items: BacklogItem[] } = { versions: [], items: [] }
+  private data: BacklogData = { versions: [], items: [] }
 
   constructor(file = join(app.getPath('userData'), 'backlog.json')) {
     this.file = file
-    this.data = loadJsonStore(
+    const loaded = loadJsonStore(
       this.file,
       () => ({ versions: [], items: [] }),
-      (value): value is typeof this.data => {
+      (value): value is BacklogData => {
         if (typeof value !== 'object' || value === null) return false
-        const candidate = value as Partial<typeof this.data>
+        const candidate = value as Partial<BacklogData>
         return Array.isArray(candidate.versions) && Array.isArray(candidate.items)
       }
     )
     // migração leve: versões antigas não tinham deliveries
-    for (const v of this.data.versions) v.deliveries = v.deliveries ?? []
+    let migrated = loaded.versions.some((version) => !version.deliveries)
+    let next: BacklogData = {
+      versions: loaded.versions.map((version) =>
+        version.deliveries ? version : { ...version, deliveries: [] }
+      ),
+      items: loaded.items.filter((item) => !(item.status === 'feito' && !item.versionId))
+    }
+    migrated ||= next.items.length !== loaded.items.length
     // migração: a caixa "SEM VERSÃO" MORREU (confundia — o mesmo trabalho
     // aparecia riscado em "sem versão" E como entrega na versão). Item
     // FEITO sem versão some (o registro real é a entrega da missão na
     // versão); item ABERTO sem versão (ou preso em versão já lançada)
     // vai para a versão corrente.
-    this.data.items = this.data.items.filter((i) => !(i.status === 'feito' && !i.versionId))
-    for (const i of this.data.items) {
-      if (i.status === 'feito') continue
-      const v = i.versionId
-        ? this.data.versions.find((x) => x.id === i.versionId)
+    for (let index = 0; index < next.items.length; index++) {
+      const item = next.items[index]
+      if (item.status === 'feito') continue
+      const version = item.versionId
+        ? next.versions.find((candidate) => candidate.id === item.versionId)
         : undefined
-      if (!v || v.status === 'lancada') {
-        i.versionId = this.ensureDefaultVersion(i.projectId).id
-        i.updatedAt = new Date().toISOString()
+      if (!version || version.status === 'lancada') {
+        const ensured = this.withDefaultVersion(next, item.projectId)
+        const items = [...ensured.data.items]
+        items[index] = {
+          ...item,
+          versionId: ensured.version.id,
+          updatedAt: new Date().toISOString()
+        }
+        next = { ...ensured.data, items }
+        migrated = true
       }
     }
+    if (migrated) persistJsonStore(this.file, next)
+    this.data = next
   }
 
-  private persist(): void {
-    persistJsonStore(this.file, this.data)
+  /** O arquivo pousa antes de a fotografia viva mudar. */
+  private commit(next: BacklogData): void {
+    persistJsonStore(this.file, next)
+    this.data = next
   }
 
   listVersions(projectId: string): Version[] {
@@ -128,8 +151,7 @@ export class BacklogStore {
       createdAt: now,
       updatedAt: now
     }
-    this.data.versions.push(version)
-    this.persist()
+    this.commit({ ...this.data, versions: [...this.data.versions, version] })
     return version
   }
 
@@ -137,14 +159,18 @@ export class BacklogStore {
     id: string,
     patch: Partial<Pick<Version, 'name' | 'theme' | 'goal' | 'status'>>
   ): Version | undefined {
-    const version = this.data.versions.find((v) => v.id === id)
-    if (!version) return undefined
+    const index = this.data.versions.findIndex((version) => version.id === id)
+    if (index < 0) return undefined
+    const current = this.data.versions[index]
+    const version = { ...current }
     // lançar carimba releasedAt — a lançada mais recente é a ATUAL na main
-    if (patch.status === 'lancada' && version.status !== 'lancada') {
+    if (patch.status === 'lancada' && current.status !== 'lancada') {
       version.releasedAt = new Date().toISOString()
     }
     Object.assign(version, patch, { updatedAt: new Date().toISOString() })
-    this.persist()
+    const versions = [...this.data.versions]
+    versions[index] = version
+    this.commit({ ...this.data, versions })
     return version
   }
 
@@ -185,49 +211,79 @@ export class BacklogStore {
     return this.validateVersionName(projectId, name)
   }
 
-  /** Versão CORRENTE do projeto (decisão do usuário, 2026-07-23): sem versão
-   *  explícita, toda missão cai na versão aberta mais antiga; sem nenhuma
-   *  aberta, nasce a próxima automaticamente — "V1.0", ou o minor seguinte
-   *  da última lançada ("V1.0" lançada → "V1.1"). */
-  ensureDefaultVersion(projectId: string): Version {
-    const open = this.listVersions(projectId)
-      .filter((v) => v.status === 'aberta')
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    if (open[0]) return open[0]
-    const released = this.listVersions(projectId).filter((v) => v.status === 'lancada')
-    const highestNumeric = released
+  private withDefaultVersion(
+    data: BacklogData,
+    projectId: string
+  ): { data: BacklogData; version: Version } {
+    const open = data.versions
+      .filter((version) => version.projectId === projectId && version.status === 'aberta')
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    if (open[0]) return { data, version: open[0] }
+
+    const highestNumeric = data.versions
+      .filter((version) => version.projectId === projectId && version.status === 'lancada')
       .map((version) => ({ version, parsed: parseVersionName(version.name) }))
       .filter(
         (entry): entry is { version: Version; parsed: [number, number, number] } =>
           entry.parsed !== null
       )
       .sort((left, right) => cmpVersionTriples(right.parsed, left.parsed))[0]
-
-    // A versão automática segue a MAIOR versão numérica histórica, não apenas
-    // a lançada mais recentemente (que pode ter nome legado ou ter sido
-    // publicada fora de ordem). Assim este caminho nunca contorna as mesmas
-    // regras de unicidade/monotonicidade aplicadas à UI e ao rename.
+    // Segue a maior versão numérica histórica, mesmo se a mais recente tiver nome legado.
     const prefix = highestNumeric
       ? (highestNumeric.version.name.trim().match(/^v/i)?.[0] ?? '')
       : 'V'
     const major = highestNumeric?.parsed[0] ?? 1
     let minor = highestNumeric ? highestNumeric.parsed[1] + 1 : 0
     let name = `${prefix}${major}.${minor}`
-    while (this.validateVersionName(projectId, name)) {
+    while (
+      data.versions.some(
+        (version) =>
+          version.projectId === projectId &&
+          version.name.toLocaleLowerCase('pt-BR') === name.toLocaleLowerCase('pt-BR')
+      )
+    ) {
       minor += 1
       name = `${prefix}${major}.${minor}`
     }
-    return this.createVersion(projectId, { name })
+    const now = new Date().toISOString()
+    const version: Version = {
+      id: randomUUID(),
+      projectId,
+      name,
+      status: 'aberta',
+      deliveries: [],
+      createdAt: now,
+      updatedAt: now
+    }
+    return {
+      data: { ...data, versions: [...data.versions, version] },
+      version
+    }
+  }
+
+  /** Versão CORRENTE do projeto (decisão do usuário, 2026-07-23): sem versão
+   *  explícita, toda missão cai na versão aberta mais antiga; sem nenhuma
+   *  aberta, nasce a próxima automaticamente — "V1.0", ou o minor seguinte
+   *  da última lançada ("V1.0" lançada → "V1.1"). */
+  ensureDefaultVersion(projectId: string): Version {
+    const ensured = this.withDefaultVersion(this.data, projectId)
+    if (ensured.data !== this.data) this.commit(ensured.data)
+    return ensured.version
   }
 
   /** Registra (ou limpa, com undefined) a branch/worktree da versão. */
   setVersionBranch(id: string, branch?: string, worktree?: string): void {
-    const version = this.data.versions.find((v) => v.id === id)
-    if (!version) return
-    version.branch = branch
-    version.worktree = worktree
-    version.updatedAt = new Date().toISOString()
-    this.persist()
+    const index = this.data.versions.findIndex((version) => version.id === id)
+    if (index < 0) return
+    const version: Version = {
+      ...this.data.versions[index],
+      branch,
+      worktree,
+      updatedAt: new Date().toISOString()
+    }
+    const versions = [...this.data.versions]
+    versions[index] = version
+    this.commit({ ...this.data, versions })
   }
 
   /**
@@ -236,48 +292,70 @@ export class BacklogStore {
    * Git e a atualização do backlog inteiramente reconciliável pelo intent.
    */
   markVersionReleased(id: string): Version | undefined {
-    const version = this.data.versions.find((v) => v.id === id)
-    if (!version) return undefined
+    const index = this.data.versions.findIndex((version) => version.id === id)
+    if (index < 0) return undefined
     const now = new Date().toISOString()
-    if (version.status !== 'lancada') version.releasedAt = now
-    version.status = 'lancada'
-    version.branch = undefined
-    version.worktree = undefined
-    version.updatedAt = now
-    this.persist()
+    const current = this.data.versions[index]
+    const version: Version = {
+      ...current,
+      status: 'lancada',
+      branch: undefined,
+      worktree: undefined,
+      updatedAt: now
+    }
+    if (current.status !== 'lancada') version.releasedAt = now
+    const versions = [...this.data.versions]
+    versions[index] = version
+    this.commit({ ...this.data, versions })
     return version
   }
 
   /** Missão da versão INTEGROU na branch da versão → entrega registrada. */
   addDelivery(versionId: string, missionId: string, title: string): Version | undefined {
-    const version = this.data.versions.find((v) => v.id === versionId)
-    if (!version) return undefined
+    const index = this.data.versions.findIndex((version) => version.id === versionId)
+    if (index < 0) return undefined
+    const current = this.data.versions[index]
     // idempotente: reintegração da mesma missão não duplica a entrega
-    if (version.deliveries.some((d) => d.missionId === missionId)) return version
-    version.deliveries.push({
-      id: randomUUID(),
-      missionId,
-      title,
-      at: new Date().toISOString()
-    })
-    version.updatedAt = new Date().toISOString()
-    this.persist()
+    if (current.deliveries.some((delivery) => delivery.missionId === missionId)) return current
+    const version: Version = {
+      ...current,
+      deliveries: [
+        ...current.deliveries,
+        {
+          id: randomUUID(),
+          missionId,
+          title,
+          at: new Date().toISOString()
+        }
+      ],
+      updatedAt: new Date().toISOString()
+    }
+    const versions = [...this.data.versions]
+    versions[index] = version
+    this.commit({ ...this.data, versions })
     return version
   }
 
   /** Remove a versão; itens dela vão para a versão corrente (a caixa
    *  "sem versão" não existe mais). */
   removeVersion(id: string): void {
-    const removed = this.data.versions.find((v) => v.id === id)
-    this.data.versions = this.data.versions.filter((v) => v.id !== id)
-    let fallback: string | undefined
-    for (const item of this.data.items) {
-      if (item.versionId !== id) continue
-      fallback = fallback ?? (removed ? this.ensureDefaultVersion(removed.projectId).id : undefined)
-      item.versionId = fallback
-      item.updatedAt = new Date().toISOString()
+    const removed = this.data.versions.find((version) => version.id === id)
+    let next: BacklogData = {
+      ...this.data,
+      versions: this.data.versions.filter((version) => version.id !== id)
     }
-    this.persist()
+    let fallback: string | undefined
+    if (removed && next.items.some((item) => item.versionId === id)) {
+      const ensured = this.withDefaultVersion(next, removed.projectId)
+      next = ensured.data
+      fallback = ensured.version.id
+    }
+    const items = next.items.map((item) =>
+      item.versionId === id
+        ? { ...item, versionId: fallback, updatedAt: new Date().toISOString() }
+        : item
+    )
+    this.commit({ ...next, items })
   }
 
   listItems(projectId: string): BacklogItem[] {
@@ -305,12 +383,19 @@ export class BacklogStore {
         throw new Error('a versão indicada não pertence a este projeto')
       }
     }
+    let next = this.data
+    let versionId = input.versionId
+    if (!versionId) {
+      const ensured = this.withDefaultVersion(next, projectId)
+      next = ensured.data
+      versionId = ensured.version.id
+    }
     const now = new Date().toISOString()
     const item: BacklogItem = {
       id: randomUUID(),
       projectId,
       // "sem versão" não existe mais: todo item nasce na versão corrente
-      versionId: input.versionId ?? this.ensureDefaultVersion(projectId).id,
+      versionId,
       type: input.type ?? 'feature',
       title: input.title,
       notes: input.notes,
@@ -319,8 +404,7 @@ export class BacklogStore {
       createdAt: now,
       updatedAt: now
     }
-    this.data.items.push(item)
-    this.persist()
+    this.commit({ ...next, items: [...next.items, item] })
     return item
   }
 
@@ -328,47 +412,57 @@ export class BacklogStore {
     id: string,
     patch: Partial<Pick<BacklogItem, 'title' | 'notes' | 'type' | 'status' | 'versionId' | 'missionId'>>
   ): BacklogItem | undefined {
-    const item = this.data.items.find((i) => i.id === id)
-    if (!item) return undefined
+    const index = this.data.items.findIndex((item) => item.id === id)
+    if (index < 0) return undefined
+    const current = this.data.items[index]
     if (typeof patch.versionId === 'string') {
       const version = this.getVersion(patch.versionId)
-      if (!version || version.projectId !== item.projectId) return undefined
+      if (!version || version.projectId !== current.projectId) return undefined
     }
-    Object.assign(item, patch, { updatedAt: new Date().toISOString() })
-    this.persist()
+    const item: BacklogItem = {
+      ...current,
+      ...patch,
+      updatedAt: new Date().toISOString()
+    }
+    const items = [...this.data.items]
+    items[index] = item
+    this.commit({ ...this.data, items })
     return item
   }
 
   removeItem(id: string): void {
-    this.data.items = this.data.items.filter((i) => i.id !== id)
-    this.persist()
+    this.commit({ ...this.data, items: this.data.items.filter((item) => item.id !== id) })
   }
 
   /** Missão integrada → itens dela viram FEITO. Devolve quantos mudaram. */
   completeMissionItems(missionId: string): number {
     let n = 0
-    for (const item of this.data.items) {
+    const items = this.data.items.map((item) => {
       if (item.missionId === missionId && item.status !== 'feito') {
-        item.status = 'feito'
-        item.updatedAt = new Date().toISOString()
         n++
+        return { ...item, status: 'feito' as const, updatedAt: new Date().toISOString() }
       }
-    }
-    if (n > 0) this.persist()
+      return item
+    })
+    if (n > 0) this.commit({ ...this.data, items })
     return n
   }
 
   /** Missão excluída → itens dela voltam a pendente (deslinkados). */
   releaseMissionItems(missionId: string): void {
     let dirty = false
-    for (const item of this.data.items) {
+    const items = this.data.items.map((item) => {
       if (item.missionId === missionId && item.status !== 'feito') {
-        item.missionId = undefined
-        item.status = 'pendente'
-        item.updatedAt = new Date().toISOString()
         dirty = true
+        return {
+          ...item,
+          missionId: undefined,
+          status: 'pendente' as const,
+          updatedAt: new Date().toISOString()
+        }
       }
-    }
-    if (dirty) this.persist()
+      return item
+    })
+    if (dirty) this.commit({ ...this.data, items })
   }
 }

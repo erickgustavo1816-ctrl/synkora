@@ -91,8 +91,11 @@ export const CURATED_SKILLS: SkillDef[] = [
     group: 'polish & micro-interações',
     source: { repo: 'pbakaus/impeccable', path: '.claude/skills/impeccable', ref: 'main' },
     summary:
-      'Design-ops completo do Paul Bakaus (criador do jQuery UI): 23 comandos (craft/critique/audit/polish), 4 modos de design e 60 detectores determinísticos de anti-padrão (precisa de Node).',
-    hint: 'Use for a full design-ops workflow on a screen or app: craft → critique → audit → polish with deterministic anti-pattern detectors (requires Node).'
+      'Design-ops com 23 operações roteadas: escolha somente a que domina o pedido (como layout, adapt, harden, typeset ou polish); comandos interativos, de auditoria ou alta agência exigem contexto e fase apropriados.',
+    hint: 'Use exactly one context-matched Impeccable operation at a time. Do not chain commands or stack it with another aesthetic-direction skill; keep the user brief, local design authority, and Synkora UI contract above its defaults.',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'browser'],
+    adapter: 'impeccable-operation'
   },
 
   // ——— layout / tipografia / cor ———
@@ -273,7 +276,7 @@ export const CURATED_SKILLS: SkillDef[] = [
     source: { repo: 'ibelick/ui-skills', path: 'skills/create-design-md', ref: 'main' },
     summary:
       'Gera/atualiza um DESIGN.md canônico a partir do código do repo (ou de uma URL de referência): tokens, estilos computados, schema validado — nunca toca no source.',
-    hint: 'Use to extract or refresh the project design system into a DESIGN.md (pairs with .synkora/DESIGN.md — write it there).',
+    hint: 'Use to extract or refresh the durable design system in tracked tokens plus the repo documentation convention (or docs/design-system.md); .synkora/DESIGN.md is read-only runtime context.',
     defaultFor: ['design']
   },
   {
@@ -1700,43 +1703,44 @@ export const CURATED_SKILLS: SkillDef[] = [
   // ————————————————————————————————————————————————————————————————————————
   // RODADA 6: RESEARCH (2026-07-29) — escopo do usuário: pesquisa +
   // DOCUMENTAÇÃO (docs→research) + PLANEJAMENTO ("entra /grill-me etc.").
-  // `orchestratorDefault: true` = skill de planejamento que o app injeta no
-  // workspace do PM/orquestrador no spawn (a persona manda usar ANTES de
-  // planejar). Régua flexibilizada ("não forçar 30"): sobreposições foram
+  // Métodos externos de planejamento permanecem no catálogo para uso manual,
+  // mas nunca são injetados no Maestro. Régua flexibilizada ("não forçar 30"):
+  // sobreposições foram
   // CORTADAS (2 de spec, 2 de concorrência, 1 de síntese, meta-triplicata →
   // writing-skills só). REJECT histórico: docx/pdf/pptx/xlsx da Anthropic
   // têm licença PROPRIETÁRIA que proíbe reter cópias fora dos Services —
   // NUNCA instalar, em NENHUMA rodada. Descartes em docs/SKILLS.md.
   // ————————————————————————————————————————————————————————————————————————
 
-  // ——— planejamento (o kit do orquestrador) ———
+  // ——— planejamento externo (catálogo manual; nunca injetado no Maestro) ———
   {
     id: 'grilling',
     kind: 'skill',
     depts: ['research'],
     group: 'planejamento',
+    manualOnly: true,
     source: { repo: 'mattpocock/skills', path: 'skills/productivity/grilling', ref: 'main' },
     summary:
       'Interrogatório implacável de plano/decisão: UMA pergunta por vez, lacunas factuais resolvidas explorando o ambiente (não perguntando), árvore de decisão com recomendação por ramo. A skill que faltava upstream — existe agora.',
-    hint: 'Use to interrogate a vague plan/decision until it holds — one question at a time, environment-first fact finding.',
-    orchestratorDefault: true
+    hint: 'Use to interrogate a vague plan/decision until it holds — one question at a time, environment-first fact finding.'
   },
   {
     id: 'grill-me',
     kind: 'skill',
     depts: ['research'],
     group: 'planejamento',
+    manualOnly: true,
     source: { repo: 'mattpocock/skills', path: 'skills/productivity/grill-me', ref: 'main' },
     summary: 'O lançador do interrogatório: "/grill-me" inicia uma sessão de grilling sobre o plano atual.',
     hint: 'Invoke to start a relentless interview that sharpens the current plan or design.',
-    requires: ['grilling'],
-    orchestratorDefault: true
+    requires: ['grilling']
   },
   {
     id: 'grill-with-docs',
     kind: 'skill',
     depts: ['research'],
     group: 'planejamento',
+    manualOnly: true,
     source: { repo: 'mattpocock/skills', path: 'skills/engineering/grill-with-docs', ref: 'main' },
     summary:
       'O interrogatório gerando documentação no caminho: ADRs + glossário (via domain-modeling) enquanto a conversa afia o plano.',
@@ -1748,40 +1752,41 @@ export const CURATED_SKILLS: SkillDef[] = [
     kind: 'skill',
     depts: ['research'],
     group: 'planejamento',
+    manualOnly: true,
     source: { repo: 'obra/superpowers', path: 'skills/brainstorming', ref: 'main' },
     summary:
       'Diálogo socrático PRÉ-implementação com gate duro (nada de código antes de design aprovado): propostas com trade-offs, spec documentada e self-review contra placeholders/ambiguidade.',
     hint: 'Use before creative/new work to explore the space and land an approved, documented design — hard gate against premature code.',
-    requires: ['writing-plans'],
-    orchestratorDefault: true
+    requires: ['writing-plans']
   },
   {
     id: 'writing-plans',
     kind: 'skill',
     depts: ['research'],
     group: 'planejamento',
+    manualOnly: true,
     source: { repo: 'obra/superpowers', path: 'skills/writing-plans', ref: 'main' },
     summary:
       'Escrever PLANOS como documento: tarefas bite-sized independentes e testáveis com código real (nunca placeholder), paths exatos e contratos de interface. Reavaliada: como deliverable de card não conflita com o pipeline do app.',
-    hint: 'Use when the deliverable is a written implementation plan — bite-sized verifiable tasks with real code and exact paths.',
-    orchestratorDefault: true
+    hint: 'Use when the deliverable is a written implementation plan — bite-sized verifiable tasks with real code and exact paths.'
   },
   {
     id: 'to-tickets',
     kind: 'skill',
     depts: ['research'],
     group: 'planejamento',
+    manualOnly: true,
     source: { repo: 'mattpocock/skills', path: 'skills/engineering/to-tickets', ref: 'main' },
     summary:
       'Decomposição em tickets "tracer-bullet": fatias VERTICAIS (schema→API→UI→testes) dimensionadas para caber numa única janela de contexto fresca, com bloqueios declarados. Modo local grava um .md por ticket.',
-    hint: 'Use to decompose planned work into vertical, context-window-sized slices with declared blocking edges (local .md mode).',
-    orchestratorDefault: true
+    hint: 'Use to decompose planned work into vertical, context-window-sized slices with declared blocking edges (local .md mode).'
   },
   {
     id: 'before-you-build',
     kind: 'skill',
     depts: ['research'],
     group: 'planejamento',
+    manualOnly: true,
     source: { repo: 'wshobson/agents', path: 'plugins/before-you-build/skills/before-you-build', ref: 'main' },
     summary:
       'Pre-mortem de produto/feature em 7 lentes de risco (demanda, posicionamento, monetização, retenção, confiança, distribuição, adoção) — prioriza a suposição mais arriscada e o menor passo de validação.',
@@ -1792,6 +1797,7 @@ export const CURATED_SKILLS: SkillDef[] = [
     kind: 'skill',
     depts: ['research'],
     group: 'planejamento',
+    manualOnly: true,
     source: { repo: 'rampstackco/claude-skills', path: 'skills/roadmap-planning', ref: 'main' },
     summary:
       'Backlog → roadmap defensável em 8 passos com modelagem HONESTA de capacidade (40–70%, nunca 100%) e lista "Not now" obrigatória.',

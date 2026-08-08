@@ -1,166 +1,238 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 import {
   bundledBodySha,
+  bundledPackageSha,
   selectStaleBundledIds
 } from '../src/main/bundledSkillRevision.ts'
 import { BUNDLED_SKILLS } from '../src/main/skillsBundled.ts'
+import { BUNDLED_AGENTS } from '../src/main/agentsBundled.ts'
 import {
   assessSkillPackage,
   skillPackageBlockMessage
 } from '../src/main/skillPackageSecurity.ts'
 import {
-  missingMandatoryFrontendStandard,
-  selectFastQaUiSkillIds,
+  IMPECCABLE_SKILL_ID,
+  missingMandatoryUiPhaseSkills,
+  skillCompatibilityIssue,
+  SYNKORA_PLANNING_STANDARD_ID,
   SYNKORA_FRONTEND_STANDARD_ID,
+  SYNKORA_REVIEW_STANDARD_ID,
+  SYNKORA_RUNTIME_QA_ID,
+  SYNKORA_UI_QA_ID,
   withMandatoryFrontendStandard
 } from '../src/main/skillsRouting.ts'
 
-const matches = BUNDLED_SKILLS.filter((skill) => skill.id === SYNKORA_FRONTEND_STANDARD_ID)
-const standard = matches[0]
-const body = standard?.bundledBody ?? ''
+function exactlyOne(id) {
+  const matches = BUNDLED_SKILLS.filter((skill) => skill.id === id)
+  assert.equal(matches.length, 1, `esperava exatamente um pacote ${id}`)
+  return matches[0]
+}
 
-test('a biblioteca contém uma única régua frontend válida e autocontida', () => {
-  assert.equal(matches.length, 1)
+const standard = exactlyOne(SYNKORA_FRONTEND_STANDARD_ID)
+const uiQa = exactlyOne(SYNKORA_UI_QA_ID)
+const planning = exactlyOne(SYNKORA_PLANNING_STANDARD_ID)
+const review = exactlyOne(SYNKORA_REVIEW_STANDARD_ID)
+const runtimeQa = exactlyOne(SYNKORA_RUNTIME_QA_ID)
+
+test('personas bundled declare helper phase and derive their real tool capabilities', () => {
+  assert.ok(BUNDLED_AGENTS.length > 0)
+  for (const agent of BUNDLED_AGENTS) {
+    assert.deepEqual(agent.allowedPhases, ['helper'], agent.id)
+    assert.equal(agent.requiresCapabilities?.includes('read'), true, agent.id)
+  }
+  for (const id of [
+    'responsive-auditor',
+    'e2e-scenario-author',
+    'playwright-test-planner',
+    'playwright-test-generator',
+    'playwright-test-healer'
+  ]) {
+    const agent = BUNDLED_AGENTS.find((candidate) => candidate.id === id)
+    assert.ok(agent, id)
+    assert.equal(agent.requiresCapabilities?.includes('browser'), true, id)
+    assert.deepEqual(skillCompatibilityIssue(agent, 'helper', ['read', 'write', 'shell']), {
+      id,
+      reason: 'capability',
+      missingCapabilities: ['browser']
+    })
+  }
+})
+
+function packageFiles(definition) {
+  return {
+    [definition.kind === 'agent' ? 'agent.md' : 'SKILL.md']: definition.bundledBody,
+    ...(definition.bundledFiles ?? {})
+  }
+}
+
+function materializePackage(root, definition) {
+  for (const [relativePath, content] of Object.entries(packageFiles(definition))) {
+    const destination = join(root, ...relativePath.split('/'))
+    mkdirSync(dirname(destination), { recursive: true })
+    writeFileSync(destination, content, 'utf8')
+  }
+}
+
+test('contrato de UI e QA são pacotes progressivos distintos e autocontidos', () => {
   assert.equal(standard.kind, 'skill')
   assert.deepEqual(standard.depts, ['front', 'design', 'qa'])
-  assert.deepEqual(standard.defaultFor, ['front', 'design', 'qa'])
   assert.equal(standard.source.repo, 'synkora/bundled')
-  assert.ok(!body.startsWith('\uFEFF'), 'SKILL.md embutido não pode carregar BOM')
-  assert.match(body, /^---\nname: synkora-frontend-standard\n/)
-  assert.match(body, /description: .*including localized FAST fixes/)
-  assert.ok(body.split(/\r?\n/).length <= 420, 'a skill deve manter progressive disclosure')
+  assert.match(standard.bundledBody, /^---\nname: synkora-frontend-standard\n/)
+  assert.ok(!standard.bundledBody.startsWith('\uFEFF'))
+  assert.ok(standard.bundledBody.split(/\r?\n/).length <= 100)
+  assert.deepEqual(Object.keys(standard.bundledFiles).sort(), [
+    'references/composition.md',
+    'references/evidence.md',
+    'references/responsive-content.md'
+  ])
+
+  assert.equal(uiQa.kind, 'skill')
+  assert.deepEqual(uiQa.depts, ['qa'])
+  assert.deepEqual(uiQa.defaultFor, ['qa'])
+  assert.match(uiQa.bundledBody, /^---\nname: synkora-ui-qa\n/)
+  assert.ok(!uiQa.bundledBody.startsWith('\uFEFF'))
+  assert.ok(uiQa.bundledBody.split(/\r?\n/).length <= 80)
+  assert.deepEqual(Object.keys(uiQa.bundledFiles).sort(), [
+    'references/runtime-checks.md',
+    'references/visual-review.md'
+  ])
 })
 
-test('o pacote embutido passa pelo mesmo gate de supply chain usado na instalação', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'synkora-frontend-standard-'))
-  try {
-    writeFileSync(join(directory, 'SKILL.md'), body, 'utf8')
+test('a árvore multi-arquivo completa passa pelo gate de supply chain', (t) => {
+  for (const definition of [standard, uiQa]) {
+    const directory = mkdtempSync(join(tmpdir(), `synkora-${definition.id}-`))
+    t.after(() => rmSync(directory, { recursive: true, force: true }))
+    materializePackage(directory, definition)
     const assessment = assessSkillPackage(directory)
-    assert.equal(assessment.filesScanned, 1)
-    assert.equal(skillPackageBlockMessage(assessment), undefined)
-  } finally {
-    rmSync(directory, { recursive: true, force: true })
+    assert.equal(
+      assessment.filesScanned,
+      1 + Object.keys(definition.bundledFiles ?? {}).length,
+      definition.id
+    )
+    assert.equal(skillPackageBlockMessage(assessment), undefined, definition.id)
   }
 })
 
-test('o corpo torna harmonia um gate visual independente e não compensável', () => {
+test('o entrypoint curto governa autoridade e carrega detalhes sob demanda', () => {
+  const body = standard.bundledBody
+  const flattened = body.replace(/\s+/g, ' ')
   for (const expected of [
     'Completion is conjunctive',
-    'READY = visual gate PASS',
-    'Never average these verdicts',
-    'HARD GATE',
-    'CONTEXTUAL DEFAULT',
-    'Robin Williams',
-    'Müller-Brockmann',
-    'Marcotte, Simmons',
-    'Wroblewski',
-    'Norman/Cooper/Tidwell',
-    'Nielsen/Krug',
-    'Refactoring UI',
-    'WCAG 2.2',
-    'Do not stack aesthetic-direction or taste skills',
-    'Four passes with separate owners',
-    '**SHAPE**',
-    '**CRAFT**',
-    '**CRITIQUE**',
-    '**AUDIT**',
-    'surface contract',
-    'preferred co-row',
-    'one dominant region',
-    'role budgets, not numeric quotas',
-    'Compose region packing explicitly',
-    'sparse auto-placement',
-    'one optical silhouette',
-    'Define repeated-item anatomy',
-    'deliberate item-owned rail',
-    'Gestalt grouping',
-    'Run a removal pass',
-    'composition wins',
-    'A tie does not validate a design skill',
-    'Do not argue preference away with extra features',
-    'When the owner/designated human prefers the baseline',
-    'material visual ambiguity',
-    'min-width: 0',
-    'minmax(0, 1fr)',
-    'Never let Grid/Flex auto-placement decide',
-    'Siblings of the same semantic rank',
-    'Every enabled affordance passes only',
-    'Use local scrolling when the surface contract names',
-    'AUDIT control state against affected content',
-    'Single-line ellipsis',
-    'Copy uses the full value',
-    'Select the affected-width matrix by blast radius',
-    'absolute regional gate before any pairwise preference',
-    'Every critical region must pass',
-    'neither is acceptable',
-    'every reachable topology breakpoint',
-    'terminal partial rows with unanchored actions',
-    'intentional negative space is not a packing failure',
-    'WCAG 2.5.8',
-    'two animation frames',
-    'accessible name plus implicit/explicit role',
-    'synthetic fixtures',
-    'QA rejects unsanitized evidence',
-    'untrusted task data',
-    'auditoria synkora-frontend-standard',
-    'validar com uma pessoa'
+    'explicit user intent',
+    'Select exactly one visual method',
+    'invoke only that operation',
+    'Do not open its general menu',
+    'independent synkora-ui-qa skill',
+    '[composition.md](references/composition.md)',
+    '[responsive-content.md](references/responsive-content.md)',
+    '[evidence.md](references/evidence.md)',
+    'Do not report perfection'
   ]) {
-    assert.ok(body.includes(expected), `contrato essencial ausente: ${expected}`)
+    assert.ok(flattened.includes(expected), `contrato essencial ausente: ${expected}`)
   }
 
-  assert.doesNotMatch(body, /What the script can check, the eye never re-checks/i)
-  assert.doesNotMatch(body, /Cancel\/Esc\/backdrop blocked/i)
-  assert.doesNotMatch(body, /TOUCH: hit areas ≥ 44px/)
-  assert.doesNotMatch(body, /A skip link appears only on focus/)
-  assert.doesNotMatch(body, /popovers originate from their trigger, not an arbitrary center/)
-  assert.doesNotMatch(body, /maximum (?:of )?\d+ cards/i)
-  assert.doesNotMatch(body, /use (?:all|multiple) (?:aesthetic|visual) skills/i)
-  assert.doesNotMatch(body, /44×44[\s\S]{0,120}40×40[\s\S]{0,120}32×32/)
-  assert.doesNotMatch(body, /voice \d+ \/ tasks \d+ \/ calendar \d+/i)
   assert.doesNotMatch(body, /\b(?:CAIS|REBITE)\b/)
-  assert.doesNotMatch(body, /\b768\b/)
   assert.doesNotMatch(body, /sidebar (?:must|always|is required)/i)
   assert.doesNotMatch(body, /actions? (?:must|always) (?:sit|go|stay|align) (?:on|to) the right/i)
+  assert.doesNotMatch(body, /use (?:all|multiple) (?:aesthetic|visual) skills/i)
+
+  const composition = standard.bundledFiles['references/composition.md']
+  const responsive = standard.bundledFiles['references/responsive-content.md']
+  const evidence = standard.bundledFiles['references/evidence.md']
+  assert.match(composition, /Place an action at the smallest scope it governs/)
+  assert.match(composition, /Group filters by the content they affect/)
+  assert.match(composition, /Long titles may change the identity region's\s+height/)
+  assert.match(composition, /Run one removal pass/)
+  assert.match(responsive, /min-width: 0/)
+  assert.match(responsive, /single-line ellipsis/)
+  assert.match(responsive, /Truncation changes presentation, never the source value/)
+  assert.match(responsive, /Every enabled control must produce the result/)
+  assert.match(evidence, /Compare like for like/)
+  assert.match(evidence, /Automation can reveal geometry/)
+  assert.match(evidence, /It\s+cannot prove harmony/)
+  assert.match(evidence, /validar com uma pessoa/)
 })
 
-test('o fingerprint do conteúdo atualiza legado e preserva instalação idêntica', () => {
-  const sha = bundledBodySha(body)
+test('QA permanece independente e separa veredito visual de runtime', () => {
+  const body = uiQa.bundledBody
+  const flattened = body.replace(/\s+/g, ' ')
+  for (const expected of [
+    'independent reviewer',
+    'cold visual pass',
+    'Do not assign a numerical beauty score',
+    '[visual-review.md](references/visual-review.md)',
+    '[runtime-checks.md](references/runtime-checks.md)',
+    'A clean runtime pass cannot award visual harmony',
+    'Never claim perfection'
+  ]) {
+    assert.ok(flattened.includes(expected), `contrato de QA ausente: ${expected}`)
+  }
+  assert.match(uiQa.bundledFiles['references/visual-review.md'], /Apply a squint test/)
+  assert.match(uiQa.bundledFiles['references/visual-review.md'], /Each critical region/)
+  assert.match(uiQa.bundledFiles['references/runtime-checks.md'], /Exercise representative short, long, missing/)
+  assert.match(uiQa.bundledFiles['references/runtime-checks.md'], /A tool signal is a\s+hypothesis/)
+  assert.match(body, /Do not modify\s+the implementation/i)
+})
+
+test('fingerprint cobre caminhos e bytes da árvore inteira de forma determinística', () => {
+  const files = standard.bundledFiles
+  const reversed = Object.fromEntries(Object.entries(files).reverse())
+  const sha = bundledPackageSha(standard.bundledBody, files)
   assert.match(sha, /^bundled:[a-f0-9]{64}$/)
-  assert.equal(sha, bundledBodySha(body))
-  assert.notEqual(sha, bundledBodySha(`${body}\nchanged`))
-
-  assert.deepEqual(
-    selectStaleBundledIds([standard], [
-      { id: standard.id, installed: true, sha: 'bundled' }
-    ]),
-    [standard.id],
-    'a instalação legada precisa ser promovida uma vez'
+  assert.equal(sha, bundledPackageSha(standard.bundledBody, reversed))
+  assert.notEqual(sha, bundledBodySha(standard.bundledBody))
+  assert.notEqual(
+    sha,
+    bundledPackageSha(standard.bundledBody, {
+      ...files,
+      'references/composition.md': `${files['references/composition.md']}changed\n`
+    })
   )
-  assert.deepEqual(
-    selectStaleBundledIds([standard], [
-      { id: standard.id, installed: true, sha }
-    ]),
-    [],
-    'bytes idênticos não devem reinstalar a skill a cada boot'
+  assert.notEqual(
+    sha,
+    bundledPackageSha(standard.bundledBody, {
+      ...Object.fromEntries(
+        Object.entries(files).filter(([path]) => path !== 'references/composition.md')
+      ),
+      'references/composition-renamed.md': files['references/composition.md']
+    })
   )
-  assert.deepEqual(
-    selectStaleBundledIds(
-      [standard],
-      [{ id: standard.id, installed: true, sha }],
-      () => false
-    ),
-    [standard.id],
-    'manifest correto não pode mascarar bytes adulterados no pacote'
+  assert.notEqual(
+    bundledPackageSha('same body', {}, 'SKILL.md'),
+    bundledPackageSha('same body', {}, 'agent.md')
   )
-  assert.deepEqual(selectStaleBundledIds([standard], []), [standard.id])
 })
 
-test('front/design e QA FAST não conseguem pular a régua visual', () => {
+test('revisão de bundle promove legado e qualquer referência divergente', () => {
+  const sha = bundledPackageSha(standard.bundledBody, standard.bundledFiles)
+  const installed = [{ id: standard.id, installed: true, sha }]
+  assert.deepEqual(selectStaleBundledIds([standard], installed), [])
+  assert.deepEqual(
+    selectStaleBundledIds([standard], [
+      { id: standard.id, installed: true, sha: bundledBodySha(standard.bundledBody) }
+    ]),
+    [standard.id],
+    'fingerprint legado de um arquivo precisa ser promovido'
+  )
+  assert.deepEqual(selectStaleBundledIds([standard], installed, () => false), [standard.id])
+  assert.deepEqual(selectStaleBundledIds([standard], []), [standard.id])
+
+  const changed = {
+    ...standard,
+    bundledFiles: {
+      ...standard.bundledFiles,
+      'references/evidence.md': `${standard.bundledFiles['references/evidence.md']}changed\n`
+    }
+  }
+  assert.deepEqual(selectStaleBundledIds([changed], installed), [standard.id])
+})
+
+test('DEV e QA de UI não conseguem pular seus contratos obrigatórios', () => {
   assert.deepEqual(withMandatoryFrontendStandard([], 'front'), [standard.id])
   assert.deepEqual(withMandatoryFrontendStandard([], 'design'), [standard.id])
   assert.deepEqual(withMandatoryFrontendStandard(['custom', standard.id], 'front'), [
@@ -169,52 +241,52 @@ test('front/design e QA FAST não conseguem pular a régua visual', () => {
   ])
   assert.deepEqual(withMandatoryFrontendStandard(['custom'], 'back'), ['custom'])
 
-  const qa = [standard.id, 'webapp-testing', 'better-accessibility']
-  assert.deepEqual(selectFastQaUiSkillIds(qa, true), [standard.id])
-  assert.deepEqual(selectFastQaUiSkillIds(qa, false), [])
-
-  assert.equal(missingMandatoryFrontendStandard([standard.id], 'front', 'dev'), false)
-  assert.equal(missingMandatoryFrontendStandard([], 'front', 'dev'), true)
-  assert.equal(missingMandatoryFrontendStandard([], 'design', 'qa'), true)
-  assert.equal(missingMandatoryFrontendStandard([], 'front', 'review'), false)
-  assert.equal(missingMandatoryFrontendStandard([], 'back', 'qa'), false)
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'front', 'dev'), [
+    standard.id,
+    IMPECCABLE_SKILL_ID
+  ])
+  assert.deepEqual(
+    missingMandatoryUiPhaseSkills([standard.id], 'front', 'dev'),
+    [IMPECCABLE_SKILL_ID]
+  )
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'design', 'qa'), [standard.id, uiQa.id])
+  assert.deepEqual(
+    missingMandatoryUiPhaseSkills([standard.id], 'front', 'qa'),
+    [uiQa.id]
+  )
+  assert.deepEqual(
+    missingMandatoryUiPhaseSkills([standard.id, uiQa.id], 'front', 'qa'),
+    []
+  )
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'front', 'review'), [review.id])
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'back', 'qa', false), [runtimeQa.id])
+  assert.equal(planning.orchestratorDefault, true)
+  assert.deepEqual(planning.allowedPhases, ['planning'])
 })
 
-test('o boot e os prompts usam a versão atual antes do primeiro pane', () => {
-  const indexSource = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
-  const librarySource = readFileSync(
-    new URL('../src/main/skillsLibrary.ts', import.meta.url),
-    'utf8'
-  )
-  const workspaceSource = readFileSync(
-    new URL('../src/main/workspaceSkills.ts', import.meta.url),
-    'utf8'
-  )
+test('o runtime instala, valida e entrega pacotes multi-arquivo em vez de só SKILL.md', () => {
+  const indexSource = new URL('../src/main/index.ts', import.meta.url)
+  const librarySource = new URL('../src/main/skillsLibrary.ts', import.meta.url)
+  const indexText = requireSource(indexSource)
+  const libraryText = requireSource(librarySource)
 
-  assert.match(indexSource, /app\.whenReady\(\)\.then\(async \(\) =>/)
-  assert.match(indexSource, /await skillsLib\.installMany\(staleBundled\)/)
-  assert.match(indexSource, /const unresolvedBundled = selectStaleBundledIds/)
-  assert.match(indexSource, /skillsLib\.bundledPackageMatches\(id\)/)
-  assert.match(indexSource, /dialog\.showErrorBox\(/)
-  assert.doesNotMatch(indexSource, /setTimeout\(\(\) => \{\s*const missing = BUNDLED_SKILLS/)
-  assert.match(indexSource, /withMandatoryFrontendStandard\(/)
-  assert.match(indexSource, /selectFastQaUiSkillIds\(/)
-  assert.match(indexSource, /missingMandatoryFrontendStandard\(/)
-  assert.match(indexSource, /required-frontend-skill-missing/)
-  assert.match(indexSource, /FAST narrows blast radius, never visual quality/)
-  assert.match(indexSource, /Use the isolated Playwright MCP for rendered UI verification/)
-  assert.match(indexSource, /FAST narrows the affected state\/viewport matrix/)
-  assert.doesNotMatch(
-    indexSource,
-    /phase === 'qa'[\s\S]{0,180}executionMode !== 'fast'[\s\S]{0,180}detectRuntimeScript/
-  )
-  assert.match(librarySource, /sha: bundledBodySha\(d\.bundledBody\)/)
-  assert.match(librarySource, /bundledPackageMatches\(id: string\)/)
-  assert.match(librarySource, /if \(def\?\.bundledBody && !this\.bundledPackageMatches\(id\)\)/)
-  assert.match(librarySource, /if \(def\.bundledBody && !this\.bundledPackageMatches\(id\)\) continue/)
-  assert.match(librarySource, /if \(this\.byId\(id\)\?\.bundledBody\)/)
-  assert.match(librarySource, /if \(def\.bundledBody\) \{\s*protectedBundledPackages\+\+/)
-  assert.match(librarySource, /managedWorkspaceSkillContentsMatch\(join\(this\.libDir, id\), dest\)/)
-  assert.match(librarySource, /Boolean\(def\.bundledBody\)/)
-  assert.match(workspaceSource, /managedWorkspaceSkillContentsMatch\(source, destination\)/)
+  assert.match(indexText, /selectStaleBundledIds/)
+  assert.match(indexText, /skillsLib\.bundledPackageMatches\(id\)/)
+  assert.match(indexText, /selectPhaseSkillPlan\(/)
+  assert.match(indexText, /missingMandatoryUiPhaseSkills\(/)
+  assert.match(indexText, /skillRuntime\.planPane\(/)
+  assert.match(indexText, /skillsLib\.loadActivationPackage\(/)
+
+  assert.match(libraryText, /function writeBundledPackage\(/)
+  assert.match(libraryText, /safeBundledDestination\(/)
+  assert.match(libraryText, /bundledFiles/)
+  assert.match(libraryText, /bundledPackageSha\(/)
+  assert.match(libraryText, /bundledPackageMatches\(id: string\)/)
+  assert.match(libraryText, /expected\.length !== actual\.length/)
+  assert.match(libraryText, /loadActivationPackage\(/)
 })
+
+function requireSource(url) {
+  // Keep source-contract checks local to this test; behavior is covered above.
+  return readFileSync(url, 'utf8')
+}

@@ -9,8 +9,10 @@ import {
   writeFileSync
 } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
 
 export const PROJECT_PLAN_SCHEMA_VERSION = 2 as const
+export const PROJECT_PLAN_TRUST_CONTRACT_VERSION = 1 as const
 const LEGACY_PROJECT_PLAN_SCHEMA_VERSION = 1 as const
 const MAX_PROJECT_PLAN_ITEMS = 500
 export const PROJECT_PLAN_DIRECTORY = '.synkora'
@@ -72,6 +74,30 @@ export interface ProjectPlanningSkillUse {
   stage: ProjectPlanningSkillStage
   contribution: string
   usedAt: string
+  /** Metadados ausentes identificam apenas registros legados/autodeclarados. */
+  contractVersion?: 1
+  receiptId?: string
+  operation?: string
+  version?: string
+  fingerprint?: string
+  phaseRun?: string
+  appliedAt?: string
+  /** updatedAt exato da fotografia do plano produzida por este receipt. */
+  planningRevision?: string
+  /** SHA-256 canonico do conteudo planejado; impede preservar o receipt ao
+   * trocar silenciosamente objetivo, escopo, decisoes ou roadmap. */
+  planningFingerprint?: string
+}
+
+/** Carimbo de migração guardado fora do workspace. Ele existe apenas para
+ * planos que já estavam aprovados antes do contrato de receipts; o JSON do
+ * projeto nunca pode conceder esse grandfathering a si próprio. */
+export interface ProjectPlanLegacyApproval {
+  contractVersion: typeof PROJECT_PLAN_TRUST_CONTRACT_VERSION
+  planningRevision: string
+  planningFingerprint: string
+  approvedAt: string
+  migratedAt: string
 }
 
 export interface ProjectPlanItem {
@@ -115,6 +141,15 @@ export interface ProjectPlan {
   roadmapMeta: ProjectPlanRoadmapMeta
   roadmap: ProjectPlanItem[]
   planningSkills: ProjectPlanningSkillUse[]
+  /** Revisao exclusiva do conteudo planejado. Eventos operacionais (aprovar,
+   * iniciar/concluir missao, publicar versao) mudam updatedAt, mas nunca
+   * invalidam o receipt que produziu esta fotografia. */
+  planningRevision: string
+  planningFingerprint: string
+  /** Planos aprovados antes do contrato de receipts continuam executaveis,
+   * mas ficam explicitamente identificados. Todo rascunho novo e toda revisao
+   * precisam voltar a receipt_required ate um novo save governado. */
+  planningGovernance: 'receipt_required' | 'receipt_verified' | 'legacy_unverified'
   activeItemIds: string[]
   readyItemIds: string[]
   currentWaveId?: string
@@ -154,7 +189,84 @@ export interface ProjectPlanDraftInput {
   /** merge é o padrão seguro; replace troca somente itens ainda sem missão real. */
   roadmapMode?: 'merge' | 'replace'
   roadmap?: ProjectPlanDraftItem[]
+  /** Preenchido somente pelo harness depois de validar um receipt ativo. */
+  planningEvidence?: ProjectPlanningSkillUse
   now?: string
+}
+
+export interface ProjectPlanValidationOptions {
+  /** Quando true, a evidencia embutida no workspace nao basta: ela precisa
+   * coincidir byte a byte com o carimbo guardado pelo control-plane. */
+  requireTrustedEvidence?: boolean
+  trustedEvidence?: ProjectPlanningSkillUse
+  trustedLegacyApproval?: ProjectPlanLegacyApproval
+}
+
+export function projectPlanContentFingerprint(plan: ProjectPlan): string {
+  const content = {
+    projectName: plan.projectName,
+    problem: plan.problem,
+    audience: plan.audience,
+    vision: plan.vision,
+    successCriteria: plan.successCriteria,
+    constraints: plan.constraints,
+    scope: plan.scope,
+    decisions: plan.decisions,
+    roadmapMeta: plan.roadmapMeta,
+    roadmap: plan.roadmap.map((item) => ({
+      id: item.id,
+      title: item.title,
+      objective: item.objective,
+      dependsOn: item.dependsOn,
+      scope: item.scope,
+      acceptanceCriteria: item.acceptanceCriteria,
+      wave: item.wave,
+      version: item.version
+        ? {
+            name: item.version.name,
+            theme: item.version.theme,
+            goal: item.version.goal
+          }
+        : undefined
+    }))
+  }
+  return createHash('sha256').update(JSON.stringify(content)).digest('hex')
+}
+
+export function legacyProjectPlanApproval(
+  plan: ProjectPlan,
+  migratedAt: string = new Date().toISOString()
+): ProjectPlanLegacyApproval | undefined {
+  if (
+    plan.planningGovernance !== 'legacy_unverified' ||
+    !['approved', 'in_progress', 'awaiting_release', 'done'].includes(plan.status) ||
+    typeof plan.approvedAt !== 'string' ||
+    plan.approvedAt.trim().length === 0
+  ) {
+    return undefined
+  }
+  const planningFingerprint = projectPlanContentFingerprint(plan)
+  if (plan.planningFingerprint !== planningFingerprint) return undefined
+  return {
+    contractVersion: PROJECT_PLAN_TRUST_CONTRACT_VERSION,
+    planningRevision: plan.planningRevision,
+    planningFingerprint,
+    approvedAt: plan.approvedAt,
+    migratedAt
+  }
+}
+
+function sameLegacyProjectPlanApproval(
+  plan: ProjectPlan,
+  trusted: ProjectPlanLegacyApproval | undefined
+): boolean {
+  return Boolean(
+    trusted &&
+      trusted.contractVersion === PROJECT_PLAN_TRUST_CONTRACT_VERSION &&
+      trusted.planningRevision === plan.planningRevision &&
+      trusted.planningFingerprint === projectPlanContentFingerprint(plan) &&
+      trusted.approvedAt === plan.approvedAt
+  )
 }
 
 export interface RecordProjectPlanningSkillUseInput {
@@ -194,6 +306,9 @@ export interface StartProjectMissionInput {
     versionName: string
   }
   now?: string
+  /** Produção passa o carimbo do control-plane para revalidar a fotografia
+   * imediatamente antes do vínculo. Testes puros podem omitir. */
+  validation?: ProjectPlanValidationOptions
 }
 
 export interface CompleteProjectMissionInput {
@@ -314,11 +429,15 @@ export function ensureGreenfieldProjectPlan(
     roadmapMeta: { complete: false },
     roadmap: [],
     planningSkills: [],
+    planningRevision: now,
+    planningFingerprint: '',
+    planningGovernance: 'receipt_required',
     activeItemIds: [],
     readyItemIds: [],
     createdAt: now,
     updatedAt: now
   }
+  plan.planningFingerprint = projectPlanContentFingerprint(plan)
   persistProjectPlan(projectRoot, plan)
   return { greenfield: true, created: true, plan }
 }
@@ -439,9 +558,32 @@ export function saveProjectPlanDraft(
         : applyListDraft(existing.decisions, input.decisions, listMode),
     roadmapMeta: mergeRoadmapMeta(existing.roadmapMeta, input.roadmapMeta),
     roadmap,
+    planningSkills: input.planningEvidence
+      ? [
+          ...existing.planningSkills.filter(
+            (entry) => entry.receiptId !== input.planningEvidence?.receiptId
+          ),
+          {
+            ...input.planningEvidence,
+            usedAt: now,
+            appliedAt: input.planningEvidence.appliedAt || now,
+            planningRevision: now
+          }
+        ].slice(-100)
+      : [...existing.planningSkills],
+    planningRevision: now,
+    planningFingerprint: '',
+    planningGovernance: input.planningEvidence ? 'receipt_verified' : 'receipt_required',
     updatedAt: now,
     approvedAt: hasActive ? existing.approvedAt : undefined,
     completedAt: undefined
+  }
+  plan.planningFingerprint = projectPlanContentFingerprint(plan)
+  if (input.planningEvidence) {
+    const currentEvidence = plan.planningSkills.find(
+      (entry) => entry.receiptId === input.planningEvidence?.receiptId
+    )
+    if (currentEvidence) currentEvidence.planningFingerprint = plan.planningFingerprint
   }
   refreshNavigation(plan)
   persistProjectPlan(projectRoot, plan)
@@ -483,7 +625,54 @@ export function recordProjectPlanningSkillUse(
   return plan
 }
 
-export function validateProjectPlanForApproval(plan: ProjectPlan): string[] {
+function samePlanningEvidence(
+  left: ProjectPlanningSkillUse,
+  right: ProjectPlanningSkillUse
+): boolean {
+  return (
+    left.id === right.id &&
+    left.stage === right.stage &&
+    left.contribution === right.contribution &&
+    left.usedAt === right.usedAt &&
+    left.contractVersion === right.contractVersion &&
+    left.receiptId === right.receiptId &&
+    left.operation === right.operation &&
+    left.version === right.version &&
+    left.fingerprint === right.fingerprint &&
+    left.phaseRun === right.phaseRun &&
+    left.appliedAt === right.appliedAt &&
+    left.planningRevision === right.planningRevision &&
+    left.planningFingerprint === right.planningFingerprint
+  )
+}
+
+export function isVerifiedProjectPlanningEvidence(
+  entry: ProjectPlanningSkillUse | undefined,
+  planningRevision: string,
+  planningFingerprint: string
+): entry is ProjectPlanningSkillUse {
+  return Boolean(
+    entry &&
+      entry.id === 'synkora-planning-standard' &&
+      ['discovery', 'scope', 'decisions', 'roadmap', 'review'].includes(entry.stage) &&
+      entry.contribution.trim() &&
+      entry.usedAt.trim() &&
+      entry.contractVersion === 1 &&
+      entry.operation === 'plan' &&
+      entry.receiptId?.trim() &&
+      entry.version?.trim() &&
+      entry.fingerprint?.trim() &&
+      entry.phaseRun?.trim() &&
+      entry.appliedAt?.trim() &&
+      entry.planningRevision === planningRevision &&
+      entry.planningFingerprint === planningFingerprint
+  )
+}
+
+export function validateProjectPlanForApproval(
+  plan: ProjectPlan,
+  options: ProjectPlanValidationOptions = {}
+): string[] {
   const problems: string[] = []
   if (!clean(plan.problem)) problems.push('descreva o problema que o projeto resolve')
   if (!clean(plan.audience)) problems.push('defina para quem o projeto será construído')
@@ -502,6 +691,46 @@ export function validateProjectPlanForApproval(plan: ProjectPlan): string[] {
   }
   if (cleanList(plan.decisions).length === 0) {
     problems.push('registre as decisões de produto/arquitetura e pesquisas necessárias')
+  }
+  const calculatedPlanningFingerprint = projectPlanContentFingerprint(plan)
+  const fingerprintMatches = plan.planningFingerprint === calculatedPlanningFingerprint
+  const currentPlanningEvidence = plan.planningSkills.find((entry) =>
+    isVerifiedProjectPlanningEvidence(
+      entry,
+      plan.planningRevision,
+      calculatedPlanningFingerprint
+    )
+  )
+  const trustedEvidenceMatches =
+    !options.requireTrustedEvidence ||
+    Boolean(
+      currentPlanningEvidence &&
+        options.trustedEvidence &&
+        isVerifiedProjectPlanningEvidence(
+          options.trustedEvidence,
+          plan.planningRevision,
+          calculatedPlanningFingerprint
+        ) &&
+        samePlanningEvidence(currentPlanningEvidence, options.trustedEvidence)
+    )
+  const approvedLegacy =
+    plan.planningGovernance === 'legacy_unverified' &&
+    (plan.status === 'approved' ||
+      plan.status === 'in_progress' ||
+      plan.status === 'awaiting_release' ||
+      plan.status === 'done') &&
+    (!options.requireTrustedEvidence ||
+      sameLegacyProjectPlanApproval(plan, options.trustedLegacyApproval))
+  if (
+    !approvedLegacy &&
+    (plan.planningGovernance !== 'receipt_verified' ||
+      !fingerprintMatches ||
+      !currentPlanningEvidence ||
+      !trustedEvidenceMatches)
+  ) {
+    problems.push(
+      'salve novamente a revisão atual usando o receipt do método de planejamento entregue pelo Synkora'
+    )
   }
   if (!plan.roadmapMeta.complete) {
     problems.push('confirme que o roadmap foi decomposto por completo antes da aprovação')
@@ -533,9 +762,13 @@ export function validateProjectPlanForApproval(plan: ProjectPlan): string[] {
   return problems
 }
 
-export function approveProjectPlan(projectRoot: string, now?: string): ProjectPlan {
+export function approveProjectPlan(
+  projectRoot: string,
+  now?: string,
+  options: ProjectPlanValidationOptions = {}
+): ProjectPlan {
   const plan = requirePlan(projectRoot)
-  const problems = validateProjectPlanForApproval(plan)
+  const problems = validateProjectPlanForApproval(plan, options)
   if (problems.length > 0) {
     throw new ProjectPlanError(
       'invalid_plan',
@@ -600,7 +833,7 @@ export function startProjectMission(
       'Aprove o plano mestre antes de abrir a primeira missão.'
     )
   }
-  const planProblems = validateProjectPlanForApproval(plan)
+  const planProblems = validateProjectPlanForApproval(plan, input.validation)
   if (planProblems.length > 0) {
     throw new ProjectPlanError(
       'approval_required',
@@ -1129,7 +1362,11 @@ export function renderProjectPlanMarkdown(plan: ProjectPlan): string {
   } else {
     for (const entry of plan.planningSkills) {
       lines.push(
-        `- **${entry.id}** · ${planningStageLabel(entry.stage)} · ${entry.contribution} (${entry.usedAt})`
+        `- **${entry.id}** · ${planningStageLabel(entry.stage)} · ${entry.contribution} (${entry.usedAt})${
+          entry.receiptId && entry.planningRevision
+            ? ` · receipt \`${entry.receiptId}\` · revisão ${entry.planningRevision}`
+            : ' · legado não verificado'
+        }`
       )
     }
   }
@@ -1254,6 +1491,60 @@ function migrateStoredPlan(value: unknown): { plan: ProjectPlan; changed: boolea
     return { plan: value as ProjectPlan, changed: false }
   }
   const legacy = value as Record<string, unknown>
+  if (legacy.schemaVersion === PROJECT_PLAN_SCHEMA_VERSION) {
+    const current = legacy as unknown as ProjectPlan
+    const lastReceiptRevision = Array.isArray(current.planningSkills)
+      ? current.planningSkills
+          .slice()
+          .reverse()
+          .find((entry) => typeof entry?.planningRevision === 'string')?.planningRevision
+      : undefined
+    const planningRevision =
+      typeof current.planningRevision === 'string'
+        ? current.planningRevision
+        : lastReceiptRevision ?? current.updatedAt
+    const calculatedPlanningFingerprint = projectPlanContentFingerprint(current)
+    const planningFingerprint =
+      typeof current.planningFingerprint === 'string'
+        ? current.planningFingerprint
+        : calculatedPlanningFingerprint
+    const hasVerifiedReceipt = Array.isArray(current.planningSkills)
+      ? current.planningSkills.some((entry) =>
+          isVerifiedProjectPlanningEvidence(
+            entry,
+            planningRevision,
+            planningFingerprint
+          )
+        )
+      : false
+    const knownGovernance = [
+      'receipt_required',
+      'receipt_verified',
+      'legacy_unverified'
+    ].includes(current.planningGovernance)
+    const planningGovernance = knownGovernance
+      ? current.planningGovernance
+      :
+      (hasVerifiedReceipt
+        ? 'receipt_verified'
+        : current.status === 'approved' ||
+            current.status === 'in_progress' ||
+            current.status === 'awaiting_release' ||
+            current.status === 'done'
+          ? 'legacy_unverified'
+          : 'receipt_required')
+    if (
+      current.planningRevision === planningRevision &&
+      current.planningFingerprint === planningFingerprint &&
+      current.planningGovernance === planningGovernance
+    ) {
+      return { plan: current, changed: false }
+    }
+    return {
+      plan: { ...current, planningRevision, planningFingerprint, planningGovernance },
+      changed: true
+    }
+  }
   if (legacy.schemaVersion !== LEGACY_PROJECT_PLAN_SCHEMA_VERSION) {
     return { plan: value as ProjectPlan, changed: false }
   }
@@ -1271,9 +1562,19 @@ function migrateStoredPlan(value: unknown): { plan: ProjectPlan; changed: boolea
     },
     roadmap,
     planningSkills: [],
+    planningRevision: String(legacy.updatedAt ?? ''),
+    planningFingerprint: '',
+    planningGovernance:
+      legacy.status === 'approved' ||
+      legacy.status === 'in_progress' ||
+      legacy.status === 'awaiting_release' ||
+      legacy.status === 'done'
+        ? 'legacy_unverified'
+        : 'receipt_required',
     activeItemIds: roadmap.filter((item) => item.status === 'active').map((item) => item.id),
     readyItemIds: []
   } as unknown as ProjectPlan
+  plan.planningFingerprint = projectPlanContentFingerprint(plan)
   refreshNavigation(plan)
   return { plan, changed: true }
 }
@@ -1848,6 +2149,11 @@ function assertStoredPlan(value: unknown): asserts value is ProjectPlan {
         plan.roadmapMeta.expectedCount > MAX_PROJECT_PLAN_ITEMS)) ||
     !Array.isArray(plan.roadmap) ||
     !Array.isArray(plan.planningSkills) ||
+    typeof plan.planningRevision !== 'string' ||
+    typeof plan.planningFingerprint !== 'string' ||
+    !['receipt_required', 'receipt_verified', 'legacy_unverified'].includes(
+      plan.planningGovernance ?? ''
+    ) ||
     !Array.isArray(plan.activeItemIds) ||
     plan.activeItemIds.some((id) => typeof id !== 'string') ||
     !Array.isArray(plan.readyItemIds) ||
@@ -1902,7 +2208,17 @@ function assertStoredPlan(value: unknown): asserts value is ProjectPlan {
       typeof entry.id !== 'string' ||
       !stages.includes(entry.stage) ||
       typeof entry.contribution !== 'string' ||
-      typeof entry.usedAt !== 'string'
+      typeof entry.usedAt !== 'string' ||
+      (entry.contractVersion !== undefined && entry.contractVersion !== 1) ||
+      (entry.receiptId !== undefined && typeof entry.receiptId !== 'string') ||
+      (entry.operation !== undefined && typeof entry.operation !== 'string') ||
+      (entry.version !== undefined && typeof entry.version !== 'string') ||
+      (entry.fingerprint !== undefined && typeof entry.fingerprint !== 'string') ||
+      (entry.phaseRun !== undefined && typeof entry.phaseRun !== 'string') ||
+      (entry.appliedAt !== undefined && typeof entry.appliedAt !== 'string') ||
+      (entry.planningRevision !== undefined && typeof entry.planningRevision !== 'string') ||
+      (entry.planningFingerprint !== undefined &&
+        typeof entry.planningFingerprint !== 'string')
     ) {
       throw new ProjectPlanError('invalid_plan', 'Há um registro inválido de skill de planejamento.')
     }

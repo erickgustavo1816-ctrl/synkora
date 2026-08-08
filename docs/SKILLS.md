@@ -1,6 +1,8 @@
-# Synkora — Biblioteca de Skills (curadoria v2, 2026-07-29)
+# Synkora — Biblioteca de Skills (arquitetura v4, 2026-08-07)
 
-Skills que o Synkora instala da FONTE e injeta POR WORKSPACE nas execuções.
+Skills que o Synkora instala da fonte, seleciona por necessidade e entrega por
+receipt somente ao pane autorizado. A biblioteca pode ser grande; o contexto
+de cada execução é deliberadamente pequeno.
 Rodadas concluídas — TODAS as 8 funções cobertas: 1–2 = FRONT (30+16),
 3 = BACK+DEVOPS (39+16), 4 = QA (31+18), 5 = DESIGN (33+15), 6 = RESEARCH
 (33+11), 7 = COPY (34+14), 8 = CYBER (2026-07-30: 48+15+re-tags), 9 = DATA
@@ -10,23 +12,35 @@ A curadoria vem de varredura de mercado com verificação na fonte (todo SKILL.m
 aberto no repo real; paths, frontmatter `name` e branch conferidos em 2026-07-29).
 Fonte da verdade em código: `src/main/skillsCatalog.ts`.
 
-## Planejamento no Maestro (F6.1)
+## Planejamento no Maestro
 
-Toda skill instalada do grupo `planejamento` é materializada no workspace do
-Maestro e do orquestrador. A persona recebe o menu que realmente foi copiado,
-separando disponibilidade de uso. No plano mestre greenfield, o Maestro registra
-somente depois de aplicar um método (`record_planning_skill_use`: id, etapa e
-contribuição concreta). O histórico aparece em `PROJECT_PLAN.md` e
-`board_status`; a aprovação exige cobertura real de descoberta/desafio e de
-decomposição do roadmap quando esse menu está disponível.
+O Maestro e o orquestrador recebem **um único método** de planejamento:
+`synkora-planning-standard`. Não existe fallback externo. Se o pacote nativo
+não estiver disponível, o seletor retorna vazio em vez de substituí-lo por uma
+metodologia diferente. O playbook nativo traduz descoberta e decomposição
+para `save_project_plan`, `create_plan` e `create_tasks`, sem criar outro fluxo
+de docs, commits, worktrees ou subagentes. O pacote é entregue por um receipt
+novo a cada abertura do Maestro/orquestrador. `save_project_plan`,
+`create_plan` e `create_mission` recusam qualquer mutação sem esse receipt
+ativado e declarado; a identidade do pacote fica gravada na mesma fotografia
+do artefato. No plano mestre, um SHA-256 canônico liga a prova ao conteúdo e um
+carimbo no control-plane impede que editar o JSON do workspace reaproveite o
+receipt para outro roadmap. Não existe registro retroativo nem bypass por
+“raciocínio direto”. Planos já aprovados antes deste contrato continuam
+executáveis com a marca explícita `legacy_unverified`; proposta nova nunca usa
+essa exceção.
+
+As skills externas do grupo `planejamento` continuam instaláveis no catálogo
+como `manualOnly`, para usos manuais fora do Maestro. Elas nunca são injetadas
+no PM ou no orquestrador e sua instalação não altera o método nativo.
 
 ## Como o sistema funciona (F4 — implementado)
 
 - **Catálogo curado** (`skillsCatalog.ts`): id = `name:` do frontmatter upstream
   (a pasta instalada usa o id; a spec Agent Skills exige pasta = name).
 - **Instalação** (HOME → "biblioteca de skills" — global à máquina, serve
-  todos os universos; a página ✦ geral de cada projeto mostra só as
-  INSTALADAS da função com a ★ padrão por projeto): baixa a subpasta do repo
+  todos os universos; a página geral de cada projeto mostra apenas a
+  disponibilidade por função): baixa a subpasta do repo
   (GitHub commits→trees→raw, SEM git; sha do último commit da subpasta = versão
   pinada) para `userData/skills/lib/<id>`. UTF-8 puro — **BOM quebra o parse
   do frontmatter nos DOIS CLIs** (sondado). Routers instalam as dependências
@@ -37,32 +51,36 @@ decomposição do roadmap quando esse menu está disponível.
   skill do repo); só repo com HEAD novo paga 1 request por skill
   (`commits?path=`). Skill com update ganha badge ⟳; atualizar = re-baixar
   pinado no sha novo.
-- **Injeção por workspace** (nunca por seat — instalar tudo em todo seat
-  incharia o system prompt de todos os panes): antes do spawn do pane, as
-  skills escolhidas são copiadas para `<cwd>/.claude/skills/<id>` E
-  `<cwd>/.agents/skills/<id>` (dev claude pode abrir ajudante codex no mesmo
-  worktree). Sondado em binário real: claude 2.1.220 lê `.claude/skills`
-  (project) e `<CLAUDE_CONFIG_DIR>/skills` (user); codex 0.146 lê
-  `.agents/skills`, `.codex/skills` (repo) e `<CODEX_HOME>/skills` (user);
-  `.agents/skills` NÃO é lido pelo claude. O codex materializa skills de
-  sistema em `<CODEX_HOME>/skills/.system` — não tocar.
-- **Git nunca vê as skills injetadas**: `.claude/skills/`, `.agents/skills/` e
-  `.codex/skills/` entram no `info/exclude` do repo (common dir — vale para
-  todos os worktrees; não suja o .gitignore versionado; exclude não afeta
-  arquivos já trackeados pelo usuário).
-- **Quem escolhe**: o ORQUESTRADOR carimba `skills` por card
-  (`create_tasks.skills` / `update_task.skills`) e aconselha skills por
-  ajudante no fluxo de delegação (o dev repassa em `delegate.skills`).
-  `list_skills` (MCP) mostra id + quando usar + instalada. Cadeia no run:
-  carimbo do card > política da função (★ padrão na página geral,
-  `policies.skills`) > `defaultFor` da curadoria (instaladas). O prompt do
-  executor lista as skills injetadas com a dica de uso (`/nome` no claude,
-  `$nome` no codex).
+- **Roteamento mínimo por fase**: disponibilidade não significa injeção. DEV
+  recebe no máximo o contrato aplicável, uma operação estética e uma técnica;
+  REVIEW usa uma allowlist curta de revisão; QA de UI recebe o contrato e o
+  revisor independente `synkora-ui-qa`, nunca o método estético do DEV. Cada
+  departamento não visual pode receber uma única técnica-base `defaultFor`.
+- **Entrega privada por receipt**: o plano é congelado por pane/fase/rodada,
+  versão e fingerprint. O executor chama `activate_skill(receiptId)` e só então
+  o pacote é materializado numa raiz efêmera da sessão, fora do projeto e fora
+  das pastas autodetectadas por Claude/Codex. Uma skill do DEV não aparece no
+  QA; o boot e o encerramento varrem sobras de sessões interrompidas. Scripts,
+  referências, templates e assets relativos continuam disponíveis quando o
+  playbook selecionado os permite.
+- **Conclusão rastreável**: `report` exige os receipts obrigatórios ativados e
+  declarados em `skillApplications`. Isso prova seleção, entrega do conteúdo e
+  declaração; não prova qualidade. O QA independente decide o resultado.
+- **Busca limitada**: `list_skills` exige contexto (`query`, função ou tipo) e
+  devolve no máximo vinte itens. O catálogo inteiro nunca entra no prompt.
+- **Escolha explícita**: cards e ajudantes aceitam no máximo uma técnica
+  concreta e um especialista. Direções estéticas alternativas não são
+  empilhadas; UI usa `synkora-frontend-standard` + exatamente uma operação
+  Impeccable. Subagentes nascem por `delegate.agent`, sem descoberta global.
+- **Git nunca vê o runtime**: `.synkora/` e as antigas roots gerenciadas de
+  skills permanecem no `info/exclude`; arquivos locais divergentes nunca são
+  podados ou sobrescritos pelo Synkora.
 
 ## Curadoria FRONT (rodada 1) — 30 skills instaláveis
 
-★ = `defaultFor` de front (entra sozinha em card sem carimbo). Oficial = mantida
-pelo autor real da lib/plataforma.
+★ = candidata histórica a `defaultFor`; o roteador atual ainda escolhe no
+máximo uma técnica contextual e pode não usar nenhuma. Oficial = mantida pelo
+autor real da lib/plataforma.
 
 | Ocasião | Skill (id) | Fonte | Nota |
 |---|---|---|---|
@@ -188,9 +206,9 @@ resolve `.claude/agents/*.md` (project) e `<CLAUDE_CONFIG_DIR>/agents/*.md`
 (user) — ambos aparecem no campo `agents` do handshake; codex NÃO tem
 subagente nativo. Dois modos:
 
-- **Por card** (`create_tasks.agents`): injetado em `.claude/agents/` do
-  workspace — o dev CLAUDE delega trabalho focado via Task tool (em pane
-  codex a injeção é inofensiva e não é anunciada no prompt).
+- **Por card** (`create_tasks.agents`, no máximo um): o plano anuncia o id ao
+  dev, que o abre por `delegate.agent` somente se o subproblema independente
+  realmente existir. Nenhum arquivo vai para a descoberta compartilhada do CLI.
 - **Por ajudante** (`delegate.agent`, um id): o ajudante NASCE como o
   especialista — claude via `--append-system-prompt` com o corpo do
   agent.md; codex via `-c developer_instructions` (persona no spawn).
@@ -281,7 +299,8 @@ bounded).
   As que tentam controlar worktree, execução, revisão ou merge ficam
   `manualOnly`; assim podem ser escolhidas explicitamente sem disputar o ciclo
   nativo do Synkora. `dispatching-parallel-agents` é segura na injeção
-  automática e `writing-plans` pertence ao grupo de planejamento.
+  automática. `writing-plans` pertence ao catálogo manual de planejamento e
+  não acompanha Maestro/PM.
 - **Referência morta**: `grill-with-docs` e `improve-codebase-architecture`
   (mattpocock) invocam `/grilling`, que NÃO existe no repo.
 - **Casca**: `implement` (mattpocock, 75 palavras que só invocam as irmãs).
@@ -578,15 +597,11 @@ SOBREPOSIÇÕES foram cortadas em vez de somadas (3 skills de spec → 2, 3 de
 concorrência → 2, 2 de síntese → 1, 2 de changelog → 1, 2 de sizing → 1,
 meta-triplicata → 1). Re-tag: domain-modeling (back→+research).
 
-MOTOR NOVO — grupo `planejamento` (pedido do usuário: "o orquestrador é um
-planejador — deve sempre ver uma dessas skills antes de planejar, não passar
-batido"): TODA skill instalada desse grupo é injetada automaticamente no
-workspace do PM e de cada orquestrador no spawn do pane
-(`syncToWorkspace` nos dois `paneSpec`). As personas ganharam "PLANNING SKILLS
-FIRST" (planejar do zero com uma skill adequada instalada = falha de processo).
-Hoje entram: grilling, grill-me, grill-with-docs, brainstorming, writing-plans,
-to-tickets, before-you-build e roadmap-planning; futuras skills desse grupo
-entram sem precisar de outra lista manual.
+MOTOR ATUAL — o grupo `planejamento` conserva as opções externas como catálogo
+`manualOnly`, mas elas nunca acompanham PM/orquestrador. O único método
+automático e executável pelo Maestro é `synkora-planning-standard`; não existe
+prioridade ou fallback externo. Se o standard faltar, a seleção fica vazia e o
+fluxo deve falhar fechado, sem trocar silenciosamente de metodologia.
 
 | Ocasião | Skill (id) | Fonte | Nota |
 |---|---|---|---|
@@ -622,7 +637,10 @@ entram sem precisar de outra lista manual.
 | Docs | `ce-doc-review` | EveryInc | O gate de documentos: review multi-persona de specs/planos |
 | Docs | `writing-skills` | obra/superpowers | Pré-existente; preservada, mas explicitamente excluída do novo lote Superpowers de 2026-07-31 |
 
-⚙ = skill do grupo `planejamento`, disponível automaticamente ao Maestro e aos orquestradores quando instalada · ★ = `defaultFor` de research.
+⚙ = skill externa do grupo `planejamento`, preservada no catálogo como
+`manualOnly` e nunca injetada no Maestro/PM · o único método automático é
+`synkora-planning-standard` · ★ = candidata histórica a `defaultFor` de
+research, sujeita ao roteamento contextual.
 
 #### Lote Superpowers integrado em 2026-07-31
 
@@ -1156,7 +1174,8 @@ o SKILL.md real na fonte antes de curar.
    do MCP playwright-test e as primeiras re-tags multi-função).
 5. ✅ Skills+subagentes de design (rodada 5, seção própria acima).
 6. ✅ Skills+subagentes de research (rodada 6, seção própria acima — escopo
-   pesquisa+docs+planejamento, motor orchestratorDefault, régua "não forçar").
+   pesquisa+docs+planejamento; o antigo motor `orchestratorDefault` foi
+   substituído pelo standard nativo único, régua "não forçar").
 7. ✅ Skills+subagentes de copy (rodada 7, seção própria acima — deferrals
    fechados: internal-comms perdeu para stakeholder-update, seo do addyosmani
    OUT permanente, image/video do marketingskills fora porque mídia é do
@@ -1169,5 +1188,5 @@ o SKILL.md real na fonte antes de curar.
    viraram pendência-pacote junto com Figma). Reserva viva:
    `type-design-analyzer` (back).
 9. Possíveis melhorias do motor: fallback `git clone --sparse` quando a API
-   do GitHub bloquear; PAT opcional nas settings (60/h → 5k/h); skills de PM
-   no pane do Maestro; skill custom de tipo subagente.
+   do GitHub bloquear; PAT opcional nas settings (60/h → 5k/h); skill custom
+   de tipo subagente.

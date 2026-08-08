@@ -208,15 +208,14 @@ export default function SkillsLibrary({ kind, openByDefault = false }: Props): R
             {isAgent ? (
               <>
                 Especialistas com persona própria — vale para <b>todos os universos</b>. O
-                orquestrador aconselha o especialista por ajudante (delegate.agent) e carimba por
-                card; executor claude também os invoca direto (Task tool). ★ padrão por função na
-                página ✦ geral.
+                roteador limita a um especialista compatível, e ele nasce somente por
+                delegate.agent para um subproblema independente. Disponível não significa ativo.
               </>
             ) : (
               <>
                 Curadoria instalada da fonte com versão pinada — vale para <b>todos os universos</b>
-                . Quem escolhe a skill de cada card/ajudante é o orquestrador; o ★ padrão por função
-                fica na página ✦ geral de cada universo.
+                . O Synkora escolhe um plano mínimo por fase e entrega cada skill por recibo;
+                instalar não despeja o catálogo no contexto do executor.
               </>
             )}
           </p>

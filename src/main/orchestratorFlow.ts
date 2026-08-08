@@ -762,6 +762,16 @@ export function validateTaskSizing(
       problems.push(`${label}: risco alto exige review + QA`)
     if (item.delegation === 'parallel' && (item.quests?.length ?? 0) < 2)
       problems.push(`${label}: ajudantes paralelos exigem ao menos dois blocos independentes`)
+    if ((item.skills?.length ?? 0) > 1)
+      problems.push(`${label}: cada card aceita no máximo uma skill técnica explícita`)
+    if ((item.agents?.length ?? 0) > 1)
+      problems.push(`${label}: cada card aceita no máximo um subagente especialista explícito`)
+    if (
+      (item.agents?.length ?? 0) > 0 &&
+      normalizeDelegationMode(item.delegation, mode) === 'none'
+    ) {
+      problems.push(`${label}: subagente selecionado exige delegação optional ou parallel`)
+    }
     if (mode !== 'fast') continue
     if (item.effort === 'pesada')
       problems.push(`${label}: trabalho pesado não cabe no modo rápido; reclassifique o plano`)
@@ -769,8 +779,6 @@ export function validateTaskSizing(
       problems.push(`${label}: modo rápido não abre ajudantes`)
     if ((item.agents?.length ?? 0) > 0)
       problems.push(`${label}: modo rápido não carrega subagentes especializados`)
-    if ((item.skills?.length ?? 0) > 1)
-      problems.push(`${label}: modo rápido usa no máximo uma skill diretamente relevante`)
   }
   return problems
 }
@@ -785,10 +793,16 @@ export function gatesForTask(
   mode: MissionExecutionMode,
   risk: MissionRiskLevel,
   deliverable: TaskDeliverableKind,
-  gates: OrchestratorTaskGate[] | undefined
+  gates: OrchestratorTaskGate[] | undefined,
+  uiWork = false
 ): OrchestratorTaskGate[] | undefined {
   if (deliverable === 'non_code') return risk === 'high' ? ['review'] : []
   if (risk === 'high') return ['review', 'qa']
+  // Código que muda uma superfície visível sempre chega a um gate capaz de
+  // renderizar. Review pode ser reduzido pela política; QA visual, nunca.
+  if (uiWork && gates !== undefined) {
+    return gates.includes('review') ? ['review', 'qa'] : ['qa']
+  }
   if (gates !== undefined && gates.length > 0) return [...gates]
   // No modo rápido também mantemos uma revisão e um QA direcionados. O ganho
   // vem de zero ajudantes/skills amplas e escopo focado, não de retirar rede.
@@ -800,7 +814,7 @@ export function retryLimitForExecutionMode(mode: MissionExecutionMode): number {
 }
 
 export function helperLimitForExecutionMode(mode: MissionExecutionMode): number {
-  return mode === 'fast' ? 0 : mode === 'standard' ? 2 : 4
+  return mode === 'fast' ? 0 : 1
 }
 
 export function skillSelectionDirective(mode: MissionExecutionMode): string {
@@ -808,9 +822,9 @@ export function skillSelectionDirective(mode: MissionExecutionMode): string {
     return 'Faça uma varredura rápida do menu e carregue no máximo UMA skill que reduza diretamente o risco deste ajuste. Nenhuma skill também é uma resposta válida. Não deixe uma metodologia adicionar fases, documentos, pesquisa ou ajudantes.'
   }
   if (mode === 'standard') {
-    return 'Escolha somente as 1–2 skills com ganho concreto para este card; disponibilidade não obriga uso e nenhuma metodologia pode ampliar o escopo.'
+    return 'Escolha no máximo UMA skill técnica com ganho concreto para este card; disponibilidade não obriga uso e nenhuma metodologia pode ampliar o escopo.'
   }
-  return 'Escolha apenas as skills realmente úteis (normalmente até 3) e use-as sem criar um segundo fluxo de planejamento, revisão ou integração.'
+  return 'Escolha no máximo UMA skill técnica realmente útil e use-a sem criar um segundo fluxo de planejamento, revisão ou integração.'
 }
 
 export function delegationDirective(
@@ -827,5 +841,5 @@ export function delegationDirective(
   if (questCount < 2) {
     return 'A delegação paralela foi pedida, mas não há dois blocos independentes; trabalhe diretamente e avise o orquestrador dessa inconsistência.'
   }
-  return 'PARALELISMO JUSTIFICADO: envie um único plano curto ao orquestrador, aguarde uma única orientação e abra todos os ajudantes aprovados numa só chamada. Não crie um ajudante por item mecânico nem duplique review/QA.'
+  return 'PARALELISMO JUSTIFICADO: envie um plano curto ao orquestrador, aguarde uma orientação e abra o único ajudante aprovado para um bloco independente enquanto você mantém o restante. Não crie um ajudante por item mecânico nem duplique review/QA.'
 }

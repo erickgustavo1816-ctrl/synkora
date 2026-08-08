@@ -1,7 +1,13 @@
 import { app } from 'electron'
-import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
+import { persistJsonStore } from './jsonStore'
+import {
+  PROJECT_PLAN_TRUST_CONTRACT_VERSION,
+  type ProjectPlanLegacyApproval,
+  type ProjectPlanningSkillUse
+} from './projectPlan'
 
 export interface Project {
   id: string
@@ -13,6 +19,15 @@ export interface Project {
   mode?: 'greenfield' | 'existing'
   /** avatar do projeto (data URL PNG 128px) — rail estilo Discord */
   photo?: string
+  /** Carimbo control-plane da ultima revisao de roadmap produzida por um
+   * receipt real. A copia em .synkora e apenas a representacao legivel. */
+  planningEvidence?: ProjectPlanningSkillUse
+  /** Migração one-shot do contrato de confiança. Ausente significa projeto
+   * criado antes do contrato; projetos novos já nascem na versão atual. */
+  planningTrustVersion?: typeof PROJECT_PLAN_TRUST_CONTRACT_VERSION
+  /** Única exceção para planos aprovados antes de receipts. Fica no
+   * control-plane (userData), nunca no JSON gravável do workspace. */
+  legacyPlanningApproval?: ProjectPlanLegacyApproval
 }
 
 // Persistência em JSON no F0; migra para SQLite na F2 quando o modelo
@@ -32,7 +47,7 @@ export class ProjectStore {
   }
 
   private persist(): void {
-    writeFileSync(this.file, JSON.stringify(this.projects, null, 2), 'utf-8')
+    persistJsonStore(this.file, this.projects)
   }
 
   list(): Project[] {
@@ -49,7 +64,8 @@ export class ProjectStore {
       name,
       path,
       createdAt: new Date().toISOString(),
-      mode
+      mode,
+      planningTrustVersion: PROJECT_PLAN_TRUST_CONTRACT_VERSION
     }
     this.projects.push(project)
     this.persist()
@@ -89,6 +105,50 @@ export class ProjectStore {
     else delete project.photo
     this.persist()
     return project
+  }
+
+  setPlanningEvidence(
+    id: string,
+    evidence: ProjectPlanningSkillUse | undefined
+  ): Project | undefined {
+    const index = this.projects.findIndex((project) => project.id === id)
+    if (index < 0) return undefined
+    const previous = this.projects[index]
+    const updated: Project = {
+      ...previous,
+      ...(evidence ? { planningEvidence: { ...evidence } } : {})
+    }
+    if (!evidence) delete updated.planningEvidence
+    else delete updated.legacyPlanningApproval
+    const next = [...this.projects]
+    next[index] = updated
+    persistJsonStore(this.file, next)
+    this.projects = next
+    return updated
+  }
+
+  migratePlanningTrust(
+    id: string,
+    legacyApproval?: ProjectPlanLegacyApproval
+  ): Project | undefined {
+    const index = this.projects.findIndex((project) => project.id === id)
+    if (index < 0) return undefined
+    const previous = this.projects[index]
+    if (
+      (previous.planningTrustVersion ?? 0) >= PROJECT_PLAN_TRUST_CONTRACT_VERSION
+    ) {
+      return previous
+    }
+    const updated: Project = {
+      ...previous,
+      planningTrustVersion: PROJECT_PLAN_TRUST_CONTRACT_VERSION,
+      ...(legacyApproval ? { legacyPlanningApproval: { ...legacyApproval } } : {})
+    }
+    const next = [...this.projects]
+    next[index] = updated
+    persistJsonStore(this.file, next)
+    this.projects = next
+    return updated
   }
 
   remove(id: string): void {

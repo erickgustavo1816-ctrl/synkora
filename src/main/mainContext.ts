@@ -131,7 +131,6 @@ export interface MainContext {
   readonly helperReported: Set<string>
   readonly helperSeen: Set<string>
   readonly voiceRequests: Map<string, { controller: AbortController; senderId: number }>
-  readonly materializedPlanningSkillsByProject: Map<string, Set<string>>
   readonly expiredSeats: Map<string, number>
   readonly baselineVerificationRuns: Map<string, Promise<PlanVerificationCheckpoint>>
   readonly finalVerificationRuns: Map<string, Promise<void>>

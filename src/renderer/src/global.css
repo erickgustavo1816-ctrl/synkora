@@ -13385,6 +13385,16 @@ body.progress-overlay-page #root {
   max-width: 900px;
 }
 
+.planmap-action-message {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  color: color-mix(in srgb, var(--ink) 78%, transparent);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .planmap-waves {
   max-width: 980px;
   margin: 0 auto;
@@ -13450,8 +13460,8 @@ body.progress-overlay-page #root {
 
 .planmap-item {
   display: grid;
-  grid-template-columns: 18px auto 1fr auto;
-  align-items: baseline;
+  grid-template-columns: 18px auto minmax(0, 1fr) auto auto;
+  align-items: center;
   gap: 8px;
   padding: 4px 6px;
   border-radius: 5px;

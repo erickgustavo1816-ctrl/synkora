@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
-import { immutableReviewDiff } from '../src/main/reviewDiff.ts'
+import {
+  immutableReviewChangedPaths,
+  immutableReviewDiff,
+  immutableReviewRangeValid
+} from '../src/main/reviewDiff.ts'
 
 const git = (cwd, args) =>
   execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true }).trim()
@@ -35,6 +40,9 @@ test('review receives an immutable diff without running repository helpers', (t)
   assert.match(evidence.text, /file\.txt/)
   assert.match(evidence.text, /-antes/)
   assert.match(evidence.text, /\+depois/)
+  assert.deepEqual(evidence.changedPaths, ['file.txt'])
+  assert.equal(immutableReviewRangeValid(root, base, head), true)
+  assert.deepEqual(immutableReviewChangedPaths(root, base, head), ['file.txt'])
   // Estouro do teto NUNCA corta o patch nem devolve o card (caso real
   // 2026-08-04): vira modo 'local' — resumo inline + leitura local pelo range
   // SHA-pinado, instruída pelo prompt do harness fora do bloco untrusted.
@@ -44,5 +52,30 @@ test('review receives an immutable diff without running repository helpers', (t)
   assert.match(local.text, /file\.txt/)
   assert.match(local.text, /grande demais para vir inline/)
   assert.doesNotMatch(local.text, /\+depois/)
+  assert.ok(local.artifactSourcePath)
+  const localArtifact = readFileSync(local.artifactSourcePath, 'utf8')
+  assert.match(localArtifact, /\+depois/)
+  assert.match(localArtifact, /PATCH/)
+  assert.equal(local.artifactBytes, statSync(local.artifactSourcePath).size)
+  assert.equal(
+    local.artifactSha256,
+    createHash('sha256').update(readFileSync(local.artifactSourcePath)).digest('hex')
+  )
+  rmSync(dirname(local.artifactSourcePath), { recursive: true, force: true })
+
+  // O antigo maxBuffer de 16 MiB bloqueava para sempre uma entrega legítima.
+  // Agora stdout vai direto ao spool, sem atravessar esse teto.
+  writeFileSync(join(root, 'huge.txt'), `${'x'.repeat(17 * 1024 * 1024)}\n`, 'utf8')
+  git(root, ['add', 'huge.txt'])
+  git(root, ['commit', '-m', 'huge snapshot'])
+  const hugeHead = git(root, ['rev-parse', 'HEAD'])
+  const huge = immutableReviewDiff(root, head, hugeHead, 2_000)
+  assert.equal(huge.mode, 'local')
+  assert.deepEqual(huge.changedPaths, ['huge.txt'])
+  assert.ok(huge.artifactSourcePath)
+  assert.ok(statSync(huge.artifactSourcePath).size > 16 * 1024 * 1024)
+  rmSync(dirname(huge.artifactSourcePath), { recursive: true, force: true })
+
+  assert.equal(immutableReviewRangeValid(root, hugeHead, head), false)
   assert.equal(immutableReviewDiff(root, 'HEAD', head), undefined)
 })

@@ -4,20 +4,20 @@ import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { performance } from 'node:perf_hooks'
 import {
   Client,
   StreamableHTTPClientTransport
 } from '@modelcontextprotocol/client'
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const OUTPUT = resolve(ROOT, 'docs', 'benchmarks', '2026-07-31', 'phase4-mcp.json')
+const OUTPUT = process.env.SYNKORA_MCP_BENCHMARK_OUTPUT
+  ? resolve(process.env.SYNKORA_MCP_BENCHMARK_OUTPUT)
+  : resolve(tmpdir(), 'synkora-phase4-mcp.json')
 const MODERN_VERSION = '2026-07-28'
 const LEGACY_VERSION = '2025-11-25'
-const EXPECTED_COUNTS = Object.freeze({ normal: 22, gate: 9, pm: 33, orchestrator: 28 })
-const GATE_TOOLS = Object.freeze([
+const REVIEW_GATE_TOOLS = Object.freeze([
   'board_status',
   'code_diagnostics',
   'code_definition',
@@ -26,10 +26,16 @@ const GATE_TOOLS = Object.freeze([
   'code_hover',
   'code_implementations',
   'code_call_hierarchy',
-  'report'
+  'activate_skill',
+  'read_review_evidence',
+  'report',
+  'check_messages'
 ])
+const QA_GATE_TOOLS = Object.freeze([...REVIEW_GATE_TOOLS, 'runtime_control'])
 const identities = new Map()
 const slowWork = new Set()
+const reportCalls = []
+const planningCalls = []
 
 function round(value) {
   return Math.round(value * 1000) / 1000
@@ -92,24 +98,63 @@ function api() {
       return JSON.stringify({ paneId: id.paneId, cwd: id.cwd, operation: query.operation })
     },
     codeReportGuard: async () => undefined,
+    activateSkill: async (id, receiptId) => JSON.stringify({
+      paneId: id.paneId,
+      phase: id.phase,
+      receiptId
+    }),
+    readReviewEvidence: async (id, offset, maxBytes) => JSON.stringify({
+      paneId: id.paneId,
+      phase: id.phase,
+      offset,
+      maxBytes
+    }),
     createTasks: stub,
     archiveMission: stub,
     updateTask: stub,
-    report: stub,
+    report: (
+      id,
+      content,
+      summary,
+      securityReview,
+      suggestedPatch,
+      skillApplications,
+      verificationEvidence
+    ) => {
+      reportCalls.push({
+        paneId: id.paneId,
+        content,
+        summary,
+        securityReview,
+        suggestedPatch,
+        skillApplications,
+        verificationEvidence
+      })
+      return 'phase4-report'
+    },
     delegateMany: asyncStub,
-    listSkills: stub,
+    listSkills: (id, filters) => JSON.stringify({ paneId: id.paneId, filters }),
     setDefaultSkills: stub,
     notifyMaestro: stub,
     notifyPane: asyncStub,
     listPanes: stub,
     generateImage: asyncStub,
-    createMission: stub,
-    saveProjectPlan: stub,
+    createMission: (id, input) => {
+      planningCalls.push({ tool: 'create_mission', paneId: id.paneId, input })
+      return 'phase4-create-mission'
+    },
+    saveProjectPlan: (id, input) => {
+      planningCalls.push({ tool: 'save_project_plan', paneId: id.paneId, input })
+      return 'phase4-save-project-plan'
+    },
     recordPlanningSkillUse: stub,
     approveProjectPlan: stub,
     startProjectMission: stub,
     guideIntegrationResolution: stub,
-    createPlan: asyncStub,
+    createPlan: async (id, input) => {
+      planningCalls.push({ tool: 'create_plan', paneId: id.paneId, input })
+      return 'phase4-create-plan'
+    },
     concludePlan: stub,
     runTask: asyncStub,
     deleteTask: stub,
@@ -170,6 +215,28 @@ function resultText(result) {
   return block.text
 }
 
+function assertSingleReceiptSchema(tool) {
+  assert.ok(tool, 'planning tool missing from catalog')
+  assert.ok(tool.inputSchema.required?.includes('skillApplications'))
+  const receipt = tool.inputSchema.properties?.skillApplications
+  assert.equal(receipt?.type, 'array')
+  assert.equal(receipt?.minItems, 1)
+  assert.equal(receipt?.maxItems, 1)
+}
+
+async function assertToolSchemaRejected(client, name, arguments_) {
+  const before = planningCalls.length
+  let rejected = false
+  try {
+    const result = await client.callTool({ name, arguments: arguments_ })
+    rejected = result.isError === true
+  } catch {
+    rejected = true
+  }
+  assert.equal(rejected, true, `${name} accepted an invalid receipt cardinality`)
+  assert.equal(planningCalls.length, before, `${name} reached the API after schema rejection`)
+}
+
 async function exercise(url, token, mode, label, fakeIdentity = {}) {
   const opened = await openClient(url, token, mode, label)
   const listStarted = performance.now()
@@ -222,38 +289,190 @@ function hostStatus(port, host) {
 
 async function profileCatalogs(url) {
   const definitions = [
-    ['livre', 'livre', {}, 'normal'],
-    ['dev', 'dev', { taskId: 'task-dev', phase: 'dev' }, 'normal'],
-    ['review', 'review', { taskId: 'task-review', phase: 'review' }, 'gate'],
-    ['qa', 'qa', { taskId: 'task-qa', phase: 'qa' }, 'gate'],
-    ['ajudante', 'ajudante', { delegatorPaneId: 'phase4-dev' }, 'normal'],
-    ['pm', 'maestro', {}, 'pm'],
-    ['orchestrator', 'maestro', { missionId: 'mission-a' }, 'orchestrator']
+    ['livre', 'livre', {}],
+    ['dev', 'dev', { taskId: 'task-dev', phase: 'dev' }],
+    ['review', 'review', { taskId: 'task-review', phase: 'review' }],
+    ['qa', 'qa', { taskId: 'task-qa', phase: 'qa' }],
+    ['ajudante', 'ajudante', { delegatorPaneId: 'phase4-dev' }],
+    ['pm', 'maestro', {}],
+    ['orchestrator', 'maestro', { missionId: 'mission-a' }]
   ]
   const catalogs = {}
-  for (const [label, role, extra, expected] of definitions) {
+  for (const [label, role, extra] of definitions) {
     const principal = identity(role, `profile-${label}`, extra)
     const opened = await exercise(url, principal.token, 'legacy', `profile-${label}`)
     try {
-      assert.equal(opened.toolNames.length, EXPECTED_COUNTS[expected], `${label} tool count`)
       catalogs[label] = opened.toolNames
+      if (label === 'orchestrator') {
+        const tool = opened.listed.tools.find((candidate) => candidate.name === 'create_plan')
+        assertSingleReceiptSchema(tool)
+        const base = {
+          title: 'Plano governado',
+          summary: 'Entregar uma mudança pequena e verificável.',
+          executionMode: 'fast',
+          risk: 'low',
+          riskSurfaces: [],
+          sizingReason: 'Uma única alteração localizada e sem dependências.',
+          expectedCards: 1,
+          workItems: [
+            {
+              id: 'work-1',
+              title: 'Implementar mudança',
+              department: 'front',
+              deliverable: 'code',
+              waveId: 'W001',
+              dependsOn: []
+            }
+          ],
+          lanes: [{ dept: 'front', notes: 'Implementar a mudança.' }]
+        }
+        await assertToolSchemaRejected(opened.client, 'create_plan', {
+          ...base,
+          skillApplications: []
+        })
+        await assertToolSchemaRejected(opened.client, 'create_plan', {
+          ...base,
+          skillApplications: ['receipt-a', 'receipt-b']
+        })
+        const valid = await opened.client.callTool({
+          name: 'create_plan',
+          arguments: { ...base, skillApplications: ['receipt-plan'] }
+        })
+        assert.equal(resultText(valid), 'phase4-create-plan')
+        assert.deepEqual(planningCalls.at(-1)?.input.skillApplications, ['receipt-plan'])
+      }
+      if (label === 'pm') {
+        const saveTool = opened.listed.tools.find(
+          (candidate) => candidate.name === 'save_project_plan'
+        )
+        const missionTool = opened.listed.tools.find(
+          (candidate) => candidate.name === 'create_mission'
+        )
+        assertSingleReceiptSchema(saveTool)
+        assertSingleReceiptSchema(missionTool)
+
+        const saveBase = {
+          planningStage: 'roadmap',
+          planningContribution: 'Decompôs a próxima entrega em uma missão verificável.'
+        }
+        await assertToolSchemaRejected(opened.client, 'save_project_plan', {
+          ...saveBase,
+          skillApplications: []
+        })
+        await assertToolSchemaRejected(opened.client, 'save_project_plan', {
+          ...saveBase,
+          skillApplications: ['receipt-a', 'receipt-b']
+        })
+        const validSave = await opened.client.callTool({
+          name: 'save_project_plan',
+          arguments: { ...saveBase, skillApplications: ['receipt-save'] }
+        })
+        assert.equal(resultText(validSave), 'phase4-save-project-plan')
+        assert.deepEqual(planningCalls.at(-1)?.input.skillApplications, ['receipt-save'])
+
+        await assertToolSchemaRejected(opened.client, 'create_mission', {
+          title: 'Missão governada',
+          skillApplications: []
+        })
+        await assertToolSchemaRejected(opened.client, 'create_mission', {
+          title: 'Missão governada',
+          skillApplications: ['receipt-a', 'receipt-b']
+        })
+        const validMission = await opened.client.callTool({
+          name: 'create_mission',
+          arguments: {
+            title: 'Missão governada',
+            goal: 'Entregar o próximo recorte.',
+            skillApplications: ['receipt-mission']
+          }
+        })
+        assert.equal(resultText(validMission), 'phase4-create-mission')
+        assert.deepEqual(planningCalls.at(-1)?.input.skillApplications, ['receipt-mission'])
+      }
+      if (label === 'dev' || label === 'review' || label === 'qa') {
+        assert.equal(opened.toolNames.includes('activate_skill'), true)
+        const activated = await opened.client.callTool({
+          name: 'activate_skill',
+          arguments: { receiptId: 'receipt-test' }
+        })
+        assert.deepEqual(JSON.parse(resultText(activated)), {
+          paneId: principal.identity.paneId,
+          phase: principal.identity.phase,
+          receiptId: 'receipt-test'
+        })
+      }
       if (label === 'review' || label === 'qa') {
         const invalid = await opened.client.callTool({
           name: 'report',
           arguments: { status: 'done' }
         })
-        assert.match(resultText(invalid), /só aceitam aprovada ou reprovada/)
+        assert.match(resultText(invalid), /só aceitam aprovada, reprovada ou bloqueada/)
         const missingReason = await opened.client.callTool({
           name: 'report',
           arguments: { status: 'reprovada' }
         })
         assert.match(resultText(missingReason), /precisa informar o motivo/)
+        const emptyApproval = await opened.client.callTool({
+          name: 'report',
+          arguments: { status: 'aprovada' }
+        })
+        assert.match(resultText(emptyApproval), /verificationEvidence/)
+        if (label === 'review') {
+          const evidence = await opened.client.callTool({
+            name: 'read_review_evidence',
+            arguments: { offset: 0, maxBytes: 4096 }
+          })
+          assert.deepEqual(JSON.parse(resultText(evidence)), {
+            paneId: principal.identity.paneId,
+            phase: 'review',
+            offset: 0,
+            maxBytes: 4096
+          })
+        }
       } else if (label === 'dev') {
+        const filtered = await opened.client.callTool({
+          name: 'list_skills',
+          arguments: {
+            query: 'accessibility',
+            kind: 'skill',
+            department: 'front',
+            installedOnly: true,
+            limit: 12
+          }
+        })
+        assert.deepEqual(JSON.parse(resultText(filtered)), {
+          paneId: principal.identity.paneId,
+          filters: {
+            query: 'accessibility',
+            kind: 'skill',
+            department: 'front',
+            installedOnly: true,
+            limit: 12
+          }
+        })
         const invalid = await opened.client.callTool({
           name: 'report',
           arguments: { status: 'aprovada' }
         })
         assert.match(resultText(invalid), /só aceita done/)
+        const valid = await opened.client.callTool({
+          name: 'report',
+          arguments: {
+            status: 'done',
+            summary: 'receipt pass-through',
+            skillApplications: ['receipt-test']
+          }
+        })
+        assert.equal(resultText(valid), 'phase4-report')
+        assert.deepEqual(reportCalls.at(-1), {
+          paneId: principal.identity.paneId,
+          content: 'done',
+          summary: 'receipt pass-through',
+          securityReview: undefined,
+          suggestedPatch: undefined,
+          skillApplications: ['receipt-test'],
+          verificationEvidence: undefined
+        })
       } else if (label === 'pm' || label === 'orchestrator') {
         const invalid = await opened.client.callTool({
           name: 'report',
@@ -268,22 +487,21 @@ async function profileCatalogs(url) {
   for (const label of ['dev', 'ajudante']) {
     assert.deepEqual(catalogs[label], catalogs.livre, `${label} catalog differs from livre`)
   }
-  assert.deepEqual(catalogs.review, GATE_TOOLS, 'review gate ACL differs')
-  assert.deepEqual(catalogs.qa, GATE_TOOLS, 'qa gate ACL differs')
+  assert.deepEqual(catalogs.review, REVIEW_GATE_TOOLS, 'review gate ACL differs')
+  assert.deepEqual(catalogs.qa, QA_GATE_TOOLS, 'qa gate ACL differs')
   for (const label of ['livre', 'dev', 'review', 'qa', 'ajudante', 'pm']) {
     assert.equal(catalogs[label].includes('create_tasks'), false, `${label} exposes create_tasks`)
     assert.equal(catalogs[label].includes('update_task'), false, `${label} exposes update_task`)
   }
   assert.equal(catalogs.orchestrator.includes('create_tasks'), true)
   assert.equal(catalogs.orchestrator.includes('update_task'), true)
-  for (const tool of [
-    'record_planning_skill_use',
-    'guide_integration_resolution',
-    'queue_missions'
-  ]) {
+  for (const tool of ['guide_integration_resolution', 'queue_missions']) {
     assert.equal(catalogs.pm.includes(tool), true, `pm missing ${tool}`)
     assert.equal(catalogs.orchestrator.includes(tool), false, `orchestrator exposes ${tool}`)
   }
+  assert.equal(catalogs.pm.includes('record_planning_skill_use'), false)
+  assert.equal(catalogs.pm.includes('activate_skill'), true)
+  assert.equal(catalogs.orchestrator.includes('activate_skill'), true)
   return Object.fromEntries(
     Object.entries(catalogs).map(([label, names]) => [label, {
       count: names.length,
@@ -394,9 +612,9 @@ async function main() {
     assert.equal(modern.log.methods.includes('initialize'), false)
     assert.ok(modern.log.methods.includes('tools/list'))
     assert.ok(modern.log.methods.includes('tools/call'))
-    assert.equal(modern.listed.ttlMs, 300_000)
+    assert.equal(modern.listed.ttlMs, 0)
     assert.equal(modern.listed.cacheScope, 'private')
-    assert.equal(modern.client.getDiscoverResult()?.ttlMs, 300_000)
+    assert.equal(modern.client.getDiscoverResult()?.ttlMs, 0)
     assert.equal(modern.client.getDiscoverResult()?.cacheScope, 'private')
     assert.equal(legacy.listed.ttlMs, undefined)
     assert.equal(legacy.listed.cacheScope, undefined)
@@ -404,7 +622,7 @@ async function main() {
     const beforeCachedList = modern.log.requests
     const cachedList = await modern.client.listTools()
     assert.deepEqual(cachedList.tools.map((tool) => tool.name), modern.toolNames)
-    assert.equal(modern.log.requests, beforeCachedList)
+    assert.ok(modern.log.requests > beforeCachedList, 'ttl zero must not reuse a stale tool catalog')
 
     assert.equal(legacy.marker.paneId, legacyPrincipal.identity.paneId)
     assert.equal(legacy.marker.cwd, legacyPrincipal.identity.cwd)

@@ -120,6 +120,17 @@ export interface TaskPlan {
   manualSecurityValidation?: ManualSecurityValidation
   sizingReason?: string
   expectedCards?: number
+  planningMethod?: {
+    contractVersion: 1
+    receiptId: string
+    skillId: string
+    operation: string
+    version: string
+    fingerprint: string
+    phaseRun: string
+    appliedAt: string
+  }
+  planningEvidenceState?: 'receipt_required' | 'verified' | 'legacy_unverified'
   conclusion?: string
   approvedAt?: string
 }
@@ -881,7 +892,12 @@ const api = {
       // revisão (task.updatedAt) que o usuário VIU no modal — o main recusa se
       // o orquestrador re-propôs no meio (CAS; caso real 2026-08-05)
       seenRevision?: string
-    ): Promise<Task | { staleRevision: true; currentRevision: string } | undefined> =>
+    ): Promise<
+      | Task
+      | { staleRevision: true; currentRevision: string }
+      | { planningEvidenceRequired: true }
+      | undefined
+    > =>
       ipcRenderer.invoke('tasks:planApprove', taskId, lanes, seenRevision),
     stopPlan: (taskId: string): Promise<Task | undefined> =>
       ipcRenderer.invoke('tasks:planStop', taskId),
@@ -1186,7 +1202,16 @@ const api = {
   projectPlan: {
     /** plano mestre (PROJECT_PLAN.json) para a aba Mapa — null sem plano */
     get: (projectId: string): Promise<ProjectPlanView | null> =>
-      ipcRenderer.invoke('projectPlan:get', projectId)
+      ipcRenderer.invoke('projectPlan:get', projectId),
+    /** Ações autoritativas do dono; tools do Maestro só conseguem solicitá-las. */
+    approve: (projectId: string, expectedUpdatedAt: string): Promise<string> =>
+      ipcRenderer.invoke('projectPlan:approve', projectId, expectedUpdatedAt),
+    startMission: (
+      projectId: string,
+      itemId: string,
+      expectedUpdatedAt: string
+    ): Promise<string> =>
+      ipcRenderer.invoke('projectPlan:startMission', projectId, itemId, expectedUpdatedAt)
   },
   hub: {
     onEvent: (cb: (evt: HubEvent) => void): (() => void) => {

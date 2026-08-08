@@ -276,6 +276,15 @@ test('novos sinais concretos forçam review e QA sem falsos positivos genéricos
   assert.deepEqual(ordinary.surfaces, [])
 })
 
+test('todo codigo que afeta UI recebe QA visual mesmo com gates legados incompletos', () => {
+  assert.deepEqual(gatesForTask('standard', 'low', 'code', ['review'], true), [
+    'review',
+    'qa'
+  ])
+  assert.deepEqual(gatesForTask('standard', 'low', 'code', [], true), ['qa'])
+  assert.deepEqual(gatesForTask('standard', 'low', 'code', ['review'], false), ['review'])
+})
+
 test('detecta classes concretas de injeção, traversal e fronteira Electron', () => {
   const cases = [
     'Corrigir XSS refletido no campo de busca.',
@@ -551,6 +560,29 @@ test('fast proíbe trabalho pesado, helpers, subagentes e skills amplas', () => 
   assert.ok(problems.some((problem) => problem.includes('no máximo uma skill')))
 })
 
+test('standard e deep também limitam o carimbo a uma técnica e um especialista', () => {
+  for (const mode of ['standard', 'deep']) {
+    const problems = validateTaskSizing(mode, 'medium', 1, 0, [
+      validCodeCard({
+        skills: ['skill-a', 'skill-b'],
+        agents: ['especialista-a', 'especialista-b']
+      })
+    ])
+    assert.ok(problems.some((problem) => problem.includes('uma skill técnica explícita')))
+    assert.ok(problems.some((problem) => problem.includes('um subagente especialista explícito')))
+  }
+})
+
+test('persona selecionada nunca pode ser descartada por delegation none', () => {
+  const problems = validateTaskSizing('standard', 'medium', 1, 0, [
+    validCodeCard({
+      agents: ['especialista-a'],
+      delegation: 'none'
+    })
+  ])
+  assert.ok(problems.some((problem) => problem.includes('exige delegação optional ou parallel')))
+})
+
 test('fast aceita várias quests sequenciais sem transformar checklist em delegação', () => {
   const card = validCodeCard({
     delegation: 'none',
@@ -576,6 +608,13 @@ test('delegação optional nunca torna várias quests uma obrigação', () => {
     validCodeCard({ delegation: 'parallel', quests: ['Um único bloco'] })
   ])
   assert.ok(invalidParallel.some((problem) => problem.includes('ao menos dois blocos')))
+})
+
+test('delegação paralela autoriza um único ajudante, não um roster', () => {
+  const directive = delegationDirective('deep', 'parallel', 3)
+  assert.match(directive, /único ajudante aprovado/)
+  assert.doesNotMatch(directive, /todos os ajudantes|vários ajudantes/i)
+  assert.equal(helperLimitForExecutionMode('deep'), 1)
 })
 
 test('non_code comum não abre gate, mas instrução/configuração sensível recebe review', () => {
@@ -651,7 +690,7 @@ test('retry e helpers possuem orçamentos proporcionais e fechados', () => {
   )
   assert.deepEqual(
     ['fast', 'standard', 'deep'].map((mode) => helperLimitForExecutionMode(mode)),
-    [0, 2, 4]
+    [0, 1, 1]
   )
 })
 
@@ -663,8 +702,8 @@ test('diretiva de skills mantém fast estreito e limita os demais modos', () => 
   assert.match(fast, /no máximo UMA skill/)
   assert.match(fast, /Nenhuma skill também é uma resposta válida/)
   assert.match(fast, /Não deixe uma metodologia adicionar fases/)
-  assert.match(standard, /1–2 skills/)
-  assert.match(deep, /até 3/)
+  assert.match(standard, /no máximo UMA skill técnica/)
+  assert.match(deep, /no máximo UMA skill técnica/)
 })
 
 test('política de segurança é curta, versionada e contextual por papel/superfície', () => {

@@ -16,9 +16,13 @@ import { pathToFileURL } from 'url'
 import { ProjectStore } from './projects'
 import { SeatStore, type SeatCli } from './seats'
 import {
+  interruptActiveSkillUsage,
+  isVerifiedTaskPlanPlanningMethod,
+  sanitizeRendererTaskPatch,
   TaskStore,
   type NewTask,
   type Task,
+  type TaskGateEvidence,
   type TaskPlan,
   type TaskUpdatePatch,
   type PlanLane,
@@ -91,6 +95,22 @@ import {
   validateTaskSizing,
   type MissionExecutionMode
 } from './orchestratorFlow'
+import { HelperSpawnReservationRegistry } from './helperSpawnReservations'
+import { HelperOpenWatchdog } from './helperOpenWatchdog'
+import { ptyPreparationCanContinue } from './ptyPreparationGuard'
+import {
+  isMethodGovernedPaneRole,
+  prepareCodexSkillIsolationProfile,
+  removeCodexSkillIsolationProfile
+} from './codexSkillIsolation'
+import {
+  validateGateVerificationEvidence,
+  type GateVerificationEvidence
+} from './gateVerificationEvidence'
+import {
+  buildReviewEvidenceChunkManifest,
+  readAuthenticatedReviewEvidenceChunk
+} from './reviewEvidence'
 import {
   buildAgentsBlock,
   buildAtomicRoundRule,
@@ -99,7 +119,9 @@ import {
   buildClosedListBlock,
   buildDevContract,
   buildExecutionProfileBlock,
+  buildGateRecyclePrompt,
   buildPhasePrompt,
+  buildQaDeliverySnapshotBlock,
   buildQaRuntimeBlock,
   buildQuestBlock,
   buildResumeReadFirstPrompt,
@@ -146,11 +168,11 @@ import { PolicyStore, type DeptPolicy, type PolicySlot } from './policies'
 import { clearCatalogCache, getCatalog } from './catalog'
 import { getCliStatus, onCliStatus, updateAllClis, type CliStatus } from './cliUpdate'
 import type { Department } from './tasks'
-import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs'
+import { appendFileSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'fs'
 import { StallAttribution, instrumentIpcMain } from './stallAttribution'
 import { GIT_CHECKPOINT_MARKER, gitOff, gitOffWithCheckpoint } from './gitAsync'
 import { execFile } from 'child_process'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { PtyManager, type PaneKind } from './pty'
 import { SessionStatsWatcher, type StatsWatchHandle } from './sessionStats'
 import { Hub, type HubCommunicationEvent, type PaneIdentity } from './hub'
@@ -176,7 +198,6 @@ import {
   type McpServerHandle,
   type McpStdioLaunch,
   type NewMissionInput,
-  type PlanningSkillUseInput,
   type SaveProjectPlanInput,
   type NewTaskInput,
   type TaskPatch
@@ -184,10 +205,23 @@ import {
 import { selectStaleBundledIds } from './bundledSkillRevision'
 import { SkillsLibrary, setGithubToken, type SkillDef } from './skillsLibrary'
 import {
-  missingMandatoryFrontendStandard,
-  selectFastQaUiSkillIds,
-  withMandatoryFrontendStandard
+  classifyTaskUiWork,
+  IMPECCABLE_SKILL_ID,
+  isVisualMethod,
+  missingMandatoryUiPhaseSkills,
+  selectPhaseSkillPlan,
+  skillCompatibilityIssue,
+  SYNKORA_FRONTEND_STANDARD_ID,
+  SYNKORA_PLANNING_STANDARD_ID,
+  SYNKORA_UI_QA_ID,
+  type SkillCapability
 } from './skillsRouting'
+import {
+  SkillRuntime,
+  type PaneSkillPlanSnapshot,
+  type PlannedSkillInput,
+  type PlanningMethodEvidence
+} from './skillRuntime'
 import { WorkspaceSkillLeaseRegistry } from './workspaceSkills'
 import { CURATED_SKILLS } from './skillsCatalog'
 import { BUNDLED_AGENTS } from './agentsBundled'
@@ -235,13 +269,14 @@ import {
   detachProjectMission as detachStoredProjectMission,
   ensureGreenfieldProjectPlan,
   isEffectivelyEmptyProject,
+  legacyProjectPlanApproval,
   loadProjectPlan,
+  PROJECT_PLAN_TRUST_CONTRACT_VERSION,
   projectPlanExecutionWindow,
   projectPlanPaths,
   projectPlanReleaseGate,
   projectPlanReleaseBlockers,
   reactivateProjectMission as reactivateStoredProjectMission,
-  recordProjectPlanningSkillUse,
   saveProjectPlanDraft,
   startProjectMission as bindProjectMission,
   summarizeProjectPlanForBoard,
@@ -293,6 +328,8 @@ import {
   codexGateMcpDisableArgs,
   codexGateMcpPolicyArgs,
   paneAccessProfile,
+  effectiveSensitiveAccess,
+  paneBrowserAvailable,
   paneExternalMcpCapabilities,
   panePermissionArgs,
   type PaneAccessProfile
@@ -363,6 +400,15 @@ const helperSeen = new Set<string>()
 // Entrega única da conclusão: helper_output após report consome o resumo e o
 // aviso assíncrono deixa de ser injetado como uma segunda mensagem.
 const helperCompletions = new HelperCompletionTracker()
+const plannedHelperAssignments = new Map<
+  string,
+  { parentPhaseRun: string; agentId: string }
+>()
+const completedPlannedAgentsByPhaseRun = new Map<string, Set<string>>()
+// Check + spawn de helper atravessa awaits (catálogo, skills, armamento). Esta
+// reserva impede duas calls MCP concorrentes de consumirem o mesmo slot.
+const helperSpawnReservations = new HelperSpawnReservationRegistry()
+const helperOpenWatchdog = new HelperOpenWatchdog()
 // Telemetria viva dos panes (tokens/contexto lidos dos JSONL dos CLIs).
 const sessionStats = new SessionStatsWatcher()
 // sessionId real do CLI por pane (descoberto pelo watcher) — resume/handoff.
@@ -374,15 +420,18 @@ const paneTokens = new Map<string, string>()
 // Config MCP escrita por pane (userData/mcp/*.json) — apagada quando o pane
 // morre: arquivo sem função não fica (política do usuário).
 const paneMcpFiles = new Map<string, string>()
+const paneCodexSkillProfiles = new Map<string, string>()
 function cleanPaneMcpFile(paneId: string): void {
   const file = paneMcpFiles.get(paneId)
-  if (!file) return
   paneMcpFiles.delete(paneId)
-  try {
+  if (file) try {
     unlinkSync(file)
   } catch {
     // já sumiu
   }
+  const profile = paneCodexSkillProfiles.get(paneId)
+  paneCodexSkillProfiles.delete(paneId)
+  removeCodexSkillIsolationProfile(profile)
 }
 // Hub de eventos + porta do servidor MCP (inicializados no whenReady).
 let hub: Hub
@@ -391,6 +440,7 @@ let mcpServerHandle: McpServerHandle | undefined
 let paneStartupMetrics: PaneStartupMetrics | undefined
 let codeIntelligence: CodeIntelligenceManager | undefined
 let releasePaneSkillLease: (paneId: string) => void = () => undefined
+let releasePaneSkillPlan: (paneId: string) => void = () => undefined
 const codeIntelligenceSessions = new Map<
   string,
   { cwd: string; session: CodeIntelligenceSession }
@@ -433,6 +483,8 @@ function releaseCodeIntelligenceSession(paneId: string): void {
 function unregisterPane(paneId: string): PaneIdentity | undefined {
   releaseCodeIntelligenceSession(paneId)
   releasePaneSkillLease(paneId)
+  releasePaneSkillPlan(paneId)
+  plannedHelperAssignments.delete(paneId)
   // nota viva morre com o pane — nota velha em pane novo mentiria no radar
   paneStatusNotes.delete(paneId)
   return hub.unregisterPane(paneId)
@@ -2577,6 +2629,29 @@ app.whenReady().then(async () => {
       return undefined
     }
   }
+  // Migração one-shot, antes de qualquer pane de agente nascer. Somente um
+  // plano que já estava aprovado no primeiro boot deste contrato recebe a
+  // exceção legacy; depois disso, editar o JSON do workspace nunca consegue
+  // fabricar o carimbo guardado em userData.
+  for (const project of projects.list()) {
+    if (
+      (project.planningTrustVersion ?? 0) >= PROJECT_PLAN_TRUST_CONTRACT_VERSION
+    ) {
+      continue
+    }
+    let legacyApproval: ReturnType<typeof legacyProjectPlanApproval> = undefined
+    if (existsSync(project.path)) {
+      try {
+        ensureSynkoraGitExcludes(project.path)
+        const plan = loadProjectPlan(project.path)
+        if (plan) legacyApproval = legacyProjectPlanApproval(plan)
+      } catch {
+        // Falha fechada: concluímos a migração sem grandfathering. O plano
+        // precisa ser reparado e salvo novamente com receipt real.
+      }
+    }
+    projects.migratePlanningTrust(project.id, legacyApproval)
+  }
   progressCoordinatorActivitySource = () => {
     const activityNow = Date.now()
     return projects.list().flatMap((project) => {
@@ -3338,9 +3413,27 @@ app.whenReady().then(async () => {
   })
 
   // BIBLIOTECA DE SKILLS (F4): catálogo curado instalado da fonte (GitHub)
-  // em userData/skills/lib e injetado POR WORKSPACE na execução. A UI (página
-  // ✦ geral) instala/atualiza; orquestrador carimba por card/ajudante.
+  // em userData/skills/lib. Execução usa plano mínimo + árvore privada por
+  // receipt; a UI instala/atualiza e mostra disponibilidade, não um kit ativo.
   const skillsLib = new SkillsLibrary([...CURATED_SKILLS, ...BUNDLED_AGENTS, ...BUNDLED_SKILLS])
+  // Pacotes ativados vivem fora do projeto e de qualquer root autodetectada.
+  // Como o app e single-instance, o sweep remove com seguranca residuos de um
+  // crash anterior antes de abrir a raiz aleatoria desta sessao.
+  const privateSkillRuntimeBase = join(app.getPath('temp'), 'synkora-skill-runtime')
+  const privateSkillRuntimeRoot = join(privateSkillRuntimeBase, `${process.pid}-${randomUUID()}`)
+  try {
+    rmSync(privateSkillRuntimeBase, { recursive: true, force: true })
+    mkdirSync(privateSkillRuntimeRoot, { recursive: true })
+  } catch (error) {
+    throw new Error(`nao foi possivel preparar o runtime privado de skills: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  app.once('will-quit', () => {
+    try {
+      rmSync(privateSkillRuntimeRoot, { recursive: true, force: true })
+    } catch {
+      // O proximo boot repete o sweep; nao bloqueia o encerramento.
+    }
+  })
   // Skill embutida é conteúdo versionado: instala antes de registrar o fluxo de
   // panes e reinstala quando os bytes do app mudam. Assim a régua nova chega a
   // quem já tinha `sha: bundled`, sem rede, delay de boot ou versão manual.
@@ -3388,18 +3481,17 @@ app.whenReady().then(async () => {
     }
   }
   setTimeout(() => void backfillSkillAssessments(), 5_000)
-  const materializedPlanningSkillsByProject = new Map<string, Set<string>>()
   skillsLib.onChanged = () => {
     if (uiSender && !uiSender.isDestroyed()) uiSender.send('skills:changed')
   }
 
-  // Ajudantes paralelos compartilham o mesmo worktree. Cada pane mantem uma
-  // lease das skills manuais de que precisa; a sincronizacao usa a UNIAO das
-  // leases ativas para um ajudante nunca podar a skill de outro em execucao.
-  const helperSkillLeases = new WorkspaceSkillLeaseRegistry()
-  const helperWorkspaceKey = (cwd: string): string =>
+  // Todos os panes que compartilham um worktree mantem leases. O disco recebe
+  // somente a UNIAO exata dos planos vivos; nenhuma skill instalada fica
+  // disponivel por acidente e um pane nunca poda o contexto de outro.
+  const paneSkillLeases = new WorkspaceSkillLeaseRegistry()
+  const workspaceSkillKey = (cwd: string): string =>
     resolve(cwd).replace(/\\/g, '/').toLocaleLowerCase('en-US')
-  const expandedHelperSkillIds = (ids: string[]): Set<string> => {
+  const expandedPaneSkillIds = (ids: string[]): Set<string> => {
     const expanded = new Set<string>()
     const visit = (id: string): void => {
       if (expanded.has(id)) return
@@ -3409,11 +3501,11 @@ app.whenReady().then(async () => {
     for (const id of ids) visit(id)
     return expanded
   }
-  const activeHelperSkillIds = (cwd: string): string[] => {
-    const workspaceKey = helperWorkspaceKey(cwd)
+  const activePaneSkillIds = (cwd: string): string[] => {
+    const workspaceKey = workspaceSkillKey(cwd)
     return [
       ...new Set(
-        helperSkillLeases.activeIds(workspaceKey)
+        paneSkillLeases.activeIds(workspaceKey)
       )
     ]
   }
@@ -3423,8 +3515,8 @@ app.whenReady().then(async () => {
     cwd: string,
     ids: string[]
   ): Promise<{ injected: SkillDef[]; missing: string[] }> => {
-    const own = expandedHelperSkillIds(ids)
-    const union = [...new Set([...activeHelperSkillIds(cwd), ...ids])]
+    const own = expandedPaneSkillIds(ids)
+    const union = [...new Set([...activePaneSkillIds(cwd), ...ids])]
     const syncStarted = Date.now()
     const synced = await skillsLib.syncToWorkspace(cwd, union)
     const syncMs = Date.now() - syncStarted
@@ -3464,27 +3556,378 @@ app.whenReady().then(async () => {
     }
     return result
   }
-  const syncHelperSkillLease = (
+  const syncPaneSkillLease = (
     paneId: string,
     cwd: string,
     ids: string[]
   ): Promise<{ injected: SkillDef[]; missing: string[] }> => {
-    const workspaceKey = helperWorkspaceKey(cwd)
-    helperSkillLeases.acquire(paneId, {
+    const workspaceKey = workspaceSkillKey(cwd)
+    paneSkillLeases.acquire(paneId, {
       cwd,
       workspaceKey,
       ids: [...new Set(ids)]
     })
     return syncWorkspaceSkills(cwd, ids)
   }
-  const releaseHelperSkillLease = (paneId: string): void => {
-    const released = helperSkillLeases.release(paneId)
+  const releaseSkillLease = (paneId: string): void => {
+    const released = paneSkillLeases.release(paneId)
     if (!released) return
     syncWorkspaceSkills(released.cwd, []).catch(() => {
       // A proxima sincronizacao tenta de novo; nunca derruba o encerramento.
     })
   }
-  releasePaneSkillLease = releaseHelperSkillLease
+  releasePaneSkillLease = releaseSkillLease
+  const skillRuntime = new SkillRuntime()
+  const skillPlanScopes = new Map<
+    string,
+    {
+      phase: string
+      phaseRun: string
+      agentIds: string[]
+      taskId?: string
+      projectId?: string
+      missionId?: string
+    }
+  >()
+  const prepareSkillPlanInputs = async (
+    rootIds: string[],
+    describe: (id: string) => Pick<PlannedSkillInput, 'operation' | 'reason' | 'required'>
+  ): Promise<{
+    definitions: SkillDef[]
+    inputs: PlannedSkillInput[]
+    missing: string[]
+  }> => {
+    const definitions: SkillDef[] = []
+    const inputs: PlannedSkillInput[] = []
+    const missing: string[] = []
+    for (const skillId of expandedPaneSkillIds(rootIds)) {
+      const definition = skillsLib.byId(skillId)
+      const descriptor = describe(skillId)
+      const activation = await skillsLib.loadActivationPackage(skillId, descriptor.operation)
+      if (!definition || definition.kind !== 'skill' || !activation) {
+        missing.push(skillId)
+        continue
+      }
+      definitions.push(definition)
+      inputs.push({
+        skillId,
+        ...descriptor,
+        version: activation.version,
+        fingerprint: activation.fingerprint
+      })
+    }
+    return { definitions, inputs, missing }
+  }
+  const planningPreparationTickets = new Map<string, string>()
+  const preparePlanningRun = async (input: {
+    paneId: string
+    projectId: string
+    missionId?: string
+    cwd: string
+  }): Promise<{ ok: true; phaseRun: string; skillBlock: string } | { ok: false; message: string }> => {
+    const ticket = randomUUID()
+    planningPreparationTickets.set(input.paneId, ticket)
+    let phaseRun: string | undefined
+    const stillOwner = (): boolean => planningPreparationTickets.get(input.paneId) === ticket
+    const fail = (message: string): { ok: false; message: string } => {
+      if (stillOwner()) {
+        planningPreparationTickets.delete(input.paneId)
+        releaseSkillLease(input.paneId)
+        const scope = skillPlanScopes.get(input.paneId)
+        if (scope?.phase === 'planning' && (!phaseRun || scope.phaseRun === phaseRun)) {
+          releasePaneSkillPlan(input.paneId)
+        }
+      }
+      return { ok: false, message }
+    }
+    try {
+      const planningIds = skillsLib.orchestratorPlanningIds()
+      if (
+        planningIds.length !== 1 ||
+        planningIds[0] !== SYNKORA_PLANNING_STANDARD_ID
+      ) {
+        return fail('o método nativo synkora-planning-standard não está íntegro e elegível')
+      }
+      await syncPaneSkillLease(input.paneId, input.cwd, [])
+      const prepared = await prepareSkillPlanInputs(planningIds, () => ({
+        operation: 'plan',
+        reason: 'planning.standard',
+        required: true
+      }))
+      if (!stillOwner()) {
+        return { ok: false, message: 'esta abertura foi substituída por uma geração mais nova' }
+      }
+      if (
+        prepared.missing.length > 0 ||
+        prepared.inputs.length !== 1 ||
+        prepared.definitions.length !== 1
+      ) {
+        return fail('não foi possível carregar exatamente o método nativo de planejamento')
+      }
+      phaseRun = randomUUID()
+      const planned = skillRuntime.planPane({
+        paneId: input.paneId,
+        phase: 'planning',
+        phaseRun,
+        skills: prepared.inputs
+      })
+      if (!planned.ok) return fail('não foi possível registrar o receipt de planejamento')
+      if (!stillOwner()) {
+        skillRuntime.release({ paneId: input.paneId, phase: 'planning', phaseRun })
+        return { ok: false, message: 'esta abertura foi substituída por uma geração mais nova' }
+      }
+      skillPlanScopes.set(input.paneId, {
+        phase: 'planning',
+        phaseRun,
+        agentIds: [],
+        projectId: input.projectId,
+        missionId: input.missionId
+      })
+      planningPreparationTickets.delete(input.paneId)
+      const receipt = planned.plan.receipts[0]
+      const definition = prepared.definitions[0]
+      return {
+        ok: true,
+        phaseRun,
+        skillBlock:
+          `\n\nACTIVE PLANNING METHOD — selected and bound to this exact planning run. ` +
+          `Before analysis or any plan mutation, call activate_skill with receiptId ${receipt.receiptId}. ` +
+          `Use only the returned method; do not browse, stack, or substitute another planning workflow. ` +
+          `Every save_project_plan/create_plan call must pass skillApplications: ["${receipt.receiptId}"]. ` +
+          `The backend rejects stale, foreign, unactivated, or omitted receipts.\n` +
+          `- ${definition.id} · operation ${receipt.operation} · receiptId ${receipt.receiptId} · REQUIRED: ${definition.hint}`
+      }
+    } catch {
+      return fail('falha ao preparar o método nativo de planejamento')
+    }
+  }
+  releasePaneSkillPlan = (paneId: string): void => {
+    const scope = skillPlanScopes.get(paneId)
+    if (!scope) return
+    const persistInterruptedUsage = (): boolean => {
+      if (!scope.taskId) return true
+      const task = tasks.get(scope.taskId)
+      if (task?.skillUsage?.phaseRun !== scope.phaseRun) return true
+      const interrupted = interruptActiveSkillUsage(task.skillUsage)
+      if (interrupted === task.skillUsage) return true
+      tasks.update(scope.taskId, { skillUsage: interrupted })
+      if (scope.projectId && uiSender && !uiSender.isDestroyed()) {
+        try {
+          uiSender.send('tasks:changed', scope.projectId)
+        } catch {
+          // A persistência é autoritativa; a UI recupera no próximo refresh.
+        }
+      }
+      return true
+    }
+    const retryInterruptedUsage = (attempt: number): void => {
+      setTimeout(() => {
+        try {
+          persistInterruptedUsage()
+        } catch (error) {
+          if (attempt < 3) {
+            retryInterruptedUsage(attempt + 1)
+            return
+          }
+          blackbox.record({
+            cat: 'pane',
+            event: 'skill-usage-interruption-persist-failed',
+            actor: 'harness',
+            ids: {
+              projectId: scope.projectId,
+              taskId: scope.taskId,
+              paneId,
+              phase: scope.phase
+            },
+            reason: 'task-store-persist-failed-after-pane-release'
+          })
+        }
+      }, attempt * 250)
+    }
+    try {
+      persistInterruptedUsage()
+    } catch {
+      // Encerrar o processo/identidade é prioritário. O ledger é retomado em
+      // background e também reconciliado no boot se o disco seguir indisponível.
+      retryInterruptedUsage(1)
+    }
+    skillPlanScopes.delete(paneId)
+    completedPlannedAgentsByPhaseRun.delete(scope.phaseRun)
+    try {
+      skillRuntime.release({ paneId, phase: scope.phase, phaseRun: scope.phaseRun })
+    } catch {
+      // O runtime é efêmero e não pode impedir o encerramento do pane.
+    }
+    void gitOff(
+      'removePrivateSkillPlan',
+      privateSkillRuntimeRoot,
+      paneId,
+      scope.phaseRun
+    ).catch(() => undefined)
+  }
+
+  /**
+   * Um pane vivo pode receber outra rodada sem perder a conversa. A conversa
+   * e reutilizada; os receipts nao. Cada novo report recebe phaseRun e IDs
+   * novos, presos novamente aos bytes atuais dos pacotes.
+   */
+  const renewLivePaneSkillRun = async (
+    paneId: string,
+    taskId: string,
+    projectId: string,
+    phase: RunPhase
+  ): Promise<string | undefined> => {
+    const scope = skillPlanScopes.get(paneId)
+    const task = tasks.get(taskId)
+    if (!scope || scope.phase !== phase || !task) return undefined
+    const activePlan = skillRuntime
+      .safeSnapshot()
+      .plans.find(
+        (plan) =>
+          plan.paneId === paneId &&
+          plan.phase === scope.phase &&
+          plan.phaseRun === scope.phaseRun
+      )
+    if (!activePlan) return undefined
+
+    const definitions: SkillDef[] = []
+    const inputs: PlannedSkillInput[] = []
+    for (const receipt of activePlan.receipts) {
+      const definition = skillsLib.byId(receipt.skillId)
+      const activation = await skillsLib.loadActivationPackage(
+        receipt.skillId,
+        receipt.operation
+      )
+      if (!definition || definition.kind !== 'skill' || !activation) return undefined
+      definitions.push(definition)
+      inputs.push({
+        skillId: receipt.skillId,
+        operation: receipt.operation,
+        version: activation.version,
+        fingerprint: activation.fingerprint,
+        reason: receipt.reason,
+        required: receipt.required
+      })
+    }
+
+    if (task.skillUsage?.phaseRun !== scope.phaseRun) return undefined
+    const phaseRun = randomUUID()
+    const previousUsage = task.skillUsage
+    const planned = skillRuntime.replacePanePlan(
+      {
+        paneId,
+        phase,
+        phaseRun,
+        expectedPhase: scope.phase,
+        expectedPhaseRun: scope.phaseRun,
+        skills: inputs
+      },
+      {
+        commit: (_previousPlan, nextPlan) => {
+          const latestTask = tasks.get(taskId)
+          if (
+            !latestTask ||
+            latestTask.projectId !== projectId ||
+            latestTask.skillUsage?.phaseRun !== scope.phaseRun
+          ) {
+            throw new Error('skill usage mudou durante a renovacao')
+          }
+          const updatedAt = new Date().toISOString()
+          const usageRun = {
+            phase,
+            phaseRun,
+            updatedAt,
+            runStatus: 'active' as const,
+            skills: nextPlan.receipts.map((receipt) => ({
+              receiptId: receipt.receiptId,
+              id: receipt.skillId,
+              operation: receipt.operation,
+              version: receipt.version,
+              fingerprint: receipt.fingerprint,
+              status: 'planned' as const
+            }))
+          }
+          const currentUsage = latestTask.skillUsage
+          const priorHistory = [...(currentUsage.history ?? [])]
+          if (!priorHistory.some((run) => run.phaseRun === currentUsage.phaseRun)) {
+            priorHistory.push({
+              phase: currentUsage.phase,
+              phaseRun: currentUsage.phaseRun,
+              updatedAt: currentUsage.updatedAt,
+              runStatus: currentUsage.runStatus ?? 'interrupted',
+              skills: currentUsage.skills
+            })
+          }
+          tasks.update(taskId, {
+            skillUsage: {
+              ...usageRun,
+              history: [
+                ...priorHistory
+                  .filter((run) => run.phaseRun !== phaseRun)
+                  .map((run) => ({
+                    ...run,
+                    runStatus:
+                      run.runStatus === 'active' ? 'interrupted' as const : run.runStatus
+                  })),
+                usageRun
+              ]
+            }
+          })
+        },
+        rollback: () => {
+          tasks.update(taskId, { skillUsage: previousUsage })
+        }
+      }
+    )
+    if (!planned.ok) return undefined
+    skillPlanScopes.set(paneId, { ...scope, phase, phaseRun, taskId, projectId })
+    await gitOff(
+      'removePrivateSkillPlan',
+      privateSkillRuntimeRoot,
+      paneId,
+      scope.phaseRun
+    ).catch(() => undefined)
+
+    // A remoção da árvore é assíncrona. O pane pode encerrar justamente nessa
+    // janela; nesse caso não persista uma rodada "active" que já nasceu morta.
+    const renewedIdentity = hub.identityByPane(paneId)
+    const renewedScope = skillPlanScopes.get(paneId)
+    const renewedTask = tasks.get(taskId)
+    if (
+      !renewedIdentity ||
+      !ptys.has(paneId) ||
+      renewedIdentity.projectId !== projectId ||
+      renewedIdentity.taskId !== taskId ||
+      renewedIdentity.phase !== phase ||
+      renewedScope?.phaseRun !== phaseRun ||
+      renewedScope.phase !== phase ||
+      renewedTask?.projectId !== projectId
+    ) {
+      if (renewedScope?.phaseRun === phaseRun) releasePaneSkillPlan(paneId)
+      await gitOff(
+        'removePrivateSkillPlan',
+        privateSkillRuntimeRoot,
+        paneId,
+        phaseRun
+      ).catch(() => undefined)
+      return undefined
+    }
+    if (uiSender && !uiSender.isDestroyed()) uiSender.send('tasks:changed', projectId)
+
+    const definitionsById = new Map(definitions.map((definition) => [definition.id, definition]))
+    return [
+      'ACTIVE SKILL PLAN RENEWED — every receipt from the previous round is expired. Activate and report only the receiptIds below.',
+      buildSkillsBlock({
+        plannedSkills: planned.plan.receipts.map((receipt) => ({
+          ...(definitionsById.get(receipt.skillId) as SkillDef),
+          receiptId: receipt.receiptId,
+          operation: receipt.operation,
+          reason: receipt.reason,
+          required: receipt.required
+        }))
+      })
+    ].join('\n\n')
+  }
   ipcMain.handle('skills:list', () => skillsLib.listState())
   ipcMain.handle('skills:install', (_e, id: string) => skillsLib.install(id))
   ipcMain.handle('skills:installMany', (_e, ids: string[]) => skillsLib.installMany(ids))
@@ -3578,101 +4021,6 @@ app.whenReady().then(async () => {
       line: describeEntry(entry)
     }))
   )
-
-  // Gates podem consultar skills de QA, mas nunca recebem subagentes: review e
-  // QA são principals somente leitura e não coordenam processos escritores.
-  // O REVIEWER SÓ RECEBE SKILLS DE QUALIDADE DE CÓDIGO (decisão do usuário,
-  // 2026-08-05: "o reviewer é pra ver a qualidade do código no contexto —
-  // limpo, sem repetição, coisa no lugar certo; boa, não perfeita" — o menu
-  // completo da função qa incluía wcag/a11y/webapp-testing/playwright, e era
-  // ELE que alimentava a régua de QA/norma que travou o card de DS o dia
-  // inteiro: o alvo de 24px é regra WCAG que veio do menu, não do contrato).
-  const REVIEW_GATE_SKILL_IDS = [
-    'code-review',
-    'code-review-and-quality',
-    'ce-code-review',
-    'differential-review'
-  ]
-  async function gateSkillsFor(
-    cwd: string,
-    cli: 'claude' | 'codex',
-    phase: 'review' | 'qa',
-    executionMode: MissionExecutionMode = 'standard',
-    opts: { includeCyber?: boolean; uiCard?: boolean } = {}
-  ): Promise<{ skillsBlock: string; agentsBlock: string; requiredSkillError?: string }> {
-    const requiresFrontendStandard = phase === 'qa' && Boolean(opts.uiCard)
-    try {
-      // Gates rápidos já recebem critérios e diff fechados. Um catálogo
-      // inteiro de skills/subagentes só adicionaria leitura e coordenação.
-      if (executionMode === 'fast' && (phase === 'review' || !opts.uiCard))
-        return { skillsBlock: '', agentsBlock: '' }
-      // QA: menu completo da função qa (testes/browser/a11y — é ele quem RODA).
-      // REVIEW: allowlist de code review apenas. GATE ESPECIALISTA
-      // (2026-08-04): review sensível em modo estrito soma o arsenal CYBER —
-      // é ele quem valida segurança, não o humano.
-      const qaInstalled = skillsLib.installedIdsForDept('qa')
-      const baseIds =
-        phase === 'review'
-          ? qaInstalled.filter((id) => REVIEW_GATE_SKILL_IDS.includes(id))
-          : executionMode === 'fast'
-            ? selectFastQaUiSkillIds(qaInstalled, Boolean(opts.uiCard))
-            : qaInstalled
-      const skillIds = [
-        ...new Set([
-          ...baseIds,
-          ...(opts.includeCyber ? skillsLib.installedIdsForDept('cyber') : [])
-        ])
-      ]
-      const sync = await syncWorkspaceSkills(cwd, skillIds)
-      if (
-        missingMandatoryFrontendStandard(
-          sync.injected.filter((skill) => skill.kind === 'skill').map((skill) => skill.id),
-          opts.uiCard ? 'front' : 'back',
-          phase
-        )
-      ) {
-        return {
-          skillsBlock: '',
-          agentsBlock: '',
-          requiredSkillError: 'a régua visual obrigatória não foi injetada no workspace do QA'
-        }
-      }
-      if (!skillIds.length) {
-        // Biblioteca com itens instalados mas menu de gate vazio = defeito de
-        // elegibilidade/sync, nunca silêncio (regra dura do usuário, 04/08).
-        // No REVIEW o menu é allowlist — vazio significa "skills de code
-        // review não instaladas", não defeito de sync; o alarme é só do QA.
-        if (skillsLib.installedRawCount() > 0 && phase === 'qa') {
-          blackbox.record({
-            cat: 'pane',
-            event: 'skills-sync-empty',
-            actor: 'harness',
-            reason: 'menu de gate vazio com biblioteca instalada — verificar elegibilidade de supply-chain'
-          })
-        }
-        return { skillsBlock: '', agentsBlock: '' }
-      }
-      const injSkills = sync.injected.filter((s) => s.kind === 'skill')
-      const skillsBlock = injSkills.length
-        ? `\n\nSKILLS INSTALLED FOR THIS REVIEW (loaded from this directory — ${
-            cli === 'claude'
-              ? 'invoke as /<name> or let them auto-trigger'
-              : 'invoke by mentioning $<name> or let them auto-trigger'
-          }; use the ones that fit this review, ignore the rest):\n${injSkills
-            .map((s) => `- ${s.id}: ${s.hint}`)
-            .join('\n')}`
-        : ''
-      return { skillsBlock, agentsBlock: '' }
-    } catch {
-      return {
-        skillsBlock: '',
-        agentsBlock: '',
-        ...(requiresFrontendStandard
-          ? { requiredSkillError: 'a sincronização da régua visual obrigatória falhou' }
-          : {})
-      }
-    }
-  }
 
   // ————— Hub Synkora: event bus + servidor MCP local —————
   // Todo evento da orquestração passa pelo hub (EVENTS.md + UI + injeção no
@@ -3864,7 +4212,7 @@ app.whenReady().then(async () => {
     sessionStats,
     helperCompletions,
     maestroSessions,
-    helperSkillLeases,
+    helperSkillLeases: paneSkillLeases,
     paneTokens,
     paneMcpFiles,
     paneSessions,
@@ -3872,7 +4220,6 @@ app.whenReady().then(async () => {
     helperReported,
     helperSeen,
     voiceRequests,
-    materializedPlanningSkillsByProject,
     get hub() {
       return hub
     },
@@ -4202,7 +4549,16 @@ app.whenReady().then(async () => {
     // Dev/ajudante recebem browser + runner. Gates recebem somente
     // Synkora/code_*: o Playwright MCP bruto não é uma fronteira segura.
     const external = paneExternalMcpCapabilities(accessProfile)
-    const browserBase = strict && !sensitive && external.browser ? externalPlaywrightForPane() : undefined
+    const configuredBrowser = externalPlaywrightForPane()
+    const browserBase = paneBrowserAvailable(accessProfile, {
+      sensitive,
+      sensitiveAutoOk: false,
+      strict,
+      mcpReady: mcpPort !== 0,
+      browserConfigured: Boolean(configuredBrowser)
+    })
+      ? configuredBrowser
+      : undefined
     // EVIDÊNCIA NUNCA NASCE GIT-VISÍVEL (caso real 2026-08-06: o output dir
     // PADRÃO do @playwright/mcp é o cwd — screenshots do QA caíram na RAIZ do
     // worktree e invalidaram o próprio veredito dele, duas rodadas): todo pane
@@ -4268,9 +4624,14 @@ app.whenReady().then(async () => {
     opts: { strictMcp?: boolean; configDir?: string; sensitive?: boolean } = {}
   ): { paneId: string; cliArgs: string[] } {
     const paneId = identity.paneId ?? randomUUID()
+    const methodGoverned = isMethodGovernedPaneRole(identity.role)
+    if (cli === 'codex' && methodGoverned && !opts.configDir) {
+      throw new Error('Codex method-governed pane requires an isolated config directory')
+    }
     const token = randomUUID()
     hub.registerPane(token, { ...identity, paneId })
     paneTokens.set(paneId, token)
+    try {
     const bypass = bypassOn(identity.projectId)
     const accessProfile = paneAccessProfile(identity.role)
     // OVERRIDE DO DONO (por projeto, decisão do usuário 2026-08-04): em domínio
@@ -4281,12 +4642,13 @@ app.whenReady().then(async () => {
     // O padrão continua protegido (override desligado).
     const sensitiveOverride =
       opts.sensitive === true && maestro.get(identity.projectId).sensitiveAutoOk === true
-    const sensitive = opts.sensitive === true && !sensitiveOverride
+    const sensitive = effectiveSensitiveAccess(opts.sensitive === true, sensitiveOverride)
     const effectiveStrictMcp = sensitive ? true : (opts.strictMcp ?? true)
     const args: string[] = []
     args.push(
       ...panePermissionArgs(cli, bypass, accessProfile, {
-        sensitive
+        sensitive,
+        receiptGoverned: methodGoverned
       })
     )
     if (sensitive && accessProfile === 'write' && bypass) {
@@ -4344,7 +4706,7 @@ app.whenReady().then(async () => {
       if (opts.configDir && project) ensureCodexTrust(opts.configDir, project.path)
       // Gates Codex must not inherit arbitrary MCP servers from the seat's
       // persistent CODEX_HOME. The ephemeral Synkora server is appended below.
-      if (opts.configDir && (accessProfile !== 'write' || sensitive)) {
+      if (opts.configDir && (methodGoverned || accessProfile !== 'write' || sensitive)) {
         const configFile = join(opts.configDir, 'config.toml')
         args.push(
           ...codexGateMcpDisableArgs(
@@ -4391,7 +4753,13 @@ app.whenReady().then(async () => {
       },
       err: mcpPort === 0 ? 'servidor MCP interno ainda não estava de pé' : undefined
     })
-    return { paneId, cliArgs: args }
+      return { paneId, cliArgs: args }
+    } catch (error) {
+      hub.unregisterPane(paneId)
+      paneTokens.delete(paneId)
+      cleanPaneMcpFile(paneId)
+      throw error
+    }
   }
 
   // Aceite do bypass gravado JÁ NO BOOT para todos os seats claude: processos
@@ -4598,7 +4966,10 @@ app.whenReady().then(async () => {
       if (uiSender && !uiSender.isDestroyed()) uiSender.send('panes:closeById', id, pane.paneId)
     }
     for (const [tid, watch] of phaseWatches) {
-      if (watch.projectId === id) phaseWatches.delete(tid)
+      if (watch.projectId === id) {
+        phaseWatches.delete(tid)
+        if (watch.paneId && !ptys.has(watch.paneId)) discardUnstartedPane(watch.paneId)
+      }
     }
     // 2. caminho novo no store (única fonte de verdade do path)
     codeIntelligence?.invalidateWorktreeNow(oldPath)
@@ -4708,8 +5079,37 @@ app.whenReady().then(async () => {
       })
       return []
     }
+    const manualDeliverable = item.deliverable ?? 'code'
+    const manualAffectsUi =
+      item.affectsUi ??
+      (manualDeliverable === 'code'
+        ? ['front', 'design'].includes(item.department) ||
+          classifyTaskUiWork({
+            department: item.department,
+            title: item.title,
+            description: item.description,
+            briefing: item.briefing,
+            quests: item.quests
+          })
+        : false)
     const created = tasks.createMany(projectId, [
-      { ...item, version: item.version ?? maestro.get(projectId).version }
+      {
+        ...item,
+        // Quick-add nao tem briefing suficiente para uma classificacao
+        // confiavel. Em front/design, o fallback seguro e ativar o contrato;
+        // nas demais lanes, sinais renderizados inequívocos também o ativam.
+        // Cards orquestrados sempre declaram o booleano explicitamente.
+        affectsUi: manualAffectsUi,
+        deliverable: manualDeliverable,
+        gates: gatesForTask(
+          'standard',
+          'low',
+          manualDeliverable,
+          item.gates,
+          manualAffectsUi === true
+        ),
+        version: item.version ?? maestro.get(projectId).version
+      }
     ])
     hub.publish({
       projectId,
@@ -4720,20 +5120,44 @@ app.whenReady().then(async () => {
     syncBoard(projectId)
     return created
   })
-  ipcMain.handle('tasks:update', (_e, id: string, patch: Partial<Task>) => {
+  ipcMain.handle('tasks:update', (_e, id: string, patch: unknown) => {
     const before = tasks.get(id)
     // F5.7: card de PLANO e cards AUTO (geridos pelo orquestrador) são
     // read-only para o renderer — aprovar/pausar o plano tem IPC próprio e
     // quem move card auto é o pipeline/orquestrador.
     if (before && (before.kind === 'plan' || before.auto)) return before
-    const updated = tasks.update(id, patch)
+    if (!before) return undefined
+    const hasActivePane =
+      phaseWatches.has(id) ||
+      hub
+        .panesOf(before.projectId)
+        .some(
+          (pane) =>
+            pane.taskId === id &&
+            (pane.role === 'dev' ||
+              pane.role === 'review' ||
+              pane.role === 'qa' ||
+              pane.role === 'ajudante')
+        )
+    const sanitized = sanitizeRendererTaskPatch(patch, { hasActivePane })
+    if (!sanitized.ok) {
+      blackbox.record({
+        cat: 'task',
+        event: 'renderer-task-update-refused',
+        actor: 'harness',
+        ids: { projectId: before.projectId, missionId: before.missionId, taskId: id },
+        reason: sanitized.reason
+      })
+      return before
+    }
+    const updated = tasks.update(id, sanitized.patch)
     if (updated) {
-      if (patch.status && patch.status !== before?.status) {
+      if (sanitized.patch.status && sanitized.patch.status !== before.status) {
         hub.publish({
           projectId: updated.projectId,
           missionId: updated.missionId,
           kind: 'task-updated',
-          text: `"${updated.title}" movida para ${patch.status}`,
+          text: `"${updated.title}" movida para ${sanitized.patch.status}`,
           actor: 'user'
         })
       }
@@ -4754,13 +5178,32 @@ app.whenReady().then(async () => {
         return false
       }
     }
-    tasks.remove(task.id)
-    // Card em EXECUÇÃO também pode ser excluído (caso real: orquestrador
-    // duplicou o card): solta o watch e fecha os panes das fases.
+    const activeWatchToRemove = phaseWatches.get(task.id)
+    const terminatedPaneIds = new Set<string>()
+    const liveWaitToRemove = liveGateWaits.get(task.id)
+    if (liveWaitToRemove) terminatedPaneIds.add(liveWaitToRemove.paneId)
+    closeLiveGateWait(task.projectId, task.id, 'tarefa removida')
+    for (const pane of hub
+      .panesOf(task.projectId)
+      .filter((candidate) => candidate.taskId === task.id)) {
+      terminatedPaneIds.add(pane.paneId)
+      if (pane.role === 'ajudante') {
+        helperCompletions.discard(pane.paneId)
+        updateStoredHelperStatus(task.projectId, pane.paneId, 'interrupted')
+        terminatePaneNow(task.projectId, pane.paneId)
+      }
+    }
     phaseWatches.delete(task.id)
-    liveGateWaits.delete(task.id)
-    for (const role of ['dev', 'review', 'qa'] as const)
-      closePhasePane(task.projectId, task.id, role)
+    for (const role of ['dev', 'review', 'qa'] as const) {
+      terminateTaskPhasePane(task.projectId, task.id, role)
+    }
+    if (activeWatchToRemove?.paneId && !terminatedPaneIds.has(activeWatchToRemove.paneId)) {
+      terminatePaneNow(task.projectId, activeWatchToRemove.paneId)
+    }
+    // Só apaga o card depois que nenhum processo consegue mais escrever no
+    // worktree ou reportar contra o estado removido.
+    tasks.remove(task.id)
+    // Depois do estado, remove transcript, marcadores e worktree.
     if (project) {
       const runsDir = join(project.path, '.synkora', 'runs')
       for (const f of [
@@ -5662,6 +6105,23 @@ app.whenReady().then(async () => {
     if (seenRevision && task.updatedAt !== seenRevision) {
       return { staleRevision: true, currentRevision: task.updatedAt }
     }
+    const resumableLegacyPlan =
+      task.plan.planningEvidenceState === 'legacy_unverified' &&
+      Boolean(task.plan.approvedAt) &&
+      !task.plan.planningMethod
+    if (!isVerifiedTaskPlanPlanningMethod(task.plan) && !resumableLegacyPlan) {
+      hub.publish({
+        projectId: task.projectId,
+        missionId: task.missionId,
+        kind: 'error',
+        text:
+          'este plano foi criado sem um receipt verificável do método de planejamento. ' +
+          'Nenhum status mudou; peça ao orquestrador para reapresentar a proposta.',
+        actor: 'harness',
+        urgent: true
+      })
+      return { planningEvidenceRequired: true as const }
+    }
     const mission = task.missionId ? missions.get(task.missionId) : undefined
     const project = projects.get(task.projectId)
     const missionCwd = mission && project
@@ -6281,7 +6741,7 @@ app.whenReady().then(async () => {
         continue
       }
       const item = plan?.roadmap.find((candidate) => candidate.id === intent.itemId)
-      if (!item || (item.missionId && item.missionId !== missionId)) {
+      if (!plan || !item || (item.missionId && item.missionId !== missionId)) {
         rollbackPlannedMission(projectId, missionId)
         clearMissionStartIntent(project.path, missionId)
         continue
@@ -6315,6 +6775,11 @@ app.whenReady().then(async () => {
           bindProjectMission(project.path, {
             itemId: item.id,
             missionId,
+            validation: {
+              requireTrustedEvidence: true,
+              trustedEvidence: project.planningEvidence,
+              trustedLegacyApproval: project.legacyPlanningApproval
+            },
             ...(version
               ? { release: { versionId: version.id, versionName: version.name } }
               : {})
@@ -6724,7 +7189,7 @@ app.whenReady().then(async () => {
           'Preservar as entregas já integradas e a intenção desta missão',
           'Rodar os testes rápidos relevantes'
         ],
-        skills: conflictInstruction && skillsLib.isInstalled('resolving-merge-conflicts')
+        skills: conflictInstruction && skillsLib.isSelectable('resolving-merge-conflicts')
           ? ['resolving-merge-conflicts']
           : undefined,
         version: maestro.get(mission.projectId).version,
@@ -9093,49 +9558,54 @@ app.whenReady().then(async () => {
     if (ptys.has(paneId)) ptys.kill(paneId)
     unregisterPane(paneId)
     const cwd = missionCwd
-    // O orquestrador é um PLANEJADOR: as skills de planejamento instaladas
-    // (orchestratorDefault) entram no workspace dele ANTES do spawn — a
-    // persona manda consultá-las antes de qualquer plano (decisão do
-    // usuário, 2026-07-29). Best-effort: falha de cópia nunca trava o pane.
-    let injectedPlanningIds: string[] = []
-    let missingPlanningIds: string[] = []
-    try {
-      const planningIds = skillsLib.orchestratorPlanningIds()
-      const synced = await syncWorkspaceSkills(cwd, planningIds)
-      injectedPlanningIds = planningIds.filter((id) =>
-        synced.injected.some((skill) => skill.id === id)
-      )
-      missingPlanningIds = synced.missing.filter((id) => planningIds.includes(id))
-    } catch {
-      /* pane nasce sem as skills; a persona degrada para planejar direto */
+    const planningRun = await preparePlanningRun({ paneId, projectId, missionId, cwd })
+    if (!planningRun.ok) {
+      hub.publish({
+        projectId,
+        missionId,
+        kind: 'error',
+        text: `não abri o orquestrador: ${planningRun.message}`,
+        actor: 'harness',
+        urgent: true
+      })
+      return null
     }
     const missionRuntimeRisk = assessMissionRisk({
       texts: [mission.title, mission.goal, mission.scope]
     })
-    const armed = armPane(
-      { paneId, projectId, role: 'maestro', missionId, cwd, seatId: seat.id },
-      seat.cli,
-      // sem strict: MCPs próprios do seat continuam valendo (como no PM)
-      {
-        strictMcp: false,
-        configDir: seats.configDirOf(seat),
-        sensitive:
-          missionRuntimeRisk.effectiveRisk === 'high' ||
-          requiresManualSecurityValidation(missionRuntimeRisk.surfaces)
-      }
-    )
+    let armed: ReturnType<typeof armPane>
+    try {
+      armed = armPane(
+        { paneId, projectId, role: 'maestro', missionId, cwd, seatId: seat.id },
+        seat.cli,
+        {
+          strictMcp: true,
+          configDir: seats.configDirOf(seat),
+          sensitive:
+            missionRuntimeRisk.effectiveRisk === 'high' ||
+            requiresManualSecurityValidation(missionRuntimeRisk.surfaces)
+        }
+      )
+    } catch {
+      releasePaneSkillLease(paneId)
+      releasePaneSkillPlan(paneId)
+      hub.publish({
+        projectId,
+        missionId,
+        kind: 'error',
+        text: 'não abri o orquestrador: falha ao armar o pane com o método de planejamento',
+        actor: 'harness',
+        urgent: true
+      })
+      return null
+    }
     // Plano de ondas PERSISTENTE da missão: memória do orquestrador que
     // sobrevive a fechamento do app/sessão perdida (fica no projeto, não no
     // worktree — sobrevive também à integração/limpeza).
     const plansDir = join(project.path, '.synkora', 'missions')
     mkdirSync(plansDir, { recursive: true })
     const planFile = join(plansDir, `${missionId.slice(0, 8)}.PLAN.md`)
-    const persona = `${missionPersona(mission, planFile)}
-
-PLANNING SKILL GATE (menu realmente materializado neste workspace):
-- Disponíveis: ${injectedPlanningIds.join(', ') || 'nenhuma'}.
-- Indisponíveis nesta abertura: ${missingPlanningIds.join(', ') || 'nenhuma'}.
-Use e anuncie somente itens da lista Disponíveis; ter sido listado aqui não significa que foi aplicado.`
+    const personaWithPlanning = `${missionPersona(mission, planFile)}${planningRun.skillBlock}`
     const cliArgs = [...armed.cliArgs]
     // Effort do orquestrador (validado: claude tem --effort low..max; codex
     // usa a chave de config). No codex o -c é global e PRECISA vir antes do
@@ -9162,12 +9632,12 @@ Use e anuncie somente itens da lista Disponíveis; ter sido listado aqui não si
       ? 'Your VERY FIRST output — before ANY tool call — is a 2-3 line introduction (PT-BR) as the orchestrator of this mission: restate the mission goal and scope you were given. ONLY THEN read your mission PLAN.md notebook if it exists (.synkora/missions/<id>.PLAN.md — your own persistent notebook, not the master plan nor the briefing; if missing, say "o caderno PLAN.md desta missão ainda não existe — normal em missão nova", NEVER the ambiguous "o plano não existe"). If the goal is already clear enough to plan, STUDY the project now and propose the plan via create_plan (the user reads and approves it on the board); if not, ask what is missing. NEVER create work cards before the plan is approved.'
       : 'Your VERY FIRST output — before ANY tool call — is a 1-2 line introduction (PT-BR) inviting the user to explain the mission: it was created with only a short title/goal and they will explain what they want HERE, in their next message. Then read your mission PLAN.md notebook if it exists (.synkora/missions/<id>.PLAN.md — your own persistent notebook; if missing, say "o caderno PLAN.md desta missão ainda não existe — normal em missão nova"). Do NOT guess the scope, do NOT open a detailed questionnaire and do NOT propose any plan yet — wait for their explanation first.'
     if (seat.cli === 'claude') {
-      appendSystemPrompt = persona
+      appendSystemPrompt = personaWithPlanning
       if (state.tuiSessionId) cliArgs.push('--resume', state.tuiSessionId)
       else initialPrompt = introPrompt
     } else {
       // Mantem o papel do orquestrador inclusive apos /new e em resume.
-      cliArgs.push('-c', codexDeveloperInstructions(persona))
+      cliArgs.push('-c', codexDeveloperInstructions(personaWithPlanning))
       if (state.tuiSessionId) cliArgs.push('resume', state.tuiSessionId)
       else initialPrompt = introPrompt
     }
@@ -10318,33 +10788,37 @@ Use e anuncie somente itens da lista Disponíveis; ter sido listado aqui não si
     // pane antigo ainda vivo (reload do renderer): mata para renascer limpo
     if (ptys.has(paneId)) ptys.kill(paneId)
     unregisterPane(paneId)
-    // O PM também planeja (missões/briefings): mesmas skills de planejamento
-    // no workspace dele (ver missions:paneSpec para o racional).
-    let injectedPlanningIds: string[] = []
-    let missingPlanningIds: string[] = []
-    try {
-      const planningIds = skillsLib.orchestratorPlanningIds()
-      const synced = await syncWorkspaceSkills(project.path, planningIds)
-      injectedPlanningIds = planningIds.filter((id) =>
-        synced.injected.some((skill) => skill.id === id)
-      )
-      missingPlanningIds = synced.missing.filter((id) => planningIds.includes(id))
-    } catch {
-      /* best-effort */
+    const planningRun = await preparePlanningRun({ paneId, projectId, cwd: project.path })
+    if (!planningRun.ok) {
+      hub.publish({
+        projectId,
+        kind: 'error',
+        text: `não abri o Maestro: ${planningRun.message}`,
+        actor: 'harness',
+        urgent: true
+      })
+      return null
     }
-    const persona = `${basePersona}
-
-PLANNING SKILL GATE (menu realmente materializado neste workspace):
-- Disponíveis: ${injectedPlanningIds.join(', ') || 'nenhuma'}.
-- Indisponíveis nesta abertura: ${missingPlanningIds.join(', ') || 'nenhuma'}.
-Registre em record_planning_skill_use somente uma skill Disponível e somente DEPOIS de aplicar seu método; disponibilidade não conta como uso.`
-    materializedPlanningSkillsByProject.set(projectId, new Set(injectedPlanningIds))
-    const armed = armPane(
-      { paneId, projectId, role: 'maestro', cwd: project.path, seatId: seat.id },
-      seat.cli,
-      // sem strict: MCPs próprios do seat continuam valendo para o Maestro
-      { strictMcp: false, configDir: seats.configDirOf(seat) }
-    )
+    const personaWithPlanning = `${basePersona}${planningRun.skillBlock}`
+    let armed: ReturnType<typeof armPane>
+    try {
+      armed = armPane(
+        { paneId, projectId, role: 'maestro', cwd: project.path, seatId: seat.id },
+        seat.cli,
+        { strictMcp: true, configDir: seats.configDirOf(seat) }
+      )
+    } catch {
+      releasePaneSkillLease(paneId)
+      releasePaneSkillPlan(paneId)
+      hub.publish({
+        projectId,
+        kind: 'error',
+        text: 'não abri o Maestro: falha ao armar o pane com o método de planejamento',
+        actor: 'harness',
+        urgent: true
+      })
+      return null
+    }
     const cliArgs = [...armed.cliArgs]
     // Effort do Maestro (escolhido no gate, persistido): claude --effort;
     // codex -c global — PRECISA vir antes do subcomando resume.
@@ -10362,13 +10836,13 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         ? `Your previous conversation was NOT resumed on purpose (~${Math.round(resumeOverBudget / 1000)}k tokens of context — replaying it would burn a real slice of the account limit; deliberate economy, no work lost). Your VERY FIRST output — before ANY tool call — is a 2-3 line PT-BR note telling the user exactly that. THEN rebuild your working memory from the durable files: read .synkora/MAESTRO.md (your own notebook) if it exists, .synkora/BOARD.md, .synkora/PROJECT_PLAN.md when present, and call board_status. Summarize where the project stands in 2-3 PT-BR lines and continue. Do NOT re-ask questions the user already answered; if .synkora/MAESTRO.md does not exist yet, say "o caderno MAESTRO.md ainda não existe — vou criá-lo agora" and write it after reading the state.`
         : undefined
     if (seat.cli === 'claude') {
-      appendSystemPrompt = persona
+      appendSystemPrompt = personaWithPlanning
       if (state.tuiSessionId) cliArgs.push('--resume', state.tuiSessionId)
       else initialPrompt = resumeSkippedIntro
     } else {
       // Diferente do primeiro prompt, developer_instructions sobrevive a /new
       // e tambem vale ao retomar uma thread Codex existente.
-      cliArgs.push('-c', codexDeveloperInstructions(persona))
+      cliArgs.push('-c', codexDeveloperInstructions(personaWithPlanning))
       if (state.tuiSessionId) {
       // -c são flags globais: podem vir antes do subcomando resume
       cliArgs.push('resume', state.tuiSessionId)
@@ -10530,6 +11004,165 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     string,
     { projectId: string; taskId: string; spec: DevPaneSpec }
   >()
+
+  function reviewArtifactIdentity(path: string): { sha256: string; bytes: number } {
+    const hash = createHash('sha256')
+    const fd = openSync(path, 'r')
+    const chunk = Buffer.allocUnsafe(1024 * 1024)
+    try {
+      for (;;) {
+        const read = readSync(fd, chunk, 0, chunk.byteLength, null)
+        if (read === 0) break
+        hash.update(chunk.subarray(0, read))
+      }
+    } finally {
+      closeSync(fd)
+    }
+    return { sha256: hash.digest('hex'), bytes: statSync(path).size }
+  }
+
+  const reviewEvidenceRoot = join(app.getPath('userData'), 'review-evidence')
+  let sweptReviewArtifacts = false
+  function removeAllReviewArtifacts(): void {
+    try {
+      mkdirSync(reviewEvidenceRoot, { recursive: true })
+      for (const name of readdirSync(reviewEvidenceRoot)) {
+        if (!/^[a-zA-Z0-9_-]+-[0-9a-f-]{36}\.review\.patch$/i.test(name)) continue
+        try {
+          unlinkSync(join(reviewEvidenceRoot, name))
+        } catch {
+          // outro processo pode ter limpado primeiro
+        }
+      }
+    } catch {
+      // diretório ainda não existe
+    }
+  }
+  function sweepReviewArtifactsOnce(): void {
+    if (sweptReviewArtifacts) return
+    sweptReviewArtifacts = true
+    removeAllReviewArtifacts()
+  }
+  // Resíduos de crash são removidos no boot mesmo que esta sessão não abra
+  // outro review grande. A instância do app é única e nenhuma rodada viva
+  // existe antes deste ponto da inicialização.
+  sweepReviewArtifactsOnce()
+  app.once('will-quit', removeAllReviewArtifacts)
+
+  /** Grava patches grandes fora do worktree. O gate só os lê pela tool
+   * vinculada a pane/fase; DEV e conteúdo do projeto nunca recebem o path. */
+  function materializeReviewDiffArtifact(
+    _cwd: string,
+    taskId: string,
+    evidence: ReturnType<typeof immutableReviewDiff>
+  ): PhaseWatch['reviewArtifact'] | undefined {
+    if (
+      evidence?.mode !== 'local' ||
+      (!evidence.artifactText && !evidence.artifactSourcePath)
+    ) {
+      return undefined
+    }
+    const safeTaskId = taskId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80)
+    if (!safeTaskId) return undefined
+    sweepReviewArtifactsOnce()
+    const absolutePath = join(
+      reviewEvidenceRoot,
+      `${safeTaskId}-${randomUUID()}.review.patch`
+    )
+    try {
+      mkdirSync(dirname(absolutePath), { recursive: true })
+      if (evidence.artifactText) {
+        writeFileSync(absolutePath, evidence.artifactText, 'utf-8')
+      } else if (evidence.artifactSourcePath) {
+        copyFileSync(evidence.artifactSourcePath, absolutePath)
+      }
+      const identity = reviewArtifactIdentity(absolutePath)
+      if (
+        (evidence.artifactSha256 && evidence.artifactSha256 !== identity.sha256) ||
+        (evidence.artifactBytes !== undefined && evidence.artifactBytes !== identity.bytes)
+      ) {
+        unlinkSync(absolutePath)
+        return undefined
+      }
+      return {
+        privatePath: absolutePath,
+        ...identity,
+        chunks: buildReviewEvidenceChunkManifest(absolutePath, identity.bytes),
+        servedUntil: 0
+      }
+    } catch {
+      try {
+        unlinkSync(absolutePath)
+      } catch {
+        // destino parcial pode não ter sido criado
+      }
+      return undefined
+    } finally {
+      if (evidence.artifactSourcePath) {
+        try {
+          unlinkSync(evidence.artifactSourcePath)
+          rmSync(dirname(evidence.artifactSourcePath), { force: true })
+        } catch {
+          // O diretório temporário do sistema cobre crash/interrupção.
+        }
+      }
+    }
+  }
+
+  function reviewArtifactProblem(watch: PhaseWatch): string | undefined {
+    const artifact = watch.reviewArtifact
+    if (!artifact) return undefined
+    const storageProblem = reviewArtifactStorageProblem(watch)
+    if (storageProblem) return storageProblem
+    try {
+      const identity = reviewArtifactIdentity(artifact.privatePath)
+      if (identity.sha256 !== artifact.sha256) return 'hash do artefato imutável mudou'
+      return undefined
+    } catch {
+      return 'artefato imutável do review não está mais legível'
+    }
+  }
+
+  function reviewArtifactStorageProblem(watch: PhaseWatch): string | undefined {
+    const artifact = watch.reviewArtifact
+    if (!artifact) return undefined
+    try {
+      const absolutePath = resolve(artifact.privatePath)
+      const relativePath = relative(resolve(reviewEvidenceRoot), absolutePath)
+      if (relativePath.startsWith('..') || isAbsolute(relativePath)) {
+        return 'artefato imutável saiu do storage privado autorizado'
+      }
+      if (statSync(absolutePath).size !== artifact.bytes) {
+        return 'tamanho do artefato imutável mudou'
+      }
+      return undefined
+    } catch {
+      return 'artefato imutável do review não está mais legível'
+    }
+  }
+
+  function cleanupReviewArtifact(watch: PhaseWatch): void {
+    if (!watch.reviewArtifact) return
+    try {
+      const absolutePath = resolve(watch.reviewArtifact.privatePath)
+      const relativePath = relative(resolve(reviewEvidenceRoot), absolutePath)
+      if (!relativePath.startsWith('..') && !isAbsolute(relativePath)) unlinkSync(absolutePath)
+    } catch {
+      // sweep do runtime remove resíduos após crash
+    }
+  }
+
+  function readReviewArtifactChunk(
+    watch: PhaseWatch,
+    offset: number,
+    _maxBytes = 32 * 1024
+  ): string {
+    const artifact = watch.reviewArtifact
+    if (!artifact) return 'evidência privada indisponível nesta rodada'
+    const problem = reviewArtifactStorageProblem(watch)
+    if (problem) return `evidência privada recusada: ${problem}`
+    return readAuthenticatedReviewEvidenceChunk(artifact, offset)
+  }
   // Um processo em fechamento não pode reaparecer num snapshot durante o
   // pequeno intervalo entre kill() e onExit().
   const closingPaneIds = new Set<string>()
@@ -10540,7 +11173,31 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
   // DEPOIS da conclusão entregue (bug real, diário de 2026-08-03).
   // Append-only por sessão: paneIds são UUIDs, o custo é desprezível.
   const paneEverSpawned = new Set<string>()
-  const phaseWatches = new Map<string, PhaseWatch>()
+  class PhaseWatchRegistry extends Map<string, PhaseWatch> {
+    override set(taskId: string, watch: PhaseWatch): this {
+      const previous = this.get(taskId)
+      if (
+        previous?.reviewArtifact &&
+        previous.reviewArtifact.privatePath !== watch.reviewArtifact?.privatePath
+      ) {
+        cleanupReviewArtifact(previous)
+      }
+      return super.set(taskId, watch)
+    }
+
+    override delete(taskId: string): boolean {
+      const watch = this.get(taskId)
+      if (watch) cleanupReviewArtifact(watch)
+      return super.delete(taskId)
+    }
+
+    /** Remove só a indexação durante a transação do report; advancePhase
+     * continua dono do artefato até aceitar ou restaurar a rodada. */
+    detach(taskId: string): boolean {
+      return super.delete(taskId)
+    }
+  }
+  const phaseWatches = new PhaseWatchRegistry()
   const phaseLaunches = new PhaseLaunchGuard()
   const phaseLaunchCapacity = new PhaseLaunchCapacityGuard()
   // Perguntas dirigidas ao USUÁRIO (tool ask_user, 2026-08-06): chave
@@ -10604,6 +11261,8 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
   /** Reverte um armamento que nunca chegou a produzir um PTY. Arquivos,
    * worktree e sessões permanecem; apenas a afirmação "está rodando" cai. */
   function rollbackFailedPaneSpawn(paneId: string, reason: string): void {
+    helperOpenWatchdog.acknowledge(paneId)
+    pendingPtyPreparations.delete(paneId)
     const identity = hub.identityByPane(paneId)
     livePaneSpecs.delete(paneId)
     closingPaneIds.delete(paneId)
@@ -10654,22 +11313,76 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     }
   }
 
+  /** Limpa um pane já armado que nunca ganhou PTY, sem alterar o estado do card. */
+  function discardUnstartedPane(paneId: string): void {
+    if (ptys.has(paneId)) return
+    helperOpenWatchdog.acknowledge(paneId)
+    pendingPtyPreparations.delete(paneId)
+    livePaneSpecs.delete(paneId)
+    closingPaneIds.delete(paneId)
+    unregisterPane(paneId)
+    paneTokens.delete(paneId)
+    cleanPaneMcpFile(paneId)
+  }
+
+  /** Encerra um pane pelo id mesmo quando o registro do Hub ja se perdeu. */
+  function terminatePaneNow(projectId: string, paneId: string): void {
+    helperOpenWatchdog.acknowledge(paneId)
+    pendingPtyPreparations.delete(paneId)
+    const terminatingIdentity = hub.identityByPane(paneId)
+    const terminatingSpec = livePaneSpecs.get(paneId)
+    const terminatingTaskId = terminatingIdentity?.taskId ?? terminatingSpec?.taskId
+    const terminatingRole = terminatingIdentity?.role ?? terminatingSpec?.spec.role
+    if (terminatingRole === 'qa' && terminatingTaskId) stopQaRuntime(terminatingTaskId)
+    const hadPty = ptys.has(paneId)
+    unregisterPane(paneId)
+    livePaneSpecs.delete(paneId)
+    if (hadPty) {
+      closingPaneIds.add(paneId)
+      ptys.kill(paneId)
+    } else {
+      closingPaneIds.delete(paneId)
+      paneTokens.delete(paneId)
+      cleanPaneMcpFile(paneId)
+    }
+    paneSessions.delete(paneId)
+    if (uiSender && !uiSender.isDestroyed()) {
+      uiSender.send('panes:closeById', projectId, paneId)
+    }
+  }
+
+  /** Helpers pertencem ao ciclo de vida do DEV que os delegou. Se esse DEV
+   * morre, não deixe escritores órfãos bloquearem ou alterarem a retomada. */
+  function terminateTaskHelpers(projectId: string, taskId: string, reason: string): void {
+    const helpers = hub
+      .panesOf(projectId)
+      .filter((pane) => pane.role === 'ajudante' && pane.taskId === taskId)
+    for (const helper of helpers) {
+      helperCompletions.discard(helper.paneId)
+      updateStoredHelperStatus(projectId, helper.paneId, 'interrupted')
+      blackbox.record({
+        cat: 'pane',
+        event: 'task-helper-terminated',
+        actor: 'harness',
+        ids: { projectId, taskId, paneId: helper.paneId },
+        reason
+      })
+      terminatePaneNow(projectId, helper.paneId)
+    }
+  }
+
   function terminateTaskPhasePane(
     projectId: string,
     taskId: string,
     role: RunPhase
   ): void {
+    if (role === 'qa') stopQaRuntime(taskId)
     for (const pane of hub
       .panesOf(projectId)
       .filter((candidate) => candidate.taskId === taskId && candidate.role === role)) {
       // Desregistre antes do kill: o report já consumiu esta fase, portanto o
       // onExit não pode reinterpretar o encerramento deliberado como crash.
-      unregisterPane(pane.paneId)
-      livePaneSpecs.delete(pane.paneId)
-      if (ptys.has(pane.paneId)) ptys.kill(pane.paneId)
-      if (uiSender && !uiSender.isDestroyed()) {
-        uiSender.send('panes:closeById', projectId, pane.paneId)
-      }
+      terminatePaneNow(projectId, pane.paneId)
     }
     closePhasePane(projectId, taskId, role)
   }
@@ -10851,6 +11564,15 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     const sensitiveRuntime =
       securityAssessment.effectiveRisk === 'high' ||
       requiresManualSecurityValidation(securityAssessment.surfaces)
+    const sensitiveAutoOk = securityWaiverOptions(projectId).sensitiveWaiverAllowed
+    const effectiveSensitiveRuntime = effectiveSensitiveAccess(sensitiveRuntime, sensitiveAutoOk)
+    const browserAvailable = paneBrowserAvailable(paneAccessProfile(phase), {
+      sensitive: sensitiveRuntime,
+      sensitiveAutoOk,
+      strict: true,
+      mcpReady: mcpPort !== 0,
+      browserConfigured: Boolean(externalPlaywrightForPane())
+    })
     const recoveringPhase = task.phaseState === 'interrupted' && task.activePhase === phase
     const retryingOriginalDev =
       phase === 'dev' && Boolean(feedback) && Boolean(task.phaseSessions?.dev)
@@ -11045,23 +11767,75 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       }
     }
     let immutableReviewerEvidence: ReturnType<typeof immutableReviewDiff>
+    let immutableReviewerArtifact: PhaseWatch['reviewArtifact'] | undefined
+    let immutableReviewerDelivered = task.verification?.dev
     if (phase === 'review' && worktree && task.deliverable === 'code') {
       const delivered = task.verification?.dev
+      const inheritedGateRound = task.gateRound?.phase === 'review' ? task.gateRound : undefined
+      const inheritedRejectedHead = inheritedGateRound?.rejectedHead
+      const reviewBaseHead = inheritedRejectedHead ?? delivered?.baseHead
+      const currentReviewNote = task.gateNotes?.review ?? ''
+      const inheritedRulingChanged = Boolean(
+        inheritedGateRound &&
+          (inheritedGateRound.gateNotesAtRejection === undefined
+            ? currentReviewNote.trim().length > 0
+            : inheritedGateRound.gateNotesAtRejection !== JSON.stringify(currentReviewNote))
+      )
       // FOTOGRAFIA DEGENERADA (base == entrega): o diff seria vazio por
       // construção e o Reviewer nasceria sem objeto — o caso real de 01/08.
       // O guard de entrega vazia impede isso de nascer; aqui cobrimos o
       // estado LEGADO já persistido e qualquer corrida futura.
-      if (delivered?.baseHead && delivered.baseHead === delivered.head) {
+      if (reviewBaseHead && reviewBaseHead === delivered?.head && !inheritedRulingChanged) {
         returnTaskToDevForSnapshotDrift(
           task,
-          'a fotografia do dev é degenerada (base == entrega): não há diff para revisar. Ou a entrega foi vazia, ou o trabalho já está na branch da missão (integrado por fora) — nesse caso NÃO re-execute o card: remova-o com delete_task ou conclua o plano sem ele'
+          inheritedRejectedHead
+            ? 'a nova rodada não contém delta desde o head rejeitado; a lista fechada ainda não foi corrigida'
+            : 'a fotografia do dev é degenerada (base == entrega): não há diff para revisar. Ou a entrega foi vazia, ou o trabalho já está na branch da missão (integrado por fora) — nesse caso NÃO re-execute o card: remova-o com delete_task ou conclua o plano sem ele'
+        )
+        return null
+      }
+      if (
+        reviewBaseHead &&
+        delivered?.head &&
+        !(await gitOff('immutableReviewRangeValid', cwd, reviewBaseHead, delivered.head))
+      ) {
+        returnTaskToDevForSnapshotDrift(
+          task,
+          inheritedRejectedHead
+            ? 'o head rejeitado não é ancestral da nova entrega; não existe delta SHA-pinado seguro para retomar a lista fechada'
+            : 'o range base..entrega do reviewer não é um par de commits ancestral verificável'
         )
         return null
       }
       immutableReviewerEvidence =
-        delivered?.baseHead && delivered.head
-          ? await gitOff('immutableReviewDiff', cwd, delivered.baseHead, delivered.head)
+        reviewBaseHead && delivered?.head
+          ? await gitOff('immutableReviewDiff', cwd, reviewBaseHead, delivered.head)
           : undefined
+      if (delivered && reviewBaseHead && immutableReviewerEvidence) {
+        immutableReviewerDelivered = {
+          ...delivered,
+          baseHead: reviewBaseHead,
+          changedPaths: immutableReviewerEvidence.changedPaths
+        }
+      }
+      if (immutableReviewerEvidence?.mode === 'local') {
+        try {
+          immutableReviewerArtifact = materializeReviewDiffArtifact(
+            cwd,
+            taskId,
+            immutableReviewerEvidence
+          )
+        } catch {
+          immutableReviewerArtifact = undefined
+        }
+        if (!immutableReviewerArtifact) {
+          returnTaskToDevForSnapshotDrift(
+            task,
+            'o backend não conseguiu materializar o patch imutável grande para o reviewer read-only'
+          )
+          return null
+        }
+      }
       // Caixa-preta: o range e o tamanho do diff imutável entregue ao Reviewer.
       // Diff VAZIO com range degenerado (base == head) é exatamente o caso que
       // cegou um gate em 01/08 — precisa aparecer como evidência, nunca como
@@ -11075,15 +11849,18 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           taskId,
           phase: 'review'
         },
-        evidence: delivered?.baseHead
-          ? `${delivered.baseHead.slice(0, 12)}..${delivered.head?.slice(0, 12) ?? '?'}`
+        evidence: reviewBaseHead
+          ? `${reviewBaseHead.slice(0, 12)}..${delivered?.head?.slice(0, 12) ?? '?'}`
           : 'sem fotografia do dev',
         detail: {
           bytes: immutableReviewerEvidence?.text.length ?? 0,
           truncated: immutableReviewerEvidence?.truncated ?? false,
           mode: immutableReviewerEvidence?.mode,
           degenerateRange: Boolean(
-            delivered?.baseHead && delivered.baseHead === delivered.head
+            reviewBaseHead && reviewBaseHead === delivered?.head
+          ),
+          waiverOnlyRound: Boolean(
+            reviewBaseHead && reviewBaseHead === delivered?.head && inheritedRulingChanged
           )
         },
         err: immutableReviewerEvidence ? undefined : 'diff imutável não materializado'
@@ -11100,6 +11877,72 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       // conselho impossível): o modo 'local' instrui o gate a ler o patch pelo
       // range SHA-pinado, imutável por definição — nenhum tamanho bloqueia.
     }
+    let qaDeliverySnapshotBlock = ''
+    if (phase === 'qa' && worktree && task.deliverable === 'code') {
+      const delivered = task.verification?.dev
+      const inheritedGateRound = task.gateRound?.phase === 'qa' ? task.gateRound : undefined
+      const inheritedRejectedHead = inheritedGateRound?.rejectedHead
+      const qaBaseHead = inheritedRejectedHead ?? delivered?.baseHead
+      const currentQaNote = task.gateNotes?.qa ?? ''
+      const inheritedRulingChanged = Boolean(
+        inheritedGateRound &&
+          (inheritedGateRound.gateNotesAtRejection === undefined
+            ? currentQaNote.trim().length > 0
+            : inheritedGateRound.gateNotesAtRejection !== JSON.stringify(currentQaNote))
+      )
+      if (qaBaseHead && qaBaseHead === delivered?.head && !inheritedRulingChanged) {
+        returnTaskToDevForSnapshotDrift(
+          task,
+          inheritedRejectedHead
+            ? 'a nova rodada de QA não contém commit nem ruling novo desde o head rejeitado'
+            : 'a fotografia do QA é degenerada (base == entrega)'
+        )
+        return null
+      }
+      if (
+        !qaBaseHead ||
+        !delivered?.head ||
+        !(await gitOff('immutableReviewRangeValid', cwd, qaBaseHead, delivered.head))
+      ) {
+        returnTaskToDevForSnapshotDrift(
+          task,
+          inheritedRejectedHead
+            ? 'o QA retomado não recebeu um delta SHA-pinado válido desde o head rejeitado'
+            : 'o QA não recebeu um snapshot SHA-pinado válido da entrega'
+        )
+        return null
+      }
+      const qaChangedPaths = await gitOff(
+        'immutableReviewChangedPaths',
+        cwd,
+        qaBaseHead,
+        delivered.head
+      )
+      if (!qaChangedPaths) {
+        returnTaskToDevForSnapshotDrift(
+          task,
+          'o backend não conseguiu enumerar o blast radius SHA-pinado para o QA'
+        )
+        return null
+      }
+      qaDeliverySnapshotBlock = buildQaDeliverySnapshotBlock({
+        baseHead: qaBaseHead,
+        head: delivered.head,
+        changedPaths: qaChangedPaths
+      })
+    }
+    const routingText = [
+      task.title,
+      task.description,
+      task.briefing,
+      ...(task.quests ?? []),
+      task.feedback,
+      feedback
+    ]
+      .filter(Boolean)
+      .join('\n')
+    const uiWork = classifyTaskUiWork(task, feedback)
+
     // QA DE VERDADE, VERSÃO FINAL (decisão do usuário, 2026-08-06 — "não é só
     // o próprio QA subir? que dificuldade"): SEM pré-aquecimento no harness.
     // O pane do QA nasce NA HORA (fim do "Electron abre, morre, e o QA chega
@@ -11109,8 +11952,9 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     let qaRuntimeBlock = ''
     if (
       phase === 'qa' &&
-      (task.department === 'front' || task.department === 'design') &&
-      !sensitiveRuntime &&
+      uiWork &&
+      browserAvailable &&
+      !effectiveSensitiveRuntime &&
       worktree &&
       detectRuntimeScript(cwd)
     ) {
@@ -11223,6 +12067,8 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     // (task.devEffort) e TODA reabertura reusa o carimbo quando o chamador
     // não trouxer um valor novo. O usuário decide o effort, nunca o acaso.
     const effectiveDevEffort = devEffort ?? task.devEffort
+    const plannedPaneId = randomUUID()
+    const phaseRun = randomUUID()
     phaseWatches.set(taskId, {
       projectId,
       taskId,
@@ -11234,13 +12080,20 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       worktree,
       logFile,
       marker,
+      paneId: plannedPaneId,
       gateBaselineFingerprint,
       gateStartedAt,
+      reviewArtifact: immutableReviewerArtifact,
+      uiWork,
+      browserAvailable,
       createdAt: Date.now()
     })
 
     const blockForMissingFrontendStandard = (reason: string): void => {
+      if (phase === 'qa') stopQaRuntime(taskId)
       phaseWatches.delete(taskId)
+      releasePaneSkillLease(plannedPaneId)
+      releasePaneSkillPlan(plannedPaneId)
       const feedback = `${reason}; a fase foi interrompida antes de abrir o pane`
       tasks.update(taskId, {
         status: phase === 'qa' ? 'qa' : phase === 'review' ? 'execucao' : 'backlog',
@@ -11267,68 +12120,204 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       syncBoard(projectId)
     }
 
-    // SKILLS + SUBAGENTES (F4): carimbo do card > política da função >
-    // padrão da curadoria (defaultFor instaladas). A cópia entra no WORKSPACE
-    // antes do spawn — o CLI carrega tudo do diretório no boot do pane.
-    // GATES (2026-07-30): review/qa recebem o kit da função 'qa' via
-    // gateSkillsFor (política do projeto > defaultFor instaladas).
-    // MENU COMPLETO, SEM ★ (decisão do usuário, 2026-07-30: "a IA vai receber
-    // TUDO que temos para aquela função e ela mesma escolhe" — kit padrão,
-    // política de skills e estrelas MORRERAM): injeta TODAS as instaladas da
-    // função + eventuais carimbos de fora dela no card. Metadata é barata
-    // (progressive disclosure) e o SKILL GATE do prompt obriga a leitura.
-    const skillIds =
-      phase === 'dev'
-        ? withMandatoryFrontendStandard(
-            executionMode === 'fast'
-              ? task.skills ?? []
-              : [...(task.skills ?? []), ...skillsLib.installedIdsForDept(task.department)],
-            task.department
-          )
-        : []
-    const agentIds =
-      phase === 'dev'
-        ? [
-            ...new Set([
-              ...(executionMode === 'fast' || delegationMode === 'none'
-                ? []
-                : task.agents ?? []),
-              ...(executionMode === 'fast' || delegationMode === 'none'
-                ? []
-                : skillsLib.installedIdsForDept(task.department, 'agent'))
-            ])
-          ]
-        : []
-    const skillSync = await syncWorkspaceSkills(cwd, [...skillIds, ...agentIds])
-    const injSkills = skillSync.injected.filter((s) => s.kind === 'skill')
-    const injAgents = skillSync.injected.filter((s) => s.kind === 'agent')
-    if (
-      missingMandatoryFrontendStandard(
-        injSkills.map((skill) => skill.id),
-        task.department,
-        phase
-      )
-    ) {
-      blockForMissingFrontendStandard('a régua visual obrigatória não entrou no workspace')
+    // Plano mínimo por fase. Disponibilidade no catálogo não equivale a
+    // injeção: o workspace recebe apenas o contrato/método/técnica selecionados
+    // para este pane, e QA usa uma régua independente da criação.
+    const installedSkillIds = new Set(skillsLib.installedIds())
+    if (task.affectsUi === false && uiWork) {
+      blockForMissingFrontendStandard('affectsUi=false contradiz a superficie visual descrita no card')
       return null
     }
-    // FALHA DE SYNC NUNCA É SILENCIOSA (regra dura do usuário, 04/08: a M01
-    // rodou inteira com os menus vazios e ninguém viu): pediu skill e nada
-    // entrou no workspace → evento na caixa-preta com os ids perdidos.
-    if (skillIds.length + agentIds.length > 0 && skillSync.injected.length === 0) {
-      blackbox.record({
-        cat: 'pane',
-        event: 'skills-sync-empty',
-        actor: 'harness',
-        ids: { projectId, missionId: task.missionId, taskId, phase, role: phase },
-        reason: `nenhuma skill entrou no workspace do ${phase} (pedidas ${
-          skillIds.length + agentIds.length
-        }; primeiras faltantes: ${skillSync.missing.slice(0, 5).join(', ') || '—'})`
-      })
+    const routedExplicitSkillIds = task.skills ?? []
+    const routedExplicitAgentIds = task.agents ?? []
+    if (routedExplicitSkillIds.length > 1 || routedExplicitAgentIds.length > 1) {
+      blockForMissingFrontendStandard(
+        'card legado possui mais de uma skill técnica ou persona; ajuste o card para uma seleção única antes de executar'
+      )
+      return null
     }
-    const skillsBlock = buildSkillsBlock({ injSkills, executionMode, cli: seat.cli })
-    // Subagentes = Task tool: recurso do claude — em pane codex a injeção é
-    // inofensiva mas não anunciamos o que o CLI não sabe invocar.
+    const rejectedExplicitIds = [
+      ...new Set([...routedExplicitSkillIds, ...routedExplicitAgentIds])
+    ]
+      .filter((skillId) => {
+        const definition = skillsLib.byId(skillId)
+        const expectedKind = routedExplicitAgentIds.includes(skillId) ? 'agent' : 'skill'
+        return (
+          !installedSkillIds.has(skillId) ||
+          !definition ||
+          definition.kind !== expectedKind ||
+          !definition.depts.includes(task.department) ||
+          (expectedKind === 'skill' && definition.adapter === 'synkora-native')
+        )
+      })
+    if (rejectedExplicitIds.length > 0) {
+      blockForMissingFrontendStandard(
+        `seleção explícita indisponível, bloqueada ou corrompida: ${rejectedExplicitIds.join(', ')}`
+      )
+      return null
+    }
+    const phaseCapabilities: SkillCapability[] =
+      phase === 'dev'
+        ? ['read', 'write', 'shell', ...(browserAvailable ? ['browser' as const] : [])]
+        : ['read', ...(phase === 'qa' && browserAvailable ? ['browser' as const] : [])]
+    const phaseSkillSelection = selectPhaseSkillPlan({
+      defs: skillsLib.definitions(),
+      isInstalled: (id) => installedSkillIds.has(id),
+      department: task.department,
+      phase,
+      taskText: routingText,
+      explicitSkillIds: routedExplicitSkillIds,
+      explicitAgentIds: routedExplicitAgentIds,
+      executionMode,
+      delegationMode,
+      uiCard: uiWork,
+      securitySensitive: sensitiveRuntime,
+      availableCapabilities: phaseCapabilities
+    })
+    if (phaseSkillSelection.incompatibilities.length > 0) {
+      const details = phaseSkillSelection.incompatibilities.map((issue) =>
+        issue.reason === 'phase'
+          ? `${issue.id} não permite a fase ${phase}`
+          : `${issue.id} exige ${issue.missingCapabilities?.join(', ') || 'capacidade indisponível'}`
+      )
+      blockForMissingFrontendStandard(
+        `o método obrigatório é incompatível com as capacidades reais do pane: ${details.join('; ')}`
+      )
+      return null
+    }
+    const skillIds = phaseSkillSelection.skillIds
+    const agentIds = phaseSkillSelection.agentIds
+    // Skills não entram mais nos diretórios autodetectados pelo CLI. O pane
+    // recebe o corpo somente por receipt/activate_skill, o que preserva a
+    // independência entre dev, review, QA e helpers no mesmo worktree.
+    let preparedSkills: Awaited<ReturnType<typeof prepareSkillPlanInputs>>
+    const injAgents: SkillDef[] = []
+    const missingAgents: string[] = []
+    try {
+      await syncPaneSkillLease(plannedPaneId, cwd, [])
+      preparedSkills = await prepareSkillPlanInputs(skillIds, (skillId) => ({
+        operation:
+          skillId === IMPECCABLE_SKILL_ID
+            ? phaseSkillSelection.impeccableOperation ?? 'polish'
+            : skillId === SYNKORA_FRONTEND_STANDARD_ID
+              ? phase === 'qa'
+                ? 'verify'
+                : phaseSkillSelection.uiOperation ?? 'polish'
+              : skillId === SYNKORA_UI_QA_ID
+                ? 'review'
+                : phase === 'review'
+                  ? 'review'
+                  : phase === 'qa'
+                    ? 'verify'
+                    : 'apply',
+        reason:
+          skillId === SYNKORA_FRONTEND_STANDARD_ID
+            ? 'ui.contract'
+            : skillId === SYNKORA_UI_QA_ID
+              ? 'ui.independent-qa'
+              : skillId === IMPECCABLE_SKILL_ID
+                ? `ui.${phaseSkillSelection.impeccableOperation ?? 'polish'}`
+                : `${phase}.technique`,
+        required: true
+      }))
+      for (const agentId of agentIds) {
+        const definition = skillsLib.byId(agentId)
+        if (!definition || definition.kind !== 'agent' || !(await skillsLib.agentBody(agentId))) {
+          missingAgents.push(agentId)
+        } else {
+          injAgents.push(definition)
+        }
+      }
+    } catch {
+      blockForMissingFrontendStandard('falha ao preparar o plano privado de skills')
+      return null
+    }
+    const injSkills = preparedSkills.definitions
+    const missingPlanned = [...new Set([...preparedSkills.missing, ...missingAgents])]
+    if (missingPlanned.length > 0) {
+      blockForMissingFrontendStandard(
+        `o plano selecionado não pôde ser preparado integralmente: ${missingPlanned.join(', ')}`
+      )
+      return null
+    }
+    const mandatoryMissing = missingMandatoryUiPhaseSkills(
+      injSkills.map((skill) => skill.id),
+      task.department,
+      phase,
+      uiWork
+    )
+    if (mandatoryMissing.length > 0) {
+      blockForMissingFrontendStandard(
+        `o contrato obrigatório da fase não entrou no workspace: ${mandatoryMissing.join(', ')}`
+      )
+      return null
+    }
+    const plannedRuntime = skillRuntime.planPane({
+      paneId: plannedPaneId,
+      phase,
+      phaseRun,
+      skills: preparedSkills.inputs
+    })
+    if (!plannedRuntime.ok) {
+      blockForMissingFrontendStandard('não foi possível registrar o plano rastreável de skills')
+      return null
+    }
+    skillPlanScopes.set(plannedPaneId, {
+      phase,
+      phaseRun,
+      agentIds: phaseSkillSelection.agentIds,
+      taskId,
+      projectId
+    })
+    const usageNow = new Date().toISOString()
+    const usageRun = {
+      phase,
+      phaseRun,
+      updatedAt: usageNow,
+      runStatus: 'active' as const,
+      skills: plannedRuntime.plan.receipts.map((receipt) => ({
+        receiptId: receipt.receiptId,
+        id: receipt.skillId,
+        operation: receipt.operation,
+        version: receipt.version,
+        fingerprint: receipt.fingerprint,
+        status: 'planned' as const
+      }))
+    }
+    const priorUsage = task.skillUsage
+    const priorHistory = priorUsage?.history ?? (priorUsage ? [{
+      phase: priorUsage.phase,
+      phaseRun: priorUsage.phaseRun,
+      updatedAt: priorUsage.updatedAt,
+      runStatus: priorUsage.runStatus ?? 'interrupted' as const,
+      skills: priorUsage.skills
+    }] : [])
+    tasks.update(taskId, {
+      skillUsage: {
+        ...usageRun,
+        history: [
+          ...priorHistory
+            .filter((run) => run.phaseRun !== phaseRun)
+            .map((run) => ({
+              ...run,
+              runStatus: run.runStatus === 'active' ? 'interrupted' as const : run.runStatus
+            })),
+          usageRun
+        ]
+      }
+    })
+    const injectedById = new Map(injSkills.map((skill) => [skill.id, skill]))
+    const skillsBlock = buildSkillsBlock({
+      plannedSkills: plannedRuntime.plan.receipts.map((receipt) => ({
+        ...(injectedById.get(receipt.skillId) as SkillDef),
+        receiptId: receipt.receiptId,
+        operation: receipt.operation,
+        reason: receipt.reason,
+        required: receipt.required
+      }))
+    })
+    // Persona selecionada fica como id de delegate.agent; não é materializada
+    // em diretório compartilhado nem depende do CLI do pane atual.
     const agentsBlock = buildAgentsBlock({ injAgents, cli: seat.cli })
 
     // Prompts em INGLÊS (rendem melhor); respostas SEMPRE em PT-BR — os
@@ -11346,7 +12335,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     const verdictRule = buildVerdictRule(structuredReviewRule)
     // Dev recebe browser + runner. Gates não recebem MCP externo enquanto o
     // browser não estiver atrás de um proxy com allowlist real.
-    const browserHint = buildBrowserHint(phase, sensitiveRuntime)
+    const browserHint = buildBrowserHint(phase, browserAvailable)
     const executionProfileBlock = buildExecutionProfileBlock({
       executionMode,
       delegationMode,
@@ -11360,7 +12349,8 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       feedback,
       title: task.title,
       deptLabel: DEPT_NAME[task.department],
-      department: task.department,
+      uiWork,
+      browserAvailable,
       executionMode,
       executionProfileBlock,
       browserHint,
@@ -11369,54 +12359,71 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     // Quests são checklist, não contagem de ajudantes. A política persistida
     // no card decide se existe delegação e o backend impõe o teto do perfil.
     const questBlock = buildQuestBlock({ quests: task.quests, executionMode, delegationMode })
-    const gateKit =
-      phase === 'dev'
-        ? { skillsBlock: '', agentsBlock: '' }
-        : await gateSkillsFor(cwd, seat.cli, phase === 'qa' ? 'qa' : 'review', executionMode, {
-            includeCyber: structuredSecurityReviewRequired,
-            uiCard: task.department === 'front' || task.department === 'design'
-          })
-    if (gateKit.requiredSkillError) {
-      blockForMissingFrontendStandard(gateKit.requiredSkillError)
-      return null
-    }
     // Lista fechada da rodada vigente (task.gateRound): pane NOVO de gate não
     // re-legisla — herda a lista da instituição (raiz da rodada 5 do caso
     // real 2026-08-05: o restart matou o gate vivo e o novo re-auditou tudo
     // com régua nova).
     const closedListBlock = buildClosedListBlock({ phase, gateRound: task.gateRound })
     const reviewDiffBlock = buildReviewDiffBlock({
-      delivered: task.verification?.dev,
+      delivered: immutableReviewerDelivered,
       evidence: immutableReviewerEvidence
+        ? { ...immutableReviewerEvidence, artifactAvailable: Boolean(immutableReviewerArtifact) }
+        : undefined
     })
     // RODADA DE GATE É ATÔMICA (caso real 2026-08-06: mudança do dono
     // injetada no reviewer COM A ANÁLISE EM CURSO cruzou com o veredito e
     // gerou um segundo relatório por fora — duas listas circulando enquanto o
     // dev corrigia a primeira).
     const atomicRoundRule = buildAtomicRoundRule(phase)
-    const basePrompt = buildBasePrompt({
-      phase,
-      title: task.title,
-      description: task.description,
-      briefing: task.briefing,
-      gates: task.gates,
-      gateNotes: task.gateNotes,
-      executionMode,
-      logFile,
-      skillsBlock,
-      agentsBlock,
-      questBlock,
-      devContract,
-      workspaceMaterialsNote,
-      atomicRoundRule,
-      reviewDiffBlock,
-      qaRuntimeBlock,
-      browserHint,
-      verdictRule,
-      closedListBlock,
-      gateSkillsBlock: gateKit.skillsBlock,
-      gateAgentsBlock: gateKit.agentsBlock
-    })
+    const assemblePhasePrompt = (
+      currentGateNotes: typeof task.gateNotes,
+      currentTaskFeedback: typeof task.feedback
+    ): string => {
+      const basePrompt = buildBasePrompt({
+        phase,
+        title: task.title,
+        description: task.description,
+        briefing: task.briefing,
+        gates: task.gates,
+        gateNotes: currentGateNotes,
+        executionMode,
+        logFile,
+        skillsBlock: phase === 'dev' ? skillsBlock : '',
+        agentsBlock: phase === 'dev' ? agentsBlock : '',
+        questBlock,
+        devContract,
+        workspaceMaterialsNote,
+        atomicRoundRule,
+        reviewDiffBlock,
+        qaDeliverySnapshotBlock,
+        qaRuntimeBlock,
+        browserHint,
+        verdictRule,
+        closedListBlock,
+        gateSkillsBlock: phase === 'dev' ? '' : skillsBlock,
+        gateAgentsBlock: ''
+      })
+
+      return buildPhasePrompt({
+        phase,
+        resumed: Boolean(resumable),
+        recoveringPhase,
+        retryingOriginalDev,
+        feedback,
+        taskFeedback: currentTaskFeedback,
+        gateNotes: currentGateNotes,
+        logFile,
+        recoveredHelperLogs,
+        basePrompt,
+        activeSkillPlanBlock: skillsBlock,
+        continuationEnvironmentBlock:
+          phase === 'review'
+            ? reviewDiffBlock
+            : phase === 'qa'
+              ? `${qaDeliverySnapshotBlock}${qaRuntimeBlock}${browserHint}`
+              : browserHint
+      })
+    }
 
     // RE-SPAWN COM RESUME = PROMPT DELTA (caso real 2026-08-05: o pane do dev
     // voltou com a conversa INTEIRA via --resume e AINDA recebeu o briefing
@@ -11426,18 +12433,97 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     // delta; o briefing completo fica para conversa genuinamente nova. A
     // autocura de resume-fail (respawn sem --resume com o MESMO prompt) é
     // coberta pela instrução de ler o transcript preservado.
-    const prompt = buildPhasePrompt({
-      phase,
-      resumed: Boolean(resumable),
-      recoveringPhase,
-      retryingOriginalDev,
-      feedback,
-      taskFeedback: task.feedback,
-      gateNotes: task.gateNotes,
-      logFile,
-      recoveredHelperLogs,
-      basePrompt
-    })
+    let prompt = assemblePhasePrompt(task.gateNotes, task.feedback)
+
+    // Checkpoint transacional: os awaits acima nao autorizam ressuscitar um
+    // card removido, um watch substituido ou uma reserva que mudou de dono.
+    const currentTaskBeforeArm = tasks.get(taskId)
+    const currentWatchBeforeArm = phaseWatches.get(taskId)
+    const launchStillOwned = launchToken
+      ? phaseLaunches.owns(taskId, launchToken)
+      : !phaseLaunches.isReserved(taskId)
+    if (
+      !currentTaskBeforeArm ||
+      currentTaskBeforeArm.projectId !== projectId ||
+      currentWatchBeforeArm?.paneId !== plannedPaneId ||
+      currentWatchBeforeArm.phase !== phase ||
+      !launchStillOwned
+    ) {
+      if (currentWatchBeforeArm?.paneId === plannedPaneId) phaseWatches.delete(taskId)
+      if (phase === 'qa') stopQaRuntime(taskId)
+      releasePaneSkillLease(plannedPaneId)
+      releasePaneSkillPlan(plannedPaneId)
+      blackbox.record({
+        cat: 'phase',
+        event: 'phase-prepare-cancelled',
+        actor: 'harness',
+        ids: {
+          projectId,
+          missionId: currentTaskBeforeArm?.missionId ?? task.missionId,
+          taskId,
+          paneId: plannedPaneId,
+          phase,
+          role: phase
+        },
+        reason: 'o card, o watch ou a reserva mudou durante a preparacao assincrona'
+      })
+      return null
+    }
+
+    if (phase !== 'dev') {
+      const latestRound =
+        currentTaskBeforeArm.gateRound?.phase === phase
+          ? currentTaskBeforeArm.gateRound
+          : undefined
+      const latestDelivered = currentTaskBeforeArm.verification?.dev
+      const latestBase = latestRound?.rejectedHead ?? latestDelivered?.baseHead
+      const latestNote = currentTaskBeforeArm.gateNotes?.[phase] ?? ''
+      const latestRulingChanged = Boolean(
+        latestRound &&
+          (latestRound.gateNotesAtRejection === undefined
+            ? latestNote.trim().length > 0
+            : latestRound.gateNotesAtRejection !== JSON.stringify(latestNote))
+      )
+      if (latestBase && latestBase === latestDelivered?.head && !latestRulingChanged) {
+        phaseWatches.delete(taskId)
+        if (phase === 'qa') stopQaRuntime(taskId)
+        releasePaneSkillLease(plannedPaneId)
+        releasePaneSkillPlan(plannedPaneId)
+        returnTaskToDevForSnapshotDrift(
+          currentTaskBeforeArm,
+          `o ruling de ${phase} mudou durante o preparo e a rodada nao possui delta nem waiver vigente`
+        )
+        return null
+      }
+    }
+
+    // `update_task` permite um patch somente de gateNotes enquanto a fase
+    // esta em preparo. Releia essa excecao no ultimo ponto sincrono antes de
+    // armar o pane: o ruling novo entra no prompt e um waiver removido nao
+    // sobrevive por ter sido capturado antes de um await.
+    if (
+      JSON.stringify(currentTaskBeforeArm.gateNotes ?? {}) !==
+      JSON.stringify(task.gateNotes ?? {})
+    ) {
+      prompt = assemblePhasePrompt(
+        currentTaskBeforeArm.gateNotes,
+        currentTaskBeforeArm.feedback
+      )
+      blackbox.record({
+        cat: 'phase',
+        event: 'phase-prompt-refreshed',
+        actor: 'harness',
+        ids: {
+          projectId,
+          missionId: currentTaskBeforeArm.missionId,
+          taskId,
+          paneId: plannedPaneId,
+          phase,
+          role: phase
+        },
+        reason: 'gateNotes mudou durante o preparo; prompt reconstruido antes de armar o pane'
+      })
+    }
 
     const phaseSessions = { ...(task.phaseSessions ?? {}) }
     if (resumable) phaseSessions[phase] = resumable
@@ -11473,53 +12559,38 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     syncBoard(projectId)
     // Identidade no hub: o MCP sabe QUEM é este pane (projeto/tarefa/fase) e
     // os cliArgs já saem com permissões (bypass/accept) + config MCP.
-    const armed = armPane(
-      { projectId, role: phase, taskId, phase, cwd, seatId: seat.id, missionId: task.missionId },
-      seat.cli,
-      {
-        strictMcp: true,
-        configDir: seats.configDirOf(seat),
-        sensitive: sensitiveRuntime
-      }
-    )
+    let armed: ReturnType<typeof armPane>
+    try {
+      armed = armPane(
+        {
+          paneId: plannedPaneId,
+          projectId,
+          role: phase,
+          taskId,
+          phase,
+          cwd,
+          seatId: seat.id,
+          missionId: task.missionId
+        },
+        seat.cli,
+        {
+          strictMcp: true,
+          configDir: seats.configDirOf(seat),
+          sensitive: sensitiveRuntime
+        }
+      )
+    } catch {
+      blockForMissingFrontendStandard('falha ao armar o pane da fase')
+      return null
+    }
     const armedWatch = phaseWatches.get(taskId)
-    if (armedWatch) {
+    if (armedWatch?.paneId === plannedPaneId && armedWatch.phase === phase) {
       armedWatch.paneId = armed.paneId
     } else {
-      // O watch registrado no início desta função sumiu durante os awaits
-      // (a corrida do poller de 06/08). Com a janela de graça isso não deve
-      // mais acontecer — mas se acontecer, reconstruir aqui é seguro (todos
-      // os campos estão em escopo) e a caixa-preta PRECISA registrar.
-      phaseWatches.set(taskId, {
-        projectId,
-        taskId,
-        phase,
-        devSeatId,
-        devModel,
-        devEffort: effectiveDevEffort,
-        cwd,
-        worktree,
-        logFile,
-        marker,
-        gateBaselineFingerprint,
-        gateStartedAt,
-        paneId: armed.paneId,
-        createdAt: Date.now()
-      })
-      blackbox.record({
-        cat: 'phase',
-        event: 'phase-watch-repaired',
-        actor: 'harness',
-        ids: {
-          projectId,
-          missionId: task.missionId,
-          taskId,
-          paneId: armed.paneId,
-          phase,
-          role: phase
-        },
-        reason: 'watch da fase sumiu durante a preparação assíncrona — reconstruído antes do spawn'
-      })
+      terminatePaneNow(projectId, armed.paneId)
+      releasePaneSkillLease(plannedPaneId)
+      releasePaneSkillPlan(plannedPaneId)
+      return null
     }
     // Effort do EXECUTOR na fase dev; gate herda o effort da LANE 'qa' do
     // plano quando ela define (contrato aprovado pelo usuário).
@@ -11641,12 +12712,8 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     const wait = liveGateWaits.get(taskId)
     if (!wait) return
     liveGateWaits.delete(taskId)
-    if (!ptys.has(wait.paneId)) return
-    unregisterPane(wait.paneId)
-    livePaneSpecs.delete(wait.paneId)
-    ptys.kill(wait.paneId)
-    if (uiSender && !uiSender.isDestroyed())
-      uiSender.send('panes:closeById', projectId, wait.paneId)
+    if (wait.phase === 'qa') stopQaRuntime(taskId)
+    terminatePaneNow(projectId, wait.paneId)
     blackbox.record({
       cat: 'phase',
       event: 'live-gate-closed',
@@ -11865,6 +12932,33 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
             pane.taskId === watch.taskId && pane.role === 'dev' && ptys.has(pane.paneId)
         )
       if (liveDev) {
+        const renewedSkillsBlock = await renewLivePaneSkillRun(
+          liveDev.paneId,
+          watch.taskId,
+          watch.projectId,
+          'dev'
+        )
+        if (!renewedSkillsBlock) {
+          terminateTaskPhasePane(watch.projectId, watch.taskId, 'dev')
+          phaseWatches.delete(watch.taskId)
+          tasks.update(watch.taskId, {
+            status: 'backlog',
+            activePhase: 'dev',
+            phaseState: 'interrupted',
+            feedback: `${motivo} — a rodada de skills expirou e o dev precisa ser reaberto`
+          })
+          const replacement = await preparePhasePane(
+            watch.projectId,
+            watch.taskId,
+            'dev',
+            watch.devSeatId,
+            watch.devModel,
+            watch.devEffort,
+            motivo
+          )
+          if (replacement) openPhasePane(replacement, watch.projectId, watch.taskId)
+          return
+        }
         // DEV VIVO NÃO TEM TETO DE CICLOS (decisão do usuário, 2026-08-04:
         // "se o reviewer reprovar dez vezes porque ele tá errando dez vezes,
         // paciência — o dev não fecha enquanto não terminar o trabalho"). O
@@ -11944,6 +13038,31 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           ? orchPaneId(watch.projectId, task.missionId)
           : undefined
         if (orchestratorPaneId && ptys.has(orchestratorPaneId)) {
+          const renewedPlanDelivery = hub.notifyPane(
+            liveDev.paneId,
+            `${renewedSkillsBlock}\n\nAguarde a triagem do orquestrador antes de corrigir; receipts de rodadas anteriores expiraram.`
+          )
+          if (renewedPlanDelivery === 'dead') {
+            terminateTaskPhasePane(watch.projectId, watch.taskId, 'dev')
+            phaseWatches.delete(watch.taskId)
+            tasks.update(watch.taskId, {
+              status: 'backlog',
+              activePhase: 'dev',
+              phaseState: 'interrupted',
+              feedback: `${motivo} — o dev encerrou antes de receber a nova rodada de skills`
+            })
+            const replacement = await preparePhasePane(
+              watch.projectId,
+              watch.taskId,
+              'dev',
+              watch.devSeatId,
+              watch.devModel,
+              watch.devEffort,
+              motivo
+            )
+            if (replacement) openPhasePane(replacement, watch.projectId, watch.taskId)
+            return
+          }
           hub.publish({
             projectId: watch.projectId,
             missionId: task.missionId,
@@ -11958,7 +13077,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         }
         const delivered = hub.notifyPaneNow(
           liveDev.paneId,
-          `A tarefa foi REPROVADA no gate (${who}): ${motivo}. Corrija no mesmo card e, quando estiver 100% resolvido, reporte done novamente.`,
+          `${renewedSkillsBlock}\n\nA tarefa foi REPROVADA no gate (${who}): ${motivo}. Corrija no mesmo card e, quando estiver 100% resolvido, reporte done novamente.`,
           {
             sourcePaneId: watch.paneId,
             kind: 'feedback',
@@ -11983,10 +13102,11 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           )
           if (deadSpec) openPhasePane(deadSpec, watch.projectId, watch.taskId)
         }
-      } else if (cycles < retryLimit) {
-        // Dev MORTO (crash/restart) reabre com o feedback no prompt — aqui o
-        // teto de ciclos segue valendo: respawn cego infinito sem orquestrador
-        // acompanhando é exatamente o loop que o orçamento existe para frear.
+      } else if (task.phaseSessions?.dev || cycles < retryLimit) {
+        // O DEV é fechado deliberadamente antes dos gates para que nenhum
+        // escritor compartilhe a fotografia auditada. Sessão preservada =
+        // continuação intencional e sem teto artificial de qualidade; pane que
+        // morreu sem sessão continua protegido pelo orçamento de respawn.
         tasks.update(watch.taskId, {
           cycles: cycles + 1,
           feedback: motivo,
@@ -11998,7 +13118,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         emitLog(watch.projectId, {
           kind: 'log',
           tag: task.department,
-          text: `↩ ${who} reprovou "${task.title}" — ciclo ${cycles + 1}/${retryLimit}: dev reaberto com o feedback`
+          text: `↩ ${who} reprovou "${task.title}" — ciclo ${cycles + 1}${task.phaseSessions?.dev ? '' : `/${retryLimit}`}: dev reaberto com o feedback`
         })
         const spec = await preparePhasePane(
           watch.projectId,
@@ -12679,7 +13799,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       // legitima a rodada mesmo sem commit.
       {
         const latestForDelta = tasks.get(watch.taskId) ?? task
-        const notesNow = JSON.stringify(latestForDelta.gateNotes ?? {})
+        const notesNow = JSON.stringify(latestForDelta.gateNotes?.[phase] ?? '')
         if (
           wait.rejectedHead &&
           latestForDelta.verification?.dev?.head === wait.rejectedHead &&
@@ -12706,23 +13826,142 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           return true
         }
       }
-      liveGateWaits.delete(watch.taskId)
       if (ptys.has(wait.paneId)) {
+        const renewedSkillsBlock = await renewLivePaneSkillRun(
+          wait.paneId,
+          watch.taskId,
+          watch.projectId,
+          phase
+        )
+        if (!renewedSkillsBlock) {
+          liveGateWaits.delete(watch.taskId)
+          phaseWatches.delete(watch.taskId)
+          terminatePaneNow(watch.projectId, wait.paneId)
+          return openGatePane(watch, phase)
+        }
+        liveGateWaits.delete(watch.taskId)
         const latest = tasks.get(watch.taskId) ?? task
         const devFacts = latest.verification?.dev
+        const recycleRoutingText = [
+          latest.title,
+          latest.description,
+          latest.briefing,
+          ...(latest.quests ?? []),
+          latest.feedback
+        ]
+          .filter(Boolean)
+          .join('\n')
+        const recycleUiWork = classifyTaskUiWork(latest)
+        const recyclePlanTask = planTaskForWorkTask(latest)
+        const recycleSecurity = assessMissionRisk({
+          declaredRisk: recyclePlanTask?.plan?.risk,
+          surfaces: recyclePlanTask?.plan?.riskSurfaces,
+          texts: [recycleRoutingText]
+        })
+        const recycleSensitive =
+          recycleSecurity.effectiveRisk === 'high' ||
+          requiresManualSecurityValidation(recycleSecurity.surfaces)
+        const recycleSensitiveAutoOk = securityWaiverOptions(
+          watch.projectId
+        ).sensitiveWaiverAllowed
+        const recycleBrowserAvailable = paneBrowserAvailable(paneAccessProfile(phase), {
+          sensitive: recycleSensitive,
+          sensitiveAutoOk: recycleSensitiveAutoOk,
+          strict: true,
+          mcpReady: mcpPort !== 0,
+          browserConfigured: Boolean(externalPlaywrightForPane())
+        })
+        let recycleDeltaBlock = ''
+        let recycleReviewArtifact: PhaseWatch['reviewArtifact'] | undefined
+        if (
+          wait.rejectedHead &&
+          devFacts?.head &&
+          /^[0-9a-f]{40,64}$/i.test(wait.rejectedHead) &&
+          /^[0-9a-f]{40,64}$/i.test(devFacts.head)
+        ) {
+          const rangeValid = await gitOff(
+            'immutableReviewRangeValid',
+            watch.cwd,
+            wait.rejectedHead,
+            devFacts.head
+          )
+          if (!rangeValid) {
+            phaseWatches.delete(watch.taskId)
+            cleanupReviewArtifact(watch)
+            terminatePaneNow(watch.projectId, wait.paneId)
+            return openGatePane(watch, phase)
+          }
+          if (phase === 'review') {
+            const deltaEvidence = await gitOff(
+              'immutableReviewDiff',
+              watch.cwd,
+              wait.rejectedHead,
+              devFacts.head
+            )
+            let deltaArtifact: PhaseWatch['reviewArtifact'] | undefined
+            if (deltaEvidence?.mode === 'local') {
+              try {
+                deltaArtifact = materializeReviewDiffArtifact(
+                  watch.cwd,
+                  watch.taskId,
+                  deltaEvidence
+                )
+              } catch {
+                deltaArtifact = undefined
+              }
+            }
+            if (!deltaEvidence || (deltaEvidence.mode === 'local' && !deltaArtifact)) {
+              phaseWatches.delete(watch.taskId)
+              cleanupReviewArtifact(watch)
+              terminatePaneNow(watch.projectId, wait.paneId)
+              return openGatePane(watch, phase)
+            }
+            recycleDeltaBlock = buildReviewDiffBlock({
+              delivered: {
+                baseHead: wait.rejectedHead,
+                head: devFacts.head,
+                changedPaths: deltaEvidence.changedPaths
+              },
+              evidence: { ...deltaEvidence, artifactAvailable: Boolean(deltaArtifact) }
+            })
+            recycleReviewArtifact = deltaArtifact
+          } else {
+            const deltaPaths = await gitOff(
+              'immutableReviewChangedPaths',
+              watch.cwd,
+              wait.rejectedHead,
+              devFacts.head
+            )
+            if (!deltaPaths) {
+              phaseWatches.delete(watch.taskId)
+              cleanupReviewArtifact(watch)
+              terminatePaneNow(watch.projectId, wait.paneId)
+              return openGatePane(watch, phase)
+            }
+            recycleDeltaBlock = buildQaDeliverySnapshotBlock({
+              baseHead: wait.rejectedHead,
+              head: devFacts.head,
+              changedPaths: deltaPaths
+            })
+          }
+        }
         const project = projects.get(watch.projectId)
         const baselineFingerprint = await gitOff('gitVisibleWorktreeFingerprint', watch.cwd)
         const gateStartedAt = new Date().toISOString()
         const marker = project
           ? join(project.path, '.synkora', 'runs', `${watch.taskId}.${phase}.verdict`)
           : watch.marker.replace(/\.done$/i, `.${phase}.verdict`)
+        cleanupReviewArtifact(watch)
         phaseWatches.set(watch.taskId, {
           ...watch,
           phase,
           paneId: wait.paneId,
           marker,
           gateBaselineFingerprint: baselineFingerprint,
-          gateStartedAt
+          gateStartedAt,
+          reviewArtifact: recycleReviewArtifact,
+          uiWork: recycleUiWork,
+          browserAvailable: recycleBrowserAvailable
         })
         tasks.update(watch.taskId, {
           status: phase === 'qa' ? 'qa' : 'execucao',
@@ -12742,6 +13981,9 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         if (
           phase === 'qa' &&
           (latest.department === 'front' || latest.department === 'design') &&
+          recycleUiWork &&
+          recycleBrowserAvailable &&
+          !effectiveSensitiveAccess(recycleSensitive, recycleSensitiveAutoOk) &&
           watch.worktree
         ) {
           const alive = qaRuntimeOf(watch.taskId)
@@ -12751,16 +13993,24 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         }
         const delivered = hub.notifyPaneNow(
           wait.paneId,
-          `RE-${phase.toUpperCase()} ROUND in THIS conversation: the dev delivered fixes for your rejection list. NEW immutable photograph: ${devFacts?.baseHead ?? '?'}..${devFacts?.head ?? '?'} (the head you rejected was ${oldHead}). YOUR PREVIOUS REJECTION LIST (verbatim — the app keeps it for you): "${wait.rejectedReason}". Items OUTSIDE that list are FORBIDDEN unless they are a regression introduced by this delta. START your verdict reason with the literal scoreboard "placar: resolvidos X/Y · parciais P · pendentes Z · novos W — " counted against that list (a partial fix counts as progress). Re-check ONLY (1) that list and (2) the delta since the head you rejected — git --no-pager diff --no-ext-diff ${oldHead} ${devFacts?.head ?? 'HEAD'} — unchanged code you already approved needs NO re-audit${
-            phase === 'qa'
-              ? '; mind the blast radius: token/global CSS changes can affect screens outside the delta — your memory of the full first pass tells you where to re-look. Close every browser/app you open before the verdict'
-              : ''
-          }.${recycleRuntimeNote} ${
-            latest.gateNotes?.[phase] &&
-            JSON.stringify(latest.gateNotes ?? {}) !== (wait.gateNotesAtRejection ?? '')
-              ? `ORCHESTRATOR RULING since your rejection (binding): ${latest.gateNotes[phase]} — a waived point must NOT re-reject. `
-              : ''
-          }Report aprovada/reprovada via the report tool exactly as before.`,
+          buildGateRecyclePrompt({
+            phase,
+            renewedSkillsBlock,
+            devBaseHead: devFacts?.baseHead,
+            devHead: devFacts?.head,
+            rejectedHead: oldHead,
+            rejectionReason: wait.rejectedReason,
+            deltaEvidenceBlock: recycleDeltaBlock,
+            uiWork: recycleUiWork,
+            browserAvailable: recycleBrowserAvailable,
+            runtimeNote: recycleRuntimeNote,
+            gateRuling:
+              latest.gateNotes?.[phase] &&
+              JSON.stringify(latest.gateNotes[phase] ?? '') !==
+                (wait.gateNotesAtRejection ?? '')
+                ? latest.gateNotes[phase]
+                : undefined
+          }),
           { kind: 'feedback', correlationId: randomUUID() }
         )
         if (delivered !== 'dead') {
@@ -12792,6 +14042,8 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         }
         // o pane morreu entre o has() e a injeção: desfaz e cai no spawn normal
         phaseWatches.delete(watch.taskId)
+      } else {
+        liveGateWaits.delete(watch.taskId)
       }
     }
     const spec = await preparePhasePane(
@@ -12837,22 +14089,55 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
   function advancePhase(
     watch: PhaseWatch,
     content: string,
-    securityReview?: SecurityReviewRecord
+    securityReview?: SecurityReviewRecord,
+    verificationEvidence?: GateVerificationEvidence,
+    acceptance?: {
+      skillUsage: NonNullable<Task['skillUsage']>
+      commitRuntime: () => boolean
+    }
   ): boolean {
     // Fase 0 (atribuição de stall): wrapper fino e SÍNCRONO — o contrato SYNC
     // do veredito (comentário-âncora no Inner) fica intacto: wrap de função
     // sync devolve sync.
     return mainStalls.wrap(`advancePhase:${watch.phase}`, watch.taskId.slice(0, 8), () =>
-      advancePhaseInner(watch, content, securityReview)
+      advancePhaseInner(watch, content, securityReview, verificationEvidence, acceptance)
     )
   }
   function advancePhaseInner(
     watch: PhaseWatch,
     content: string,
-    securityReview?: SecurityReviewRecord
+    securityReview?: SecurityReviewRecord,
+    verificationEvidence?: GateVerificationEvidence,
+    acceptance?: {
+      skillUsage: NonNullable<Task['skillUsage']>
+      commitRuntime: () => boolean
+    }
   ): boolean {
     const task = tasks.get(watch.taskId)
     if (!task) return false
+    let runtimeAcceptanceCommitted = false
+    const commitRuntimeAcceptance = (): void => {
+      if (!acceptance || runtimeAcceptanceCommitted) return
+      if (acceptance.commitRuntime()) {
+        runtimeAcceptanceCommitted = true
+        return
+      }
+      // A gravação autoritativa já ocorreu numa única atualização do card.
+      // Falha aqui indica divergência interna, não licença para apagar a prova.
+      blackbox.record({
+        cat: 'phase',
+        event: 'skill-runtime-post-commit-mismatch',
+        actor: 'harness',
+        ids: {
+          projectId: watch.projectId,
+          missionId: task.missionId,
+          taskId: watch.taskId,
+          phase: watch.phase,
+          role: watch.phase
+        },
+        reason: 'o ledger persistido aceitou a rodada, mas o stamp efêmero recusou o fechamento'
+      })
+    }
     if (
       watch.phase === 'dev' &&
       hub
@@ -12873,7 +14158,12 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       }
       return false
     }
-    const gates = task.gates ?? ['review', 'qa']
+    const configuredGates = task.gates ?? ['review', 'qa']
+    const taskUiWork = classifyTaskUiWork(task)
+    const gates =
+      task.deliverable === 'code' && taskUiWork && !configuredGates.includes('qa')
+        ? [...configuredGates, 'qa' as const]
+        : configuredGates
     if (watch.phase === 'dev') {
       // O report encerra o executor imediatamente. A fotografia abaixo ainda
       // se protege contra filhos/background tardios, mas não deixamos o mesmo
@@ -13031,16 +14321,14 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           actor: 'harness'
         })
       }
-      // DEV FICA VIVO durante os gates (decisão do usuário, 2026-08-04):
-      // reprovação vira injeção na MESMA conversa (retryOrBacklog.liveDev) —
-      // contexto preservado, zero re-briefing; para dev codex é o único
-      // caminho (resume nasce sem MCP). O fingerprint do gate é a cerca se o
-      // dev em espera tocar em algo. Fecha aqui só quando NÃO há gate;
-      // aprovação fecha no finalizeTask, ciclos esgotados fecham no retry.
-      if (!next) terminateTaskPhasePane(watch.projectId, watch.taskId, 'dev')
-      const phaseSessions = { ...(task.phaseSessions ?? {}) }
+      // REVIEW/QA nunca dividem uma árvore gravável com o autor. A conversa e
+      // o handoff ficam persistidos, mas o processo escritor morre antes de o
+      // gate nascer; uma reprovação reabre o mesmo card sobre esta fotografia.
+      const latestBeforeGate = tasks.get(watch.taskId) ?? task
+      const phaseSessions = { ...(latestBeforeGate.phaseSessions ?? {}) }
       if (next) delete phaseSessions[next]
       tasks.update(watch.taskId, {
+        ...(acceptance ? { skillUsage: acceptance.skillUsage } : {}),
         status: next === 'qa' ? 'qa' : 'execucao',
         activePhase: next ?? 'dev',
         phaseState: next ? 'pending' : 'finalizing',
@@ -13055,7 +14343,8 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
             tree: snapshot?.tree,
             baseHead: snapshot?.baseHead,
             fingerprint: snapshot?.fingerprint ?? gitVisibleWorktreeFingerprint(watch.cwd),
-            changedPaths
+            changedPaths,
+            ...(verificationEvidence ? { verificationEvidence } : {})
           },
           activeGate: undefined,
           // Evidência memoizada SOBREVIVE quando a entrega é o mesmo head já
@@ -13064,6 +14353,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           qa: qaMemo
         }
       })
+      commitRuntimeAcceptance()
       hub.publish({
         projectId: watch.projectId,
         missionId: task.missionId,
@@ -13076,10 +14366,11 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         tag: task.department,
         text: `✔ dev sinalizou conclusão de "${task.title}"${next ? ` — ${next === 'review' ? '🧐 revisão' : '🔎 QA'} entrando` : ' — sem gates, concluindo'}`
       })
-      // "Abriu, testou, reportou → FECHOU": o dev fica esperandinho com a
-      // árvore viva — as janelas de teste (Chrome/Electron do produto) não
-      // podem sobrar na máquina do usuário durante os gates.
+      // "Abriu, testou, reportou → FECHOU": encerra também janelas de teste e
+      // helpers antes de qualquer leitor/runtime independente tocar a árvore.
       if (watch.paneId) ptys.reapVisualsOf(watch.paneId)
+      terminateTaskHelpers(watch.projectId, watch.taskId, 'entrega congelada para gates independentes')
+      terminateTaskPhasePane(watch.projectId, watch.taskId, 'dev')
       if (next) void openGatePane(watch, next)
       else
         void finalizeTask(
@@ -13114,6 +14405,12 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     let snapshotProblem = watch.worktree
       ? snapshotProblemFor(watch.cwd, snapFacts, latestForSnapshot.deliverable === 'code')
       : undefined
+    const artifactProblem = reviewArtifactProblem(watch)
+    if (artifactProblem) {
+      snapshotProblem = snapshotProblem
+        ? `${snapshotProblem}; ${artifactProblem}`
+        : artifactProblem
+    }
     // QUARENTENA DE EVIDÊNCIA (item 20, 2026-08-06: screenshots do QA na raiz
     // invalidaram uma aprovação visual GENUÍNA — mas o que se integra é o
     // COMMIT; untracked nunca entra no merge): se a única divergência são
@@ -13178,6 +14475,14 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       baselineFingerprint === finalFingerprint &&
       boundToDevSnapshot &&
       !snapshotProblem
+    if (securityReview && watch.phase !== 'review') {
+      throw new Error(
+        'securityReview recusado: somente o revisor, durante a fase review, pode emitir esta evidência'
+      )
+    }
+    let pendingSecurityPlanApproval:
+      | { planTaskId: string; plan: NonNullable<Task['plan']> }
+      | undefined
     if (securityReview) {
       const parsedVerdict = /^\s*aprovada\b/i.test(content)
         ? 'approved'
@@ -13207,43 +14512,35 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         }
         return false
       }
-      // GATE ESPECIALISTA RESOLVE A VALIDAÇÃO (decisão do usuário 2026-08-04:
+      // O relatório sanitizado acima é somente evidência isolada. A autoridade
+      // do GATE ESPECIALISTA (plano aprovado + veredito + receipt do card) só
+      // nasce, de forma indivisível, no updateMany executado por recordGate.
+      // Decisão do usuário 2026-08-04:
       // "não sou especialista em segurança — ou retira, ou um especialista
       // olha o código"). Em modo estrito, o securityReview APROVADO sobre
       // fotografia imutável preenche a validação do plano com ator
       // 'security-gate' — o humano nunca mais é perguntado sobre segurança;
       // segue decidindo apenas produto e integração.
-      if (readonly && securityReview.verdict === 'approved') {
+      if (watch.phase === 'review' && readonly && securityReview.verdict === 'approved') {
         const workTask = tasks.get(watch.taskId)
         const securityPlanTask = workTask ? planTaskForWorkTask(workTask) : undefined
         const pendingValidation =
           securityPlanTask?.plan &&
           manualSecurityValidationOf(securityPlanTask.plan).status === 'pending'
         if (securityPlanTask?.plan && pendingValidation) {
-          tasks.update(securityPlanTask.id, {
+          pendingSecurityPlanApproval = {
+            planTaskId: securityPlanTask.id,
             plan: {
               ...securityPlanTask.plan,
               manualSecurityValidation: {
                 required: true,
                 status: 'approved',
                 actor: 'security-gate',
-                resolvedAt: new Date().toISOString(),
-                evidence: `securityReview aprovado e imutável no gate de review do card "${workTask?.title ?? watch.taskId}"; registro sanitizado persistido no projeto (.synkora)`
+                resolvedAt: finishedAt,
+                evidence: `securityReview aprovado e imutável no gate de review do card "${workTask?.title ?? watch.taskId}"; a autoridade foi persistida junto do veredito e do receipt, com relatório sanitizado isolado em .synkora`
               }
             }
-          })
-          blackbox.record({
-            cat: 'verify',
-            event: 'security-gate-validated',
-            actor: 'harness',
-            ids: {
-              projectId: watch.projectId,
-              missionId: workTask?.missionId,
-              taskId: watch.taskId
-            },
-            reason:
-              'validação de segurança do plano resolvida pelo GATE ESPECIALISTA (securityReview aprovado) — sem ação humana'
-          })
+          }
         }
       }
     }
@@ -13254,16 +14551,37 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       verdict: 'approved' | 'rejected' | 'invalid',
       reason: string,
       wasReadonly = readonly,
-      transition?: 'dev' | 'qa' | 'finalize'
+      transition?: 'dev' | 'qa' | 'finalize',
+      consumeAcceptance = false,
+      nextGateRound?: Task['gateRound']
     ): void => {
       const latest = tasks.get(watch.taskId)
       const verification = latest?.verification ?? { contractVersion: 1 as const }
       const phaseSessions = { ...(latest?.phaseSessions ?? {}) }
       if (transition === 'qa') delete phaseSessions.qa
-      tasks.update(watch.taskId, {
+      const gateEvidence: TaskGateEvidence = {
+        phase: watch.phase === 'qa' ? 'qa' : 'review',
+        verdict,
+        startedAt: watch.gateStartedAt ?? latest?.phaseStartedAt ?? finishedAt,
+        finishedAt,
+        baselineFingerprint,
+        finalFingerprint,
+        snapshotHead: verification.dev?.head,
+        snapshotTree: verification.dev?.tree,
+        readonly: wasReadonly,
+        reason,
+        ...(securityReview ? { securityReview } : {}),
+        ...(verificationEvidence ? { verificationEvidence } : {})
+      }
+      const workTaskPatch: TaskUpdatePatch = {
+        ...(consumeAcceptance && acceptance ? { skillUsage: acceptance.skillUsage } : {}),
         // aprovação encerra a rodada aberta: lista fechada/placar não vazam
         // para a fase seguinte nem para um card aprovado
-        ...(verdict === 'approved' ? { gateRound: undefined } : {}),
+        ...(verdict === 'approved'
+          ? { gateRound: undefined }
+          : nextGateRound
+            ? { gateRound: nextGateRound }
+            : {}),
         ...(transition === 'dev'
           ? {
               status: 'backlog' as const,
@@ -13293,23 +14611,49 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         verification: {
           ...verification,
           activeGate: undefined,
-          [watch.phase]: {
-            phase: watch.phase,
-            verdict,
-            startedAt: watch.gateStartedAt ?? latest?.phaseStartedAt ?? finishedAt,
-            finishedAt,
-            baselineFingerprint,
-            finalFingerprint,
-            snapshotHead: verification.dev?.head,
-            snapshotTree: verification.dev?.tree,
-            readonly: wasReadonly,
-            reason,
-            ...(securityReview ? { securityReview } : {})
-          }
+          gateHistory: [...(verification.gateHistory ?? []), gateEvidence].slice(-24),
+          [watch.phase]: gateEvidence
         }
-      })
+      }
+      const approveSecurityPlan = verdict === 'approved' && pendingSecurityPlanApproval
+      if (approveSecurityPlan) {
+        if (!consumeAcceptance || !acceptance) {
+          throw new Error(
+            'aprovação de segurança recusada: veredito, plano e receipt precisam da mesma transação'
+          )
+        }
+        const committed = tasks.updateMany([
+          { id: watch.taskId, patch: workTaskPatch },
+          {
+            id: approveSecurityPlan.planTaskId,
+            patch: { plan: approveSecurityPlan.plan }
+          }
+        ])
+        if (!committed) {
+          throw new Error(
+            'aprovação de segurança recusada: card de trabalho ou plano desapareceu antes do commit'
+          )
+        }
+        // Observabilidade não é autoridade e nunca pode anteceder o commit.
+        blackbox.record({
+          cat: 'verify',
+          event: 'security-gate-validated',
+          actor: 'harness',
+          ids: {
+            projectId: watch.projectId,
+            missionId: latest?.missionId,
+            taskId: watch.taskId
+          },
+          reason:
+            'validação de segurança do plano, veredito do gate e receipt persistidos numa única transação — sem ação humana'
+        })
+      } else if (!tasks.update(watch.taskId, workTaskPatch)) {
+        throw new Error('card desapareceu antes do commit do veredito do gate')
+      }
+      if (consumeAcceptance) commitRuntimeAcceptance()
     }
     if (!readonly) {
+      cleanupReviewArtifact(watch)
       terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
       liveGateWaits.delete(watch.taskId)
       const reason = snapshotProblem
@@ -13341,9 +14685,10 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     // truncá-lo fazia o dev corrigir o resumo enquanto o gate vivo re-checava
     // a lista completa da memória ("persistem…" em 3 rodadas seguidas). Logs
     // curtos fatiam na exibição, nunca na fonte.
-    const motivo = (m?.[2] ?? '').trim().slice(0, 1500) || 'sem motivo'
+    const motivo = (m?.[2] ?? '').trim() || 'sem motivo'
     const who = watch.phase === 'review' ? 'revisor' : 'QA'
     if (!m) {
+      cleanupReviewArtifact(watch)
       terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
       liveGateWaits.delete(watch.taskId)
       recordGate('invalid', `veredito ilegível: ${content.slice(0, 120)}`)
@@ -13365,7 +14710,6 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         actor: who
       })
     } else if (!approved) {
-      recordGate('rejected', motivo, readonly, 'dev')
       // LISTA FECHADA NO CARD (2026-08-05): a regra "lista completa na 1ª
       // passada" morria com o pane — um gate novo re-legislava do zero (r5 do
       // caso real). A lista + placar persistem no card e um spawn fresco os
@@ -13376,15 +14720,19 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         ...(prevRound?.scores ?? []).slice(-8),
         ...(score ? [{ ...score, head: devFacts?.head, at: finishedAt }] : [])
       ]
-      tasks.update(watch.taskId, {
-        gateRound: {
-          phase: watch.phase,
-          rejectedHead: devFacts?.head,
-          list: (m?.[2] ?? '').trim().slice(0, 2000) || motivo,
-          round: (prevRound?.round ?? 0) + 1,
-          scores: roundScores
-        }
-      })
+      const nextGateRound: Task['gateRound'] = {
+        phase: watch.phase,
+        rejectedHead: devFacts?.head,
+        list: (m?.[2] ?? '').trim() || motivo,
+        round: (prevRound?.round ?? 0) + 1,
+        scores: roundScores,
+        ...(verificationEvidence ? { verificationEvidence } : {}),
+        gateNotesAtRejection: JSON.stringify(
+          (tasks.get(watch.taskId) ?? task).gateNotes?.[watch.phase] ?? ''
+        )
+      }
+      recordGate('rejected', motivo, readonly, 'dev', true, nextGateRound)
+      cleanupReviewArtifact(watch)
       maybeAlarmGateLoop(watch, task, roundScores)
       // GATE VIVO: a reprovação limpa deixa o pane do gate ABERTO em espera;
       // o próximo done do dev recicla esta mesma conversa com o delta.
@@ -13396,7 +14744,9 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           rejectedHead: devFacts?.head,
           rejectedReason: motivo,
           rejectedAt: finishedAt,
-          gateNotesAtRejection: JSON.stringify(tasks.get(watch.taskId)?.gateNotes ?? {})
+          gateNotesAtRejection: JSON.stringify(
+            tasks.get(watch.taskId)?.gateNotes?.[watch.phase] ?? ''
+          )
         })
         hub.notifyPane(
           watch.paneId,
@@ -13419,10 +14769,11 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           qaEvidence?.verdict === 'approved' &&
           qaEvidence.snapshotHead === devFacts.head
       )
-      terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
-      liveGateWaits.delete(watch.taskId)
       if (qaAlreadyApproved) {
-        recordGate('approved', motivo, readonly, 'finalize')
+        recordGate('approved', motivo, readonly, 'finalize', true)
+        cleanupReviewArtifact(watch)
+        terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
+        liveGateWaits.delete(watch.taskId)
         blackbox.record({
           cat: 'phase',
           event: 'gate-skipped-memoized',
@@ -13437,15 +14788,19 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         syncBoard(watch.projectId)
         return true
       }
-      recordGate('approved', motivo, readonly, 'qa')
+      recordGate('approved', motivo, readonly, 'qa', true)
+      cleanupReviewArtifact(watch)
+      terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
+      liveGateWaits.delete(watch.taskId)
       emitLog(watch.projectId, { kind: 'log', tag: 'maestro', text: `🧐 revisor aprovou "${task.title}" — 🔎 QA entrando (pane real)` })
       hub.publish({ projectId: watch.projectId, missionId: task.missionId, kind: 'report', text: `revisor aprovou "${task.title}" — QA entrando`, actor: 'review' })
       void openGatePane(watch, 'qa')
       return true
     } else {
+      recordGate('approved', motivo, readonly, 'finalize', true)
+      cleanupReviewArtifact(watch)
       terminateTaskPhasePane(watch.projectId, watch.taskId, watch.phase)
       liveGateWaits.delete(watch.taskId)
-      recordGate('approved', motivo, readonly, 'finalize')
       void finalizeTask(watch, task, `aprovada pelo ${who}`)
     }
     if (uiSender && !uiSender.isDestroyed()) uiSender.send('tasks:changed', watch.projectId)
@@ -13457,6 +14812,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
   // Cobre com folga a preparação assíncrona da fase (worktree ~1s + skill
   // sync ~0,7s + prompt); um card movido à mão espera no máximo isto a mais.
   const PHASE_WATCH_GRACE_MS = 30_000
+  const HELPER_OPEN_GRACE_MS = 30_000
   setInterval(() => {
     for (const [taskId, watch] of [...phaseWatches]) {
       const task = tasks.get(taskId)
@@ -13470,6 +14826,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       if (!task || (task.status !== activeStatus && !existsSync(watch.marker))) {
         if (task && Date.now() - watch.createdAt < PHASE_WATCH_GRACE_MS) continue
         phaseWatches.delete(taskId)
+        if (watch.paneId) terminatePaneNow(watch.projectId, watch.paneId)
         blackbox.record({
           cat: 'phase',
           event: 'phase-watch-released',
@@ -13525,6 +14882,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           if (!launchToken) return
           try {
             phaseWatches.delete(taskId)
+            if (watch.paneId) discardUnstartedPane(watch.paneId)
             const spec = await preparePhasePane(
               watch.projectId,
               taskId,
@@ -13535,10 +14893,29 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
               undefined,
               launchToken
             )
-            if (spec) openPhasePane(spec, watch.projectId, taskId)
-            else if (!phaseWatches.has(taskId)) phaseWatches.set(taskId, watch)
+            if (spec) {
+              openPhasePane(spec, watch.projectId, taskId)
+            } else {
+              const current = tasks.get(taskId)
+              if (current && !phaseWatches.has(taskId)) {
+                tasks.update(taskId, {
+                  activePhase: watch.phase,
+                  phaseState: 'interrupted',
+                  feedback: `o pane ${watch.phase} nao abriu; a fase foi preservada para retomada`
+                })
+                syncBoard(watch.projectId)
+              }
+            }
           } catch {
-            if (!phaseWatches.has(taskId)) phaseWatches.set(taskId, watch)
+            const current = tasks.get(taskId)
+            if (current && !phaseWatches.has(taskId)) {
+              tasks.update(taskId, {
+                activePhase: watch.phase,
+                phaseState: 'interrupted',
+                feedback: `falha ao reabrir o pane ${watch.phase}; a fase foi preservada para retomada`
+              })
+              syncBoard(watch.projectId)
+            }
           } finally {
             phaseLaunches.release(taskId, launchToken)
           }
@@ -13587,6 +14964,37 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
             if (watch.phase === 'dev') {
               const identity = watch.paneId ? hub.identityByPane(watch.paneId) : undefined
               if (!identity) return
+              const skillScope = skillPlanScopes.get(identity.paneId)
+              if (!skillScope) {
+                try {
+                  unlinkSync(watch.marker)
+                } catch {
+                  // marcador ja sumiu
+                }
+                hub.notifyPane(
+                  identity.paneId,
+                  '[synkora] conclusao recusada: o plano de skills desta rodada expirou; reabra somente esta fase'
+                )
+                return
+              }
+              const skillGuard = skillRuntime.guardReport({
+                paneId: identity.paneId,
+                phase: identity.phase ?? 'dev',
+                phaseRun: skillScope.phaseRun,
+                skillApplications: []
+              })
+              if (!skillGuard.ok) {
+                try {
+                  unlinkSync(watch.marker)
+                } catch {
+                  // marcador ja sumiu
+                }
+                hub.notifyPane(
+                  identity.paneId,
+                  '[synkora] conclusão por arquivo recusada: este pane tem um ACTIVE SKILL PLAN. Ative os receipts exigidos e conclua pela tool MCP report com skillApplications.'
+                )
+                return
+              }
               const blocked = await mcpApi.codeReportGuard(identity)
               try {
                 ensureProjectRuntimeWritable(watch.projectId)
@@ -13618,7 +15026,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
             } catch {
               // já sumiu
             }
-            phaseWatches.delete(taskId)
+            phaseWatches.detach(taskId)
             advancePhase(watch, content)
           } finally {
             phaseMarkersProcessing.delete(taskId)
@@ -13627,6 +15035,69 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       }
     }
     // Marcadores de INTEGRAÇÃO de missão (fallback do report MCP do gate).
+    // Helper tambem nasce por `panes:open`, que e um push sem ACK. Uma
+    // notificacao perdida nao pode criar um escritor fantasma no Hub e ocupar
+    // para sempre o unico slot de delegacao do card. Reenvie uma vez; sem PTY
+    // depois da segunda janela, reverta todo o armamento de forma auditada.
+    for (const pending of helperOpenWatchdog.due(Date.now(), HELPER_OPEN_GRACE_MS)) {
+      const identity = hub.identityByPane(pending.paneId)
+      const live = livePaneSpecs.get(pending.paneId)
+      if (ptys.has(pending.paneId) || paneEverSpawned.has(pending.paneId)) {
+        helperOpenWatchdog.acknowledge(pending.paneId)
+        continue
+      }
+      if (!identity || identity.role !== 'ajudante' || !live) {
+        helperOpenWatchdog.acknowledge(pending.paneId)
+        if (identity) rollbackFailedPaneSpawn(pending.paneId, 'armamento do ajudante perdeu a spec')
+        continue
+      }
+      const delegatorAlive =
+        !identity.delegatorPaneId || Boolean(hub.identityByPane(identity.delegatorPaneId))
+      if (
+        pending.action === 'retry' &&
+        delegatorAlive &&
+        uiSender &&
+        !uiSender.isDestroyed()
+      ) {
+        uiSender.send('panes:open', live.projectId, live.taskId, live.spec)
+        blackbox.record({
+          cat: 'pane',
+          event: 'helper-open-retried',
+          actor: 'harness',
+          ids: {
+            projectId: identity.projectId,
+            missionId: identity.missionId,
+            taskId: identity.taskId,
+            paneId: pending.paneId,
+            role: 'ajudante'
+          },
+          reason: 'ajudante armado nao criou PTY apos o primeiro push; panes:open reenviado uma vez'
+        })
+        continue
+      }
+      blackbox.record({
+        cat: 'pane',
+        event: 'helper-open-expired',
+        actor: 'harness',
+        ids: {
+          projectId: identity.projectId,
+          missionId: identity.missionId,
+          taskId: identity.taskId,
+          paneId: pending.paneId,
+          role: 'ajudante'
+        },
+        reason: delegatorAlive
+          ? 'ajudante nao criou PTY depois de duas tentativas'
+          : 'delegador encerrou antes de o ajudante criar PTY'
+      })
+      rollbackFailedPaneSpawn(
+        pending.paneId,
+        delegatorAlive
+          ? 'o pedido de abertura se perdeu duas vezes'
+          : 'o pane delegador encerrou antes do inicio'
+      )
+    }
+
     for (const [missionId, watch] of [...missionWatches]) {
       if (!existsSync(watch.marker)) continue
       let content = ''
@@ -14109,19 +15580,105 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     if (!reusedPty) paneStartupMetrics?.begin(req.id, paneStartupDescriptor(req))
     const seat = requestedSeat
     const extraEnv: Record<string, string> = {}
+    let effectiveCliArgs = req.cliArgs ? [...req.cliArgs] : undefined
     if (seat) {
       const dir = seats.configDirOf(seat)
       const preparationTicket = Symbol(req.id)
       pendingPtyPreparations.set(req.id, preparationTicket)
       await seats.prepare(seat)
-      if (
-        pendingPtyPreparations.get(req.id) !== preparationTicket ||
-        e.sender.isDestroyed()
-      ) {
+      const phaseStillActive = (): boolean => {
+        if (reusedPty || !pendingIdentity?.taskId) return true
+        const owner = tasks.get(pendingIdentity.taskId)
+        if (pendingIdentity.role === 'ajudante') {
+          return Boolean(
+            owner &&
+              owner.status === 'execucao' &&
+              owner.activePhase === 'dev' &&
+              (owner.phaseState === 'pending' || owner.phaseState === 'running')
+          )
+        }
+        if (
+          pendingIdentity.role === 'dev' ||
+          pendingIdentity.role === 'review' ||
+          pendingIdentity.role === 'qa'
+        ) {
+          const watch = phaseWatches.get(pendingIdentity.taskId)
+          return Boolean(
+            owner &&
+              owner.status !== 'done' &&
+              owner.activePhase === pendingIdentity.role &&
+              (owner.phaseState === 'pending' || owner.phaseState === 'running') &&
+              watch?.phase === pendingIdentity.role &&
+              watch.paneId === req.id
+          )
+        }
+        return true
+      }
+      const preparationCanContinue = (): boolean =>
+        ptyPreparationCanContinue({
+          ticketMatches: pendingPtyPreparations.get(req.id) === preparationTicket,
+          senderAlive: !e.sender.isDestroyed(),
+          closing: closingPaneIds.has(req.id),
+          requiresPaneGeneration: req.kind !== 'shell' && !isSeatLogin,
+          capturedIdentity: pendingIdentity,
+          currentIdentity: hub.identityByPane(req.id),
+          capturedToken: token,
+          currentToken: paneTokens.get(req.id),
+          capturedSpec: cached,
+          currentSpec: livePaneSpecs.get(req.id),
+          phaseStillActive: phaseStillActive()
+        })
+      if (!preparationCanContinue()) {
         if (pendingPtyPreparations.get(req.id) === preparationTicket) {
           pendingPtyPreparations.delete(req.id)
         }
         return false
+      }
+      if (
+        !reusedPty &&
+        seat.cli === 'codex' &&
+        isMethodGovernedPaneRole(pendingIdentity?.role)
+      ) {
+        let preparedProfile:
+          | { profileName: string; profilePath: string }
+          | undefined
+        try {
+          preparedProfile = await prepareCodexSkillIsolationProfile({
+            paneGenerationId: `${req.id}-${randomUUID()}`,
+            cwd: req.cwd,
+            configDir: dir
+          })
+        } catch (error) {
+          const stillOwnsPreparation =
+            pendingPtyPreparations.get(req.id) === preparationTicket
+          if (stillOwnsPreparation) {
+            pendingPtyPreparations.delete(req.id)
+            rollbackFailedPaneSpawn(
+              req.id,
+              `catálogo de skills do Codex não pôde ser isolado: ${String(error)}`
+            )
+          }
+          return false
+        }
+        // Profile generation executes the provider binary and crosses an
+        // await. Revalidate the complete pane generation before spawning.
+        if (!preparationCanContinue()) {
+          removeCodexSkillIsolationProfile(preparedProfile.profilePath)
+          if (pendingPtyPreparations.get(req.id) === preparationTicket) {
+            pendingPtyPreparations.delete(req.id)
+          }
+          return false
+        }
+        const previousProfile = paneCodexSkillProfiles.get(req.id)
+        paneCodexSkillProfiles.set(req.id, preparedProfile.profilePath)
+        if (previousProfile && previousProfile !== preparedProfile.profilePath) {
+          removeCodexSkillIsolationProfile(previousProfile)
+        }
+        effectiveCliArgs = [
+          ...(effectiveCliArgs ?? []),
+          '-p',
+          preparedProfile.profileName
+        ]
       }
       pendingPtyPreparations.delete(req.id)
       if (seat.cli === 'claude') extraEnv['CLAUDE_CONFIG_DIR'] = dir
@@ -14171,7 +15728,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       extraEnv,
       initialPrompt: req.initialPrompt,
       model: req.model,
-      cliArgs: req.cliArgs,
+      cliArgs: effectiveCliArgs,
       appendSystemPrompt: req.appendSystemPrompt,
       cols: req.cols,
       rows: req.rows,
@@ -14456,6 +16013,11 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
                   actor: 'harness'
                 })
               } else {
+                terminateTaskHelpers(
+                  identity.projectId,
+                  identity.taskId,
+                  'pane dev encerrou antes de concluir a fase'
+                )
                 tasks.update(identity.taskId, {
                   status: 'backlog',
                   ...(task.feedback
@@ -14529,6 +16091,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     }
     if (ptyCreated) {
       paneEverSpawned.add(req.id)
+      helperOpenWatchdog.acknowledge(req.id)
       // Servidor de teste do dono: o pane shell nasce cru — o comando entra
       // digitado (inject fatiado) assim que o prompt do PowerShell assentar.
       const testSrv = testServerPanes.get(req.id)
@@ -14806,6 +16369,85 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
   // CHECK 14: assinatura do último catálogo servido por pane — só mudança
   // (ou 1º serve) vira evento; requisições repetidas não inundam o journal.
   const mcpCatalogServedByPane = new Map<string, string>()
+  // Autorizações humanas de uso único. Só handlers IPC acionados pela UI
+  // entram nestes conjuntos e consomem a autorização na mesma pilha síncrona;
+  // nenhuma tool MCP consegue fabricar o gesto do dono.
+  const humanProjectPlanApprovals = new Set<string>()
+  const humanProjectMissionStarts = new Set<string>()
+  const preparePlanningArtifactEvidence = (
+    id: PaneIdentity,
+    skillApplications: string[] | undefined
+  ):
+    | { ok: true; evidence: PlanningMethodEvidence; accept: () => boolean }
+    | { ok: false; message: string } => {
+    const scope = skillPlanScopes.get(id.paneId)
+    const currentIdentity = hub.identityByPane(id.paneId)
+    if (
+      id.role !== 'maestro' ||
+      !scope ||
+      scope.phase !== 'planning' ||
+      scope.projectId !== id.projectId ||
+      scope.missionId !== id.missionId ||
+      !currentIdentity ||
+      currentIdentity.projectId !== id.projectId ||
+      currentIdentity.missionId !== id.missionId
+    ) {
+      return { ok: false, message: 'esta conversa não possui uma rodada ativa de planejamento' }
+    }
+    const guarded = skillRuntime.guardReport({
+      paneId: id.paneId,
+      phase: 'planning',
+      phaseRun: scope.phaseRun,
+      skillApplications
+    })
+    if (!guarded.ok) {
+      return {
+        ok: false,
+        message: 'ative e declare o receipt obrigatório do ACTIVE PLANNING METHOD desta rodada'
+      }
+    }
+    const activePlan = skillRuntime
+      .safeSnapshot()
+      .plans.find(
+        (plan) =>
+          plan.paneId === id.paneId &&
+          plan.phase === 'planning' &&
+          plan.phaseRun === scope.phaseRun
+      )
+    const receipt = activePlan?.receipts.find(
+      (candidate) => guarded.skillApplications.includes(candidate.receiptId)
+    )
+    if (
+      !receipt ||
+      receipt.skillId !== SYNKORA_PLANNING_STANDARD_ID ||
+      receipt.operation !== 'plan' ||
+      !receipt.activatedAt
+    ) {
+      return { ok: false, message: 'o receipt declarado não corresponde ao método nativo ativado' }
+    }
+    const evidence: PlanningMethodEvidence = {
+      contractVersion: 1,
+      receiptId: receipt.receiptId,
+      skillId: receipt.skillId,
+      operation: receipt.operation,
+      version: receipt.version,
+      fingerprint: receipt.fingerprint,
+      phaseRun: scope.phaseRun,
+      appliedAt: receipt.appliedAt ?? new Date().toISOString()
+    }
+    return {
+      ok: true,
+      evidence,
+      accept: () =>
+        skillRuntime.acceptReport({
+          paneId: id.paneId,
+          phase: 'planning',
+          phaseRun: scope.phaseRun,
+          skillApplications
+        }).ok
+    }
+  }
+
   const mcpApi: McpApi = {
     noteCatalogServed: (id, tools) => {
       const key = id.paneId ?? 'sem-pane'
@@ -14897,6 +16539,19 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         )
       if (openHelpers.length > 0) {
         return `${openHelpers.length} ajudante(s) deste card ainda estão abertos. Aguarde o fechamento automático após o report (ou encerre-os explicitamente) antes de reportar done; o snapshot final só nasce depois que nenhum outro processo pode escrever.`
+      }
+      const parentSkillScope = skillPlanScopes.get(id.paneId)
+      const requiredAgentId = parentSkillScope?.agentIds[0]
+      if (
+        requiredAgentId &&
+        !completedPlannedAgentsByPhaseRun
+          .get(parentSkillScope.phaseRun)
+          ?.has(requiredAgentId)
+      ) {
+        return (
+          `o subagente especialista ${requiredAgentId} foi selecionado para esta rodada, ` +
+          'mas nenhum ajudante com essa persona concluiu e reportou. Abra-o via delegate e integre o resultado antes de reportar done.'
+        )
       }
       const project = projects.get(task.projectId)
       const mission = task.missionId ? missions.get(task.missionId) : undefined
@@ -15239,10 +16894,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
                         (itemId) => productPlan.roadmap.find((item) => item.id === itemId)?.title ?? itemId
                       ),
                       skillsPlanejamento: {
-                        disponiveis: [
-                          ...(materializedPlanningSkillsByProject.get(id.projectId) ??
-                            new Set(skillsLib.orchestratorPlanningIds()))
-                        ],
+                        disponiveis: skillsLib.orchestratorPlanningIds(),
                         declaradasComoUsadas: productPlan.planningSkills.map((entry) => ({
                           id: entry.id,
                           etapa: entry.stage,
@@ -15345,6 +16997,36 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     },
 
     createTasks: (id, items) => {
+      const oversizedBriefings = items
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => (item.briefing?.length ?? 0) > 6000)
+      if (oversizedBriefings.length > 0) {
+        return `briefing excede o teto autoritativo de 6000 caracteres nos cards: ${oversizedBriefings.map(({ index }) => index + 1).join(', ')}; resuma sem remover critérios de aceite`
+      }
+      const overloadedSkillPlans = items
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => (item.skills?.length ?? 0) > 1 || (item.agents?.length ?? 0) > 1)
+      if (overloadedSkillPlans.length > 0) {
+        return `cards aceitam no máximo uma skill técnica e um subagente especialista explícitos: ${overloadedSkillPlans.map(({ index }) => index + 1).join(', ')}`
+      }
+      const missingUiDeclarations = items
+        .map((item, index) => ({ item, index }))
+        .filter(
+          ({ item }) =>
+            item.deliverable === 'code' && typeof item.affectsUi !== 'boolean'
+        )
+      if (missingUiDeclarations.length > 0) {
+        return `todo card de código precisa declarar affectsUi explicitamente: ${missingUiDeclarations.map(({ index }) => index + 1).join(', ')}`
+      }
+      const contradictoryUiDeclarations = items
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) =>
+          item.affectsUi === false &&
+          classifyTaskUiWork(item)
+        )
+      if (contradictoryUiDeclarations.length > 0) {
+        return `affectsUi=false contradiz a superficie descrita nos cards: ${contradictoryUiDeclarations.map(({ index }) => index + 1).join(', ')}`
+      }
       if (id.role !== 'maestro' || !id.missionId)
         return 'só o orquestrador da missão cria cards de trabalho'
       const mission = missions.get(id.missionId)
@@ -15379,6 +17061,26 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         return approvedPlan?.status === 'backlog'
           ? 'o PLANO desta missão ainda aguarda a aprovação do usuário — nenhum card de trabalho nasce antes disso'
           : 'nenhum card nasce sem um plano aprovado em execução nesta missão'
+      const legacyPlanningPlan =
+        approvedPlan.plan?.planningEvidenceState === 'legacy_unverified' &&
+        !approvedPlan.plan.planningMethod
+      if (!isVerifiedTaskPlanPlanningMethod(approvedPlan.plan) && !legacyPlanningPlan) {
+        return 'o plano aprovado não possui evidência de um receipt de planejamento verificado — reproponha o plano nesta conversa antes de criar cards'
+      }
+      if (legacyPlanningPlan) {
+        blackbox.record({
+          cat: 'task',
+          event: 'legacy-planning-plan-consumed',
+          ids: {
+            projectId: id.projectId,
+            missionId: id.missionId,
+            taskId: approvedPlan.id
+          },
+          actor: 'harness',
+          reason:
+            'plano aprovado antes do contrato de receipts; continuidade permitida sem converter a ausência em uso verificado'
+        })
+      }
       auto = true
       activePlanId = approvedPlan.id
       const executionMode = normalizeExecutionMode(approvedPlan.plan?.executionMode)
@@ -15535,17 +17237,40 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       // (id fantasma viraria injeção silenciosamente vazia; skill no campo de
       // subagente ganharia hint errado — melhor avisar o orquestrador na hora).
       const badSkills: string[] = []
-      const okOfKind = (ids: string[] | undefined, kind: 'skill' | 'agent'): string[] => {
+      const routedAestheticStamps: string[] = []
+      const okOfKind = (
+        ids: string[] | undefined,
+        kind: 'skill' | 'agent',
+        department: Department
+      ): string[] => {
         const ok: string[] = []
         for (const s of ids ?? []) {
-          if (skillsLib.byId(s)?.kind === kind && skillsLib.isInstalled(s)) ok.push(s)
-          else badSkills.push(s)
+          const definition = skillsLib.byId(s)
+          if (
+            definition?.kind !== kind ||
+            !definition.depts.includes(department) ||
+            !skillsLib.isSelectable(s)
+          ) {
+            badSkills.push(s)
+            continue
+          }
+          if (
+            kind === 'skill' &&
+            (isVisualMethod(definition) ||
+              definition.adapter === 'synkora-native' ||
+              s === SYNKORA_FRONTEND_STANDARD_ID ||
+              s === SYNKORA_UI_QA_ID)
+          ) {
+            routedAestheticStamps.push(s)
+            continue
+          }
+          ok.push(s)
         }
         return ok
       }
       const news: NewTask[] = items.map((i, index) => {
-        const okSkills = okOfKind(i.skills, 'skill')
-        const okAgents = okOfKind(i.agents, 'agent')
+        const okSkills = okOfKind(i.skills, 'skill', i.department)
+        const okAgents = okOfKind(i.agents, 'agent', i.department)
         return {
           department: i.department,
           type: i.type ?? 'feature',
@@ -15553,9 +17278,16 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           title: i.title,
           description: i.description ?? '',
           briefing: i.briefing,
-          gates: gatesForTask(executionMode, risk, i.deliverable, i.gates),
+          gates: gatesForTask(
+            executionMode,
+            risk,
+            i.deliverable,
+            i.gates,
+            classifyTaskUiWork(i)
+          ),
           quests: i.quests,
           skills: okSkills.length ? okSkills : undefined,
+          affectsUi: i.affectsUi,
           agents: okAgents.length ? okAgents : undefined,
           delegation: normalizeDelegationMode(i.delegation, executionMode),
           deliverable: i.deliverable,
@@ -15571,6 +17303,11 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           planItemId: i.planItemId
         }
       })
+      if (badSkills.length > 0) {
+        return `lote recusado sem criar cards: skills/subagentes inexistentes, não instalados, incompatíveis com a função ou no campo errado: ${[
+          ...new Set(badSkills)
+        ].join(', ')}. Corrija os ids pelo list_skills e reenvie o lote inteiro.`
+      }
       const created = tasks.createMany(id.projectId, news)
       for (const t of created)
         emitLog(id.projectId, { kind: 'log', tag: t.department, text: t.title })
@@ -15594,21 +17331,11 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         badSkills.length
           ? ` · AVISO: skills/subagentes ignorados (não instalados, inexistentes ou no campo do tipo errado): ${[...new Set(badSkills)].join(', ')} — use ids EXATOS de list_skills, no campo certo (tipo=skill → skills; tipo=subagente → agents)`
           : ''
-      }${(() => {
-        // Kit de polish em card de UI é regra desde a F6.7 e foi descumprida
-        // no caso real de 2026-08-05 (4 ciclos de reprovação num card de
-        // design sem nenhuma skill carimbada) — o lembrete cobra na hora.
-        const uiNoSkills = created.filter(
-          (t) => (t.department === 'front' || t.department === 'design') && !t.skills?.length
-        )
-        return uiNoSkills.length
-          ? ` · LEMBRETE (kit de polish em card de UI): ${uiNoSkills
-              .map((t) => `"${t.title}"`)
-              .join(
-                ', '
-              )} nasceu SEM skills carimbadas — carimbe via update_task {skills: [...]} as skills de polish/design que o dev deve priorizar (ex.: impeccable, better-interface, typography-audit; confira em list_skills). O harness exige a detail pass no done de qualquer forma; o carimbo dirige a escolha.`
+      }${
+        routedAestheticStamps.length
+          ? ` · AVISO: carimbos estéticos removidos (${[...new Set(routedAestheticStamps)].join(', ')}); direção visual é responsabilidade do roteador, e o card aceita somente uma técnica concreta.`
           : ''
-      })()}`
+      } · O roteador definirá o plano mínimo de cada fase; não carimbe estética por rotina.`
     },
 
     updateTask: (id, taskId, patch: TaskPatch) => {
@@ -15620,12 +17347,34 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       if (t0?.kind === 'plan')
         return 'o card de PLANO não se edita por update_task — use create_plan (substituir a proposta) ou conclude_plan (encerrar com a conclusão)'
       if (!t0.auto) return 'só cards AUTO do plano podem ser ajustados pelo orquestrador'
+      if ((patch.briefing?.length ?? 0) > 6000) {
+        return 'ajuste recusado: briefing excede o teto autoritativo de 6000 caracteres; resuma sem remover critérios de aceite'
+      }
       // gateNotes SOZINHAS podem entrar com o card em andamento: o gate alvo
       // ainda não nasceu e a nota viaja no PROMPT dele no spawn — é o caminho
       // do "instrução no briefing, nunca perseguindo o pane".
       const gateNotesOnly =
         patch.gateNotes !== undefined &&
         Object.keys(patch).every((key) => key === 'gateNotes')
+      const requestedDeliverable = patch.deliverable ?? t0.deliverable ?? 'code'
+      if (
+        !gateNotesOnly &&
+        requestedDeliverable === 'code' &&
+        typeof (patch.affectsUi ?? t0.affectsUi) !== 'boolean'
+      ) {
+        return 'ajuste recusado: todo card de código precisa declarar affectsUi explicitamente'
+      }
+      if (
+        (patch.affectsUi ?? t0.affectsUi) === false &&
+        classifyTaskUiWork({
+          ...t0,
+          ...patch,
+          affectsUi: false,
+          feedback: t0.feedback
+        })
+      ) {
+        return 'ajuste recusado: affectsUi=false contradiz a superficie visual descrita no card'
+      }
       if (t0.status === 'done')
         return 'card concluído não recebe ajuste — reabra via run_task { adjustment } se necessário'
       if (t0.status !== 'backlog' && !gateNotesOnly)
@@ -15635,7 +17384,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       const planTask = planTaskForWorkTask(t0)
       const executionMode = normalizeExecutionMode(planTask?.plan?.executionMode)
       const risk = normalizeRiskLevel(planTask?.plan?.risk)
-      const deliverable = patch.deliverable ?? t0.deliverable ?? 'code'
+      const deliverable = requestedDeliverable
       const runtimeRisk = assessMissionRisk({
         declaredRisk: risk,
         texts: [
@@ -15650,6 +17399,40 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       if (runtimeRisk.raised) {
         return `ajuste recusado: o novo briefing revela risco ${runtimeRisk.effectiveRisk} acima do plano aprovado (${risk}). Pause e reapresente o plano com gates proporcionais.`
       }
+      if ((patch.skills?.length ?? 0) > 1)
+        return 'ajuste recusado: cada card aceita no máximo uma skill técnica explícita'
+      if ((patch.agents?.length ?? 0) > 1)
+        return 'ajuste recusado: cada card aceita no máximo um subagente especialista explícito'
+      if (patch.skills) {
+        for (const skillId of patch.skills) {
+          const definition = skillsLib.byId(skillId)
+          if (!definition || definition.kind !== 'skill' || !skillsLib.isSelectable(skillId)) {
+            return `ajuste recusado: skill ${skillId} não existe, não está instalada ou não é do tipo skill`
+          }
+          if (!definition.depts.includes(t0.department)) {
+            return `ajuste recusado: skill ${skillId} nÃ£o Ã© compatÃ­vel com a funÃ§Ã£o ${t0.department}`
+          }
+          if (
+            isVisualMethod(definition) ||
+            definition.adapter === 'synkora-native' ||
+            skillId === SYNKORA_FRONTEND_STANDARD_ID ||
+            skillId === SYNKORA_UI_QA_ID
+          ) {
+            return `ajuste recusado: ${skillId} é direção/contrato visual roteado automaticamente; selecione no máximo uma técnica concreta`
+          }
+        }
+      }
+      if (patch.agents) {
+        for (const agentId of patch.agents) {
+          const definition = skillsLib.byId(agentId)
+          if (!definition || definition.kind !== 'agent' || !skillsLib.isSelectable(agentId)) {
+            return `ajuste recusado: subagente ${agentId} não existe, não está instalado ou está no campo errado`
+          }
+          if (!definition.depts.includes(t0.department)) {
+            return `ajuste recusado: subagente ${agentId} nÃ£o Ã© compatÃ­vel com a funÃ§Ã£o ${t0.department}`
+          }
+        }
+      }
       const approvedSecuritySurfaces = new Set(planTask?.plan?.riskSurfaces ?? [])
       const newManualSurfaces = runtimeRisk.surfaces.filter(
         (surface) => !approvedSecuritySurfaces.has(surface)
@@ -15662,6 +17445,12 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         return `ajuste recusado: o briefing introduz uma superfície sensível que não estava no plano (${newManualSurfaces.join(', ')}). Reapresente o plano para registrar controles e validação humana.`
       }
       const candidate = {
+        department: t0.department,
+        title: patch.title ?? t0.title,
+        description: patch.description ?? t0.description,
+        briefing: patch.briefing ?? t0.briefing,
+        affectsUi: patch.affectsUi ?? t0.affectsUi,
+        feedback: t0.feedback,
         effort: patch.effort ?? t0.effort,
         gates: patch.gates ?? t0.gates,
         delegation: patch.delegation ?? t0.delegation,
@@ -15688,7 +17477,13 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         ...patch,
         deliverable,
         delegation: normalizeDelegationMode(candidate.delegation, executionMode),
-        gates: gatesForTask(executionMode, risk, deliverable, candidate.gates)
+        gates: gatesForTask(
+          executionMode,
+          risk,
+          deliverable,
+          candidate.gates,
+          classifyTaskUiWork(candidate)
+        )
       }
       const updated = tasks.update(taskId, normalizedPatch as Partial<Task>)
       if (!updated) return `tarefa ${taskId} não encontrada`
@@ -15781,47 +17576,51 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       const existing = tasks
         .list(id.projectId)
         .filter((t) => t.missionId === id.missionId && t.kind === 'plan')
+      const unresolvedPlans = existing.filter((task) => task.status !== 'done')
+      if (unresolvedPlans.length > 1) {
+        return 'plano recusado: a missão já possui mais de um card de plano aberto; reconcilie essa duplicidade no board antes de propor outra versão'
+      }
+      // Tudo abaixo pode atravessar consultas assíncronas de catálogo. Guarde a
+      // fotografia autoritativa que fundamentou o pré-voo; no trecho final ela
+      // precisa continuar idêntica. Sem este CAS lógico, um clique de aprovação
+      // durante o await podia ser sobrescrito pela proposta antiga.
+      const initialPlanState = existing
+        .map((task) => `${task.id}:${task.status}:${task.updatedAt}`)
+        .sort()
+        .join('|')
+      const initialPlanIds = new Set(existing.map((task) => task.id))
+      const initialLinkedCardState = tasks
+        .list(id.projectId)
+        .filter(
+          (task) =>
+            task.missionId === id.missionId &&
+            task.kind !== 'plan' &&
+            Boolean(task.planId && initialPlanIds.has(task.planId))
+        )
+        .map(
+          (task) =>
+            `${task.id}:${task.status}:${task.updatedAt}:${task.planId ?? ''}:${task.planItemId ?? ''}`
+        )
+        .sort()
+        .join('|')
+      const initialMissionUpdatedAt = mission.updatedAt
       const runningPlan = existing.find((t) => t.status === 'execucao')
-      let autoPausedPlan = false
       if (runningPlan) {
         // PAUSA AUTOMÁTICA PARA RECLASSIFICAÇÃO (decisão do usuário,
         // 02/08/2026: "com 10/20 missões eu não vou saber que precisa pausar").
         // O clique de pausa existe para proteger TRABALHO EM CURSO; quando
         // nenhum card do plano está rodando, exigi-lo é burocracia sem
         // decisão. Com card ativo a recusa continua — pausar mataria runs.
-        const planCardsActive = tasks
+        const planCards = tasks
           .list(id.projectId)
-          .some(
+          .filter(
             (t) =>
               t.missionId === id.missionId &&
               t.kind !== 'plan' &&
-              t.planId === runningPlan.id &&
-              (t.status === 'execucao' || t.status === 'qa' || phaseWatches.has(t.id))
+              t.planId === runningPlan.id
           )
-        if (planCardsActive)
-          return 'já existe um plano APROVADO em execução COM card ativo — conclua com conclude_plan, aguarde os cards terminarem ou peça a pausa ao usuário antes de propor outro'
-        tasks.update(runningPlan.id, { status: 'backlog' })
-        autoPausedPlan = true
-        blackbox.record({
-          cat: 'task',
-          event: 'plan-auto-paused',
-          ids: {
-            projectId: id.projectId,
-            missionId: id.missionId,
-            taskId: runningPlan.id
-          },
-          actor: 'maestro',
-          reason:
-            'reclassificação: proposta nova de plano com nenhum card ativo — pausa automática, aprovação continua humana'
-        })
-        hub.publish({
-          projectId: id.projectId,
-          missionId: id.missionId,
-          kind: 'info',
-          text: `plano "${runningPlan.title}" pausado automaticamente para reclassificação (nenhum card estava rodando) — a proposta nova aguarda a aprovação do usuário no board`,
-          actor: 'harness',
-          quiet: true
-        })
+        if (planCards.length > 0)
+          return 'já existe um plano APROVADO com cards ligados — conclua ou descarte explicitamente esse grafo antes de propor outro; a reclassificação nunca reaproveita cards do plano antigo'
       }
       // Lanes — REGRA DO USUÁRIO (2026-07-28): função COM política definida
       // NÃO dá liberdade de modelo ao orquestrador no planejamento — a lane
@@ -15931,6 +17730,68 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       const manualSecurityValidationRequired =
         requiresManualSecurityValidation(riskAssessment.surfaces) &&
         !securityWaiverOptions(id.projectId).sensitiveWaiverAllowed
+      // Tudo acima pode consultar catálogos assíncronos. O receipt é revalidado
+      // somente agora; deste ponto até persistir+aceitar não existe await.
+      const planningEvidence = preparePlanningArtifactEvidence(id, input.skillApplications)
+      if (!planningEvidence.ok) return `plano recusado: ${planningEvidence.message}`
+      const currentMission = missions.get(id.missionId)
+      if (
+        !currentMission ||
+        currentMission.status !== 'ativa' ||
+        currentMission.updatedAt !== initialMissionUpdatedAt ||
+        integrationQueue.getByMission(id.missionId)
+      ) {
+        return 'plano recusado: a missão ou a fila mudou durante o preparo; releia o estado atual antes de propor novamente'
+      }
+      const currentExisting = tasks
+        .list(id.projectId)
+        .filter((task) => task.missionId === id.missionId && task.kind === 'plan')
+      const currentPlanState = currentExisting
+        .map((task) => `${task.id}:${task.status}:${task.updatedAt}`)
+        .sort()
+        .join('|')
+      if (currentPlanState !== initialPlanState) {
+        return 'plano recusado: o card de plano mudou durante o preparo (por exemplo, foi aprovado, pausado ou reproposto); releia o board e tente novamente'
+      }
+      const currentPlanIds = new Set(currentExisting.map((task) => task.id))
+      const currentLinkedCards = tasks
+        .list(id.projectId)
+        .filter(
+          (task) =>
+            task.missionId === id.missionId &&
+            task.kind !== 'plan' &&
+            Boolean(task.planId && currentPlanIds.has(task.planId))
+        )
+      const currentLinkedCardState = currentLinkedCards
+        .map(
+          (task) =>
+            `${task.id}:${task.status}:${task.updatedAt}:${task.planId ?? ''}:${task.planItemId ?? ''}`
+        )
+        .sort()
+        .join('|')
+      if (currentLinkedCardState !== initialLinkedCardState) {
+        return 'plano recusado: os cards ligados ao plano mudaram durante o preparo; releia a missão antes de reclassificar'
+      }
+      const currentRunningPlan = currentExisting.find((task) => task.status === 'execucao')
+      if (
+        currentRunningPlan &&
+        tasks
+          .list(id.projectId)
+          .some(
+            (task) =>
+              task.missionId === id.missionId &&
+              task.kind !== 'plan' &&
+              task.planId === currentRunningPlan.id &&
+              (task.status === 'execucao' || task.status === 'qa' || phaseWatches.has(task.id))
+          )
+      ) {
+        return 'plano recusado: um card do plano entrou em execução durante o preparo; conclua-o ou aguarde a pausa humana antes de reclassificar'
+      }
+      const candidatePlanId =
+        currentRunningPlan?.id ?? currentExisting.find((task) => task.status === 'backlog')?.id
+      if (candidatePlanId && currentLinkedCards.some((task) => task.planId === candidatePlanId)) {
+        return 'plano recusado: este plano já possui cards de trabalho; conclua, descarte ou replaneje esses cards explicitamente antes de trocar o grafo aprovado'
+      }
       const plan: TaskPlan = {
         summary: input.summary,
         lanes,
@@ -15948,6 +17809,8 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         ),
         sizingReason: input.sizingReason.trim(),
         expectedCards: input.expectedCards,
+        planningMethod: planningEvidence.evidence,
+        planningEvidenceState: 'verified',
         workItems: input.workItems.map((item) => ({
           id: item.id,
           title: item.title,
@@ -15957,9 +17820,18 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           dependsOn: [...item.dependsOn]
         }))
       }
-      const proposed = existing.find((t) => t.status === 'backlog')
+      // O plano em execução sem card ativo é o próprio alvo da reproposta.
+      // Status backlog + conteúdo novo pousam no mesmo commit, sem fotografia
+      // intermediária pausada e sem criar um segundo card de plano.
+      const proposed =
+        currentRunningPlan ?? currentExisting.find((task) => task.status === 'backlog')
       const planTask = proposed
-        ? tasks.update(proposed.id, { title: input.title, department: lanes[0].dept, plan })
+        ? tasks.update(proposed.id, {
+            status: 'backlog',
+            title: input.title,
+            department: lanes[0].dept,
+            plan
+          })
         : tasks.createMany(id.projectId, [
             {
               department: lanes[0].dept,
@@ -15974,6 +17846,32 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
               plan
             }
           ])[0]
+      if (!planTask) return 'plano recusado: a proposta não pôde ser persistida'
+      if (!planningEvidence.accept()) {
+        return 'plano recusado: o receipt expirou antes da confirmação do artefato; reabra o orquestrador'
+      }
+      if (currentRunningPlan && planTask.id === currentRunningPlan.id) {
+        blackbox.record({
+          cat: 'task',
+          event: 'plan-auto-paused',
+          ids: {
+            projectId: id.projectId,
+            missionId: id.missionId,
+            taskId: currentRunningPlan.id
+          },
+          actor: 'maestro',
+          reason:
+            'reclassificação: o mesmo card recebeu a proposta nova e voltou ao backlog em commit único; aprovação continua humana'
+        })
+        hub.publish({
+          projectId: id.projectId,
+          missionId: id.missionId,
+          kind: 'info',
+          text: `plano "${currentRunningPlan.title}" reclassificado no mesmo card (nenhum card estava rodando) — a proposta nova aguarda a aprovação do usuário no board`,
+          actor: 'harness',
+          quiet: true
+        })
+      }
       hub.publish({
         projectId: id.projectId,
         missionId: id.missionId,
@@ -16449,12 +18347,195 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       return `card "${task.title}" removido do board`
     },
 
+    activateSkill: async (id, receiptId) => {
+      const scope = skillPlanScopes.get(id.paneId)
+      const activeSkillPhase =
+        id.role === 'maestro'
+          ? 'planning'
+          : id.phase ?? (id.role === 'ajudante' ? 'helper' : undefined)
+      if (
+        !scope ||
+        !activeSkillPhase ||
+        scope.phase !== activeSkillPhase ||
+        scope.projectId !== id.projectId ||
+        (id.role === 'maestro' && scope.missionId !== id.missionId)
+      )
+        return 'ativação recusada: este pane não possui um plano ativo de skills'
+      const input = {
+        paneId: id.paneId,
+        phase: activeSkillPhase,
+        phaseRun: scope.phaseRun,
+        receiptId
+      }
+      const resolved = skillRuntime.resolve(input)
+      if (!resolved.ok) return `ativação recusada: ${resolved.message}`
+      const payload = await skillsLib.loadActivationPackage(
+        resolved.receipt.skillId,
+        resolved.receipt.operation
+      )
+      if (!payload) {
+        return 'ativação recusada: o pacote selecionado não está íntegro ou o playbook não existe'
+      }
+      if (
+        payload.version !== resolved.receipt.version ||
+        payload.fingerprint !== resolved.receipt.fingerprint
+      ) {
+        return 'ativação recusada: o pacote mudou depois que esta rodada foi planejada; reabra a fase para receber um receipt novo'
+      }
+      const privateRoot = await skillsLib.materializeActivationTree(
+        payload.id,
+        privateSkillRuntimeRoot,
+        id.paneId,
+        scope.phaseRun,
+        resolved.receipt.version,
+        payload.sourceFingerprint,
+        payload.content
+      )
+      if (!privateRoot) {
+        return 'ativação recusada: não foi possível preparar a árvore privada e íntegra desta skill'
+      }
+      const currentIdentity = hub.identityByPane(id.paneId)
+      const currentScope = skillPlanScopes.get(id.paneId)
+      if (
+        !currentIdentity ||
+        currentScope?.phaseRun !== scope.phaseRun ||
+        currentScope.phase !== scope.phase
+      ) {
+        await gitOff(
+          'removePrivateSkillPlan',
+          privateSkillRuntimeRoot,
+          id.paneId,
+          scope.phaseRun,
+          payload.id
+        ).catch(() => undefined)
+        return 'ativação recusada: o pane ou a rodada encerrou durante a preparação do pacote'
+      }
+      const privateContent = payload.content
+        .replaceAll(`.claude/skills/${payload.id}`, privateRoot)
+        .replaceAll(`.agents/skills/${payload.id}`, privateRoot)
+      let durableUsageBefore: NonNullable<Task['skillUsage']> | undefined
+      let durableUsageAfter: NonNullable<Task['skillUsage']> | undefined
+      const durableTaskId = scope.taskId
+      if (durableTaskId) {
+        const task = tasks.get(durableTaskId)
+        const usage = task?.skillUsage
+        const ledgerReceipt = usage?.skills.find((skill) => skill.receiptId === receiptId)
+        if (
+          id.taskId !== durableTaskId ||
+          task?.projectId !== id.projectId ||
+          usage?.phaseRun !== scope.phaseRun ||
+          usage.phase !== scope.phase ||
+          !ledgerReceipt ||
+          ledgerReceipt.id !== resolved.receipt.skillId ||
+          ledgerReceipt.operation !== resolved.receipt.operation ||
+          ledgerReceipt.version !== resolved.receipt.version ||
+          ledgerReceipt.fingerprint !== resolved.receipt.fingerprint
+        ) {
+          await gitOff(
+            'removePrivateSkillPlan',
+            privateSkillRuntimeRoot,
+            id.paneId,
+            scope.phaseRun,
+            payload.id
+          ).catch(() => undefined)
+          return 'ativação recusada: o ledger durável desta rodada não corresponde ao receipt planejado'
+        }
+        if (ledgerReceipt.status === 'planned') {
+          const updatedAt = new Date().toISOString()
+          const skills = usage.skills.map((skill) =>
+            skill.receiptId === receiptId ? { ...skill, status: 'activated' as const } : skill
+          )
+          durableUsageBefore = usage
+          durableUsageAfter = {
+            ...usage,
+            updatedAt,
+            skills,
+            history: (usage.history ?? []).map((run) =>
+              run.phaseRun === scope.phaseRun ? { ...run, updatedAt, skills } : run
+            )
+          }
+        }
+      }
+      const activated = durableTaskId
+        ? skillRuntime.activateAfterDurableCommit(input, {
+            commit: () => {
+              if (!durableUsageAfter) return
+              if (!tasks.update(durableTaskId, { skillUsage: durableUsageAfter })) {
+                throw new Error('task ledger disappeared before activation commit')
+              }
+            },
+            rollback: () => {
+              if (!durableUsageBefore) return
+              if (!tasks.update(durableTaskId, { skillUsage: durableUsageBefore })) {
+                throw new Error('task ledger disappeared before activation rollback')
+              }
+            }
+          })
+        : skillRuntime.activate(input)
+      if (!activated.ok) {
+        await gitOff(
+          'removePrivateSkillPlan',
+          privateSkillRuntimeRoot,
+          id.paneId,
+          scope.phaseRun,
+          payload.id
+        ).catch(() => undefined)
+        return `ativação recusada: ${activated.message}`
+      }
+      blackbox.record({
+        cat: 'pane',
+        event: 'skill-activated',
+        actor: id.role,
+        ids: {
+          projectId: id.projectId,
+          missionId: id.missionId,
+          taskId: id.taskId,
+          paneId: id.paneId,
+          phase: id.phase,
+          role: id.role
+        },
+        reason: `${payload.id}:${payload.operation}`,
+        evidence: payload.fingerprint.slice(0, 24),
+        detail: { receiptId, references: payload.loadedReferences }
+      })
+      if (durableTaskId && uiSender && !uiSender.isDestroyed()) {
+        try {
+          uiSender.send('tasks:changed', id.projectId)
+        } catch {
+          // A notificação acelera a UI, mas nunca invalida ledger+runtime já confirmados.
+        }
+      }
+      return [
+        `SKILL ACTIVATED · ${payload.id} · operation ${payload.operation} · receiptId ${receiptId}`,
+        `PRIVATE PACKAGE ROOT · ${privateRoot} · resolve every relative reference, script, template, or asset from this directory; do not browse another pane's runtime plan.`,
+        privateContent
+      ].join('\n\n')
+    },
+
+    readReviewEvidence: (id, offset, maxBytes) => {
+      if (id.role !== 'review' || !id.taskId || id.phase !== 'review') {
+        return 'leitura recusada: somente o reviewer ativo lê a evidência privada da própria rodada'
+      }
+      const watch = phaseWatches.get(id.taskId)
+      if (
+        !watch ||
+        watch.phase !== 'review' ||
+        watch.paneId !== id.paneId ||
+        !hub.identityByPane(id.paneId)
+      ) {
+        return 'leitura recusada: esta rodada de review não está mais ativa'
+      }
+      return readReviewArtifactChunk(watch, offset, maxBytes)
+    },
+
     report: (
       id,
       content,
       summary,
       securityReview: SecurityReviewInput | undefined,
-      suggestedPatch?: string
+      suggestedPatch?: string,
+      skillApplications?: string[],
+      verificationEvidence?: GateVerificationEvidence
     ) => {
       // Report cru atravessa MCP e pode acabar em task.feedback, transcript,
       // EVENTS e notificações. Sanitizamos uma vez na fronteira para nenhum
@@ -16462,6 +18543,56 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       content = redactSensitiveText(content)
       summary = summary ? redactSensitiveText(summary) : undefined
       if (id.role === 'ajudante') {
+        const helperScope = skillPlanScopes.get(id.paneId)
+        if (!helperScope || helperScope.phase !== 'helper') {
+          return 'report recusado: o plano rastreável de skills deste ajudante não está disponível'
+        }
+        const guardedHelperReport = skillRuntime.guardReport({
+          paneId: id.paneId,
+          phase: 'helper',
+          phaseRun: helperScope.phaseRun,
+          skillApplications
+        })
+        if (!guardedHelperReport.ok) {
+          const details =
+            guardedHelperReport.code === 'report_incomplete'
+              ? [
+                  ...(guardedHelperReport.missingActivated ?? []).map(
+                    (receipt) => `ative ${receipt} com activate_skill`
+                  ),
+                  ...(guardedHelperReport.missingDeclared ?? []).map(
+                    (receipt) => `inclua ${receipt} em skillApplications`
+                  ),
+                  ...(guardedHelperReport.unknownApplications ?? []).map(
+                    (receipt) => `receipt desconhecido ${receipt}`
+                  ),
+                  ...(guardedHelperReport.unactivatedApplications ?? []).map(
+                    (receipt) => `receipt não ativado ${receipt}`
+                  )
+                ]
+              : []
+          return `report de skills incompleto: ${details.join('; ') || guardedHelperReport.message}`
+        }
+        const acceptedHelperReport = skillRuntime.acceptReport({
+          paneId: id.paneId,
+          phase: 'helper',
+          phaseRun: helperScope.phaseRun,
+          skillApplications
+        })
+        if (!acceptedHelperReport.ok) {
+          return 'report recusado: o plano de skills do ajudante mudou durante a conclusão'
+        }
+        const plannedAssignment = plannedHelperAssignments.get(id.paneId)
+        if (plannedAssignment) {
+          const completed =
+            completedPlannedAgentsByPhaseRun.get(plannedAssignment.parentPhaseRun) ??
+            new Set<string>()
+          completed.add(plannedAssignment.agentId)
+          completedPlannedAgentsByPhaseRun.set(
+            plannedAssignment.parentPhaseRun,
+            completed
+          )
+        }
         const firstReport = !helperReported.has(id.paneId)
         helperReported.add(id.paneId)
         const { paneId, projectId, missionId, delegatorPaneId } = id
@@ -16631,6 +18762,152 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           : 'nenhuma fase ativa para esta tarefa (report já processado ou tarefa fora da fase)'
       if (watch.phase !== id.phase)
         return `a fase ativa agora é ${watch.phase} — report da fase ${id.phase ?? '?'} ignorado`
+      if (watch.paneId !== id.paneId)
+        return 'esta rodada já foi substituída por outro pane — relatório antigo ignorado'
+      if (
+        securityReview &&
+        (id.role !== 'review' || id.phase !== 'review' || watch.phase !== 'review')
+      ) {
+        return 'securityReview recusado: somente o revisor ativo, durante a fase review, pode enviar esta evidência. Nenhum receipt, veredito ou plano foi alterado.'
+      }
+      const evidenceTask = tasks.get(watch.taskId)
+      const evidenceUiWork = Boolean(
+        watch.uiWork ?? (evidenceTask && classifyTaskUiWork(evidenceTask))
+      )
+      const evidenceStatus = /^\s*aprovada\b/i.test(content)
+        ? 'aprovada'
+        : /^\s*reprovada\b/i.test(content)
+          ? 'reprovada'
+          : /^\s*bloqueada\b/i.test(content)
+            ? 'bloqueada'
+            : 'done'
+      if (
+        evidenceStatus === 'done' &&
+        watch.phase === 'dev' &&
+        evidenceUiWork &&
+        watch.browserAvailable === false
+      ) {
+        return 'report done recusado: este pane de UI não tem browser/runtime autorizado. Não fabrique evidência; reporte bloqueada com o motivo ambiental para preservar o trabalho.'
+      }
+      const evidenceValidation = validateGateVerificationEvidence({
+        status: evidenceStatus,
+        phase: watch.phase,
+        uiWork: evidenceUiWork,
+        evidence: verificationEvidence
+      })
+      if (!evidenceValidation.ok) {
+        return `report sem evidencia suficiente: ${evidenceValidation.reason}. Nenhum receipt ou veredito foi consumido.`
+      }
+      const sanitizeEvidenceList = (
+        items: string[] | undefined,
+        maxItems: number
+      ): string[] | undefined => {
+        const sanitized = items
+          ?.slice(0, maxItems)
+          .map((item) => redactSensitiveText(item).trim().slice(0, 600))
+          .filter(Boolean)
+        return sanitized?.length ? sanitized : undefined
+      }
+      const sanitizedVerificationEvidence: GateVerificationEvidence | undefined =
+        verificationEvidence
+          ? {
+              summary: redactSensitiveText(verificationEvidence.summary).trim().slice(0, 2000),
+              surfaces: sanitizeEvidenceList(verificationEvidence.surfaces, 24),
+              states: sanitizeEvidenceList(verificationEvidence.states, 24),
+              viewports: sanitizeEvidenceList(verificationEvidence.viewports, 12),
+              observations: sanitizeEvidenceList(verificationEvidence.observations, 32) ?? []
+            }
+          : undefined
+      const skillScope = skillPlanScopes.get(id.paneId)
+      if (!skillScope)
+        return 'report recusado: o plano rastreável de skills desta rodada não está disponível; reabra somente esta fase'
+      const blockedReport = /^\s*bloqueada\b/i.test(content)
+      if (
+        !blockedReport &&
+        watch.phase === 'review' &&
+        watch.reviewArtifact &&
+        watch.reviewArtifact.bytes > 0 &&
+        watch.reviewArtifact.servedUntil === 0
+      ) {
+        return 'report recusado: a evidência privada do patch grande ainda não foi aberta. Use read_review_evidence ao menos uma vez e combine os trechos relevantes com a inspeção de TODOS os changed paths fornecidos pelo harness; nenhum receipt ou veredito foi consumido.'
+      }
+      const boundArtifactProblem = blockedReport ? undefined : reviewArtifactProblem(watch)
+      if (boundArtifactProblem) {
+        phaseWatches.detach(watch.taskId)
+        try {
+          unlinkSync(watch.marker)
+        } catch {
+          // marcador nem chegou a existir
+        }
+        const advanced = advancePhase(
+          watch,
+          content,
+          undefined,
+          sanitizedVerificationEvidence
+        )
+        return advanced
+          ? `veredito invalidado antes de consumir receipts: ${boundArtifactProblem}`
+          : `artefato imutável inválido e pipeline preservado: ${boundArtifactProblem}`
+      }
+      if (!blockedReport) {
+        const guardedSkillReport = skillRuntime.guardReport({
+          paneId: id.paneId,
+          phase: id.phase ?? watch.phase,
+          phaseRun: skillScope.phaseRun,
+          skillApplications
+        })
+        if (!guardedSkillReport.ok) {
+          const details =
+            guardedSkillReport.code === 'report_incomplete'
+              ? [
+                  ...(guardedSkillReport.missingActivated ?? []).map(
+                    (receipt) => `ative ${receipt} com activate_skill`
+                  ),
+                  ...(guardedSkillReport.missingDeclared ?? []).map(
+                    (receipt) => `inclua ${receipt} em skillApplications`
+                  ),
+                  ...(guardedSkillReport.unknownApplications ?? []).map(
+                    (receipt) => `receipt desconhecido ${receipt}`
+                  ),
+                  ...(guardedSkillReport.unactivatedApplications ?? []).map(
+                    (receipt) => `receipt não ativado ${receipt}`
+                  )
+                ]
+              : []
+          return `report de skills incompleto: ${details.join('; ') || guardedSkillReport.message}`
+        }
+      }
+      const prepareSkillUsageAcceptance = (): {
+        skillUsage: NonNullable<Task['skillUsage']>
+        commitRuntime: () => boolean
+      } | undefined => {
+        if (!id.taskId || !skillScope) return undefined
+        const task = tasks.get(id.taskId)
+        const usage = task?.skillUsage
+        if (usage?.phaseRun !== skillScope.phaseRun) return undefined
+        const updatedAt = new Date().toISOString()
+        const skills = usage.skills.map((skill) => ({ ...skill, status: 'applied' as const }))
+        return {
+          skillUsage: {
+            ...usage,
+            updatedAt,
+            runStatus: 'completed',
+            skills,
+            history: (usage.history ?? []).map((run) =>
+              run.phaseRun === skillScope.phaseRun
+                ? { ...run, updatedAt, runStatus: 'completed' as const, skills }
+                : run
+            )
+          },
+          commitRuntime: () =>
+            skillRuntime.acceptReport({
+              paneId: id.paneId,
+              phase: id.phase ?? watch.phase,
+              phaseRun: skillScope.phaseRun,
+              skillApplications
+            }).ok
+        }
+      }
       try {
         ensureProjectRuntimeWritable(watch.projectId)
       } catch {
@@ -16645,9 +18922,10 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       // SÓ o gate (o respawn tenta subir o runtime de novo).
       if (
         (watch.phase === 'review' || watch.phase === 'qa') &&
-        /^\s*bloqueada\b/i.test(content)
+        blockedReport
       ) {
         const blockedTask = tasks.get(watch.taskId)
+        cleanupReviewArtifact(watch)
         phaseWatches.delete(watch.taskId)
         try {
           unlinkSync(watch.marker)
@@ -16694,8 +18972,57 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         syncBoard(watch.projectId)
         return 'bloqueio ambiental registrado — o gate fechou SEM contar ciclo e nada foi ao dev; o orquestrador reabre o gate após o ambiente ser corrigido'
       }
+      if (watch.phase === 'dev' && blockedReport) {
+        if (!evidenceUiWork || watch.browserAvailable !== false) {
+          return 'bloqueio recusado: DEV só pode usar bloqueada quando uma entrega de UI ficou sem browser/runtime autorizado'
+        }
+        const blockedTask = tasks.get(watch.taskId)
+        phaseWatches.delete(watch.taskId)
+        try {
+          unlinkSync(watch.marker)
+        } catch {
+          // marcador nem chegou a existir
+        }
+        try {
+          appendFileSync(watch.logFile, `\n[report dev bloqueada] ${content}\n`, 'utf-8')
+        } catch {
+          // transcript é best-effort
+        }
+        terminateTaskPhasePane(watch.projectId, watch.taskId, 'dev')
+        tasks.update(watch.taskId, {
+          status: 'backlog',
+          activePhase: 'dev',
+          phaseState: 'interrupted',
+          feedback: `bloqueio ambiental de validação visual: ${content.slice(0, 400)}`
+        })
+        blackbox.record({
+          cat: 'phase',
+          event: 'dev-ui-blocked-environment',
+          actor: 'dev',
+          ids: {
+            projectId: watch.projectId,
+            missionId: blockedTask?.missionId,
+            taskId: watch.taskId,
+            paneId: id.paneId,
+            phase: 'dev',
+            role: 'dev'
+          },
+          reason: content.slice(0, 400)
+        })
+        hub.publish({
+          projectId: watch.projectId,
+          missionId: blockedTask?.missionId,
+          kind: 'error',
+          urgent: true,
+          text: `DEV de UI bloqueado por falta de browser/runtime em "${blockedTask?.title ?? watch.taskId}". O trabalho foi preservado, nenhum receipt foi marcado como aplicado e a fase ficou interrompida para correção da capacidade.`,
+          actor: 'harness'
+        })
+        if (uiSender && !uiSender.isDestroyed()) uiSender.send('tasks:changed', watch.projectId)
+        syncBoard(watch.projectId)
+        return 'bloqueio ambiental do DEV registrado — trabalho preservado, rodada interrompida e nenhum receipt aplicado'
+      }
       let normalizedSecurityReview: SecurityReviewRecord | undefined
-      if (watch.phase === 'review' || watch.phase === 'qa') {
+      if (watch.phase === 'review') {
         const task = tasks.get(watch.taskId)
         const planTask = task ? planTaskForWorkTask(task) : undefined
         const assessment = assessMissionRisk({
@@ -16766,7 +19093,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           // transcript é best-effort
         }
       }
-      phaseWatches.delete(watch.taskId)
+      phaseWatches.detach(watch.taskId)
       try {
         unlinkSync(watch.marker)
       } catch {
@@ -16814,11 +19141,27 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           patchNote = ''
         }
       }
-      const advanced = advancePhase(
-        watch,
-        patchNote ? `${content}${patchNote}` : content,
-        normalizedSecurityReview
-      )
+      const acceptance = prepareSkillUsageAcceptance()
+      if (!acceptance) {
+        phaseWatches.set(watch.taskId, watch)
+        return 'report recusado: o ledger persistido desta rodada não corresponde ao plano ativo; reabra somente esta fase'
+      }
+      let advanced = false
+      try {
+        advanced = advancePhase(
+          watch,
+          patchNote ? `${content}${patchNote}` : content,
+          normalizedSecurityReview,
+          sanitizedVerificationEvidence,
+          acceptance
+        )
+      } catch (error) {
+        // TaskStore só publica a nova fotografia depois de o JSON atômico
+        // pousar. Reindexar o watch torna o mesmo report repetível sem receipt
+        // aplicado, pane órfão ou fase que avançou apenas em memória.
+        phaseWatches.set(watch.taskId, watch)
+        return `report preservado: não foi possível persistir a transação da fase (${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 240)}). Nenhum receipt foi consumido; tente novamente.`
+      }
       return advanced
         ? 'report recebido — o pipeline avançou'
         : 'conclusão preservada: o pipeline não avançou; confira o aviso do Synkora, reconcilie ajudantes/arquivos/diagnósticos e reporte done novamente'
@@ -16829,9 +19172,36 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     // entre calls, reclamação real do usuário em 2026-07-29).
     // Biblioteca (skills + subagentes) na mão dos agentes: o orquestrador
     // consulta antes de carimbar cards e de aconselhar/abrir ajudantes.
-    listSkills: () => {
-      const list = skillsLib.listState()
-      if (!list.length) return 'biblioteca vazia — nada curado disponível ainda'
+    listSkills: (id, filter = {}) => {
+      const normalize = (value: string): string =>
+        value
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLocaleLowerCase('pt-BR')
+      const query = normalize(filter.query?.trim() ?? '')
+      const taskDepartment = id.taskId ? tasks.get(id.taskId)?.department : undefined
+      const department = filter.department ?? taskDepartment
+      const installedOnly = filter.installedOnly ?? true
+      if (!query && !filter.kind && !department) {
+        return 'consulta ampla recusada para proteger o contexto — informe query, department ou kind; o roteador já escolhe automaticamente o plano mínimo de cada fase'
+      }
+      const limit = Math.max(1, Math.min(20, filter.limit ?? 16))
+      const all = skillsLib.listState()
+      const selectableIds = new Set(skillsLib.installedIds())
+      if (!all.length) return 'biblioteca vazia — nada curado disponível ainda'
+      const matches = all
+        .filter((skill) => !installedOnly || selectableIds.has(skill.id))
+        .filter((skill) => !filter.kind || skill.kind === filter.kind)
+        .filter((skill) => !department || skill.depts.includes(department))
+        .filter((skill) => {
+          if (!query) return true
+          return normalize([skill.id, skill.group, skill.summary, skill.hint].join(' ')).includes(query)
+        })
+        .sort((a, b) => Number(b.installed) - Number(a.installed) || a.id.localeCompare(b.id))
+      const list = matches.slice(0, limit)
+      if (!list.length) {
+        return 'nenhum item corresponde aos filtros — ajuste query/função/tipo; use installedOnly=false somente para descobrir opções instaláveis'
+      }
       return JSON.stringify(
         {
           itens: list.map((s) => ({
@@ -16840,47 +19210,20 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
             grupo: s.group,
             funcoes: s.depts,
             instalado: s.installed,
+            disponivelParaExecucao: selectableIds.has(s.id),
             quandoUsar: s.hint,
             ...(s.updateAvailable ? { atualizacaoDisponivel: true } : {})
           })),
-          dica: 'ids EXATOS e instalado=true, só o que encaixa no trabalho. SKILLS (tipo=skill): carimbe por card em create_tasks.skills (1-3) ou por ajudante em delegate.skills. SUBAGENTES (tipo=subagente): create_tasks.agents deixa o especialista disponível para o dev CLAUDE invocar via Task tool (codex ignora); delegate.agent faz o AJUDANTE nascer com a persona do especialista (vale nos dois CLIs). Item útil mas não instalado: peça ao usuário para instalar na central de Configurações.'
+          correspondencias: matches.length,
+          retornados: list.length,
+          ...(matches.length > list.length
+            ? { refine: 'há mais resultados; refine query/função/tipo em vez de ampliar o contexto' }
+            : {}),
+          dica: 'ids EXATOS e instalado=true, só o que encaixa. O roteador da fase escolhe automaticamente o plano mínimo; carimbos explícitos servem apenas para uma necessidade técnica concreta. SUBAGENTES exigem um subproblema independente.'
         },
         null,
         2
       )
-    },
-
-    // PM define o kit ★ padrão por função (pedido do usuário 2026-07-29:
-    // "quero que o maestro possa selecionar as melhores por padrão") — mexe
-    // em policies.skills/agents; carimbo por card continua vencendo.
-    setDefaultSkills: (id, dept, skillIds, agentIds) => {
-      const bad: string[] = []
-      const clean = (ids: string[] | undefined, kind: 'skill' | 'agent'): string[] | undefined => {
-        if (ids === undefined) return undefined
-        const ok: string[] = []
-        for (const s of ids) {
-          if (skillsLib.byId(s)?.kind === kind && skillsLib.isInstalled(s)) ok.push(s)
-          else bad.push(s)
-        }
-        return ok
-      }
-      const cleanSkills = clean(skillIds, 'skill')
-      const cleanAgents = clean(agentIds, 'agent')
-      if (cleanSkills === undefined && cleanAgents === undefined)
-        return 'informe "skills" e/ou "agents" (arrays de ids do list_skills; [] limpa o padrão da função)'
-      const cur = policies.get(id.projectId)[dept] ?? {}
-      policies.set(id.projectId, dept, {
-        ...cur,
-        ...(cleanSkills !== undefined ? { skills: cleanSkills } : {}),
-        ...(cleanAgents !== undefined ? { agents: cleanAgents } : {})
-      })
-      if (uiSender && !uiSender.isDestroyed()) uiSender.send('policies:changed', id.projectId)
-      const eff = policies.get(id.projectId)[dept]
-      return `kit padrão de ${dept} atualizado — skills: [${(eff?.skills ?? []).join(', ') || 'nenhuma'}] · subagentes: [${(eff?.agents ?? []).join(', ') || 'nenhum'}]${
-        bad.length
-          ? ` · IGNORADOS (não instalados, inexistentes ou tipo errado): ${[...new Set(bad)].join(', ')}`
-          : ''
-      }. Carimbo por card continua vencendo o padrão. Avise o usuário do kit em 1-2 linhas.`
     },
 
     delegateMany: async (id, list) => {
@@ -16899,6 +19242,15 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       if (id.taskId) {
         const task = tasks.get(id.taskId)
         if (!task) return 'card do delegador não encontrado — nenhum ajudante foi aberto'
+        const activeDevWatch = phaseWatches.get(id.taskId)
+        if (
+          task.activePhase !== 'dev' ||
+          (task.phaseState !== 'pending' && task.phaseState !== 'running') ||
+          activeDevWatch?.phase !== 'dev' ||
+          activeDevWatch.paneId !== id.paneId
+        ) {
+          return 'este pane não é o DEV ativo da rodada; ajudantes não podem nascer durante review, QA ou retomada interrompida'
+        }
         const executionMode = executionModeForTask(task)
         const delegation = normalizeDelegationMode(task.delegation, executionMode)
         const limit = helperLimitForExecutionMode(executionMode)
@@ -16909,11 +19261,46 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           .filter((pane) => pane.role === 'ajudante' && pane.taskId === id.taskId).length
         if (activeHelpers + list.length > limit)
           return `o modo ${EXECUTION_MODE_LABEL[executionMode]} permite no máximo ${limit} ajudante(s) simultâneo(s) por card; já há ${activeHelpers} e esta chamada pediu ${list.length}. Reduza para blocos realmente independentes.`
+      } else {
+        const activeHelpers = hub
+          .panesOf(id.projectId)
+          .filter((pane) => pane.role === 'ajudante' && pane.delegatorPaneId === id.paneId).length
+        if (activeHelpers + list.length > 1)
+          return 'este pane já possui seu único ajudante; encerre ou aguarde o atual antes de abrir outro'
+      }
+      const helperReservationKey = id.taskId ? `task:${id.taskId}` : `pane:${id.paneId}`
+      if (!helperSpawnReservations.tryAcquire(helperReservationKey))
+        return 'um ajudante deste trabalho já está sendo preparado; aguarde o armamento antes de tentar novamente'
+      const helperParentStillActive = (): boolean => {
+        const current = hub.identityByPane(id.paneId)
+        if (
+          !current ||
+          !ptys.has(id.paneId) ||
+          current.projectId !== id.projectId ||
+          current.role !== id.role ||
+          current.taskId !== id.taskId ||
+          current.cwd !== id.cwd
+        ) {
+          return false
+        }
+        if (!id.taskId) return true
+        const task = tasks.get(id.taskId)
+        const watch = phaseWatches.get(id.taskId)
+        return Boolean(
+          task &&
+            task.projectId === id.projectId &&
+            task.status !== 'done' &&
+            task.activePhase === 'dev' &&
+            (task.phaseState === 'pending' || task.phaseState === 'running') &&
+            watch?.phase === 'dev' &&
+            watch.paneId === id.paneId
+        )
       }
       const one = async (opts: DelegateOpts): Promise<{ ok: boolean; msg: string }> => {
         const project = projects.get(id.projectId)
         if (!project) return { ok: false, msg: 'projeto não encontrado' }
         const parentTask = id.taskId ? tasks.get(id.taskId) : undefined
+        const helperDepartment = opts.dept ?? parentTask?.department
         const parentPlan = parentTask ? planTaskForWorkTask(parentTask) : undefined
         const helperSecurity = assessMissionRisk({
           declaredRisk: parentPlan?.plan?.risk,
@@ -16933,6 +19320,24 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         const helperSensitiveRuntime =
           helperSecurity.effectiveRisk === 'high' ||
           requiresManualSecurityValidation(helperSecurity.surfaces)
+        const helperSensitiveAutoOk = securityWaiverOptions(id.projectId).sensitiveWaiverAllowed
+        const helperEffectiveSensitiveRuntime = effectiveSensitiveAccess(
+          helperSensitiveRuntime,
+          helperSensitiveAutoOk
+        )
+        const helperBrowserAvailable = paneBrowserAvailable(paneAccessProfile('ajudante'), {
+          sensitive: helperSensitiveRuntime,
+          sensitiveAutoOk: helperSensitiveAutoOk,
+          strict: true,
+          mcpReady: mcpPort !== 0,
+          browserConfigured: Boolean(externalPlaywrightForPane())
+        })
+        const helperCapabilities: SkillCapability[] = [
+          'read',
+          'write',
+          'shell',
+          ...(helperBrowserAvailable ? ['browser' as const] : [])
+        ]
         try {
           ensureSynkoraGitExcludes(project.path)
         } catch (error) {
@@ -16980,17 +19385,50 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         // developer_instructions (os dois caminhos já validados em PTY real).
         let agentDef: SkillDef | undefined
         let agentPersona: string | null = null
-        if (opts.agent) {
-          const d = skillsLib.byId(opts.agent)
-          if (!d || d.kind !== 'agent' || !skillsLib.isInstalled(opts.agent))
+        const parentScope = id.taskId ? skillPlanScopes.get(id.paneId) : undefined
+        const plannedAgentId = parentScope?.agentIds[0]
+        const requestedAgentId = opts.agent ?? plannedAgentId
+        if (id.taskId && opts.agent && opts.agent !== plannedAgentId) {
+          return {
+            ok: false,
+            msg: `subagente "${opts.agent}" não pertence ao plano ativo deste pane; use ${plannedAgentId ?? 'nenhum especialista'}`
+          }
+        }
+        if (requestedAgentId) {
+          const d = skillsLib.byId(requestedAgentId)
+          if (!d || d.kind !== 'agent' || !skillsLib.isSelectable(requestedAgentId))
             return {
               ok: false,
-              msg: `subagente "${opts.agent}" não existe ou não está instalado — use um id EXATO de list_skills com tipo=subagente e instalado=true (ou peça ao usuário para instalar em Configurações › Subagentes)`
+              msg: `subagente "${requestedAgentId}" não existe ou não está instalado — use um id EXATO de list_skills com tipo=subagente e instalado=true (ou peça ao usuário para instalar em Configurações › Subagentes)`
             }
-          agentPersona = await skillsLib.agentBody(opts.agent)
+          if (helperDepartment && !d.depts.includes(helperDepartment))
+            return {
+              ok: false,
+              msg: `subagente "${requestedAgentId}" incompativel com a funcao ${helperDepartment}`
+            }
+          if (id.taskId && (!parentScope || !parentScope.agentIds.includes(requestedAgentId)))
+            return {
+              ok: false,
+              msg: `subagente "${requestedAgentId}" nao pertence ao plano ativo deste pane; use o especialista selecionado no card`
+            }
+          agentPersona = await skillsLib.agentBody(requestedAgentId)
           if (!agentPersona)
-            return { ok: false, msg: `subagente "${opts.agent}" está corrompido na biblioteca — reinstale em Configurações › Subagentes` }
+            return { ok: false, msg: `subagente "${requestedAgentId}" está corrompido na biblioteca — reinstale em Configurações › Subagentes` }
           agentDef = d
+          const incompatibility = skillCompatibilityIssue(
+            agentDef,
+            'helper',
+            helperCapabilities
+          )
+          if (incompatibility) {
+            return {
+              ok: false,
+              msg:
+                incompatibility.reason === 'phase'
+                  ? `subagente "${requestedAgentId}" não permite a fase helper`
+                  : `subagente "${requestedAgentId}" exige capacidades indisponíveis: ${incompatibility.missingCapabilities?.join(', ')}`
+            }
+          }
         }
         seats.preseed(seat)
         try {
@@ -17009,31 +19447,211 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
             msg: 'a interface recarregou antes do spawn; nenhum ajudante foi armado'
           }
         }
-        const armed = armPane(
-          {
-            projectId: id.projectId,
-            role: 'ajudante',
-            taskId: id.taskId,
-            cwd: id.cwd,
-            seatId: seat.id,
-            delegatorPaneId: id.paneId,
-            missionId: id.missionId
-          },
-          seat.cli,
-          {
-            strictMcp: true,
-            configDir: seats.configDirOf(seat),
-            sensitive: helperSensitiveRuntime
+        const helperPaneId = randomUUID()
+        const helperPhaseRun = randomUUID()
+        const helperRoutingText = [opts.title, opts.prompt].filter(Boolean).join('\n')
+        const helperUiWork = helperDepartment
+          ? classifyTaskUiWork({
+              department: helperDepartment,
+              title: opts.title,
+              description: opts.prompt,
+              affectsUi: opts.affectsUi
+            })
+          : false
+        if (
+          helperDepartment &&
+          opts.affectsUi === false &&
+          classifyTaskUiWork({
+            department: helperDepartment,
+            title: opts.title,
+            description: opts.prompt,
+            affectsUi: false
+          })
+        ) {
+          return { ok: false, msg: 'affectsUi=false contradiz a superficie visual descrita para o ajudante' }
+        }
+        const eligibleIds = new Set(skillsLib.installedIds())
+        const requestedHelperSkills = [...new Set(opts.skills ?? [])]
+        const rejectedHelperSkills = requestedHelperSkills.filter((skillId) => {
+          const definition = skillsLib.byId(skillId)
+          return (
+            !eligibleIds.has(skillId) ||
+            !definition ||
+            definition.kind !== 'skill' ||
+            (helperDepartment !== undefined && !definition.depts.includes(helperDepartment)) ||
+            definition.adapter === 'synkora-native' ||
+            isVisualMethod(definition)
+          )
+        })
+        if (rejectedHelperSkills.length > 0) {
+          return {
+            ok: false,
+            msg: `skills do ajudante indisponíveis, bloqueadas ou corrompidas: ${rejectedHelperSkills.join(', ')}`
           }
+        }
+        if (!helperDepartment) {
+          const incompatibleUnscoped = requestedHelperSkills
+            .map((skillId) => skillsLib.byId(skillId))
+            .filter((definition): definition is SkillDef => Boolean(definition))
+            .map((definition) =>
+              skillCompatibilityIssue(definition, 'helper', helperCapabilities)
+            )
+            .filter((issue) => issue !== undefined)
+          if (incompatibleUnscoped.length > 0) {
+            return {
+              ok: false,
+              msg: `skills do ajudante incompatíveis com a fase/capacidades: ${incompatibleUnscoped.map((issue) => issue.id).join(', ')}`
+            }
+          }
+        }
+        const helperSelection = helperDepartment
+          ? selectPhaseSkillPlan({
+              defs: skillsLib.definitions(),
+              isInstalled: (skillId) => eligibleIds.has(skillId),
+              department: helperDepartment,
+              phase: 'helper',
+              taskText: helperRoutingText,
+              explicitSkillIds: opts.skills,
+              executionMode: 'standard',
+              delegationMode: 'none',
+              uiCard: helperUiWork,
+              availableCapabilities: helperCapabilities
+            })
+          : {
+              skillIds: requestedHelperSkills.slice(0, 1),
+              agentIds: [],
+              impeccableOperation: undefined,
+              uiOperation: undefined,
+              incompatibilities: []
+            }
+        if (helperSelection.incompatibilities.length > 0) {
+          const details = helperSelection.incompatibilities.map((issue) =>
+            issue.reason === 'phase'
+              ? `${issue.id} não permite helper`
+              : `${issue.id} exige ${issue.missingCapabilities?.join(', ') || 'capacidade indisponível'}`
+          )
+          return {
+            ok: false,
+            msg: `o ajudante não pode aplicar o método selecionado neste ambiente: ${details.join('; ')}`
+          }
+        }
+        const ignoredRequestedHelperSkills = requestedHelperSkills.filter(
+          (skillId) => !helperSelection.skillIds.includes(skillId)
         )
-        // SKILLS do ajudante (F4): o conselho do orquestrador viaja no
-        // delegate.skills — injetadas no MESMO cwd antes do pane nascer.
-        const skillSync = await syncHelperSkillLease(armed.paneId, id.cwd, opts.skills ?? [])
-        const skillsBlock = skillSync.injected.length
-          ? `\n\nSKILLS INSTALLED FOR THIS JOB (${
-              seat.cli === 'claude' ? 'invoke as /<name>' : 'invoke by mentioning $<name>'
-            }) — INVOKE the relevant ones FIRST, before starting the job: they were chosen for you and loading the method up front is what makes the result better. Synkora still owns branches, worktrees, review, merge and cleanup; generic skill steps must not duplicate or bypass that lifecycle:\n${skillSync.injected.map((s) => `- ${s.id}: ${s.hint}`).join('\n')}`
-          : '\n\nNO EXTRA SKILL WAS INJECTED FOR THIS HELPER. Ignore manual-only workflows that may be visible only because another helper is running in the same shared workspace; follow only this job prompt and the Synkora lifecycle.'
+        if (ignoredRequestedHelperSkills.length > 0) {
+          return {
+            ok: false,
+            msg: `o roteador nao escolheu a tecnica pedida para este ajudante: ${ignoredRequestedHelperSkills.join(', ')}`
+          }
+        }
+        let preparedHelperSkills: Awaited<ReturnType<typeof prepareSkillPlanInputs>>
+        try {
+          await syncPaneSkillLease(helperPaneId, id.cwd, [])
+          preparedHelperSkills = await prepareSkillPlanInputs(
+            helperSelection.skillIds,
+            (skillId) => ({
+              operation:
+                skillId === IMPECCABLE_SKILL_ID || skillId === SYNKORA_FRONTEND_STANDARD_ID
+                  ? helperSelection.impeccableOperation ?? 'polish'
+                  : 'apply',
+              reason:
+                skillId === SYNKORA_FRONTEND_STANDARD_ID
+                  ? 'ui.contract'
+                  : skillId === IMPECCABLE_SKILL_ID
+                    ? `ui.${helperSelection.impeccableOperation ?? 'polish'}`
+                    : 'helper.technique',
+              required: true
+            })
+          )
+        } catch {
+          releasePaneSkillLease(helperPaneId)
+          return { ok: false, msg: 'falha ao preparar o plano privado do ajudante' }
+        }
+        const helperMandatoryMissing = helperDepartment
+          ? missingMandatoryUiPhaseSkills(
+              preparedHelperSkills.definitions.map((skill) => skill.id),
+              helperDepartment,
+              'dev',
+              helperUiWork
+            )
+          : []
+        const helperMissing = [
+          ...new Set([...preparedHelperSkills.missing, ...helperMandatoryMissing])
+        ]
+        if (helperMissing.length > 0) {
+          releasePaneSkillLease(helperPaneId)
+          return {
+            ok: false,
+            msg: `plano do ajudante não pôde ser preparado integralmente: ${helperMissing.join(', ')}`
+          }
+        }
+        const helperPlan = skillRuntime.planPane({
+          paneId: helperPaneId,
+          phase: 'helper',
+          phaseRun: helperPhaseRun,
+          skills: preparedHelperSkills.inputs
+        })
+        if (!helperPlan.ok) {
+          releasePaneSkillLease(helperPaneId)
+          return { ok: false, msg: 'não foi possível registrar o plano rastreável do ajudante' }
+        }
+        skillPlanScopes.set(helperPaneId, {
+          phase: 'helper',
+          phaseRun: helperPhaseRun,
+          agentIds: []
+        })
+        if (!helperParentStillActive()) {
+          releasePaneSkillLease(helperPaneId)
+          releasePaneSkillPlan(helperPaneId)
+          return {
+            ok: false,
+            msg: 'o pane delegador ou o card encerrou durante o preparo; nenhum ajudante foi aberto'
+          }
+        }
+        let armed: ReturnType<typeof armPane>
+        try {
+          armed = armPane(
+            {
+              paneId: helperPaneId,
+              projectId: id.projectId,
+              role: 'ajudante',
+              taskId: id.taskId,
+              cwd: id.cwd,
+              seatId: seat.id,
+              delegatorPaneId: id.paneId,
+              missionId: id.missionId
+            },
+            seat.cli,
+            {
+              strictMcp: true,
+              configDir: seats.configDirOf(seat),
+              sensitive: helperSensitiveRuntime
+            }
+          )
+        } catch {
+          releasePaneSkillLease(helperPaneId)
+          releasePaneSkillPlan(helperPaneId)
+          return { ok: false, msg: 'falha ao armar o pane do ajudante' }
+        }
+        if (!helperParentStillActive()) {
+          terminatePaneNow(id.projectId, armed.paneId)
+          return {
+            ok: false,
+            msg: 'o pane delegador ou o card encerrou antes da publicação; o ajudante foi descartado'
+          }
+        }
+        const helperDefinitionsById = new Map(
+          preparedHelperSkills.definitions.map((skill) => [skill.id, skill])
+        )
+        const skillsBlock = buildSkillsBlock({
+          plannedSkills: helperPlan.plan.receipts.map((receipt) => ({
+            ...(helperDefinitionsById.get(receipt.skillId) as SkillDef),
+            receiptId: receipt.receiptId,
+            operation: receipt.operation,
+            reason: receipt.reason,
+            required: receipt.required
+          }))
+        })
         // effort do ajudante escolhido pelo delegador (list_seats orienta)
         const helperArgs = [...armed.cliArgs]
         if (opts.effort) {
@@ -17097,7 +19715,9 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
             `WHO IS TALKING TO YOU: messages arriving with a bracketed sender ("[do orquestrador]", "[do seu delegador]") or the "[synkora]" prefix come from the app or another agent — treat them as work input from that sender. Messages without any such stamp are the human user. ` +
             `REPO HYGIENE: report/analysis files you write go to .synkora/reports/<name>.md — never loose .md at the repo root or docs/. ` +
             `SYNKORA OWNS THE WORKFLOW: stay in this workspace; do not create docs/superpowers planning/spec files, commit a separate plan, start an external execution handoff, create/switch branches or worktrees, request another review, merge, open a PR or clean the workspace. Return the result to your delegator through report(done). ` +
-            `For live-browser checks use the "playwright" MCP tools (browser_navigate, browser_snapshot…) — available in this pane. ` +
+            (helperBrowserAvailable
+              ? `For live-browser checks use the "playwright" MCP tools (browser_navigate, browser_snapshot…) — available in this pane. `
+              : `The isolated Playwright browser is unavailable in this helper pane${helperEffectiveSensitiveRuntime ? ' because the work is sensitive' : ''}; do not claim rendered verification. `) +
             `For structural TypeScript/JavaScript questions, use the Synkora code_* tools before broad text searches. If code intelligence is unavailable or unsupported, fall back to textual search. Before report(done) after code changes, run code_diagnostics on the changed compatible files and read the result. ` +
             `When you finish, call the MCP tool "report" from the synkora server with status "done" and a short summary of the result (include paths of any generated files). ` +
             `Your full terminal output stays readable by your delegator (helper_output) after you report — but for a LONG text deliverable, prefer writing it to .synkora/reports/<name>.md and reporting the path.`,
@@ -17112,6 +19732,13 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           taskId: id.taskId ?? '',
           spec
         })
+        if (agentDef && parentScope) {
+          plannedHelperAssignments.set(armed.paneId, {
+            parentPhaseRun: parentScope.phaseRun,
+            agentId: agentDef.id
+          })
+        }
+        helperOpenWatchdog.arm(armed.paneId)
         closingPaneIds.delete(armed.paneId)
         if (uiSender && !uiSender.isDestroyed())
           uiSender.send('panes:open', id.projectId, id.taskId ?? '', spec)
@@ -17131,26 +19758,26 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           ok: true,
           msg: `ajudante aberto (paneId ${armed.paneId}, seat ${seat.name}${model ? `, modelo ${model}` : ''}${
             agentDef ? `, persona ${agentDef.id}` : ''
-          })${
-            skillSync.missing.length
-              ? ` · skills não injetadas (ausentes, corrompidas ou em colisão com uma skill local preservada): ${skillSync.missing.join(', ')} — veja list_skills`
-              : ''
-          }`
+          })`
         }
       }
-      const results: string[] = []
-      let anyOk = false
-      for (let i = 0; i < list.length; i++) {
-        const r = await one(list[i])
-        anyOk ||= r.ok
-        results.push(list.length > 1 ? `${i + 1}. ${r.msg}` : r.msg)
+      try {
+        const results: string[] = []
+        let anyOk = false
+        for (let i = 0; i < list.length; i++) {
+          const r = await one(list[i])
+          anyOk ||= r.ok
+          results.push(list.length > 1 ? `${i + 1}. ${r.msg}` : r.msg)
+        }
+        if (anyOk)
+          results.push(
+            `Trabalham no mesmo diretório. Você será avisado com "[synkora] ajudante concluiu" quando cada um reportar done (ou morrer sem reportar). ` +
+              `VOCÊ TEM CONTROLE TOTAL: list_helpers (estado), helper_output (ler a saída), helper_send (responder prompts/escolher opções), helper_close (encerrar).`
+          )
+        return results.join('\n')
+      } finally {
+        helperSpawnReservations.release(helperReservationKey)
       }
-      if (anyOk)
-        results.push(
-          `Trabalham no mesmo diretório. Você será avisado com "[synkora] ajudante concluiu" quando cada um reportar done (ou morrer sem reportar). ` +
-            `VOCÊ TEM CONTROLE TOTAL: list_helpers (estado), helper_output (ler a saída), helper_send (responder prompts/escolher opções), helper_close (encerrar).`
-        )
-      return results.join('\n')
     },
 
     // Catálogo REAL por seat (cacheado no catalog.ts) — o dev escolhe o
@@ -17379,6 +20006,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       // fechamento DELIBERADO — o onExit não deve avisar "encerrou sem report"
       helperReported.add(paneId)
       helperCompletions.discard(paneId)
+      helperOpenWatchdog.acknowledge(paneId)
       unregisterPane(paneId)
       livePaneSpecs.delete(paneId)
       closingPaneIds.add(paneId)
@@ -17419,6 +20047,33 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       if (id.role !== 'qa' || !id.taskId)
         return 'runtime_control é exclusivo do QA de um card'
       const task = tasks.get(id.taskId)
+      const currentIdentity = hub.identityByPane(id.paneId)
+      const activeWatch = phaseWatches.get(id.taskId)
+      const isCurrentQaRound = (): boolean => {
+        const currentTask = tasks.get(id.taskId as string)
+        const currentWatch = phaseWatches.get(id.taskId as string)
+        const currentPane = hub.identityByPane(id.paneId)
+        return Boolean(
+          currentTask &&
+            currentPane &&
+            currentPane.projectId === id.projectId &&
+            currentPane.taskId === id.taskId &&
+            currentPane.role === 'qa' &&
+            currentTask.activePhase === 'qa' &&
+            currentTask.phaseState === 'running' &&
+            currentWatch?.phase === 'qa' &&
+            currentWatch.paneId === id.paneId
+        )
+      }
+      if (
+        !task ||
+        !currentIdentity ||
+        currentIdentity.projectId !== id.projectId ||
+        currentIdentity.taskId !== id.taskId ||
+        currentIdentity.role !== 'qa'
+      ) {
+        return 'runtime_control recusado: este pane não é mais o QA vivo deste card'
+      }
       const cwd = qaRuntimeOf(id.taskId)?.cwd ?? id.cwd
       if (action === 'status') {
         const rt = qaRuntimeOf(id.taskId)
@@ -17429,8 +20084,32 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
             : 'nenhum runtime vivo para este card — use restart'
       }
       if (action === 'stop') {
+        if (activeWatch && !isCurrentQaRound())
+          return 'runtime_control recusado: outra rodada de QA é a dona do runtime'
         stopQaRuntime(id.taskId)
         return 'runtime derrubado'
+      }
+      if (!isCurrentQaRound())
+        return 'runtime_control recusado: restart exige a rodada QA atual em execução'
+      const planTask = planTaskForWorkTask(task)
+      const runtimeRisk = assessMissionRisk({
+        declaredRisk: planTask?.plan?.risk,
+        surfaces: planTask?.plan?.riskSurfaces,
+        texts: [task.title, task.description, task.briefing, ...(task.quests ?? [])]
+      })
+      const sensitiveRuntime =
+        runtimeRisk.effectiveRisk === 'high' ||
+        requiresManualSecurityValidation(runtimeRisk.surfaces)
+      const sensitiveAutoOk = securityWaiverOptions(id.projectId).sensitiveWaiverAllowed
+      const browserAvailable = paneBrowserAvailable(paneAccessProfile('qa'), {
+        sensitive: sensitiveRuntime,
+        sensitiveAutoOk,
+        strict: true,
+        mcpReady: mcpPort !== 0,
+        browserConfigured: Boolean(externalPlaywrightForPane())
+      })
+      if (!browserAvailable) {
+        return 'runtime_control recusado: o browser/runtime isolado não está autorizado nesta rodada; reporte bloqueada sem iniciar processo'
       }
       const script = detectRuntimeScript(cwd)
       if (!script)
@@ -17443,6 +20122,10 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         reason: `restart pedido pelo QA${port ? ` na porta ${port}` : ''}`
       })
       const rt = await startQaRuntime(id.taskId, cwd, script, port)
+      if (!isCurrentQaRound()) {
+        stopQaRuntime(id.taskId)
+        return 'runtime descartado: a rodada QA mudou enquanto o processo era preparado'
+      }
       if (rt.url) return `runtime DE PÉ em ${rt.url} — navegue com o playwright; o harness derruba quando seu gate terminar`
       const pinned = /electron-vite|\belectron\b/.test(readScriptCommand(cwd, script))
         ? ' NOTA: este produto usa electron-vite, que TRAVA a porta do renderer na config — porta por parâmetro não tem efeito; se o conflito persistir, a saída é a config de porta própria no produto (mudança de código = decisão do orquestrador/dono).'
@@ -17593,16 +20276,20 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       const v = item.versionId ? backlog.getVersion(item.versionId) : undefined
       if (v?.status === 'lancada')
         return `a versão ${v.name} já foi lançada — histórico read-only`
-      backlog.removeItem(item.id)
       emitBacklogChanged(id.projectId)
       hub.publish({
         projectId: id.projectId,
         kind: 'info',
-        quiet: true,
-        text: `item de backlog removido pelo PM: "${item.title}"`,
-        actor: 'maestro'
+        text:
+          `remoção solicitada para o item "${item.title}". Nada foi apagado: ` +
+          'o dono precisa confirmar a exclusão na aba Versões.',
+        actor: 'maestro',
+        urgent: true
       })
-      return `item "${item.title}" removido${v ? ` da ${v.name}` : ''}`
+      return (
+        `pedido para remover "${item.title}" registrado${v ? ` na ${v.name}` : ''}. ` +
+        'O item continua no backlog até a confirmação humana na aba Versões.'
+      )
     },
 
     registerDirectMission: (id, title, points) => {
@@ -17769,6 +20456,8 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     saveProjectPlan: (id, input: SaveProjectPlanInput) => {
       if (id.role !== 'maestro' || id.missionId)
         return 'apenas o PM (Maestro do projeto) mantém o plano mestre'
+      const planningEvidence = preparePlanningArtifactEvidence(id, input.skillApplications)
+      if (!planningEvidence.ok) return `não salvei o plano mestre: ${planningEvidence.message}`
       const project = projects.get(id.projectId)
       if (!project) return 'projeto não encontrado'
       try {
@@ -17780,7 +20469,37 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       if (projectModeOf(id.projectId) !== 'greenfield')
         return 'este é um projeto existente — use missões pontuais; o plano mestre automático pertence ao fluxo de pasta vazia'
       try {
-        const plan = saveProjectPlanDraft(project.path, input)
+        const now = new Date().toISOString()
+        const {
+          planningStage,
+          planningContribution,
+          skillApplications: _skillApplications,
+          ...draft
+        } = input
+        const { skillId, ...receiptEvidence } = planningEvidence.evidence
+        const trustedPlanningEvidence = {
+          id: skillId,
+          stage: planningStage,
+          contribution: planningContribution,
+          usedAt: now,
+          ...receiptEvidence,
+          planningRevision: now
+        } as const
+        const plan = saveProjectPlanDraft(project.path, {
+          ...draft,
+          now,
+          planningEvidence: trustedPlanningEvidence
+        })
+        const persistedPlanningEvidence = plan.planningSkills.find(
+          (entry) => entry.receiptId === trustedPlanningEvidence.receiptId
+        )
+        if (!persistedPlanningEvidence?.planningFingerprint) {
+          return 'não salvei o plano mestre: a fotografia não recebeu um fingerprint de conteúdo verificável'
+        }
+        if (!planningEvidence.accept()) {
+          return 'não salvei o plano mestre: o receipt expirou antes da confirmação do artefato; reabra o Maestro'
+        }
+        projects.setPlanningEvidence(id.projectId, persistedPlanningEvidence)
         syncBoard(id.projectId)
         const missing = validateProjectPlanForApproval(plan)
         return (
@@ -17798,50 +20517,26 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       }
     },
 
-    recordPlanningSkillUse: (id, input: PlanningSkillUseInput) => {
-      if (id.role !== 'maestro' || id.missionId)
-        return 'apenas o PM (Maestro do projeto) registra o método usado no plano mestre'
-      const project = projects.get(id.projectId)
-      if (!project) return 'projeto não encontrado'
-      try {
-        ensureSynkoraGitExcludes(project.path)
-      } catch (error) {
-        return 'não registrei a skill: ' +
-          (error instanceof Error ? error.message : String(error))
-      }
-      if (projectModeOf(id.projectId) !== 'greenfield')
-        return 'o registro de skills do plano mestre pertence ao fluxo de projeto novo'
-      const available = [
-        ...(materializedPlanningSkillsByProject.get(id.projectId) ??
-          new Set(skillsLib.orchestratorPlanningIds()))
-      ]
-      if (!available.includes(input.skillId)) {
-        return (
-          `não registrei "${input.skillId}": ela não está instalada e classificada como planejamento. ` +
-          `Disponíveis agora: ${available.join(', ') || 'nenhuma'}`
-        )
-      }
-      try {
-        const plan = recordProjectPlanningSkillUse(project.path, {
-          id: input.skillId,
-          stage: input.stage,
-          contribution: input.contribution
-        })
-        syncBoard(id.projectId)
-        return (
-          `uso de ${input.skillId} registrado na etapa ${input.stage}: ${input.contribution}. ` +
-          `Skills declaradas até aqui: ${plan.planningSkills.map((entry) => entry.id).join(', ')}.`
-        )
-      } catch (error) {
-        return 'não registrei a skill: ' + (error instanceof Error ? error.message : String(error))
-      }
-    },
-
     approveProjectPlan: (id) => {
       if (id.role !== 'maestro' || id.missionId)
         return 'apenas o PM (Maestro do projeto) aprova o plano mestre'
       const project = projects.get(id.projectId)
       if (!project) return 'projeto não encontrado'
+      if (!humanProjectPlanApprovals.has(id.projectId)) {
+        hub.publish({
+          projectId: id.projectId,
+          kind: 'info',
+          text:
+            'o Maestro solicitou aprovação do plano mestre. Nenhum status mudou: ' +
+            'o dono precisa abrir o Mapa e clicar em “aprovar roadmap”.',
+          actor: 'maestro',
+          urgent: true
+        })
+        return (
+          'pedido de aprovação registrado, mas o plano continua pendente. ' +
+          'Somente o clique humano “aprovar roadmap” pode alterar o status.'
+        )
+      }
       try {
         ensureSynkoraGitExcludes(project.path)
       } catch (error) {
@@ -17851,27 +20546,11 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       if (projectModeOf(id.projectId) !== 'greenfield')
         return 'este projeto foi classificado como existente — o fluxo de plano mestre não se aplica'
       try {
-        const current = loadProjectPlan(project.path)
-        const installedPlanning = [
-          ...(materializedPlanningSkillsByProject.get(id.projectId) ??
-            new Set(skillsLib.orchestratorPlanningIds()))
-        ]
-        if (current && installedPlanning.length > 0) {
-          const validUses = current.planningSkills.filter((entry) =>
-            installedPlanning.includes(entry.id)
-          )
-          const discoveryUse = validUses.some((entry) =>
-            ['discovery', 'scope', 'decisions'].includes(entry.stage)
-          )
-          const roadmapUse = validUses.some((entry) => entry.stage === 'roadmap')
-          if (!discoveryUse || !roadmapUse) {
-            return (
-              'não aprovei ainda: antes do aval final, registre o uso real de ao menos uma skill na descoberta/desafio ' +
-              'e uma na decomposição do roadmap. Ter a skill disponível não conta como uso.'
-            )
-          }
-        }
-        const plan = approveStoredProjectPlan(project.path)
+        const plan = approveStoredProjectPlan(project.path, undefined, {
+          requireTrustedEvidence: true,
+          trustedEvidence: project.planningEvidence,
+          trustedLegacyApproval: project.legacyPlanningApproval
+        })
         syncBoard(id.projectId)
         const ready = plan.readyItemIds
           .map((itemId) => plan.roadmap.find((item) => item.id === itemId))
@@ -17969,6 +20648,22 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         return 'apenas o PM (Maestro do projeto) abre missões do plano mestre'
       const project = projects.get(id.projectId)
       if (!project) return 'projeto não encontrado'
+      const humanStartKey = `${id.projectId}:${itemId.trim()}`
+      if (!humanProjectMissionStarts.has(humanStartKey)) {
+        hub.publish({
+          projectId: id.projectId,
+          kind: 'info',
+          text:
+            `o Maestro solicitou abrir o item ${itemId.trim()} do roadmap. ` +
+            'Nenhuma missão foi criada: o dono precisa confirmar esse item no Mapa.',
+          actor: 'maestro',
+          urgent: true
+        })
+        return (
+          `pedido para abrir ${itemId.trim()} registrado, mas nenhuma missão foi criada. ` +
+          'Somente a confirmação humana no Mapa autoriza esta ação.'
+        )
+      }
       if (projectModeOf(id.projectId) !== 'greenfield')
         return 'este projeto foi classificado como existente — use create_mission para melhorias pontuais'
       const plan = projectPlanOf(id.projectId)
@@ -17995,7 +20690,11 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       }
       if (plan.status !== 'approved' && plan.status !== 'in_progress')
         return 'o plano mestre ainda não foi aprovado explicitamente pelo usuário'
-      const planProblems = validateProjectPlanForApproval(plan)
+      const planProblems = validateProjectPlanForApproval(plan, {
+        requireTrustedEvidence: true,
+        trustedEvidence: project.planningEvidence,
+        trustedLegacyApproval: project.legacyPlanningApproval
+      })
       if (planProblems.length)
         return (
           'o mapa precisa ser revisado e aprovado novamente antes de abrir outra missão: ' +
@@ -18106,6 +20805,11 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         bindProjectMission(project.path, {
           itemId: item.id,
           missionId: mission.id,
+          validation: {
+            requireTrustedEvidence: true,
+            trustedEvidence: project.planningEvidence,
+            trustedLegacyApproval: project.legacyPlanningApproval
+          },
           ...(releaseVersion
             ? {
                 release: {
@@ -18167,6 +20871,8 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
     createMission: (id, input: NewMissionInput) => {
       if (id.role !== 'maestro' || id.missionId)
         return 'apenas o PM (Maestro do projeto) cria missões'
+      const planningEvidence = preparePlanningArtifactEvidence(id, input.skillApplications)
+      if (!planningEvidence.ok) return `não criei a missão: ${planningEvidence.message}`
       const masterPlan = projectPlanOf(id.projectId)
       if (projectModeOf(id.projectId) === 'greenfield' && masterPlan?.status !== 'done') {
         return masterPlan?.status === 'draft'
@@ -18186,6 +20892,7 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           goal: input.goal,
           scope: input.scope,
           versionId: version.versionId,
+          planningMethod: planningEvidence.evidence,
           // Missão do PM NÃO herda seat em silêncio: o usuário escolhe
           // conta/modelo/effort do orquestrador num modal no board e só
           // então o pane nasce (decisão do usuário, 02/08).
@@ -18194,6 +20901,9 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
         'maestro'
       )
       if (!mission) return 'projeto não encontrado (ou título vazio)'
+      if (!planningEvidence.accept()) {
+        return 'não criei a missão: o receipt expirou antes da confirmação do artefato; reabra o Maestro'
+      }
       return (
         `missão "${mission.title}" criada (id ${mission.id})` +
         (mission.branch
@@ -18235,18 +20945,21 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       if (!seat) return `conta "${seatQuery}" não encontrada — use o NOME exato do list_seats`
       if (model && isBannedModel(model))
         return `o modelo ${model} é banido para agentes — escolha outro do list_seats`
-      const res = await setPhaseExecutorImpl(
-        id.projectId,
-        taskId,
-        { seatId: seat.id, model: model?.trim() || undefined, effort: effort?.trim() || undefined },
-        'maestro',
-        order
+      hub.publish({
+        projectId: id.projectId,
+        missionId: task.missionId,
+        kind: 'info',
+        text:
+          `troca de executor solicitada para "${task.title}": ${seat.name}` +
+          `${model?.trim() ? ` · ${model.trim()}` : ''}${effort?.trim() ? ` · ${effort.trim()}` : ''}. ` +
+          'A alteração só acontece pelo controle do próprio card, acionado pelo dono.',
+        actor: 'maestro',
+        urgent: true
+      })
+      return (
+        `pedido registrado, mas nenhuma conta/modelo foi alterado. ` +
+        `O dono precisa confirmar no controle do card "${task.title}". Ordem citada: ${order}`
       )
-      return res.ok
-        ? `${res.msg} — NOVO carimbo do card: ${seat.name}${model?.trim() ? ` · ${model.trim()}` : ''}${
-            effort?.trim() ? ` · ${effort.trim()}` : ''
-          } (ordem do dono auditada na caixa-preta)`
-        : `não troquei: ${res.msg}`
     },
 
     queueMissions: (id, missionIds) => {
@@ -18279,12 +20992,25 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
 
     releaseVersion: (id, versionName) => {
       if (id.role !== 'maestro' || id.missionId)
-        return 'apenas o PM (Maestro do projeto) sobe versões'
+        return 'apenas o PM (Maestro do projeto) solicita releases'
       const version = backlog
         .listVersions(id.projectId)
         .find((v) => v.name.toLowerCase() === versionName.trim().toLowerCase())
       if (!version) return `versão "${versionName}" não encontrada — veja as versões no board_status`
-      return releaseVersionImpl(version.id, id.role)
+      hub.publish({
+        projectId: id.projectId,
+        kind: 'info',
+        text:
+          `release solicitado para ${version.name}. Nenhum merge foi executado: ` +
+          'o dono precisa abrir a versão e confirmar “subir agora”.',
+        actor: 'maestro',
+        urgent: true
+      })
+      emitBacklogChanged(id.projectId)
+      return (
+        `pedido de release de ${version.name} registrado. ` +
+        'Nenhum merge foi feito; somente o clique humano “subir agora” pode publicar a versão.'
+      )
     },
 
     setReleaseHold: (id, on, reason) => {
@@ -18526,7 +21252,14 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
                 : undefined,
               detail: {
                 args: args.slice(id ? 1 : 0),
-                ...(err === undefined ? { result: summarizeResult(result) } : {})
+                ...(err === undefined
+                  ? {
+                      result:
+                        prop === 'activateSkill'
+                          ? 'pacote de instrução entregue (conteúdo omitido do diário)'
+                          : summarizeResult(result)
+                    }
+                  : {})
               },
               err
             })
@@ -18558,6 +21291,54 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
       }
     })
   }
+  ipcMain.handle('projectPlan:approve', (e, projectId: string, expectedUpdatedAt: string) => {
+    bindUiSender(e.sender)
+    const project = projects.get(projectId)
+    if (!project) return 'projeto não encontrado'
+    const currentPlan = projectPlanOf(projectId)
+    if (!currentPlan || currentPlan.updatedAt !== expectedUpdatedAt) {
+      return 'o roadmap mudou enquanto estava aberto. Recarreguei a fotografia; revise a versão atual antes de aprovar.'
+    }
+    humanProjectPlanApprovals.add(projectId)
+    try {
+      return mcpApi.approveProjectPlan({
+        paneId: `renderer-plan-approval:${projectId}`,
+        projectId,
+        role: 'maestro',
+        cwd: project.path
+      })
+    } finally {
+      humanProjectPlanApprovals.delete(projectId)
+    }
+  })
+  ipcMain.handle(
+    'projectPlan:startMission',
+    (e, projectId: string, itemId: string, expectedUpdatedAt: string) => {
+    bindUiSender(e.sender)
+    const project = projects.get(projectId)
+    if (!project) return 'projeto não encontrado'
+    const currentPlan = projectPlanOf(projectId)
+    if (!currentPlan || currentPlan.updatedAt !== expectedUpdatedAt) {
+      return 'o roadmap mudou enquanto estava aberto. Recarreguei a fotografia; confirme o item novamente na versão atual.'
+    }
+    const normalizedItemId = itemId.trim()
+    const key = `${projectId}:${normalizedItemId}`
+    humanProjectMissionStarts.add(key)
+    try {
+      return mcpApi.startProjectMission(
+        {
+          paneId: `renderer-mission-start:${projectId}:${normalizedItemId}`,
+          projectId,
+          role: 'maestro',
+          cwd: project.path
+        },
+        normalizedItemId
+      )
+    } finally {
+      humanProjectMissionStarts.delete(key)
+    }
+    }
+  )
   const instrumentedMcpApi = instrumentMcpApi(mcpApi)
 
   const installInternalMcp = async (preferredPort = 0): Promise<void> => {
@@ -18807,6 +21588,11 @@ Registre em record_planning_skill_use somente uma skill Disponível e somente DE
           }
         }
         continue
+      }
+      const recoveredSkillUsage = interruptActiveSkillUsage(t.skillUsage)
+      if (recoveredSkillUsage !== t.skillUsage) {
+        tasks.update(t.id, { skillUsage: recoveredSkillUsage })
+        dirty = true
       }
       const recoveryDecision = (decision: string, reason: string): void => {
         blackbox.record({

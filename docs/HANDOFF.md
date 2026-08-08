@@ -825,11 +825,13 @@ antes do merge. O destino é atualizado por compare-and-swap contra branch+SHA
 validados; se o Windows impedir a atualização dos arquivos, intent/ticket/branches
 ficam preservados e o boot só conclui depois de um reparo seguro da mesma fotografia.
 
-O menu de planejamento realmente materializado é anexado à persona persistente.
-Depois de aplicar um método, o Maestro chama `record_planning_skill_use`; o MD e
-`board_status` separam skills disponíveis das declaradas como usadas e guardam a
-contribuição concreta. A aprovação exige uso declarado em descoberta/desafio e
-em decomposição do roadmap quando há skills de planejamento disponíveis.
+O planejamento usa somente `synkora-planning-standard`, entregue por receipt da
+rodada — nenhum catálogo de métodos é anexado à persona. O Maestro precisa ativar
+esse receipt e incluí-lo no próprio artefato. Roadmap e plano de missão guardam
+versão/fingerprint do pacote; o plano mestre também vincula o receipt ao hash do
+conteúdo e a um carimbo do control-plane fora do workspace. Proposta nova sem essa
+prova não pode ser aprovada nem gerar cards. Planos já aprovados antes do contrato
+continuam executáveis como `legacy_unverified`, sem fingir que usaram a skill.
 
 ## Plano executado (2026-07-31) — performance, MCP 2026 e LSP
 

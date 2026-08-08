@@ -56,6 +56,27 @@ export interface PhaseWatch {
    * alteracao feita por review/QA, inclusive depois de um restart. */
   gateBaselineFingerprint?: string
   gateStartedAt?: string
+  /** Patch grande entregue fora do prompt; bytes ficam presos a esta rodada. */
+  reviewArtifact?: {
+    /** Caminho app-private; nunca é revelado ao DEV nem ao gate. */
+    privatePath: string
+    sha256: string
+    bytes: number
+    /** Manifesto calculado quando os bytes sao congelados. Cada bloco lido
+     * precisa bater com este hash antes de ser devolvido ao reviewer. */
+    chunks: Array<{
+      offset: number
+      bytes: number
+      sha256: string
+    }>
+    /** Cursor servido sequencialmente ao reviewer pela tool privada. */
+    servedUntil: number
+    lastServedOffset?: number
+    lastServedNextOffset?: number
+  }
+  /** Mesma decisão/capacidade usada pelo prompt e pelo guard do report. */
+  uiWork?: boolean
+  browserAvailable?: boolean
   /** Snapshot criado pelo guard de report e validado por diagnóstico antes
    * de a chamada poder avançar para review/QA. */
   devSnapshot?: {

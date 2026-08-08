@@ -240,6 +240,7 @@ function PlanModal({
   // CAS da aprovação: o orquestrador re-propôs enquanto o usuário lia — a
   // aprovação foi recusada e o modal precisa ser reaberto na versão nova.
   const [stalePlan, setStalePlan] = useState(false)
+  const [planningEvidenceRequired, setPlanningEvidenceRequired] = useState(false)
   const editable = task.status === 'backlog'
   const securityWaiverAllowed =
     plan?.risk !== 'high' && (plan?.riskSurfaces?.length ?? 0) === 0
@@ -479,6 +480,12 @@ function PlanModal({
             plano para ler a versão nova antes de aprovar.
           </div>
         )}
+        {planningEvidenceRequired && (
+          <div className="plan-progress" style={{ color: 'var(--err)' }}>
+            ⚠ esta proposta veio de uma versão antiga do fluxo e não comprova o método
+            de planejamento. Peça ao orquestrador para reapresentá-la antes de aprovar.
+          </div>
+        )}
         <div className="task-modal-actions">
           {task.status === 'backlog' && (
             <>
@@ -503,8 +510,12 @@ function PlanModal({
                   // orquestrador re-propôs no meio, o main recusa e o modal
                   // avisa em vez de aprovar um contrato desatualizado.
                   void approvePlan(task.id, lanes, task.updatedAt).then((r) => {
-                    if (r?.staleRevision) {
+                    if (r && 'staleRevision' in r) {
                       setStalePlan(true)
+                      return
+                    }
+                    if (r && 'planningEvidenceRequired' in r) {
+                      setPlanningEvidenceRequired(true)
                       return
                     }
                     onClose()
@@ -576,6 +587,45 @@ function TaskModal({
   const [effort, setEffort] = useState(task.effort)
   const [status, setStatus] = useState(task.status)
   const phaseView = taskPhaseView(task, livePane ?? undefined)
+  const skillStatusLabel = {
+    planned: 'selecionada',
+    activated: 'carregada',
+    applied: 'declarada na entrega'
+  } as const
+  const skillRuns = task.skillUsage
+    ? task.skillUsage.history?.length
+      ? task.skillUsage.history
+      : [task.skillUsage]
+    : []
+  const latestSkillRunByPhase = new Map<string, (typeof skillRuns)[number]>()
+  for (const run of skillRuns) latestSkillRunByPhase.set(run.phase, run)
+  const visibleSkillRuns = [...latestSkillRunByPhase.values()]
+  const skillUsageLine = visibleSkillRuns.some((run) => run.skills.length)
+    ? visibleSkillRuns
+        .map(
+          (run) =>
+            `${run.phase.toUpperCase()} · ${run.skills
+              .map((skill) => `${skill.id} (${skill.operation} · ${skillStatusLabel[skill.status]})`)
+              .join(' · ')}`
+        )
+        .join(' | ')
+    : [
+        ...(task.skills ?? []).map((skill) => `${skill} (carimbada)`),
+        ...(task.agents ?? []).map((agent) => `⬡ ${agent}`)
+      ].join(' · ')
+  const skillUsageTip = task.skillUsage
+    ? `Rastreio por rodada: ${skillRuns
+        .map(
+          (run) =>
+            `${run.phase.toUpperCase()} ${run.runStatus ?? 'legado'} — ${run.skills
+              .map(
+                (skill) =>
+                  `${skill.id}@${skill.version?.slice(0, 10) ?? 'legado'} (${skillStatusLabel[skill.status]})`
+              )
+              .join(', ')}`
+        )
+        .join(' | ')}. A qualidade é julgada separadamente pelo QA.`
+    : 'Preferências carimbadas no card; a seleção efetiva aparece quando a fase começa.'
 
   const dept = DEPT_BY_KEY[department]
   const dirty =
@@ -659,13 +709,9 @@ function TaskModal({
               ))}
             </div>
           )}
-          {((task.skills?.length ?? 0) > 0 || (task.agents?.length ?? 0) > 0) && (
-            <div className="task-skills-line" data-tip="skills injetadas no workspace desta execução">
-              ⚡{' '}
-              {[
-                ...(task.skills ?? []).map((s) => `/${s}`),
-                ...(task.agents ?? []).map((a) => `⬡ ${a}`)
-              ].join(' · ')}
+          {skillUsageLine && (
+            <div className="task-skills-line" data-tip={skillUsageTip}>
+              ⚡ {skillUsageLine}
             </div>
           )}
           <div className="done-meta">
@@ -753,6 +799,11 @@ function TaskModal({
             Esta tarefa está vinculada ao pane <b>{livePane.title}</b>. O orquestrador
             conduz esta fase; abra a aba Panes somente se quiser acompanhar o terminal.
           </div>
+          {skillUsageLine && (
+            <div className="task-skills-line" data-tip={skillUsageTip}>
+              ⚡ {skillUsageLine}
+            </div>
+          )}
         </div>
       </div>,
       document.body
@@ -783,6 +834,11 @@ function TaskModal({
           </div>
           <div className="task-modal-title readonly">{task.title}</div>
           <div className="task-modal-desc readonly">{task.description || 'sem descrição'}</div>
+          {skillUsageLine && (
+            <div className="task-skills-line" data-tip={skillUsageTip}>
+              ⚡ {skillUsageLine}
+            </div>
+          )}
           <div className="lock-note">
             Esta tarefa parou no gate de QA. O orquestrador reabre somente a validação
             {task.feedback ? ` (${task.feedback})` : ''}; depois ela conclui ou volta para
@@ -845,16 +901,9 @@ function TaskModal({
               ))}
             </div>
           )}
-          {((task.skills?.length ?? 0) > 0 || (task.agents?.length ?? 0) > 0) && (
-            <div
-              className="task-skills-line"
-              data-tip="skills da biblioteca carimbadas pelo orquestrador — injetadas no workspace do executor"
-            >
-              ⚡{' '}
-              {[
-                ...(task.skills ?? []).map((s) => `/${s}`),
-                ...(task.agents ?? []).map((a) => `⬡ ${a}`)
-              ].join(' · ')}
+          {skillUsageLine && (
+            <div className="task-skills-line" data-tip={skillUsageTip}>
+              ⚡ {skillUsageLine}
             </div>
           )}
           {task.briefing && (
@@ -928,16 +977,9 @@ function TaskModal({
             ))}
           </div>
         )}
-        {((task.skills?.length ?? 0) > 0 || (task.agents?.length ?? 0) > 0) && (
-          <div
-            className="task-skills-line"
-            data-tip="skills (/) e subagentes (⬡) da biblioteca carimbados para este card — injetados no workspace do executor"
-          >
-            ⚡{' '}
-            {[
-              ...(task.skills ?? []).map((s) => `/${s}`),
-              ...(task.agents ?? []).map((a) => `⬡ ${a}`)
-            ].join(' · ')}
+        {skillUsageLine && (
+          <div className="task-skills-line" data-tip={skillUsageTip}>
+            ⚡ {skillUsageLine}
           </div>
         )}
         {task.briefing && (

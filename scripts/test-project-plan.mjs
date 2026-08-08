@@ -12,17 +12,20 @@ import {
   detachProjectMission,
   ensureGreenfieldProjectPlan,
   isEffectivelyEmptyProject,
+  legacyProjectPlanApproval,
   loadProjectPlan,
   projectPlanReleaseBlockers,
   projectPlanReleaseGate,
   projectPlanExecutionWindow,
+  projectPlanContentFingerprint,
   projectPlanPaths,
   reactivateProjectMission,
   recordProjectPlanningSkillUse,
   renderProjectPlanMarkdown,
-  saveProjectPlanDraft,
+  saveProjectPlanDraft as saveProjectPlanDraftRaw,
   startProjectMission,
-  summarizeProjectPlanForBoard
+  summarizeProjectPlanForBoard,
+  validateProjectPlanForApproval
 } from '../src/main/projectPlan.ts'
 
 const T0 = '2026-07-31T10:00:00.000Z'
@@ -30,6 +33,31 @@ const T1 = '2026-07-31T11:00:00.000Z'
 const T2 = '2026-07-31T12:00:00.000Z'
 const T3 = '2026-07-31T13:00:00.000Z'
 const T4 = '2026-07-31T14:00:00.000Z'
+
+function planningEvidence(now = T0) {
+  return {
+    id: 'synkora-planning-standard',
+    stage: 'roadmap',
+    contribution: 'Decompôs o objetivo em missões verticais e dependências verificáveis.',
+    usedAt: now,
+    contractVersion: 1,
+    receiptId: `receipt-${now.replace(/[^0-9]/g, '').slice(-12) || 'planning'}`,
+    operation: 'plan',
+    version: 'bundled-test',
+    fingerprint: 'sha256-test-planning-standard',
+    phaseRun: `phase-${now.replace(/[^0-9]/g, '').slice(-12) || 'planning'}`,
+    appliedAt: now,
+    planningRevision: now
+  }
+}
+
+function saveProjectPlanDraft(root, input) {
+  const now = input.now ?? T0
+  return saveProjectPlanDraftRaw(root, {
+    ...input,
+    planningEvidence: input.planningEvidence ?? planningEvidence(now)
+  })
+}
 
 function temporaryProject(t) {
   const root = mkdtempSync(join(tmpdir(), 'synkora-project-plan-'))
@@ -1416,7 +1444,7 @@ test('roadmap completo aceita lote de 150 missões e valida sua contagem declara
   )
 })
 
-test('Maestro registra skills de planejamento com contribuição auditável', (t) => {
+test('registros legados ficam auditáveis, mas não substituem o receipt nativo', (t) => {
   const root = temporaryProject(t)
   saveValidDraft(root)
   const first = recordProjectPlanningSkillUse(root, {
@@ -1425,7 +1453,7 @@ test('Maestro registra skills de planejamento com contribuição auditável', (t
     contribution: 'Expôs a principal hipótese de público.',
     now: T1
   })
-  assert.equal(first.planningSkills.length, 1)
+  assert.equal(first.planningSkills.filter((entry) => entry.id === 'grill-me').length, 1)
 
   const updated = recordProjectPlanningSkillUse(root, {
     id: 'grill-me',
@@ -1433,9 +1461,10 @@ test('Maestro registra skills de planejamento com contribuição auditável', (t
     contribution: 'Expôs a hipótese de público e seu risco central.',
     now: T2
   })
-  assert.equal(updated.planningSkills.length, 2)
-  assert.equal(updated.planningSkills[0].usedAt, T1)
-  assert.equal(updated.planningSkills[1].usedAt, T2)
+  const grillEntries = updated.planningSkills.filter((entry) => entry.id === 'grill-me')
+  assert.equal(grillEntries.length, 2)
+  assert.equal(grillEntries[0].usedAt, T1)
+  assert.equal(grillEntries[1].usedAt, T2)
 
   const idempotent = recordProjectPlanningSkillUse(root, {
     id: 'grill-me',
@@ -1443,7 +1472,7 @@ test('Maestro registra skills de planejamento com contribuição auditável', (t
     contribution: 'Expôs a hipótese de público e seu risco central.',
     now: T3
   })
-  assert.equal(idempotent.planningSkills.length, 2)
+  assert.equal(idempotent.planningSkills.filter((entry) => entry.id === 'grill-me').length, 2)
 
   const second = recordProjectPlanningSkillUse(root, {
     id: 'roadmap-planning',
@@ -1452,6 +1481,7 @@ test('Maestro registra skills de planejamento com contribuição auditável', (t
     now: T3
   })
   assert.deepEqual(second.planningSkills.map((entry) => entry.id), [
+    'synkora-planning-standard',
     'grill-me',
     'grill-me',
     'roadmap-planning'
@@ -1459,6 +1489,123 @@ test('Maestro registra skills de planejamento com contribuição auditável', (t
   assert.match(renderProjectPlanMarkdown(second), /Skills de planejamento declaradas/)
   assert.match(renderProjectPlanMarkdown(second), /Separou o projeto em ondas/)
   assert.match(summarizeProjectPlanForBoard(second), /grill-me, roadmap-planning/)
+})
+
+test('receipt fica ligado à revisão de conteúdo e sobrevive a eventos operacionais', (t) => {
+  const root = temporaryProject(t)
+  const draft = saveValidDraft(root)
+  const evidence = draft.planningSkills.find(
+    (entry) => entry.id === 'synkora-planning-standard'
+  )
+  assert.ok(evidence)
+  assert.equal(draft.planningGovernance, 'receipt_verified')
+  assert.equal(draft.planningFingerprint, projectPlanContentFingerprint(draft))
+  assert.equal(evidence.planningRevision, draft.planningRevision)
+  assert.equal(evidence.planningFingerprint, draft.planningFingerprint)
+
+  const approved = approveProjectPlan(root, T1)
+  assert.equal(approved.updatedAt, T1)
+  assert.equal(approved.planningRevision, draft.planningRevision)
+  assert.equal(approved.planningFingerprint, draft.planningFingerprint)
+  assert.deepEqual(validateProjectPlanForApproval(approved), [])
+})
+
+test('nova revisão sem receipt volta a receipt_required e não pode ser aprovada', (t) => {
+  const root = temporaryProject(t)
+  const verified = saveValidDraft(root)
+  assert.equal(verified.planningGovernance, 'receipt_verified')
+
+  const unverified = saveProjectPlanDraftRaw(root, {
+    vision: 'A mesma direção de produto, revisada sem comprovação do método.',
+    now: T1
+  })
+  assert.equal(unverified.status, 'draft')
+  assert.equal(unverified.planningGovernance, 'receipt_required')
+  assert.equal(unverified.planningRevision, T1)
+  assert.equal(unverified.planningFingerprint, projectPlanContentFingerprint(unverified))
+  assert.ok(
+    validateProjectPlanForApproval(unverified).some((problem) => /receipt do método/.test(problem))
+  )
+  assert.throws(() => approveProjectPlan(root, T2), hasCode('invalid_plan'))
+})
+
+test('plano legado já em execução recebe marker explícito e continua validável', (t) => {
+  const root = temporaryProject(t)
+  saveValidDraft(root)
+  approveProjectPlan(root, T1)
+  const running = startProjectMission(root, {
+    itemId: 'foundation',
+    missionId: 'mission-foundation',
+    now: T2
+  })
+  assert.equal(running.status, 'in_progress')
+
+  const legacy = structuredClone(running)
+  legacy.planningSkills = []
+  delete legacy.planningRevision
+  delete legacy.planningFingerprint
+  delete legacy.planningGovernance
+  writeFileSync(projectPlanPaths(root).json, `${JSON.stringify(legacy, null, 2)}\n`, 'utf8')
+
+  const migrated = loadProjectPlan(root)
+  assert.ok(migrated)
+  assert.equal(migrated.status, 'in_progress')
+  assert.equal(migrated.planningGovernance, 'legacy_unverified')
+  assert.notDeepEqual(
+    validateProjectPlanForApproval(migrated, { requireTrustedEvidence: true }),
+    [],
+    'o JSON do workspace não pode conceder grandfathering a si próprio'
+  )
+  const trustedLegacyApproval = legacyProjectPlanApproval(migrated, T3)
+  assert.ok(trustedLegacyApproval)
+  assert.deepEqual(
+    validateProjectPlanForApproval(migrated, {
+      requireTrustedEvidence: true,
+      trustedLegacyApproval
+    }),
+    []
+  )
+
+  const forged = structuredClone(migrated)
+  forged.vision = 'Conteúdo trocado depois da migração controlada.'
+  forged.planningFingerprint = projectPlanContentFingerprint(forged)
+  assert.notDeepEqual(
+    validateProjectPlanForApproval(forged, {
+      requireTrustedEvidence: true,
+      trustedLegacyApproval
+    }),
+    [],
+    'um snapshot legacy diferente não pode reutilizar o carimbo control-plane'
+  )
+})
+
+test('alterar o conteúdo preservando receipt e revisão invalida a aprovação', (t) => {
+  const root = temporaryProject(t)
+  const draft = saveValidDraft(root)
+  const evidence = draft.planningSkills.find(
+    (entry) => entry.id === 'synkora-planning-standard'
+  )
+  assert.ok(evidence)
+  const paths = projectPlanPaths(root)
+  const tampered = {
+    ...draft,
+    vision: 'Outra visão inserida depois da aplicação do método.'
+  }
+  writeFileSync(paths.json, `${JSON.stringify(tampered, null, 2)}\n`, 'utf8')
+  const loaded = loadProjectPlan(root)
+  assert.ok(loaded)
+  const problems = validateProjectPlanForApproval(loaded, {
+    requireTrustedEvidence: true,
+    trustedEvidence: evidence
+  })
+  assert.ok(problems.some((problem) => /receipt do método/.test(problem)))
+  assert.throws(
+    () => approveProjectPlan(root, T1, {
+      requireTrustedEvidence: true,
+      trustedEvidence: evidence
+    }),
+    hasCode('invalid_plan')
+  )
 })
 
 test('JSON corrompido é rejeitado de forma explícita', (t) => {

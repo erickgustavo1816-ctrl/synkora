@@ -36,7 +36,7 @@ gateDeathLog :12005 · gateCooldownUntil :12008 · phaseLaunches :10757 ·
 phaseLaunchCapacity :10758 · phaseMarkersProcessing :13825 ·
 bootRespawnsPending :12092 · missionWatches :6379 · integrationDrainTimers
 :6380 · integrationDraining :6381 · baselineVerificationRuns :4668 ·
-finalVerificationRuns :4669 · materializedPlanningSkillsByProject :3366 ·
+finalVerificationRuns :4669 · skillPlanScopes (receipt por pane/phaseRun) ·
 pendingUserQuestions :10766 (+persistUserQuestions :10776) · testServerPanes
 :9846 · voiceRequests :2780 · surveyAborts :9381 · expiredSeats :4220 ·
 mcpCatalogServedByPane :15258 · mcpPaneFirstContact :18833 · seenMcpTokens

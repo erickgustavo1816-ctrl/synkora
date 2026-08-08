@@ -70,6 +70,8 @@ function groupWaves(plan: ProjectPlanView): WaveGroup[] {
 export default function PlanMapView({ projectId }: { projectId: string }): React.JSX.Element {
   const [plan, setPlan] = useState<ProjectPlanView | null>(null)
   const [loaded, setLoaded] = useState(false)
+  const [actionMessage, setActionMessage] = useState('')
+  const [actionPending, setActionPending] = useState('')
   const setUniverseTab = useStore((s) => s.setUniverseTab)
 
   const refresh = useCallback(async () => {
@@ -100,6 +102,32 @@ export default function PlanMapView({ projectId }: { projectId: string }): React
   const total = plan.roadmap.length
   const done = plan.roadmap.filter((item) => item.status === 'done').length
   const waves = groupWaves(plan)
+  const canApprove = plan.status === 'draft' || plan.status === 'revision_pending'
+  const displayedPlanUpdatedAt = plan.updatedAt
+
+  async function approveRoadmap(): Promise<void> {
+    if (!window.synkora.projectPlan || actionPending) return
+    setActionPending('approve')
+    try {
+      setActionMessage(await window.synkora.projectPlan.approve(projectId, displayedPlanUpdatedAt))
+      await refresh()
+    } finally {
+      setActionPending('')
+    }
+  }
+
+  async function startRoadmapMission(itemId: string): Promise<void> {
+    if (!window.synkora.projectPlan || actionPending) return
+    setActionPending(itemId)
+    try {
+      setActionMessage(
+        await window.synkora.projectPlan.startMission(projectId, itemId, displayedPlanUpdatedAt)
+      )
+      await refresh()
+    } finally {
+      setActionPending('')
+    }
+  }
 
   return (
     <div className="planmap">
@@ -128,8 +156,18 @@ export default function PlanMapView({ projectId }: { projectId: string }): React
           >
             ver texto completo em Arquivos
           </button>
+          {canApprove && (
+            <button
+              className="btn accent tiny"
+              disabled={Boolean(actionPending)}
+              onClick={() => void approveRoadmap()}
+            >
+              {actionPending === 'approve' ? 'aprovando…' : 'aprovar roadmap'}
+            </button>
+          )}
         </div>
         {plan.vision && <p className="planmap-vision">{plan.vision}</p>}
+        {actionMessage && <p className="planmap-action-message">{actionMessage}</p>}
       </header>
 
       <div className="planmap-waves">
@@ -169,6 +207,15 @@ export default function PlanMapView({ projectId }: { projectId: string }): React
                       <span className="planmap-item-id">{item.id}</span>
                       <span className="planmap-item-title">{item.title}</span>
                       <span className="planmap-item-state">{state.label}</span>
+                      {plan.readyItemIds.includes(item.id) && !item.missionId && (
+                        <button
+                          className="btn ghost tiny"
+                          disabled={Boolean(actionPending)}
+                          onClick={() => void startRoadmapMission(item.id)}
+                        >
+                          {actionPending === item.id ? 'abrindo…' : 'abrir missão'}
+                        </button>
+                      )}
                     </li>
                   )
                 })}
