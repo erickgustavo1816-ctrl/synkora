@@ -69,6 +69,28 @@ test('prompt-input paths become exact disabled skill entries without bodies', ()
   assert.equal((profile.match(/\[\[skills\.config\]\]/g) ?? []).length, 2)
   assert.equal((profile.match(/enabled = false/g) ?? []).length, 2)
   assert.doesNotMatch(profile, /alpha instructions|beta instructions/)
+  assert.doesNotMatch(profile, /developer_instructions/)
+
+  // F5 (sonda P1-P3, 2026-08-09): o contrato invisivel viaja no MESMO
+  // profile; a serializacao JSON e TOML valida (quebras/aspas escapadas) e
+  // precisa vir ANTES das secoes [[skills.config]] (chave raiz do TOML).
+  const withContract = renderCodexSkillIsolationProfile(
+    paths,
+    'Phase contract line 1\nwith "quotes" and \\backslash'
+  )
+  const instrLine = withContract
+    .split('\n')
+    .find((line) => line.startsWith('developer_instructions='))
+  assert.ok(instrLine, 'developer_instructions presente')
+  assert.equal(
+    JSON.parse(instrLine.slice('developer_instructions='.length)),
+    'Phase contract line 1\nwith "quotes" and \\backslash'
+  )
+  assert.ok(
+    withContract.indexOf('developer_instructions=') <
+      withContract.indexOf('[[skills.config]]'),
+    'chave raiz antes das secoes TOML'
+  )
 })
 
 test('profile preparation probes before and after and fails closed on residual catalog', async (t) => {
@@ -133,7 +155,9 @@ test('installed Codex removes a real repository skill from effective prompt-inpu
 })
 
 test('launcher integrates isolation after seat preparation and rechecks generation', () => {
-  const source = readFileSync(resolve('src/main/index.ts'), 'utf8')
+  // Fase 1 moveu o launcher do index.ts para ipc/pty.ts (o predicado
+  // methodGoverned vive em paneLifecycle.ts) — as ancoras seguem o codigo.
+  const source = readFileSync(resolve('src/main/ipc/pty.ts'), 'utf8')
   const prepareAt = source.indexOf('await seats.prepare(seat)')
   const isolateAt = source.indexOf('await prepareCodexSkillIsolationProfile({', prepareAt)
   const recheckAt = source.indexOf('if (!preparationCanContinue())', isolateAt)
@@ -142,7 +166,12 @@ test('launcher integrates isolation after seat preparation and rechecks generati
   assert.ok(recheckAt > isolateAt && spawnAt > recheckAt)
   assert.match(source.slice(isolateAt, spawnAt), /effectiveCliArgs = \[/)
   assert.match(source.slice(isolateAt, spawnAt), /'-p'/)
-  assert.match(source, /methodGoverned \|\| accessProfile !== 'write' \|\| sensitive/)
+  // F5: o contrato invisivel do pane viaja no profile e o spawn codex nunca
+  // repassa appendSystemPrompt cru (a flag e do claude).
+  assert.match(source.slice(isolateAt, spawnAt), /developerInstructions: req\.appendSystemPrompt/)
+  assert.match(source, /req\.kind === 'codex' \? undefined : req\.appendSystemPrompt/)
+  const lifecycle = readFileSync(resolve('src/main/paneLifecycle.ts'), 'utf8')
+  assert.match(lifecycle, /methodGoverned \|\| accessProfile !== 'write' \|\| sensitive/)
 })
 
 test('prompt probes never start inherited MCP servers', async (t) => {

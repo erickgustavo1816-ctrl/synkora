@@ -260,7 +260,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     skillPlanScopes,
     storedHelperRecoveries,
     harnessPortsInUse,
-    codexDeveloperInstructions,
     armPane,
     codeReportGuard
   } = extras
@@ -1517,8 +1516,11 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         gateSkillsBlock: phase === 'dev' ? '' : skillsBlock,
         gateAgentsBlock: ''
       })
-      phaseSystemContract = seat.cli === 'claude' ? parts.system : ''
-      const basePrompt = seat.cli === 'claude' ? parts.turn : parts.turn + parts.system
+      // Os DOIS CLIs recebem o contrato invisível: claude por
+      // --append-system-prompt-file; codex pelo PROFILE por pane
+      // (developer_instructions por arquivo — sonda P1–P3, 2026-08-09).
+      phaseSystemContract = parts.system
+      const basePrompt = parts.turn
 
       return buildPhasePrompt({
         phase,
@@ -1717,9 +1719,9 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       if (seat.cli === 'claude') cliArgs.push('--effort', phaseEffort)
       else cliArgs.push('-c', `model_reasoning_effort="${phaseEffort}"`)
     }
-    if (seat.cli === 'codex') {
-      cliArgs.push('-c', codexDeveloperInstructions(securityBlock))
-    }
+    // securityBlock codex saiu do -c: ele viaja junto do contrato de fase no
+    // spec.appendSystemPrompt → PROFILE por pane (F5, sonda P3: um -c de
+    // developer_instructions aqui VENCERIA o profile e mataria o contrato).
     if (resumable) {
       if (seat.cli === 'claude') cliArgs.push('--resume', resumable.sessionId)
       // codex resume aceita só o UUID do rollout; ids vindos do backend de
@@ -1811,12 +1813,11 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       model: model || undefined,
       cwd,
       cliArgs,
-      // contrato de fase invisível + bloco de segurança — os dois no canal
-      // por arquivo do claude (F5, 2026-08-08)
+      // contrato de fase invisível + bloco de segurança — canal por arquivo
+      // nos DOIS CLIs (claude: --append-system-prompt-file; codex: o ipc/pty
+      // leva ao developer_instructions do profile por pane). F5, 2026-08-09.
       appendSystemPrompt:
-        seat.cli === 'claude'
-          ? [phaseSystemContract, securityBlock].filter(Boolean).join('\n\n')
-          : undefined,
+        [phaseSystemContract, securityBlock].filter(Boolean).join('\n\n') || undefined,
       initialPrompt: deliveredPrompt,
       logFile,
       title: `${PHASE_ICON[phase]} ${task.title.slice(0, 28)}${task.title.length > 28 ? '…' : ''}`,

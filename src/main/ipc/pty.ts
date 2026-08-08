@@ -263,7 +263,12 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
           preparedProfile = await prepareCodexSkillIsolationProfile({
             paneGenerationId: `${req.id}-${randomUUID()}`,
             cwd: req.cwd,
-            configDir: dir
+            configDir: dir,
+            // F5 (sonda P1–P3): o contrato invisível do pane codex viaja no
+            // MESMO profile por pane — arquivo, sem o teto do argv. O spawn
+            // NUNCA leva também -c developer_instructions (P3: o -c vence o
+            // profile e mataria o contrato).
+            developerInstructions: req.appendSystemPrompt ?? undefined
           })
         } catch (error) {
           const stillOwnsPreparation =
@@ -295,6 +300,15 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
           ...(effectiveCliArgs ?? []),
           '-p',
           preparedProfile.profileName
+        ]
+      } else if (!reusedPty && seat.cli === 'codex' && req.appendSystemPrompt) {
+        // Fallback para spec codex FORA do ramo do profile (hoje nenhum):
+        // instruções via -c inline — a guarda de argv dá erro legível se
+        // estourar; nunca descarte silencioso de contrato.
+        effectiveCliArgs = [
+          ...(effectiveCliArgs ?? []),
+          '-c',
+          `developer_instructions=${JSON.stringify(req.appendSystemPrompt)}`
         ]
       }
       pendingPtyPreparations.delete(req.id)
@@ -354,7 +368,12 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
       initialPrompt: req.initialPrompt,
       model: req.model,
       cliArgs: effectiveCliArgs,
-      appendSystemPrompt: req.appendSystemPrompt,
+      // Codex NUNCA recebe appendSystemPrompt no spawn (a flag
+      // --append-system-prompt é do claude): pane method-governed levou o
+      // contrato pelo PROFILE acima; um spec codex fora desse ramo com
+      // appendSystemPrompt cai no -c inline abaixo (fallback auditável pela
+      // guarda de argv — nunca descarte silencioso).
+      appendSystemPrompt: req.kind === 'codex' ? undefined : req.appendSystemPrompt,
       cols: req.cols,
       rows: req.rows,
       logFile: req.logFile,

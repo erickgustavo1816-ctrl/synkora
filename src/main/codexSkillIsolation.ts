@@ -37,12 +37,23 @@ export function codexSkillPathsFromPromptInput(output: string): string[] {
   return [...paths].sort((left, right) => left.localeCompare(right, 'en'))
 }
 
-export function renderCodexSkillIsolationProfile(paths: readonly string[]): string {
+export function renderCodexSkillIsolationProfile(
+  paths: readonly string[],
+  developerInstructions?: string
+): string {
   const unique = [...new Set(paths.map((path) => resolve(path).replace(/\\/g, '/')))].sort(
     (left, right) => left.localeCompare(right, 'en')
   )
   return [
     '# Synkora runtime profile. Generated per pane; never edit by hand.',
+    // CONTRATO INVISÍVEL DO PANE (F5, sonda probe-codex-profile-instructions
+    // 2026-08-09: P1 curto ok · P2 40KB ok — o ARQUIVO fura o teto de 32.767
+    // do argv · P3 `-c developer_instructions` VENCE o profile, então o
+    // spawn de um pane cujo profile carrega instruções NUNCA pode levar
+    // também o -c — ele mataria o contrato em silêncio).
+    ...(developerInstructions
+      ? ['', `developer_instructions=${JSON.stringify(developerInstructions)}`]
+      : []),
     ...unique.flatMap((path) => [
       '',
       '[[skills.config]]',
@@ -149,6 +160,9 @@ export async function prepareCodexSkillIsolationProfile(input: {
   configDir: string
   probe?: CodexPromptInputProbe
   mcpDisableArgs?: readonly string[]
+  /** F5: contrato invisível do pane — viaja no MESMO profile por pane
+   *  (developer_instructions por arquivo, sem o teto do argv). */
+  developerInstructions?: string
 }): Promise<{ profileName: string; profilePath: string; disabledPaths: string[] }> {
   const profileName = codexSkillIsolationProfileName(input.paneGenerationId)
   const probe = input.probe ?? probeCodexPromptInput
@@ -164,10 +178,14 @@ export async function prepareCodexSkillIsolationProfile(input: {
   const temporaryPath = `${profilePath}.${process.pid}.${randomUUID()}.tmp`
   mkdirSync(input.configDir, { recursive: true })
   try {
-    writeFileSync(temporaryPath, renderCodexSkillIsolationProfile(disabledPaths), {
-      encoding: 'utf8',
-      flag: 'wx'
-    })
+    writeFileSync(
+      temporaryPath,
+      renderCodexSkillIsolationProfile(disabledPaths, input.developerInstructions),
+      {
+        encoding: 'utf8',
+        flag: 'wx'
+      }
+    )
     rmSync(profilePath, { force: true })
     renameSync(temporaryPath, profilePath)
 
