@@ -73,9 +73,21 @@
   que nunca viria). CORRIGIDO em a3267be, junto com: hint de espera no
   agente livre, regra DELEGOU-NÃO-ASSISTE (retorno do delegate + idle
   waiter hint de todos os papéis) e teto do livre 1→4 ajudantes.
-- RE-TESTE do mesmo cenário natural vale a pena antes da missão: 2
-  ajudantes devem abrir em paralelo, reports chegarem pelo correio e o
-  delegador ficar QUIETO esperando (waiter/long-poll), sem narração.
+- RE-TESTE 2 (22:51): 2 ajudantes em PARALELO ✓, activate_skill ✓, reports
+  pelo correio ✓ — mas o 📬 foi digitado com long-poll pendurado (reclamação
+  do dono: "não teria que o Synkora avisar") e um ajudante do teste seguinte
+  (23:00, 1º com contrato no system prompt) imprimiu a resposta SEM chamar
+  report. Fixes em bc8cdd7: nudge só para quem NÃO tem espera armada
+  (hasWaiters checado ANTES do post; outcome skipped-waiter-armed), throttle
+  re-agenda em vez de engolir, linha de fecho do report de volta ao turno
+  visível, lembrete "ainda esperando?" no drain do check_messages.
+- **RE-TESTE FINAL (23:10) — VALIDADO PELO DONO ("funcionou certinho, sem o
+  aviso digitado")**: 2 delegates paralelos, 2 reports via MCP, 2×
+  `skipped-waiter-armed` (zero digitação — o post acordou o long-poll), o
+  principal manteve o loop entre as respostas e consolidou as duas. O
+  vocabulário completo do correio está validado ao vivo SEM missão. O nudge
+  não precisa ser "aposentado": o desenho final é o CONDICIONAL (typed =
+  rede para pane sem espera armada; é a exceção auditada do F3).
 
 ## Fatos novos da sessão 2 (resumo de 1 tela)
 
