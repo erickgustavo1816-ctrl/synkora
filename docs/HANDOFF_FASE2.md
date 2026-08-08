@@ -1,28 +1,58 @@
-# HANDOFF — Fase 2 (veredito sem barreira síncrona) — CÓDIGO COMPLETO; falta a validação ao vivo do dono
+# HANDOFF — Fase 2 (veredito sem barreira síncrona) — CONCLUÍDA E VALIDADA PELO DONO (2026-08-08)
 
 ## PRÓXIMA SESSÃO (pós-clear) — leia isto primeiro
 
-1. **ONDE ESTAMOS**: TODO O CÓDIGO DA FASE ESTÁ CORTADO E VERDE — commits
-   **c1, c2, c3, c4, c5a, c5b, c5c e c5d FEITOS** (o corte real foi o
-   c5a/c5b: advancePhase é ASYNC, o git do veredito viaja ao worker em 1-2
-   pacotes e a atomicidade vem do PhaseTransitionLock por card). A matriz
-   §5.3 está ligada (races 9→18, com injeção de corrida via pauseGitTrip) e
-   o diff passou por revisão adversarial de agente Opus (APPROVED WITH
-   FIXES — todos aplicados no c5d, incluindo o F1 🔴: re-check de vigência
-   pós-await do sha256 no report). Detalhe por commit nos ESTADOs 1–7 da
-   seção "Fase 2" de docs/PLANO_NIVEL_5.md. Documentos-mestres:
-   - `docs/FASE2_PLANO.md` — o plano aprovado.
-   - `docs/FASE2_MAPA_VEREDITO.md` + `docs/FASE2_MAPA_CONCORRENTES.md` — as
-     varreduras (âncoras greppáveis; linhas deslocaram — grep sempre).
-2. **PRÓXIMO PASSO: VALIDAÇÃO AO VIVO DO DONO** (critério §1.3 do plano — é
-   o que FECHA a fase): rodar uma missão com gates atravessando
-   dev→review→QA no app real e conferir com
-   `node scripts/bbwatch.mjs --grep stall` que `advancePhase:*` SUMIU do
-   ranking de culpados; zero evento `phase-advance-without-lock`;
-   contenções de lock (`phase-transition-contention`) raras e explicadas.
-   Os casos 3/4/8 da matriz (run_task recusado no meio · onExit no meio ·
-   re-entrega × veredito) não são alcançáveis pelo harness (moram fora do
-   fecho compilado) — a validação ao vivo é a cobertura deles.
+0. **TEXTO QUE O DONO VAI COLAR** (referência do que foi combinado):
+   > Continua o nível 5 na branch nivel5-fase1. Lê docs/HANDOFF_FASE2.md
+   > primeiro (seção "PRÓXIMA SESSÃO"). A Fase 2 está concluída e validada.
+   > Tarefas, na ordem: (1) triagem da travadinha residual de abrir projeto
+   > pelo journal (bbwatch --grep stall); (2) começar a FASE 5 — zero
+   > digitação entre agentes (correio MCP); (3) se sobrar, sonda do
+   > SynVoice mais rápido. Agentes Opus [liberados / não]. App [aberto /
+   > fechado]. Push [feito / pendente].
+1. **ONDE ESTAMOS**: FASE 2 CONCLUÍDA — commits c1…c5d todos verdes, matriz
+   de corridas ligada (races 18), revisão adversarial aplicada, e o dono
+   VALIDOU AO VIVO ("melhorou bastante; nada se compara ao que estava
+   antes"). Detalhe por commit nos ESTADOs 1–8 da seção "Fase 2" de
+   docs/PLANO_NIVEL_5.md. Documentos-mestres: docs/FASE2_PLANO.md +
+   docs/FASE2_MAPA_VEREDITO.md + docs/FASE2_MAPA_CONCORRENTES.md (âncoras
+   greppáveis; linhas deslocaram — grep sempre).
+2. **TAREFA 1 — TRIAGEM DO RESIDUAL (barata, fazer primeiro)**: o dono
+   relatou "leve travadinha ao clicar no projeto" (ABERTURA do projeto —
+   não é o veredito). `node scripts/bbwatch.mjs --grep stall` no journal do
+   uso de 2026-08-08+ NOMEIA o culpado (Fase 0 instrumentou boot:*, ipc:*,
+   mcp:*, spawn). De quebra, fechar o critério §1.3 formal: advancePhase:*
+   fora do ranking · zero `phase-advance-without-lock` · contenções
+   (`phase-transition-contention`) raras. Culpado = renderer/WebGL/spawn →
+   evidência da FASE 3 (multi-renderer, Vertente B já decidida), NÃO
+   consertar na mão; culpado barato e nomeado → card pequeno.
+3. **TAREFA 2 — FASE 5: ZERO DIGITAÇÃO ENTRE AGENTES** (a prioridade que o
+   dono declarou: "depois vai resolver a questão do MCP"). O plano formal é
+   a seção "Fase 5" de docs/PLANO_NIVEL_5.md; a ordem do dono está na
+   memória feedback-zero-digitacao-entre-agentes. Estado real: o correio F1
+   (mailbox durável + entrega de carona nos resultados de tools) está EM
+   PRODUÇÃO desde F6.10; o que resta digitado é o AVISO curto "📬 …" e os
+   fallbacks. Pré-condição do plano: validar o F1 ao vivo — dá para provar
+   pelo journal (eventos mailbox-post/mailbox-delivered carona|check) antes
+   de desenhar. As sondas que provam o caminho do zero absoluto: R12
+   (WAITER em background acorda pane ocioso sem digitar) e R13 (long-poll
+   de check_messages para gates read-only) — falta sondar o equivalente
+   CODEX antes de generalizar (regra: sonda antes de afirmar).
+4. **TAREFA 3 (se sobrar) — SYNVOICE MAIS RÁPIDO** (pedido do dono
+   2026-08-08: a transcrição demora perceptível após soltar a gravação;
+   "poderia ser quase instantâneo"). Diagnóstico honesto: o fluxo atual é
+   NÃO-STREAMING (grava tudo → sobe o arquivo → espera o modelo processar o
+   clipe inteiro → texto) — a espera é majoritariamente da OpenAI, mas o
+   DESENHO amplifica. Três degraus, sondar antes de mexer (synVoice.ts):
+   (a) BARATO: conferir/trocar o modelo para o transcribe MINI (mais
+   rápido) + `stream=true` no /v1/audio/transcriptions (o texto começa a
+   chegar antes do fim do processamento — corta a latência percebida);
+   (b) MÉDIO: transcrição em STREAMING DURANTE a gravação via Realtime
+   API/WebSocket — ao soltar o botão o texto já está ~pronto (é o único
+   caminho para "quase instantâneo"); custo: reescrever o fluxo de captura
+   para chunks + WS no main, mais pontos de falha; (c) descartar por ora:
+   modelo local (whisper.cpp) — qualidade/manutenção não compensam. Regra
+   viva: sondar a API real com a chave do dono ANTES de prometer números.
 3. **DÉBITOS REGISTRADOS na revisão (decisão do dono, fora do gate)**:
    (a) `test:harness-lifecycle` está VERMELHO (26 falhas) desde a FASE 1 —
    as âncoras leem src/main/index.ts e as implementações migraram para
@@ -53,9 +83,10 @@
    §5.3 do plano). DESCOBERTA cravada em teste: o prefixo síncrono do
    retryOrBacklog zera verification.dev + evidência do gate reprovador
    ANTES do advancePhase retornar (§6.1 — a ordem que o c5 tem de manter).
-5. **Pendências que não são código**: PUSH (52 commits locais à frente de
-   origin — o dono decide) · validação AO VIVO do dono fecha a fase (item
-   2 acima) · agentes Opus exigem re-liberação do dono POR SESSÃO.
+5. **Pendências que não são código**: PUSH (~54 commits locais à frente de
+   origin — o dono decide) · agentes Opus exigem re-liberação do dono POR
+   SESSÃO · débito test:harness-lifecycle vermelho (item 3 da lista de
+   débitos acima) aguarda decisão do dono (re-apontar × aposentar).
 6. **Regras vivas** (inalteradas): toda edição de src SÓ com app parado
    (checar `Get-Process electron` imediatamente antes — a prova expira; o
    Synkora INSTALADO rodando não importa, é isolado desde e944325) · cada

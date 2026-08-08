@@ -536,6 +536,25 @@ bloco. Nunca "aproveitar e refatorar" fora do mapa.
 > provando que advancePhase:* sumiu do ranking (critério §1.3), zero
 > `phase-advance-without-lock`, contenções raras e explicadas. PUSH segue
 > pendente (decisão do dono).
+>
+> ESTADO 8 (2026-08-08, mesma sessão): **FASE 2 CONCLUÍDA — VALIDAÇÃO AO
+> VIVO POSITIVA do dono** ("o aplicativo subiu, eu testei, melhorou
+> bastante; nada se compara ao que estava antes"). Nota de incidente da
+> sessão: o node_modules do checkout principal foi esvaziado pela remoção
+> do worktree do agente (junction atravessada) — recuperado na hora com
+> npm ci + node_modules/electron/install.js; lição gravada em memória
+> (feedback-worktree-junction-node-modules). RESIDUAL RELATADO pelo dono:
+> "leve travadinha ao clicar no projeto" — isso NÃO é o veredito: é a
+> ABERTURA do projeto (spawn escalonado de panes/maestro, paneSpec,
+> renderer/WebGL — a família do CHECK 2, cuja solução de fundo é a FASE 3
+> multi-renderer, Vertente B já decidida pelo dono). A 1ª tarefa da próxima
+> sessão é a TRIAGEM BARATA desse residual: `node scripts/bbwatch.mjs
+> --grep stall` no journal do uso de hoje NOMEIA o culpado (a Fase 0
+> instrumentou boot:*, ipc:*, mcp:* e os wrappers) — e de quebra confirma o
+> critério §1.3 formal (advancePhase:* fora do ranking, zero
+> phase-advance-without-lock, contenções raras). Se o culpado do clique for
+> renderer/WebGL/spawn → vira EVIDÊNCIA da Fase 3, não conserto manual; se
+> for algo barato e nomeado → card pequeno.
 
 - Hoje `advancePhase` é SYNC POR CONTRATO (comentário-âncora em :10855; a
   cicatriz do "[object Promise]"): a fotografia atômica é garantida por
