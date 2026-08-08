@@ -95,6 +95,17 @@ export interface PhaseApi {
   openPhasePane(watchSpec: DevPaneSpec, projectId: string, taskId: string): void
   closePhasePane(projectId: string, taskId: string, role: RunPhase): void
   terminateTaskPhasePane(projectId: string, taskId: string, role: RunPhase): void
+  // ——— superfície extra do engine consumida pelo mcpApi (commit 4a) ———
+  /** Valida o artefato imutável do review (hash/tamanho/containment). */
+  reviewArtifactProblem(watch: PhaseWatch): string | undefined
+  /** Remove o artefato do storage privado (fim de rodada/veredito). */
+  cleanupReviewArtifact(watch: PhaseWatch): void
+  /** Chunk autenticado do diff SHA-pinado servido ao reviewer. */
+  readReviewArtifactChunk(watch: PhaseWatch, offset: number, maxBytes?: number): string
+  /** Marcador `synkora-task:<id>` usado no recibo de integração. */
+  taskIntegrationMarker(task: Task): string
+  /** Retoma merge/finalize interrompido sobre os gates já aprovados. */
+  recoverFinalizingTask(task: Task): Promise<boolean>
 }
 
 export interface MainContext {

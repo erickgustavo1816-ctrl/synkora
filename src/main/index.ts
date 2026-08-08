@@ -4315,7 +4315,12 @@ app.whenReady().then(async () => {
       finalizeTask: (...args) => finalizeTask(...args),
       openPhasePane: (...args) => openPhasePane(...args),
       closePhasePane: (...args) => closePhasePane(...args),
-      terminateTaskPhasePane: (...args) => terminateTaskPhasePane(...args)
+      terminateTaskPhasePane: (...args) => terminateTaskPhasePane(...args),
+      reviewArtifactProblem: (...args) => reviewArtifactProblem(...args),
+      cleanupReviewArtifact: (...args) => cleanupReviewArtifact(...args),
+      readReviewArtifactChunk: (...args) => readReviewArtifactChunk(...args),
+      taskIntegrationMarker: (...args) => taskIntegrationMarker(...args),
+      recoverFinalizingTask: (...args) => recoverFinalizingTask(...args)
     }
   }
   // consumidores do ctx: phaseEngine (commit 3); mcpApi/ipc nos commits 4–5
