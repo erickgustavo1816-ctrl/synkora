@@ -116,6 +116,11 @@ import { buildMissionsApi } from './mcpApi/missions'
 import { buildHelpersApi } from './mcpApi/helpers'
 import { buildBoardApi } from './mcpApi/board'
 import { buildReportApi } from './mcpApi/report'
+import { registerFilesIpc } from './ipc/files'
+import { registerSettingsIpc } from './ipc/settings'
+import { registerServicesIpc } from './ipc/services'
+import { registerHarnessIpc } from './ipc/harness'
+import { registerProjectPlanIpc } from './ipc/projectPlan'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerProgressIpc } from './ipc/progress'
 import { registerSkillsIpc } from './ipc/skills'
@@ -2774,57 +2779,6 @@ app.whenReady().then(async () => {
   // token opcional do GitHub p/ a biblioteca de skills (60/h → 5.000/h)
   setGithubToken(settings.get().githubToken)
 
-  ipcMain.handle('settings:get', (e) => {
-    assertMainRendererSender(e)
-    return settings.view()
-  })
-  ipcMain.handle('settings:set', async (e, patch: SynkoraSettingsPatch) => {
-    assertMainRendererSender(e)
-    const previous = settings.get()
-    const safePatch: SynkoraSettingsPatch =
-      patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {}
-    const next = settings.update(safePatch)
-    ptys.setConptyDll(next.conptyDll !== false)
-    setGithubToken(next.githubToken)
-    if (previous.codeIntelligenceMode !== next.codeIntelligenceMode) {
-      await transitionCodeIntelligence(next.codeIntelligenceMode)
-    }
-    if (previous.externalServicePreparation !== next.externalServicePreparation) {
-      if (next.externalServicePreparation === 'automatic') {
-        validateExternalServices()
-        for (const seat of seats.list()) {
-          if (seat.cli === 'codex') void prewarmCodexMcpProtocol(seats.configDirOf(seat))
-        }
-      }
-      else {
-        preparedPlaywright = undefined
-        externalServicesAvailable = null
-        externalServicesCheckedAt = null
-      }
-    }
-    // Outra alteração pode ter sido persistida enquanto o fechamento do LSP
-    // aguardava. Devolver o estado atual impede uma resposta tardia de fazer a
-    // UI regredir para um snapshot antigo.
-    return settings.view()
-  })
-  const validSettingsSecret = (value: unknown): value is SettingsSecretName =>
-    value === 'openrouterKey' || value === 'githubToken'
-  ipcMain.handle('settings:secret:set', (e, name: unknown, value: unknown) => {
-    assertMainRendererSender(e)
-    if (!validSettingsSecret(name) || typeof value !== 'string') {
-      throw new Error('Credencial inválida.')
-    }
-    const next = settings.setSecret(name, value)
-    if (name === 'githubToken') setGithubToken(next.githubToken)
-    return settings.view()
-  })
-  ipcMain.handle('settings:secret:clear', (e, name: unknown) => {
-    assertMainRendererSender(e)
-    if (!validSettingsSecret(name)) throw new Error('Credencial inválida.')
-    const next = settings.clearSecret(name)
-    if (name === 'githubToken') setGithubToken(next.githubToken)
-    return settings.view()
-  })
 
   // SYNVOICE: bytes do microfone entram por IPC e a chamada externa acontece
   // exclusivamente no main. As chaves nunca voltam ao renderer e ficam
@@ -10650,55 +10604,6 @@ app.whenReady().then(async () => {
   }, 3000)
 
 
-  ipcMain.handle('harness:setBypass', (e, projectId: string, on: boolean) => {
-    bindUiSender(e.sender)
-    // on = fluxo reto (bypass); off = religa aprovações (acceptEdits/sandbox).
-    maestro.update(projectId, { bypassOff: on ? undefined : true })
-    emitLog(projectId, {
-      kind: 'ok',
-      text: on
-        ? 'permissões em BYPASS — o fluxo segue reto, sem prompts (vale para panes novos)'
-        : 'aprovações RELIGADAS — panes novos voltam a pedir permissão'
-    })
-    hub.publish({
-      projectId,
-      kind: 'info',
-      text: on ? 'permissões em bypass (fluxo reto)' : 'aprovações religadas',
-      actor: 'user'
-    })
-  })
-
-  // Override do DONO para superfície sensível: em projeto cujo DOMÍNIO cita
-  // PII/fiscal em toda missão (ex.: PER/DCOMP), o classificador suprimiria o
-  // bypass de todo pane escritor para sempre. Este switch devolve o comando ao
-  // toggle de bypass; cada pane que nasce sob o override é auditado na
-  // caixa-preta (sensitive-bypass-override).
-  ipcMain.handle('harness:setSensitiveBypass', (e, projectId: string, on: boolean) => {
-    bindUiSender(e.sender)
-    maestro.update(projectId, { sensitiveAutoOk: on ? true : undefined })
-    emitLog(projectId, {
-      kind: 'ok',
-      text: on
-        ? 'superfície sensível LIBERADA — o toggle de bypass volta a mandar (vale para panes novos; auditado na caixa-preta)'
-        : 'superfície sensível PROTEGIDA — pane escritor em missão sensível volta a pedir aprovação'
-    })
-    hub.publish({
-      projectId,
-      kind: 'info',
-      text: on
-        ? 'superfície sensível liberada pelo usuário (bypass vale)'
-        : 'superfície sensível protegida (aprovação interativa)',
-      actor: 'user'
-    })
-  })
-
-  // Plano mestre para a aba Mapa do renderer (read-only; a fonte é o
-  // PROJECT_PLAN.json que o Maestro mantém).
-  ipcMain.handle('projectPlan:get', (e, projectId: string) => {
-    bindUiSender(e.sender)
-    return projectPlanOf(projectId) ?? null
-  })
-
   // Versão atual do projeto: tarefas novas são carimbadas com ela (filtro do
   // board por versão).
   ipcMain.handle('maestro:setVersion', (e, projectId: string, version: string) => {
@@ -10790,157 +10695,10 @@ app.whenReady().then(async () => {
   )
 
 
-  // ————— Arquivos do projeto (aba Arquivos + viewer de markdown) —————
-  // Lista os .md que interessam (planos do maestro, dossiê, docs, transcripts)
-  // e serve o conteúdo para o viewer renderizar bonito dentro do Synkora.
-  interface DocFile {
-    /** caminho relativo ao projeto, com / */
-    path: string
-    name: string
-    group: 'projeto' | 'docs' | 'synkora' | 'transcripts'
-    mtime: number
-    size: number
-  }
-
-  ipcMain.handle('files:listDocs', (_e, projectId: string): DocFile[] => {
-    const project = projects.get(projectId)
-    if (!project) return []
-    const out: DocFile[] = []
-    const push = (abs: string, rel: string, group: DocFile['group']): void => {
-      try {
-        const st = statSync(abs)
-        out.push({
-          path: rel.replace(/\\/g, '/'),
-          name: rel.split(/[\\/]/).pop() ?? rel,
-          group,
-          mtime: st.mtimeMs,
-          size: st.size
-        })
-      } catch {
-        // sumiu no meio do scan
-      }
-    }
-    const scanDir = (dir: string, relBase: string, group: DocFile['group'], depth: number): void => {
-      let entries: import('fs').Dirent[]
-      try {
-        entries = readdirSync(dir, { withFileTypes: true })
-      } catch {
-        return
-      }
-      for (const ent of entries) {
-        if (ent.name.startsWith('.') || ent.name === 'node_modules') continue
-        const abs = join(dir, ent.name)
-        const rel = relBase ? `${relBase}/${ent.name}` : ent.name
-        if (ent.isDirectory()) {
-          if (depth > 0) scanDir(abs, rel, group, depth - 1)
-        } else if (/\.md$/i.test(ent.name)) {
-          push(abs, rel, group)
-        }
-      }
-    }
-    scanDir(project.path, '', 'projeto', 0) // .md da raiz (README, CLAUDE.md…)
-    scanDir(join(project.path, 'docs'), 'docs', 'docs', 3)
-    scanDir(join(project.path, '.synkora'), '.synkora', 'synkora', 0)
-    scanDir(join(project.path, '.synkora', 'missions'), '.synkora/missions', 'synkora', 0)
-    scanDir(join(project.path, '.synkora', 'reports'), '.synkora/reports', 'synkora', 0)
-    scanDir(join(project.path, '.synkora', 'runs'), '.synkora/runs', 'transcripts', 0)
-    return out.sort((a, b) => b.mtime - a.mtime)
-  })
-
-  ipcMain.handle(
-    'files:readDoc',
-    (_e, projectId: string, relPath: string): { content: string; mtime: number } | null => {
-      const project = projects.get(projectId)
-      if (!project) return null
-      return readProjectMarkdown(project.path, relPath)
-    }
-  )
-
   /** Raízes autorizadas para links impressos por um pane. O renderer não pode
    * escolher um cwd: ele só informa o paneId, e o main recupera a identidade
    * que foi armada para aquele processo. */
-  const terminalFileRoots = (projectId: string, paneId: string): TerminalFileRoot[] => {
-    const project = projects.get(projectId)
-    const identity = hub.identityByPane(paneId)
-    if (!project || !identity || identity.projectId !== projectId) return []
-    const roots: TerminalFileRoot[] = [{ id: 'project', path: project.path }]
-    if (resolve(identity.cwd).toLowerCase() !== resolve(project.path).toLowerCase()) {
-      roots.push({ id: 'pane', path: identity.cwd })
-    }
-    return roots
-  }
 
-  ipcMain.handle(
-    'files:terminalLinks',
-    (_e, projectId: string, paneId: string, text: string) => {
-      if (typeof text !== 'string' || text.length > 16_384) return []
-      return findTerminalFileLinks(text, terminalFileRoots(projectId, paneId))
-        .map(({ start, length, text: label }) => ({ start, length, text: label }))
-    }
-  )
-
-  ipcMain.handle(
-    'files:openTerminalFile',
-    async (_e, projectId: string, paneId: string, candidate: string) => {
-      if (typeof candidate !== 'string') return { ok: false, error: 'caminho inválido' }
-      const resolvedFile = resolveTerminalFile(
-        candidate,
-        terminalFileRoots(projectId, paneId)
-      )
-      if (!resolvedFile) return { ok: false, error: 'arquivo não encontrado ou fora do projeto' }
-
-      const openKind = terminalFileOpenKind(resolvedFile.absolutePath)
-      if (openKind === 'markdown') {
-        return {
-          ok: true,
-          action: 'markdown' as const,
-          paneId,
-          root: resolvedFile.root,
-          path: resolvedFile.relativePath,
-          name: basename(resolvedFile.absolutePath),
-          displayPath: candidate
-        }
-      }
-      if (openKind === 'reveal') {
-        shell.showItemInFolder(resolvedFile.absolutePath)
-        return { ok: true, action: 'reveal' as const }
-      }
-
-      const error = await shell.openPath(resolvedFile.absolutePath)
-      return error
-        ? { ok: false, error }
-        : { ok: true, action: 'external' as const }
-    }
-  )
-
-  ipcMain.handle(
-    'files:readTerminalDoc',
-    (
-      _e,
-      projectId: string,
-      paneId: string,
-      rootId: TerminalFileRoot['id'],
-      relPath: string
-    ): { content: string; mtime: number } | null => {
-      if (typeof relPath !== 'string' || !/\.md$/i.test(relPath)) return null
-      const project = projects.get(projectId)
-      const root = rootId === 'project' && project
-        ? { id: 'project' as const, path: project.path }
-        : terminalFileRoots(projectId, paneId).find((item) => item.id === rootId)
-      if (!root) return null
-      const resolvedFile = resolveTerminalFile(relPath, [root])
-      if (!resolvedFile || !/\.md$/i.test(resolvedFile.absolutePath)) return null
-      try {
-        const st = statSync(resolvedFile.absolutePath)
-        if (st.size > 2 * 1024 * 1024) {
-          return { content: '_arquivo grande demais para o viewer (>2MB)_', mtime: st.mtimeMs }
-        }
-        return { content: readFileSync(resolvedFile.absolutePath, 'utf-8'), mtime: st.mtimeMs }
-      } catch {
-        return null
-      }
-    }
-  )
 
   ipcMain.on('pty:startup-request', (_e, paneId: string) => {
     if (typeof paneId !== 'string' || paneId.length > 200 || ptys.has(paneId)) return
@@ -12177,54 +11935,6 @@ app.whenReady().then(async () => {
       }
     })
   }
-  ipcMain.handle('projectPlan:approve', (e, projectId: string, expectedUpdatedAt: string) => {
-    bindUiSender(e.sender)
-    const project = projects.get(projectId)
-    if (!project) return 'projeto não encontrado'
-    const currentPlan = projectPlanOf(projectId)
-    if (!currentPlan || currentPlan.updatedAt !== expectedUpdatedAt) {
-      return 'o roadmap mudou enquanto estava aberto. Recarreguei a fotografia; revise a versão atual antes de aprovar.'
-    }
-    humanProjectPlanApprovals.add(projectId)
-    try {
-      return mcpApi.approveProjectPlan({
-        paneId: `renderer-plan-approval:${projectId}`,
-        projectId,
-        role: 'maestro',
-        cwd: project.path
-      })
-    } finally {
-      humanProjectPlanApprovals.delete(projectId)
-    }
-  })
-  ipcMain.handle(
-    'projectPlan:startMission',
-    (e, projectId: string, itemId: string, expectedUpdatedAt: string) => {
-    bindUiSender(e.sender)
-    const project = projects.get(projectId)
-    if (!project) return 'projeto não encontrado'
-    const currentPlan = projectPlanOf(projectId)
-    if (!currentPlan || currentPlan.updatedAt !== expectedUpdatedAt) {
-      return 'o roadmap mudou enquanto estava aberto. Recarreguei a fotografia; confirme o item novamente na versão atual.'
-    }
-    const normalizedItemId = itemId.trim()
-    const key = `${projectId}:${normalizedItemId}`
-    humanProjectMissionStarts.add(key)
-    try {
-      return mcpApi.startProjectMission(
-        {
-          paneId: `renderer-mission-start:${projectId}:${normalizedItemId}`,
-          projectId,
-          role: 'maestro',
-          cwd: project.path
-        },
-        normalizedItemId
-      )
-    } finally {
-      humanProjectMissionStarts.delete(key)
-    }
-    }
-  )
   const instrumentedMcpApi = instrumentMcpApi(mcpApi)
 
   const installInternalMcp = async (preferredPort = 0): Promise<void> => {
@@ -12344,30 +12054,6 @@ app.whenReady().then(async () => {
     }
   }
 
-  ipcMain.handle('services:get', (e, includeLocalDetails?: boolean) => {
-    assertMainRendererSender(e)
-    return servicesSnapshot(includeLocalDetails === true)
-  })
-  ipcMain.handle('services:restart', async (e, service: unknown) => {
-    assertMainRendererSender(e)
-    if (service === 'code-intelligence') {
-      await transitionCodeIntelligence(settings.get().codeIntelligenceMode, true)
-    } else if (service === 'internal-mcp') {
-      await restartInternalMcp()
-    } else if (service === 'codex-probe') {
-      invalidateCodexMcpProtocol()
-      await Promise.all(
-        seats.list()
-          .filter((seat) => seat.cli === 'codex')
-          .map((seat) => prewarmCodexMcpProtocol(seats.configDirOf(seat)))
-      )
-    } else if (service === 'external-services') {
-      validateExternalServices()
-    } else {
-      throw new Error('Serviço local desconhecido.')
-    }
-    return servicesSnapshot(false)
-  })
 
   const HELPER_TTL = 7 * 86_400_000
   const CLIP_TTL = 14 * 86_400_000
@@ -12715,6 +12401,46 @@ app.whenReady().then(async () => {
         return latestProgressSnapshot
       }
     }
+  })
+  registerFilesIpc(ctx)
+  registerSettingsIpc(ctx, {
+    assertMainRendererSender,
+    transitionCodeIntelligence,
+    validateExternalServices,
+    state: {
+      get preparedPlaywright() {
+        return preparedPlaywright
+      },
+      set preparedPlaywright(v) {
+        preparedPlaywright = v
+      },
+      get externalServicesAvailable() {
+        return externalServicesAvailable
+      },
+      set externalServicesAvailable(v) {
+        externalServicesAvailable = v
+      },
+      get externalServicesCheckedAt() {
+        return externalServicesCheckedAt
+      },
+      set externalServicesCheckedAt(v) {
+        externalServicesCheckedAt = v
+      }
+    }
+  })
+  registerServicesIpc(ctx, {
+    assertMainRendererSender,
+    transitionCodeIntelligence,
+    restartInternalMcp,
+    servicesSnapshot,
+    validateExternalServices
+  })
+  registerHarnessIpc(ctx, { bindUiSender })
+  registerProjectPlanIpc(ctx, {
+    bindUiSender,
+    humanProjectPlanApprovals,
+    humanProjectMissionStarts,
+    getMcpApi: () => mcpApi
   })
 
   // Fase 0: criação da janela é etapa medida do boot
