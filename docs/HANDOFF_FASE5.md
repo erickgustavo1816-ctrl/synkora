@@ -61,6 +61,22 @@
    default: `undefined` explícito ATIVA o default (bug real na suíte
    mail-wait).
 
+## Teste sem missão do dono (2026-08-08, noite — agente livre + 2 ajudantes)
+
+- PROVOU o correio ao vivo: zero delivery-injected; o "empurrão" do
+  delegador foi mailbox-post → nudge 📬 (1 linha) → check_messages 4s
+  depois. O texto visto no pane do ajudante é o ECO do initialPrompt
+  (spawn), não digitação.
+- ACHOU BUG REAL: scope de skills do ajudante sem projectId → activate_skill
+  recusava sempre → report(done) em beco (os 2 ajudantes travaram; o
+  delegador pollou list_helpers 15× + helper_output 8× esperando um report
+  que nunca viria). CORRIGIDO em a3267be, junto com: hint de espera no
+  agente livre, regra DELEGOU-NÃO-ASSISTE (retorno do delegate + idle
+  waiter hint de todos os papéis) e teto do livre 1→4 ajudantes.
+- RE-TESTE do mesmo cenário natural vale a pena antes da missão: 2
+  ajudantes devem abrir em paralelo, reports chegarem pelo correio e o
+  delegador ficar QUIETO esperando (waiter/long-poll), sem narração.
+
 ## Fatos novos da sessão 2 (resumo de 1 tela)
 
 - probe-codex-mailbox-wait.mjs ganhou W6 (check_messages long-poll com
