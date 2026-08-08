@@ -390,6 +390,24 @@ bloco. Nunca "aproveitar e refatorar" fora do mapa.
 > portado da main (e944325 — userData próprio %LOCALAPPDATA%\Synkora +
 > origem file:/// do microfone, sondada em probe-file-media-origin +
 > aviso de captura negada); o SynVoice do instalado foi validado pelo dono.
+>
+> ESTADO 3 (2026-08-08): **F2-c2 FEITO** (59c961f):
+> scripts/test-phase-verdict-races.mjs — o engine REAL roda em node cru
+> (fecho de 65 módulos via tsc --noCheck; stubs de electron E ./gitAsync por
+> Module._load — o stub do gitAsync tem gate `beforeCall` pronto para as
+> corridas do c5), ctx fake mínimo (só o que o createPhaseEngine
+> desestrutura na construção) com TaskStore REAL (commit atômico de
+> produção) e fixture git REAL em tmpdir. 6 baselines dos fluxos ATUAIS:
+> dev done→review · drift de fotografia (false re-indexa o watch) ·
+> reprovada limpa · aprovada→qa · gate-que-escreveu invalidado · sentinela
+> de rejeição órfã das continuações `void` (zerada). DESCOBERTA do baseline
+> que vira asserção permanente: o PREFIXO SÍNCRONO do retryOrBacklog
+> (disparado com `void` de dentro do veredito) zera verification.dev e a
+> evidência do gate reprovador ANTES de o advancePhase retornar — é a
+> ordem exata que o §6.1 do plano protege na conversão async. Verde:
+> typecheck + 39/25/14/14/8 + 9 + 6. PRÓXIMO: F2-c3 — pacotes de fatos git
+> no worktree.ts (devDeliveryFacts/gateVerdictFacts/quarantineAndRevalidate)
+> + extração do reviewArtifactIdentity para reviewEvidence.ts + registry.
 
 - Hoje `advancePhase` é SYNC POR CONTRATO (comentário-âncora em :10855; a
   cicatriz do "[object Promise]"): a fotografia atômica é garantida por
