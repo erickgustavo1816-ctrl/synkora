@@ -555,6 +555,30 @@ bloco. Nunca "aproveitar e refatorar" fora do mapa.
 > phase-advance-without-lock, contenções raras). Se o culpado do clique for
 > renderer/WebGL/spawn → vira EVIDÊNCIA da Fase 3, não conserto manual; se
 > for algo barato e nomeado → card pequeno.
+>
+> ESTADO 9 (2026-08-08, sessão seguinte): **TRIAGEM DO RESIDUAL FEITA —
+> critério §1.3 formal FECHADO**: `advancePhase:*` AUSENTE de todos os
+> culprits (0 ocorrências nos journals de 02–08/08), zero
+> `phase-advance-without-lock`, zero `phase-transition-contention`. A
+> Fase 2 está limpa no journal. **A travadinha do clique tem culpado
+> NOMEADO** (journal dev, 2026-08-07 19:31:12Z, boot 942c3b6f, uptime 11s,
+> stall ~1457ms): `ipc:missions:paneSpec` ×3 (~474+457+445ms) +
+> `ipc:maestro:paneSpec` (~194ms). Leitura do código: missions:paneSpec
+> roda GIT SÍNCRONO no main por missão — `ensureMissionWorktree`
+> (missionEngine.ts:191: hasGitCommit + isExpectedWorktree +
+> ensureSynkoraGitExcludes, todos execFileSync de worktree.ts) +
+> ensureProjectSecurityBaseline; abrir projeto com N missões ativas =
+> N×~450ms de main parado (o escalonador de 350ms espaça os SPAWNS, não o
+> custo síncrono de cada spec). NÃO é evidência da Fase 3 (nenhum culpado
+> renderer/WebGL). **CARD PEQUENO registrado**: caminho de LEITURA do
+> paneSpec viaja por gitOff (o registry do gitWorker já tem worktree.ts e
+> missions:paneSpec já é async); mutação de estado fica no main com guarda
+> anti-janela-de-await — mesmo padrão da cópia de skills (F6.8). Observação
+> menor: os 15 stalls de 08/08 são todos de BOOT (~1,6–1,8s, uptime 3–6s) —
+> culprits nomeados somam só ~200–900ms (boot:progressSnapshot ~190ms +
+> syncBoard em rajada 5×~125ms); o resto é overhead de partida
+> não-instrumentado (dev/GC por eliminação, hipótese da Fase 0 rodada 2). O
+> INSTALADO (userData próprio) registrou 2 boots com ZERO stalls.
 
 - Hoje `advancePhase` é SYNC POR CONTRATO (comentário-âncora em :10855; a
   cicatriz do "[object Promise]"): a fotografia atômica é garantida por
@@ -623,6 +647,49 @@ eles extremamente rápida" (memória `feedback-zero-digitacao-entre-agentes`).
 - Encaixe: pode rodar ANTES da Fase 3 (multi-renderer) se a validação do F1
   vier limpa — é menor que qualquer fase da cirurgia e independe dela; a
   Fase 1 (extração do mcpApi/hub) deixa o terreno mais limpo para o F2.
+
+> ESTADO F5-1 (2026-08-08): **SONDA CODEX FEITA**
+> (scripts/probe-codex-mailbox-wait.mjs; resultado em
+> .tmp/probe-codex-mailbox-wait.json; codex 0.147.0, gpt-5.6-luna, servidor
+> MCP REAL do app com api stub, perfil exato do gate codex):
+> **(a) LONG-POLL POSITIVO** — o cliente MCP do codex espera a resposta de
+> uma tool call segurada por 45s E 75s SEM nenhuma config (W2/W3
+> long-poll-ok; o marcador voltou ao modelo); o knob por servidor
+> `mcp_servers.synkora.tool_timeout_sec` existe e funciona (W4 com 300s).
+> O R13 do claude tem equivalente codex PROVADO: gates/panes codex podem
+> esperar correio via check_messages long-poll.
+> **(b) WAITER BACKGROUND NEGATIVO** — com `--enable unified_exec` o
+> catálogo ganha functions.exec + functions.wait (W5a), mas processo
+> background que TERMINA não acorda o agente pós-turno (W5 TUI real via
+> PowerShell -EncodedCommand: WAITING confirmado no ROLLOUT, 180s de espera,
+> nunca WOKE-UP). A espera do codex é DENTRO do turno (functions.wait /
+> tool MCP segurada) — o waiter pós-turno R12 fica EXCLUSIVO do claude; o
+> caminho universal codex é o long-poll do check_messages.
+> Pegadinhas cravadas na sonda: perfil de gate codex exige
+> codexGateMcpPolicyArgs (default_tools_approval_mode="approve") — sem ela
+> AUTO-NEGA ("user cancelled MCP tool call"), bypass indiferente; e detectar
+> resposta de TUI codex pela TELA dá falso positivo (eco do prompt) — só o
+> rollout vale (mesma lição do R7 claude).
+>
+> ESTADO F5-2 (2026-08-08, mesma sessão): **F2 COMEÇOU — correio entrega de
+> verdade** (docs/FASE5_INVENTARIO_INJETORES.md é o mapa completo; 4 bugs do
+> F1 achados na varredura). c1: a decisão de correio SUBIU para o hub
+> (HubDeps.hasMailbox/deliverToMailbox) — entrega de correio é IMEDIATA
+> (guardas composer/inFlight/gap são de TECLADO e não se aplicam), desfecho
+> auditado novo `mailboxed` (o journal grava `mailbox-post` com meta causal;
+> `delivery-injected` volta a significar SÓ digitação real — o falso
+> positivo do F1 morreu), nudge 📬 AUDITADO (evento `mailbox-nudge`
+> typed/throttled/skipped-composer-busy) e respeitando o composer, mailbox
+> com meta causal fim-a-fim (sourcePaneId/kind/correlationId) e coalescência
+> por FATO (dedupKey = key da fila do hub). c2: `helper_send` curto (picker)
+> vai por TECLADO CRU (bug real do F1: resposta de picker ia para a mailbox
+> e a seleção nunca acontecia; pelo hub ainda ganharia prefixo "[synkora]")
+> com evento auditado `helper-send-raw-keystroke`; retornos de notify_pane/
+> helper_send agora dizem a VIA REAL da entrega. Suíte nova
+> test:mailbox-delivery (9). Pendente: validação ao vivo do F1+F2 na
+> próxima missão real (nenhuma missão rodou desde F6.10 — journals 07-08
+> zerados de mailbox-*), e o F3 (aposentar o nudge via waiter claude +
+> long-poll check_messages, agora com os dois lados sondados).
 
 ## Nota de estado — spec MCP 2026-07-28 (verificado em sonda, 2026-08-07)
 
