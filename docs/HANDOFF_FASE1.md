@@ -1,8 +1,50 @@
-# HANDOFF — Fase 1 da cirurgia do índice (pós-commits 0/0.5/1)
+# HANDOFF — Fase 1 da cirurgia do índice (pós-commit 3)
 
-Escrito 2026-08-07, fim da sessão dos commits 0/0.5/1. A PRÓXIMA SESSÃO lê
-este arquivo PRIMEIRO, depois docs/FASE1_MAPA_MAINCONTEXT.md (a receita) e o
-bloco ESTADO da Fase 1 em docs/PLANO_NIVEL_5.md.
+Atualizado 2026-08-08, fim da sessão do commit 3 (phaseEngine.ts). A PRÓXIMA
+SESSÃO lê este arquivo PRIMEIRO, depois docs/FASE1_MAPA_MAINCONTEXT.md (a
+receita) e o bloco ESTADO da Fase 1 em docs/PLANO_NIVEL_5.md (o ESTADO 4 tem
+o desfecho desta sessão).
+
+## SESSÃO DE 2026-08-08 — o que mudou desde o texto abaixo
+
+- **CHECKPOINT DA FRENTE PARALELA (885c054)**: o working tree chegou com
+  ~12,5k linhas NÃO commitadas da outra frente (skills/evidence/harness),
+  entrelaçadas com o index (+2,8k nele, incluindo PhaseWatch.reviewArtifact
+  — a frente mexeu na própria máquina de fases). Separado em commit próprio
+  ANTES do corte, com typecheck + 5 suítes validados verdes naquele ponto.
+  A regra "não commitar a família skills" do handoff anterior valia com a
+  sessão paralela VIVA; commitar o commit 3 por cima do tree misto seria a
+  violação pior (commit irreversível na prática). O dono revisa/reorganiza
+  antes do push se quiser — nada foi pushado.
+- **COMMIT 3 FEITO (685a77b)**: src/main/phaseEngine.ts com
+  createPhaseEngine(ctx, extras). Corte MECÂNICO por range de linha com
+  âncoras regex por borda (script; zero redigitação); substituições no corpo
+  restritas a uiSender/mcpPort/codeIntelligence → ctx.* (getters reativos) e
+  mcpApi.codeReportGuard → extras.codeReportGuard (late-bound por arrow). O
+  index mantém ALIASES desestruturados do engine — call sites externos e
+  getters do ctx ficaram textualmente intactos. Riscos do mapa todos pagos
+  (advancePhase sync, MAX_PARALLEL_RUNS export sem hoisting,
+  tickPhaseWatches separado, recordGateDeath no onExit). Fixes de contrato
+  no mainContext.ts: advancePhase com arity real de 5 params e phaseWatches
+  com detach() estrutural.
+- **DIVERGÊNCIA JUSTIFICADA do handoff antigo**: livePaneSpecs/
+  closingPaneIds/paneEverSpawned NÃO migraram — a varredura provou que são
+  ciclo de vida de pane genérico (pty:create/kill, delegateMany,
+  helperClose) e pertencem ao futuro paneLifecycle.ts, não ao engine.
+- index.ts: 21.783 (pós-frente-paralela) → **17.988 linhas**. Verde:
+  typecheck node+web + orchestrator-flow 39 + mission-verification 25 +
+  integration-queue 14 + pane-permissions 14 + stall-attribution 8 (as
+  suítes CRESCERAM na frente paralela: 35→39 e 11→14).
+- **PRÓXIMO PASSO: commit 4 — mcpApi/ por domínio** (mailbox → code →
+  board → skills → helpers → panes → missions → images; `report` em commit
+  PRÓPRIO — é o bloco mais entrelaçado do arquivo). O engine já expõe tudo
+  o que o mcpApi precisa via ctx.phase + aliases; a montagem final continua
+  um objeto único literal-compatível com McpApi (mcpServer.ts).
+- Boot de validação do dono AINDA pendente — agora cobre também o
+  checkpoint da frente paralela (um `npm run dev`: boot limpo, board
+  abrindo, pipeline de fase inteiro passando pelo engine).
+
+## Texto da sessão anterior (2026-08-07) — contexto histórico
 
 ## Onde a obra está (branch `nivel5-fase1`)
 

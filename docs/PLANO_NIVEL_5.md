@@ -114,6 +114,39 @@ eliminação é overhead do modo dev/GC — registrar e seguir para a Fase 1.
 > HANDOFF da sessão em **docs/HANDOFF_FASE1.md** — a próxima sessão lê
 > ELE primeiro (pendências não-código: boot de validação do dono, push
 > dos 5 commits locais, mão alheia em bundledSkillRevision/skillsLibrary).
+>
+> ESTADO 4 (2026-08-08): **checkpoint da frente paralela + commit 3 FEITOS**.
+> Checkpoint (885c054): a frente paralela (skills/evidence/harness) deixou
+> ~12,5k linhas não commitadas ENTRELAÇADAS com o index — separada em commit
+> próprio, não revisado por esta obra, para o commit 3 nascer reversível
+> (a regra "não commitar a família skills" valia com a sessão paralela
+> VIVA; com ela fechada, misturar as frentes no mesmo commit era o mal
+> maior). Commit 3 (685a77b): `src/main/phaseEngine.ts` novo —
+> createPhaseEngine(ctx, extras) com o corpo movido VERBATIM por range de
+> linha (script de corte com âncoras regex por borda; zero redigitação):
+> preparePhasePane/Inner, advancePhase/Inner (SYNC POR CONTRATO),
+> retryOrBacklog, finalizeTask, openGatePane, open/closePhasePane,
+> terminateTaskPhasePane, recoverFinalizingTask, gates vivos, boot
+> respawns, artefato de review e o tick de fases (tickPhaseWatches; o
+> setInterval fica no index com helper watchdog + missionWatches). Estado
+> de fase nasce NO ENGINE; o index mantém aliases desestruturados (call
+> sites e getters do ctx textualmente intactos). Riscos do mapa pagos:
+> MAX_PARALLEL_RUNS export declarado antes de todo consumidor,
+> recordGateDeath(taskId) no onExit (nunca o Map cru), codeReportGuard
+> late-bound por arrow (mcpApi nasce depois). Fixes de contrato:
+> PhaseApi.advancePhase com a arity REAL de 5 params (o tipo do commit 1
+> dropava verificationEvidence/acceptance em silêncio — gap achado na
+> re-varredura) e ctx.phaseWatches tipado com detach() (estrutural, sem
+> ciclo de import). DIVERGÊNCIA JUSTIFICADA do handoff: livePaneSpecs/
+> closingPaneIds/paneEverSpawned FICARAM no index — são ciclo de vida de
+> pane genérico (helpers/delegateMany/helperClose/pty) e pertencem ao
+> futuro paneLifecycle.ts. index 21783→17988 linhas (a frente paralela
+> tinha devolvido ~2,8k). Verde: typecheck node+web + orchestrator-flow
+> 39 + mission-verification 25 + integration-queue 14 + pane-permissions
+> 14 + stall-attribution 8 (as suítes cresceram na frente paralela).
+> PRÓXIMO: commit 4 (mcpApi/ por domínio; report em commit próprio) —
+> boot de validação do dono segue pendente, agora cobrindo TAMBÉM o
+> checkpoint da frente paralela.
 
 Âncoras reais (index.ts de hoje): bindUiSender :463 · mcpPaneArgs :3988 ·
 armPane :4062 · recovery de boot :6797–6943 · completeMissionMerge :7344 ·
