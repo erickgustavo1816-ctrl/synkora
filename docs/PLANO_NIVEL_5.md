@@ -424,6 +424,44 @@ bloco. Nunca "aproveitar e refatorar" fora do mapa.
 > F2-c4 — SERIALIZAR: lock ligado em todos os entrantes da tabela §3.3 do
 > plano com advancePhase AINDA sync (comportamento idêntico; recusas e
 > contagens já testáveis).
+>
+> ESTADO 5 (2026-08-08): **F2-c4 FEITO** (c18afd7) — SERIALIZAR: a tabela
+> §3.3 INTEIRA ligada com advancePhase ainda SYNC. O engine cria o
+> PhaseTransitionLock (onContention → blackbox `phase-transition-contention`)
+> e o expõe em ctx.phaseTransitions + `phaseOccupancy(projectId, exclude?)`
+> (watches + locks sem watch — §7.6, sem dupla contagem). Entrantes:
+> report adquire SÍNCRONO (sites A/B, ordem acquire→detach→unlink; blocos
+> `bloqueada` gate/dev com try/finally próprio; falha = recusa com receita);
+> poller adquire após o guard (posse cobre rodada EM VOO; o re-check por
+> referência FICA para rodada já fechada — decisão documentada no código:
+> remover no c4 seria regressão) e PULA card locked nos ramos stale/
+> pane-open-lost; setPhaseExecutorImpl ESPERA (waitAndAcquire + span
+> `advancePhase:lock-wait`, padrão wrapper→Locked com guards baratos
+> pré-lock); recoverFinalizingTask e respawnInterruptedPhase adquirem;
+> run_task/delete_task/removeTaskCascade/projects:relocate recusam com
+> receita; arquivar/excluir missão pré-checa com a LISTA dos cards e o
+> stopMissionExecution pula card locked como cinto; tasks:update trata lock
+> como hasActivePane; sweepProjectFiles preserva marcador (§8.4); onExit só
+> consulta (`pane-exit-during-transition`, §7.7). POSSE DO RELEASE (desenho
+> cravado): advancePhase é o dono a partir da chamada — release imediato nos
+> desfechos sem continuação (incluindo throw: no c4 o rollback do call site
+> roda na MESMA pilha; a ordem set→release do §8.2 revisita no c5) e no
+> SETTLE da cadeia via `chainContinuation` (as 7 disparadas `void` viraram
+> chainContinuation — o prefixo síncrono do retryOrBacklog intacto);
+> tripwire `phase-advance-without-lock` no Inner (token vira 6º parâmetro
+> opcional do PhaseApi). BÔNUS da tabela: finalizeTask agora mata panes via
+> terminatePaneNow (o kill cru deixava a identidade viva para o onExit).
+> JANELA NOVA JÁ NO C4: o lock vive do acquire até o settle da continuação
+> (openGatePane ~1-4s, finalize ~4s) — run_task/remoções nesse meio recusam
+> (fecha §7.5/§7.9 de graça); baseline 1 do harness PROVA isLocked=true logo
+> após o retorno sync e false pós-settle. Harness: baselines entram como
+> entrante real (acquire+token) e 2 testes novos (recusa+contenção+anomalia
+> sem posse · phaseOccupancy) — races 7→9. Verde: typecheck node+web +
+> 39/25/14/14/8 + 9 + 9 + 27. PRÓXIMO: **F2-c5 — DESSINCRONIZAR** (§4 do
+> plano, o corte real): advancePhaseInner async via gitOff com os pacotes de
+> fatos do c3, regras de frescor (§4.3), R7/R8/§6.1/§7.4/§7.10, PhaseApi
+> `Promise<boolean>`, report async, poller await, cicatrizes reescritas e a
+> matriz de 13 corridas ligada no harness (gate beforeCall do stub).
 
 - Hoje `advancePhase` é SYNC POR CONTRATO (comentário-âncora em :10855; a
   cicatriz do "[object Promise]"): a fotografia atômica é garantida por
