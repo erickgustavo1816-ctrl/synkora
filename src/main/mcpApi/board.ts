@@ -1,0 +1,1707 @@
+/**
+ * MCP API — domínio board (fase 1, commit 4c).
+ * O board pelo olhar dos agentes: status completo, cards, plano da
+ * missão, disparo de fases (run_task), conclusão verificada e troca de
+ * executor por ordem do dono.
+ *
+ * Corpo movido VERBATIM do literal mcpApi do index.ts. O return é tipado
+ * Pick<McpApi, …> para preservar o contextual typing; uiSender/mcpPort e a
+ * máquina de fases são lidos via ctx (getters/ctx.phase).
+ */
+import { app } from 'electron'
+import { join } from 'path'
+import { type SeatCli } from '../seats'
+import {
+  isVerifiedTaskPlanPlanningMethod,
+  type Department,
+  type NewTask,
+  type PlanLane,
+  type PlanVerificationCheckpoint,
+  type Task,
+  type TaskPlan,
+  type TaskUpdatePatch
+} from '../tasks'
+import { gitHead, hasGitCommit, isWorktreeClean } from '../worktree'
+import { type Mission } from '../missions'
+import {
+  EXECUTION_MODE_LABEL,
+  assessMissionRisk,
+  gatesForTask,
+  normalizeDelegationMode,
+  normalizeExecutionMode,
+  normalizeRiskLevel,
+  validatePlanCompletion,
+  validatePlanDependencies,
+  validatePlanSizing,
+  validateTaskSizing
+} from '../orchestratorFlow'
+import { GATE_DEATH_LIMIT, MAX_PARALLEL_RUNS } from '../phaseEngine'
+import { SECURITY_POLICY_VERSION, requiresManualSecurityValidation } from '../securityPolicy'
+import {
+  initialManualSecurityValidation,
+  manualSecurityValidationPending
+} from '../manualSecurityValidation'
+import { type PolicySlot } from '../policies'
+import { getCatalog } from '../catalog'
+import { type PaneIdentity } from '../hub'
+import { type TaskPatch } from '../mcpServer'
+import {
+  SYNKORA_FRONTEND_STANDARD_ID,
+  SYNKORA_UI_QA_ID,
+  classifyTaskUiWork,
+  isVisualMethod
+} from '../skillsRouting'
+import { type PlanningMethodEvidence } from '../skillRuntime'
+import { summarizeProjectPlanForBoard } from '../projectPlan'
+import { prepareTaskAdjustment, unapprovedAdjustmentRiskSurfaces } from '../taskAdjustment'
+import type { MainContext } from '../mainContext'
+import type { McpApi } from '../mcpServer'
+
+/** Dependências do closure do index ainda não migradas (mesmo padrão
+ * do PhaseEngineExtras). */
+export interface BoardApiExtras {
+  currentPlanOf(projectId: string, missionId: string): Task | undefined
+  finalVerificationAccepted(checkpoint: PlanVerificationCheckpoint | undefined): boolean
+  resumePlanVerificationIfNeeded(planTask: Task | undefined): void
+  baselineVerificationUsable(checkpoint: PlanVerificationCheckpoint | undefined): boolean
+  ensurePlanBaseline(planTask: Task): Promise<PlanVerificationCheckpoint>
+  startFinalPlanVerification(planTask: Task, conclusion: string): void
+  closeVerifiedPlan(planId: string): void
+  removeTaskCascade(task: Task): boolean
+  ensureMissionWorktree(missionId: string): Mission | undefined
+  missionWorkspacePath(projectPath: string, mission: Mission): string | undefined
+  isBannedModel(m?: string): boolean
+  agentModelPool(seat: { cli: SeatCli; id: string }): Promise<{ id: string; label: string }[]>
+  preparePlanningArtifactEvidence(
+    id: PaneIdentity,
+    skillApplications: string[] | undefined
+  ):
+    | { ok: true; evidence: PlanningMethodEvidence; accept: () => boolean }
+    | { ok: false; message: string }
+  securityWaiverOptions(projectId: string): { sensitiveWaiverAllowed: boolean }
+  planTaskForWorkTask(task: Task): Task | undefined
+  setPhaseExecutorImpl(
+    projectId: string,
+    taskId: string,
+    choice: { seatId: string; model?: string; effort?: string },
+    swapActor: 'user' | 'maestro',
+    ownerOrder?: string
+  ): Promise<{ ok: boolean; msg: string }>
+}
+
+export function buildBoardApi(
+  ctx: MainContext,
+  extras: BoardApiExtras
+): Pick<McpApi, 'boardStatus' | 'createTasks' | 'updateTask' | 'createPlan' | 'runTask' | 'concludePlan' | 'deleteTask' | 'setPhaseExecutor'> {
+  const {
+    tasks,
+    seats,
+    projects,
+    missions,
+    blackbox,
+    maestro,
+    policies,
+    skillsLib,
+    integrationQueue,
+    backlog,
+    phaseWatches,
+    gateCooldownUntil,
+    phaseLaunches,
+    phaseLaunchCapacity,
+    finalVerificationRuns,
+    emitLog,
+    syncBoard,
+    projectModeOf,
+    projectPlanOf
+  } = ctx
+  // hub é atribuído 1× antes do mcpApi nascer — capturar é seguro.
+  const hub = ctx.hub
+  const {
+    currentPlanOf,
+    finalVerificationAccepted,
+    resumePlanVerificationIfNeeded,
+    baselineVerificationUsable,
+    ensurePlanBaseline,
+    startFinalPlanVerification,
+    closeVerifiedPlan,
+    removeTaskCascade,
+    ensureMissionWorktree,
+    missionWorkspacePath,
+    isBannedModel,
+    agentModelPool,
+    preparePlanningArtifactEvidence,
+    securityWaiverOptions,
+    planTaskForWorkTask,
+    setPhaseExecutorImpl
+  } = extras
+  return {
+    boardStatus: (id) => {
+      if (id.missionId) resumePlanVerificationIfNeeded(currentPlanOf(id.projectId, id.missionId))
+      // Orquestrador de missão vê SÓ as tarefas da missão dele; o PM vê tudo
+      // (agrupado) + o resumo das missões. O card de PLANO (F5.7) sai da lista
+      // de tarefas e ganha seção própria.
+      const allRaw = tasks
+        .list(id.projectId)
+        .filter((t) => !id.missionId || t.missionId === id.missionId)
+      const all = allRaw.filter((t) => t.kind !== 'plan')
+      const planLabel = (p: Task): string => {
+        const final = p.plan?.verification?.final
+        const verification = final?.status === 'running' || final?.status === 'pending'
+          ? ' · validação conjunta em andamento'
+          : final?.comparison?.status === 'blocked'
+            ? ' · validação conjunta BLOQUEADA'
+            : finalVerificationAccepted(final)
+              ? ' · conjunto verificado'
+              : ''
+        const label = p.status === 'backlog'
+          ? p.plan?.approvedAt
+            ? 'PAUSADO pelo usuário — aguardando re-aprovação'
+            : 'proposto — aguardando aprovação do usuário'
+          : p.status === 'execucao'
+            ? 'APROVADO — em execução (você dirige: create_tasks + run_task)'
+            : 'concluído'
+        return label + verification
+      }
+      const panes = hub.panesOf(id.projectId).map((p) => ({
+        role: p.role,
+        taskId: p.taskId,
+        taskTitle: p.taskId ? tasks.get(p.taskId)?.title : undefined
+      }))
+      const ms = missions.list(id.projectId)
+      const integrationLane = integrationQueue.listPending(id.projectId)
+      const productPlan = id.missionId ? undefined : projectPlanOf(id.projectId)
+      const missionOf = (mid?: string): string | undefined =>
+        mid ? ms.find((m) => m.id === mid)?.title : undefined
+      return JSON.stringify(
+        {
+          ...(id.missionId
+            ? { missao: (() => {
+                const m = missions.get(id.missionId)
+                return m
+                  ? {
+                      id: m.id,
+                      title: m.title,
+                      status: m.status,
+                      branch: m.branch,
+                      baseBranch: m.baseBranch,
+                      filaIntegracao: integrationQueue.getByMission(m.id) ?? null
+                    }
+                  : undefined
+              })(),
+              plano: (() => {
+                const p = currentPlanOf(id.projectId, id.missionId)
+                return p
+                  ? {
+                      id: p.id,
+                      title: p.title,
+                      status: planLabel(p),
+                      lanes: p.plan?.lanes,
+                      fluxo: EXECUTION_MODE_LABEL[normalizeExecutionMode(p.plan?.executionMode)],
+                      risco: normalizeRiskLevel(p.plan?.risk),
+                      politicaSeguranca: p.plan?.securityPolicyVersion
+                        ? `Synkora v${p.plan.securityPolicyVersion}`
+                        : 'plano legado',
+                      superficiesSensiveis: p.plan?.riskSurfaces ?? [],
+                      motivosDeSeguranca: p.plan?.riskReasons ?? [],
+                      validacaoHumanaNecessaria:
+                        p.plan?.manualSecurityValidationRequired ?? false,
+                      motivoDoTamanho: p.plan?.sizingReason,
+                      cardsPrevistos: p.plan?.expectedCards,
+                      ...(p.plan?.conclusion ? { conclusao: p.plan.conclusion } : {})
+                    }
+                  : 'nenhum — proponha com create_plan'
+              })() }
+            : {
+                modoProjeto: projectModeOf(id.projectId),
+                planoProjeto: productPlan
+                  ? {
+                      status: productPlan.status,
+                      resumo: summarizeProjectPlanForBoard(productPlan),
+                      progresso: `${productPlan.roadmap.filter((item) => item.status === 'done').length}/${productPlan.roadmap.length}`,
+                      ondaAtual: productPlan.currentWaveId ?? null,
+                      missoesAtivas: productPlan.activeItemIds.map(
+                        (itemId) => productPlan.roadmap.find((item) => item.id === itemId)?.title ?? itemId
+                      ),
+                      missoesProntas: productPlan.readyItemIds.map(
+                        (itemId) => productPlan.roadmap.find((item) => item.id === itemId)?.title ?? itemId
+                      ),
+                      skillsPlanejamento: {
+                        disponiveis: skillsLib.orchestratorPlanningIds(),
+                        declaradasComoUsadas: productPlan.planningSkills.map((entry) => ({
+                          id: entry.id,
+                          etapa: entry.stage,
+                          contribuicao: entry.contribution
+                        }))
+                      },
+                      roadmap: productPlan.roadmap.map((item) => ({
+                        id: item.id,
+                        title: item.title,
+                        status: item.status,
+                        wave: item.wave,
+                        dependsOn: item.dependsOn,
+                        missionId: item.missionId,
+                        version: item.version?.name
+                      })),
+                      arquivo: '.synkora/PROJECT_PLAN.md'
+                    }
+                  : null,
+                missoes: ms.map((m) => ({
+                  id: m.id,
+                  title: m.title,
+                  status: m.status,
+                  branch: m.branch,
+                  scope: m.scope,
+                  filaIntegracao: integrationQueue.getByMission(m.id) ?? null,
+                  tarefas: tasks
+                    .list(id.projectId)
+                    .filter((t) => t.missionId === m.id && t.kind !== 'plan').length,
+                  ...(() => {
+                    const p = m.kind === 'direta' ? undefined : currentPlanOf(id.projectId, m.id)
+                    return p ? { plano: planLabel(p) } : {}
+                  })()
+                })),
+                filaIntegracao: integrationLane.map((ticket) => ({
+                  posicao: ticket.position,
+                  total: ticket.total,
+                  missaoId: ticket.missionId,
+                  missao: ms.find((mission) => mission.id === ticket.missionId)?.title,
+                  estado: ticket.state,
+                  bloqueio: ticket.block,
+                  orientacaoMaestro: ticket.resolution
+                })),
+                // roadmap do PO: versões do backlog + itens ainda não feitos
+                backlogVersoes: backlog.listVersions(id.projectId).map((v) => ({
+                  id: v.id,
+                  name: v.name,
+                  theme: v.theme,
+                  status: v.status,
+                  branch: v.branch,
+                  jaSubiuNaVersao: v.deliveries.map((d) => d.title),
+                  itensPendentes: backlog
+                    .listItems(id.projectId)
+                    .filter((i) => i.versionId === v.id && i.status !== 'feito')
+                    .map((i) => `[${i.type}] ${i.title}`)
+                })),
+                versaoAtualNaMain:
+                  backlog
+                    .listVersions(id.projectId)
+                    .filter((v) => v.status === 'lancada')
+                    .sort((a, b) => (a.releasedAt ?? '').localeCompare(b.releasedAt ?? ''))
+                    .at(-1)?.name ?? null,
+                backlogSemVersao: backlog
+                  .listItems(id.projectId)
+                  .filter((i) => !i.versionId && i.status !== 'feito')
+                  .map((i) => `[${i.type}] ${i.title}`)
+              }),
+          tasks: all.map((t) => ({
+            id: t.id,
+            department: t.department,
+            type: t.type,
+            effort: t.effort,
+            title: t.title,
+            status: t.status,
+            cycles: t.cycles,
+            feedback: t.feedback,
+            faseAtiva: t.activePhase,
+            estadoDaFase: t.phaseState,
+            delegacao: t.delegation,
+            runSeat: t.runSeat,
+            runModel: t.runModel,
+            ...(id.missionId ? {} : { missao: missionOf(t.missionId) ?? '(geral)' })
+          })),
+          panesAbertos: panes,
+          arquivos: {
+            board: '.synkora/BOARD.md',
+            eventos: '.synkora/EVENTS.md',
+            transcripts: '.synkora/runs/<taskId>.md',
+            reports: '.synkora/reports/ (relatórios/auditorias de agentes — NUNCA .md solto na raiz/docs)',
+            ...(!id.missionId && productPlan
+              ? { planoMestre: '.synkora/PROJECT_PLAN.md' }
+              : {}),
+            ...(id.missionId
+              ? { planoDaMissao: `.synkora/missions/${id.missionId.slice(0, 8)}.PLAN.md` }
+              : {})
+          }
+        },
+        null,
+        2
+      )
+    },
+    createTasks: (id, items) => {
+      const oversizedBriefings = items
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => (item.briefing?.length ?? 0) > 6000)
+      if (oversizedBriefings.length > 0) {
+        return `briefing excede o teto autoritativo de 6000 caracteres nos cards: ${oversizedBriefings.map(({ index }) => index + 1).join(', ')}; resuma sem remover critérios de aceite`
+      }
+      const overloadedSkillPlans = items
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => (item.skills?.length ?? 0) > 1 || (item.agents?.length ?? 0) > 1)
+      if (overloadedSkillPlans.length > 0) {
+        return `cards aceitam no máximo uma skill técnica e um subagente especialista explícitos: ${overloadedSkillPlans.map(({ index }) => index + 1).join(', ')}`
+      }
+      const missingUiDeclarations = items
+        .map((item, index) => ({ item, index }))
+        .filter(
+          ({ item }) =>
+            item.deliverable === 'code' && typeof item.affectsUi !== 'boolean'
+        )
+      if (missingUiDeclarations.length > 0) {
+        return `todo card de código precisa declarar affectsUi explicitamente: ${missingUiDeclarations.map(({ index }) => index + 1).join(', ')}`
+      }
+      const contradictoryUiDeclarations = items
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) =>
+          item.affectsUi === false &&
+          classifyTaskUiWork(item)
+        )
+      if (contradictoryUiDeclarations.length > 0) {
+        return `affectsUi=false contradiz a superficie descrita nos cards: ${contradictoryUiDeclarations.map(({ index }) => index + 1).join(', ')}`
+      }
+      if (id.role !== 'maestro' || !id.missionId)
+        return 'só o orquestrador da missão cria cards de trabalho'
+      const mission = missions.get(id.missionId)
+      if (!mission || mission.projectId !== id.projectId || mission.status !== 'ativa')
+        return 'a missão deste orquestrador não está ativa neste projeto'
+      const queuedMission = integrationQueue.getByMission(id.missionId)
+      if (queuedMission)
+        return `esta missão está na posição #${queuedMission.position} da fila; novos cards avulsos estão congelados. Execute apenas o card de sincronização/conflito que a própria fila criar.`
+      if (
+        !id.missionId &&
+        projectModeOf(id.projectId) === 'greenfield' &&
+        projectPlanOf(id.projectId)?.status !== 'done'
+      ) {
+        return 'este projeto novo ainda segue o plano mestre — tarefas soltas não são permitidas; use start_project_mission somente para a próxima missão aprovada'
+      }
+      // F5.7: numa missão plan-driven nada nasce antes da aprovação; depois
+      // dela os cards do orquestrador nascem AUTO (visuais para o usuário —
+      // quem executa é o orquestrador via run_task).
+      let auto = false
+      let activePlanId: string | undefined
+      if (id.role === 'maestro' && id.missionId) {
+        const plan = currentPlanOf(id.projectId, id.missionId)
+        if (plan && plan.status === 'backlog')
+          return 'o PLANO desta missão ainda aguarda a aprovação do usuário — nenhum card de trabalho nasce antes disso (ajuste a proposta com create_plan se precisar)'
+        auto = plan?.status === 'execucao'
+        // carimbo do plano: o modal/progresso de cada plano lista SÓ os
+        // cards dele (2 planos na mesma missão não se misturam)
+        if (auto) activePlanId = plan?.id
+      }
+      const approvedPlan = currentPlanOf(id.projectId, id.missionId)
+      if (!approvedPlan || approvedPlan.status !== 'execucao')
+        return approvedPlan?.status === 'backlog'
+          ? 'o PLANO desta missão ainda aguarda a aprovação do usuário — nenhum card de trabalho nasce antes disso'
+          : 'nenhum card nasce sem um plano aprovado em execução nesta missão'
+      const legacyPlanningPlan =
+        approvedPlan.plan?.planningEvidenceState === 'legacy_unverified' &&
+        !approvedPlan.plan.planningMethod
+      if (!isVerifiedTaskPlanPlanningMethod(approvedPlan.plan) && !legacyPlanningPlan) {
+        return 'o plano aprovado não possui evidência de um receipt de planejamento verificado — reproponha o plano nesta conversa antes de criar cards'
+      }
+      if (legacyPlanningPlan) {
+        blackbox.record({
+          cat: 'task',
+          event: 'legacy-planning-plan-consumed',
+          ids: {
+            projectId: id.projectId,
+            missionId: id.missionId,
+            taskId: approvedPlan.id
+          },
+          actor: 'harness',
+          reason:
+            'plano aprovado antes do contrato de receipts; continuidade permitida sem converter a ausência em uso verificado'
+        })
+      }
+      auto = true
+      activePlanId = approvedPlan.id
+      const executionMode = normalizeExecutionMode(approvedPlan.plan?.executionMode)
+      const risk = normalizeRiskLevel(approvedPlan.plan?.risk)
+      const runtimeRisk = assessMissionRisk({
+        declaredRisk: risk,
+        texts: items.flatMap((item) => [
+          item.title,
+          item.description,
+          item.briefing,
+          ...(item.quests ?? [])
+        ])
+      })
+      if (runtimeRisk.raised) {
+        return `os cards revelaram risco ${runtimeRisk.effectiveRisk} acima do plano aprovado (${risk}): ${runtimeRisk.reasons
+          .map((reason) => reason.reason)
+          .join('; ')}. Pause e reapresente o plano; o backend não deixa risco sensível entrar escondido.`
+      }
+      const approvedSecuritySurfaces = new Set(approvedPlan.plan?.riskSurfaces ?? [])
+      const newManualSurfaces = runtimeRisk.surfaces.filter(
+        (surface) => !approvedSecuritySurfaces.has(surface)
+      )
+      if (requiresManualSecurityValidation(newManualSurfaces)) {
+        // MODO LEVE (2026-08-04): com o switch "sensível ok" do projeto, a
+        // superfície nova é AUTO-ANOTADA no plano aprovado e o trabalho segue
+        // — auditada na caixa-preta, nunca uma rodada extra de aprovação
+        // humana (o vai-e-vem da M01 custou 3 aprovações para zero trabalho).
+        if (securityWaiverOptions(id.projectId).sensitiveWaiverAllowed && approvedPlan.plan) {
+          const merged = [...new Set([...approvedSecuritySurfaces, ...newManualSurfaces])]
+          tasks.update(approvedPlan.id, {
+            plan: { ...approvedPlan.plan, riskSurfaces: merged }
+          })
+          blackbox.record({
+            cat: 'task',
+            event: 'plan-surfaces-auto-annotated',
+            actor: 'harness',
+            ids: { projectId: id.projectId, missionId: id.missionId, taskId: approvedPlan.id },
+            reason: `superfície(s) ${newManualSurfaces.join(', ')} anotada(s) no plano aprovado (modo leve do projeto)`
+          })
+        } else {
+          return `os cards introduziram uma superfície sensível que não estava no plano aprovado (${newManualSurfaces.join(', ')}). Pause e reapresente o plano para que a validação humana e os controles corretos fiquem visíveis antes da execução.`
+        }
+      }
+      const expectedCards = approvedPlan.plan?.expectedCards
+      const allowedDepartments = new Set(approvedPlan.plan?.lanes.map((lane) => lane.dept) ?? [])
+      const outsideContract = items
+        .map((item) => item.department)
+        .filter((department) => !allowedDepartments.has(department))
+      if (outsideContract.length > 0) {
+        return `card fora do contrato aprovado: ${[...new Set(outsideContract)].join(', ')} não está nas lanes do plano. Reclassifique/reapresente o plano em vez de acrescentar trabalho escondido.`
+      }
+      if (expectedCards !== undefined) {
+        const existingCards = tasks
+          .list(id.projectId)
+          .filter((task) => task.planId === approvedPlan.id && task.kind !== 'plan').length
+        const sizingProblems = validateTaskSizing(
+          executionMode,
+          risk,
+          expectedCards,
+          existingCards,
+          items
+        )
+        if (sizingProblems.length > 0) {
+          return (
+            'cards recusados pelo contrato de proporcionalidade: ' +
+            sizingProblems.join('; ') +
+            '. Se a inspeção revelou complexidade real, pause e reapresente um plano maior para aprovação.'
+          )
+        }
+      }
+      const planCards = tasks
+        .list(id.projectId)
+        .filter((task) => task.planId === approvedPlan.id && task.kind !== 'plan')
+      const planCardById = new Map(planCards.map((task) => [task.id, task]))
+      const planCardByItemId = new Map(
+        planCards.flatMap((task) => (task.planItemId ? [[task.planItemId, task] as const] : []))
+      )
+      const workItems = approvedPlan.plan?.workItems ?? []
+      const workItemById = new Map(workItems.map((item) => [item.id, item]))
+      const dependencyProblems: string[] = []
+      const resolvedDependencies = new Map<number, string[]>()
+      const batchPlanItems = new Set<string>()
+      for (const [index, item] of items.entries()) {
+        if (workItems.length > 0) {
+          if (!item.planItemId) {
+            dependencyProblems.push(`card ${index + 1}: informe planItemId do grafo aprovado`)
+            continue
+          }
+          const workItem = workItemById.get(item.planItemId)
+          if (!workItem) {
+            dependencyProblems.push(
+              `card ${index + 1}: planItemId ${item.planItemId} não existe no grafo aprovado`
+            )
+            continue
+          }
+          if (batchPlanItems.has(item.planItemId) || planCardByItemId.has(item.planItemId)) {
+            dependencyProblems.push(
+              `card ${index + 1}: o item ${item.planItemId} já ganhou um card`
+            )
+            continue
+          }
+          batchPlanItems.add(item.planItemId)
+          if (workItem.department !== item.department) {
+            dependencyProblems.push(
+              `card ${index + 1}: ${item.department} não corresponde à função ${workItem.department} aprovada para ${item.planItemId}`
+            )
+          }
+          if (workItem.deliverable !== item.deliverable) {
+            dependencyProblems.push(
+              `card ${index + 1}: o entregável de ${item.planItemId} foi aprovado como ${workItem.deliverable}, não ${item.deliverable}`
+            )
+          }
+          const dependencyTaskIds: string[] = []
+          for (const dependencyItemId of workItem.dependsOn) {
+            const dependency = planCardByItemId.get(dependencyItemId)
+            if (!dependency) {
+              dependencyProblems.push(
+                `card ${index + 1}: a entrega anterior ${dependencyItemId} ainda não tem card concluído; crie ondas somente quando forem liberadas`
+              )
+              continue
+            }
+            dependencyTaskIds.push(dependency.id)
+          }
+          resolvedDependencies.set(index, dependencyTaskIds)
+          continue
+        }
+        const seen = new Set<string>()
+        for (const dependencyId of item.dependsOn ?? []) {
+          if (seen.has(dependencyId)) {
+            dependencyProblems.push(`card ${index + 1}: dependencia duplicada ${dependencyId}`)
+            continue
+          }
+          seen.add(dependencyId)
+          const dependency = planCardById.get(dependencyId)
+          if (!dependency) {
+            dependencyProblems.push(
+              `card ${index + 1}: ${dependencyId} nao e um card anterior deste plano`
+            )
+          } else {
+            const dependencies = resolvedDependencies.get(index) ?? []
+            dependencies.push(dependency.id)
+            resolvedDependencies.set(index, dependencies)
+          }
+        }
+      }
+      if (dependencyProblems.length > 0) {
+        return (
+          'dependencias recusadas: ' +
+          dependencyProblems.join('; ') +
+          '. Use IDs devolvidos por create_tasks em ondas anteriores do mesmo plano.'
+        )
+      }
+      // Skills/subagentes do card: só ids INSTALADOS e do TIPO certo entram
+      // (id fantasma viraria injeção silenciosamente vazia; skill no campo de
+      // subagente ganharia hint errado — melhor avisar o orquestrador na hora).
+      const badSkills: string[] = []
+      const routedAestheticStamps: string[] = []
+      const okOfKind = (
+        ids: string[] | undefined,
+        kind: 'skill' | 'agent',
+        department: Department
+      ): string[] => {
+        const ok: string[] = []
+        for (const s of ids ?? []) {
+          const definition = skillsLib.byId(s)
+          if (
+            definition?.kind !== kind ||
+            !definition.depts.includes(department) ||
+            !skillsLib.isSelectable(s)
+          ) {
+            badSkills.push(s)
+            continue
+          }
+          if (
+            kind === 'skill' &&
+            (isVisualMethod(definition) ||
+              definition.adapter === 'synkora-native' ||
+              s === SYNKORA_FRONTEND_STANDARD_ID ||
+              s === SYNKORA_UI_QA_ID)
+          ) {
+            routedAestheticStamps.push(s)
+            continue
+          }
+          ok.push(s)
+        }
+        return ok
+      }
+      const news: NewTask[] = items.map((i, index) => {
+        const okSkills = okOfKind(i.skills, 'skill', i.department)
+        const okAgents = okOfKind(i.agents, 'agent', i.department)
+        return {
+          department: i.department,
+          type: i.type ?? 'feature',
+          effort: i.effort ?? 'leve',
+          title: i.title,
+          description: i.description ?? '',
+          briefing: i.briefing,
+          gates: gatesForTask(
+            executionMode,
+            risk,
+            i.deliverable,
+            i.gates,
+            classifyTaskUiWork(i)
+          ),
+          quests: i.quests,
+          skills: okSkills.length ? okSkills : undefined,
+          affectsUi: i.affectsUi,
+          agents: okAgents.length ? okAgents : undefined,
+          delegation: normalizeDelegationMode(i.delegation, executionMode),
+          deliverable: i.deliverable,
+          dependsOn: resolvedDependencies.get(index)?.length
+            ? [...new Set(resolvedDependencies.get(index))]
+            : undefined,
+          verification: { contractVersion: 1 },
+          version: maestro.get(id.projectId).version,
+          missionId: id.missionId,
+          origin: 'maestro',
+          auto: auto || undefined,
+          planId: activePlanId,
+          planItemId: i.planItemId
+        }
+      })
+      if (badSkills.length > 0) {
+        return `lote recusado sem criar cards: skills/subagentes inexistentes, não instalados, incompatíveis com a função ou no campo errado: ${[
+          ...new Set(badSkills)
+        ].join(', ')}. Corrija os ids pelo list_skills e reenvie o lote inteiro.`
+      }
+      const created = tasks.createMany(id.projectId, news)
+      for (const t of created)
+        emitLog(id.projectId, { kind: 'log', tag: t.department, text: t.title })
+      emitLog(id.projectId, { kind: 'ok', text: `${created.length} tarefas criadas no backlog` })
+      hub.publish({
+        projectId: id.projectId,
+        missionId: id.missionId,
+        kind: 'task-created',
+        text: `${created.length} tarefa(s): ${created.map((t) => t.title).join(' · ')}`,
+        actor: id.role
+      })
+      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', id.projectId)
+      syncBoard(id.projectId)
+      return `${created.length} tarefa(s) criadas no backlog dentro do modo ${EXECUTION_MODE_LABEL[executionMode]}: ${created
+        .map((t) => `"${t.title}" [${t.department}/${t.effort}${t.gates ? `/gates:${t.gates.join('+') || 'nenhum'}` : ''}] id=${t.id}`)
+        .join(' · ')} — ${
+        auto
+          ? 'cards AUTO (o usuário só acompanha) — dispare cada um com run_task'
+          : 'o usuário decide quando executar'
+      }${
+        badSkills.length
+          ? ` · AVISO: skills/subagentes ignorados (não instalados, inexistentes ou no campo do tipo errado): ${[...new Set(badSkills)].join(', ')} — use ids EXATOS de list_skills, no campo certo (tipo=skill → skills; tipo=subagente → agents)`
+          : ''
+      }${
+        routedAestheticStamps.length
+          ? ` · AVISO: carimbos estéticos removidos (${[...new Set(routedAestheticStamps)].join(', ')}); direção visual é responsabilidade do roteador, e o card aceita somente uma técnica concreta.`
+          : ''
+      } · O roteador definirá o plano mínimo de cada fase; não carimbe estética por rotina.`
+    },
+    updateTask: (id, taskId, patch: TaskPatch) => {
+      if (id.role !== 'maestro' || !id.missionId)
+        return 'só o orquestrador da missão ajusta cards'
+      const t0 = tasks.get(taskId)
+      if (!t0 || t0.projectId !== id.projectId || t0.missionId !== id.missionId)
+        return 'card não encontrado nesta missão'
+      if (t0?.kind === 'plan')
+        return 'o card de PLANO não se edita por update_task — use create_plan (substituir a proposta) ou conclude_plan (encerrar com a conclusão)'
+      if (!t0.auto) return 'só cards AUTO do plano podem ser ajustados pelo orquestrador'
+      if ((patch.briefing?.length ?? 0) > 6000) {
+        return 'ajuste recusado: briefing excede o teto autoritativo de 6000 caracteres; resuma sem remover critérios de aceite'
+      }
+      // gateNotes SOZINHAS podem entrar com o card em andamento: o gate alvo
+      // ainda não nasceu e a nota viaja no PROMPT dele no spawn — é o caminho
+      // do "instrução no briefing, nunca perseguindo o pane".
+      const gateNotesOnly =
+        patch.gateNotes !== undefined &&
+        Object.keys(patch).every((key) => key === 'gateNotes')
+      const requestedDeliverable = patch.deliverable ?? t0.deliverable ?? 'code'
+      if (
+        !gateNotesOnly &&
+        requestedDeliverable === 'code' &&
+        typeof (patch.affectsUi ?? t0.affectsUi) !== 'boolean'
+      ) {
+        return 'ajuste recusado: todo card de código precisa declarar affectsUi explicitamente'
+      }
+      if (
+        (patch.affectsUi ?? t0.affectsUi) === false &&
+        classifyTaskUiWork({
+          ...t0,
+          ...patch,
+          affectsUi: false,
+          feedback: t0.feedback
+        })
+      ) {
+        return 'ajuste recusado: affectsUi=false contradiz a superficie visual descrita no card'
+      }
+      if (t0.status === 'done')
+        return 'card concluído não recebe ajuste — reabra via run_task { adjustment } se necessário'
+      if (t0.status !== 'backlog' && !gateNotesOnly)
+        return 'só cards em backlog podem ter o briefing ajustado (exceção: patch só de gateNotes); estado atual: ' + t0.status
+      if (patch.status)
+        return 'status não pode ser alterado por update_task — use run_task e aguarde os gates do pipeline'
+      const planTask = planTaskForWorkTask(t0)
+      const executionMode = normalizeExecutionMode(planTask?.plan?.executionMode)
+      const risk = normalizeRiskLevel(planTask?.plan?.risk)
+      const deliverable = requestedDeliverable
+      const runtimeRisk = assessMissionRisk({
+        declaredRisk: risk,
+        texts: [
+          patch.title ?? t0.title,
+          patch.description ?? t0.description,
+          patch.briefing ?? t0.briefing,
+          patch.gateNotes?.review ?? t0.gateNotes?.review,
+          patch.gateNotes?.qa ?? t0.gateNotes?.qa,
+          ...(patch.quests ?? t0.quests ?? [])
+        ]
+      })
+      if (runtimeRisk.raised) {
+        return `ajuste recusado: o novo briefing revela risco ${runtimeRisk.effectiveRisk} acima do plano aprovado (${risk}). Pause e reapresente o plano com gates proporcionais.`
+      }
+      if ((patch.skills?.length ?? 0) > 1)
+        return 'ajuste recusado: cada card aceita no máximo uma skill técnica explícita'
+      if ((patch.agents?.length ?? 0) > 1)
+        return 'ajuste recusado: cada card aceita no máximo um subagente especialista explícito'
+      if (patch.skills) {
+        for (const skillId of patch.skills) {
+          const definition = skillsLib.byId(skillId)
+          if (!definition || definition.kind !== 'skill' || !skillsLib.isSelectable(skillId)) {
+            return `ajuste recusado: skill ${skillId} não existe, não está instalada ou não é do tipo skill`
+          }
+          if (!definition.depts.includes(t0.department)) {
+            return `ajuste recusado: skill ${skillId} nÃ£o Ã© compatÃ­vel com a funÃ§Ã£o ${t0.department}`
+          }
+          if (
+            isVisualMethod(definition) ||
+            definition.adapter === 'synkora-native' ||
+            skillId === SYNKORA_FRONTEND_STANDARD_ID ||
+            skillId === SYNKORA_UI_QA_ID
+          ) {
+            return `ajuste recusado: ${skillId} é direção/contrato visual roteado automaticamente; selecione no máximo uma técnica concreta`
+          }
+        }
+      }
+      if (patch.agents) {
+        for (const agentId of patch.agents) {
+          const definition = skillsLib.byId(agentId)
+          if (!definition || definition.kind !== 'agent' || !skillsLib.isSelectable(agentId)) {
+            return `ajuste recusado: subagente ${agentId} não existe, não está instalado ou está no campo errado`
+          }
+          if (!definition.depts.includes(t0.department)) {
+            return `ajuste recusado: subagente ${agentId} nÃ£o Ã© compatÃ­vel com a funÃ§Ã£o ${t0.department}`
+          }
+        }
+      }
+      const approvedSecuritySurfaces = new Set(planTask?.plan?.riskSurfaces ?? [])
+      const newManualSurfaces = runtimeRisk.surfaces.filter(
+        (surface) => !approvedSecuritySurfaces.has(surface)
+      )
+      if (
+        requiresManualSecurityValidation(newManualSurfaces) &&
+        // MODO LEVE (2026-08-04): superfície nova em ajuste é anotada, não recusada
+        !securityWaiverOptions(id.projectId).sensitiveWaiverAllowed
+      ) {
+        return `ajuste recusado: o briefing introduz uma superfície sensível que não estava no plano (${newManualSurfaces.join(', ')}). Reapresente o plano para registrar controles e validação humana.`
+      }
+      const candidate = {
+        department: t0.department,
+        title: patch.title ?? t0.title,
+        description: patch.description ?? t0.description,
+        briefing: patch.briefing ?? t0.briefing,
+        affectsUi: patch.affectsUi ?? t0.affectsUi,
+        feedback: t0.feedback,
+        effort: patch.effort ?? t0.effort,
+        gates: patch.gates ?? t0.gates,
+        delegation: patch.delegation ?? t0.delegation,
+        deliverable,
+        skills: patch.skills ?? t0.skills,
+        agents: patch.agents ?? t0.agents,
+        quests: patch.quests ?? t0.quests
+      }
+      const sizingProblems = validateTaskSizing(
+        executionMode,
+        risk,
+        planTask?.plan?.expectedCards ?? Number.MAX_SAFE_INTEGER,
+        Math.max(
+          0,
+          tasks
+            .list(id.projectId)
+            .filter((task) => task.planId === planTask?.id && task.kind !== 'plan').length - 1
+        ),
+        [candidate]
+      )
+      if (sizingProblems.length > 0)
+        return 'ajuste recusado pelo contrato de proporcionalidade: ' + sizingProblems.join('; ')
+      const normalizedPatch: TaskPatch = {
+        ...patch,
+        deliverable,
+        delegation: normalizeDelegationMode(candidate.delegation, executionMode),
+        gates: gatesForTask(
+          executionMode,
+          risk,
+          deliverable,
+          candidate.gates,
+          classifyTaskUiWork(candidate)
+        )
+      }
+      const updated = tasks.update(taskId, normalizedPatch as Partial<Task>)
+      if (!updated) return `tarefa ${taskId} não encontrada`
+      hub.publish({
+        projectId: id.projectId,
+        missionId: updated.missionId,
+        kind: 'task-updated',
+        text: `"${updated.title}" atualizada${patch.status ? ` → ${patch.status}` : ''}`,
+        actor: id.role
+      })
+      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', id.projectId)
+      syncBoard(id.projectId)
+      return `tarefa "${updated.title}" atualizada`
+    },
+
+    // ————— F5.7: plano da missão (proposta → aprovação → autonomia) —————,
+    createPlan: async (id, input) => {
+      if (id.role !== 'maestro' || !id.missionId)
+        return 'só o orquestrador da missão propõe o plano'
+      const mission = missions.get(id.missionId)
+      if (!mission || mission.status !== 'ativa')
+        return 'a missão não está ativa — sem plano novo'
+      const queuedMission = integrationQueue.getByMission(id.missionId)
+      if (queuedMission)
+        return `esta missão já ocupa a posição #${queuedMission.position} da fila de integração — o plano aprovado está congelado. Se a fila pedir sincronização/conflito, ela mesma reabre esse plano e cria o único card operacional.`
+      if (input.lanes.length === 0) return 'o plano precisa de ao menos uma lane'
+      const executionMode = normalizeExecutionMode(input.executionMode)
+      const declaredRisk = normalizeRiskLevel(input.risk)
+      // PRÉ-VOO DE SUPERFÍCIES (caso real 04/08/2026: o plano V1 foi aprovado
+      // sem personal_data e o create_tasks recusou DEPOIS da aprovação humana
+      // — 3 aprovações para zero trabalho novo). O goal da missão nem sempre
+      // carrega o sinal (o CPF morava no schema que o orquestrador ia criar);
+      // o plano do PROJETO e o item do roadmap carregam — entram na varredura
+      // para a proposta já nascer com as superfícies declaradas.
+      const projectMasterPlan = projectPlanOf(id.projectId)
+      const missionRoadmapItem = projectMasterPlan?.roadmap.find(
+        (item) => item.missionId === id.missionId
+      )
+      const riskAssessment = assessMissionRisk({
+        declaredRisk,
+        surfaces: input.riskSurfaces,
+        texts: [
+          mission.title,
+          mission.goal,
+          mission.scope,
+          input.title,
+          input.summary,
+          input.sizingReason,
+          ...input.workItems.map((item) => item.title),
+          projectMasterPlan?.problem,
+          projectMasterPlan?.vision,
+          ...(projectMasterPlan?.successCriteria ?? []),
+          ...(projectMasterPlan?.scope.in ?? []),
+          missionRoadmapItem?.objective,
+          ...(missionRoadmapItem?.acceptanceCriteria ?? []),
+          ...(missionRoadmapItem?.scope.in ?? [])
+        ]
+      })
+      const risk = riskAssessment.effectiveRisk
+      const sizingProblems = validatePlanSizing({
+        mode: executionMode,
+        expectedCards: input.expectedCards,
+        laneCount: input.lanes.length
+      })
+      const dependencyProblems = validatePlanDependencies({
+        mode: executionMode,
+        expectedCards: input.expectedCards,
+        items: input.workItems.map((item) => ({
+          id: item.id,
+          waveId: item.waveId,
+          dependsOn: item.dependsOn
+        }))
+      })
+      const laneDepartments = new Set(input.lanes.map((lane) => lane.dept))
+      for (const item of input.workItems) {
+        if (!laneDepartments.has(item.department)) {
+          dependencyProblems.push(
+            `o item ${item.id} usa ${item.department}, mas essa função não existe nas lanes`
+          )
+        }
+      }
+      if (sizingProblems.length > 0 || dependencyProblems.length > 0) {
+        return (
+          'plano desproporcional: ' +
+          [...sizingProblems, ...dependencyProblems].join('; ') +
+          '. Ajuste o perfil ou reduza a estrutura antes de mostrar ao usuário.'
+        )
+      }
+      const existing = tasks
+        .list(id.projectId)
+        .filter((t) => t.missionId === id.missionId && t.kind === 'plan')
+      const unresolvedPlans = existing.filter((task) => task.status !== 'done')
+      if (unresolvedPlans.length > 1) {
+        return 'plano recusado: a missão já possui mais de um card de plano aberto; reconcilie essa duplicidade no board antes de propor outra versão'
+      }
+      // Tudo abaixo pode atravessar consultas assíncronas de catálogo. Guarde a
+      // fotografia autoritativa que fundamentou o pré-voo; no trecho final ela
+      // precisa continuar idêntica. Sem este CAS lógico, um clique de aprovação
+      // durante o await podia ser sobrescrito pela proposta antiga.
+      const initialPlanState = existing
+        .map((task) => `${task.id}:${task.status}:${task.updatedAt}`)
+        .sort()
+        .join('|')
+      const initialPlanIds = new Set(existing.map((task) => task.id))
+      const initialLinkedCardState = tasks
+        .list(id.projectId)
+        .filter(
+          (task) =>
+            task.missionId === id.missionId &&
+            task.kind !== 'plan' &&
+            Boolean(task.planId && initialPlanIds.has(task.planId))
+        )
+        .map(
+          (task) =>
+            `${task.id}:${task.status}:${task.updatedAt}:${task.planId ?? ''}:${task.planItemId ?? ''}`
+        )
+        .sort()
+        .join('|')
+      const initialMissionUpdatedAt = mission.updatedAt
+      const runningPlan = existing.find((t) => t.status === 'execucao')
+      if (runningPlan) {
+        // PAUSA AUTOMÁTICA PARA RECLASSIFICAÇÃO (decisão do usuário,
+        // 02/08/2026: "com 10/20 missões eu não vou saber que precisa pausar").
+        // O clique de pausa existe para proteger TRABALHO EM CURSO; quando
+        // nenhum card do plano está rodando, exigi-lo é burocracia sem
+        // decisão. Com card ativo a recusa continua — pausar mataria runs.
+        const planCards = tasks
+          .list(id.projectId)
+          .filter(
+            (t) =>
+              t.missionId === id.missionId &&
+              t.kind !== 'plan' &&
+              t.planId === runningPlan.id
+          )
+        if (planCards.length > 0)
+          return 'já existe um plano APROVADO com cards ligados — conclua ou descarte explicitamente esse grafo antes de propor outro; a reclassificação nunca reaproveita cards do plano antigo'
+      }
+      // Lanes — REGRA DO USUÁRIO (2026-07-28): função COM política definida
+      // NÃO dá liberdade de modelo ao orquestrador no planejamento — a lane
+      // usa um dos DOIS slots do usuário (▲ pesadas / ▽ leves; a escolha
+      // ENTRE eles e o effort são do orquestrador; o usuário segue livre no
+      // modal). Sugestão fora da política é CORRIGIDA aqui (bug real: lane de
+      // qa veio com sonnet, que não está em slot nenhum). Liberdade de modelo
+      // só em função SEM política — e nos ajudantes do dev (outro fluxo).
+      // Modelo banido (spark) é limpo em qualquer caminho.
+      const pmSeatId = maestro.get(id.projectId).seatId
+      const sane = (m?: string): string | undefined => (isBannedModel(m) ? undefined : m)
+      const adjusted: string[] = []
+      const lanes: PlanLane[] = []
+      for (const l of input.lanes) {
+        const pol = policies.get(id.projectId)[l.dept]
+        const heavySlot = pol?.heavy?.seatId && seats.get(pol.heavy.seatId) ? pol.heavy : undefined
+        const lightSlot = pol?.light?.seatId && seats.get(pol.light.seatId) ? pol.light : undefined
+        const slots = [heavySlot, lightSlot].filter(
+          (s): s is PolicySlot => !!s?.seatId && !!seats.get(s.seatId)
+        )
+        if (slots.length > 0) {
+          const match = slots.find(
+            (s) =>
+              s.seatId === l.seatId &&
+              (l.model === undefined || (s.model || undefined) === sane(l.model))
+          )
+          // O fallback antigo era sempre heavy porque esse slot aparecia
+          // primeiro. Rápido/equilibrado caem no light; deep ou risco alto
+          // justificam heavy quando o orquestrador não escolheu explicitamente.
+          const chosen =
+            match ??
+            (executionMode === 'deep' || risk === 'high'
+              ? heavySlot ?? lightSlot ?? slots[0]
+              : lightSlot ?? heavySlot ?? slots[0])
+          if (!match && (l.seatId || l.model))
+            adjusted.push(
+              `${l.dept} → ${seats.get(chosen.seatId)?.name ?? chosen.seatId}${chosen.model ? ` · ${chosen.model}` : ''}`
+            )
+          lanes.push({
+            dept: l.dept,
+            notes: l.notes,
+            seatId: chosen.seatId,
+            model: sane(chosen.model || undefined),
+            effort: l.effort
+          })
+          continue
+        }
+        if (l.seatId && seats.get(l.seatId)) {
+          // Dept SEM política: escolha livre — mas o id tem que EXISTIR no
+          // catálogo do seat (id inventado degradaria o run inteiro).
+          let m = sane(l.model)
+          if (m) {
+            try {
+              const pool = await agentModelPool(seats.get(l.seatId)!)
+              if (pool.length > 0 && !pool.some((x) => x.id === m)) {
+                adjusted.push(`${l.dept}: modelo "${m}" não existe → padrão do seat`)
+                m = undefined
+              }
+            } catch {
+              // catálogo indisponível — deixa passar
+            }
+          }
+          lanes.push({ dept: l.dept, notes: l.notes, seatId: l.seatId, model: m, effort: l.effort })
+          continue
+        }
+        const seatId = mission.seatId ?? pmSeatId
+        lanes.push({
+          dept: l.dept,
+          notes: l.notes,
+          seatId,
+          model: sane(l.model ?? (seatId && seatId === mission.seatId ? mission.model : undefined)),
+          effort: l.effort
+        })
+      }
+      // LANE DE QA OBRIGATÓRIA QUANDO HAVERÁ GATES (decisão do usuário,
+      // 2026-08-06: o plano da O02d nasceu sem lane qa e o gate 2 abriu com
+      // modelo da política e um effort que NINGUÉM escolheu — "eu não pude
+      // escolher"). O QA é executor tão contratual quanto o dev: com qualquer
+      // entrega de código no plano, a lane qa é auto-completada pela cadeia
+      // de sempre e o usuário a ajusta no modal antes de aprovar.
+      const hasCodeDelivery = input.workItems.some((item) => item.deliverable === 'code')
+      if (hasCodeDelivery && !lanes.some((l) => l.dept === 'qa')) {
+        const qaPol = policies.get(id.projectId)['qa']
+        const qaHeavy = qaPol?.heavy?.seatId && seats.get(qaPol.heavy.seatId) ? qaPol.heavy : undefined
+        const qaLight = qaPol?.light?.seatId && seats.get(qaPol.light.seatId) ? qaPol.light : undefined
+        const qaSlot =
+          executionMode === 'deep' || risk === 'high'
+            ? qaHeavy ?? qaLight
+            : qaLight ?? qaHeavy
+        const qaSeatId = qaSlot?.seatId ?? mission.seatId ?? pmSeatId
+        if (qaSeatId && seats.get(qaSeatId)) {
+          lanes.push({
+            dept: 'qa',
+            notes: 'gates (review/QA) — auto-completada; ajuste conta/modelo/effort antes de aprovar',
+            seatId: qaSeatId,
+            model: sane(qaSlot?.model || (qaSeatId === mission.seatId ? mission.model : undefined)),
+            effort: undefined
+          })
+          adjusted.push('lane qa AUTO-COMPLETADA (o plano terá gates — o usuário escolhe o executor no modal)')
+        }
+      }
+      // Proposta nova zera a aprovação anterior (plano pausado re-proposto).
+      // MODO LEVE (decisão do usuário, 2026-08-04: "muita barra de segurança,
+      // não estamos conseguindo avançar"): com o switch "sensível ok" do
+      // projeto ligado, a VALIDAÇÃO HUMANA por plano não nasce — a aprovação
+      // do plano pelo usuário já é o ato humano. Sem o switch, regra estrita.
+      const manualSecurityValidationRequired =
+        requiresManualSecurityValidation(riskAssessment.surfaces) &&
+        !securityWaiverOptions(id.projectId).sensitiveWaiverAllowed
+      // Tudo acima pode consultar catálogos assíncronos. O receipt é revalidado
+      // somente agora; deste ponto até persistir+aceitar não existe await.
+      const planningEvidence = preparePlanningArtifactEvidence(id, input.skillApplications)
+      if (!planningEvidence.ok) return `plano recusado: ${planningEvidence.message}`
+      const currentMission = missions.get(id.missionId)
+      if (
+        !currentMission ||
+        currentMission.status !== 'ativa' ||
+        currentMission.updatedAt !== initialMissionUpdatedAt ||
+        integrationQueue.getByMission(id.missionId)
+      ) {
+        return 'plano recusado: a missão ou a fila mudou durante o preparo; releia o estado atual antes de propor novamente'
+      }
+      const currentExisting = tasks
+        .list(id.projectId)
+        .filter((task) => task.missionId === id.missionId && task.kind === 'plan')
+      const currentPlanState = currentExisting
+        .map((task) => `${task.id}:${task.status}:${task.updatedAt}`)
+        .sort()
+        .join('|')
+      if (currentPlanState !== initialPlanState) {
+        return 'plano recusado: o card de plano mudou durante o preparo (por exemplo, foi aprovado, pausado ou reproposto); releia o board e tente novamente'
+      }
+      const currentPlanIds = new Set(currentExisting.map((task) => task.id))
+      const currentLinkedCards = tasks
+        .list(id.projectId)
+        .filter(
+          (task) =>
+            task.missionId === id.missionId &&
+            task.kind !== 'plan' &&
+            Boolean(task.planId && currentPlanIds.has(task.planId))
+        )
+      const currentLinkedCardState = currentLinkedCards
+        .map(
+          (task) =>
+            `${task.id}:${task.status}:${task.updatedAt}:${task.planId ?? ''}:${task.planItemId ?? ''}`
+        )
+        .sort()
+        .join('|')
+      if (currentLinkedCardState !== initialLinkedCardState) {
+        return 'plano recusado: os cards ligados ao plano mudaram durante o preparo; releia a missão antes de reclassificar'
+      }
+      const currentRunningPlan = currentExisting.find((task) => task.status === 'execucao')
+      if (
+        currentRunningPlan &&
+        tasks
+          .list(id.projectId)
+          .some(
+            (task) =>
+              task.missionId === id.missionId &&
+              task.kind !== 'plan' &&
+              task.planId === currentRunningPlan.id &&
+              (task.status === 'execucao' || task.status === 'qa' || phaseWatches.has(task.id))
+          )
+      ) {
+        return 'plano recusado: um card do plano entrou em execução durante o preparo; conclua-o ou aguarde a pausa humana antes de reclassificar'
+      }
+      const candidatePlanId =
+        currentRunningPlan?.id ?? currentExisting.find((task) => task.status === 'backlog')?.id
+      if (candidatePlanId && currentLinkedCards.some((task) => task.planId === candidatePlanId)) {
+        return 'plano recusado: este plano já possui cards de trabalho; conclua, descarte ou replaneje esses cards explicitamente antes de trocar o grafo aprovado'
+      }
+      const plan: TaskPlan = {
+        summary: input.summary,
+        lanes,
+        executionMode,
+        declaredRisk,
+        risk,
+        riskSurfaces: riskAssessment.surfaces,
+        riskReasons: riskAssessment.reasons.map(
+          (reason) => `${reason.reason} (${reason.evidence})`
+        ),
+        securityPolicyVersion: SECURITY_POLICY_VERSION,
+        manualSecurityValidationRequired,
+        manualSecurityValidation: initialManualSecurityValidation(
+          manualSecurityValidationRequired
+        ),
+        sizingReason: input.sizingReason.trim(),
+        expectedCards: input.expectedCards,
+        planningMethod: planningEvidence.evidence,
+        planningEvidenceState: 'verified',
+        workItems: input.workItems.map((item) => ({
+          id: item.id,
+          title: item.title,
+          department: item.department,
+          deliverable: item.deliverable,
+          waveId: item.waveId,
+          dependsOn: [...item.dependsOn]
+        }))
+      }
+      // O plano em execução sem card ativo é o próprio alvo da reproposta.
+      // Status backlog + conteúdo novo pousam no mesmo commit, sem fotografia
+      // intermediária pausada e sem criar um segundo card de plano.
+      const proposed =
+        currentRunningPlan ?? currentExisting.find((task) => task.status === 'backlog')
+      const planTask = proposed
+        ? tasks.update(proposed.id, {
+            status: 'backlog',
+            title: input.title,
+            department: lanes[0].dept,
+            plan
+          })
+        : tasks.createMany(id.projectId, [
+            {
+              department: lanes[0].dept,
+              type: 'feature',
+              effort: 'leve',
+              title: input.title,
+              description: '',
+              origin: 'maestro',
+              missionId: id.missionId,
+              version: maestro.get(id.projectId).version,
+              kind: 'plan',
+              plan
+            }
+          ])[0]
+      if (!planTask) return 'plano recusado: a proposta não pôde ser persistida'
+      if (!planningEvidence.accept()) {
+        return 'plano recusado: o receipt expirou antes da confirmação do artefato; reabra o orquestrador'
+      }
+      if (currentRunningPlan && planTask.id === currentRunningPlan.id) {
+        blackbox.record({
+          cat: 'task',
+          event: 'plan-auto-paused',
+          ids: {
+            projectId: id.projectId,
+            missionId: id.missionId,
+            taskId: currentRunningPlan.id
+          },
+          actor: 'maestro',
+          reason:
+            'reclassificação: o mesmo card recebeu a proposta nova e voltou ao backlog em commit único; aprovação continua humana'
+        })
+        hub.publish({
+          projectId: id.projectId,
+          missionId: id.missionId,
+          kind: 'info',
+          text: `plano "${currentRunningPlan.title}" reclassificado no mesmo card (nenhum card estava rodando) — a proposta nova aguarda a aprovação do usuário no board`,
+          actor: 'harness',
+          quiet: true
+        })
+      }
+      hub.publish({
+        projectId: id.projectId,
+        missionId: id.missionId,
+        kind: 'info',
+        text: `orquestrador propôs o PLANO da missão ("${input.title}") — aguardando aprovação do usuário no board`,
+        actor: 'maestro'
+      })
+      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', id.projectId)
+      syncBoard(id.projectId)
+      return `plano ${proposed ? 'atualizado' : 'criado'} no board (card "${planTask?.title ?? input.title}" · modo ${EXECUTION_MODE_LABEL[executionMode]} · risco ${risk} · ${input.expectedCards} card(s))${
+        adjusted.length
+          ? ` — OBS: lane(s) com política do departamento foram TRAVADAS nela (regra do usuário; sua sugestão fora da política foi corrigida): ${adjusted.join(' · ')}.`
+          : ' —'
+      }${
+        riskAssessment.raised
+          ? ` O backend elevou o risco de ${declaredRisk} para ${risk} por: ${riskAssessment.reasons.map((reason) => reason.reason).join('; ')}.`
+          : ''
+      }${
+        plan.manualSecurityValidationRequired
+          ? ' O card marca VALIDAÇÃO HUMANA: deixe o cenário seguro e a evidência ainda necessária explícitos na conclusão antes de pedir integração.'
+          : ''
+      }${
+        executionMode === 'fast'
+          ? ' LEMBRETE FAST: os cards deste plano deverão ser LEVES, sem ajudantes e com no máximo 1 skill — entrega que exigiria card "pesada" NÃO cabe em fast; reclassifique para standard/deep AGORA (o create_tasks recusará depois da aprovação, custando outra rodada humana).'
+          : ''
+      } avise o usuário e aguarde: ele pode ajustar seat/modelo/effort das lanes no card antes de aprovar. NÃO crie cards de trabalho até o evento "[synkora] PLANO APROVADO".`
+    },
+    runTask: async (id, taskId, phase, adjustment) => {
+      if (id.role !== 'maestro' || !id.missionId)
+        return 'só o orquestrador da missão dispara cards — executores paralelizam via delegate'
+      let task = tasks.get(taskId)
+      if (!task || task.missionId !== id.missionId) return 'card não encontrado nesta missão'
+      if (task.kind === 'plan')
+        return 'o card de plano é o contrato, não se executa — dispare os cards de trabalho'
+      if (phase && adjustment)
+        return 'phase e adjustment são caminhos diferentes; use apenas um deles'
+      if (phase === 'review' || phase === 'qa') {
+        // breaker de crash-loop: gate que morreu 3× em 60s não reabre em
+        // reflexo — diagnóstico primeiro (caso real 05/08 16:59)
+        const cooldown = gateCooldownUntil.get(taskId)
+        if (cooldown && Date.now() < cooldown)
+          return `o gate ${phase} deste card morreu ${GATE_DEATH_LIMIT}× em 1 minuto — reabertura em cooldown por mais ${Math.ceil((cooldown - Date.now()) / 1000)}s. Diagnostique a causa (últimas linhas no evento pane/exit da caixa-preta) ou troque o executor do gate (config do reviewer/lane) antes de tentar de novo`
+      }
+      if (phaseWatches.has(taskId))
+        return 'já existe uma fase rodando para este card — não abri outro pane'
+      const launchToken = phaseLaunches.reserve(taskId)
+      if (!launchToken)
+        return 'este card já está sendo preparado por outra chamada — não abri outro pane'
+      const activeAtReservation = [...phaseWatches.values()].filter(
+        (watch) => watch.projectId === id.projectId
+      ).length
+      const capacityToken = phaseLaunchCapacity.reserve(
+        id.projectId,
+        activeAtReservation,
+        MAX_PARALLEL_RUNS
+      )
+      if (!capacityToken) {
+        phaseLaunches.release(taskId, launchToken)
+        return `limite de ${MAX_PARALLEL_RUNS} execuções paralelas atingido — aguarde um evento de conclusão e chame run_task de novo`
+      }
+      try {
+        // REPARO DE INTEGRAÇÃO (plano de estabilização 02/08): card APROVADO
+        // cujo merge foi bloqueado fica em `finalizing`; este ramo re-tenta
+        // SOMENTE o merge do mesmo commit aprovado — nunca reabre dev/gates.
+        if (phase === 'finalize') {
+          if (task.status === 'done') return 'o card já está concluído'
+          if (task.phaseState !== 'finalizing')
+            return `este card não está em finalização (estado atual: ${task.status}/${task.phaseState ?? '-'}) — o reparo de integração vale apenas para card aprovado com merge bloqueado`
+          // Receipt 'preparing' é só intenção: nenhum commit de merge foi
+          // journalado, então é seguro refazê-lo com o destino ATUAL — é assim
+          // que o retry aceita o destino já reparado (commit da sujeira) pelo
+          // orquestrador. Um receipt 'prepared' tem commit journalado e o
+          // recover o revalida integralmente, como sempre.
+          if (task.integrationReceipt?.stage === 'preparing') {
+            tasks.update(task.id, { integrationReceipt: undefined })
+          }
+          blackbox.record({
+            cat: 'merge',
+            event: 'finalize-retry',
+            ids: {
+              projectId: id.projectId,
+              missionId: id.missionId,
+              taskId: task.id
+            },
+            actor: 'maestro',
+            reason: 'run_task {phase: "finalize"} — reparo de integração solicitado'
+          })
+          const latest = tasks.get(taskId)
+          const recovered = latest ? await ctx.phase.recoverFinalizingTask(latest) : false
+          const after = tasks.get(taskId)
+          return recovered && after?.status === 'done'
+            ? `integração concluída: "${after.title}" está done — nenhuma fase foi repetida`
+            : `a integração foi re-tentada e continua pendente: ${after?.feedback ?? 'veja o feedback do card'}. Resolva a causa apontada e chame run_task {id: "${taskId}", phase: "finalize"} de novo`
+        }
+        if (adjustment) {
+          if (task.adjustment && task.status !== 'done')
+            return `o ajuste já está persistido neste card (${task.phaseState ?? task.status}); retome-o com run_task {id: "${taskId}"}, sem repetir adjustment`
+          const planTask = planTaskForWorkTask(task)
+          const mission = missions.get(id.missionId)
+          if (!planTask || !mission)
+            return 'não encontrei o plano/missão original; o ajuste não foi aberto'
+          const currentPlan = currentPlanOf(id.projectId, id.missionId)
+          const anotherOpenPlan = tasks
+            .list(id.projectId)
+            .some(
+              (candidate) =>
+                candidate.missionId === id.missionId &&
+                candidate.kind === 'plan' &&
+                candidate.id !== planTask.id &&
+                candidate.status !== 'done'
+            )
+          if (currentPlan?.id !== planTask.id || anotherOpenPlan) {
+            return 'há um plano mais novo/aberto nesta missão; não reabri uma entrega antiga por baixo dele'
+          }
+          const adjustmentRisk = assessMissionRisk({
+            declaredRisk: planTask.plan?.risk,
+            texts: [adjustment]
+          })
+          const newAdjustmentSurfaces = unapprovedAdjustmentRiskSurfaces(
+            adjustmentRisk.surfaces,
+            planTask.plan?.riskSurfaces ?? []
+          )
+          // MODO LEVE (2026-08-04): superfície nova em AJUSTE também é
+          // auto-anotada — a recusa deste site travou o reparo pós-verificação
+          // da M01 ("ai_agents, supply_chain" no briefing de lint).
+          const adjustmentLightMode = securityWaiverOptions(id.projectId).sensitiveWaiverAllowed
+          if (newAdjustmentSurfaces.length > 0) {
+            if (adjustmentLightMode && planTask.plan) {
+              const merged = [
+                ...new Set([...(planTask.plan.riskSurfaces ?? []), ...newAdjustmentSurfaces])
+              ]
+              tasks.update(planTask.id, { plan: { ...planTask.plan, riskSurfaces: merged } })
+              blackbox.record({
+                cat: 'task',
+                event: 'plan-surfaces-auto-annotated',
+                actor: 'harness',
+                ids: { projectId: id.projectId, missionId: id.missionId, taskId: planTask.id },
+                reason: `superfície(s) ${newAdjustmentSurfaces.join(', ')} anotada(s) via ajuste (modo leve do projeto)`
+              })
+            } else {
+              return `o ajuste introduz superfície(s) que não estavam no plano aprovado (${newAdjustmentSurfaces.join(', ')}); reapresente um novo plano e obtenha aprovação antes de executar`
+            }
+          }
+          if (adjustmentRisk.raised && !adjustmentLightMode) {
+            return `o pedido deixou de ser um ajuste pequeno seguro (${adjustmentRisk.reasons.map((reason) => reason.surface).join(' · ')}); reclassifique o plano e obtenha aprovação antes de executar`
+          }
+          const decision = prepareTaskAdjustment({
+            reason: adjustment,
+            integrationQueued: Boolean(integrationQueue.getByMission(id.missionId)),
+            // válvula sancionada (05/08 00:25-00:45): verificação final do
+            // plano existente e ainda não aceita = o único momento em que um
+            // card done PRECISA reabrir sem o plano concluído — remediação
+            // auditada, dev → gates integrais de novo.
+            verificationBlocked: Boolean(
+              planTask.plan?.verification?.final &&
+                !finalVerificationAccepted(planTask.plan.verification.final)
+            ),
+            task,
+            planTask,
+            mission
+          })
+          if (!decision.ok) return decision.message
+          const { adjustment: adjustmentPatch, ...taskPatch } = decision.patches.task
+          const taskAdjustmentPatch: TaskUpdatePatch = {
+            ...taskPatch,
+            adjustment: {
+              ...adjustmentPatch,
+              requestedAt: new Date().toISOString()
+            },
+            ...(normalizeRiskLevel(planTask.plan?.risk) === 'high'
+              ? { gates: ['review', 'qa'] }
+              : {})
+          }
+          const reopened = tasks.updateMany([
+            {
+              id: decision.patches.planTaskId,
+              patch: decision.patches.planTask
+            },
+            { id: decision.patches.taskId, patch: taskAdjustmentPatch }
+          ])
+          task = reopened?.find((candidate) => candidate.id === taskId)
+          if (!task) return 'o card desapareceu durante a reabertura; nada foi iniciado'
+          hub.publish({
+            projectId: id.projectId,
+            missionId: id.missionId,
+            kind: 'info',
+            text: `ajuste pequeno reabriu o MESMO card "${task.title}" em fluxo FAST — sem novo plano ou card`,
+            actor: 'maestro'
+          })
+        }
+      if (!task) return 'o card não está mais disponível; nada foi iniciado'
+      const taskIdentity = {
+        projectId: task.projectId,
+        missionId: task.missionId,
+        planId: task.planId,
+        department: task.department
+      }
+      const dependencyProblems = (task.dependsOn ?? []).flatMap((dependencyId) => {
+        const dependency = tasks.get(dependencyId)
+        if (
+          !dependency ||
+          dependency.projectId !== taskIdentity.projectId ||
+          dependency.missionId !== taskIdentity.missionId ||
+          dependency.planId !== taskIdentity.planId ||
+          dependency.kind === 'plan'
+        ) {
+          return [`${dependencyId} (inválida ou fora do plano)`]
+        }
+        return dependency.status === 'done'
+          ? []
+          : [`"${dependency.title}" (${dependency.status})`]
+      })
+      if (dependencyProblems.length > 0) {
+        return `card bloqueado por dependência: ${dependencyProblems.join(' · ')}. Aguarde os cards anteriores terminarem; esta onda não pode furar a ordem.`
+      }
+      // REABRIR SÓ O GATE (2026-07-30: fechar/perder o QA não pode custar uma
+      // rodada inteira de dev — o worktree do card está intacto).
+      if (phase) {
+        if (task.status === 'done') return 'o card já está concluído'
+        const active = phaseWatches.get(taskId)
+        if (active)
+          return `já existe uma fase "${active.phase}" rodando para este card — aguarde o veredito/conclusão dela. Se o pane dessa fase estiver MORTO/zumbi (confira com list_panes), peça ao usuário para fechá-lo no mapa (×) — a fase solta sozinha e aí o run_task funciona`
+        const gates = task.gates ?? ['review', 'qa']
+        if (!gates.includes(phase))
+          return `o gate ${phase} não faz parte do contrato deste card — gates: ${gates.join(' + ') || 'nenhum'}`
+        if (task.activePhase && task.activePhase !== phase)
+          return `a fase preservada deste card é "${task.activePhase}", não "${phase}". RECEITA: ${
+            task.activePhase === 'dev'
+              ? 'o dev vivo pode simplesmente reportar done (re-entrega aceita); se o pane do dev morreu, chame run_task {id} sem phase para redespachá-lo'
+              : `chame run_task {id, phase: "${task.activePhase}"} para reabrir o gate preservado`
+          } — não repita nem pule trabalho já feito`
+        if (
+          !task.activePhase &&
+          !((phase === 'review' && task.status === 'execucao') || (phase === 'qa' && task.status === 'qa'))
+        )
+          return `não existe um gate ${phase} interrompido neste card; o estado atual é "${task.status}"`
+      } else if (
+        task.phaseState === 'interrupted' &&
+        task.activePhase &&
+        task.activePhase !== 'dev'
+      ) {
+        return `o card preservou a fase "${task.activePhase}" — reabra somente ela com run_task {id: "${taskId}", phase: "${task.activePhase}"}`
+      } else if (task.status !== 'backlog') {
+        return `o card está em "${task.status}" — só card em backlog pode ser disparado (para REABRIR um gate morto use phase: "review"/"qa")`
+      }
+      const plan = currentPlanOf(id.projectId, id.missionId)
+      if (!plan || plan.status !== 'execucao')
+        return plan && plan.status === 'backlog'
+          ? 'o plano ainda não foi aprovado (ou está pausado) — aguarde o evento "[synkora] PLANO APROVADO"'
+          : 'sem plano em execução nesta missão — proponha com create_plan e aguarde a aprovação do usuário'
+      const projectForRun = projects.get(id.projectId)
+      let missionForRun = missions.get(id.missionId)
+      if (!projectForRun || !missionForRun)
+        return 'execução bloqueada: projeto ou missão não estão mais disponíveis'
+      missionForRun = ensureMissionWorktree(id.missionId)
+      if (!missionForRun)
+        return 'execução bloqueada: não consegui criar ou comprovar o isolamento Git desta missão'
+      const missionCwd = missionWorkspacePath(projectForRun.path, missionForRun)
+      if (!missionCwd) {
+        return 'execução bloqueada: não foi possível provar ou reanexar o worktree isolado desta missão. Nada será aberto na branch principal; repare/reabra a missão e tente novamente.'
+      }
+      const baseline = await ensurePlanBaseline(plan)
+      if (!baselineVerificationUsable(baseline)) {
+        return `execução bloqueada: não foi possível registrar uma fotografia inicial confiável (${baseline.lastError || baseline.status}). Corrija a causa e rode o card novamente; nenhum desenvolvimento foi iniciado.`
+      }
+      if (hasGitCommit(projectForRun.path)) {
+        const currentHead = gitHead(missionCwd)
+        const expectedHead = plan.plan?.executionHead
+        if (isWorktreeClean(missionCwd) !== true) {
+          return 'execução bloqueada: a branch da missão tem alterações feitas fora de um card. O orquestrador não é desenvolvedor; preserve o conteúdo, encaminhe o ajuste a um card FAST e só continue depois de restaurar uma fotografia limpa.'
+        }
+        if (expectedHead && currentHead !== expectedHead) {
+          return `execução bloqueada: a branch da missão avançou fora da cadeia de cards (${expectedHead.slice(0, 12)} → ${currentHead?.slice(0, 12) ?? 'desconhecido'}). Nada novo será executado até o orquestrador decidir como preservar e enquadrar essa alteração em um card.`
+        }
+        if (!expectedHead && currentHead && plan.plan) {
+          tasks.update(plan.id, {
+            plan: { ...plan.plan, executionHead: currentHead }
+          })
+        }
+      }
+      const running = Array.from(phaseWatches.values()).filter(
+        (w) => w.projectId === id.projectId
+      ).length
+      if (running >= MAX_PARALLEL_RUNS)
+        return `limite de ${MAX_PARALLEL_RUNS} execuções paralelas atingido — aguarde um evento de conclusão e chame run_task de novo`
+      // Executor: lane do plano (contrato do usuário) > política do dept >
+      // seat da missão > seat do PM.
+      const lane = plan.plan?.lanes.find((l) => l.dept === taskIdentity.department)
+      const pol = policies.get(id.projectId)[task.department]
+      const slot = task.effort === 'pesada' ? (pol?.heavy ?? pol?.light) : (pol?.light ?? pol?.heavy)
+      const mission = missionForRun
+      let seatId: string | undefined
+      let model: string | undefined
+      if (lane?.seatId && seats.get(lane.seatId)) {
+        seatId = lane.seatId
+        model = lane.model
+      } else if (slot?.seatId && seats.get(slot.seatId)) {
+        seatId = slot.seatId
+        model = lane?.model ?? (slot.model || undefined)
+      } else {
+        seatId = mission?.seatId ?? maestro.get(id.projectId).seatId
+        model = lane?.model
+      }
+      const seat = seatId ? seats.get(seatId) : undefined
+      if (!seat)
+        return `sem seat válido para a função ${task.department} — a lane do plano não tem seat e não há política do departamento`
+      if (isBannedModel(model)) model = undefined
+      // id que não existe mais no catálogo degrada para o padrão do seat —
+      // a execução nunca trava por modelo morto (caso gpt-5.4-mini).
+      if (model) {
+        try {
+          const cat = await getCatalog(seat.cli, seats.configDirOf(seat))
+          if (cat.models.length > 0 && !cat.models.some((m) => m.id === model)) model = undefined
+        } catch {
+          // catálogo indisponível — segue com o configurado
+        }
+      }
+      const finalPlan = tasks.get(plan.id)
+      const finalTask = tasks.get(taskId)
+      if (
+        finalPlan?.status !== 'execucao' ||
+        finalTask?.missionId !== id.missionId ||
+        finalTask.kind === 'plan' ||
+        currentPlanOf(id.projectId, id.missionId)?.id !== plan.id
+      ) {
+        return 'o plano/card mudou ou foi pausado enquanto a fase era preparada; nenhum pane foi aberto'
+      }
+      const activeBeforeSpawn = [...phaseWatches.values()].filter(
+        (watch) => watch.projectId === id.projectId
+      ).length
+      if (activeBeforeSpawn >= MAX_PARALLEL_RUNS)
+        return `limite de ${MAX_PARALLEL_RUNS} execuções paralelas atingido antes do spawn — tente novamente quando uma fase terminar`
+      const spec = await ctx.phase.preparePhasePane(
+        id.projectId,
+        taskId,
+        phase ?? 'dev',
+        seat.id,
+        model,
+        lane?.effort,
+        undefined,
+        launchToken
+      )
+      if (!spec)
+        return 'não deu para abrir a execução AGORA — causa mais comum: outra transição de fase deste card ainda em andamento (corrida) ou a janela do app recarregando. Aguarde ~5s e chame run_task de novo; se persistir 3+ vezes, confira board_status e a pasta do projeto'
+      ctx.phase.openPhasePane(spec, id.projectId, taskId)
+      hub.publish({
+        projectId: id.projectId,
+        missionId: id.missionId,
+        kind: 'info',
+        text: phase
+          ? `orquestrador REABRIU o gate ${phase} de "${task.title}" (worktree preservado)`
+          : `orquestrador INICIOU o card "${task.title}" (dev · seat ${seat.name}${model ? ` · ${model}` : ''}${lane?.effort ? ` · ${lane.effort}` : ''})`,
+        actor: 'maestro'
+      })
+      return phase
+        ? `gate ${phase} de "${task.title}" reaberto sobre o worktree existente — o veredito chega como evento`
+        : `execução de "${task.title}" iniciada (seat ${seat.name}${model ? ` · ${model}` : ''}${lane?.effort ? ` · effort ${lane.effort}` : ''}) — o pipeline (dev → gates → merge na branch da missão) avisa por eventos "[synkora]"`
+      } finally {
+        phaseLaunchCapacity.release(id.projectId, capacityToken)
+        phaseLaunches.release(taskId, launchToken)
+      }
+    },
+    concludePlan: async (id, conclusion) => {
+      if (id.role !== 'maestro' || !id.missionId) return 'só o orquestrador conclui o plano'
+      const plan = currentPlanOf(id.projectId, id.missionId)
+      if (!plan || plan.status !== 'execucao') return 'não há plano em execução para concluir'
+      if (manualSecurityValidationPending(plan.plan, securityWaiverOptions(id.projectId))) {
+        return 'conclusao bloqueada: este plano exige validacao humana de seguranca ainda pendente. O usuario precisa confirmar a evidencia ou dispensar com justificativa no card do plano.'
+      }
+      const planCards = tasks
+        .list(id.projectId)
+        .filter(
+          (t) =>
+            t.missionId === id.missionId &&
+            t.kind !== 'plan' &&
+            (t.planId === plan.id || (!t.planId && !plan.plan?.executionMode))
+        )
+      const open = planCards.filter((task) => task.status !== 'done')
+      if (open.length > 0)
+        return `ainda há ${open.length} card(s) não concluído(s): ${open
+          .map((t) => `"${t.title}" (${t.status})`)
+          .join(' · ')} — rode com run_task, aguarde os eventos, ou remova com delete_task o que não será feito`
+      const project = projects.get(id.projectId)
+      let mission = missions.get(id.missionId)
+      if (!project || !mission) return 'missão não encontrada'
+      mission = ensureMissionWorktree(id.missionId) ?? mission
+      const missionCwd = missionWorkspacePath(project.path, mission)
+      if (!missionCwd || !mission.branch || !mission.worktree) {
+        return 'conclusão bloqueada: não foi possível provar ou reanexar a branch isolada da missão; nada será concluído na branch principal'
+      }
+      const mode = normalizeExecutionMode(plan.plan?.executionMode)
+      const expectedCards = plan.plan?.expectedCards ?? planCards.length
+      const completionProblems = validatePlanCompletion({
+        mode,
+        expectedCards,
+        cards: planCards.map((card) => ({ status: card.status }))
+      })
+      if (plan.plan?.expectedCards !== undefined && planCards.length !== expectedCards) {
+        completionProblems.push(
+          `o plano aprovou ${expectedCards} card(s), mas ${planCards.length} foram registrados; não é permitido pular ou apagar entrega para encerrar`
+        )
+      }
+      const workItems = plan.plan?.workItems ?? []
+      if (workItems.length > 0) {
+        const deliveredItems = new Set(planCards.map((card) => card.planItemId).filter(Boolean))
+        for (const item of workItems) {
+          if (!deliveredItems.has(item.id))
+            completionProblems.push(`o item aprovado ${item.id} não possui card entregue`)
+        }
+        if (deliveredItems.size !== planCards.length)
+          completionProblems.push('há card sem vínculo único com o grafo aprovado do plano')
+      }
+      for (const card of planCards.filter((candidate) => candidate.deliverable === 'code')) {
+        if (card.verification?.contractVersion !== 1) continue
+        const gates = card.gates ?? ['review', 'qa']
+        for (const gate of gates) {
+          const evidence = card.verification[gate]
+          if (evidence?.verdict !== 'approved' || evidence.readonly !== true) {
+            completionProblems.push(`"${card.title}" não possui evidência válida do gate ${gate}`)
+          }
+        }
+      }
+      if (completionProblems.length > 0) {
+        return `conclusão bloqueada pelo contrato verificável: ${completionProblems.join('; ')}`
+      }
+      if (isWorktreeClean(missionCwd) !== true) {
+        return 'conclusão bloqueada: a branch da missão não está limpa; alterações fora de cards ou artefatos de verificação precisam ser enquadrados antes de concluir'
+      }
+      const head = gitHead(missionCwd)
+      if (plan.plan?.executionHead && head !== plan.plan.executionHead) {
+        return `conclusão bloqueada: a branch avançou fora da cadeia reconhecida de cards (${plan.plan.executionHead.slice(0, 12)} → ${head?.slice(0, 12) ?? 'desconhecido'})`
+      }
+      const final = plan.plan?.verification?.final
+      if (
+        finalVerificationAccepted(final) &&
+        final?.head === head &&
+        final?.pendingConclusion === conclusion
+      ) {
+        closeVerifiedPlan(plan.id)
+        return tasks.get(plan.id)?.status === 'done'
+          ? 'plano concluído: todos os cards e a fotografia combinada foram verificados. Avise o usuário e aguarde o aval explícito para integrar.'
+          : 'a evidência final ficou desatualizada; a verificação será refeita'
+      }
+      if (finalVerificationRuns.has(plan.id)) {
+        return 'a verificação conjunta da missão já está em andamento — aguarde o evento do harness; não abra outro gate nem repita os cards'
+      }
+      startFinalPlanVerification(plan, conclusion)
+      return 'todos os cards foram entregues. Iniciei a verificação conjunta na branch da missão; o plano só será marcado como concluído quando essa fotografia passar. Você receberá um evento automático.'
+    },
+    deleteTask: (id, taskId) => {
+      if (id.role !== 'maestro' || !id.missionId) return 'só o orquestrador remove cards'
+      const task = tasks.get(taskId)
+      if (!task || task.missionId !== id.missionId) return 'card não encontrado nesta missão'
+      if (task.kind === 'plan') return 'o card de plano não se remove por aqui'
+      if (!task.auto)
+        return 'só cards AUTO (criados por você no modo plano) podem ser removidos — cards do usuário são dele'
+      if (task.status === 'execucao' || task.status === 'qa')
+        return 'card em execução/QA — aguarde o pipeline terminar (ou o evento de erro) antes de remover'
+      if (!removeTaskCascade(task))
+        return 'não removi o card: .synkora está rastreado pelo Git; retire o runtime do versionamento antes da limpeza'
+      hub.publish({
+        projectId: id.projectId,
+        missionId: id.missionId,
+        kind: 'task-updated',
+        text: `orquestrador removeu o card "${task.title}" (não será feito)`,
+        actor: 'maestro'
+      })
+      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', id.projectId)
+      syncBoard(id.projectId)
+      return `card "${task.title}" removido do board`
+    },
+    setPhaseExecutor: async (id, taskId, seatQuery, ownerOrder, model, effort) => {
+      if (id.role !== 'maestro')
+        return 'apenas o PM ou o orquestrador trocam o executor de uma fase — e SEMPRE por ordem explícita do dono'
+      const order = ownerOrder?.trim()
+      if (!order || order.length < 8)
+        return 'recusado: ownerOrder precisa da ordem VERBATIM do dono. A troca de executor é prerrogativa DELE — sem ordem registrada, pergunte via ask_user e espere'
+      const task = tasks.get(taskId)
+      if (!task || task.projectId !== id.projectId) return 'card não encontrado neste projeto'
+      if (id.missionId && task.missionId !== id.missionId)
+        return 'um orquestrador só troca executor de card da PRÓPRIA missão'
+      const q = seatQuery.trim().toLowerCase()
+      const seat = seats.list().find((s) => s.id === seatQuery.trim() || s.name.toLowerCase() === q)
+      if (!seat) return `conta "${seatQuery}" não encontrada — use o NOME exato do list_seats`
+      if (model && isBannedModel(model))
+        return `o modelo ${model} é banido para agentes — escolha outro do list_seats`
+      hub.publish({
+        projectId: id.projectId,
+        missionId: task.missionId,
+        kind: 'info',
+        text:
+          `troca de executor solicitada para "${task.title}": ${seat.name}` +
+          `${model?.trim() ? ` · ${model.trim()}` : ''}${effort?.trim() ? ` · ${effort.trim()}` : ''}. ` +
+          'A alteração só acontece pelo controle do próprio card, acionado pelo dono.',
+        actor: 'maestro',
+        urgent: true
+      })
+      return (
+        `pedido registrado, mas nenhuma conta/modelo foi alterado. ` +
+        `O dono precisa confirmar no controle do card "${task.title}". Ordem citada: ${order}`
+      )
+    }
+  }
+}
