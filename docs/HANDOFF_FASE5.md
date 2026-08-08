@@ -89,6 +89,24 @@
   não precisa ser "aposentado": o desenho final é o CONDICIONAL (typed =
   rede para pane sem espera armada; é a exceção auditada do F3).
 
+## Sessão 3 (2026-08-08/09, madrugada — pós-validação do correio)
+
+- PANES ABREM LIMPOS: contrato do AJUDANTE no system prompt (cd15198 +
+  linha de fecho do report de volta ao turno em bc8cdd7); panes de FASE
+  claude (d3a9d7c): buildBasePromptParts {turn, system} — rubrica dos
+  gates/atomicRoundRule/roster de agents invisíveis; CONTEÚDO + toda
+  instrução de AÇÃO (verdictRule, devContract, ACTIVE SKILL PLAN) no turno.
+  Briefing de fase claude SEMPRE por arquivo (read-first; evento
+  phase-prompt-via-file) — a proteção do CHECK 14 no fresco virou
+  deliberada. Codex segue com tudo no turno (pendência: sonda do canal por
+  arquivo via profile).
+- **O QUE FALTA NA FASE 5: SÓ O TESTE DE MISSÃO** (decisão do dono: só
+  depois de tudo pronto). Observar nele: gates esperando rodada nova por
+  long-poll (zero digitação no reciclo), retry de reprovação pelo correio,
+  prompt-delta, panes abrindo limpos, skills ativadas nos gates (o ACTIVE
+  SKILL PLAN ficou no turno — conferir receipts), e `--grep mailbox` +
+  `--grep delivery-injected` no journal. Depois do teste: decisão de PUSH.
+
 ## Fatos novos da sessão 2 (resumo de 1 tela)
 
 - probe-codex-mailbox-wait.mjs ganhou W6 (check_messages long-poll com
