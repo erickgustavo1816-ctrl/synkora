@@ -1,5 +1,37 @@
 # HANDOFF — Fase 1 da cirurgia do índice — ✅ CONCLUÍDA (2026-08-08)
 
+## PRÓXIMA SESSÃO (pós-clear) — leia isto primeiro
+
+1. **PENDÊNCIA DO DONO: PUSH** — 35 commits locais na `nivel5-fase1` à
+   frente de origin (ele decide quando; nada bloqueia).
+2. **PRÓXIMA OBRA: Fase 2 — veredito sem barreira síncrona (CHECK 1
+   núcleo).** É cirurgia de comportamento, não de movimentação: PLANO
+   FORMAL ANTES de qualquer linha (a régua da Fase 1 vale em dobro).
+   Desenho já esboçado na seção "Fase 2" de docs/PLANO_NIVEL_5.md: lock de
+   transição POR CARD (fila serializada taskId→Promise) + snapshotProblemFor
+   viajando pelo gitWorker (gitOff) + estado transitório do card; o contrato
+   "nenhum veredito com fotografia velha" passa a ser garantido por
+   SERIALIZAÇÃO, não por sincronicidade. Primeira entrega da sessão: o plano
+   formal com (a) varredura de TODOS os call sites de advancePhase (que
+   viram await — o SYNC POR CONTRATO do PhaseApi é exatamente o que a Fase 2
+   renegocia, com o lock no lugar), (b) o desenho do lock cobrindo poller ×
+   report × boot ("quem SEGURA O LOCK deleta o watch"), e (c) o TESTE NOVO
+   OBRIGATÓRIO de corrida: 2 vereditos simultâneos no mesmo card + veredito
+   × boot. Só depois do plano aprovado pelo dono: código.
+   O terreno está pronto: advancePhase mora no phaseEngine, call sites todos
+   mapeados nos FASE1_MAPA_*.md, e a Fase 0 (stall attribution) está ligada
+   para provar o antes/depois dos stalls de 1,2–2,1s.
+3. **Higiene opcional entre fases** (não bloqueia, cada uma é obra própria
+   pequena com a receita da Fase 1): corte de overlays+asserts (~1,5k) ·
+   verificação de plano (~940L) · release/versões (~350L) — levariam o
+   index de 6.658 para ~3,3k; chão honesto ~2,5–3k (composition root).
+   Débitos maiores: partição do missionEngine (2,2k) e do pty:create.
+4. **Regras vivas** (inalteradas): app parado para editar src (checar
+   processo antes, a prova expira) · cada commit verde (typecheck + 5
+   suítes 39/25/14/14/8) · commits `fase1:`/`fase2:` sem acentos · agentes
+   Opus sob liberação do dono POR SESSÃO · git add por caminho explícito ·
+   scripts por âncora · higiene de imports por diff de órfãos.
+
 **A FASE 1 ESTÁ FECHADA** por decisão do dono, após o boot de validação dos
 commits 7a–7c ("boot limpo, pode fechar"). Este arquivo vira REGISTRO
 HISTÓRICO da obra: o placar final e a decisão de encerramento estão no
