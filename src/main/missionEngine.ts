@@ -109,10 +109,15 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     blackbox,
     mainStalls,
     skillsLib,
+    helperCompletions,
+    helperReported,
+    helperSeen,
     syncBoard,
     scheduleProgressSnapshot,
     projectModeOf,
-    orchPaneId
+    orchPaneId,
+    unregisterPane,
+    ensureProjectRuntimeWritable
   } = ctx
   // hub é atribuído UMA vez, antes de o engine nascer — capturar é seguro.
   const hub = ctx.hub
@@ -2136,6 +2141,82 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     startMissionIntegration(watch.missionId, 'review legado')
   }
 
+  function stopMissionExecution(projectId: string, missionId: string, reason: string): void {
+    const missionTaskIds = new Set(
+      tasks
+        .list(projectId)
+        .filter((task) => task.missionId === missionId && task.kind !== 'plan')
+        .map((task) => task.id)
+    )
+    for (const taskId of missionTaskIds) {
+      // phaseWatches/livePaneSpecs em CALL TIME via ctx: os aliases do index
+      // nascem no createPhaseEngine, DEPOIS deste engine — destructurar na
+      // construção seria TDZ.
+      const watch = ctx.phaseWatches.get(taskId)
+      ctx.phaseWatches.delete(taskId)
+      if (watch) {
+        try {
+          ensureProjectRuntimeWritable(projectId)
+          unlinkSync(watch.marker)
+        } catch {
+          // marcador já consumido ou nunca criado
+        }
+      }
+      const task = tasks.get(taskId)
+      if (task && (task.status === 'execucao' || task.status === 'qa')) {
+        tasks.update(taskId, {
+          status: 'backlog',
+          feedback: reason,
+          activePhase: watch?.phase ?? task.activePhase ?? 'dev',
+          phaseState: 'interrupted'
+        })
+      }
+    }
+
+    for (const pane of hub
+      .panesOf(projectId)
+      .filter((candidate) => candidate.missionId === missionId)) {
+      helperCompletions.discard(pane.paneId)
+      helperReported.add(pane.paneId)
+      helperSeen.add(pane.paneId)
+      if (ptys.has(pane.paneId)) ptys.kill(pane.paneId)
+      unregisterPane(pane.paneId)
+      ctx.livePaneSpecs.delete(pane.paneId)
+      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) {
+        ctx.uiSender.send('panes:closeById', projectId, pane.paneId)
+      }
+    }
+    syncBoard(projectId)
+  }
+
+  /** Poller de 3s (a parte de MISSÕES; fases e watchdog de helper seguem no
+   * index). Marcadores de INTEGRAÇÃO de missão (fallback do report MCP do
+   * gate). Preservar o catch { continue } do runtime não gravável: sem ele,
+   * um projeto com .synkora versionado travaria o poller inteiro. */
+  function tickMissionWatches(): void {
+    for (const [missionId, watch] of [...missionWatches]) {
+      if (!existsSync(watch.marker)) continue
+      let content = ''
+      try {
+        content = readFileSync(watch.marker, 'utf-8')
+      } catch {
+        continue // ainda sendo escrito
+      }
+      try {
+        ensureProjectRuntimeWritable(watch.projectId)
+      } catch {
+        continue
+      }
+      try {
+        unlinkSync(watch.marker)
+      } catch {
+        // já sumiu
+      }
+      missionWatches.delete(missionId)
+      handleMissionVerdict(watch, content)
+    }
+  }
+
   return {
     // ——— estado (nasce aqui; ctx expõe por getter via alias no index) ———
     missionWatches,
@@ -2148,6 +2229,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     ensureMissionWorktree,
     createMissionImpl,
     ensureMissionVersion,
+    stopMissionExecution,
     // ——— vínculo com o plano mestre (roadmap) ———
     writeMissionStartIntent,
     clearMissionStartIntent,
@@ -2164,6 +2246,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // ——— recuperação (chamada pelo boot) ———
     recoverMissionStartIntents,
     recoverMissionIntegrationIntents,
-    repairIntegrationSyncTickets
+    repairIntegrationSyncTickets,
+    // ——— tick do poller de 3s ———
+    tickMissionWatches
   }
 }

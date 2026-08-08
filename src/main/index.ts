@@ -6605,6 +6605,7 @@ app.whenReady().then(async () => {
     ensureMissionWorktree,
     createMissionImpl,
     ensureMissionVersion,
+    stopMissionExecution,
     writeMissionStartIntent,
     clearMissionStartIntent,
     rollbackPlannedMission,
@@ -6822,56 +6823,9 @@ app.whenReady().then(async () => {
   }
 
 
-  function stopMissionExecution(projectId: string, missionId: string, reason: string): void {
-    const missionTaskIds = new Set(
-      tasks
-        .list(projectId)
-        .filter((task) => task.missionId === missionId && task.kind !== 'plan')
-        .map((task) => task.id)
-    )
-    for (const taskId of missionTaskIds) {
-      const watch = phaseWatches.get(taskId)
-      phaseWatches.delete(taskId)
-      if (watch) {
-        try {
-          ensureProjectRuntimeWritable(projectId)
-          unlinkSync(watch.marker)
-        } catch {
-          // marcador já consumido ou nunca criado
-        }
-      }
-      const task = tasks.get(taskId)
-      if (task && (task.status === 'execucao' || task.status === 'qa')) {
-        tasks.update(taskId, {
-          status: 'backlog',
-          feedback: reason,
-          activePhase: watch?.phase ?? task.activePhase ?? 'dev',
-          phaseState: 'interrupted'
-        })
-      }
-    }
-
-    for (const pane of hub
-      .panesOf(projectId)
-      .filter((candidate) => candidate.missionId === missionId)) {
-      helperCompletions.discard(pane.paneId)
-      helperReported.add(pane.paneId)
-      helperSeen.add(pane.paneId)
-      if (ptys.has(pane.paneId)) ptys.kill(pane.paneId)
-      unregisterPane(pane.paneId)
-      livePaneSpecs.delete(pane.paneId)
-      if (uiSender && !uiSender.isDestroyed()) {
-        uiSender.send('panes:closeById', projectId, pane.paneId)
-      }
-    }
-    syncBoard(projectId)
-  }
-
-
   const HELPER_OPEN_GRACE_MS = 30_000
   setInterval(() => {
     phaseEngine.tickPhaseWatches()
-    // Marcadores de INTEGRAÇÃO de missão (fallback do report MCP do gate).
     // Helper tambem nasce por `panes:open`, que e um push sem ACK. Uma
     // notificacao perdida nao pode criar um escritor fantasma no Hub e ocupar
     // para sempre o unico slot de delegacao do card. Reenvie uma vez; sem PTY
@@ -6935,27 +6889,7 @@ app.whenReady().then(async () => {
       )
     }
 
-    for (const [missionId, watch] of [...missionWatches]) {
-      if (!existsSync(watch.marker)) continue
-      let content = ''
-      try {
-        content = readFileSync(watch.marker, 'utf-8')
-      } catch {
-        continue // ainda sendo escrito
-      }
-      try {
-        ensureProjectRuntimeWritable(watch.projectId)
-      } catch {
-        continue
-      }
-      try {
-        unlinkSync(watch.marker)
-      } catch {
-        // já sumiu
-      }
-      missionWatches.delete(missionId)
-      handleMissionVerdict(watch, content)
-    }
+    missionEngine.tickMissionWatches()
   }, 3000)
 
 
