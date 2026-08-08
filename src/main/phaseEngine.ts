@@ -3391,7 +3391,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       if (watch.paneId) {
         hub.notifyPane(
           watch.paneId,
-          '[synkora] conclusão bloqueada: ainda existe ajudante aberto neste card. Aguarde o fechamento e reporte done novamente.'
+          'conclusão bloqueada: ainda existe ajudante aberto neste card. Aguarde o fechamento e reporte done novamente.'
         )
       }
       return false
@@ -3431,7 +3431,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         if (watch.paneId) {
           hub.notifyPane(
             watch.paneId,
-            '[synkora] conclusão bloqueada: a fotografia mudou depois dos diagnósticos. Confira os arquivos e reporte done novamente.'
+            'conclusão bloqueada: a fotografia mudou depois dos diagnósticos. Confira os arquivos e reporte done novamente.'
           )
         }
         return false
@@ -3498,7 +3498,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         if (watch.paneId) {
           hub.notifyPane(
             watch.paneId,
-            '[synkora] conclusão bloqueada: a fotografia non_code não pôde ser provada como livre de código/configuração executável. Peça reclassificação ao orquestrador.'
+            'conclusão bloqueada: a fotografia non_code não pôde ser provada como livre de código/configuração executável. Peça reclassificação ao orquestrador.'
           )
         }
         return false
@@ -3771,7 +3771,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         if (watch.paneId) {
           hub.notifyPane(
             watch.paneId,
-            '[synkora] report preservado: não foi possível gravar a evidência sanitizada; tente novamente'
+            'report preservado: não foi possível gravar a evidência sanitizada; tente novamente'
           )
         }
         return false
@@ -4044,7 +4044,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         })
         hub.notifyPane(
           watch.paneId,
-          '[synkora] veredito registrado. Este pane FICA ABERTO em espera: não toque em NADA — a rodada de correção do dev chega NESTA conversa com a fotografia nova, e você re-verifica só a sua lista + o delta.'
+          'veredito registrado. Este pane FICA ABERTO em espera: não toque em NADA — a rodada de correção do dev chega NESTA conversa com a fotografia nova, e você re-verifica só a sua lista + o delta. Para esperar SEM digitação: chame check_messages em loop (cada chamada segura ~45s e retorna na hora em que a rodada nova chegar).'
         )
         // gate vivo esperando não deixa browser/app de teste aberto na máquina
         ptys.reapVisualsOf(watch.paneId)
@@ -4242,7 +4242,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           if (watch.paneId) {
             hub.notifyPane(
               watch.paneId,
-              `[synkora] veredito por arquivo foi recusado; gate ${watch.phase} conclui somente pela tool MCP report`
+              `veredito por arquivo foi recusado; gate ${watch.phase} conclui somente pela tool MCP report`
             )
           }
           continue
@@ -4275,7 +4275,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
                 }
                 hub.notifyPane(
                   identity.paneId,
-                  '[synkora] conclusao recusada: o plano de skills desta rodada expirou; reabra somente esta fase'
+                  'conclusao recusada: o plano de skills desta rodada expirou; reabra somente esta fase'
                 )
                 return
               }
@@ -4293,7 +4293,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
                 }
                 hub.notifyPane(
                   identity.paneId,
-                  '[synkora] conclusão por arquivo recusada: este pane tem um ACTIVE SKILL PLAN. Ative os receipts exigidos e conclua pela tool MCP report com skillApplications.'
+                  'conclusão por arquivo recusada: este pane tem um ACTIVE SKILL PLAN. Ative os receipts exigidos e conclua pela tool MCP report com skillApplications.'
                 )
                 return
               }
@@ -4303,7 +4303,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
               } catch {
                 hub.notifyPane(
                   identity.paneId,
-                  '[synkora] conclusão pausada: .synkora passou a ser rastreado pelo Git; retire o runtime do versionamento e reporte novamente'
+                  'conclusão pausada: .synkora passou a ser rastreado pelo Git; retire o runtime do versionamento e reporte novamente'
                 )
                 return
               }
@@ -4318,7 +4318,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
                 } catch {
                   // transcript é best-effort; a trava e o aviso continuam valendo
                 }
-                hub.notifyPane(identity.paneId, `[synkora] conclusão bloqueada: ${guard.blocked}`)
+                hub.notifyPane(identity.paneId, `conclusão bloqueada: ${guard.blocked}`)
                 return
               }
               guardSnapshot = guard.devSnapshot

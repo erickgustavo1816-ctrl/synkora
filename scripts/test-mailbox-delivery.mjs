@@ -150,6 +150,28 @@ test('pane morto: dead sem postar nada', () => {
   )
 })
 
+test('PaneMailbox.waitFor (long-poll F3): resolve imediato com caixa cheia, acorda no post, false no teto', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'synkora-mailbox-wait-'))
+  const file = join(dir, 'mailboxes.json')
+  try {
+    const box = new PaneMailbox(file)
+    // caixa já cheia → imediato
+    box.post('task:t1:review', { text: 'rodada nova', at: '2026-08-08T10:00:00Z' })
+    assert.equal(await box.waitFor('task:t1:review', 50), true)
+    box.drain('task:t1:review')
+    // pendurado → o post acorda antes do teto
+    const t0 = Date.now()
+    const waiting = box.waitFor('task:t1:review', 5000)
+    setTimeout(() => box.post('task:t1:review', { text: 'chegou', at: '2026-08-08T10:01:00Z' }), 60)
+    assert.equal(await waiting, true)
+    assert.ok(Date.now() - t0 < 3000, 'acordou pelo post, não pelo teto')
+    // teto vence com a caixa vazia de outro endereço
+    assert.equal(await box.waitFor('task:outro:qa', 80), false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('PaneMailbox: dedupKey colapsa no fato mais novo; texto idêntico coalesce; drain esvazia', () => {
   const dir = mkdtempSync(join(tmpdir(), 'synkora-mailbox-test-'))
   const file = join(dir, 'mailboxes.json')

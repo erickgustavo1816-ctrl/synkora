@@ -332,6 +332,10 @@ export interface McpApi {
   drainInboxFor?: (id: PaneIdentity, tool: string) => string | undefined
   /** CHECK 15: drenagem explícita via tool check_messages */
   checkMessages: (id: PaneIdentity) => string
+  /** F5-F3 (long-poll): resolve true assim que o correio do pane tiver
+   *  mensagem (imediato se já houver), false no teto — check_messages segura
+   *  a resposta em vez de devolver "vazio" na hora. */
+  waitForMail?: (id: PaneIdentity, timeoutMs: number) => Promise<boolean>
   /** troca seat/modelo/effort do executor de uma fase — SÓ por ordem explícita do dono */
   setPhaseExecutor: (
     id: PaneIdentity,
@@ -440,6 +444,12 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   // recém-atualizado honrando TTL de catálogo é gatilho plausível. Custo de
   // remover: um tools/list por boot de pane. Só re-anunciar com sonda.
   const server = new McpServer({ name: 'synkora', version: '1.0.0' })
+
+  // F5-F3: teto do long-poll do check_messages — DENTRO do provado em sonda
+  // nos dois CLIs (R13: claude segura 45s no perfil exato do gate; W2–W4:
+  // codex segura 75s+ sem config, e os panes codex ganham
+  // tool_timeout_sec=300 de folga). Subir além disso exige re-sonda.
+  const CHECK_MESSAGES_LONGPOLL_MS = 45_000
 
   // INSTRUMENTAÇÃO DO CATÁLOGO (CHECK 14): coleciona os nomes registrados
   // NESTA construção e avisa o app (dedupe por pane lá) — a caixa-preta
@@ -899,9 +909,17 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     'check_messages',
     {
       description:
-        'Drena sua caixa de mensagens do Synkora (avisos do app, do orquestrador e de outros agentes — mesmo vocabulário das linhas "[synkora]" do terminal). As mensagens também chegam SOZINHAS de carona no resultado das suas outras tools; chame isto quando o terminal avisar "📬" enquanto você está parado, ou antes de decidir esperar. Caixa vazia = ninguém te chamou.'
+        'Drena sua caixa de mensagens do Synkora (avisos do app, do orquestrador e de outros agentes — mesmo vocabulário das linhas "[synkora]" do terminal). As mensagens também chegam SOZINHAS de carona no resultado das suas outras tools. LONG-POLL: com a caixa vazia esta tool SEGURA a resposta por até ~45s e retorna na hora em que algo chegar — para ESPERAR uma mensagem (rodada nova de gate, resposta do orquestrador), chame em loop: cada chamada é uma espera barata, sem digitação e sem polling agressivo. Retorno "sem mensagens" = ninguém te chamou nesse intervalo; chame de novo se ainda estiver esperando.'
     },
-    async () => text(api.checkMessages(identity))
+    async () => {
+      // F5-F3 (sondas R13 claude 45s+ · W2–W4 codex 75s+ e
+      // tool_timeout_sec=300 de folga nos panes codex): caixa vazia NÃO
+      // devolve vazio na hora — segura até chegar mensagem ou até o teto.
+      // É o "acordar sem input" dos gates read-only (sem shell) e de todo
+      // pane codex (que não tem waiter de background pós-turno — sonda W5).
+      await api.waitForMail?.(identity, CHECK_MESSAGES_LONGPOLL_MS)
+      return text(api.checkMessages(identity))
+    }
   )
 
   if (identity.role === 'qa') {
@@ -2014,7 +2032,12 @@ export function codexMcpArgs(
     // já de pé, estourar isso é o event loop do main ocupado na tempestade de
     // boot de panes, não rede. Folga tripla.
     '-c',
-    'mcp_servers.synkora.startup_timeout_sec=30'
+    'mcp_servers.synkora.startup_timeout_sec=30',
+    // F5-F3: folga para o LONG-POLL do check_messages (o servidor segura a
+    // resposta com a caixa vazia). Sonda W4 (2026-08-08) provou o knob no
+    // codex 0.147; o default já aguentava 75s+ — isto é cinto, não cura.
+    '-c',
+    'mcp_servers.synkora.tool_timeout_sec=300'
   ]
   if (browserCmd) {
     // browser de teste também nos panes codex de execução (pedido do usuário:

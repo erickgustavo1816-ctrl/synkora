@@ -35,6 +35,9 @@ const PRUNE_AFTER_MS = 7 * 24 * 60 * 60 * 1000
 
 export class PaneMailbox {
   private data: Record<string, MailboxMessage[]>
+  /** F3 — long-poll do check_messages: resolvers aguardando chegada por
+   *  endereço; post() acorda todos os da key. */
+  private waiters = new Map<string, Set<(arrived: boolean) => void>>()
 
   constructor(private readonly file: string) {
     this.data = loadJsonStore<Record<string, MailboxMessage[]>>(
@@ -84,7 +87,37 @@ export class PaneMailbox {
     if (box.length > BOX_CAP) box.splice(0, box.length - BOX_CAP)
     this.data[key] = box
     this.persist()
+    this.wake(key)
     return 'posted'
+  }
+
+  /** F3 — LONG-POLL: resolve true assim que houver mensagem no endereço
+   *  (imediato se a caixa já tem algo), false no teto. É o "acordar sem
+   *  input" dos gates read-only e de todo pane codex (sondas R13 + W2–W4:
+   *  claude aguenta 45s+ por tool call, codex 75s+ sem config). */
+  waitFor(key: string, timeoutMs: number): Promise<boolean> {
+    if (this.pending(key) > 0) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      const set = this.waiters.get(key) ?? new Set()
+      let settled = false
+      const finish = (arrived: boolean): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        set.delete(finish)
+        if (set.size === 0) this.waiters.delete(key)
+        resolve(arrived)
+      }
+      const timer = setTimeout(() => finish(false), timeoutMs)
+      set.add(finish)
+      this.waiters.set(key, set)
+    })
+  }
+
+  private wake(key: string): void {
+    const set = this.waiters.get(key)
+    if (!set) return
+    for (const finish of [...set]) finish(true)
   }
 
   /** Drena o endereço inteiro (a entrega registra o recibo no chamador). */

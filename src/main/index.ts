@@ -3203,7 +3203,7 @@ app.whenReady().then(async () => {
             : 'Este é um PROJETO EXISTENTE. Use missões focadas para melhorias concretas; o fluxo de plano mestre de pasta vazia não se aplica.'
     hub.notifyPaneNow(
       paneId,
-      `[synkora] MUDANÇA DE ETAPA (instrução autoritativa): ${instruction}`
+      `MUDANÇA DE ETAPA (instrução autoritativa): ${instruction}`
     )
   }
   // CORREIO MCP (CHECK 15 F1 → F5-F2): payload de pane MCP-armado vai para a

@@ -15,7 +15,7 @@ import type { McpApi } from '../mcpServer'
 
 export function buildMailboxApi(
   ctx: MainContext
-): Pick<McpApi, 'noteCatalogServed' | 'drainInboxFor' | 'checkMessages'> {
+): Pick<McpApi, 'noteCatalogServed' | 'drainInboxFor' | 'checkMessages' | 'waitForMail'> {
   const {
     blackbox,
     mailbox,
@@ -62,12 +62,19 @@ export function buildMailboxApi(
       })
       return formatInboxBlock(messages)
     },
+    waitForMail: (id, timeoutMs) => {
+      // F5-F3 (long-poll do check_messages): o handler segura a resposta até
+      // ter mensagem ou até o teto — é o acordar-sem-input dos gates
+      // read-only e de todo pane codex (sondas R13/W2–W5).
+      if (!id.paneId) return Promise.resolve(false)
+      return mailbox.waitFor(mailboxKeyOf(id, id.paneId), timeoutMs)
+    },
     checkMessages: (id) => {
       if (!id.paneId) return 'caixa indisponível para esta identidade'
       const key = mailboxKeyOf(id, id.paneId)
       const messages = mailbox.drain(key)
       if (messages.length === 0)
-        return 'caixa vazia — nenhuma mensagem pendente para você (as entregas também chegam de carona nos resultados das suas outras tools)'
+        return 'caixa vazia — ninguém te chamou neste intervalo de espera (a chamada segura ~45s sozinha). Ainda aguardando algo (rodada nova de gate, resposta do orquestrador)? chame check_messages de novo. As entregas também chegam de carona nos resultados das suas outras tools.'
       blackbox.record({
         cat: 'msg',
         event: 'mailbox-delivered',
