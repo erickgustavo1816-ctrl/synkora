@@ -98,8 +98,15 @@
   instrução de AÇÃO (verdictRule, devContract, ACTIVE SKILL PLAN) no turno.
   Briefing de fase claude SEMPRE por arquivo (read-first; evento
   phase-prompt-via-file) — a proteção do CHECK 14 no fresco virou
-  deliberada. Codex segue com tudo no turno (pendência: sonda do canal por
-  arquivo via profile).
+  deliberada.
+- CODEX TAMBÉM (878a46b): sonda probe-codex-profile-instructions provou que
+  o PROFILE por pane (o mesmo do skill isolation) carrega
+  developer_instructions POR ARQUIVO — 40KB ok, fura o teto do argv (fecha
+  a pendência da F6.4); CUIDADO CRAVADO: `-c developer_instructions` VENCE
+  o profile — nunca os dois no mesmo spawn. Pane codex de fase abre limpo
+  (turn = conteúdo; contrato+securityBlock via profile). Bônus: suíte
+  codex-skill-isolation estava VERMELHA desde a Fase 1 (âncoras no
+  index.ts) — re-apontada para ipc/pty.ts + asserts do canal (7/7).
 - **O QUE FALTA NA FASE 5: SÓ O TESTE DE MISSÃO** (decisão do dono: só
   depois de tudo pronto). Observar nele: gates esperando rodada nova por
   long-poll (zero digitação no reciclo), retry de reprovação pelo correio,
