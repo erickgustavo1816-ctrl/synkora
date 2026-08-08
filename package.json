@@ -44,6 +44,7 @@
     "test:integration-queue": "node --experimental-strip-types --test scripts/test-integration-queue.mjs",
     "test:phase-launch-guard": "node --experimental-strip-types --test scripts/test-phase-launch-guard.mjs",
     "test:phase-transition-lock": "node --experimental-strip-types --test scripts/test-phase-transition-lock.mjs",
+    "test:phase-verdict-races": "tsc --outDir .tmp/phase-verdict-races --target ES2022 --module node16 --moduleResolution node16 --esModuleInterop --skipLibCheck --noCheck --types node src/main/phaseEngine.ts && node --test scripts/test-phase-verdict-races.mjs",
     "test:task-adjustment": "node --experimental-strip-types --test scripts/test-task-adjustment.mjs",
     "test:orchestrator-flow": "node --experimental-strip-types --test scripts/test-orchestrator-flow.mjs",
     "test:pane-permissions": "node --experimental-strip-types --test scripts/test-pane-permissions.mjs",
