@@ -265,17 +265,23 @@ test('DEV e QA de UI não conseguem pular seus contratos obrigatórios', () => {
 })
 
 test('o runtime instala, valida e entrega pacotes multi-arquivo em vez de só SKILL.md', () => {
+  // Fase 1 moveu o plano de fase/ativacao para phaseEngine e mcpApi/skills —
+  // as ancoras seguem o codigo (o boot de bundled continua no index).
   const indexSource = new URL('../src/main/index.ts', import.meta.url)
   const librarySource = new URL('../src/main/skillsLibrary.ts', import.meta.url)
+  const phaseEngineSource = new URL('../src/main/phaseEngine.ts', import.meta.url)
+  const skillsApiSource = new URL('../src/main/mcpApi/skills.ts', import.meta.url)
   const indexText = requireSource(indexSource)
   const libraryText = requireSource(librarySource)
+  const phaseEngineText = requireSource(phaseEngineSource)
+  const skillsApiText = requireSource(skillsApiSource)
 
   assert.match(indexText, /selectStaleBundledIds/)
   assert.match(indexText, /skillsLib\.bundledPackageMatches\(id\)/)
-  assert.match(indexText, /selectPhaseSkillPlan\(/)
-  assert.match(indexText, /missingMandatoryUiPhaseSkills\(/)
-  assert.match(indexText, /skillRuntime\.planPane\(/)
-  assert.match(indexText, /skillsLib\.loadActivationPackage\(/)
+  assert.match(phaseEngineText, /selectPhaseSkillPlan\(/)
+  assert.match(phaseEngineText, /missingMandatoryUiPhaseSkills\(/)
+  assert.match(phaseEngineText, /skillRuntime\.planPane\(/)
+  assert.match(skillsApiText, /skillsLib\.loadActivationPackage\(/)
 
   assert.match(libraryText, /function writeBundledPackage\(/)
   assert.match(libraryText, /safeBundledDestination\(/)
