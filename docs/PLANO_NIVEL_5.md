@@ -147,6 +147,36 @@ eliminação é overhead do modo dev/GC — registrar e seguir para a Fase 1.
 > PRÓXIMO: commit 4 (mcpApi/ por domínio; report em commit próprio) —
 > boot de validação do dono segue pendente, agora cobrindo TAMBÉM o
 > checkpoint da frente paralela.
+>
+> ESTADO 5 (2026-08-08, mesma data): **BOOT DE VALIDAÇÃO FEITO pelo dono**
+> (npm run dev limpo com os commits 0–3 + checkpoint; claude atualizou
+> 2.1.224→2.1.226 no boot — re-sondar CHECK 14/MCP quando a M02c voltar a
+> rodar) e **COMMIT 4 COMPLETO em 4 partes**, todas verdes (typecheck
+> node+web + 39/25/14/14/8):
+> - 4a (6ba29fc): PhaseApi ganha reviewArtifactProblem/cleanupReviewArtifact/
+>   readReviewArtifactChunk/taskIntegrationMarker/recoverFinalizingTask —
+>   com a superfície no contrato, os módulos de domínio não precisam de
+>   entradas de fase nas extras.
+> - 4b (86c4ea1): nasce src/main/mcpApi/ — images (0 extras), mailbox
+>   (0 extras), code, skills, panes. Factories buildXxxApi(ctx, extras?) →
+>   Pick<McpApi, …> (contextual typing preservado); o literal do index vira
+>   spreads + membros restantes. Armadilha paga: mcpPaneFirstContact nasce
+>   DEPOIS do literal — nos módulos vai por ctx.* em call time, nunca
+>   desestruturado (TDZ).
+> - 4c (7ce43eb): missions (12 membros), helpers (6), board (8). Sets de
+>   handshake humano (humanProjectPlanApprovals/humanProjectMissionStarts)
+>   POR REFERÊNCIA — os IPCs projectPlan:* continuam donos da escrita.
+> - 4d (547082e): report + readReviewEvidence em módulo PRÓPRIO (ordem do
+>   mapa). Transação do veredito conferida no diff: detach → advancePhase
+>   síncrono → rollback por phaseWatches.set, tudo via ctx.phase.
+> A varredura Opus do mcpApi provou ZERO chamadas cruzadas entre membros —
+> os 9 módulos são independentes, sem late-binding entre eles (o único
+> late-bound do desenho segue sendo o codeReportGuard do phaseEngine).
+> index.ts 17988→13420 linhas (−31% na sessão; 19448 pré-obra → −31%).
+> PRÓXIMO: commit 5 — ipc/<domínio>.ts (ilhas → pesados; pty POR ÚLTIMO
+> como paneLifecycle.ts, levando livePaneSpecs/closingPaneIds/
+> paneEverSpawned). Cerca viva: register<X>Ipc(ctx) chamados do whenReady,
+> NUNCA no import (senão a instrumentação da Fase 0 morre em silêncio).
 
 Âncoras reais (index.ts de hoje): bindUiSender :463 · mcpPaneArgs :3988 ·
 armPane :4062 · recovery de boot :6797–6943 · completeMissionMerge :7344 ·

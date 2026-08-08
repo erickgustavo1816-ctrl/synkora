@@ -35,14 +35,28 @@ o desfecho desta sessão).
   typecheck node+web + orchestrator-flow 39 + mission-verification 25 +
   integration-queue 14 + pane-permissions 14 + stall-attribution 8 (as
   suítes CRESCERAM na frente paralela: 35→39 e 11→14).
-- **PRÓXIMO PASSO: commit 4 — mcpApi/ por domínio** (mailbox → code →
-  board → skills → helpers → panes → missions → images; `report` em commit
-  PRÓPRIO — é o bloco mais entrelaçado do arquivo). O engine já expõe tudo
-  o que o mcpApi precisa via ctx.phase + aliases; a montagem final continua
-  um objeto único literal-compatível com McpApi (mcpServer.ts).
-- Boot de validação do dono AINDA pendente — agora cobre também o
-  checkpoint da frente paralela (um `npm run dev`: boot limpo, board
-  abrindo, pipeline de fase inteiro passando pelo engine).
+- **COMMIT 4 FEITO na mesma data** (2ª rodada da sessão, após o dono validar
+  o boot com `npm run dev` limpo): 4a (6ba29fc, PhaseApi +5), 4b (86c4ea1,
+  mcpApi/ images+mailbox+code+skills+panes), 4c (7ce43eb,
+  missions+helpers+board) e 4d (547082e, report+readReviewEvidence em módulo
+  próprio). O literal mcpApi do index é SÓ spreads + hub. Detalhe completo
+  no ESTADO 5 do PLANO_NIVEL_5.md. Armadilhas pagas que valem re-ler antes
+  do commit 5: mcpPaneFirstContact via ctx.* em call time (nasce depois do
+  literal — TDZ na desestruturação); Sets de handshake humano por
+  referência; transação do report (detach → advancePhase sync → rollback)
+  conferida linha a linha no módulo.
+- **PRÓXIMO PASSO: commit 5 — ipc/<domínio>.ts** (ilhas primeiro: skills,
+  voice, seats/settings/policies/catalog/cli/services/clipboard/files/
+  attachments/dialog; depois backlog, projects, tasks/missions/maestro;
+  **pty POR ÚLTIMO como paneLifecycle.ts**, levando livePaneSpecs/
+  closingPaneIds/paneEverSpawned). Cerca viva: módulos exportam
+  `register<X>Ipc(ctx)` CHAMADOS do whenReady — NUNCA registrar no import
+  (a instrumentação de stall da Fase 0 cobre só handlers registrados depois
+  de instrumentIpcMain). Guards de sender (bindUiSender etc.) → ipc/guards.ts
+  único, conforme o mapa.
+- Nota de ambiente: no boot de validação o claude atualizou 2.1.224→2.1.226
+  — a sonda do CHECK 14 (MCP first-turn) foi feita na 2.1.224; re-sondar
+  no próximo resume de fase ao vivo.
 
 ## Texto da sessão anterior (2026-08-07) — contexto histórico
 
