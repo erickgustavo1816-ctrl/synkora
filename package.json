@@ -22,6 +22,7 @@
     "bench:code-intelligence": "node scripts/bench-code-intelligence.mjs",
     "bench:panes": "node scripts/bench-pane-startup.mjs",
     "test:playwright-runtime": "node scripts/test-playwright-runtime.mjs",
+    "test:qa-cdp": "node --experimental-strip-types --test scripts/test-qa-cdp.mjs",
     "test:mcp-protocol": "node scripts/run-mcp-protocol-tests.mjs",
     "test:mcp-dual-era": "node --experimental-strip-types scripts/test-mcp-dual-era.mjs",
     "test:pty-transcript": "tsc --outDir .tmp/pty-transcript-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/pty.ts src/main/ptyRecovery.ts src/main/securityRedaction.ts src/main/winPath.ts && node --test scripts/test-pty-transcript.mjs",
