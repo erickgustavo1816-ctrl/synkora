@@ -4,6 +4,19 @@ Escrito 2026-08-08. Vertente B aprovada pelo dono ("meu PC tem 32GB"); ordem
 vigente: FASE 3 → FASE 4 → teste de missão → push. Padrão das fases 1/2:
 mapa → commits pequenos e verdes → validação.
 
+> ESTADO FINAL (2026-08-08, mesma sessão): **OBRA CONCLUÍDA EM CÓDIGO** — os
+> 6 commits saíram na ordem planejada (c0 3becc05 · c1 cce043d · c2 eda8d84 ·
+> c3 92c82dd · c4 8387f47 · c5 ececd08 + re-aponte dcd4288), typecheck 0 e o
+> gate completo verde (22 suítes, incl. o agregado skills-system). A Fase 4
+> (QA Electron via CDP, agente Fable em worktree isolado) foi mergeada em
+> 792e73a SEM conflito com a costura. Desvios conscientes do plano: SeatGate
+> não força tab board (o hide por hostOverlayCount do D6 já cobre — menos
+> mecanismo); `panes:attention-cleared` carrega projectId (assinatura real do
+> clearPaneAttention); driver E2E corrigido no ato (exclui `?view=` do match
+> de target CDP — D11). PENDENTE: validação AO VIVO pelo dono (primeiro
+> `npm run dev` com a view: abrir projeto, aba Panes, missão com gates,
+> agente livre, ▶ testar, ditado no canvas, crash/reload da view).
+
 ## 1. Objetivo e desenho
 
 Dividir o renderer único em DOIS processos de renderer:

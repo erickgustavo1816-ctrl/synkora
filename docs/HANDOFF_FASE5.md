@@ -2,6 +2,16 @@
 
 Atualizado em 2026-08-09 (madrugada), antes do /clear do dono.
 
+> ATUALIZAÇÃO 2026-08-08 (sessão da retomada): **FASES 3 e 4 CONCLUÍDAS EM
+> CÓDIGO** — F3 multi-renderer (docs/FASE3_PLANO.md, commits fase3 c0–c5 +
+> merge fase4 792e73a; bloco F6.11 do CLAUDE.md tem o resumo completo).
+> O que RESTA: (1) validação ao vivo do dono — primeiro `npm run dev` com a
+> WebContentsView (abrir projeto, aba Panes, gates, agente livre, ▶ testar,
+> ditado no canvas, crash/reload da view) e uma missão de QA de produto
+> Electron real (CDP); (2) TAREFA 3 abaixo (teste de missão); (3) PUSH.
+> Worktrees de agente em .claude/worktrees/ ficam até o fechamento — remoção
+> SÓ com checagem de junctions (lição feedback-worktree-junction).
+
 ## PRÓXIMA SESSÃO (pós-clear) — leia isto primeiro
 
 0. **TEXTO QUE O DONO VAI COLAR** (referência do combinado):

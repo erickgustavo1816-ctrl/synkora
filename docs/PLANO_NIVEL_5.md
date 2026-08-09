@@ -595,6 +595,17 @@ bloco. Nunca "aproveitar e refatorar" fora do mapa.
 
 ## Fase 3 (5b) — multi-renderer (CHECK 2; sessão própria)
 
+> ESTADO (2026-08-08): **CONCLUÍDA EM CÓDIGO** — plano formal e estado final
+> em docs/FASE3_PLANO.md. Desenho executado: o HOST (BrowserWindow) é a view
+> "board"; UMA WebContentsView nova (`?view=panes`, mesmo bundle/preload)
+> assume o canvas de Panes com renderer próprio (orçamento WebGL dobrado; o
+> parse dos pty:data de execução sai da thread do Board — o unicast por
+> webContents do PtyManager já dava o roteamento de graça). Costura de push
+> pushBoard/pushPanes/pushAll no MainContext (o ctx.push morto virou família
+> real; 45 bindUiSender oportunistas removidos); sonda nova
+> probe-webcontentsview-hidden (setVisible(false) preserva layout/rAF;
+> removeChildView NÃO). PENDENTE: validação ao vivo do dono.
+
 - Sonda positiva de 2026-08-06 (probe-webcontentsview-webgl): WebContentsView
   = renderer PRÓPRIO por view, 16 contextos WebGL POR view, ~107MB/view.
   Decisão do dono já tomada: Vertente B ("meu PC tem 32GB").
@@ -608,6 +619,19 @@ bloco. Nunca "aproveitar e refatorar" fora do mapa.
 - Complemento posterior: pool WebGL por visibilidade.
 
 ## Fase 4 (5c) — QA de Electron com app real via CDP (1 janela + validação)
+
+> ESTADO (2026-08-08): **CONCLUÍDA EM CÓDIGO** — implementada por agente
+> Fable 5 em worktree isolado (4 commits, merge 792e73a). `qaCdp.ts` novo:
+> reserva de porta CDP POR CARD antes do armPane (pane de QA nasce com
+> --cdp-endpoint selado; startQaRuntime consulta o MESMO registro e sobe o
+> Electron real com --remote-debugging-port); prontidão = linha "DevTools
+> listening" completa (nunca a URL do vite); decorador ÚNICO dos args do
+> playwright nos DOIS gravadores de config (de quebra corrigiu o
+> --output-dir que o re-grave anti-corrida do pty:create dropava no remount);
+> prompts do QA no modo CDP (app REAL, não navegar URL, stop no fim da
+> rodada); guardião já cobria a árvore. Sondas: probe-electron-cdp 4/4 e
+> probe-electron-vite-cdp 4/4 (cadeia npm run dev completa); suíte
+> test:qa-cdp 10. PENDENTE: validação ao vivo numa missão de QA real.
 
 - `@playwright/mcp` aceita `--cdp-endpoint` (sondado 2026-08-07). qaRuntime
   detecta produto Electron → sobe o app real com

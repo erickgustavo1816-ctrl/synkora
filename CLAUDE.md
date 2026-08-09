@@ -110,6 +110,60 @@ PAINEL DE GESTÃO) — caderno completo da sessão em scratchpad NOTAS_TESTE_202
 - DESCARTADO (decisão do usuário): alavanca de "segurar gate" (hold) — os gates vivos
   cobrem a dor; re-avaliar só se ela voltar.
 
+### F6.11 — FASES 3 e 4 do nível 5 CONCLUÍDAS EM CÓDIGO (2026-08-08; app parado; typecheck + 22 suítes verdes; PENDENTE validação ao vivo)
+
+Ordem do dono: FASE 3 → FASE 4 → teste de missão → push. Docs:
+docs/FASE3_PLANO.md (plano formal + estado) e PLANO_NIVEL_5 (estados).
+
+- **FASE 3 (multi-renderer, CHECK 2)**: o canvas de Panes saiu do renderer da
+  janela para uma **WebContentsView própria** (`?view=panes`, mesmo bundle/
+  preload — padrão dos overlays; `src/main/panesView.ts` novo, criação lazy
+  com pré-aquecimento). O HOST é a view "board" (titlebar/rail/Home/Board/
+  Versões/Arquivos); a view é dona da MONTAGEM dos panes de execução (o
+  unicast por webContents do PtyManager divide o parse dos pty:data de graça)
+  e o host mantém a lista como ESPELHO pelos mesmos eventos broadcast.
+  Costura de push: `ctx.pushBoard/pushPanes/pushAll` REAIS (o ctx.push morto
+  virou família; ~60 sites migrados por classificação canal→destino; os 45
+  `bindUiSender(e.sender)` oportunistas morreram — o did-finish-load já
+  cobria); canais de CHROME (panes:stats, pane:lastlines, pty:effort/model,
+  tasks:attention, seats:changed, panes:closeById) saíram do sender capturado
+  do pty para broadcast (pty:data/exit/reset seguem unicast POR CONTRATO).
+  Nascimento/fecho de pane SEMPRE via evento do main (panes:open-free,
+  panes:requestClose→terminatePaneNow). Esconder a view = `setVisible(false)`
+  (sonda probe-webcontentsview-hidden: layout/rAF vivos = keepalive intacto;
+  removeChildView MATA o rAF — nunca usar com pane vivo); `panes-view:shown`
+  pausa o rAF decorativo do mapa. Overlays globais do host (popovers da
+  titlebar, menu ✦ Agente, SeatGate, FreeAgentModal, SynVoice panel)
+  escondem a view enquanto abertos (child view compõe POR CIMA do host —
+  hostOverlayCount). Costuras cross-view via main: files:navigate (link .md
+  → aba Arquivos), mapa→board, panes:activity, attention-cleared,
+  settings:changed (zoom de fonte vale nas duas), ditado SynVoice no canvas
+  (foco registrado no main, válido só com a view VISÍVEL; paste resolvido
+  pelo registry local da view; banquinho já cobria perda). Segurança:
+  trustedRendererView +'panes'; permission handlers por MEMBERSHIP (host =
+  clipboard+mic; view = só clipboard); settings:get/set aceitam a view
+  (assertAppRendererSender); asserts de voice/serviços/secrets continuam
+  host-only. Driver E2E exclui `?view=` do target CDP. WEBGL_BUDGET=12 fica:
+  o teto do Chromium é POR PROCESSO (16/view, sonda 2026-08-06).
+- **FASE 4 (QA de Electron via CDP — mata o duplo de bridge)**: feita por
+  agente Fable 5 em worktree isolado e mergeada (792e73a). `src/main/qaCdp.ts`
+  novo: porta CDP reservada POR CARD em preparePhasePane (ANTES do armPane —
+  o pane de QA nasce com `--cdp-endpoint` selado nos args do playwright;
+  startQaRuntime consulta o MESMO registro e sobe o app com
+  `--remote-debugging-port`); electron-vite recebe env REMOTE_DEBUGGING_PORT
+  + argv `-- -- --remote-debugging-port=N`; prontidão = linha "DevTools
+  listening" COMPLETA com o uuid (nunca a URL do vite; porta anunciada ≠
+  reservada falha ALTO); decorador único `decorateBrowserLaunchArgs` nos
+  DOIS gravadores de config do playwright (corrigiu de quebra o --output-dir
+  dropado no re-grave anti-corrida do pty:create); prompts do QA em modo CDP
+  (app REAL com preload/IPC verdadeiros; NÃO navegar URL; stop ao fim da
+  rodada — browser.close só desconecta); guardião de job objects já cobria a
+  árvore. Sondas probe-electron-cdp 4/4 + probe-electron-vite-cdp 4/4;
+  suíte test:qa-cdp 10.
+- PRÓXIMO: validação ao vivo do dono (boot com a view + missão real de QA) →
+  teste de missão → PUSH. Worktrees de agente em .claude/worktrees/ NÃO
+  remover sem checar junctions (lição feedback-worktree-junction).
+
 ### F6.10b — CHECK 14 com causa PROVADA por sonda + FIX APLICADO (2026-08-07 tarde; typecheck + orchestrator-flow 35/35 verdes)
 
 Sessão dos níveis 4/5 do handoff (docs/HANDOFF_NIVEIS_4_5.md tem o desfecho
