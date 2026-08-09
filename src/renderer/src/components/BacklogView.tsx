@@ -610,7 +610,7 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
                       <button
                         className="btn ghost tiny danger"
                         data-tip="Derrubar o servidor de teste desta versão (fecha o pane e a árvore de processos)."
-                        onClick={() => closePane(projectId, vPane.id)}
+                        onClick={() => window.synkora.panes.requestClose(projectId, vPane.id)}
                       >
                         ■ derrubar teste
                       </button>

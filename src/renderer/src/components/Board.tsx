@@ -2225,7 +2225,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                   <button
                     className="btn tiny mission-action-btn mission-archive"
                     data-tip={'Derrubar o servidor de teste desta missão (fecha o pane e a árvore de processos).'}
-                    onClick={() => closePane(projectId, testPane.id)}
+                    onClick={() => window.synkora.panes.requestClose(projectId, testPane.id)}
                   >
                     ■ derrubar teste
                   </button>

@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useStore } from './store'
+import { useStore, type PaneKind, type PaneOptions } from './store'
 import { playAttentionChime, playSoftBlip } from './notify'
 import Home from './screens/Home'
 import Universe from './screens/Universe'
@@ -71,6 +71,13 @@ export default function App(): React.JSX.Element {
       // main antigo): a assinatura de eventos continua funcionando.
       console.error('[panes] falha ao reidratar panes vivos', error)
     })
+    // F3-c3: pane sem fase (agente livre/test server) nasce por evento do
+    // main — aqui só o ESPELHO da lista (quem monta é a view de panes).
+    const offOpenFree = window.synkora.panes.onOpenFree
+      ? window.synkora.panes.onOpenFree((projectId, kind, opts) =>
+          useStore.getState().addPane(projectId, kind as PaneKind, opts as PaneOptions)
+        )
+      : () => undefined
     const offPaneClose = window.synkora.tasks.onPaneClose(closeTaskPane)
     const offAttention = window.synkora.tasks.onAttention((taskId, paneId) => {
       // plim SÓ na transição para "esperando" — repetição do evento não re-toca
@@ -118,6 +125,7 @@ export default function App(): React.JSX.Element {
     )
     return () => {
       disposed = true
+      offOpenFree()
       offPolicies()
       offProgressTarget()
       offProjectFlow()

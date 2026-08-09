@@ -53,7 +53,6 @@ function FreeAgentModal({
   seat: Seat
   onClose: () => void
 }): React.JSX.Element {
-  const addPane = useStore((s) => s.addPane)
   const setTab = useStore((s) => s.setUniverseTab)
   const loadCatalog = useStore((s) => s.loadCatalog)
   const catalog = useStore((s) => s.catalogByCli[`${seat.cli}:${seat.id}`])
@@ -74,20 +73,20 @@ function FreeAgentModal({
       setErr('reinicie o app (npm run dev) para abrir o agente armado')
       return
     }
-    const spec = await window.synkora.panes.freeSpec(projectId, seat.id, effort || undefined)
+    // F3-c3: o registro do pane chega por evento do main (panes:open-free) às
+    // duas views — o modal só arma e navega; o addPane local morreu.
+    const spec = await window.synkora.panes.freeSpec(
+      projectId,
+      seat.id,
+      effort || undefined,
+      model || undefined
+    )
     if (!spec) {
       setErr('não foi possível armar o agente — a pasta do projeto existe? reloque na Home')
       return
     }
     onClose()
     setTab(projectId, 'panes')
-    addPane(projectId, seat.cli, {
-      seatId: seat.id,
-      model: model || undefined,
-      id: spec.paneId,
-      cliArgs: spec.cliArgs.length ? spec.cliArgs : undefined,
-      appendSystemPrompt: spec.appendSystemPrompt
-    })
   }
 
   return createPortal(

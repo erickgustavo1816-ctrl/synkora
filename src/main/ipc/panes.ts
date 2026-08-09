@@ -157,17 +157,35 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
         ids: { projectId, missionId, paneId },
         reason: `servidor de teste: "${command}" em ${cwd}`
       })
+      // F3-c3: TODO nascimento de pane viaja por evento do main — as duas
+      // views populam a lista (o host como espelho, a view de panes monta).
+      const title = `▶ ${label.slice(0, 26)}`
+      ctx.pushAll('panes:open-free', projectId, 'shell', {
+        id: paneId,
+        title,
+        cwd,
+        missionId,
+        versionId: target.versionId,
+        testServer: true
+      })
       return {
         ok: true,
         paneId,
         cwd,
         command,
-        title: `▶ ${label.slice(0, 26)}`,
+        title,
         missionId,
         versionId: target.versionId
       }
     }
   )
+
+  // F3-c3: fechar pane a partir do HOST (■ derrubar teste do Board/Versões).
+  // terminatePaneNow mata o PTY no main e faz o broadcast panes:closeById —
+  // funciona MESMO com a view de panes crashada (o kill não depende dela).
+  ipcMain.on('panes:requestClose', (e, projectId: string, paneId: string) => {
+    engine.terminatePaneNow(projectId, paneId)
+  })
 
   // Mapa de portas para o MODAL do ▶ testar (decisão do dono, 2026-08-07):
   // mesma string que o QA recebe no prompt — o dono escolhe vendo o mapa.
@@ -182,7 +200,7 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
   // (register_direct_mission, board_status, notify_maestro…) + persona de
   // consciência da base (claude). Sem isso ele podia quebrar o app editando a
   // main por fora do sistema de missões/versões.
-  ipcMain.handle('panes:freeSpec', (e, projectId: string, seatId: string, effort?: string) => {
+  ipcMain.handle('panes:freeSpec', (e, projectId: string, seatId: string, effort?: string, model?: string) => {
     const project = projects.get(projectId)
     const seat = seats.get(seatId)
     if (!project || !seat || !existsSync(project.path)) return null
@@ -226,6 +244,15 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
     // method-governed (sem profile), então o ipc/pty aplica o fallback
     // -c developer_instructions inline (mesma serialização validada da
     // sonda BANANA123) — comportamento idêntico ao antigo, caminho único.
+    // F3-c3: o registro do pane nasce por evento (o modal do host não chama
+    // mais addPane) — o model escolhido no modal viaja pelo invoke.
+    ctx.pushAll('panes:open-free', projectId, seat.cli, {
+      id: armed.paneId,
+      seatId: seat.id,
+      model: model || undefined,
+      cliArgs: cliArgs.length ? cliArgs : undefined,
+      appendSystemPrompt: freePersona
+    })
     return {
       paneId: armed.paneId,
       cliArgs,

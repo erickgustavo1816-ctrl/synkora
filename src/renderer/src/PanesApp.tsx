@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useStore } from './store'
+import { useStore, type PaneKind, type PaneOptions } from './store'
 import PanesView from './components/PanesView'
 import TooltipLayer from './components/Tooltip'
 import { TERMINAL_DEFAULT_FONT_SIZE } from './terminalGeometry'
@@ -55,6 +55,13 @@ export default function PanesApp(): React.JSX.Element {
     const offPaneClose = window.synkora.tasks.onPaneClose((projectId, taskId, role) =>
       useStore.getState().closeTaskPane(projectId, taskId, role)
     )
+    // Pane sem fase (agente livre/test server): nasce por evento do main e é
+    // MONTADO aqui — esta view é a dona da montagem (F3-c3).
+    const offOpenFree = window.synkora.panes.onOpenFree
+      ? window.synkora.panes.onOpenFree((projectId, kind, opts) =>
+          useStore.getState().addPane(projectId, kind as PaneKind, opts as PaneOptions)
+        )
+      : () => undefined
     const offCloseById = window.synkora.tasks.onPaneCloseById((projectId, paneId) =>
       useStore.getState().closePane(projectId, paneId)
     )
@@ -104,6 +111,7 @@ export default function PanesApp(): React.JSX.Element {
       offShown()
       offPaneOpen()
       offPaneClose()
+      offOpenFree()
       offCloseById()
       offAttention()
       offStats()

@@ -535,6 +535,10 @@ export function installDevMock(): void {
 
   let dataCb: ((id: string, data: string) => void) | null = null
   let maestroCb: ((evt: MaestroEvent) => void) | null = null
+  // F3-c3: simula o broadcast panes:open-free do main no preview de browser.
+  let openFreeCb:
+    | ((projectId: string, kind: string, opts: Record<string, unknown>) => void)
+    | null = null
   let liveCb: ((evt: MaestroLiveEvent) => void) | null = null
   let ctxCb: ((tokens: number) => void) | null = null
   let mockCtx = 87_000
@@ -939,24 +943,49 @@ export function installDevMock(): void {
       // Spec plausível (o app RECUSA abrir agente livre com spec nula — sem
       // armamento ele viraria um CLI cru na branch base); no preview o pane só
       // imprime o aviso do mock.
-      freeSpec: async (_projectId: string, seatId: string) => ({
-        paneId: `free-${seatId}-${Math.random().toString(16).slice(2, 8)}`,
-        cliArgs: [],
-        appendSystemPrompt: '(persona do agente livre — mock)'
-      }),
+      freeSpec: async (projectId: string, seatId: string, _effort?: string, model?: string) => {
+        const paneId = `free-${seatId}-${Math.random().toString(16).slice(2, 8)}`
+        openFreeCb?.(projectId, 'claude', { id: paneId, seatId, model })
+        return {
+          paneId,
+          cliArgs: [],
+          appendSystemPrompt: '(persona do agente livre — mock)'
+        }
+      },
       testServerSpec: async (
-        _projectId: string,
-        _target: { missionId?: string; versionId?: string },
+        projectId: string,
+        target: { missionId?: string; versionId?: string },
         port?: number
-      ) => ({
-        ok: true,
-        paneId: `testsrv-${Math.random().toString(16).slice(2, 8)}`,
-        cwd: 'C:\\mock\\worktree',
-        command: `npm run dev${port ? ` -- --port ${port}` : ''}`,
-        title: '▶ teste (mock)'
-      }),
+      ) => {
+        const paneId = `testsrv-${Math.random().toString(16).slice(2, 8)}`
+        openFreeCb?.(projectId, 'shell', {
+          id: paneId,
+          title: '▶ teste (mock)',
+          cwd: 'C:\\mock\\worktree',
+          missionId: target.missionId,
+          versionId: target.versionId,
+          testServer: true
+        })
+        return {
+          ok: true,
+          paneId,
+          cwd: 'C:\\mock\\worktree',
+          command: `npm run dev${port ? ` -- --port ${port}` : ''}`,
+          title: '▶ teste (mock)'
+        }
+      },
       portsInUse: async (_projectId: string) =>
-        '5174 = QA do card "tela de exemplo" · 2057 (pedida) = servidor de teste do dono'
+        '5174 = QA do card "tela de exemplo" · 2057 (pedida) = servidor de teste do dono',
+      // F3-c3: no app real o registro do pane chega por evento do main — o
+      // mock dispara o callback ao resolver a spec (senão o preview não abre
+      // pane nenhum).
+      onOpenFree: (cb) => {
+        openFreeCb = cb
+        return () => {
+          openFreeCb = null
+        }
+      },
+      requestClose: () => undefined
     },
     // Fase 3: no browser não há WebContentsView — layout/estado são no-op e a
     // view (?view=panes no preview) nunca recebe push do host.

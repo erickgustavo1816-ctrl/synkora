@@ -978,9 +978,29 @@ const api = {
     freeSpec: (
       projectId: string,
       seatId: string,
-      effort?: string
+      effort?: string,
+      model?: string
     ): Promise<{ paneId: string; cliArgs: string[]; appendSystemPrompt?: string } | null> =>
-      ipcRenderer.invoke('panes:freeSpec', projectId, seatId, effort),
+      ipcRenderer.invoke('panes:freeSpec', projectId, seatId, effort, model),
+    /** F3-c3: nascimento de pane sem fase (agente livre/test server) chega por
+     *  evento do main às DUAS views — quem monta é a view de panes; o host
+     *  espelha a lista. */
+    onOpenFree: (
+      cb: (projectId: string, kind: string, opts: Record<string, unknown>) => void
+    ): (() => void) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        projectId: string,
+        kind: string,
+        opts: Record<string, unknown>
+      ): void => cb(projectId, kind, opts)
+      ipcRenderer.on('panes:open-free', listener)
+      return () => ipcRenderer.removeListener('panes:open-free', listener)
+    },
+    /** F3-c3: fechar pane a partir do host (■ derrubar) — o main mata o PTY e
+     *  ecoa panes:closeById para as duas views. */
+    requestClose: (projectId: string, paneId: string): void =>
+      ipcRenderer.send('panes:requestClose', projectId, paneId),
     /** Servidor de teste do dono: pane shell no worktree da missão/versão com
      *  o script de runtime já digitado (o usuário escolhe a porta). */
     testServerSpec: (

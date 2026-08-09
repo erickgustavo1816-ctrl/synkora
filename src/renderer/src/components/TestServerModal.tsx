@@ -19,7 +19,6 @@ export function TestServerModal({
   label: string
   onClose: () => void
 }): React.JSX.Element {
-  const addPane = useStore((s) => s.addPane)
   const setTab = useStore((s) => s.setUniverseTab)
   const [port, setPort] = useState('')
   const [err, setErr] = useState('')
@@ -55,16 +54,9 @@ export function TestServerModal({
       setErr(res.msg || 'não foi possível preparar o servidor de teste')
       return
     }
+    // F3-c3: o registro do pane chega por evento do main (panes:open-free).
     onClose()
     setTab(projectId, 'panes')
-    addPane(projectId, 'shell', {
-      id: res.paneId,
-      title: res.title,
-      cwd: res.cwd,
-      missionId: res.missionId,
-      versionId: res.versionId,
-      testServer: true
-    })
   }
 
   return createPortal(
