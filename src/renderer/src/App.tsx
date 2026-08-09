@@ -139,6 +139,45 @@ export default function App(): React.JSX.Element {
     }
   }, [bridgeOk, loadProjects, loadSeats, loadSettings, openProject, setUniverseTab, setMissionTab, appendMaestroEvent, setMaestroCtx, handleMaestroLive, openDevPane, closeTaskPane, setTaskAttention, setPaneStats, closePane])
 
+  // ——— FASE 3: o host comanda a WebContentsView do canvas ———
+  // Efeito CENTRAL de layout: compõe visibilidade (workspace + aba panes do
+  // projeto ativo + nenhum overlay global aberto) com o rect do placeholder.
+  // Quem manda o {visible:false} quando se vai à Home/Settings é ESTE efeito —
+  // um efeito por-Universe não cobre "nenhum universo ativo".
+  const panesTab = useStore((s) =>
+    s.openProjectId ? (s.universeTabByProject[s.openProjectId] ?? 'board') : null
+  )
+  const panesAnchor = useStore((s) =>
+    s.openProjectId ? (s.panesAnchorByProject[s.openProjectId] ?? null) : null
+  )
+  const hostOverlayCount = useStore((s) => s.hostOverlayCount)
+  useEffect(() => {
+    if (!bridgeOk) return
+    const visible =
+      appPage === 'workspace' &&
+      openProjectId !== null &&
+      panesTab === 'panes' &&
+      hostOverlayCount === 0 &&
+      panesAnchor !== null
+    window.synkora.panesView.layout({
+      visible,
+      bounds: panesAnchor ?? { x: 0, y: 0, width: 0, height: 0 }
+    })
+  }, [bridgeOk, appPage, openProjectId, panesTab, hostOverlayCount, panesAnchor])
+
+  // Recorte de estado de shell que a view precisa (cacheado no main — o
+  // reload/crash da view re-hidrata sem o host perceber).
+  const mountedForView = useStore((s) => s.mountedProjects)
+  const remountNonceForView = useStore((s) => s.remountNonce)
+  useEffect(() => {
+    if (!bridgeOk) return
+    window.synkora.panesView.state({
+      openProjectId,
+      mountedProjects: mountedForView,
+      remountNonce: remountNonceForView
+    })
+  }, [bridgeOk, openProjectId, mountedForView, remountNonceForView])
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if ((!event.ctrlKey && !event.metaKey) || event.altKey) return

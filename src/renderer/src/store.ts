@@ -675,6 +675,29 @@ interface SynkoraState {
    *  olhando, além de montar Backlog/Arquivos dos universos escondidos. */
   universeTabByProject: Record<string, UniverseTab>
   setUniverseTab: (projectId: string, tab: UniverseTab) => void
+  // ——— FASE 3 (docs/FASE3_PLANO.md): o canvas de Panes mora numa
+  // WebContentsView própria; host e view sincronizam por push do main ———
+  /** HOST: rect da área da aba Panes por projeto (placeholder medido — vira o
+   *  bounds da view). */
+  panesAnchorByProject: Record<string, { x: number; y: number; width: number; height: number } | null>
+  setPanesAnchor: (
+    projectId: string,
+    rect: { x: number; y: number; width: number; height: number } | null
+  ) => void
+  /** HOST: overlays globais abertos (popovers da titlebar, menu ✦ Agente,
+   *  SeatGate, FreeAgentModal) — a view é escondida enquanto > 0, senão o
+   *  overlay do host ficaria POR BAIXO dela (child view compõe por cima). */
+  hostOverlayCount: number
+  bumpHostOverlay: (delta: 1 | -1) => void
+  /** VIEW: visibilidade real vinda do main (gate do rAF decorativo). */
+  panesViewShown: boolean
+  setPanesViewShown: (shown: boolean) => void
+  /** VIEW: aplica o recorte de estado de shell empurrado pelo host. */
+  applyHostViewState: (state: {
+    openProjectId: string | null
+    mountedProjects: string[]
+    remountNonce: Record<string, number>
+  }) => void
   addPane: (projectId: string, kind: PaneKind, opts?: PaneOptions) => void
   closePane: (projectId: string, paneId: string) => void
   /** estado da aba PANES por projeto (nó ancorado, destaque, imerso, cartões) */
@@ -1372,6 +1395,30 @@ export const useStore = create<SynkoraState>((set, get) => ({
   universeTabByProject: {},
   setUniverseTab: (projectId, tab) =>
     set((s) => ({ universeTabByProject: { ...s.universeTabByProject, [projectId]: tab } })),
+
+  // ——— Fase 3: sincronização host ↔ view de panes ———
+  panesAnchorByProject: {},
+  setPanesAnchor: (projectId, rect) =>
+    set((s) => ({
+      panesAnchorByProject: { ...s.panesAnchorByProject, [projectId]: rect }
+    })),
+  hostOverlayCount: 0,
+  bumpHostOverlay: (delta) =>
+    set((s) => ({ hostOverlayCount: Math.max(0, s.hostOverlayCount + delta) })),
+  panesViewShown: true,
+  setPanesViewShown: (shown) => set({ panesViewShown: shown }),
+  applyHostViewState: (state) =>
+    set((s) => ({
+      openProjectId: state.openProjectId,
+      appPage: 'workspace',
+      mountedProjects: state.mountedProjects,
+      remountNonce: state.remountNonce,
+      // na view, a "aba" do projeto ativo é SEMPRE panes — é o que liga os
+      // atalhos Ctrl+Alt e o keepalive do PanesView (o host guarda a real).
+      universeTabByProject: state.openProjectId
+        ? { ...s.universeTabByProject, [state.openProjectId]: 'panes' }
+        : s.universeTabByProject
+    })),
 
   panesUiByProject: {},
   mapLayoutByProject: {},

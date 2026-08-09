@@ -60,6 +60,16 @@ export default function TitleBar(): React.JSX.Element {
   const project = openProjectId ? projects.find((p) => p.id === openProjectId) : null
   const inSettings = appPage === 'settings'
 
+  // Fase 3 (D6): popovers da titlebar descem sobre a área do canvas — com a
+  // aba Panes ativa a WebContentsView comporia POR CIMA deles; overlay aberto
+  // esconde a view.
+  const bumpHostOverlay = useStore((s) => s.bumpHostOverlay)
+  useEffect(() => {
+    if (!open && !cliOpen) return
+    bumpHostOverlay(1)
+    return () => bumpHostOverlay(-1)
+  }, [open, cliOpen, bumpHostOverlay])
+
   useEffect(() => {
     if (!open) return
     function onDocClick(e: MouseEvent): void {

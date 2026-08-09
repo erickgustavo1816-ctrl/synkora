@@ -32,6 +32,14 @@ export default function SeatGate({ projectId, canCancel }: Props): React.JSX.Ele
   const [model, setModel] = useState(maestroModel ?? '')
   const [effort, setEffort] = useState(maestroEffort ?? '')
 
+  // Fase 3 (D6): overlay full-screen do host — a WebContentsView de panes
+  // comporia POR CIMA e o gate ficaria clicável só em volta dela.
+  const bumpHostOverlay = useStore((s) => s.bumpHostOverlay)
+  useEffect(() => {
+    bumpHostOverlay(1)
+    return () => bumpHostOverlay(-1)
+  }, [bumpHostOverlay])
+
   const selected = seats.find((s) => s.id === selectedId)
   const cli = selected?.cli ?? 'claude'
   const catalog = useStore((s) => s.catalogByCli[`${cli}:${selected?.id ?? ''}`])

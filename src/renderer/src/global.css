@@ -13525,3 +13525,11 @@ body.progress-overlay-page #root {
 .planmap-item.future {
   opacity: 0.62;
 }
+
+/* ——— FASE 3: raiz da WebContentsView de panes (sem titlebar/rail — o chrome
+   é do host; aqui só o deck keepalive dos PanesView) ——— */
+.panes-view-shell {
+  position: relative;
+  height: 100%;
+  display: block;
+}

@@ -88,6 +88,14 @@ export class PanesViewManager {
   applyLayout(layout: PanesViewLayout): void {
     const win = this.deps.window()
     if (!win || win.isDestroyed()) return
+    // Criação LAZY com pré-aquecimento: layout invisível com bounds vazios
+    // (Home pura, nenhum universo montado) não justifica um renderer novo;
+    // bounds reais (projeto aberto, mesmo na aba board) criam a view
+    // invisível para o primeiro clique em Panes não pagar o boot.
+    if (!this.view && !layout.visible && layout.bounds.width <= 0) {
+      this.lastLayout = layout
+      return
+    }
     const view = this.ensureView(win)
     if (!view) return
     this.lastLayout = layout

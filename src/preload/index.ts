@@ -527,6 +527,20 @@ export interface LivePaneSnapshot {
   spec: DevPaneSpec
 }
 
+/** Fase 3: geometria+visibilidade da WebContentsView do canvas (DIPs da
+ *  página do host — titleBarStyle hidden faz o rect coincidir). */
+export interface PanesViewLayout {
+  visible: boolean
+  bounds: { x: number; y: number; width: number; height: number }
+}
+
+/** Fase 3: recorte do estado de shell que a view de panes precisa. */
+export interface PanesHostState {
+  openProjectId: string | null
+  mountedProjects: string[]
+  remountNonce: Record<string, number>
+}
+
 /** Preferências globais editáveis; não inclui credenciais. */
 export interface SynkoraPreferences {
   codeIntelligenceMode: 'automatic' | 'off'
@@ -987,6 +1001,28 @@ const api = {
      *  linha humana para o modal do ▶ testar (decisão do dono, 2026-08-07). */
     portsInUse: (projectId: string): Promise<string> =>
       ipcRenderer.invoke('panes:portsInUse', projectId)
+  },
+  // FASE 3 (docs/FASE3_PLANO.md): o canvas de Panes roda numa WebContentsView
+  // própria (`?view=panes`). O HOST comanda geometria/visibilidade e empurra o
+  // recorte de estado de shell; a VIEW consome os ecos do main.
+  panesView: {
+    /** HOST → main: onde a view fica e se aparece (o host é o dono do layout —
+     *  ele sabe onde a área da aba Panes está e o que a cobre). */
+    layout: (layout: PanesViewLayout): void => ipcRenderer.send('panes-view:layout', layout),
+    /** HOST → main (cacheado; reload da view re-hidrata sozinho). */
+    state: (state: PanesHostState): void => ipcRenderer.send('panes-view:state', state),
+    /** VIEW: estado de shell do host (openProject/montados/nonce). */
+    onState: (cb: (state: PanesHostState) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, state: PanesHostState): void => cb(state)
+      ipcRenderer.on('panes-view:state', listener)
+      return () => ipcRenderer.removeListener('panes-view:state', listener)
+    },
+    /** VIEW: visibilidade real (gate do rAF decorativo — mapa/paperField). */
+    onShown: (cb: (shown: boolean) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, shown: boolean): void => cb(shown)
+      ipcRenderer.on('panes-view:shown', listener)
+      return () => ipcRenderer.removeListener('panes-view:shown', listener)
+    }
   },
   maestro: {
     /** Perguntas dirigidas ao usuário (tool ask_user): a aba do board pulsa. */

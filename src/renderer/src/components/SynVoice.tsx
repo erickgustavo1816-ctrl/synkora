@@ -364,11 +364,19 @@ export default function SynVoice(): React.JSX.Element {
   const [config, setConfig] = useState<SynVoiceConfig | null>(null)
   const [stage, setStage] = useState<Stage>('loading')
   const [panelOpen, setPanelOpen] = useState(false)
+  // Fase 3 (D6): o painel/banquinho flutuam sobre a área do canvas — com a
+  // view de panes visível eles ficariam por baixo dela.
+  const bumpHostOverlay = useStore((s) => s.bumpHostOverlay)
   // Banquinho das últimas falas (2026-08-06): recuperar transcrição que caiu
   // no vazio (destino sem foco) sem precisar falar tudo de novo.
   const [historyOpen, setHistoryOpen] = useState(false)
   const [history, setHistory] = useState<Array<{ text: string; at: string }>>([])
   const historyAnchorRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!panelOpen && !historyOpen) return
+    bumpHostOverlay(1)
+    return () => bumpHostOverlay(-1)
+  }, [panelOpen, historyOpen, bumpHostOverlay])
   useEffect(() => {
     if (!historyOpen) return
     const onDocClick = (event: MouseEvent): void => {

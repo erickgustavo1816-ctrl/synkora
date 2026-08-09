@@ -4,7 +4,6 @@ import CliMark from '../components/CliMark'
 import { useStore, type Seat } from '../store'
 import { hueOf } from '../util'
 import Board from '../components/Board'
-import PanesView from '../components/PanesView'
 import FilesView from '../components/FilesView'
 import BacklogView from '../components/BacklogView'
 import PlanMapView from '../components/PlanMapView'
@@ -17,6 +16,31 @@ interface Props {
 }
 
 const NO_PANES: never[] = []
+
+// FASE 3: a aba Panes virou uma WebContentsView (renderer próprio). O host só
+// mantém este PLACEHOLDER — a régua de geometria da view: o rect medido aqui
+// vira o setBounds no main (o efeito central do App compõe com visibilidade).
+// visibility:hidden do keepalive não atrapalha: o layout box continua medível.
+function PanesAnchor({ projectId }: { projectId: string }): React.JSX.Element {
+  const setPanesAnchor = useStore((s) => s.setPanesAnchor)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const report = (): void => {
+      const r = el.getBoundingClientRect()
+      setPanesAnchor(projectId, { x: r.x, y: r.y, width: r.width, height: r.height })
+    }
+    report()
+    const ro = new ResizeObserver(report)
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      setPanesAnchor(projectId, null)
+    }
+  }, [projectId, setPanesAnchor])
+  return <div ref={ref} className="tab-content workspace-keepalive panes-view-anchor" />
+}
 
 // Modal do AGENTE LIVRE (decisão do usuário): escolher MODELO e EFFORT antes
 // de abrir — mesmo padrão do modal de missão (catálogo real do seat).
@@ -162,6 +186,20 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
     return () => document.removeEventListener('mousedown', onDocClick)
   }, [menuOpen])
 
+  // Fase 3 (D6): dropdown/modal do host abrindo com a aba Panes ativa ficaria
+  // POR BAIXO da WebContentsView — sinaliza overlay global e a view se esconde.
+  const bumpHostOverlay = useStore((s) => s.bumpHostOverlay)
+  useEffect(() => {
+    if (!menuOpen) return
+    bumpHostOverlay(1)
+    return () => bumpHostOverlay(-1)
+  }, [menuOpen, bumpHostOverlay])
+  useEffect(() => {
+    if (!freeAgentSeat) return
+    bumpHostOverlay(1)
+    return () => bumpHostOverlay(-1)
+  }, [freeAgentSeat, bumpHostOverlay])
+
   if (!project) return <div className="bridge-warning">Projeto não encontrado.</div>
 
   return (
@@ -281,13 +319,8 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
         >
           <Board projectId={projectId} />
         </div>
-        <div
-          className={`tab-content workspace-keepalive${tab === 'panes' ? ' is-active' : ''}`}
-          aria-hidden={tab === 'panes' ? undefined : true}
-          inert={tab === 'panes' ? undefined : true}
-        >
-          <PanesView projectId={projectId} projectPath={project.path} />
-        </div>
+        {/* Fase 3: o canvas mora na WebContentsView — aqui fica só a régua. */}
+        <PanesAnchor projectId={projectId} />
         {/* Backlog/Arquivos não rodam processo nenhum — podem montar/desmontar
             à vontade (montar só quando ativo recarrega a lista fresca). */}
         {tab === 'backlog' && (

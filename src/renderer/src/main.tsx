@@ -1,5 +1,6 @@
 import ReactDOM from 'react-dom/client'
 import App from './App'
+import PanesApp from './PanesApp'
 import SynVoiceOverlay from './components/SynVoiceOverlay'
 import ProgressOverlay from './components/ProgressOverlay'
 import TooltipLayer from './components/Tooltip'
@@ -10,6 +11,9 @@ const isSynVoiceOverlay =
   new URLSearchParams(window.location.search).get('view') === 'synvoice-overlay'
 const isProgressOverlay =
   new URLSearchParams(window.location.search).get('view') === 'progress-overlay'
+// Fase 3: o canvas de Panes roda numa WebContentsView própria — mesmo bundle,
+// raiz diferente (o padrão dos overlays).
+const isPanesView = new URLSearchParams(window.location.search).get('view') === 'panes'
 
 if (isSynVoiceOverlay) {
   document.documentElement.classList.add('synvoice-overlay-page')
@@ -18,6 +22,10 @@ if (isSynVoiceOverlay) {
 if (isProgressOverlay) {
   document.documentElement.classList.add('progress-overlay-page')
   document.body.classList.add('progress-overlay-page')
+}
+if (isPanesView) {
+  document.documentElement.classList.add('panes-view-page')
+  document.body.classList.add('panes-view-page')
 }
 
 // Drop de arquivo fora de um pane: sem isto o Chromium NAVEGA para file:// e
@@ -51,6 +59,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <SynVoiceOverlay />
       <TooltipLayer />
     </>
+  ) : isPanesView ? (
+    <PanesApp />
   ) : (
     <App />
   )

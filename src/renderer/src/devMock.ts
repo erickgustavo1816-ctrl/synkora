@@ -958,6 +958,14 @@ export function installDevMock(): void {
       portsInUse: async (_projectId: string) =>
         '5174 = QA do card "tela de exemplo" · 2057 (pedida) = servidor de teste do dono'
     },
+    // Fase 3: no browser não há WebContentsView — layout/estado são no-op e a
+    // view (?view=panes no preview) nunca recebe push do host.
+    panesView: {
+      layout: () => undefined,
+      state: () => undefined,
+      onState: () => () => undefined,
+      onShown: () => () => undefined
+    },
     maestro: {
       pendingQuestions: async () => [],
       questionSeen: async () => true,
