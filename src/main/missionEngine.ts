@@ -137,7 +137,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   // carimbadas. Integração = gate de review do diff completo → merge na base.
 
   function emitMissionsChanged(projectId: string): void {
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('missions:changed', projectId)
+    ctx.pushAll('missions:changed', projectId)
     scheduleProgressSnapshot()
   }
 
@@ -1057,7 +1057,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         planId: plan.id
       }
     ])
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', mission.projectId)
+    ctx.pushAll('tasks:changed', mission.projectId)
     return true
   }
 
@@ -2111,8 +2111,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   function handleMissionVerdict(watch: MissionWatch, content: string): void {
     const mission = missions.get(watch.missionId)
     if (!mission) return
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed())
-      ctx.uiSender.send('panes:closeById', watch.projectId, watch.paneId)
+    ctx.pushAll('panes:closeById', watch.projectId, watch.paneId)
     const m = content.match(/^\s*(aprovada|reprovada)\s*:?\s*([\s\S]*)$/i)
     const approved = m?.[1]?.toLowerCase() === 'aprovada'
     const motivo = (m?.[2] ?? '').trim().slice(0, 300) || 'sem motivo'
@@ -2198,9 +2197,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       if (ptys.has(pane.paneId)) ptys.kill(pane.paneId)
       unregisterPane(pane.paneId)
       ctx.livePaneSpecs.delete(pane.paneId)
-      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) {
-        ctx.uiSender.send('panes:closeById', projectId, pane.paneId)
-      }
+      ctx.pushAll('panes:closeById', projectId, pane.paneId)
     }
     syncBoard(projectId)
   }

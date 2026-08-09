@@ -178,8 +178,7 @@ export function buildPanesApi(
         ids: { projectId: id.projectId, missionId: id.missionId, paneId: id.paneId },
         reason: q
       })
-      if (ctx.uiSender && !ctx.uiSender.isDestroyed())
-        ctx.uiSender.send('maestro:userQuestion', id.projectId, missionKey, q)
+      ctx.pushBoard('maestro:userQuestion', id.projectId, missionKey, q)
       // pergunta pendente é o item nº 1 do radar de andamento
       scheduleProgressSnapshot()
       return 'pergunta registrada — a aba correspondente do board pulsa até o usuário abrir; mantenha a pergunta completa no seu terminal e AGUARDE a resposta'

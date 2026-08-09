@@ -17,7 +17,6 @@ import type { MainContext } from '../mainContext'
 /** Dependências do closure do index ainda não migradas (mesmo padrão
  * do PhaseEngineExtras). */
 export interface BacklogIpcExtras {
-  bindUiSender(sender: Electron.WebContents): void
   emitBacklogChanged(projectId: string): void
   releaseVersionImpl(versionId: string, actor: string): Promise<string>
   versionIsolationIsValid(
@@ -34,13 +33,11 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
     projectModeOf
   } = ctx
   const {
-    bindUiSender,
     emitBacklogChanged,
     releaseVersionImpl,
     versionIsolationIsValid
   } = extras
   ipcMain.handle('backlog:releaseVersion', (e, versionId: string) => {
-    bindUiSender(e.sender)
     return releaseVersionImpl(versionId, 'user')
   })
 
@@ -51,7 +48,6 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
   ipcMain.handle(
     'backlog:createVersion',
     (e, projectId: string, input: { name: string; theme?: string; goal?: string }) => {
-      bindUiSender(e.sender)
       if (!input.name.trim()) return null
       // duplicada ou inferior à main → não cria (a UI só oferece opções
       // válidas; isto é a rede de segurança)
@@ -65,7 +61,6 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
   ipcMain.handle(
     'backlog:updateVersion',
     (e, id: string, patch: { name?: string; theme?: string; goal?: string }) => {
-      bindUiSender(e.sender)
       const current = backlog.getVersion(id)
       if (!current) return null
       const nextName = patch.name?.trim()
@@ -104,7 +99,6 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
   )
 
   ipcMain.handle('backlog:removeVersion', (e, projectId: string, id: string) => {
-    bindUiSender(e.sender)
     // versão com branch viva: limpa worktree+branch (commits não subidos morrem
     // junto — exclusão é explícita e confirmada na UI)
     const version = backlog.getVersion(id)
@@ -173,7 +167,6 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
       projectId: string,
       input: { title: string; type?: BacklogItemType; notes?: string; versionId?: string }
     ) => {
-      bindUiSender(e.sender)
       if (!input.title.trim()) return null
       if (!projects.get(projectId)) return null
       if (input.versionId) {
@@ -201,7 +194,6 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
         missionId?: string | null
       }
     ) => {
-      bindUiSender(e.sender)
       const current = backlog.getItem(id)
       if (!current || current.projectId !== projectId) return null
       if (typeof patch.versionId === 'string') {
@@ -230,7 +222,6 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
   )
 
   ipcMain.handle('backlog:removeItem', (e, projectId: string, id: string) => {
-    bindUiSender(e.sender)
     const current = backlog.getItem(id)
     if (!current || current.projectId !== projectId) return false
     backlog.removeItem(id)

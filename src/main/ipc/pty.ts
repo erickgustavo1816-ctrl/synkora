@@ -171,9 +171,9 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
           paneTokens.delete(req.id)
           cleanPaneMcpFile(req.id)
         }
-        if (projectId && !e.sender.isDestroyed()) {
-          e.sender.send('panes:closeById', projectId, req.id)
-        }
+        // pushAll: o pane nasceu na lista das DUAS views via panes:open — a
+        // falha de armamento precisa removê-lo do espelho do host também.
+        if (projectId) ctx.pushAll('panes:closeById', projectId, req.id)
         return false
       }
     }
@@ -188,8 +188,7 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
         unregisterPane(req.id)
         paneTokens.delete(req.id)
         cleanPaneMcpFile(req.id)
-        if (!e.sender.isDestroyed())
-          e.sender.send('panes:closeById', pendingIdentity.projectId, req.id)
+        ctx.pushAll('panes:closeById', pendingIdentity.projectId, req.id)
         return false
       }
     }
@@ -396,7 +395,9 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
             if (identity && paneHasAutomaticBypass) return
             // manda o PANE junto: dev, ajudantes e gate dividem o MESMO taskId,
             // então só com o taskId o 🖐 acendia (e piscava) em todos eles
-            if (!sender.isDestroyed()) sender.send('tasks:attention', req.taskId, req.id)
+            // broadcast: o 🖐 pulsa no chrome das DUAS views (card do Board,
+            // rail, Home e o pane no canvas) — o sender capturado só cobria uma.
+            ctx.pushAll('tasks:attention', req.taskId, req.id)
           }
         : undefined,
       // Janela REAL de contexto do banner do TUI → teto do medidor do pane.
@@ -525,7 +526,7 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
                 })
               }
             }
-            if (!sender.isDestroyed()) sender.send('seats:changed')
+            ctx.pushAll('seats:changed')
           }
         : undefined,
       onExit: (exitCode, outputTail) => {
@@ -573,10 +574,9 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
           progressLiveIdleTimers.delete(req.id)
           refreshProgressLiveSnapshot()
         }
-        const paneSender = ctx.uiSender && !ctx.uiSender.isDestroyed() ? ctx.uiSender : sender
-        if (!paneSender.isDestroyed()) {
-          paneSender.send('panes:closeById', identity.projectId, req.id)
-        }
+        // pushAll substitui o fallback `ctx.uiSender ?? sender` (F3-c0): a
+        // lista de panes vive nas DUAS views e o exit precisa limpar ambas.
+        ctx.pushAll('panes:closeById', identity.projectId, req.id)
         // Ajudante que morreu SEM reportar done (crash/fechado): o delegador
         // é avisado na hora — controle total sobre os ajudantes (pedido do
         // usuário). SEM ruído: com report, com helper_close deliberado ou com
@@ -699,7 +699,7 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
                   actor: 'harness'
                 })
               }
-              if (!sender.isDestroyed()) sender.send('tasks:changed', identity.projectId)
+              ctx.pushAll('tasks:changed', identity.projectId)
               syncBoard(identity.projectId)
             }
           }
@@ -850,7 +850,7 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
             phaseState: 'running',
             phaseStartedAt: new Date().toISOString()
           })
-          if (!sender.isDestroyed()) sender.send('tasks:changed', identity.projectId)
+          ctx.pushAll('tasks:changed', identity.projectId)
           syncBoard(identity.projectId)
         }
       }
@@ -905,7 +905,9 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
         // o JSONL não carrega o [1m] — o teto real vem do modelo do spawn
         modelHint: req.model,
         onStats: (stats) => {
-          if (!sender.isDestroyed()) sender.send('panes:stats', req.id, stats)
+          // broadcast: os medidores dos chips vivem no chrome das DUAS views
+          // (Board lê PM/orquestrador, canvas lê execução — e vice-versa).
+          ctx.pushAll('panes:stats', req.id, stats)
           stampPhaseContext(stats.contextTokens)
           stampMaestroContext(stats.contextTokens)
         },

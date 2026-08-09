@@ -225,10 +225,10 @@ export function createMaestroEngine(ctx: MainContext, extras: MaestroEngineExtra
   // reloads do renderer, então os eventos vão sempre para a janela mais recente.
   function emitLog(projectId: string, evt: MaestroEvent): void {
     maestro.appendLog(projectId, evt)
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('maestro:event', evt)
+    ctx.pushBoard('maestro:event', evt)
   }
   function emitLive(evt: unknown): void {
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('maestro:live', evt)
+    ctx.pushBoard('maestro:live', evt)
   }
 
   // Traduz os eventos crus do painel de fundo em log persistido + live da UI.
@@ -288,7 +288,7 @@ export function createMaestroEngine(ctx: MainContext, extras: MaestroEngineExtra
               kind: 'ok',
               text: `${created.length} tarefas criadas no backlog`
             })
-            if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', projectId)
+            ctx.pushAll('tasks:changed', projectId)
             syncBoard(projectId)
           }
           break
@@ -339,8 +339,7 @@ export function createMaestroEngine(ctx: MainContext, extras: MaestroEngineExtra
               contextTokens: evt.contextTokens,
               ...(evt.contextWindow ? { contextWindow: evt.contextWindow } : {})
             })
-            if (ctx.uiSender && !ctx.uiSender.isDestroyed())
-              ctx.uiSender.send('maestro:ctx', evt.contextTokens)
+            ctx.pushBoard('maestro:ctx', evt.contextTokens)
           }
           if (evt.isError && evt.errorText)
             emitLog(projectId, { kind: 'err', text: evt.errorText })

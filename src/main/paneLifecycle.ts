@@ -443,8 +443,7 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
       testServerPanes.delete(paneId)
       if (!ptys.has(paneId)) continue
       ptys.kill(paneId)
-      if (ctx.uiSender && !ctx.uiSender.isDestroyed())
-        ctx.uiSender.send('panes:closeById', entry.projectId, paneId)
+      ctx.pushAll('panes:closeById', entry.projectId, paneId)
       blackbox.record({
         cat: 'pane',
         event: 'test-server-closed',
@@ -526,10 +525,8 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
         }
       }
     }
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) {
-      ctx.uiSender.send('panes:closeById', identity.projectId, paneId)
-      ctx.uiSender.send('tasks:changed', identity.projectId)
-    }
+    ctx.pushAll('panes:closeById', identity.projectId, paneId)
+    ctx.pushAll('tasks:changed', identity.projectId)
   }
 
   /** Limpa um pane já armado que nunca ganhou PTY, sem alterar o estado do card. */
@@ -565,9 +562,7 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
       cleanPaneMcpFile(paneId)
     }
     paneSessions.delete(paneId)
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) {
-      ctx.uiSender.send('panes:closeById', projectId, paneId)
-    }
+    ctx.pushAll('panes:closeById', projectId, paneId)
   }
 
   /** Helpers pertencem ao ciclo de vida do DEV que os delegou. Se esse DEV
@@ -616,13 +611,16 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
       }
       const delegatorAlive =
         !identity.delegatorPaneId || Boolean(hub.identityByPane(identity.delegatorPaneId))
+      // Guard de destino: sem renderer vivo o retry seria um push para o vazio
+      // gastando a única janela — o rollback auditado do fallback é o desfecho
+      // certo. (F3-c2 troca este guard pelo predicado da VIEW de panes.)
       if (
         pending.action === 'retry' &&
         delegatorAlive &&
         ctx.uiSender &&
         !ctx.uiSender.isDestroyed()
       ) {
-        ctx.uiSender.send('panes:open', live.projectId, live.taskId, live.spec)
+        ctx.pushAll('panes:open', live.projectId, live.taskId, live.spec)
         blackbox.record({
           cat: 'pane',
           event: 'helper-open-retried',

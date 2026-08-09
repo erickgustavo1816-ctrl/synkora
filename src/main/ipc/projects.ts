@@ -20,7 +20,6 @@ import type { MainContext } from '../mainContext'
 /** Dependências do closure do index ainda não migradas (mesmo padrão
  * do PhaseEngineExtras). */
 export interface ProjectsIpcExtras {
-  bindUiSender(sender: Electron.WebContents): void
   killMaestroSession(projectId: string): void
   hasProjectPlanArtifacts(projectPath: string): boolean
   ensureBypassAccepted(configDir: string, trustCwd?: string): void
@@ -42,7 +41,6 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     hub
   } = ctx
   const {
-    bindUiSender,
     killMaestroSession,
     hasProjectPlanArtifacts,
     ensureBypassAccepted,
@@ -170,7 +168,6 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
   // conversa vive em <configDir>/projects/<slug-do-cwd> — sem migrar, o
   // --resume do pane do Maestro não acha a conversa).
   ipcMain.handle('projects:relocate', async (e, id: string) => {
-    bindUiSender(e.sender)
     const project = projects.get(id)
     if (!project) return { ok: false, error: 'projeto não encontrado' }
     const result = await dialog.showOpenDialog({
@@ -198,7 +195,7 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     killMaestroSession(id)
     for (const pane of hub.panesOf(id)) {
       if (ptys.has(pane.paneId)) ptys.kill(pane.paneId)
-      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('panes:closeById', id, pane.paneId)
+      ctx.pushAll('panes:closeById', id, pane.paneId)
     }
     for (const [tid, watch] of phaseWatches) {
       if (watch.projectId === id) {

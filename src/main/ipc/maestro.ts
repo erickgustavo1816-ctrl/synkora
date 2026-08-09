@@ -33,7 +33,6 @@ import type { MaestroBackend, MaestroEngine } from '../maestroEngine'
  * outros ipc/*). O engine viaja inteiro: os handlers são a casca fina dele. */
 export interface MaestroIpcExtras {
   engine: MaestroEngine
-  bindUiSender(sender: Electron.WebContents): void
   sweepProjectFiles(projectId: string, opts?: { preserveInterruptedHelpers?: boolean }): number
   killMaestroSession(projectId: string): void
   beginProgressMaestroTurn(projectId: string, session: MaestroBackend): void
@@ -71,7 +70,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   } = ctx
   const {
     engine,
-    bindUiSender,
     sweepProjectFiles,
     killMaestroSession,
     beginProgressMaestroTurn,
@@ -99,7 +97,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   } = engine
 
   ipcMain.handle('maestro:cleanup', (e, projectId: string) => {
-    bindUiSender(e.sender)
     if (!projects.get(projectId)) return 'projeto não encontrado'
     const removed = sweepProjectFiles(projectId)
     hub.publish({
@@ -113,7 +110,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   })
 
   ipcMain.handle('maestro:getState', (e, projectId: string) => {
-    bindUiSender(e.sender)
     const state = maestro.get(projectId)
     return {
       log: state.log,
@@ -155,7 +151,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   ipcMain.handle(
     'maestro:send',
     (e, projectId: string, message: string, seatId?: string) => {
-      bindUiSender(e.sender)
       const project = projects.get(projectId)
       if (!project) {
         emitLog(projectId, { kind: 'err', text: 'projeto não encontrado' })
@@ -221,7 +216,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   // Capacidades reais do painel (comandos, modelos, conta) — spawna o painel
   // se preciso; o handshake não gasta tokens.
   ipcMain.handle('maestro:capabilities', async (e, projectId: string, seatId?: string) => {
-    bindUiSender(e.sender)
     const session = ensureSession(projectId, seatId)
     if (!session) return null
     return session.waitCaps()
@@ -230,7 +224,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   ipcMain.handle(
     'maestro:permission',
     (e, projectId: string, requestId: string, choice: PermissionChoice) => {
-      bindUiSender(e.sender)
       const info = maestroSessions.get(projectId)?.answerPermission(requestId, choice)
       if (info) {
         const verdict =
@@ -248,7 +241,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   )
 
   ipcMain.handle('maestro:interrupt', (e, projectId: string) => {
-    bindUiSender(e.sender)
     const abortSurvey = surveyAborts.get(projectId)
     if (abortSurvey) {
       emitLog(projectId, { kind: 'log', tag: 'maestro', text: '⏹ interrompendo o /estudar…' })
@@ -268,7 +260,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   ipcMain.handle(
     'maestro:survey',
     async (e, projectId: string, seatId?: string) => {
-      bindUiSender(e.sender)
       const emit = makeEmitter(e.sender, projectId)
       const project = projects.get(projectId)
       if (!project) {
@@ -357,7 +348,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   // Trocar de seat é ação explícita: mata painel de fundo + pane TUI e zera
   // sessão/modelo/effort (são por CLI — sem isso um modelo gpt vaza p/ claude).
   ipcMain.handle('maestro:setSeat', (e, projectId: string, seatId: string, model?: string, effort?: string) => {
-    bindUiSender(e.sender)
     const state = maestro.get(projectId)
     const prev = state.seatId
     if (prev === seatId) {
@@ -416,7 +406,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   })
 
   ipcMain.handle('maestro:paneSpec', async (e, projectId: string) => {
-    bindUiSender(e.sender)
     await staggerPaneSpawn()
     const project = projects.get(projectId)
     if (!project) return null
@@ -583,7 +572,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   })
 
   ipcMain.handle('maestro:setModel', async (e, projectId: string, model: string) => {
-    bindUiSender(e.sender)
     const emit = makeEmitter(e.sender, projectId)
     const session = maestroSessions.get(projectId)
     if (session?.alive) {
@@ -602,7 +590,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   })
 
   ipcMain.handle('maestro:pendingQuestions', (e, projectId: string) => {
-    bindUiSender(e.sender)
     // PODA PREGUIÇOSA: pergunta de projeto removido ou de missão que deixou de
     // estar viva não tem aba para pulsar — resíduo sai do arquivo aqui mesmo.
     let pruned = false
@@ -622,7 +609,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   })
 
   ipcMain.handle('maestro:questionSeen', (e, projectId: string, missionKey: string) => {
-    bindUiSender(e.sender)
     if (pendingUserQuestions.delete(`${projectId}--${missionKey}`)) {
       persistUserQuestions()
       scheduleProgressSnapshot()
@@ -633,7 +619,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   // Versão atual do projeto: tarefas novas são carimbadas com ela (filtro do
   // board por versão).
   ipcMain.handle('maestro:setVersion', (e, projectId: string, version: string) => {
-    bindUiSender(e.sender)
     maestro.update(projectId, { version: version.trim() || undefined })
     hub.publish({
       projectId,

@@ -17,7 +17,6 @@ import type { MainContext } from '../mainContext'
 /** Dependências do closure do index ainda não migradas (mesmo padrão
  * do PhaseEngineExtras). */
 export interface ProjectPlanIpcExtras {
-  bindUiSender(sender: Electron.WebContents): void
   humanProjectPlanApprovals: Set<string>
   humanProjectMissionStarts: Set<string>
   getMcpApi(): McpApi
@@ -30,7 +29,6 @@ export function registerProjectPlanIpc(ctx: MainContext, extras: ProjectPlanIpcE
     projectPlanOf
   } = ctx
   const {
-    bindUiSender,
     humanProjectPlanApprovals,
     humanProjectMissionStarts,
     getMcpApi
@@ -38,12 +36,10 @@ export function registerProjectPlanIpc(ctx: MainContext, extras: ProjectPlanIpcE
   // Plano mestre para a aba Mapa do renderer (read-only; a fonte é o
   // PROJECT_PLAN.json que o Maestro mantém).
   ipcMain.handle('projectPlan:get', (e, projectId: string) => {
-    bindUiSender(e.sender)
     return projectPlanOf(projectId) ?? null
   })
 
   ipcMain.handle('projectPlan:approve', (e, projectId: string, expectedUpdatedAt: string) => {
-    bindUiSender(e.sender)
     const project = projects.get(projectId)
     if (!project) return 'projeto não encontrado'
     const currentPlan = projectPlanOf(projectId)
@@ -66,7 +62,6 @@ export function registerProjectPlanIpc(ctx: MainContext, extras: ProjectPlanIpcE
   ipcMain.handle(
     'projectPlan:startMission',
     (e, projectId: string, itemId: string, expectedUpdatedAt: string) => {
-    bindUiSender(e.sender)
     const project = projects.get(projectId)
     if (!project) return 'projeto não encontrado'
     const currentPlan = projectPlanOf(projectId)

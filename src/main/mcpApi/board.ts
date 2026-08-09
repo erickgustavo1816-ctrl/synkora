@@ -650,7 +650,7 @@ export function buildBoardApi(
         text: `${created.length} tarefa(s): ${created.map((t) => t.title).join(' · ')}`,
         actor: id.role
       })
-      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', id.projectId)
+      ctx.pushAll('tasks:changed', id.projectId)
       syncBoard(id.projectId)
       return `${created.length} tarefa(s) criadas no backlog dentro do modo ${EXECUTION_MODE_LABEL[executionMode]}: ${created
         .map((t) => `"${t.title}" [${t.department}/${t.effort}${t.gates ? `/gates:${t.gates.join('+') || 'nenhum'}` : ''}] id=${t.id}`)
@@ -824,7 +824,7 @@ export function buildBoardApi(
         text: `"${updated.title}" atualizada${patch.status ? ` → ${patch.status}` : ''}`,
         actor: id.role
       })
-      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', id.projectId)
+      ctx.pushAll('tasks:changed', id.projectId)
       syncBoard(id.projectId)
       return `tarefa "${updated.title}" atualizada`
     },
@@ -1208,7 +1208,7 @@ export function buildBoardApi(
         text: `orquestrador propôs o PLANO da missão ("${input.title}") — aguardando aprovação do usuário no board`,
         actor: 'maestro'
       })
-      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', id.projectId)
+      ctx.pushAll('tasks:changed', id.projectId)
       syncBoard(id.projectId)
       return `plano ${proposed ? 'atualizado' : 'criado'} no board (card "${planTask?.title ?? input.title}" · modo ${EXECUTION_MODE_LABEL[executionMode]} · risco ${risk} · ${input.expectedCards} card(s))${
         adjusted.length
@@ -1668,7 +1668,7 @@ export function buildBoardApi(
         text: `orquestrador removeu o card "${task.title}" (não será feito)`,
         actor: 'maestro'
       })
-      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', id.projectId)
+      ctx.pushAll('tasks:changed', id.projectId)
       syncBoard(id.projectId)
       return `card "${task.title}" removido do board`
     },

@@ -33,14 +33,13 @@ import type { PaneLifecycleEngine } from '../paneLifecycle'
  * outros ipc/*). */
 export interface PanesIpcExtras {
   engine: PaneLifecycleEngine
-  bindUiSender(sender: Electron.WebContents): void
   /** missionEngine — worktree provado antes do servidor de teste. */
   ensureMissionWorktree(missionId: string): Mission | undefined
 }
 
 export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void {
   const { projects, seats, tasks, backlog, blackbox, hub, projectModeOf, projectPlanOf } = ctx
-  const { engine, bindUiSender, ensureMissionWorktree } = extras
+  const { engine, ensureMissionWorktree } = extras
   const {
     livePaneSpecs,
     closingPaneIds,
@@ -66,7 +65,6 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
       missionId?: string
       versionId?: string
     } => {
-      bindUiSender(e.sender)
       const project = projects.get(projectId)
       if (!project || !existsSync(project.path))
         return { ok: false, msg: 'projeto indisponível — a pasta existe?' }
@@ -174,7 +172,6 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
   // Mapa de portas para o MODAL do ▶ testar (decisão do dono, 2026-08-07):
   // mesma string que o QA recebe no prompt — o dono escolhe vendo o mapa.
   ipcMain.handle('panes:portsInUse', (e, projectId: string) => {
-    bindUiSender(e.sender)
     return formatPortMap(harnessPortsInUse(projectId))
   })
 
@@ -186,7 +183,6 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
   // consciência da base (claude). Sem isso ele podia quebrar o app editando a
   // main por fora do sistema de missões/versões.
   ipcMain.handle('panes:freeSpec', (e, projectId: string, seatId: string, effort?: string) => {
-    bindUiSender(e.sender)
     const project = projects.get(projectId)
     const seat = seats.get(seatId)
     if (!project || !seat || !existsSync(project.path)) return null

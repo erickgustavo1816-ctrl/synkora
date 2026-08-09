@@ -200,9 +200,9 @@ export function buildSkillsApi(
         evidence: payload.fingerprint.slice(0, 24),
         detail: { receiptId, references: payload.loadedReferences }
       })
-      if (durableTaskId && ctx.uiSender && !ctx.uiSender.isDestroyed()) {
+      if (durableTaskId) {
         try {
-          ctx.uiSender.send('tasks:changed', id.projectId)
+          ctx.pushAll('tasks:changed', id.projectId)
         } catch {
           // A notificação acelera a UI, mas nunca invalida ledger+runtime já confirmados.
         }

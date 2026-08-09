@@ -33,7 +33,6 @@ import type { MainContext } from '../mainContext'
 /** Dependências do closure do index ainda não migradas (mesmo padrão
  * do PhaseEngineExtras). */
 export interface MiscIpcExtras {
-  bindUiSender(sender: Electron.WebContents): void
   assertMainRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
   ensureBypassAccepted(configDir: string, trustCwd?: string): void
 }
@@ -47,7 +46,6 @@ export function registerMiscIpc(ctx: MainContext, extras: MiscIpcExtras): void {
     expiredSeats
   } = ctx
   const {
-    bindUiSender,
     assertMainRendererSender,
     ensureBypassAccepted
   } = extras
@@ -59,12 +57,10 @@ export function registerMiscIpc(ctx: MainContext, extras: MiscIpcExtras): void {
   })
 
   ipcMain.handle('cli:status', (e): CliStatus[] => {
-    bindUiSender(e.sender)
     return getCliStatus()
   })
 
   ipcMain.handle('cli:update', (e): Promise<CliStatus[]> => {
-    bindUiSender(e.sender)
     // Chamada durante uma rodada em andamento entra na MESMA promessa e não
     // gera evento nenhum. Sem este empurrão o botão ficaria mudo até o fim da
     // rodada (que pode levar minutos) — e nem desabilitado, porque o estado do

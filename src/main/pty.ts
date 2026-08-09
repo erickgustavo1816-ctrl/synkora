@@ -265,6 +265,21 @@ export class PtyManager {
     this.conptyDll = process.platform === 'win32' && enabled
   }
 
+  /** Broadcast da Fase 3 (docs/FASE3_PLANO.md §3): canais de CHROME
+   *  (pane:lastlines, pty:effort, pty:model) são consumidos pelas DUAS views
+   *  — o wc capturado no create só alcança a view que montou o pane. O index
+   *  injeta o pushAll aqui; sem hook (testes/uso avulso), degrada para o wc.
+   *  pty:data/pty:exit/pty:reset NUNCA passam por aqui: unicast por contrato
+   *  (broadcast pintaria o mesmo buffer em dois xterms). */
+  private broadcast: ((channel: string, ...args: unknown[]) => void) | null = null
+  setBroadcast(fn: (channel: string, ...args: unknown[]) => void): void {
+    this.broadcast = fn
+  }
+  private sendChrome(wc: WebContents, channel: string, ...args: unknown[]): void {
+    if (this.broadcast) this.broadcast(channel, ...args)
+    else if (!wc.isDestroyed()) wc.send(channel, ...args)
+  }
+
   setPromptDir(dir: string): void {
     this.promptDir = dir
   }
@@ -545,7 +560,7 @@ export class PtyManager {
     let tailTimer: NodeJS.Timeout | null = null
     const flushTail = (): void => {
       tailTimer = null
-      if (!wc.isDestroyed()) wc.send('pane:lastlines', opts.id, tailLines.slice())
+      this.sendChrome(wc, 'pane:lastlines', opts.id, tailLines.slice())
     }
     const inspectNotice = (line: string): void => {
       if (opts.onAttention && ATTENTION_RE.test(line) && Date.now() - lastAttention > 30_000) {
@@ -813,7 +828,7 @@ export class PtyManager {
           c.match(/\b(minimal|low|medium|high|xhigh|max|ultra)\s*·\s*\/effort/i)
         if (m && m[1].toLowerCase() !== lastEffort) {
           lastEffort = m[1].toLowerCase()
-          if (!wc.isDestroyed()) wc.send('pty:effort', opts.id, lastEffort)
+          this.sendChrome(wc, 'pty:effort', opts.id, lastEffort)
         }
       }
       if (opts.onCtxWindow) ctxBannerBuf = (ctxBannerBuf + data).slice(-4096)
@@ -859,7 +874,7 @@ export class PtyManager {
           const model = `${m[1].toLowerCase()}${m[2] ? `-${m[2]}` : ''}${oneM ? '[1m]' : ''}`
           if (model !== lastModel) {
             lastModel = model
-            if (!wc.isDestroyed()) wc.send('pty:model', opts.id, model)
+            this.sendChrome(wc, 'pty:model', opts.id, model)
           }
         }
       } else if (opts.kind === 'codex' && /·/.test(data)) {
@@ -870,12 +885,12 @@ export class PtyManager {
         if (m) {
           if (m[1] !== lastModel) {
             lastModel = m[1]
-            if (!wc.isDestroyed()) wc.send('pty:model', opts.id, m[1])
+            this.sendChrome(wc, 'pty:model', opts.id, m[1])
           }
           const effort = m[2].toLowerCase().replace(/^extra\s+high$/, 'xhigh')
           if (effort !== lastEffort) {
             lastEffort = effort
-            if (!wc.isDestroyed()) wc.send('pty:effort', opts.id, effort)
+            this.sendChrome(wc, 'pty:effort', opts.id, effort)
           }
         }
       }

@@ -310,8 +310,7 @@ export function buildReportApi(
           } else {
             helperCompletions.settle(paneId, completionId)
           }
-          if (ctx.uiSender && !ctx.uiSender.isDestroyed())
-            ctx.uiSender.send('panes:closeById', projectId, paneId)
+          ctx.pushAll('panes:closeById', projectId, paneId)
           // O renderer normalmente desmonta o pane e mata o PTY. Fazemos o
           // mesmo no main para que uma janela fechada/remount lento não deixe
           // um helper já reportado capaz de escrever após o snapshot do dev.
@@ -608,7 +607,7 @@ export function buildReportApi(
             text: `gate ${watch.phase} de "${blockedTask?.title ?? watch.taskId}" BLOQUEADO POR AMBIENTE (não é defeito do produto — NÃO repasse nada ao dev): ${content.slice(0, 400)}. Corrija o ambiente se estiver ao seu alcance e reabra SÓ o gate com run_task {id: "${watch.taskId}", phase: "${watch.phase}"} — a reabertura tenta subir o runtime de novo. Se o bloqueio persistir na segunda tentativa, escale ao USUÁRIO com UMA pergunta objetiva`,
             actor: 'harness'
           })
-          if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+          ctx.pushAll('tasks:changed', watch.projectId)
           syncBoard(watch.projectId)
           return 'bloqueio ambiental registrado — o gate fechou SEM contar ciclo e nada foi ao dev; o orquestrador reabre o gate após o ambiente ser corrigido'
         } finally {
@@ -668,7 +667,7 @@ export function buildReportApi(
             text: `DEV de UI bloqueado por falta de browser/runtime em "${blockedTask?.title ?? watch.taskId}". O trabalho foi preservado, nenhum receipt foi marcado como aplicado e a fase ficou interrompida para correção da capacidade.`,
             actor: 'harness'
           })
-          if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+          ctx.pushAll('tasks:changed', watch.projectId)
           syncBoard(watch.projectId)
           return 'bloqueio ambiental do DEV registrado — trabalho preservado, rodada interrompida e nenhum receipt aplicado'
         } finally {

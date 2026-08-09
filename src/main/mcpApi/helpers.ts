@@ -687,8 +687,7 @@ export function buildHelpersApi(
         }
         helperOpenWatchdog.arm(armed.paneId)
         closingPaneIds.delete(armed.paneId)
-        if (ctx.uiSender && !ctx.uiSender.isDestroyed())
-          ctx.uiSender.send('panes:open', id.projectId, id.taskId ?? '', spec)
+        ctx.pushAll('panes:open', id.projectId, id.taskId ?? '', spec)
         hub.publish({
           projectId: id.projectId,
           missionId: id.missionId,
@@ -979,8 +978,7 @@ export function buildHelpersApi(
       paneSessions.delete(paneId)
       helperReported.delete(paneId)
       helperSeen.delete(paneId)
-      if (ctx.uiSender && !ctx.uiSender.isDestroyed())
-        ctx.uiSender.send('panes:closeById', h.projectId, paneId)
+      ctx.pushAll('panes:closeById', h.projectId, paneId)
       // encerrado de propósito = transcript é lixo (sem lixo na pasta —
       // decisão do usuário); espera o flush final do tee antes de apagar
       const file = helperTranscriptPath(h.projectId, paneId)

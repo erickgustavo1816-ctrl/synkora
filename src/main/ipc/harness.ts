@@ -10,23 +10,13 @@
 import { ipcMain } from 'electron'
 import type { MainContext } from '../mainContext'
 
-/** Dependências do closure do index ainda não migradas (mesmo padrão
- * do PhaseEngineExtras). */
-export interface HarnessIpcExtras {
-  bindUiSender(sender: Electron.WebContents): void
-}
-
-export function registerHarnessIpc(ctx: MainContext, extras: HarnessIpcExtras): void {
+export function registerHarnessIpc(ctx: MainContext): void {
   const {
     maestro,
     emitLog,
     hub
   } = ctx
-  const {
-    bindUiSender
-  } = extras
   ipcMain.handle('harness:setBypass', (e, projectId: string, on: boolean) => {
-    bindUiSender(e.sender)
     // on = fluxo reto (bypass); off = religa aprovações (acceptEdits/sandbox).
     maestro.update(projectId, { bypassOff: on ? undefined : true })
     emitLog(projectId, {
@@ -49,7 +39,6 @@ export function registerHarnessIpc(ctx: MainContext, extras: HarnessIpcExtras): 
   // toggle de bypass; cada pane que nasce sob o override é auditado na
   // caixa-preta (sensitive-bypass-override).
   ipcMain.handle('harness:setSensitiveBypass', (e, projectId: string, on: boolean) => {
-    bindUiSender(e.sender)
     maestro.update(projectId, { sensitiveAutoOk: on ? true : undefined })
     emitLog(projectId, {
       kind: 'ok',

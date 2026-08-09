@@ -407,40 +407,31 @@ const progressHeadlessActivities = new Map<
 const progressMaestroTurnTokens = new WeakMap<MaestroBackend, number>()
 let progressHeadlessActivityToken = 0
 let abortVoiceRequests: () => void = () => {}
-// Janela única: o último WebContents que falou com o Maestro recebe os eventos.
+// O canal de push é amarrado EXCLUSIVAMENTE no did-finish-load da janela
+// (F5.5) — o bindUiSender oportunista (`uiSender = e.sender` nos handlers)
+// morreu na F3-c0: era redundante desde a F5.5 e, com a segunda view (F3),
+// deixaria qualquer IPC vindo dela sequestrar/perder o canal do host (a
+// blindagem CHECK 17 contra overlays existia só por causa dele).
 let uiSender: Electron.WebContents | null = null
 let mainWindow: BrowserWindow | null = null
-
-// BLINDAGEM DO CANAL DE PUSH (CHECK 17, 2026-08-07): overlays (SynVoice/
-// ANDAMENTO) são BrowserWindows próprios — um handler compartilhado fazendo
-// `uiSender = e.sender` sob um overlay sequestra TODOS os pushes main→UI
-// (paralisia real: panes:open perdido às 17:03Z parou o pipeline por 11min em
-// silêncio). Só o webContents da JANELA PRINCIPAL amarra o canal; tentativa
-// recusada e troca legítima ficam na caixa-preta.
-const refusedUiSenderIds = new Set<number>()
-function bindUiSender(sender: Electron.WebContents): void {
-  const mainWc = mainWindow?.webContents
-  if (mainWc && !mainWc.isDestroyed() && sender.id !== mainWc.id) {
-    if (!refusedUiSenderIds.has(sender.id)) {
-      refusedUiSenderIds.add(sender.id)
-      blackbox.record({
-        cat: 'app',
-        event: 'ui-sender-rebind-refused',
-        actor: 'harness',
-        reason: `webContents ${sender.id} (overlay/janela auxiliar) tentou re-amarrar o canal de push — mantido na janela principal (${mainWc.id})`
-      })
-    }
-    return
-  }
-  if (uiSender && uiSender !== sender && !uiSender.isDestroyed()) {
-    blackbox.record({
-      cat: 'app',
-      event: 'ui-sender-rebound',
-      actor: 'harness',
-      reason: `canal de push re-amarrado: webContents ${uiSender.id} → ${sender.id}`
-    })
-  }
-  uiSender = sender
+// COSTURA DE PUSH DA FASE 3 (docs/FASE3_PLANO.md §3-D3): o destino de um push
+// é a VIEW, não "a janela". `panesSender` é o webContents da WebContentsView
+// do canvas de panes — amarrado pelo did-finish-load dela (F3-c1); enquanto
+// null (view não nasceu), pushPanes/pushAll degradam para o host: com uma
+// view só, pushAll ≡ pushBoard e NADA muda de comportamento. A classificação
+// canal→destino é a tabela do FASE3_PLANO §3 — canal consumido pelos dois
+// lados empurrado para um só meio-funciona em silêncio; na dúvida, pushAll.
+let panesSender: Electron.WebContents | null = null
+function pushBoard(channel: string, ...args: unknown[]): void {
+  if (uiSender && !uiSender.isDestroyed()) uiSender.send(channel, ...args)
+}
+function pushPanes(channel: string, ...args: unknown[]): void {
+  const target = panesSender && !panesSender.isDestroyed() ? panesSender : uiSender
+  if (target && !target.isDestroyed()) target.send(channel, ...args)
+}
+function pushAll(channel: string, ...args: unknown[]): void {
+  pushBoard(channel, ...args)
+  if (panesSender && !panesSender.isDestroyed()) panesSender.send(channel, ...args)
 }
 let synVoiceOverlayWindow: BrowserWindow | null = null
 let progressOverlayWindow: BrowserWindow | null = null
@@ -2682,6 +2673,9 @@ app.whenReady().then(async () => {
   // a tela inteira a cada resize. Ligado por padrão; settings.conptyDll=false
   // volta ao ConPTY do Windows sem rebuild. Ver o bloco no spawn de pty.ts.
   ptys.setConptyDll(settings.get().conptyDll !== false)
+  // Chrome dos panes (lastlines/effort/model) é consumido pelas DUAS views —
+  // o PtyManager troca o wc capturado pelo broadcast da costura (F3-c0).
+  ptys.setBroadcast(pushAll)
   // Persona de pane vira ARQUIVO (--append-system-prompt-file) nesta pasta —
   // argv tem teto de 32767 chars no Windows (ver guarda no pty.ts, caso 02/08).
   const trustedPromptDir = join(app.getPath('userData'), 'prompts')
@@ -2788,7 +2782,7 @@ app.whenReady().then(async () => {
   }
   setTimeout(() => void backfillSkillAssessments(), 5_000)
   skillsLib.onChanged = () => {
-    if (uiSender && !uiSender.isDestroyed()) uiSender.send('skills:changed')
+    pushBoard('skills:changed')
   }
 
   // Todos os panes que compartilham um worktree mantem leases. O disco recebe
@@ -2934,9 +2928,9 @@ app.whenReady().then(async () => {
       const interrupted = interruptActiveSkillUsage(task.skillUsage)
       if (interrupted === task.skillUsage) return true
       tasks.update(scope.taskId, { skillUsage: interrupted })
-      if (scope.projectId && uiSender && !uiSender.isDestroyed()) {
+      if (scope.projectId) {
         try {
-          uiSender.send('tasks:changed', scope.projectId)
+          pushAll('tasks:changed', scope.projectId)
         } catch {
           // A persistência é autoritativa; a UI recupera no próximo refresh.
         }
@@ -3135,7 +3129,7 @@ app.whenReady().then(async () => {
       ).catch(() => undefined)
       return undefined
     }
-    if (uiSender && !uiSender.isDestroyed()) uiSender.send('tasks:changed', projectId)
+    pushAll('tasks:changed', projectId)
 
     const definitionsById = new Map(definitions.map((definition) => [definition.id, definition]))
     return [
@@ -3345,9 +3339,7 @@ app.whenReady().then(async () => {
       if (
         (status === 'injected' || status === 'mailboxed') &&
         meta.sourcePaneId &&
-        context &&
-        uiSender &&
-        !uiSender.isDestroyed()
+        context
       ) {
         const communication: HubCommunicationEvent = {
           id: meta.correlationId
@@ -3361,7 +3353,8 @@ app.whenReady().then(async () => {
           targetPaneId: paneId,
           kind: meta.kind ?? 'message'
         }
-        uiSender.send('hub:communication', communication)
+        // pushPanes: só o ConstellationMap (view de panes) consome este canal.
+        pushPanes('hub:communication', communication)
       }
     },
     onEvent: (evt) => {
@@ -3374,7 +3367,7 @@ app.whenReady().then(async () => {
         ids: { projectId: evt.projectId, missionId: evt.missionId },
         detail: { text: evt.text, quiet: evt.quiet, urgent: evt.urgent }
       })
-      if (uiSender && !uiSender.isDestroyed()) uiSender.send('hub:event', evt)
+      pushAll('hub:event', evt)
     }
   })
 
@@ -3530,9 +3523,9 @@ app.whenReady().then(async () => {
     persistUserQuestions: () => persistUserQuestions(),
     abortVoiceRequests: () => abortVoiceRequests(),
     releasePaneSkillLease: (...args) => releasePaneSkillLease(...args),
-    push: (channel, ...args) => {
-      if (uiSender && !uiSender.isDestroyed()) uiSender.send(channel, ...args)
-    },
+    pushBoard: (channel, ...args) => pushBoard(channel, ...args),
+    pushPanes: (channel, ...args) => pushPanes(channel, ...args),
+    pushAll: (channel, ...args) => pushAll(channel, ...args),
     phase: {
       preparePhasePane: (...args) => preparePhasePane(...args),
       advancePhase: (...args) => advancePhase(...args),
@@ -3746,7 +3739,7 @@ app.whenReady().then(async () => {
         }
       }
     }
-    if (uiSender && !uiSender.isDestroyed()) uiSender.send('cli:status', all)
+    pushBoard('cli:status', all)
   })
 
 
@@ -4202,7 +4195,7 @@ app.whenReady().then(async () => {
         actor: 'harness',
         urgent: true
       })
-      if (uiSender && !uiSender.isDestroyed()) uiSender.send('tasks:changed', planTask.projectId)
+      pushAll('tasks:changed', planTask.projectId)
       syncBoard(planTask.projectId)
       return
     }
@@ -4256,7 +4249,7 @@ app.whenReady().then(async () => {
       actor: 'orchestrator',
       urgent: true
     })
-    if (uiSender && !uiSender.isDestroyed()) uiSender.send('tasks:changed', planTask.projectId)
+    pushAll('tasks:changed', planTask.projectId)
     syncBoard(planTask.projectId)
     if (resumesAuthorizedQueue) startMissionIntegration(mission.id, 'orquestrador · retomada autorizada')
   }
@@ -4298,8 +4291,7 @@ app.whenReady().then(async () => {
           actor: 'harness',
           urgent: true
         })
-        if (uiSender && !uiSender.isDestroyed())
-          uiSender.send('tasks:changed', current.projectId)
+        pushAll('tasks:changed', current.projectId)
         syncBoard(current.projectId)
         return
       }
@@ -4374,7 +4366,7 @@ app.whenReady().then(async () => {
           actor: 'harness',
           urgent: true
         })
-        if (uiSender && !uiSender.isDestroyed()) uiSender.send('tasks:changed', current.projectId)
+        pushAll('tasks:changed', current.projectId)
         syncBoard(current.projectId)
         return
       }
@@ -4443,7 +4435,7 @@ app.whenReady().then(async () => {
           actor: 'harness',
           urgent: true
         })
-        if (uiSender && !uiSender.isDestroyed()) uiSender.send('tasks:changed', current.projectId)
+        pushAll('tasks:changed', current.projectId)
         syncBoard(current.projectId)
         return
         }
@@ -4574,7 +4566,7 @@ app.whenReady().then(async () => {
           actor: 'harness',
           urgent: true
         })
-        if (uiSender && !uiSender.isDestroyed()) uiSender.send('tasks:changed', current.projectId)
+        pushAll('tasks:changed', current.projectId)
         syncBoard(current.projectId)
       } catch (error) {
         const now = new Date().toISOString()
@@ -4606,7 +4598,7 @@ app.whenReady().then(async () => {
           actor: 'harness',
           urgent: true
         })
-        if (uiSender && !uiSender.isDestroyed()) uiSender.send('tasks:changed', current.projectId)
+        pushAll('tasks:changed', current.projectId)
         syncBoard(current.projectId)
       }
     })().finally(() => finalVerificationRuns.delete(planTask.id))
@@ -4663,8 +4655,7 @@ app.whenReady().then(async () => {
         actor: 'harness',
         urgent: true
       })
-      if (uiSender && !uiSender.isDestroyed())
-        uiSender.send('tasks:changed', planTask.projectId)
+      pushAll('tasks:changed', planTask.projectId)
       syncBoard(planTask.projectId)
       return
     }
@@ -4717,7 +4708,7 @@ app.whenReady().then(async () => {
 
   // ————— BACKLOG DE PRODUTO (versões como escopo de planejamento) —————
   function emitBacklogChanged(projectId: string): void {
-    if (uiSender && !uiSender.isDestroyed()) uiSender.send('backlog:changed', projectId)
+    pushBoard('backlog:changed', projectId)
   }
 
   // SUBIR VERSÃO (release): merge da branch version/<nome> na base. Cada
@@ -5501,7 +5492,7 @@ app.whenReady().then(async () => {
         } Este é o NOVO carimbo do card: não trate como anomalia nem re-imponha o modelo da lane`,
         actor: 'harness'
       })
-      if (uiSender && !uiSender.isDestroyed()) uiSender.send('tasks:changed', projectId)
+      pushAll('tasks:changed', projectId)
       return {
         ok: true,
         msg: migrated
@@ -5590,9 +5581,7 @@ app.whenReady().then(async () => {
       // board é best-effort — nunca derruba o fluxo
     }
     syncMaestroProjectLifecycle(projectId)
-    if (uiSender && !uiSender.isDestroyed()) {
-      uiSender.send('projects:flowChanged', projectId)
-    }
+    pushAll('projects:flowChanged', projectId)
     scheduleProgressSnapshot()
   }
 
@@ -6542,7 +6531,7 @@ app.whenReady().then(async () => {
   // registrar tarde e identico a registrar cedo, e aqui TODO simbolo do
   // closure ja foi declarado: zero TDZ). NUNCA registrar no import.
   registerSkillsIpc(ctx)
-  registerMiscIpc(ctx, { bindUiSender, assertMainRendererSender, ensureBypassAccepted })
+  registerMiscIpc(ctx, { assertMainRendererSender, ensureBypassAccepted })
   registerVoiceIpc(ctx, {
     assertMainVoiceSender,
     assertOverlayVoiceSender,
@@ -6664,28 +6653,24 @@ app.whenReady().then(async () => {
     servicesSnapshot,
     validateExternalServices
   })
-  registerHarnessIpc(ctx, { bindUiSender })
+  registerHarnessIpc(ctx)
   registerProjectPlanIpc(ctx, {
-    bindUiSender,
     humanProjectPlanApprovals,
     humanProjectMissionStarts,
     getMcpApi: () => mcpApi
   })
   registerProjectsIpc(ctx, {
-    bindUiSender,
     killMaestroSession,
     hasProjectPlanArtifacts,
     ensureBypassAccepted,
     discardUnstartedPane
   })
   registerBacklogIpc(ctx, {
-    bindUiSender,
     emitBacklogChanged,
     releaseVersionImpl,
     versionIsolationIsValid
   })
   registerTasksIpc(ctx, {
-    bindUiSender,
     assertMainRendererSender,
     removeTaskCascade,
     fmtLane,
@@ -6696,7 +6681,6 @@ app.whenReady().then(async () => {
   })
   registerMaestroIpc(ctx, {
     engine: maestroEngine,
-    bindUiSender,
     sweepProjectFiles,
     killMaestroSession,
     beginProgressMaestroTurn,
@@ -6712,7 +6696,6 @@ app.whenReady().then(async () => {
   registerMissionsIpc(ctx, {
     engine: missionEngine,
     maestroEngine,
-    bindUiSender,
     orchKey,
     emitBacklogChanged,
     staggerPaneSpawn,
@@ -6734,7 +6717,6 @@ app.whenReady().then(async () => {
   })
   registerPanesIpc(ctx, {
     engine: paneLifecycle,
-    bindUiSender,
     ensureMissionWorktree
   })
 

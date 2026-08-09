@@ -36,7 +36,6 @@ import type { MainContext } from '../mainContext'
 /** Dependências do closure do index ainda não migradas (mesmo padrão
  * do PhaseEngineExtras). */
 export interface TasksIpcExtras {
-  bindUiSender(sender: Electron.WebContents): void
   assertMainRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
   removeTaskCascade(task: Task): boolean
   fmtLane(l: PlanLane): string
@@ -68,7 +67,6 @@ export function registerTasksIpc(ctx: MainContext, extras: TasksIpcExtras): void
     hub
   } = ctx
   const {
-    bindUiSender,
     assertMainRendererSender,
     removeTaskCascade,
     fmtLane,
@@ -199,7 +197,6 @@ export function registerTasksIpc(ctx: MainContext, extras: TasksIpcExtras): void
   })
 
   ipcMain.handle('tasks:remove', (e, id: string) => {
-    bindUiSender(e.sender)
     const task = tasks.get(id)
     if (!task) return
     // F5.7: card AUTO é do orquestrador (delete_task); plano em execução
@@ -213,12 +210,11 @@ export function registerTasksIpc(ctx: MainContext, extras: TasksIpcExtras): void
       text: `${task.kind === 'plan' ? 'card de PLANO' : 'tarefa'} "${task.title}" EXCLUÍDA pelo usuário`,
       actor: 'user'
     })
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', task.projectId)
+    ctx.pushAll('tasks:changed', task.projectId)
     syncBoard(task.projectId)
   })
 
   ipcMain.handle('tasks:planApprove', (e, taskId: string, lanes: PlanLane[], seenRevision?: string) => {
-    bindUiSender(e.sender)
     const task = tasks.get(taskId)
     if (!task || task.kind !== 'plan' || !task.plan || task.status !== 'backlog') return undefined
     // CAS DA APROVAÇÃO (caso real E2E 2026-08-05: o orquestrador re-propôs o
@@ -271,13 +267,12 @@ export function registerTasksIpc(ctx: MainContext, extras: TasksIpcExtras): void
       // o orquestrador está parado esperando exatamente isto — injeção na hora
       urgent: true
     })
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', task.projectId)
+    ctx.pushAll('tasks:changed', task.projectId)
     syncBoard(task.projectId)
     return updated
   })
 
   ipcMain.handle('tasks:planStop', (e, taskId: string) => {
-    bindUiSender(e.sender)
     const task = tasks.get(taskId)
     if (!task || task.kind !== 'plan' || task.status !== 'execucao') return undefined
     const updated = tasks.update(taskId, { status: 'backlog' })
@@ -290,7 +285,7 @@ export function registerTasksIpc(ctx: MainContext, extras: TasksIpcExtras): void
       // "pare AGORA" não pode esperar a cadência do drain
       urgent: true
     })
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', task.projectId)
+    ctx.pushAll('tasks:changed', task.projectId)
     syncBoard(task.projectId)
     return updated
   })
@@ -304,7 +299,6 @@ export function registerTasksIpc(ctx: MainContext, extras: TasksIpcExtras): void
       evidence: string
     ) => {
       assertMainRendererSender(e)
-      bindUiSender(e.sender)
       const task = tasks.get(taskId)
       if (!task || task.kind !== 'plan' || !task.plan) {
         throw new Error('Plano nao encontrado para registrar a validacao humana.')
@@ -355,7 +349,7 @@ export function registerTasksIpc(ctx: MainContext, extras: TasksIpcExtras): void
         actor: 'user',
         urgent: true
       })
-      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', task.projectId)
+      ctx.pushAll('tasks:changed', task.projectId)
       syncBoard(task.projectId)
       return updated
     }
@@ -376,7 +370,6 @@ export function registerTasksIpc(ctx: MainContext, extras: TasksIpcExtras): void
       taskId: string,
       choice: { seatId: string; model?: string; effort?: string }
     ) => {
-      bindUiSender(e.sender)
       return setPhaseExecutorImpl(projectId, taskId, choice, 'user')
     }
   )
@@ -384,7 +377,6 @@ export function registerTasksIpc(ctx: MainContext, extras: TasksIpcExtras): void
   ipcMain.handle(
     'tasks:run',
     async (e, projectId: string, taskId: string, seatId: string, model?: string, effort?: string) => {
-      bindUiSender(e.sender)
       // F5.7: card de plano nunca roda o pipeline; card AUTO é disparado pelo
       // orquestrador via run_task, não pelo usuário.
       const guard = tasks.get(taskId)

@@ -577,9 +577,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       actor: 'harness',
       urgent: true
     })
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) {
-      ctx.uiSender.send('tasks:changed', task.projectId)
-    }
+    ctx.pushAll('tasks:changed', task.projectId)
     syncBoard(task.projectId)
   }
 
@@ -1222,7 +1220,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         actor: 'harness',
         urgent: true
       })
-      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', projectId)
+      ctx.pushAll('tasks:changed', projectId)
       syncBoard(projectId)
     }
 
@@ -1673,7 +1671,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           }
         : {})
     })
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', projectId)
+    ctx.pushAll('tasks:changed', projectId)
     syncBoard(projectId)
     // Identidade no hub: o MCP sabe QUEM é este pane (projeto/tarefa/fase) e
     // os cliArgs já saem com permissões (bypass/accept) + config MCP.
@@ -1829,8 +1827,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
   }
 
   function openPhasePane(watchSpec: DevPaneSpec, projectId: string, taskId: string): void {
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed())
-      ctx.uiSender.send('panes:open', projectId, taskId, watchSpec)
+    ctx.pushAll('panes:open', projectId, taskId, watchSpec)
     const task = tasks.get(taskId)
     hub.publish({
       projectId,
@@ -1844,8 +1841,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
   }
 
   function closePhasePane(projectId: string, taskId: string, role: RunPhase): void {
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed())
-      ctx.uiSender.send('panes:close', projectId, taskId, role)
+    ctx.pushAll('panes:close', projectId, taskId, role)
   }
 
   // GATES VIVOS (decisão do usuário, 2026-08-05: "só tô gastando token de
@@ -2251,7 +2247,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
             text: `${who} REPROVOU "${task.title}" (ciclo ${cycles + 1}): ${motivo}. PASSO 1 — JULGUE cada bloqueio contra o CONTRATO do card (briefing/critérios/DESIGN.md): bloqueio que o contrato não pede (norma externa, "autorização", meta-auditoria, cobertura extra) é o gate legislando — registre o waiver em update_task.gateNotes.${watch.phase} AGORA e não repasse. AUTOCONTRADIÇÃO DO GATE = WAIVER IMEDIATO SEU, sem consultar o dono: item que o próprio gate RECEITOU em rodada anterior e o dev fez conforme a receita não se reabre nem ganha régua mais funda — waive citando a receita do gate. PASSO 2 — envie via notify_pane UMA mensagem CURTA ao dev VIVO, que NÃO recebeu este veredito: só a lista SOBREVIVENTE (nunca re-briefing; ele já sabe tudo), corrigindo a CLASSE de cada item no repo inteiro. Endereço estável: notify_pane {taskId: "${watch.taskId}", role: "dev"} — dispensa copiar paneId. Ciclos repetidos = seu diagnóstico; disputa dev×gate: VOCÊ é o juiz final`,
             actor: 'harness'
           })
-          if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+          ctx.pushAll('tasks:changed', watch.projectId)
           syncBoard(watch.projectId)
           return
         }
@@ -2333,7 +2329,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         })
       }
     }
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+    ctx.pushAll('tasks:changed', watch.projectId)
     syncBoard(watch.projectId)
   }
 
@@ -2745,7 +2741,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           actor: 'harness',
           urgent: true
         })
-        if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+        ctx.pushAll('tasks:changed', watch.projectId)
         syncBoard(watch.projectId)
         return
       }
@@ -3009,7 +3005,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         text: `plano pausado: a fase ${phase} de "${task.title}" foi preservada e não abriu pane; reabra somente esse gate após a retomada`,
         actor: 'harness'
       })
-      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+      ctx.pushAll('tasks:changed', watch.projectId)
       syncBoard(watch.projectId)
       return false
     }
@@ -3268,7 +3264,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
             text: `gate ${phase} de "${task.title}" reaproveitou o pane vivo — re-verificação incremental do delta`,
             actor: 'harness'
           })
-          if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+          ctx.pushAll('tasks:changed', watch.projectId)
           syncBoard(watch.projectId)
           return true
         }
@@ -3304,7 +3300,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         phaseState: 'interrupted',
         feedback: `não foi possível abrir o gate ${phase}; tente reabri-lo sem repetir o desenvolvimento`
       })
-      if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+      ctx.pushAll('tasks:changed', watch.projectId)
       syncBoard(watch.projectId)
       return false
     }
@@ -3535,7 +3531,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           actor: 'harness',
           urgent: true
         })
-        if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+        ctx.pushAll('tasks:changed', watch.projectId)
         syncBoard(watch.projectId)
         return true
       }
@@ -3677,7 +3673,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           )
         )
       if (!next) {
-        if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+        ctx.pushAll('tasks:changed', watch.projectId)
         syncBoard(watch.projectId)
       }
       return true
@@ -4131,7 +4127,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         chainContinuation(
           finalizeTask(watch, task, 'aprovada pelo revisor (QA memoizado para o mesmo head)')
         )
-        if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+        ctx.pushAll('tasks:changed', watch.projectId)
         syncBoard(watch.projectId)
         return true
       }
@@ -4150,7 +4146,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       liveGateWaits.delete(watch.taskId)
       chainContinuation(finalizeTask(watch, task, `aprovada pelo ${who}`))
     }
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', watch.projectId)
+    ctx.pushAll('tasks:changed', watch.projectId)
     syncBoard(watch.projectId)
     return true
   }

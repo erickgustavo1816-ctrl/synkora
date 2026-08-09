@@ -251,9 +251,17 @@ export interface MainContext {
   abortVoiceRequests(): void
   releasePaneSkillLease(paneId: string): void
 
-  /** Push seguro à janela principal — ponto único do padrão
-   *  `if (uiSender && !uiSender.isDestroyed()) uiSender.send(...)`. */
-  push(channel: string, ...args: unknown[]): void
+  /** Costura de push da Fase 3 (docs/FASE3_PLANO.md §3-D3): o destino deixa
+   *  de ser "a janela" e passa a ser a VIEW. `pushBoard` = host (uiSender);
+   *  `pushPanes` = WebContentsView do canvas (cai no host enquanto a view
+   *  não existe — compat de 1 view); `pushAll` = broadcast para as duas.
+   *  Todos encapsulam o padrão `sender && !sender.isDestroyed()` (CHECK 17).
+   *  A classificação canal→destino vive na tabela do FASE3_PLANO §3 — um
+   *  canal consumido pelos dois lados que for empurrado só para um deles
+   *  meio-funciona em silêncio; na dúvida, pushAll. */
+  pushBoard(channel: string, ...args: unknown[]): void
+  pushPanes(channel: string, ...args: unknown[]): void
+  pushAll(channel: string, ...args: unknown[]): void
 
   readonly phase: PhaseApi
 }

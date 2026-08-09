@@ -41,7 +41,6 @@ export interface MissionsIpcExtras {
     MaestroEngine,
     'maestroResumeOverBudget' | 'skipMaestroResume' | 'preparePlanningRun'
   >
-  bindUiSender(sender: Electron.WebContents): void
   /** `${projectId}--${missionId}` — chave do maestroStore do orquestrador. */
   orchKey(projectId: string, missionId: string): string
   emitBacklogChanged(projectId: string): void
@@ -76,7 +75,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   } = ctx
   const {
     engine,
-    bindUiSender,
     orchKey,
     emitBacklogChanged,
     staggerPaneSpawn,
@@ -99,7 +97,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   ipcMain.handle('missions:list', (_e, projectId: string) => missionsWithIntegration(projectId))
 
   ipcMain.handle('missions:create', (e, projectId: string, input: NewMission) => {
-    bindUiSender(e.sender)
     const masterPlan = projectPlanOf(projectId)
     if (projectModeOf(projectId) === 'greenfield' && masterPlan?.status !== 'done') {
       hub.publish({
@@ -120,7 +117,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   ipcMain.handle(
     'missions:confirmOrchestrator',
     (e, projectId: string, missionId: string, choice: { seatId?: string; model?: string; effort?: string }) => {
-      bindUiSender(e.sender)
       const mission = missions.get(missionId)
       if (!mission || mission.projectId !== projectId || !mission.pendingOrchestrator) return false
       const seatId = choice?.seatId && seats.get(choice.seatId) ? choice.seatId : undefined
@@ -155,7 +151,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       missionId: string,
       choice: { seatId: string; model?: string; effort?: string }
     ) => {
-      bindUiSender(e.sender)
       const mission = missions.get(missionId)
       if (!mission || mission.projectId !== projectId) return { ok: false, msg: 'missão não encontrada' }
       if (mission.status !== 'ativa')
@@ -228,7 +223,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   ipcMain.handle(
     'missions:update',
     (e, id: string, patch: { title?: string; goal?: string; scope?: string; status?: 'ativa' | 'arquivada' }) => {
-      bindUiSender(e.sender)
       const mission = missions.get(id)
       if (!mission) return null
       // status só transita entre ativa e arquivada pela UI (integração tem
@@ -324,14 +318,12 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   )
 
   ipcMain.handle('missions:integrate', (e, missionId: string) => {
-    bindUiSender(e.sender)
     return startMissionIntegration(missionId, 'user')
   })
 
   // Excluir missão: só ARQUIVADA (fluxo: arquivar → excluir). Leva junto as
   // tarefas dela e limpa worktree/branch — a exclusão é deliberada.
   ipcMain.handle('missions:remove', (e, missionId: string) => {
-    bindUiSender(e.sender)
     const mission = missions.get(missionId)
     if (!mission || mission.status !== 'arquivada') return false
     const project = projects.get(mission.projectId)
@@ -422,7 +414,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       text: `missão "${mission.title}" EXCLUÍDA (tarefas${mission.branch ? ` e branch ${mission.branch}` : ''} removidas)`,
       actor: 'user'
     })
-    if (ctx.uiSender && !ctx.uiSender.isDestroyed()) ctx.uiSender.send('tasks:changed', mission.projectId)
+    ctx.pushAll('tasks:changed', mission.projectId)
     emitMissionsChanged(mission.projectId)
     syncBoard(mission.projectId)
     return true
@@ -432,7 +424,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   // via --append-system-prompt/1º prompt + resume + MCP). O seat é herdado do
   // PM na primeira abertura e fica preso à missão (sessão pertence ao seat).
   ipcMain.handle('missions:paneSpec', async (e, projectId: string, missionId: string) => {
-    bindUiSender(e.sender)
     await staggerPaneSpawn()
     const project = projects.get(projectId)
     let mission = missions.get(missionId)

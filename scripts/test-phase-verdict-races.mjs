@@ -289,7 +289,12 @@ function createHarness(t, fixture) {
     livePaneSpecs: new Map(),
     closingPaneIds: new Set(),
     uiSender: null,
-    mainWindow: null
+    mainWindow: null,
+    // Costura da Fase 3 (F3-c0): o engine empurra via ctx.push* em vez de
+    // ctx.uiSender.send. uiSender null = sem renderer → push é no-op fiel.
+    pushBoard: () => {},
+    pushPanes: () => {},
+    pushAll: () => {}
   }
   // O plano é MUTÁVEL de fora (caso 5, §7.8): a pausa do dono no MEIO do
   // veredito só vale como prova se o stub puder virar depois do 1º await.
