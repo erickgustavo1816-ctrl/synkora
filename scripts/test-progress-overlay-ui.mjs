@@ -19,6 +19,10 @@ import { progressCompletionFeed } from '../src/renderer/src/progressHistory.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const main = readFileSync(root + '/src/main/index.ts', 'utf8')
+// Fase 1 moveu os handlers progress:* para ipc/progress.ts — as âncoras do
+// IPC autenticado moram lá agora (re-apontadas na Fase 3, mesma classe do
+// re-aponte do bundled-skills).
+const progressIpc = readFileSync(root + '/src/main/ipc/progress.ts', 'utf8')
 const preload = readFileSync(root + '/src/preload/index.ts', 'utf8')
 const overlay = readFileSync(root + '/src/renderer/src/components/ProgressOverlay.tsx', 'utf8')
 const voiceOverlay = readFileSync(root + '/src/renderer/src/components/SynVoiceOverlay.tsx', 'utf8')
@@ -205,9 +209,9 @@ test('main preserves expanded bounds and exposes only authenticated history IPC'
   assert.match(main, /progressOverlayBoundsFlush\?\.\(\)/)
   assert.match(main, /function hideProgressOverlay\(\): void \{\s*progressOverlayBoundsFlush\?\.\(\)/)
   assert.match(main, /!current\.compact \? \{ width, height \} : \{\}/)
-  assert.match(main, /assertProgressOverlaySender\(event\)[\s\S]*?'clear-history'/)
-  assert.match(main, /historyClearedAt:\s*clearedAt/)
-  assert.match(main, /const clearedAt = latestProgressSnapshot\.generatedAt/)
+  assert.match(progressIpc, /assertProgressOverlaySender\(event\)[\s\S]*?'clear-history'/)
+  assert.match(progressIpc, /historyClearedAt:\s*clearedAt/)
+  assert.match(progressIpc, /const clearedAt = state\.latestProgressSnapshot\.generatedAt/)
   assert.match(overlay, /setHistoryClearedAt\(snapshot\.generatedAt\)/)
   assert.match(
     overlay,
@@ -216,7 +220,7 @@ test('main preserves expanded bounds and exposes only authenticated history IPC'
   assert.match(preload, /\| 'clear-history'/)
   assert.match(preload, /progress:overlay-history-changed/)
   assert.doesNotMatch(
-    main,
+    progressIpc,
     /input\.command === 'clear-history'[\s\S]{0,600}missions\.(remove|update)/
   )
 })
