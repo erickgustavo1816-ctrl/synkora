@@ -77,6 +77,7 @@ import { migrateCliSessionBetweenSeats } from './cliSessionTransplant'
 import { createMaestroEngine, type MaestroBackend } from './maestroEngine'
 import { createMissionEngine } from './missionEngine'
 import { createPaneLifecycle } from './paneLifecycle'
+import { PanesViewManager } from './panesView'
 import { buildImagesApi } from './mcpApi/images'
 import { buildMailboxApi } from './mcpApi/mailbox'
 import { buildCodeApi } from './mcpApi/code'
@@ -422,6 +423,18 @@ let mainWindow: BrowserWindow | null = null
 // canal→destino é a tabela do FASE3_PLANO §3 — canal consumido pelos dois
 // lados empurrado para um só meio-funciona em silêncio; na dúvida, pushAll.
 let panesSender: Electron.WebContents | null = null
+let panesViewManager: PanesViewManager | null = null
+function bindPanesSender(sender: Electron.WebContents | null): void {
+  panesSender = sender
+  blackbox.record({
+    cat: 'app',
+    event: sender ? 'panes-view-sender-bound' : 'panes-view-sender-cleared',
+    actor: 'harness',
+    reason: sender
+      ? `push da view de panes amarrado ao webContents ${sender.id}`
+      : 'push da view de panes solto (teardown/crash)'
+  })
+}
 function pushBoard(channel: string, ...args: unknown[]): void {
   if (uiSender && !uiSender.isDestroyed()) uiSender.send(channel, ...args)
 }
@@ -677,7 +690,7 @@ function trustedRendererUrl(rawUrl: string): boolean {
   try {
     const actual = new URL(rawUrl)
     const queryEntries = [...actual.searchParams.entries()]
-    const allowedViews = new Set(['synvoice-overlay', 'progress-overlay'])
+    const allowedViews = new Set(['synvoice-overlay', 'progress-overlay', 'panes'])
     const allowedQuery = queryEntries.length === 0 || (
       queryEntries.length === 1 &&
       queryEntries[0][0] === 'view' &&
@@ -714,7 +727,7 @@ function trustedRendererOrigin(rawOrigin: string): boolean {
 
 function trustedRendererView(
   rawUrl: string,
-  view: 'main' | 'synvoice-overlay' | 'progress-overlay'
+  view: 'main' | 'panes' | 'synvoice-overlay' | 'progress-overlay'
 ): boolean {
   if (!trustedRendererUrl(rawUrl)) return false
   try {
@@ -913,23 +926,41 @@ function createWindow(): BrowserWindow {
   // O renderer só pede áudio. Autorizar `media` sem conferir o tipo também
   // liberaria câmera para qualquer código futuro carregado na janela. A origem
   // é o renderer local do app (file:// empacotado ou a URL do Vite em dev).
-  win.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+  // MEMBERSHIP por view (F3-c1): a session é COMPARTILHADA com a
+  // WebContentsView de panes — o handler identifica a superfície pelo
+  // webContents e exige a URL da view correspondente. Escopos: host =
+  // clipboard + microfone (SynVoice mora nele); view de panes = SÓ clipboard
+  // (cópia de seleção nos terminais; mídia jamais).
+  const permissionScopeOf = (
+    webContents: Electron.WebContents | null,
+    requestingUrl: string | undefined
+  ): 'main' | 'panes' | null => {
+    const url = requestingUrl ?? webContents?.getURL() ?? ''
+    if (webContents?.id === win.webContents.id && trustedRendererView(url, 'main')) return 'main'
     if (
-      webContents?.id !== win.webContents.id ||
-      !details.isMainFrame ||
-      !trustedRendererView(details.requestingUrl ?? webContents.getURL(), 'main')
-    ) return false
+      webContents &&
+      panesViewManager?.isPanesWebContentsId(webContents.id) &&
+      trustedRendererView(url, 'panes')
+    ) return 'panes'
+    return null
+  }
+  win.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    if (!details.isMainFrame) return false
+    const scope = permissionScopeOf(webContents, details.requestingUrl)
+    if (!scope) return false
     if (permission === 'clipboard-sanitized-write') return true
-    return permission === 'media' &&
+    return scope === 'main' &&
+      permission === 'media' &&
       details.mediaType === 'audio' &&
       trustedRendererOrigin(details.securityOrigin ?? requestingOrigin)
   })
   win.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    if (
-      webContents.id !== win.webContents.id ||
-      !details.isMainFrame ||
-      !trustedRendererView(details.requestingUrl ?? webContents.getURL(), 'main')
-    ) {
+    if (!details.isMainFrame) {
+      callback(false)
+      return
+    }
+    const scope = permissionScopeOf(webContents, details.requestingUrl)
+    if (!scope) {
       callback(false)
       return
     }
@@ -940,7 +971,8 @@ function createWindow(): BrowserWindow {
     const mediaTypes = 'mediaTypes' in details ? details.mediaTypes : undefined
     const securityOrigin = 'securityOrigin' in details ? details.securityOrigin : undefined
     callback(
-      permission === 'media' &&
+      scope === 'main' &&
+        permission === 'media' &&
         Boolean(securityOrigin && trustedRendererOrigin(securityOrigin)) &&
         mediaTypes?.length === 1 &&
         mediaTypes[0] === 'audio'
@@ -998,6 +1030,8 @@ function createWindow(): BrowserWindow {
     synVoiceNoticeReady = null
     synVoiceDetached = false
     mainProgressRendererReady = false
+    // child views não morrem com a janela sozinhas — teardown explícito
+    panesViewManager?.destroy()
     if (mainWindow === win) mainWindow = null
     if (uiSender?.id === mainWebContentsId) uiSender = null
   })
@@ -6531,6 +6565,26 @@ app.whenReady().then(async () => {
   // registrar tarde e identico a registrar cedo, e aqui TODO simbolo do
   // closure ja foi declarado: zero TDZ). NUNCA registrar no import.
   registerSkillsIpc(ctx)
+  // A view de panes (F3-c1) fica DORMENTE até o host emitir o primeiro
+  // panes-view:layout (F3-c2) — instanciar/registrar aqui não cria nada.
+  panesViewManager = new PanesViewManager({
+    window: () => mainWindow,
+    preloadPath: join(__dirname, '../preload/index.js'),
+    trustedPanesUrl: (url) => trustedRendererView(url, 'panes'),
+    onSenderBound: (wc) => bindPanesSender(wc),
+    onSenderGone: () => bindPanesSender(null),
+    isHostSender: (e) =>
+      Boolean(
+        mainWindow &&
+          !mainWindow.isDestroyed() &&
+          e.sender === mainWindow.webContents &&
+          e.senderFrame &&
+          trustedRendererView(e.senderFrame.url, 'main')
+      ),
+    record: (event, reason) => blackbox.record({ cat: 'app', event, actor: 'harness', reason }),
+    openExternal: (url) => void shell.openExternal(url)
+  })
+  panesViewManager.registerIpc()
   registerMiscIpc(ctx, { assertMainRendererSender, ensureBypassAccepted })
   registerVoiceIpc(ctx, {
     assertMainVoiceSender,
