@@ -774,6 +774,27 @@ function assertMainRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): voi
   }
 }
 
+/** Fase 3: host OU view de panes — para IPCs que as DUAS superfícies do app
+ *  usam legitimamente (settings gerais: a view lê a fonte do terminal e o
+ *  zoom Ctrl+/- grava dela). Secrets/serviços continuam host-only. */
+function assertAppRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void {
+  const frame = event.senderFrame
+  if (!frame || frame !== event.sender.mainFrame) {
+    throw new Error('Janela não autorizada para controlar serviços locais.')
+  }
+  const isHost =
+    trustedRendererView(frame.url, 'main') &&
+    mainWindow !== null &&
+    !mainWindow.isDestroyed() &&
+    event.sender === mainWindow.webContents
+  const isPanesView =
+    trustedRendererView(frame.url, 'panes') &&
+    panesViewManager?.isPanesWebContentsId(event.sender.id) === true
+  if (!isHost && !isPanesView) {
+    throw new Error('Janela não autorizada para controlar serviços locais.')
+  }
+}
+
 function assertOverlayVoiceSender(event: IpcMainInvokeEvent | IpcMainEvent): void {
   assertTrustedVoiceSender(event)
   if (
@@ -6581,6 +6602,7 @@ app.whenReady().then(async () => {
           e.senderFrame &&
           trustedRendererView(e.senderFrame.url, 'main')
       ),
+    pushBoard: (channel, ...args) => pushBoard(channel, ...args),
     record: (event, reason) => blackbox.record({ cat: 'app', event, actor: 'harness', reason }),
     openExternal: (url) => void shell.openExternal(url)
   })
@@ -6677,6 +6699,7 @@ app.whenReady().then(async () => {
   registerFilesIpc(ctx)
   registerSettingsIpc(ctx, {
     assertMainRendererSender,
+    assertAppRendererSender,
     transitionCodeIntelligence,
     validateExternalServices,
     state: {

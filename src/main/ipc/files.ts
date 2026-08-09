@@ -125,7 +125,7 @@ export function registerFilesIpc(ctx: MainContext): void {
 
       const openKind = terminalFileOpenKind(resolvedFile.absolutePath)
       if (openKind === 'markdown') {
-        return {
+        const result = {
           ok: true,
           action: 'markdown' as const,
           paneId,
@@ -134,6 +134,11 @@ export function registerFilesIpc(ctx: MainContext): void {
           name: basename(resolvedFile.absolutePath),
           displayPath: candidate
         }
+        // F3-c4: quem abre a aba Arquivos é o HOST — o desfecho viaja por push
+        // (um caminho só para clique vindo do host ou da view de panes; o
+        // registro módulo-level do renderer não cruza processos).
+        ctx.pushBoard('files:navigate', projectId, result)
+        return result
       }
       if (openKind === 'reveal') {
         shell.showItemInFolder(resolvedFile.absolutePath)

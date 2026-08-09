@@ -422,6 +422,16 @@ export default function ConstellationMap({
   // mesmo valor não re-renderiza — o measure pode chamar à vontade.
   const [live, setLive] = useState(true)
   const liveRef = useRef(true)
+  // F3-c4: a WebContentsView escondida por setVisible(false) NÃO zera o rect
+  // (sonda probe-webcontentsview-hidden S2) — sem este sinal explícito do
+  // main, o rAF decorativo queimaria CPU invisível para sempre.
+  const viewShown = useStore((s) => s.panesViewShown)
+  const viewShownRef = useRef(viewShown)
+  const measureRef = useRef<(() => void) | null>(null)
+  useEffect(() => {
+    viewShownRef.current = viewShown
+    measureRef.current?.()
+  }, [viewShown])
 
   useLayoutEffect(() => {
     const el = wrapRef.current
@@ -433,7 +443,7 @@ export default function ConstellationMap({
     const measure = (): void => {
       const r = el.getBoundingClientRect()
       // caixa 0x0 = aba/universo escondido por display:none — pausa tudo
-      const visible = r.width > 0 && r.height > 0
+      const visible = r.width > 0 && r.height > 0 && viewShownRef.current
       liveRef.current = visible
       setLive(visible)
       field.setPaused(!visible || document.hidden)
@@ -442,6 +452,7 @@ export default function ConstellationMap({
         field.resize(r.width, r.height)
       }
     }
+    measureRef.current = measure
     const obs = new ResizeObserver(measure)
     obs.observe(el)
     measure()

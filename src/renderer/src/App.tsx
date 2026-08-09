@@ -1,5 +1,12 @@
 import { useEffect } from 'react'
-import { useStore, type PaneKind, type PaneOptions } from './store'
+import {
+  useStore,
+  type PaneActivity,
+  type PaneKind,
+  type PaneOptions,
+  type UniverseTab
+} from './store'
+import { queueMarkdownOpen } from './projectFileNavigation'
 import { playAttentionChime, playSoftBlip } from './notify'
 import Home from './screens/Home'
 import Universe from './screens/Universe'
@@ -123,8 +130,39 @@ export default function App(): React.JSX.Element {
     const offPolicies = window.synkora.policies.onChanged(
       (projectId) => void useStore.getState().loadPolicies(projectId)
     )
+    // ——— F3-c4: costuras vindas da view de panes (via main) ———
+    const offFilesNav = window.synkora.files.onNavigate
+      ? window.synkora.files.onNavigate((projectId, result) => {
+          if (!result.ok || result.action !== 'markdown') return
+          queueMarkdownOpen(projectId, result)
+          useStore.getState().setUniverseTab(projectId, 'arquivos')
+        })
+      : () => undefined
+    const offViewNav = window.synkora.panesView.onNavigateHost
+      ? window.synkora.panesView.onNavigateHost((projectId, tab) =>
+          useStore.getState().setUniverseTab(projectId, tab as UniverseTab)
+        )
+      : () => undefined
+    const offViewActivity = window.synkora.panesView.onActivity
+      ? window.synkora.panesView.onActivity((paneId, activity) =>
+          useStore.getState().setPaneActivity(paneId, activity as PaneActivity)
+        )
+      : () => undefined
+    const offViewAttn = window.synkora.panesView.onAttentionCleared
+      ? window.synkora.panesView.onAttentionCleared((projectId, paneId) =>
+          useStore.getState().clearPaneAttention(projectId, paneId)
+        )
+      : () => undefined
+    const offSettings = window.synkora.settings.onChanged
+      ? window.synkora.settings.onChanged(() => void useStore.getState().loadSettings())
+      : () => undefined
     return () => {
       disposed = true
+      offFilesNav()
+      offViewNav()
+      offViewActivity()
+      offViewAttn()
+      offSettings()
       offOpenFree()
       offPolicies()
       offProgressTarget()

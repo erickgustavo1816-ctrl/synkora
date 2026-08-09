@@ -15,7 +15,6 @@ import {
   TERMINAL_SCROLLBAR_WIDTH,
   terminalFontStack
 } from '../terminalGeometry'
-import { queueMarkdownOpen } from '../projectFileNavigation'
 import '@xterm/xterm/css/xterm.css'
 
 // Tema "overclock": painel escuro quente + paleta ANSI completa. Sem os 16
@@ -549,13 +548,10 @@ export default function TerminalPane({
                       },
                       decorations: { pointerCursor: true, underline: true },
                       activate: (_event, candidate): void => {
-                        void window.synkora.files
-                          .openTerminalFile(projectId, paneId, candidate)
-                          .then((result) => {
-                            if (!result.ok || result.action !== 'markdown') return
-                            queueMarkdownOpen(projectId, result)
-                            useStore.getState().setUniverseTab(projectId, 'arquivos')
-                          })
+                        // F3-c4: o desfecho markdown volta por push do main ao
+                        // HOST (files:navigate) — um caminho só para clique
+                        // vindo do host ou da view de panes.
+                        void window.synkora.files.openTerminalFile(projectId, paneId, candidate)
                       }
                     }
                   }).filter((link): link is ILink => link !== null)
@@ -657,12 +653,17 @@ export default function TerminalPane({
     // Estado VIVO do pane (chip ●/◌/■ no titlebar): saída = rodando; 4s sem
     // saída = esperando; exit = parado. Só publica quando MUDA.
     const setActivity = useStore.getState().setPaneActivity
+    // F3-c4: na VIEW de panes a transição também viaja ao host via main —
+    // livePaneOf do Board e os dots do rail/Home leem paneActivity de panes
+    // que não moram no processo deles.
+    const inPanesView = document.body.classList.contains('panes-view-page')
     let actState: 'run' | 'idle' | 'dead' | null = null
     let actTimer: number | undefined
     const mark = (state: 'run' | 'idle' | 'dead'): void => {
       if (actState === state) return
       actState = state
       setActivity(paneId, state)
+      if (inPanesView) window.synkora.panesView.reportActivity(paneId, state)
     }
 
     // Estado do ciclo create: um fit anterior à resolução do IPC nunca pode

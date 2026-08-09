@@ -32,6 +32,9 @@ export interface SettingsIpcState {
  * do PhaseEngineExtras). */
 export interface SettingsIpcExtras {
   assertMainRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
+  /** F3-c4: host OU view de panes — settings GERAIS são das duas superfícies
+   *  (a view lê a fonte do terminal e o zoom Ctrl+/- grava dela). */
+  assertAppRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
   transitionCodeIntelligence(
     mode: SynkoraSettings['codeIntelligenceMode'],
     restart?: boolean
@@ -48,6 +51,7 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
   } = ctx
   const {
     assertMainRendererSender,
+    assertAppRendererSender,
     transitionCodeIntelligence,
     validateExternalServices,
     state
@@ -56,12 +60,12 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
     value === 'openrouterKey' || value === 'githubToken'
 
   ipcMain.handle('settings:get', (e) => {
-    assertMainRendererSender(e)
+    assertAppRendererSender(e)
     return settings.view()
   })
 
   ipcMain.handle('settings:set', async (e, patch: SynkoraSettingsPatch) => {
-    assertMainRendererSender(e)
+    assertAppRendererSender(e)
     const previous = settings.get()
     const safePatch: SynkoraSettingsPatch =
       patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {}
@@ -84,6 +88,9 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
         state.externalServicesCheckedAt = null
       }
     }
+    // F3-c4: o OUTRO lado (host ↔ view de panes) recarrega — sem isto o zoom
+    // de fonte feito numa view não chegava à outra.
+    ctx.pushAll('settings:changed')
     // Outra alteração pode ter sido persistida enquanto o fechamento do LSP
     // aguardava. Devolver o estado atual impede uma resposta tardia de fazer a
     // UI regredir para um snapshot antigo.

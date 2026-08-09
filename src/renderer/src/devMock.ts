@@ -792,7 +792,8 @@ export function installDevMock(): void {
       readTerminalDoc: async (_projectId, _paneId, _root, relPath) => ({
         content: `# ${relPath}\n\nArquivo aberto a partir do terminal (mock).`,
         mtime: Date.now()
-      })
+      }),
+      onNavigate: () => () => undefined
     },
     projects: {
       list: async () => [...projects],
@@ -993,7 +994,13 @@ export function installDevMock(): void {
       layout: () => undefined,
       state: () => undefined,
       onState: () => () => undefined,
-      onShown: () => () => undefined
+      onShown: () => () => undefined,
+      navigateHost: () => undefined,
+      reportActivity: () => undefined,
+      reportAttentionCleared: () => undefined,
+      onNavigateHost: () => () => undefined,
+      onActivity: () => () => undefined,
+      onAttentionCleared: () => () => undefined
     },
     maestro: {
       pendingQuestions: async () => [],
@@ -1234,6 +1241,7 @@ export function installDevMock(): void {
           appSettings = { ...appSettings, ...patch }
           return { ...appSettings }
         },
+        onChanged: () => () => undefined,
         setSecret: async (name, _value) => {
           const masked = '••••••••'
           appSettings = name === 'openrouterKey'

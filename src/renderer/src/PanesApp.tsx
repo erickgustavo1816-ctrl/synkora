@@ -92,6 +92,10 @@ export default function PanesApp(): React.JSX.Element {
     const offSeats = window.synkora.seats.onChanged(
       () => void useStore.getState().loadSeats()
     )
+    // F3-c4: zoom de fonte gravado no host chega aqui (e vice-versa).
+    const offSettings = window.synkora.settings.onChanged
+      ? window.synkora.settings.onChanged(() => void useStore.getState().loadSettings())
+      : () => undefined
 
     // Reidratação pós-reload: os PTYs sobrevivem no main; remontar aqui faz o
     // pty:create rebindar o webContents NOVO (sem isto o stream cai no vazio).
@@ -122,6 +126,7 @@ export default function PanesApp(): React.JSX.Element {
       offMissions()
       offProjects()
       offSeats()
+      offSettings()
     }
   }, [bridgeOk])
 

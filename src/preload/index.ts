@@ -1042,6 +1042,36 @@ const api = {
       const listener = (_e: IpcRendererEvent, shown: boolean): void => cb(shown)
       ipcRenderer.on('panes-view:shown', listener)
       return () => ipcRenderer.removeListener('panes-view:shown', listener)
+    },
+    // ——— relays VIEW→host (F3-c4): a view não alcança o shell do host ———
+    /** VIEW: pedir navegação no host (mapa → "abrir board"). */
+    navigateHost: (projectId: string, tab: string): void =>
+      ipcRenderer.send('panes-view:navigate', projectId, tab),
+    /** VIEW: transição de atividade de um pane de execução (o host precisa
+     *  para livePaneOf/dots do rail/Home). */
+    reportActivity: (paneId: string, activity: string): void =>
+      ipcRenderer.send('panes-view:activity', paneId, activity),
+    /** VIEW: pane promovido/visto — o pulso de atenção do host apaga junto. */
+    reportAttentionCleared: (projectId: string, paneId: string): void =>
+      ipcRenderer.send('panes-view:attention-cleared', projectId, paneId),
+    /** HOST: consumo dos relays acima. */
+    onNavigateHost: (cb: (projectId: string, tab: string) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, projectId: string, tab: string): void =>
+        cb(projectId, tab)
+      ipcRenderer.on('panes-view:navigate', listener)
+      return () => ipcRenderer.removeListener('panes-view:navigate', listener)
+    },
+    onActivity: (cb: (paneId: string, activity: string) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, paneId: string, activity: string): void =>
+        cb(paneId, activity)
+      ipcRenderer.on('panes:activity', listener)
+      return () => ipcRenderer.removeListener('panes:activity', listener)
+    },
+    onAttentionCleared: (cb: (projectId: string, paneId: string) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, projectId: string, paneId: string): void =>
+        cb(projectId, paneId)
+      ipcRenderer.on('panes:attention-cleared', listener)
+      return () => ipcRenderer.removeListener('panes:attention-cleared', listener)
     }
   },
   maestro: {
@@ -1227,7 +1257,20 @@ const api = {
       root: 'project' | 'pane',
       relPath: string
     ): Promise<{ content: string; mtime: number } | null> =>
-      ipcRenderer.invoke('files:readTerminalDoc', projectId, paneId, root, relPath)
+      ipcRenderer.invoke('files:readTerminalDoc', projectId, paneId, root, relPath),
+    /** F3-c4 (HOST): link .md clicado em QUALQUER terminal (host ou view de
+     *  panes) chega aqui — o main empurra o desfecho para quem abre a aba. */
+    onNavigate: (
+      cb: (projectId: string, result: TerminalFileOpenResult) => void
+    ): (() => void) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        projectId: string,
+        result: TerminalFileOpenResult
+      ): void => cb(projectId, result)
+      ipcRenderer.on('files:navigate', listener)
+      return () => ipcRenderer.removeListener('files:navigate', listener)
+    }
   },
   catalog: {
     get: (cli: SeatCli, seatId?: string): Promise<Catalog> =>
@@ -1300,7 +1343,14 @@ const api = {
     setSecret: (name: SettingsSecretName, value: string): Promise<SynkoraSettings> =>
       ipcRenderer.invoke('settings:secret:set', name, value),
     clearSecret: (name: SettingsSecretName): Promise<SynkoraSettings> =>
-      ipcRenderer.invoke('settings:secret:clear', name)
+      ipcRenderer.invoke('settings:secret:clear', name),
+    /** F3-c4: o outro lado (host ↔ view de panes) gravou settings — recarrega
+     *  (o zoom de fonte do terminal vale nas duas). */
+    onChanged: (cb: () => void): (() => void) => {
+      const listener = (): void => cb()
+      ipcRenderer.on('settings:changed', listener)
+      return () => ipcRenderer.removeListener('settings:changed', listener)
+    }
   },
   services: {
     get: (includeLocalDetails = false): Promise<ServicesSnapshot> =>

@@ -1036,7 +1036,9 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
             itemAttention={paneAttention}
             onAnchor={anchor}
             onOpenPane={openPaneFromMap}
-            onOpenBoard={() => setUniverseTab(projectId, 'board')}
+            // F3-c4: o board mora no HOST — navegar é relay via main (o tab
+            // local desta view fica cravado em 'panes' de propósito).
+            onOpenBoard={() => window.synkora.panesView.navigateHost(projectId, 'board')}
             missionsAtivas={missionsAtivas}
             panesAtivos={panes.length}
           />
@@ -1203,7 +1205,11 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
                   fallbackSize={fallback}
                   sizeGroup={sizeGroup}
                   voiceLabel={pane.title}
-                  onUserInput={() => clearPaneAttention(projectId, pane.id)}
+                  onUserInput={() => {
+                    clearPaneAttention(projectId, pane.id)
+                    // F3-c4: o pulso do rail/abas do host apaga junto.
+                    window.synkora.panesView.reportAttentionCleared(projectId, pane.id)
+                  }}
                 />
               </div>
             )

@@ -41,6 +41,8 @@ export interface PanesViewDeps {
   onSenderGone(): void
   /** Só o webContents do HOST pode comandar layout/estado da view. */
   isHostSender(event: IpcMainEvent): boolean
+  /** Relays VIEW→host (F3-c4): navegação, activity e attention-cleared. */
+  pushBoard(channel: string, ...args: unknown[]): void
   record(event: string, reason: string): void
   openExternal(url: string): void
 }
@@ -69,6 +71,32 @@ export class PanesViewManager {
       const wc = this.liveWebContents()
       if (wc) wc.send('panes-view:state', state)
     })
+    // ——— relays da VIEW para o host (F3-c4) — volume baixo (transições) ———
+    ipcMain.on('panes-view:navigate', (e, projectId: string, tab: string) => {
+      if (!this.guardView(e, 'panes-view:navigate')) return
+      this.deps.pushBoard('panes-view:navigate', projectId, tab)
+    })
+    ipcMain.on('panes-view:activity', (e, paneId: string, activity: string) => {
+      if (!this.guardView(e, 'panes-view:activity')) return
+      this.deps.pushBoard('panes:activity', paneId, activity)
+    })
+    ipcMain.on('panes-view:attention-cleared', (e, projectId: string, paneId: string) => {
+      if (!this.guardView(e, 'panes-view:attention-cleared')) return
+      this.deps.pushBoard('panes:attention-cleared', projectId, paneId)
+    })
+  }
+
+  /** Contraparte do guardHost: só a PRÓPRIA view emite relays view→host. */
+  private guardView(e: IpcMainEvent, channel: string): boolean {
+    if (this.isPanesWebContentsId(e.sender.id)) return true
+    if (!this.refusedSenderIds.has(e.sender.id)) {
+      this.refusedSenderIds.add(e.sender.id)
+      this.deps.record(
+        'panes-view-command-refused',
+        `webContents ${e.sender.id} tentou ${channel} — só a view de panes emite este relay`
+      )
+    }
+    return false
   }
 
   /** Guard sem throw: exception em listener `.on` não responde nada a
