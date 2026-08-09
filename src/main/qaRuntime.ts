@@ -19,6 +19,7 @@ import { createServer } from 'net'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { RuntimeOwnershipRegistry } from './runtimeOwnership'
+import { cdpInvocation, isElectronScript, matchDevToolsListening, qaCdpPortFor } from './qaCdp'
 
 interface QaRuntimeEntry {
   proc: ChildProcess
@@ -28,6 +29,9 @@ interface QaRuntimeEntry {
   cwd: string
   script: string
   url?: string
+  /** Fase 4 (CHECK 7c): endpoint HTTP do CDP quando o produto é Electron e o
+   * card tem porta reservada — o pane de QA nasceu com --cdp-endpoint aqui. */
+  cdpEndpoint?: string
   outputTail: string
   /** Acumulado SEM ANSI para o match de URL — o vite imprime a porta em
    * NEGRITO DENTRO da URL ("http://localhost:" + ESC[1m + "5174") e o match
@@ -122,7 +126,7 @@ export function portInvocation(
   isWin: boolean
 ): { prefix: string; suffix: string; note?: string } {
   if (!port) return { prefix: '', suffix: '' }
-  if (/electron-vite|\belectron\b/.test(scriptCommand))
+  if (isElectronScript(scriptCommand))
     // CHECK 9.4 (2026-08-07): a porta escolhida VIAJA via PORT no ambiente —
     // produto PORT-aware a honra; config com strictPort pinado a ignora (a
     // nota é honesta sobre isso). Antes o prefixo vazio deixava o modal do
@@ -220,7 +224,7 @@ function startQaRuntimeAttempt(
   cwd: string,
   script: string,
   port?: number
-): Promise<{ url?: string; error?: string }> {
+): Promise<{ url?: string; cdpEndpoint?: string; error?: string }> {
   stopCurrentQaRuntime(taskId)
   // Worktree sem node_modules: sem o bootstrap, o script resolveria binários
   // pelo PATH herdado (o electron-vite do PRÓPRIO Synkora vazou num caso
@@ -233,15 +237,28 @@ function startQaRuntimeAttempt(
   }
   // Porta pedida (runtime_control do QA): sufixo por ferramenta quando ela
   // aceita; a convenção PORT= vai SEMPRE no env (inofensiva onde ignorada).
+  const scriptCommand = readScriptCommand(cwd, script)
   const inv = port
-    ? portInvocation(readScriptCommand(cwd, script), script, port, false)
+    ? portInvocation(scriptCommand, script, port, false)
     : { prefix: '', suffix: '' }
-  const commandLine = `${needsInstall ? `${installCommand(cwd)} && ` : ''}npm run ${script}${inv.suffix}`
+  // CDP (Fase 4, sonda probe-electron-cdp 4/4): card com porta CDP reservada
+  // + script Electron → o app do produto sobe com --remote-debugging-port na
+  // MESMA porta que o pane de QA recebeu em --cdp-endpoint. A prontidão deixa
+  // de ser a URL do dev server e vira a linha "DevTools listening" (stderr do
+  // electron, que atravessa shell→pipe — provado na sonda R1).
+  const cdpPort = qaCdpPortFor(taskId)
+  const cdp =
+    cdpPort && isElectronScript(scriptCommand) ? cdpInvocation(scriptCommand, cdpPort) : undefined
+  const commandLine = `${needsInstall ? `${installCommand(cwd)} && ` : ''}npm run ${script}${inv.suffix}${cdp?.suffix ?? ''}`
   let proc: ChildProcess
   try {
     proc = spawn(commandLine, {
       cwd,
-      env: { ...sanitizedEnv(), ...(port ? { PORT: String(port) } : {}) },
+      env: {
+        ...sanitizedEnv(),
+        ...(port ? { PORT: String(port) } : {}),
+        ...(cdp?.env ?? {})
+      },
       shell: true,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
@@ -268,14 +285,17 @@ function startQaRuntimeAttempt(
   return new Promise((resolve) => {
     const HARD_CAP_MS = 300_000
     const SILENCE_MS = 45_000
+    // Em modo CDP a URL do dev server é informação acessória: a prontidão que
+    // o pane consegue USAR é o endpoint que ele recebeu em --cdp-endpoint.
+    const readiness = cdp ? 'o endpoint CDP (linha "DevTools listening")' : 'URL local'
     const startedAt = Date.now()
     let lastOutputAt = Date.now()
     let settled = false
-    const finish = (result: { url?: string; error?: string }): void => {
+    const finish = (result: { url?: string; cdpEndpoint?: string; error?: string }): void => {
       if (settled) return
       settled = true
       clearInterval(watchdog)
-      if (!result.url) {
+      if (!result.url && !result.cdpEndpoint) {
         releaseQaRuntimeEntry(taskId, entry, true)
       }
       resolve(result)
@@ -284,11 +304,11 @@ function startQaRuntimeAttempt(
       const now = Date.now()
       if (now - startedAt > HARD_CAP_MS) {
         finish({
-          error: `o script "${script}" não anunciou URL local em ${Math.round(HARD_CAP_MS / 1000)}s (teto duro) — última saída: ${entry.outputTail.slice(-400) || '(vazia)'}`
+          error: `o script "${script}" não anunciou ${readiness} em ${Math.round(HARD_CAP_MS / 1000)}s (teto duro) — última saída: ${entry.outputTail.slice(-400) || '(vazia)'}`
         })
       } else if (now - lastOutputAt > SILENCE_MS) {
         finish({
-          error: `o script "${script}" ficou ${Math.round(SILENCE_MS / 1000)}s em silêncio sem anunciar URL — última saída: ${entry.outputTail.slice(-400) || '(vazia)'}`
+          error: `o script "${script}" ficou ${Math.round(SILENCE_MS / 1000)}s em silêncio sem anunciar ${readiness} — última saída: ${entry.outputTail.slice(-400) || '(vazia)'}`
         })
       }
     }, 5_000)
@@ -307,7 +327,24 @@ function startQaRuntimeAttempt(
       const match = LOCAL_URL_RE.exec(entry.cleanTail)
       if (match) {
         entry.url = match[1]
-        finish({ url: match[1] })
+        // Em modo CDP a URL do vite chega ANTES de o electron abrir —
+        // registrar sem encerrar: quem encerra é a linha DevTools (ou timeout).
+        if (!cdp) finish({ url: match[1] })
+      }
+      if (cdp && cdpPort) {
+        const devtools = matchDevToolsListening(entry.cleanTail)
+        if (devtools) {
+          if (devtools.port === cdpPort) {
+            entry.cdpEndpoint = `http://127.0.0.1:${cdpPort}`
+            finish({ url: entry.url, cdpEndpoint: entry.cdpEndpoint })
+          } else {
+            // Porta divergente = o pane de QA está ligado num endpoint que
+            // não existe — derrubar e explicar vale mais que um QA cego.
+            finish({
+              error: `o CDP do produto anunciou na porta ${devtools.port}, mas o pane de QA foi ligado em ${cdpPort} — o produto ignora --remote-debugging-port? Reporte bloqueada citando esta linha`
+            })
+          }
+        }
       }
     }
     proc.stdout?.on('data', onChunk)
@@ -363,7 +400,7 @@ export async function startQaRuntime(
   cwd: string,
   script: string,
   port?: number
-): Promise<{ url?: string; error?: string }> {
+): Promise<{ url?: string; cdpEndpoint?: string; error?: string }> {
   const requestGeneration = beginStartRequest(taskId)
   let result = await startQaRuntimeAttempt(taskId, cwd, script, port)
   if (latestStartRequest.get(taskId) !== requestGeneration) {
@@ -390,17 +427,25 @@ export async function startQaRuntime(
 
 /** Runtimes vivos do harness — para nomear QUEM segura uma porta pinada
  * (colisão dono×QA e QA×QA do CHECK 9, 2026-08-07). */
-export function activeQaRuntimes(): Array<{ taskId: string; cwd: string; url?: string }> {
+export function activeQaRuntimes(): Array<{
+  taskId: string
+  cwd: string
+  url?: string
+  cdpEndpoint?: string
+}> {
   return [...runtimes.entries()].map(([taskId, entry]) => ({
     taskId,
     cwd: entry.cwd,
-    url: entry.url
+    url: entry.url,
+    cdpEndpoint: entry.cdpEndpoint
   }))
 }
 
-export function qaRuntimeOf(taskId: string): { url?: string; cwd: string } | undefined {
+export function qaRuntimeOf(
+  taskId: string
+): { url?: string; cdpEndpoint?: string; cwd: string } | undefined {
   const entry = runtimes.get(taskId)
-  return entry ? { url: entry.url, cwd: entry.cwd } : undefined
+  return entry ? { url: entry.url, cdpEndpoint: entry.cdpEndpoint, cwd: entry.cwd } : undefined
 }
 
 export function stopQaRuntime(taskId: string): void {

@@ -31,6 +31,7 @@ import {
 import { resolveProjectPlaywrightTest, writeClaudeMcpConfig } from '../mcpServer'
 import { paneAccessProfile, paneExternalMcpCapabilities } from '../panePermissions'
 import { stopQaRuntime } from '../qaRuntime'
+import { decorateBrowserLaunchArgs } from '../qaCdp'
 import type { StatsWatchHandle } from '../sessionStats'
 import type { PaneIdentity } from '../hub'
 import type { HelperOpenWatchdog } from '../helperOpenWatchdog'
@@ -337,7 +338,21 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
       const external = pendingIdentity
         ? paneExternalMcpCapabilities(paneAccessProfile(pendingIdentity.role))
         : { browser: false, testRunner: false }
-      const browser = strict && external.browser ? externalPlaywrightForPane() : undefined
+      const browserBase = strict && external.browser ? externalPlaywrightForPane() : undefined
+      // MESMO decorador do armPane (qaCdp): esta regravação vinha CRUA e
+      // dropava o --output-dir no remount (a lição F6.8i só valia no primeiro
+      // caminho); com o --cdp-endpoint da Fase 4 a divergência deixaria o QA
+      // de Electron cego ao app real — fonte única, nunca separar de novo.
+      const browser = browserBase
+        ? {
+            ...browserBase,
+            args: decorateBrowserLaunchArgs(browserBase.args, {
+              cwd: req.cwd || undefined,
+              role: pendingIdentity?.role,
+              taskId: pendingIdentity?.taskId
+            })
+          }
+        : undefined
       const testRunner =
         strict && external.testRunner
           ? resolveProjectPlaywrightTest(req.cwd)
