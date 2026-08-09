@@ -131,7 +131,14 @@ import {
   paneBrowserAvailable
 } from './panePermissions'
 import { immutableReviewDiff } from './reviewDiff'
-import { detectRuntimeScript, qaRuntimeOf, startQaRuntime, stopQaRuntime } from './qaRuntime'
+import {
+  detectRuntimeScript,
+  qaRuntimeOf,
+  readScriptCommand,
+  startQaRuntime,
+  stopQaRuntime
+} from './qaRuntime'
+import { isElectronScript, qaCdpEndpointFor, reserveQaCdpPort } from './qaCdp'
 import { formatPortMap, type PortUseEntry } from './portMap'
 import {
   PhaseLaunchCapacityGuard,
@@ -1064,20 +1071,31 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       worktree &&
       detectRuntimeScript(cwd)
     ) {
+      const runtimeScript = detectRuntimeScript(cwd)
+      // FASE 4 (CHECK 7c, sonda probe-electron-cdp 4/4): produto ELECTRON
+      // ganha porta CDP reservada AQUI, antes do armPane — o pane de QA nasce
+      // com --cdp-endpoint nela e o startQaRuntime (que consulta o mesmo
+      // registro em qaCdp) sobe o app REAL com --remote-debugging-port na
+      // mesma porta. O QA dirige preload/IPC de verdade; o playbook do duplo
+      // de bridge morre para este card.
+      let qaCdpEndpoint: string | undefined
+      if (runtimeScript && isElectronScript(readScriptCommand(cwd, runtimeScript))) {
+        await reserveQaCdpPort(taskId)
+        qaCdpEndpoint = qaCdpEndpointFor(taskId)
+      }
       const qaPortMapLine = formatPortMap(harnessPortsInUse(projectId))
       // REDE DE SEGURANÇA DO RESUME (CHECK 14, 2026-08-07): pane de QA
       // RESUMADO nasce comprovadamente SEM a tool runtime_control (8/8 panes
       // no journal do dia; todo pane FRESCO tem — variante claude da
       // armadilha codex-resume-sem-MCP; causa exata pendente de sonda). No
-      // caminho resumado o HARNESS sobe o runtime e entrega a URL no prompt —
-      // o QA vê o produto sem depender da tool. Caminho fresco segue
-      // self-service (decisão F6.8h do dono, intacta).
+      // caminho resumado o HARNESS sobe o runtime e entrega a URL (ou o
+      // endpoint CDP) no prompt — o QA vê o produto sem depender da tool.
+      // Caminho fresco segue self-service (decisão F6.8h do dono, intacta).
       let resumedRuntimeNote = ''
       if (resumable) {
-        const runtimeScript = detectRuntimeScript(cwd)
         const liveRuntime = qaRuntimeOf(taskId)
-        if (liveRuntime?.url) {
-          resumedRuntimeNote = qaRuntimeAlreadyRunningNote(liveRuntime.url)
+        if (liveRuntime?.url || liveRuntime?.cdpEndpoint) {
+          resumedRuntimeNote = qaRuntimeAlreadyRunningNote(liveRuntime)
         } else if (runtimeScript) {
           const started = await startQaRuntime(taskId, cwd, runtimeScript)
           // A rede de segurança era CEGA (caso real 2026-08-07: QA reclamou de
@@ -1087,18 +1105,21 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
             event: 'qa-runtime-harness-start',
             actor: 'harness',
             ids: { projectId, missionId: task.missionId, taskId, phase, role: phase },
-            reason: started.url
-              ? `runtime subido pelo harness para o QA resumado: ${started.url}`
-              : `runtime NÃO subiu para o QA resumado: ${(started.error ?? 'sem detalhe').slice(0, 260)}`
+            reason:
+              started.url || started.cdpEndpoint
+                ? `runtime subido pelo harness para o QA resumado: ${started.cdpEndpoint ? `CDP ${started.cdpEndpoint}` : started.url}`
+                : `runtime NÃO subiu para o QA resumado: ${(started.error ?? 'sem detalhe').slice(0, 260)}`
           })
-          resumedRuntimeNote = started.url
-            ? qaRuntimeHarnessStartedNote(started.url)
-            : qaRuntimeHarnessFailedNote(started.error)
+          resumedRuntimeNote =
+            started.url || started.cdpEndpoint
+              ? qaRuntimeHarnessStartedNote(started)
+              : qaRuntimeHarnessFailedNote(started.error)
         }
       }
       qaRuntimeBlock = buildQaRuntimeBlock({
         resumedRuntimeNote,
-        portMapLine: qaPortMapLine
+        portMapLine: qaPortMapLine,
+        cdpEndpoint: qaCdpEndpoint
       })
     }
     const logFile = join(runsDir, `${taskId}.md`)
@@ -3219,9 +3240,17 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           watch.worktree
         ) {
           const alive = qaRuntimeOf(watch.taskId)
-          recycleRuntimeNote = alive?.url
-            ? ` The product runtime is STILL RUNNING at ${alive.url} (serves the updated worktree — hot reload); restart it via runtime_control if it misbehaves.`
-            : ` Start the product yourself for the visual pass: runtime_control {action:"restart"} returns the URL; retry with another port if needed, and only report "bloqueada" when your tool cannot reach the cause.`
+          const recycleCdp = qaCdpEndpointFor(watch.taskId)
+          // Fase 4: pane reciclado NASCEU com --cdp-endpoint (a reserva é do
+          // preparePhasePane do mesmo pane) — a instrução muda de "navegue a
+          // URL" para "interaja com o app real já ligado às suas tools".
+          recycleRuntimeNote = alive?.cdpEndpoint
+            ? ` The REAL Electron app is STILL RUNNING and your playwright tools remain attached to it over CDP (${alive.cdpEndpoint}) — it serves the updated worktree; restart via runtime_control {action:"restart"} if it misbehaves, and do NOT navigate to any URL.`
+            : alive?.url
+              ? ` The product runtime is STILL RUNNING at ${alive.url} (serves the updated worktree — hot reload); restart it via runtime_control if it misbehaves.`
+              : recycleCdp
+                ? ` Start the product yourself for the visual pass: runtime_control {action:"restart"} launches the REAL Electron app over CDP already wired to your playwright tools (${recycleCdp}) — do NOT navigate to any URL afterwards; interact with the app window directly, and only report "bloqueada" when your tool cannot reach the cause.`
+                : ` Start the product yourself for the visual pass: runtime_control {action:"restart"} returns the URL; retry with another port if needed, and only report "bloqueada" when your tool cannot reach the cause.`
         }
         const delivered = hub.notifyPaneNow(
           wait.paneId,

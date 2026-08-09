@@ -51,6 +51,7 @@ import {
 } from './mcpProtocol'
 import { isMethodGovernedPaneRole } from './codexSkillIsolation'
 import { activeQaRuntimes, stopQaRuntime } from './qaRuntime'
+import { decorateBrowserLaunchArgs, qaCdpReservations } from './qaCdp'
 import { parsePortFromUrl, type PortUseEntry } from './portMap'
 import type { PaneStartupDescriptor } from './paneStartupMetrics'
 import type { PaneKind } from './pty'
@@ -167,7 +168,9 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
     cwd?: string,
     configDir?: string,
     accessProfile: PaneAccessProfile = 'write',
-    sensitive = false
+    sensitive = false,
+    paneRole?: string,
+    taskId?: string
   ): string[] {
     if (ctx.mcpPort === 0) return [] // servidor ainda subindo (raro): pane nasce sem tools
     // Dev/ajudante recebem browser + runner. Gates recebem somente
@@ -183,16 +186,18 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
     })
       ? configuredBrowser
       : undefined
-    // EVIDÊNCIA NUNCA NASCE GIT-VISÍVEL (caso real 2026-08-06: o output dir
-    // PADRÃO do @playwright/mcp é o cwd — screenshots do QA caíram na RAIZ do
-    // worktree e invalidaram o próprio veredito dele, duas rodadas): todo pane
-    // com browser ganha --output-dir apontando .playwright-mcp/ (git-ignorado
-    // pelo produto e coberto pela higiene do .synkora). O wrapper codex é
-    // fingerprinted por args — cada cwd ganha o seu.
-    const browser =
-      browserBase && cwd
-        ? { ...browserBase, args: [...browserBase.args, '--output-dir', join(cwd, '.playwright-mcp')] }
-        : browserBase
+    // Decoração POR PANE dos args do playwright numa fonte única (qaCdp):
+    // --output-dir <cwd>/.playwright-mcp (evidência nunca nasce git-visível,
+    // caso real 2026-08-06) e, para o pane de QA de card Electron com porta
+    // CDP reservada, --cdp-endpoint (Fase 4 — o QA dirige o app REAL). O
+    // wrapper codex é fingerprinted por args — cada cwd/porta ganha o seu.
+    // A regravação anti-corrida do pty:create usa o MESMO decorador.
+    const browser = browserBase
+      ? {
+          ...browserBase,
+          args: decorateBrowserLaunchArgs(browserBase.args, { cwd, role: paneRole, taskId })
+        }
+      : browserBase
     const testRunner =
       strict && !sensitive && external.testRunner ? resolveProjectPlaywrightTest(cwd) : undefined
     if (cli === 'claude') {
@@ -348,7 +353,9 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
         identity.cwd,
         opts.configDir,
         accessProfile,
-        sensitive
+        sensitive,
+        identity.role,
+        identity.taskId
       )
     )
     // Caixa-preta: papel/CLI/perfil solicitados + se a config MCP saiu de
@@ -432,6 +439,17 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
         port: srv.port,
         requested: srv.port !== undefined,
         owner: `servidor de teste do dono${srv.label ? ` (${srv.label.slice(0, 40)})` : ''}`
+      })
+    }
+    // Portas CDP reservadas (Fase 4): entram no mapa mesmo antes de o app
+    // subir — o pane de QA já nasceu apontando para elas, então ninguém mais
+    // pode usá-las (dono×QA e QA×QA na mesma régua do resto do mapa).
+    for (const { taskId, port } of qaCdpReservations()) {
+      const task = tasks.get(taskId)
+      if (task && task.projectId !== projectId) continue
+      entries.push({
+        port,
+        owner: `CDP do QA do card "${task?.title?.slice(0, 48) ?? taskId.slice(0, 8)}"`
       })
     }
     return entries

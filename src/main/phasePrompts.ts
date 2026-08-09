@@ -87,14 +87,19 @@ export interface GateNotesRef {
  * vivo. Aqui ficam só os três TEXTOS e a montagem final do bloco.
  * ------------------------------------------------------------------ */
 
-/** Nota do resume quando o runtime do card JÁ está de pé (harness é o dono). */
-export function qaRuntimeAlreadyRunningNote(url: string): string {
-  return `THE PRODUCT IS ALREADY RUNNING at ${url} (harness-owned) — navigate it directly with your playwright tools. `
+/** Nota do resume quando o runtime do card JÁ está de pé (harness é o dono).
+ *  Fase 4: com CDP o pane já nasceu LIGADO ao app real — navegar URL é erro. */
+export function qaRuntimeAlreadyRunningNote(rt: { url?: string; cdpEndpoint?: string }): string {
+  if (rt.cdpEndpoint)
+    return `THE PRODUCT (a REAL Electron app) IS ALREADY RUNNING and your playwright tools are attached to it over CDP (${rt.cdpEndpoint}) — do NOT navigate to any URL; use browser_snapshot and interact with the app's open window directly (real preload, real IPC). `
+  return `THE PRODUCT IS ALREADY RUNNING at ${rt.url} (harness-owned) — navigate it directly with your playwright tools. `
 }
 
 /** Nota do resume quando o HARNESS acabou de subir o produto. */
-export function qaRuntimeHarnessStartedNote(url: string): string {
-  return `THE HARNESS ALREADY STARTED THE PRODUCT at ${url} — resumed panes may lack the runtime_control tool (a known harness issue, never your fault); navigate this URL directly with your playwright tools. `
+export function qaRuntimeHarnessStartedNote(rt: { url?: string; cdpEndpoint?: string }): string {
+  if (rt.cdpEndpoint)
+    return `THE HARNESS ALREADY STARTED THE REAL ELECTRON APP and your playwright tools are attached to it over CDP (${rt.cdpEndpoint}) — resumed panes may lack the runtime_control tool (a known harness issue, never your fault); do NOT navigate to any URL, interact with the app's open window directly (real preload, real IPC). `
+  return `THE HARNESS ALREADY STARTED THE PRODUCT at ${rt.url} — resumed panes may lack the runtime_control tool (a known harness issue, never your fault); navigate this URL directly with your playwright tools. `
 }
 
 /** Nota do resume quando o harness TENTOU subir e falhou. */
@@ -107,23 +112,35 @@ export interface QaRuntimeBlockInput {
   resumedRuntimeNote: string
   /** mapa humano de portas em uso pelo harness ('' quando não há nenhuma) */
   portMapLine: string
+  /** Fase 4: endpoint CDP reservado para o card (produto Electron) — quando
+   *  presente, o pane nasceu com --cdp-endpoint e o QA dirige o app REAL. */
+  cdpEndpoint?: string
 }
 
 /** Bloco do QA sobre subir e navegar o produto. */
 export function buildQaRuntimeBlock({
   resumedRuntimeNote,
-  portMapLine
+  portMapLine,
+  cdpEndpoint
 }: QaRuntimeBlockInput): string {
   const startup = resumedRuntimeNote
     ? resumedRuntimeNote +
-      `THIS CARD HAS UI. Use the harness-provided URL directly; do NOT call runtime_control from this resumed pane. If the note says startup failed, report "bloqueada" instead of inventing a product verdict. NEVER approve UI you did not see — code reading is not visual validation. `
-    : `THIS CARD HAS UI — START THE PRODUCT YOURSELF as an early step: call runtime_control {action:"restart"} (the harness owns the process; the tool waits for the dev server and RETURNS ITS URL), then navigate that URL with your playwright tools for the visual pass. If it fails, retry — optionally with another port ({port: <number>}); only when your tool genuinely cannot reach the cause, report status "bloqueada" with the exact error (environmental blockage: no cycle, nothing goes to the dev). NEVER approve UI you did not see — code reading is not visual validation. `
+      `THIS CARD HAS UI. Use the harness-provided ${cdpEndpoint ? 'CDP attachment' : 'URL'} directly; do NOT call runtime_control from this resumed pane. If the note says startup failed, report "bloqueada" instead of inventing a product verdict. NEVER approve UI you did not see — code reading is not visual validation. `
+    : cdpEndpoint
+      ? `THIS CARD HAS UI AND THE PRODUCT IS AN ELECTRON APP THAT RUNS FOR REAL — call runtime_control {action:"restart"} as an EARLY step: the harness launches the real app with CDP, and your playwright tools are ALREADY wired to it (endpoint ${cdpEndpoint}). After restart succeeds, do NOT navigate to any dev-server URL — browser_snapshot attaches to the app's real window (REAL preload and IPC). If a playwright tool cannot connect, the app is not up (or died): call runtime_control {action:"restart"} again; only when your tool genuinely cannot reach the cause, report status "bloqueada" with the exact error (environmental blockage: no cycle, nothing goes to the dev). NEVER approve UI you did not see — code reading is not visual validation. `
+      : `THIS CARD HAS UI — START THE PRODUCT YOURSELF as an early step: call runtime_control {action:"restart"} (the harness owns the process; the tool waits for the dev server and RETURNS ITS URL), then navigate that URL with your playwright tools for the visual pass. If it fails, retry — optionally with another port ({port: <number>}); only when your tool genuinely cannot reach the cause, report status "bloqueada" with the exact error (environmental blockage: no cycle, nothing goes to the dev). NEVER approve UI you did not see — code reading is not visual validation. `
+  // Fase 4 (CHECK 7c): com CDP o playbook do "duplo de bridge" MORRE — o
+  // window.api que o QA enxerga é o REAL, então estado de erro no boot volta
+  // a ser verdade do produto. Sem CDP (produto web), o playbook antigo segue.
+  const electronPlaybook = cdpEndpoint
+    ? `REAL APP OVER CDP (no bridge double): the window.api/preload bridge in this session is the REAL one — an error state on boot is PRODUCT TRUTH now, never "environment"; judge what you see. END OF ROUND: closing the playwright browser only DISCONNECTS from the app — finish with runtime_control {action:"stop"} right before your verdict (if the tool is unavailable in a resumed pane, the harness tears the app down when your gate closes). `
+    : `ELECTRON PRODUCT IN A BROWSER HAS NO PRELOAD (playbook, real case 2026-08-06): the dev-server URL serves only the RENDERER — window.api/the preload bridge does not exist in a plain browser tab, so the app boots into its error state. That error state is the ENVIRONMENT, never a product defect: do not approve or reject because of it. Use the product's dev mock of the bridge if one exists (look for devMock/dev-mock in the renderer); otherwise build a faithful double of the IPC contract yourself — read the real main/preload sources and install the double via playwright before the app loads (browser_evaluate/addInitScript style), WITHOUT touching any project file — then exercise the real screens against it. `
   return (
     startup +
     (portMapLine
       ? `PORTS IN USE BY THE HARNESS RIGHT NOW (the owner's rule — never guess blind): ${portMapLine}. When you request a port, pick one NOT on this list; the harness also auto-hunts a free port on collision. `
       : '') +
-    `ELECTRON PRODUCT IN A BROWSER HAS NO PRELOAD (playbook, real case 2026-08-06): the dev-server URL serves only the RENDERER — window.api/the preload bridge does not exist in a plain browser tab, so the app boots into its error state. That error state is the ENVIRONMENT, never a product defect: do not approve or reject because of it. Use the product's dev mock of the bridge if one exists (look for devMock/dev-mock in the renderer); otherwise build a faithful double of the IPC contract yourself — read the real main/preload sources and install the double via playwright before the app loads (browser_evaluate/addInitScript style), WITHOUT touching any project file — then exercise the real screens against it. `
+    electronPlaybook
   )
 }
 

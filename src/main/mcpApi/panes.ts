@@ -26,6 +26,7 @@ import {
   startQaRuntime,
   stopQaRuntime
 } from '../qaRuntime'
+import { isElectronScript } from '../qaCdp'
 import type { MainContext } from '../mainContext'
 import type { McpApi } from '../mcpServer'
 
@@ -103,6 +104,8 @@ export function buildPanesApi(
       const cwd = qaRuntimeOf(id.taskId)?.cwd ?? id.cwd
       if (action === 'status') {
         const rt = qaRuntimeOf(id.taskId)
+        if (rt?.cdpEndpoint)
+          return `runtime DE PÉ — app Electron REAL no ar, CDP em ${rt.cdpEndpoint} já ligado às suas tools playwright (worktree ${rt.cwd})${rt.url ? `; dev server interno em ${rt.url}` : ''}`
         return rt?.url
           ? `runtime DE PÉ em ${rt.url} (worktree ${rt.cwd})`
           : rt
@@ -152,8 +155,13 @@ export function buildPanesApi(
         stopQaRuntime(id.taskId)
         return 'runtime descartado: a rodada QA mudou enquanto o processo era preparado'
       }
+      // Fase 4: produto Electron sobe DE VERDADE e o pane já nasceu com
+      // --cdp-endpoint — a resposta ensina a NÃO navegar URL (o erro clássico
+      // pós-CDP seria abrir o dev server num tab e voltar ao mundo sem preload).
+      if (rt.cdpEndpoint)
+        return `runtime DE PÉ — app Electron REAL no ar, CDP em ${rt.cdpEndpoint} JÁ ligado às suas tools playwright: NÃO navegue para URL nenhuma; use browser_snapshot e interaja com a janela aberta (preload/IPC reais)${rt.url ? `; dev server interno em ${rt.url}` : ''}. Ao FIM da rodada, derrube com runtime_control {action:"stop"} — fechar o browser só desconecta. O harness também derruba quando seu gate terminar`
       if (rt.url) return `runtime DE PÉ em ${rt.url} — navegue com o playwright; o harness derruba quando seu gate terminar`
-      const pinned = /electron-vite|\belectron\b/.test(readScriptCommand(cwd, script))
+      const pinned = isElectronScript(readScriptCommand(cwd, script))
         ? ' NOTA: este produto usa electron-vite, que TRAVA a porta do renderer na config — porta por parâmetro não tem efeito; se o conflito persistir, a saída é a config de porta própria no produto (mudança de código = decisão do orquestrador/dono).'
         : ''
       return `runtime NÃO subiu: ${(rt.error ?? 'sem detalhe').slice(0, 400)}.${pinned} Se mais tentativas não fizerem sentido, reporte "bloqueada" com este erro`
