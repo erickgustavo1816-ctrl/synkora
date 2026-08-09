@@ -716,10 +716,26 @@ export default function SynVoice(): React.JSX.Element {
       if (target) {
         target.insert(text)
         target.focus()
-      } else {
-        await navigator.clipboard.writeText(text)
+        return target
       }
-      return target
+      // F3-c5: terminal focado na VIEW de panes (processo irmão) — o registry
+      // local do host não o enxerga; o main sabe se a view visível tem alvo.
+      // O texto já está no banquinho (↺) antes desta entrega — perda vira
+      // recuperável, nunca fatal.
+      const viewTarget = await window.synkora.panesView.voiceTarget?.().catch(() => null)
+      if (viewTarget) {
+        window.synkora.panesView.voicePaste(text)
+        return {
+          id: 'panes-view-target',
+          label: viewTarget.label,
+          element: document.body,
+          isAvailable: () => true,
+          focus: () => undefined,
+          insert: () => undefined
+        }
+      }
+      await navigator.clipboard.writeText(text)
+      return null
     },
     []
   )

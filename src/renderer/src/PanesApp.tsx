@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useStore, type PaneKind, type PaneOptions } from './store'
 import PanesView from './components/PanesView'
 import TooltipLayer from './components/Tooltip'
+import { getSynVoiceTarget } from './synVoiceTarget'
 import { TERMINAL_DEFAULT_FONT_SIZE } from './terminalGeometry'
 
 /**
@@ -96,6 +97,20 @@ export default function PanesApp(): React.JSX.Element {
     const offSettings = window.synkora.settings.onChanged
       ? window.synkora.settings.onChanged(() => void useStore.getState().loadSettings())
       : () => undefined
+    // F3-c5: transcrição do SynVoice (host) para o terminal focado DAQUI — o
+    // registry local resolve o alvo; sem alvo válido, clipboard (o banquinho
+    // do host já guardou o texto de qualquer forma).
+    const offVoicePaste = window.synkora.panesView.onVoicePaste
+      ? window.synkora.panesView.onVoicePaste((text) => {
+          const target = getSynVoiceTarget()
+          if (target) {
+            target.insert(text)
+            target.focus()
+          } else {
+            void navigator.clipboard.writeText(text).catch(() => undefined)
+          }
+        })
+      : () => undefined
 
     // Reidratação pós-reload: os PTYs sobrevivem no main; remontar aqui faz o
     // pty:create rebindar o webContents NOVO (sem isto o stream cai no vazio).
@@ -127,6 +142,7 @@ export default function PanesApp(): React.JSX.Element {
       offProjects()
       offSeats()
       offSettings()
+      offVoicePaste()
     }
   }, [bridgeOk])
 

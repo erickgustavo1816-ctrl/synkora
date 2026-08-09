@@ -569,9 +569,20 @@ export default function TerminalPane({
     // pane montado nem o pane ampliado. `term.paste` preserva bracketed paste e
     // não acrescenta Enter; quebras de linha são achatadas para uma fala nunca
     // executar dois comandos sem revisão explícita.
+    // F3-c4/c5: este componente monta nos DOIS processos (host: maestros;
+    // view: execução) — a classe da página diz onde estamos, e é ela que liga
+    // os relays de activity e de foco de ditado para o outro lado.
+    const inPanesView = document.body.classList.contains('panes-view-page')
     const voiceTargetId = `terminal:${paneId}`
     const onVoiceFocus = (): void => {
       if (!voiceEnabledRef.current) return
+      // F3-c5: na VIEW de panes o SynVoice (host) não enxerga este registry —
+      // o foco de ditado é reportado ao main, que responde ao host na entrega.
+      if (inPanesView) {
+        window.synkora.panesView.reportVoiceFocus(
+          voiceLabelRef.current?.trim() || 'painel ativo'
+        )
+      }
       setSynVoiceTarget({
         id: voiceTargetId,
         label: voiceLabelRef.current?.trim() || 'painel ativo',
@@ -653,10 +664,6 @@ export default function TerminalPane({
     // Estado VIVO do pane (chip ●/◌/■ no titlebar): saída = rodando; 4s sem
     // saída = esperando; exit = parado. Só publica quando MUDA.
     const setActivity = useStore.getState().setPaneActivity
-    // F3-c4: na VIEW de panes a transição também viaja ao host via main —
-    // livePaneOf do Board e os dots do rail/Home leem paneActivity de panes
-    // que não moram no processo deles.
-    const inPanesView = document.body.classList.contains('panes-view-page')
     let actState: 'run' | 'idle' | 'dead' | null = null
     let actTimer: number | undefined
     const mark = (state: 'run' | 'idle' | 'dead'): void => {

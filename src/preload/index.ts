@@ -1072,6 +1072,21 @@ const api = {
         cb(projectId, paneId)
       ipcRenderer.on('panes:attention-cleared', listener)
       return () => ipcRenderer.removeListener('panes:attention-cleared', listener)
+    },
+    // ——— F3-c5: ditado SynVoice em terminal do canvas (processo irmão) ———
+    /** VIEW: terminal ganhou foco de ditado (label humano para o status). */
+    reportVoiceFocus: (label: string): void =>
+      ipcRenderer.send('panes-view:voice-focus', label),
+    /** HOST: há alvo de ditado na view VISÍVEL? (null = não). */
+    voiceTarget: (): Promise<{ label: string } | null> =>
+      ipcRenderer.invoke('panes-view:voice-target'),
+    /** HOST: entrega o texto transcrito ao alvo corrente da view. */
+    voicePaste: (text: string): void => ipcRenderer.send('panes-view:voice-paste', text),
+    /** VIEW: cola no alvo local (o registry daqui resolve o terminal). */
+    onVoicePaste: (cb: (text: string) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, text: string): void => cb(text)
+      ipcRenderer.on('panes-view:voice-paste', listener)
+      return () => ipcRenderer.removeListener('panes-view:voice-paste', listener)
     }
   },
   maestro: {

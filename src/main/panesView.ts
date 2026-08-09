@@ -22,7 +22,7 @@
  * canvas está e qual aba está ativa); o main só aplica e audita.
  */
 import { app, ipcMain, WebContentsView } from 'electron'
-import type { BrowserWindow, IpcMainEvent, WebContents } from 'electron'
+import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron'
 import { join } from 'path'
 
 export interface PanesViewLayout {
@@ -40,7 +40,7 @@ export interface PanesViewDeps {
   onSenderBound(wc: WebContents): void
   onSenderGone(): void
   /** Só o webContents do HOST pode comandar layout/estado da view. */
-  isHostSender(event: IpcMainEvent): boolean
+  isHostSender(event: IpcMainEvent | IpcMainInvokeEvent): boolean
   /** Relays VIEW→host (F3-c4): navegação, activity e attention-cleared. */
   pushBoard(channel: string, ...args: unknown[]): void
   record(event: string, reason: string): void
@@ -52,6 +52,8 @@ export class PanesViewManager {
   private lastLayout: PanesViewLayout | null = null
   private lastState: unknown = null
   private refusedSenderIds = new Set<number>()
+  /** F3-c5: label do terminal focado para ditado na view (null = nenhum). */
+  private voiceFocusLabel: string | null = null
 
   constructor(private deps: PanesViewDeps) {}
 
@@ -83,6 +85,28 @@ export class PanesViewManager {
     ipcMain.on('panes-view:attention-cleared', (e, projectId: string, paneId: string) => {
       if (!this.guardView(e, 'panes-view:attention-cleared')) return
       this.deps.pushBoard('panes:attention-cleared', projectId, paneId)
+    })
+    // ——— F3-c5: ditado SynVoice num terminal do canvas ———
+    // O registro do alvo mora AQUI (o registry módulo-level do renderer não
+    // cruza processos): a view reporta o foco, o host consulta na entrega.
+    ipcMain.on('panes-view:voice-focus', (e, label: string) => {
+      if (!this.guardView(e, 'panes-view:voice-focus')) return
+      this.voiceFocusLabel = typeof label === 'string' && label.trim() ? label.trim() : null
+    })
+    ipcMain.handle('panes-view:voice-target', (e) => {
+      if (!this.deps.isHostSender(e)) return null
+      // Semântica do registry local preservada: pane invisível não é alvo —
+      // com a view ESCONDIDA (setVisible false) o CSS interno não muda, então
+      // quem sabe da visibilidade real é o lastLayout daqui.
+      if (!this.lastLayout?.visible || !this.voiceFocusLabel || !this.liveWebContents())
+        return null
+      return { label: this.voiceFocusLabel }
+    })
+    ipcMain.on('panes-view:voice-paste', (e, text: string) => {
+      if (!this.guardHost(e, 'panes-view:voice-paste')) return
+      if (typeof text !== 'string' || !text) return
+      const wc = this.liveWebContents()
+      if (wc) wc.send('panes-view:voice-paste', text)
     })
   }
 
@@ -186,6 +210,7 @@ export class PanesViewManager {
     })
     wc.on('render-process-gone', (_e, details) => {
       this.deps.onSenderGone()
+      this.voiceFocusLabel = null
       this.deps.record(
         'panes-view-crashed',
         `renderer da view de panes morreu (${details.reason}); recarregando`
@@ -221,6 +246,7 @@ export class PanesViewManager {
     const view = this.view
     this.view = null
     this.lastLayout = null
+    this.voiceFocusLabel = null
     this.deps.onSenderGone()
     if (!view) return
     const win = this.deps.window()

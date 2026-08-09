@@ -1000,7 +1000,11 @@ export function installDevMock(): void {
       reportAttentionCleared: () => undefined,
       onNavigateHost: () => () => undefined,
       onActivity: () => () => undefined,
-      onAttentionCleared: () => () => undefined
+      onAttentionCleared: () => () => undefined,
+      reportVoiceFocus: () => undefined,
+      voiceTarget: async () => null,
+      voicePaste: () => undefined,
+      onVoicePaste: () => () => undefined
     },
     maestro: {
       pendingQuestions: async () => [],
