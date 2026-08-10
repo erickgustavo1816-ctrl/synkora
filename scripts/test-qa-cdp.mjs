@@ -104,7 +104,7 @@ test('reserva de porta CDP: estavel por card, some no release', async () => {
   assert.equal(qaCdpEndpointFor(taskId), undefined)
 })
 
-test('decorateBrowserLaunchArgs: output-dir com cwd; cdp-endpoint SO para QA com reserva', async () => {
+test('decorateBrowserLaunchArgs: output-dir com cwd; cdp-endpoint para QA e DEV com reserva', async () => {
   const taskId = 'test-task-cdp-0002'
   try {
     const port = await reserveQaCdpPort(taskId)
@@ -113,9 +113,14 @@ test('decorateBrowserLaunchArgs: output-dir com cwd; cdp-endpoint SO para QA com
     assert.ok(qa.includes('--output-dir'), 'evidencia nunca nasce git-visivel')
     assert.ok(qa.includes('--cdp-endpoint'))
     assert.equal(qa[qa.indexOf('--cdp-endpoint') + 1], `http://127.0.0.1:${port}`)
-    // dev do MESMO card: browser normal, sem CDP (ele navega URL de dev server)
+    // dev do MESMO card TAMBEM dirige o app real (ordem do dono 2026-08-10:
+    // "o QA abre o app, mas o DEV ainda abre o chrome")
     const dev = decorateBrowserLaunchArgs(base, { cwd: 'C:/wt', role: 'dev', taskId })
-    assert.ok(!dev.includes('--cdp-endpoint'))
+    assert.ok(dev.includes('--cdp-endpoint'))
+    assert.equal(dev[dev.indexOf('--cdp-endpoint') + 1], `http://127.0.0.1:${port}`)
+    // ajudante do card NAO: browser normal (delegacao visual e do dev/QA)
+    const helper = decorateBrowserLaunchArgs(base, { cwd: 'C:/wt', role: 'ajudante', taskId })
+    assert.ok(!helper.includes('--cdp-endpoint'))
     // QA de card SEM reserva (produto web): sem CDP
     const web = decorateBrowserLaunchArgs(base, { cwd: 'C:/wt', role: 'qa', taskId: 'sem-reserva' })
     assert.ok(!web.includes('--cdp-endpoint'))

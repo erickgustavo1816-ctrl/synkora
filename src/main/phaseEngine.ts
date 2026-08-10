@@ -116,9 +116,12 @@ import { type PaneIdentity } from './hub'
 import { type SkillDef } from './skillsLibrary'
 import {
   IMPECCABLE_SKILL_ID,
+  SYNKORA_DESIGN_SYSTEM_QA_ID,
+  SYNKORA_DESIGN_SYSTEM_STANDARD_ID,
   SYNKORA_FRONTEND_STANDARD_ID,
   SYNKORA_UI_QA_ID,
   classifyTaskUiWork,
+  isDesignSystemWork,
   missingMandatoryUiPhaseSkills,
   selectPhaseSkillPlan,
   type SkillCapability
@@ -138,7 +141,13 @@ import {
   startQaRuntime,
   stopQaRuntime
 } from './qaRuntime'
-import { isElectronScript, qaCdpEndpointFor, reserveQaCdpPort } from './qaCdp'
+import {
+  cdpInvocation,
+  isElectronScript,
+  qaCdpEndpointFor,
+  qaCdpPortFor,
+  reserveQaCdpPort
+} from './qaCdp'
 import { formatPortMap, type PortUseEntry } from './portMap'
 import {
   PhaseLaunchCapacityGuard,
@@ -1053,6 +1062,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       .filter(Boolean)
       .join('\n')
     const uiWork = classifyTaskUiWork(task, feedback)
+    const designSystemWork = uiWork && isDesignSystemWork(task.department, routingText)
 
     // QA DE VERDADE, VERSÃO FINAL (decisão do usuário, 2026-08-06 — "não é só
     // o próprio QA subir? que dificuldade"): SEM pré-aquecimento no harness.
@@ -1069,11 +1079,27 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     // card BACK de sync ficou sem reserva e o QA navegou a URL do vite — o
     // duplo de bridge que a F4 veio matar; a reserva é só uma porta).
     let qaCdpEndpoint: string | undefined
-    if (phase === 'qa' && worktree) {
+    let devCdpBlock = ''
+    if ((phase === 'qa' || phase === 'dev') && worktree) {
       const cdpScript = detectRuntimeScript(cwd)
-      if (cdpScript && isElectronScript(readScriptCommand(cwd, cdpScript))) {
+      const cdpCommand = cdpScript ? readScriptCommand(cwd, cdpScript) : undefined
+      if (cdpScript && cdpCommand && isElectronScript(cdpCommand)) {
         await reserveQaCdpPort(taskId)
         qaCdpEndpoint = qaCdpEndpointFor(taskId)
+        // DEV também dirige o app REAL (pedido do dono, 2026-08-10: "o QA
+        // abre o app, mas o DEV ainda abre o chrome"): o wrapper playwright
+        // do pane de dev nasce com --cdp-endpoint na MESMA reserva do card;
+        // quem sobe o produto com a flag é o próprio dev (ele tem shell).
+        if (phase === 'dev' && qaCdpEndpoint) {
+          const cdpPort = qaCdpPortFor(taskId)
+          const invocation = cdpPort ? cdpInvocation(cdpCommand, cdpPort) : undefined
+          const envNote = invocation
+            ? Object.entries(invocation.env)
+                .map(([key, value]) => `${key}=${value}`)
+                .join(' ')
+            : ''
+          devCdpBlock = ` ELECTRON PRODUCT — SEE YOUR WORK IN THE REAL APP: your playwright tools are wired to CDP ${qaCdpEndpoint} (they ATTACH to a running app; they never launch a browser). To validate UI, launch the product yourself from this worktree with the debug port: \`npm run ${cdpScript}${invocation?.suffix ?? ''}\`${envNote ? ` (equivalent env: ${envNote})` : ''} — readiness is the complete "DevTools listening" line in its output. Do NOT point a plain Chrome at the vite URL for validation; the real app with the real preload/IPC is the target. Close the product app when your round ends.`
+        }
       }
     }
     if (
@@ -1328,10 +1354,16 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         operation:
           skillId === IMPECCABLE_SKILL_ID
             ? phaseSkillSelection.impeccableOperation ?? 'polish'
+            : skillId === SYNKORA_DESIGN_SYSTEM_STANDARD_ID
+              ? 'build'
+              : skillId === SYNKORA_DESIGN_SYSTEM_QA_ID
+                ? 'review'
             : skillId === SYNKORA_FRONTEND_STANDARD_ID
               ? phase === 'qa'
                 ? 'verify'
-                : phaseSkillSelection.uiOperation ?? 'polish'
+                : designSystemWork
+                  ? 'build'
+                  : phaseSkillSelection.uiOperation ?? 'polish'
               : skillId === SYNKORA_UI_QA_ID
                 ? 'review'
                 : phase === 'review'
@@ -1340,7 +1372,11 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
                     ? 'verify'
                     : 'apply',
         reason:
-          skillId === SYNKORA_FRONTEND_STANDARD_ID
+          skillId === SYNKORA_DESIGN_SYSTEM_STANDARD_ID
+            ? 'design-system.contract'
+            : skillId === SYNKORA_DESIGN_SYSTEM_QA_ID
+              ? 'design-system.independent-qa'
+          : skillId === SYNKORA_FRONTEND_STANDARD_ID
             ? 'ui.contract'
             : skillId === SYNKORA_UI_QA_ID
               ? 'ui.independent-qa'
@@ -1373,7 +1409,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       injSkills.map((skill) => skill.id),
       task.department,
       phase,
-      uiWork
+      uiWork,
+      designSystemWork
     )
     if (mandatoryMissing.length > 0) {
       blockForMissingFrontendStandard(
@@ -1479,6 +1516,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       title: task.title,
       deptLabel: DEPT_NAME[task.department],
       uiWork,
+      designSystemWork,
       browserAvailable,
       executionMode,
       executionProfileBlock,
@@ -1561,7 +1599,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
             ? reviewDiffBlock
             : phase === 'qa'
               ? `${qaDeliverySnapshotBlock}${qaRuntimeBlock}${browserHint}`
-              : browserHint
+              : `${browserHint}${devCdpBlock}`
       })
     }
 

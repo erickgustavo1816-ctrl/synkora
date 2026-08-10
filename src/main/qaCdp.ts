@@ -141,8 +141,11 @@ export function qaCdpReservations(): Array<{ taskId: string; port: number }> {
  * (a lição F6.8i valia só no primeiro caminho); com o --cdp-endpoint a
  * divergência viraria QA cego ao app real — por isso a fonte é uma só.
  *  - `--output-dir <cwd>/.playwright-mcp`: evidência nunca nasce git-visível.
- *  - `--cdp-endpoint`: SÓ para o pane de QA do card com porta reservada — o
- *    dev continua com browser normal (ele navega URL de dev server).
+ *  - `--cdp-endpoint`: panes de QA E de DEV do card com porta reservada
+ *    (pedido do dono 2026-08-10: "o QA abre o app, mas o DEV ainda abre o
+ *    chrome") — em produto Electron os dois dirigem o app REAL; quem sobe o
+ *    produto com a flag é o próprio agente (QA via runtime_control/harness,
+ *    dev pelo shell com a receita do prompt).
  */
 export function decorateBrowserLaunchArgs(
   baseArgs: string[],
@@ -150,7 +153,7 @@ export function decorateBrowserLaunchArgs(
 ): string[] {
   const args = [...baseArgs]
   if (opts.cwd) args.push('--output-dir', join(opts.cwd, '.playwright-mcp'))
-  if (opts.role === 'qa') {
+  if (opts.role === 'qa' || opts.role === 'dev') {
     const endpoint = qaCdpEndpointFor(opts.taskId)
     if (endpoint) args.push('--cdp-endpoint', endpoint)
   }
