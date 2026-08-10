@@ -1061,26 +1061,30 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     // chamada espera a URL e a devolve na resposta. O harness segue dono do
     // processo (QA sem shell; runtime morre com o pane).
     let qaRuntimeBlock = ''
+    // FASE 4 (CHECK 7c, sonda probe-electron-cdp 4/4): produto ELECTRON
+    // ganha porta CDP reservada AQUI, antes do armPane — o pane de QA nasce
+    // com --cdp-endpoint nela e o startQaRuntime (que consulta o mesmo
+    // registro em qaCdp) sobe o app REAL com --remote-debugging-port na
+    // mesma porta. INDEPENDE da classificação de UI do card (2026-08-10:
+    // card BACK de sync ficou sem reserva e o QA navegou a URL do vite — o
+    // duplo de bridge que a F4 veio matar; a reserva é só uma porta).
+    let qaCdpEndpoint: string | undefined
+    if (phase === 'qa' && worktree) {
+      const cdpScript = detectRuntimeScript(cwd)
+      if (cdpScript && isElectronScript(readScriptCommand(cwd, cdpScript))) {
+        await reserveQaCdpPort(taskId)
+        qaCdpEndpoint = qaCdpEndpointFor(taskId)
+      }
+    }
     if (
       phase === 'qa' &&
-      uiWork &&
+      (uiWork || qaCdpEndpoint !== undefined) &&
       browserAvailable &&
       !effectiveSensitiveRuntime &&
       worktree &&
       detectRuntimeScript(cwd)
     ) {
       const runtimeScript = detectRuntimeScript(cwd)
-      // FASE 4 (CHECK 7c, sonda probe-electron-cdp 4/4): produto ELECTRON
-      // ganha porta CDP reservada AQUI, antes do armPane — o pane de QA nasce
-      // com --cdp-endpoint nela e o startQaRuntime (que consulta o mesmo
-      // registro em qaCdp) sobe o app REAL com --remote-debugging-port na
-      // mesma porta. O QA dirige preload/IPC de verdade; o playbook do duplo
-      // de bridge morre para este card.
-      let qaCdpEndpoint: string | undefined
-      if (runtimeScript && isElectronScript(readScriptCommand(cwd, runtimeScript))) {
-        await reserveQaCdpPort(taskId)
-        qaCdpEndpoint = qaCdpEndpointFor(taskId)
-      }
       const qaPortMapLine = formatPortMap(harnessPortsInUse(projectId))
       // REDE DE SEGURANÇA DO RESUME (CHECK 14, 2026-08-07): pane de QA
       // RESUMADO nasce comprovadamente SEM a tool runtime_control (8/8 panes
@@ -3083,6 +3087,24 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           phase
         )
         if (!renewedSkillsBlock) {
+          // Fallback do reciclo NUNCA é mudo (2026-08-10: o gate vivo em
+          // espera foi morto no done e um pane novo nasceu sem o journal
+          // dizer POR QUÊ — a economia dos gates vivos evaporou sem rastro).
+          blackbox.record({
+            cat: 'phase',
+            event: 'live-gate-recycle-fallback',
+            actor: 'harness',
+            ids: {
+              projectId: watch.projectId,
+              missionId: task.missionId,
+              taskId: watch.taskId,
+              paneId: wait.paneId,
+              phase,
+              role: phase
+            },
+            reason:
+              'renovação do plano de skills do pane vivo falhou — pane em espera fechado e gate FRESCO aberto no lugar (conversa perdida; herança da lista fechada cobre)'
+          })
           liveGateWaits.delete(watch.taskId)
           phaseWatches.delete(watch.taskId)
           terminatePaneNow(watch.projectId, wait.paneId)
@@ -3135,6 +3157,20 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
             devFacts.head
           )
           if (!rangeValid) {
+            blackbox.record({
+              cat: 'phase',
+              event: 'live-gate-recycle-fallback',
+              actor: 'harness',
+              ids: {
+                projectId: watch.projectId,
+                missionId: task.missionId,
+                taskId: watch.taskId,
+                paneId: wait.paneId,
+                phase,
+                role: phase
+              },
+              reason: `range do delta inválido no worktree (${wait.rejectedHead?.slice(0, 12)} → ${devFacts?.head?.slice(0, 12)} — head reprovado inalcançável? amend/rebase do dev?) — pane em espera fechado e gate FRESCO aberto no lugar`
+            })
             phaseWatches.delete(watch.taskId)
             cleanupReviewArtifact(watch)
             terminatePaneNow(watch.projectId, wait.paneId)
