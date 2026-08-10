@@ -1624,7 +1624,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     'complete_task',
     {
       description:
-        'SÓ Maestro/orquestrador — SUA AUTORIDADE sobre os cards AUTO do seu plano: conclui um card DIRETO, sem rodar fase nenhuma, quando A SEU JUÍZO o trabalho já existe e está validado (ex.: entrega já commitada e conferida, gate já aprovou o mesmo commit em rodada descartada, estado que só falta carimbar). O harness encerra panes/esperas/runtime do card, marca done e registra gates faltantes como "waived" COM O SEU MOTIVO — juízo auditado verbatim na caixa-preta, nunca evidência fabricada. Use com honestidade: a verificação conjunta do conclude_plan e o clique ⇪ do dono continuam sendo as cercas do merge. reason é OBRIGATÓRIO (1-2 frases com a sua evidência).',
+        'SÓ Maestro/orquestrador — SUA AUTORIDADE sobre os cards AUTO do seu plano: conclui um card DIRETO, sem rodar fase nenhuma, quando A SEU JUÍZO o trabalho já existe e está validado (ex.: entrega já commitada e conferida, gate já aprovou o mesmo commit em rodada descartada, estado que só falta carimbar). O harness encerra panes/esperas/runtime do card, marca done e registra gates faltantes como "waived" COM O SEU MOTIVO — juízo auditado verbatim na caixa-preta, nunca evidência fabricada. NÃO mescla a branch task/<id8> do card na branch da missão: se a entrega ainda vive só lá, o merge é seu (git merge --no-ff — sua branch, sua autoridade). Use com honestidade: a verificação conjunta do conclude_plan e o clique ⇪ do dono continuam sendo as cercas do merge. reason é OBRIGATÓRIO (1-2 frases com a sua evidência).',
       inputSchema: {
         id: z.string().describe('id do card'),
         reason: z

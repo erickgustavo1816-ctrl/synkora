@@ -1054,7 +1054,11 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         missionId: mission.id,
         origin: 'maestro',
         auto: true,
-        planId: plan.id
+        planId: plan.id,
+        // Identidade PERSISTENTE de card do harness (2026-08-10): o marcador
+        // [fila:...] do briefing morre se o briefing for reescrito — este
+        // campo é o que mantém o card fora do contrato de proporcionalidade.
+        queueSync: true
       }
     ])
     ctx.pushAll('tasks:changed', mission.projectId)

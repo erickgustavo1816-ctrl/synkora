@@ -482,7 +482,11 @@ export function buildBoardApi(
           .list(id.projectId)
           .filter(
             (task) =>
-              task.planId === approvedPlan.id && task.kind !== 'plan' && !isHarnessQueueCard(task)
+              task.planId === approvedPlan.id &&
+              task.kind !== 'plan' &&
+              !isHarnessQueueCard(task, {
+                planHasWorkItems: (approvedPlan.plan?.workItems ?? []).length > 0
+              })
           ).length
         const sizingProblems = validateTaskSizing(
           executionMode,
@@ -1690,7 +1694,10 @@ export function buildBoardApi(
       // operacional criado pela FILA (sync) precisa estar done e com gates
       // válidos como os demais, mas fica FORA da contagem e do grafo — contar
       // trabalho do próprio harness era o deadlock de 2026-08-10.
-      const contractCards = planCards.filter((card) => !isHarnessQueueCard(card))
+      const planHasGraph = (plan.plan?.workItems ?? []).length > 0
+      const contractCards = planCards.filter(
+        (card) => !isHarnessQueueCard(card, { planHasWorkItems: planHasGraph })
+      )
       const open = planCards.filter((task) => task.status !== 'done')
       if (open.length > 0)
         return `ainda há ${open.length} card(s) não concluído(s): ${open
@@ -1850,7 +1857,11 @@ export function buildBoardApi(
       })
       ctx.pushAll('tasks:changed', id.projectId)
       syncBoard(id.projectId)
-      return `card "${task.title}" CONCLUÍDO por sua autoridade (motivo auditado)${waivedGates.length ? ` — gates ${waivedGates.join('+')} registrados como dispensados por você` : ''}. A verificação conjunta do conclude_plan e o ⇪ do dono seguem valendo.`
+      return `card "${task.title}" CONCLUÍDO por sua autoridade (motivo auditado)${waivedGates.length ? ` — gates ${waivedGates.join('+')} registrados como dispensados por você` : ''}. A verificação conjunta do conclude_plan e o ⇪ do dono seguem valendo.${
+        task.verification?.dev?.head
+          ? ` ATENÇÃO: complete_task NÃO mescla a branch task/${taskId.slice(0, 8)} na branch da missão — se a entrega ainda vive só lá, faça você mesmo o merge --no-ff (sua branch, sua autoridade) antes do conclude_plan.`
+          : ''
+      }`
     },
     deleteTask: (id, taskId) => {
       if (id.role !== 'maestro' || !id.missionId) return 'só o orquestrador remove cards'

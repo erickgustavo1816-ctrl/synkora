@@ -685,11 +685,26 @@ export function validatePlanDependencies(input: PlanDependencyInput): string[] {
  * (caso real 2026-08-10: plano de 3 cards + sync da fila = conclude_plan
  * recusado sem rota de saída).
  */
-export function isHarnessQueueCard(card: {
-  kind?: string
-  briefing?: string
-}): boolean {
-  return card.kind !== 'plan' && /\[fila:[0-9a-f-]{8,}:/i.test(card.briefing ?? '')
+export function isHarnessQueueCard(
+  card: {
+    kind?: string
+    briefing?: string
+    auto?: boolean
+    planItemId?: string
+    queueSync?: boolean
+  },
+  opts?: { planHasWorkItems?: boolean }
+): boolean {
+  if (card.kind === 'plan') return false
+  // Campo persistente (2026-08-10): a identidade que sobrevive a reescrita
+  // de briefing — caso real: o orquestrador reescreveu o briefing do card de
+  // sync e o marcador [fila:...] morreu, ressuscitando o deadlock.
+  if (card.queueSync === true) return true
+  if (/\[fila:[0-9a-f-]{8,}:/i.test(card.briefing ?? '')) return true
+  // Reparo estrutural para cards legados sem campo E sem marcador: em plano
+  // COM grafo aprovado, card do orquestrador SEMPRE nasce com planItemId
+  // (create_tasks recusa sem) — card auto SEM vínculo só o harness cria.
+  return Boolean(opts?.planHasWorkItems && card.auto === true && !card.planItemId)
 }
 
 /**

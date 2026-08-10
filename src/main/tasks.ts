@@ -378,6 +378,11 @@ export interface Task {
   planId?: string
   /** id estável do item correspondente no grafo aprovado do plano. */
   planItemId?: string
+  /** Card operacional criado pelo PRÓPRIO HARNESS (sync da fila de
+   *  integração) — fica FORA do contrato de proporcionalidade e do grafo
+   *  aprovado. Campo persistente porque o marcador [fila:...] do briefing
+   *  morre em reescrita (caso real 2026-08-10). */
+  queueSync?: boolean
 }
 
 export type TaskGate = 'review' | 'qa'
@@ -406,6 +411,7 @@ export interface NewTask {
   auto?: boolean
   planId?: string
   planItemId?: string
+  queueSync?: boolean
 }
 
 export type TaskUpdatePatch = Partial<
@@ -687,6 +693,7 @@ export class TaskStore {
         auto: item.auto,
         planId: item.planId,
         planItemId: item.planItemId,
+        queueSync: item.queueSync,
         createdAt: now,
         updatedAt: now
       }
