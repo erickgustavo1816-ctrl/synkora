@@ -599,10 +599,13 @@ test('fast aceita várias quests sequenciais sem transformar checklist em delega
 })
 
 test('delegação optional nunca torna várias quests uma obrigação', () => {
+  // Contrato 2026-08-10 (ordem do dono): delegar é julgamento do DEV, sem
+  // pedir licença — mas checklist curto/sequencial continua direto.
   const directive = delegationDirective('standard', 'optional', 6)
-  assert.match(directive, /OPCIONAIS/)
-  assert.match(directive, /ganho for claramente maior que o custo/)
-  assert.doesNotMatch(directive, /PARALELISMO JUSTIFICADO/)
+  assert.match(directive, /A JULGAMENTO/)
+  assert.match(directive, /sem pedir licença/)
+  assert.match(directive, /se faz direto/)
+  assert.doesNotMatch(directive, /aguarde uma orientação/)
 
   const invalidParallel = validateTaskSizing('standard', 'medium', 1, 0, [
     validCodeCard({ delegation: 'parallel', quests: ['Um único bloco'] })
@@ -610,11 +613,14 @@ test('delegação optional nunca torna várias quests uma obrigação', () => {
   assert.ok(invalidParallel.some((problem) => problem.includes('ao menos dois blocos')))
 })
 
-test('delegação paralela autoriza um único ajudante, não um roster', () => {
+test('delegação paralela abre os ajudantes direto, até o teto do modo', () => {
+  // Contrato 2026-08-10: paralelismo planejado não pede aprovação prévia —
+  // abre os blocos independentes numa chamada só, teto 2 (standard)/4 (deep).
   const directive = delegationDirective('deep', 'parallel', 3)
-  assert.match(directive, /único ajudante aprovado/)
-  assert.doesNotMatch(directive, /todos os ajudantes|vários ajudantes/i)
-  assert.equal(helperLimitForExecutionMode('deep'), 1)
+  assert.match(directive, /DIRETO/)
+  assert.match(directive, /teto do modo/)
+  assert.doesNotMatch(directive, /único ajudante aprovado|aguarde uma orientação/)
+  assert.equal(helperLimitForExecutionMode('deep'), 4)
 })
 
 test('non_code comum não abre gate, mas instrução/configuração sensível recebe review', () => {
@@ -690,7 +696,8 @@ test('retry e helpers possuem orçamentos proporcionais e fechados', () => {
   )
   assert.deepEqual(
     ['fast', 'standard', 'deep'].map((mode) => helperLimitForExecutionMode(mode)),
-    [0, 1, 1]
+    // F6.2 restaurado (ordem do dono 2026-08-10): fast 0 · standard 2 · deep 4
+    [0, 2, 4]
   )
 })
 

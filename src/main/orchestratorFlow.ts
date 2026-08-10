@@ -855,7 +855,12 @@ export function retryLimitForExecutionMode(mode: MissionExecutionMode): number {
 }
 
 export function helperLimitForExecutionMode(mode: MissionExecutionMode): number {
-  return mode === 'fast' ? 0 : 1
+  // Contrato F6.2 RESTAURADO (ordem do dono 2026-08-10: "por que o Synkora
+  // parou de chamar ajudantes?" — um corte posterior tinha reduzido tudo
+  // não-fast a UM ajudante e um dev Opus-max fazia tela inteira sozinho em
+  // 40-50min): fast 0 · standard 2 · deep 4.
+  if (mode === 'fast') return 0
+  return mode === 'standard' ? 2 : 4
 }
 
 export function skillSelectionDirective(mode: MissionExecutionMode): string {
@@ -873,14 +878,17 @@ export function delegationDirective(
   delegation: TaskDelegationMode,
   questCount: number
 ): string {
-  if (mode === 'fast' || delegation === 'none') {
-    return 'EXECUTE DIRETAMENTE: este card não abre ajudantes. Checklist não significa paralelismo; conclua os itens no mesmo contexto.'
+  // Doutrina 2026-08-10 ("guardas não capam julgamento"): delegar é decisão
+  // do DEV — o dono prefere VELOCIDADE, e esperar aprovação para abrir
+  // ajudante era um dos freios que faziam uma tela de 20min levar 50.
+  if (mode === 'fast') {
+    return 'EXECUTE DIRETAMENTE: card rápido não abre ajudantes. Checklist não significa paralelismo; conclua os itens no mesmo contexto.'
   }
-  if (delegation === 'optional') {
-    return 'AJUDANTES SÃO OPCIONAIS: só delegue quando existirem pelo menos dois blocos substanciais, independentes e quando o ganho for claramente maior que o custo de explicar, esperar e integrar. Um checklist curto deve ser feito diretamente.'
+  if (delegation === 'none') {
+    return 'Este card foi planejado SEM ajudantes. Se durante o trabalho você identificar 2+ blocos genuinamente independentes em que paralelizar economizaria tempo real, avise o orquestrador via notify_maestro — ele libera na hora com update_task {delegation: "optional"} (vale mesmo com o card em andamento) e você abre os ajudantes. Sem blocos independentes, siga direto.'
   }
-  if (questCount < 2) {
-    return 'A delegação paralela foi pedida, mas não há dois blocos independentes; trabalhe diretamente e avise o orquestrador dessa inconsistência.'
+  if (delegation === 'optional' || questCount < 2) {
+    return 'AJUDANTES SÃO SEUS, A JULGAMENTO: com 2+ blocos genuinamente independentes (seções de tela, camadas store/UI, specs), ABRA os ajudantes DIRETO — sem pedir licença — até o teto do modo, numa ÚNICA chamada delegate com helpers[]. O tempo do dono vale mais que o custo de coordenar; trabalho VISUAL vai para ajudante do MESMO nível ou melhor, nunca mais fraco. Não delegue duplicata de review/QA nem item mecânico avulso; checklist curto e sequencial se faz direto.'
   }
-  return 'PARALELISMO JUSTIFICADO: envie um plano curto ao orquestrador, aguarde uma orientação e abra o único ajudante aprovado para um bloco independente enquanto você mantém o restante. Não crie um ajudante por item mecânico nem duplique review/QA.'
+  return 'PARALELISMO PLANEJADO: o card já nasceu para paralelizar — abra os ajudantes dos blocos independentes DIRETO (uma chamada delegate com helpers[], até o teto do modo), supervisione pelos reports no correio e integre. Trabalho visual só em ajudante do mesmo nível ou melhor. Não crie um ajudante por item mecânico nem duplique review/QA.'
 }
