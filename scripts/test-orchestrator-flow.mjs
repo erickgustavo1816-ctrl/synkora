@@ -602,7 +602,7 @@ test('delegação optional nunca torna várias quests uma obrigação', () => {
   // Contrato 2026-08-10 (ordem do dono): delegar é julgamento do DEV, sem
   // pedir licença — mas checklist curto/sequencial continua direto.
   const directive = delegationDirective('standard', 'optional', 6)
-  assert.match(directive, /A JULGAMENTO/)
+  assert.match(directive, /MESMO modelo e MESMO effort/)
   assert.match(directive, /sem pedir licença/)
   assert.match(directive, /se faz direto/)
   assert.doesNotMatch(directive, /aguarde uma orientação/)
