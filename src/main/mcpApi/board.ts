@@ -674,9 +674,17 @@ export function buildBoardApi(
           : ''
       } · O roteador definirá o plano mínimo de cada fase; não carimbe estética por rotina.`
     },
-    updateTask: (id, taskId, patch: TaskPatch) => {
+    updateTask: (id, taskId, patchWithOrder: TaskPatch & { ownerOrder?: string }) => {
       if (id.role !== 'maestro' || !id.missionId)
         return 'só o orquestrador da missão ajusta cards'
+      // T10 (2026-08-10, caso real: o dono respondeu no ask_user "tira o QA
+      // deste card" e o motor recusou por piso de risco — decisão do dono
+      // não tinha canal mecânico): ownerOrder VERBATIM (padrão do
+      // set_phase_executor) autoriza mudança de gates contra o piso, sempre
+      // auditada. Nunca persiste no card.
+      const { ownerOrder: ownerOrderRaw, ...patch } = patchWithOrder
+      const ownerOrder = ownerOrderRaw?.trim() || undefined
+      const gateOwnerWaiver = Boolean(ownerOrder && patch.gates !== undefined)
       const t0 = tasks.get(taskId)
       if (!t0 || t0.projectId !== id.projectId || t0.missionId !== id.missionId)
         return 'card não encontrado nesta missão'
@@ -736,7 +744,21 @@ export function buildBoardApi(
         ]
       })
       if (runtimeRisk.raised) {
-        return `ajuste recusado: o novo briefing revela risco ${runtimeRisk.effectiveRisk} acima do plano aprovado (${risk}). Pause e reapresente o plano com gates proporcionais.`
+        // Rebaixamento (regra do dono 2026-08-10, "guardas não capam
+        // inteligência"): em MODO LEVE risco maior num AJUSTE é ANOTADO e
+        // auditado, nunca multa o julgamento do orquestrador. Modo estrito
+        // mantém a recusa (validação humana de segurança é o contrato lá).
+        if (securityWaiverOptions(id.projectId).sensitiveWaiverAllowed) {
+          blackbox.record({
+            cat: 'task',
+            event: 'risk-raise-annotated',
+            actor: id.role,
+            ids: { projectId: id.projectId, missionId: id.missionId, taskId },
+            reason: `ajuste elevou o risco percebido para ${runtimeRisk.effectiveRisk} (plano: ${risk}) — aceito em modo leve, superfícies auditadas`
+          })
+        } else {
+          return `ajuste recusado: o novo briefing revela risco ${runtimeRisk.effectiveRisk} acima do plano aprovado (${risk}). Pause e reapresente o plano com gates proporcionais.`
+        }
       }
       if ((patch.skills?.length ?? 0) > 1)
         return 'ajuste recusado: cada card aceita no máximo uma skill técnica explícita'
@@ -807,7 +829,8 @@ export function buildBoardApi(
         risk,
         Number.MAX_SAFE_INTEGER,
         0,
-        [candidate]
+        [candidate],
+        { ownerGateWaiver: gateOwnerWaiver }
       )
       if (sizingProblems.length > 0)
         return 'ajuste recusado pelo contrato de proporcionalidade: ' + sizingProblems.join('; ')
@@ -815,13 +838,26 @@ export function buildBoardApi(
         ...patch,
         deliverable,
         delegation: normalizeDelegationMode(candidate.delegation, executionMode),
-        gates: gatesForTask(
-          executionMode,
-          risk,
-          deliverable,
-          candidate.gates,
-          classifyTaskUiWork(candidate)
-        )
+        // ownerOrder presente + gates no patch = os gates do DONO valem
+        // literalmente (o piso de risco não re-impõe); sem ordem, piso normal.
+        gates: gateOwnerWaiver
+          ? patch.gates
+          : gatesForTask(
+              executionMode,
+              risk,
+              deliverable,
+              candidate.gates,
+              classifyTaskUiWork(candidate)
+            )
+      }
+      if (gateOwnerWaiver) {
+        blackbox.record({
+          cat: 'task',
+          event: 'gate-owner-waiver',
+          actor: id.role,
+          ids: { projectId: id.projectId, missionId: id.missionId, taskId },
+          reason: `gates → [${(patch.gates ?? []).join(', ') || 'nenhum'}] por ORDEM DO DONO: "${(ownerOrder ?? '').slice(0, 300)}"`
+        })
       }
       const updated = tasks.update(taskId, normalizedPatch as Partial<Task>)
       if (!updated) return `tarefa ${taskId} não encontrada`
@@ -834,9 +870,14 @@ export function buildBoardApi(
       })
       ctx.pushAll('tasks:changed', id.projectId)
       syncBoard(id.projectId)
-      return inFlightPatch
-        ? `tarefa "${updated.title}" atualizada COM o card em andamento — o patch vale para as próximas fases/spawns; o pane que já está rodando NÃO relê o briefing (se precisar avisá-lo agora, use notify_pane)`
-        : `tarefa "${updated.title}" atualizada`
+      const waiverNote = gateOwnerWaiver
+        ? ' · gates ajustados por ORDEM DO DONO (auditado na caixa-preta)'
+        : ''
+      return (
+        (inFlightPatch
+          ? `tarefa "${updated.title}" atualizada COM o card em andamento — o patch vale para as próximas fases/spawns; o pane que já está rodando NÃO relê o briefing (se precisar avisá-lo agora, use notify_pane)`
+          : `tarefa "${updated.title}" atualizada`) + waiverNote
+      )
     },
 
     // ————— F5.7: plano da missão (proposta → aprovação → autonomia) —————,

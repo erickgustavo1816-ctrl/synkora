@@ -230,7 +230,11 @@ export interface McpApi {
   boardStatus: (id: PaneIdentity) => string
   createTasks: (id: PaneIdentity, items: NewTaskInput[]) => string
   archiveMission: (id: PaneIdentity, query: string) => string
-  updateTask: (id: PaneIdentity, taskId: string, patch: TaskPatch) => string
+  updateTask: (
+    id: PaneIdentity,
+    taskId: string,
+    patch: TaskPatch & { ownerOrder?: string }
+  ) => string
   report: (
     id: PaneIdentity,
     content: string,
@@ -277,6 +281,10 @@ export interface McpApi {
    *  correspondente pulsa até o dono abrir (pergunta em prosa não tem sinal
    *  visual nenhum — caso real 2026-08-06, PM no vácuo). */
   askUser: (id: PaneIdentity, question: string) => string
+  /** Maestro/orquestrador → allowlist de RUNTIME do produto (T9 2026-08-10):
+   *  arquivos rastreados que o app grava ao rodar; sujeira de gate composta
+   *  só deles é restaurada ao commit julgado em vez de descartar o veredito. */
+  declareRuntimePaths: (id: PaneIdentity, paths: string[]) => string
   /** Qualquer agente → frase curta "o que estou fazendo agora" para o radar
    *  de andamento do dono (2026-08-06: ele acompanha sem abrir o app). */
   statusNote: (id: PaneIdentity, note: string) => string
@@ -601,12 +609,20 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     server.registerTool(
     'update_task',
     {
-      description: 'Ajusta briefing e conteúdo de um card ainda em backlog nesta missão.',
+      description:
+        'Ajusta briefing e conteúdo de um card desta missão (em backlog ou EM ANDAMENTO — patch em card rodando vale para as fases futuras; o pane atual não relê o briefing). Para mudar GATES contra o piso de risco, inclua ownerOrder com a ordem VERBATIM do dono.',
       inputSchema: {
         id: z.string(),
         title: z.string().optional(),
         description: z.string().optional(),
         effort: z.enum(['leve', 'pesada']).optional(),
+        ownerOrder: z
+          .string()
+          .max(600)
+          .optional()
+          .describe(
+            'ordem VERBATIM do dono (ex.: resposta do ask_user) autorizando mudança de gates contra o piso de risco — sem ela o piso vale; auditada na caixa-preta'
+          ),
         briefing: z
           .string()
           .max(6000)
@@ -1580,6 +1596,21 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       }
     },
     async ({ question }) => text(api.askUser(identity, question))
+  )
+
+  server.registerTool(
+    'declare_runtime_paths',
+    {
+      description:
+        'SÓ Maestro/orquestrador: declara os caminhos de RUNTIME do produto — arquivos RASTREADOS que o app GRAVA ao rodar (ex.: ["data"]). Com a allowlist declarada, sujeira de gate composta SÓ de modificação nesses caminhos é RESTAURADA ao commit julgado pelo harness e o veredito SOBREVIVE (mata o loop "QA roda o app → árvore suja → veredito descartado → volta ao dev sem defeito"). Envie a lista COMPLETA (substitui a anterior; [] limpa). A correção definitiva continua sendo o produto gravar runtime FORA de caminho rastreado — declare E crie o card.',
+      inputSchema: {
+        paths: z
+          .array(z.string().max(200))
+          .max(12)
+          .describe('caminhos relativos ao repo (ex.: ["data"]); lista completa, substitui a anterior')
+      }
+    },
+    async ({ paths }) => text(api.declareRuntimePaths(identity, paths))
   )
 
   server.registerTool(

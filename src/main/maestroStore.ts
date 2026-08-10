@@ -25,6 +25,12 @@ export interface MaestroProjectState {
    *  cita PII/fiscal em toda missão — sem isto a automação morre; auditado
    *  na caixa-preta a cada pane) */
   sensitiveAutoOk?: boolean
+  /** T9 (2026-08-10): caminhos de RUNTIME do produto (relativos ao repo,
+   *  ex.: "data") declarados via declare_runtime_paths — arquivos rastreados
+   *  que o app grava AO RODAR. Divergência de gate composta só deles é
+   *  restaurada ao commit julgado e revalidada (restoreRuntimeAndRevalidate)
+   *  em vez de descartar o veredito. */
+  runtimePaths?: string[]
   /** sessão do PANE TUI do Maestro (resume ao reabrir o projeto/app) */
   tuiSessionId?: string
   /** contexto vivo da conversa do pane TUI (carimbo do sessionStats) — o

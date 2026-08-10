@@ -40,7 +40,16 @@ export interface PanesApiExtras {
 
 export function buildPanesApi(
   ctx: MainContext, extras: PanesApiExtras
-): Pick<McpApi, 'runtimeControl' | 'askUser' | 'statusNote' | 'notifyMaestro' | 'listPanes' | 'notifyPane'> {
+): Pick<
+  McpApi,
+  | 'runtimeControl'
+  | 'askUser'
+  | 'declareRuntimePaths'
+  | 'statusNote'
+  | 'notifyMaestro'
+  | 'listPanes'
+  | 'notifyPane'
+> {
   const {
     tasks,
     seats,
@@ -190,6 +199,47 @@ export function buildPanesApi(
       // pergunta pendente é o item nº 1 do radar de andamento
       scheduleProgressSnapshot()
       return 'pergunta registrada — a aba correspondente do board pulsa até o usuário abrir; mantenha a pergunta completa no seu terminal e AGUARDE a resposta'
+    },
+    // T9 (2026-08-10): allowlist de RUNTIME do produto — arquivos rastreados
+    // que o app grava AO RODAR. Com ela declarada, sujeira de gate composta
+    // só desses caminhos é restaurada ao commit julgado e o veredito
+    // sobrevive (fim do loop "QA roda o app → árvore suja → veredito
+    // descartado → volta ao dev que nada tinha a corrigir").
+    declareRuntimePaths: (id, paths) => {
+      if (id.role !== 'maestro')
+        return 'só o Maestro/orquestrador declara caminhos de runtime — peça ao seu orquestrador via notify_maestro'
+      const clean = [
+        ...new Set((paths ?? []).map((p) => String(p).trim().replace(/\\/g, '/')).filter(Boolean))
+      ].slice(0, 12)
+      const bad = clean.filter(
+        (p) =>
+          p.includes('..') ||
+          p.startsWith('/') ||
+          /^[a-z]:/i.test(p) ||
+          p === '.git' ||
+          p.startsWith('.git/')
+      )
+      if (bad.length > 0)
+        return `caminhos recusados (${bad.join(', ')}): use caminhos RELATIVOS ao repo — nunca absolutos, ".." ou .git`
+      const prev = maestro.get(id.projectId).runtimePaths ?? []
+      maestro.update(id.projectId, { runtimePaths: clean })
+      blackbox.record({
+        cat: 'git',
+        event: 'runtime-paths-declared',
+        actor: 'maestro',
+        ids: { projectId: id.projectId, missionId: id.missionId, paneId: id.paneId },
+        reason: `${prev.join(', ') || '(vazio)'} → ${clean.join(', ') || '(vazio)'}`
+      })
+      hub.publish({
+        projectId: id.projectId,
+        kind: 'info',
+        quiet: true,
+        text: `caminhos de runtime do produto declarados: ${clean.join(', ') || '(allowlist limpa)'}`,
+        actor: 'maestro'
+      })
+      return clean.length > 0
+        ? `caminhos de runtime declarados: ${clean.join(', ')} — divergência de gate composta SÓ de modificação não-staged nesses caminhos passa a ser RESTAURADA ao commit julgado (veredito sobrevive); qualquer coisa fora deles segue invalidando normalmente. A correção definitiva continua sendo o produto gravar runtime fora de caminho rastreado.`
+        : 'allowlist de runtime LIMPA — toda divergência de gate volta a invalidar o veredito integralmente'
     },
     statusNote: (id, note) => {
       const clean = redactSensitiveText(note).replace(/\s+/g, ' ').trim().slice(0, 120)

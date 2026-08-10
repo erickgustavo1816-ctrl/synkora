@@ -223,6 +223,82 @@ export function quarantineAndRevalidate(
   }
 }
 
+/** T9 (2026-08-10, loop real de 4 ciclos no teste de missões): o RUNTIME do
+ * produto suja arquivos RASTREADOS enquanto o gate read-only roda o app —
+ * o gate não pode limpar, o veredito era descartado e o card voltava ao dev
+ * que nada tinha a corrigir. Com a allowlist DECLARADA
+ * (declare_runtime_paths), divergência composta APENAS de arquivos
+ * rastreados MODIFICADOS dentro dela é RESTAURADA ao commit julgado e a
+ * fotografia revalidada. Restaurar ≠ aceitar: o que integra é o commit
+ * entregue, e QUALQUER divergência fora da allowlist (arquivo de fora,
+ * staged, deleção, rename) mantém a invalidação integral — a cerca contra
+ * gate-que-edita-código continua inteira. */
+export interface RuntimeRestoreRevalidation {
+  restored: string[]
+  fingerprint: ReturnType<typeof gitVisibleWorktreeFingerprint>
+  snapshotProblem: string | undefined
+}
+
+function normalizeRuntimePattern(pattern: string): string | undefined {
+  const clean = pattern.trim().replace(/\\/g, '/').replace(/^\.\//, '')
+  if (!clean || clean.includes('..') || clean.startsWith('/') || /^[a-z]:/i.test(clean))
+    return undefined
+  if (clean === '.git' || clean.startsWith('.git/')) return undefined
+  return clean.replace(/\/+$/, '')
+}
+
+function matchesRuntimePattern(rel: string, patterns: string[]): boolean {
+  return patterns.some((p) => rel === p || rel.startsWith(`${p}/`))
+}
+
+export function restoreRuntimeAndRevalidate(
+  cwd: string,
+  snap: DevSnapshotFacts,
+  requireBase: boolean,
+  runtimePaths: string[]
+): RuntimeRestoreRevalidation {
+  const none: RuntimeRestoreRevalidation = {
+    restored: [],
+    fingerprint: undefined,
+    snapshotProblem: undefined
+  }
+  const patterns = runtimePaths
+    .map(normalizeRuntimePattern)
+    .filter((p): p is string => Boolean(p))
+  if (patterns.length === 0) return none
+  let status: string
+  try {
+    status = git(cwd, ['status', '--porcelain'])
+  } catch {
+    return none
+  }
+  const lines = status.split(/\r?\n/).filter((line) => line.trim() !== '')
+  if (lines.length === 0) return none
+  const files: string[] = []
+  for (const line of lines) {
+    // SÓ modificação NÃO-staged de arquivo rastreado (' M') é elegível — é a
+    // assinatura exata de app gravando em runtime. Staged/untracked/deleção/
+    // rename = não é runtime de app rodando; nada se restaura (sem mascarar).
+    if (line.slice(0, 2) !== ' M') return none
+    const rel = line.slice(3).trim().replace(/^"|"$/g, '').replace(/\\/g, '/')
+    if (!rel || !matchesRuntimePattern(rel, patterns)) return none
+    files.push(rel)
+  }
+  try {
+    git(cwd, ['checkout', '--', ...files])
+  } catch {
+    return none
+  }
+  // A restauração precisa devolver a árvore EXATAMENTE limpa — sobra
+  // qualquer coisa, nada foi "consertado" e a invalidação normal continua.
+  if (git(cwd, ['status', '--porcelain']).trim() !== '') return none
+  return {
+    restored: files,
+    fingerprint: gitVisibleWorktreeFingerprint(cwd),
+    snapshotProblem: snapshotProblemFor(cwd, snap, requireBase)
+  }
+}
+
 /** Fatos da entrega do DEV numa viagem: re-checagem da fotografia
  * (head/tree/limpo/fingerprint contra o devSnapshot), fingerprint EFETIVO da
  * entrega e paths mudados contra a base. `baseRef` explícito (baseHead da

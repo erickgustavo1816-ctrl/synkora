@@ -746,7 +746,14 @@ export function validateTaskSizing(
   risk: MissionRiskLevel,
   expectedCards: number,
   existingCards: number,
-  items: TaskSizingInput[]
+  items: TaskSizingInput[],
+  opts?: {
+    /** T10 (2026-08-10): ordem VERBATIM do dono autoriza gates contra o piso
+     *  de risco (o caso real: ask_user respondido "tira o QA" e o motor
+     *  recusava a decisão dele). Só desliga os PISOS de gate — o resto da
+     *  validação de conteúdo continua. */
+    ownerGateWaiver?: boolean
+  }
 ): string[] {
   const problems: string[] = []
   if (existingCards + items.length > expectedCards) {
@@ -754,13 +761,15 @@ export function validateTaskSizing(
       `o plano prometeu ${expectedCards} card(s), mas esta criação levaria o total a ${existingCards + items.length}`
     )
   }
+  const gateFloor = !opts?.ownerGateWaiver
   for (const [index, item] of items.entries()) {
     const label = `card ${index + 1}`
     if (!item.deliverable)
       problems.push(`${label}: declare se o entregável é code ou non_code`)
-    if (item.deliverable === 'code' && item.gates?.length === 0)
+    if (gateFloor && item.deliverable === 'code' && item.gates?.length === 0)
       problems.push(`${label}: código nunca usa gates vazios; a validação básica é obrigatória`)
     if (
+      gateFloor &&
       item.deliverable === 'non_code' &&
       risk === 'high' &&
       item.gates !== undefined &&
@@ -770,6 +779,7 @@ export function validateTaskSizing(
         `${label}: entregável não executável de risco alto exige review (instruções, configuração e relatórios também podem afetar segurança)`
       )
     if (
+      gateFloor &&
       item.deliverable === 'code' &&
       risk === 'high' &&
       item.gates !== undefined &&

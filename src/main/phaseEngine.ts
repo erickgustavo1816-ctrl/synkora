@@ -3834,6 +3834,59 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         })
       }
     }
+    // T9 (2026-08-10, loop real de 4 ciclos: QA aprovou no MÉRITO e o
+    // veredito era descartado porque RODAR o app sujava arquivos rastreados
+    // — runtime em caminho versionado, e o gate read-only não pode limpar):
+    // com a allowlist DECLARADA (declare_runtime_paths), divergência restante
+    // composta SÓ de modificação não-staged dentro dela é RESTAURADA ao
+    // commit julgado e revalidada. Restaurar ≠ aceitar: o que integra é o
+    // commit entregue; QUALQUER coisa fora da allowlist mantém a invalidação.
+    if (
+      watch.worktree &&
+      (snapshotProblem || baselineFingerprint !== finalFingerprint) &&
+      gateFacts.head === preDevFacts?.head
+    ) {
+      const declaredRuntimePaths = maestro.get(watch.projectId).runtimePaths ?? []
+      if (declaredRuntimePaths.length > 0) {
+        const runtimeRestore = await gitOff(
+          'restoreRuntimeAndRevalidate',
+          watch.cwd,
+          snapFacts,
+          requireCodeBase,
+          declaredRuntimePaths
+        )
+        if (runtimeRestore.restored.length > 0) {
+          finalFingerprint = runtimeRestore.fingerprint
+          snapshotProblem = runtimeRestore.snapshotProblem
+          blackbox.record({
+            cat: 'phase',
+            event: 'gate-runtime-dirt-restored',
+            actor: 'harness',
+            ids: {
+              projectId: watch.projectId,
+              missionId: task.missionId,
+              taskId: watch.taskId,
+              phase: watch.phase,
+              role: watch.phase
+            },
+            evidence:
+              runtimeRestore.restored.slice(0, 8).join(', ') +
+              (runtimeRestore.restored.length > 8
+                ? ` +${runtimeRestore.restored.length - 8}`
+                : ''),
+            reason: `${runtimeRestore.restored.length} arquivo(s) de RUNTIME declarado restaurados ao commit julgado (o app-sob-teste os gravou durante o gate) — veredito preservado`
+          })
+          hub.publish({
+            projectId: watch.projectId,
+            missionId: task.missionId,
+            kind: 'info',
+            quiet: true,
+            text: `runtime declarado do produto sujou ${runtimeRestore.restored.length} arquivo(s) durante o gate de "${task.title}" — o harness restaurou ao commit julgado e o veredito segue válido`,
+            actor: 'harness'
+          })
+        }
+      }
+    }
     // RELEITURA ÚNICA (R4): a fotografia da DECISÃO. Daqui até o commit do
     // recordGate não há mais await nem releitura do card — as 4 releituras
     // antigas enxergavam o mesmo estado por sorte síncrona; agora a sorte é
@@ -4037,12 +4090,17 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       if (consumeAcceptance) commitRuntimeAcceptance()
     }
     if (!readonly) {
+      // Receita T9 na própria invalidação: se a sujeira é o RUNTIME do
+      // produto (o app grava ao rodar), o caminho não é devolver ao dev — é
+      // o orquestrador declarar os caminhos e o harness restaurar sozinho.
+      const runtimeRecipe =
+        ' — se esses arquivos são RUNTIME do produto (o app os grava ao RODAR), o orquestrador deve declará-los com declare_runtime_paths: o harness passa a restaurá-los ao commit julgado e o veredito sobrevive'
       const reason = snapshotProblem
-        ? `a fotografia imutável deixou de ser válida: ${snapshotProblem}`
+        ? `a fotografia imutável deixou de ser válida: ${snapshotProblem}${runtimeRecipe}`
         : !boundToDevSnapshot
           ? `${watch.phase} não revisou a mesma fotografia entregue pelo dev`
           : baselineFingerprint && finalFingerprint
-            ? `${watch.phase} alterou arquivos visíveis ao Git; gates são somente leitura`
+            ? `${watch.phase} alterou arquivos visíveis ao Git; gates são somente leitura${runtimeRecipe}`
             : `não foi possível provar que o gate ${watch.phase} permaneceu somente leitura`
       // R7 (F2-c5): o COMMIT vem antes dos efeitos destrutivos — um throw no
       // recordGate deixava artefato apagado e pane morto com a promessa
