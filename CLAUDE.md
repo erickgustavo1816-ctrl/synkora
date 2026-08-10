@@ -215,6 +215,31 @@ VERIFICABILIDADE, guarda de JULGAMENTO vira advisory auditado):
   com declare_runtime_paths(["data"]) — a receita chega sozinha na próxima
   invalidação.
 
+BLOCO 3 na mesma data (26b4e30, meta /goal do dono: "só termina quando o
+orquestrador e o maestro tiverem AUTONOMIA" — depois de um dev inteiro
+queimado só p/ re-carimbar fotografia com finalize/reabrir-gate/adjustment
+TODOS recusando; fim dos remendos, UMA primitiva de autoridade):
+- `complete_task {id, reason}` (maestro/orquestrador; registrada DEPOIS do
+  corte de catálogo dos gates — gate read-only nem VÊ a ferramenta): conclui
+  card AUTO direto por juízo do orquestrador; o motor encerra panes/watch/
+  gate-waits/runtime do card, marca done e grava gates faltantes como
+  verdict 'waived' com o motivo VERBATIM (evento task-completed-by-authority)
+  — juízo registrado, nunca evidência fabricada. conclude_plan aceita
+  'waived'; cercas restantes = verificação conjunta + ⇪ do dono. As duas
+  portas trancadas ("fase rodando"/"não está em finalização") agora apontam
+  a receita do complete_task.
+- restoreRuntimeAndRevalidate cobre também '??' (arquivo de runtime que
+  NASCE no primeiro uso — achado AO VIVO pelo orquestrador: data/notes.json
+  continuava derrubando veredito; combo modificado+novo resolve numa
+  passada; remoção recursiva p/ diretório novo).
+- Persona do orquestrador: YOUR AUTHORITY OVER YOUR OWN CARDS (primeira
+  alavanca quando o motor não tem porta p/ um estado que ele já sabe ser
+  verdadeiro; escalar mecânica ao dono é falha).
+- Verdes: typecheck 0 · agregado 12 suítes (incl. mcp-dual-era: a cerca de
+  catálogo dos gates PEGOU a 1ª tentativa de registro na zona errada — o
+  teste salvou a invariante) · mission-worktree 29 · mission-verification 25
+  · integration-queue 14 · phase-verdict-races 18 · mcp-protocol 5.
+
 ### F6.11 — FASES 3 e 4 do nível 5 CONCLUÍDAS (2026-08-08; typecheck + 22 suítes verdes; BOOT AO VIVO VALIDADO 2026-08-10 — falta o teste de missões)
 
 Ordem do dono: FASE 3 → FASE 4 → teste de missão → push. Docs:
