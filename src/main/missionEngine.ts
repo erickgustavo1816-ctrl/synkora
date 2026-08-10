@@ -1001,13 +1001,17 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     )
       return false
     const marker = `[fila:${ticket.id}:${targetHead}]`
+    // Dedupe por IDENTIDADE PERSISTENTE (2026-08-10): o marcador do briefing
+    // morre em reescrita — queueSync é a placa que sobrevive. Um ticket por
+    // missão de cada vez: QUALQUER card de sync vivo da missão conta como
+    // existente (criar outro era a fábrica de fantasmas).
     const existing = tasks
       .list(mission.projectId)
       .find(
         (task) =>
           task.missionId === mission.id &&
           task.kind !== 'plan' &&
-          task.briefing?.includes(marker)
+          (task.queueSync === true || task.briefing?.includes(`[fila:${ticket.id}:`))
       )
     if (existing) return true
 
@@ -1072,16 +1076,39 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       .listPending(projectId)
       .filter((candidate) => candidate.state === 'sync_required')) {
       // Qualquer card deste ticket, inclusive já done aguardando conclude_plan,
-      // prova que não estamos na janela entre decisão e criação.
-      const hasCard = tasks
+      // prova que não estamos na janela entre decisão e criação. Identidade
+      // PERSISTENTE (2026-08-10): a detecção só por marcador criava um
+      // FANTASMA a cada boot quando o briefing tinha sido reescrito (caso
+      // real M06: duplicata em backlog ressuscitou o deadlock já resolvido).
+      const syncCards = tasks
         .list(projectId)
-        .some(
+        .filter(
           (task) =>
             task.missionId === ticket.missionId &&
             task.kind !== 'plan' &&
-            task.briefing?.includes(`[fila:${ticket.id}:`)
+            (task.queueSync === true || task.briefing?.includes(`[fila:${ticket.id}:`))
         )
-      if (hasCard) continue
+      // Autocura dos fantasmas de boots anteriores: fica UM card (o mais
+      // avançado); duplicata parada em backlog sai com auditoria.
+      if (syncCards.length > 1) {
+        const rank = (s: string): number =>
+          s === 'done' ? 3 : s === 'qa' ? 2 : s === 'execucao' ? 1 : 0
+        const keep = [...syncCards].sort((a, b) => rank(b.status) - rank(a.status))[0]
+        for (const ghost of syncCards) {
+          if (ghost.id === keep.id || ghost.status !== 'backlog') continue
+          tasks.remove(ghost.id)
+          blackbox.record({
+            cat: 'recovery',
+            event: 'queue-sync-ghost-removed',
+            actor: 'harness',
+            ids: { projectId, missionId: ticket.missionId, taskId: ghost.id, ticketId: ticket.id },
+            reason: `duplicata de card de sync em backlog removida no boot (identidade por marcador falhou em boot anterior); card mantido: ${keep.id.slice(0, 8)} (${keep.status})`
+          })
+        }
+        ctx.pushAll('tasks:changed', projectId)
+        syncBoard(projectId)
+      }
+      if (syncCards.length > 0) continue
       let mission = missions.get(ticket.missionId)
       if (!mission || mission.projectId !== projectId) continue
       mission = ensureMissionWorktree(mission.id) ?? mission

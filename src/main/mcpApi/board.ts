@@ -1682,13 +1682,17 @@ export function buildBoardApi(
       if (manualSecurityValidationPending(plan.plan, securityWaiverOptions(id.projectId))) {
         return 'conclusao bloqueada: este plano exige validacao humana de seguranca ainda pendente. O usuario precisa confirmar a evidencia ou dispensar com justificativa no card do plano.'
       }
+      // consts para os callbacks (plan é `let` por causa da válvula acima —
+      // closure perderia o narrowing do TS)
+      const planKey = plan.id
+      const planPreContract = !plan.plan?.executionMode
       const planCards = tasks
         .list(id.projectId)
         .filter(
           (t) =>
             t.missionId === id.missionId &&
             t.kind !== 'plan' &&
-            (t.planId === plan.id || (!t.planId && !plan.plan?.executionMode))
+            (t.planId === planKey || (!t.planId && planPreContract))
         )
       // Cards do CONTRATO = o que o orquestrador prometeu na aprovação. Card
       // operacional criado pela FILA (sync) precisa estar done e com gates
@@ -1758,8 +1762,22 @@ export function buildBoardApi(
         return 'conclusão bloqueada: a branch da missão não está limpa; alterações fora de cards ou artefatos de verificação precisam ser enquadrados antes de concluir'
       }
       const head = gitHead(missionCwd)
-      if (plan.plan?.executionHead && head !== plan.plan.executionHead) {
-        return `conclusão bloqueada: a branch avançou fora da cadeia reconhecida de cards (${plan.plan.executionHead.slice(0, 12)} → ${head?.slice(0, 12) ?? 'desconhecido'})`
+      if (plan.plan?.executionHead && head && head !== plan.plan.executionHead) {
+        // Rebaixamento (doutrina 2026-08-10, "guardas não capam julgamento"):
+        // a cadeia-de-cards era guarda de JULGAMENTO — o orquestrador é dono
+        // da branch da missão (merge manual de card concluído por autoridade
+        // é legítimo; caso real: a entrega 767a6a8 verde recusada aqui). A
+        // cerca REAL é a verificação conjunta que roda em seguida no head
+        // verdadeiro. Aceita, audita e re-carimba.
+        blackbox.record({
+          cat: 'task',
+          event: 'plan-execution-head-restamped',
+          actor: id.role,
+          ids: { projectId: id.projectId, missionId: id.missionId, taskId: plan.id },
+          reason: `branch avançou fora da cadeia de cards (${plan.plan.executionHead.slice(0, 12)} → ${head.slice(0, 12)}) — aceito por autoridade do orquestrador; a verificação conjunta prova o head atual`
+        })
+        tasks.update(plan.id, { plan: { ...plan.plan, executionHead: head } })
+        plan = tasks.get(plan.id) ?? plan
       }
       const final = plan.plan?.verification?.final
       if (
