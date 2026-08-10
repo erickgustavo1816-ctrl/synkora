@@ -909,7 +909,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     'check_messages',
     {
       description:
-        'Drena sua caixa de mensagens do Synkora (avisos do app, do orquestrador e de outros agentes — mesmo vocabulário das linhas "[synkora]" do terminal). As mensagens também chegam SOZINHAS de carona no resultado das suas outras tools. LONG-POLL: com a caixa vazia esta tool SEGURA a resposta por até ~45s e retorna na hora em que algo chegar — para ESPERAR uma mensagem (rodada nova de gate, resposta do orquestrador), chame em loop: cada chamada é uma espera barata, sem digitação e sem polling agressivo. Retorno "sem mensagens" = ninguém te chamou nesse intervalo; chame de novo se ainda estiver esperando.'
+        'Drena sua caixa de mensagens do Synkora (avisos do app, do orquestrador e de outros agentes — mesmo vocabulário das linhas "[synkora]" do terminal). As mensagens também chegam SOZINHAS de carona no resultado das suas outras tools. LONG-POLL: com a caixa vazia esta tool SEGURA a resposta por até ~45s e retorna na hora em que algo chegar — UMA chamada é uma espera barata. Veio vazia e você segue só esperando? ENCERRE O TURNO e fique parado: custa zero contexto e o app te acorda com uma linha "[synkora] 📬" quando algo chegar (NUNCA chame em loop por minutos — cada chamada vazia queima contexto à toa).'
     },
     async () => {
       // F5-F3 (sondas R13 claude 45s+ · W2–W4 codex 75s+ e

@@ -3254,9 +3254,9 @@ app.whenReady().then(async () => {
   // delivery-injected falso do F1 morreu).
   const mailbox = new PaneMailbox(join(app.getPath('userData'), 'mailboxes.json'))
   const MAILBOX_NUDGE =
-    '[synkora] 📬 mensagem nova no seu correio — ela chega no resultado da sua PRÓXIMA tool; parado? chame check_messages'
+    '[synkora] 📬 correio novo — chame check_messages; se ela vier vazia, a entrega já chegou de carona no resultado de outra tool sua: siga o que estava fazendo'
   const mailboxNudgeAt = new Map<string, number>()
-  function nudgeMailbox(paneId: string, retried = false): void {
+  function nudgeMailbox(paneId: string, attempt = 0): void {
     // Re-checagem VIVA a cada tentativa (inclusive re-agendadas): pendência
     // já drenada (carona/check) ou espera armada nesse meio-tempo = nada a
     // digitar — o post acorda quem espera sozinho.
@@ -3277,9 +3277,9 @@ app.whenReady().then(async () => {
     const since = Date.now() - (mailboxNudgeAt.get(paneId) ?? 0)
     if (since < 20_000) {
       // Throttle NUNCA engole sinal (caso real 22:52: a 2ª mensagem em <20s
-      // só não ficou órfã porque havia long-poll): re-agenda UMA vez para o
-      // fim da janela; a re-chegada re-checa pendência/espera do zero.
-      if (!retried) setTimeout(() => nudgeMailbox(paneId, true), 20_000 - since + 500)
+      // só não ficou órfã porque havia long-poll): re-agenda para o fim da
+      // janela; a re-chegada re-checa pendência/espera do zero.
+      if (attempt === 0) setTimeout(() => nudgeMailbox(paneId, 1), 20_000 - since + 500)
       else
         blackbox.record({
           cat: 'msg',
@@ -3290,18 +3290,23 @@ app.whenReady().then(async () => {
         })
       return
     }
-    // O nudge é a ÚNICA digitação do correio — e teclado respeita o composer
-    // do humano (digitar por cima corrompe; a mensagem em si já está segura
-    // na caixa e chega de carona mesmo sem nudge).
-    if (ptys.composerBusy(paneId)) {
-      if (!retried) setTimeout(() => nudgeMailbox(paneId, true), 2500)
+    // PANE EM TURNO NUNCA recebe nudge digitado (2026-08-10, três casos ao
+    // vivo no teste de missões: Maestro trabalhando, gate recém-reportado e
+    // QA na janela read-first do 1º turno — o nudge enfileirado dispara
+    // STALE como turno extra, e na janela read-first é o gatilho exato do
+    // "No such tool" do CHECK 14). A carona entrega de qualquer jeito; o
+    // teclado é só o DESPERTADOR de pane PARADO. Re-checa a cada 5s até
+    // aquietar (teto ~10min; post novo re-arma o ciclo sozinho). O mesmo
+    // degrau cobre o composer sujo do humano.
+    if (!ptys.isIdle(paneId, 2500) || ptys.composerBusy(paneId)) {
+      if (attempt < 120) setTimeout(() => nudgeMailbox(paneId, attempt + 1), 5000)
       else
         blackbox.record({
           cat: 'msg',
           event: 'mailbox-nudge',
           actor: 'harness',
           ids: { paneId },
-          detail: { outcome: 'skipped-composer-busy' }
+          detail: { outcome: 'skipped-busy' }
         })
       return
     }

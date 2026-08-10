@@ -74,7 +74,7 @@ export function buildMailboxApi(
       const key = mailboxKeyOf(id, id.paneId)
       const messages = mailbox.drain(key)
       if (messages.length === 0)
-        return 'caixa vazia — ninguém te chamou neste intervalo de espera (a chamada segura ~45s sozinha). Ainda aguardando algo (rodada nova de gate, resposta do orquestrador)? chame check_messages de novo. As entregas também chegam de carona nos resultados das suas outras tools.'
+        return 'caixa vazia — ninguém te chamou neste intervalo de espera (a chamada segura ~45s sozinha). Ainda aguardando algo (rodada nova de gate, resposta do orquestrador)? ENCERRE SEU TURNO e fique parado: esperar parado custa ZERO contexto e o app te acorda com uma linha "[synkora] 📬" na hora em que algo chegar. NÃO chame check_messages em loop. As entregas também chegam de carona nos resultados das suas outras tools.'
       blackbox.record({
         cat: 'msg',
         event: 'mailbox-delivered',
@@ -92,7 +92,7 @@ export function buildMailboxApi(
       // espera — a 2ª chegou para ninguém. O lembrete mora no ponto exato.
       return (
         formatInboxBlock(messages).trim() +
-        '\n\n(esperando MAIS alguma resposta? volte ao loop: chame check_messages de novo — ela segura ~45s por chamada — ou re-arme seu waiter)'
+        '\n\n(esperando MAIS alguma resposta? re-arme seu waiter ou ENCERRE O TURNO — o app te acorda com a linha 📬 quando chegar; não fique em loop de check_messages)'
       )
     }
   }

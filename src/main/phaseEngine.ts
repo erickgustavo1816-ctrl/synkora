@@ -4120,7 +4120,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         })
         hub.notifyPane(
           watch.paneId,
-          'veredito registrado. Este pane FICA ABERTO em espera: não toque em NADA — a rodada de correção do dev chega NESTA conversa com a fotografia nova, e você re-verifica só a sua lista + o delta. Para esperar SEM digitação: chame check_messages em loop (cada chamada segura ~45s e retorna na hora em que a rodada nova chegar).'
+          'veredito registrado. Este pane FICA ABERTO em espera: não toque em NADA — a rodada de correção do dev chega NESTA conversa com a fotografia nova, e você re-verifica só a sua lista + o delta. ESPERE DE GRAÇA: encerre seu turno e fique parado (se seu CLI tem o waiter de background mail-wait, arme-o antes) — quando a rodada chegar o app te acorda com uma linha "[synkora] 📬" e aí você chama check_messages. NÃO fique em loop de check_messages: cada chamada vazia queima contexto à toa.'
         )
         // gate vivo esperando não deixa browser/app de teste aberto na máquina
         ptys.reapVisualsOf(watch.paneId)

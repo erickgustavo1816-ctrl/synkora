@@ -718,7 +718,7 @@ export function buildHelpersApi(
         if (anyOk)
           results.push(
             `Trabalham no mesmo diretório. Você será avisado no seu CORREIO quando cada um reportar done (ou morrer sem reportar). ` +
-              `DELEGOU, NÃO ASSISTE (regra do dono, teste real 2026-08-08: um delegador pollou list_helpers/helper_output 23x e queimou ~3M tokens à toa): NÃO fique chamando list_helpers/helper_output em loop para acompanhar — espere SEM digitação (claude: waiter em background no /mail-wait; codex: loop de check_messages, que segura ~45s por chamada) e aja quando o report chegar. ` +
+              `DELEGOU, NÃO ASSISTE (regra do dono, teste real 2026-08-08: um delegador pollou list_helpers/helper_output 23x e queimou ~3M tokens à toa): NÃO fique chamando list_helpers/helper_output em loop para acompanhar — espere SEM digitação (claude: waiter em background no /mail-wait; codex: UMA check_messages, que segura ~45s, e depois ENCERRE O TURNO — o app te acorda com a linha 📬) e aja quando o report chegar. ` +
               `helper_output é para DEPOIS do report (ler a entrega) ou diagnóstico pontual de ajudante travado — nunca acompanhamento contínuo. Controle: list_helpers (estado), helper_send (responder prompts/escolher opções), helper_close (encerrar).`
           )
         return results.join('\n')
