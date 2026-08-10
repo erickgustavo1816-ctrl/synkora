@@ -10,6 +10,7 @@ import {
   realpathSync,
   renameSync,
   rmdirSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
   type Dirent
@@ -274,18 +275,27 @@ export function restoreRuntimeAndRevalidate(
   }
   const lines = status.split(/\r?\n/).filter((line) => line.trim() !== '')
   if (lines.length === 0) return none
-  const files: string[] = []
+  const modified: string[] = []
+  const born: string[] = []
   for (const line of lines) {
-    // SÓ modificação NÃO-staged de arquivo rastreado (' M') é elegível — é a
-    // assinatura exata de app gravando em runtime. Staged/untracked/deleção/
-    // rename = não é runtime de app rodando; nada se restaura (sem mascarar).
-    if (line.slice(0, 2) !== ' M') return none
+    // Assinaturas de app gravando em runtime: ' M' (rastreado modificado,
+    // não-staged) e '??' (arquivo NOVO — caso real 2026-08-10: data/notes.json
+    // nascia no primeiro uso e derrubava o veredito mesmo com a allowlist,
+    // achado pelo próprio orquestrador). Staged/deleção/rename = não é
+    // runtime de app rodando; nada se restaura (sem mascarar).
+    const xy = line.slice(0, 2)
     const rel = line.slice(3).trim().replace(/^"|"$/g, '').replace(/\\/g, '/')
-    if (!rel || !matchesRuntimePattern(rel, patterns)) return none
-    files.push(rel)
+    if (!rel || !matchesRuntimePattern(rel.replace(/\/+$/, ''), patterns)) return none
+    if (xy === ' M') modified.push(rel)
+    else if (xy === '??') born.push(rel)
+    else return none
   }
   try {
-    git(cwd, ['checkout', '--', ...files])
+    if (modified.length > 0) git(cwd, ['checkout', '--', ...modified])
+    for (const rel of born) {
+      // '??' pode ser diretório inteiro novo ("data/cache/") — remove fundo.
+      rmSync(join(cwd, rel), { recursive: true, force: true })
+    }
   } catch {
     return none
   }
@@ -293,7 +303,7 @@ export function restoreRuntimeAndRevalidate(
   // qualquer coisa, nada foi "consertado" e a invalidação normal continua.
   if (git(cwd, ['status', '--porcelain']).trim() !== '') return none
   return {
-    restored: files,
+    restored: [...modified, ...born],
     fingerprint: gitVisibleWorktreeFingerprint(cwd),
     snapshotProblem: snapshotProblemFor(cwd, snap, requireBase)
   }

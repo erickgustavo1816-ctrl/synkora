@@ -235,6 +235,10 @@ export interface McpApi {
     taskId: string,
     patch: TaskPatch & { ownerOrder?: string }
   ) => string
+  /** AUTONOMIA (ordem do dono 2026-08-10): o orquestrador conclui card AUTO
+   *  por juízo próprio — motivo auditado, gates faltantes viram 'waived';
+   *  cercas restantes = verificação conjunta do plano + ⇪ do dono. */
+  completeTask: (id: PaneIdentity, taskId: string, reason: string) => string
   report: (
     id: PaneIdentity,
     content: string,
@@ -1611,6 +1615,25 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       }
     },
     async ({ paths }) => text(api.declareRuntimePaths(identity, paths))
+  )
+
+  // AUTONOMIA (ordem do dono 2026-08-10): registrado APÓS o corte de catálogo
+  // dos gates (finishCatalog) — gate read-only nunca VÊ ferramenta de
+  // autoridade; a cerca é de catálogo, não só de guard na api.
+  server.registerTool(
+    'complete_task',
+    {
+      description:
+        'SÓ Maestro/orquestrador — SUA AUTORIDADE sobre os cards AUTO do seu plano: conclui um card DIRETO, sem rodar fase nenhuma, quando A SEU JUÍZO o trabalho já existe e está validado (ex.: entrega já commitada e conferida, gate já aprovou o mesmo commit em rodada descartada, estado que só falta carimbar). O harness encerra panes/esperas/runtime do card, marca done e registra gates faltantes como "waived" COM O SEU MOTIVO — juízo auditado verbatim na caixa-preta, nunca evidência fabricada. Use com honestidade: a verificação conjunta do conclude_plan e o clique ⇪ do dono continuam sendo as cercas do merge. reason é OBRIGATÓRIO (1-2 frases com a sua evidência).',
+      inputSchema: {
+        id: z.string().describe('id do card'),
+        reason: z
+          .string()
+          .max(600)
+          .describe('por que o trabalho já está pronto/validado — auditado verbatim')
+      }
+    },
+    async ({ id, reason }) => text(api.completeTask(identity, id, reason))
   )
 
   server.registerTool(

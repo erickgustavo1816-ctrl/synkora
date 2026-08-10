@@ -146,7 +146,10 @@ export interface PlanVerificationState {
 
 export interface TaskGateEvidence {
   phase: 'review' | 'qa'
-  verdict: 'approved' | 'rejected' | 'invalid'
+  /** 'waived' = dispensado por AUTORIDADE do orquestrador (complete_task,
+   *  2026-08-10) — juízo auditado, nunca evidência fabricada; conclude_plan
+   *  aceita e a verificação conjunta + ⇪ do dono seguem sendo as cercas. */
+  verdict: 'approved' | 'rejected' | 'invalid' | 'waived'
   startedAt: string
   finishedAt: string
   baselineFingerprint?: string

@@ -93,7 +93,18 @@ export interface BoardApiExtras {
 export function buildBoardApi(
   ctx: MainContext,
   extras: BoardApiExtras
-): Pick<McpApi, 'boardStatus' | 'createTasks' | 'updateTask' | 'createPlan' | 'runTask' | 'concludePlan' | 'deleteTask' | 'setPhaseExecutor'> {
+): Pick<
+  McpApi,
+  | 'boardStatus'
+  | 'createTasks'
+  | 'updateTask'
+  | 'createPlan'
+  | 'runTask'
+  | 'concludePlan'
+  | 'completeTask'
+  | 'deleteTask'
+  | 'setPhaseExecutor'
+> {
   const {
     tasks,
     seats,
@@ -1296,7 +1307,7 @@ export function buildBoardApi(
           return `o gate ${phase} deste card morreu ${GATE_DEATH_LIMIT}× em 1 minuto — reabertura em cooldown por mais ${Math.ceil((cooldown - Date.now()) / 1000)}s. Diagnostique a causa (últimas linhas no evento pane/exit da caixa-preta) ou troque o executor do gate (config do reviewer/lane) antes de tentar de novo`
       }
       if (phaseWatches.has(taskId))
-        return 'já existe uma fase rodando para este card — não abri outro pane'
+        return 'já existe uma fase rodando para este card — não abri outro pane. Se a seu juízo o trabalho já está pronto e validado, complete_task {id, reason} encerra tudo e conclui o card direto (auditado)'
       // F2-c4 (§7.5/§7.9 do mapa): card em TRANSIÇÃO parece livre (watch
       // detached) — a recusa com receita fecha o run_task no meio do veredito.
       if (ctx.phaseTransitions.isLocked(taskId))
@@ -1321,7 +1332,7 @@ export function buildBoardApi(
         if (phase === 'finalize') {
           if (task.status === 'done') return 'o card já está concluído'
           if (task.phaseState !== 'finalizing')
-            return `este card não está em finalização (estado atual: ${task.status}/${task.phaseState ?? '-'}) — o reparo de integração vale apenas para card aprovado com merge bloqueado`
+            return `este card não está em finalização (estado atual: ${task.status}/${task.phaseState ?? '-'}) — o reparo de integração vale apenas para card aprovado com merge bloqueado. Se a seu juízo o trabalho já está pronto e validado, complete_task {id, reason} conclui o card direto (auditado)`
           // Receipt 'preparing' é só intenção: nenhum commit de merge foi
           // journalado, então é seguro refazê-lo com o destino ATUAL — é assim
           // que o retry aceita o destino já reparado (commit da sujeira) pelo
@@ -1722,7 +1733,13 @@ export function buildBoardApi(
         const gates = card.gates ?? ['review', 'qa']
         for (const gate of gates) {
           const evidence = card.verification[gate]
-          if (evidence?.verdict !== 'approved' || evidence.readonly !== true) {
+          // 'waived' = dispensa por autoridade do orquestrador (complete_task)
+          // — juízo auditado conta como desfecho válido do gate; a cerca do
+          // merge é a verificação conjunta logo abaixo.
+          const gateSettled =
+            (evidence?.verdict === 'approved' && evidence.readonly === true) ||
+            evidence?.verdict === 'waived'
+          if (!gateSettled) {
             completionProblems.push(`"${card.title}" não possui evidência válida do gate ${gate}`)
           }
         }
@@ -1753,6 +1770,87 @@ export function buildBoardApi(
       }
       startFinalPlanVerification(plan, conclusion)
       return 'todos os cards foram entregues. Iniciei a verificação conjunta na branch da missão; o plano só será marcado como concluído quando essa fotografia passar. Você receberá um evento automático.'
+    },
+    // AUTONOMIA (ordem do dono, 2026-08-10 — "dá autonomia pro orquestrador";
+    // caso real: um dev inteiro queimado só para re-carimbar fotografia de
+    // trabalho já pronto, com finalize/reabrir-gate/adjustment TODOS
+    // recusando): o orquestrador declara o card CONCLUÍDO por juízo próprio,
+    // com motivo auditado verbatim. O motor faz a higiene (panes/watch/
+    // espera/runtime) e carimba 'waived' nos gates que faltarem — juízo
+    // REGISTRADO, nunca evidência fabricada. As cercas que ficam são as de
+    // autoridade: verificação conjunta no conclude_plan e o ⇪ do dono.
+    completeTask: (id, taskId, reason) => {
+      if (id.role !== 'maestro')
+        return 'só o Maestro/orquestrador conclui card por autoridade'
+      const task = tasks.get(taskId)
+      if (!task || task.projectId !== id.projectId) return 'card não encontrado'
+      if (id.missionId && task.missionId !== id.missionId)
+        return 'card não pertence à sua missão'
+      if (!id.missionId && task.missionId)
+        return 'card de missão se conclui pelo orquestrador dela'
+      if (task.kind === 'plan')
+        return 'o card de PLANO se conclui via conclude_plan (a verificação conjunta é a cerca do merge)'
+      if (!task.auto)
+        return 'card criado pelo usuário é dele — peça a ele para concluir no board'
+      if (task.status === 'done') return 'card já está concluído'
+      const why = (reason ?? '').trim()
+      if (why.length < 10)
+        return 'reason obrigatório: diga em 1-2 frases POR QUE o trabalho já está pronto/validado — vai auditado verbatim para a caixa-preta'
+      if (ctx.phaseTransitions.isLocked(taskId))
+        return 'há um veredito de fase fechando neste card AGORA — aguarde alguns segundos e chame de novo'
+      ctx.phase.closeLiveGateWait(
+        id.projectId,
+        taskId,
+        'card concluído por autoridade do orquestrador'
+      )
+      for (const role of ['dev', 'review', 'qa'] as const)
+        ctx.phase.terminateTaskPhasePane(id.projectId, taskId, role)
+      phaseWatches.delete(taskId)
+      const verification: NonNullable<Task['verification']> = {
+        ...(task.verification ?? { contractVersion: 1 as const }),
+        activeGate: undefined
+      }
+      const waivedGates: Array<'review' | 'qa'> = []
+      for (const gate of (task.gates ?? ['review', 'qa']) as Array<'review' | 'qa'>) {
+        const evidence = verification[gate]
+        if (evidence?.verdict === 'approved' && evidence.readonly === true) continue
+        const now = new Date().toISOString()
+        verification[gate] = {
+          phase: gate,
+          verdict: 'waived',
+          startedAt: now,
+          finishedAt: now,
+          readonly: true,
+          reason: `dispensado por autoridade do orquestrador: ${why.slice(0, 300)}`
+        }
+        waivedGates.push(gate)
+      }
+      tasks.update(taskId, {
+        status: 'done',
+        activePhase: undefined,
+        phaseState: undefined,
+        phaseStartedAt: undefined,
+        phaseResume: undefined,
+        verification
+      } as Partial<Task>)
+      blackbox.record({
+        cat: 'task',
+        event: 'task-completed-by-authority',
+        actor: id.role,
+        ids: { projectId: id.projectId, missionId: id.missionId, taskId },
+        reason: `${why.slice(0, 400)}${waivedGates.length ? ` · gates dispensados: ${waivedGates.join('+')}` : ''}`
+      })
+      hub.publish({
+        projectId: id.projectId,
+        missionId: task.missionId,
+        kind: 'task-updated',
+        text: `orquestrador concluiu "${task.title}" por autoridade própria${waivedGates.length ? ` (gates ${waivedGates.join('+')} dispensados)` : ''}: ${why.slice(0, 140)}`,
+        actor: id.role,
+        quiet: true
+      })
+      ctx.pushAll('tasks:changed', id.projectId)
+      syncBoard(id.projectId)
+      return `card "${task.title}" CONCLUÍDO por sua autoridade (motivo auditado)${waivedGates.length ? ` — gates ${waivedGates.join('+')} registrados como dispensados por você` : ''}. A verificação conjunta do conclude_plan e o ⇪ do dono seguem valendo.`
     },
     deleteTask: (id, taskId) => {
       if (id.role !== 'maestro' || !id.missionId) return 'só o orquestrador remove cards'
