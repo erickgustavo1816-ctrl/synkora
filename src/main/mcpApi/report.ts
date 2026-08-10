@@ -373,7 +373,26 @@ export function buildReportApi(
         securityReview &&
         (id.role !== 'review' || id.phase !== 'review' || watch.phase !== 'review')
       ) {
-        return 'securityReview recusado: somente o revisor ativo, durante a fase review, pode enviar esta evidência. Nenhum receipt, veredito ou plano foi alterado.'
+        // FACILITADOR (2026-08-10, caso real do teste de missões: o dev
+        // anexou securityReview no done e o report INTEIRO foi recusado —
+        // rodada perdida re-enviando o MESMO conteúdo sem o campo). Campo
+        // fora de lugar é DESCARTADO com auditoria; a evidência de segurança
+        // segue exclusiva do revisor ativo e o resto do report processa.
+        blackbox.record({
+          cat: 'phase',
+          event: 'security-review-field-dropped',
+          actor: id.role,
+          ids: {
+            projectId: id.projectId,
+            missionId: id.missionId,
+            taskId: watch.taskId,
+            phase: watch.phase,
+            role: id.role
+          },
+          reason:
+            'securityReview anexado fora da fase review — campo ignorado, report processado sem ele'
+        })
+        securityReview = undefined
       }
       const evidenceTask = tasks.get(watch.taskId)
       const evidenceUiWork = Boolean(
