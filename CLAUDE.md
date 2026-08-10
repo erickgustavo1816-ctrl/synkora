@@ -110,6 +110,77 @@ PAINEL DE GESTÃO) — caderno completo da sessão em scratchpad NOTAS_TESTE_202
 - DESCARTADO (decisão do usuário): alavanca de "segurar gate" (hold) — os gates vivos
   cobrem a dor; re-avaliar só se ela voltar.
 
+### F6.12 — TESTE DE MISSÕES rodada 1 + bloco do FACILITADOR (2026-08-10; typecheck + agregado skills-system + fila/verificação verdes)
+
+Rodada 1 do teste de missões (roteiro do HANDOFF_FASE5): o MOTOR atravessou
+dev→review→QA→conflito→estratégia do Maestro→card de sync→gates de ponta a
+ponta com zero payload digitado — mas SEIS classes de burocracia do harness
+travaram trabalho bom (veredito do dono: "mais atrapalhando que ajudando").
+Caderno completo em scratchpad NOTAS_TESTE_MISSOES_2026-08-10.md; bloco
+único aplicado com app parado (commits bb79f96 · da46c04 · 95376d1 ·
+37a5b2b). PRINCÍPIO REAFIRMADO: guarda protege contra excesso do AGENTE,
+nunca conta ação do próprio harness; toda guarda tem rota de saída.
+
+- 🔴 DEADLOCK proporcionalidade × fila MORTO: `isHarnessQueueCard`
+  (orchestratorFlow — briefing com marcador `[fila:...]`) tira o card de
+  sync criado pela PRÓPRIA FILA da contagem do contrato (create_tasks E
+  conclude_plan; caso real: plano de 3 + sync da fila = 4 e o conclude
+  recusava com o create_plan congelado pela fila — nó circular sem saída).
+- ORQUESTRADOR ALTERA CARD EM ANDAMENTO (ordem do dono): update_task aceita
+  patch completo fora do backlog (vale para as fases FUTURAS; aviso honesto
+  de que o pane rodando não relê briefing) e a contagem de proporcionalidade
+  saiu do UPDATE (ajuste nunca muda contagem — a recusa punia estado
+  pré-existente e foi o que deixou o card de sync sem affectsUi → sem CDP).
+- VÁLVULA DA FOTOGRAFIA DEFASADA: conclude_plan em plano DONE com
+  verification.final.head ≠ head atual REABRE o plano SÓ para a verificação
+  conjunta re-rodar no head novo e fechar sozinha (evento
+  plan-reverify-reopened com o range fora-da-cadeia auditado). Era o beco do
+  "revalide a fotografia atual" sem ferramenta (caso M05: commit de runtime
+  do teste de aceite moveu o head).
+- ⇪ BLOQUEADO NUNCA É MUDO: todo retorno bloqueante do
+  startMissionIntegration audita `queue/mission-integrate-blocked` e, em
+  clique do DONO, manda o motivo+receita ao orquestrador (evento urgente).
+  pendingIntegrationApproval só limpa quando o clique ATRAVESSA as checagens
+  (o clear precoce matava a pulsação com o clique bloqueado). A PORTEIRA só
+  anuncia "PRONTA" com fotografia PROVADA (árvore limpa + head==verificação)
+  — agente com foto defasada recebe a receita da válvula em vez de pulsar um
+  botão que ia falhar.
+- 📬 NUDGE SÓ ACORDA PANE PARADO: nudgeMailbox ganhou o degrau que faltava
+  (ptys.isIdle 2,5s + composer; re-checa a cada 5s até aquietar, teto
+  ~10min) — 3 casos ao vivo de nudge digitado em pane EM TURNO (Maestro
+  trabalhando, gate recém-reportado, QA na janela read-first = gatilho exato
+  do CHECK 14). Texto anti-stale ("veio vazia = já chegou de carona").
+- FIM DO LOOP DE 45s NA ESPERA DE GATE (crítica do dono: "~80
+  inferências/hora gastando contexto à toa"): toda a doutrina de espera
+  (idleWaiterHint codex, atomicRoundRule, mensagem do gate vivo, description
+  e resposta-vazia do check_messages, advisor de helpers) virou "UMA chamada
+  de ~45s e ENCERRE O TURNO — parado custa zero; o app acorda com a linha 📬"
+  (que agora só dispara em pane ocioso = o despertador correto). Claude
+  segue com o waiter de background. Pendente: sonda de long-poll mais longo
+  no codex (tool_timeout_sec=300 já provado na W4).
+- RECICLO DE GATE VIVO INSTRUMENTADO: os dois fallbacks silenciosos
+  (renovação de skills falhou · range do delta inválido — candidato:
+  amend/rebase do dev tornando o head reprovado inalcançável) agora gravam
+  `live-gate-recycle-fallback` com a causa; na ocorrência real de 14:29 o
+  gate em espera foi morto e um fresco nasceu sem o journal dizer por quê.
+- QA-CDP INDEPENDE DE CLASSIFICAÇÃO DE UI: reserva de porta CDP acontece
+  para QUALQUER card de QA em worktree cujo runtime script é Electron (card
+  BACK de sync ficou sem reserva e o QA navegou a URL do vite — o duplo de
+  bridge que a F4 veio matar).
+- securityReview FORA DE LUGAR não derruba mais o report inteiro: campo
+  descartado com auditoria (security-review-field-dropped) e o done processa
+  (o dev perdeu uma rodada re-enviando o MESMO conteúdo).
+- VARREDURA "mente fechada" (pedido do dono) — recomendações ABERTAS, não
+  implementadas: (1) tool/botão de SAIR DA FILA para ticket não-merging
+  (hoje só arquivando a missão); (2) par "risco subiu no ajuste" ×
+  "create_plan congelado na fila" ainda é beco em modo estrito; (3) card no
+  PRODUTO PAINEL: runtime data fora de caminho rastreado (a classe-raiz da
+  fotografia defasada; persona greenfield nova já cobre produtos futuros).
+- PÓS-BOOT deste bloco: plano da M03 pode estar pausado (re-aprovar no
+  board) → orquestrador chama conclude_plan (agora passa com o card da
+  fila) → verificação conjunta → fila drena Empresas e Notas; M05 destrava
+  com conclude_plan (válvula da fotografia) → ⇪.
+
 ### F6.11 — FASES 3 e 4 do nível 5 CONCLUÍDAS (2026-08-08; typecheck + 22 suítes verdes; BOOT AO VIVO VALIDADO 2026-08-10 — falta o teste de missões)
 
 Ordem do dono: FASE 3 → FASE 4 → teste de missão → push. Docs:
