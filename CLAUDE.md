@@ -239,6 +239,15 @@ TODOS recusando; fim dos remendos, UMA primitiva de autoridade):
   catálogo dos gates PEGOU a 1ª tentativa de registro na zona errada — o
   teste salvou a invariante) · mission-worktree 29 · mission-verification 25
   · integration-queue 14 · phase-verdict-races 18 · mcp-protocol 5.
+- ADENDO (b94fbf2, mesma noite): a isenção do card da fila por MARCADOR de
+  briefing morreu quando um orquestrador reescreveu o briefing (a liberdade
+  de update do bloco 1 apagou a placa do bloco 1 — deadlock ressuscitou com
+  entrega JÁ mesclada e verde). Identidade agora é CAMPO persistente
+  `Task.queueSync` (carimbado pela fila) + fallback estrutural p/ cards
+  legados (plano COM grafo: card auto sem planItemId só o harness cria — o
+  card travado da M06 conclui sem apagar nada). complete_task
+  documenta que NÃO mescla a branch task/<id8> (o merge é do orquestrador —
+  furo achado ao vivo por ele).
 
 ### F6.11 — FASES 3 e 4 do nível 5 CONCLUÍDAS (2026-08-08; typecheck + 22 suítes verdes; BOOT AO VIVO VALIDADO 2026-08-10 — falta o teste de missões)
 
