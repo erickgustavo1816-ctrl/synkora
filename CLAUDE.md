@@ -249,6 +249,32 @@ TODOS recusando; fim dos remendos, UMA primitiva de autoridade):
   documenta que NÃO mescla a branch task/<id8> (o merge é do orquestrador —
   furo achado ao vivo por ele).
 
+BLOCO 4 na mesma noite (8483b8d..cab38b2 + clamp não-commitado — HANDOFF
+completo da sessão em docs/HANDOFF_SESSAO_2026-08-10.md; o dono deu /clear):
+- 8483b8d: reparo de boot da fila pela identidade PERSISTENTE (fim da
+  fábrica de FANTASMAS — cada boot criava sync duplicado quando o briefing
+  perdia o marcador) + autocura remove fantasmas existentes
+  (queue-sync-ghost-removed) + guarda da "cadeia reconhecida" no conclude
+  virou re-carimbo auditado (plan-execution-head-restamped — merge manual
+  do orquestrador é legítimo; a cerca é a verificação conjunta).
+- d534d4b: DEV dirige o app Electron REAL via CDP (mesma reserva do card;
+  prompt com a receita --remote-debugging-port); Ctrl+A = SELECIONAR tudo
+  (Ctrl+C copia); apagar-input virou Ctrl+Shift+A.
+- 7646928: memória ESCALÁVEL do Maestro — fato duro nunca é prosa (sempre
+  board_status/git antes de afirmar); MAESTRO.md = ÍNDICE ≤~120 linhas;
+  tópicos destilados ≤200 linhas em .synkora/maestro/ sob demanda;
+  manutenção = reescrever menor, nunca anexar.
+- df11983 + cab38b2: AJUDANTES DE VOLTA com régua QUALIDADE-PRIMEIRO — teto
+  F6.2 restaurado (fast 0 · standard 2 · deep 4; um corte posterior tinha
+  deixado tudo em 1 e o dev Opus-max fazia tela de 50min sozinho); delegar
+  SÓ trabalho longo (~30min+ solo); ajudante CLONA o dev (mesmo modelo,
+  MESMO effort, skills do bloco via delegate.skills); dev integra e ASSINA.
+- CLAMP MECÂNICO do tier em mcpApi/helpers.ts (delegate sobrescreve
+  modelo/effort do ajudante de dev para os do delegador, com aviso) ficou
+  NÃO-COMMITADO de propósito: o arquivo carrega WIP de OUTRO agente (área
+  de skills) — quem fechar aquele trabalho commita junto; nunca reverter
+  helpers.ts sem preservar o clamp.
+
 ### F6.11 — FASES 3 e 4 do nível 5 CONCLUÍDAS (2026-08-08; typecheck + 22 suítes verdes; BOOT AO VIVO VALIDADO 2026-08-10 — falta o teste de missões)
 
 Ordem do dono: FASE 3 → FASE 4 → teste de missão → push. Docs:
