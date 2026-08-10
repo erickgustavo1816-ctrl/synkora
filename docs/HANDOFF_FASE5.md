@@ -1,16 +1,72 @@
-# HANDOFF — nível 5 (pós-Fase 5, auditado) — próximo: FASES 3 e 4, depois a missão
+# HANDOFF — nível 5: próximo passo = TESTE DE MISSÕES (depois PUSH)
 
-Atualizado em 2026-08-09 (madrugada), antes do /clear do dono.
+Atualizado em 2026-08-10, após a validação ao vivo do boot com a view.
+
+## PRÓXIMA SESSÃO — TESTE DE MISSÕES (leia isto primeiro; o resto é histórico)
+
+**ONDE ESTAMOS**: Fases 0, 1, 2, 5, 3 e 4 do nível 5 CONCLUÍDAS. F3
+multi-renderer e F4 QA-CDP em código, gate completo verde (22 suítes), e o
+BOOT AO VIVO com a WebContentsView foi validado pelo dono em 2026-08-10
+(journal: panes-view-created → sender-bound → ready limpos; sobrou só o
+stall de PARTIDA conhecido ~2,4s, família da Fase 0 rodada 2, pré-existente).
+Falta: **teste de missões → PUSH → instalador**.
+
+**ROTEIRO DO TESTE DE MISSÕES** (o dono roda; a sessão monitora — app SÓ no
+terminal dele; monitor: `node scripts/bbwatch.mjs --follow` em background e
+NARRAR marcos sem ser pedido; NUNCA editar src com missão viva):
+
+1. Missão real dev→review→QA no DEV. Observar por camada:
+   - **F5 zero digitação**: gates reprovando e esperando a rodada nova SÓ
+     por long-poll; retry chegando ao dev pelo correio; panes abrindo
+     limpos nos dois CLIs; `--grep mailbox` cheio (mailbox-post com meta
+     causal + mailbox-delivered + skipped-waiter-armed);
+     `--grep delivery-injected` ≈ zero para agentes (exceções auditadas:
+     helper-send-raw-keystroke, pane shell).
+   - **F3 multi-renderer**: panes de execução nascendo NA VIEW (aba Panes)
+     com o host fluido sob carga; pulsos de atenção cruzando as views
+     (rail/abas pulsam com pane do canvas pedindo permissão); ■/× fechando
+     pelo eco do main; link .md de terminal do canvas abrindo a aba
+     Arquivos; ditado SynVoice em terminal do canvas; overlays da titlebar
+     escondendo a view sem sujeira; se a view crashar, reload + rehydration
+     sozinhos (`--grep panes-view`). Régua do CHECK 2: `--grep stall`
+     durante o USO (clicar missões com panes vivos) — a queixa original era
+     lag exatamente aí.
+   - **F4 QA-CDP**: card de QA de produto Electron → o harness sobe o app
+     REAL com --remote-debugging-port (porta reservada POR CARD, prontidão
+     = linha "DevTools listening" completa) e o QA navega o app real (NÃO
+     navega URL; browser.close só desconecta); janela do produto fechada ao
+     fim da rodada; crash sujo não deixa árvore órfã (guardião).
+   - **Skills**: ACTIVE SKILL PLAN declarado no turno + receipts no journal;
+     QA de UI declarando a auditoria no report.
+   - **De carona (F6.9 nunca vistas ao vivo)**: porteira ⇪ de integração,
+     set_phase_executor, synkora-frontend-standard declarada, caça de porta.
+2. Tropeços: anotar no caderno da sessão e aplicar em BLOCO ÚNICO com o app
+   parado (`Get-Process electron` imediatamente antes — a prova expira).
+3. **DEPOIS DO TESTE**: PUSH de tudo (ordem do dono: só quando terminar
+   tudo) · gerar INSTALADOR novo (o instalado roda binário antigo) ·
+   decisões avulsas do dono: postar ou não
+   docs/ISSUE_DRAFT_claude-code_mcp-first-turn.md · candidato futuro
+   electron-updater · varrer ou não os .md históricos da MAIN
+   (MAPA_RETOMADA, MATRIZ_FALHAS, EM_ABERTO, HANDOFF_F6.3,
+   PLANO_ESTABILIZACAO) · este arquivo se varre no fechamento.
+4. **Higiene pendente**: dois worktrees de agente em `.claude/worktrees/`
+   (o da Fase 4, já mergeado em 792e73a, e um de predecessor abortado) —
+   remoção SÓ com checagem de junctions (lição
+   feedback-worktree-junction-node-modules); nunca `remove --force` cego.
+
+**Regras vivas** (inalteradas): app SÓ no terminal do dono · edição de src
+SÓ com app parado · commits sem acentos, reversíveis e verdes · git add por
+caminho explícito · sonda antes de afirmar · subagentes/Opus só com aval POR
+SESSÃO (nesta era o dono liberou Fable 5 liderando com agentes Opus de
+varredura — reconfirmar a cada sessão).
+
+---
+
+# Histórico (pós-Fase 5, auditado — era das FASES 3 e 4)
 
 > ATUALIZAÇÃO 2026-08-08 (sessão da retomada): **FASES 3 e 4 CONCLUÍDAS EM
 > CÓDIGO** — F3 multi-renderer (docs/FASE3_PLANO.md, commits fase3 c0–c5 +
 > merge fase4 792e73a; bloco F6.11 do CLAUDE.md tem o resumo completo).
-> O que RESTA: (1) validação ao vivo do dono — primeiro `npm run dev` com a
-> WebContentsView (abrir projeto, aba Panes, gates, agente livre, ▶ testar,
-> ditado no canvas, crash/reload da view) e uma missão de QA de produto
-> Electron real (CDP); (2) TAREFA 3 abaixo (teste de missão); (3) PUSH.
-> Worktrees de agente em .claude/worktrees/ ficam até o fechamento — remoção
-> SÓ com checagem de junctions (lição feedback-worktree-junction).
 
 ## PRÓXIMA SESSÃO (pós-clear) — leia isto primeiro
 

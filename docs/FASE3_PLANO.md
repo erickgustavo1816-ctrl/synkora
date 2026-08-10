@@ -13,9 +13,16 @@ mapa → commits pequenos e verdes → validação.
 > não força tab board (o hide por hostOverlayCount do D6 já cobre — menos
 > mecanismo); `panes:attention-cleared` carrega projectId (assinatura real do
 > clearPaneAttention); driver E2E corrigido no ato (exclui `?view=` do match
-> de target CDP — D11). PENDENTE: validação AO VIVO pelo dono (primeiro
-> `npm run dev` com a view: abrir projeto, aba Panes, missão com gates,
-> agente livre, ▶ testar, ditado no canvas, crash/reload da view).
+> de target CDP — D11).
+>
+> VALIDAÇÃO AO VIVO — BOOT OK (2026-08-10): o dono rodou `npm run dev` e
+> confirmou o app funcionando; journal do boot: `panes-view-created` →
+> `panes-view-sender-bound` → `panes-view-ready` em sequência limpa (wc 2).
+> Restou o stall de PARTIDA conhecido (~2,4s, família da Fase 0 rodada 2 —
+> overhead de boot não-instrumentado, pré-existente à view). Os itens finos
+> (missão com gates na view, agente livre, ▶ testar, ditado no canvas,
+> crash/reload da view, fluidez sob carga de panes) validam no TESTE DE
+> MISSÃO — roteiro em docs/HANDOFF_FASE5.md.
 
 ## 1. Objetivo e desenho
 

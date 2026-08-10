@@ -110,7 +110,7 @@ PAINEL DE GESTÃO) — caderno completo da sessão em scratchpad NOTAS_TESTE_202
 - DESCARTADO (decisão do usuário): alavanca de "segurar gate" (hold) — os gates vivos
   cobrem a dor; re-avaliar só se ela voltar.
 
-### F6.11 — FASES 3 e 4 do nível 5 CONCLUÍDAS EM CÓDIGO (2026-08-08; app parado; typecheck + 22 suítes verdes; PENDENTE validação ao vivo)
+### F6.11 — FASES 3 e 4 do nível 5 CONCLUÍDAS (2026-08-08; typecheck + 22 suítes verdes; BOOT AO VIVO VALIDADO 2026-08-10 — falta o teste de missões)
 
 Ordem do dono: FASE 3 → FASE 4 → teste de missão → push. Docs:
 docs/FASE3_PLANO.md (plano formal + estado) e PLANO_NIVEL_5 (estados).
@@ -160,9 +160,14 @@ docs/FASE3_PLANO.md (plano formal + estado) e PLANO_NIVEL_5 (estados).
   rodada — browser.close só desconecta); guardião de job objects já cobria a
   árvore. Sondas probe-electron-cdp 4/4 + probe-electron-vite-cdp 4/4;
   suíte test:qa-cdp 10.
-- PRÓXIMO: validação ao vivo do dono (boot com a view + missão real de QA) →
-  teste de missão → PUSH. Worktrees de agente em .claude/worktrees/ NÃO
-  remover sem checar junctions (lição feedback-worktree-junction).
+- BOOT AO VIVO VALIDADO (2026-08-10): `npm run dev` do dono funcionando;
+  journal panes-view-created → sender-bound → ready limpos; sobrou o stall
+  de PARTIDA conhecido (~2,4s, família Fase 0 rodada 2, pré-view).
+- PRÓXIMO: **TESTE DE MISSÕES** (roteiro completo em docs/HANDOFF_FASE5.md
+  — F5 zero-digitação + F3 view sob carga + F4 QA-CDP + skills receipts +
+  validações F6.9 de carona) → PUSH → instalador novo. Worktrees de agente
+  em .claude/worktrees/ NÃO remover sem checar junctions (lição
+  feedback-worktree-junction).
 
 ### F6.10b — CHECK 14 com causa PROVADA por sonda + FIX APLICADO (2026-08-07 tarde; typecheck + orchestrator-flow 35/35 verdes)
 
