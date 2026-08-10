@@ -84,6 +84,23 @@ canal mecânico (ownerOrder verbatim, padrão set_phase_executor).
     delegar SÓ trabalho longo (~30min+ solo); ajudante CLONA o dev — mesmo
     modelo, mesmo effort, skills do bloco; dev integra e ASSINA.
 
+## PÓS-HANDOFF (mesma noite, ainda nesta sessão)
+
+- Análise do Xirp (ADE do Spotify, lançado 2026-08-10): macOS-only,
+  proprietário, preso ao Portal comercial, SEM pipeline de qualidade —
+  decisão do dono: SEGUIR com o Synkora. A única inveja real virou feature:
+- 73653bb — DOCUMENTAÇÃO AUTOMÁTICA DE SESSÃO: tool record_learnings
+  (maestro/orquestrador; fora do catálogo dos gates) grava tópico destilado
+  em .synkora/maestro/<slug>.md (slug path-safe + nomes reservados do
+  Windows, .bak de 1 nível com mensagem HONESTA quando falha, redação de
+  segredos, auditoria learnings-recorded, evento quiet ao PM para o mapa de
+  tópicos do índice). Personas: orquestrador LÊ a estante antes de estudar/
+  planejar e DESTILA no conclude_plan (nudge no resultado da tool); PM
+  incorpora tópicos novos ao mapa. Feature REVISADA por agente adversarial
+  antes do commit (2 achados reais corrigidos: .bak desonesto e elo com o
+  PM inexistente). VALIDAR AO VIVO: primeira missão concluída deve gerar
+  tópico + evento; sessão nova do orquestrador deve ler a estante.
+
 ## ⚠️ WORKING TREE COMPARTILHADO — NÃO COMMITAR NEM REVERTER
 
 Outro agente de IA trabalha AO MESMO TEMPO na área de SKILLS. Uncommitted
