@@ -1122,6 +1122,32 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     if (!mission) return 'missão não encontrada'
     const project = projects.get(mission.projectId)
     if (!project) return 'projeto não encontrado'
+    const missionProjectId = mission.projectId
+    const missionTitle = mission.title
+    // Bloqueio de integração NUNCA é mudo (2026-08-10: o clique do dono no ⇪
+    // devolvia só uma string que virava banner — zero rastro no journal e
+    // cara de clique morto): todo retorno bloqueante audita na caixa-preta
+    // e, quando o gesto é do DONO, o orquestrador recebe o motivo como
+    // evento urgente com a receita de destravar.
+    const integrateBlocked = (code: string, msg: string): string => {
+      blackbox.record({
+        cat: 'queue',
+        event: 'mission-integrate-blocked',
+        actor,
+        ids: { projectId: missionProjectId, missionId },
+        reason: `${code}: ${msg.slice(0, 400)}`
+      })
+      if (actor === 'user')
+        hub.publish({
+          projectId: missionProjectId,
+          missionId,
+          kind: 'error',
+          urgent: true,
+          text: `⇪ do dono BLOQUEADO em "${missionTitle}": ${msg}`,
+          actor: 'harness'
+        })
+      return msg
+    }
     if (mission.status === 'arquivada')
       return 'a missão está ARQUIVADA — reative-a antes de pedir integração'
     if (mission.status === 'integrando') {
@@ -1144,38 +1170,74 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     }
     const missionPlan = currentPlanOf(mission.projectId, missionId)
     if (!missionPlan) {
-      return 'integração bloqueada: esta missão ainda não tem um plano aprovado e concluído — abra a aba da missão e combine o plano com o orquestrador'
+      return integrateBlocked(
+        'no-plan',
+        'integração bloqueada: esta missão ainda não tem um plano aprovado e concluído — abra a aba da missão e combine o plano com o orquestrador'
+      )
     }
     if (manualSecurityValidationPending(missionPlan.plan, securityWaiverOptions(mission.projectId))) {
-      return 'integracao bloqueada: a validacao humana de seguranca deste plano continua pendente. Confirme a evidencia ou dispense com justificativa no card do plano.'
+      return integrateBlocked(
+        'security-validation',
+        'integracao bloqueada: a validacao humana de seguranca deste plano continua pendente. Confirme a evidencia ou dispense com justificativa no card do plano.'
+      )
     }
     if (missionPlan.status !== 'done') {
-      return missionPlan.status === 'backlog'
-        ? 'integração bloqueada: o plano da missão ainda aguarda sua aprovação (ou está pausado)'
-        : 'integração bloqueada: o plano aprovado ainda está em execução — conclua todos os cards e o plano antes de integrar'
+      return integrateBlocked(
+        'plan-not-done',
+        missionPlan.status === 'backlog'
+          ? 'integração bloqueada: o plano da missão ainda aguarda sua aprovação (ou está pausado)'
+          : 'integração bloqueada: o plano aprovado ainda está em execução — conclua todos os cards e o plano antes de integrar'
+      )
     }
     const verifiedFinal = missionPlan.plan?.verification?.final
     if (missionPlan.plan?.verification && !finalVerificationAccepted(verifiedFinal)) {
-      return 'integração bloqueada: a verificação conjunta do plano não está aprovada'
+      return integrateBlocked(
+        'final-verification',
+        'integração bloqueada: a verificação conjunta do plano não está aprovada'
+      )
     }
     const open = tasks
       .list(mission.projectId)
       .filter((t) => t.missionId === missionId && t.status !== 'done')
     if (open.length > 0)
-      return `ainda há ${open.length} tarefa(s) não concluída(s) na missão — finalize (ou remova) antes de integrar: ${open
-        .map((t) => `"${t.title}"`)
-        .join(' · ')}`
+      return integrateBlocked(
+        'open-cards',
+        `ainda há ${open.length} tarefa(s) não concluída(s) na missão — finalize (ou remova) antes de integrar: ${open
+          .map((t) => `"${t.title}"`)
+          .join(' · ')}`
+      )
     mission = ensureMissionWorktree(missionId) ?? mission
     const gitProject = hasGitCommit(project.path)
     const missionSource = missionWorkspacePath(project.path, mission)
     if (!missionSource) {
-      return 'integração bloqueada: não foi possível provar ou reanexar o worktree isolado da missão. A fila e a branch principal permaneceram intactas.'
+      return integrateBlocked(
+        'no-worktree',
+        'integração bloqueada: não foi possível provar ou reanexar o worktree isolado da missão. A fila e a branch principal permaneceram intactas.'
+      )
     }
     // PORTEIRA MECÂNICA DE INTEGRAÇÃO (2026-08-07): merge de missão anda SÓ
     // com gesto do DONO. Chamada de agente chegando aqui = missão validada e
     // pronta; registra a INTENÇÃO, o board pulsa, e o clique no ⇪ (actor
     // 'user') é o único caminho que executa.
     if (actor !== 'user') {
+      // A porteira só anuncia "PRONTA" com a fotografia PROVADA (2026-08-10:
+      // o agente registrou intenção com o head defasado, o botão pulsou e o
+      // clique do dono bateu no bloqueio — botão pulsando para um clique que
+      // ia falhar). Árvore suja/head defasado voltam com a receita, sem
+      // registrar intenção.
+      if (gitProject) {
+        if (isWorktreeClean(missionSource) !== true)
+          return integrateBlocked(
+            'agent-dirty-tree',
+            'a missão NÃO está pronta para o aval do dono: a branch tem alterações não commitadas depois dos gates — enquadre a árvore (commit auditado ou limpeza) antes de pedir integração'
+          )
+        const agentHead = gitHead(missionSource)
+        if (verifiedFinal?.head && agentHead && verifiedFinal.head !== agentHead)
+          return integrateBlocked(
+            'agent-photo-stale',
+            `a missão NÃO está pronta para o aval do dono: a branch mudou depois da verificação conjunta (${verifiedFinal.head.slice(0, 12)} → ${agentHead.slice(0, 12)}). Chame conclude_plan para REVALIDAR a fotografia (o plano reabre só para a verificação re-rodar e fecha sozinho); depois peça a integração de novo.`
+          )
+      }
       if (!missions.get(missionId)?.pendingIntegrationApproval) {
         missions.update(missionId, { pendingIntegrationApproval: true })
         emitMissionsChanged(mission.projectId)
@@ -1193,12 +1255,9 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         'Não re-chame integrate_mission (é no-op); se o dono demorar, pergunte via ask_user e ESPERE a resposta — ausência nunca é consentimento.'
       )
     }
-    if (missions.get(missionId)?.pendingIntegrationApproval) {
-      missions.update(missionId, { pendingIntegrationApproval: false })
-    }
     if (!gitProject) {
       // sem git não há merge: concluir é só marcar.
-      missions.update(missionId, { status: 'concluida' })
+      missions.update(missionId, { status: 'concluida', pendingIntegrationApproval: false })
       reconcileConcludedMission(
         mission.projectId,
         missionId,
@@ -1215,23 +1274,47 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       return 'missão concluída (projeto sem git, sem merge a fazer)'
     }
     if (!mission.branch || !mission.worktree || !missionSource) {
-      return 'integração bloqueada: metadados do isolamento Git estão incompletos'
+      return integrateBlocked(
+        'git-meta',
+        'integração bloqueada: metadados do isolamento Git estão incompletos'
+      )
     }
     if (existsSync(missionIntegrationIntentPath(project.path, missionId))) {
-      return 'integração bloqueada: existe um journal anterior ainda não reconciliado. Reinicie o Synkora para a recuperação segura ou repare o marcador antes de tentar novamente.'
+      return integrateBlocked(
+        'intent-journal',
+        'integração bloqueada: existe um journal anterior ainda não reconciliado. Reinicie o Synkora para a recuperação segura ou repare o marcador antes de tentar novamente.'
+      )
     }
     const target = resolveMissionIntegrationTarget(project, mission)
     if (!target)
-      return 'integração bloqueada: não consegui preparar a branch de destino; a missão foi preservada'
+      return integrateBlocked(
+        'target',
+        'integração bloqueada: não consegui preparar a branch de destino; a missão foi preservada'
+      )
     if (isWorktreeClean(missionSource) !== true) {
-      return 'integração bloqueada: a branch da missão tem alterações não commitadas depois dos gates — conclua e valide essa fotografia antes de entrar na fila'
+      return integrateBlocked(
+        'dirty-tree',
+        'integração bloqueada: a branch da missão tem alterações não commitadas depois dos gates — peça ao orquestrador para enquadrar a árvore (commit auditado ou limpeza) e valide essa fotografia antes de entrar na fila'
+      )
     }
     const sourceHead = gitHead(missionSource)
     const targetHead = gitHead(target.dir)
     if (!sourceHead || !targetHead)
-      return 'integração bloqueada: não consegui identificar os commits atuais da missão e do destino'
+      return integrateBlocked(
+        'heads',
+        'integração bloqueada: não consegui identificar os commits atuais da missão e do destino'
+      )
     if (verifiedFinal?.head && verifiedFinal.head !== sourceHead) {
-      return `integração bloqueada: a branch mudou depois da verificação conjunta (${verifiedFinal.head.slice(0, 12)} → ${sourceHead.slice(0, 12)}); revalide a fotografia atual`
+      return integrateBlocked(
+        'photo-stale',
+        `integração bloqueada: a branch mudou depois da verificação conjunta (${verifiedFinal.head.slice(0, 12)} → ${sourceHead.slice(0, 12)}). RECEITA: o orquestrador chama conclude_plan para REVALIDAR a fotografia (o plano reabre só para a verificação re-rodar no head atual e fecha sozinho); depois clique ⇪ de novo.`
+      )
+    }
+    // O AVAL do dono só se consome quando o clique ATRAVESSA todas as
+    // checagens (2026-08-10: o clear precoce apagava a pulsação do botão
+    // mesmo com o clique bloqueado — a intenção do agente se perdia).
+    if (missions.get(missionId)?.pendingIntegrationApproval) {
+      missions.update(missionId, { pendingIntegrationApproval: false })
     }
 
     const existing = integrationQueue.getByMission(missionId)

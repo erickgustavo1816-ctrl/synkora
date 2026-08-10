@@ -27,6 +27,7 @@ import {
   EXECUTION_MODE_LABEL,
   assessMissionRisk,
   gatesForTask,
+  isHarnessQueueCard,
   normalizeDelegationMode,
   normalizeExecutionMode,
   normalizeRiskLevel,
@@ -464,9 +465,14 @@ export function buildBoardApi(
         return `card fora do contrato aprovado: ${[...new Set(outsideContract)].join(', ')} não está nas lanes do plano. Reclassifique/reapresente o plano em vez de acrescentar trabalho escondido.`
       }
       if (expectedCards !== undefined) {
+        // Card de sync criado pela FILA fica fora da contagem: o contrato é
+        // contra expansão do orquestrador, nunca contra o próprio harness.
         const existingCards = tasks
           .list(id.projectId)
-          .filter((task) => task.planId === approvedPlan.id && task.kind !== 'plan').length
+          .filter(
+            (task) =>
+              task.planId === approvedPlan.id && task.kind !== 'plan' && !isHarnessQueueCard(task)
+          ).length
         const sizingProblems = validateTaskSizing(
           executionMode,
           risk,
@@ -707,8 +713,11 @@ export function buildBoardApi(
       }
       if (t0.status === 'done')
         return 'card concluído não recebe ajuste — reabra via run_task { adjustment } se necessário'
-      if (t0.status !== 'backlog' && !gateNotesOnly)
-        return 'só cards em backlog podem ter o briefing ajustado (exceção: patch só de gateNotes); estado atual: ' + t0.status
+      // Ajuste em card EM ANDAMENTO é permitido (ordem do dono, 2026-08-10:
+      // "essa burocracia é desnecessária"): o patch vale para as FASES
+      // FUTURAS (gates, affectsUi, skills do próximo spawn); o aviso honesto
+      // abaixo lembra que o pane já rodando não relê o briefing.
+      const inFlightPatch = t0.status !== 'backlog' && !gateNotesOnly
       if (patch.status)
         return 'status não pode ser alterado por update_task — use run_task e aguarde os gates do pipeline'
       const planTask = planTaskForWorkTask(t0)
@@ -789,16 +798,15 @@ export function buildBoardApi(
         agents: patch.agents ?? t0.agents,
         quests: patch.quests ?? t0.quests
       }
+      // AJUSTE nunca muda a CONTAGEM de cards — o teto de proporcionalidade
+      // não se aplica aqui (caso real 2026-08-10: card de sync da fila levava
+      // o total acima do prometido e TODO update do plano passava a ser
+      // recusado). Ficam só as validações de conteúdo por item.
       const sizingProblems = validateTaskSizing(
         executionMode,
         risk,
-        planTask?.plan?.expectedCards ?? Number.MAX_SAFE_INTEGER,
-        Math.max(
-          0,
-          tasks
-            .list(id.projectId)
-            .filter((task) => task.planId === planTask?.id && task.kind !== 'plan').length - 1
-        ),
+        Number.MAX_SAFE_INTEGER,
+        0,
         [candidate]
       )
       if (sizingProblems.length > 0)
@@ -826,7 +834,9 @@ export function buildBoardApi(
       })
       ctx.pushAll('tasks:changed', id.projectId)
       syncBoard(id.projectId)
-      return `tarefa "${updated.title}" atualizada`
+      return inFlightPatch
+        ? `tarefa "${updated.title}" atualizada COM o card em andamento — o patch vale para as próximas fases/spawns; o pane que já está rodando NÃO relê o briefing (se precisar avisá-lo agora, use notify_pane)`
+        : `tarefa "${updated.title}" atualizada`
     },
 
     // ————— F5.7: plano da missão (proposta → aprovação → autonomia) —————,
@@ -1563,8 +1573,56 @@ export function buildBoardApi(
     },
     concludePlan: async (id, conclusion) => {
       if (id.role !== 'maestro' || !id.missionId) return 'só o orquestrador conclui o plano'
-      const plan = currentPlanOf(id.projectId, id.missionId)
-      if (!plan || plan.status !== 'execucao') return 'não há plano em execução para concluir'
+      let plan = currentPlanOf(id.projectId, id.missionId)
+      if (!plan) return 'não há plano em execução para concluir'
+      if (plan.status !== 'execucao') {
+        // VÁLVULA SANCIONADA (2026-08-10): plano DONE cuja fotografia final
+        // ficou DEFASADA (a branch ganhou commit fora da cadeia de cards —
+        // ex.: runtime do teste de aceite commitado para limpar a árvore)
+        // reabre SÓ para revalidar: a verificação conjunta re-roda no head
+        // atual e o plano fecha sozinho pelo caminho normal. Era o beco do ⇪
+        // ("revalide a fotografia atual" sem nenhuma ferramenta que
+        // revalidasse). O range fora da cadeia fica auditado — nada entra em
+        // silêncio.
+        const staleProject = projects.get(id.projectId)
+        const staleMission = staleProject ? missions.get(id.missionId) : undefined
+        const staleCwd =
+          staleProject && staleMission
+            ? missionWorkspacePath(staleProject.path, staleMission)
+            : undefined
+        const staleHead = staleCwd ? gitHead(staleCwd) : undefined
+        const staleFinal = plan.plan?.verification?.final
+        const photoStale =
+          plan.status === 'done' &&
+          staleMission?.status === 'ativa' &&
+          plan.plan !== undefined &&
+          finalVerificationAccepted(staleFinal) &&
+          typeof staleHead === 'string' &&
+          staleFinal !== undefined &&
+          typeof staleFinal.head === 'string' &&
+          staleFinal.head !== staleHead
+        if (!photoStale) return 'não há plano em execução para concluir'
+        const deltaFrom = plan.plan?.executionHead ?? staleFinal?.head ?? ''
+        tasks.update(plan.id, {
+          status: 'execucao',
+          plan: { ...plan.plan!, executionHead: staleHead as string }
+        })
+        blackbox.record({
+          cat: 'task',
+          event: 'plan-reverify-reopened',
+          actor: id.role,
+          ids: { projectId: id.projectId, missionId: id.missionId, taskId: plan.id },
+          reason: `fotografia final defasada (${deltaFrom.slice(0, 12)} → ${(staleHead as string).slice(0, 12)}) — plano reaberto SÓ para a verificação conjunta re-rodar no head atual; commits fora da cadeia de cards entram SEM novo gate: confira o range no git se algum não for esperado`
+        })
+        hub.publish({
+          projectId: id.projectId,
+          missionId: id.missionId,
+          kind: 'info',
+          text: `plano de "${staleMission?.title ?? id.missionId}" reaberto para REVALIDAÇÃO da fotografia (${deltaFrom.slice(0, 10)} → ${(staleHead as string).slice(0, 10)}) — a verificação conjunta re-roda e o plano fecha sozinho`,
+          actor: 'harness'
+        })
+        plan = tasks.get(plan.id) ?? plan
+      }
       if (manualSecurityValidationPending(plan.plan, securityWaiverOptions(id.projectId))) {
         return 'conclusao bloqueada: este plano exige validacao humana de seguranca ainda pendente. O usuario precisa confirmar a evidencia ou dispensar com justificativa no card do plano.'
       }
@@ -1576,6 +1634,11 @@ export function buildBoardApi(
             t.kind !== 'plan' &&
             (t.planId === plan.id || (!t.planId && !plan.plan?.executionMode))
         )
+      // Cards do CONTRATO = o que o orquestrador prometeu na aprovação. Card
+      // operacional criado pela FILA (sync) precisa estar done e com gates
+      // válidos como os demais, mas fica FORA da contagem e do grafo — contar
+      // trabalho do próprio harness era o deadlock de 2026-08-10.
+      const contractCards = planCards.filter((card) => !isHarnessQueueCard(card))
       const open = planCards.filter((task) => task.status !== 'done')
       if (open.length > 0)
         return `ainda há ${open.length} card(s) não concluído(s): ${open
@@ -1590,25 +1653,27 @@ export function buildBoardApi(
         return 'conclusão bloqueada: não foi possível provar ou reanexar a branch isolada da missão; nada será concluído na branch principal'
       }
       const mode = normalizeExecutionMode(plan.plan?.executionMode)
-      const expectedCards = plan.plan?.expectedCards ?? planCards.length
+      const expectedCards = plan.plan?.expectedCards ?? contractCards.length
       const completionProblems = validatePlanCompletion({
         mode,
         expectedCards,
-        cards: planCards.map((card) => ({ status: card.status }))
+        cards: contractCards.map((card) => ({ status: card.status }))
       })
-      if (plan.plan?.expectedCards !== undefined && planCards.length !== expectedCards) {
+      if (plan.plan?.expectedCards !== undefined && contractCards.length !== expectedCards) {
         completionProblems.push(
-          `o plano aprovou ${expectedCards} card(s), mas ${planCards.length} foram registrados; não é permitido pular ou apagar entrega para encerrar`
+          `o plano aprovou ${expectedCards} card(s), mas ${contractCards.length} foram registrados; não é permitido pular ou apagar entrega para encerrar`
         )
       }
       const workItems = plan.plan?.workItems ?? []
       if (workItems.length > 0) {
-        const deliveredItems = new Set(planCards.map((card) => card.planItemId).filter(Boolean))
+        const deliveredItems = new Set(
+          contractCards.map((card) => card.planItemId).filter(Boolean)
+        )
         for (const item of workItems) {
           if (!deliveredItems.has(item.id))
             completionProblems.push(`o item aprovado ${item.id} não possui card entregue`)
         }
-        if (deliveredItems.size !== planCards.length)
+        if (deliveredItems.size !== contractCards.length)
           completionProblems.push('há card sem vínculo único com o grafo aprovado do plano')
       }
       for (const card of planCards.filter((candidate) => candidate.deliverable === 'code')) {

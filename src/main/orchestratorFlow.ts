@@ -677,6 +677,22 @@ export function validatePlanDependencies(input: PlanDependencyInput): string[] {
 }
 
 /**
+ * Card operacional criado pelo PRÓPRIO HARNESS (sync da fila de integração —
+ * briefing carrega o marcador [fila:<ticket>:<head>] que a dedupe da fila já
+ * usa como identidade). Cards assim NUNCA contam no contrato de
+ * proporcionalidade: a guarda existe contra expansão silenciosa do
+ * ORQUESTRADOR, e contar trabalho que o app mesmo criou virava deadlock
+ * (caso real 2026-08-10: plano de 3 cards + sync da fila = conclude_plan
+ * recusado sem rota de saída).
+ */
+export function isHarnessQueueCard(card: {
+  kind?: string
+  briefing?: string
+}): boolean {
+  return card.kind !== 'plan' && /\[fila:[0-9a-f-]{8,}:/i.test(card.briefing ?? '')
+}
+
+/**
  * Gate puro de encerramento. Planos legados STANDARD/DEEP continuam aceitando
  * um orçamento máximo, mas FAST nunca pode virar "concluído" sem seu único card.
  */
