@@ -181,6 +181,40 @@ nunca conta ação do próprio harness; toda guarda tem rota de saída.
   fila) → verificação conjunta → fila drena Empresas e Notas; M05 destrava
   com conclude_plan (válvula da fotografia) → ⇪.
 
+BLOCO 2 na mesma data (65474cc, "dá mais poder ao orquestrador" — ordem do
+dono; princípio gravado em memória: guarda dura SÓ protege AUTORIDADE/
+VERIFICABILIDADE, guarda de JULGAMENTO vira advisory auditado):
+- T9 RUNTIME DECLARADO SOBREVIVE AO GATE (loop real de 4 ciclos na fila da
+  Notas: QA aprovou no MÉRITO 2× e o veredito era descartado porque RODAR o
+  app sujava data/* rastreado — gate read-only não limpa): tool nova
+  `declare_runtime_paths` (maestro/orquestrador; allowlist por projeto em
+  maestroStore.runtimePaths) + `restoreRuntimeAndRevalidate` (worktree, via
+  gitWorker) no veredito — divergência composta SÓ de modificação NÃO-staged
+  dentro da allowlist é restaurada ao commit julgado e revalidada (evento
+  gate-runtime-dirt-restored). Restaurar ≠ aceitar: staged/deleção/fora da
+  lista invalida integral (cerca contra gate-que-edita intacta); a mensagem
+  de invalidação carrega a receita. Correção definitiva segue sendo card no
+  produto (runtime fora de caminho rastreado).
+- T10 ORDEM DO DONO TEM CANAL: update_task aceita `ownerOrder` verbatim
+  (padrão set_phase_executor) — com ele, mudança de gates passa por cima dos
+  pisos de risco (evento gate-owner-waiver; caso real: dono respondeu no
+  ask_user "tira o QA deste card" e o motor recusou a decisão dele).
+- REBAIXAMENTO: risco elevado em AJUSTE vira anotação auditada
+  (risk-raise-annotated) em modo leve — recusa só no modo estrito.
+- T8 TESTES AUTOMATIZADOS SÃO CARDS DE QA (prática profissional do dono:
+  "quem escreve teste é QA — dev escrevendo valida a própria função
+  quebrada"): persona do orquestrador pareia card de feature com TEST CARD
+  de dept qa cujo executor escreve specs A PARTIR DOS CRITÉRIOS DE ACEITE,
+  nunca da implementação; casca greenfield ganha item (d) harness e2e desde
+  o dia um; prompt do gate de QA trata suíte verde (rodada pelo harness) como
+  PISO DE REGRESSÃO e RECEITA specs faltantes em vez de re-testar na mão.
+- Verdes: typecheck 0 · agregado skills-system 11 suítes 0 falhas ·
+  mcp-protocol 5 · mission-worktree 29 · phase-verdict-races 18 ·
+  task-adjustment 11 · qa-cdp 10 · mailbox-delivery 10.
+- AO VIVO pós-boot 2: o orquestrador da Notas pode destravar o loop na hora
+  com declare_runtime_paths(["data"]) — a receita chega sozinha na próxima
+  invalidação.
+
 ### F6.11 — FASES 3 e 4 do nível 5 CONCLUÍDAS (2026-08-08; typecheck + 22 suítes verdes; BOOT AO VIVO VALIDADO 2026-08-10 — falta o teste de missões)
 
 Ordem do dono: FASE 3 → FASE 4 → teste de missão → push. Docs:
