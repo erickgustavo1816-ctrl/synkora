@@ -1794,7 +1794,7 @@ export function buildBoardApi(
         return 'a verificação conjunta da missão já está em andamento — aguarde o evento do harness; não abra outro gate nem repita os cards'
       }
       startFinalPlanVerification(plan, conclusion)
-      return 'todos os cards foram entregues. Iniciei a verificação conjunta na branch da missão; o plano só será marcado como concluído quando essa fotografia passar. Você receberá um evento automático.'
+      return 'todos os cards foram entregues. Iniciei a verificação conjunta na branch da missão; o plano só será marcado como concluído quando essa fotografia passar. Você receberá um evento automático. ENQUANTO ELA RODA: grave o aprendizado durável desta missão via record_learnings (5-15 linhas destiladas por tópico — decisões, pegadinhas, pedras; nunca o que board_status/git já respondem).'
     },
     // AUTONOMIA (ordem do dono, 2026-08-10 — "dá autonomia pro orquestrador";
     // caso real: um dev inteiro queimado só para re-carimbar fotografia de

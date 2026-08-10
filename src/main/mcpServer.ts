@@ -289,6 +289,10 @@ export interface McpApi {
    *  arquivos rastreados que o app grava ao rodar; sujeira de gate composta
    *  só deles é restaurada ao commit julgado em vez de descartar o veredito. */
   declareRuntimePaths: (id: PaneIdentity, paths: string[]) => string
+  /** Maestro/orquestrador → documentação automática de sessão (2026-08-10):
+   *  destila aprendizado durável num tópico de .synkora/maestro/ — a estante
+   *  da memória escalável que alimenta as sessões futuras. */
+  recordLearnings: (id: PaneIdentity, topic: string, content: string) => string
   /** Qualquer agente → frase curta "o que estou fazendo agora" para o radar
    *  de andamento do dono (2026-08-06: ele acompanha sem abrir o app). */
   statusNote: (id: PaneIdentity, note: string) => string
@@ -1634,6 +1638,25 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       }
     },
     async ({ id, reason }) => text(api.completeTask(identity, id, reason))
+  )
+
+  server.registerTool(
+    'record_learnings',
+    {
+      description:
+        'SÓ Maestro/orquestrador — DOCUMENTAÇÃO AUTOMÁTICA DE SESSÃO: destila o que esta missão/sessão ENSINOU num tópico durável de .synkora/maestro/ (a estante que alimenta as sessões futuras: decisões de arquitetura, pegadinhas, contratos criados, pedras que derrubaram missão). Envie o CONTEÚDO COMPLETO do tópico reescrito (5-15 linhas destiladas; LEIA o tópico atual antes de reescrever — a tool guarda um .bak de um nível). NÃO grave o que o board_status/git já respondem (estado consultável nunca vira prosa); grave o que só quem viveu a sessão sabe. Chame no FECHAMENTO da missão (conclude_plan) e em qualquer decisão durável no meio do caminho.',
+      inputSchema: {
+        topic: z
+          .string()
+          .max(48)
+          .describe('nome curto do tópico em kebab-case (ex.: "telas", "dados-runtime", "licoes")'),
+        content: z
+          .string()
+          .max(8000)
+          .describe('o tópico REESCRITO por inteiro, destilado (5-15 linhas; nunca um log)')
+      }
+    },
+    async ({ topic, content }) => text(api.recordLearnings(identity, topic, content))
   )
 
   server.registerTool(

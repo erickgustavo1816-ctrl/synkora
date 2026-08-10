@@ -15,7 +15,14 @@ import { type Task } from '../tasks'
 import { assessMissionRisk } from '../orchestratorFlow'
 import { requiresManualSecurityValidation } from '../securityPolicy'
 import { redactSensitiveText } from '../securityRedaction'
-import { appendFileSync } from 'fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync
+} from 'fs'
 import { randomUUID } from 'crypto'
 import { Hub } from '../hub'
 import { paneAccessProfile, paneBrowserAvailable } from '../panePermissions'
@@ -45,6 +52,7 @@ export function buildPanesApi(
   | 'runtimeControl'
   | 'askUser'
   | 'declareRuntimePaths'
+  | 'recordLearnings'
   | 'statusNote'
   | 'notifyMaestro'
   | 'listPanes'
@@ -240,6 +248,108 @@ export function buildPanesApi(
       return clean.length > 0
         ? `caminhos de runtime declarados: ${clean.join(', ')} — divergência de gate composta SÓ de modificação não-staged nesses caminhos passa a ser RESTAURADA ao commit julgado (veredito sobrevive); qualquer coisa fora deles segue invalidando normalmente. A correção definitiva continua sendo o produto gravar runtime fora de caminho rastreado.`
         : 'allowlist de runtime LIMPA — toda divergência de gate volta a invalidar o veredito integralmente'
+    },
+    // DOCUMENTAÇÃO AUTOMÁTICA DE SESSÃO (pedido do dono, 2026-08-10, após a
+    // análise do Xirp: "sessão vira doc, doc alimenta a próxima sessão"):
+    // quem VIVEU a missão destila o aprendizado durável em tópicos de
+    // .synkora/maestro/ — a estante que o contrato de memória escalável do
+    // Maestro já consome (índice ≤120 linhas + tópicos sob demanda). O
+    // conteúdo enviado é a REESCRITA COMPLETA do tópico (destilação, nunca
+    // append); um .bak de um nível cobre reescrita cega.
+    recordLearnings: (id, topic, content) => {
+      if (id.role !== 'maestro')
+        return 'só o Maestro/orquestrador grava aprendizados — mande os seus ao orquestrador via notify_maestro que ele destila'
+      const project = projects.get(id.projectId)
+      if (!project || !existsSync(project.path)) return 'projeto não encontrado'
+      let slug = topic
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 48)
+        .replace(/-+$/, '')
+      // Nome reservado do Windows: no Win11 grava normal (testado), mas no
+      // Win10 clássico `nul.md` redireciona pro device e a gravação "sucede"
+      // sem arquivo — 1 linha elimina a classe (o app distribui installer).
+      if (/^(con|prn|aux|nul|com\d|lpt\d)$/.test(slug)) slug = `t-${slug}`
+      if (!slug)
+        return 'topic inválido — nome curto em kebab-case (ex.: "telas", "dados-runtime", "licoes")'
+      const clean = redactSensitiveText(content).trim()
+      if (clean.length < 20)
+        return 'conteúdo curto demais — escreva 5-15 linhas destiladas do que importa para missões futuras'
+      // Teto acima do cap do zod (8k): só a EXPANSÃO da redação de segredos
+      // alcança — folga para não punir conteúdo enviado dentro do limite.
+      if (clean.length > 9000)
+        return 'conteúdo grande demais: aprendizado é snapshot destilado, nunca log — reescreva menor'
+      const dir = join(project.path, '.synkora', 'maestro')
+      try {
+        mkdirSync(dir, { recursive: true })
+      } catch {
+        return 'não consegui preparar .synkora/maestro/ no projeto — verifique permissões da pasta'
+      }
+      const file = join(dir, `${slug}.md`)
+      const existed = existsSync(file)
+      let bakOk = false
+      if (existed) {
+        // Um nível de desfazer para reescrita cega (a regra é ler o tópico
+        // antes de reescrever — mas um acidente não pode custar a estante).
+        // bakOk condiciona a MENSAGEM: anunciar um .bak que falhou (EPERM
+        // transitório de AV é caso real do repo) seria mentir o caminho de
+        // restauração — mensagem honesta é princípio de projeto.
+        try {
+          writeFileSync(`${file}.bak`, readFileSync(file, 'utf-8'), 'utf-8')
+          bakOk = true
+        } catch {
+          // backup é best-effort
+        }
+      }
+      const stampSource = id.missionId
+        ? `orquestrador (missão ${id.missionId.slice(0, 8)})`
+        : 'Maestro'
+      try {
+        writeFileSync(
+          file,
+          `# ${slug}\n\n_Atualizado ${new Date().toISOString().slice(0, 10)} por ${stampSource}_\n\n${clean}\n`,
+          'utf-8'
+        )
+      } catch {
+        return 'não consegui gravar o tópico — verifique permissões de .synkora/maestro/'
+      }
+      let topics: string[] = []
+      try {
+        topics = readdirSync(dir)
+          .filter((name) => name.endsWith('.md'))
+          .map((name) => name.replace(/\.md$/, ''))
+          .sort()
+      } catch {
+        // listagem é cosmética
+      }
+      blackbox.record({
+        cat: 'msg',
+        event: 'learnings-recorded',
+        actor: id.role,
+        ids: { projectId: id.projectId, missionId: id.missionId, paneId: id.paneId },
+        reason: `tópico ${slug} ${existed ? 'reescrito' : 'criado'} (${clean.length} chars)`
+      })
+      // O PM é o dono do ÍNDICE (MAESTRO.md) — sem este aviso, tópico criado
+      // por orquestrador nunca entraria no mapa e a sessão seguinte do PM não
+      // o descobriria (achado do review de 2026-08-10). Evento de PROJETO
+      // (sem missionId) chega ao PM; quiet = correio/EVENTS.md, sem turno.
+      if (id.missionId)
+        hub.publish({
+          projectId: id.projectId,
+          kind: 'info',
+          quiet: true,
+          text: `aprendizado de missão gravado na estante: .synkora/maestro/${slug}.md (${existed ? 'reescrito' : 'tópico NOVO'}) — inclua no mapa de tópicos do MAESTRO.md na próxima reescrita do índice`,
+          actor: 'orchestrator'
+        })
+      return `aprendizado gravado em .synkora/maestro/${slug}.md (${
+        existed
+          ? bakOk
+            ? `tópico REESCRITO — versão anterior em ${slug}.md.bak`
+            : 'tópico REESCRITO — ATENÇÃO: o backup .bak FALHOU, a versão anterior se foi'
+          : 'tópico NOVO'
+      }). Tópicos do projeto: ${topics.join(', ') || slug}. O índice MAESTRO.md (do PM) deve listar os tópicos no mapa.`
     },
     statusNote: (id, note) => {
       const clean = redactSensitiveText(note).replace(/\s+/g, ' ').trim().slice(0, 120)
