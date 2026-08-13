@@ -137,6 +137,10 @@ interface Props {
   /** estado vivo do PTY: ● rodando / ◌ esperando / ■ parado */
   activity?: PaneActivity
   stats?: PaneStats
+  /** Esconde ↓in ↑out preservando a barra de contexto. O pane GUI recebe
+   *  contexto/custo pelos eventos `init`/`result`, mas o motor não publica
+   *  entrada/saída por turno — e mostrar ↓0 ↑0 seria mentira. */
+  hideTokens?: boolean
   /** ancora a telemetria no grupo direito (usado pelo orquestrador) */
   pinStats?: boolean
   focused?: boolean
@@ -177,6 +181,7 @@ export default function PaneChrome({
   title,
   activity,
   stats,
+  hideTokens = false,
   pinStats = false,
   focused,
   onToggleFocus,
@@ -201,13 +206,15 @@ export default function PaneChrome({
   const shownModel = model ?? stats?.model
   const statsView = stats ? (
     <>
-      <span
-        className="stat-chip tokens"
-        data-tip={tokenUsageTip(stats)}
-        aria-label={tokenUsageTip(stats)}
-      >
-        ↓{fmtTokens(stats.inputTokens)} ↑{fmtTokens(stats.outputTokens)}
-      </span>
+      {!hideTokens && (
+        <span
+          className="stat-chip tokens"
+          data-tip={tokenUsageTip(stats)}
+          aria-label={tokenUsageTip(stats)}
+        >
+          ↓{fmtTokens(stats.inputTokens)} ↑{fmtTokens(stats.outputTokens)}
+        </span>
+      )}
       <span
         className={`stat-chip ctx ${ctxPct == null || ctxPct < 60 ? 'ok' : ctxPct >= 85 ? 'crit' : 'warn'}`}
         data-tip={
@@ -320,6 +327,7 @@ export default function PaneChrome({
     children,
     details,
     effort,
+    hideTokens,
     pinStats,
     priorityDetails,
     seatName,

@@ -13551,3 +13551,349 @@ body.progress-overlay-page #root {
   height: 100%;
   display: block;
 }
+
+/* ---------- PANE GUI (Synkora 2.0): o chat no lugar da TUI ---------- */
+/* Mesma moldura .term-window dos panes: corpo em PAINEL ESCURO, texto claro,
+   tipografia mono. O que muda em relação ao xterm é só o conteúdo. */
+
+.gui-pane {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--panel-ink);
+}
+
+.gui-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  scrollbar-gutter: stable;
+}
+
+/* ---- mensagens ---- */
+
+.gui-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  animation: rise 160ms ease both;
+}
+
+.gui-msg-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  color: var(--panel-ink);
+}
+
+.gui-msg.user {
+  align-self: flex-end;
+  align-items: flex-end;
+  max-width: 86%;
+}
+
+.gui-msg.user .gui-msg-text {
+  background: var(--panel-2);
+  border: 1px solid var(--panel-line);
+  border-radius: 10px 10px 2px 10px;
+  padding: 7px 10px;
+}
+
+.gui-msg-tag {
+  color: var(--accent);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.gui-note {
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.gui-error {
+  color: #e0655a;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.gui-thinking {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+  font-style: italic;
+}
+
+.gui-thinking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: blinkc 1s step-end infinite;
+}
+
+/* ---- cards de ferramenta: uma linha, resultado sob demanda ---- */
+
+.gui-tool {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 5px 9px;
+  font-size: 11.5px;
+  color: var(--panel-ink-2);
+  min-width: 0;
+}
+
+details.gui-tool {
+  display: block;
+}
+
+.gui-tool summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  list-style: none;
+  min-width: 0;
+}
+
+.gui-tool summary::-webkit-details-marker {
+  display: none;
+}
+
+.gui-tool summary::after {
+  content: '⌄';
+  margin-left: auto;
+  color: var(--panel-ink-3);
+  font-size: 10px;
+}
+
+.gui-tool[open] summary::after {
+  content: '⌃';
+}
+
+.gui-tool-state {
+  flex: none;
+  color: var(--panel-ink-3);
+}
+
+.gui-tool-state.ok {
+  color: var(--ok);
+}
+
+.gui-tool-state.err {
+  color: #e0655a;
+}
+
+.gui-tool-state.run {
+  animation: blinkc 1s step-end infinite;
+  color: var(--accent);
+}
+
+.gui-tool-name {
+  flex: none;
+  color: var(--panel-ink);
+  font-weight: 700;
+}
+
+.gui-tool-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--panel-ink-3);
+}
+
+.gui-tool-detail {
+  margin: 6px 0 2px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--panel-line);
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.gui-perm-mark {
+  color: var(--panel-ink-3);
+  font-size: 11px;
+}
+
+.gui-perm-mark.deny {
+  color: #c98a82;
+}
+
+/* ---- card de permissão: a única superfície em ACENTO ---- */
+
+.gui-perm {
+  flex: none;
+  margin: 0 12px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-2));
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  animation: rise 160ms ease both;
+}
+
+.gui-perm-head {
+  font-size: 12.5px;
+  color: var(--panel-ink);
+  user-select: text;
+}
+
+.gui-perm-head b {
+  color: var(--accent);
+}
+
+.gui-perm-reason,
+.gui-perm-input summary {
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+}
+
+.gui-perm-input summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.gui-perm-input summary::-webkit-details-marker {
+  display: none;
+}
+
+.gui-perm-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---- botões e composer ---- */
+
+.gui-btn {
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--panel-line);
+  border-radius: 7px;
+  color: var(--panel-ink);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    color 120ms ease,
+    background 120ms ease;
+}
+
+.gui-btn:hover:not(:disabled) {
+  border-color: var(--panel-ink-2);
+}
+
+.gui-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.gui-btn.primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.gui-btn.primary:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+
+.gui-btn.deny:hover:not(:disabled) {
+  border-color: var(--err);
+  color: #e0655a;
+}
+
+.gui-to-end {
+  position: absolute;
+  right: 16px;
+  bottom: 74px;
+  z-index: 2;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-line);
+  border-radius: 999px;
+  color: var(--panel-ink-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 11px;
+  cursor: pointer;
+}
+
+.gui-to-end:hover {
+  color: var(--panel-ink);
+  border-color: var(--panel-ink-3);
+}
+
+.gui-composer {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--panel-line);
+  background: var(--panel);
+}
+
+.gui-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  color: var(--panel-ink);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  max-height: 168px;
+  overflow-y: auto;
+  user-select: text;
+}
+
+.gui-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.gui-input::placeholder {
+  color: var(--panel-ink-3);
+}
+
+.gui-input:disabled {
+  opacity: 0.6;
+}
