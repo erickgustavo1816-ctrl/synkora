@@ -14273,12 +14273,111 @@ body.progress-overlay-page #root {
 .gui-head {
   flex: none;
   display: flex;
-  align-items: baseline;
-  padding: 9px 18px 3px;
+  align-items: center;
+  gap: 0;
+  padding: 8px 18px 7px;
+  border-bottom: 1px solid var(--gui-line);
   font-size: 11px;
   letter-spacing: 0.03em;
   color: var(--ink-2);
   min-width: 0;
+}
+
+.gui-head-cli {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  margin-right: 8px;
+  color: var(--ink);
+}
+
+/* o separador do cabeçalho não vale para a marca do CLI nem para a conta
+   (esta tem moldura própria) */
+.gui-head-cli + *::before,
+.gui-head-seat + *::before {
+  content: none !important;
+}
+
+.gui-head-seat {
+  margin: 0 8px 0 10px;
+}
+
+.gui-head-seat-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 320px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--gui-line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.gui-head-seat-btn:hover,
+.gui-head-seat-btn.open {
+  border-color: var(--ink-2);
+  background: var(--gui-fill);
+}
+
+.gui-head-seat-btn .ghs-name {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.gui-head-seat-btn .ghs-mail,
+.gui-head-seat-btn .ghs-plan {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+  font-size: 10px;
+}
+
+.gui-head-seat-btn .ghs-plan {
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 1px 5px;
+  border: 1px solid var(--gui-line);
+  border-radius: 4px;
+}
+
+.gui-head-seat-btn .ghs-caret {
+  color: var(--ink-3);
+  font-size: 9px;
+}
+
+/* o menu de contas nasce ABAIXO (o cabeçalho está no topo do chat) */
+.gui-seat-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  bottom: auto;
+  left: 0;
+  z-index: 40;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  animation: rise 130ms ease both;
+}
+
+.gui-head-effort {
+  flex: none;
+  text-transform: lowercase;
+  color: var(--ink-3);
 }
 
 .gui-head > * {
@@ -14313,6 +14412,26 @@ body.progress-overlay-page #root {
   flex: none;
   margin-left: auto;
   padding-left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* o ponto do estado pulsa só quando há trabalho vivo do outro lado */
+.gui-head-status .ghs-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.gui-head-status.working .ghs-dot,
+.gui-head-status.starting .ghs-dot {
+  animation: gui-dot 1.05s ease-in-out infinite;
+}
+
+.gui-head-status.waiting-you .ghs-dot {
+  animation: perm-pulse 1.4s ease-in-out infinite;
 }
 
 /* o estado vem sozinho na ponta direita — separador ali seria ruído */
@@ -14466,6 +14585,158 @@ body.progress-overlay-page #root {
 /* streaming: texto ink APAGADO + cursor piscando (o mockup, item 6) */
 .gui-msg.stream .gui-msg-text {
   color: var(--ink-2);
+}
+
+/* ---- markdown das respostas: o agente escreve em markdown, o chat lê ---- */
+
+.gui-md {
+  white-space: normal;
+}
+
+.gui-md > :first-child {
+  margin-top: 0;
+}
+
+.gui-md > :last-child {
+  margin-bottom: 0;
+}
+
+.gui-md p {
+  margin: 0 0 8px;
+}
+
+.gui-md h1,
+.gui-md h2,
+.gui-md h3,
+.gui-md h4 {
+  margin: 14px 0 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.gui-md h1 {
+  font-size: 13.5px;
+}
+
+.gui-md ul,
+.gui-md ol {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.gui-md li {
+  margin: 2px 0;
+}
+
+.gui-md li::marker {
+  color: var(--ink-3);
+}
+
+.gui-md a {
+  color: var(--accent-deep);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.gui-md code {
+  padding: 1px 4px;
+  border: 1px solid var(--gui-line);
+  border-radius: 4px;
+  background: var(--gui-fill);
+  font-size: 11.5px;
+}
+
+.gui-md pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--gui-line);
+  border-radius: 7px;
+  background: var(--gui-fill-2);
+  overflow-x: auto;
+}
+
+.gui-md pre code {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.gui-md blockquote {
+  margin: 0 0 8px;
+  padding-left: 10px;
+  border-left: 2px solid var(--gui-line-strong);
+  color: var(--ink-2);
+}
+
+.gui-md hr {
+  border: none;
+  border-top: 1px solid var(--gui-line);
+  margin: 12px 0;
+}
+
+.gui-md table {
+  width: 100%;
+  margin: 0 0 8px;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.gui-md th,
+.gui-md td {
+  border: 1px solid var(--gui-line);
+  padding: 4px 7px;
+  text-align: left;
+}
+
+.gui-md th {
+  background: var(--gui-fill);
+  font-weight: 700;
+}
+
+.gui-md img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+/* ---- pergunta respondida: fica no fio como registro do que foi escolhido ---- */
+
+.gui-answered {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.gui-answered .ga-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-3);
+}
+
+.gui-answered .ga-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.gui-answered .ga-chip {
+  padding: 2px 7px;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 999px;
+  background: var(--gui-fill);
+  color: var(--ink);
+}
+
+.gui-answered .ga-skip {
+  font-style: italic;
+  color: var(--ink-3);
 }
 
 .gui-note {
@@ -14832,6 +15103,400 @@ details.gui-tool {
 
 /* ---- composer ---- */
 
+/* ---- pergunta com opções (AskUserQuestion) ---- */
+
+.gui-question {
+  flex: none;
+  margin: 0 auto;
+  width: 100%;
+  max-width: var(--gui-column);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--card));
+  animation: rise 160ms ease both;
+}
+
+.gui-question:focus {
+  outline: none;
+}
+
+.gui-question-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.gui-question-title {
+  font-weight: 700;
+  color: var(--ink);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 10px;
+}
+
+.gui-question-steps {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.gui-question-steps .gq-dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.gui-question-steps .gq-dot.done {
+  background: var(--gui-line-strong);
+}
+
+.gui-question-steps .gq-dot.active {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.gui-question-steps .gq-count {
+  font-size: 10px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.gui-question-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+  user-select: text;
+}
+
+.gui-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gq-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--mono);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.gq-option:hover {
+  border-color: var(--ink-2);
+  background: var(--gui-fill);
+}
+
+.gq-option.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--card));
+}
+
+.gq-option.other {
+  border-style: dashed;
+}
+
+.gq-key {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--gui-line);
+  border-radius: 4px;
+  background: var(--gui-fill);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+.gq-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gq-body b {
+  font-size: 12px;
+}
+
+.gq-desc {
+  font-size: 10.5px;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+
+.gq-check {
+  margin-left: auto;
+  color: var(--accent-deep);
+  font-size: 12px;
+}
+
+.gq-custom {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  user-select: text;
+}
+
+.gq-custom:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.gui-question-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.gq-hint {
+  margin-right: auto;
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+/* ---- plano proposto (ExitPlanMode): o veredito mora no próprio plano ---- */
+
+.gui-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 11px 13px;
+  border: 1px solid var(--gui-line-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: 9px;
+  background: var(--card);
+  animation: rise 160ms ease both;
+}
+
+.gui-plan-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-3);
+}
+
+.gui-plan-title {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.gui-plan-tag {
+  margin-left: auto;
+  color: var(--accent-deep);
+  text-transform: none;
+  letter-spacing: 0.03em;
+  font-size: 10.5px;
+}
+
+.gui-plan-body {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  user-select: text;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.gui-plan-actions {
+  display: flex;
+  gap: 7px;
+}
+
+/* ---- autocomplete de comandos ---- */
+
+.gui-slash-menu {
+  width: 100%;
+  max-width: var(--gui-column);
+  margin: 0 auto 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  animation: rise 120ms ease both;
+}
+
+.gui-slash-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink);
+  font-family: var(--mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.gui-slash-item.active {
+  border-color: var(--accent);
+  background: var(--gui-fill);
+}
+
+.gui-slash-item .gs-name {
+  flex: none;
+  font-size: 12px;
+}
+
+.gui-slash-item .gs-arg {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--accent-deep);
+}
+
+.gui-slash-item .gs-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--ink-2);
+}
+
+/* ---- escolha da conta da conversa (card no lugar do chat) ---- */
+
+.gui-seatpick {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--paper);
+}
+
+.gui-seatpick-card {
+  width: min(460px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.gsp-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.gsp-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin-bottom: 10px;
+}
+
+.gsp-error {
+  margin-bottom: 8px;
+  padding: 6px 9px;
+  border-left: 2px solid var(--err);
+  color: var(--err);
+  font-size: 11px;
+}
+
+.gsp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gsp-empty {
+  font-size: 11px;
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
+.gsp-seat {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.gsp-seat:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--gui-fill);
+}
+
+.gsp-seat:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.gsp-name {
+  font-weight: 700;
+}
+
+.gsp-cli {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 9.5px;
+  color: var(--ink-3);
+}
+
+.gsp-warn {
+  font-size: 10px;
+  color: var(--err);
+}
+
+.gsp-go {
+  margin-left: auto;
+  color: var(--ink-3);
+}
+
 .gui-composer {
   flex: none;
   padding: 10px 18px 12px;
@@ -14848,10 +15513,13 @@ details.gui-tool {
   margin: 0 auto;
 }
 
-/* MODO DE PERMISSÃO POR CONVERSA (onda D): o interruptor global do universo
-   morreu — quem decide o quanto o agente pode agir sozinho é cada chat, aqui,
-   colado no que se vai escrever. */
-.gui-perm-mode {
+/* OS CONTROLES DA CONVERSA (2.0): permissão · modelo · effort. O interruptor
+   global do universo morreu — quem decide o quanto o agente pode agir e com
+   que motor é cada chat, aqui, colado no que se vai escrever. Os três são a
+   MESMA família visual: mesmo tamanho, mesma borda, só o glifo e o matiz
+   mudam. */
+.gui-perm-mode,
+.gui-menu-host {
   position: relative;
   flex: none;
 }
@@ -14888,13 +15556,27 @@ details.gui-tool {
   cursor: default;
 }
 
+/* Identidade por MODO: a cor diz o quanto o agente pode agir sozinho antes de
+   se ler a palavra. Bypass é o único que grita (é o que dispensa você). */
 .gui-mode-btn.mode-bypass {
   border-color: var(--accent);
   color: var(--accent-deep);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.gui-mode-btn.mode-acceptEdits {
+  border-color: color-mix(in srgb, var(--ok) 55%, var(--gui-line-strong));
+  color: color-mix(in srgb, var(--ok) 75%, var(--ink));
 }
 
 .gui-mode-btn.mode-plan {
+  border-color: color-mix(in srgb, var(--ink) 22%, transparent);
   color: var(--ink-3);
+}
+
+.gui-mode-btn.mode-model,
+.gui-mode-btn.mode-effort {
+  text-transform: lowercase;
 }
 
 .gui-mode-menu {
@@ -14903,6 +15585,8 @@ details.gui-tool {
   left: 0;
   z-index: 40;
   min-width: 292px;
+  max-height: 320px;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -14914,7 +15598,8 @@ details.gui-tool {
   animation: rise 130ms ease both;
 }
 
-.gui-mode-item {
+.gui-mode-item,
+.gui-menu-item {
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -14929,21 +15614,95 @@ details.gui-tool {
   color: var(--ink);
 }
 
-.gui-mode-item b {
+.gui-mode-item b,
+.gui-menu-item b {
   font-size: 12px;
 }
 
-.gui-mode-item span {
+.gui-mode-item span,
+.gui-menu-item span {
   font-size: 10.5px;
   color: var(--ink-2);
 }
 
-.gui-mode-item:hover {
+.gui-mode-item:hover,
+.gui-menu-item:hover {
   background: var(--gui-fill);
 }
 
-.gui-mode-item.active {
+.gui-mode-item.active,
+.gui-menu-item.active {
   border-color: var(--accent);
+}
+
+/* O glifo do modo vira selo no canto do item — a linha do texto continua
+   respirando (grid de duas colunas com o selo na primeira). */
+.gui-menu-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+}
+
+.gui-menu-item .gmi-glyph {
+  grid-row: 1 / span 2;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--gui-line);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.gui-menu-item.mode-bypass .gmi-glyph {
+  border-color: var(--accent);
+  color: var(--accent-deep);
+}
+
+.gui-menu-item.mode-acceptEdits .gmi-glyph {
+  border-color: color-mix(in srgb, var(--ok) 55%, var(--gui-line));
+  color: color-mix(in srgb, var(--ok) 75%, var(--ink));
+}
+
+/* Item SEM selo (modelo, effort) volta a ser uma coluna simples — a grade de
+   duas colunas existe para acomodar o glifo, e sem ele jogaria a descrição
+   para o lado do nome. */
+.gui-mode-menu .gui-menu-item:not(:has(.gmi-glyph)) {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* item de conta: marca do CLI · nome · CLI, tudo na mesma linha */
+.gui-seat-menu .gui-menu-item {
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: auto;
+  align-items: center;
+}
+
+.gui-seat-menu .gui-menu-item .cli-mark {
+  color: var(--ink-2);
+}
+
+.gui-seat-menu .gui-menu-item span {
+  justify-self: end;
+  text-transform: uppercase;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+.gui-menu-foot {
+  padding: 7px 9px 5px;
+  border-top: 1px dashed var(--gui-line);
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--ink-3);
 }
 
 .gui-input {
@@ -14958,12 +15717,20 @@ details.gui-tool {
   font-size: 12.5px;
   line-height: 1.5;
   padding: 8px 11px;
-  max-height: 168px;
+  /* A caixa CRESCE em vez de ganhar barra de rolagem (ordem do dono): o teto
+     é alto e a barra é invisível — quem escreve texto longo vê o texto, não
+     um trilho cinza. O JS grampeia a altura no mesmo valor. */
+  max-height: 300px;
   overflow-y: auto;
+  scrollbar-width: none;
   user-select: text;
   transition:
     border-color 120ms ease,
     box-shadow 120ms ease;
+}
+
+.gui-input::-webkit-scrollbar {
+  display: none;
 }
 
 .gui-input:focus {
@@ -15047,7 +15814,9 @@ details.gui-tool {
 
 @container pane (max-width: 560px) {
   .gui-thread,
-  .gui-composer-inner {
+  .gui-composer-inner,
+  .gui-question,
+  .gui-slash-menu {
     max-width: none;
   }
 
@@ -15055,7 +15824,8 @@ details.gui-tool {
     width: calc(100% - 28px);
   }
 
-  .gui-head-where {
+  .gui-head-where,
+  .gui-head-seat-btn .ghs-mail {
     display: none;
   }
 }
@@ -15069,7 +15839,11 @@ details.gui-tool {
 }
 
 @container pane (max-width: 430px) {
-  .gui-mode-text {
+  /* os três controles viram só o glifo — a família continua legível, mas o
+     que precisa de espaço é a caixa de escrever */
+  .gui-mode-text,
+  .gui-head-effort,
+  .gui-head-seat-btn .ghs-plan {
     display: none;
   }
 
