@@ -24,6 +24,10 @@ export interface MaestroSessionOpts {
   sandbox?: string
   /** claude: --permission-mode (ex.: 'acceptEdits' nos executores de tarefa) */
   permissionMode?: string
+  /** Teto de silêncio do CLI antes de encerrar a sessão. Ausente = os 10 min
+   *  de sempre (todo chamador existente); 0 DESLIGA o relógio — é o que o pane
+   *  GUI usa: chat aberto não morre por tédio (docs/GUI_PANE_CONTRACT.md). */
+  idleTimeoutMs?: number
 }
 
 // Capacidades REAIS do CLI, vindas do handshake `initialize`: a mesma lista
@@ -59,7 +63,9 @@ export type SessionEvent =
       contextWindow?: number
     }
   | { type: 'delta'; text: string }
-  | { type: 'thinking' }
+  /** `text` = delta do raciocínio quando o backend o entrega (aditivo: quem
+   *  só acende um spinner continua funcionando sem ler o campo). */
+  | { type: 'thinking'; text?: string }
   | { type: 'text'; text: string }
   | { type: 'tool'; name: string; input: Record<string, unknown> }
   | { type: 'tool-result'; text: string; isError: boolean }
@@ -392,10 +398,12 @@ export class MaestroSession {
     this.clearIdle()
     // Permissão pendente = esperando o HUMANO, não o CLI. Sem timeout.
     if (this.pending.size > 0) return
+    const timeout = this.opts.idleTimeoutMs ?? IDLE_TIMEOUT
+    if (timeout <= 0) return // relógio desligado (pane GUI)
     this.idleTimer = setTimeout(() => {
       this.emit({ type: 'fatal', text: 'sem resposta do CLI há 10 min — sessão encerrada' })
       this.kill()
-    }, IDLE_TIMEOUT)
+    }, timeout)
   }
 
   private clearIdle(): void {
@@ -436,7 +444,7 @@ export class MaestroSession {
           if (inner.delta?.type === 'text_delta' && inner.delta.text) {
             this.emit({ type: 'delta', text: inner.delta.text })
           } else if (inner.delta?.type === 'thinking_delta') {
-            this.emit({ type: 'thinking' })
+            this.emit({ type: 'thinking', text: inner.delta.text })
           }
         }
         break

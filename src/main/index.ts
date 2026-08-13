@@ -98,6 +98,7 @@ import { registerFilesIpc } from './ipc/files'
 import { registerSettingsIpc } from './ipc/settings'
 import { registerServicesIpc } from './ipc/services'
 import { registerHarnessIpc } from './ipc/harness'
+import { registerGuiIpc } from './ipc/gui'
 import { registerProjectPlanIpc } from './ipc/projectPlan'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerProgressIpc } from './ipc/progress'
@@ -6814,6 +6815,14 @@ app.whenReady().then(async () => {
     validateExternalServices
   })
   registerHarnessIpc(ctx)
+  // PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md): sessão de chat
+  // por pane. Nenhum CLI filho sobrevive ao quit.
+  const guiSessions = registerGuiIpc(ctx, {
+    assertAppRendererSender,
+    systemPromptFile: persistTrustedSystemPrompt,
+    storeFile: join(app.getPath('userData'), 'gui-sessions.json')
+  })
+  app.once('will-quit', () => guiSessions.killAll())
   registerProjectPlanIpc(ctx, {
     humanProjectPlanApprovals,
     humanProjectMissionStarts,

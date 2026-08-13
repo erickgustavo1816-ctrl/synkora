@@ -574,10 +574,12 @@ export class CodexSession {
   private resetIdle(): void {
     this.clearIdle()
     if (this.approvals.size > 0) return // esperando o humano
+    const timeout = this.opts.idleTimeoutMs ?? IDLE_TIMEOUT
+    if (timeout <= 0) return // relógio desligado (pane GUI)
     this.idleTimer = setTimeout(() => {
       this.emit({ type: 'fatal', text: 'sem resposta do codex há 10 min — sessão encerrada' })
       this.kill()
-    }, IDLE_TIMEOUT)
+    }, timeout)
   }
 
   private clearIdle(): void {
@@ -772,9 +774,12 @@ export class CodexSession {
         break
       }
       case 'item/reasoning/textDelta':
-      case 'item/reasoning/summaryTextDelta':
-        this.emit({ type: 'thinking' })
+      case 'item/reasoning/summaryTextDelta': {
+        // O delta do raciocínio viaja no mesmo campo do agentMessage/delta.
+        const delta = p['delta']
+        this.emit({ type: 'thinking', text: typeof delta === 'string' && delta ? delta : undefined })
         break
+      }
       case 'turn/started': {
         const turn = p['turn'] as { id?: string } | undefined
         if (turn?.id) this.turnId = turn.id

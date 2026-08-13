@@ -2,9 +2,19 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 import { release } from 'node:os'
 import type { ProgressOverlaySnapshot } from '../main/progressSnapshot'
 import type { BlackboxEntry } from '../main/blackbox'
+import type {
+  GuiLivePayload,
+  GuiPaneSpawn,
+  GuiPermBehavior,
+  GuiResult
+} from '../main/guiSessions'
 
 /** entrada do diário da caixa-preta + linha legível pronta para exibição */
 export type BlackboxTailEntry = BlackboxEntry & { line: string }
+
+/** Contrato do pane GUI (docs/GUI_PANE_CONTRACT.md) — fonte única dos tipos;
+ *  o renderer copia/reexporta pelo accessor tipado de guiApi.ts. */
+export type { GuiLivePayload, GuiPaneSpawn, GuiPermBehavior, GuiResult }
 
 export type {
   MissionProgressState,
@@ -1110,6 +1120,35 @@ const api = {
       const listener = (_e: IpcRendererEvent, tip: PanesViewTip | null): void => cb(tip)
       ipcRenderer.on('panes-view:tip', listener)
       return () => ipcRenderer.removeListener('panes-view:tip', listener)
+    }
+  },
+  /** PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md): o chat que
+   *  substitui o xterm. O motor é MaestroSession/CodexSession por pane, no
+   *  main; aqui só passa a costura. */
+  gui: {
+    /** Instancia a sessão do pane; os eventos começam a chegar em onLive. */
+    create: (spawn: GuiPaneSpawn): Promise<GuiResult> => ipcRenderer.invoke('gui:create', spawn),
+    /** Turno novo (ocupado = steering/fila do próprio backend). */
+    send: (paneId: string, text: string): Promise<GuiResult> =>
+      ipcRenderer.invoke('gui:send', paneId, text),
+    /** Responde o card de permissão. */
+    permission: (
+      paneId: string,
+      requestId: string,
+      behavior: GuiPermBehavior
+    ): Promise<GuiResult> =>
+      ipcRenderer.invoke('gui:permission', paneId, requestId, behavior),
+    interrupt: (paneId: string): Promise<GuiResult> =>
+      ipcRenderer.invoke('gui:interrupt', paneId),
+    kill: (paneId: string): Promise<GuiResult> => ipcRenderer.invoke('gui:kill', paneId),
+    /** Replay para a remontagem (o main guarda ~500 eventos por pane). */
+    state: (paneId: string): Promise<{ events: unknown[] }> =>
+      ipcRenderer.invoke('gui:state', paneId),
+    /** Evento vivo; devolve a função de cancelar a assinatura. */
+    onLive: (cb: (payload: GuiLivePayload) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, payload: GuiLivePayload): void => cb(payload)
+      ipcRenderer.on('gui:live', listener)
+      return () => ipcRenderer.removeListener('gui:live', listener)
     }
   },
   maestro: {
