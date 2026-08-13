@@ -1251,6 +1251,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // efeitos que mexem em estado global/processos só rodam no projeto ATIVO.
   const isActive = useStore((s) => s.openProjectId === projectId)
   const projectFlow = useStore((s) => s.projects.find((p) => p.id === projectId))
+  // Trava greenfield da era F6 — hoje vale SÓ para a TAREFA AVULSA do quick-add
+  // (o `tasks:create` do main ainda a recusa em projeto novo com plano mestre
+  // aberto). MISSÃO não entra mais aqui: no 2.0 quem cria missão é o dono, em
+  // qualquer modo de projeto, e a recusa do `missions:create` foi removida.
   const greenfieldLocked =
     projectFlow?.mode === 'greenfield' && projectFlow.planStatus !== 'done'
 
@@ -1318,11 +1322,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     null
   )
   const [missionMsg, setMissionMsg] = useState<string | null>(null)
-  useEffect(() => {
-    if (!greenfieldLocked) return
-    setNewMissionOpen(false)
-    setMissionPrefill(null)
-  }, [greenfieldLocked])
   const [missionCopied, setMissionCopied] = useState(false)
   // Confirmação de exclusão NOSSA (window.confirm nativo do Electron quebra o
   // foco da janela no Windows — cliques morriam depois dele — e era feio).
@@ -3295,7 +3294,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         entries={missionColumnEntries}
         selectedId={missionTab}
         generalPulse={tabPulse['geral']}
-        greenfieldLocked={greenfieldLocked}
         onSelect={(id) => setMissionTab(projectId, id)}
         onNewMission={() => setNewMissionOpen(true)}
       />
@@ -3334,13 +3332,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                 })()
               }
               onNewMissionFrom={() => {
-                if (greenfieldLocked) {
-                  setOpenTaskId(null)
-                  setMissionMsg(
-                    'Este projeto ainda segue o plano mestre. Peça ao Maestro para revisar o mapa ou abrir a próxima missão planejada.'
-                  )
-                  return
-                }
                 const m = missions.find((x) => x.id === task.missionId)
                 setMissionPrefill({
                   title: `Ajustar: ${task.title}`.slice(0, 60),
@@ -3418,7 +3409,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         />
       )}
 
-      {newMissionOpen && !greenfieldLocked && (
+      {newMissionOpen && (
         <NewMissionModal
           projectId={projectId}
           initialTitle={missionPrefill?.title}

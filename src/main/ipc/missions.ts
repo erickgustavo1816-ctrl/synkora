@@ -165,7 +165,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     hub,
     syncBoard,
     projectModeOf,
-    projectPlanOf,
     orchPaneId,
     unregisterPane,
     releasePaneSkillLease
@@ -195,24 +194,26 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
 
   ipcMain.handle('missions:list', (_e, projectId: string) => missionsWithIntegration(projectId))
 
-  ipcMain.handle('missions:create', (e, projectId: string, input: NewMission) => {
-    const masterPlan = projectPlanOf(projectId)
-    if (projectModeOf(projectId) === 'greenfield' && masterPlan?.status !== 'done') {
-      hub.publish({
-        projectId,
-        kind: 'error',
-        text:
-          'missão avulsa bloqueada: este projeto novo ainda segue o plano mestre — converse com o Maestro para revisar/aprovar o mapa ou autorizar a próxima missão indicada',
-        actor: 'harness'
-      })
-      return null
-    }
-    // SYNKORA 2.0 (onda B): missão criada PELO DONO nasce DIRETA — sem
-    // orquestrador, sem plano; o chat do dev é o centro. Missão nascida por
-    // agente (plano mestre, MCP) segue pelo createMissionImpl com o fluxo
-    // legado intacto, e o que já existe no disco não muda de natureza.
-    return createMissionImpl(projectId, { ...input, direct: input.direct ?? true }, 'user')
-  })
+  /**
+   * SYNKORA 2.0 (onda B): missão criada PELO DONO nasce DIRETA — sem
+   * orquestrador, sem plano; o chat do dev é o centro. Missão nascida por
+   * agente (plano mestre, MCP) segue pelo createMissionImpl com o fluxo
+   * legado intacto, e o que já existe no disco não muda de natureza.
+   *
+   * A CERCA GREENFIELD MORREU AQUI (2026-08-13, ordem do dono: "não consigo
+   * criar missão neste projeto"). Este canal é do RENDERER — só o dono chega
+   * nele —, e a recusa "missão avulsa bloqueada: este projeto novo ainda
+   * segue o plano mestre" era da era F6, quando toda missão de projeto novo
+   * tinha de nascer pela mão do Maestro na ordem do roadmap. No 2.0 o dono É
+   * o orquestrador: ele cria missão em QUALQUER modo de projeto (greenfield
+   * com plano em rascunho inclusive) e nenhum estado de plano mestre o
+   * interdita. O caminho de AGENTE (create_mission / start_project_mission em
+   * mcpApi/missions.ts) conserva a regra antiga de propósito — lá o roadmap
+   * continua sendo a autoridade sobre o que um agente pode abrir sozinho.
+   */
+  ipcMain.handle('missions:create', (_e, projectId: string, input: NewMission) =>
+    createMissionImpl(projectId, { ...input, direct: input.direct ?? true }, 'user')
+  )
 
   /**
    * ISOLAMENTO PROVADO — pré-condição de tudo que abre no espaço da missão
