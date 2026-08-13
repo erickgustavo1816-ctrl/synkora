@@ -1848,6 +1848,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     const res = await missionGui.spec(missionId, role)
     missionGuiInFlight.current.delete(key)
     if (!res.ok || !res.spawn) {
+      // Sem conta escolhida NENHUM papel abre — e a resposta é o card de
+      // escolha, não um erro (o revisor abre sozinho depois da escolha).
+      if (res.needsSeat) {
+        setMissionNeedsSeat((prev) => ({ ...prev, [missionId]: true }))
+        return
+      }
       setMissionGuiError((prev) => ({
         ...prev,
         [missionId]: res.error ?? `não deu para abrir ${MISSION_GUI_ROLE_LABEL[role]}`

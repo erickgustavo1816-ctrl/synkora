@@ -23,6 +23,8 @@ import GuiMarkdown from './GuiMarkdown'
 const TARGET_LAG_MS = 900
 /** Ritmo base de uma conversa tranquila. */
 const BASE_WORD_MS = 34
+/** Intervalo mínimo entre repinturas (o markdown é re-parseado a cada uma). */
+const MIN_PAINT_MS = 33
 
 /** Fim da próxima palavra a partir de `from` (espaço que a sucede incluso —
  *  revelar a palavra sem o espaço faria o texto "grudar" no quadro seguinte). */
@@ -43,13 +45,20 @@ export default function GuiStreamText({ text }: { text: string }): React.JSX.Ele
   const [shown, setShown] = useState(0)
   const shownRef = useRef(0)
   const textRef = useRef(text)
+  const prevLenRef = useRef(text.length)
   textRef.current = text
 
-  // Turno novo (o buffer encolheu porque o anterior fechou): recomeça do zero
-  // em vez de manter um cursor que aponta para fora do texto atual.
-  if (shownRef.current > text.length) {
-    shownRef.current = 0
-  }
+  // TURNO NOVO: o buffer ENCOLHEU porque o anterior fechou e virou mensagem.
+  // Sem zerar o cursor aqui, a resposta seguinte apareceria inteira de uma vez
+  // (o clamp mostraria tudo) — justamente o pulo que este componente existe
+  // para matar.
+  useEffect(() => {
+    if (text.length < prevLenRef.current) {
+      shownRef.current = 0
+      setShown(0)
+    }
+    prevLenRef.current = text.length
+  }, [text])
 
   useEffect(() => {
     if (prefersReducedMotion()) {
@@ -59,6 +68,7 @@ export default function GuiStreamText({ text }: { text: string }): React.JSX.Ele
     }
     let frame = 0
     let last = performance.now()
+    let painted = last
     let credit = 0
 
     const tick = (now: number): void => {
@@ -76,8 +86,12 @@ export default function GuiStreamText({ text }: { text: string }): React.JSX.Ele
       const speed = Math.max(1, pending / ((TARGET_LAG_MS / BASE_WORD_MS) * 5))
       credit += (elapsed / BASE_WORD_MS) * speed
       let words = Math.floor(credit)
-      if (words > 0) {
+      // Teto de repintura: acelerado, o revelador andaria a cada quadro e o
+      // markdown seria re-parseado 60×/s numa resposta longa. Um quadro a
+      // cada ~33ms é indistinguível a olho e devolve o resto da CPU ao app.
+      if (words > 0 && now - painted >= MIN_PAINT_MS) {
         credit -= words
+        painted = now
         let cursor = shownRef.current
         while (words > 0 && cursor < full.length) {
           cursor = nextWordEnd(full, cursor)
