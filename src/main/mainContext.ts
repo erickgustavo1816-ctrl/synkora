@@ -204,7 +204,15 @@ export interface MainContext {
   readonly surveyAborts: Map<string, () => void>
   readonly testServerPanes: Map<
     string,
-    { projectId: string; cwd: string; command: string; port?: number; label?: string }
+    {
+      projectId: string
+      cwd: string
+      /** ausente = terminal avulso da missão (2.0): não há script a digitar. */
+      command?: string
+      port?: number
+      label?: string
+      purpose?: 'test-server' | 'mission-shell'
+    }
   >
   readonly livePaneSpecs: Map<
     string,

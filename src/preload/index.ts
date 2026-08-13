@@ -9,7 +9,8 @@ import type {
   GuiResult
 } from '../main/guiSessions'
 import type { GuiMissionRole } from '../main/guiMissionContracts'
-import type { MissionGuiSpecResult } from '../main/ipc/missions'
+import type { MissionGuiSpecResult, MissionShellSpecResult } from '../main/ipc/missions'
+import type { PlanningGuiSpecResult } from '../main/ipc/projects'
 
 /** entrada do diário da caixa-preta + linha legível pronta para exibição */
 export type BlackboxTailEntry = BlackboxEntry & { line: string }
@@ -18,8 +19,9 @@ export type BlackboxTailEntry = BlackboxEntry & { line: string }
  *  o renderer copia/reexporta pelo accessor tipado de guiApi.ts. */
 export type { GuiLivePayload, GuiPaneSpawn, GuiPermBehavior, GuiResult }
 
-/** Papéis do chat de missão 2.0 e a resposta do missions.guiSpec. */
-export type { GuiMissionRole, MissionGuiSpecResult }
+/** Papéis do chat de missão 2.0 e as respostas das specs que o 2.0 abriu:
+ *  chat da missão, terminal avulso do worktree e sessão de planejamento. */
+export type { GuiMissionRole, MissionGuiSpecResult, MissionShellSpecResult, PlanningGuiSpecResult }
 
 export type {
   MissionProgressState,
@@ -886,6 +888,11 @@ const api = {
       ipcRenderer.invoke('projects:removePhoto', id),
     relocate: (id: string): Promise<RelocateResult> =>
       ipcRenderer.invoke('projects:relocate', id),
+    /** SYNKORA 2.0: spec do CHAT de PLANEJAMENTO do universo (a casa da coluna
+     *  "✦ geral" quando não há missão legada viva). paneId determinístico —
+     *  reabrir o universo cai na mesma conversa. */
+    planningGuiSpec: (projectId: string): Promise<PlanningGuiSpecResult> =>
+      ipcRenderer.invoke('projects:planningGuiSpec', projectId),
     onFlowChanged: (cb: (projectId: string) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
       ipcRenderer.on('projects:flowChanged', listener)
@@ -1276,6 +1283,12 @@ const api = {
      *  legada (com orquestrador) segue usando o paneSpec acima. */
     guiSpec: (missionId: string, role: GuiMissionRole): Promise<MissionGuiSpecResult> =>
       ipcRenderer.invoke('missions:guiSpec', missionId, role),
+    /** SYNKORA 2.0: TERMINAL avulso no worktree da missão (botão do trilho de
+     *  entrega). Pane shell cru — sem CLI, sem persona, sem MCP. O main já
+     *  emitiu `panes:open-free`, então a view MONTA o pane sozinha: o chamador
+     *  só navega para a aba Panes (mesmo padrão do ▶ testar). */
+    shellSpec: (missionId: string): Promise<MissionShellSpecResult> =>
+      ipcRenderer.invoke('missions:shellSpec', missionId),
     onChanged: (cb: (projectId: string) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
       ipcRenderer.on('missions:changed', listener)

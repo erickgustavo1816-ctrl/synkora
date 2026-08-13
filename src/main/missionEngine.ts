@@ -2063,8 +2063,9 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     if (!mission || !project)
       return { state: 'failed', detail: 'missão/projeto não encontrado' }
     const missionSource = missionWorkspacePath(project.path, mission)
-    // Servidor de teste do dono ainda rodando neste worktree seguraria
-    // arquivos durante o merge (Windows) — fecha antes de mesclar.
+    // Servidor de teste do dono — ou, no 2.0, o TERMINAL avulso da missão —
+    // ainda rodando neste worktree seguraria arquivos durante o merge
+    // (Windows). Os dois vivem no mesmo registro e caem aqui, antes de mesclar.
     if (mission.worktree) closeTestServersUnder(mission.worktree)
     if (
       !hasGitCommit(project.path) ||
