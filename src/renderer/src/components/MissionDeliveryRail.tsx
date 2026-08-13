@@ -182,44 +182,7 @@ export default function MissionDeliveryRail({
         </span>
         {mission.baseBranch && <span className="dr-base">base: {mission.baseBranch}</span>}
         {versionLabel && <span className="dr-version">◈ {versionLabel}</span>}
-        {queueLabel && <span className="dr-queue">{queueLabel}</span>}
       </div>
-
-      {/* ⇪ — a porteira é MECÂNICA: o agente pode pedir, mas só o clique do
-          dono enfileira. Missão direta não tem card de plano para "concluir",
-          então a única condição é a missão estar viva; árvore suja é recusada
-          pelo servidor com a mensagem exata do que falta commitar. */}
-      {live && !integration && (
-        <button
-          className={`btn tiny dr-btn dr-integrate${
-            mission.pendingIntegrationApproval ? ' approve-pending' : ''
-          }`}
-          data-tip={
-            mission.pendingIntegrationApproval
-              ? 'O agente pediu a integração — o merge SÓ anda com o SEU clique (porteira mecânica)'
-              : 'Colocar esta branch na fila serial de integração da versão'
-          }
-          onClick={onIntegrate}
-        >
-          {mission.pendingIntegrationApproval ? '⇪ aprovar integração' : '⇪ fila da versão'}
-        </button>
-      )}
-      {live && integration && (
-        <button
-          className="btn tiny dr-btn dr-integrate"
-          disabled={integration.state !== 'sync_required'}
-          data-tip={integration.lastError ?? queueLabel}
-          onClick={onIntegrate}
-        >
-          {integration.state === 'blocked'
-            ? integration.owner === 'orchestrator'
-              ? '⚠ reparo pendente'
-              : '⚠ Maestro decidindo'
-            : integration.state === 'sync_required'
-              ? '↻ retomar fila'
-              : `⇪ fila #${integration.position}`}
-        </button>
-      )}
 
       {live && (
         <>
@@ -287,6 +250,50 @@ export default function MissionDeliveryRail({
           )}
         </>
       )}
+
+      {/* ⇪ — o mockup põe a integração DEPOIS de um divisor, em acento: é a
+          alavanca irreversível do trilho, e ela não se confunde com as de
+          trabalho acima. A porteira é MECÂNICA: o agente pode pedir, mas só o
+          clique do dono enfileira. Missão direta não tem card de plano para
+          "concluir", então a única condição é a missão estar viva; árvore suja
+          é recusada pelo servidor com a mensagem exata do que falta commitar. */}
+      {live && <div className="dr-divider" aria-hidden="true" />}
+      {live && !integration && (
+        <button
+          className={`btn tiny dr-btn dr-integrate${
+            mission.pendingIntegrationApproval ? ' approve-pending' : ''
+          }`}
+          data-tip={
+            mission.pendingIntegrationApproval
+              ? 'O agente pediu a integração — o merge SÓ anda com o SEU clique (porteira mecânica)'
+              : 'Colocar esta branch na fila serial de integração da versão'
+          }
+          onClick={onIntegrate}
+        >
+          {mission.pendingIntegrationApproval
+            ? '⇪ aprovar integração'
+            : `⇪ fila da ${versionLabel ?? 'versão'}`}
+        </button>
+      )}
+      {live && integration && (
+        <button
+          className="btn tiny dr-btn dr-integrate"
+          disabled={integration.state !== 'sync_required'}
+          data-tip={integration.lastError ?? queueLabel}
+          onClick={onIntegrate}
+        >
+          {integration.state === 'blocked'
+            ? integration.owner === 'orchestrator'
+              ? '⚠ reparo pendente'
+              : '⚠ Maestro decidindo'
+            : integration.state === 'sync_required'
+              ? '↻ retomar fila'
+              : `⇪ fila #${integration.position}`}
+        </button>
+      )}
+      {/* Nota de fila/conflito logo abaixo do ⇪ — é ali que a pergunta nasce. */}
+      {queueLabel && <span className="dr-queue">{queueLabel}</span>}
+      {integration?.lastError && <span className="dr-conflict">⚠ {integration.lastError}</span>}
 
       {(mission.status === 'ativa' || mission.status === 'arquivada') && (
         <button

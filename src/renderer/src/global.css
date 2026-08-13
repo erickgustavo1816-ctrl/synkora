@@ -14,6 +14,9 @@
   --accent-deep: #c05a2e;
   --ok: #3e9b5f;
   --err: #c4453a;
+  /* âmbar do contrato visual (docs/MOCKUP_WORKSPACE.md): "espera o dono" —
+     nem sucesso, nem erro; é o sinal de que a decisão é sua */
+  --warn: #d9a23f;
   --panel: #26241f;
   --panel-2: #2e2b25;
   --panel-line: rgba(239, 232, 216, 0.12);
@@ -2797,9 +2800,14 @@ select {
 
   /* Empilhado o eixo NÃO é reverso: a ordem do DOM volta a valer, então a
      coluna de missões (último filho) precisa de `order` para subir ao topo —
-     e ela vira uma FAIXA horizontal, não uma barra lateral de 240px. */
+     e ela vira uma FAIXA horizontal, não uma barra lateral de 240px.
+
+     O prefixo `.board` NÃO é decoração: as regras do MODO PALCO moram bem
+     depois deste bloco no arquivo e têm a mesma especificidade, então sem ele
+     a cascata deixava o layout lateral vencer o empilhado (a caixa nunca
+     empilhava de verdade). `.board` é o próprio container da query. */
   .mission-col,
-  .board-main.direct-mode .mission-col {
+  .board .board-main.stage-mode .mission-col {
     order: -1;
     flex: none;
     flex-direction: row;
@@ -2813,13 +2821,15 @@ select {
     overflow-y: hidden;
   }
 
-  .board-main.direct-mode .maestro-window {
+  .board .board-main.stage-mode .maestro-window {
     order: 0;
     min-width: 0;
+    max-width: none;
+    width: 100%;
     flex: 1 1 50%;
   }
 
-  .board-main.direct-mode .board-content {
+  .board .board-main.stage-mode .board-content {
     order: 1;
     flex: 0 0 auto;
   }
@@ -4107,6 +4117,60 @@ select {
   border-color: var(--line-strong);
   background: var(--card);
   outline: none;
+}
+
+/* ---------- CHIPS DO PROJETO NA BARRA (mockup 2026-08-14) ----------
+   "Os números do projeto (◈ versão, contadores de missão, fila) são CHIPS NA
+   TOPBAR — nunca um cartão ocupando o centro." O centro é da conversa. */
+.ws-chips {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  margin-left: 2px;
+}
+
+.ws-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-2);
+  font: 700 10px/1 var(--mono);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.ws-chip.quiet {
+  opacity: 0.6;
+}
+
+.ws-chip-sep {
+  opacity: 0.45;
+  margin: 0 2px;
+}
+
+.ws-chip.accent {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, var(--card));
+  color: var(--accent-deep);
+}
+
+/* fila esperando o ⇪ do dono: o mesmo pulso de atenção do resto do app */
+.ws-chip.accent.pulse {
+  animation: perm-pulse 1.6s ease-in-out infinite;
+}
+
+/* janela estreita: o placar cede espaço para o nome e as abas (o trilho de
+   entrega e o quadro de rotas continuam dizendo tudo isso por extenso) */
+@media (max-width: 1080px) {
+  .ws-chips {
+    display: none;
+  }
 }
 
 /* falha de relocação: linha honesta abaixo da barra, some no próximo clique */
@@ -7379,15 +7443,31 @@ body.pane-docking .pane-bar.draggable {
 /* ONDA D: .mission-col-tools morreu junto com os interruptores do rodapé. */
 
 /* ---------- TRILHO DE ENTREGA (missão direta) ----------
-   O que sobra do board quando não há kanban: estado da branch + alavancas. */
+   O que sobra do board quando não há kanban: estado da branch + alavancas.
+   COMPACTO por contrato (mockup: trilho direito ~180-220px) — a leitura é de
+   relance, e o que ele empurra para fora é largura da CONVERSA. */
 .delivery-rail {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
   border: 1.5px solid var(--line-strong);
   border-radius: 10px;
   background: var(--card);
-  padding: 12px;
+  padding: 10px;
+}
+
+/* o mockup separa o ⇪ do resto: acima, o trabalho; abaixo, a entrega */
+.dr-divider {
+  height: 1px;
+  margin: 2px 0;
+  background: var(--line);
+}
+
+/* conflito/erro da fila mora colado no botão que o produziu */
+.dr-conflict {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--err);
 }
 
 .dr-head {
@@ -7548,7 +7628,11 @@ body.pane-docking .pane-bar.draggable {
   font-weight: 600;
 }
 
+/* saiu de dentro do `.dr-facts` (onda D) e virou nota do ⇪: a posição na fila
+   é resposta da alavanca de entrega, não fato da branch */
 .dr-queue {
+  font-size: 10px;
+  line-height: 1.4;
   color: var(--accent-deep);
 }
 
@@ -7556,6 +7640,8 @@ body.pane-docking .pane-bar.draggable {
   width: 100%;
   justify-content: flex-start;
   text-align: left;
+  padding: 4px 8px;
+  font-size: 10px;
 }
 
 .dr-integrate {
@@ -7604,15 +7690,21 @@ body.pane-docking .pane-bar.draggable {
   opacity: 1;
 }
 
-/* ---------- MODO MISSÃO DIRETA: conversa no CENTRO ----------
+/* ---------- MODO PALCO: A CONVERSA OCUPA O CENTRO ----------
+   O mockup é literal (docs/MOCKUP_WORKSPACE.md): "Coluna esquerda ~200-240px;
+   trilho direito ~180-220px; O CHAT FICA COM TODO O RESTO." Vale para missão
+   DIRETA e para a casa do planejamento (✦ geral) — missão LEGADA mantém o
+   desenho de colunas da era F6.
+
    `.board-main` é row-reverse, então ORDER MAIOR renderiza mais à ESQUERDA.
    A ordem visual muda só por CSS: reordenar os filhos no DOM remontaria os
    TerminalPane e mataria os PTYs do Maestro e dos orquestradores. */
-.board-main.direct-mode .mission-col {
+.board-main.stage-mode .mission-col {
   order: 2;
+  flex: 0 0 216px;
 }
 
-.board-main.direct-mode .maestro-window {
+.board-main.stage-mode .maestro-window {
   order: 1;
   width: auto;
   max-width: none;
@@ -7622,13 +7714,304 @@ body.pane-docking .pane-bar.draggable {
 
 /* a largura do centro é dada pela sobra entre coluna e trilho — arrastar não
    faz sentido aqui (os dois lados são fixos) */
-.board-main.direct-mode .maestro-resizer {
+.board-main.stage-mode .maestro-resizer {
   display: none;
 }
 
-.board-main.direct-mode .board-content {
+.board-main.stage-mode .board-content {
   order: 0;
-  flex: 0 0 268px;
+  flex: 0 0 204px;
+}
+
+/* ESCAPE: o ✦ geral de um projeto com tarefas SOLTAS legadas ainda renderiza
+   o kanban aqui. Espremê-lo em 204px seria trocar um problema por outro — a
+   coluna cresce quando existe kanban de verdade. */
+.board-main.stage-mode .board-content:has(.dept-filter) {
+  flex: 1 1 380px;
+}
+
+/* ✦ geral em modo palco: o retrato do projeto é conteúdo SECUNDÁRIO ao lado
+   do convite de planejamento — os números que importam subiram para os chips
+   da barra do universo (mockup: "nunca um cartão ocupando o centro"). */
+.board-main.stage-mode .project-general {
+  font-size: 11px;
+}
+
+.board-main.stage-mode .pg-identity {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.board-main.stage-mode .pg-avatar {
+  width: 54px;
+  height: 54px;
+}
+
+/* ---------- O PALCO EM PAPEL (mockup 2026-08-14) ----------
+   "O erro a nunca repetir: o chat NÃO é um painel escuro de terminal — o chat
+   é PAPEL." A caixa do palco perde o `.term-window` (fundo --panel, sombra de
+   janela de terminal) e vira uma superfície de papel com borda de tinta. O
+   painel escuro segue EXCLUSIVO de terminal: missão legada e os slots de
+   TerminalPane continuam pretos por dentro, como devem. */
+.maestro-window.stage-window {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1.5px solid var(--line-strong);
+  border-radius: 10px;
+}
+
+/* o chat ocupa a caixa inteira: quem respira é o conteúdo dele, não a moldura */
+.stage-window .maestro-body {
+  padding: 0;
+  gap: 0;
+}
+
+/* ---------- cabeçalho fino + seletor de conversas ---------- */
+.stage-head {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 12px 7px;
+  border-bottom: 1px solid var(--line);
+}
+
+.stage-pills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+/* conversa ainda nascendo: a linha some em vez de reservar um vão vazio */
+.stage-pills:empty {
+  display: none;
+}
+
+.stage-pill-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* pílula: inativa = borda de tinta; ativa = tinta cheia com texto papel
+   (o "ink-on-paper invertido" do contrato) */
+.stage-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 11px;
+  border: 1.5px solid var(--ink-3);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  font: 700 10px/1 var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: lowercase;
+  cursor: pointer;
+  transition:
+    color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    background var(--motion-fast) ease;
+}
+
+.stage-pill:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.stage-pill.active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+.stage-pill.term {
+  border-style: dashed;
+}
+
+/* conversa que espera o dono (permissão pendente) — mesmo vocabulário de
+   atenção do resto do app */
+.stage-pill.asking {
+  border-color: var(--accent);
+  color: var(--accent-deep);
+  animation: perm-pulse 1.6s ease-in-out infinite;
+}
+
+.stage-pill.active.asking {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
+}
+
+.stage-pill-glyph {
+  opacity: 0.65;
+}
+
+.stage-pill-close {
+  height: 20px;
+  padding: 0 5px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  font: 700 10px/1 var(--mono);
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.stage-pill-close:hover {
+  opacity: 1;
+  color: var(--ink);
+}
+
+/* a confirmação é INLINE: window.confirm quebra o foco da janela no Windows */
+.stage-pill-close.confirming {
+  opacity: 1;
+  padding: 0 7px;
+  border: 1.5px solid var(--err);
+  color: var(--err);
+  text-transform: lowercase;
+}
+
+/* ---------- a linha fina: `dev · opus 4.8 · mission/1f3a` ---------- */
+.stage-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.stage-meta-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+}
+
+/* separadores por CSS: a linha nunca ganha um "·" órfão quando um fato falta */
+.stage-meta-line > * + *::before {
+  content: '·';
+  margin: 0 6px;
+  opacity: 0.55;
+}
+
+.stage-meta-line .sm-role {
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: color-mix(in srgb, var(--ink) 72%, transparent);
+}
+
+.stage-meta-line .sm-role.term {
+  color: color-mix(in srgb, var(--accent-deep) 78%, transparent);
+}
+
+.stage-branch {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  max-width: 26ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stage-branch:hover {
+  color: var(--ink);
+}
+
+.stage-branch.copied {
+  color: var(--ok);
+}
+
+.stage-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stage-act {
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  font: 700 10px/1 var(--mono);
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+
+.stage-act:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.stage-act:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ---------- estados vazios do palco em PAPEL ----------
+   `.maestro-empty` e a casa do planejamento nasceram no painel escuro (cores
+   --panel-ink-*): em papel elas ficariam quase invisíveis. O TERMINAL dentro
+   do palco continua escuro por dentro — quem muda é só a moldura. */
+.stage-window .maestro-empty {
+  color: var(--ink-3);
+}
+
+.stage-window .planning-home .ph-title {
+  color: var(--ink-2);
+}
+
+.stage-window .planning-home .ph-text {
+  color: var(--ink-3);
+}
+
+.stage-window .planning-home .ph-text code {
+  color: var(--ink-2);
+}
+
+/* o botão do convite é papel-e-tinta aqui, não um term-btn de titlebar escuro */
+.stage-window .planning-home .term-btn {
+  height: 26px;
+  padding: 0 12px;
+  border: 1.5px solid var(--ink);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+}
+
+.stage-window .planning-home .term-btn:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.stage-window .planning-home .term-btn.ghost-dim {
+  border-color: var(--ink-3);
+  color: var(--ink-3);
+}
+
+.stage-window .planning-home .term-btn.ghost-dim:hover {
+  border-color: var(--ink);
+  background: transparent;
+  color: var(--ink);
 }
 
 /* ONDA D: o INTERRUPTOR DE PERMISSÕES do universo (.perm-switch/.ps-track/
@@ -13357,6 +13740,238 @@ body.progress-overlay-page #root {
   font-size: 13px;
   text-align: center;
   padding: 40px;
+}
+
+/* ============================================================
+   QUADRO DE ROTAS — a aba MAPA do mockup (docs/MOCKUP_WORKSPACE.md).
+   Linha = versão · colunas = backlog · rodando · fila ⇪ · integrada.
+   Papel e tinta: sem canvas, sem física, sem card flutuante.
+   ============================================================ */
+.routeboard {
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px 22px 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.routeboard-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+  font-size: 12px;
+  padding: 40px;
+}
+
+/* espelho exato da grade de `.rb-row` — inclusive a borda (1.5px) e o padding
+   (12px) da ficha, para o rótulo cair EM CIMA da coluna que ele nomeia */
+.rb-legend {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 10px;
+  padding: 0 13.5px;
+  font: 700 9px/1 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.rb-legend-lanes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 8px do padding da coluna + 1px da linha divisória dela */
+.rb-legend-item {
+  padding-left: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rb-legend-item.rb-fila {
+  color: var(--accent-deep);
+}
+
+.rb-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rb-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  padding: 10px 12px;
+}
+
+/* versão LANÇADA fica apagada com ✓ (o mockup pede isso literalmente) */
+.rb-row.released {
+  opacity: 0.62;
+  background: transparent;
+  border-style: dashed;
+}
+
+.rb-row-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.rb-row-name {
+  font: 700 12px/1.2 var(--mono);
+  color: var(--ink);
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rb-row-check {
+  color: var(--ok);
+}
+
+.rb-row-count {
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+.rb-lanes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.rb-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+}
+
+/* o rótulo por coluna some quando a legenda do topo dá conta (telas largas):
+   em coluna estreita ele volta a ser a única âncora de leitura */
+.rb-lane-label {
+  display: none;
+  font: 700 9px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.rb-lane-empty {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--ink) 32%, transparent);
+}
+
+.rb-card {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  font-family: inherit;
+  padding: 6px 8px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink-2);
+  cursor: pointer;
+  min-width: 0;
+  transition:
+    color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease;
+}
+
+.rb-card:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.rb-card.asking {
+  border-color: var(--warn);
+  animation: perm-pulse 1.6s ease-in-out infinite;
+}
+
+.rb-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rb-card-title {
+  font-size: 11px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.rb-card-note {
+  font-size: 9px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+.rb-dot.ok {
+  background: var(--ink-3);
+}
+
+.rb-dot.busy {
+  background: var(--accent);
+}
+
+.rb-dot.ask {
+  background: var(--warn);
+}
+
+.rb-dot.err {
+  background: var(--err);
+}
+
+.rb-dot.done {
+  background: var(--ok);
+}
+
+/* estreitou: as quatro colunas viram duas e cada uma reassume o rótulo */
+@media (max-width: 1080px) {
+  .rb-legend {
+    display: none;
+  }
+
+  .rb-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rb-lanes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .rb-lane-label {
+    display: block;
+  }
 }
 
 .planmap-head {
