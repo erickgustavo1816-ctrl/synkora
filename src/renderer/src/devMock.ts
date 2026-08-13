@@ -1196,6 +1196,17 @@ export function installDevMock(): void {
       setBypass: async () => undefined,
       setSensitiveBypass: async () => undefined
     },
+    // Pane GUI (docs/GUI_PANE_CONTRACT.md): no preview de browser não há CLI —
+    // as chamadas respondem ok e nenhum evento vivo chega.
+    gui: {
+      create: async () => ({ ok: true }),
+      send: async () => ({ ok: true }),
+      permission: async () => ({ ok: true }),
+      interrupt: async () => ({ ok: true }),
+      kill: async () => ({ ok: true }),
+      state: async () => ({ events: [] }),
+      onLive: () => () => undefined
+    },
     projectPlan: {
       get: async () => null,
       approve: async () => 'mock: roadmap aprovado pelo usuário',
