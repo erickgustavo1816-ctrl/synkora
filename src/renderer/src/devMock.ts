@@ -753,6 +753,14 @@ export function installDevMock(): void {
         return { ok: true, msg: 'conta trocada (mock)' }
       },
       paneSpec: async () => null,
+      // 2.0: a conta da conversa é escolhida DENTRO da missão (card do chat
+      // vazio / menu do cabeçalho). No preview o mock só carimba o seat.
+      setChatSeat: async (_projectId: string, missionId: string, seatId: string) => {
+        const m = missions.find((x) => x.id === missionId)
+        if (!m) return { ok: false, msg: 'missão não encontrada' }
+        Object.assign(m, { seatId, updatedAt: new Date().toISOString() })
+        return { ok: true, msg: 'conta escolhida (mock)' }
+      },
       // 2.0: no preview de browser não há CLI para conversar — a spec do chat
       // da missão recusa com texto honesto em vez de fingir sessão.
       guiSpec: async () => ({ ok: false, error: 'sem sessão de chat no preview' }),
@@ -1218,6 +1226,8 @@ export function installDevMock(): void {
       create: async () => ({ ok: true }),
       send: async () => ({ ok: true }),
       permission: async () => ({ ok: true }),
+      answerQuestion: async () => ({ ok: true }),
+      answerPlan: async () => ({ ok: true }),
       interrupt: async () => ({ ok: true }),
       kill: async () => ({ ok: true }),
       state: async () => ({ events: [] }),

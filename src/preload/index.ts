@@ -1211,6 +1211,19 @@ const api = {
       behavior: GuiPermBehavior
     ): Promise<GuiResult> =>
       ipcRenderer.invoke('gui:permission', paneId, requestId, behavior),
+    /** Responde o card de PERGUNTA (AskUserQuestion): mapa
+     *  { texto da pergunta → labels escolhidos unidos por ', ' }; mapa vazio
+     *  = "pular" (o agente segue sem a escolha). */
+    answerQuestion: (
+      paneId: string,
+      requestId: string,
+      answers: Record<string, string>
+    ): Promise<GuiResult> =>
+      ipcRenderer.invoke('gui:answerQuestion', paneId, requestId, answers),
+    /** Veredito do card de PLANO (ExitPlanMode): true = construir, false =
+     *  devolver para revisão. */
+    answerPlan: (paneId: string, requestId: string, approve: boolean): Promise<GuiResult> =>
+      ipcRenderer.invoke('gui:answerPlan', paneId, requestId, approve),
     interrupt: (paneId: string): Promise<GuiResult> =>
       ipcRenderer.invoke('gui:interrupt', paneId),
     kill: (paneId: string): Promise<GuiResult> => ipcRenderer.invoke('gui:kill', paneId),
@@ -1338,6 +1351,15 @@ const api = {
       ipcRenderer.invoke('missions:setOrchestratorSeat', projectId, missionId, choice),
     paneSpec: (projectId: string, missionId: string): Promise<MaestroPaneSpec | null> =>
       ipcRenderer.invoke('missions:paneSpec', projectId, missionId),
+    /** SYNKORA 2.0: a CONTA da conversa da missão direta — escolhida no card
+     *  do chat vazio ou trocada pelo cabeçalho. Mesmo CLI = a conversa é
+     *  transplantada; as sessões vivas morrem e o chat reabre no seat novo. */
+    setChatSeat: (
+      projectId: string,
+      missionId: string,
+      seatId: string
+    ): Promise<{ ok: boolean; msg?: string }> =>
+      ipcRenderer.invoke('missions:setChatSeat', projectId, missionId, seatId),
     /** SYNKORA 2.0: spec do CHAT da missão por papel (dev/reviewer/ajudante).
      *  O paneId é determinístico — reabrir cai na mesma conversa. Missão
      *  legada (com orquestrador) segue usando o paneSpec acima.

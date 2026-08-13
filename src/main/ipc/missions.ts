@@ -31,6 +31,7 @@ import { gitOff } from '../gitAsync'
 import { type Mission, type NewMission } from '../missions'
 import type { Project } from '../projects'
 import {
+  GUI_MISSION_ROLES,
   guiMissionFirstPrompt,
   guiMissionPaneId,
   guiPlanningFirstPrompt,
@@ -91,6 +92,10 @@ export interface MissionGuiSpecResult {
   ok: boolean
   spawn?: GuiPaneSpawn
   error?: string
+  /** 2.0: a missão nasce SEM conta (o modal só pergunta o título) — o chat
+   *  mostra o card de escolha em vez de um erro. Herança silenciosa do seat
+   *  do Maestro morreu por ordem do dono. */
+  needsSeat?: boolean
 }
 
 /**
@@ -445,14 +450,22 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       const route = routeGuiMissionPane(mission, role)
       if (!route.ok) return { ok: false, error: route.error }
 
-      // Conta: a escolhida na criação da missão > a já usada pelo orquestrador
-      // desta missão > a do PM do projeto. Modelo/effort seguem a missão.
-      const seatId =
-        mission.seatId ??
-        maestro.get(orchKey(mission.projectId, missionId)).seatId ??
-        maestro.get(mission.projectId).seatId
+      // CONTA DA CONVERSA (2.0): missão DIRETA só usa a conta que o dono
+      // escolheu PARA ELA — herdar o seat do Maestro em silêncio foi banido
+      // (o modal de criação nem pergunta mais). Sem conta o chat não é erro:
+      // é o card de escolha (`needsSeat`) no lugar da conversa. Missão LEGADA
+      // mantém a cadeia antiga — lá o orquestrador é quem manda.
+      const seatId = mission.direct
+        ? mission.seatId
+        : (mission.seatId ??
+          maestro.get(orchKey(mission.projectId, missionId)).seatId ??
+          maestro.get(mission.projectId).seatId)
       const seat = seatId ? seats.get(seatId) : undefined
-      if (!seat) return { ok: false, error: 'escolha uma conta para esta missão antes de abrir o chat' }
+      if (!seat) {
+        if (mission.direct)
+          return { ok: false, needsSeat: true, error: 'escolha a conta desta conversa' }
+        return { ok: false, error: 'escolha uma conta para esta missão antes de abrir o chat' }
+      }
       seats.preseed(seat)
 
       let paneId = guiMissionPaneId(role, missionId)
@@ -482,9 +495,13 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         projectId: mission.projectId,
         cli: seat.cli,
         configDir: seats.configDirOf(seat),
+        seatId: seat.id,
         cwd,
-        model: mission.model,
-        effort: mission.effort,
+        // A escolha feita NO CHAT vence a da criação: os seletores do composer
+        // gravam modelo/effort por pane, e reabrir tem de cair na última
+        // escolha do dono — não na que a missão nasceu.
+        model: remembered?.model ?? mission.model,
+        effort: remembered?.effort ?? mission.effort,
         systemPrompt: route.systemPrompt,
         resumeSessionId,
         permissionMode: effectiveMode,
@@ -520,6 +537,89 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         }
       })
       return { ok: true, spawn }
+    }
+  )
+
+  /**
+   * CONTA DA CONVERSA (2.0 — ordem do dono: "o seat eu escolho dentro da
+   * missão, num card, igual no Claude GUI"). Vale para o card da conversa
+   * vazia E para o menu de troca no cabeçalho do chat.
+   *
+   * Trocar a conta com conversa viva não pode custar o contexto: mesmo CLI →
+   * a conversa de CADA pane GUI da missão é TRANSPLANTADA para o config dir
+   * novo (mesma prova de 2026-08-04 do reseat do orquestrador); CLI diferente
+   * → nada a migrar, o resume já se recusa a atravessar binários. Depois as
+   * sessões vivas MORREM (elas falam pela conta antiga) e o renderer reabre
+   * pelo guiSpec — que agora resolve o seat novo.
+   */
+  ipcMain.handle(
+    'missions:setChatSeat',
+    (e, projectId: string, missionId: string, seatId: string): { ok: boolean; msg?: string } => {
+      const mission = missions.get(missionId)
+      if (!mission || mission.projectId !== projectId)
+        return { ok: false, msg: 'missão não encontrada' }
+      if (!mission.direct)
+        return { ok: false, msg: 'esta missão é do pipeline antigo — a conta dela é a do orquestrador' }
+      if (mission.status !== 'ativa')
+        return { ok: false, msg: 'só missão ativa troca a conta da conversa' }
+      const nextSeat = seats.get(seatId)
+      if (!nextSeat) return { ok: false, msg: 'escolha uma conta válida' }
+      const prevSeat = mission.seatId ? seats.get(mission.seatId) : undefined
+      if (prevSeat?.id === nextSeat.id) return { ok: true, msg: 'esta conversa já usa essa conta' }
+
+      // Transplante ANTES de matar as sessões: o arquivo de conversa é lido do
+      // config dir antigo, e o kill não o apaga — mas fazer na ordem certa
+      // mantém o motivo óbvio para quem ler depois.
+      const cwd =
+        missionTypeOf(mission) === 'planejamento'
+          ? projects.get(projectId)?.path
+          : (mission.worktree ?? projects.get(projectId)?.path)
+      let migrated = 0
+      if (prevSeat && cwd && prevSeat.cli === nextSeat.cli) {
+        const paneIds = [
+          ...GUI_MISSION_ROLES.filter((role) => role !== 'helper').map((role) =>
+            guiMissionPaneId(role, missionId)
+          ),
+          ...Array.from({ length: MAX_MISSION_HELPERS }, (_, i) =>
+            guiMissionPaneId('helper', missionId, i + 1)
+          )
+        ]
+        for (const paneId of paneIds) {
+          const remembered = guiSessions.remembered(paneId)
+          if (!remembered?.sessionId || remembered.cli !== nextSeat.cli) continue
+          if (
+            migrateCliSessionBetweenSeats(
+              nextSeat.cli,
+              prevSeat.id,
+              nextSeat.id,
+              cwd,
+              remembered.sessionId
+            )
+          )
+            migrated += 1
+        }
+      }
+      killMissionGuiPanes(missionId)
+      // `setExecutorSeat` e não `confirmOrchestrator`: aquele grava os três
+      // campos incondicionalmente e apagaria o modelo escolhido pelo dono.
+      const updated = missions.setExecutorSeat(missionId, nextSeat.id)
+      if (!updated) return { ok: false, msg: 'não consegui gravar a conta desta missão' }
+      blackbox.record({
+        cat: 'user',
+        event: 'mission-chat-seat-set',
+        actor: 'user',
+        ids: { projectId, missionId, seatId: nextSeat.id },
+        detail: { prevSeatId: prevSeat?.id, cli: nextSeat.cli, migrated }
+      })
+      emitMissionsChanged(projectId)
+      return {
+        ok: true,
+        msg: migrated
+          ? `conta trocada para ${nextSeat.name} — a conversa foi junto`
+          : prevSeat && prevSeat.cli !== nextSeat.cli
+            ? `conta trocada para ${nextSeat.name} — CLI diferente, a conversa recomeça`
+            : `conta desta conversa: ${nextSeat.name}`
+      }
     }
   )
 

@@ -136,12 +136,15 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     // janela. O throttle por pane e a guarda de foco moram no módulo — aqui só
     // se resolve QUEM está chamando (o guiSessions não conhece missão nem
     // projeto por nome, e nunca importa electron).
-    onPermissionPending: ({ paneId, projectId, toolName }) =>
+    onPermissionPending: ({ paneId, projectId, toolName, kind }) =>
       notifyDesktop({
         kind: 'attention',
         key: paneId,
         title: 'Synkora — missão esperando você',
-        body: `${paneLabel(ctx, paneId, projectId)} pediu permissão para ${toolName}`
+        body:
+          kind === 'question'
+            ? `${paneLabel(ctx, paneId, projectId)} fez uma pergunta a você`
+            : `${paneLabel(ctx, paneId, projectId)} pediu permissão para ${toolName}`
       })
   })
 
@@ -164,6 +167,34 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
         return { ok: false, error: `decisão inválida: ${String(behavior)}` }
       }
       return registry.permission(paneId, requestId, behavior)
+    }
+  )
+
+  // PERGUNTA COM OPÇÕES (AskUserQuestion): as escolhas do card viajam no
+  // updatedInput do MESMO control_response da permissão — quem monta o payload
+  // é o maestroSession; aqui só se valida a forma que veio do renderer.
+  ipcMain.handle(
+    'gui:answerQuestion',
+    (e, paneId: string, requestId: string, answers: Record<string, string>): GuiResult => {
+      extras.assertAppRendererSender(e)
+      if (!requestId) return { ok: false, error: 'pergunta sem identificador' }
+      if (!answers || typeof answers !== 'object' || Array.isArray(answers))
+        return { ok: false, error: 'resposta em formato inválido' }
+      const clean: Record<string, string> = {}
+      for (const [question, answer] of Object.entries(answers)) {
+        if (typeof answer === 'string') clean[question] = answer
+      }
+      return registry.answerQuestion(paneId, requestId, clean)
+    }
+  )
+
+  // VEREDITO DO PLANO (ExitPlanMode): construir = allow, revisar = deny.
+  ipcMain.handle(
+    'gui:answerPlan',
+    (e, paneId: string, requestId: string, approve: boolean): GuiResult => {
+      extras.assertAppRendererSender(e)
+      if (!requestId) return { ok: false, error: 'plano sem identificador' }
+      return registry.answerPlan(paneId, requestId, Boolean(approve))
     }
   )
 

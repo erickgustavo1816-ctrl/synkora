@@ -31,6 +31,8 @@ export interface GuiPaneSpawn {
   cli: 'claude' | 'codex'
   /** Config dir isolado do seat (CLAUDE_CONFIG_DIR / CODEX_HOME). */
   configDir: string
+  /** id do seat dono desta conversa — o renderer usa para o menu de troca */
+  seatId?: string
   /** Worktree da missão (ou raiz do projeto no planejamento). */
   cwd: string
   model?: string
@@ -158,6 +160,11 @@ export interface GuiSessionRecord {
   updatedAt: string
   /** Último modo ESCOLHIDO para este pane (onda D): reabrir mantém a escolha. */
   permissionMode?: GuiPermissionMode
+  /** Último modelo/effort ESCOLHIDOS para este pane (2.0, seletores do
+   *  composer): mesma régua do permissionMode — reabrir a conversa cai na
+   *  última escolha do dono, nunca de volta na da criação da missão. */
+  model?: string
+  effort?: string
 }
 
 interface GuiSessionsDoc {
@@ -187,6 +194,10 @@ interface GuiPaneEntry {
   /** Guarda de geração: o `dispose` apaga a chama e o sink da sessão MORTA
    *  cala na hora — evento atrasado nunca fala pelo pane que a substituiu. */
   token: { alive: boolean }
+  /** O MESMO sink do create (anel + push): é por ele que os eventos SINTÉTICOS
+   *  do roteamento de slash saem — nunca por fora, senão a remontagem perderia
+   *  o replay do que o comando respondeu. */
+  sink: (evt: SessionEvent) => void
 }
 
 export interface GuiSessionDeps {
@@ -204,11 +215,14 @@ export interface GuiSessionDeps {
   ): void
   /** 2.0 onda D: a conversa parou pedindo permissão. A NOTIFICAÇÃO de desktop
    *  é costurada no ipc/gui — este módulo nunca importa electron (é o que
-   *  mantém a suíte test:gui-sessions rodando em node puro). */
+   *  mantém a suíte test:gui-sessions rodando em node puro).
+   *  `kind` (aditivo): 'question' = AskUserQuestion parou a conversa — mesma
+   *  notificação, texto próprio; ausente/'permission' = pedido de sempre. */
   onPermissionPending?(input: {
     paneId: string
     projectId: string
     toolName: string
+    kind?: 'permission' | 'question'
   }): void
 }
 
@@ -285,7 +299,17 @@ export class GuiSessionRegistry {
         this.deps.onPermissionPending?.({
           paneId: spawn.paneId,
           projectId: spawn.projectId,
-          toolName: evt.toolName
+          toolName: evt.toolName,
+          kind: 'permission'
+        })
+      // Pergunta estruturada TAMBÉM acorda o dono: ela não passa pelo evento
+      // de permissão, e sem este gancho a conversa pararia em silêncio.
+      if (evt.type === 'question')
+        this.deps.onPermissionPending?.({
+          paneId: spawn.paneId,
+          projectId: spawn.projectId,
+          toolName: 'AskUserQuestion',
+          kind: 'question'
         })
     }
 
@@ -303,7 +327,7 @@ export class GuiSessionRegistry {
       return { ok: false, error: `não consegui abrir a sessão: ${text}` }
     }
 
-    this.panes.set(spawn.paneId, { spawn, fingerprint, session, ring, token })
+    this.panes.set(spawn.paneId, { spawn, fingerprint, session, ring, token, sink })
     // O modo é gravado JÁ no create (não espera o `init`): reabrir a conversa
     // sem escolher nada tem de cair na última escolha do dono.
     this.remember(spawn)
@@ -325,10 +349,76 @@ export class GuiSessionRegistry {
     const entry = this.panes.get(paneId)
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
     if (!entry.session.alive) return { ok: false, error: 'a sessão deste pane encerrou' }
+    const trimmed = text.trim()
+    if (trimmed.startsWith('/') && this.routeSlash(entry, trimmed)) return { ok: true }
     // Turno durante turno é problema RESOLVIDO dos backends (claude enfileira,
     // codex faz steer) — o motor não tem fila própria.
     entry.session.send(text)
     return { ok: true }
+  }
+
+  /**
+   * COMANDOS SLASH NO CHAT (2.0). true = tratado aqui, nada vai cru ao CLI.
+   * - codex: `runSlash` mapeia cada comando ao RPC real; desconhecido responde
+   *   sintético — slash cru num turn/start viraria prompt e QUEIMARIA tokens.
+   * - claude: o CLI em modo SDK executa comandos crus sozinho (caminho 'raw');
+   *   as exceções interceptadas são /model (set_model ao vivo + carimbo novo
+   *   no spawn/documento) e /fast (fora desta rodada: o toggle REAL exige
+   *   respawn com --settings {"fastMode":true} — ver o /fast do painel do PM).
+   * Evento sintético sai pelo SINK do entry (anel + push): sem o par
+   * command-output+result o spinner do renderer nunca fecharia.
+   */
+  private routeSlash(entry: GuiPaneEntry, trimmed: string): boolean {
+    if (entry.session instanceof CodexSession) {
+      if (entry.session.runSlash(trimmed)) return true
+      entry.sink({
+        type: 'command-output',
+        text: codexUnknownSlashReply(slashCommandName(trimmed))
+      })
+      entry.sink({ type: 'result', isError: false })
+      return true
+    }
+    const route = routeClaudeSlash(trimmed)
+    if (route.kind === 'raw') return false
+    if (route.kind === 'fast') {
+      entry.sink({
+        type: 'command-output',
+        text: 'o /fast do claude ainda não está disponível no chat — por enquanto use um pane de terminal'
+      })
+      entry.sink({ type: 'result', isError: false })
+      return true
+    }
+    if (route.kind === 'model-list') {
+      const models = entry.session.caps?.models ?? []
+      entry.sink({
+        type: 'command-output',
+        text: models.length
+          ? models.map((m) => `${m.value} — ${m.displayName}`).join('\n')
+          : 'a lista de modelos ainda não chegou do CLI — tente de novo em instantes'
+      })
+      entry.sink({ type: 'result', isError: false })
+      return true
+    }
+    const model = route.model
+    void entry.session.setModel(model).then((ok) => {
+      if (!entry.token.alive) return
+      if (ok) {
+        // O modelo novo vira o CARIMBO do spawn: sem isto uma remontagem
+        // posterior compararia o fingerprint velho e respawnaria à toa — e o
+        // documento reabriria a conversa na escolha antiga.
+        entry.spawn.model = model === 'default' ? undefined : model
+        entry.fingerprint = spawnFingerprint(entry.spawn)
+        this.remember(entry.spawn)
+      }
+      entry.sink({
+        type: 'command-output',
+        text: ok
+          ? `modelo: ${model}`
+          : `não consegui trocar o modelo para ${model} — confira o id com /model`
+      })
+      entry.sink({ type: 'result', isError: false })
+    })
+    return true
   }
 
   permission(paneId: string, requestId: string, behavior: GuiPermBehavior): GuiResult {
@@ -336,6 +426,29 @@ export class GuiSessionRegistry {
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
     const answered = entry.session.answerPermission(requestId, behavior)
     if (!answered) return { ok: false, error: 'este pedido de permissão não está mais pendente' }
+    return { ok: true }
+  }
+
+  /** Resposta do card de AskUserQuestion (claude apenas — o codex não tem a
+   *  tool, e a recusa diz isso em vez de fingir). */
+  answerQuestion(paneId: string, requestId: string, answers: Record<string, string>): GuiResult {
+    const entry = this.panes.get(paneId)
+    if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
+    if (!(entry.session instanceof MaestroSession))
+      return { ok: false, error: 'este CLI não tem perguntas interativas' }
+    if (!entry.session.answerQuestion(requestId, answers))
+      return { ok: false, error: 'esta pergunta não está mais pendente' }
+    return { ok: true }
+  }
+
+  /** Veredito do card de plano (ExitPlanMode; claude apenas). */
+  answerPlan(paneId: string, requestId: string, approve: boolean): GuiResult {
+    const entry = this.panes.get(paneId)
+    if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
+    if (!(entry.session instanceof MaestroSession))
+      return { ok: false, error: 'este CLI não tem perguntas interativas' }
+    if (!entry.session.answerPlanReview(requestId, approve))
+      return { ok: false, error: 'este plano não está mais pendente' }
     return { ok: true }
   }
 
@@ -462,9 +575,11 @@ export class GuiSessionRegistry {
   }
 
   /**
-   * Grava conversa + modo do pane (nunca apaga no kill: retomar é decisão de
-   * quem reabre). `sessionId` ausente = só o modo mudou — é o caminho do
-   * create, que carimba a escolha do dono antes de o CLI anunciar a conversa.
+   * Grava conversa + modo + modelo/effort do pane (nunca apaga no kill:
+   * retomar é decisão de quem reabre). `sessionId` ausente = só a escolha
+   * mudou — é o caminho do create, que carimba a escolha do dono antes de o
+   * CLI anunciar a conversa. Modelo/effort seguem a régua do permissionMode:
+   * cada create regrava a última escolha, e reabrir cai nela.
    */
   private remember(spawn: GuiPaneSpawn, sessionId?: string): void {
     const previous = this.doc.panes[spawn.paneId]
@@ -476,7 +591,9 @@ export class GuiSessionRegistry {
     if (
       previous?.cli === spawn.cli &&
       previous.sessionId === nextSession &&
-      previous.permissionMode === mode
+      previous.permissionMode === mode &&
+      previous.model === spawn.model &&
+      previous.effort === spawn.effort
     )
       return
     this.doc.panes[spawn.paneId] = {
@@ -484,7 +601,9 @@ export class GuiSessionRegistry {
       cli: spawn.cli,
       projectId: spawn.projectId,
       updatedAt: new Date().toISOString(),
-      permissionMode: mode
+      permissionMode: mode,
+      ...(spawn.model ? { model: spawn.model } : {}),
+      ...(spawn.effort ? { effort: spawn.effort } : {})
     }
     if (!this.deps.storeFile) return
     try {
@@ -512,6 +631,43 @@ export function inheritedResumeSessionId(
   if (remembered?.cli === next.cli && remembered.sessionId) return remembered.sessionId
   if (previous?.cli === next.cli && previous.resumeSessionId) return previous.resumeSessionId
   return undefined
+}
+
+// ————— comandos slash no chat (2.0) — helpers PUROS, exportados para teste —————
+
+/** O cardápio que o codex atende no chat (cada um vira o RPC real no
+ *  runSlash) — mora aqui para a resposta de comando desconhecido nunca mentir
+ *  sobre o que existe. */
+export const CODEX_GUI_SLASH_COMMANDS =
+  '/status /usage /compact /review /diff /init /permissions /rename /goal /mcp /skills /fast'
+
+/** Primeiro token do comando ('/model opus' → '/model'). */
+export function slashCommandName(text: string): string {
+  return text.trim().split(/\s+/)[0] ?? ''
+}
+
+export function codexUnknownSlashReply(cmd: string): string {
+  return `o codex não tem ${cmd} — comandos: ${CODEX_GUI_SLASH_COMMANDS}`
+}
+
+/** Decisão PURA do roteamento claude: o que o registry intercepta antes de o
+ *  texto chegar ao CLI. 'raw' = o CLI executa sozinho (modo SDK interpreta
+ *  comandos crus — /usage, /compact, skills…). Prefixo NUNCA casa: '/modelx'
+ *  é comando do CLI, não nosso. */
+export type GuiClaudeSlashRoute =
+  | { kind: 'model-set'; model: string }
+  | { kind: 'model-list' }
+  | { kind: 'fast' }
+  | { kind: 'raw' }
+
+export function routeClaudeSlash(trimmed: string): GuiClaudeSlashRoute {
+  const cmd = slashCommandName(trimmed)
+  if (cmd === '/model') {
+    const arg = trimmed.trim().slice(cmd.length).trim()
+    return arg ? { kind: 'model-set', model: arg } : { kind: 'model-list' }
+  }
+  if (cmd === '/fast') return { kind: 'fast' }
+  return { kind: 'raw' }
 }
 
 /** Identidade do spawn: o que só muda com processo novo. Exportada para teste

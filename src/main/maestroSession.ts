@@ -53,6 +53,58 @@ export interface CliCaps {
   account?: { email?: string; subscriptionType?: string }
 }
 
+// ————— pergunta estruturada (AskUserQuestion → card de opções no chat GUI) —————
+// Formas FIXADAS no contrato 2.0 (Anexo A do CONTRATO_CHAT_2_0) — o renderer
+// copia VERBATIM. O input chega no can_use_tool e a resposta viaja no
+// updatedInput do MESMO control_response da permissão.
+
+export interface GuiQuestionOption {
+  label: string
+  description?: string
+}
+
+export interface GuiQuestion {
+  question: string
+  header?: string
+  multiSelect?: boolean
+  options: GuiQuestionOption[]
+}
+
+/** Parse DEFENSIVO do input do AskUserQuestion. Qualquer coisa fora do molde
+ *  devolve undefined e o pedido segue como permissão genérica — pergunta
+ *  ilegível nunca some muda. */
+export function parseGuiQuestions(input: Record<string, unknown>): GuiQuestion[] | undefined {
+  const raw = input['questions']
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+  const questions: GuiQuestion[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') return undefined
+    const q = item as Record<string, unknown>
+    const questionText = q['question']
+    if (typeof questionText !== 'string' || !questionText.trim()) return undefined
+    const rawOptions = q['options']
+    if (!Array.isArray(rawOptions) || rawOptions.length === 0) return undefined
+    const options: GuiQuestionOption[] = []
+    for (const opt of rawOptions) {
+      if (!opt || typeof opt !== 'object') return undefined
+      const o = opt as Record<string, unknown>
+      const label = o['label']
+      if (typeof label !== 'string' || !label.trim()) return undefined
+      options.push({
+        label,
+        ...(typeof o['description'] === 'string' ? { description: o['description'] } : {})
+      })
+    }
+    questions.push({
+      question: questionText,
+      ...(typeof q['header'] === 'string' ? { header: q['header'] } : {}),
+      ...(typeof q['multiSelect'] === 'boolean' ? { multiSelect: q['multiSelect'] } : {}),
+      options
+    })
+  }
+  return questions
+}
+
 export type SessionEvent =
   | {
       type: 'init'
@@ -79,6 +131,12 @@ export type SessionEvent =
       canAlways: boolean
     }
   | { type: 'permission-cancel'; requestId: string }
+  /** AskUserQuestion virou card de opções (2.0): a resposta volta por
+   *  answerQuestion, no mesmo canal de control_response da permissão. */
+  | { type: 'question'; requestId: string; questions: GuiQuestion[] }
+  /** ExitPlanMode (modo plano): o plano em markdown para o dono aprovar
+   *  (answerPlanReview) — construir = allow, revisar = deny. */
+  | { type: 'plan-review'; requestId: string; plan: string }
   | { type: 'session-id'; sessionId: string }
   | { type: 'ready'; caps: CliCaps }
   | { type: 'command-output'; text: string }
@@ -332,6 +390,43 @@ export class MaestroSession {
     return { toolName: req.toolName, description: req.description }
   }
 
+  /** Responde a AskUserQuestion pendente: allow com as escolhas DENTRO do
+   *  updatedInput ({...input, answers}) — formato provado no claudecodeui.
+   *  `answers` = { "<texto da pergunta>": "labels unidos por ', '" }; "pular"
+   *  é answers {} com allow. Id stale → false, espelhando answerPermission. */
+  answerQuestion(requestId: string, answers: Record<string, string>): boolean {
+    const req = this.pending.get(requestId)
+    if (!req) return false
+    this.pending.delete(requestId)
+    this.write({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: requestId,
+        response: { behavior: 'allow', updatedInput: { ...req.input, answers } }
+      }
+    })
+    this.resetIdle()
+    return true
+  }
+
+  /** Veredito do modo plano (ExitPlanMode): construir = allow (updatedInput é
+   *  o próprio input); revisar = deny com a frase que o CLI espera. */
+  answerPlanReview(requestId: string, approve: boolean): boolean {
+    const req = this.pending.get(requestId)
+    if (!req) return false
+    this.pending.delete(requestId)
+    const response = approve
+      ? { behavior: 'allow', updatedInput: req.input }
+      : { behavior: 'deny', message: 'User asked to revise the plan' }
+    this.write({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: requestId, response }
+    })
+    this.resetIdle()
+    return true
+  }
+
   interrupt(): void {
     this.write({
       type: 'control_request',
@@ -527,19 +622,43 @@ export class MaestroSession {
         const req = evt.request
         if (req?.subtype === 'can_use_tool' && evt.request_id && req.tool_name) {
           const suggestions = req.permission_suggestions ?? []
+          const input = req.input ?? {}
+          // Interativo ou não, o pedido mora no MESMO `pending`: a resposta de
+          // question/plan-review reusa o control_response da permissão, e o
+          // control_cancel_request abaixo cobre os três tipos de graça.
           this.pending.set(evt.request_id, {
             toolName: req.display_name ?? req.tool_name,
             description: req.description ?? '',
-            input: req.input ?? {},
+            input,
             suggestions
           })
-          this.clearIdle() // esperando o humano
+          this.clearIdle() // esperando o humano — interativo NUNCA expira
+          // PERGUNTA ESTRUTURADA (2.0): AskUserQuestion vira card de opções.
+          // GOTCHA documentado no fork (claudecodeui): em acceptEdits/
+          // bypassPermissions o caminho de permissão pode resolver ANTES do
+          // can_use_tool e a pergunta nem chega (o modelo inventa a resposta)
+          // — fora desta rodada; default/plan cobrem o caminho feliz.
+          if (req.tool_name === 'AskUserQuestion') {
+            const questions = parseGuiQuestions(input)
+            if (questions) {
+              this.emit({ type: 'question', requestId: evt.request_id, questions })
+              break
+            }
+            // input torto → cai na permissão genérica (nunca engolir o pedido)
+          }
+          // MODO PLANO: ExitPlanMode carrega o plano em markdown (o fork
+          // desfaz o \n escapado — mesma regra aqui).
+          if (req.tool_name === 'ExitPlanMode' || req.tool_name === 'exit_plan_mode') {
+            const plan = String(input['plan'] ?? '').replace(/\\n/g, '\n')
+            this.emit({ type: 'plan-review', requestId: evt.request_id, plan })
+            break
+          }
           this.emit({
             type: 'permission',
             requestId: evt.request_id,
             toolName: req.display_name ?? req.tool_name,
             description: req.description ?? '',
-            inputPretty: firstLines(JSON.stringify(req.input ?? {}, null, 2), DETAIL_MAX),
+            inputPretty: firstLines(JSON.stringify(input, null, 2), DETAIL_MAX),
             reason: req.decision_reason,
             canAlways: suggestions.length > 0
           })
@@ -548,6 +667,9 @@ export class MaestroSession {
       }
 
       case 'control_cancel_request':
+        // Vale para permission E question/plan-review: os três moram no mesmo
+        // `pending`, então o permission-cancel com o requestId limpa qualquer
+        // um deles no renderer (contrato A.3 — visível nos testes do chat).
         if (evt.request_id && this.pending.delete(evt.request_id)) {
           this.emit({ type: 'permission-cancel', requestId: evt.request_id })
           this.resetIdle()
