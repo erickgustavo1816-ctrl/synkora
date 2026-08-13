@@ -2,10 +2,13 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import PaneChrome, { ZERO_STATS } from './PaneChrome'
+import PaneChrome, { ZERO_STATS, type PaneRole } from './PaneChrome'
 import TerminalPane from './TerminalPane'
+import GuiPane from './GuiPane'
 import ProjectGeneral from './ProjectGeneral'
 import NewMissionModal from './NewMissionModal'
+import MissionColumn, { type MissionColumnEntry } from './MissionColumn'
+import MissionDeliveryRail from './MissionDeliveryRail'
 import { TestServerModal } from './TestServerModal'
 import { ModelSelect } from './ModelSelect'
 import Select from './Select'
@@ -21,8 +24,10 @@ import {
 import {
   useStore,
   type Department,
+  type GuiPaneStatus,
   type Mission,
   type Pane,
+  type PaneActivity,
   type PlanLane,
   type Task,
   type TaskStatus,
@@ -30,6 +35,38 @@ import {
   type Version
 } from '../store'
 import { DEPARTMENTS, DEPT_BY_KEY, deptHueVar, STATUS_LABEL, STATUS_ORDER } from '../departments'
+import type { GuiPaneSpawn } from '../guiApi'
+import { missionGui, type MissionGuiRole } from '../missionGui'
+
+/** Uma conversa aberta de uma missão DIRETA (onda B). O papel não viaja na
+ *  spec — é o Board que sabe por que pediu cada uma. */
+interface MissionGuiSlot {
+  role: MissionGuiRole
+  spawn: GuiPaneSpawn
+}
+
+const MISSION_GUI_ROLE_LABEL: Record<MissionGuiRole, string> = {
+  dev: 'agente',
+  reviewer: 'revisor',
+  helper: 'ajudante'
+}
+
+/** O chrome do pane já sabe pintar estes papéis (cor, glifo, rótulo) — a
+ *  conversa da missão reusa o vocabulário do pipeline em vez de criar outro. */
+const MISSION_GUI_PANE_ROLE: Record<MissionGuiRole, PaneRole> = {
+  dev: 'dev',
+  reviewer: 'review',
+  helper: 'ajudante'
+}
+
+/** O chat não tem PTY: o LED do chrome vem do estado da SESSÃO. */
+const GUI_ACTIVITY: Record<GuiPaneStatus, PaneActivity> = {
+  starting: 'run',
+  working: 'run',
+  'waiting-you': 'idle',
+  idle: 'idle',
+  dead: 'dead'
+}
 
 // Spec do pane TUI do Maestro (tipo vem da bridge do preload).
 type MaestroPaneSpec = NonNullable<Awaited<ReturnType<typeof window.synkora.maestro.paneSpec>>>
@@ -1217,6 +1254,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const paneEffort = useStore((s) => s.paneEffort)
   const paneModel = useStore((s) => s.paneModel)
   const paneActivity = useStore((s) => s.paneActivity)
+  const guiPanes = useStore((s) => s.guiPanes)
   const resetPaneTelemetry = useStore((s) => s.resetPaneTelemetry)
   // Vários universos ficam montados ao mesmo tempo (troca estilo Discord) —
   // efeitos que mexem em estado global/processos só rodam no projeto ATIVO.
@@ -1236,6 +1274,15 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // Specs dos ORQUESTRADORES por missão — panes ficam MONTADOS (display:none
   // fora da aba ativa), como tudo que roda CLI de verdade.
   const [missionSpecs, setMissionSpecs] = useState<Record<string, MaestroPaneSpec>>({})
+  // MISSÃO DIRETA (2.0): no lugar do orquestrador TUI, uma ou mais CONVERSAS
+  // GUI no worktree — o agente (dev), o revisor de sessão limpa e ajudantes.
+  // Todas ficam MONTADAS depois de abertas (a conversa É o trabalho); trocar
+  // de papel só troca qual slot está visível.
+  const [missionGuiSlots, setMissionGuiSlots] = useState<Record<string, MissionGuiSlot[]>>({})
+  const [missionGuiActive, setMissionGuiActive] = useState<Record<string, string>>({})
+  const [missionGuiError, setMissionGuiError] = useState<Record<string, string>>({})
+  const missionGuiInFlight = useRef<Set<string>>(new Set())
+  const dropGuiPane = useStore((s) => s.dropGuiPane)
   const [newMissionOpen, setNewMissionOpen] = useState(false)
   // Troca de CONTA do orquestrador no meio da missão (limite estourou):
   // mesmo CLI = a conversa é transplantada junto (sondas 2026-08-04).
@@ -1251,7 +1298,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // Missão criada pelo PM aguardando a escolha do orquestrador no modal;
   // "depois" marca dismissed e o placeholder da aba da missão reabre.
   const [pendingOrchDismissed, setPendingOrchDismissed] = useState<Record<string, boolean>>({})
-  const pendingOrchMission = missions.find((m) => m.status === 'ativa' && m.pendingOrchestrator)
+  // Missão DIRETA nunca pede orquestrador: se um carimbo legado de
+  // `pendingOrchestrator` sobrar nela, o modal de escolha não deve abrir —
+  // não há orquestrador para nascer.
+  const pendingOrchMission = missions.find(
+    (m) => m.status === 'ativa' && m.pendingOrchestrator && !m.direct
+  )
   // "nova missão a partir deste card" (card done de missão já integrada):
   // abre o MESMO modal com título/goal pré-preenchidos referenciando o card.
   const [missionPrefill, setMissionPrefill] = useState<{ title: string; goal: string } | null>(
@@ -1558,6 +1610,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     if (!isActive || !window.synkora.missions) return
     for (const m of missions) {
       if (m.status !== 'ativa' && m.status !== 'integrando') continue
+      // MISSÃO 2.0: direta NÃO tem orquestrador. Sai antes do paneSpec — que
+      // spawnaria um CLI TUI com a persona de orquestrador em cima de uma
+      // missão que não tem plano nem cards para ele dirigir.
+      if (m.direct) continue
       // aguardando o modal de escolha do orquestrador — o paneSpec recusaria
       if (m.pendingOrchestrator) continue
       const current = missionSpecs[m.id]
@@ -1621,6 +1677,109 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     })
   }, [missions])
 
+  // ————— MISSÃO DIRETA: as conversas do worktree —————
+  // Nada nasce em segundo plano (cada slot é um CLI de verdade): o chat do
+  // agente abre quando o dono ENTRA na missão pela primeira vez e daí em
+  // diante fica montado. A guarda de voo evita o fetch duplo enquanto o 1º
+  // `guiSpec` viaja — o efeito redispara antes de o estado chegar.
+  useEffect(() => {
+    if (!isActive || !selMission?.direct) return
+    const mid = selMission.id
+    if (missionGuiSlots[mid]?.length) return
+    const key = `${mid}:dev`
+    if (missionGuiInFlight.current.has(key)) return
+    missionGuiInFlight.current.add(key)
+    void missionGui
+      .spec(mid, 'dev')
+      .then((res) => {
+        if (!res.ok || !res.spawn) {
+          setMissionGuiError((prev) => ({
+            ...prev,
+            [mid]: res.error ?? 'não deu para abrir a conversa desta missão'
+          }))
+          return
+        }
+        const spawn = res.spawn
+        setMissionGuiSlots((prev) =>
+          prev[mid]?.length ? prev : { ...prev, [mid]: [{ role: 'dev', spawn }] }
+        )
+        setMissionGuiActive((prev) => ({ ...prev, [mid]: spawn.paneId }))
+        setMissionGuiError((prev) => {
+          if (!prev[mid]) return prev
+          const next = { ...prev }
+          delete next[mid]
+          return next
+        })
+      })
+      .finally(() => missionGuiInFlight.current.delete(key))
+  }, [isActive, selMission?.id, selMission?.direct, missionGuiSlots])
+
+  // Missão saiu de viva: as sessões dela morrem no main (gui:kill) e os slots
+  // somem. Mesma cautela do efeito dos orquestradores — missão AUSENTE da
+  // lista não conta (`missions` vira a lista de OUTRO projeto ao trocar de
+  // universo, e matar aqui derrubaria conversa boa).
+  useEffect(() => {
+    setMissionGuiSlots((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const id of Object.keys(next)) {
+        const m = missions.find((x) => x.id === id)
+        if (!m || (m.status !== 'concluida' && m.status !== 'arquivada')) continue
+        for (const slot of next[id]) dropGuiPane(slot.spawn.paneId)
+        delete next[id]
+        changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [missions, dropGuiPane])
+
+  /** Abre (ou volta o foco para) uma conversa da missão direta. */
+  async function openMissionGuiRole(missionId: string, role: MissionGuiRole): Promise<void> {
+    const slots = missionGuiSlots[missionId] ?? []
+    // Agente e revisor são ÚNICOS por missão: clicar de novo volta o foco para
+    // a rodada em andamento. A sessão do revisor é limpa por NASCER limpa —
+    // recriar aqui jogaria fora a revisão que ele já estava escrevendo.
+    if (role !== 'helper') {
+      const existing = slots.find((s) => s.role === role)
+      if (existing) {
+        setMissionGuiActive((prev) => ({ ...prev, [missionId]: existing.spawn.paneId }))
+        return
+      }
+    }
+    const key = `${missionId}:${role}`
+    if (missionGuiInFlight.current.has(key)) return
+    missionGuiInFlight.current.add(key)
+    const res = await missionGui.spec(missionId, role)
+    missionGuiInFlight.current.delete(key)
+    if (!res.ok || !res.spawn) {
+      setMissionGuiError((prev) => ({
+        ...prev,
+        [missionId]: res.error ?? `não deu para abrir ${MISSION_GUI_ROLE_LABEL[role]}`
+      }))
+      return
+    }
+    const spawn = res.spawn
+    setMissionGuiSlots((prev) => {
+      const cur = prev[missionId] ?? []
+      if (cur.some((s) => s.spawn.paneId === spawn.paneId)) return prev
+      return { ...prev, [missionId]: [...cur, { role, spawn }] }
+    })
+    setMissionGuiActive((prev) => ({ ...prev, [missionId]: spawn.paneId }))
+  }
+
+  /** Fecha UMA conversa (revisor/ajudante). O chat do agente não fecha por
+   *  aqui: ele é a missão. */
+  function closeMissionGuiSlot(missionId: string, paneId: string): void {
+    dropGuiPane(paneId)
+    const rest = (missionGuiSlots[missionId] ?? []).filter((s) => s.spawn.paneId !== paneId)
+    setMissionGuiSlots((prev) => ({ ...prev, [missionId]: rest }))
+    setMissionGuiActive((prev) =>
+      prev[missionId] === paneId
+        ? { ...prev, [missionId]: rest[0]?.spawn.paneId ?? '' }
+        : prev
+    )
+  }
+
   // Missão saiu de VIVA (integrada/arquivada) com a aba dela aberta → volta para
   // ✦ geral. Sem isso a aba 🚀 desaparecia da fila e nenhuma aba ficava ativa:
   // board sem conteúdo e sem terminal. Guardas: só no projeto ATIVO e só quando
@@ -1654,6 +1813,17 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const maestroSeat = seats.find((x) => x.id === maestroSeatId)
   const selSpec = selMission ? missionSpecs[selMission.id] : undefined
   const selSeat = selSpec ? seats.find((x) => x.id === selSpec.seatId) : undefined
+  // Missão DIRETA: quem ocupa o centro é uma conversa GUI, não um TUI. O slot
+  // ativo manda no chrome (modelo/estado vêm do estado do chat, não do PTY).
+  const isDirect = Boolean(selMission?.direct)
+  const directSlots = selMission ? (missionGuiSlots[selMission.id] ?? []) : []
+  const directActiveId = selMission ? missionGuiActive[selMission.id] : undefined
+  const directSlot =
+    directSlots.find((s) => s.spawn.paneId === directActiveId) ?? directSlots[0] ?? undefined
+  const directGui = directSlot ? guiPanes[directSlot.spawn.paneId] : undefined
+  const directSeat = directSlot
+    ? seats.find((x) => x.configDir && x.configDir === directSlot.spawn.configDir)
+    : undefined
   const measuredMaestroBox = maestroTerminalBox.w > 0 ? maestroTerminalBox : undefined
   const maestroTerminalFont = settings?.terminalFontSize ?? TERMINAL_DEFAULT_FONT_SIZE
   const maestroTerminalLineHeight =
@@ -1726,160 +1896,44 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const visible = byDept
   // Aba geral virou a casa do PO: kanban só aparece numa MISSÃO (ou se ainda
   // existirem tarefas soltas legadas para não sumir com dado do usuário).
-  const showKanban = Boolean(selMission) || missionTasks.length > 0
+  // MISSÃO DIRETA (2.0) não tem card nenhum: o board dela é a conversa no
+  // centro + o trilho de entrega — kanban vazio ali só ocuparia a tela.
+  const showKanban = isDirect ? false : Boolean(selMission) || missionTasks.length > 0
+
+  // Linhas da coluna da esquerda: o Board resolve tudo (conta, modelo, versão,
+  // progresso, pulso) e a coluna só desenha.
+  const missionColumnEntries: MissionColumnEntry[] = liveMissions.map((m) => {
+    const spec = missionSpecs[m.id]
+    const slots = missionGuiSlots[m.id] ?? []
+    // Missão direta: a conta/modelo que aparecem no card são os da CONVERSA
+    // aberta (o que o dono está de fato gastando ali), não os de um
+    // orquestrador que não existe.
+    const guiSpawn = slots[0]?.spawn
+    const seat = guiSpawn
+      ? seats.find((x) => x.configDir && x.configDir === guiSpawn.configDir)
+      : seats.find((x) => x.id === (spec?.seatId ?? m.seatId ?? maestroSeatId))
+    // O chat não escreve em `paneLastLines`, então a heurística do "?" não o
+    // alcança: permissão pendente numa conversa da missão é o sinal real de
+    // "esperando você" e precisa pulsar o card igual ao ask_user.
+    const guiWaiting = slots.some((s) => guiPanes[s.spawn.paneId]?.perm)
+    const cards = tasks.filter((t) => t.missionId === m.id && t.kind !== 'plan')
+    return {
+      mission: m,
+      done: cards.filter((t) => t.status === 'done').length,
+      total: cards.length,
+      seatName: seat?.name,
+      model: guiPanes[slots[0]?.spawn.paneId ?? '']?.model ?? guiSpawn?.model ?? spec?.model ?? m.model,
+      versionLabel: versionName(m.versionId),
+      pulse:
+        tabPulse[m.id] ??
+        (guiWaiting ? 'o agente está esperando sua permissão nesta conversa' : undefined),
+      queueLabel: integrationQueueLabel(m)
+    }
+  })
 
 
   return (
     <div className="board">
-      {/* Abas de MISSÃO: cada missão tem orquestrador, tarefas e (com git)
-          branch próprios. "Geral" = o PM do universo + tarefas soltas. */}
-      <div className="mission-bar">
-        {/* NAVEGAÇÃO — onde você está trabalhando */}
-        <div className="mission-tabs">
-          <button
-            className={`mission-tab ${!selMission ? 'active' : ''}${tabPulse['geral'] ? ' asking' : ''}`}
-            data-tip={
-              tabPulse['geral']
-                ? `❓ O MAESTRO PERGUNTOU A VOCÊ:\n${tabPulse['geral']}`
-                : 'PM do universo: conversa geral, cria missões e tarefas soltas'
-            }
-            onClick={() => setMissionTab(projectId, null)}
-          >
-            <span className="mt-glyph">{tabPulse['geral'] ? '❓' : '✦'}</span>
-            <span className="mt-label">geral</span>
-          </button>
-          {liveMissions.map((m) => {
-            const count = tasks.filter((t) => t.missionId === m.id && t.kind !== 'plan').length
-            const doneCount = tasks.filter(
-              (t) => t.missionId === m.id && t.kind !== 'plan' && t.status === 'done'
-            ).length
-            // Hover ENXUTO (o goal virou briefing gigante escrito pelo PM —
-            // despejá-lo aqui cobria a tela): 1ª linha do goal truncada +
-            // versão/branch/progresso. O briefing completo vive no plano.
-            const goalLine = (m.goal ?? '').split('\n')[0].trim()
-            const goalTip =
-              goalLine && goalLine !== m.title
-                ? goalLine.length > 110
-                  ? `${goalLine.slice(0, 110)}…`
-                  : goalLine
-                : ''
-            const metaTip = [
-              versionName(m.versionId) ? `◈ ${versionName(m.versionId)}` : '',
-              m.branch ?? '',
-              integrationQueueLabel(m) ?? '',
-              count > 0 ? `▣ ${doneCount}/${count} cards` : ''
-            ]
-              .filter(Boolean)
-              .join(' · ')
-            return (
-              <button
-                key={m.id}
-                className={`mission-tab ${selMission?.id === m.id ? 'active' : ''}${
-                  m.status === 'integrando' ? ' integrating' : ''
-                }${tabPulse[m.id] || m.pendingIntegrationApproval ? ' asking' : ''}`}
-                data-tip={
-                  tabPulse[m.id]
-                    ? `❓ O ORQUESTRADOR PERGUNTOU A VOCÊ:\n${tabPulse[m.id]}`
-                    : m.pendingIntegrationApproval
-                      ? `⇪ INTEGRAÇÃO AGUARDA SEU AVAL:\no agente pediu para integrar "${m.title}" — abra a missão e confirme no botão ⇪ (nada mergeia sem você)`
-                      : [m.title, goalTip, metaTip].filter(Boolean).join('\n')
-                }
-                onClick={() => setMissionTab(projectId, m.id)}
-              >
-                <span className="mt-glyph">
-                  {tabPulse[m.id] ? '❓' : m.pendingIntegrationApproval ? '⇪' : '🚀'}
-                </span>
-                <span className="mt-label">{m.title}</span>
-                {count > 0 && (
-                  <span className="mt-count">
-                    {doneCount}/{count}
-                  </span>
-                )}
-                {m.integration && m.integration.state !== 'merging' && (
-                  <span
-                    className={`mt-queue ${m.integration.state}`}
-                    aria-label={integrationQueueLabel(m)}
-                  >
-                    {m.integration.state === 'blocked'
-                      ? m.integration.owner === 'orchestrator'
-                        ? '! reparo'
-                        : '! Maestro'
-                      : m.integration.state === 'sync_required'
-                        ? '↻ sync'
-                        : `fila #${m.integration.position}`}
-                  </span>
-                )}
-                {m.status === 'integrando' && <span className="mt-merging" aria-hidden="true" />}
-              </button>
-            )
-          })}
-          <button
-            className="mission-tab add"
-            disabled={greenfieldLocked}
-            title={
-              greenfieldLocked
-                ? 'Projeto novo: as missões nascem pelo Maestro, na ordem do plano mestre.'
-                : undefined
-            }
-            data-tip={
-              greenfieldLocked
-                ? 'Projeto novo: as missões nascem pelo Maestro, na ordem do plano mestre.'
-                : 'Nova missão: um fluxo de trabalho com orquestrador e branch próprios'
-            }
-            onClick={() => {
-              if (!greenfieldLocked) setNewMissionOpen(true)
-            }}
-          >
-            <span className="mt-glyph">+</span>
-            <span className="mt-label">missão</span>
-          </button>
-        </div>
-
-        {/* CONTROLE DO UNIVERSO — não é navegação, então mora do outro lado da
-            divisória. O bypass é um INTERRUPTOR: ele tem dois estados fixos e
-            o usuário precisa saber em qual está sem ler o texto. */}
-        <div className="mission-bar-tools">
-          <span className="bar-div" aria-hidden="true" />
-          <button
-            className={`perm-switch ${maestroBypass ? 'bypass' : 'guard'}`}
-            role="switch"
-            aria-checked={maestroBypass}
-            data-tip={
-              maestroBypass
-                ? 'Permissões em BYPASS: os agentes seguem reto, sem pedir aprovação. Clique para religar as aprovações.'
-                : 'Aprovações RELIGADAS: os agentes pedem permissão. Clique para voltar ao fluxo reto (bypass).'
-            }
-            onClick={() => void toggleBypass(projectId, !maestroBypass)}
-          >
-            <span className="ps-track">
-              <span className="ps-knob">{maestroBypass ? '⏩' : '🛡'}</span>
-            </span>
-            <span className="ps-text">{maestroBypass ? 'bypass' : 'aprovações'}</span>
-          </button>
-          {/* Override do DONO para missão SENSÍVEL (classificador de risco):
-              sem ele, projeto de domínio fiscal/PII perde o bypass em TODO
-              pane escritor. Só faz sentido com bypass ligado. */}
-          {maestroBypass && (
-            <button
-              className={`perm-switch ${sensitiveBypassOk ? 'bypass' : 'guard'}`}
-              role="switch"
-              aria-checked={sensitiveBypassOk}
-              data-tip={
-                sensitiveBypassOk
-                  ? 'Missões SENSÍVEIS (dados pessoais/fiscais, pagamentos…) também seguem em bypass — sua escolha, auditada na caixa-preta. Clique para voltar à proteção.'
-                  : 'Missões classificadas como SENSÍVEIS pedem aprovação mesmo com bypass. Num projeto cujo domínio é fiscal/PII isso trava tudo — clique para liberar o bypass nelas.'
-              }
-              onClick={() => void toggleSensitiveBypass(projectId, !sensitiveBypassOk)}
-            >
-              <span className="ps-track">
-                <span className="ps-knob">{sensitiveBypassOk ? '⏩' : '🔒'}</span>
-              </span>
-              <span className="ps-text">{sensitiveBypassOk ? 'sensível ok' : 'sensível'}</span>
-            </button>
-          )}
-        </div>
-      </div>
-
       {missionMsg && (
         <div className="mission-msg">
           {missionMsg}
@@ -1889,11 +1943,14 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         </div>
       )}
 
-      {/* Linha principal em row-reverse: o maestro (1º filho) vira COLUNA
-          LATERAL DIREITA de altura total; o conteúdo fica à esquerda.
-          O Maestro/orquestrador é um PANE CLI DE VERDADE. TODOS ficam
-          montados (display:none fora da aba) — trocar de aba não mata nada. */}
-      <div className="board-main">
+      {/* Linha principal em row-reverse: o 1º filho renderiza à DIREITA e o
+          último à ESQUERDA. Em missão legada/geral segue o desenho de sempre
+          (missões · conteúdo · maestro). Em missão DIRETA o `direct-mode`
+          troca a ORDEM VISUAL por CSS (missões · conversa · entrega) sem
+          mexer no DOM: reordenar filhos remontaria os TerminalPane e mataria
+          os PTYs do Maestro e dos orquestradores.
+          TODOS os panes ficam montados (display:none fora da aba). */}
+      <div className={`board-main${isDirect ? ' direct-mode' : ''}`}>
       {/* Só a cabeça da fila fica bloqueada durante os poucos instantes em que
           o Git altera a branch de destino. Não existe reviewer extra aqui. */}
       {selMission?.status === 'integrando' && (
@@ -1910,48 +1967,80 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       )}
       <div className="term-window maestro-window" ref={winRef}>
         <PaneChrome
-          role={selMission ? 'orquestrador' : 'maestro'}
-          kind={selMission ? (selSpec?.kind ?? maestroSeat?.cli ?? 'claude') : (maestroSeat?.cli ?? 'claude')}
-          seatName={selMission ? selSeat?.name : maestroSeat?.name}
+          // Missão DIRETA: o papel é o da CONVERSA aberta (agente/revisor/
+          // ajudante), não "orquestrador" — não existe orquestrador aqui.
+          role={
+            isDirect
+              ? MISSION_GUI_PANE_ROLE[directSlot?.role ?? 'dev']
+              : selMission
+                ? 'orquestrador'
+                : 'maestro'
+          }
+          kind={
+            isDirect
+              ? (directSlot?.spawn.cli ?? maestroSeat?.cli ?? 'claude')
+              : selMission
+                ? (selSpec?.kind ?? maestroSeat?.cli ?? 'claude')
+                : (maestroSeat?.cli ?? 'claude')
+          }
+          seatName={isDirect ? directSeat?.name : selMission ? selSeat?.name : maestroSeat?.name}
           // valor VIVO do TUI (pty:model/pty:effort, muda na hora da troca via
-          // /model) > configurado
+          // /model) > configurado. No chat quem publica o modelo real é o
+          // evento `init`/`result` da sessão (guiPanes), não o PTY.
           model={
-            selMission
-              ? ((selSpec ? paneModel[selSpec.paneId] : undefined) ??
-                selSpec?.model ??
-                selMission.model)
-              : ((maestroSpec ? paneModel[maestroSpec.paneId] : undefined) ??
-                maestroModel ??
-                undefined)
+            isDirect
+              ? (directGui?.model ?? directSlot?.spawn.model)
+              : selMission
+                ? ((selSpec ? paneModel[selSpec.paneId] : undefined) ??
+                  selSpec?.model ??
+                  selMission.model)
+                : ((maestroSpec ? paneModel[maestroSpec.paneId] : undefined) ??
+                  maestroModel ??
+                  undefined)
           }
           effort={
-            selMission
-              ? ((selSpec ? paneEffort[selSpec.paneId] : undefined) ?? selMission.effort)
-              : ((maestroSpec ? paneEffort[maestroSpec.paneId] : undefined) ??
-                maestroEffort ??
-                undefined)
+            isDirect
+              ? (directSlot?.spawn.effort ?? selMission?.effort)
+              : selMission
+                ? ((selSpec ? paneEffort[selSpec.paneId] : undefined) ?? selMission.effort)
+                : ((maestroSpec ? paneEffort[maestroSpec.paneId] : undefined) ??
+                  maestroEffort ??
+                  undefined)
           }
           // sem repetição: o chip de papel já diz MAESTRO/ORQUESTRADOR — o
           // título é SÓ o nome da missão (PM fica sem título)
           title={selMission ? selMission.title : ''}
           stats={
-            selMission
-              ? selSpec
-                ? (paneStats[selSpec.paneId] ?? ZERO_STATS)
-                : undefined
-              : maestroSpec
-                ? (paneStats[maestroSpec.paneId] ?? ZERO_STATS)
-                : undefined
+            isDirect
+              ? {
+                  model: directGui?.model ?? undefined,
+                  inputTokens: 0,
+                  outputTokens: 0,
+                  contextTokens: directGui?.contextTokens ?? null,
+                  contextWindow: directGui?.contextWindow ?? null,
+                  costUsd: directGui?.costUsd ?? undefined
+                }
+              : selMission
+                ? selSpec
+                  ? (paneStats[selSpec.paneId] ?? ZERO_STATS)
+                  : undefined
+                : maestroSpec
+                  ? (paneStats[maestroSpec.paneId] ?? ZERO_STATS)
+                  : undefined
           }
+          // o chat não conta tokens de entrada/saída como o JSONL do TUI
+          hideTokens={isDirect}
           pinStats={Boolean(selMission)}
           activity={
-            selMission
-              ? selSpec
-                ? paneActivity[selSpec.paneId]
-                : undefined
-              : maestroSpec
-                ? paneActivity[maestroSpec.paneId]
-                : undefined
+            isDirect
+              ? GUI_ACTIVITY[directGui?.status ?? 'starting']
+              : selMission
+                ? selSpec
+                  ? paneActivity[selSpec.paneId]
+                  : undefined
+                : maestroSpec
+                  ? paneActivity[maestroSpec.paneId]
+                  : undefined
           }
           priorityDetails={
             selMission ? (
@@ -2006,6 +2095,44 @@ export default function Board({ projectId }: Props): React.JSX.Element {
             ) : undefined
           }
         >
+          {/* Missão DIRETA: seletor das conversas abertas. Trocar de papel só
+              muda QUAL slot está visível — todos seguem montados e vivos. */}
+          {isDirect &&
+            selMission &&
+            directSlots.map((slot, i) => {
+              const helperN = directSlots.filter((s, j) => s.role === 'helper' && j <= i).length
+              const label =
+                slot.role === 'helper'
+                  ? `ajudante ${helperN}`
+                  : MISSION_GUI_ROLE_LABEL[slot.role]
+              const active = directSlot?.spawn.paneId === slot.spawn.paneId
+              return (
+                <span key={slot.spawn.paneId} className="mission-gui-tab-wrap">
+                  <button
+                    className={`term-btn ghost-dim mission-gui-tab${active ? ' active' : ''}`}
+                    data-tip={`Ver a conversa "${label}" desta missão`}
+                    onClick={() =>
+                      setMissionGuiActive((prev) => ({
+                        ...prev,
+                        [selMission.id]: slot.spawn.paneId
+                      }))
+                    }
+                  >
+                    {label}
+                  </button>
+                  {slot.role !== 'dev' && (
+                    <button
+                      className="term-btn ghost-dim mission-gui-tab-close"
+                      data-tip={`Encerrar a conversa "${label}" (o worktree e os commits ficam)`}
+                      aria-label={`Encerrar ${label}`}
+                      onClick={() => closeMissionGuiSlot(selMission.id, slot.spawn.paneId)}
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
+              )
+            })}
           {!selMission && maestroBusy && <span className="spinner" />}
           {!selMission && (
             <>
@@ -2111,7 +2238,62 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               />
             </div>
           ))}
+          {/* MISSÃO DIRETA (2.0): as conversas GUI do worktree. Lista KEYADA e
+              separada da dos orquestradores — cada slot é uma sessão viva no
+              main, então nada aqui pode remontar ao trocar de aba/papel. */}
+          {Object.entries(missionGuiSlots).flatMap(([mid, slots]) =>
+            slots.map((slot) => {
+              const active =
+                mid === missionTab && directSlot?.spawn.paneId === slot.spawn.paneId
+              return (
+                <div
+                  key={slot.spawn.paneId}
+                  className={`maestro-slot${active ? ' is-active' : ''}`}
+                  aria-hidden={active ? undefined : true}
+                  inert={active ? undefined : true}
+                >
+                  <GuiPane
+                    paneId={slot.spawn.paneId}
+                    projectId={projectId}
+                    cli={slot.spawn.cli}
+                    configDir={slot.spawn.configDir}
+                    cwd={slot.spawn.cwd}
+                    model={slot.spawn.model}
+                    effort={slot.spawn.effort}
+                    systemPrompt={slot.spawn.systemPrompt}
+                    resumeSessionId={slot.spawn.resumeSessionId}
+                    firstPrompt={slot.spawn.firstPrompt}
+                  />
+                </div>
+              )
+            })
+          )}
+          {selMission?.direct && directSlots.length === 0 && (
+            <div className="maestro-empty">
+              {missionGuiError[selMission.id] ? (
+                <div style={{ display: 'grid', gap: 10, justifyItems: 'center' }}>
+                  <span>// {missionGuiError[selMission.id]}</span>
+                  <button
+                    className="term-btn"
+                    onClick={() => {
+                      setMissionGuiError((prev) => {
+                        const next = { ...prev }
+                        delete next[selMission.id]
+                        return next
+                      })
+                      void openMissionGuiRole(selMission.id, 'dev')
+                    }}
+                  >
+                    ⟳ tentar de novo
+                  </button>
+                </div>
+              ) : (
+                '// abrindo a conversa desta missão…'
+              )}
+            </div>
+          )}
           {selMission &&
+            !selMission.direct &&
             !missionSpecs[selMission.id] &&
             (selMission.pendingOrchestrator ? (
               <div className="maestro-empty">
@@ -2167,7 +2349,28 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       {/* Aba GERAL = página de configurações do projeto (identidade + funções) */}
       {!selMission && <ProjectGeneral projectId={projectId} />}
 
-      {(showKanban || selMission) && (
+      {/* MISSÃO DIRETA: sem kanban e sem filtro de função — o que resta do
+          board é o TRILHO DE ENTREGA (estado da branch + alavancas). */}
+      {isDirect && selMission && (
+        <MissionDeliveryRail
+          mission={selMission}
+          versionLabel={versionName(selMission.versionId)}
+          queueLabel={integrationQueueLabel(selMission)}
+          guiAvailable={missionGui.available()}
+          testServerOpen={panes.some((p) => p.testServer && p.missionId === selMission.id)}
+          onIntegrate={() => void onIntegrate()}
+          onReview={() => void openMissionGuiRole(selMission.id, 'reviewer')}
+          onHelper={() => void openMissionGuiRole(selMission.id, 'helper')}
+          onTestServer={() => setTestServerOpen(true)}
+          onKillTestServer={() => {
+            const testPane = panes.find((p) => p.testServer && p.missionId === selMission.id)
+            if (testPane) window.synkora.panes.requestClose(projectId, testPane.id)
+          }}
+          onArchive={() => void archiveMission(selMission.id, selMission.status === 'ativa')}
+        />
+      )}
+
+      {!isDirect && (showKanban || selMission) && (
       <div className="dept-filter">
         {showKanban && (
           <>
@@ -2566,6 +2769,20 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       )}
 
       </div>
+
+      {/* COLUNA DE MISSÕES — ÚLTIMO filho de propósito: `.board-main` é
+          row-reverse, então o último do DOM é o PRIMEIRO da tela, e
+          acrescentar no fim não desloca `.maestro-window` nem `.board-content`
+          (deslocar remontaria os TerminalPane e mataria os PTYs). */}
+      <MissionColumn
+        projectId={projectId}
+        entries={missionColumnEntries}
+        selectedId={missionTab}
+        generalPulse={tabPulse['geral']}
+        greenfieldLocked={greenfieldLocked}
+        onSelect={(id) => setMissionTab(projectId, id)}
+        onNewMission={() => setNewMissionOpen(true)}
+      />
       </div>
 
       {openTaskId &&

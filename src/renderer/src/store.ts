@@ -300,6 +300,10 @@ export interface Mission {
   effort?: string
   /** 'direta' = registro de trabalho de agente livre (sem cards/orquestrador) */
   kind?: 'direta'
+  /** MISSÃO 2.0 (onda B): sem orquestrador e sem maquinário de plano — abrir a
+   *  aba abre um CHAT GUI no worktree. TODA missão criada pelo usuário nasce
+   *  com este carimbo; missão legada (sem o campo) mantém o fluxo de hoje. */
+  direct?: boolean
   /** criada pelo PM: aguarda o usuário escolher conta/modelo/effort do
    *  orquestrador no modal — o pane só nasce depois */
   pendingOrchestrator?: boolean
@@ -311,6 +315,19 @@ export interface Mission {
   integration?: MissionIntegrationQueueView
   createdAt: string
   updatedAt: string
+}
+
+/** O que o modal de missão manda para o main ao criar uma missão. */
+export interface NewMissionInput {
+  title: string
+  goal?: string
+  scope?: string
+  seatId?: string
+  model?: string
+  effort?: string
+  versionId?: string
+  /** missão 2.0: sem orquestrador, chat GUI no worktree (onda B) */
+  direct?: boolean
 }
 
 // Backlog de produto: versões como escopo de planejamento + itens desejados.
@@ -1031,18 +1048,7 @@ interface SynkoraState {
   /** missões do projeto ATIVO */
   missions: Mission[]
   loadMissions: (projectId: string) => Promise<void>
-  createMission: (
-    projectId: string,
-    input: {
-      title: string
-      goal?: string
-      scope?: string
-      seatId?: string
-      model?: string
-      effort?: string
-      versionId?: string
-    }
-  ) => Promise<Mission | null>
+  createMission: (projectId: string, input: NewMissionInput) => Promise<Mission | null>
   archiveMission: (id: string, archived: boolean) => Promise<void>
   deleteMission: (id: string) => Promise<void>
   integrateMission: (missionId: string) => Promise<string>
@@ -1565,7 +1571,15 @@ export const useStore = create<SynkoraState>((set, get) => ({
   },
   createMission: async (projectId, input) => {
     if (!window.synkora.missions) return null
-    const created = await window.synkora.missions.create(projectId, input)
+    // `direct` é campo da onda B e o tipo NewMission do preload é do agente
+    // MOTOR: até as duas frentes mesclarem, o campo viaja por um cast estreito
+    // (o main ignora o que não conhece, então missão legada não muda).
+    // TODO(onda B, motor): apagar o cast quando NewMission declarar `direct`.
+    const create = window.synkora.missions.create as unknown as (
+      projectId: string,
+      input: NewMissionInput
+    ) => Promise<Mission | null>
+    const created = await create(projectId, input)
     await get().loadMissions(projectId)
     return created
   },
