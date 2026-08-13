@@ -1,5 +1,11 @@
 import { create } from 'zustand'
 import type { CanvasNodeLayout } from './paneCanvas'
+import {
+  asGuiEvent,
+  guiApi,
+  type GuiPermBehavior,
+  type GuiSessionEvent
+} from './guiApi'
 import type {
   SettingsSecretName,
   SkillState,
@@ -453,6 +459,391 @@ export interface PaneStats {
   costUsd?: number
 }
 
+// ————— PANE GUI (Synkora 2.0, onda A) —————
+// O pane GUI substitui a TUI por um CHAT: o motor é o mesmo (maestroSession /
+// codexSession, agora por pane) e o renderer só acumula os eventos de
+// `gui:live`. Contrato completo em docs/GUI_PANE_CONTRACT.md.
+
+/** starting = sessão nascendo · working = turno em curso · waiting-you =
+ *  permissão pendente · idle = turno fechado · dead = sessão encerrada. */
+export type GuiPaneStatus = 'starting' | 'working' | 'waiting-you' | 'idle' | 'dead'
+
+/** Item cronológico do chat. Tool card e marcador de permissão entram na MESMA
+ *  lista das mensagens — a ordem do que aconteceu É a informação. */
+export type GuiItem =
+  | { id: string; kind: 'user' | 'assistant' | 'note' | 'error'; text: string; at: number }
+  | {
+      id: string
+      kind: 'tool'
+      name: string
+      summary: string
+      result?: { text: string; isError: boolean }
+      at: number
+    }
+  | {
+      id: string
+      kind: 'permission'
+      toolName: string
+      behavior: GuiPermBehavior | 'cancelada'
+      at: number
+    }
+
+/** Pedido de permissão vivo do CLI (mesma forma do PermPicker do espelho). */
+export interface GuiPendingPerm {
+  requestId: string
+  toolName: string
+  description: string
+  inputPretty: string
+  reason?: string
+  canAlways: boolean
+}
+
+export interface GuiPaneState {
+  items: GuiItem[]
+  /** turno em curso: deltas acumulados até o `text` final fechar a mensagem */
+  stream: string
+  thinking: boolean
+  /** delta do raciocínio, quando o backend fornece (campo aditivo do contrato) */
+  thinkingText: string
+  perm: GuiPendingPerm | null
+  status: GuiPaneStatus
+  sessionId: string | null
+  model: string | null
+  contextTokens: number | null
+  contextWindow: number | null
+  costUsd: number | null
+  /** handshake concluído (evento `ready` com as caps reais do CLI) */
+  ready: boolean
+  error: string | null
+  /** já houve mensagem do assistente NESTE turno — sem isso o `resultText`
+   *  (que só existe para comandos locais) duplicaria a resposta */
+  turnHadText: boolean
+  /** `gui:create` já foi pedido para este pane nesta janela */
+  spawned: boolean
+}
+
+export const EMPTY_GUI_PANE: GuiPaneState = {
+  items: [],
+  stream: '',
+  thinking: false,
+  thinkingText: '',
+  perm: null,
+  status: 'starting',
+  sessionId: null,
+  model: null,
+  contextTokens: null,
+  contextWindow: null,
+  costUsd: null,
+  ready: false,
+  error: null,
+  turnHadText: false,
+  spawned: false
+}
+
+/** Teto de itens por pane: o main guarda ~500 eventos no ring buffer, então
+ *  reter mais que isto no renderer só custaria memória. */
+const GUI_ITEM_CAP = 400
+/** Resultado de ferramenta pode vir enorme (um `cat` inteiro) — o card mostra
+ *  o começo e o resto não fica na memória do renderer. */
+const GUI_TOOL_RESULT_CAP = 4000
+
+let guiItemSeq = 0
+function guiItemId(): string {
+  guiItemSeq += 1
+  return `g${guiItemSeq}`
+}
+
+function pushGuiItem(items: GuiItem[], item: GuiItem): GuiItem[] {
+  const next = [...items, item]
+  return next.length > GUI_ITEM_CAP ? next.slice(next.length - GUI_ITEM_CAP) : next
+}
+
+function guiOneLine(text: string, cap = 140): string {
+  const flat = text.replace(/\s+/gu, ' ').trim()
+  return flat.length > cap ? `${flat.slice(0, cap - 1)}…` : flat
+}
+
+/** Resumo de UMA LINHA do input da ferramenta: o card compacto mostra o que
+ *  interessa (comando, arquivo, padrão) sem obrigar a abrir o JSON. */
+const GUI_TOOL_KEYS = [
+  'command',
+  'file_path',
+  'path',
+  'notebook_path',
+  'pattern',
+  'query',
+  'url',
+  'prompt',
+  'description'
+]
+
+export function guiToolSummary(input: Record<string, unknown> | undefined): string {
+  if (!input) return ''
+  for (const key of GUI_TOOL_KEYS) {
+    const value = input[key]
+    if (typeof value === 'string' && value.trim()) return guiOneLine(value)
+  }
+  const keys = Object.keys(input)
+  if (!keys.length) return ''
+  try {
+    return guiOneLine(JSON.stringify(input))
+  } catch {
+    return keys.join(', ')
+  }
+}
+
+/** Fecha o turno visual: o que estava streamando vira mensagem definitiva. O
+ *  caminho normal é o evento `text` fechar; isto cobre backend que encerra o
+ *  turno sem repetir o bloco inteiro. */
+function flushGuiStream(state: GuiPaneState): GuiPaneState {
+  if (!state.stream.trim()) return state.stream ? { ...state, stream: '' } : state
+  return {
+    ...state,
+    items: pushGuiItem(state.items, {
+      id: guiItemId(),
+      kind: 'assistant',
+      text: state.stream,
+      at: Date.now()
+    }),
+    stream: '',
+    turnHadText: true
+  }
+}
+
+/**
+ * Redutor PURO de um pane GUI. O mesmo código serve para o evento vivo e para
+ * o replay de `gui:state` na remontagem — é isso que faz reabrir a aba
+ * reconstruir a conversa exatamente como ela estava.
+ */
+export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState {
+  const busy = (s: GuiPaneState): GuiPaneStatus =>
+    s.perm ? 'waiting-you' : s.status === 'dead' ? 'dead' : 'working'
+
+  switch (evt.type) {
+    case 'init':
+      return {
+        ...state,
+        model: evt.model || state.model,
+        sessionId: evt.sessionId || state.sessionId,
+        contextWindow: evt.contextWindow ?? state.contextWindow,
+        status: state.status === 'starting' ? 'idle' : state.status
+      }
+
+    case 'session-id':
+      return { ...state, sessionId: evt.sessionId }
+
+    case 'ready':
+      return {
+        ...state,
+        ready: true,
+        status: state.status === 'starting' ? 'idle' : state.status
+      }
+
+    case 'delta':
+      return {
+        ...state,
+        stream: state.stream + evt.text,
+        thinking: false,
+        status: busy(state)
+      }
+
+    case 'thinking':
+      return {
+        ...state,
+        thinking: true,
+        thinkingText: evt.text ? state.thinkingText + evt.text : state.thinkingText,
+        status: busy(state)
+      }
+
+    case 'text': {
+      if (!evt.text.trim()) return state.stream ? { ...state, stream: '' } : state
+      return {
+        ...state,
+        items: pushGuiItem(state.items, {
+          id: guiItemId(),
+          kind: 'assistant',
+          text: evt.text,
+          at: Date.now()
+        }),
+        stream: '',
+        thinking: false,
+        thinkingText: '',
+        turnHadText: true
+      }
+    }
+
+    case 'tool': {
+      const base = flushGuiStream(state)
+      return {
+        ...base,
+        items: pushGuiItem(base.items, {
+          id: guiItemId(),
+          kind: 'tool',
+          name: evt.name,
+          summary: guiToolSummary(evt.input),
+          at: Date.now()
+        }),
+        thinking: false,
+        status: busy(base)
+      }
+    }
+
+    case 'tool-result': {
+      // anexa ao ÚLTIMO card de ferramenta ainda sem resultado
+      const items = [...state.items]
+      for (let i = items.length - 1; i >= 0; i -= 1) {
+        const item = items[i]
+        if (item.kind === 'tool' && !item.result) {
+          items[i] = {
+            ...item,
+            result: {
+              text: evt.text.slice(0, GUI_TOOL_RESULT_CAP),
+              isError: evt.isError
+            }
+          }
+          return { ...state, items }
+        }
+      }
+      return state
+    }
+
+    case 'permission': {
+      const base = flushGuiStream(state)
+      return {
+        ...base,
+        perm: {
+          requestId: evt.requestId,
+          toolName: evt.toolName,
+          description: evt.description,
+          inputPretty: evt.inputPretty,
+          reason: evt.reason,
+          canAlways: evt.canAlways
+        },
+        thinking: false,
+        status: 'waiting-you'
+      }
+    }
+
+    case 'permission-cancel': {
+      if (state.perm?.requestId !== evt.requestId) return state
+      return {
+        ...state,
+        items: pushGuiItem(state.items, {
+          id: guiItemId(),
+          kind: 'permission',
+          toolName: state.perm.toolName,
+          behavior: 'cancelada',
+          at: Date.now()
+        }),
+        perm: null,
+        status: state.status === 'dead' ? 'dead' : 'working'
+      }
+    }
+
+    case 'command-output': {
+      const base = flushGuiStream(state)
+      return {
+        ...base,
+        items: pushGuiItem(base.items, {
+          id: guiItemId(),
+          kind: 'note',
+          text: evt.text,
+          at: Date.now()
+        })
+      }
+    }
+
+    case 'limit': {
+      const base = flushGuiStream(state)
+      return {
+        ...base,
+        items: pushGuiItem(base.items, {
+          id: guiItemId(),
+          kind: 'error',
+          text: evt.text,
+          at: Date.now()
+        })
+      }
+    }
+
+    case 'result': {
+      let next = flushGuiStream(state)
+      if (evt.isError && evt.errorText?.trim()) {
+        next = {
+          ...next,
+          items: pushGuiItem(next.items, {
+            id: guiItemId(),
+            kind: 'error',
+            text: evt.errorText,
+            at: Date.now()
+          })
+        }
+      } else if (!next.turnHadText && evt.resultText?.trim()) {
+        // comando local (/usage, /status…) responde SÓ pelo resultText
+        next = {
+          ...next,
+          items: pushGuiItem(next.items, {
+            id: guiItemId(),
+            kind: 'note',
+            text: evt.resultText,
+            at: Date.now()
+          })
+        }
+      }
+      return {
+        ...next,
+        thinking: false,
+        thinkingText: '',
+        turnHadText: false,
+        contextTokens: evt.contextTokens ?? next.contextTokens,
+        contextWindow: evt.contextWindow ?? next.contextWindow,
+        costUsd: evt.costUsd ?? next.costUsd,
+        status: next.perm ? 'waiting-you' : next.status === 'dead' ? 'dead' : 'idle'
+      }
+    }
+
+    case 'fatal': {
+      const base = flushGuiStream(state)
+      return {
+        ...base,
+        items: pushGuiItem(base.items, {
+          id: guiItemId(),
+          kind: 'error',
+          text: evt.text,
+          at: Date.now()
+        }),
+        perm: null,
+        thinking: false,
+        error: evt.text,
+        status: 'dead'
+      }
+    }
+
+    case 'closed': {
+      const base = flushGuiStream(state)
+      return {
+        ...base,
+        items: pushGuiItem(base.items, {
+          id: guiItemId(),
+          kind: 'note',
+          text:
+            evt.code === null || evt.code === 0
+              ? 'sessão encerrada'
+              : `sessão encerrada (código ${evt.code})`,
+          at: Date.now()
+        }),
+        perm: null,
+        thinking: false,
+        status: 'dead'
+      }
+    }
+
+    default:
+      // kind novo do main nunca quebra a UI: ignora e segue
+      return state
+  }
+}
+
 export interface Pane {
   id: string
   kind: PaneKind
@@ -481,6 +872,20 @@ export interface Pane {
   testServer?: boolean
   /** versão dona do servidor de teste (botão ▶ testar da aba Versões) */
   versionId?: string
+  /** SUPERFÍCIE do pane: 'tui' (xterm com o CLI dentro, padrão histórico) ou
+   *  'gui' (chat do Synkora 2.0, sem PTY). O contrato chama este campo de
+   *  `kind`, mas `Pane.kind` já é o CLI (shell/claude/codex) e o pane GUI
+   *  continua precisando dele — para a marca no chrome e para o `cli` do
+   *  `gui:create`. Ausente = 'tui'. */
+  surface?: 'tui' | 'gui'
+  /** effort do executor (pane GUI: viaja no `gui:create`; pane TUI já recebe
+   *  o dele pelos cliArgs montados no main). */
+  effort?: string
+  /** conversa a retomar no pane GUI (claude sessionId / codex thread id) */
+  resumeSessionId?: string
+  /** persona/contrato curto do pane GUI (claude: append-system-prompt;
+   *  codex: developerInstructions) — o equivalente GUI do appendSystemPrompt */
+  systemPrompt?: string
 }
 
 export interface PaneOptions {
@@ -502,6 +907,11 @@ export interface PaneOptions {
   /** servidor de teste do dono (botão ▶ testar) */
   testServer?: boolean
   versionId?: string
+  /** 'gui' abre o CHAT no lugar do xterm (Synkora 2.0) — ver Pane.surface */
+  surface?: 'tui' | 'gui'
+  effort?: string
+  resumeSessionId?: string
+  systemPrompt?: string
 }
 
 export interface DevPaneSpec {
@@ -714,6 +1124,24 @@ interface SynkoraState {
   }) => void
   addPane: (projectId: string, kind: PaneKind, opts?: PaneOptions) => void
   closePane: (projectId: string, paneId: string) => void
+  /** conversa de cada pane GUI (Synkora 2.0), por paneId. Alimentada pelo
+   *  canal `gui:live` e pelo replay de `gui:state` na montagem. */
+  guiPanes: Record<string, GuiPaneState>
+  /** evento vivo do canal `gui:live` (payload cru — o redutor valida) */
+  handleGuiLive: (paneId: string, evt: unknown) => void
+  /** remontagem: refaz o estado do zero a partir do ring buffer do main */
+  replayGuiPane: (paneId: string, events: GuiSessionEvent[]) => void
+  /** carimba que `gui:create` já foi pedido (não spawnar duas vezes) */
+  markGuiSpawned: (paneId: string) => void
+  sendGuiMessage: (paneId: string, text: string) => Promise<void>
+  answerGuiPerm: (
+    projectId: string,
+    paneId: string,
+    behavior: GuiPermBehavior
+  ) => Promise<void>
+  interruptGuiPane: (paneId: string) => Promise<void>
+  /** pane fechado: encerra a sessão no main e descarta a conversa */
+  dropGuiPane: (paneId: string) => void
   /** estado da aba PANES por projeto (nó ancorado, destaque, imerso, cartões) */
   panesUiByProject: Record<string, PanesUi>
   setPanesUi: (projectId: string, patch: Partial<PanesUi>) => void
@@ -1577,6 +2005,143 @@ export const useStore = create<SynkoraState>((set, get) => ({
     if (updated) set((s) => ({ tasks: s.tasks.map((t) => (t.id === id ? updated : t)) }))
   },
 
+  // ————— PANE GUI —————
+  // O pulso needs-perm continua sendo o `paneAttention` de sempre: pane TUI e
+  // pane GUI acendem a MESMA chave, então mapa, abas e Ctrl+Alt+P funcionam
+  // sem saber que existe uma superfície nova.
+  guiPanes: {},
+
+  handleGuiLive: (paneId, raw) =>
+    set((s) => {
+      const evt = asGuiEvent(raw)
+      if (!evt) return {}
+      const prev = s.guiPanes[paneId] ?? EMPTY_GUI_PANE
+      const next = applyGuiEvent(prev, evt)
+      if (next === prev) return {}
+      const patch: Partial<SynkoraState> = {
+        guiPanes: { ...s.guiPanes, [paneId]: next }
+      }
+      if (!!next.perm !== !!s.paneAttention[paneId]) {
+        const paneAttention = { ...s.paneAttention }
+        if (next.perm) paneAttention[paneId] = true
+        else delete paneAttention[paneId]
+        patch.paneAttention = paneAttention
+      }
+      return patch
+    }),
+
+  replayGuiPane: (paneId, events) =>
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      let next: GuiPaneState = { ...EMPTY_GUI_PANE, spawned: prev?.spawned ?? false }
+      for (const evt of events) next = applyGuiEvent(next, evt)
+      const patch: Partial<SynkoraState> = {
+        guiPanes: { ...s.guiPanes, [paneId]: next }
+      }
+      if (!!next.perm !== !!s.paneAttention[paneId]) {
+        const paneAttention = { ...s.paneAttention }
+        if (next.perm) paneAttention[paneId] = true
+        else delete paneAttention[paneId]
+        patch.paneAttention = paneAttention
+      }
+      return patch
+    }),
+
+  markGuiSpawned: (paneId) =>
+    set((s) => {
+      const prev = s.guiPanes[paneId] ?? EMPTY_GUI_PANE
+      if (prev.spawned) return {}
+      return { guiPanes: { ...s.guiPanes, [paneId]: { ...prev, spawned: true } } }
+    }),
+
+  sendGuiMessage: async (paneId, text) => {
+    const message = text.trim()
+    if (!message) return
+    set((s) => {
+      const prev = s.guiPanes[paneId] ?? EMPTY_GUI_PANE
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: {
+            ...prev,
+            items: pushGuiItem(prev.items, {
+              id: guiItemId(),
+              kind: 'user',
+              text: message,
+              at: Date.now()
+            }),
+            // backend ocupado enfileira/steera sozinho — a UI nunca trava o input
+            status: prev.status === 'dead' ? 'dead' : 'working',
+            turnHadText: false
+          }
+        }
+      }
+    })
+    await guiApi.send(paneId, message)
+  },
+
+  answerGuiPerm: async (projectId, paneId, behavior) => {
+    const perm = get().guiPanes[paneId]?.perm
+    if (!perm) return
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (!prev?.perm) return {}
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: {
+            ...prev,
+            items: pushGuiItem(prev.items, {
+              id: guiItemId(),
+              kind: 'permission',
+              toolName: prev.perm.toolName,
+              behavior,
+              at: Date.now()
+            }),
+            perm: null,
+            status: prev.status === 'dead' ? 'dead' : 'working'
+          }
+        }
+      }
+    })
+    // responder É a interação do usuário: apaga o pulso do pane (e do card,
+    // quando nenhum irmão da mesma tarefa segue esperando)
+    get().clearPaneAttention(projectId, paneId)
+    await guiApi.permission(paneId, perm.requestId, behavior)
+  },
+
+  interruptGuiPane: async (paneId) => {
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (!prev) return {}
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: {
+            ...prev,
+            items: pushGuiItem(prev.items, {
+              id: guiItemId(),
+              kind: 'note',
+              text: 'interrupção pedida',
+              at: Date.now()
+            })
+          }
+        }
+      }
+    })
+    await guiApi.interrupt(paneId)
+  },
+
+  dropGuiPane: (paneId) => {
+    void guiApi.kill(paneId)
+    set((s) => {
+      if (!s.guiPanes[paneId]) return {}
+      const guiPanes = { ...s.guiPanes }
+      delete guiPanes[paneId]
+      return { guiPanes }
+    })
+  },
+
   addPane: (projectId, kind, opts = {}) =>
     set((s) => {
       const panes = s.panesByProject[projectId] ?? []
@@ -1603,6 +2168,10 @@ export const useStore = create<SynkoraState>((set, get) => ({
         delegatorPaneId: opts.delegatorPaneId,
         testServer: opts.testServer,
         versionId: opts.versionId,
+        surface: opts.surface,
+        effort: opts.effort,
+        resumeSessionId: opts.resumeSessionId,
+        systemPrompt: opts.systemPrompt,
         // Pane de CLI com seat NÃO repete o nome do seat no título (o chip do
         // seat já diz — padronização com o Maestro/orquestrador, que também
         // não repetem); o número só aparece quando há mais de um pane igual.
@@ -1644,7 +2213,14 @@ export const useStore = create<SynkoraState>((set, get) => ({
       return { paneStats, paneModel, paneEffort, paneActivity, paneLastLines }
     }),
 
-  closePane: (projectId, paneId) =>
+  closePane: (projectId, paneId) => {
+    // Pane TUI encerra o PTY no unmount do TerminalPane; o pane GUI não tem
+    // PTY nenhum — quem encerra a sessão do main é o `gui:kill`. Fica AQUI (e
+    // não só no botão ×) para valer em TODO caminho de fecho: fase concluída,
+    // panes:closeById do main, missão arquivada.
+    if ((get().panesByProject[projectId] ?? []).find((p) => p.id === paneId)?.surface === 'gui') {
+      get().dropGuiPane(paneId)
+    }
     set((s) => {
       const pane = (s.panesByProject[projectId] ?? []).find((p) => p.id === paneId)
       const attention = { ...s.taskAttention }
@@ -1700,6 +2276,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
         }
       }
     })
+  }
 }))
 
 // Cores das funções: aplica os overrides do usuário nas CSS vars globais no

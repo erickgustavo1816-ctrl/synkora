@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useStore } from '../store'
+import {
+  useStore,
+  type GuiPaneStatus,
+  type PaneActivity,
+  type PaneStats
+} from '../store'
 import TerminalPane from './TerminalPane'
+import GuiPane from './GuiPane'
 import PaneChrome, { ZERO_STATS } from './PaneChrome'
 import PhaseSeatModal from './PhaseSeatModal'
 import ConstellationMap from './ConstellationMap'
@@ -138,6 +144,17 @@ function paneAtMatchingCanvasEdge(
   return best?.paneId ?? null
 }
 
+// Pane GUI no chrome de sempre: o estado do chat vira o mesmo ● / ◌ / ■ que a
+// telemetria do PTY produz nos panes TUI (permissão pendente já pulsa por
+// `paneAttention`, então aqui ela lê como "esperando").
+const GUI_ACTIVITY: Record<GuiPaneStatus, PaneActivity> = {
+  starting: 'run',
+  working: 'run',
+  'waiting-you': 'idle',
+  idle: 'idle',
+  dead: 'dead'
+}
+
 const DOCK_LABEL: Record<DockDropZone, string> = {
   left: 'COLUNA À ESQUERDA',
   right: 'COLUNA À DIREITA',
@@ -168,6 +185,9 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
   const paneActivity = useStore((s) => s.paneActivity)
   const paneEffort = useStore((s) => s.paneEffort)
   const paneModel = useStore((s) => s.paneModel)
+  // conversa dos panes GUI (Synkora 2.0): alimenta o chrome (modelo, contexto,
+  // custo, estado) exatamente como a telemetria do PTY alimenta os panes TUI
+  const guiPanes = useStore((s) => s.guiPanes)
   const ui = useStore((s) => s.panesUiByProject[projectId])
   const setPanesUi = useStore((s) => s.setPanesUi)
   const loadPanesUi = useStore((s) => s.loadPanesUi)
@@ -1109,6 +1129,20 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
             const terminalBox =
               expanded === pane.id ? { x: 0, y: 0, w: stageBox.w, h: stageBox.h } : baseBox
             const compactTitle = !!terminalBox && terminalBox.w < 320
+            // SUPERFÍCIE do pane: 'gui' troca o xterm pelo chat e NÃO cria PTY
+            // nenhum (nada aqui chega ao TerminalPane, que é quem spawna).
+            const isGui = pane.surface === 'gui'
+            const gui = isGui ? guiPanes[pane.id] : undefined
+            const guiStats: PaneStats | undefined = isGui
+              ? {
+                  model: gui?.model ?? undefined,
+                  inputTokens: 0,
+                  outputTokens: 0,
+                  contextTokens: gui?.contextTokens ?? null,
+                  contextWindow: gui?.contextWindow ?? null,
+                  costUsd: gui?.costUsd ?? undefined
+                }
+              : undefined
             // A tipografia é uma preferência global FIXA. Encolher o ladrilho
             // reduz cols×rows; nunca reduz ou amplia os glifos.
             const terminalFont = settings?.terminalFontSize ?? TERMINAL_DEFAULT_FONT_SIZE
@@ -1151,11 +1185,20 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
                   kind={pane.kind}
                   deptHue={dept && deptHueVar(dept.key)}
                   seatName={seat?.name}
-                  model={paneModel[pane.id] ?? pane.model}
-                  effort={paneEffort[pane.id]}
+                  model={isGui ? (gui?.model ?? pane.model) : (paneModel[pane.id] ?? pane.model)}
+                  effort={isGui ? pane.effort : paneEffort[pane.id]}
                   title={pane.title}
-                  activity={paneActivity[pane.id]}
-                  stats={paneStats[pane.id] ?? (pane.kind !== 'shell' ? ZERO_STATS : undefined)}
+                  activity={
+                    isGui
+                      ? GUI_ACTIVITY[gui?.status ?? 'starting']
+                      : paneActivity[pane.id]
+                  }
+                  stats={
+                    isGui
+                      ? guiStats
+                      : (paneStats[pane.id] ?? (pane.kind !== 'shell' ? ZERO_STATS : undefined))
+                  }
+                  hideTokens={isGui}
                   focused={expanded === pane.id}
                   onToggleFocus={() => toggleExpand(pane.id)}
                   onMakeColumn={() => spanPane(pane.id, 'x')}
@@ -1184,33 +1227,51 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
                     </button>
                   )}
                 </PaneChrome>
-                <TerminalPane
-                  paneId={pane.id}
-                  cwd={pane.cwd ?? projectPath}
-                  kind={pane.kind}
-                  projectId={projectId}
-                  seatId={pane.seatId}
-                  taskId={pane.taskId}
-                  initialPrompt={pane.initialPrompt}
-                  model={pane.model}
-                  cliArgs={pane.cliArgs}
-                  appendSystemPrompt={pane.appendSystemPrompt}
-                  logFile={pane.logFile}
-                  imagePasteProjectId={projectId}
-                  fontSize={terminalFont}
-                  lineHeight={terminalLineHeight}
-                  fontFamily={terminalFontFamily}
-                  minCols={terminalMinCols}
-                  minRows={pane.kind === 'claude' ? 12 : 6}
-                  fallbackSize={fallback}
-                  sizeGroup={sizeGroup}
-                  voiceLabel={pane.title}
-                  onUserInput={() => {
-                    clearPaneAttention(projectId, pane.id)
-                    // F3-c4: o pulso do rail/abas do host apaga junto.
-                    window.synkora.panesView.reportAttentionCleared(projectId, pane.id)
-                  }}
-                />
+                {/* A superfície é decidida no NASCIMENTO do pane e nunca muda,
+                    então este ternário jamais troca de ramo com o pane vivo —
+                    a regra de ouro do deck (nada remonta) segue intacta. */}
+                {isGui ? (
+                  <GuiPane
+                    paneId={pane.id}
+                    projectId={projectId}
+                    cli={pane.kind === 'codex' ? 'codex' : 'claude'}
+                    configDir={seat?.configDir}
+                    cwd={pane.cwd ?? projectPath}
+                    model={pane.model}
+                    effort={pane.effort}
+                    systemPrompt={pane.systemPrompt ?? pane.appendSystemPrompt}
+                    resumeSessionId={pane.resumeSessionId}
+                    firstPrompt={pane.initialPrompt}
+                  />
+                ) : (
+                  <TerminalPane
+                    paneId={pane.id}
+                    cwd={pane.cwd ?? projectPath}
+                    kind={pane.kind}
+                    projectId={projectId}
+                    seatId={pane.seatId}
+                    taskId={pane.taskId}
+                    initialPrompt={pane.initialPrompt}
+                    model={pane.model}
+                    cliArgs={pane.cliArgs}
+                    appendSystemPrompt={pane.appendSystemPrompt}
+                    logFile={pane.logFile}
+                    imagePasteProjectId={projectId}
+                    fontSize={terminalFont}
+                    lineHeight={terminalLineHeight}
+                    fontFamily={terminalFontFamily}
+                    minCols={terminalMinCols}
+                    minRows={pane.kind === 'claude' ? 12 : 6}
+                    fallbackSize={fallback}
+                    sizeGroup={sizeGroup}
+                    voiceLabel={pane.title}
+                    onUserInput={() => {
+                      clearPaneAttention(projectId, pane.id)
+                      // F3-c4: o pulso do rail/abas do host apaga junto.
+                      window.synkora.panesView.reportAttentionCleared(projectId, pane.id)
+                    }}
+                  />
+                )}
               </div>
             )
           })}
