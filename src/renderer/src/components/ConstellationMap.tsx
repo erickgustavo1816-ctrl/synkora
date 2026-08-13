@@ -14,7 +14,7 @@ import {
   type MapSatellite,
   type PaneNode
 } from '../panesNodes'
-import { missionChatLabel } from '../guiMissionPanes'
+import { missionChatLabel, NO_MISSION_CHAT } from '../guiMissionPanes'
 import { createPaperField, type FieldWell, type PaperField } from '../paperField'
 import { fmtTokens, prettyModel } from './PaneChrome'
 import { hueOf, initialsOf } from '../util'
@@ -2046,7 +2046,7 @@ export default function ConstellationMap({
             data-tip={
               node.mission?.direct
                 ? `Missão "${node.mission.title}"\n${node.mission.branch ?? 'sem branch'}\n${missionChatLabel(
-                    node.chat ?? { pulse: 'dormant', running: 0, attention: 0, live: 0 }
+                    node.chat ?? NO_MISSION_CHAT
                   )} · clique para abrir a conversa dela no board`
                 : node.mission
                 ? `Orquestrador da missão "${node.mission.title}"\n${node.mission.branch ?? 'sem branch'}\nclique para abrir os terminais · os cards em volta são os devs/ajudantes/gates dele`

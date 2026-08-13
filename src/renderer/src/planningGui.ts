@@ -5,47 +5,44 @@
 // roadmap em `plano/` e fecha. Quem cria as missões continua sendo ele, no
 // app; esta sessão só produz o plano.
 //
-// Mesmo padrão de `missionGui.ts`: enquanto as duas frentes da onda não
-// mesclam, o preload deste worktree ainda não declara `planningGuiSpec`, então
-// o acesso passa por um cast estreito resolvido A CADA CHAMADA.
-// TODO(onda C, motor): quando o preload publicar o tipo, trocar `bridge()` por
-// `window.synkora.projects` e apagar a interface local.
+// O main já publicou o tipo (o motor da onda C mesclou), então este módulo
+// fala com `window.synkora.projects` de verdade. O que sobra aqui é o que só o
+// renderer sabe fazer: não explodir com a ponte ausente (devMock/browser puro)
+// e traduzir a falha para uma frase que cabe na UI.
+//
+// Ele é a ÚNICA costura do renderer com esse canal: nenhum componente chama
+// `window.synkora.projects.planningGuiSpec` direto.
 
-import type { GuiPaneSpawn } from './guiApi'
+import type { PlanningGuiSpecResult } from '../../preload/index'
 
-export interface PlanningGuiSpecResult {
-  ok: boolean
-  spawn?: GuiPaneSpawn
-  error?: string
-}
+export type { PlanningGuiSpecResult }
 
-interface PlanningGuiBridge {
-  planningGuiSpec: (projectId: string) => Promise<PlanningGuiSpecResult>
-}
-
-function bridge(): Partial<PlanningGuiBridge> | undefined {
-  return (window as unknown as { synkora?: { projects?: Partial<PlanningGuiBridge> } }).synkora
-    ?.projects
+function bridge(): Window['synkora']['projects'] | undefined {
+  // `window.synkora` não existe no browser puro (devMock monta o que conhece):
+  // a leitura é opcional de propósito, apesar do tipo prometer o objeto.
+  return (window as Partial<Window>).synkora?.projects
 }
 
 const NO_BRIDGE =
   'reinicie o app (npm run dev) para habilitar a sessão de planejamento — esta janela ainda não tem a ponte'
 
-/** paneId da sessão de planejamento do projeto (convenção do main). */
+/** paneId da sessão de planejamento do projeto — a MESMA convenção do main
+ *  (`projects:planningGuiSpec`): é ele que endereça o resume gravado, e é por
+ *  isso que reabrir o universo cai na conversa de antes, não numa em branco. */
 export function planningPaneId(projectId: string): string {
   return `gui-plan-${projectId.slice(0, 8)}`
 }
 
 export const planningGui = {
-  /** false = preload sem `planningGuiSpec` (devMock/browser puro, ou motor
-   *  ainda não mesclado). A UI mostra o aviso em vez de fingir que abriu. */
+  /** false = janela sem `planningGuiSpec` (browser puro ou preload antigo). A
+   *  UI mostra o aviso em vez de fingir que abriu. */
   available(): boolean {
     return typeof bridge()?.planningGuiSpec === 'function'
   },
 
   async spec(projectId: string): Promise<PlanningGuiSpecResult> {
     const api = bridge()
-    if (!api?.planningGuiSpec) return { ok: false, error: NO_BRIDGE }
+    if (typeof api?.planningGuiSpec !== 'function') return { ok: false, error: NO_BRIDGE }
     try {
       return (await api.planningGuiSpec(projectId)) ?? { ok: false, error: NO_BRIDGE }
     } catch (e) {

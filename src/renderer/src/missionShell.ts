@@ -4,54 +4,38 @@
 // terminal cru no worktree dela (rodar git, um script, olhar um arquivo). Não
 // é agente e não é servidor de teste — nasce sem CLI, sem persona e sem MCP.
 //
-// Mesmo padrão de `missionGui.ts`: enquanto as duas frentes da onda não
-// mesclam, o preload deste worktree ainda não declara `shellSpec`, então o
-// acesso passa por um cast estreito resolvido A CADA CHAMADA (o namespace pode
-// nascer depois deste módulo ser importado).
-// TODO(onda C, motor): quando o preload publicar o tipo, trocar `bridge()` por
-// `window.synkora.missions` e apagar a interface local — nada fora daqui muda.
+// O main já publicou o tipo (o motor da onda C mesclou), então este módulo
+// fala com `window.synkora.missions` de verdade — sem cast e sem cópia local
+// da forma da spec, que envelheceria em silêncio. O que sobra aqui é o que só
+// o renderer sabe fazer: nunca explodir com a ponte ausente (devMock/browser
+// puro) e traduzir a falha para uma frase que cabe na UI.
+//
+// Ele é a ÚNICA costura do renderer com esse canal: nenhum componente chama
+// `window.synkora.missions.shellSpec` direto.
 
-/** Spec de um pane SHELL, no formato que o deck de panes já sabe montar. */
-export interface MissionShellSpec {
-  paneId: string
-  cwd: string
-  kind?: 'shell'
-  seatId?: string
-  missionId?: string
-  title?: string
-  cliArgs?: string[]
-  initialPrompt?: string
-  logFile?: string
-}
+import type { MissionShellSpecResult } from '../../preload/index'
 
-export interface MissionShellSpecResult {
-  ok: boolean
-  spec?: MissionShellSpec
-  error?: string
-}
+export type { MissionShellSpecResult }
 
-interface MissionShellBridge {
-  shellSpec: (missionId: string) => Promise<MissionShellSpecResult>
-}
-
-function bridge(): Partial<MissionShellBridge> | undefined {
-  return (window as unknown as { synkora?: { missions?: Partial<MissionShellBridge> } }).synkora
-    ?.missions
+function bridge(): Window['synkora']['missions'] | undefined {
+  // `window.synkora` não existe no browser puro (devMock monta o que conhece):
+  // a leitura é opcional de propósito, apesar do tipo prometer o objeto.
+  return (window as Partial<Window>).synkora?.missions
 }
 
 const NO_BRIDGE =
   'reinicie o app (npm run dev) para habilitar o terminal da missão — esta janela ainda não tem a ponte'
 
 export const missionShell = {
-  /** false = preload sem `shellSpec` (devMock/browser puro, ou motor ainda não
-   *  mesclado). A UI mostra o aviso em vez de fingir que abriu. */
+  /** false = janela sem `shellSpec` (browser puro ou preload antigo). A UI
+   *  mostra o aviso em vez de fingir que abriu. */
   available(): boolean {
     return typeof bridge()?.shellSpec === 'function'
   },
 
   async spec(missionId: string): Promise<MissionShellSpecResult> {
     const api = bridge()
-    if (!api?.shellSpec) return { ok: false, error: NO_BRIDGE }
+    if (typeof api?.shellSpec !== 'function') return { ok: false, error: NO_BRIDGE }
     try {
       return (await api.shellSpec(missionId)) ?? { ok: false, error: NO_BRIDGE }
     } catch (e) {

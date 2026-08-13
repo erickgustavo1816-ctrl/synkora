@@ -1819,32 +1819,28 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     setPlanningSpawn(res.spawn)
   }
 
+  /** Encerra a sessão de planejamento — ela é PONTUAL por desenho: entrevista,
+   *  escreve o plano em `plano/` e fecha. A coluna volta ao convite; o que ela
+   *  escreveu está no repo, e reabrir retoma a conversa pelo mesmo paneId. */
+  function closePlanningGui(): void {
+    if (planningSpawn) dropGuiPane(planningSpawn.paneId)
+    setPlanningSpawn(null)
+    setPlanningError(null)
+  }
+
   /** Terminal CRU no worktree da missão (trilho de entrega → "▷ terminal").
-   *  O main devolve a spec de um pane SHELL; o deck de panes monta igual aos
-   *  outros (servidor de teste, agente livre). Quando o main também transmite
-   *  `panes:open-free`, o pane já chegou pelo evento — daí a guarda por id. */
+   *  F3-c3: TODO nascimento de pane viaja por evento do main — o handler do
+   *  `missions:shellSpec` já transmitiu `panes:open-free`, então a view de
+   *  panes MONTA o pane e o host espelha a lista sozinho. Aqui NÃO se chama
+   *  addPane (seria uma segunda entrada do mesmo pane): o botão só leva o
+   *  dono até onde o terminal nasceu, igual ao ▶ testar. */
   async function openMissionShell(missionId: string): Promise<void> {
     const res = await missionShell.spec(missionId)
     if (!res.ok || !res.spec) {
       setMissionMsg(res.error ?? 'não deu para abrir o terminal desta missão')
       return
     }
-    const spec = res.spec
-    const store = useStore.getState()
-    const already = (store.panesByProject[projectId] ?? []).some((p) => p.id === spec.paneId)
-    if (!already) {
-      store.addPane(projectId, spec.kind ?? 'shell', {
-        id: spec.paneId,
-        cwd: spec.cwd,
-        seatId: spec.seatId,
-        missionId: spec.missionId ?? missionId,
-        cliArgs: spec.cliArgs,
-        initialPrompt: spec.initialPrompt,
-        logFile: spec.logFile,
-        title: spec.title
-      })
-    }
-    store.setUniverseTab(projectId, 'panes')
+    useStore.getState().setUniverseTab(projectId, 'panes')
   }
 
   /** Fecha UMA conversa (revisor/ajudante). O chat do agente não fecha por
@@ -1913,7 +1909,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const planningSeat = planningSpawn
     ? seats.find((x) => x.configDir && x.configDir === planningSpawn.configDir)
     : undefined
-  const planningGuiState = planningSpawn ? guiPanes[planningSpawn.paneId] : undefined
+  // A conversa se endereça pelo paneId DETERMINÍSTICO (a mesma convenção do
+  // main): é ele que sobrevive ao spawn e ao resume — ler o estado por aqui
+  // vale mesmo antes de a spec voltar.
+  const planningId = planningPaneId(projectId)
+  const planningGuiState = planningSpawn ? guiPanes[planningId] : undefined
   const maestroSlotActive = !missionTab && !planningHome
   const measuredMaestroBox = maestroTerminalBox.w > 0 ? maestroTerminalBox : undefined
   const maestroTerminalFont = settings?.terminalFontSize ?? TERMINAL_DEFAULT_FONT_SIZE
@@ -2257,6 +2257,17 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               )
             })}
           {!selMission && maestroBusy && <span className="spinner" />}
+          {/* A sessão de planejamento é pontual: quando ela termina o dono a
+              encerra aqui e a coluna volta ao convite (o plano fica no repo). */}
+          {planningActive && (
+            <button
+              className="term-btn ghost-dim"
+              data-tip="Encerrar a sessão de planejamento (o que ela escreveu em plano/ fica)"
+              onClick={closePlanningGui}
+            >
+              ✕<span className="btn-label">encerrar</span>
+            </button>
+          )}
           {/* Volta para a casa do planejamento depois de espiar o PM (o botão
               gêmeo do "♛ voltar ao Maestro"); só existe nesse estado. */}
           {!selMission && !hasLegacyLiveMission && showMaestroAnyway && (
