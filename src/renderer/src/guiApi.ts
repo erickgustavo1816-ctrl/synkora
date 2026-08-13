@@ -26,6 +26,8 @@ export interface GuiPaneSpawn {
   cli: 'claude' | 'codex'
   /** Config dir isolado do seat (CLAUDE_CONFIG_DIR / CODEX_HOME). */
   configDir: string
+  /** id do seat dono desta conversa — alimenta o menu de troca do cabeçalho. */
+  seatId?: string
   /** Worktree da missão (ou raiz do projeto no planejamento). */
   cwd: string
   model?: string
@@ -82,6 +84,23 @@ export interface GuiCliCaps {
   account?: { email?: string; subscriptionType?: string }
 }
 
+// ————— pergunta com opções (AskUserQuestion) e veredito de plano —————
+// Espelho VERBATIM do maestroSession (main é o dono). A resposta viaja no
+// updatedInput do mesmo control_response da permissão — por isso o card
+// devolve um MAPA { texto da pergunta → labels unidos por ', ' }.
+
+export interface GuiQuestionOption {
+  label: string
+  description?: string
+}
+
+export interface GuiQuestion {
+  question: string
+  header?: string
+  multiSelect?: boolean
+  options: GuiQuestionOption[]
+}
+
 export type GuiSessionEvent =
   | {
       type: 'init'
@@ -106,6 +125,8 @@ export type GuiSessionEvent =
       canAlways: boolean
     }
   | { type: 'permission-cancel'; requestId: string }
+  | { type: 'question'; requestId: string; questions: GuiQuestion[] }
+  | { type: 'plan-review'; requestId: string; plan: string }
   | { type: 'session-id'; sessionId: string }
   | { type: 'ready'; caps: GuiCliCaps }
   | { type: 'command-output'; text: string }
@@ -141,6 +162,16 @@ interface GuiBridge {
     requestId: string,
     behavior: GuiPermBehavior
   ) => Promise<{ ok: boolean }>
+  answerQuestion: (
+    paneId: string,
+    requestId: string,
+    answers: Record<string, string>
+  ) => Promise<{ ok: boolean; error?: string }>
+  answerPlan: (
+    paneId: string,
+    requestId: string,
+    approve: boolean
+  ) => Promise<{ ok: boolean; error?: string }>
   interrupt: (paneId: string) => Promise<{ ok: boolean }>
   kill: (paneId: string) => Promise<{ ok: boolean }>
   state: (paneId: string) => Promise<{ events: unknown[] }>
@@ -191,6 +222,37 @@ export const guiApi = {
       return (await api.permission(paneId, requestId, behavior)) ?? { ok: true }
     } catch {
       return { ok: false }
+    }
+  },
+
+  /** Responde o card de pergunta. Mapa VAZIO = pular (o agente segue sem a
+   *  escolha) — nunca é o mesmo que negar. */
+  async answerQuestion(
+    paneId: string,
+    requestId: string,
+    answers: Record<string, string>
+  ): Promise<{ ok: boolean; error?: string }> {
+    const api = bridge()
+    if (!api?.answerQuestion) return { ok: false, error: NO_BRIDGE }
+    try {
+      return (await api.answerQuestion(paneId, requestId, answers)) ?? { ok: true }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  },
+
+  /** Veredito do card de plano: true = construir, false = devolver para revisão. */
+  async answerPlan(
+    paneId: string,
+    requestId: string,
+    approve: boolean
+  ): Promise<{ ok: boolean; error?: string }> {
+    const api = bridge()
+    if (!api?.answerPlan) return { ok: false, error: NO_BRIDGE }
+    try {
+      return (await api.answerPlan(paneId, requestId, approve)) ?? { ok: true }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
   },
 

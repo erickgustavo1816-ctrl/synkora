@@ -37,6 +37,7 @@ import {
 import { DEPARTMENTS, DEPT_BY_KEY, deptHueVar, STATUS_LABEL, STATUS_ORDER } from '../departments'
 import type { GuiPaneSpawn, GuiPermissionMode } from '../guiApi'
 import { missionGui, type MissionGuiRole } from '../missionGui'
+import GuiSeatPick from './GuiSeatPick'
 import { missionShell } from '../missionShell'
 // `planningGui` (projects:planningGuiSpec) NÃO é importado de propósito: o
 // convite de planejamento que nascia sozinho no ✦ geral MORREU (ordem do dono,
@@ -1281,6 +1282,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const [missionGuiSlots, setMissionGuiSlots] = useState<Record<string, MissionGuiSlot[]>>({})
   const [missionGuiActive, setMissionGuiActive] = useState<Record<string, string>>({})
   const [missionGuiError, setMissionGuiError] = useState<Record<string, string>>({})
+  // Missão sem conta escolhida (2.0): não é erro — é o CARD de escolha no
+  // lugar da conversa. `seatBusy` trava o card enquanto o main troca a conta.
+  const [missionNeedsSeat, setMissionNeedsSeat] = useState<Record<string, boolean>>({})
+  const [seatBusy, setSeatBusy] = useState<string | null>(null)
   const missionGuiInFlight = useRef<Set<string>>(new Set())
   const dropGuiPane = useStore((s) => s.dropGuiPane)
   // PLANEJAMENTO (2.0): o estado da sessão avulsa saiu daqui. Planejar é uma
@@ -1720,12 +1725,24 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       .spec(mid, 'dev')
       .then((res) => {
         if (!res.ok || !res.spawn) {
+          // Falta de conta tem tela PRÓPRIA (o card de escolha) — tratá-la
+          // como erro mandaria o dono procurar um problema que não existe.
+          if (res.needsSeat) {
+            setMissionNeedsSeat((prev) => ({ ...prev, [mid]: true }))
+            return
+          }
           setMissionGuiError((prev) => ({
             ...prev,
             [mid]: res.error ?? 'não deu para abrir a conversa desta missão'
           }))
           return
         }
+        setMissionNeedsSeat((prev) => {
+          if (!prev[mid]) return prev
+          const next = { ...prev }
+          delete next[mid]
+          return next
+        })
         const spawn = res.spawn
         setMissionGuiSlots((prev) =>
           prev[mid]?.length ? prev : { ...prev, [mid]: [{ role: 'dev', spawn }] }
@@ -1880,6 +1897,65 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     })
   }
 
+  /** Modelo/effort trocados NO CHAT: o slot guarda a escolha para a
+   *  remontagem não voltar ao executor antigo (par do setMissionSlotPermission
+   *  — o motor também grava do lado dele, por pane). */
+  function setMissionSlotExecutor(
+    missionId: string,
+    paneId: string,
+    patch: { model?: string; effort?: string }
+  ): void {
+    setMissionGuiSlots((prev) => {
+      const cur = prev[missionId]
+      if (!cur) return prev
+      return {
+        ...prev,
+        [missionId]: cur.map((s) =>
+          s.spawn.paneId === paneId ? { ...s, spawn: { ...s.spawn, ...patch } } : s
+        )
+      }
+    })
+  }
+
+  /**
+   * A CONTA DA CONVERSA (2.0): vale para o card da missão sem conta e para o
+   * menu do cabeçalho do chat. O main transplanta a conversa quando o CLI é o
+   * mesmo e MATA as sessões vivas (elas falavam pela conta antiga) — aqui os
+   * slots são descartados e o chat reabre já no seat novo.
+   */
+  async function chooseChatSeat(missionId: string, seatId: string): Promise<void> {
+    setSeatBusy(seatId)
+    const res = await missionGui.setChatSeat(projectId, missionId, seatId)
+    setSeatBusy(null)
+    if (!res.ok) {
+      setMissionGuiError((prev) => ({
+        ...prev,
+        [missionId]: res.msg ?? 'não deu para escolher a conta desta conversa'
+      }))
+      return
+    }
+    for (const slot of missionGuiSlots[missionId] ?? []) dropGuiPane(slot.spawn.paneId)
+    setMissionGuiSlots((prev) => {
+      if (!prev[missionId]) return prev
+      const next = { ...prev }
+      delete next[missionId]
+      return next
+    })
+    setMissionNeedsSeat((prev) => {
+      const next = { ...prev }
+      delete next[missionId]
+      return next
+    })
+    setMissionGuiError((prev) => {
+      if (!prev[missionId]) return prev
+      const next = { ...prev }
+      delete next[missionId]
+      return next
+    })
+    await loadMissions(projectId)
+    await openMissionGuiRole(missionId, 'dev')
+  }
+
   /** Fecha UMA conversa (revisor/ajudante). O chat do agente não fecha por
    *  aqui: ele é a missão. */
   function closeMissionGuiSlot(missionId: string, paneId: string): void {
@@ -2006,7 +2082,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         label,
         kind: 'chat',
         active: !missionTermId && directSlot?.spawn.paneId === slot.spawn.paneId,
-        attention: Boolean(guiPanes[slot.spawn.paneId]?.perm),
+        attention: Boolean(
+          guiPanes[slot.spawn.paneId]?.perm ||
+            guiPanes[slot.spawn.paneId]?.question ||
+            guiPanes[slot.spawn.paneId]?.planReview
+        ),
         tip: `Ver a conversa "${label}" desta missão`,
         onSelect: () => {
           setMissionTerm((prev) => ({ ...prev, [selMission.id]: null }))
@@ -2180,9 +2260,19 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       ? seats.find((x) => x.configDir && x.configDir === guiSpawn.configDir)
       : seats.find((x) => x.id === (spec?.seatId ?? m.seatId ?? maestroSeatId))
     // O chat não escreve em `paneLastLines`, então a heurística do "?" não o
-    // alcança: permissão pendente numa conversa da missão é o sinal real de
-    // "esperando você" e precisa pulsar o card igual ao ask_user.
-    const guiWaiting = slots.some((s) => guiPanes[s.spawn.paneId]?.perm)
+    // alcança: o que PARA a conversa esperando o dono (permissão, pergunta com
+    // opções, plano a aprovar) é o sinal real e precisa pulsar o card.
+    const waitingPane = slots.find((s) => {
+      const pane = guiPanes[s.spawn.paneId]
+      return pane?.perm || pane?.question || pane?.planReview
+    })
+    const waitingKind = waitingPane
+      ? guiPanes[waitingPane.spawn.paneId]?.question
+        ? 'o agente fez uma pergunta nesta conversa'
+        : guiPanes[waitingPane.spawn.paneId]?.planReview
+          ? 'o agente propôs um plano e espera seu aval'
+          : 'o agente está esperando sua permissão nesta conversa'
+      : undefined
     const cards = tasks.filter((t) => t.missionId === m.id && t.kind !== 'plan')
     return {
       mission: m,
@@ -2191,9 +2281,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       seatName: seat?.name,
       model: guiPanes[slots[0]?.spawn.paneId ?? '']?.model ?? guiSpawn?.model ?? spec?.model ?? m.model,
       versionLabel: versionName(m.versionId),
-      pulse:
-        tabPulse[m.id] ??
-        (guiWaiting ? 'o agente está esperando sua permissão nesta conversa' : undefined),
+      pulse: tabPulse[m.id] ?? waitingKind,
       queueLabel: integrationQueueLabel(m)
     }
   })
@@ -2580,12 +2668,43 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                     firstPrompt={slot.spawn.firstPrompt}
                     permissionMode={slot.spawn.permissionMode}
                     onPermissionMode={(pm) => setMissionSlotPermission(mid, slot.spawn.paneId, pm)}
+                    onExecutorChange={(patch) =>
+                      setMissionSlotExecutor(mid, slot.spawn.paneId, patch)
+                    }
+                    seats={seats}
+                    seatId={slot.spawn.seatId}
+                    onChangeSeat={(next) => void chooseChatSeat(mid, next)}
                   />
                 </div>
               )
             })
           )}
-          {selMission?.direct && directSlots.length === 0 && !missionTermId && (
+          {/* MISSÃO SEM CONTA (2.0): a missão nasce só com título, então o
+              primeiro habitante do palco é o CARD DE ESCOLHA — não um erro.
+              Fica FORA do `.maestro-empty` (que é a casca de "// aguarde"). */}
+          {selMission?.direct &&
+            directSlots.length === 0 &&
+            !missionTermId &&
+            missionNeedsSeat[selMission.id] && (
+              <div className="maestro-slot is-active">
+                <GuiSeatPick
+                  seats={seats}
+                  title={
+                    isPlanningMission
+                      ? 'quem escreve este planejamento?'
+                      : 'quem conversa nesta missão?'
+                  }
+                  hint="a conta manda no modelo e no limite gasto — dá para trocar depois, no cabeçalho do chat"
+                  busySeatId={seatBusy}
+                  error={missionGuiError[selMission.id]}
+                  onPick={(seatId) => void chooseChatSeat(selMission.id, seatId)}
+                />
+              </div>
+            )}
+          {selMission?.direct &&
+            directSlots.length === 0 &&
+            !missionTermId &&
+            !missionNeedsSeat[selMission.id] && (
             <div className="maestro-empty">
               {missionGuiError[selMission.id] ? (
                 <div style={{ display: 'grid', gap: 10, justifyItems: 'center' }}>

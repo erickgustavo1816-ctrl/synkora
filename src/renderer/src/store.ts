@@ -3,7 +3,9 @@ import type { CanvasNodeLayout } from './paneCanvas'
 import {
   asGuiEvent,
   guiApi,
+  type GuiCliCaps,
   type GuiPermBehavior,
+  type GuiQuestion,
   type GuiSessionEvent
 } from './guiApi'
 import type {
@@ -523,6 +525,15 @@ export type GuiItem =
       behavior: GuiPermBehavior | 'cancelada'
       at: number
     }
+  /** Pergunta JÁ respondida: o fio guarda o que foi escolhido (o card some
+   *  quando a resposta sai). `entries` vazio = o dono pulou. */
+  | {
+      id: string
+      kind: 'question'
+      header?: string
+      entries: { question: string; answer: string }[]
+      at: number
+    }
 
 /** Pedido de permissão vivo do CLI (mesma forma do PermPicker do espelho). */
 export interface GuiPendingPerm {
@@ -542,6 +553,13 @@ export interface GuiPaneState {
   /** delta do raciocínio, quando o backend fornece (campo aditivo do contrato) */
   thinkingText: string
   perm: GuiPendingPerm | null
+  /** pergunta com opções esperando o dono (AskUserQuestion) */
+  question: { requestId: string; questions: GuiQuestion[] } | null
+  /** plano esperando veredito (ExitPlanMode): construir × revisar */
+  planReview: { requestId: string; plan: string } | null
+  /** caps REAIS do CLI (evento `ready`): comandos do autocomplete e catálogo
+   *  de modelos/efforts dos seletores do composer */
+  caps: GuiCliCaps | null
   status: GuiPaneStatus
   sessionId: string | null
   model: string | null
@@ -564,6 +582,9 @@ export const EMPTY_GUI_PANE: GuiPaneState = {
   thinking: false,
   thinkingText: '',
   perm: null,
+  question: null,
+  planReview: null,
+  caps: null,
   status: 'starting',
   sessionId: null,
   model: null,
@@ -652,8 +673,12 @@ function flushGuiStream(state: GuiPaneState): GuiPaneState {
  * reconstruir a conversa exatamente como ela estava.
  */
 export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState {
+  // Tudo que PARA a conversa esperando o dono conta igual: permissão,
+  // pergunta com opções e veredito de plano.
+  const halted = (s: GuiPaneState): boolean =>
+    Boolean(s.perm) || Boolean(s.question) || Boolean(s.planReview)
   const busy = (s: GuiPaneState): GuiPaneStatus =>
-    s.perm ? 'waiting-you' : s.status === 'dead' ? 'dead' : 'working'
+    halted(s) ? 'waiting-you' : s.status === 'dead' ? 'dead' : 'working'
 
   switch (evt.type) {
     case 'init':
@@ -669,9 +694,12 @@ export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPan
       return { ...state, sessionId: evt.sessionId }
 
     case 'ready':
+      // As caps FICAM: são elas que alimentam o autocomplete de comandos e os
+      // seletores de modelo/effort do composer (antes eram descartadas aqui).
       return {
         ...state,
         ready: true,
+        caps: evt.caps ?? state.caps,
         status: state.status === 'starting' ? 'idle' : state.status
       }
 
@@ -760,7 +788,55 @@ export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPan
       }
     }
 
+    case 'question': {
+      const base = flushGuiStream(state)
+      return {
+        ...base,
+        question: { requestId: evt.requestId, questions: evt.questions },
+        thinking: false,
+        status: 'waiting-you'
+      }
+    }
+
+    case 'plan-review': {
+      const base = flushGuiStream(state)
+      return {
+        ...base,
+        planReview: { requestId: evt.requestId, plan: evt.plan },
+        thinking: false,
+        status: 'waiting-you'
+      }
+    }
+
     case 'permission-cancel': {
+      // Um cancelamento só: permissão, pergunta e plano moram no mesmo
+      // `pending` do main e chegam aqui pelo MESMO requestId.
+      if (state.question?.requestId === evt.requestId) {
+        return {
+          ...state,
+          items: pushGuiItem(state.items, {
+            id: guiItemId(),
+            kind: 'note',
+            text: 'a pergunta foi cancelada pelo agente',
+            at: Date.now()
+          }),
+          question: null,
+          status: state.status === 'dead' ? 'dead' : 'working'
+        }
+      }
+      if (state.planReview?.requestId === evt.requestId) {
+        return {
+          ...state,
+          items: pushGuiItem(state.items, {
+            id: guiItemId(),
+            kind: 'note',
+            text: 'o plano foi retirado pelo agente',
+            at: Date.now()
+          }),
+          planReview: null,
+          status: state.status === 'dead' ? 'dead' : 'working'
+        }
+      }
       if (state.perm?.requestId !== evt.requestId) return state
       return {
         ...state,
@@ -834,7 +910,7 @@ export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPan
         contextTokens: evt.contextTokens ?? next.contextTokens,
         contextWindow: evt.contextWindow ?? next.contextWindow,
         costUsd: evt.costUsd ?? next.costUsd,
-        status: next.perm ? 'waiting-you' : next.status === 'dead' ? 'dead' : 'idle'
+        status: halted(next) ? 'waiting-you' : next.status === 'dead' ? 'dead' : 'idle'
       }
     }
 
@@ -849,6 +925,8 @@ export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPan
           at: Date.now()
         }),
         perm: null,
+        question: null,
+        planReview: null,
         thinking: false,
         error: evt.text,
         status: 'dead'
@@ -869,6 +947,8 @@ export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPan
           at: Date.now()
         }),
         perm: null,
+        question: null,
+        planReview: null,
         thinking: false,
         status: 'dead'
       }
@@ -1167,6 +1247,15 @@ interface SynkoraState {
     paneId: string,
     behavior: GuiPermBehavior
   ) => Promise<void>
+  /** resposta do card de pergunta: { texto da pergunta → labels unidos por
+   *  ', ' }. Mapa vazio = pular (o agente segue sem a escolha). */
+  answerGuiQuestion: (
+    projectId: string,
+    paneId: string,
+    answers: Record<string, string>
+  ) => Promise<void>
+  /** veredito do card de plano: true = construir, false = revisar */
+  answerGuiPlan: (projectId: string, paneId: string, approve: boolean) => Promise<void>
   interruptGuiPane: (paneId: string) => Promise<void>
   /** pane fechado: encerra a sessão no main e descarta a conversa */
   dropGuiPane: (paneId: string) => void
@@ -2163,6 +2252,66 @@ export const useStore = create<SynkoraState>((set, get) => ({
     // quando nenhum irmão da mesma tarefa segue esperando)
     get().clearPaneAttention(projectId, paneId)
     await guiApi.permission(paneId, perm.requestId, behavior)
+  },
+
+  answerGuiQuestion: async (projectId, paneId, answers) => {
+    const pending = get().guiPanes[paneId]?.question
+    if (!pending) return
+    const entries = pending.questions
+      .map((q) => ({ question: q.question, answer: answers[q.question] ?? '' }))
+      .filter((entry) => entry.answer.trim().length > 0)
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (!prev?.question) return {}
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: {
+            ...prev,
+            items: pushGuiItem(prev.items, {
+              id: guiItemId(),
+              kind: 'question',
+              header: prev.question.questions[0]?.header,
+              entries,
+              at: Date.now()
+            }),
+            question: null,
+            status: prev.status === 'dead' ? 'dead' : 'working'
+          }
+        }
+      }
+    })
+    get().clearPaneAttention(projectId, paneId)
+    await guiApi.answerQuestion(paneId, pending.requestId, answers)
+  },
+
+  answerGuiPlan: async (projectId, paneId, approve) => {
+    const pending = get().guiPanes[paneId]?.planReview
+    if (!pending) return
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (!prev?.planReview) return {}
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: {
+            ...prev,
+            items: pushGuiItem(prev.items, {
+              id: guiItemId(),
+              kind: 'note',
+              text: approve
+                ? 'plano aprovado — o agente começou a construir'
+                : 'plano devolvido para revisão',
+              at: Date.now()
+            }),
+            planReview: null,
+            status: prev.status === 'dead' ? 'dead' : 'working'
+          }
+        }
+      }
+    })
+    get().clearPaneAttention(projectId, paneId)
+    await guiApi.answerPlan(paneId, pending.requestId, approve)
   },
 
   interruptGuiPane: async (paneId) => {

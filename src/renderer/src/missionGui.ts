@@ -23,10 +23,18 @@ export interface MissionGuiSpecResult {
   ok: boolean
   spawn?: GuiPaneSpawn
   error?: string
+  /** 2.0: a missão nasce SÓ com título — falta escolher a conta desta
+   *  conversa. Não é erro: é o card de escolha no lugar do chat. */
+  needsSeat?: boolean
 }
 
 interface MissionGuiBridge {
   guiSpec: (missionId: string, role: MissionGuiRole) => Promise<MissionGuiSpecResult>
+  setChatSeat: (
+    projectId: string,
+    missionId: string,
+    seatId: string
+  ) => Promise<{ ok: boolean; msg?: string }>
 }
 
 function bridge(): Partial<MissionGuiBridge> | undefined {
@@ -51,6 +59,23 @@ export const missionGui = {
       return (await api.guiSpec(missionId, role)) ?? { ok: false, error: NO_BRIDGE }
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  },
+
+  /** A CONTA desta conversa: o card do chat vazio e o menu do cabeçalho
+   *  chamam o mesmo caminho. O main mata as sessões vivas (elas falam pela
+   *  conta antiga) — quem reabre é o efeito de spec do Board. */
+  async setChatSeat(
+    projectId: string,
+    missionId: string,
+    seatId: string
+  ): Promise<{ ok: boolean; msg?: string }> {
+    const api = bridge()
+    if (!api?.setChatSeat) return { ok: false, msg: NO_BRIDGE }
+    try {
+      return (await api.setChatSeat(projectId, missionId, seatId)) ?? { ok: false, msg: NO_BRIDGE }
+    } catch (e) {
+      return { ok: false, msg: e instanceof Error ? e.message : String(e) }
     }
   }
 }

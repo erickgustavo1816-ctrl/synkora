@@ -4,12 +4,20 @@ import {
   useStore,
   type GuiItem,
   type GuiPaneStatus,
-  type GuiPendingPerm
+  type GuiPendingPerm,
+  type Seat
 } from '../store'
 import { prettyModel } from './PaneChrome'
+import CliMark from './CliMark'
+import GuiMarkdown from './GuiMarkdown'
+import GuiStreamText from './GuiStreamText'
+import GuiQuestionCard from './GuiQuestionCard'
+import GuiPlanCard from './GuiPlanCard'
+import GuiSlashMenu, { filterSlashCommands, slashName, slashQueryAt } from './GuiSlashMenu'
 import {
   asGuiEvent,
   guiApi,
+  type GuiCliCommand,
   type GuiPaneSpawn,
   type GuiPermBehavior,
   type GuiPermissionMode,
@@ -21,10 +29,7 @@ import {
 // O visual é CONTRATO: docs/MOCKUP_WORKSPACE.md § "Anatomia do chat". A regra
 // que esta superfície existe para não quebrar de novo ("tá parecendo um pane
 // ainda, tá feio"): o chat é PAPEL. `--panel` (o painel escuro) é EXCLUSIVO do
-// TerminalPane — nenhuma superfície de conversa o usa. Aqui não há barra de
-// pane escura: o cabeçalho da conversa é UMA linha apagada dentro do próprio
-// papel, e quem quiser envolver o chat em outro chrome (o layout do Board) só
-// desliga `showHeader`.
+// TerminalPane — nenhuma superfície de conversa o usa.
 //
 // A regra de ouro do deck continua valendo: a lista de slots é plana e nunca
 // se desmonta ao reorganizar — desmontar derrubaria a assinatura de `gui:live`
@@ -50,6 +55,13 @@ interface Props {
   /** o dono da spec guarda a escolha: sem isto, remontar o slot voltaria ao
    *  modo antigo enquanto a sessão no main já está no novo. */
   onPermissionMode?: (mode: GuiPermissionMode) => void
+  /** modelo/effort trocados no composer — mesma razão do modo acima. */
+  onExecutorChange?: (patch: { model?: string; effort?: string }) => void
+  /** contas disponíveis + a desta conversa: o cabeçalho troca a conta sem
+   *  sair do chat (ausente = o cabeçalho não oferece troca). */
+  seats?: Seat[]
+  seatId?: string
+  onChangeSeat?: (seatId: string) => void
   /** Papel desta conversa no cabeçalho fino ("dev", "reviewer", "ajudante 2",
    *  "planejamento"). Ausente = deduzido do paneId. */
   role?: string
@@ -84,7 +96,7 @@ function replayOverlap(replay: GuiSessionEvent[], buffered: GuiSessionEvent[]): 
   return 0
 }
 
-// ————— cabeçalho fino da conversa —————
+// ————— cabeçalho da conversa —————
 
 /** Papel deduzido do endereço estável do pane (guiMissionContracts):
  *  `gui-dev-<short>` · `gui-reviewer-<short>` · `gui-helper-<short>-<n>` ·
@@ -147,6 +159,11 @@ function toolGlyph(name: string): string {
   return '▪'
 }
 
+/** Ferramentas cujo card genérico NÃO se mostra: elas têm superfície própria
+ *  (o card de pergunta e o card de plano). O ITEM continua na lista — o
+ *  pareamento do tool-result depende da ordem —, só não se desenha. */
+const INTERACTIVE_TOOLS = new Set(['askuserquestion', 'exitplanmode', 'exit_plan_mode'])
+
 function firstLine(text: string, cap: number): string {
   const line = text
     .split('\n')
@@ -200,12 +217,19 @@ function GuiToolCard({ item }: { item: Extract<GuiItem, { kind: 'tool' }> }): Re
 }
 
 /** Vocabulário do seletor do composer (onda D): rótulo curto para o botão e
- *  frase de uma linha para o menu — o dono escolhe SEM abrir documentação. */
-const PERM_MODES: { id: GuiPermissionMode; label: string; hint: string }[] = [
-  { id: 'default', label: 'padrão', hint: 'pergunta antes de agir fora do combinado' },
-  { id: 'acceptEdits', label: 'edições', hint: 'edita arquivos sem perguntar; o resto pergunta' },
-  { id: 'bypass', label: 'bypass', hint: 'segue reto, sem nenhuma aprovação' },
-  { id: 'plan', label: 'plano', hint: 'só estuda e propõe — não escreve nada' }
+ *  frase de uma linha para o menu — o dono escolhe SEM abrir documentação.
+ *  O glifo carrega a identidade (o dono pediu os modos bonitos): mão que
+ *  pergunta, lápis que edita, seta que segue reto, prancheta que só planeja. */
+const PERM_MODES: { id: GuiPermissionMode; label: string; glyph: string; hint: string }[] = [
+  { id: 'default', label: 'padrão', glyph: '✋', hint: 'pergunta antes de agir fora do combinado' },
+  {
+    id: 'acceptEdits',
+    label: 'edições',
+    glyph: '✎',
+    hint: 'edita arquivos sem perguntar; o resto pergunta'
+  },
+  { id: 'bypass', label: 'bypass', glyph: '⏩', hint: 'segue reto, sem nenhuma aprovação' },
+  { id: 'plan', label: 'plano', glyph: '☰', hint: 'só estuda e propõe — não escreve nada' }
 ]
 
 const PERM_MODE_LABEL: Record<GuiPermissionMode, string> = {
@@ -215,6 +239,13 @@ const PERM_MODE_LABEL: Record<GuiPermissionMode, string> = {
   plan: 'plano'
 }
 
+const PERM_MODE_GLYPH: Record<GuiPermissionMode, string> = {
+  default: '✋',
+  acceptEdits: '✎',
+  bypass: '⏩',
+  plan: '☰'
+}
+
 const PERM_LABEL: Record<GuiPermBehavior | 'cancelada', string> = {
   allow: 'permitido desta vez',
   'allow-always': 'permitido sempre (nesta sessão)',
@@ -222,8 +253,11 @@ const PERM_LABEL: Record<GuiPermBehavior | 'cancelada', string> = {
   cancelada: 'cancelado pelo CLI'
 }
 
-function GuiMessage({ item }: { item: GuiItem }): React.JSX.Element {
-  if (item.kind === 'tool') return <GuiToolCard item={item} />
+function GuiMessage({ item }: { item: GuiItem }): React.JSX.Element | null {
+  if (item.kind === 'tool') {
+    if (INTERACTIVE_TOOLS.has(item.name.toLowerCase())) return null
+    return <GuiToolCard item={item} />
+  }
   if (item.kind === 'permission') {
     return (
       <div className={`gui-perm-mark ${item.behavior === 'deny' ? 'deny' : ''}`}>
@@ -231,6 +265,27 @@ function GuiMessage({ item }: { item: GuiItem }): React.JSX.Element {
         <span>
           {item.toolName}: {PERM_LABEL[item.behavior]}
         </span>
+      </div>
+    )
+  }
+  if (item.kind === 'question') {
+    return (
+      <div className="gui-answered">
+        <span className="ga-head">
+          <span aria-hidden="true">❓</span>
+          {item.header?.trim() || 'pergunta respondida'}
+        </span>
+        {item.entries.length === 0 ? (
+          <span className="ga-skip">você pulou</span>
+        ) : (
+          <span className="ga-chips">
+            {item.entries.map((entry) => (
+              <span key={entry.question} className="ga-chip" data-tip={entry.question}>
+                {entry.answer}
+              </span>
+            ))}
+          </span>
+        )}
       </div>
     )
   }
@@ -246,7 +301,9 @@ function GuiMessage({ item }: { item: GuiItem }): React.JSX.Element {
   if (item.kind === 'error') return <div className="gui-error">{item.text}</div>
   return (
     <div className="gui-msg dev">
-      <div className="gui-msg-text">{item.text}</div>
+      <div className="gui-msg-text">
+        <GuiMarkdown text={item.text} />
+      </div>
     </div>
   )
 }
@@ -311,26 +368,6 @@ function asksForGo(text: string): boolean {
   return ASK_RE.test(trimmed.slice(-320))
 }
 
-function MicGlyph(): React.JSX.Element {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="14"
-      height="14"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.9"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="9" y="2.5" width="6" height="11.5" rx="3" />
-      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" />
-      <path d="M12 18.2V21.5" />
-    </svg>
-  )
-}
-
 function SendGlyph(): React.JSX.Element {
   return (
     <svg
@@ -363,6 +400,10 @@ export default function GuiPane({
   firstPrompt,
   permissionMode,
   onPermissionMode,
+  onExecutorChange,
+  seats,
+  seatId,
+  onChangeSeat,
   role,
   branchLabel,
   firstPromptLabel,
@@ -374,7 +415,27 @@ export default function GuiPane({
   const markGuiSpawned = useStore((s) => s.markGuiSpawned)
   const sendGuiMessage = useStore((s) => s.sendGuiMessage)
   const answerGuiPerm = useStore((s) => s.answerGuiPerm)
+  const answerGuiQuestion = useStore((s) => s.answerGuiQuestion)
+  const answerGuiPlan = useStore((s) => s.answerGuiPlan)
   const interruptGuiPane = useStore((s) => s.interruptGuiPane)
+
+  // MODO DE PERMISSÃO (onda D) + MODELO/EFFORT (2.0): estado local para os
+  // botões responderem na hora, semeados pela spec. O pai guarda a escolha na
+  // spec dele — por isso os efeitos só re-semeiam quando a PROP muda.
+  const [mode, setMode] = useState<GuiPermissionMode>(permissionMode ?? 'default')
+  const [openMenu, setOpenMenu] = useState<'mode' | 'model' | 'effort' | 'seat' | null>(null)
+  const [busyMenu, setBusyMenu] = useState<'mode' | 'model' | 'effort' | null>(null)
+  const [liveModel, setLiveModel] = useState<string | undefined>(model)
+  const [liveEffort, setLiveEffort] = useState<string | undefined>(effort)
+  useEffect(() => {
+    setMode(permissionMode ?? 'default')
+  }, [permissionMode])
+  useEffect(() => {
+    setLiveModel(model)
+  }, [model])
+  useEffect(() => {
+    setLiveEffort(effort)
+  }, [effort])
 
   // A spec do spawn muda no MÁXIMO junto com o pane; guardá-la em ref evita
   // que uma prop nova re-dispare o efeito de montagem (que reabriria sessão).
@@ -383,33 +444,25 @@ export default function GuiPane({
     projectId,
     cli,
     configDir: configDir ?? '',
+    seatId,
     cwd,
-    model,
-    effort,
+    model: liveModel,
+    effort: liveEffort,
     systemPrompt,
     resumeSessionId,
     firstPrompt,
-    permissionMode: permissionMode ?? 'default'
+    permissionMode: mode
   })
-
-  // MODO DE PERMISSÃO (onda D): estado local para o botão responder na hora,
-  // semeado pela spec. O pai (quando existe) guarda a escolha na spec dele —
-  // por isso o efeito só re-semeia quando a PROP muda de fato.
-  const [mode, setMode] = useState<GuiPermissionMode>(permissionMode ?? 'default')
-  const [modeOpen, setModeOpen] = useState(false)
-  const [modeBusy, setModeBusy] = useState(false)
-  useEffect(() => {
-    setMode(permissionMode ?? 'default')
-  }, [permissionMode])
 
   spawnRef.current = {
     paneId,
     projectId,
     cli,
     configDir: configDir ?? '',
+    seatId,
     cwd,
-    model,
-    effort,
+    model: liveModel,
+    effort: liveEffort,
     systemPrompt,
     resumeSessionId,
     firstPrompt,
@@ -418,6 +471,7 @@ export default function GuiPane({
 
   const [draft, setDraft] = useState('')
   const [pinned, setPinned] = useState(true)
+  const [slashIndex, setSlashIndex] = useState(0)
   const logRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -486,18 +540,24 @@ export default function GuiPane({
     const el = logRef.current
     if (!el || !pinnedRef.current) return
     el.scrollTop = el.scrollHeight
-  }, [gui.items, gui.stream, gui.thinking, gui.perm])
+  }, [gui.items, gui.stream, gui.thinking, gui.perm, gui.question, gui.planReview])
 
-  // textarea que cresce com o texto (Enter envia, Shift+Enter quebra linha)
+  // textarea que cresce com o texto (Enter envia, Shift+Enter quebra linha).
+  // Teto alto e SEM barra de rolagem (ordem do dono): a caixa cresce até um
+  // terço da tela em vez de virar uma janelinha com scroll.
   useLayoutEffect(() => {
     const ta = inputRef.current
     if (!ta) return
     ta.style.height = 'auto'
-    ta.style.height = `${Math.min(168, ta.scrollHeight)}px`
+    ta.style.height = `${Math.min(300, ta.scrollHeight)}px`
   }, [draft])
 
   const dead = gui.status === 'dead'
   const working = gui.status === 'working' || gui.status === 'starting'
+  // Pergunta e plano SUSPENDEM o composer: é a linguagem do Claude GUI que o
+  // dono pediu — o que está na tela é a coisa a responder, não uma caixa de
+  // texto que compete com ela.
+  const awaitingCard = Boolean(gui.question || gui.planReview)
 
   const send = useCallback(
     (text: string): void => {
@@ -510,6 +570,44 @@ export default function GuiPane({
     [dead, paneId, sendGuiMessage]
   )
 
+  // ————— autocomplete de comandos —————
+  const slashQuery = useMemo(() => {
+    if (!draft.startsWith('/') && !/\s\/\S*$/u.test(draft)) return null
+    const el = inputRef.current
+    const cursor = el ? el.selectionStart : draft.length
+    return slashQueryAt(draft, cursor ?? draft.length)
+  }, [draft])
+
+  const slashMatches = useMemo(() => {
+    if (!slashQuery || !gui.caps?.commands?.length) return []
+    return filterSlashCommands(gui.caps.commands, slashQuery.query).slice(0, 40)
+  }, [gui.caps, slashQuery])
+
+  const slashOpen = slashMatches.length > 0
+  useEffect(() => {
+    setSlashIndex(0)
+  }, [slashQuery?.query])
+
+  /** Completar NUNCA envia: insere `/nome ` e devolve o cursor ao composer —
+   *  os argumentos vêm depois, digitados por quem chamou. */
+  const pickCommand = useCallback(
+    (command: GuiCliCommand): void => {
+      if (!slashQuery) return
+      const el = inputRef.current
+      const cursor = el?.selectionStart ?? draft.length
+      const before = draft.slice(0, slashQuery.at)
+      const after = draft.slice(cursor)
+      const inserted = `${slashName(command)} `
+      setDraft(`${before}${inserted}${after}`)
+      window.setTimeout(() => {
+        const pos = before.length + inserted.length
+        el?.focus({ preventScroll: true })
+        el?.setSelectionRange(pos, pos)
+      }, 0)
+    },
+    [draft, slashQuery]
+  )
+
   const submit = useCallback((): void => {
     const text = draft.trim()
     if (!text || dead) return
@@ -518,46 +616,106 @@ export default function GuiPane({
   }, [draft, dead, send])
 
   /**
-   * TROCA DE MODO EM VOO (onda D): re-emite `gui:create` com o MESMO paneId e
-   * o modo novo. O motor trata a mudança de fingerprint respawnando a sessão
-   * COM resume — a conversa continua, o modo é outro. A linha no transcript
-   * existe porque uma troca silenciosa seria indistinguível de um bug.
+   * TROCA EM VOO (modo, modelo, effort): re-emite `gui:create` com o MESMO
+   * paneId e o campo novo. O motor trata a mudança de fingerprint respawnando
+   * a sessão COM resume — a conversa continua, a régua é outra. A linha no
+   * transcript existe porque uma troca silenciosa seria indistinguível de bug.
    */
-  const changeMode = useCallback(
-    async (next: GuiPermissionMode): Promise<void> => {
-      setModeOpen(false)
-      if (next === mode || modeBusy || dead) return
-      setModeBusy(true)
-      setMode(next)
-      onPermissionMode?.(next)
-      const res = await guiApi.create({ ...spawnRef.current, permissionMode: next })
-      setModeBusy(false)
+  const applySpawnChange = useCallback(
+    async (
+      which: 'mode' | 'model' | 'effort',
+      patch: Partial<GuiPaneSpawn>,
+      okText: string
+    ): Promise<void> => {
+      setOpenMenu(null)
+      if (busyMenu || dead) return
+      setBusyMenu(which)
+      const res = await guiApi.create({ ...spawnRef.current, ...patch })
+      setBusyMenu(null)
       handleGuiLive(
         paneId,
         res.ok
-          ? {
-              type: 'command-output',
-              text: `modo de permissão: ${PERM_MODE_LABEL[next]} — sessão retomada`
-            }
+          ? { type: 'command-output', text: `${okText} — sessão retomada` }
           : {
               type: 'limit',
-              text: `não deu para trocar o modo de permissão: ${res.error ?? 'motivo desconhecido'}`
+              text: `não deu para aplicar a troca: ${res.error ?? 'motivo desconhecido'}`
             }
       )
     },
-    [mode, modeBusy, dead, onPermissionMode, paneId, handleGuiLive]
+    [busyMenu, dead, handleGuiLive, paneId]
   )
 
-  // fechar o menu clicando fora (mesmo padrão dos dropdowns do app)
-  const modeRef = useRef<HTMLDivElement>(null)
+  const changeMode = useCallback(
+    (next: GuiPermissionMode): void => {
+      if (next === mode) {
+        setOpenMenu(null)
+        return
+      }
+      setMode(next)
+      onPermissionMode?.(next)
+      void applySpawnChange(
+        'mode',
+        { permissionMode: next },
+        `modo de permissão: ${PERM_MODE_LABEL[next]}`
+      )
+    },
+    [applySpawnChange, mode, onPermissionMode]
+  )
+
+  const changeModel = useCallback(
+    (next: string): void => {
+      if (next === (liveModel ?? '')) {
+        setOpenMenu(null)
+        return
+      }
+      const value = next || undefined
+      // Modelo novo pode não ter o effort atual — carregar um nível que ele
+      // não suporta faria o spawn nascer recusado pelo CLI.
+      const supported =
+        gui.caps?.models.find((m) => m.value === value)?.supportedEffortLevels ?? []
+      const keepEffort = liveEffort && supported.includes(liveEffort) ? liveEffort : undefined
+      setLiveModel(value)
+      setLiveEffort(keepEffort)
+      onExecutorChange?.({ model: value, effort: keepEffort })
+      void applySpawnChange(
+        'model',
+        { model: value, effort: keepEffort },
+        `modelo: ${value ? prettyModel(value) : 'padrão da conta'}`
+      )
+    },
+    [applySpawnChange, gui.caps, liveEffort, liveModel, onExecutorChange]
+  )
+
+  const changeEffort = useCallback(
+    (next: string): void => {
+      if (next === (liveEffort ?? '')) {
+        setOpenMenu(null)
+        return
+      }
+      const value = next || undefined
+      setLiveEffort(value)
+      onExecutorChange?.({ effort: value })
+      void applySpawnChange('effort', { effort: value }, `effort: ${value ?? 'padrão do modelo'}`)
+    },
+    [applySpawnChange, liveEffort, onExecutorChange]
+  )
+
+  // fechar menus clicando fora (mesmo padrão dos dropdowns do app)
+  const paneRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (!modeOpen) return
+    if (!openMenu) return
     const onDocDown = (e: MouseEvent): void => {
-      if (!modeRef.current?.contains(e.target as Node)) setModeOpen(false)
+      const target = e.target as Node
+      if (!paneRef.current?.contains(target)) {
+        setOpenMenu(null)
+        return
+      }
+      if (!(target instanceof Element)) return
+      if (!target.closest('.gui-menu-host')) setOpenMenu(null)
     }
     document.addEventListener('mousedown', onDocDown)
     return () => document.removeEventListener('mousedown', onDocDown)
-  }, [modeOpen])
+  }, [openMenu])
 
   const goToEnd = useCallback((): void => {
     const el = logRef.current
@@ -567,22 +725,15 @@ export default function GuiPane({
     setPinned(true)
   }, [])
 
-  /**
-   * DITADO NESTE CHAT: focar o input já o registra como destino do SynVoice
-   * (o listener global de `focusin` mora no SynVoice da titlebar); o comando
-   * de gravar é o botão real da barra. Sem barra na janela (a WebContentsView
-   * dos panes), o foco sozinho continua valendo — a transcrição cai aqui.
-   */
-  const dictate = useCallback((): void => {
-    inputRef.current?.focus({ preventScroll: true })
-    const trigger = document.querySelector<HTMLButtonElement>('.synvoice-trigger')
-    if (trigger && !trigger.disabled) trigger.click()
-  }, [])
-
   const headRole = role?.trim() || roleFromPaneId(paneId)
-  const headModel = gui.model || model
+  const headModel = gui.model || liveModel
   const headWhere = branchLabel?.trim() || tailOf(cwd)
   const headStatus = STATUS_TEXT[gui.status]
+  const account = gui.caps?.account
+  const seat = seats?.find((s) => s.id === seatId)
+  const modelOptions = gui.caps?.models ?? []
+  const effortOptions =
+    modelOptions.find((m) => m.value === (liveModel ?? ''))?.supportedEffortLevels ?? []
 
   const injection = useMemo(() => {
     const text = firstPrompt?.trim()
@@ -596,25 +747,82 @@ export default function GuiPane({
    *  nada pendente; é isso que torna os botões inline uma resposta, não um
    *  atalho no meio do trabalho. */
   const askingGo = useMemo(() => {
-    if (gui.status !== 'idle' || gui.perm || gui.stream) return false
+    if (gui.status !== 'idle' || gui.perm || gui.stream || awaitingCard) return false
     for (let i = gui.items.length - 1; i >= 0; i -= 1) {
       const item = gui.items[i]
       if (item.kind === 'user') return false
       if (item.kind === 'assistant') return asksForGo(item.text)
     }
     return false
-  }, [gui.items, gui.status, gui.perm, gui.stream])
+  }, [gui.items, gui.status, gui.perm, gui.stream, awaitingCard])
 
-  const empty = gui.items.length === 0 && !gui.stream && !gui.perm && !injection
+  const empty = gui.items.length === 0 && !gui.stream && !gui.perm && !injection && !awaitingCard
 
   return (
-    <div className="gui-pane">
+    <div className="gui-pane" ref={paneRef}>
       {showHeader && (
         <div className="gui-head">
+          <span className="gui-head-cli" aria-hidden="true">
+            <CliMark cli={cli} size={13} />
+          </span>
           {headRole && <span className="gui-head-role">{headRole}</span>}
+
+          {/* A CONTA da conversa: clicar troca de seat sem sair do chat. */}
+          {seats?.length && onChangeSeat ? (
+            <span className="gui-menu-host gui-head-seat">
+              <button
+                className={`gui-head-seat-btn${openMenu === 'seat' ? ' open' : ''}`}
+                aria-haspopup="menu"
+                aria-expanded={openMenu === 'seat'}
+                data-tip={'Conta desta conversa. Trocar mantém a conversa quando o CLI é o mesmo.'}
+                onClick={() => setOpenMenu((v) => (v === 'seat' ? null : 'seat'))}
+              >
+                <span className="ghs-name">{seat?.name ?? 'escolher conta'}</span>
+                {account?.email && <span className="ghs-mail">{account.email}</span>}
+                {account?.subscriptionType && (
+                  <span className="ghs-plan">{account.subscriptionType}</span>
+                )}
+                <span className="ghs-caret" aria-hidden="true">
+                  ▾
+                </span>
+              </button>
+              {openMenu === 'seat' && (
+                <div className="gui-menu gui-seat-menu" role="menu">
+                  {seats.map((option) => (
+                    <button
+                      key={option.id}
+                      className={`gui-menu-item${option.id === seatId ? ' active' : ''}`}
+                      role="menuitem"
+                      onClick={() => {
+                        setOpenMenu(null)
+                        if (option.id !== seatId) onChangeSeat(option.id)
+                      }}
+                    >
+                      <CliMark cli={option.cli} size={12} />
+                      <b>{option.name}</b>
+                      <span>{option.cli}</span>
+                    </button>
+                  ))}
+                  <span className="gui-menu-foot">
+                    mesma família de CLI: a conversa vai junto para a conta nova · CLI diferente: a
+                    conversa recomeça
+                  </span>
+                </div>
+              )}
+            </span>
+          ) : (
+            seat?.name && <span className="gui-head-where">{seat.name}</span>
+          )}
+
           {headModel && <span className="gui-head-model">{prettyModel(headModel)}</span>}
+          {liveEffort && <span className="gui-head-effort">{liveEffort}</span>}
           {headWhere && <span className="gui-head-where">{headWhere}</span>}
-          {headStatus && <span className={`gui-head-status ${gui.status}`}>{headStatus}</span>}
+          {headStatus && (
+            <span className={`gui-head-status ${gui.status}`}>
+              <i className="ghs-dot" aria-hidden="true" />
+              {headStatus}
+            </span>
+          )}
         </div>
       )}
 
@@ -647,14 +855,7 @@ export default function GuiPane({
               <GuiMessage key={item.id} item={item} />
             ))}
 
-            {gui.stream && (
-              <div className="gui-msg dev stream">
-                <div className="gui-msg-text">
-                  {gui.stream}
-                  <span className="stream-cursor">▍</span>
-                </div>
-              </div>
-            )}
+            {gui.stream && <GuiStreamText text={gui.stream} />}
 
             {gui.thinking && !gui.stream && (
               <div className="gui-thinking">
@@ -665,6 +866,21 @@ export default function GuiPane({
                 </span>
                 pensando{gui.thinkingText ? `: ${gui.thinkingText.slice(-160)}` : '…'}
               </div>
+            )}
+
+            {gui.planReview && (
+              <GuiPlanCard
+                plan={gui.planReview.plan}
+                onDecide={(approve) => void answerGuiPlan(projectId, paneId, approve)}
+              />
+            )}
+
+            {gui.question && (
+              <GuiQuestionCard
+                questions={gui.question.questions}
+                onAnswer={(answers) => void answerGuiQuestion(projectId, paneId, answers)}
+                onSkip={() => void answerGuiQuestion(projectId, paneId, {})}
+              />
             )}
 
             {askingGo && (
@@ -700,94 +916,213 @@ export default function GuiPane({
         />
       )}
 
-      <div className="gui-composer">
-        <div className="gui-composer-inner">
-          {/* PERMISSÃO POR CONVERSA (onda D): o interruptor global do universo
-              morreu — quem decide o quanto o agente pode agir sozinho é cada
-              chat, aqui, ao lado do que se vai escrever. */}
-          <div className="gui-perm-mode" ref={modeRef}>
-            <button
-              className={`gui-mode-btn mode-${mode}`}
-              disabled={dead || modeBusy}
-              data-tip={`Permissão desta conversa: ${PERM_MODE_LABEL[mode]}\nTrocar retoma a mesma conversa com a regra nova.`}
-              aria-haspopup="menu"
-              aria-expanded={modeOpen}
-              aria-label={`Permissão desta conversa: ${PERM_MODE_LABEL[mode]}`}
-              onClick={() => setModeOpen((v) => !v)}
-            >
-              <span aria-hidden="true">⛭</span>
-              <span className="gui-mode-text">{modeBusy ? 'trocando…' : PERM_MODE_LABEL[mode]}</span>
-            </button>
-            {modeOpen && (
-              <div className="gui-mode-menu" role="menu">
-                {PERM_MODES.map((option) => (
+      {!awaitingCard && (
+        <div className="gui-composer">
+          {slashOpen && (
+            <GuiSlashMenu
+              commands={slashMatches}
+              index={slashIndex}
+              onPick={pickCommand}
+              onHover={setSlashIndex}
+            />
+          )}
+          <div className="gui-composer-inner">
+            {/* A FAMÍLIA DE CONTROLES da conversa: permissão · modelo · effort.
+                O interruptor global do universo morreu — quem decide o quanto o
+                agente pode agir, e com que motor, é cada chat, aqui. */}
+            <div className="gui-menu-host">
+              <button
+                className={`gui-mode-btn mode-${mode}`}
+                disabled={dead || Boolean(busyMenu)}
+                data-tip={`Permissão desta conversa: ${PERM_MODE_LABEL[mode]}\nTrocar retoma a mesma conversa com a regra nova.`}
+                aria-haspopup="menu"
+                aria-expanded={openMenu === 'mode'}
+                aria-label={`Permissão desta conversa: ${PERM_MODE_LABEL[mode]}`}
+                onClick={() => setOpenMenu((v) => (v === 'mode' ? null : 'mode'))}
+              >
+                <span aria-hidden="true">{PERM_MODE_GLYPH[mode]}</span>
+                <span className="gui-mode-text">
+                  {busyMenu === 'mode' ? 'trocando…' : PERM_MODE_LABEL[mode]}
+                </span>
+              </button>
+              {openMenu === 'mode' && (
+                <div className="gui-menu gui-mode-menu" role="menu">
+                  {PERM_MODES.map((option) => (
+                    <button
+                      key={option.id}
+                      className={`gui-menu-item mode-${option.id}${
+                        option.id === mode ? ' active' : ''
+                      }`}
+                      role="menuitem"
+                      onClick={() => changeMode(option.id)}
+                    >
+                      <span className="gmi-glyph" aria-hidden="true">
+                        {option.glyph}
+                      </span>
+                      <b>{option.label}</b>
+                      <span>{option.hint}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="gui-menu-host">
+              <button
+                className="gui-mode-btn mode-model"
+                disabled={dead || Boolean(busyMenu)}
+                data-tip={'Modelo desta conversa.\nTrocar retoma a mesma conversa no modelo novo.'}
+                aria-haspopup="menu"
+                aria-expanded={openMenu === 'model'}
+                onClick={() => setOpenMenu((v) => (v === 'model' ? null : 'model'))}
+              >
+                <span aria-hidden="true">◆</span>
+                <span className="gui-mode-text">
+                  {busyMenu === 'model'
+                    ? 'trocando…'
+                    : liveModel
+                      ? prettyModel(liveModel)
+                      : 'modelo'}
+                </span>
+              </button>
+              {openMenu === 'model' && (
+                <div className="gui-menu gui-mode-menu" role="menu">
                   <button
-                    key={option.id}
-                    className={`gui-mode-item${option.id === mode ? ' active' : ''}`}
+                    className={`gui-menu-item${liveModel ? '' : ' active'}`}
                     role="menuitem"
-                    onClick={() => void changeMode(option.id)}
+                    onClick={() => changeModel('')}
                   >
-                    <b>{option.label}</b>
-                    <span>{option.hint}</span>
+                    <b>padrão da conta</b>
+                    <span>o modelo que o CLI escolher</span>
                   </button>
-                ))}
+                  {modelOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      className={`gui-menu-item${option.value === liveModel ? ' active' : ''}`}
+                      role="menuitem"
+                      onClick={() => changeModel(option.value)}
+                    >
+                      <b>{option.displayName || option.value}</b>
+                      {option.description && <span>{option.description}</span>}
+                    </button>
+                  ))}
+                  {modelOptions.length === 0 && (
+                    <span className="gui-menu-foot">
+                      a lista de modelos chega quando o CLI termina de abrir
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {effortOptions.length > 0 && (
+              <div className="gui-menu-host">
+                <button
+                  className="gui-mode-btn mode-effort"
+                  disabled={dead || Boolean(busyMenu)}
+                  data-tip={'Esforço de raciocínio desta conversa.'}
+                  aria-haspopup="menu"
+                  aria-expanded={openMenu === 'effort'}
+                  onClick={() => setOpenMenu((v) => (v === 'effort' ? null : 'effort'))}
+                >
+                  <span aria-hidden="true">◇</span>
+                  <span className="gui-mode-text">
+                    {busyMenu === 'effort' ? 'trocando…' : (liveEffort ?? 'effort')}
+                  </span>
+                </button>
+                {openMenu === 'effort' && (
+                  <div className="gui-menu gui-mode-menu" role="menu">
+                    <button
+                      className={`gui-menu-item${liveEffort ? '' : ' active'}`}
+                      role="menuitem"
+                      onClick={() => changeEffort('')}
+                    >
+                      <b>padrão do modelo</b>
+                    </button>
+                    {effortOptions.map((option) => (
+                      <button
+                        key={option}
+                        className={`gui-menu-item${option === liveEffort ? ' active' : ''}`}
+                        role="menuitem"
+                        onClick={() => changeEffort(option)}
+                      >
+                        <b>{option}</b>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
-          </div>
 
-          <textarea
-            ref={inputRef}
-            className="gui-input"
-            rows={1}
-            value={draft}
-            disabled={dead}
-            aria-label="Mensagem para esta conversa"
-            placeholder={
-              dead
-                ? 'sessão encerrada — feche o pane e abra outro'
-                : 'dirija o dev — ou peça um reviewer'
-            }
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
-                e.preventDefault()
-                submit()
+            <textarea
+              ref={inputRef}
+              className="gui-input"
+              rows={1}
+              value={draft}
+              disabled={dead}
+              aria-label="Mensagem para esta conversa"
+              placeholder={
+                dead
+                  ? 'sessão encerrada — feche o pane e abra outro'
+                  : 'dirija o dev — / abre os comandos'
               }
-            }}
-          />
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                // O menu de comandos manda no teclado enquanto está aberto:
+                // Enter ali COMPLETA, nunca envia.
+                if (slashOpen) {
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault()
+                    setSlashIndex((i) => (i + 1) % slashMatches.length)
+                    return
+                  }
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    setSlashIndex((i) => (i - 1 + slashMatches.length) % slashMatches.length)
+                    return
+                  }
+                  if (e.key === 'Tab' || e.key === 'Enter') {
+                    e.preventDefault()
+                    pickCommand(slashMatches[slashIndex] ?? slashMatches[0])
+                    return
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setSlashIndex(0)
+                    setDraft((text) => `${text} `)
+                    return
+                  }
+                }
+                if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+                  e.preventDefault()
+                  submit()
+                }
+              }}
+            />
 
-          <button
-            className="gui-sq gui-mic"
-            disabled={dead}
-            data-tip="Ditar neste chat (SynVoice)"
-            aria-label="Ditar neste chat"
-            onClick={dictate}
-          >
-            <MicGlyph />
-          </button>
-
-          {working ? (
-            <button
-              className="gui-sq gui-send stop"
-              data-tip="Interromper o turno em andamento"
-              aria-label="Interromper o turno"
-              onClick={() => void interruptGuiPane(paneId)}
-            >
-              ■
-            </button>
-          ) : (
-            <button
-              className="gui-sq gui-send"
-              disabled={!draft.trim() || dead}
-              data-tip="Enviar · Enter"
-              aria-label="Enviar mensagem"
-              onClick={submit}
-            >
-              <SendGlyph />
-            </button>
-          )}
+            {working ? (
+              <button
+                className="gui-sq gui-send stop"
+                data-tip="Interromper o turno em andamento"
+                aria-label="Interromper o turno"
+                onClick={() => void interruptGuiPane(paneId)}
+              >
+                ■
+              </button>
+            ) : (
+              <button
+                className="gui-sq gui-send"
+                disabled={!draft.trim() || dead}
+                data-tip="Enviar · Enter"
+                aria-label="Enviar mensagem"
+                onClick={submit}
+              >
+                <SendGlyph />
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
