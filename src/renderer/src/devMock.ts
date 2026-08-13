@@ -1215,7 +1215,10 @@ export function installDevMock(): void {
       interrupt: async () => ({ ok: true }),
       kill: async () => ({ ok: true }),
       state: async () => ({ events: [] }),
-      onLive: () => () => undefined
+      onLive: () => () => undefined,
+      // Anexo no browser puro não tem disco nem pane vivo: recusa honesta com
+      // o mesmo texto de UI do main (nunca um path falso que o prompt citaria).
+      attach: async () => ({ ok: false, error: 'anexos só funcionam no app' })
     },
     projectPlan: {
       get: async () => null,

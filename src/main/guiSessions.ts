@@ -238,6 +238,16 @@ export class GuiSessionRegistry {
     return this.doc.panes[paneId]
   }
 
+  /**
+   * Pasta de trabalho do pane VIVO (worktree da missão, ou raiz do projeto no
+   * planejamento). É por aqui que o `gui:attach` descobre onde gravar o anexo:
+   * o destino nasce do registro, NUNCA de um caminho vindo do renderer.
+   * undefined = pane desconhecido — o chamador recusa em vez de adivinhar.
+   */
+  cwdOf(paneId: string): string | undefined {
+    return this.panes.get(paneId)?.spawn.cwd
+  }
+
   create(input: GuiPaneSpawn): GuiResult {
     if (!input.paneId) return { ok: false, error: 'pane sem identificador' }
     if (!input.cwd) return { ok: false, error: 'pane sem pasta de trabalho' }
