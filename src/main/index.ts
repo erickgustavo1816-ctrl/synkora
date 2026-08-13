@@ -100,7 +100,7 @@ import { registerServicesIpc } from './ipc/services'
 import { registerHarnessIpc } from './ipc/harness'
 import { registerGuiIpc } from './ipc/gui'
 import type { GuiSessionRegistry } from './guiSessions'
-import { isGuiMissionPaneId } from './guiMissionContracts'
+import { isGuiMissionPaneId, isGuiPlanningPaneId } from './guiMissionContracts'
 import { registerProjectPlanIpc } from './ipc/projectPlan'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerProgressIpc } from './ipc/progress'
@@ -5771,6 +5771,13 @@ app.whenReady().then(async () => {
   const killMissionGuiPanes = (missionId: string): void => {
     guiSessions?.killWhere((paneId) => isGuiMissionPaneId(paneId, missionId))
   }
+  // Onda C: os chats do PROJETO (hoje só o de planejamento, `gui-plan-<id8>`)
+  // rodam na RAIZ do universo — morrem quando essa raiz sai debaixo deles
+  // (relocação, exclusão do projeto). Os de MISSÃO não entram aqui: o cwd
+  // deles é o worktree em userData, que sobrevive aos dois gestos.
+  const killProjectGuiPanes = (projectId: string): void => {
+    guiSessions?.killWhere((paneId) => isGuiPlanningPaneId(paneId, projectId))
+  }
   // MISSÕES → missionEngine.ts (fase 1, commit 6d). Missões + fila de
   // integração nascem no engine; os aliases abaixo mantêm os call sites do
   // index (onExit do PTY, boot recovery, extras do mcpApi/) e os getters do
@@ -6849,7 +6856,9 @@ app.whenReady().then(async () => {
     killMaestroSession,
     hasProjectPlanArtifacts,
     ensureBypassAccepted,
-    discardUnstartedPane
+    discardUnstartedPane,
+    guiSessions: guiSessionRegistry,
+    killProjectGuiPanes
   })
   registerBacklogIpc(ctx, {
     emitBacklogChanged,

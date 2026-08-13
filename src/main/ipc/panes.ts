@@ -149,7 +149,14 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
         : ''
       const command = `${noteEcho}${installPrefix}${inv.prefix}npm run ${script}${inv.suffix}`
       const paneId = randomUUID()
-      testServerPanes.set(paneId, { projectId, cwd, command, port: chosenPort, label })
+      testServerPanes.set(paneId, {
+        projectId,
+        cwd,
+        command,
+        port: chosenPort,
+        label,
+        purpose: 'test-server'
+      })
       blackbox.record({
         cat: 'pane',
         event: 'test-server-open',
