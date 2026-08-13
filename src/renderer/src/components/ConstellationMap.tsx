@@ -14,6 +14,7 @@ import {
   type MapSatellite,
   type PaneNode
 } from '../panesNodes'
+import { missionChatLabel } from '../guiMissionPanes'
 import { createPaperField, type FieldWell, type PaperField } from '../paperField'
 import { fmtTokens, prettyModel } from './PaneChrome'
 import { hueOf, initialsOf } from '../util'
@@ -308,6 +309,9 @@ interface Props {
   itemActivity: Record<string, PaneActivity>
   itemAttention: Record<string, boolean>
   onAnchor: (nodeId: string) => void
+  /** MISSÃO DIRETA (2.0): o trabalho dela é a CONVERSA, e a conversa mora no
+   *  board — clicar no card leva até ela em vez de abrir um palco vazio. */
+  onOpenMission: (missionId: string) => void
   /** clicar num SATÉLITE abre o palco do nó já com aquele terminal em foco */
   onOpenPane: (nodeId: string, paneId: string) => void
   /** clicar no núcleo leva ao Board (o Maestro mora lá — trazer o terminal para
@@ -386,6 +390,7 @@ export default function ConstellationMap({
   itemActivity,
   itemAttention,
   onAnchor,
+  onOpenMission,
   onOpenPane,
   onOpenBoard,
   missionsAtivas,
@@ -1496,6 +1501,24 @@ export default function ConstellationMap({
     fieldRef.current?.pointer(null, null)
   }, [])
 
+  // CLICAR NUM CARD DE NÓ. Missão LEGADA abre o palco de terminais (o que
+  // sempre fez). Missão DIRETA (2.0) não tem terminal de trabalho: o que ela
+  // tem é a CONVERSA, e a conversa mora no board — então o clique navega até
+  // lá. Se ela tiver terminais de utilidade abertos (▷ terminal, ▶ testar) o
+  // nó é ancorado junto, e voltar à aba Panes já cai no palco certo.
+  const activateNode = useCallback(
+    (node: PaneNode): void => {
+      const direct = node.mission?.direct ? node.mission : null
+      if (direct) {
+        if (node.paneIds.length) onAnchor(node.id)
+        onOpenMission(direct.id)
+        return
+      }
+      onAnchor(node.id)
+    },
+    [onAnchor, onOpenMission]
+  )
+
   // ARRASTAR CARD: gesto sem re-render. Move o próprio elemento e publica a
   // posição num ref — o rAF dos fios lê dali, então a curva acompanha com a
   // mesma ondulação em vez de virar uma reta rígida. `setPointerCapture` +
@@ -1602,7 +1625,7 @@ export default function ConstellationMap({
           // recentralizar — é o gesto natural de "me leve até ele".
           cameraFollowAllowed.current = true
           setFocus(node.id)
-          onAnchor(node.id)
+          activateNode(node)
         }
       }
       const restore = (): void => {
@@ -1623,7 +1646,7 @@ export default function ConstellationMap({
       card.addEventListener('pointercancel', onCancel)
       card.addEventListener('lostpointercapture', onLost)
     },
-    [offsets, placedSats, cx, setNodeOffset, projectId, onAnchor, shock]
+    [offsets, placedSats, cx, setNodeOffset, projectId, activateNode, shock]
   )
 
   // ARRASTAR SATÉLITE: mesma mecânica do card grande (gesto sem re-render,
@@ -2016,12 +2039,16 @@ export default function ConstellationMap({
                 e.preventDefault()
                 cameraFollowAllowed.current = true
                 setFocus(node.id)
-                onAnchor(node.id)
+                activateNode(node)
               }
             }}
             onDoubleClick={() => setNodeOffset(projectId, node.id, { dx: 0, dy: 0 })}
             data-tip={
-              node.mission
+              node.mission?.direct
+                ? `Missão "${node.mission.title}"\n${node.mission.branch ?? 'sem branch'}\n${missionChatLabel(
+                    node.chat ?? { pulse: 'dormant', running: 0, attention: 0, live: 0 }
+                  )} · clique para abrir a conversa dela no board`
+                : node.mission
                 ? `Orquestrador da missão "${node.mission.title}"\n${node.mission.branch ?? 'sem branch'}\nclique para abrir os terminais · os cards em volta são os devs/ajudantes/gates dele`
                 : node.kind === 'orfaos'
                   ? 'Terminais de missões já encerradas que continuam de pé'
@@ -2036,12 +2063,24 @@ export default function ConstellationMap({
             </span>
             <span className="node-title">{node.label}</span>
             <span className="node-line">
-              {node.kind === 'mission' ? '✦ orquestrador · ' : ''}
-              {node.kind === 'teste'
-                ? node.paneIds.length === 1
-                  ? '▶ teste em andamento'
-                  : `▶ ${node.paneIds.length} testes em andamento`
-                : `${node.paneIds.length} ${node.paneIds.length === 1 ? 'painel ativo' : 'painéis ativos'}`}
+              {/* Missão DIRETA fala da CONVERSA (o trabalho dela); os painéis
+                  do worktree, quando existem, entram como sufixo. */}
+              {node.chat ? (
+                <>
+                  {`✎ ${missionChatLabel(node.chat)}`}
+                  {node.paneIds.length > 0 &&
+                    ` · ${node.paneIds.length} ${node.paneIds.length === 1 ? 'painel' : 'painéis'}`}
+                </>
+              ) : (
+                <>
+                  {node.kind === 'mission' ? '✦ orquestrador · ' : ''}
+                  {node.kind === 'teste'
+                    ? node.paneIds.length === 1
+                      ? '▶ teste em andamento'
+                      : `▶ ${node.paneIds.length} testes em andamento`
+                    : `${node.paneIds.length} ${node.paneIds.length === 1 ? 'painel ativo' : 'painéis ativos'}`}
+                </>
+              )}
             </span>
             <span className="node-foot">
               {node.mission?.branch && (

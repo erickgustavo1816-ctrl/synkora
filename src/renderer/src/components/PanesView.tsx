@@ -12,6 +12,7 @@ import PhaseSeatModal from './PhaseSeatModal'
 import ConstellationMap from './ConstellationMap'
 import { DEPT_BY_KEY, deptHueVar } from '../departments'
 import { buildNodes, hueOfNode, NODE_GERAL, type PaneNode } from '../panesNodes'
+import { missionChatSummary, type MissionChatSummary } from '../guiMissionPanes'
 import {
   DEFAULT_CANVAS_LAYOUT,
   type CanvasBox,
@@ -20,6 +21,7 @@ import {
   type CanvasPageLayout
 } from '../paneCanvas'
 import { freezeTerminalLayoutFor, holdTerminalLayout } from '../terminalLayoutFreeze'
+import { encodeHostNavTarget } from '../hostNavTarget'
 import {
   TERMINAL_DEFAULT_FONT_FAMILY,
   TERMINAL_DEFAULT_FONT_SIZE,
@@ -246,6 +248,25 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
     return () => obs.disconnect()
   }, [])
 
+  // 2.0: missão direta não tem pane TUI — quem diz se ela está trabalhando é a
+  // CONVERSA (espelho de `gui:live` alimentado no PanesApp desta view). O
+  // resumo é destilado aqui e entra nos nós por ASSINATURA: `gui:live` dispara
+  // a cada delta do turno, e pendurar `nodes` no objeto cru faria a geometria
+  // do canvas recalcular dezenas de vezes por segundo.
+  const missionChat = useMemo(() => {
+    const out: Record<string, MissionChatSummary> = {}
+    for (const mission of missions) {
+      if (!mission.direct || mission.projectId !== projectId) continue
+      out[mission.id] = missionChatSummary(mission.id, guiPanes)
+    }
+    return out
+  }, [missions, projectId, guiPanes])
+  const missionChatSig = Object.entries(missionChat)
+    .map(([id, chat]) => `${id}:${chat.pulse}:${chat.running}:${chat.attention}:${chat.live}`)
+    .join('|')
+  const missionChatRef = useRef(missionChat)
+  missionChatRef.current = missionChat
+
   const nodes = useMemo(
     () =>
       buildNodes({
@@ -253,9 +274,11 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
         tasks,
         missions: missions.filter((m) => m.projectId === projectId),
         paneActivity,
-        paneAttention
+        paneAttention,
+        missionChat: missionChatRef.current
       }),
-    [panes, tasks, missions, projectId, paneActivity, paneAttention]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [panes, tasks, missions, projectId, paneActivity, paneAttention, missionChatSig]
   )
 
   // Nó ancorado que deixou de existir (missão integrada/arquivada, último pane
@@ -394,6 +417,19 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
       })
     },
     [anchored, projectId, setPanesUi]
+  )
+
+  // Clique num card de MISSÃO DIRETA (2.0): o trabalho dela é a conversa, e a
+  // conversa mora no board — que vive no HOST. F3-c4: o único caminho é o
+  // relay via main, e o alvo (aba + missão) viaja codificado na string.
+  const openMissionOnBoard = useCallback(
+    (missionId: string): void => {
+      window.synkora.panesView.navigateHost(
+        projectId,
+        encodeHostNavTarget('board', missionId)
+      )
+    },
+    [projectId]
   )
 
   // Clique num SATÉLITE do mapa: abre o palco do nó já com aquele terminal em
@@ -1055,6 +1091,7 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
             itemActivity={paneActivity}
             itemAttention={paneAttention}
             onAnchor={anchor}
+            onOpenMission={openMissionOnBoard}
             onOpenPane={openPaneFromMap}
             // F3-c4: o board mora no HOST — navegar é relay via main (o tab
             // local desta view fica cravado em 'panes' de propósito).

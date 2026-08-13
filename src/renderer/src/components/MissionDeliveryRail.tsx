@@ -18,10 +18,12 @@ export default function MissionDeliveryRail({
   versionLabel,
   queueLabel,
   guiAvailable,
+  shellAvailable,
   testServerOpen,
   onIntegrate,
   onReview,
   onHelper,
+  onTerminal,
   onTestServer,
   onKillTestServer,
   onArchive
@@ -31,11 +33,14 @@ export default function MissionDeliveryRail({
   queueLabel?: string
   /** ponte do chat viva? sem ela revisar/ajudante não têm o que abrir */
   guiAvailable: boolean
+  /** ponte do `missions:shellSpec` viva? sem ela o terminal não tem o que abrir */
+  shellAvailable: boolean
   /** já existe um pane de servidor de teste desta missão */
   testServerOpen: boolean
   onIntegrate: () => void
   onReview: () => void
   onHelper: () => void
+  onTerminal: () => void
   onTestServer: () => void
   onKillTestServer: () => void
   onArchive: () => void
@@ -124,12 +129,24 @@ export default function MissionDeliveryRail({
           >
             ✦ ajudante
           </button>
-          {/* Utilidade de shell no worktree: sobe o script do projeto num pane
-              de terminal de verdade (o mesmo ▶ testar de sempre).
-              PENDENTE (onda B, motor): um terminal VAZIO no worktree precisa de
-              um seam novo no main — o renderer não tem canal para abrir pane
-              shell avulso; hoje só `panes:freeSpec` (arma agente) e
-              `panes:testServerSpec` (roda o script) existem. */}
+          {/* Terminal CRU no worktree (`missions:shellSpec`): shell de verdade,
+              sem CLI, sem persona e sem MCP — para o dono rodar git, um script
+              solto ou olhar um arquivo com as próprias mãos. Nasce no deck de
+              panes como qualquer outro pane shell. */}
+          <button
+            className="btn tiny dr-btn"
+            disabled={!shellAvailable}
+            data-tip={
+              shellAvailable
+                ? 'Abre um terminal comum no worktree desta missão (sem agente) — o pane vai para a aba Panes'
+                : 'reinicie o app (npm run dev) para habilitar o terminal da missão'
+            }
+            onClick={onTerminal}
+          >
+            ▷ terminal
+          </button>
+          {/* Utilidade irmã: sobe o SCRIPT do projeto (o mesmo ▶ testar de
+              sempre) num pane de terminal, com a porta escolhida no modal. */}
           {testServerOpen ? (
             <button
               className="btn tiny dr-btn dr-danger"
