@@ -1,5 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { EMPTY_GUI_PANE, useStore, type GuiItem, type GuiPendingPerm } from '../store'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  EMPTY_GUI_PANE,
+  useStore,
+  type GuiItem,
+  type GuiPaneStatus,
+  type GuiPendingPerm
+} from '../store'
+import { prettyModel } from './PaneChrome'
 import {
   asGuiEvent,
   guiApi,
@@ -9,15 +16,21 @@ import {
   type GuiSessionEvent
 } from '../guiApi'
 
-// PANE GUI — o chat que substitui a TUI dentro do pane (Synkora 2.0, onda A).
+// PANE GUI — o CHAT que substitui a TUI (Synkora 2.0).
 //
-// Mora no MESMO deck de PanesView, com o MESMO chrome (PaneChrome). A regra de
-// ouro do deck continua valendo: a lista é plana e nunca se desmonta ao
-// reorganizar o canvas — aqui isso importa ainda mais, porque desmontar
-// derrubaria a assinatura do canal `gui:live` e a conversa viva.
+// O visual é CONTRATO: docs/MOCKUP_WORKSPACE.md § "Anatomia do chat". A regra
+// que esta superfície existe para não quebrar de novo ("tá parecendo um pane
+// ainda, tá feio"): o chat é PAPEL. `--panel` (o painel escuro) é EXCLUSIVO do
+// TerminalPane — nenhuma superfície de conversa o usa. Aqui não há barra de
+// pane escura: o cabeçalho da conversa é UMA linha apagada dentro do próprio
+// papel, e quem quiser envolver o chat em outro chrome (o layout do Board) só
+// desliga `showHeader`.
 //
-// Este componente NÃO cria PTY nenhum: o motor é uma sessão por pane no main
-// (maestroSession/codexSession), comandada por `window.synkora.gui`.
+// A regra de ouro do deck continua valendo: a lista de slots é plana e nunca
+// se desmonta ao reorganizar — desmontar derrubaria a assinatura de `gui:live`
+// e a conversa viva. Este componente NÃO cria PTY nenhum: o motor é uma sessão
+// por pane no main (maestroSession/codexSession), comandada por
+// `window.synkora.gui`.
 
 interface Props {
   paneId: string
@@ -37,6 +50,17 @@ interface Props {
   /** o dono da spec guarda a escolha: sem isto, remontar o slot voltaria ao
    *  modo antigo enquanto a sessão no main já está no novo. */
   onPermissionMode?: (mode: GuiPermissionMode) => void
+  /** Papel desta conversa no cabeçalho fino ("dev", "reviewer", "ajudante 2",
+   *  "planejamento"). Ausente = deduzido do paneId. */
+  role?: string
+  /** Lugar desta conversa (branch da missão). Ausente = cauda do cwd. */
+  branchLabel?: string
+  /** Nome do que foi injetado como 1º prompt ("002-auth.md"). Ausente =
+   *  deduzido da 1ª linha do próprio prompt. */
+  firstPromptLabel?: string
+  /** false = o chat nasce sem o cabeçalho fino (quem envolve o pane já mostra
+   *  papel/modelo/branch). O chat NUNCA depende de um chrome externo. */
+  showHeader?: boolean
 }
 
 /**
@@ -60,14 +84,110 @@ function replayOverlap(replay: GuiSessionEvent[], buffered: GuiSessionEvent[]): 
   return 0
 }
 
+// ————— cabeçalho fino da conversa —————
+
+/** Papel deduzido do endereço estável do pane (guiMissionContracts):
+ *  `gui-dev-<short>` · `gui-reviewer-<short>` · `gui-helper-<short>-<n>` ·
+ *  `gui-plan-<id8>`. Serve de default para quem monta o pane sem passar
+ *  `role` — o cabeçalho nunca nasce mudo. */
+function roleFromPaneId(paneId: string): string | null {
+  const match = /^gui-(dev|reviewer|helper|plan)(?:-|$)/.exec(paneId)
+  if (!match) return null
+  if (match[1] === 'helper') {
+    const n = /-(\d+)$/.exec(paneId)?.[1]
+    return n && n !== '1' ? `ajudante ${n}` : 'ajudante'
+  }
+  return match[1] === 'plan' ? 'planejamento' : match[1]
+}
+
+/** Cauda do caminho: o worktree da missão já se chama pela branch. */
+function tailOf(path: string): string {
+  const parts = path.split(/[\\/]+/u).filter(Boolean)
+  return parts[parts.length - 1] ?? ''
+}
+
+/** Só o que informa: parado não vira palavra na tela (o mockup mostra a linha
+ *  em repouso com três campos e nada mais). */
+const STATUS_TEXT: Record<GuiPaneStatus, string | null> = {
+  starting: 'abrindo',
+  working: 'trabalhando',
+  'waiting-you': 'esperando você',
+  idle: null,
+  dead: 'encerrada'
+}
+
+// ————— injeção do 1º prompt —————
+
+/** Nome curto do que foi injetado: a 1ª linha útil do briefing, sem o rótulo
+ *  do contrato. Nunca inventa: sem linha legível, cai em "briefing". */
+function injectionLabel(prompt: string): string {
+  const line = prompt
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0)
+  if (!line) return 'briefing'
+  const clean = line.replace(/^(MISSION|GOAL|SCOPE|PROJECT|PROJETO)\s*:\s*/iu, '').trim()
+  const text = clean || line
+  return text.length > 64 ? `${text.slice(0, 63)}…` : text
+}
+
+// ————— tool cards —————
+
+/** Glifo por FAMÍLIA de ferramenta: o card lê como uma linha de trabalho
+ *  ("✎ Edit · src/…"), não como um bloco de terminal. */
+function toolGlyph(name: string): string {
+  const n = name.toLowerCase()
+  if (/(edit|write|notebook|create|update)/u.test(n)) return '✎'
+  if (/(read|cat|view|notebookread)/u.test(n)) return '▤'
+  if (/(bash|shell|exec|command|run)/u.test(n)) return '❯'
+  if (/(grep|glob|search|find)/u.test(n)) return '⌕'
+  if (/(web|fetch|http|url)/u.test(n)) return '⇗'
+  if (/(task|agent|delegate|helper)/u.test(n)) return '✦'
+  if (/(todo|plan)/u.test(n)) return '☰'
+  return '▪'
+}
+
+function firstLine(text: string, cap: number): string {
+  const line = text
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0)
+  if (!line) return ''
+  return line.length > cap ? `${line.slice(0, cap - 1)}…` : line
+}
+
+/**
+ * Desfecho à direita do card. NUNCA fabrica número: só promove a contagem que
+ * o próprio resultado publica (testes que passaram, linhas inseridas); fora
+ * disso o sinal honesto é o ✓ verde (a ferramenta terminou) ou o erro em
+ * vermelho com a 1ª linha do motivo.
+ */
+function toolOutcome(
+  result: { text: string; isError: boolean } | undefined
+): { tone: 'ok' | 'err'; label: string } | null {
+  if (!result) return null
+  if (result.isError) return { tone: 'err', label: firstLine(result.text, 34) || 'erro' }
+  const text = result.text
+  const passed = /(\d+)\s+(?:passed|passing|passaram)/iu.exec(text)
+  if (passed) return { tone: 'ok', label: `✓ ${passed[1]} passed` }
+  const inserted = /(\d+)\s+(?:insertions?|inserções?|linhas? adicionadas?)/iu.exec(text)
+  if (inserted) return { tone: 'ok', label: `+${inserted[1]}` }
+  const plus = /(?:^|\n)\s*\+(\d+)\b/u.exec(text)
+  if (plus) return { tone: 'ok', label: `+${plus[1]}` }
+  return { tone: 'ok', label: '✓' }
+}
+
 function GuiToolCard({ item }: { item: Extract<GuiItem, { kind: 'tool' }> }): React.JSX.Element {
-  const state = item.result ? (item.result.isError ? 'err' : 'ok') : 'run'
-  const glyph = item.result ? (item.result.isError ? '✗' : '✓') : '◌'
+  const out = toolOutcome(item.result)
   const row = (
     <>
-      <span className={`gui-tool-state ${state}`}>{glyph}</span>
+      <span className={`gui-tool-icon${item.result ? '' : ' run'}`} aria-hidden="true">
+        {item.result ? toolGlyph(item.name) : '◌'}
+      </span>
       <b className="gui-tool-name">{item.name}</b>
-      {item.summary && <span className="gui-tool-summary">{item.summary}</span>}
+      {item.summary && <span className="gui-tool-sep">·</span>}
+      <span className="gui-tool-summary">{item.summary}</span>
+      {out && <span className={`gui-tool-out ${out.tone}`}>{out.label}</span>}
     </>
   )
   if (!item.result?.text) return <div className="gui-tool">{row}</div>
@@ -107,7 +227,10 @@ function GuiMessage({ item }: { item: GuiItem }): React.JSX.Element {
   if (item.kind === 'permission') {
     return (
       <div className={`gui-perm-mark ${item.behavior === 'deny' ? 'deny' : ''}`}>
-        ⛭ {item.toolName}: {PERM_LABEL[item.behavior]}
+        <span aria-hidden="true">⛭</span>
+        <span>
+          {item.toolName}: {PERM_LABEL[item.behavior]}
+        </span>
       </div>
     )
   }
@@ -120,9 +243,9 @@ function GuiMessage({ item }: { item: GuiItem }): React.JSX.Element {
     )
   }
   if (item.kind === 'note') return <div className="gui-note">{item.text}</div>
-  if (item.kind === 'error') return <div className="gui-error">✗ {item.text}</div>
+  if (item.kind === 'error') return <div className="gui-error">{item.text}</div>
   return (
-    <div className="gui-msg assistant">
+    <div className="gui-msg dev">
       <div className="gui-msg-text">{item.text}</div>
     </div>
   )
@@ -135,10 +258,21 @@ function GuiPermCard({
   perm: GuiPendingPerm
   onChoose: (behavior: GuiPermBehavior) => void
 }): React.JSX.Element {
+  // O mockup pede `permissão: <comando>`: o comando é a descrição quando o CLI
+  // a manda (é ela que carrega o `npm test` da vez); o nome da ferramenta vira
+  // a etiqueta discreta à direita.
+  const command = perm.description.trim() || perm.toolName
+  const showTool = Boolean(perm.description.trim())
   return (
     <div className="gui-perm">
       <div className="gui-perm-head">
-        <b>{perm.toolName}</b> {perm.description}
+        <span className="gui-perm-icon" aria-hidden="true">
+          ✋
+        </span>
+        <span className="gui-perm-title">
+          permissão: <b>{command}</b>
+        </span>
+        {showTool && <span className="gui-perm-tool">{perm.toolName}</span>}
       </div>
       {perm.reason && <div className="gui-perm-reason">motivo: {perm.reason}</div>}
       {perm.inputPretty && perm.inputPretty !== '{}' && (
@@ -164,6 +298,58 @@ function GuiPermCard({
   )
 }
 
+/** Marcadores de PEDIDO DE ACEITE: o dev fecha o turno com uma pergunta de
+ *  seguir/parar (mini-plano, "posso implementar?"). Só aí a linha de ação
+ *  inline aparece — pergunta comum de conteúdo continua sendo respondida no
+ *  composer, como qualquer conversa. */
+const ASK_RE =
+  /\b(aprova(?:r|do|ção)?|posso (?:seguir|implementar|começar|continuar|ir)|pode (?:seguir|ir)|sigo|prossigo|confirma|de acordo|fecha(?:do)?\?|segue assim)\b/iu
+
+function asksForGo(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed.endsWith('?')) return false
+  return ASK_RE.test(trimmed.slice(-320))
+}
+
+function MicGlyph(): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="9" y="2.5" width="6" height="11.5" rx="3" />
+      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" />
+      <path d="M12 18.2V21.5" />
+    </svg>
+  )
+}
+
+function SendGlyph(): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="15"
+      height="15"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.1"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4.5 12h13.5" />
+      <path d="m12.5 5.5 6.5 6.5-6.5 6.5" />
+    </svg>
+  )
+}
+
 export default function GuiPane({
   paneId,
   projectId,
@@ -176,7 +362,11 @@ export default function GuiPane({
   resumeSessionId,
   firstPrompt,
   permissionMode,
-  onPermissionMode
+  onPermissionMode,
+  role,
+  branchLabel,
+  firstPromptLabel,
+  showHeader = true
 }: Props): React.JSX.Element {
   const gui = useStore((s) => s.guiPanes[paneId]) ?? EMPTY_GUI_PANE
   const handleGuiLive = useStore((s) => s.handleGuiLive)
@@ -309,14 +499,23 @@ export default function GuiPane({
   const dead = gui.status === 'dead'
   const working = gui.status === 'working' || gui.status === 'starting'
 
+  const send = useCallback(
+    (text: string): void => {
+      const message = text.trim()
+      if (!message || dead) return
+      pinnedRef.current = true
+      setPinned(true)
+      void sendGuiMessage(paneId, message)
+    },
+    [dead, paneId, sendGuiMessage]
+  )
+
   const submit = useCallback((): void => {
     const text = draft.trim()
     if (!text || dead) return
     setDraft('')
-    pinnedRef.current = true
-    setPinned(true)
-    void sendGuiMessage(paneId, text)
-  }, [draft, dead, paneId, sendGuiMessage])
+    send(text)
+  }, [draft, dead, send])
 
   /**
    * TROCA DE MODO EM VOO (onda D): re-emite `gui:create` com o MESMO paneId e
@@ -368,42 +567,131 @@ export default function GuiPane({
     setPinned(true)
   }, [])
 
-  const empty = gui.items.length === 0 && !gui.stream && !gui.perm
+  /**
+   * DITADO NESTE CHAT: focar o input já o registra como destino do SynVoice
+   * (o listener global de `focusin` mora no SynVoice da titlebar); o comando
+   * de gravar é o botão real da barra. Sem barra na janela (a WebContentsView
+   * dos panes), o foco sozinho continua valendo — a transcrição cai aqui.
+   */
+  const dictate = useCallback((): void => {
+    inputRef.current?.focus({ preventScroll: true })
+    const trigger = document.querySelector<HTMLButtonElement>('.synvoice-trigger')
+    if (trigger && !trigger.disabled) trigger.click()
+  }, [])
+
+  const headRole = role?.trim() || roleFromPaneId(paneId)
+  const headModel = gui.model || model
+  const headWhere = branchLabel?.trim() || tailOf(cwd)
+  const headStatus = STATUS_TEXT[gui.status]
+
+  const injection = useMemo(() => {
+    const text = firstPrompt?.trim()
+    // Conversa RETOMADA não recebe 1º prompt (o briefing já está lá dentro):
+    // anunciar injeção nesse caso seria mentira de tela.
+    if (!text || resumeSessionId) return null
+    return { label: firstPromptLabel?.trim() || injectionLabel(text), text }
+  }, [firstPrompt, firstPromptLabel, resumeSessionId])
+
+  /** Última fala do dev pedindo um "pode seguir" — só com o turno FECHADO e
+   *  nada pendente; é isso que torna os botões inline uma resposta, não um
+   *  atalho no meio do trabalho. */
+  const askingGo = useMemo(() => {
+    if (gui.status !== 'idle' || gui.perm || gui.stream) return false
+    for (let i = gui.items.length - 1; i >= 0; i -= 1) {
+      const item = gui.items[i]
+      if (item.kind === 'user') return false
+      if (item.kind === 'assistant') return asksForGo(item.text)
+    }
+    return false
+  }, [gui.items, gui.status, gui.perm, gui.stream])
+
+  const empty = gui.items.length === 0 && !gui.stream && !gui.perm && !injection
 
   return (
     <div className="gui-pane">
-      <div className="gui-log" ref={logRef} onScroll={onScroll}>
-        {empty && (
-          <div className="gui-note">
-            {gui.status === 'starting'
-              ? 'abrindo a sessão…'
-              : 'conversa vazia — escreva abaixo para começar'}
+      {showHeader && (
+        <div className="gui-head">
+          {headRole && <span className="gui-head-role">{headRole}</span>}
+          {headModel && <span className="gui-head-model">{prettyModel(headModel)}</span>}
+          {headWhere && <span className="gui-head-where">{headWhere}</span>}
+          {headStatus && <span className={`gui-head-status ${gui.status}`}>{headStatus}</span>}
+        </div>
+      )}
+
+      {/* O palco é a âncora do "ir para o fim": preso ao .gui-pane, o botão
+          cairia POR CIMA do card de permissão (que nasce entre o fio e o
+          composer). Aqui ele acompanha o fim do fio, sempre. */}
+      <div className="gui-stage">
+        <div className="gui-log" ref={logRef} onScroll={onScroll}>
+          <div className="gui-thread">
+            {empty && (
+              <div className="gui-empty">
+                {gui.status === 'starting'
+                  ? 'abrindo a conversa…'
+                  : 'conversa vazia — escreva abaixo para começar'}
+              </div>
+            )}
+
+            {injection && (
+              <details className="gui-inject">
+                <summary>
+                  <span aria-hidden="true">📄</span>
+                  <span className="gui-inject-name">{injection.label}</span>
+                  <span className="gui-inject-tag">injetada como 1º prompt</span>
+                </summary>
+                <pre className="gui-inject-body">{injection.text}</pre>
+              </details>
+            )}
+
+            {gui.items.map((item) => (
+              <GuiMessage key={item.id} item={item} />
+            ))}
+
+            {gui.stream && (
+              <div className="gui-msg dev stream">
+                <div className="gui-msg-text">
+                  {gui.stream}
+                  <span className="stream-cursor">▍</span>
+                </div>
+              </div>
+            )}
+
+            {gui.thinking && !gui.stream && (
+              <div className="gui-thinking">
+                <span className="gui-dots" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                pensando{gui.thinkingText ? `: ${gui.thinkingText.slice(-160)}` : '…'}
+              </div>
+            )}
+
+            {askingGo && (
+              <div className="gui-ask">
+                <span className="gui-ask-label">esta conversa está esperando você</span>
+                <div className="gui-ask-actions">
+                  <button className="gui-btn primary" onClick={() => send('aprovado — pode seguir.')}>
+                    aprovar
+                  </button>
+                  <button
+                    className="gui-btn"
+                    onClick={() => inputRef.current?.focus({ preventScroll: true })}
+                  >
+                    ajustar
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        )}
-        {gui.items.map((item) => (
-          <GuiMessage key={item.id} item={item} />
-        ))}
-        {gui.stream && (
-          <div className="gui-msg assistant">
-            <div className="gui-msg-text">
-              {gui.stream}
-              <span className="stream-cursor">▍</span>
-            </div>
-          </div>
-        )}
-        {gui.thinking && !gui.stream && (
-          <div className="gui-thinking">
-            <span className="gui-thinking-dot" />
-            pensando{gui.thinkingText ? `: ${gui.thinkingText.slice(-160)}` : '…'}
-          </div>
+        </div>
+
+        {!pinned && (
+          <button className="gui-to-end" onClick={goToEnd}>
+            ▼ ir para o fim
+          </button>
         )}
       </div>
-
-      {!pinned && (
-        <button className="gui-to-end" onClick={goToEnd}>
-          ▼ ir para o fim
-        </button>
-      )}
 
       {gui.perm && (
         <GuiPermCard
@@ -413,68 +701,92 @@ export default function GuiPane({
       )}
 
       <div className="gui-composer">
-        {/* PERMISSÃO POR CONVERSA (onda D): o interruptor global do universo
-            morreu — quem decide o quanto o agente pode agir sozinho é cada
-            chat, aqui, ao lado do que se vai escrever. */}
-        <div className="gui-perm-mode" ref={modeRef}>
+        <div className="gui-composer-inner">
+          {/* PERMISSÃO POR CONVERSA (onda D): o interruptor global do universo
+              morreu — quem decide o quanto o agente pode agir sozinho é cada
+              chat, aqui, ao lado do que se vai escrever. */}
+          <div className="gui-perm-mode" ref={modeRef}>
+            <button
+              className={`gui-mode-btn mode-${mode}`}
+              disabled={dead || modeBusy}
+              data-tip={`Permissão desta conversa: ${PERM_MODE_LABEL[mode]}\nTrocar retoma a mesma conversa com a regra nova.`}
+              aria-haspopup="menu"
+              aria-expanded={modeOpen}
+              aria-label={`Permissão desta conversa: ${PERM_MODE_LABEL[mode]}`}
+              onClick={() => setModeOpen((v) => !v)}
+            >
+              <span aria-hidden="true">⛭</span>
+              <span className="gui-mode-text">{modeBusy ? 'trocando…' : PERM_MODE_LABEL[mode]}</span>
+            </button>
+            {modeOpen && (
+              <div className="gui-mode-menu" role="menu">
+                {PERM_MODES.map((option) => (
+                  <button
+                    key={option.id}
+                    className={`gui-mode-item${option.id === mode ? ' active' : ''}`}
+                    role="menuitem"
+                    onClick={() => void changeMode(option.id)}
+                  >
+                    <b>{option.label}</b>
+                    <span>{option.hint}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <textarea
+            ref={inputRef}
+            className="gui-input"
+            rows={1}
+            value={draft}
+            disabled={dead}
+            aria-label="Mensagem para esta conversa"
+            placeholder={
+              dead
+                ? 'sessão encerrada — feche o pane e abra outro'
+                : 'dirija o dev — ou peça um reviewer'
+            }
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+                e.preventDefault()
+                submit()
+              }
+            }}
+          />
+
           <button
-            className={`gui-btn gui-mode-btn mode-${mode}`}
-            disabled={dead || modeBusy}
-            data-tip={`Permissão desta conversa: ${PERM_MODE_LABEL[mode]}\nTrocar retoma a mesma conversa com a regra nova.`}
-            aria-haspopup="menu"
-            aria-expanded={modeOpen}
-            onClick={() => setModeOpen((v) => !v)}
+            className="gui-sq gui-mic"
+            disabled={dead}
+            data-tip="Ditar neste chat (SynVoice)"
+            aria-label="Ditar neste chat"
+            onClick={dictate}
           >
-            ⛭ {modeBusy ? 'trocando…' : PERM_MODE_LABEL[mode]}
+            <MicGlyph />
           </button>
-          {modeOpen && (
-            <div className="gui-mode-menu" role="menu">
-              {PERM_MODES.map((option) => (
-                <button
-                  key={option.id}
-                  className={`gui-mode-item${option.id === mode ? ' active' : ''}`}
-                  role="menuitem"
-                  onClick={() => void changeMode(option.id)}
-                >
-                  <b>{option.label}</b>
-                  <span>{option.hint}</span>
-                </button>
-              ))}
-            </div>
+
+          {working ? (
+            <button
+              className="gui-sq gui-send stop"
+              data-tip="Interromper o turno em andamento"
+              aria-label="Interromper o turno"
+              onClick={() => void interruptGuiPane(paneId)}
+            >
+              ■
+            </button>
+          ) : (
+            <button
+              className="gui-sq gui-send"
+              disabled={!draft.trim() || dead}
+              data-tip="Enviar · Enter"
+              aria-label="Enviar mensagem"
+              onClick={submit}
+            >
+              <SendGlyph />
+            </button>
           )}
         </div>
-        <textarea
-          ref={inputRef}
-          className="gui-input"
-          rows={1}
-          value={draft}
-          disabled={dead}
-          placeholder={
-            dead
-              ? 'sessão encerrada — feche o pane e abra outro'
-              : 'escreva aqui · Enter envia · Shift+Enter quebra linha'
-          }
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
-              e.preventDefault()
-              submit()
-            }
-          }}
-        />
-        {working ? (
-          <button
-            className="gui-btn"
-            data-tip="Interromper o turno em andamento"
-            onClick={() => void interruptGuiPane(paneId)}
-          >
-            ⏹ parar
-          </button>
-        ) : (
-          <button className="gui-btn primary" disabled={!draft.trim() || dead} onClick={submit}>
-            enviar
-          </button>
-        )}
       </div>
     </div>
   )
