@@ -4,6 +4,8 @@ import type { PaneActivity, PaneKind, PaneStats } from '../store'
 export type PaneRole =
   | 'maestro'
   | 'orquestrador'
+  // 2.0: sessão PONTUAL de planejamento do projeto (escreve `plano/` e fecha)
+  | 'plano'
   | 'dev'
   | 'review'
   | 'qa'
@@ -13,6 +15,7 @@ export type PaneRole =
 const ROLE_LABEL: Record<PaneRole, string> = {
   maestro: 'MAESTRO',
   orquestrador: 'ORQUESTRADOR',
+  plano: 'PLANO',
   dev: 'DEV',
   review: 'REVIEW',
   qa: 'QA',
@@ -25,6 +28,7 @@ const ROLE_LABEL: Record<PaneRole, string> = {
 const ROLE_SYMBOL: Record<PaneRole, string> = {
   maestro: '♛',
   orquestrador: '◇',
+  plano: '✎',
   dev: '⌘',
   review: '✓',
   qa: '◆',
@@ -36,6 +40,7 @@ const ROLE_SYMBOL: Record<PaneRole, string> = {
 const ROLE_HUE: Record<PaneRole, number> = {
   maestro: 21,
   orquestrador: 21,
+  plano: 21,
   dev: 21,
   review: 265,
   qa: 145,

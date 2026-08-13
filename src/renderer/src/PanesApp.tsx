@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useStore, type PaneKind, type PaneOptions } from './store'
 import PanesView from './components/PanesView'
 import TooltipLayer from './components/Tooltip'
+import { guiApi } from './guiApi'
 import { getSynVoiceTarget } from './synVoiceTarget'
 import { TERMINAL_DEFAULT_FONT_SIZE } from './terminalGeometry'
 
@@ -111,6 +112,22 @@ export default function PanesApp(): React.JSX.Element {
           }
         })
       : () => undefined
+    // ESPELHO PASSIVO DAS CONVERSAS (2.0): o mapa desta view precisa saber se
+    // a missão direta está trabalhando, mas quem MONTA o chat dela é o HOST
+    // (board) — aqui não existe GuiPane para assinar o canal. `gui:live` é
+    // pushAll, então o estado chega; só não tinha quem o guardasse.
+    // GUARDA: pane que ESTA view monta como chat (surface 'gui' no deck) já
+    // aplica o evento por conta própria — aplicar de novo duplicaria a
+    // conversa inteira.
+    const offGuiLive = guiApi.onLive((payload) => {
+      if (!payload?.paneId) return
+      const state = useStore.getState()
+      const mountedHere = Object.values(state.panesByProject).some((list) =>
+        list.some((pane) => pane.id === payload.paneId && pane.surface === 'gui')
+      )
+      if (mountedHere) return
+      state.handleGuiLive(payload.paneId, payload.evt)
+    })
 
     // Reidratação pós-reload: os PTYs sobrevivem no main; remontar aqui faz o
     // pty:create rebindar o webContents NOVO (sem isto o stream cai no vazio).
@@ -143,6 +160,7 @@ export default function PanesApp(): React.JSX.Element {
       offSeats()
       offSettings()
       offVoicePaste()
+      offGuiLive()
     }
   }, [bridgeOk])
 

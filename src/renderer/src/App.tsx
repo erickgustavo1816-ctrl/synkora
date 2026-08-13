@@ -7,6 +7,7 @@ import {
   type PaneOptions,
   type UniverseTab
 } from './store'
+import { decodeHostNavTarget } from './hostNavTarget'
 import { queueMarkdownOpen } from './projectFileNavigation'
 import { playAttentionChime, playSoftBlip } from './notify'
 import Home from './screens/Home'
@@ -139,10 +140,15 @@ export default function App(): React.JSX.Element {
           useStore.getState().setUniverseTab(projectId, 'arquivos')
         })
       : () => undefined
+    // O alvo vem CODIFICADO (hostNavTarget): o mapa passou a abrir MISSÃO —
+    // clicar o card de uma missão direta leva à conversa dela, que mora no
+    // board. Emissor antigo manda só "board" e cai no caminho de sempre.
     const offViewNav = window.synkora.panesView.onNavigateHost
-      ? window.synkora.panesView.onNavigateHost((projectId, tab) =>
-          useStore.getState().setUniverseTab(projectId, tab as UniverseTab)
-        )
+      ? window.synkora.panesView.onNavigateHost((projectId, raw) => {
+          const target = decodeHostNavTarget(raw)
+          useStore.getState().setUniverseTab(projectId, target.tab as UniverseTab)
+          if (target.missionId) useStore.getState().setMissionTab(projectId, target.missionId)
+        })
       : () => undefined
     const offViewActivity = window.synkora.panesView.onActivity
       ? window.synkora.panesView.onActivity((paneId, activity) =>

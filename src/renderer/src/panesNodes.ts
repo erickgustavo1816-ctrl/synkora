@@ -1,3 +1,4 @@
+import { NO_MISSION_CHAT, type MissionChatSummary } from './guiMissionPanes'
 import type { Department, Mission, Pane, PaneActivity, Task } from './store'
 
 // ————————————————————————————————————————————————————————————————————————
@@ -28,6 +29,10 @@ export interface PaneNode {
   waiting: number
   /** panes pedindo permissão AGORA */
   attention: number
+  /** MISSÃO DIRETA (2.0): o que as CONVERSAS dela estão fazendo. Missão direta
+   *  não tem pane TUI nenhum — o trabalho vive no chat, que mora no board. Sem
+   *  isto o card do mapa ficaria sempre apagado, mentindo "nada acontecendo". */
+  chat?: MissionChatSummary
 }
 
 /** Matiz do card: derivada do id da missão, estável entre sessões. */
@@ -83,6 +88,13 @@ interface BuildInput {
   missions: Mission[]
   paneActivity: Record<string, PaneActivity>
   paneAttention: Record<string, boolean>
+  /** Resumo das conversas por missão DIRETA (2.0), já destilado pelo chamador
+   *  (`missionChatSummary`). Ausente = mapa sem leitura de chat: os nós de
+   *  missão direta ficam calmos, nunca inventam movimento.
+   *  Entra destilado de propósito: `gui:live` dispara a cada delta do turno, e
+   *  o objeto cru de conversas faria a geometria do canvas recalcular dezenas
+   *  de vezes por segundo. */
+  missionChat?: Record<string, MissionChatSummary>
 }
 
 /**
@@ -95,7 +107,8 @@ export function buildNodes({
   tasks,
   missions,
   paneActivity,
-  paneAttention
+  paneAttention,
+  missionChat
 }: BuildInput): PaneNode[] {
   const byMission = new Map<string, string[]>()
   const geral: string[] = []
@@ -154,13 +167,24 @@ export function buildNodes({
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   for (const mission of live) {
     const ids = sortIds(byMission.get(mission.id) ?? [])
+    const counts = tally(ids)
+    // MISSÃO DIRETA (2.0): o trabalho está no CHAT, não num terminal. As
+    // conversas entram nas MESMAS contagens dos panes — cometa, pulso de
+    // permissão e "N esperando" continuam funcionando sem saber que existe
+    // uma superfície nova. Os terminais do worktree (▷ terminal, ▶ testar)
+    // seguem somando por cima.
+    const chat = mission.direct ? missionChat?.[mission.id] : undefined
     nodes.push({
       id: `mission:${mission.id}`,
       kind: 'mission',
       label: mission.title,
       mission,
       paneIds: ids,
-      ...tally(ids)
+      running: counts.running + (chat?.running ?? 0),
+      waiting:
+        counts.waiting + Math.max(0, (chat?.live ?? 0) - (chat?.running ?? 0) - (chat?.attention ?? 0)),
+      attention: counts.attention + (chat?.attention ?? 0),
+      ...(mission.direct ? { chat: chat ?? NO_MISSION_CHAT } : {})
     })
   }
   if (teste.length) {
