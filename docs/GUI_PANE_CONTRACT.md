@@ -62,6 +62,10 @@ export interface GuiLivePayload { paneId: string; evt: unknown /* SessionEvent *
 
 - Canal **`gui:live`** com `GuiLivePayload`, enviado via `ctx.pushAll` (a panes view
   monta o pane; o host espelha status). O renderer acumula o estado por paneId.
+- O preload (dono: agente MOTOR) expõe a subscrição:
+  `window.synkora.gui.onLive(cb: (p: GuiLivePayload) => void): () => void`
+  (retorna unsubscribe; mesmo padrão dos `on*` existentes). O agente PANE consome
+  APENAS via o accessor tipado de `guiApi.ts`.
 
 ## Regras do motor
 
