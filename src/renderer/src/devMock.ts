@@ -759,6 +759,7 @@ export function installDevMock(): void {
       // 2.0: terminal do worktree é um PTY de verdade — o preview de browser
       // não tem processo nenhum para abrir, então recusa em vez de fingir.
       shellSpec: async () => ({ ok: false, error: 'sem terminal no preview' }),
+      workspaceFiles: async () => ({ ok: false, error: 'sem worktree no preview' }),
       onChanged: () => () => undefined
     },
     files: {
