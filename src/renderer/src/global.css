@@ -13284,6 +13284,62 @@ body.progress-overlay-page #root {
   }
 }
 
+/* ————— ABA MAPA: a casa da CONSTELAÇÃO (UniverseMapView) —————
+   O palco é o containing block do mapa: `.map-wrap` é `position:absolute;
+   inset:0` e precisa de um ancestral POSICIONADO com altura definida. O
+   seletor constelação/plano fica fora dele, senão o mapa (absoluto) cobriria
+   os botões. */
+
+.universe-map {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.universe-map-switch {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.universe-map-tab {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  font: 700 10px/1 var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.universe-map-tab:hover,
+.universe-map-tab:focus-visible {
+  border-color: var(--line-strong);
+  color: var(--ink);
+  outline: none;
+}
+
+.universe-map-tab.on {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, var(--card));
+  color: var(--accent-deep);
+}
+
+.universe-map-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 /* ————— ABA MAPA: plano mestre visível (ondas → missões) ————— */
 
 .planmap {

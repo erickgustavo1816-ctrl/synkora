@@ -4,7 +4,7 @@ import { hueOf, initialsOf } from '../util'
 import Board from '../components/Board'
 import FilesView from '../components/FilesView'
 import BacklogView from '../components/BacklogView'
-import PlanMapView from '../components/PlanMapView'
+import UniverseMapView from '../components/UniverseMapView'
 import SeatGate from '../components/SeatGate'
 
 interface Props {
@@ -83,7 +83,7 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
           <button
             className={`tab ${tab === 'mapa' ? 'active' : ''}`}
             onClick={() => setTab(projectId, 'mapa')}
-            data-tip="O mapa do projeto: ondas, missões e progresso"
+            data-tip="A constelação do projeto: cada missão viva é um card ligado ao núcleo (em projeto criado do zero, o plano mestre fica ao lado)"
           >
             Mapa
           </button>
@@ -146,9 +146,14 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
             <FilesView projectId={projectId} />
           </div>
         )}
+        {/* MAPA = a CONSTELAÇÃO (2.0): ela perdeu a casa quando o deck de panes
+            saiu e voltou aqui como conteúdo primário. Monta/desmonta com a aba
+            de propósito — o mapa não roda processo, e caixa desmontada é o que
+            pausa o rAF decorativo e o campo de partículas. O plano mestre fica
+            no seletor interno, só em projeto greenfield. */}
         {tab === 'mapa' && (
           <div className="tab-content">
-            <PlanMapView projectId={projectId} />
+            <UniverseMapView projectId={projectId} />
           </div>
         )}
       </div>
