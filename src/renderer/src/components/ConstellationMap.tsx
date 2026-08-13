@@ -2217,10 +2217,10 @@ export default function ConstellationMap({
 
       {nodes.length === 0 && (
         <div className="map-empty">
-          <p className="empty-title">Nenhum painel aberto</p>
+          <p className="empty-title">Nenhuma missão viva</p>
           <p className="hint">
-            Abra um <strong>✦ Agente</strong> ou um <strong>&gt;_ Terminal</strong> no topo — ou
-            execute uma tarefa do board.
+            Crie uma missão no <strong>Board</strong> — cada missão vira um card aqui, ligado ao
+            núcleo do projeto.
           </p>
         </div>
       )}
