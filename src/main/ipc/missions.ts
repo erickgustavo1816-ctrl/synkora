@@ -23,6 +23,7 @@ import { existsSync, mkdirSync, unlinkSync } from 'fs'
 import {
   ensureSynkoraGitExcludes,
   removeWorktreeAndBranch,
+  type MissionWorkspaceFileDiff,
   type MissionWorkspaceSummary
 } from '../worktree'
 import { gitOff } from '../gitAsync'
@@ -119,6 +120,14 @@ export interface MissionWorkspaceFilesResult {
   summary?: MissionWorkspaceSummary
   error?: string
 }
+
+/**
+ * Resposta do `missions:fileDiff` (2.0, onda D, item 4 — o trilho rico): o
+ * diff de UM arquivo listado pelo workspaceFiles. A FORMA é a que o worktree
+ * devolve (fonte única): declarar um gêmeo aqui só criaria dois contratos para
+ * manter em sincronia.
+ */
+export type MissionFileDiffResult = MissionWorkspaceFileDiff
 
 /** Teto de ajudantes GUI simultâneos por missão — o sufixo do paneId sobe até
  *  achar vaga livre; acima disto o dono fecha um antes de abrir outro. */
@@ -238,6 +247,40 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       const summary = await gitOff('missionWorkspaceSummary', mission.worktree, mission.baseBranch)
       if (!summary) return { ok: false, error: 'não consegui ler o diff do worktree desta missão' }
       return { ok: true, summary }
+    }
+  )
+
+  /**
+   * DIFF DE UM ARQUIVO (2.0, onda D): o trilho lista os arquivos mudados e o
+   * dono clica para VER o que mudou naquele. Mesma honestidade do cabeçalho —
+   * merge-base com a base até a ÁRVORE DE TRABALHO — e a mesma leitura PURA:
+   * nunca cria nem repara worktree.
+   *
+   * A cerca do caminho (nada fora do worktree) mora no worktree.ts junto do
+   * git, não aqui: é lá que o argumento vira processo. Todo o git viaja pelo
+   * gitWorker — clicar arquivo a arquivo não pode congelar o main.
+   */
+  ipcMain.handle(
+    'missions:fileDiff',
+    async (_e, missionId: string, filePath: string): Promise<MissionFileDiffResult> => {
+      const mission = missions.get(missionId)
+      if (!mission) return { ok: false, error: 'missão não encontrada' }
+      const project = projects.get(mission.projectId)
+      if (!project) return { ok: false, error: 'projeto não encontrado' }
+      if (!mission.worktree || !existsSync(mission.worktree))
+        return { ok: false, error: 'esta missão não tem worktree aberto' }
+      try {
+        return await gitOff(
+          'missionWorkspaceFileDiff',
+          mission.worktree,
+          filePath,
+          mission.baseBranch
+        )
+      } catch {
+        // Worker de git com soluço não pode estourar como rejeição no trilho:
+        // o dono clica de novo e o painel segue de pé.
+        return { ok: false, error: 'não consegui ler o diff deste arquivo' }
+      }
     }
   )
 

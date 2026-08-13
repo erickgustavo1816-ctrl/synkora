@@ -22,13 +22,16 @@ import { freshWindowsPath } from './winPath'
 // task/<id>; aprovada nos dois gates, o main integra com merge --no-ff e limpa.
 // Projeto sem git (ou sem commit) cai no modo direto — executa no próprio dir.
 
-function gitRaw(cwd: string, args: string[]): string {
+function gitRaw(cwd: string, args: string[], maxBuffer?: number): string {
   return execFileSync('git', args, {
     cwd,
     encoding: 'utf-8',
     env: { ...(process.env as Record<string, string>), PATH: freshWindowsPath() },
     timeout: 60_000,
     windowsHide: true,
+    // Padrão do Node é 1MB; quem lê DIFF de arquivo pede folga explícita —
+    // estourar o buffer vira ENOBUFS sem stdout aproveitável.
+    ...(maxBuffer ? { maxBuffer } : {}),
     // stderr capturado (vai no erro), não despejado no console do app —
     // hasGitCommit sonda projetos sem git e enchia o dev de "fatal:".
     stdio: ['ignore', 'pipe', 'pipe']
@@ -1441,6 +1444,25 @@ export interface MissionWorkspaceSummary {
 const WORKSPACE_FILES_CAP = 400
 
 /**
+ * DE ONDE o diff vivo parte — FONTE ÚNICA do cabeçalho do trilho e do diff
+ * por arquivo (divergir aqui faria o total dizer uma coisa e o arquivo aberto
+ * dizer outra).
+ *
+ * merge-base e não a ponta da base: a base pode ter andado depois que a missão
+ * nasceu, e diffar contra a ponta mostraria o trabalho DOS OUTROS como se
+ * fosse desta missão. Sem base utilizável, 'HEAD' (só o não-committed).
+ */
+function missionDiffBaseRef(worktreeDir: string, baseBranch?: string): string {
+  const base = baseBranch?.trim()
+  if (!base) return 'HEAD'
+  try {
+    return git(worktreeDir, ['merge-base', base, 'HEAD']) || base
+  } catch {
+    return base
+  }
+}
+
+/**
  * O que a missão MUDOU até agora, do ponto de vista do dono: commits à frente
  * da base + o diff da base até a ÁRVORE DE TRABALHO (committed E não
  * committed — o trilho é vivo, não uma foto do último commit).
@@ -1456,17 +1478,9 @@ export function missionWorkspaceSummary(
 ): MissionWorkspaceSummary | undefined {
   if (!existsSync(worktreeDir)) return undefined
   let ahead = 0
-  let from = 'HEAD'
   const base = baseBranch?.trim()
+  const from = missionDiffBaseRef(worktreeDir, baseBranch)
   if (base) {
-    // merge-base: a base pode ter andado depois que a missão nasceu, e diffar
-    // contra a ponta dela mostraria o trabalho DOS OUTROS como se fosse desta
-    // missão.
-    try {
-      from = git(worktreeDir, ['merge-base', base, 'HEAD']) || base
-    } catch {
-      from = base
-    }
     try {
       ahead = Number.parseInt(git(worktreeDir, ['rev-list', '--count', `${from}..HEAD`]), 10) || 0
     } catch {
@@ -1516,6 +1530,143 @@ export function missionWorkspaceSummary(
     // repositório sem index utilizável
   }
   return { ahead, insertions, deletions, files: files.slice(0, WORKSPACE_FILES_CAP) }
+}
+
+// ————— DIFF DE UM ARQUIVO (2.0, onda D: o dono clica e VÊ o que mudou) —————
+
+export interface MissionWorkspaceFileDiff {
+  ok: boolean
+  /** Diff unificado já cortado no teto. String VAZIA = o arquivo existe e não
+   *  mudou nada em relação à base — resposta legítima, não erro. */
+  diff?: string
+  /** O diff real passou do teto e o texto acima está cortado numa linha. */
+  truncated?: boolean
+  error?: string
+}
+
+/** O trilho abre UM arquivo, não despeja o repositório na tela: 200KB é muito
+ *  mais do que qualquer revisão humana lê de uma vez. */
+const FILE_DIFF_CAP = 200_000
+
+/** Folga do buffer do processo (o padrão de 1MB do Node corta diff grande
+ *  ANTES do nosso teto e vira ENOBUFS, que não tem stdout aproveitável). */
+const FILE_DIFF_MAX_BUFFER = 16 * 1024 * 1024
+
+/**
+ * O caminho pedido tem que MORAR no worktree da missão. Função PURA — só
+ * aritmética de path, nenhum toque no disco — devolvendo o caminho RELATIVO em
+ * barras normais (a forma que o git aceita nos dois SOs) ou `undefined` quando
+ * o pedido escapa.
+ *
+ * Por que cerca própria em vez de confiar no git: `git diff -- ../x` até recusa
+ * ("outside repository"), mas `git diff --no-index -- /dev/null <absoluto>` NÃO
+ * recusa NADA — leria qualquer arquivo da máquina. A cerca é aqui, antes de
+ * qualquer processo nascer.
+ */
+export function resolveWorkspaceFilePath(
+  worktreeDir: string,
+  filePath: string
+): string | undefined {
+  const raw = typeof filePath === 'string' ? filePath.trim() : ''
+  if (!raw || raw.includes('\0')) return undefined
+  // Absoluto nunca vem do trilho (que lista caminhos relativos ao worktree), e
+  // aceitá-lo é a metade fácil de um escape. Junto vão as formas do Windows que
+  // o isAbsolute não pega: drive-relativo ("C:sem-barra") e UNC.
+  if (isAbsolute(raw) || /^[A-Za-z]:/.test(raw) || raw.startsWith('\\\\') || raw.startsWith('//'))
+    return undefined
+  const root = resolve(worktreeDir)
+  const target = resolve(root, raw)
+  const rel = relative(root, target)
+  // rel vazio = o próprio worktree (diretório, não arquivo); '..' em qualquer
+  // forma = escape; absoluto = outro volume no Windows.
+  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return undefined
+  return rel.split(sep).join('/')
+}
+
+/** `git diff --no-index` sai com 1 QUANDO HÁ diferença — que é o caso normal
+ *  aqui. Só o que o git realmente reprova (128 e afins) sobe como erro. */
+function gitDiffOutput(cwd: string, args: string[]): string {
+  try {
+    return gitRaw(cwd, args, FILE_DIFF_MAX_BUFFER)
+  } catch (error) {
+    const failure = error as { status?: number; stdout?: string | Buffer }
+    if (failure.status === 1 && failure.stdout != null) return String(failure.stdout)
+    throw error
+  }
+}
+
+function fileDiffFailure(error: unknown): string {
+  const failure = error as { code?: string; stderr?: string | Buffer }
+  if (failure.code === 'ENOBUFS') return 'o diff deste arquivo é grande demais para exibir aqui'
+  const stderr = String(failure.stderr ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+  return stderr ? `não consegui ler o diff: ${stderr}` : 'não consegui ler o diff deste arquivo'
+}
+
+function capFileDiff(raw: string): MissionWorkspaceFileDiff {
+  if (raw.length <= FILE_DIFF_CAP) return { ok: true, diff: raw }
+  const cut = raw.slice(0, FILE_DIFF_CAP)
+  const lastBreak = cut.lastIndexOf('\n')
+  // Cortar na linha: meia linha de diff mente sobre o conteúdo.
+  return { ok: true, diff: lastBreak > 0 ? cut.slice(0, lastBreak + 1) : cut, truncated: true }
+}
+
+/**
+ * O diff de UM arquivo do trilho, com a MESMA honestidade do cabeçalho:
+ * merge-base(base, HEAD) até a ÁRVORE DE TRABALHO — committed E não committed,
+ * porque o trilho é vivo e não uma foto do último commit.
+ *
+ * Arquivo ainda FORA do git (o status '?' da lista) não tem diff nenhum contra
+ * a base; nesse caso o honesto é mostrá-lo INTEIRO como adição, que é o que
+ * `--no-index` contra /dev/null produz — inclusive a linha "Binary files …
+ * differ" quando não é texto, sem despejar bytes na tela.
+ */
+export function missionWorkspaceFileDiff(
+  worktreeDir: string,
+  filePath: string,
+  baseBranch?: string
+): MissionWorkspaceFileDiff {
+  if (!existsSync(worktreeDir))
+    return { ok: false, error: 'o worktree desta missão não existe mais' }
+  const rel = resolveWorkspaceFilePath(worktreeDir, filePath)
+  if (!rel) return { ok: false, error: 'caminho fora do worktree desta missão' }
+  const from = missionDiffBaseRef(worktreeDir, baseBranch)
+  // --no-color: config global do dono pode forçar cor e o payload é para uma
+  // tela, não para um terminal. --no-ext-diff: difftool externo não roda aqui.
+  let tracked: string
+  try {
+    tracked = gitDiffOutput(worktreeDir, ['diff', '--no-color', '--no-ext-diff', from, '--', rel])
+  } catch (error) {
+    return { ok: false, error: fileDiffFailure(error) }
+  }
+  if (tracked.trim()) return capFileDiff(tracked)
+  // Vazio é ambíguo: "nada mudou neste arquivo" OU "o git não conhece este
+  // arquivo". Só o segundo caso vira o diff-de-adição abaixo.
+  if (!existsSync(join(worktreeDir, rel))) return { ok: true, diff: tracked }
+  let known = ''
+  try {
+    known = git(worktreeDir, ['ls-files', '--', rel])
+  } catch {
+    known = ''
+  }
+  if (known) return { ok: true, diff: tracked }
+  try {
+    return capFileDiff(
+      gitDiffOutput(worktreeDir, [
+        'diff',
+        '--no-index',
+        '--no-color',
+        '--no-ext-diff',
+        '--',
+        '/dev/null',
+        rel
+      ])
+    )
+  } catch (error) {
+    return { ok: false, error: fileDiffFailure(error) }
+  }
 }
 
 /** Worktree de MISSÃO: branch mission/<id8> onde as tarefas da missão nascem

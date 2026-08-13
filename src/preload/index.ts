@@ -11,6 +11,7 @@ import type {
 } from '../main/guiSessions'
 import type { GuiMissionRole } from '../main/guiMissionContracts'
 import type {
+  MissionFileDiffResult,
   MissionGuiSpecResult,
   MissionShellSpecResult,
   MissionWorkspaceFilesResult
@@ -29,8 +30,14 @@ export type { GuiLivePayload, GuiPaneSpawn, GuiPermBehavior, GuiPermissionMode, 
  *  chat da missão, terminal avulso do worktree e sessão de planejamento. */
 export type { GuiMissionRole, MissionGuiSpecResult, MissionShellSpecResult, PlanningGuiSpecResult }
 
-/** Diff vivo do worktree da missão (2.0, onda D) — o cabeçalho do trilho. */
-export type { MissionWorkspaceFile, MissionWorkspaceFilesResult, MissionWorkspaceSummary }
+/** Diff vivo do worktree da missão (2.0, onda D) — o cabeçalho do trilho e o
+ *  diff de UM arquivo, quando o dono abre a linha da lista. */
+export type {
+  MissionFileDiffResult,
+  MissionWorkspaceFile,
+  MissionWorkspaceFilesResult,
+  MissionWorkspaceSummary
+}
 
 export type {
   MissionProgressState,
@@ -1323,6 +1330,13 @@ const api = {
      *  repara worktree, então pode ser chamada com frequência pelo trilho. */
     workspaceFiles: (missionId: string): Promise<MissionWorkspaceFilesResult> =>
       ipcRenderer.invoke('missions:workspaceFiles', missionId),
+    /** SYNKORA 2.0 (onda D): diff unificado de UM arquivo do trilho — da
+     *  merge-base com a base até a árvore de trabalho, igual ao cabeçalho.
+     *  Arquivo ainda fora do git volta INTEIRO como adição; passando do teto
+     *  vem `truncated`. `filePath` é relativo ao worktree (o main recusa
+     *  qualquer coisa que aponte para fora dele). */
+    fileDiff: (missionId: string, filePath: string): Promise<MissionFileDiffResult> =>
+      ipcRenderer.invoke('missions:fileDiff', missionId, filePath),
     onChanged: (cb: (projectId: string) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
       ipcRenderer.on('missions:changed', listener)
