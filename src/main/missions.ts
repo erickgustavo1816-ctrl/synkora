@@ -38,6 +38,11 @@ export interface Mission {
    *  nasce concluída, sem orquestrador/cards/branch — só a história (goal =
    *  pontos do que foi mexido), para o PM ter noção do que aconteceu */
   kind?: 'direta'
+  /** MISSÃO 2.0 (onda B): sem orquestrador e sem maquinaria de plano — o dono
+   *  fala direto com o dev no pane GUI e o ⇪ integra pelo caminho direto.
+   *  Carimbado no NASCIMENTO e nunca mais: missão legada (sem o campo) segue
+   *  com o fluxo de sempre, intacto. */
+  direct?: true
   /** Missão criada pelo PM aguardando o usuário escolher conta/modelo/effort
    *  do orquestrador no modal (decisão do usuário, 02/08) — enquanto true o
    *  paneSpec recusa abrir o orquestrador. */
@@ -68,6 +73,8 @@ export interface NewMission {
   versionId?: string
   planningMethod?: PlanningMethodEvidence
   pendingOrchestrator?: boolean
+  /** Missão 2.0 (sem orquestrador/plano). Só o nascimento decide. */
+  direct?: boolean
 }
 
 export class MissionStore {
@@ -120,6 +127,9 @@ export class MissionStore {
       versionId: input.versionId,
       planningMethod: input.planningMethod,
       pendingOrchestrator: input.pendingOrchestrator || undefined,
+      // Carimbo de nascimento: `update` não lista `direct` no Pick, então
+      // ninguém converte missão legada em 2.0 (nem o contrário) depois.
+      direct: input.direct ? true : undefined,
       status: 'ativa',
       createdAt: now,
       updatedAt: now
