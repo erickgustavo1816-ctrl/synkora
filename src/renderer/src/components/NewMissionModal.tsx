@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, type Mission, type Version } from '../store'
+import { useStore, type Mission, type MissionType, type Version } from '../store'
 import { ModelSelect } from './ModelSelect'
 import Select from './Select'
 
@@ -49,9 +49,18 @@ export default function NewMissionModal({
   const [effort, setEffort] = useState(reseatMission?.effort ?? '')
   const [versionId, setVersionId] = useState(lockedMission?.versionId ?? initialVersionId ?? '')
   const [versions, setVersions] = useState<Version[]>([])
+  // NATUREZA da missão (2.0): o planejamento deixou de aparecer sozinho no
+  // ✦ geral e virou algo que o DONO cria, aqui, como qualquer missão. A
+  // escolha vale só no NASCIMENTO — missão nenhuma troca de natureza depois,
+  // por isso ela não existe nos modos travados (confirmar/trocar conta) nem
+  // quando a missão nasce PRESA a uma versão (aba Versões): ali o contexto já
+  // disse que é entrega de produto, e planejamento não pertence a versão.
+  const [missionType, setMissionType] = useState<MissionType>('dev')
   const confirmOnly = Boolean(confirmMission)
   const reseatOnly = Boolean(reseatMission)
   const locked = confirmOnly || reseatOnly
+  const typeChoosable = !locked && !lockVersion
+  const planning = typeChoosable && missionType === 'planejamento'
 
   useEffect(() => {
     if (window.synkora.backlog) void window.synkora.backlog.listVersions(projectId).then(setVersions)
@@ -111,15 +120,23 @@ export default function NewMissionModal({
     const created = await createMission(projectId, {
       title: title.trim(),
       goal: goal.trim() || undefined,
-      scope: scope.trim() || undefined,
+      // Planejamento não toca arquivo de produto: escopo de paths não existe
+      // nessa natureza (o campo nem aparece na tela dela).
+      scope: planning ? undefined : scope.trim() || undefined,
       seatId: seatId || undefined,
       model: model.trim() || undefined,
       effort: effort || undefined,
-      versionId: versionId || undefined,
+      // Missão de planejamento não pertence a versão nenhuma: ela ESCREVE o
+      // recorte da próxima versão em plano/, não entrega dentro de uma.
+      versionId: planning ? undefined : versionId || undefined,
       // MISSÃO 2.0 (onda B): TODA missão criada pelo usuário nasce DIRETA —
       // sem orquestrador e sem plano; abrir a aba abre o chat no worktree.
       // Missão legada (sem o campo) continua no fluxo antigo, intocada.
-      direct: true
+      direct: true,
+      // NATUREZA (2.0): decidida aqui e só aqui. O main carimba 'planejamento'
+      // e roteia o chat para a raiz do projeto (missions:guiSpec). Deriva de
+      // `planning`, nunca do estado cru: sem escolha na tela, é 'dev'.
+      missionType: planning ? 'planejamento' : 'dev'
     })
     if (!created) {
       setSubmitError(
@@ -142,7 +159,9 @@ export default function NewMissionModal({
               ? '⇄ trocar a conta do orquestrador'
               : confirmOnly
                 ? '🚀 orquestrador da missão do Maestro'
-                : '🚀 nova missão'}
+                : planning
+                  ? '✎ novo planejamento'
+                  : '🚀 nova missão'}
           </span>
           {(lockVersion || locked) && versionId && (
             <span className="task-origin" data-tip="Versão herdada da aba Versões">
@@ -158,11 +177,45 @@ export default function NewMissionModal({
             {submitError}
           </div>
         )}
+        {/* NATUREZA da missão — duas, decididas no nascimento. Fica no TOPO
+            porque é ela que governa o resto do formulário (planejamento não
+            tem versão nem escopo de paths). */}
+        {typeChoosable && (
+          <div className="mission-type-choice" role="radiogroup" aria-label="Tipo da missão">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!planning}
+              className={`mtc-opt${planning ? '' : ' active'}`}
+              data-tip="Trabalho de produto: branch e worktree próprios, o agente trabalha isolado e o ⇪ leva para a fila de integração"
+              onClick={() => setMissionType('dev')}
+            >
+              🚀 missão
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={planning}
+              className={`mtc-opt${planning ? ' active' : ''}`}
+              data-tip="Uma conversa que entrevista você e escreve o roadmap em plano/ — quem cria as missões continua sendo você"
+              onClick={() => setMissionType('planejamento')}
+            >
+              ✎ planejamento
+            </button>
+          </div>
+        )}
+        {planning && (
+          <span className="mission-type-hint">
+            roda na raiz do projeto e escreve o plano/ — não entra na fila
+          </span>
+        )}
         <input
           className="task-modal-title"
           autoFocus={!locked}
           readOnly={locked}
-          placeholder="título (ex.: Tela de checkout)"
+          placeholder={
+            planning ? 'título (ex.: Plano da V1.1)' : 'título (ex.: Tela de checkout)'
+          }
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && void submit()}
@@ -171,11 +224,15 @@ export default function NewMissionModal({
           className="task-modal-desc"
           rows={3}
           readOnly={locked}
-          placeholder="objetivo em 1-3 frases (vira o contexto do orquestrador)"
+          placeholder={
+            planning
+              ? 'o recorte em 1-3 frases: o que você quer planejar agora'
+              : 'objetivo em 1-3 frases (vira o contexto do agente)'
+          }
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
         />
-        {(!locked || scope) && (
+        {!planning && (!locked || scope) && (
           <input
             className="mission-scope-input"
             readOnly={locked}
@@ -234,6 +291,10 @@ export default function NewMissionModal({
               ]}
             />
           </label>
+          {/* Missão de planejamento não pertence a versão: ela é quem PROPÕE o
+              recorte da próxima. O seletor some em vez de ficar cinza — campo
+              desabilitado sugere "escolha bloqueada", e aqui não existe escolha. */}
+          {!planning && (
           <label>
             versão do app
             <Select
@@ -255,6 +316,7 @@ export default function NewMissionModal({
               ]}
             />
           </label>
+          )}
         </div>
         <div className="task-modal-actions">
           <span className="task-modal-meta">
@@ -262,9 +324,11 @@ export default function NewMissionModal({
               ? 'mesma família de CLI = a CONVERSA vai junto para a conta nova (transplante de sessão); CLI diferente = o orquestrador se reergue pelo plano e board da missão'
               : confirmOnly
                 ? 'o Maestro criou esta missão — escolha conta, modelo e effort do ORQUESTRADOR; ele só abre depois desta escolha'
-                : versionId
-                  ? 'a missão nasce em branch/worktree próprios e integra na BRANCH DA VERSÃO — a main só recebe quando você subir a versão'
-                  : 'a missão nasce em branch/worktree próprios (sem git? o Synkora inicializa o repo)'}
+                : planning
+                  ? 'a conversa abre na RAIZ do projeto e entrega escrevendo plano/ — sem branch, sem worktree e fora da fila de integração'
+                  : versionId
+                    ? 'a missão nasce em branch/worktree próprios e integra na BRANCH DA VERSÃO — a main só recebe quando você subir a versão'
+                    : 'a missão nasce em branch/worktree próprios (sem git? o Synkora inicializa o repo)'}
           </span>
           <button className="btn ghost" onClick={onClose}>
             {locked ? 'depois' : 'cancelar'}
@@ -274,7 +338,13 @@ export default function NewMissionModal({
             disabled={reseatOnly ? !seatId : !title.trim()}
             onClick={() => void submit()}
           >
-            {reseatOnly ? '⇄ trocar conta' : confirmOnly ? '▶ abrir orquestrador' : 'criar missão'}
+            {reseatOnly
+              ? '⇄ trocar conta'
+              : confirmOnly
+                ? '▶ abrir orquestrador'
+                : planning
+                  ? 'criar planejamento'
+                  : 'criar missão'}
           </button>
         </div>
       </div>

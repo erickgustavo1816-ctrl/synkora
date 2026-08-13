@@ -1,4 +1,4 @@
-import type { Mission } from '../store'
+import { missionTypeOf, type Mission } from '../store'
 
 // COLUNA DE MISSÕES (Synkora 2.0, onda B) — o mockup aprovado pelo dono: as
 // missões saem da fila de abas no topo e viram CARDS na coluna da ESQUERDA,
@@ -88,11 +88,16 @@ export default function MissionColumn({
       <div className="mission-col-list">
         {entries.length === 0 && (
           <div className="mission-col-empty">
-            nenhuma missão aberta — crie uma abaixo e o agente abre no worktree dela
+            nenhuma missão aberta — crie a primeira abaixo: missão de produto (worktree
+            próprio) ou planejamento (escreve o plano/)
           </div>
         )}
         {entries.map((entry) => {
           const { mission, done, total } = entry
+          // MISSÃO DE PLANEJAMENTO (2.0): ela roda na RAIZ e não tem branch —
+          // mostrar "⎇ sem branch (repo novo)" ali seria descrever uma falta
+          // que não existe. No lugar entra o ✎, que diz a natureza dela.
+          const planning = missionTypeOf(mission) === 'planejamento'
           const badge = badgeFor(entry)
           const meta = [entry.seatName, entry.model].filter(Boolean).join(' · ')
           return (
@@ -127,8 +132,13 @@ export default function MissionColumn({
                 </span>
               )}
               {/* O WORKTREE embaixo de cada missão (pedido do dono): é ele que
-                  diz onde o agente daquela conversa está de fato trabalhando. */}
-              <span className="mc-branch">⎇ {mission.branch ?? 'sem branch (repo novo)'}</span>
+                  diz onde o agente daquela conversa está de fato trabalhando.
+                  Planejamento não tem worktree — leva o ✎ no lugar. */}
+              {planning ? (
+                <span className="mc-branch mc-planning">✎ planejamento · escreve plano/</span>
+              ) : (
+                <span className="mc-branch">⎇ {mission.branch ?? 'sem branch (repo novo)'}</span>
+              )}
             </button>
           )
         })}
@@ -139,7 +149,10 @@ export default function MissionColumn({
           plano mestre") saiu daqui junto com a recusa do `missions:create`. */}
       <button
         className="mission-col-new"
-        data-tip="Nova missão: branch e worktree próprios, com o agente já dentro"
+        data-tip={
+          'Nova missão: branch e worktree próprios, com o agente já dentro.\n' +
+          'No modal dá para escolher PLANEJAMENTO — a conversa que escreve o plano/ na raiz.'
+        }
         onClick={onNewMission}
       >
         + nova missão

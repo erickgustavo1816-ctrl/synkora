@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { Mission } from '../store'
+import { missionTypeOf, type Mission } from '../store'
 import { missionWorkspace, type MissionWorkspaceSummary } from '../missionWorkspace'
 
 // TRILHO DE ENTREGA (Synkora 2.0, onda B; enriquecido na onda D) — a coluna da
@@ -75,6 +75,11 @@ export default function MissionDeliveryRail({
 }): React.JSX.Element {
   const integration = mission.integration
   const live = mission.status === 'ativa'
+  // MISSÃO DE PLANEJAMENTO (2.0): sem branch, sem worktree e fora da fila —
+  // diff, revisor, ajudante, terminal e ⇪ não têm objeto aqui. O trilho dela é
+  // uma linha de natureza + a alavanca de encerrar; o entregável dela (plano/)
+  // já está no repo desde que a conversa escreveu.
+  const planning = missionTypeOf(mission) === 'planejamento'
 
   // ——— diff vivo da branch (onda D) ———
   const [summary, setSummary] = useState<MissionWorkspaceSummary | null>(null)
@@ -83,7 +88,9 @@ export default function MissionDeliveryRail({
   const [diffBusy, setDiffBusy] = useState(false)
 
   const refreshDiff = useCallback(async (): Promise<void> => {
-    if (!missionWorkspace.available()) {
+    // Planejamento nem pergunta: o motor responderia "esta missão não tem
+    // worktree aberto", e essa recusa correta viraria um erro na tela.
+    if (planning || !missionWorkspace.available()) {
       setDiffError(null)
       setSummary(null)
       return
@@ -97,7 +104,7 @@ export default function MissionDeliveryRail({
     }
     setDiffError(null)
     setSummary(res.summary ?? null)
-  }, [mission.id])
+  }, [mission.id, planning])
 
   // Mede ao entrar na missão e a cada sinal do Board (⇪, arquivar…). Abrir a
   // lista re-mede também: quem abre quer o estado de AGORA, não o do minuto
@@ -118,9 +125,19 @@ export default function MissionDeliveryRail({
   return (
     <div className="delivery-rail">
       <div className="dr-head">
-        <span className="dr-title">entrega</span>
+        <span className="dr-title">{planning ? 'planejamento' : 'entrega'}</span>
         <span className={`dr-status ${mission.status}`}>{STATUS_LABEL[mission.status]}</span>
       </div>
+
+      {/* A natureza no lugar onde o diff estaria: é a resposta para "o que sai
+          daqui?" numa missão que não produz branch. */}
+      {planning && (
+        <div className="dr-facts dr-planning">
+          <span className="dr-branch" data-tip="A conversa roda na RAIZ do projeto: sem branch e sem worktree">
+            ✎ escreve <code>plano/</code> na raiz do projeto
+          </span>
+        </div>
+      )}
 
       {/* DIFF VIVO: o que esta branch mudou, sem sair da tela da decisão. */}
       {(diffLabel || diffError) && (
@@ -176,15 +193,17 @@ export default function MissionDeliveryRail({
         </div>
       )}
 
-      <div className="dr-facts">
-        <span className="dr-branch" data-tip={`Worktree da missão: ${mission.worktree ?? '—'}`}>
-          ⎇ {mission.branch ?? 'sem branch'}
-        </span>
-        {mission.baseBranch && <span className="dr-base">base: {mission.baseBranch}</span>}
-        {versionLabel && <span className="dr-version">◈ {versionLabel}</span>}
-      </div>
+      {!planning && (
+        <div className="dr-facts">
+          <span className="dr-branch" data-tip={`Worktree da missão: ${mission.worktree ?? '—'}`}>
+            ⎇ {mission.branch ?? 'sem branch'}
+          </span>
+          {mission.baseBranch && <span className="dr-base">base: {mission.baseBranch}</span>}
+          {versionLabel && <span className="dr-version">◈ {versionLabel}</span>}
+        </div>
+      )}
 
-      {live && (
+      {live && !planning && (
         <>
           {/* Revisor = conversa NOVA sobre o que a branch entregou. Nasce limpa
               de propósito: quem revisa não pode herdar o contexto de quem
@@ -257,8 +276,8 @@ export default function MissionDeliveryRail({
           clique do dono enfileira. Missão direta não tem card de plano para
           "concluir", então a única condição é a missão estar viva; árvore suja
           é recusada pelo servidor com a mensagem exata do que falta commitar. */}
-      {live && <div className="dr-divider" aria-hidden="true" />}
-      {live && !integration && (
+      {live && !planning && <div className="dr-divider" aria-hidden="true" />}
+      {live && !planning && !integration && (
         <button
           className={`btn tiny dr-btn dr-integrate${
             mission.pendingIntegrationApproval ? ' approve-pending' : ''
@@ -275,7 +294,7 @@ export default function MissionDeliveryRail({
             : `⇪ fila da ${versionLabel ?? 'versão'}`}
         </button>
       )}
-      {live && integration && (
+      {live && !planning && integration && (
         <button
           className="btn tiny dr-btn dr-integrate"
           disabled={integration.state !== 'sync_required'}
@@ -292,16 +311,26 @@ export default function MissionDeliveryRail({
         </button>
       )}
       {/* Nota de fila/conflito logo abaixo do ⇪ — é ali que a pergunta nasce. */}
-      {queueLabel && <span className="dr-queue">{queueLabel}</span>}
-      {integration?.lastError && <span className="dr-conflict">⚠ {integration.lastError}</span>}
+      {!planning && queueLabel && <span className="dr-queue">{queueLabel}</span>}
+      {!planning && integration?.lastError && (
+        <span className="dr-conflict">⚠ {integration.lastError}</span>
+      )}
 
       {(mission.status === 'ativa' || mission.status === 'arquivada') && (
         <button
           className={`btn tiny dr-btn ${live ? 'dr-quiet' : ''}`}
-          data-tip={live ? 'Arquivar a missão (branch preservada)' : 'Reativar a missão'}
+          data-tip={
+            live
+              ? planning
+                ? 'Encerra esta sessão de planejamento — o que ela escreveu em plano/ fica no repo'
+                : 'Arquivar a missão (branch preservada)'
+              : planning
+                ? 'Reabrir esta sessão de planejamento'
+                : 'Reativar a missão'
+          }
           onClick={onArchive}
         >
-          {live ? '⊟ arquivar' : '↩ reativar'}
+          {live ? (planning ? '⊟ concluir planejamento' : '⊟ arquivar') : '↩ reativar'}
         </button>
       )}
     </div>

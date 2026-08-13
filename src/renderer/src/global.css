@@ -7034,40 +7034,23 @@ body.pane-docking .pane-bar.draggable {
   padding: 24px;
 }
 
-/* CASA DO PLANEJAMENTO (2.0): a coluna ✦ geral quando o projeto não tem
-   missão legada viva. Mesma superfície escura dos panes — o convite ocupa o
-   lugar exato onde a conversa vai nascer. */
-.maestro-empty.planning-home {
-  place-items: center;
-  align-content: center;
-  gap: 12px;
-  text-align: center;
-  max-width: 100%;
+/* ✦ GERAL COMEÇA VAZIO (2026-08-13, ordem do dono): a "casa do planejamento"
+   — o convite que nascia sozinho nesta coluna — MORREU, e com ela as regras
+   .planning-home/.ph-*. Planejar virou um TIPO de missão que o dono cria, e o
+   chat dela usa o palco normal. Sem missão selecionada, sem PM legado e sem
+   terminal avulso o palco inteiro sai da tela: o retrato do projeto ocupa a
+   linha sozinho. `display:none` e NÃO desmontar — os slots de conversa e os
+   terminais de outras missões ficam montados atrás (desmontar mata PTY). */
+.maestro-window.stage-empty {
+  display: none;
 }
 
-.planning-home .ph-title {
-  font-size: 11px;
-  font-weight: 750;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--panel-ink-2);
-}
-
-.planning-home .ph-text {
-  margin: 0;
-  max-width: 46ch;
-  line-height: 1.6;
-  color: var(--panel-ink-3);
-}
-
-.planning-home .ph-text code {
-  font-family: var(--mono);
-  color: var(--panel-ink-2);
-}
-
-.planning-home .ph-error {
-  color: var(--err);
-  max-width: 46ch;
+/* As alavancas do universo quando não há palco para hospedá-las. */
+.board-general-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .seat-gate {
@@ -7403,6 +7386,14 @@ body.pane-docking .pane-bar.draggable {
   text-align: left;
 }
 
+/* MISSÃO DE PLANEJAMENTO (2.0): sem worktree, o rodapé do card diz a NATUREZA
+   dela. O `direction: rtl` do irmão existe para cortar o COMEÇO de um path —
+   numa frase curta ele só embaralharia a pontuação. */
+.mc-branch.mc-planning {
+  direction: ltr;
+  font-style: italic;
+}
+
 .mission-card.active .mc-meta,
 .mission-card.active .mc-branch {
   color: var(--panel-ink-2);
@@ -7626,6 +7617,18 @@ body.pane-docking .pane-bar.draggable {
 .dr-branch {
   color: var(--ink-2);
   font-weight: 600;
+}
+
+/* Trilho da missão de PLANEJAMENTO: no lugar de branch/base/diff entra a
+   natureza dela. A frase é curta mas quebra em vez de virar reticências — ela
+   é a única informação da caixa. */
+.dr-facts.dr-planning > span {
+  white-space: normal;
+  line-height: 1.45;
+}
+
+.dr-planning code {
+  font-family: var(--mono);
 }
 
 /* saiu de dentro do `.dr-facts` (onda D) e virou nota do ⇪: a posição na fila
@@ -7969,27 +7972,18 @@ body.pane-docking .pane-bar.draggable {
 }
 
 /* ---------- estados vazios do palco em PAPEL ----------
-   `.maestro-empty` e a casa do planejamento nasceram no painel escuro (cores
-   --panel-ink-*): em papel elas ficariam quase invisíveis. O TERMINAL dentro
-   do palco continua escuro por dentro — quem muda é só a moldura. */
+   `.maestro-empty` nasceu no painel escuro (cores --panel-ink-*): em papel ela
+   ficaria quase invisível. O TERMINAL dentro do palco continua escuro por
+   dentro — quem muda é só a moldura.
+   As regras `.planning-home .ph-*`/`.term-btn` que moravam aqui morreram com o
+   convite de planejamento (2026-08-13). O botão que sobra num palco vazio é o
+   "⟳ tentar de novo" do chat de missão. */
 .stage-window .maestro-empty {
   color: var(--ink-3);
 }
 
-.stage-window .planning-home .ph-title {
-  color: var(--ink-2);
-}
-
-.stage-window .planning-home .ph-text {
-  color: var(--ink-3);
-}
-
-.stage-window .planning-home .ph-text code {
-  color: var(--ink-2);
-}
-
-/* o botão do convite é papel-e-tinta aqui, não um term-btn de titlebar escuro */
-.stage-window .planning-home .term-btn {
+/* botão de papel-e-tinta dentro do palco claro (não um term-btn de titlebar) */
+.stage-window .maestro-empty .term-btn {
   height: 26px;
   padding: 0 12px;
   border: 1.5px solid var(--ink);
@@ -7998,20 +7992,9 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink);
 }
 
-.stage-window .planning-home .term-btn:hover {
+.stage-window .maestro-empty .term-btn:hover {
   background: var(--ink);
   color: var(--paper);
-}
-
-.stage-window .planning-home .term-btn.ghost-dim {
-  border-color: var(--ink-3);
-  color: var(--ink-3);
-}
-
-.stage-window .planning-home .term-btn.ghost-dim:hover {
-  border-color: var(--ink);
-  background: transparent;
-  color: var(--ink);
 }
 
 /* ONDA D: o INTERRUPTOR DE PERMISSÕES do universo (.perm-switch/.ps-track/
@@ -8210,6 +8193,50 @@ body.pane-docking .pane-bar.draggable {
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 10px;
+}
+
+/* NATUREZA da missão (2.0): missão × planejamento, escolhida no NASCIMENTO.
+   Segmentado compacto no topo do modal — é ele que governa o resto do
+   formulário (planejamento não tem versão nem escopo de paths). */
+.mission-type-choice {
+  display: flex;
+  gap: 6px;
+}
+
+.mtc-opt {
+  flex: 1;
+  min-width: 0;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #fffdf6;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.mtc-opt:hover {
+  border-color: var(--ink-2);
+}
+
+.mtc-opt.active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+.mission-type-hint {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--ink-3);
+  font-style: italic;
 }
 
 /* NOVO UNIVERSO (onda D): a linha da pasta — botão + caminho escolhido. */
