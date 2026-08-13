@@ -1172,7 +1172,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     summary:
       'O loop de QA ao vivo oficial da Anthropic: Python+Playwright com gestão de ciclo de vida de servidores (with_server.py), descoberta de seletores, captura de console — roda local (exige Python + playwright + Chromium).',
     hint: 'Use to live-test a local web app end-to-end (start servers, drive the browser, capture console) — requires Python with playwright installed.',
-    defaultFor: ['qa']
+    manualOnly: true,
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell', 'browser']
   },
   {
     id: 'playwright-cli',
@@ -1192,7 +1194,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     source: { repo: 'currents-dev/playwright-best-practices-skill', path: 'playwright-best-practices', ref: 'main' },
     summary:
       'A enciclopédia Playwright (Currents, vendor de CI para Playwright): 57 docs em 8 áreas — flaky, visual, a11y com axe, POM, auth, CI — com decision tree e loop de validação real.',
-    hint: 'Use when writing or fixing Playwright tests — comprehensive best-practice references with a validation loop.'
+    hint: 'Use when writing or fixing Playwright tests — comprehensive best-practice references with a validation loop.',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell', 'browser']
   },
   {
     id: 'exploratory-testing',
@@ -1202,7 +1206,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     source: { repo: 'petrkindlmann/qa-skills', path: 'skills/exploratory-testing', ref: 'main' },
     summary:
       'Testing exploratório SBTM operacionalizado: charters, sessões time-boxed (15min orientar → 40 explorar → 20 bordas/erros → 15 documentar), 7 oráculos de bug e pipeline exploração→automação.',
-    hint: 'Use for a charter-driven exploratory session on a feature — time-boxed, oracle-based bug recognition, findings feed automation.'
+    hint: 'Use for a charter-driven exploratory session on a feature — time-boxed, oracle-based bug recognition, findings feed automation.',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'browser']
   },
 
   // ——— autoria de testes ———
@@ -1214,7 +1220,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     source: { repo: 'antfu/skills', path: 'skills/vitest', ref: 'main' },
     summary:
       'Referência Vitest 5.x mantida pelo Anthony Fu (lead do Vitest — semi-oficial): mocking, snapshots, coverage, fixtures, benchmarks.',
-    hint: 'Use when authoring or fixing unit tests with Vitest — current API reference from the project lead.'
+    hint: 'Use when authoring or fixing unit tests with Vitest — current API reference from the project lead.',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell']
   },
   {
     id: 'api-testing',
@@ -1223,7 +1231,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     group: 'autoria de testes',
     source: { repo: 'petrkindlmann/qa-skills', path: 'skills/api-testing', ref: 'main' },
     summary: 'Testes de API: APIRequestContext/Supertest, validação de schema com Zod/AJV, auth, ciclo CRUD, paginação.',
-    hint: 'Use when writing API-level tests — request contexts, schema validation, auth flows, CRUD lifecycles.'
+    hint: 'Use when writing API-level tests — request contexts, schema validation, auth flows, CRUD lifecycles.',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell']
   },
   {
     id: 'contract-testing',
@@ -1233,7 +1243,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     source: { repo: 'petrkindlmann/qa-skills', path: 'skills/contract-testing', ref: 'main' },
     summary:
       'Contract testing neutro: Pact-JS v16, broker, can-i-deploy, message pacts e alternativa schema-first (OpenAPI/Ajv/Schemathesis).',
-    hint: 'Use when services need consumer-driven or schema-first contract tests (Pact or OpenAPI-based).'
+    hint: 'Use when services need consumer-driven or schema-first contract tests (Pact or OpenAPI-based).',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell']
   },
   {
     id: 'visual-testing',
@@ -1243,7 +1255,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     source: { repo: 'petrkindlmann/qa-skills', path: 'skills/visual-testing', ref: 'main' },
     summary:
       'Regressão visual: toHaveScreenshot vs serviços (Chromatic/Percy/Argos), máscara de conteúdo dinâmico, baselines só em Docker de CI, tuning de thresholds.',
-    hint: 'Use when adding or stabilizing visual-regression tests — baseline discipline and dynamic-content masking.'
+    hint: 'Use when adding or stabilizing visual-regression tests — baseline discipline and dynamic-content masking.',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell', 'browser']
   },
   {
     id: 'cypress-author',
@@ -1252,7 +1266,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     group: 'autoria de testes',
     source: { repo: 'cypress-io/ai-toolkit', path: 'skills/cypress-author', ref: 'main' },
     summary: 'Oficial do Cypress: criar/atualizar/consertar testes E2E e de componente com subskills de tarefa.',
-    hint: 'Use when the project tests with Cypress — official authoring workflow.'
+    hint: 'Use when the project tests with Cypress — official authoring workflow.',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell', 'browser']
   },
   {
     id: 'cypress-explain',
@@ -1273,7 +1289,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     source: { repo: 'petrkindlmann/qa-skills', path: 'skills/test-reliability', ref: 'main' },
     summary:
       'A melhor skill de flaky da varredura: 7 categorias de flake com decision tree, healing multi-atributo, quarentena e auto-repair com score de confiança.',
-    hint: 'Use when tests are flaky — classify the flake mechanism, heal or quarantine with confidence scoring.'
+    hint: 'Use when tests are flaky — classify the flake mechanism, heal or quarantine with confidence scoring.',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell']
   },
   {
     id: 'selector-drift-recovery',
@@ -1283,7 +1301,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     source: { repo: 'petrkindlmann/qa-skills', path: 'skills/selector-drift-recovery', ref: 'main' },
     summary:
       'Recuperação EM LOTE de seletores após refactor de UI: aria-snapshots pareados, candidatos rankeados por rubrica 0–5 (aplica só ≥3), validação da suíte inteira, PR revisável com screenshots.',
-    hint: 'Use after a UI refactor breaks many selectors — batch-regenerate with a stability rubric and human-reviewable evidence.'
+    hint: 'Use after a UI refactor breaks many selectors — batch-regenerate with a stability rubric and human-reviewable evidence.',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell', 'browser']
   },
   {
     id: 'coverage-analysis',
@@ -1293,7 +1313,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     source: { repo: 'petrkindlmann/qa-skills', path: 'skills/coverage-analysis', ref: 'main' },
     summary:
       'Cobertura com juízo: ratchet no CI, diff de coverage por PR, mutation para qualidade de asserção, "meaningful vs vanity coverage".',
-    hint: 'Use to judge and improve what coverage MEANS — ratchets, per-PR diffs, assertion quality.'
+    hint: 'Use to judge and improve what coverage MEANS — ratchets, per-PR diffs, assertion quality.',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell']
   },
   {
     id: 'mutation-testing',
@@ -1303,7 +1325,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     source: { repo: 'secondsky/claude-skills', path: 'plugins/mutation-testing/skills/mutation-testing', ref: 'main' },
     summary:
       'Mutation testing no stack web: Stryker (TS/JS com Vitest) + mutmut (Python), runs incrementais, leitura de killed/survived, alvo 80%+.',
-    hint: 'Use to judge test-suite strength with mutation testing (Stryker/mutmut) — surviving mutants = weak tests.'
+    hint: 'Use to judge test-suite strength with mutation testing (Stryker/mutmut) — surviving mutants = weak tests.',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell']
   },
 
   // ——— acessibilidade (gate) ———
@@ -1343,7 +1367,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     source: { repo: 'petrkindlmann/qa-skills', path: 'skills/accessibility-testing', ref: 'main' },
     summary:
       'A11y INTEGRADA à suíte: axe-core no Playwright + auditoria de teclado + AT real, thresholds concretos (4.5:1, 24×24px), gate que não aceita "axe passou" como aprovação.',
-    hint: 'Use to wire accessibility checks INTO the test suite (axe-core + keyboard + AT) and gate releases on both.'
+    hint: 'Use to wire accessibility checks INTO the test suite (axe-core + keyboard + AT) and gate releases on both.',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell', 'browser']
   },
 
   // ——— debugging & regressão / gate visual / performance ———
@@ -1375,7 +1401,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     source: { repo: 'grafana/skills', path: 'skills/grafana-k6/k6', ref: 'main' },
     summary:
       'Load testing oficial da Grafana: gera/valida/revisa scripts k6 (load/stress/spike/soak, HTTP/WS/gRPC/browser, thresholds) com validação real via k6 run.',
-    hint: 'Use to author and validate k6 load-test scripts against SLAs — requires the k6 binary.'
+    hint: 'Use to author and validate k6 load-test scripts against SLAs — requires the k6 binary.',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell']
   },
 
   // ——— SUBAGENTES de mercado (rodada qa) ———
@@ -1947,12 +1975,12 @@ export const CURATED_SKILLS: SkillDef[] = [
     id: 'deep-research',
     kind: 'skill',
     depts: ['research'],
+    manualOnly: true,
     group: 'pesquisa & avaliação',
     source: { repo: 'daymade/claude-code-skills', path: 'deep-research', ref: 'main' },
     summary:
       'Deep research P0–P7 com subagentes paralelos, registro de citações deduplicado, counter-review OBRIGATÓRIO (≥3 issues) e passe de verificação — usa WebSearch/WebFetch nativos, zero deps.',
-    hint: 'Use for multi-source deep research with citation governance and a mandatory counter-review pass.',
-    defaultFor: ['research']
+    hint: 'Use only when the user explicitly chooses its external subagent/counter-review workflow; normal Synkora research routes through the native contract plus the source-primary research technique.'
   },
   {
     id: 'firecrawl-search',
@@ -2967,7 +2995,9 @@ export const CURATED_SKILLS: SkillDef[] = [
     summary:
       'Verificação de segurança do PRÓPRIO app em CI, 5 camadas (secret scan→deps→SAST→DAST ZAP→testes de auth) + padrões Playwright de XSS/CSRF/SQLi/SSRF/IDOR e JWT alg:none — exige provar que o teste FALHA contra alvo vulnerável.',
     hint: 'Use to add automated security verification of your own app — CI scanning layers plus negative-path auth/injection tests.',
-    defaultFor: ['cyber']
+    defaultFor: ['cyber'],
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell']
   },
   {
     id: 'compliance-testing',

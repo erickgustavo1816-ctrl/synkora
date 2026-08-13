@@ -77,6 +77,14 @@ export interface PhaseWatch {
   /** Mesma decisão/capacidade usada pelo prompt e pelo guard do report. */
   uiWork?: boolean
   browserAvailable?: boolean
+  /** Rodada QUICK (ajuste rápido do dono): evidência do delta basta. */
+  quickRound?: boolean
+  /** Capacidade de browser DO DEV, carimbada quando o watch da fase dev nasce
+   * e carregada pelos watches de gate: o re-arm do dev vivo (retryOrBacklog)
+   * restaura ESTE valor, nunca o do gate — bug real 2026-08-11/12: o spread
+   * do watch do REVIEWER (browser false por desenho) fazia o done seguinte do
+   * dev ser recusado como "sem browser/runtime" e o pane inteiro reciclar. */
+  devBrowserAvailable?: boolean
   /** Snapshot criado pelo guard de report e validado por diagnóstico antes
    * de a chamada poder avançar para review/QA. */
   devSnapshot?: {

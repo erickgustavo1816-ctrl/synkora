@@ -210,7 +210,9 @@ test('review Claude expõe só leitura nativa e skills exclusivamente por receip
     // plan mode bloqueia o mcp__synkora__report (sonda 5) — nunca pode voltar
     assert.equal(args.includes('plan'), false)
     assert.equal(args[args.indexOf('--tools') + 1], 'Read,Grep,Glob')
-    assert.equal(args.includes('--disable-slash-commands'), true)
+    // slash é interface do HUMANO — a cerca do agente é o --disallowedTools
+    // (a flag --disable-slash-commands punia o dono; removida 2026-08-11)
+    assert.equal(args.includes('--disable-slash-commands'), false)
     assert.equal(args[args.indexOf('--disallowedTools') + 1], 'Skill,Agent,Task')
     assert.match(args[args.indexOf('--allowedTools') + 1], /mcp__synkora__report/)
     assert.match(args[args.indexOf('--allowedTools') + 1], /mcp__synkora__activate_skill/)
@@ -265,7 +267,8 @@ test('Claude writer governado por receipt não descobre skills ou plugins por fo
   for (const bypass of [false, true]) {
     const args = panePermissionArgs('claude', bypass, 'write', { receiptGoverned: true })
     assert.equal(args.includes('--setting-sources='), true)
-    assert.equal(args.includes('--disable-slash-commands'), true)
+    // slash liberado para o dono; a cerca do agente segue no --disallowedTools
+    assert.equal(args.includes('--disable-slash-commands'), false)
     assert.equal(args[args.indexOf('--disallowedTools') + 1], 'Skill,Agent,Task')
     assert.equal(args.includes('--no-chrome'), true)
     assert.equal(

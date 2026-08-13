@@ -30,6 +30,7 @@ import { CodeIntelligenceError, CodeIntelligenceSession, type CodeQuery } from '
 import { formatCodeQueryError, formatCodeQueryResult } from '../codeIntelligence/format'
 import type { MainContext } from '../mainContext'
 import type { McpApi } from '../mcpServer'
+import { plannedHelperCompletionProblem } from '../agentRouting'
 
 /** Dependências do closure do index ainda não migradas (mesmo padrão
  * do PhaseEngineExtras). */
@@ -48,6 +49,7 @@ export interface CodeApiExtras {
     }
   >
   completedPlannedAgentsByPhaseRun: Map<string, Set<string>>
+  completedHelperPhaseRuns: Set<string>
 }
 
 export function buildCodeApi(
@@ -68,7 +70,8 @@ export function buildCodeApi(
     planTaskForWorkTask,
     missionWorkspacePath,
     skillPlanScopes,
-    completedPlannedAgentsByPhaseRun
+    completedPlannedAgentsByPhaseRun,
+    completedHelperPhaseRuns
   } = extras
   return {
     codeQuery: async (id, query: CodeQuery) => {
@@ -105,17 +108,14 @@ export function buildCodeApi(
       }
       const parentSkillScope = skillPlanScopes.get(id.paneId)
       const requiredAgentId = parentSkillScope?.agentIds[0]
-      if (
-        requiredAgentId &&
-        !completedPlannedAgentsByPhaseRun
-          .get(parentSkillScope.phaseRun)
-          ?.has(requiredAgentId)
-      ) {
-        return block(
-          `o subagente especialista ${requiredAgentId} foi selecionado para esta rodada, ` +
-            'mas nenhum ajudante com essa persona concluiu e reportou. Abra-o via delegate e integre o resultado antes de reportar done.'
-        )
-      }
+      const helperProblem = plannedHelperCompletionProblem({
+        delegationMode: task.delegation,
+        phaseRun: parentSkillScope?.phaseRun,
+        requiredAgentId,
+        completedHelperPhaseRuns,
+        completedAgentsByPhaseRun: completedPlannedAgentsByPhaseRun
+      })
+      if (helperProblem) return block(helperProblem)
       const project = projects.get(task.projectId)
       const mission = task.missionId ? missions.get(task.missionId) : undefined
       if (

@@ -8,8 +8,8 @@
  * máquina de fases são lidos via ctx (getters/ctx.phase).
  */
 import { app } from 'electron'
-import { join } from 'path'
-import { ensureSynkoraGitExcludes, gitHead } from '../worktree'
+import { join, resolve } from 'path'
+import { ensureSynkoraGitExcludes, gitCommitReached, gitHead, isWorktreeClean } from '../worktree'
 import { type Mission, type NewMission } from '../missions'
 import { type IntegrationQueueTicketView } from '../integrationQueue'
 import { randomUUID } from 'crypto'
@@ -102,7 +102,8 @@ export function buildMissionsApi(
     projectModeOf,
     projectPlanOf,
     unregisterPane,
-    orchPaneId
+    orchPaneId,
+    blackbox
   } = ctx
   // hub é atribuído 1× antes do mcpApi nascer — capturar é seguro.
   const hub = ctx.hub
@@ -359,7 +360,7 @@ export function buildMissionsApi(
         return 'não aprovei o plano mestre: ' + (error instanceof Error ? error.message : String(error))
       }
     },
-    guideIntegrationResolution: (id, missionId, instruction) => {
+    guideIntegrationResolution: (id, missionId, instruction, directResolution) => {
       if (id.role !== 'maestro' || id.missionId)
         return 'apenas o Maestro do projeto decide a estratégia de um conflito da fila'
       const mission = missions.get(missionId)
@@ -380,6 +381,69 @@ export function buildMissionsApi(
       const targetHead = target ? gitHead(target.dir) : undefined
       if (!target || !targetHead)
         return 'não consegui preparar o destino para transformar sua decisão em um card seguro'
+      // RESOLUÇÃO DIRETA AUDITADA (ordem do dono, 2026-08-11 — caso real M08:
+      // conflito de UMA linha no package.json custou estratégia + card de
+      // sync + dev + gates): quando o conflito é MECÂNICO e o próprio
+      // Maestro já o resolveu na branch da missão (merge do destino +
+      // commit), esta chamada re-lacra o ticket no head novo e a fila
+      // retoma com o aval ORIGINAL do dono — sem card, sem gates novos.
+      // Cercas que ficam: origem provada LIMPA e contendo o head do destino;
+      // range da resolução auditado verbatim (o diff é reproduzível por
+      // qualquer um via git); o drain re-roda o precheck do merge real.
+      // Conflito semântico continua no fluxo com card — o julgamento
+      // mecânico×semântico é do Maestro, auditado (doutrina F6.12).
+      if (directResolution) {
+        const missionSource = missionWorkspacePath(project.path, mission)
+        if (!missionSource)
+          return 'não encontrei o worktree da missão para validar a resolução direta'
+        if (isWorktreeClean(missionSource) !== true)
+          return 'resolução direta recusada: a branch da missão tem alterações não commitadas — commite a resolução (ou limpe a árvore) e chame de novo'
+        if (gitCommitReached(missionSource, targetHead) !== true)
+          return `resolução direta recusada: a branch da missão ainda não contém o head do destino (${targetHead.slice(0, 12)}) — faça o merge de ${target.branch} na branch da missão, resolva, commite e chame de novo; se o conflito não for mecânico, use o fluxo normal (sem directResolution) para abrir o card de sincronização`
+        const newSourceHead = gitHead(missionSource)
+        if (!newSourceHead)
+          return 'resolução direta recusada: não consegui ler o head atual da branch da missão'
+        try {
+          if (queued.state === 'blocked') {
+            integrationQueue.guideResolution(missionId, { instruction })
+          } else if (queued.resolution?.instruction.trim() !== instruction.trim()) {
+            return `já existe uma estratégia persistida para esta posição e ela não foi sobrescrita: ${queued.resolution?.instruction}`
+          }
+          integrationQueue.requeueAfterSync(missionId, {
+            sourceHead: newSourceHead,
+            validatedTargetHead: targetHead,
+            targetBranch: target.branch,
+            targetDir: resolve(target.dir)
+          })
+        } catch (error) {
+          return (
+            'não registrei a resolução direta: ' +
+            (error instanceof Error ? error.message : String(error))
+          )
+        }
+        blackbox.record({
+          cat: 'queue',
+          event: 'queue-direct-resolution',
+          actor: id.role,
+          ids: { projectId: project.id, missionId },
+          reason: `Maestro resolveu o conflito da posição #${queued.position} DIRETO na branch da missão (${(queued.sourceHead ?? '?').slice(0, 12)} → ${newSourceHead.slice(0, 12)}; destino ${targetHead.slice(0, 12)}) — sem card; estratégia verbatim: ${instruction.slice(0, 600)}`
+        })
+        hub.publish({
+          projectId: project.id,
+          missionId,
+          kind: 'info',
+          text: `o Maestro resolveu o conflito da fila DIRETAMENTE na branch da missão "${mission.title}" (resolução mecânica auditada) — a fila retoma sozinha com o aval original; nenhum card novo`,
+          actor: 'harness',
+          urgent: true
+        })
+        emitMissionsChanged(project.id)
+        syncBoard(project.id)
+        scheduleIntegrationDrain(project.id)
+        return (
+          `resolução direta aceita para "${mission.title}": ticket re-lacrado em ${newSourceHead.slice(0, 12)} e fila retomada na posição #${queued.position} com o aval original do dono. ` +
+          'O merge real ainda passa pelo precheck do drain; se algo divergir, a fila pausa de novo com o motivo.'
+        )
+      }
       try {
         // A decisão é a fonte de verdade e nasce ANTES do card. Se o app cair
         // no intervalo, boot/retry recriam o card usando somente a orientação

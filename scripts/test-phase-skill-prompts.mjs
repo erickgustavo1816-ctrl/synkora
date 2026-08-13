@@ -87,6 +87,25 @@ test('front técnico sem impacto visual não recebe contrato Impeccable inexiste
   assert.match(visual, /exactly ONE Impeccable operation/)
 })
 
+test('criação de design system recebe um único método nativo e não empilha Impeccable', () => {
+  const result = buildDevContract({
+    title: 'Criar design system',
+    deptLabel: 'Design',
+    uiWork: true,
+    designSystemWork: true,
+    browserAvailable: true,
+    executionMode: 'deep',
+    executionProfileBlock: '',
+    browserHint: '',
+    marker: '.synkora/runs/task.done'
+  })
+  assert.match(result, /exactly ONE design-system creation method/)
+  assert.match(result, /synkora-design-system-standard/)
+  assert.match(result, /do not invoke Impeccable/)
+  assert.match(result, /tokens, components, product patterns, documentation, specimen, manifest and governance/)
+  assert.doesNotMatch(result, /exactly ONE Impeccable operation/)
+})
+
 test('review FAST ativa somente o plano obrigatório e não proíbe o próprio receipt', () => {
   const result = buildBasePrompt({
     phase: 'review',

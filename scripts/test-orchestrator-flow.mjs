@@ -6,6 +6,7 @@ import {
   delegationDirective,
   gatesForTask,
   helperLimitForExecutionMode,
+  newTaskDelegationProblem,
   normalizeDelegationMode,
   normalizeExecutionMode,
   normalizeRiskLevel,
@@ -276,13 +277,23 @@ test('novos sinais concretos forçam review e QA sem falsos positivos genéricos
   assert.deepEqual(ordinary.surfaces, [])
 })
 
-test('todo codigo que afeta UI recebe QA visual mesmo com gates legados incompletos', () => {
-  assert.deepEqual(gatesForTask('standard', 'low', 'code', ['review'], true), [
+test('gates explicitos sao contrato: UI nao re-impoe QA (ordem do dono 2026-08-12)', () => {
+  // Escolha explícita vale literalmente, inclusive em card de UI (caso real
+  // M09: o ownerOrder gravou ["review"] e o force-append reabria o QA).
+  assert.deepEqual(gatesForTask('standard', 'low', 'code', ['review'], true), ['review'])
+  assert.deepEqual(gatesForTask('standard', 'low', 'code', ['review'], false), ['review'])
+  // Default de card de UI sem gates segue integral (review+qa via pipeline).
+  assert.equal(gatesForTask('standard', 'low', 'code', undefined, true), undefined)
+})
+
+test('test card (dept qa) nasce so com review, inclusive sob risco alto', () => {
+  assert.deepEqual(gatesForTask('standard', 'low', 'code', undefined, false, 'qa'), ['review'])
+  assert.deepEqual(gatesForTask('standard', 'high', 'code', undefined, false, 'qa'), ['review'])
+  // Escolha explícita do orquestrador em card qa continua valendo.
+  assert.deepEqual(gatesForTask('standard', 'low', 'code', ['review', 'qa'], false, 'qa'), [
     'review',
     'qa'
   ])
-  assert.deepEqual(gatesForTask('standard', 'low', 'code', [], true), ['qa'])
-  assert.deepEqual(gatesForTask('standard', 'low', 'code', ['review'], false), ['review'])
 })
 
 test('detecta classes concretas de injeção, traversal e fronteira Electron', () => {
@@ -573,14 +584,19 @@ test('standard e deep também limitam o carimbo a uma técnica e um especialista
   }
 })
 
-test('persona selecionada nunca pode ser descartada por delegation none', () => {
-  const problems = validateTaskSizing('standard', 'medium', 1, 0, [
-    validCodeCard({
-      agents: ['especialista-a'],
-      delegation: 'none'
-    })
-  ])
-  assert.ok(problems.some((problem) => problem.includes('exige delegação optional ou parallel')))
+test('persona selecionada exige decisão parallel do orquestrador', () => {
+  for (const delegation of ['none', 'optional']) {
+    const problems = validateTaskSizing('standard', 'medium', 1, 0, [
+      validCodeCard({
+        agents: ['especialista-a'],
+        delegation
+      })
+    ])
+    assert.ok(
+      problems.some((problem) => problem.includes('exige paralelismo planejado')),
+      delegation
+    )
+  }
 })
 
 test('fast aceita várias quests sequenciais sem transformar checklist em delegação', () => {
@@ -598,14 +614,16 @@ test('fast aceita várias quests sequenciais sem transformar checklist em delega
   assert.doesNotMatch(directive, /aguarde uma única orientação/)
 })
 
-test('delegação optional nunca torna várias quests uma obrigação', () => {
-  // Contrato 2026-08-10 (ordem do dono): delegar é julgamento do DEV, sem
-  // pedir licença — mas checklist curto/sequencial continua direto.
+test('delegação optional sobrevive apenas como compatibilidade legada', () => {
   const directive = delegationDirective('standard', 'optional', 6)
   assert.match(directive, /MESMO modelo e MESMO effort/)
-  assert.match(directive, /sem pedir licença/)
-  assert.match(directive, /se faz direto/)
-  assert.doesNotMatch(directive, /aguarde uma orientação/)
+  assert.match(directive, /COMPATIBILIDADE LEGADA/)
+  assert.match(directive, /Cards novos nunca usam optional/)
+
+  assert.equal(newTaskDelegationProblem('none'), undefined)
+  assert.equal(newTaskDelegationProblem('parallel'), undefined)
+  assert.match(newTaskDelegationProblem('optional'), /apenas legado/)
+  assert.match(newTaskDelegationProblem(undefined), /precisa declarar/)
 
   const invalidParallel = validateTaskSizing('standard', 'medium', 1, 0, [
     validCodeCard({ delegation: 'parallel', quests: ['Um único bloco'] })

@@ -116,11 +116,26 @@ import { type PaneIdentity } from './hub'
 import { type SkillDef } from './skillsLibrary'
 import {
   IMPECCABLE_SKILL_ID,
+  SYNKORA_BACKEND_QA_ID,
+  SYNKORA_BACKEND_STANDARD_ID,
+  SYNKORA_CYBER_QA_ID,
+  SYNKORA_CYBER_STANDARD_ID,
+  SYNKORA_COPY_QA_ID,
+  SYNKORA_COPY_STANDARD_ID,
+  SYNKORA_DATA_QA_ID,
+  SYNKORA_DATA_STANDARD_ID,
   SYNKORA_DESIGN_SYSTEM_QA_ID,
   SYNKORA_DESIGN_SYSTEM_STANDARD_ID,
+  SYNKORA_DEVOPS_QA_ID,
+  SYNKORA_DEVOPS_STANDARD_ID,
   SYNKORA_FRONTEND_STANDARD_ID,
+  SYNKORA_RESEARCH_QA_ID,
+  SYNKORA_RESEARCH_STANDARD_ID,
+  SYNKORA_QA_QA_ID,
+  SYNKORA_QA_STANDARD_ID,
   SYNKORA_UI_QA_ID,
   classifyTaskUiWork,
+  isDevOpsWork,
   isDesignSystemWork,
   missingMandatoryUiPhaseSkills,
   selectPhaseSkillPlan,
@@ -146,6 +161,7 @@ import {
   isElectronScript,
   qaCdpEndpointFor,
   qaCdpPortFor,
+  releaseQaCdpPort,
   reserveQaCdpPort
 } from './qaCdp'
 import { formatPortMap, type PortUseEntry } from './portMap'
@@ -1062,7 +1078,12 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       .filter(Boolean)
       .join('\n')
     const uiWork = classifyTaskUiWork(task, feedback)
+    // AJUSTE RÁPIDO (ordem do dono 2026-08-12): carimbo por rodada, gravado
+    // pelo run_task — corta protocolo (checks/evidência do delta, review
+    // olhada-relâmpago, sem QA), nunca skills/qualidade.
+    const quickRound = Boolean(task.quickRound)
     const designSystemWork = uiWork && isDesignSystemWork(task.department, routingText)
+    const devOpsWork = isDevOpsWork(task.department, routingText)
 
     // QA DE VERDADE, VERSÃO FINAL (decisão do usuário, 2026-08-06 — "não é só
     // o próprio QA subir? que dificuldade"): SEM pré-aquecimento no harness.
@@ -1098,7 +1119,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
                 .map(([key, value]) => `${key}=${value}`)
                 .join(' ')
             : ''
-          devCdpBlock = ` ELECTRON PRODUCT — SEE YOUR WORK IN THE REAL APP: your playwright tools are wired to CDP ${qaCdpEndpoint} (they ATTACH to a running app; they never launch a browser). To validate UI, launch the product yourself from this worktree with the debug port: \`npm run ${cdpScript}${invocation?.suffix ?? ''}\`${envNote ? ` (equivalent env: ${envNote})` : ''} — readiness is the complete "DevTools listening" line in its output. Do NOT point a plain Chrome at the vite URL for validation; the real app with the real preload/IPC is the target. Close the product app when your round ends.`
+          devCdpBlock = ` ELECTRON PRODUCT — SEE YOUR WORK IN THE REAL APP: your playwright tools are wired to CDP ${qaCdpEndpoint} (they ATTACH to a running app; they never launch a browser). To validate UI, launch the product yourself from this worktree with the debug port: \`npm run ${cdpScript}${invocation?.suffix ?? ''}\`${envNote ? ` (equivalent env: ${envNote})` : ''} — readiness is the complete "DevTools listening" line in its output. Do NOT point a plain Chrome at the vite URL for validation; the real app with the real preload/IPC is the target. Close the product app when your round ends. Any app/browser you launch from this shell inherits this console — redirect its stderr to a file (e.g. append \` 2>.synkora/runtime-stderr.log\` and read readiness from the file) or its log lines will scribble over this terminal's UI.`
         }
       }
     }
@@ -1224,6 +1245,11 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     const effectiveDevEffort = devEffort ?? task.devEffort
     const plannedPaneId = randomUUID()
     const phaseRun = randomUUID()
+    // Gate herda a capacidade de browser DO DEV como campo próprio: é ela que
+    // o re-arm do dev vivo restaura após reprovação (o browserAvailable do
+    // watch de gate descreve o GATE — review é false por desenho).
+    const carriedDevBrowserAvailable =
+      phase === 'dev' ? browserAvailable : phaseWatches.get(taskId)?.devBrowserAvailable
     phaseWatches.set(taskId, {
       projectId,
       taskId,
@@ -1241,6 +1267,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       reviewArtifact: immutableReviewerArtifact,
       uiWork,
       browserAvailable,
+      devBrowserAvailable: carriedDevBrowserAvailable,
+      quickRound,
       createdAt: Date.now()
     })
 
@@ -1348,41 +1376,71 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     let preparedSkills: Awaited<ReturnType<typeof prepareSkillPlanInputs>>
     const injAgents: SkillDef[] = []
     const missingAgents: string[] = []
+    const operationForSkill = (skillId: string): string => {
+      if (skillId === IMPECCABLE_SKILL_ID) {
+        return phaseSkillSelection.impeccableOperation ?? 'polish'
+      }
+      if (skillId === SYNKORA_DESIGN_SYSTEM_STANDARD_ID) return 'build'
+      if (skillId === SYNKORA_DESIGN_SYSTEM_QA_ID || skillId === SYNKORA_UI_QA_ID) {
+        return 'review'
+      }
+      if (skillId === SYNKORA_FRONTEND_STANDARD_ID) {
+        if (phase === 'qa') return 'verify'
+        return designSystemWork ? 'build' : phaseSkillSelection.uiOperation ?? 'polish'
+      }
+      if (
+        skillId === SYNKORA_BACKEND_STANDARD_ID ||
+        skillId === SYNKORA_DEVOPS_STANDARD_ID ||
+        skillId === SYNKORA_CYBER_STANDARD_ID ||
+        skillId === SYNKORA_DATA_STANDARD_ID ||
+        skillId === SYNKORA_RESEARCH_STANDARD_ID ||
+        skillId === SYNKORA_COPY_STANDARD_ID ||
+        skillId === SYNKORA_QA_STANDARD_ID
+      ) {
+        return phase === 'qa' ? 'verify' : 'contract'
+      }
+      if (
+        skillId === SYNKORA_BACKEND_QA_ID ||
+        skillId === SYNKORA_DEVOPS_QA_ID ||
+        skillId === SYNKORA_CYBER_QA_ID ||
+        skillId === SYNKORA_DATA_QA_ID ||
+        skillId === SYNKORA_RESEARCH_QA_ID ||
+        skillId === SYNKORA_COPY_QA_ID ||
+        skillId === SYNKORA_QA_QA_ID
+      ) return 'verify'
+      if (phase === 'review') return 'review'
+      if (phase === 'qa') return 'verify'
+      return 'apply'
+    }
+    const reasonForSkill = (skillId: string): string => {
+      if (skillId === SYNKORA_DESIGN_SYSTEM_STANDARD_ID) return 'design-system.contract'
+      if (skillId === SYNKORA_DESIGN_SYSTEM_QA_ID) return 'design-system.independent-qa'
+      if (skillId === SYNKORA_FRONTEND_STANDARD_ID) return 'ui.contract'
+      if (skillId === SYNKORA_UI_QA_ID) return 'ui.independent-qa'
+      if (skillId === SYNKORA_BACKEND_STANDARD_ID) return 'backend.contract'
+      if (skillId === SYNKORA_BACKEND_QA_ID) return 'backend.independent-qa'
+      if (skillId === SYNKORA_DEVOPS_STANDARD_ID) return 'devops.contract'
+      if (skillId === SYNKORA_DEVOPS_QA_ID) return 'devops.independent-qa'
+      if (skillId === SYNKORA_CYBER_STANDARD_ID) return 'cyber.contract'
+      if (skillId === SYNKORA_CYBER_QA_ID) return 'cyber.independent-qa'
+      if (skillId === SYNKORA_DATA_STANDARD_ID) return 'data.contract'
+      if (skillId === SYNKORA_DATA_QA_ID) return 'data.independent-qa'
+      if (skillId === SYNKORA_RESEARCH_STANDARD_ID) return 'research.contract'
+      if (skillId === SYNKORA_RESEARCH_QA_ID) return 'research.independent-qa'
+      if (skillId === SYNKORA_COPY_STANDARD_ID) return 'copy.contract'
+      if (skillId === SYNKORA_COPY_QA_ID) return 'copy.independent-qa'
+      if (skillId === SYNKORA_QA_STANDARD_ID) return 'qa-authoring.contract'
+      if (skillId === SYNKORA_QA_QA_ID) return 'qa-authoring.independent-qa'
+      if (skillId === IMPECCABLE_SKILL_ID) {
+        return `ui.${phaseSkillSelection.impeccableOperation ?? 'polish'}`
+      }
+      return `${phase}.technique`
+    }
     try {
       await syncPaneSkillLease(plannedPaneId, cwd, [])
       preparedSkills = await prepareSkillPlanInputs(skillIds, (skillId) => ({
-        operation:
-          skillId === IMPECCABLE_SKILL_ID
-            ? phaseSkillSelection.impeccableOperation ?? 'polish'
-            : skillId === SYNKORA_DESIGN_SYSTEM_STANDARD_ID
-              ? 'build'
-              : skillId === SYNKORA_DESIGN_SYSTEM_QA_ID
-                ? 'review'
-            : skillId === SYNKORA_FRONTEND_STANDARD_ID
-              ? phase === 'qa'
-                ? 'verify'
-                : designSystemWork
-                  ? 'build'
-                  : phaseSkillSelection.uiOperation ?? 'polish'
-              : skillId === SYNKORA_UI_QA_ID
-                ? 'review'
-                : phase === 'review'
-                  ? 'review'
-                  : phase === 'qa'
-                    ? 'verify'
-                    : 'apply',
-        reason:
-          skillId === SYNKORA_DESIGN_SYSTEM_STANDARD_ID
-            ? 'design-system.contract'
-            : skillId === SYNKORA_DESIGN_SYSTEM_QA_ID
-              ? 'design-system.independent-qa'
-          : skillId === SYNKORA_FRONTEND_STANDARD_ID
-            ? 'ui.contract'
-            : skillId === SYNKORA_UI_QA_ID
-              ? 'ui.independent-qa'
-              : skillId === IMPECCABLE_SKILL_ID
-                ? `ui.${phaseSkillSelection.impeccableOperation ?? 'polish'}`
-                : `${phase}.technique`,
+        operation: operationForSkill(skillId),
+        reason: reasonForSkill(skillId),
         required: true
       }))
       for (const agentId of agentIds) {
@@ -1410,7 +1468,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       task.department,
       phase,
       uiWork,
-      designSystemWork
+      designSystemWork,
+      devOpsWork
     )
     if (mandatoryMissing.length > 0) {
       blockForMissingFrontendStandard(
@@ -1448,7 +1507,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         version: receipt.version,
         fingerprint: receipt.fingerprint,
         status: 'planned' as const
-      }))
+      })),
+      agents: agentIds.map((id) => ({ id, status: 'planned' as const }))
     }
     const priorUsage = task.skillUsage
     const priorHistory = priorUsage?.history ?? (priorUsage ? [{
@@ -1456,7 +1516,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       phaseRun: priorUsage.phaseRun,
       updatedAt: priorUsage.updatedAt,
       runStatus: priorUsage.runStatus ?? 'interrupted' as const,
-      skills: priorUsage.skills
+      skills: priorUsage.skills,
+      agents: priorUsage.agents
     }] : [])
     tasks.update(taskId, {
       skillUsage: {
@@ -1522,7 +1583,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       executionProfileBlock,
       browserHint,
       idleWaiterHint: buildIdleWaiterHint(seat.cli),
-      marker
+      marker,
+      quickRound
     })
     // Quests são checklist, não contagem de ajudantes. A política persistida
     // no card decide se existe delegação e o backend impõe o teto do perfil.
@@ -1574,7 +1636,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         verdictRule,
         closedListBlock,
         gateSkillsBlock: phase === 'dev' ? '' : skillsBlock,
-        gateAgentsBlock: ''
+        gateAgentsBlock: '',
+        quickRound
       })
       // Os DOIS CLIs recebem o contrato invisível: claude por
       // --append-system-prompt-file; codex pelo PROFILE por pane
@@ -1729,7 +1792,12 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       ...(phase === 'dev'
         ? {
             runSeat: seat.name,
-            runModel: `${model || 'modelo padrão'}${effectiveDevEffort ? ` · ${effectiveDevEffort}` : ''}`,
+            // ID PURO, nunca display (bug real 2026-08-11: o carimbo
+            // "opus[1m] · max" era consumido pelo clamp de tier do delegate
+            // como id de modelo e a validação de pool recusava 100% dos
+            // ajudantes). Effort tem campo próprio (devEffort); concatenar é
+            // problema da UI.
+            runModel: model || undefined,
             devEffort: effectiveDevEffort
           }
         : {})
@@ -2264,7 +2332,18 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
           marker,
           paneId: liveDev.paneId,
           gateBaselineFingerprint: undefined,
-          gateStartedAt: undefined
+          gateStartedAt: undefined,
+          // 🔴 BUG REAL 2026-08-11/12 (2× no card de créditos): `...watch` aqui
+          // é o watch do GATE que reprovou — o do REVIEW carrega
+          // browserAvailable=false POR DESENHO (gate de código não tem
+          // browser) e o dev vivo herdava o false: o done seguinte era
+          // recusado como "pane de UI sem browser/runtime", o dev reportava
+          // bloqueada confabulando queda de MCP e a rodada inteira reciclava
+          // (~20-30min + re-evidência). Restaurar a capacidade DO DEV. O
+          // fallback true é invariante: card de UI com dev genuinamente sem
+          // browser nunca passa do próprio done (recusa 417) — se chegou a um
+          // gate e voltou, o dev vivo nasceu com browser.
+          browserAvailable: watch.devBrowserAvailable ?? true
         })
         // UM AVISO SÓ (decisão do usuário, 2026-08-04 — caso real: o dev
         // recebia o veredito cru do harness E a triagem do orquestrador em
@@ -2695,6 +2774,11 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
 
   async function finalizeTask(watch: PhaseWatch, task: Task, approvedBy: string): Promise<void> {
     liveGateWaits.delete(watch.taskId)
+    // A reserva de porta CDP é POR CARD e sobrevive entre rodadas; o fecho
+    // do ciclo de vida é aqui (bug real 2026-08-11: o modal do ▶ testar
+    // ainda anunciava "CDP do QA" de card já concluído — a reserva nunca era
+    // liberada em caminho nenhum).
+    releaseQaCdpPort(watch.taskId)
     closePhasePane(watch.projectId, watch.taskId, 'dev')
     // O renderer fecha visualmente de forma assíncrona. Encerra os processos
     // de fase aqui, antes da fotografia final, para nenhum dev/gate/helper de
@@ -3552,10 +3636,37 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     // mudança legítima de gates chega pela PRÓXIMA rodada, nunca no meio.
     const configuredGates = task.gates ?? ['review', 'qa']
     const taskUiWork = classifyTaskUiWork(task)
-    const gates =
-      task.deliverable === 'code' && taskUiWork && !configuredGates.includes('qa')
-        ? [...configuredGates, 'qa' as const]
-        : configuredGates
+    // OS GATES DO CARD SÃO O CONTRATO (ordem do dono, 2026-08-12 — caso real:
+    // update_task com ownerOrder gravou gates=["review"] e ESTE force-append
+    // reabriu o QA mesmo assim; o orquestrador teve que stop_task no gate):
+    // guarda de julgamento nunca re-impõe gate sobre escolha EXPLÍCITA — card
+    // de UI sem QA vira ANOTAÇÃO auditada, o aceite visual fica com o
+    // dono/orquestrador. Default (gates ausentes) segue review+qa. Rodada
+    // QUICK (ajuste rápido) nunca abre QA: dev + olhada-relâmpago — o aceite
+    // visual do ajuste é do dono que o pediu.
+    const gates = task.quickRound
+      ? configuredGates.filter((gate) => gate !== 'qa')
+      : configuredGates
+    if (
+      task.deliverable === 'code' &&
+      taskUiWork &&
+      task.gates !== undefined &&
+      !configuredGates.includes('qa')
+    ) {
+      blackbox.record({
+        cat: 'phase',
+        event: 'ui-card-without-qa-gate',
+        actor: 'harness',
+        ids: {
+          projectId: watch.projectId,
+          missionId: task.missionId,
+          taskId: watch.taskId,
+          phase: watch.phase,
+          role: watch.phase
+        },
+        reason: `card de UI avança sem gate de QA por contrato explícito (gates: ${configuredGates.join('+') || 'nenhum'}) — aceite visual é do dono/orquestrador`
+      })
+    }
     if (watch.phase === 'dev') {
       // O report encerra o executor imediatamente. A fotografia abaixo ainda
       // se protege contra filhos/background tardios, mas não deixamos o mesmo
@@ -3759,11 +3870,16 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         tag: task.department,
         text: `✔ dev sinalizou conclusão de "${task.title}"${next ? ` — ${next === 'review' ? '🧐 revisão' : '🔎 QA'} entrando` : ' — sem gates, concluindo'}`
       })
-      // "Abriu, testou, reportou → FECHOU": encerra também janelas de teste e
-      // helpers antes de qualquer leitor/runtime independente tocar a árvore.
+      // "Abriu, testou, FECHOU" = as JANELAS DE TESTE e os helpers — NUNCA o
+      // pane do dev (ordem do dono, 2026-08-11: "eu quero que ele fique lá
+      // esperando, independente" — o fechamento no done forçava respawn a
+      // cada rodada e, acima de 150k, fresco por custo: cada ciclo parecia
+      // "abrir um novo"). O dev VIVO espera o veredito: reprovação volta na
+      // MESMA conversa (caminho liveDev), aprovação final fecha via
+      // finalizeTask. A cerca da fotografia segue sendo o fingerprint
+      // antes/depois + devContract (esperar sem tocar em nada).
       if (watch.paneId) ptys.reapVisualsOf(watch.paneId)
       terminateTaskHelpers(watch.projectId, watch.taskId, 'entrega congelada para gates independentes')
-      terminateTaskPhasePane(watch.projectId, watch.taskId, 'dev')
       if (next) chainContinuation(openGatePane(watch, next))
       else
         chainContinuation(
@@ -3823,6 +3939,11 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     // COMMIT; untracked nunca entra no merge): se a única divergência são
     // arquivos NOVOS untracked com o head/árvore intactos, move-os para
     // .synkora/quarantine e REVALIDA — o veredito sobrevive ao lixo de gate.
+    // A allowlist de runtime declarado viaja junto (2026-08-11): divergência
+    // MISTA "evidência untracked + runtime tracked" travava as duas válvulas
+    // mutuamente; a quarentena tolera a classe do restore e ele limpa o resto
+    // logo abaixo.
+    const declaredRuntimePathsForVerdict = maestro.get(watch.projectId).runtimePaths ?? []
     if (
       watch.worktree &&
       (snapshotProblem || baselineFingerprint !== finalFingerprint) &&
@@ -3840,7 +3961,8 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
               `${watch.taskId.slice(0, 8)}-${finishedAt.replace(/[:.]/g, '-')}`
             ),
             snapFacts,
-            requireCodeBase
+            requireCodeBase,
+            declaredRuntimePathsForVerdict
           )
         : { moved: [] as string[], fingerprint: undefined, snapshotProblem: undefined }
       if (revalidation.moved.length > 0) {
@@ -3882,17 +4004,42 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     if (
       watch.worktree &&
       (snapshotProblem || baselineFingerprint !== finalFingerprint) &&
-      gateFacts.head === preDevFacts?.head
+      declaredRuntimePathsForVerdict.length > 0
     ) {
-      const declaredRuntimePaths = maestro.get(watch.projectId).runtimePaths ?? []
-      if (declaredRuntimePaths.length > 0) {
+      // Skip INSTRUMENTADO (2026-08-11, caso real M09 23:04: culpados 100%
+      // dentro da allowlist e o veredito caiu mesmo assim — sem evento, o
+      // porquê era indiagnosticável). Toda não-restauração com allowlist
+      // declarada agora nomeia a condição exata que a pulou.
+      const restoreSkip = (why: string): void => {
+        blackbox.record({
+          cat: 'phase',
+          event: 'gate-runtime-restore-skipped',
+          actor: 'harness',
+          ids: {
+            projectId: watch.projectId,
+            missionId: task.missionId,
+            taskId: watch.taskId,
+            phase: watch.phase,
+            role: watch.phase
+          },
+          reason: `allowlist declarada (${declaredRuntimePathsForVerdict.join(', ')}) mas NADA foi restaurado: ${why}`
+        })
+      }
+      if (gateFacts.head !== preDevFacts?.head) {
+        restoreSkip(
+          `head do worktree no veredito (${gateFacts.head?.slice(0, 12) ?? '?'}) difere da entrega registrada do dev (${preDevFacts?.head?.slice(0, 12) ?? 'ausente'})`
+        )
+      } else {
         const runtimeRestore = await gitOff(
           'restoreRuntimeAndRevalidate',
           watch.cwd,
           snapFacts,
           requireCodeBase,
-          declaredRuntimePaths
+          declaredRuntimePathsForVerdict
         )
+        if (runtimeRestore.restored.length === 0) {
+          restoreSkip(runtimeRestore.skipReason ?? 'motivo não informado pelo worker')
+        }
         if (runtimeRestore.restored.length > 0) {
           finalFingerprint = runtimeRestore.fingerprint
           snapshotProblem = runtimeRestore.snapshotProblem
@@ -4133,12 +4280,21 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       // o orquestrador declarar os caminhos e o harness restaurar sozinho.
       const runtimeRecipe =
         ' — se esses arquivos são RUNTIME do produto (o app os grava ao RODAR), o orquestrador deve declará-los com declare_runtime_paths: o harness passa a restaurá-los ao commit julgado e o veredito sobrevive'
+      // A ALAVANCA DE AUTORIDADE na própria receita (2026-08-11, pergunta do
+      // dono: "era só o orquestrador deletar o png e dar como concluído?" —
+      // SIM, e a tool existia; faltava a receita apontá-la): veredito de
+      // MÉRITO aprovado + invalidação puramente processual = o orquestrador
+      // pode limpar a árvore e concluir por complete_task citando o veredito
+      // (juízo auditado; verificação conjunta e ⇪ do dono seguem de pé).
+      const meritRecipe = /^\s*aprovada\b/i.test(content)
+        ? ' — O VEREDITO DE MÉRITO (aprovada) JÁ FOI EMITIDO e está registrado no journal: se a divergência é puramente processual (evidência/runtime), NÃO re-rode gates pagos — limpe a árvore e conclua o card com complete_task citando o veredito'
+        : ''
       const reason = snapshotProblem
-        ? `a fotografia imutável deixou de ser válida: ${snapshotProblem}${runtimeRecipe}`
+        ? `a fotografia imutável deixou de ser válida: ${snapshotProblem}${runtimeRecipe}${meritRecipe}`
         : !boundToDevSnapshot
           ? `${watch.phase} não revisou a mesma fotografia entregue pelo dev`
           : baselineFingerprint && finalFingerprint
-            ? `${watch.phase} alterou arquivos visíveis ao Git; gates são somente leitura${runtimeRecipe}`
+            ? `${watch.phase} alterou arquivos visíveis ao Git; gates são somente leitura${runtimeRecipe}${meritRecipe}`
             : `não foi possível provar que o gate ${watch.phase} permaneceu somente leitura`
       // R7 (F2-c5): o COMMIT vem antes dos efeitos destrutivos — um throw no
       // recordGate deixava artefato apagado e pane morto com a promessa

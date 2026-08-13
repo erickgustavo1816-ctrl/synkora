@@ -77,8 +77,9 @@ export interface ReportApiExtras {
   >
   securityWaiverOptions(projectId: string): { sensitiveWaiverAllowed: boolean }
   planTaskForWorkTask(task: Task): Task | undefined
-  plannedHelperAssignments: Map<string, { parentPhaseRun: string; agentId: string }>
+  plannedHelperAssignments: Map<string, { parentPhaseRun: string; agentId?: string }>
   completedPlannedAgentsByPhaseRun: Map<string, Set<string>>
+  completedHelperPhaseRuns: Set<string>
 }
 
 export function buildReportApi(
@@ -115,7 +116,8 @@ export function buildReportApi(
     securityWaiverOptions,
     planTaskForWorkTask,
     plannedHelperAssignments,
-    completedPlannedAgentsByPhaseRun
+    completedPlannedAgentsByPhaseRun,
+    completedHelperPhaseRuns
   } = extras
   return {
     readReviewEvidence: (id, offset, maxBytes) => {
@@ -190,14 +192,17 @@ export function buildReportApi(
         }
         const plannedAssignment = plannedHelperAssignments.get(id.paneId)
         if (plannedAssignment) {
-          const completed =
-            completedPlannedAgentsByPhaseRun.get(plannedAssignment.parentPhaseRun) ??
-            new Set<string>()
-          completed.add(plannedAssignment.agentId)
-          completedPlannedAgentsByPhaseRun.set(
-            plannedAssignment.parentPhaseRun,
-            completed
-          )
+          completedHelperPhaseRuns.add(plannedAssignment.parentPhaseRun)
+          if (plannedAssignment.agentId) {
+            const completed =
+              completedPlannedAgentsByPhaseRun.get(plannedAssignment.parentPhaseRun) ??
+              new Set<string>()
+            completed.add(plannedAssignment.agentId)
+            completedPlannedAgentsByPhaseRun.set(
+              plannedAssignment.parentPhaseRun,
+              completed
+            )
+          }
         }
         const firstReport = !helperReported.has(id.paneId)
         helperReported.add(id.paneId)
@@ -417,7 +422,8 @@ export function buildReportApi(
         status: evidenceStatus,
         phase: watch.phase,
         uiWork: evidenceUiWork,
-        evidence: verificationEvidence
+        evidence: verificationEvidence,
+        quickRound: watch.quickRound
       })
       if (!evidenceValidation.ok) {
         return `report sem evidencia suficiente: ${evidenceValidation.reason}. Nenhum receipt ou veredito foi consumido.`
@@ -536,15 +542,20 @@ export function buildReportApi(
         if (usage?.phaseRun !== skillScope.phaseRun) return undefined
         const updatedAt = new Date().toISOString()
         const skills = usage.skills.map((skill) => ({ ...skill, status: 'applied' as const }))
+        const agents = usage.agents?.map((agent) => ({
+          ...agent,
+          status: 'completed' as const
+        }))
         return {
           skillUsage: {
             ...usage,
             updatedAt,
             runStatus: 'completed',
             skills,
+            agents,
             history: (usage.history ?? []).map((run) =>
               run.phaseRun === skillScope.phaseRun
-                ? { ...run, updatedAt, runStatus: 'completed' as const, skills }
+                ? { ...run, updatedAt, runStatus: 'completed' as const, skills, agents }
                 : run
             )
           },

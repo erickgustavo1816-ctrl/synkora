@@ -796,6 +796,102 @@ export class SkillsLibrary {
       referenceNames.push('references/evidence.md')
     } else if (id === 'synkora-ui-qa') {
       referenceNames.push('references/visual-review.md', 'references/runtime-checks.md')
+    } else if (id === 'synkora-design-system-standard') {
+      referenceNames.push(
+        'references/foundations.md',
+        'references/components-patterns.md',
+        'references/showcase.md',
+        'references/governance.md',
+        'references/evidence.md'
+      )
+    } else if (id === 'synkora-design-system-qa') {
+      referenceNames.push(
+        'references/system-integrity.md',
+        'references/specimen-runtime.md',
+        'references/governance-evidence.md'
+      )
+    } else if (id === 'synkora-backend-standard') {
+      referenceNames.push(
+        'references/contracts-boundaries.md',
+        'references/data-concurrency.md',
+        'references/failure-observability.md'
+      )
+    } else if (id === 'synkora-backend-qa') {
+      referenceNames.push(
+        'references/api-runtime.md',
+        'references/data-failure.md',
+        'references/evidence.md'
+      )
+    } else if (id === 'synkora-devops-standard') {
+      referenceNames.push(
+        'references/ci-artifacts.md',
+        'references/infrastructure-containers.md',
+        'references/rollout-recovery.md'
+      )
+    } else if (id === 'synkora-devops-qa') {
+      referenceNames.push(
+        'references/pipeline-infrastructure.md',
+        'references/recovery-evidence.md'
+      )
+    } else if (id === 'synkora-cyber-standard') {
+      referenceNames.push(
+        'references/trust-boundaries.md',
+        'references/secrets-supply-chain.md',
+        'references/llm-mcp.md',
+        'references/evidence-remediation.md'
+      )
+    } else if (id === 'synkora-cyber-qa') {
+      referenceNames.push(
+        'references/remediation-verification.md',
+        'references/authorization-data.md',
+        'references/agent-supply-chain.md',
+        'references/evidence.md'
+      )
+    } else if (id === 'synkora-data-standard') {
+      referenceNames.push(
+        'references/source-context.md',
+        'references/analysis-validity.md',
+        'references/delivery-evidence.md'
+      )
+    } else if (id === 'synkora-data-qa') {
+      referenceNames.push(
+        'references/reconciliation.md',
+        'references/method-evidence.md'
+      )
+    } else if (id === 'synkora-research-standard') {
+      referenceNames.push(
+        'references/question-source-plan.md',
+        'references/claim-citation.md',
+        'references/synthesis-uncertainty.md'
+      )
+    } else if (id === 'synkora-research-qa') {
+      referenceNames.push(
+        'references/source-audit.md',
+        'references/synthesis-audit.md'
+      )
+    } else if (id === 'synkora-copy-standard') {
+      referenceNames.push(
+        'references/brief-voice-proof.md',
+        'references/channel-structure.md',
+        'references/clarity-consent.md'
+      )
+    } else if (id === 'synkora-copy-qa') {
+      referenceNames.push(
+        'references/claim-voice.md',
+        'references/channel-completeness.md',
+        'references/safety-accessibility.md'
+      )
+    } else if (id === 'synkora-qa-standard') {
+      referenceNames.push(
+        'references/test-strategy.md',
+        'references/oracles-fixtures.md',
+        'references/reliability-evidence.md'
+      )
+    } else if (id === 'synkora-qa-qa') {
+      referenceNames.push(
+        'references/independent-audit.md',
+        'references/verdict-evidence.md'
+      )
     }
 
     try {

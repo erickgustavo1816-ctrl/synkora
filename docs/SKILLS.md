@@ -1,12 +1,14 @@
-# Synkora — Biblioteca de Skills (arquitetura v4, 2026-08-07)
+# Synkora — Biblioteca de Skills (arquitetura v4, 2026-08-10)
 
 Skills que o Synkora instala da fonte, seleciona por necessidade e entrega por
 receipt somente ao pane autorizado. A biblioteca pode ser grande; o contexto
 de cada execução é deliberadamente pequeno.
-Rodadas concluídas — TODAS as 8 funções cobertas: 1–2 = FRONT (30+16),
-3 = BACK+DEVOPS (39+16), 4 = QA (31+18), 5 = DESIGN (33+15), 6 = RESEARCH
-(33+11), 7 = COPY (34+14), 8 = CYBER (2026-07-30: 48+15+re-tags), 9 = DATA
-(2026-07-30: 39+13+re-tags). Cada rodada tem seção própria abaixo.
+Cobertura automática atual: Front/UI, Design System, Back, DevOps, Cyber,
+Data, Research, Copy e QA autoral. O board continua com oito funções porque
+DevOps é uma lane especializada de Back; cada fluxo executável tem contrato
+nativo, roteamento contextual limitado e gate independente. As contagens da
+curadoria de mercado permanecem nas seções históricas abaixo, mas quantidade
+instalada nunca significa quantidade entregue a um pane.
 
 A curadoria vem de varredura de mercado com verificação na fonte (todo SKILL.md
 aberto no repo real; paths, frontmatter `name` e branch conferidos em 2026-07-29).
@@ -34,6 +36,160 @@ As skills externas do grupo `planejamento` continuam instaláveis no catálogo
 como `manualOnly`, para usos manuais fora do Maestro. Elas nunca são injetadas
 no PM ou no orquestrador e sua instalação não altera o método nativo.
 
+## Design system nativo (2026-08-10)
+
+Criação/evolução de design system ganhou um contrato próprio e fixo:
+`synkora-design-system-standard`. Ele ocupa o mesmo slot visual que o
+Impeccable; os dois nunca são empilhados. O roteador distingue trabalho
+sistêmico (tokens, biblioteca de componentes, padrões, documentação viva e
+governança) do uso cotidiano de um sistema existente numa tela. O primeiro usa
+o standard novo; o segundo continua usando exatamente uma operação Impeccable.
+
+O pacote nativo cobre cinco camadas conectadas: fundamentos/tokens, elementos e
+componentes, padrões de produto, documentação/specimen executável e governança.
+Ele inclui referências progressivas, um template de manifesto rastreável e um
+validador determinístico de estrutura/caminhos. O validador não atribui nota
+estética. O QA recebe `synkora-design-system-qa` além do contrato de UI e do QA
+visual geral; ele cruza manifesto, fontes, documentação e render sem herdar o
+método do criador.
+
+A pesquisa comparou [RampStack design-system](https://github.com/rampstackco/claude-skills/blob/main/skills/design-system/SKILL.md),
+[Wshobson design-system-patterns](https://github.com/wshobson/agents/blob/main/plugins/ui-design/skills/design-system-patterns/SKILL.md),
+[UI UX Pro Max design-system](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill/blob/main/.claude/skills/design-system/SKILL.md),
+[Vercel design-systems-to-agent-skills](https://github.com/vercel-labs/design-systems-to-agent-skills)
+e [Penpot AI Kit](https://github.com/penpot/penpot-ai-kit). RampStack foi a
+melhor referência única de criação completa; Wshobson contribuiu a hierarquia
+técnica de tokens e Vercel a disciplina de extração/verificação. Nenhum workflow
+externo é injetado cru: o adapter nativo preserva receipts, fases e gates do
+Synkora.
+
+O [ds-hope-finances](https://github.com/jbrunnoo/ds-hope-finances) foi usado
+apenas como benchmark funcional de completude — paletas, tipografia, spacing,
+componentes/estados, formulários, KPIs, gráficos, tabelas densas, calendário,
+feedback e exemplos de produto. Como o repositório não publica licença, nenhum
+código, texto ou asset foi copiado.
+
+## Contratos nativos de Back, DevOps e Cyber (2026-08-10)
+
+Estas três frentes agora usam a mesma arquitetura que estabilizou o Front: uma
+régua nativa obrigatória, no máximo uma técnica externa contextual e um QA
+independente. A quantidade do catálogo não aumenta o contexto do executor.
+
+| Frente | DEV/ajudante | Técnica contextual (máx. 1) | QA independente |
+|---|---|---|---|
+| Back | `synkora-backend-standard` | OAuth, API, Postgres, MCP, Stripe, Node, Python, debugging ou TDD conforme o card | `synkora-backend-standard` + `synkora-backend-qa` |
+| DevOps | `synkora-devops-standard` | GitHub Actions, Terraform, SLO/PromQL, Workers ou pipeline/deployment conforme o card | `synkora-devops-standard` + `synkora-devops-qa` |
+| Cyber | `synkora-cyber-standard` | OAuth, segredos, supply chain, prompt injection, MCP, Next.js, threat model ou security testing conforme o card | `synkora-cyber-standard` + `synkora-cyber-qa` |
+
+DevOps continua aparecendo como função Back no board atual, mas o roteador
+classifica artefatos operacionais concretos (CI/CD, workflows, IaC, Terraform,
+containers, rollout/rollback, SLO/observabilidade) antes da escolha da técnica.
+Near-misses como “pipeline de dados”, uma entidade chamada Release ou um card
+que declara “sem mudanças no deployment” continuam no fluxo normal de Back.
+
+O contrato de Back cobre limites de API/serviço, autenticação versus
+autorização, compatibilidade, efeitos externos, persistência, transações,
+idempotência, concorrência, migrações, jobs, falhas e observabilidade. Seu QA
+transforma o card em uma matriz proporcional de ator, entrada, estado, saída,
+efeito e maior caminho negativo; ele usa somente evidência autorizada e bloqueia
+quando o comportamento essencial não pode ser observado.
+
+O contrato de DevOps trata pipeline e infraestrutura como código de produto:
+trust de triggers, permissões, pinning, build reproduzível, artefato imutável,
+IaC/state, containers, least privilege, compatibilidade de rollout, rollback e
+SLOs. Nem DEV nem QA fazem apply, deploy, release, destroy, rotação de segredo ou
+mutação de cloud/produção autonomamente; esses efeitos continuam atrás da
+aprovação humana específica do produto.
+
+O contrato de Cyber é estritamente defensivo e limitado ao repositório/escopo
+autorizado. Ele cobre trust boundaries, authz/tenant, segredos e supply chain,
+LLM/prompt injection/MCP e remediação com evidência sanitizada. Seu QA verifica
+a alegação e a classe da correção com dados sintéticos; não abre varredura ampla,
+não lê valores secretos e não transforma a aprovação de um card em declaração
+de pentest, certificação ou segurança total.
+
+A curadoria contextual preserva fontes fortes em vez de copiá-las para um
+workflow monolítico: [Supabase Postgres Best Practices](https://github.com/supabase/agent-skills),
+[HashiCorp Agent Skills](https://github.com/hashicorp/agent-skills),
+[Trail of Bits Skills](https://github.com/trailofbits/skills) e o
+[OWASP Secure Agent Playbook](https://github.com/OWASP/secure-agent-playbook).
+Os corpos externos continuam subordinados aos receipts, capacidades e fases do
+Synkora; nenhum deles recebe o direito de abrir outro processo, gate ou efeito
+externo.
+
+## Contratos nativos de Data, Research e Copy (2026-08-10)
+
+A segunda rodada de contratos de resultado cobre as três funções de conhecimento.
+O catálogo continua amplo, mas cada pane recebe somente o contrato nativo e no
+máximo uma técnica contextual. O QA recebe um contrato próprio e nunca herda o
+método usado pelo autor.
+
+| Frente | DEV/ajudante | Técnica contextual (máx. 1) | QA independente |
+|---|---|---|---|
+| Data | `synkora-data-standard` | dbt/MetricFlow, Polars, DuckDB, SQL, KPI, dashboard, visualização, data quality, experimento ou estatística conforme o artefato | `synkora-data-standard` + `synkora-data-qa` |
+| Research | `synkora-research-standard` | reverse-spec, PRD, competitive brief, market sizing, user-research synthesis ou pesquisa por fontes primárias | `synkora-research-standard` + `synkora-research-qa` |
+| Copy | `synkora-copy-standard` | brand review/voice, UX writing, landing, email, social, SEO, copy editing ou humanização conforme o canal | `synkora-copy-standard` + `synkora-copy-qa` |
+
+Data trata cada número como um claim ligado a source snapshot, grain, definição,
+tempo e transformação reproduzível. O contrato cobre joins, denominadores,
+missingness, outliers, leakage, experimentos, incerteza, dashboards e privacidade.
+Seu QA reconstrói a alegação, reconcilia ao menos um total/invariante por rota
+independente e limita a aprovação ao snapshot e método realmente observados.
+
+Research parte de uma pergunta que reduz incerteza para uma decisão. Fontes
+primárias e atuais vencem resumos secundários; cada claim material precisa de
+suporte direto, data e proveniência. Contradições, inferências e gaps ficam
+explícitos. O roteador não injeta automaticamente `deep-research`, porque seu
+workflow próprio de subagentes/counter-review disputaria o controle do Synkora;
+pedidos profundos usam a técnica source-primary `research` dentro do contrato.
+O QA audita primeiro os claims capazes de mudar a decisão, incluindo fonte,
+recência, counterevidence e confiança.
+
+Copy separa verdade de persuasão. O contrato fixa audiência, momento, ação,
+voz, product truth, prova, canal, acessibilidade e consentimento. Ele proíbe
+claims, depoimentos, escassez ou garantias inventadas e nunca autoriza publicar,
+enviar campanha ou alterar CMS autonomamente. O QA verifica brief, claims, voz,
+completude do canal, estados de UX e o maior risco de interpretação; aprovação
+não equivale a clearance jurídico nem garantia de conversão.
+
+A curadoria reutiliza técnicas fortes sem importar seus workflows inteiros:
+[Anthropic Knowledge Work Plugins](https://github.com/anthropics/knowledge-work-plugins)
+para Data, Research e revisão de marca; [dbt Labs Agent Skills](https://github.com/dbt-labs/dbt-agent-skills)
+para analytics engineering e semantic layer; [DuckDB Skills](https://github.com/duckdb/duckdb-skills)
+para arquivos e consulta local; e [Corey Haines Marketing Skills](https://github.com/coreyhaines31/marketingskills)
+para copy, canal e edição. Cada técnica permanece subordinada ao contrato,
+receipt, capability e fase do Synkora.
+
+## QA autoral nativo (2026-08-10)
+
+QA agora tem dois papéis separados. Um **card da função QA** cria ou repara
+testes, fixtures, harnesses e checks; a **fase QA desse card** julga de forma
+independente se os testes entregues realmente detectam o defeito/contrato que
+alegam cobrir. O executor não aprova o próprio trabalho.
+
+| Momento | Plano automático | Responsabilidade |
+|---|---|---|
+| DEV/ajudante de QA | `synkora-qa-standard` + no máximo uma técnica contextual | transformar critérios e risco em oráculos sensíveis, fixtures determinísticas e evidência executável |
+| QA do card QA | `synkora-qa-qa` | auditar traceabilidade, sensibilidade ao defeito, limites reais, determinismo e resultados sem herdar a técnica do autor |
+
+O roteador escolhe técnica somente quando a necessidade é inequívoca:
+Playwright/Cypress/browser, Vitest, API, contrato, visual, acessibilidade,
+segurança, carga k6, mutation, coverage, flaky/reliability, exploratory ou
+selector drift. Sem sinal específico, fica apenas o contrato nativo; não existe
+fallback genérico de navegador. Uma negação como “sem testes de API ou browser”
+não ativa essas técnicas por coincidência textual.
+
+As capacidades também são parte da decisão. Uma técnica de browser só entra
+quando o pane realmente recebeu browser; um carimbo explícito incompatível
+falha fechado em vez de ser substituído. O contrato autoral exige leitura,
+escrita e shell para criar e executar testes. O gate `synkora-qa-qa` é
+read-only e recebe somente a evidência/artefatos autorizados.
+
+`webapp-testing` permanece instalável como `manualOnly`: seu workflow próprio
+de Python, servidor e Playwright é útil fora do fluxo governado, mas não é
+mais fallback automático. Isso evita que um card de unit, API, contrato ou
+confiabilidade seja transformado silenciosamente num teste de navegador.
+
 ## Como o sistema funciona (F4 — implementado)
 
 - **Catálogo curado** (`skillsCatalog.ts`): id = `name:` do frontmatter upstream
@@ -52,10 +208,11 @@ no PM ou no orquestrador e sua instalação não altera o método nativo.
   (`commits?path=`). Skill com update ganha badge ⟳; atualizar = re-baixar
   pinado no sha novo.
 - **Roteamento mínimo por fase**: disponibilidade não significa injeção. DEV
-  recebe no máximo o contrato aplicável, uma operação estética e uma técnica;
-  REVIEW usa uma allowlist curta de revisão; QA de UI recebe o contrato e o
-  revisor independente `synkora-ui-qa`, nunca o método estético do DEV. Cada
-  departamento não visual pode receber uma única técnica-base `defaultFor`.
+  recebe os contratos de resultado aplicáveis, no máximo uma operação estética
+  e uma técnica contextual; REVIEW usa uma allowlist curta de revisão. QA usa
+  um contrato independente da superfície: UI, design system, Back, DevOps,
+  Cyber, Data, Research, Copy, autoria de QA ou runtime genérico quando nenhuma
+  dessas lanes se aplica — nunca o método técnico/estético do DEV.
 - **Entrega privada por receipt**: o plano é congelado por pane/fase/rodada,
   versão e fingerprint. O executor chama `activate_skill(receiptId)` e só então
   o pacote é materializado numa raiz efêmera da sessão, fora do projeto e fora
@@ -70,11 +227,42 @@ no PM ou no orquestrador e sua instalação não altera o método nativo.
   devolve no máximo vinte itens. O catálogo inteiro nunca entra no prompt.
 - **Escolha explícita**: cards e ajudantes aceitam no máximo uma técnica
   concreta e um especialista. Direções estéticas alternativas não são
-  empilhadas; UI usa `synkora-frontend-standard` + exatamente uma operação
-  Impeccable. Subagentes nascem por `delegate.agent`, sem descoberta global.
+  empilhadas; UI usa `synkora-frontend-standard` + exatamente um método visual:
+  uma operação Impeccable para produto/telas ou
+  `synkora-design-system-standard` para criação/evolução sistêmica. Subagentes
+  nascem por `delegate.agent`, sem descoberta global.
 - **Git nunca vê o runtime**: `.synkora/` e as antigas roots gerenciadas de
   skills permanecem no `info/exclude`; arquivos locais divergentes nunca são
   podados ou sobrescritos pelo Synkora.
+
+## Roteamento de ajudantes e personas
+
+A autoridade de **necessidade** é o orquestrador. Todo card novo nasce com
+`delegation="none"` ou `delegation="parallel"`; `optional` existe somente para
+compatibilidade com cards antigos. `none` bloqueia a abertura de ajudantes.
+`parallel` exige dois ou mais blocos longos, independentes e de baixa
+sobreposição, e o DEV não consegue concluir a rodada até ao menos um ajudante
+ter reportado e sido integrado.
+
+Depois dessa decisão, um roteador fechado cruza função, texto real do card,
+instalação e capacidades do pane. Ele pode escolher **no máximo uma** das 56
+personas nativas quando há aderência forte; palavra genérica não fabrica um
+especialista. A persona ocupa um único ajudante da rodada. Se houver outros
+blocos paralelos, eles nascem genéricos. FAST abre zero ajudantes; STANDARD
+permite até dois simultâneos; DEEP, até quatro.
+
+O DEV continua responsável pela execução: chama `delegate`, delimita o bloco,
+supervisiona, lê a entrega e integra o resultado no mesmo worktree. Ele não
+decide unilateralmente que um card `none` precisava de paralelismo e não troca
+a persona roteada. Se surgir evidência nova, notifica o Maestro; o Maestro
+altera quests+delegation antes do spawn. A conclusão fica ligada à `phaseRun`:
+o backend exige o helper e, quando houver, a persona exata; o card mostra
+planejada → concluída junto do plano efetivo.
+
+As 56 personas app-owned são reparadas no boot sem rede, mas não entram no
+prompt nem na descoberta global. Só o especialista escolhido para aquela
+rodada recebe sua persona privada. Ter uma biblioteca grande, portanto, não
+significa empilhar subagentes nem aumentar o contexto de cada executor.
 
 ## Curadoria FRONT (rodada 1) — 30 skills instaláveis
 
@@ -134,8 +322,9 @@ autor real da lib/plataforma.
   `create-design-md`.
 - **higgsfield-ai/skills**: 6 de 7 são geração de mídia p/ marketing; a de
   websites exige CLI+créditos próprios e faz deploy direto em produção.
-- **webapp-testing (anthropics)**: excelente, mas é loop de QA — entra na
-  rodada da função qa (Python+Playwright).
+- **webapp-testing (anthropics)**: excelente como loop autônomo de
+  Python+Playwright, mas disputa ciclo de servidor/browser com o harness do
+  Synkora. Fica `manualOnly`; não é fallback do QA autoral.
 - **mattpocock/skills e obra/superpowers**: metodologia de processo (grill,
   tdd, plans) — zero skills de front; candidatas às rodadas de PM/back/qa.
 - **hyperframes/remotion/humanizer**: nichos reais (vídeo, copy) — entram nas
@@ -376,7 +565,7 @@ e pragmatic-code-review, pr-test-analyzer, silent-failure-hunter (back).
 | Review (gate) | ★ `code-review` | mattpocock/skills | O motor: 2 eixos paralelos (Standards com smells de Fowler × fidelidade à Spec) |
 | Review (gate) | ★ `code-review-and-quality` | addyosmani/agent-skills | A rubrica: 5 eixos, severidade Critical/Nit/FYI, red flags de processo |
 | Review (gate) | `ce-code-review` | EveryInc/compound-engineering-plugin | O pipeline: personas selecionadas por risco do diff (evolução dos 17 reviewers da Every), schema JSON, P0–P3 |
-| Teste ao vivo | ★ `webapp-testing` | anthropics/skills (Apache-2.0 por skill) | Loop de QA oficial: Python+Playwright com gestão de servidores; roda local |
+| Teste ao vivo | `webapp-testing` (`manualOnly`) | anthropics/skills (Apache-2.0 por skill) | Loop de QA oficial: Python+Playwright com gestão própria de servidores; não entra no roteamento automático |
 | Teste ao vivo | `playwright-cli` | microsoft/playwright-cli (oficial; ~102k installs) | 40+ comandos de browser via CLI, 9 docs de referência |
 | Teste ao vivo | `playwright-best-practices` | currents-dev (pasta na RAIZ; ~66k) | 57 docs em 8 áreas: flaky, visual, a11y, POM, CI |
 | Teste ao vivo | `exploratory-testing` | petrkindlmann/qa-skills | SBTM operacionalizado: charters, sessões time-boxed, 7 oráculos |

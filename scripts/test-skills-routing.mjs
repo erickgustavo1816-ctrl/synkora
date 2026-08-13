@@ -17,6 +17,8 @@ import {
   classifyTaskUiWork,
   detectImpeccableOperation,
   IMPECCABLE_SKILL_ID,
+  isDesignSystemWork,
+  isDevOpsWork,
   isUiSurfaceWork,
   missingMandatoryUiPhaseSkills,
   selectPhaseSkillPlan,
@@ -24,7 +26,23 @@ import {
   selectInstalledManualOnlyIdsToPrune,
   selectInstalledPlanningIds,
   SYNKORA_PLANNING_STANDARD_ID,
+  SYNKORA_BACKEND_QA_ID,
+  SYNKORA_BACKEND_STANDARD_ID,
+  SYNKORA_CYBER_QA_ID,
+  SYNKORA_CYBER_STANDARD_ID,
+  SYNKORA_COPY_QA_ID,
+  SYNKORA_COPY_STANDARD_ID,
+  SYNKORA_DATA_QA_ID,
+  SYNKORA_DATA_STANDARD_ID,
+  SYNKORA_DESIGN_SYSTEM_QA_ID,
+  SYNKORA_DESIGN_SYSTEM_STANDARD_ID,
+  SYNKORA_DEVOPS_QA_ID,
+  SYNKORA_DEVOPS_STANDARD_ID,
   SYNKORA_FRONTEND_STANDARD_ID,
+  SYNKORA_QA_QA_ID,
+  SYNKORA_QA_STANDARD_ID,
+  SYNKORA_RESEARCH_QA_ID,
+  SYNKORA_RESEARCH_STANDARD_ID,
   SYNKORA_REVIEW_STANDARD_ID,
   SYNKORA_RUNTIME_QA_ID,
   SYNKORA_UI_QA_ID
@@ -98,6 +116,150 @@ const ROUTING_DEFS = [
     adapter: 'synkora-native'
   },
   {
+    id: SYNKORA_QA_STANDARD_ID,
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'qa authoring contract',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_QA_QA_ID,
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'qa authoring independent qa',
+    allowedPhases: ['qa'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_BACKEND_STANDARD_ID,
+    kind: 'skill',
+    depts: ['back', 'qa'],
+    group: 'backend contract',
+    allowedPhases: ['dev', 'qa', 'helper'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_BACKEND_QA_ID,
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'backend qa',
+    allowedPhases: ['qa'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_DEVOPS_STANDARD_ID,
+    kind: 'skill',
+    depts: ['back', 'qa'],
+    group: 'devops contract',
+    allowedPhases: ['dev', 'qa', 'helper'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_DEVOPS_QA_ID,
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'devops qa',
+    allowedPhases: ['qa'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_CYBER_STANDARD_ID,
+    kind: 'skill',
+    depts: ['cyber', 'qa'],
+    group: 'cyber contract',
+    allowedPhases: ['dev', 'qa', 'helper'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_CYBER_QA_ID,
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'cyber qa',
+    allowedPhases: ['qa'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_DATA_STANDARD_ID,
+    kind: 'skill',
+    depts: ['data', 'qa'],
+    group: 'data contract',
+    allowedPhases: ['dev', 'qa', 'helper'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_DATA_QA_ID,
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'data qa',
+    allowedPhases: ['qa'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_RESEARCH_STANDARD_ID,
+    kind: 'skill',
+    depts: ['research', 'qa'],
+    group: 'research contract',
+    allowedPhases: ['dev', 'qa', 'helper'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_RESEARCH_QA_ID,
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'research qa',
+    allowedPhases: ['qa'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_COPY_STANDARD_ID,
+    kind: 'skill',
+    depts: ['copy', 'qa'],
+    group: 'copy contract',
+    allowedPhases: ['dev', 'qa', 'helper'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_COPY_QA_ID,
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'copy qa',
+    allowedPhases: ['qa'],
+    requiresCapabilities: ['read'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_DESIGN_SYSTEM_STANDARD_ID,
+    kind: 'skill',
+    depts: ['design', 'front'],
+    group: 'design system',
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell', 'browser'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: SYNKORA_DESIGN_SYSTEM_QA_ID,
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'design system qa',
+    allowedPhases: ['qa'],
+    requiresCapabilities: ['read', 'browser'],
+    adapter: 'synkora-native'
+  },
+  {
     id: SYNKORA_FRONTEND_STANDARD_ID,
     kind: 'skill',
     depts: ['front', 'design', 'qa'],
@@ -143,6 +305,103 @@ const ROUTING_DEFS = [
     group: 'typescript & python',
     defaultFor: ['back']
   },
+  {
+    id: 'oauth',
+    kind: 'skill',
+    depts: ['back', 'cyber'],
+    group: 'auth & security'
+  },
+  {
+    id: 'api-design-principles',
+    kind: 'skill',
+    depts: ['back'],
+    group: 'api & services'
+  },
+  {
+    id: 'diagnosing-bugs',
+    kind: 'skill',
+    depts: ['back'],
+    group: 'debugging'
+  },
+  {
+    id: 'deployment-pipeline-design',
+    kind: 'skill',
+    depts: ['back'],
+    group: 'devops ci cd iac'
+  },
+  {
+    id: 'github-actions-templates',
+    kind: 'skill',
+    depts: ['back'],
+    group: 'devops ci cd iac'
+  },
+  {
+    id: 'terraform-skill',
+    kind: 'skill',
+    depts: ['back'],
+    group: 'devops ci cd iac'
+  },
+  {
+    id: 'slo-implementation',
+    kind: 'skill',
+    depts: ['back'],
+    group: 'devops ci cd iac'
+  },
+  {
+    id: 'secrets-audit',
+    kind: 'skill',
+    depts: ['cyber'],
+    group: 'supply chain & secrets'
+  },
+  {
+    id: 'prompt-injection-defense',
+    kind: 'skill',
+    depts: ['cyber'],
+    group: 'llm security'
+  },
+  {
+    id: 'security-threat-model',
+    kind: 'skill',
+    depts: ['cyber'],
+    group: 'threat modeling'
+  },
+  {
+    id: 'security-best-practices',
+    kind: 'skill',
+    depts: ['back', 'cyber'],
+    group: 'auth & security',
+    defaultFor: ['cyber']
+  },
+  { id: 'sql-queries', kind: 'skill', depts: ['data'], group: 'sql', defaultFor: ['data'] },
+  { id: 'building-dbt-semantic-layer', kind: 'skill', depts: ['data'], group: 'dbt' },
+  { id: 'using-dbt-for-analytics-engineering', kind: 'skill', depts: ['data'], group: 'dbt' },
+  { id: 'polars', kind: 'skill', depts: ['data'], group: 'dataframes' },
+  { id: 'read-file', kind: 'skill', depts: ['data'], group: 'files' },
+  { id: 'query', kind: 'skill', depts: ['data'], group: 'duckdb' },
+  { id: 'kpi-dashboard-design', kind: 'skill', depts: ['data'], group: 'bi' },
+  { id: 'build-dashboard', kind: 'skill', depts: ['data'], group: 'bi' },
+  { id: 'data-visualization', kind: 'skill', depts: ['data'], group: 'bi' },
+  { id: 'data-quality-frameworks', kind: 'skill', depts: ['data'], group: 'quality' },
+  { id: 'validate-data', kind: 'skill', depts: ['data'], group: 'quality' },
+  { id: 'ab-testing', kind: 'skill', depts: ['data'], group: 'statistics' },
+  { id: 'statistical-analysis', kind: 'skill', depts: ['data'], group: 'statistics' },
+  { id: 'explore-data', kind: 'skill', depts: ['data'], group: 'exploration' },
+  { id: 'research', kind: 'skill', depts: ['research'], group: 'research', defaultFor: ['research'] },
+  { id: 'spec-miner', kind: 'skill', depts: ['research'], group: 'specs' },
+  { id: 'write-spec', kind: 'skill', depts: ['research'], group: 'specs' },
+  { id: 'competitive-brief', kind: 'skill', depts: ['research'], group: 'research' },
+  { id: 'market-sizing-analysis', kind: 'skill', depts: ['research'], group: 'research' },
+  { id: 'synthesize-research', kind: 'skill', depts: ['research'], group: 'research' },
+  { id: 'copywriting', kind: 'skill', depts: ['copy'], group: 'conversion', defaultFor: ['copy'] },
+  { id: 'brand-review', kind: 'skill', depts: ['copy'], group: 'voice' },
+  { id: 'email-sequence', kind: 'skill', depts: ['copy'], group: 'email' },
+  { id: 'social', kind: 'skill', depts: ['copy'], group: 'social' },
+  { id: 'landing-page-copy', kind: 'skill', depts: ['copy'], group: 'conversion' },
+  { id: 'ai-seo', kind: 'skill', depts: ['copy'], group: 'seo' },
+  { id: 'brand-voice', kind: 'skill', depts: ['copy'], group: 'voice' },
+  { id: 'ux-writing', kind: 'skill', depts: ['copy'], group: 'ux' },
+  { id: 'copy-editing', kind: 'skill', depts: ['copy'], group: 'editing' },
+  { id: 'humanizer', kind: 'skill', depts: ['copy'], group: 'editing' },
   {
     id: 'webapp-testing',
     kind: 'skill',
@@ -238,6 +497,47 @@ test('roteia somente operações visuais seguras do Impeccable', () => {
   }
 })
 
+test('criação de design system recebe um método fixo em vez de empilhar Impeccable', () => {
+  const text =
+    'Criar um design system completo com design tokens, biblioteca de componentes, estados, Storybook, specimen e governança.'
+  assert.equal(isDesignSystemWork('design', text), true)
+  assert.equal(isDesignSystemWork('front', text), true)
+  assert.equal(isDesignSystemWork('back', text), false)
+
+  const dev = route({ department: 'design', taskText: text, uiCard: true })
+  assert.deepEqual(dev.skillIds, [
+    SYNKORA_FRONTEND_STANDARD_ID,
+    SYNKORA_DESIGN_SYSTEM_STANDARD_ID
+  ])
+  assert.equal(dev.skillIds.includes(IMPECCABLE_SKILL_ID), false)
+  assert.equal(dev.impeccableOperation, undefined)
+
+  const qa = route({ department: 'design', phase: 'qa', taskText: text, uiCard: true })
+  assert.deepEqual(qa.skillIds, [
+    SYNKORA_FRONTEND_STANDARD_ID,
+    SYNKORA_UI_QA_ID,
+    SYNKORA_DESIGN_SYSTEM_QA_ID
+  ])
+  assert.equal(qa.skillIds.includes(IMPECCABLE_SKILL_ID), false)
+})
+
+test('consumir o design system numa tela continua sendo trabalho Impeccable', () => {
+  const cases = [
+    'Use o design system existente para criar uma nova tela de calendário.',
+    'Crie uma nova tela com os componentes do design system existente.',
+    'Ajuste somente o botão do design system nesta página.'
+  ]
+  for (const text of cases) {
+    assert.equal(isDesignSystemWork('design', text), false, text)
+    const selected = route({ department: 'design', taskText: text, uiCard: true })
+    assert.deepEqual(selected.skillIds.slice(0, 2), [
+      SYNKORA_FRONTEND_STANDARD_ID,
+      IMPECCABLE_SKILL_ID
+    ])
+    assert.equal(selected.skillIds.includes(SYNKORA_DESIGN_SYSTEM_STANDARD_ID), false)
+  }
+})
+
 test('near-misses técnicos não ativam skill visual', () => {
   const cases = [
     { department: 'back', text: 'Harden the API authentication endpoint.' },
@@ -251,7 +551,10 @@ test('near-misses técnicos não ativam skill visual', () => {
     const selected = route({ ...item, uiCard: false })
     assert.ok(!selected.skillIds.includes(SYNKORA_FRONTEND_STANDARD_ID), item.text)
     assert.ok(!selected.skillIds.includes(IMPECCABLE_SKILL_ID), item.text)
-    assert.ok(selected.skillIds.length <= 1, item.text)
+    assert.ok(selected.skillIds.length <= 2, item.text)
+    if (item.department === 'back') {
+      assert.equal(selected.skillIds[0], SYNKORA_BACKEND_STANDARD_ID, item.text)
+    }
     assert.deepEqual(selected.agentIds, [], item.text)
     assert.equal(selected.impeccableOperation, undefined, item.text)
   }
@@ -259,19 +562,290 @@ test('near-misses técnicos não ativam skill visual', () => {
 
 test('cada departamento não visual recebe no máximo uma técnica-base curada', () => {
   for (const department of ['back', 'copy', 'cyber', 'data', 'research']) {
-    const selected = selectPhaseSkillPlan({
-      defs: CURATED_SKILLS,
-      isInstalled: () => true,
+    const selected = route({
       department,
-      phase: 'dev',
       taskText: 'Implementar a entrega descrita no card.',
-      uiCard: false,
-      executionMode: 'standard',
-      delegationMode: 'none'
+      uiCard: false
     })
-    assert.equal(selected.skillIds.length, 1, department)
+    assert.equal(selected.skillIds.length, 2, department)
+    if (department === 'back') assert.equal(selected.skillIds[0], SYNKORA_BACKEND_STANDARD_ID)
+    if (department === 'cyber') assert.equal(selected.skillIds[0], SYNKORA_CYBER_STANDARD_ID)
+    if (department === 'data') assert.equal(selected.skillIds[0], SYNKORA_DATA_STANDARD_ID)
+    if (department === 'research') assert.equal(selected.skillIds[0], SYNKORA_RESEARCH_STANDARD_ID)
+    if (department === 'copy') assert.equal(selected.skillIds[0], SYNKORA_COPY_STANDARD_ID)
     assert.deepEqual(selected.agentIds, [], department)
     assert.equal(selected.impeccableOperation, undefined, department)
+  }
+})
+
+test('Back escolhe contrato nativo e uma técnica específica antes do fallback genérico', () => {
+  const cases = [
+    {
+      text: 'Corrigir falha de autorização OAuth no refresh token.',
+      technique: 'oauth'
+    },
+    {
+      text: 'Projetar o contrato dos endpoints REST e os status HTTP.',
+      technique: 'api-design-principles'
+    },
+    {
+      text: 'Investigar uma regressão sem pista de domínio e provar a causa raiz.',
+      technique: 'diagnosing-bugs'
+    }
+  ]
+  for (const { text, technique } of cases) {
+    const selected = route({ department: 'back', taskText: text, uiCard: false })
+    assert.deepEqual(selected.skillIds, [SYNKORA_BACKEND_STANDARD_ID, technique], text)
+    assert.deepEqual(selected.incompatibilities, [], text)
+  }
+})
+
+test('Data recebe contrato nativo e a tecnica especifica para o artefato', () => {
+  const cases = [
+    ['Definir a camada semantica MetricFlow e as metricas dbt.', 'building-dbt-semantic-layer'],
+    ['Criar um modelo dbt com ref, source e lineage.', 'using-dbt-for-analytics-engineering'],
+    ['Otimizar a transformacao Polars com LazyFrame.', 'polars'],
+    ['Inspecionar schema e amostra de um arquivo Parquet.', 'read-file'],
+    ['Consultar os eventos locais com DuckDB.', 'query'],
+    ['Definir a hierarquia de KPIs do scorecard executivo.', 'kpi-dashboard-design'],
+    ['Construir um dashboard interativo com filtros.', 'build-dashboard'],
+    ['Criar um grafico acessivel para comparar as distribuicoes.', 'data-visualization'],
+    ['Desenhar um experimento A/B com sample size e guardrails.', 'ab-testing'],
+    ['Analisar significancia, effect size e intervalo de confianca.', 'statistical-analysis']
+  ]
+  for (const [text, technique] of cases) {
+    const selected = route({ department: 'data', taskText: text, uiCard: false })
+    assert.deepEqual(selected.skillIds, [SYNKORA_DATA_STANDARD_ID, technique], text)
+    assert.equal(selected.skillIds.length, 2, text)
+  }
+})
+
+test('Research recebe contrato nativo e evita workflow deep-research com subagentes', () => {
+  const deepResearch = CURATED_SKILLS.find((skill) => skill.id === 'deep-research')
+  assert.equal(deepResearch?.manualOnly, true)
+  assert.equal(deepResearch?.defaultFor, undefined)
+  const cases = [
+    ['Extrair a spec do codigo legado sem documentacao.', 'spec-miner'],
+    ['Escrever PRD com user stories e criterios de aceitacao.', 'write-spec'],
+    ['Comparar concorrentes e produzir benchmark de mercado.', 'competitive-brief'],
+    ['Estimar TAM, SAM e SOM com premissas explicitas.', 'market-sizing-analysis'],
+    ['Sintetizar entrevistas e survey de user research.', 'synthesize-research'],
+    ['Fazer pesquisa profunda multi-source com fontes primarias.', 'research']
+  ]
+  for (const [text, technique] of cases) {
+    const selected = route({ department: 'research', taskText: text, uiCard: false })
+    assert.deepEqual(selected.skillIds, [SYNKORA_RESEARCH_STANDARD_ID, technique], text)
+    assert.equal(selected.skillIds.includes('deep-research'), false, text)
+  }
+})
+
+test('Copy recebe contrato nativo e uma tecnica adequada ao canal', () => {
+  const cases = [
+    ['Revisar o texto contra a brand voice e o guia de estilo.', 'brand-review'],
+    ['Criar uma sequencia de emails de onboarding com exit conditions.', 'email-sequence'],
+    ['Escrever um carrossel para LinkedIn.', 'social'],
+    ['Escrever a landing page e o CTA de conversao.', 'landing-page-copy'],
+    ['Otimizar o artigo para SEO, AEO e llms.txt.', 'ai-seo'],
+    ['Definir a voz da marca e o tom de voz.', 'brand-voice'],
+    ['Escrever microcopy, empty state e mensagem de erro.', 'ux-writing'],
+    ['Fazer copy edit e revisar o rascunho.', 'copy-editing'],
+    ['Humanizar o texto robotico escrito por IA.', 'humanizer']
+  ]
+  for (const [text, technique] of cases) {
+    const selected = route({ department: 'copy', taskText: text, uiCard: false })
+    assert.deepEqual(selected.skillIds, [SYNKORA_COPY_STANDARD_ID, technique], text)
+    assert.equal(selected.skillIds.length, 2, text)
+  }
+})
+
+test('QA de Data, Research e Copy usa somente os contratos independentes', () => {
+  const cases = [
+    {
+      department: 'data',
+      text: 'Validar metricas dbt, joins, denominadores e reconciliacao.',
+      expected: [SYNKORA_DATA_STANDARD_ID, SYNKORA_DATA_QA_ID]
+    },
+    {
+      department: 'research',
+      text: 'Validar fontes, claims, datas, contraevidencia e sintese.',
+      expected: [SYNKORA_RESEARCH_STANDARD_ID, SYNKORA_RESEARCH_QA_ID]
+    },
+    {
+      department: 'copy',
+      text: 'Validar claims, voz, canal, acessibilidade e consentimento.',
+      expected: [SYNKORA_COPY_STANDARD_ID, SYNKORA_COPY_QA_ID]
+    }
+  ]
+  for (const { department, text, expected } of cases) {
+    const selected = route({
+      department,
+      phase: 'qa',
+      taskText: text,
+      uiCard: false,
+      explicitSkillIds: ['sql-queries', 'research', 'copywriting'],
+      availableCapabilities: ['read']
+    })
+    assert.deepEqual(selected.skillIds, expected, text)
+    assert.deepEqual(selected.agentIds, [], text)
+    assert.deepEqual(selected.incompatibilities, [], text)
+  }
+})
+
+test('contratos de conhecimento falham fechado e nao atravessam departamentos', () => {
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'data', 'dev', false), [
+    SYNKORA_DATA_STANDARD_ID
+  ])
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'data', 'qa', false), [
+    SYNKORA_DATA_STANDARD_ID,
+    SYNKORA_DATA_QA_ID
+  ])
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'research', 'qa', false), [
+    SYNKORA_RESEARCH_STANDARD_ID,
+    SYNKORA_RESEARCH_QA_ID
+  ])
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'copy', 'qa', false), [
+    SYNKORA_COPY_STANDARD_ID,
+    SYNKORA_COPY_QA_ID
+  ])
+
+  assert.deepEqual(
+    route({ department: 'research', taskText: 'Documentar como o projeto usa dbt.', uiCard: false }).skillIds,
+    [SYNKORA_RESEARCH_STANDARD_ID, 'research']
+  )
+  assert.deepEqual(
+    route({ department: 'data', taskText: 'A coluna se chama social_post.', uiCard: false }).skillIds,
+    [SYNKORA_DATA_STANDARD_ID, 'sql-queries']
+  )
+})
+
+test('Data e Copy visuais combinam contrato funcional com UI sem contaminar o QA', () => {
+  const dataDev = route({
+    department: 'data',
+    taskText: 'Criar um dashboard responsivo com KPIs e filtros visuais.',
+    uiCard: true
+  })
+  assert.deepEqual(dataDev.skillIds, [
+    SYNKORA_DATA_STANDARD_ID,
+    SYNKORA_FRONTEND_STANDARD_ID,
+    IMPECCABLE_SKILL_ID,
+    'build-dashboard'
+  ])
+
+  const dataQa = route({
+    department: 'data',
+    phase: 'qa',
+    taskText: 'Validar o dashboard responsivo com KPIs e filtros visuais.',
+    uiCard: true,
+    availableCapabilities: ['read', 'browser']
+  })
+  assert.deepEqual(dataQa.skillIds, [
+    SYNKORA_DATA_STANDARD_ID,
+    SYNKORA_DATA_QA_ID,
+    SYNKORA_FRONTEND_STANDARD_ID,
+    SYNKORA_UI_QA_ID
+  ])
+
+  const copyQa = route({
+    department: 'copy',
+    phase: 'qa',
+    taskText: 'Validar microcopy, empty state e mensagem de erro da tela.',
+    uiCard: true,
+    availableCapabilities: ['read', 'browser']
+  })
+  assert.deepEqual(copyQa.skillIds, [
+    SYNKORA_COPY_STANDARD_ID,
+    SYNKORA_COPY_QA_ID,
+    SYNKORA_FRONTEND_STANDARD_ID,
+    SYNKORA_UI_QA_ID
+  ])
+  assert.equal(copyQa.skillIds.includes('ux-writing'), false)
+})
+
+test('DevOps é uma lane própria dentro de Back e evita near-misses de backend/dados', () => {
+  for (const text of [
+    'Criar um workflow do GitHub Actions para build e testes.',
+    'Corrigir o state lock do Terraform antes do rollout.',
+    'Definir SLO, error budget e alertas PromQL.',
+    'Revisar o Dockerfile e a imagem de container.'
+  ]) assert.equal(isDevOpsWork('back', text), true, text)
+
+  for (const text of [
+    'Implementar o endpoint que publica uma entidade chamada Release.',
+    'Criar pipeline de dados para normalização no serviço.',
+    'Corrigir a API, sem mudanças no pipeline de deployment.',
+    'Revisar Terraform como palavra em um relatório de pesquisa.'
+  ]) assert.equal(isDevOpsWork(text.includes('pesquisa') ? 'research' : 'back', text), false, text)
+
+  assert.deepEqual(
+    route({
+      department: 'back',
+      taskText: 'Criar workflow do GitHub Actions com cache e artefato de build.',
+      uiCard: false
+    }).skillIds,
+    [SYNKORA_DEVOPS_STANDARD_ID, 'github-actions-templates']
+  )
+  assert.deepEqual(
+    route({
+      department: 'back',
+      taskText: 'Corrigir state drift e lock concorrente do Terraform.',
+      uiCard: false
+    }).skillIds,
+    [SYNKORA_DEVOPS_STANDARD_ID, 'terraform-skill']
+  )
+  assert.deepEqual(
+    route({
+      department: 'back',
+      taskText: 'Definir SLO e alertas por error budget com PromQL.',
+      uiCard: false
+    }).skillIds,
+    [SYNKORA_DEVOPS_STANDARD_ID, 'slo-implementation']
+  )
+})
+
+test('Cyber recebe contrato defensivo e somente a técnica contextual', () => {
+  const cases = [
+    ['Auditar prompt injection no fluxo de LLM.', 'prompt-injection-defense'],
+    ['Verificar vazamento de secrets e credenciais no histórico.', 'secrets-audit'],
+    ['Criar threat model STRIDE dos trust boundaries.', 'security-threat-model'],
+    ['Revisar OAuth PKCE e rotação de refresh token.', 'oauth']
+  ]
+  for (const [text, technique] of cases) {
+    const selected = route({ department: 'cyber', taskText: text, uiCard: false })
+    assert.deepEqual(selected.skillIds, [SYNKORA_CYBER_STANDARD_ID, technique], text)
+    assert.equal(selected.skillIds.length, 2, text)
+  }
+})
+
+test('QA de Back, DevOps e Cyber usa contratos independentes sem técnica do DEV', () => {
+  const cases = [
+    {
+      department: 'back',
+      text: 'Validar contrato e autorização dos endpoints REST.',
+      expected: [SYNKORA_BACKEND_STANDARD_ID, SYNKORA_BACKEND_QA_ID]
+    },
+    {
+      department: 'back',
+      text: 'Validar o workflow GitHub Actions, artefato e rollback do deployment pipeline.',
+      expected: [SYNKORA_DEVOPS_STANDARD_ID, SYNKORA_DEVOPS_QA_ID]
+    },
+    {
+      department: 'cyber',
+      text: 'Validar a remediação de prompt injection e MCP security.',
+      expected: [SYNKORA_CYBER_STANDARD_ID, SYNKORA_CYBER_QA_ID]
+    }
+  ]
+  for (const { department, text, expected } of cases) {
+    const selected = route({
+      department,
+      phase: 'qa',
+      taskText: text,
+      uiCard: false,
+      explicitSkillIds: ['oauth', 'secrets-audit', 'github-actions-templates'],
+      availableCapabilities: ['read']
+    })
+    assert.deepEqual(selected.skillIds, expected, text)
+    assert.deepEqual(selected.agentIds, [], text)
+    assert.deepEqual(selected.incompatibilities, [], text)
   }
 })
 
@@ -371,7 +945,34 @@ test('QA de UI falha fechado sem contrato e sem revisor independente', () => {
     ),
     []
   )
-  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'back', 'qa', false), [SYNKORA_RUNTIME_QA_ID])
+  assert.deepEqual(
+    missingMandatoryUiPhaseSkills([], 'design', 'dev', true, true),
+    [SYNKORA_FRONTEND_STANDARD_ID, SYNKORA_DESIGN_SYSTEM_STANDARD_ID]
+  )
+  assert.deepEqual(
+    missingMandatoryUiPhaseSkills(
+      [SYNKORA_FRONTEND_STANDARD_ID, SYNKORA_UI_QA_ID],
+      'design',
+      'qa',
+      true,
+      true
+    ),
+    [SYNKORA_DESIGN_SYSTEM_QA_ID]
+  )
+  assert.deepEqual(
+    missingMandatoryUiPhaseSkills(
+      [SYNKORA_FRONTEND_STANDARD_ID, SYNKORA_UI_QA_ID, SYNKORA_DESIGN_SYSTEM_QA_ID],
+      'design',
+      'qa',
+      true,
+      true
+    ),
+    []
+  )
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'back', 'qa', false), [
+    SYNKORA_BACKEND_STANDARD_ID,
+    SYNKORA_BACKEND_QA_ID
+  ])
 
   const fastQa = route({
     phase: 'qa',
@@ -1130,13 +1731,59 @@ test('classificacao usa escopo visual real e ignora feedback operacional do card
     true
   )
   assert.deepEqual(missingMandatoryUiPhaseSkills([], 'back', 'dev', true), [
+    SYNKORA_BACKEND_STANDARD_ID,
     SYNKORA_FRONTEND_STANDARD_ID,
     IMPECCABLE_SKILL_ID
   ])
   assert.deepEqual(missingMandatoryUiPhaseSkills([], 'back', 'qa', true), [
+    SYNKORA_BACKEND_STANDARD_ID,
+    SYNKORA_BACKEND_QA_ID,
     SYNKORA_FRONTEND_STANDARD_ID,
     SYNKORA_UI_QA_ID
   ])
+})
+
+test('QA visual classifica o artefato testado sem fingir que altera o produto', () => {
+  const qaVisualTest = {
+    department: 'qa',
+    title: 'Adicionar regressao visual',
+    description: 'Criar screenshots com Percy para o modal de ajustes.',
+    affectsUi: false
+  }
+  assert.equal(classifyTaskUiWork(qaVisualTest), false)
+  assert.equal(
+    classifyTaskUiWork({
+      department: 'qa',
+      title: 'Corrigir os testes Playwright do modal',
+      description: 'Cobrir os estados aberto, fechado e overflow.',
+      affectsUi: false
+    }),
+    false
+  )
+  assert.equal(
+    classifyTaskUiWork({
+      ...qaVisualTest,
+      title: 'Alterar o modal e atualizar sua regressao visual',
+      affectsUi: true
+    }),
+    true
+  )
+
+  const defs = [...ROUTING_DEFS, ...CURATED_SKILLS]
+  const devPlan = selectPhaseSkillPlan({
+    defs,
+    isInstalled: () => true,
+    department: 'qa',
+    phase: 'dev',
+    taskText: `${qaVisualTest.title}\n${qaVisualTest.description}`,
+    uiCard: classifyTaskUiWork(qaVisualTest),
+    availableCapabilities: ['read', 'write', 'shell', 'browser'],
+    executionMode: 'standard',
+    delegationMode: 'none'
+  })
+  assert.deepEqual(devPlan.skillIds, [SYNKORA_QA_STANDARD_ID, 'visual-testing'])
+  assert.equal(devPlan.skillIds.includes(SYNKORA_FRONTEND_STANDARD_ID), false)
+  assert.equal(devPlan.skillIds.includes(IMPECCABLE_SKILL_ID), false)
 })
 
 test('adapter Impeccable fecha uma unica operacao e neutraliza handoffs', () => {
@@ -1189,13 +1836,165 @@ test('taxonomia escolhe uma tecnica contextual por funcao e por QA', () => {
       delegationMode: 'none'
     }).skillIds
 
-  assert.deepEqual(contextual('back', 'Investigue a regressao e prove a causa raiz.'), ['diagnosing-bugs'])
-  assert.deepEqual(contextual('back', 'Desenhe os endpoints REST desta API.'), ['api-design-principles'])
-  assert.deepEqual(contextual('copy', 'Escreva uma sequencia de emails de onboarding.'), ['email-sequence'])
-  assert.deepEqual(contextual('cyber', 'Audite prompt injection no recurso de LLM.'), ['prompt-injection-defense'])
-  assert.deepEqual(contextual('data', 'Crie um dashboard de KPIs com filtros.'), ['build-dashboard'])
-  assert.deepEqual(contextual('research', 'Compare concorrentes e posicionamento.'), ['competitive-brief'])
-  assert.deepEqual(contextual('back', 'Valide os endpoints e status HTTP.', 'qa'), [SYNKORA_RUNTIME_QA_ID])
+  assert.deepEqual(contextual('back', 'Investigue a regressao e prove a causa raiz.'), [
+    SYNKORA_BACKEND_STANDARD_ID,
+    'diagnosing-bugs'
+  ])
+  assert.deepEqual(contextual('back', 'Desenhe os endpoints REST desta API.'), [
+    SYNKORA_BACKEND_STANDARD_ID,
+    'api-design-principles'
+  ])
+  assert.deepEqual(contextual('copy', 'Escreva uma sequencia de emails de onboarding.'), [
+    SYNKORA_COPY_STANDARD_ID,
+    'email-sequence'
+  ])
+  assert.deepEqual(contextual('cyber', 'Audite prompt injection no recurso de LLM.'), [
+    SYNKORA_CYBER_STANDARD_ID,
+    'prompt-injection-defense'
+  ])
+  assert.deepEqual(contextual('data', 'Crie um dashboard de KPIs com filtros.'), [
+    SYNKORA_DATA_STANDARD_ID,
+    'build-dashboard'
+  ])
+  assert.deepEqual(contextual('research', 'Compare concorrentes e posicionamento.'), [
+    SYNKORA_RESEARCH_STANDARD_ID,
+    'competitive-brief'
+  ])
+  assert.deepEqual(contextual('back', 'Valide os endpoints e status HTTP.', 'qa'), [
+    SYNKORA_BACKEND_STANDARD_ID,
+    SYNKORA_BACKEND_QA_ID
+  ])
+})
+
+test('QA autoral recebe o contrato e exatamente uma tecnica aderente ao risco', () => {
+  const defs = [...ROUTING_DEFS, ...CURATED_SKILLS]
+  const choose = (
+    taskText,
+    availableCapabilities = ['read', 'write', 'shell', 'browser'],
+    explicitSkillIds = []
+  ) =>
+    selectPhaseSkillPlan({
+      defs,
+      isInstalled: () => true,
+      department: 'qa',
+      phase: 'dev',
+      taskText,
+      explicitSkillIds,
+      uiCard: false,
+      availableCapabilities,
+      executionMode: 'standard',
+      delegationMode: 'none'
+    })
+
+  const cases = [
+    ['Corrigir selector drift nos locators apos o refactor.', 'selector-drift-recovery'],
+    ['Adicionar mutation testing com Stryker para provar a forca dos asserts.', 'mutation-testing'],
+    ['Analisar branch coverage e criar um ratchet de cobertura.', 'coverage-analysis'],
+    ['Criar teste de carga k6 para o SLO de latencia.', 'k6'],
+    ['Adicionar testes de acessibilidade com axe e teclado.', 'accessibility-testing'],
+    ['Adicionar testes de seguranca para a autorizacao.', 'security-testing'],
+    ['Criar testes de contrato Pact entre consumidor e provedor.', 'contract-testing'],
+    ['Criar testes da API REST e seus status HTTP.', 'api-testing'],
+    ['Adicionar regressao visual com screenshots e pixel diff.', 'visual-testing'],
+    ['Eliminar testes flaky e a dependencia de ordem.', 'test-reliability'],
+    ['Executar uma sessao de teste exploratorio com charter.', 'exploratory-testing'],
+    ['Criar o fluxo E2E com Cypress.', 'cypress-author'],
+    ['Corrigir os testes Playwright e seus locators.', 'playwright-best-practices'],
+    ['Criar testes unitarios com Vitest.', 'vitest'],
+    ['Automatizar o fluxo de usuario no navegador.', 'playwright-best-practices']
+  ]
+
+  for (const [text, technique] of cases) {
+    const selected = choose(text)
+    assert.deepEqual(selected.skillIds, [SYNKORA_QA_STANDARD_ID, technique], text)
+    assert.deepEqual(selected.agentIds, [], text)
+    assert.deepEqual(selected.incompatibilities, [], text)
+  }
+
+  const generic = choose('Definir a matriz de testes para os criterios de aceitacao.')
+  assert.deepEqual(generic.skillIds, [SYNKORA_QA_STANDARD_ID])
+
+  const negated = choose('Documentar a estrategia, sem testes de API ou browser nesta rodada.')
+  assert.deepEqual(negated.skillIds, [SYNKORA_QA_STANDARD_ID])
+})
+
+test('QA dos testes e independente e capacidades impedem tecnica impossivel', () => {
+  const defs = [...ROUTING_DEFS, ...CURATED_SKILLS]
+  const gate = selectPhaseSkillPlan({
+    defs,
+    isInstalled: () => true,
+    department: 'qa',
+    phase: 'qa',
+    taskText: 'Auditar os testes Playwright entregues.',
+    explicitSkillIds: ['playwright-best-practices'],
+    uiCard: false,
+    availableCapabilities: ['read'],
+    executionMode: 'standard',
+    delegationMode: 'none'
+  })
+  assert.deepEqual(gate.skillIds, [SYNKORA_QA_QA_ID])
+  assert.deepEqual(gate.agentIds, [])
+  assert.deepEqual(gate.incompatibilities, [])
+
+  const automaticWithoutBrowser = selectPhaseSkillPlan({
+    defs,
+    isInstalled: () => true,
+    department: 'qa',
+    phase: 'dev',
+    taskText: 'Corrigir os testes Playwright do fluxo principal.',
+    uiCard: false,
+    availableCapabilities: ['read', 'write', 'shell'],
+    executionMode: 'standard',
+    delegationMode: 'none'
+  })
+  assert.deepEqual(automaticWithoutBrowser.skillIds, [SYNKORA_QA_STANDARD_ID])
+  assert.deepEqual(automaticWithoutBrowser.incompatibilities, [])
+
+  const explicitWithoutBrowser = selectPhaseSkillPlan({
+    defs,
+    isInstalled: () => true,
+    department: 'qa',
+    phase: 'dev',
+    taskText: 'Corrigir os testes Playwright do fluxo principal.',
+    explicitSkillIds: ['playwright-best-practices'],
+    uiCard: false,
+    availableCapabilities: ['read', 'write', 'shell'],
+    executionMode: 'standard',
+    delegationMode: 'none'
+  })
+  assert.deepEqual(explicitWithoutBrowser.skillIds, [SYNKORA_QA_STANDARD_ID])
+  assert.deepEqual(explicitWithoutBrowser.incompatibilities, [
+    {
+      id: 'playwright-best-practices',
+      reason: 'capability',
+      missingCapabilities: ['browser']
+    }
+  ])
+
+  const authorWithoutShell = selectPhaseSkillPlan({
+    defs,
+    isInstalled: () => true,
+    department: 'qa',
+    phase: 'dev',
+    taskText: 'Criar testes unitarios com Vitest.',
+    uiCard: false,
+    availableCapabilities: ['read', 'write'],
+    executionMode: 'standard',
+    delegationMode: 'none'
+  })
+  assert.deepEqual(authorWithoutShell.skillIds, [])
+  assert.equal(
+    authorWithoutShell.incompatibilities.some(
+      (issue) =>
+        issue.id === SYNKORA_QA_STANDARD_ID && issue.missingCapabilities?.includes('shell')
+    ),
+    true
+  )
+
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'qa', 'dev', false), [
+    SYNKORA_QA_STANDARD_ID
+  ])
+  assert.deepEqual(missingMandatoryUiPhaseSkills([], 'qa', 'qa', false), [SYNKORA_QA_QA_ID])
 })
 
 test('nova superfície recebe layout; polish fica reservado ao acabamento', () => {
@@ -1218,14 +2017,11 @@ test('fase e capacidades são barreiras executáveis, não metadados decorativos
     taskText: 'Validar o endpoint entregue.',
     availableCapabilities: ['read']
   })
-  assert.deepEqual(qaWithoutBrowser.skillIds, [])
-  assert.deepEqual(qaWithoutBrowser.incompatibilities, [
-    {
-      id: SYNKORA_RUNTIME_QA_ID,
-      reason: 'capability',
-      missingCapabilities: ['browser']
-    }
+  assert.deepEqual(qaWithoutBrowser.skillIds, [
+    SYNKORA_BACKEND_STANDARD_ID,
+    SYNKORA_BACKEND_QA_ID
   ])
+  assert.deepEqual(qaWithoutBrowser.incompatibilities, [])
 
   const uiDevWithoutBrowser = route({
     taskText: 'Criar uma nova tela responsiva.',
@@ -1257,6 +2053,44 @@ test('fase e capacidades são barreiras executáveis, não metadados decorativos
     ),
     true
   )
+
+  const designSystemText =
+    'Criar um design system com tokens, biblioteca de componentes, specimen e governança.'
+  const designSystemDevWithoutBrowser = route({
+    department: 'design',
+    taskText: designSystemText,
+    uiCard: true,
+    availableCapabilities: ['read', 'write', 'shell']
+  })
+  assert.deepEqual(designSystemDevWithoutBrowser.skillIds, [SYNKORA_FRONTEND_STANDARD_ID])
+  assert.deepEqual(designSystemDevWithoutBrowser.incompatibilities, [
+    {
+      id: SYNKORA_DESIGN_SYSTEM_STANDARD_ID,
+      reason: 'capability',
+      missingCapabilities: ['browser']
+    }
+  ])
+
+  const designSystemQaWithoutBrowser = route({
+    department: 'design',
+    phase: 'qa',
+    taskText: designSystemText,
+    uiCard: true,
+    availableCapabilities: ['read']
+  })
+  assert.deepEqual(designSystemQaWithoutBrowser.skillIds, [SYNKORA_FRONTEND_STANDARD_ID])
+  assert.deepEqual(designSystemQaWithoutBrowser.incompatibilities, [
+    {
+      id: SYNKORA_UI_QA_ID,
+      reason: 'capability',
+      missingCapabilities: ['browser']
+    },
+    {
+      id: SYNKORA_DESIGN_SYSTEM_QA_ID,
+      reason: 'capability',
+      missingCapabilities: ['browser']
+    }
+  ])
 })
 
 test('técnica específica vence o diagnóstico genérico em pedidos combinados', () => {
@@ -1273,14 +2107,20 @@ test('técnica específica vence o diagnóstico genérico em pedidos combinados'
       delegationMode: 'none'
     }).skillIds
 
-  assert.deepEqual(choose('Corrigir falha de autorização OAuth no refresh token.'), ['oauth'])
+  assert.deepEqual(choose('Corrigir falha de autorização OAuth no refresh token.'), [
+    SYNKORA_BACKEND_STANDARD_ID,
+    'oauth'
+  ])
   assert.deepEqual(choose('Investigar erro no schema Postgres e na política RLS.'), [
+    SYNKORA_BACKEND_STANDARD_ID,
     'supabase-postgres-best-practices'
   ])
   assert.deepEqual(choose('Corrigir bug no webhook e no contrato da API.'), [
+    SYNKORA_BACKEND_STANDARD_ID,
     'api-design-principles'
   ])
   assert.deepEqual(choose('Resolver regressão de segurança e autorização RBAC.'), [
+    SYNKORA_BACKEND_STANDARD_ID,
     'security-best-practices'
   ])
 })

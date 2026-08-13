@@ -131,7 +131,8 @@ export function registerTasksIpc(ctx: MainContext, extras: TasksIpcExtras): void
           'low',
           manualDeliverable,
           item.gates,
-          manualAffectsUi === true
+          manualAffectsUi === true,
+          item.department
         ),
         version: item.version ?? maestro.get(projectId).version
       }

@@ -16,6 +16,10 @@ export interface GateVerificationEvidenceInput {
   phase: 'dev' | 'review' | 'qa'
   uiWork: boolean
   evidence?: GateVerificationEvidence
+  /** Rodada QUICK (ajuste rápido do dono, 2026-08-12): evidência do DELTA —
+   * summary + observação + a superfície mudada bastam; o catálogo completo de
+   * states/viewports é exigência de rodada cheia. */
+  quickRound?: boolean
 }
 
 export function validateGateVerificationEvidence(
@@ -38,11 +42,13 @@ export function validateGateVerificationEvidence(
   }
 
   if (visualDelivery) {
-    const missing = [
-      !evidence.surfaces?.some((item) => item.trim()) ? 'surfaces' : undefined,
-      !evidence.states?.some((item) => item.trim()) ? 'states' : undefined,
-      !evidence.viewports?.some((item) => item.trim()) ? 'viewports' : undefined
-    ].filter(Boolean)
+    const missing = input.quickRound
+      ? [!evidence.surfaces?.some((item) => item.trim()) ? 'surfaces' : undefined].filter(Boolean)
+      : [
+          !evidence.surfaces?.some((item) => item.trim()) ? 'surfaces' : undefined,
+          !evidence.states?.some((item) => item.trim()) ? 'states' : undefined,
+          !evidence.viewports?.some((item) => item.trim()) ? 'viewports' : undefined
+        ].filter(Boolean)
     if (missing.length > 0) {
       return {
         ok: false,

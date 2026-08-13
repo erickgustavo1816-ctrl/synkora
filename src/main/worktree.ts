@@ -141,10 +141,33 @@ export function snapshotProblemFor(
  * untracked (não-ignorados) para fora do worktree — o que se integra é o
  * COMMIT e untracked nunca entra no merge; anular um veredito por screenshot
  * de gate custou uma aprovação visual genuína. SÓ age quando NADA rastreado
- * mudou (tracked sujo = drift real, não evidência). Devolve os paths movidos. */
-export function quarantineUntrackedNew(cwd: string, quarantineDir: string): string[] {
+ * mudou (tracked sujo = drift real, não evidência) — EXCETO modificação
+ * não-staged dentro da allowlist de RUNTIME declarado (`tolerateRuntimePaths`,
+ * 2026-08-11: divergência MISTA "?? screenshot na raiz + M data/* de runtime"
+ * travava as duas válvulas mutuamente e invalidou um veredito de QA aprovado
+ * no mérito; a quarentena tolera a classe do restore e o restore, rodando em
+ * seguida sobre a árvore já sem os untracked, limpa o resto). Devolve os
+ * paths movidos. */
+export function quarantineUntrackedNew(
+  cwd: string,
+  quarantineDir: string,
+  tolerateRuntimePaths: string[] = []
+): string[] {
   try {
-    if (git(cwd, ['status', '--porcelain', '-uno']).trim() !== '') return []
+    const tolerated = tolerateRuntimePaths
+      .map(normalizeRuntimePattern)
+      .filter((p): p is string => Boolean(p))
+    const trackedDirt = git(cwd, ['status', '--porcelain', '-uno'])
+      .split(/\r?\n/)
+      .filter((line) => line.trim() !== '')
+    for (const line of trackedDirt) {
+      const xy = line.slice(0, 2)
+      const rel = line.slice(3).trim().replace(/^"|"$/g, '').replace(/\\/g, '/')
+      // Só a assinatura exata de runtime-de-app-rodando é tolerada (' M' na
+      // allowlist); qualquer outra sujeira rastreada segue sendo drift real.
+      if (xy !== ' M' || !rel || !matchesRuntimePattern(rel.replace(/\/+$/, ''), tolerated))
+        return []
+    }
     const untracked = git(cwd, ['ls-files', '--others', '--exclude-standard'])
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -211,9 +234,10 @@ export function quarantineAndRevalidate(
   cwd: string,
   quarantineDir: string,
   snap: DevSnapshotFacts,
-  requireBase: boolean
+  requireBase: boolean,
+  tolerateRuntimePaths: string[] = []
 ): QuarantineRevalidation {
-  const moved = quarantineUntrackedNew(cwd, quarantineDir)
+  const moved = quarantineUntrackedNew(cwd, quarantineDir, tolerateRuntimePaths)
   if (moved.length === 0) {
     return { moved, fingerprint: undefined, snapshotProblem: undefined }
   }
@@ -238,6 +262,10 @@ export interface RuntimeRestoreRevalidation {
   restored: string[]
   fingerprint: ReturnType<typeof gitVisibleWorktreeFingerprint>
   snapshotProblem: string | undefined
+  /** Por que NADA foi restaurado (2026-08-11, caso real M09 23:04: culpados
+   *  100% dentro da allowlist e o veredito caiu mesmo assim — o skip era
+   *  silencioso e indiagnosticável pelo journal). */
+  skipReason?: string
 }
 
 function normalizeRuntimePattern(pattern: string): string | undefined {
@@ -258,23 +286,24 @@ export function restoreRuntimeAndRevalidate(
   requireBase: boolean,
   runtimePaths: string[]
 ): RuntimeRestoreRevalidation {
-  const none: RuntimeRestoreRevalidation = {
+  const none = (skipReason: string): RuntimeRestoreRevalidation => ({
     restored: [],
     fingerprint: undefined,
-    snapshotProblem: undefined
-  }
+    snapshotProblem: undefined,
+    skipReason
+  })
   const patterns = runtimePaths
     .map(normalizeRuntimePattern)
     .filter((p): p is string => Boolean(p))
-  if (patterns.length === 0) return none
+  if (patterns.length === 0) return none('allowlist vazia após normalização')
   let status: string
   try {
     status = git(cwd, ['status', '--porcelain'])
   } catch {
-    return none
+    return none('git status falhou no worktree')
   }
   const lines = status.split(/\r?\n/).filter((line) => line.trim() !== '')
-  if (lines.length === 0) return none
+  if (lines.length === 0) return none('árvore já estava limpa')
   const modified: string[] = []
   const born: string[] = []
   for (const line of lines) {
@@ -285,10 +314,11 @@ export function restoreRuntimeAndRevalidate(
     // runtime de app rodando; nada se restaura (sem mascarar).
     const xy = line.slice(0, 2)
     const rel = line.slice(3).trim().replace(/^"|"$/g, '').replace(/\\/g, '/')
-    if (!rel || !matchesRuntimePattern(rel.replace(/\/+$/, ''), patterns)) return none
+    if (!rel || !matchesRuntimePattern(rel.replace(/\/+$/, ''), patterns))
+      return none(`divergência FORA da allowlist: "${line.slice(0, 120)}"`)
     if (xy === ' M') modified.push(rel)
     else if (xy === '??') born.push(rel)
-    else return none
+    else return none(`assinatura não-runtime (staged/deleção/rename): "${line.slice(0, 120)}"`)
   }
   try {
     if (modified.length > 0) git(cwd, ['checkout', '--', ...modified])
@@ -296,12 +326,17 @@ export function restoreRuntimeAndRevalidate(
       // '??' pode ser diretório inteiro novo ("data/cache/") — remove fundo.
       rmSync(join(cwd, rel), { recursive: true, force: true })
     }
-  } catch {
-    return none
+  } catch (error) {
+    return none(
+      'restauração falhou (checkout/rm): ' +
+        (error instanceof Error ? error.message.slice(0, 160) : String(error).slice(0, 160))
+    )
   }
   // A restauração precisa devolver a árvore EXATAMENTE limpa — sobra
   // qualquer coisa, nada foi "consertado" e a invalidação normal continua.
-  if (git(cwd, ['status', '--porcelain']).trim() !== '') return none
+  const leftover = git(cwd, ['status', '--porcelain']).trim()
+  if (leftover !== '')
+    return none(`árvore não ficou limpa após restaurar: "${leftover.slice(0, 160)}"`)
   return {
     restored: [...modified, ...born],
     fingerprint: gitVisibleWorktreeFingerprint(cwd),

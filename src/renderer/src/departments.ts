@@ -6,16 +6,18 @@ export interface DeptInfo {
   icon: string
   hue: number
   desc: string
-  /** skills PRÉ-SETADAS pelo app (o executor escolhe a melhor para o caso) */
+  /** contratos nativos sempre visíveis; o roteador soma no máximo uma técnica contextual */
   skills: string[]
-  /** subagentes especializados PRÉ-SETADOS pelo app */
+  /** resumo humano do fluxo automático desta função */
+  skillFlow: string
+  /** exemplos históricos; a autoridade real é o roteador por card paralelo */
   agents: string[]
 }
 
 // Funções enxutas (decisão do usuário): só existe função quando muda QUEM
-// executa e COMO — mobile→front, devops→back, docs→research. Skills e
-// subagentes vêm setados de fábrica; o usuário pode adicionar/remover na
-// página geral e a IA escolhe o melhor para cada caso (injeção real = F4).
+// executa e COMO — mobile→front, devops→back, docs→research. O board mostra
+// somente os contratos nativos estáveis; a biblioteca completa permanece na
+// página geral e o roteador escolhe no máximo uma técnica contextual por card.
 export const DEPARTMENTS: DeptInfo[] = [
   {
     key: 'front',
@@ -23,10 +25,9 @@ export const DEPARTMENTS: DeptInfo[] = [
     icon: '🎨',
     hue: 21,
     desc: 'interface, componentes e experiência (mobile incluso)',
-    // F4: ids REAIS da biblioteca (skillsCatalog.ts no main é a fonte da
-    // verdade; estes são os defaultFor de 'front' — a UI da página geral
-    // mostra a biblioteca completa e o estado real de instalação).
-    skills: ['frontend-design', 'better-ui', 'better-layout'],
+    // O método visual é contextual e, por isso, não aparece como contrato fixo.
+    skills: ['synkora-frontend-standard', 'synkora-ui-qa'],
+    skillFlow: 'contrato visual + 1 operação Impeccable; QA visual independente',
     agents: ['ui-visual-validator']
   },
   {
@@ -35,7 +36,13 @@ export const DEPARTMENTS: DeptInfo[] = [
     icon: '⚙️',
     hue: 210,
     desc: 'servidor, integrações, infra e deploy',
-    skills: ['test-driven-development', 'verification-before-completion', 'supabase-postgres-best-practices'],
+    skills: [
+      'synkora-backend-standard',
+      'synkora-backend-qa',
+      'synkora-devops-standard',
+      'synkora-devops-qa'
+    ],
+    skillFlow: 'Back ou DevOps + 1 técnica contextual; QA próprio da entrega',
     agents: ['backend-reality-checker']
   },
   {
@@ -44,7 +51,8 @@ export const DEPARTMENTS: DeptInfo[] = [
     icon: '🔍',
     hue: 145,
     desc: 'revisão, testes e qualidade',
-    skills: ['code-review', 'code-review-and-quality', 'webapp-testing'],
+    skills: ['synkora-qa-standard', 'synkora-qa-qa'],
+    skillFlow: 'contrato de autoria + 1 técnica; QA independente dos testes',
     agents: ['test-writer']
   },
   {
@@ -53,7 +61,13 @@ export const DEPARTMENTS: DeptInfo[] = [
     icon: '🖌️',
     hue: 315,
     desc: 'identidade visual, mockups e protótipos',
-    skills: ['create-design-md', 'frontend-design', 'design-system-patterns'],
+    skills: [
+      'synkora-frontend-standard',
+      'synkora-design-system-standard',
+      'synkora-design-system-qa',
+      'synkora-ui-qa'
+    ],
+    skillFlow: 'método e QA próprios de Design System; uso em telas volta ao fluxo Front',
     agents: ['ui-ux-designer']
   },
   {
@@ -62,7 +76,8 @@ export const DEPARTMENTS: DeptInfo[] = [
     icon: '🔬',
     hue: 48,
     desc: 'pesquisa, referências e documentação',
-    skills: ['research', 'deep-research', 'domain-modeling'],
+    skills: ['synkora-research-standard', 'synkora-research-qa'],
+    skillFlow: 'contrato de fontes + 1 técnica; QA audita claims e incerteza',
     agents: ['technical-researcher']
   },
   {
@@ -71,8 +86,8 @@ export const DEPARTMENTS: DeptInfo[] = [
     icon: '✍️',
     hue: 285,
     desc: 'textos, microcopy e voz do produto',
-    // F4 rodada 7: ids REAIS (defaultFor de 'copy' no skillsCatalog/agentsBundled)
-    skills: ['better-writing', 'humanizer', 'copywriting'],
+    skills: ['synkora-copy-standard', 'synkora-copy-qa'],
+    skillFlow: 'contrato de verdade e voz + 1 técnica do canal; QA independente',
     agents: ['microcopy-surgeon']
   },
   {
@@ -81,8 +96,8 @@ export const DEPARTMENTS: DeptInfo[] = [
     icon: '🛡️',
     hue: 355,
     desc: 'segurança, ameaças e hardening',
-    // F4 rodada 8: ids REAIS (defaultFor de 'cyber' no skillsCatalog/agentsBundled)
-    skills: ['differential-review', 'insecure-defaults', 'security-testing', 'owasp-security'],
+    skills: ['synkora-cyber-standard', 'synkora-cyber-qa'],
+    skillFlow: 'contrato defensivo + 1 lente contextual; QA fechado ao escopo',
     agents: ['sharp-edges-analyzer']
   },
   {
@@ -91,8 +106,8 @@ export const DEPARTMENTS: DeptInfo[] = [
     icon: '📊',
     hue: 170,
     desc: 'dados, métricas e analytics',
-    // F4 rodada 9: ids REAIS (defaultFor de 'data' no skillsCatalog/agentsBundled)
-    skills: ['sql-queries', 'statistical-analysis', 'validate-data', 'data-quality-frameworks'],
+    skills: ['synkora-data-standard', 'synkora-data-qa'],
+    skillFlow: 'contrato de métricas + 1 técnica; QA recompõe e reconcilia',
     agents: ['data-quality-sentinel']
   }
 ]

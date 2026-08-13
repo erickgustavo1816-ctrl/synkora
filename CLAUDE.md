@@ -110,6 +110,185 @@ PAINEL DE GESTÃO) — caderno completo da sessão em scratchpad NOTAS_TESTE_202
 - DESCARTADO (decisão do usuário): alavanca de "segurar gate" (hold) — os gates vivos
   cobrem a dor; re-avaliar só se ela voltar.
 
+### F6.14 — bloco 2026-08-12: forense dos "bloqueios de browser" + regras novas do dono (app parado; typecheck 0 · orchestrator-flow 39 · verdict-races 18 · pane-permissions 14 · task-adjustment 11 · phase-skill-prompts 10 · mission-verification 25 · mcp-protocol 5 · mcp-dual-era 32)
+
+- 🔴 BUG RAIZ DOS "DEV DE UI BLOQUEADO POR FALTA DE BROWSER" (2 ocorrências,
+  08-11 22:22 e 08-12 15:18, mesmo card): NÃO era processo morrendo — os
+  mcp-logs do playwright terminam com browser_close LIMPO nas duas sessões e
+  a recusa literal no journal era "report done recusado: este pane de UI não
+  tem browser/runtime autorizado". Cadeia: watch do REVIEW nasce com
+  browserAvailable=false POR DESENHO → reprovação → retryOrBacklog caminho
+  liveDev re-armava o watch do dev com `{...watch}` DO REVIEWER → dev herdava
+  o false → done recusado → o próprio texto da recusa mandava "reporte
+  bloqueada ambiental" e o dev CONFABULAVA queda de MCP → pane reciclava
+  (~20-30min + re-evidência por reprovação de review em card de UI). Fix:
+  `devBrowserAvailable` no PhaseWatch — carimbado quando o watch do dev
+  nasce, carregado pelos watches de gate e RESTAURADO no re-arm do liveDev
+  (fallback true é invariante: dev de UI sem browser nunca passa do próprio
+  done). RECLASSIFICAÇÃO: o "playwright MCP caiu 22:22" do handoff de 08-11
+  era ESTE bug; de externo genuíno sobrou só o crash do Network Service
+  (08-11 15:52). Forense útil: LiveKernelEvent 193 em rajada = WER
+  re-tentando relatório antigo a cada boot (ruído); AsusDownloadAgent crasha
+  em todo boot (bloatware).
+- REVIEWER NÃO LEGISLA (ordem do dono: "revisar a qualidade do código,
+  APENAS ISSO"; caso real: reprovou exigindo "migração versionada com
+  rollback e backup" que card nenhum pediu): cerca nova na rubrica — "YOU
+  REVIEW WHAT WAS DELIVERED, NEVER LEGISLATE WHAT SHOULD EXIST": exigir
+  capacidade/infra nova fora do contrato (migração, rollback/backup,
+  telemetria, feature flags, resiliência, hardening) NUNCA bloqueia — vira
+  sugestão não-bloqueante; item bloqueante desse tipo = falha do gate que o
+  orquestrador waiva.
+- CARD DE QA NÃO TEM GATE DE QA (ordem do dono: "QA não tem necessidade de
+  QA, apenas de code review"): gatesForTask ganhou `department` — test card
+  (dept qa) nasce com gates ['review'] por default, INCLUSIVE sob risco alto
+  (validateTaskSizing isenta dept qa do piso review+QA); escolha explícita
+  continua valendo. E TEST CARD SÓ RODA APÓS O ACEITE DO DONO (caso real
+  M09: a suíte re-rodava atrás de cada ajuste visual): persona T8 + lembrete
+  no retorno do create_tasks — fica no backlog até o aceite explícito da UI
+  coberta; ajustes acumulam e a suíte sincroniza UMA vez ao final.
+- stop_task {id, reason} (tool nova, maestro/orquestrador, registrada após o
+  corte de catálogo dos gates — ordem do dono: "ele tem que poder fazer o
+  que quiser" com os panes da missão): gêmeo do complete_task — PARA a fase
+  deliberadamente (pane fechado, worktree/commits/conversa preservados),
+  card ao backlog interrompido SEM contar ciclo, evento
+  task-stopped-by-authority com reason verbatim; feedback só entra com o
+  campo VAZIO (lista de reprovação nunca é sobrescrita); gate parado morre
+  SEM veredito (run_task {phase} reabre). Persona: o ciclo de vida dos panes
+  da missão é do orquestrador — pedir ao dono para fechar pane é falha.
+- TEMA DE FÁBRICA dark-ansi: ensureBypassAccepted também semeia
+  `theme: "dark-ansi"` no settings.json do config dir de todo seat claude
+  (chave sondada: é onde o picker /theme grava) — SÓ quando ausente, escolha
+  do TUI nunca é sobrescrita. Os 3 seats atuais já estavam gravados à mão.
+- STDERR DE BROWSER/APP LANÇADO DO SHELL vai para arquivo: o devCdpBlock
+  agora instrui `2>.synkora/runtime-stderr.log` — filho herdando o console
+  rabiscava a TUI por fora do claude (print real do dono; cosmético).
+- Observando (sem fix ainda): "report de segurança recusado: reprovação
+  precisa registrar ao menos um achado" 3× em 08-11 — reviewer perde uma
+  volta re-enviando com findings.
+
+BLOCO 2 na mesma data ("fechei o app, arruma os dois" — typecheck 0 ·
+orchestrator-flow 40 · task-adjustment 11 · verdict-races 18 · mcp-protocol 5
+· phase-skill-prompts 10 · mission-verification 25 · pane-permissions 14):
+
+- 🔴 "MENTE FECHADA" DOS GATES MORTA EM TRÊS PONTOS (caso real M09: dono
+  mandou "só reviewer, sem QA", orquestrador obedeceu com update_task +
+  ownerOrder + gate-owner-waiver auditado, e o QA abriu MESMO ASSIM — ele
+  teve que stop_task no gate): (1) advancePhaseInner force-appendava 'qa' em
+  card de UI por cima de gates explícitos — agora os gates do card são o
+  contrato e card de UI sem QA vira anotação auditada
+  (ui-card-without-qa-gate); (2) gatesForTask re-impunha ['review','qa'] em
+  card de UI com gates explícitos — morto, escolha explícita vale literal
+  (default sem gates segue review+qa); (3) run_task {adjustment} em plano de
+  risco ALTO re-carimbava gates ['review','qa'] no card — agora só em modo
+  ESTRITO (foi esta linha que recolocou o QA às 17:19, antes do ownerOrder).
+  Teste do contrato velho atualizado ao novo.
+- RODADA QUICK IMPLEMENTADA (a espec do item 9 do caderno): run_task
+  {adjustment} agora É a rodada quick — Task.quickRound carimbado no
+  adjustment (true) e zerado em dispatch cheio; viaja no PhaseWatch (spread
+  do liveDev/reciclo carrega). Cortes: devContract ganha QUICK ADJUSTMENT
+  ROUND (só o delta; typecheck+lint+testes DOS ARQUIVOS TOCADOS — a suíte
+  completa fica com a verificação do harness; evidência = o elemento mudado,
+  viewports só se o ajuste for de layout; done curto; skills e barra visual
+  INTEIRAS); validateGateVerificationEvidence aceita evidência mínima
+  (summary+observação+1 surface) em quick; review vira OLHADA-RELÂMPAGO (só
+  o diff, aprova salvo bug real, reprovação = lista mínima, minutos); QA
+  NUNCA abre em rodada quick (advance filtra 'qa' — o aceite visual é do
+  dono que pediu o ajuste). Persona + description do run_task ensinam a
+  régua (copy, formatação, máscara, espaçamento, um elemento) e que o dono
+  força nos dois sentidos. Meta: máscara de hoje (30+ min) vira ~5-7 min.
+- VALIDADO AO VIVO NO MESMO DIA: stop_task usado corretamente pelo
+  orquestrador na 1ª ocorrência real (18:03, matou o QA re-imposto citando a
+  ordem do dono verbatim); rodada QUICK de ponta a ponta (quickRound: true,
+  QA nunca abriu, merge automático na aprovação, 18:50).
+
+BLOCO 3 na mesma noite (o dono, à beira de desistir do Synkora: "não adianta
+consertar regra a regra — em que momento o orquestrador vai entender que é
+ELE que tá no comando?"; typecheck 0 · as 8 suítes da família verdes):
+
+- 🔴 PERSONA DO ORQUESTRADOR REESCRITA COMANDO-PRIMEIRO (a cirurgia, não o
+  remendo — a persona tinha virado constituição de burocrata e ensinava o
+  modelo a temer o próprio juízo; caso real: ele PROVOU por bytes que a
+  reprovação era falsa e ainda assim rodou rodada-vazia de dev em vez do
+  complete_task que ele mesmo citou): seção COMMAND no topo COM PRECEDÊNCIA
+  EXPLÍCITA sobre todo o resto ("pipeline é ferramenta SUA, nunca seu
+  chefe"; os 3 fracassos: escalar mecânica, esperar permissão que as
+  alavancas já dão, queimar rodada em cerimônia); princípio "GATES INFORM
+  YOU, THEY NEVER COMMAND YOU — reprovação com todos os itens julgados
+  falsos É aprovação com zero achados: complete_task NA HORA, rodada-vazia
+  proibida" (vale p/ review E QA); cercas duras SÓ as 3 de verificabilidade
+  (evidência nunca fabricada · verificação conjunta · ⇪ do dono); ESCADA DO
+  TAMANHO: PEQUENO = O ORQUESTRADOR IMPLEMENTA ELE MESMO no worktree da
+  missão (edita, typecheck+lint+testes tocados, commit "ajuste:" imediato —
+  branch nunca fica suja —, UM ajudante lê o diff, "pronto, olha aí"; a
+  proibição de editar produto MORREU — o que fica proibido é tampering de
+  verificação) · MÉDIO = run_task {adjustment} quick · GRANDE = NUNCA vira
+  card sozinho: UMA pergunta via ask_user ("card ou eu mesmo faço?") e a
+  resposta do dono vale. Contradições removidas do corpo (small-correction
+  rule, "you do not implement", acceptance test).
+- GATE JULGA-PRIMEIRO na seção de reprovação: verificar claims factuais
+  VOCÊ MESMO quando barato (bytes/grep/render); contar sobreviventes; zero
+  = complete_task, nunca re-entrega.
+- 🔴 MOJIBAKE NO CANAL DE LEITURA DO GATE — SONDADO E CONFIRMADO (a raiz
+  das 2 reprovações falsas de "aspas"): Get-Content default do PS 5.1
+  decodifica arquivo UTF-8 como ANSI — "1T 2025" com aspas curvas vira
+  "â€œ1T 2025â€" e o modelo lê como aspas quebradas (família do mojibake
+  GESTÃO/F6.7, agora na leitura do reviewer). Mitigação em rubrica:
+  CHARACTER-LEVEL CLAIMS REQUIRE BYTES (reprovar por aspas/traços/encoding
+  exige verificação byte-authoritative) + aviso do trap ("conteúdo garbled =
+  SEU canal, releia com -Encoding utf8"). Fix definitivo candidato (decisão
+  do dono): ACP UTF-8 do Windows (Use Unicode UTF-8 worldwide) — mexe na
+  máquina toda.
+- MODO LEVE: escolha EXPLÍCITA de gates do orquestrador no update_task vale
+  SEM ownerOrder (o piso de risco alto re-carimbava review+qa a cada update
+  — o dono teve que repetir a ordem 2× no mesmo dia); auditado
+  gates-explicit-light-mode; modo estrito mantém o piso.
+- RECONCILIADOR DO BOARD (caso real: merge concluiu o card às 18:50 e o
+  board seguiu mostrando "em execução" — push de tasks:changed perdido):
+  board ATIVO re-busca as tasks a cada 30s (princípio F6.10: nenhum passo
+  depende de entrega única).
+- NADA COMMITADO (árvore segue compartilhada com o trabalho de skills).
+
+### F6.13 — TESTE DE MISSÕES rodada 2: o pipeline ficou LIMPO (2026-08-11/12; 4 blocos de fixes; handoff completo em docs/HANDOFF_SESSAO_2026-08-11.md — LER PRIMEIRO)
+
+Sessão inteira de teste ao vivo + 4 blocos com app parado. Placar: 11/18
+missões (M06b repaginação, M07 PERDCOMP — a 1ª missão 100% LIMPA da
+história — e M08 SPED integradas); M09 créditos 3/3 cards done aguardando
+o ⇪ do dono. NADA COMMITADO (árvore compartilhada com o trabalho de
+skills). Resumo dos fixes (detalhe e file:line no handoff):
+
+- 🔴 `--disable-slash-commands` REMOVIDO do claudeSkillIsolation
+  (panePermissions) — matava /model etc. do DONO em todo pane claude; a
+  cerca do agente segue sendo --disallowedTools Skill,Agent,Task. Provado
+  por sonda A/B em PTY real (2.1.227).
+- 🔴 DELEGATE consertado: runModel volta a ser ID PURO (phaseEngine
+  gravava "opus[1m] · max" e o clamp de tier consumia como id → recusa
+  100%) + clamp defensivo split(' · ') p/ cards persistidos velhos.
+- 🔴 GUARD DA CADEIA no run_task rebaixado para o re-carimbo auditado do
+  conclude (plan-execution-head-restamped) — merge manual auditado do
+  orquestrador travava card novo e nem reinício resolvia (beco real M09).
+- ORDEM DO DONO (memória feedback-panes-vivos-esperando): dev e gate
+  NUNCA fecham entre rodadas — vivos esperando, trafega SÓ o delta.
+  Validado 3× ao vivo (gate-recycled na MESMA conversa 2×). Ctrl+A custom
+  removido (tecla crua; Ctrl+Shift+A = apagar input).
+- RESOLUÇÃO DIRETA AUDITADA de conflito MECÂNICO da fila:
+  guide_integration_resolution ganhou directResolution (PM resolve na
+  branch, harness valida origem limpa+destino contido, re-lacra e drena
+  com o aval original — sem card; régua mecânico×semântico na persona).
+- Risco por keyword no create_plan virou ANOTAÇÃO auditada em modo leve
+  (payments casava prosa do plano mestre num produto tributário).
+- Restore de runtime INSTRUMENTADO: skipReason em todo caminho de
+  não-ação + evento gate-runtime-restore-skipped (23:04 invalidou com
+  culpados 100% na allowlist e não dava para saber por quê).
+- UI (agente paralelo): tooltip do host roteado PARA DENTRO da panes view
+  (fim do clipe) + snapshot congelado (capturePage) sob popovers do host
+  (fim do buraco). Validação visual pendente.
+- Resiliência: retry/backoff no reload pós renderer-gone (crash do
+  Network Service 15:52 = externo, sem minidump; Defender exclusions).
+- VALIDADO EM PRODUÇÃO de carona: complete_task por ordem verbatim,
+  record_learnings (estante viva re-escrita), espera = 1 long-poll,
+  memória escalável do PM, renascimentos (222k–479k skip), job objects em
+  crash sujo (zero órfãos), estratégia de conflito do PM 2×.
+
 ### F6.12 — TESTE DE MISSÕES rodada 1 + bloco do FACILITADOR (2026-08-10; typecheck + agregado skills-system + fila/verificação verdes)
 
 Rodada 1 do teste de missões (roteiro do HANDOFF_FASE5): o MOTOR atravessou

@@ -22,12 +22,14 @@ import {
   type TaskUpdatePatch
 } from '../tasks'
 import { gitHead, hasGitCommit, isWorktreeClean } from '../worktree'
+import { releaseQaCdpPort } from '../qaCdp'
 import { type Mission } from '../missions'
 import {
   EXECUTION_MODE_LABEL,
   assessMissionRisk,
   gatesForTask,
   isHarnessQueueCard,
+  newTaskDelegationProblem,
   normalizeDelegationMode,
   normalizeExecutionMode,
   normalizeRiskLevel,
@@ -102,6 +104,7 @@ export function buildBoardApi(
   | 'runTask'
   | 'concludePlan'
   | 'completeTask'
+  | 'stopTask'
   | 'deleteTask'
   | 'setPhaseExecutor'
 > {
@@ -340,6 +343,12 @@ export function buildBoardApi(
       )
     },
     createTasks: (id, items) => {
+      const invalidDelegations = items
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => newTaskDelegationProblem(item.delegation) !== undefined)
+      if (invalidDelegations.length > 0) {
+        return `todo card novo precisa declarar delegation="none" ou delegation="parallel"; optional é apenas legado: ${invalidDelegations.map(({ index }) => index + 1).join(', ')}`
+      }
       const oversizedBriefings = items
         .map((item, index) => ({ item, index }))
         .filter(({ item }) => (item.briefing?.length ?? 0) > 6000)
@@ -635,7 +644,8 @@ export function buildBoardApi(
             risk,
             i.deliverable,
             i.gates,
-            classifyTaskUiWork(i)
+            classifyTaskUiWork(i),
+            i.department
           ),
           quests: i.quests,
           skills: okSkills.length ? okSkills : undefined,
@@ -673,9 +683,15 @@ export function buildBoardApi(
       })
       ctx.pushAll('tasks:changed', id.projectId)
       syncBoard(id.projectId)
+      // TEST CARD SÓ RODA APÓS O ACEITE DO DONO (ordem 2026-08-12, caso M09:
+      // a suíte re-rodava atrás de cada ajuste visual): lembrete colado na
+      // resposta sempre que um card de QA nasce no lote.
+      const qaSequencingReminder = created.some((t) => t.department === 'qa')
+        ? ' · LEMBRETE (card de QA/testes): despache-o por ÚLTIMO, somente depois que o DONO aceitar a UI que ele cobre — ajuste de tela nunca re-dispara a suíte; acumule os ajustes e sincronize os testes UMA vez, ao final'
+        : ''
       return `${created.length} tarefa(s) criadas no backlog dentro do modo ${EXECUTION_MODE_LABEL[executionMode]}: ${created
         .map((t) => `"${t.title}" [${t.department}/${t.effort}${t.gates ? `/gates:${t.gates.join('+') || 'nenhum'}` : ''}] id=${t.id}`)
-        .join(' · ')} — ${
+        .join(' · ')}${qaSequencingReminder} — ${
         auto
           ? 'cards AUTO (o usuário só acompanha) — dispare cada um com run_task'
           : 'o usuário decide quando executar'
@@ -839,13 +855,19 @@ export function buildBoardApi(
       // não se aplica aqui (caso real 2026-08-10: card de sync da fila levava
       // o total acima do prometido e TODO update do plano passava a ser
       // recusado). Ficam só as validações de conteúdo por item.
+      // MODO LEVE = escolha EXPLÍCITA de gates do orquestrador vale sem
+      // ownerOrder (caso real M09, 2026-08-12: o piso de risco alto
+      // re-carimbava review+qa a cada update e o dono teve que repetir a
+      // ordem; guarda de julgamento anota, nunca re-impõe). Estrito mantém.
+      const gatesLightMode = securityWaiverOptions(id.projectId).sensitiveWaiverAllowed
+      const explicitGatesInLightMode = !gateOwnerWaiver && gatesLightMode && patch.gates !== undefined
       const sizingProblems = validateTaskSizing(
         executionMode,
         risk,
         Number.MAX_SAFE_INTEGER,
         0,
         [candidate],
-        { ownerGateWaiver: gateOwnerWaiver }
+        { ownerGateWaiver: gateOwnerWaiver || explicitGatesInLightMode }
       )
       if (sizingProblems.length > 0)
         return 'ajuste recusado pelo contrato de proporcionalidade: ' + sizingProblems.join('; ')
@@ -855,14 +877,15 @@ export function buildBoardApi(
         delegation: normalizeDelegationMode(candidate.delegation, executionMode),
         // ownerOrder presente + gates no patch = os gates do DONO valem
         // literalmente (o piso de risco não re-impõe); sem ordem, piso normal.
-        gates: gateOwnerWaiver
+        gates: gateOwnerWaiver || explicitGatesInLightMode
           ? patch.gates
           : gatesForTask(
               executionMode,
               risk,
               deliverable,
               candidate.gates,
-              classifyTaskUiWork(candidate)
+              classifyTaskUiWork(candidate),
+              t0.department
             )
       }
       if (gateOwnerWaiver) {
@@ -872,6 +895,14 @@ export function buildBoardApi(
           actor: id.role,
           ids: { projectId: id.projectId, missionId: id.missionId, taskId },
           reason: `gates → [${(patch.gates ?? []).join(', ') || 'nenhum'}] por ORDEM DO DONO: "${(ownerOrder ?? '').slice(0, 300)}"`
+        })
+      } else if (explicitGatesInLightMode && risk === 'high') {
+        blackbox.record({
+          cat: 'task',
+          event: 'gates-explicit-light-mode',
+          actor: id.role,
+          ids: { projectId: id.projectId, missionId: id.missionId, taskId },
+          reason: `gates → [${(patch.gates ?? []).join(', ') || 'nenhum'}] por escolha explícita do orquestrador em modo leve (risco ${risk} — piso não re-impõe, anotado)`
         })
       }
       const updated = tasks.update(taskId, normalizedPatch as Partial<Task>)
@@ -938,7 +969,19 @@ export function buildBoardApi(
           ...(missionRoadmapItem?.scope.in ?? [])
         ]
       })
-      const risk = riskAssessment.effectiveRisk
+      // MODO LEVE: elevação vinda SÓ de sinal de TEXTO vira ANOTAÇÃO
+      // auditada (ordem do dono, 2026-08-11, falso positivo real ao vivo: a
+      // regex de payments casou a prosa do plano MESTRE — produto tributário
+      // fala de honorários/cobrança — e elevou uma repaginação puramente
+      // visual de LOW a HIGH; doutrina F6.12: keyword é JULGAMENTO, não
+      // autoridade). Superfície DECLARADA pelo agente segue impondo piso nos
+      // DOIS modos (ele mesmo declarou); modo ESTRITO preserva a imposição
+      // integral por texto. As superfícies detectadas continuam anotadas no
+      // plano (riskSurfaces/riskReasons) — anotar ≠ ignorar.
+      const planLightMode = securityWaiverOptions(id.projectId).sensitiveWaiverAllowed
+      const declaredOnlyRisk = assessMissionRisk({ declaredRisk, surfaces: input.riskSurfaces })
+      const textOnlyRaise = riskAssessment.effectiveRisk !== declaredOnlyRisk.effectiveRisk
+      const risk = planLightMode ? declaredOnlyRisk.effectiveRisk : riskAssessment.effectiveRisk
       const sizingProblems = validatePlanSizing({
         mode: executionMode,
         expectedCards: input.expectedCards,
@@ -1245,6 +1288,15 @@ export function buildBoardApi(
       if (!planningEvidence.accept()) {
         return 'plano recusado: o receipt expirou antes da confirmação do artefato; reabra o orquestrador'
       }
+      if (planLightMode && textOnlyRaise) {
+        blackbox.record({
+          cat: 'task',
+          event: 'plan-risk-raise-annotated',
+          actor: 'harness',
+          ids: { projectId: id.projectId, missionId: id.missionId, taskId: planTask.id },
+          reason: `sinais de texto sugeriam ${riskAssessment.effectiveRisk} (declarado ${declaredRisk}); modo leve manteve o declarado e anotou: ${riskAssessment.reasons.map((r) => r.surface).join(', ')}`
+        })
+      }
       if (currentRunningPlan && planTask.id === currentRunningPlan.id) {
         blackbox.record({
           cat: 'task',
@@ -1281,8 +1333,12 @@ export function buildBoardApi(
           ? ` — OBS: lane(s) com política do departamento foram TRAVADAS nela (regra do usuário; sua sugestão fora da política foi corrigida): ${adjusted.join(' · ')}.`
           : ' —'
       }${
-        riskAssessment.raised
+        !planLightMode && riskAssessment.raised
           ? ` O backend elevou o risco de ${declaredRisk} para ${risk} por: ${riskAssessment.reasons.map((reason) => reason.reason).join('; ')}.`
+          : ''
+      }${
+        planLightMode && textOnlyRaise
+          ? ` Sinais de risco no TEXTO foram ANOTADOS no plano SEM elevar o risco (modo leve): ${riskAssessment.reasons.map((reason) => reason.surface).join(', ')} — se algum for real NESTE trabalho, redeclare risk/riskSurfaces você mesmo.`
           : ''
       }${
         plan.manualSecurityValidationRequired
@@ -1438,7 +1494,15 @@ export function buildBoardApi(
               ...adjustmentPatch,
               requestedAt: new Date().toISOString()
             },
-            ...(normalizeRiskLevel(planTask.plan?.risk) === 'high'
+            // AJUSTE RÁPIDO (ordem do dono 2026-08-12): adjustment É a rodada
+            // quick — protocolo cortado (checks/evidência do delta, review
+            // olhada-relâmpago, sem QA), skills/qualidade intactas.
+            quickRound: true,
+            // Re-imposição de gates por risco alto SÓ em modo estrito (a
+            // guarda de julgamento em modo leve atropelava a escolha
+            // explícita — caso real M09: recolocou o QA que o dono mandou
+            // tirar, uma linha antes do ownerOrder dele chegar).
+            ...(normalizeRiskLevel(planTask.plan?.risk) === 'high' && !adjustmentLightMode
               ? { gates: ['review', 'qa'] }
               : {})
           }
@@ -1455,9 +1519,14 @@ export function buildBoardApi(
             projectId: id.projectId,
             missionId: id.missionId,
             kind: 'info',
-            text: `ajuste pequeno reabriu o MESMO card "${task.title}" em fluxo FAST — sem novo plano ou card`,
+            text: `ajuste pequeno reabriu o MESMO card "${task.title}" em rodada QUICK — protocolo cortado (delta + olhada-relâmpago), sem novo plano ou card`,
             actor: 'maestro'
           })
+        } else if (!phase && task.quickRound) {
+          // Dispatch CHEIO zera o carimbo quick da rodada anterior — cada
+          // run_task decide o perfil da SUA rodada.
+          const refreshed = tasks.update(taskId, { quickRound: false })
+          if (refreshed) task = refreshed
         }
       if (!task) return 'o card não está mais disponível; nada foi iniciado'
       const taskIdentity = {
@@ -1514,7 +1583,7 @@ export function buildBoardApi(
       } else if (task.status !== 'backlog') {
         return `o card está em "${task.status}" — só card em backlog pode ser disparado (para REABRIR um gate morto use phase: "review"/"qa")`
       }
-      const plan = currentPlanOf(id.projectId, id.missionId)
+      let plan = currentPlanOf(id.projectId, id.missionId)
       if (!plan || plan.status !== 'execucao')
         return plan && plan.status === 'backlog'
           ? 'o plano ainda não foi aprovado (ou está pausado) — aguarde o evento "[synkora] PLANO APROVADO"'
@@ -1540,8 +1609,27 @@ export function buildBoardApi(
         if (isWorktreeClean(missionCwd) !== true) {
           return 'execução bloqueada: a branch da missão tem alterações feitas fora de um card. O orquestrador não é desenvolvedor; preserve o conteúdo, encaminhe o ajuste a um card FAST e só continue depois de restaurar uma fotografia limpa.'
         }
-        if (expectedHead && currentHead !== expectedHead) {
-          return `execução bloqueada: a branch da missão avançou fora da cadeia de cards (${expectedHead.slice(0, 12)} → ${currentHead?.slice(0, 12) ?? 'desconhecido'}). Nada novo será executado até o orquestrador decidir como preservar e enquadrar essa alteração em um card.`
+        if (expectedHead && currentHead && currentHead !== expectedHead) {
+          // Mesmo rebaixamento do conclude_plan (doutrina 2026-08-10 aplicada
+          // aqui em 2026-08-11 — caso real M09: merge manual AUDITADO como
+          // idêntico ao commit aprovado travava o 3º card do plano e o único
+          // remédio era reiniciar o app, que nem resolvia): a cadeia-de-cards
+          // é guarda de JULGAMENTO e o orquestrador é dono da branch da
+          // missão. A árvore LIMPA (guard acima) é o que fica de
+          // verificabilidade; as cercas reais seguem sendo os gates do card
+          // que vai rodar e a verificação conjunta no fim. Aceita, audita e
+          // re-carimba — beco sem rota de saída é bug, não rigor (F6.8b).
+          blackbox.record({
+            cat: 'task',
+            event: 'plan-execution-head-restamped',
+            actor: id.role,
+            ids: { projectId: id.projectId, missionId: id.missionId, taskId: plan.id },
+            reason: `branch avançou fora da cadeia de cards (${expectedHead.slice(0, 12)} → ${currentHead.slice(0, 12)}) — aceito por autoridade do orquestrador no run_task; gates do card + verificação conjunta seguem como cerca`
+          })
+          if (plan.plan) {
+            tasks.update(plan.id, { plan: { ...plan.plan, executionHead: currentHead } })
+            plan = tasks.get(plan.id) ?? plan
+          }
         }
         if (!expectedHead && currentHead && plan.plan) {
           tasks.update(plan.id, {
@@ -1831,6 +1919,9 @@ export function buildBoardApi(
       for (const role of ['dev', 'review', 'qa'] as const)
         ctx.phase.terminateTaskPhasePane(id.projectId, taskId, role)
       phaseWatches.delete(taskId)
+      // Fecho do ciclo de vida do card também aqui (caminho próprio, não
+      // passa pelo finalizeTask): a reserva CDP por card morre com o card.
+      releaseQaCdpPort(taskId)
       const verification: NonNullable<Task['verification']> = {
         ...(task.verification ?? { contractVersion: 1 as const }),
         activeGate: undefined
@@ -1880,6 +1971,66 @@ export function buildBoardApi(
           ? ` ATENÇÃO: complete_task NÃO mescla a branch task/${taskId.slice(0, 8)} na branch da missão — se a entrega ainda vive só lá, faça você mesmo o merge --no-ff (sua branch, sua autoridade) antes do conclude_plan.`
           : ''
       }`
+    },
+    // AUTORIDADE PLENA SOBRE OS PANES (ordem do dono 2026-08-12, caso real
+    // M09: "pode fechar o pane dele" e o orquestrador não tinha ferramenta —
+    // "ele tem que poder fazer o que quiser"): o gêmeo do complete_task.
+    // Parar NUNCA fabrica veredito: gate parado encerra a rodada sem veredito
+    // e run_task {phase} reabre; o trabalho do dev fica intacto (worktree,
+    // commits, conversa preservada para resume).
+    stopTask: (id, taskId, reason) => {
+      if (id.role !== 'maestro')
+        return 'só o Maestro/orquestrador para um card por autoridade'
+      const task = tasks.get(taskId)
+      if (!task || task.projectId !== id.projectId) return 'card não encontrado'
+      if (id.missionId && task.missionId !== id.missionId)
+        return 'card não pertence à sua missão'
+      if (!id.missionId && task.missionId)
+        return 'card de missão se para pelo orquestrador dela'
+      if (task.kind === 'plan')
+        return 'o card de PLANO se pausa pelo dono no board (⏸) — não por aqui'
+      if (task.status === 'done') return 'card já está concluído — nada rodando para parar'
+      if (task.status !== 'execucao' && task.status !== 'qa')
+        return 'card não tem fase rodando — já está parado no backlog'
+      const why = (reason ?? '').trim()
+      if (why.length < 10)
+        return 'reason obrigatório: diga em 1-2 frases POR QUE está parando — vai auditado verbatim para a caixa-preta'
+      if (ctx.phaseTransitions.isLocked(taskId))
+        return 'há um veredito de fase fechando neste card AGORA — aguarde alguns segundos e chame de novo'
+      const stoppedPhase = task.activePhase ?? 'dev'
+      ctx.phase.closeLiveGateWait(id.projectId, taskId, 'card parado por autoridade do orquestrador')
+      for (const role of ['dev', 'review', 'qa'] as const)
+        ctx.phase.terminateTaskPhasePane(id.projectId, taskId, role)
+      phaseWatches.delete(taskId)
+      tasks.update(taskId, {
+        status: 'backlog',
+        activePhase: stoppedPhase,
+        phaseState: 'interrupted',
+        phaseStartedAt: undefined,
+        // feedback TEM UM DONO (F6.8b): a nota operacional do stop NUNCA
+        // sobrescreve uma lista de reprovação pendente.
+        feedback: task.feedback ?? `parado pelo orquestrador: ${why.slice(0, 300)}`
+      } as Partial<Task>)
+      blackbox.record({
+        cat: 'task',
+        event: 'task-stopped-by-authority',
+        actor: id.role,
+        ids: { projectId: id.projectId, missionId: id.missionId, taskId, phase: stoppedPhase },
+        reason: why.slice(0, 400)
+      })
+      hub.publish({
+        projectId: id.projectId,
+        missionId: task.missionId,
+        kind: 'task-updated',
+        text: `orquestrador PAROU "${task.title}" (fase ${stoppedPhase}) por autoridade própria: ${why.slice(0, 140)}`,
+        actor: id.role,
+        quiet: true
+      })
+      ctx.pushAll('tasks:changed', id.projectId)
+      syncBoard(id.projectId)
+      return `card "${task.title}" PARADO (fase ${stoppedPhase} encerrada, motivo auditado): pane fechado, trabalho preservado (worktree/commits/conversa intactos), card de volta ao backlog como interrompido — sem contar ciclo. run_task {id: "${taskId}"} retoma quando você decidir${
+        stoppedPhase !== 'dev' ? `; a rodada do gate morreu SEM veredito — run_task {id, phase: "${stoppedPhase}"} reabre só o gate` : ''
+      }.`
     },
     deleteTask: (id, taskId) => {
       if (id.role !== 'maestro' || !id.missionId) return 'só o orquestrador remove cards'

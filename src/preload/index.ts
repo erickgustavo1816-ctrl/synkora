@@ -541,6 +541,15 @@ export interface PanesHostState {
   remountNonce: Record<string, number>
 }
 
+/** Tooltip do HOST roteado para DENTRO da view de panes (2026-08-11): a view
+ *  compõe POR CIMA do DOM do host, então tooltip do host que cruza o rect dela
+ *  seria clipado — a view (mesmo bundle, mesma .app-tip) desenha por ele.
+ *  anchor em coords da página do HOST; o main translada para a view. */
+export interface PanesViewTip {
+  text: string
+  anchor: { left: number; top: number; width: number; height: number }
+}
+
 /** Preferências globais editáveis; não inclui credenciais. */
 export interface SynkoraPreferences {
   codeIntelligenceMode: 'automatic' | 'off'
@@ -1087,6 +1096,20 @@ const api = {
       const listener = (_e: IpcRendererEvent, text: string): void => cb(text)
       ipcRenderer.on('panes-view:voice-paste', listener)
       return () => ipcRenderer.removeListener('panes-view:voice-paste', listener)
+    },
+    // ——— 2026-08-11: overlay do host × view que compõe por cima ———
+    /** HOST: fotografa a view VISÍVEL (PNG dataURL) antes de escondê-la sob um
+     *  overlay do host — o congelado tapa o buraco. null = sem view/falha. */
+    capture: (): Promise<{ dataUrl: string } | null> =>
+      ipcRenderer.invoke('panes-view:capture'),
+    /** HOST: tooltip que cruzaria o rect da view — a view desenha por ele. */
+    tipShow: (tip: PanesViewTip): void => ipcRenderer.send('panes-view:tip-show', tip),
+    tipHide: (): void => ipcRenderer.send('panes-view:tip-hide'),
+    /** VIEW: tooltip roteado do host (null = esconder). */
+    onTip: (cb: (tip: PanesViewTip | null) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, tip: PanesViewTip | null): void => cb(tip)
+      ipcRenderer.on('panes-view:tip', listener)
+      return () => ipcRenderer.removeListener('panes-view:tip', listener)
     }
   },
   maestro: {

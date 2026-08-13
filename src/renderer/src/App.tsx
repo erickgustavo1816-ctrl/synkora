@@ -1,5 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import {
+  panesViewVisibleRect,
   useStore,
   type PaneActivity,
   type PaneKind,
@@ -197,18 +198,54 @@ export default function App(): React.JSX.Element {
     s.openProjectId ? (s.panesAnchorByProject[s.openProjectId] ?? null) : null
   )
   const hostOverlayCount = useStore((s) => s.hostOverlayCount)
+  // Geração do congelado: incrementa a CADA rodada do efeito — captura que
+  // resolve depois de uma troca de estado (popover fechou rápido, saiu da aba)
+  // é descartada em vez de esconder/pintar sobre o estado novo.
+  const panesFreezeSeqRef = useRef(0)
   useEffect(() => {
     if (!bridgeOk) return
-    const visible =
-      appPage === 'workspace' &&
-      openProjectId !== null &&
-      panesTab === 'panes' &&
-      hostOverlayCount === 0 &&
-      panesAnchor !== null
-    window.synkora.panesView.layout({
-      visible,
-      bounds: panesAnchor ?? { x: 0, y: 0, width: 0, height: 0 }
-    })
+    const st = useStore.getState()
+    // panesViewVisibleRect é a fonte única da composição (mesmos campos que as
+    // deps abaixo — o efeito re-roda quando qualquer um muda).
+    const visibleRect = panesViewVisibleRect(st)
+    const wouldBeVisible = panesViewVisibleRect(st, true)
+    const seq = ++panesFreezeSeqRef.current
+    const bounds = panesAnchor ?? { x: 0, y: 0, width: 0, height: 0 }
+    if (visibleRect) {
+      window.synkora.panesView.layout({ visible: true, bounds: visibleRect })
+      // O congelado sai DEPOIS de a view voltar a compor (ela cobre o img —
+      // remover junto deixava 1-2 frames de placeholder vazio na volta).
+      if (st.panesFreeze) {
+        const timer = window.setTimeout(() => {
+          if (panesFreezeSeqRef.current === seq) useStore.getState().setPanesFreeze(null)
+        }, 200)
+        return () => window.clearTimeout(timer)
+      }
+      return
+    }
+    // Escondendo SÓ por overlay do host (2026-08-11): a view compõe por cima
+    // do DOM, então o popover exige escondê-la — mas sumir seco deixava a área
+    // dos panes como um buraco vazio atrás do popover. Congela a última imagem
+    // ANTES do hide; captura falha (null/reject) = esconde sem congelado, o
+    // comportamento antigo.
+    if (wouldBeVisible && window.synkora.panesView.capture) {
+      let cancelled = false
+      void window.synkora.panesView
+        .capture()
+        .catch(() => null)
+        .then((snap) => {
+          if (cancelled || panesFreezeSeqRef.current !== seq) return
+          if (snap && openProjectId) {
+            useStore.getState().setPanesFreeze({ projectId: openProjectId, dataUrl: snap.dataUrl })
+          }
+          window.synkora.panesView.layout({ visible: false, bounds })
+        })
+      return () => {
+        cancelled = true
+      }
+    }
+    useStore.getState().setPanesFreeze(null)
+    window.synkora.panesView.layout({ visible: false, bounds })
   }, [bridgeOk, appPage, openProjectId, panesTab, hostOverlayCount, panesAnchor])
 
   // Recorte de estado de shell que a view precisa (cacheado no main — o

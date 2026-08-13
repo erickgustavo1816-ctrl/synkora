@@ -600,29 +600,46 @@ function TaskModal({
   const latestSkillRunByPhase = new Map<string, (typeof skillRuns)[number]>()
   for (const run of skillRuns) latestSkillRunByPhase.set(run.phase, run)
   const visibleSkillRuns = [...latestSkillRunByPhase.values()]
-  const skillUsageLine = visibleSkillRuns.some((run) => run.skills.length)
+  const effectivePlanLine = visibleSkillRuns.some(
+    (run) => run.skills.length || (run.agents?.length ?? 0) > 0
+  )
     ? visibleSkillRuns
         .map(
-          (run) =>
-            `${run.phase.toUpperCase()} · ${run.skills
-              .map((skill) => `${skill.id} (${skill.operation} · ${skillStatusLabel[skill.status]})`)
-              .join(' · ')}`
+          (run) => {
+            const entries = [
+              ...run.skills.map(
+                (skill) => `${skill.id} (${skill.operation} · ${skillStatusLabel[skill.status]})`
+              ),
+              ...(run.agents ?? []).map(
+                (agent) => `⬡ ${agent.id} (${agent.status === 'completed' ? 'concluído' : 'planejado'})`
+              )
+            ]
+            return entries.length ? `${run.phase.toUpperCase()} · ${entries.join(' · ')}` : ''
+          }
         )
+        .filter(Boolean)
         .join(' | ')
     : [
         ...(task.skills ?? []).map((skill) => `${skill} (carimbada)`),
         ...(task.agents ?? []).map((agent) => `⬡ ${agent}`)
       ].join(' · ')
+  const skillUsageLine = [
+    effectivePlanLine,
+    ...(task.delegation === 'parallel' ? ['⇉ ajudante obrigatório'] : [])
+  ].filter(Boolean).join(' | ')
   const skillUsageTip = task.skillUsage
     ? `Rastreio por rodada: ${skillRuns
         .map(
           (run) =>
-            `${run.phase.toUpperCase()} ${run.runStatus ?? 'legado'} — ${run.skills
-              .map(
+            `${run.phase.toUpperCase()} ${run.runStatus ?? 'legado'} — ${[
+              ...run.skills.map(
                 (skill) =>
                   `${skill.id}@${skill.version?.slice(0, 10) ?? 'legado'} (${skillStatusLabel[skill.status]})`
+              ),
+              ...(run.agents ?? []).map(
+                (agent) => `persona ${agent.id} (${agent.status === 'completed' ? 'concluída' : 'planejada'})`
               )
-              .join(', ')}`
+            ].join(', ')}`
         )
         .join(' | ')}. A qualidade é julgada separadamente pelo QA.`
     : 'Preferências carimbadas no card; a seleção efetiva aparece quando a fase começa.'
@@ -1150,15 +1167,13 @@ function DeptStats({
         </div>
       </div>
       <div className="dept-skills">
-        <span className="dept-skills-label">skills do departamento:</span>
+        <span className="dept-skills-label">contratos automáticos:</span>
         {d.skills.map((s) => (
           <span key={s} className="skill-chip">
             /{s}
           </span>
         ))}
-        <span className="dept-skills-note">
-          política de modelos e skills configuram-se na aba ✦ geral
-        </span>
+        <span className="dept-skills-note">{d.skillFlow}</span>
       </div>
     </div>
   )
@@ -1429,6 +1444,18 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       if (pid === projectId && useStore.getState().openProjectId === projectId)
         void loadTasks(projectId)
     })
+  }, [projectId, loadTasks])
+
+  // RECONCILIADOR DO BOARD (caso real 2026-08-12: o merge concluiu o card às
+  // 18:50 e o board seguiu desenhando "em execução" — um tasks:changed se
+  // perdeu no caminho; princípio F6.10: nenhum passo depende de entrega
+  // única). Board ATIVO re-busca as tasks a cada 30s — push perdido custa
+  // segundos, nunca uma tela mentindo até o próximo evento.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (useStore.getState().openProjectId === projectId) void loadTasks(projectId)
+    }, 30_000)
+    return () => window.clearInterval(timer)
   }, [projectId, loadTasks])
 
   const maestroStateLoaded = useStore((s) => s.maestroStateLoaded)

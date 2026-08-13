@@ -322,22 +322,18 @@ export default function TerminalPane({
       // deixar passar faria o TUI receber lixo. O listener global vive no
       // PanesView, em fase de captura — aqui só é preciso não repassar.
       if (ev.ctrlKey && ev.altKey && ev.type === 'keydown') return false
-      // Ctrl+A = SELECIONAR TUDO, como em qualquer app (pedido do dono,
-      // 2026-08-10: "às vezes quero apagar, mas às vezes quero copiar" — o
-      // apagar destrutivo no atalho universal de seleção comia texto). A
-      // seleção do xterm é visual; Ctrl+C em seguida copia (caminho abaixo).
-      if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'a' && kind !== 'shell') {
-        if (ev.type === 'keydown') term.selectAll()
-        return false
-      }
-      // Ctrl+Shift+A = "selecionar tudo e APAGAR" o INPUT do TUI (o antigo
-      // Ctrl+A). A seleção do xterm é visual e o editor do CLI não a conhece
-      // — o equivalente real é limpar o input inteiro. Sequência validada em
-      // sonda de PTY real (claude 2.1.216 e codex): por linha, Ctrl+K (mata
-      // após o cursor) + Ctrl+U (mata antes) + Backspace (junta com a linha
-      // de cima) — ^U sozinho só limpa a LINHA ATUAL em multilinha, e ^C
-      // interromperia resposta em andamento. FATIADO a 20ms: rajada única
-      // cai na detecção de paste do editor e os controles são filtrados.
+      // Ctrl+A vai CRU ao TUI (decisão do dono, 2026-08-11: o selectAll do
+      // buffer inteiro "seleciona TUDO e não só o que eu escrevi" — removido;
+      // selecionar só o input é impossível de fora, o xterm não conhece a
+      // região do composer).
+      // Ctrl+Shift+A = apagar o INPUT do TUI. A seleção do xterm é visual e
+      // o editor do CLI não a conhece — o equivalente real é limpar o input
+      // inteiro. Sequência validada em sonda de PTY real (claude 2.1.216 e
+      // codex): por linha, Ctrl+K (mata após o cursor) + Ctrl+U (mata antes)
+      // + Backspace (junta com a linha de cima) — ^U sozinho só limpa a
+      // LINHA ATUAL em multilinha, e ^C interromperia resposta em andamento.
+      // FATIADO a 20ms: rajada única cai na detecção de paste do editor e os
+      // controles são filtrados.
       if (ev.ctrlKey && ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'a' && kind !== 'shell') {
         if (ev.type === 'keydown') {
           for (let i = 0; i < 40; i++) {

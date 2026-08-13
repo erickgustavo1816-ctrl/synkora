@@ -98,6 +98,8 @@ export interface TaskSizingInput {
   skills?: string[]
   agents?: string[]
   quests?: string[]
+  /** Função do card — test card (dept qa) é isento do piso review+QA. */
+  department?: string
 }
 
 export const EXECUTION_MODE_LABEL: Record<MissionExecutionMode, string> = {
@@ -118,6 +120,14 @@ export function normalizeDelegationMode(
   return value === 'none' || value === 'parallel' || value === 'optional'
     ? value
     : 'optional'
+}
+
+/** Cards novos do Maestro não podem reabrir a decisão no executor. O modo
+ * optional permanece no tipo somente para carregar cards legados. */
+export function newTaskDelegationProblem(value: unknown): string | undefined {
+  return value === 'none' || value === 'parallel'
+    ? undefined
+    : 'todo card novo precisa declarar delegation="none" ou delegation="parallel"; optional é apenas legado'
 }
 
 export function normalizeRiskLevel(value: unknown): MissionRiskLevel {
@@ -797,6 +807,10 @@ export function validateTaskSizing(
       gateFloor &&
       item.deliverable === 'code' &&
       risk === 'high' &&
+      // CARD DE QA NÃO TEM GATE DE QA (ordem do dono, 2026-08-12): o piso de
+      // risco não se aplica a card cujo entregável É teste — gate de QA sobre
+      // a suíte é circular; a suíte verde roda no harness.
+      item.department !== 'qa' &&
       item.gates !== undefined &&
       (!item.gates.includes('review') || !item.gates.includes('qa'))
     )
@@ -809,9 +823,9 @@ export function validateTaskSizing(
       problems.push(`${label}: cada card aceita no máximo um subagente especialista explícito`)
     if (
       (item.agents?.length ?? 0) > 0 &&
-      normalizeDelegationMode(item.delegation, mode) === 'none'
+      normalizeDelegationMode(item.delegation, mode) !== 'parallel'
     ) {
-      problems.push(`${label}: subagente selecionado exige delegação optional ou parallel`)
+      problems.push(`${label}: subagente especializado selecionado exige paralelismo planejado`)
     }
     if (mode !== 'fast') continue
     if (item.effort === 'pesada')
@@ -835,15 +849,26 @@ export function gatesForTask(
   risk: MissionRiskLevel,
   deliverable: TaskDeliverableKind,
   gates: OrchestratorTaskGate[] | undefined,
-  uiWork = false
+  uiWork = false,
+  department?: string
 ): OrchestratorTaskGate[] | undefined {
+  // CARD DE QA NÃO TEM GATE DE QA (ordem do dono, 2026-08-12: "QA não tem
+  // necessidade de QA, apenas de code review"): o entregável do test card É a
+  // suíte — QA re-testando os testes é circular (o harness roda a suíte como
+  // piso de regressão) e o que precisa de olho é a qualidade das specs contra
+  // os critérios de aceite. Vale inclusive sob risco alto; escolha EXPLÍCITA
+  // do orquestrador continua valendo.
+  if (department === 'qa' && deliverable !== 'non_code') {
+    return gates !== undefined ? [...gates] : ['review']
+  }
   if (deliverable === 'non_code') return risk === 'high' ? ['review'] : []
   if (risk === 'high') return ['review', 'qa']
-  // Código que muda uma superfície visível sempre chega a um gate capaz de
-  // renderizar. Review pode ser reduzido pela política; QA visual, nunca.
-  if (uiWork && gates !== undefined) {
-    return gates.includes('review') ? ['review', 'qa'] : ['qa']
-  }
+  // OS GATES EXPLÍCITOS SÃO O CONTRATO (ordem do dono, 2026-08-12 — "muito
+  // mente fechada: pedi só reviewer e ele não consegue criar o fluxo sem
+  // QA"): a re-imposição de QA em card de UI morreu — escolha explícita do
+  // orquestrador vale literalmente; o DEFAULT de card de UI sem gates segue
+  // review+qa. Guarda de julgamento anota (advance audita
+  // ui-card-without-qa-gate), nunca re-impõe.
   if (gates !== undefined && gates.length > 0) return [...gates]
   // No modo rápido também mantemos uma revisão e um QA direcionados. O ganho
   // vem de zero ajudantes/skills amplas e escopo focado, não de retirar rede.
@@ -878,17 +903,17 @@ export function delegationDirective(
   delegation: TaskDelegationMode,
   questCount: number
 ): string {
-  // Doutrina 2026-08-10 ("guardas não capam julgamento"): delegar é decisão
-  // do DEV — o dono prefere VELOCIDADE, e esperar aprovação para abrir
-  // ajudante era um dos freios que faziam uma tela de 20min levar 50.
+  // O orquestrador é a autoridade de necessidade: cards novos chegam como
+  // none ou parallel. `optional` fica apenas como semântica de compatibilidade
+  // para cards persistidos antes deste contrato.
   if (mode === 'fast') {
     return 'EXECUTE DIRETAMENTE: card rápido não abre ajudantes. Checklist não significa paralelismo; conclua os itens no mesmo contexto.'
   }
   if (delegation === 'none') {
-    return 'Este card foi planejado SEM ajudantes. Se durante o trabalho você identificar 2+ blocos genuinamente independentes em que paralelizar economizaria tempo real, avise o orquestrador via notify_maestro — ele libera na hora com update_task {delegation: "optional"} (vale mesmo com o card em andamento) e você abre os ajudantes. Sem blocos independentes, siga direto.'
+    return 'Este card foi planejado SEM ajudantes. Se durante o trabalho surgir evidência nova de 2+ blocos longos e genuinamente independentes, avise o orquestrador via notify_maestro: ELE reclassifica o card para delegation="parallel" antes de qualquer ajudante nascer. Sem essa decisão, siga direto.'
   }
   if (delegation === 'optional' || questCount < 2) {
-    return 'AJUDANTES — a decisão é sua, o CRITÉRIO é rígido (regra do dono, 2026-08-10): delegue SOMENTE quando o trabalho à frente é LONGO de verdade (ex.: uma tela inteira com seções independentes que levaria ~30min+ sozinho) e o paralelo corta esse tempo de forma clara. Ajudante NUNCA rebaixa qualidade: MESMO modelo e MESMO effort que os seus (dev Opus max abre ajudante Opus max) e repasse via delegate.skills as skills que você usaria no bloco delegado. Abra os blocos numa ÚNICA chamada delegate com helpers[] (até o teto do modo), sem pedir licença — e VOCÊ inspeciona, integra e ASSINA o resultado: a qualidade final é sua, não do ajudante. Trabalho curto ou sequencial se faz direto; nunca delegue duplicata de review/QA nem item mecânico avulso.'
+    return 'COMPATIBILIDADE LEGADA — este card antigo ainda usa delegation="optional". A decisão operacional permanece com o DEV somente nesta rodada legada: delegue apenas trabalho longo e independente, com o MESMO modelo e MESMO effort, e assine a integração. Cards novos nunca usam optional; o orquestrador escolhe none ou parallel antes do spawn.'
   }
-  return 'PARALELISMO PLANEJADO: o card nasceu para paralelizar blocos LONGOS e independentes — abra-os DIRETO numa chamada delegate com helpers[] (até o teto do modo), cada ajudante com o MESMO modelo e MESMO effort que os seus e as skills do bloco (delegate.skills). Supervisione pelos reports no correio, inspecione, integre e ASSINE. Nunca um ajudante por item mecânico, nunca duplicar review/QA.'
+  return 'PARALELISMO PLANEJADO PELO ORQUESTRADOR: o card nasceu para paralelizar blocos LONGOS e independentes. O ACTIVE SKILL PLAN traz, quando houver aderência forte, exatamente UMA persona especializada roteada; abra DIRETO via delegate sem inventar outra persona e abra os demais blocos como ajudantes genéricos numa chamada helpers[] (até o teto do modo). O backend recusa done até ao menos um ajudante planejado concluir — e, se houver persona selecionada, ela também precisa concluir. Supervisione, inspecione, integre e ASSINE; nunca duplique review/QA.'
 }

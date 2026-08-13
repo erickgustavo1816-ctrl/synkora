@@ -1,4 +1,7 @@
 import type { SkillDef } from './skillsLibrary'
+import { BACKEND_DEVOPS_CYBER_BUNDLED_SKILLS } from './skillsBackendCyberBundled.js'
+import { KNOWLEDGE_BUNDLED_SKILLS } from './skillsKnowledgeBundled.js'
+import { QA_BUNDLED_SKILLS } from './skillsQaBundled.js'
 
 // App-owned UI contract. Keep the entry point small: detailed acceptance
 // guidance lives in references and is loaded only when the active work needs it.
@@ -462,6 +465,535 @@ hypothesis until running or source evidence confirms it; a clean tool result is
 never a visual verdict.
 `
 
+const DESIGN_SYSTEM_STANDARD_BODY = `---
+name: synkora-design-system-standard
+description: Native Synkora method for creating, evolving, consolidating, migrating, documenting, or governing a complete product design system. Use for system-level tokens, component libraries, patterns, living documentation, and governance. Do not use merely to consume an existing design system while building one screen or component; that remains an Impeccable task.
+---
+
+# Synkora design-system standard
+
+Build a product-owned system whose rules, implementation, specimen, and
+governance agree. This is the one visual creation method for this phase. Do not
+invoke Impeccable, another design-system workflow, or a second aesthetic method.
+The briefing and existing product truth remain authoritative.
+
+## Required outcome
+
+A complete system has five connected layers:
+
+1. foundations and semantic tokens;
+2. elements and reusable component families;
+3. product patterns and templates;
+4. living documentation and a rendered specimen;
+5. ownership, contribution, versioning, migration, and deprecation rules.
+
+Store durable outputs in tracked product sources. A screenshot, moodboard,
+token list, component gallery, or DESIGN.md alone is not a design system.
+
+## Method
+
+1. Inventory existing product language, duplicated values, component families,
+   states, content shapes, breakpoints, accessibility constraints, and product
+   patterns before defining a new taxonomy.
+2. Write a short design thesis: product character, hierarchy, density,
+   interaction tone, and the few deliberate constraints that distinguish this
+   system. Avoid arbitrary style adjectives without observable rules.
+3. Define primitive, semantic, and component tokens; implement components from
+   semantic contracts rather than copied literals.
+4. Specify anatomy, variants, states, content behavior, responsive behavior,
+   semantics, keyboard behavior, and failure/loading/empty behavior for each
+   affected family. Compose representative product patterns from those parts.
+5. Build living documentation and a real rendered specimen. Include realistic
+   content and working controls; prove both compact and wide behavior.
+6. Fill a tracked manifest using
+   [the template](assets/design-system-manifest.template.json), run
+   [the validator](scripts/validate-design-system.mjs), and resolve its factual
+   gaps. The validator checks structure and traceability, never aesthetic taste.
+7. Record ownership, contribution, versioning, migration, and deprecation so
+   the system can survive the current task.
+
+## Progressive references
+
+- [Foundations and tokens](references/foundations.md)
+- [Components and patterns](references/components-patterns.md)
+- [Living documentation and specimen](references/showcase.md)
+- [Governance and adoption](references/governance.md)
+- [Completion evidence](references/evidence.md)
+
+Report the tracked sources, manifest, rendered surfaces, covered states and
+viewports, validator result, and any intentionally deferred family. Never claim
+completeness from generated files alone; observable product coverage decides.
+`
+
+const DESIGN_SYSTEM_FOUNDATIONS_REFERENCE = `# Foundations and tokens
+
+## Begin with product truth
+
+Extract the existing visual language before inventing one. Inspect real product
+surfaces, brand assets, themes, data density, content range, platform limits,
+accessibility targets, and existing reusable code. Separate intentional rules
+from accidental repetition.
+
+Write a design thesis short enough to make choices: product character,
+information hierarchy, density, geometry, color behavior, motion tone, and the
+relationship between brand expression and operational clarity. Every adjective
+needs an observable consequence.
+
+## Token architecture
+
+Use three levels when the product needs them:
+
+- primitives describe raw scales and ramps;
+- semantic tokens describe purpose, such as surface, text, border, action,
+  feedback, focus, and data series;
+- component tokens exist only for a stable component-specific contract.
+
+Components consume semantic or component tokens, never arbitrary primitive
+values. Document aliases and fallbacks. Preserve one source of truth across CSS,
+code, theme files, and documentation; generated outputs identify their source.
+
+Cover the applicable foundations:
+
+- color ramps, surfaces, text, borders, actions, feedback, focus, overlays, and
+  data visualization, including theme and contrast behavior;
+- typography families, roles, sizes, weights, line heights, tracking, measure,
+  numeric alignment, and responsive scaling;
+- spacing, sizing, grid, containers, breakpoints, and density modes;
+- radius, border, elevation, opacity, layering, and icon geometry;
+- motion duration, easing, reduced-motion behavior, and state transitions;
+- content conventions, locale expansion, numbers, dates, currency, and labels.
+
+Name tokens by role rather than current appearance. A rename or theme should not
+require editing every component. Do not create a scale because a template says
+so; every scale needs consumers and every hardcoded exception needs a reason.
+
+## Verification
+
+Check contrast in every supported theme and state, keyboard focus against each
+surface, text and zoom expansion, forced colors where applicable, and compact
+and wide layouts. Compare token source, compiled output, documentation, and the
+rendered specimen for drift.
+`
+
+const DESIGN_SYSTEM_COMPONENTS_REFERENCE = `# Components and product patterns
+
+## Component contract
+
+For each affected family, document and implement:
+
+- purpose and non-goals;
+- anatomy and owned regions;
+- variants, sizes, density, and composition boundaries;
+- default, hover, active, selected, focus-visible, disabled, read-only, loading,
+  empty, error, success, and permission behavior where meaningful;
+- short, long, missing, localized, numeric, and asymmetric content behavior;
+- responsive geometry, wrapping, truncation, collision, scroll, and overlay
+  ownership;
+- semantic element, accessible name, role, state/value, keyboard order,
+  dismissal, focus restoration, and reduced-motion behavior;
+- API, defaults, escape hatches, examples, tests, and migration notes.
+
+Do not force every state onto every component. Mark a state not applicable with
+the reason, rather than silently omitting it. Prefer composition and explicit
+slots over boolean-prop explosions. Shared behavior belongs in primitives;
+product-specific meaning stays in patterns.
+
+## Layering
+
+Keep elements, components, and patterns distinct. Elements are small visual or
+semantic building blocks. Components own a reusable interaction contract.
+Patterns compose components into product behavior such as navigation, forms,
+search/filter/sort, authentication, onboarding, feedback, data entry, data
+review, and destructive confirmation.
+
+For data-dense products, deliberately cover representative KPI/value displays,
+charts and legends, dense tables, status/progress, cards, calendars or timelines,
+comparison, filters, empty/loading/error states, and responsive reductions where
+the domain uses them. Never add those families merely to fill a checklist.
+
+## Consistency tests
+
+Compare equivalent controls side by side. Verify shared height, padding,
+baseline, icon geometry, focus treatment, state language, and content policy.
+Then place them in real product patterns: isolated component beauty does not
+prove compositional coherence.
+`
+
+const DESIGN_SYSTEM_SHOWCASE_REFERENCE = `# Living documentation and specimen
+
+Documentation is a product surface, not a screenshot archive. It must make the
+system understandable, inspectable, and usable without reading its source.
+
+Include:
+
+- the design thesis and token hierarchy with semantic names and theme behavior;
+- component anatomy, API, variants, states, accessibility, content rules, and
+  do/don't examples;
+- representative patterns built from the real components;
+- working theme, density, viewport, and state controls when those capabilities
+  exist;
+- copyable implementation examples tied to the actual source;
+- ownership, contribution, versioning, migration, and deprecation guidance;
+- a change record or decision log for intentional exceptions.
+
+Use realistic product content. Exercise long labels, empty data, errors,
+permissions, loading, localization, large numbers, dates, and dense information
+where applicable. A specimen control must actually change the rendered state;
+fake toggles and decorative examples are failures.
+
+Inspect at representative compact and wide sizes, adding an intermediate size
+only where the layout changes. Test the documentation itself for navigation,
+keyboard access, focus, contrast, overflow, deep links, and readable code.
+
+The rendered specimen and product implementation must import the same system
+sources. If documentation hand-copies values or markup, label it as illustrative
+and add a drift check or replace it with a live example.
+`
+
+const DESIGN_SYSTEM_GOVERNANCE_REFERENCE = `# Governance and adoption
+
+A system without ownership becomes a one-time gallery. Define the smallest
+governance model the team can actually operate.
+
+Record:
+
+- accountable owner and review path;
+- contribution flow and acceptance criteria;
+- source-of-truth locations and generated artifacts;
+- versioning policy and compatibility promise;
+- deprecation window, migration guidance, and removal criteria;
+- decision-log location and exception expiry;
+- release notes or change communication appropriate to the repository;
+- adoption plan for existing screens, including measurement of remaining drift.
+
+Prefer incremental adoption. Establish foundations, migrate representative
+families and patterns, then expand based on product use. Do not mass-rewrite the
+product merely to satisfy the system. A compatibility layer may be safer than a
+flag day, but it must have an owner and an exit condition.
+
+Add a new token or variant only when a real product need cannot be expressed by
+the existing contract. Review contributions for semantic reuse, accessibility,
+content behavior, responsive evidence, tests, documentation, and migration
+impact. Deprecations remain visible until consumers are migrated.
+
+Keep human approval for brand direction and meaningful breaking changes. The
+validator can prove references and coverage declarations; it cannot decide
+whether the product feels right.
+`
+
+const DESIGN_SYSTEM_EVIDENCE_REFERENCE = `# Completion evidence
+
+Treat completion as a conjunction of source integrity, rendered behavior,
+documentation, and governance.
+
+Provide traceable evidence for:
+
+1. token sources and generated/consumed outputs;
+2. component families and their applicable variant/state/content matrices;
+3. representative product patterns built from the real components;
+4. living documentation and rendered specimen routes;
+5. themes, compact/wide behavior, keyboard/focus, contrast, and realistic
+   content observations;
+6. manifest validation and existing focused mechanical checks;
+7. ownership, contribution, versioning, migration, and deprecation locations.
+
+The manifest is an index, not proof. Confirm each path exists and the runtime
+matches it. A clean validator result proves only that declared evidence is
+structured and traceable. It does not prove visual harmony, accessibility,
+correct product behavior, or adoption completeness.
+
+For an incremental evolution, report the affected families and untouched
+boundary. For a new complete system, cover every declared foundation and a
+representative pattern for every product-critical family. Name intentional
+deferrals with owner and follow-up; never hide them behind "future work".
+`
+
+const DESIGN_SYSTEM_QA_BODY = `---
+name: synkora-design-system-qa
+description: Independent read-only QA for a created or evolved product design system. Verifies source, manifest, tokens, components, patterns, living documentation, rendered specimens, accessibility, responsive behavior, and governance without inheriting the creator's method or editing the result.
+---
+
+# Synkora design-system QA
+
+Review the delivered system independently. Do not load the creator's
+design-system method, Impeccable operation, or another aesthetic workflow. Do
+not modify files. The ACTIVE SKILL PLAN and accepted product criteria are the
+only methodology and scope authority.
+
+Use the manifest as a map, never as proof. Cross-check tracked sources,
+documentation, and the running specimen. Judge system integrity separately from
+the taste of one screen.
+
+## Review order
+
+1. Confirm the declared source of truth, manifest, documentation, and specimen
+   exist and describe the same version and product language.
+2. Trace representative primitive, semantic, and component tokens from source
+   to consumers and render; look for copied literals, broken aliases, theme
+   drift, and undocumented exceptions.
+3. Inspect affected component families and product patterns across applicable
+   variants, states, content shapes, themes, and compact/wide behavior.
+4. Exercise documentation controls, navigation, keyboard/focus, overlays,
+   contrast, loading/empty/error behavior, and realistic content.
+5. Verify ownership, contribution, versioning, migration, and deprecation are
+   actionable and point to tracked sources.
+
+Read the focused references:
+
+- [System integrity](references/system-integrity.md)
+- [Rendered specimen](references/specimen-runtime.md)
+- [Governance evidence](references/governance-evidence.md)
+
+Report exact surfaces, families, states, themes, viewports, and observations.
+Reject contradictions, missing product-critical coverage, non-working specimens,
+or declared evidence that does not match source/render. When two coherent brand
+directions are both valid, request human validation instead of inventing taste.
+`
+
+const DESIGN_SYSTEM_QA_INTEGRITY_REFERENCE = `# System integrity review
+
+Trace a representative chain from primitive to semantic token, component
+contract, pattern, documentation, and rendered output. Repeat for color,
+typography, spacing/layout, shape/elevation, motion, and responsive behavior
+where applicable.
+
+Look for duplicate authorities, copied literals, components importing primitives
+directly, undocumented aliases, theme asymmetry, stale generated output,
+documentation-only examples, incompatible naming, and escape hatches that have
+become the default.
+
+For each affected component family, compare anatomy, variants, states, content
+rules, responsive behavior, semantics, keyboard behavior, tests, docs, and
+migration notes. A manifest entry is not evidence until the path and behavior
+match it.
+`
+
+const DESIGN_SYSTEM_QA_SPECIMEN_REFERENCE = `# Rendered specimen review
+
+Open the real documentation/specimen and representative product patterns. Use
+realistic short, long, empty, loading, error, success, permission, localized,
+numeric, and asymmetric content when the product supports them.
+
+Inspect compact and wide sizes plus only the breakpoints where geometry changes.
+Check hierarchy, density, alignment, overflow, truncation, scroll ownership,
+focus, contrast, themes, reduced motion, overlays, keyboard order, accessible
+name/role/state/value, and restoration after dismissal.
+
+Exercise every visible specimen control. Theme, density, viewport, variant, and
+state selectors must change the actual rendered component and remain reflected
+in accessible state. Compare representative components together inside product
+patterns; isolated tiles cannot prove system coherence.
+`
+
+const DESIGN_SYSTEM_QA_GOVERNANCE_REFERENCE = `# Governance evidence review
+
+Confirm the owner, contribution path, source-of-truth locations, versioning,
+deprecation, migration, decision log, and adoption plan are tracked and usable.
+Links must resolve; generated artifacts must identify their source.
+
+Check that a contributor can determine when to reuse, extend, or propose a new
+contract; that breaking changes have an approval and migration path; and that
+exceptions name an owner and expiry. Do not require enterprise ceremony from a
+small project, but do reject placeholders that cannot guide the next change.
+
+Separate facts from judgment. Mechanical validation supports path and schema
+claims. Running inspection supports behavior. Human review remains authoritative
+for brand direction and tradeoffs between coherent alternatives.
+`
+
+const DESIGN_SYSTEM_MANIFEST_TEMPLATE = `{
+  "schemaVersion": 1,
+  "name": "REPLACE_WITH_SYSTEM_NAME",
+  "version": "0.1.0",
+  "designThesis": "REPLACE_WITH_OBSERVABLE_PRODUCT_RULES",
+  "sources": {
+    "tokens": ["REPLACE_WITH_TRACKED_TOKEN_SOURCE"],
+    "components": ["REPLACE_WITH_TRACKED_COMPONENT_SOURCE"],
+    "documentation": ["REPLACE_WITH_TRACKED_DOCUMENTATION_SOURCE"],
+    "showcase": ["REPLACE_WITH_RENDERED_SHOWCASE_ENTRY"]
+  },
+  "foundations": [
+    "color",
+    "typography",
+    "spacing",
+    "radius",
+    "elevation",
+    "motion",
+    "breakpoints"
+  ],
+  "componentFamilies": [
+    {
+      "name": "REPLACE_WITH_COMPONENT_FAMILY",
+      "source": "REPLACE_WITH_TRACKED_SOURCE",
+      "variants": ["default"],
+      "states": ["default", "hover", "focus-visible", "disabled"],
+      "accessibility": "REPLACE_WITH_SEMANTICS_AND_KEYBOARD_CONTRACT"
+    }
+  ],
+  "patterns": [
+    {
+      "name": "REPLACE_WITH_PRODUCT_PATTERN",
+      "source": "REPLACE_WITH_TRACKED_SOURCE",
+      "states": ["loading", "empty", "error", "success"]
+    }
+  ],
+  "coverage": {
+    "themes": ["default"],
+    "viewports": ["compact", "wide"],
+    "content": ["short", "long", "empty", "localized"],
+    "requiredStates": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled",
+      "loading",
+      "empty",
+      "error",
+      "success"
+    ]
+  },
+  "accessibility": {
+    "standard": "WCAG 2.2 AA",
+    "keyboard": "REPLACE_WITH_KEYBOARD_AND_FOCUS_POLICY",
+    "contrast": "REPLACE_WITH_THEME_AND_STATE_CONTRAST_POLICY"
+  },
+  "governance": {
+    "owner": "REPLACE_WITH_OWNER",
+    "contributionPath": "REPLACE_WITH_TRACKED_CONTRIBUTION_GUIDE",
+    "versioning": "REPLACE_WITH_VERSIONING_POLICY",
+    "deprecationPolicy": "REPLACE_WITH_DEPRECATION_AND_MIGRATION_POLICY",
+    "decisionLogPath": "REPLACE_WITH_TRACKED_DECISION_LOG"
+  }
+}
+`
+
+const DESIGN_SYSTEM_VALIDATOR_SCRIPT = `import { existsSync, readFileSync, statSync } from 'node:fs'
+import { isAbsolute, relative, resolve } from 'node:path'
+
+const failures = []
+const manifestArg = process.argv[2]
+const projectRoot = process.cwd()
+
+function fail(message) {
+  failures.push(message)
+}
+
+function usableString(value) {
+  return typeof value === 'string' && value.trim().length > 0 && !value.includes('REPLACE_WITH_')
+}
+
+function projectPath(value, label) {
+  if (!usableString(value)) {
+    fail(label + ' must be a filled tracked path')
+    return undefined
+  }
+  const absolute = resolve(projectRoot, value)
+  const rel = relative(projectRoot, absolute)
+  if (isAbsolute(rel) || rel === '..' || rel.startsWith('..\\\\') || rel.startsWith('../')) {
+    fail(label + ' must stay inside the project')
+    return undefined
+  }
+  if (!existsSync(absolute)) {
+    fail(label + ' does not exist: ' + value)
+    return undefined
+  }
+  return absolute
+}
+
+if (!manifestArg) {
+  fail('usage: node validate-design-system.mjs <manifest.json>')
+}
+
+let manifest
+if (manifestArg) {
+  const file = projectPath(manifestArg, 'manifest')
+  if (file) {
+    try {
+      if (!statSync(file).isFile()) throw new Error('not a file')
+      manifest = JSON.parse(readFileSync(file, 'utf8'))
+    } catch (error) {
+      fail('manifest is not readable JSON: ' + (error instanceof Error ? error.message : String(error)))
+    }
+  }
+}
+
+if (manifest) {
+  if (manifest.schemaVersion !== 1) fail('schemaVersion must be 1')
+  for (const key of ['name', 'version', 'designThesis']) {
+    if (!usableString(manifest[key])) fail(key + ' must be filled')
+  }
+
+  for (const group of ['tokens', 'components', 'documentation', 'showcase']) {
+    const values = manifest.sources && manifest.sources[group]
+    if (!Array.isArray(values) || values.length === 0) {
+      fail('sources.' + group + ' must contain at least one tracked path')
+      continue
+    }
+    values.forEach((value, index) => projectPath(value, 'sources.' + group + '[' + index + ']'))
+  }
+
+  const requiredFoundations = ['color', 'typography', 'spacing', 'radius', 'elevation', 'motion', 'breakpoints']
+  const foundations = new Set(Array.isArray(manifest.foundations) ? manifest.foundations : [])
+  for (const item of requiredFoundations) {
+    if (!foundations.has(item)) fail('foundations is missing ' + item)
+  }
+
+  if (!Array.isArray(manifest.componentFamilies) || manifest.componentFamilies.length === 0) {
+    fail('componentFamilies must declare at least one real family')
+  } else {
+    manifest.componentFamilies.forEach((family, index) => {
+      const prefix = 'componentFamilies[' + index + ']'
+      if (!usableString(family && family.name)) fail(prefix + '.name must be filled')
+      projectPath(family && family.source, prefix + '.source')
+      if (!Array.isArray(family && family.variants) || family.variants.length === 0) fail(prefix + '.variants must not be empty')
+      if (!Array.isArray(family && family.states) || family.states.length === 0) fail(prefix + '.states must not be empty')
+      if (!usableString(family && family.accessibility)) fail(prefix + '.accessibility must be filled')
+    })
+  }
+
+  if (!Array.isArray(manifest.patterns) || manifest.patterns.length === 0) {
+    fail('patterns must declare at least one real product pattern')
+  } else {
+    manifest.patterns.forEach((pattern, index) => {
+      const prefix = 'patterns[' + index + ']'
+      if (!usableString(pattern && pattern.name)) fail(prefix + '.name must be filled')
+      projectPath(pattern && pattern.source, prefix + '.source')
+      if (!Array.isArray(pattern && pattern.states) || pattern.states.length === 0) fail(prefix + '.states must not be empty')
+    })
+  }
+
+  const coverage = manifest.coverage || {}
+  if (!Array.isArray(coverage.themes) || coverage.themes.length === 0) fail('coverage.themes must not be empty')
+  if (!Array.isArray(coverage.viewports) || coverage.viewports.length < 2) fail('coverage.viewports must include compact and wide evidence')
+  for (const item of ['short', 'long', 'empty', 'localized']) {
+    if (!Array.isArray(coverage.content) || !coverage.content.includes(item)) fail('coverage.content is missing ' + item)
+  }
+  for (const state of ['default', 'hover', 'focus-visible', 'disabled', 'loading', 'empty', 'error', 'success']) {
+    if (!Array.isArray(coverage.requiredStates) || !coverage.requiredStates.includes(state)) fail('coverage.requiredStates is missing ' + state)
+  }
+
+  const accessibility = manifest.accessibility || {}
+  for (const key of ['standard', 'keyboard', 'contrast']) {
+    if (!usableString(accessibility[key])) fail('accessibility.' + key + ' must be filled')
+  }
+
+  const governance = manifest.governance || {}
+  for (const key of ['owner', 'versioning', 'deprecationPolicy']) {
+    if (!usableString(governance[key])) fail('governance.' + key + ' must be filled')
+  }
+  projectPath(governance.contributionPath, 'governance.contributionPath')
+  projectPath(governance.decisionLogPath, 'governance.decisionLogPath')
+}
+
+if (failures.length > 0) {
+  console.error('Design-system manifest failed validation:')
+  failures.forEach((message) => console.error('- ' + message))
+  process.exitCode = 1
+} else {
+  console.log('Design-system manifest is structurally complete and all declared paths exist.')
+}
+`
+
 const PLANNING_STANDARD_BODY = `---
 name: synkora-planning-standard
 description: Native planning method for Synkora project and mission orchestrators. Use only to turn an approved outcome into a small, dependency-aware plan and executable cards through Synkora tools. Never creates a parallel docs, git, commit, worktree, review, or subagent workflow.
@@ -551,6 +1083,9 @@ because the implementation looks plausible or a developer said it passed.
 `
 
 export const BUNDLED_SKILLS: SkillDef[] = [
+  ...BACKEND_DEVOPS_CYBER_BUNDLED_SKILLS,
+  ...KNOWLEDGE_BUNDLED_SKILLS,
+  ...QA_BUNDLED_SKILLS,
   {
     id: 'synkora-planning-standard',
     kind: 'skill',
@@ -587,6 +1122,48 @@ export const BUNDLED_SKILLS: SkillDef[] = [
     summary: 'QA nativo e independente para cards nÃ£o visuais: valida comportamento observÃ¡vel com os controles seguros do gate, sem editar nem depender de shell.',
     hint: 'Use in non-visual Synkora QA gates; exercise acceptance paths with read/runtime evidence and never edit.',
     bundledBody: RUNTIME_QA_BODY.trim() + '\n',
+    allowedPhases: ['qa'],
+    requiresCapabilities: ['read', 'browser'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: 'synkora-design-system-standard',
+    kind: 'skill',
+    depts: ['design', 'front'],
+    group: 'design system',
+    source: { repo: 'synkora/bundled', path: 'synkora-design-system-standard' },
+    summary:
+      'Metodo nativo completo para criar ou evoluir design systems: conecta tese visual, tokens semanticos, componentes e estados, padroes de produto, documentacao viva, specimen renderizado, governanca e adocao.',
+    hint: 'Use only for system-level creation, evolution, consolidation, migration or governance; it replaces Impeccable for that phase and must not be stacked with another visual method.',
+    bundledBody: DESIGN_SYSTEM_STANDARD_BODY.trim() + '\n',
+    bundledFiles: {
+      'references/foundations.md': DESIGN_SYSTEM_FOUNDATIONS_REFERENCE.trim() + '\n',
+      'references/components-patterns.md': DESIGN_SYSTEM_COMPONENTS_REFERENCE.trim() + '\n',
+      'references/showcase.md': DESIGN_SYSTEM_SHOWCASE_REFERENCE.trim() + '\n',
+      'references/governance.md': DESIGN_SYSTEM_GOVERNANCE_REFERENCE.trim() + '\n',
+      'references/evidence.md': DESIGN_SYSTEM_EVIDENCE_REFERENCE.trim() + '\n',
+      'assets/design-system-manifest.template.json': DESIGN_SYSTEM_MANIFEST_TEMPLATE.trim() + '\n',
+      'scripts/validate-design-system.mjs': DESIGN_SYSTEM_VALIDATOR_SCRIPT.trim() + '\n'
+    },
+    allowedPhases: ['dev', 'helper'],
+    requiresCapabilities: ['read', 'write', 'shell', 'browser'],
+    adapter: 'synkora-native'
+  },
+  {
+    id: 'synkora-design-system-qa',
+    kind: 'skill',
+    depts: ['qa'],
+    group: 'design system qa',
+    source: { repo: 'synkora/bundled', path: 'synkora-design-system-qa' },
+    summary:
+      'QA independente e somente leitura para design systems: cruza manifesto, fontes, tokens, componentes, estados, padroes, documentacao, specimen, acessibilidade e governanca.',
+    hint: 'Use only in QA for a design-system delivery; inspect source, documentation and the running specimen independently and never inherit the creator method.',
+    bundledBody: DESIGN_SYSTEM_QA_BODY.trim() + '\n',
+    bundledFiles: {
+      'references/system-integrity.md': DESIGN_SYSTEM_QA_INTEGRITY_REFERENCE.trim() + '\n',
+      'references/specimen-runtime.md': DESIGN_SYSTEM_QA_SPECIMEN_REFERENCE.trim() + '\n',
+      'references/governance-evidence.md': DESIGN_SYSTEM_QA_GOVERNANCE_REFERENCE.trim() + '\n'
+    },
     allowedPhases: ['qa'],
     requiresCapabilities: ['read', 'browser'],
     adapter: 'synkora-native'

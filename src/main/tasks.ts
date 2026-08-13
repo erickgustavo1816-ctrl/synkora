@@ -257,6 +257,12 @@ export interface TaskSkillUsageRun {
     fingerprint?: string
     status: 'planned' | 'activated' | 'applied'
   }>
+  /** Persona efetiva roteada para esta rodada. Diferente de task.agents,
+   * inclui a seleção automática feita quando o pane conhece capacidades. */
+  agents?: Array<{
+    id: string
+    status: 'planned' | 'completed'
+  }>
 }
 
 export interface TaskSkillUsage extends TaskSkillUsageRun {
@@ -290,6 +296,12 @@ export interface Task {
   /** Correção pequena pedida depois da entrega: reabre este mesmo card com
    * perfil FAST, sem fabricar um segundo plano/card para o mesmo trabalho. */
   adjustment?: { reason: string; requestedAt: string }
+  /** Rodada QUICK (ajuste rápido — ordem do dono 2026-08-12: "ajustes
+   * pequenos são insuportáveis", máscara de input custou 30+ min de rito):
+   * protocolo cortado — checks proporcionais + evidência do delta no dev,
+   * olhada-relâmpago no review, sem QA. Skills/qualidade NUNCA se cortam.
+   * Carimbado pelo run_task: adjustment ⇒ true; dispatch cheio ⇒ false. */
+  quickRound?: boolean
   /** briefing escrito pelo MAESTRO para o executor (vira o prompt do dev) */
   briefing?: string
   /** gates a rodar após o dev — ausente = ['review','qa']; [] = nenhum
@@ -305,8 +317,8 @@ export interface Task {
   /** skills da BIBLIOTECA carimbadas pelo orquestrador para ESTE card — o
    *  harness injeta no workspace do run (F4). Ausente = padrão da função. */
   skills?: string[]
-  /** True when the card changes a user-visible surface. Orchestrated
-   * front/design cards declare it; legacy/manual cards use safe inference. */
+  /** True when the card changes a user-visible surface. Every orchestrated
+   * code card declares it; legacy/manual cards use safe inference. */
   affectsUi?: boolean
   /** Plano efetivo escolhido pelo roteador nesta fase, separado dos carimbos
    * do card. Permite ao dono ver planejada -> ativada -> aplicada. */
@@ -428,6 +440,7 @@ export type TaskUpdatePatch = Partial<
     | 'cycles'
     | 'feedback'
     | 'adjustment'
+    | 'quickRound'
     | 'briefing'
     | 'gates'
     | 'version'
@@ -559,7 +572,8 @@ export function interruptActiveSkillUsage(
     phaseRun: usage.phaseRun,
     updatedAt: usage.updatedAt,
     runStatus: usage.runStatus,
-    skills: usage.skills
+    skills: usage.skills,
+    agents: usage.agents
   }
   let matched = false
   const history = (usage.history?.length ? usage.history : [currentRun]).map((run) => {

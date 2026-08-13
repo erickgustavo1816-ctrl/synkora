@@ -90,6 +90,15 @@ function substituteMarker(value, bridge) {
 const originalLoad = Module._load
 Module._load = function loadWithStubs(request, parent, isMain) {
   if (request === 'electron') return electronStub
+  // skillsRouting usa a extensão .ts no runtime strip-types. Este harness
+  // transpila o fecho para CommonJS, portanto liga o mesmo import ao .js
+  // emitido sem alterar o caminho exigido pelo app real.
+  if (
+    request === './agentRouting.ts' &&
+    parent?.filename?.includes('phase-verdict-races')
+  ) {
+    return originalLoad.call(this, join(COMPILED, 'agentRouting.js'), parent, isMain)
+  }
   if (
     (request === './gitAsync' || request.endsWith('/gitAsync')) &&
     parent?.filename?.includes('phase-verdict-races')

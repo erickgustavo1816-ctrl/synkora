@@ -32,8 +32,18 @@ import { type DelegateOpts } from '../mcpServer'
 import { type SkillDef } from '../skillsLibrary'
 import {
   IMPECCABLE_SKILL_ID,
+  SYNKORA_BACKEND_STANDARD_ID,
+  SYNKORA_COPY_STANDARD_ID,
+  SYNKORA_CYBER_STANDARD_ID,
+  SYNKORA_DATA_STANDARD_ID,
+  SYNKORA_DESIGN_SYSTEM_STANDARD_ID,
+  SYNKORA_DEVOPS_STANDARD_ID,
   SYNKORA_FRONTEND_STANDARD_ID,
+  SYNKORA_QA_STANDARD_ID,
+  SYNKORA_RESEARCH_STANDARD_ID,
   classifyTaskUiWork,
+  isDevOpsWork,
+  isDesignSystemWork,
   isVisualMethod,
   missingMandatoryUiPhaseSkills,
   selectPhaseSkillPlan,
@@ -42,6 +52,7 @@ import {
 } from '../skillsRouting'
 import { SkillRuntime, type PlannedSkillInput } from '../skillRuntime'
 import { formatHelperCompletionNote, helperCompletionNotificationKey } from '../helperCompletion'
+import { plannedAgentForHelper } from '../agentRouting'
 import {
   HELPER_RECOVERY_VERSION,
   filterHelperRecoveryRecords,
@@ -97,7 +108,8 @@ export interface HelpersApiExtras {
   >
   helperSpawnReservations: HelperSpawnReservationRegistry
   helperOpenWatchdog: HelperOpenWatchdog
-  plannedHelperAssignments: Map<string, { parentPhaseRun: string; agentId: string }>
+  plannedHelperAssignments: Map<string, { parentPhaseRun: string; agentId?: string }>
+  completedPlannedAgentsByPhaseRun: Map<string, Set<string>>
   securityWaiverOptions(projectId: string): { sensitiveWaiverAllowed: boolean }
   planTaskForWorkTask(task: Task): Task | undefined
 }
@@ -147,6 +159,7 @@ export function buildHelpersApi(
     helperSpawnReservations,
     helperOpenWatchdog,
     plannedHelperAssignments,
+    completedPlannedAgentsByPhaseRun,
     securityWaiverOptions,
     planTaskForWorkTask
   } = extras
@@ -230,6 +243,7 @@ export function buildHelpersApi(
             watch.paneId === id.paneId
         )
       }
+      let plannedAgentAssignedInBatch = false
       const one = async (opts: DelegateOpts): Promise<{ ok: boolean; msg: string }> => {
         const project = projects.get(id.projectId)
         if (!project) return { ok: false, msg: 'projeto não encontrado' }
@@ -299,6 +313,37 @@ export function buildHelpersApi(
         if (!seat && id.seatId) seat = seats.get(id.seatId)
         if (!seat)
           return { ok: false, msg: 'sem seat disponível para o ajudante — defina uma política ou informe seatId' }
+        // CLAMP DE TIER (ordem do dono, 2026-08-10 — "quero o mesmo nível de
+        // qualidade do dev"): ajudante aberto pelo DEV de um card NUNCA desce
+        // de nível — herda o MESMO modelo e o MESMO effort do delegador (dev
+        // Opus max abre ajudante Opus max; a cagada histórica veio de
+        // ajudante mais fraco). Pedido divergente é SOBRESCRITO com aviso no
+        // retorno; seat de CLI diferente do delegador volta ao seat dele para
+        // o modelo clonado existir no catálogo.
+        let tierClamp = ''
+        if (id.taskId && id.role === 'dev') {
+          const delegatorTask = tasks.get(id.taskId)
+          // Cards carimbados antes de 2026-08-11 gravaram runModel como
+          // DISPLAY ("opus[1m] · max" / "modelo padrão") — extrai o id puro;
+          // o formato novo já é id e passa intacto pelo split.
+          const stampedRunModel = (delegatorTask?.runModel ?? '').split(' · ')[0].trim()
+          const devModel =
+            stampedRunModel && stampedRunModel !== 'modelo padrão' ? stampedRunModel : undefined
+          const devEffort = delegatorTask?.devEffort
+          const delegatorSeat = id.seatId ? seats.get(id.seatId) : undefined
+          if (devModel && delegatorSeat && seat.cli !== delegatorSeat.cli) {
+            seat = delegatorSeat
+            tierClamp += ` · seat ajustado ao CLI do delegador (${delegatorSeat.name})`
+          }
+          if (devModel && model !== devModel) {
+            model = devModel
+            tierClamp += ` · modelo clonado do delegador (${devModel})`
+          }
+          if (devEffort && opts.effort !== devEffort) {
+            opts.effort = devEffort
+            tierClamp += ` · effort clonado do delegador (${devEffort})`
+          }
+        }
         // O modelo TEM que existir no catálogo do seat (o orquestrador chegou a
         // aconselhar um id morto, gpt-5.4-mini): id fora do pool é recusado com
         // a lista certa em vez de abrir um pane quebrado.
@@ -321,11 +366,33 @@ export function buildHelpersApi(
         let agentPersona: string | null = null
         const parentScope = id.taskId ? skillPlanScopes.get(id.paneId) : undefined
         const plannedAgentId = parentScope?.agentIds[0]
-        const requestedAgentId = opts.agent ?? plannedAgentId
+        const plannedAlreadyAssigned = Boolean(
+          plannedAgentId &&
+            (plannedAgentAssignedInBatch ||
+              completedPlannedAgentsByPhaseRun
+                .get(parentScope?.phaseRun ?? '')
+                ?.has(plannedAgentId) ||
+              [...plannedHelperAssignments.values()].some(
+                (assignment) =>
+                  assignment.parentPhaseRun === parentScope?.phaseRun &&
+                  assignment.agentId === plannedAgentId
+              ))
+        )
+        const requestedAgentId = plannedAgentForHelper({
+          requestedAgentId: opts.agent,
+          plannedAgentId,
+          plannedAlreadyAssigned
+        })
         if (id.taskId && opts.agent && opts.agent !== plannedAgentId) {
           return {
             ok: false,
             msg: `subagente "${opts.agent}" não pertence ao plano ativo deste pane; use ${plannedAgentId ?? 'nenhum especialista'}`
+          }
+        }
+        if (opts.agent && plannedAlreadyAssigned) {
+          return {
+            ok: false,
+            msg: `a persona "${opts.agent}" já foi atribuída a outro ajudante desta rodada; abra este bloco como ajudante genérico`
           }
         }
         if (requestedAgentId) {
@@ -392,6 +459,12 @@ export function buildHelpersApi(
               affectsUi: opts.affectsUi
             })
           : false
+        const helperDesignSystemWork = Boolean(
+          helperDepartment && helperUiWork && isDesignSystemWork(helperDepartment, helperRoutingText)
+        )
+        const helperDevOpsWork = Boolean(
+          helperDepartment && isDevOpsWork(helperDepartment, helperRoutingText)
+        )
         if (
           helperDepartment &&
           opts.affectsUi === false &&
@@ -485,11 +558,39 @@ export function buildHelpersApi(
             helperSelection.skillIds,
             (skillId) => ({
               operation:
-                skillId === IMPECCABLE_SKILL_ID || skillId === SYNKORA_FRONTEND_STANDARD_ID
-                  ? helperSelection.impeccableOperation ?? 'polish'
+                skillId === SYNKORA_DESIGN_SYSTEM_STANDARD_ID
+                  ? 'build'
+                  : skillId === SYNKORA_BACKEND_STANDARD_ID ||
+                      skillId === SYNKORA_DEVOPS_STANDARD_ID ||
+                      skillId === SYNKORA_CYBER_STANDARD_ID ||
+                      skillId === SYNKORA_DATA_STANDARD_ID ||
+                      skillId === SYNKORA_RESEARCH_STANDARD_ID ||
+                      skillId === SYNKORA_COPY_STANDARD_ID ||
+                      skillId === SYNKORA_QA_STANDARD_ID
+                    ? 'contract'
+                  : skillId === IMPECCABLE_SKILL_ID || skillId === SYNKORA_FRONTEND_STANDARD_ID
+                    ? helperDesignSystemWork
+                      ? 'build'
+                      : helperSelection.impeccableOperation ?? 'polish'
                   : 'apply',
               reason:
-                skillId === SYNKORA_FRONTEND_STANDARD_ID
+                skillId === SYNKORA_DESIGN_SYSTEM_STANDARD_ID
+                  ? 'design-system.contract'
+                  : skillId === SYNKORA_BACKEND_STANDARD_ID
+                    ? 'backend.contract'
+                    : skillId === SYNKORA_DEVOPS_STANDARD_ID
+                      ? 'devops.contract'
+                      : skillId === SYNKORA_CYBER_STANDARD_ID
+                        ? 'cyber.contract'
+                        : skillId === SYNKORA_DATA_STANDARD_ID
+                          ? 'data.contract'
+                          : skillId === SYNKORA_RESEARCH_STANDARD_ID
+                            ? 'research.contract'
+                            : skillId === SYNKORA_COPY_STANDARD_ID
+                              ? 'copy.contract'
+                              : skillId === SYNKORA_QA_STANDARD_ID
+                                ? 'qa-authoring.contract'
+                  : skillId === SYNKORA_FRONTEND_STANDARD_ID
                   ? 'ui.contract'
                   : skillId === IMPECCABLE_SKILL_ID
                     ? `ui.${helperSelection.impeccableOperation ?? 'polish'}`
@@ -506,7 +607,9 @@ export function buildHelpersApi(
               preparedHelperSkills.definitions.map((skill) => skill.id),
               helperDepartment,
               'dev',
-              helperUiWork
+              helperUiWork,
+              helperDesignSystemWork,
+              helperDevOpsWork
             )
           : []
         const helperMissing = [
@@ -679,12 +782,13 @@ export function buildHelpersApi(
           taskId: id.taskId ?? '',
           spec
         })
-        if (agentDef && parentScope) {
+        if (parentScope) {
           plannedHelperAssignments.set(armed.paneId, {
             parentPhaseRun: parentScope.phaseRun,
-            agentId: agentDef.id
+            ...(agentDef ? { agentId: agentDef.id } : {})
           })
         }
+        if (agentDef?.id === plannedAgentId) plannedAgentAssignedInBatch = true
         helperOpenWatchdog.arm(armed.paneId)
         closingPaneIds.delete(armed.paneId)
         ctx.pushAll('panes:open', id.projectId, id.taskId ?? '', spec)
@@ -704,7 +808,7 @@ export function buildHelpersApi(
           ok: true,
           msg: `ajudante aberto (paneId ${armed.paneId}, seat ${seat.name}${model ? `, modelo ${model}` : ''}${
             agentDef ? `, persona ${agentDef.id}` : ''
-          })`
+          })${tierClamp}`
         }
       }
       try {

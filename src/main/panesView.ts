@@ -30,6 +30,13 @@ export interface PanesViewLayout {
   bounds: { x: number; y: number; width: number; height: number }
 }
 
+/** Tooltip do host roteado para dentro da view (2026-08-11) — espelho do tipo
+ *  do preload; anchor chega em coords da página do HOST. */
+export interface PanesViewTip {
+  text: string
+  anchor: { left: number; top: number; width: number; height: number }
+}
+
 export interface PanesViewDeps {
   window(): BrowserWindow | null
   preloadPath: string
@@ -107,6 +114,63 @@ export class PanesViewManager {
       if (typeof text !== 'string' || !text) return
       const wc = this.liveWebContents()
       if (wc) wc.send('panes-view:voice-paste', text)
+    })
+    // ——— 2026-08-11: tooltip do HOST sobre a área da view ———
+    // A view compõe POR CIMA do DOM do host — tooltip do host que cruza o rect
+    // dela é clipado (caso real: tooltip do radar de andamento cortado no meio
+    // com a aba Panes ativa). Alternativas descartadas: esconder a view no
+    // hover piscaria a cada tooltip; a janela nativa de tooltip do SynVoice é
+    // parented ao mini overlay e gated por synVoiceDetached no index (outra
+    // dona, outra vida útil); clampar na faixa visível do host não cabe (a
+    // titlebar tem 36px). A view roda o MESMO bundle com a MESMA .app-tip:
+    // desenhar o tooltip lá dentro custa um relay — o main só translada o
+    // anchor de coords do host para coords da view.
+    ipcMain.on('panes-view:tip-show', (e, tip: PanesViewTip) => {
+      if (!this.guardHost(e, 'panes-view:tip-show')) return
+      const wc = this.liveWebContents()
+      const layout = this.lastLayout
+      if (!wc || !layout?.visible) return
+      const text = typeof tip?.text === 'string' ? tip.text.slice(0, 600) : ''
+      const a = tip?.anchor
+      if (!text || !a || typeof a !== 'object') return
+      const left = Number(a.left)
+      const top = Number(a.top)
+      const width = Number(a.width)
+      const height = Number(a.height)
+      if (![left, top, width, height].every(Number.isFinite)) return
+      const b = layout.bounds
+      wc.send('panes-view:tip', {
+        text,
+        anchor: { left: left - b.x, top: top - b.y, width, height }
+      })
+    })
+    ipcMain.on('panes-view:tip-hide', (e) => {
+      if (!this.guardHost(e, 'panes-view:tip-hide')) return
+      const wc = this.liveWebContents()
+      if (wc) wc.send('panes-view:tip', null)
+    })
+    // ——— 2026-08-11: congelado da view sob overlays do host ———
+    // Overlay do host aberto = view escondida (setVisible false) e a área dos
+    // panes virava um BURACO vazio atrás do popover. O host captura a view
+    // AINDA visível, pinta o PNG no rect dela e só então manda o hide.
+    // PNG (toDataURL) e não JPEG: texto de terminal em fundo escuro comprime
+    // bem sem os artefatos de ringing do JPEG. Downscale só acima de 3840px de
+    // largura de DEVICE — reduzir sempre borraria o congelado em tela comum, e
+    // o dataURL típico (~centenas de KB) fica longe do teto de IPC (~16MB).
+    ipcMain.handle('panes-view:capture', async (e) => {
+      if (!this.deps.isHostSender(e)) return null
+      const wc = this.liveWebContents()
+      if (!wc || !this.lastLayout?.visible) return null
+      try {
+        let image = await wc.capturePage()
+        if (image.isEmpty()) return null
+        if (image.getSize().width > 3840) image = image.resize({ width: 3840 })
+        return { dataUrl: image.toDataURL() }
+      } catch {
+        // captura falhou = fallback gracioso: o chamador esconde sem congelado
+        // (o comportamento antigo), nunca trava o fluxo do overlay.
+        return null
+      }
     })
   }
 
@@ -200,7 +264,9 @@ export class PanesViewManager {
       return { action: 'deny' }
     })
 
+    let loadRetries = 0
     wc.on('did-finish-load', () => {
+      loadRetries = 0
       this.deps.onSenderBound(wc)
       this.deps.record('panes-view-ready', `webContents ${wc.id} carregado e amarrado ao push`)
       // Reload/crash da view: o estado cacheado re-hidrata sem esperar o
@@ -216,6 +282,23 @@ export class PanesViewManager {
         `renderer da view de panes morreu (${details.reason}); recarregando`
       )
       if (details.reason !== 'clean-exit' && !wc.isDestroyed()) wc.reload()
+    })
+    // AUTOCURA DO LOAD (crash real 2026-08-11: o Utility Network Service
+    // morreu, o reload imediato disparou com a rede do Chromium ainda
+    // reiniciando e o load do vite por HTTP falhou — view morta com main e
+    // panes VIVOS). Load falho re-tenta com backoff; -3 (ERR_ABORTED) é
+    // navegação interrompida, não falha.
+    wc.on('did-fail-load', (_e, errorCode, errorDescription, _url, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3 || wc.isDestroyed()) return
+      if (loadRetries >= 5) return
+      loadRetries += 1
+      this.deps.record(
+        'panes-view-load-retry',
+        `did-fail-load ${errorCode} ${errorDescription} — tentativa ${loadRetries}/5 em 2s`
+      )
+      setTimeout(() => {
+        if (!wc.isDestroyed()) wc.reload()
+      }, 2000)
     })
 
     win.contentView.addChildView(view)

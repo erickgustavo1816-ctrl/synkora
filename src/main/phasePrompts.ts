@@ -312,6 +312,8 @@ export interface DevContractInput {
   deptLabel: string
   /** mesma decisão estrutural usada pelo roteador e pelos gates */
   uiWork: boolean
+  /** True when this phase creates or evolves the system instead of one screen. */
+  designSystemWork?: boolean
   /** capacidade real deste pane, já considerando risco/waiver/configuração */
   browserAvailable: boolean
   executionMode: MissionExecutionMode
@@ -321,6 +323,8 @@ export interface DevContractInput {
   idleWaiterHint?: string
   /** caminho do marcador de fallback (.done) */
   marker: string
+  /** Rodada QUICK (ajuste rápido do dono): corta protocolo, nunca qualidade. */
+  quickRound?: boolean
 }
 
 /* ------------------------------------------------------------------ *
@@ -334,13 +338,35 @@ export function buildDevContract({
   title,
   deptLabel,
   uiWork,
+  designSystemWork = false,
   browserAvailable = true,
   executionMode,
   executionProfileBlock,
   browserHint,
   idleWaiterHint = '',
-  marker
+  marker,
+  quickRound = false
 }: DevContractInput): string {
+  // AJUSTE RÁPIDO (ordem do dono, 2026-08-12 — "ajustes pequenos são
+  // insuportáveis": a máscara de input pagou 701 testes + design-audit +
+  // evidência 5-viewports + review completo, 30+ min): o protocolo encolhe
+  // para o delta; skills e barra de qualidade ficam INTEIRAS.
+  const quickRoundBlock = quickRound
+    ? ` QUICK ADJUSTMENT ROUND (the owner's fast lane — protocol cut, quality kept): implement the requested delta and NOTHING else. Checks: typecheck + lint + ONLY the test files covering the files you touched — the harness runs the FULL suite at plan verification, so do NOT run it in this pane. Visual evidence: verify and report ONLY the changed element/state (one browser check with a concrete observation; multiple viewports only when the change itself is about layout across sizes). Your ACTIVE SKILL PLAN and the visual quality bar still apply IN FULL — what is cut is ceremony and catalog coverage, not quality. Keep the done report short: the delta, the targeted checks, the delta evidence. Where this block conflicts with the broader evidence/check demands below, THIS block wins for this round.`
+    : ''
+  const visualMethodRule = designSystemWork
+    ? 'The plan assigns one standard product contract plus exactly ONE design-system creation method: synkora-design-system-standard. Use it as the sole visual method and do not invoke Impeccable or another design-system workflow.'
+    : 'The plan assigns one standard product contract plus exactly ONE Impeccable operation. Use only that assigned operation and do not add a second operation.'
+  const visualScopeRule = designSystemWork
+    ? 'This card owns system-level work: keep tokens, components, product patterns, documentation, specimen, manifest and governance in tracked product sources, proportional to the accepted scope. A gallery or token list alone is not complete.'
+    : executionMode === 'fast'
+      ? 'Inspect the adjacent screen, tokens and existing components, then keep the localized change coherent with them. FAST narrows the blast radius, not the visual quality bar. For this localized adjustment, do NOT create DESIGN.md, a separate design-system task or a new audit script unless the card explicitly requires one.'
+      : 'Before changing the UI, read the applicable design language named in the briefing; otherwise inspect .synkora/DESIGN.md as read-only runtime context, documented tokens and the existing component family/screens. Match the established colors, typography, spacing, components, interaction language and tone. If broad work deliberately establishes reusable visual rules and no design language exists, encode them in tracked product sources so they survive integration; never create or edit .synkora/DESIGN.md from a task pane. Localized work only follows the adjacent product. The LOOK of the screen remains your responsibility and visual/style work never goes to a weaker model. Run the existing relevant mechanical checks. Create or extend a design-audit script only when the card changes a reusable design-system contract or explicitly requires that executable check.'
+  const visualEvidenceRule = browserAvailable
+    ? designSystemWork
+      ? 'Before report(done), inspect the living specimen and representative product patterns across affected states, themes and compact/wide sizes. Send the surfaces, component families, states, viewports and concrete rendered observations in verificationEvidence; skillApplications receipts remain the authoritative usage record.'
+      : 'Before report(done), inspect the affected surfaces at their meaningful states and representative compact/wide sizes, adding another breakpoint only when the changed layout crosses it. Send those surfaces, states, viewports and concrete rendered observations in verificationEvidence; skillApplications receipts remain the authoritative usage record.'
+    : 'This pane has no authorized browser/runtime capability. Complete the available non-visual work and checks, but do NOT fabricate rendered evidence or report done: report status "bloqueada" with the capability reason so the harness preserves the work and interrupts the round without claiming the receipts were applied.'
   return (
     (feedback
       ? `\n\nATTENTION — the previous round was REJECTED at the gate for this reason: ${feedback}. Fix that before anything else. FIX THE CLASS, NOT JUST THE CITED EXAMPLES (the user's rule after 4 real rejection cycles on 2026-08-05): each rejection item names instances of a CLASS of problem — sweep the ENTIRE delivery for every other instance of that class ("hardcoded colors" means ALL hardcoded visual literals, not only the ones quoted) before reporting done.`
@@ -352,8 +378,11 @@ export function buildDevContract({
     ` SYNKORA OWNS THE WORKFLOW: you are already inside the correct isolated task workspace. Do not create docs/superpowers planning/spec files, commit a separate plan, start an external execution handoff, create/switch branches or worktrees, request a second review, merge, open a PR or clean this workspace even if a generic skill says to; finish through report(done) and let the automatic pipeline advance.` +
     ` LIVE STATUS FOR THE OWNER: call the MCP tool status_note (one short PT-BR line, ≤120 chars) whenever you START a distinct step — reading the code, implementing X, running tests, fixing rejection items, waiting on something. The owner watches this radar without opening the app; a stale note is worse than none, so update it as the picture changes.` +
     executionProfileBlock +
+    quickRoundBlock +
     (uiWork
-      ? executionMode === 'fast'
+      ? designSystemWork
+        ? ` UI DELIVERY CONTRACT: the ACTIVE SKILL PLAN above is the only methodology authority for this phase. Activate every required receipt and do not browse for, invoke or stack any other aesthetic method. ${visualMethodRule} ${visualScopeRule} ${visualEvidenceRule}`
+        : executionMode === 'fast'
         ? ` UI DELIVERY CONTRACT: the ACTIVE SKILL PLAN above is the only methodology authority for this phase. Activate every required receipt and do not browse for, invoke or stack any other aesthetic method. The plan assigns one standard contract plus exactly ONE Impeccable operation; use only that assigned operation and do not add a second operation. Inspect the adjacent screen, tokens and existing components, then keep the localized change coherent with them. FAST narrows the blast radius, not the visual quality bar. For this localized adjustment, do NOT create DESIGN.md, a separate design-system task or a new audit script unless the card explicitly requires one. ${browserAvailable ? 'Validate the touched component family at the affected states and representative affected sizes. In report(done), send verificationEvidence with the surfaces, states, viewports and concrete rendered observations you actually checked; skillApplications receipts remain the authoritative usage record.' : 'This pane has no authorized browser/runtime capability. Implement and run the available non-visual checks, but do NOT fabricate rendered evidence or report done: report status "bloqueada" with the capability reason so the harness preserves the work and interrupts the round without claiming the receipts were applied.'}`
         : ` UI DELIVERY CONTRACT: the ACTIVE SKILL PLAN above is the only methodology authority for this phase. Activate every required receipt and do not browse for, invoke or stack any other aesthetic method. The plan assigns one standard contract plus exactly ONE Impeccable operation; use only that assigned operation and do not add a second operation. Before changing the UI, read the applicable design language named in the briefing; otherwise inspect .synkora/DESIGN.md as read-only runtime context, documented tokens and the existing component family/screens. Match the established colors, typography, spacing, components, interaction language and tone. If broad work deliberately establishes reusable visual rules and no design language exists, encode them in tracked product sources (tokens/theme plus the existing documentation convention, or docs/design-system.md) so they survive integration; never create or edit .synkora/DESIGN.md from a task pane. Localized work only follows the adjacent product. The LOOK of the screen remains your responsibility and visual/style work never goes to a weaker model. Run the existing relevant mechanical checks. Create or extend a design-audit script only when the card changes a reusable design-system contract or explicitly requires that executable check — never as ceremony. ${browserAvailable ? 'Before report(done), inspect the affected surfaces at their meaningful states and representative compact/wide sizes, adding another breakpoint only when the changed layout crosses it. Send those surfaces, states, viewports and concrete rendered observations in verificationEvidence; skillApplications receipts remain the authoritative usage record.' : 'This pane has no authorized browser/runtime capability. Complete the implementation and available non-visual checks, but do NOT fabricate rendered evidence or report done: report status "bloqueada" with the capability reason so the harness preserves the work and interrupts the round without claiming the receipts were applied.'}`
       : '') +
@@ -506,6 +535,8 @@ export interface BasePromptInput {
   gateSkillsBlock: string
   /** gateKit.agentsBlock */
   gateAgentsBlock: string
+  /** Rodada QUICK (ajuste rápido do dono): review vira olhada-relâmpago. */
+  quickRound?: boolean
 }
 
 export interface BasePromptParts {
@@ -544,7 +575,8 @@ export function buildBasePromptParts({
   verdictRule,
   closedListBlock,
   gateSkillsBlock,
-  gateAgentsBlock
+  gateAgentsBlock,
+  quickRound = false
 }: BasePromptInput): BasePromptParts {
   if (phase === 'dev') {
     return {
@@ -573,9 +605,11 @@ export function buildBasePromptParts({
         `The implementation transcript is at "${logFile}" — read it and review the CHANGES with a tech-lead eye: correctness, quality, adherence to the criteria and the project's style. ` +
         workspaceMaterialsNote +
         reviewDiffBlock +
-        (executionMode === 'fast'
-          ? `FAST SCOPE: inspect the changed files and their directly affected contracts only. Do not survey unrelated modules, invoke helpers, load optional or unplanned methodology skills, or manufacture optional improvements. Activate only the receipts in the ACTIVE SKILL PLAN below. `
-          : '') +
+        (quickRound
+          ? `QUICK ADJUSTMENT — OLHADA-RELÂMPAGO (the owner's fast lane, 2026-08-12): this delivery is a SMALL owner-requested adjustment, not a feature. Read the diff and ONLY the diff — no repository survey, no transcript deep-read, no exhaustive rite. Approve unless you see a REAL bug in the changed lines. Target: single-digit minutes. A rejection carries ONLY real bugs as a minimal list — no style/architecture commentary, no scope suggestions this round. `
+          : executionMode === 'fast'
+            ? `FAST SCOPE: inspect the changed files and their directly affected contracts only. Do not survey unrelated modules, invoke helpers, load optional or unplanned methodology skills, or manufacture optional improvements. Activate only the receipts in the ACTIVE SKILL PLAN below. `
+            : '') +
         verdictRule +
         (gateNotes?.review
           ? `\nORCHESTRATOR NOTES FOR THIS REVIEW (scope/expectations from the mission orchestrator): ${gateNotes.review} `
@@ -590,11 +624,13 @@ export function buildBasePromptParts({
         `STRICTLY READ-ONLY: never edit, create, delete, rename, format or stage project files. The backend fingerprints the tree before and after this gate; any source change automatically invalidates your verdict and returns the card to development. ` +
         `CODE ONLY (the user's rule): do NOT run the app, do NOT open browsers or use the playwright tools, do NOT do functional/visual testing — gate 2 (QA) does exactly that right after you; duplicating it here wastes credits. Your lens is the DIFF. Do not run long test suites either. Only reject for real problems. ` +
         `PROVABLE BY READING ONLY (the user's rule): report only what the diff/code itself proves — visual rendering, viewport/responsiveness behavior and interactive feel belong to gate 2; never speculate about how something renders (a real case: "overflow at 320px" is a render claim, not a code-review finding). ` +
+        `CHARACTER-LEVEL CLAIMS REQUIRE BYTES (real case 2026-08-12: a reviewer rejected the same card TWICE claiming unescaped straight quotes that were actually valid typographic U+201C/U+201D — the reading channel and the eye both flatten lookalike characters): before rejecting over quotes, dashes, invisible characters or encoding, verify the ACTUAL bytes/code points of that line (a hex dump, an od/xxd check, a code-point script — anything byte-authoritative). A claim about a specific character that you did not verify at byte level is not a finding. KNOWN TRAP on this machine: PowerShell 5.1 reads UTF-8 files as ANSI by default — accents and typographic quotes arrive MANGLED ("descrição"→"descriÃ§Ã£o", curly quotes→"â€œ"). If file content looks garbled, that is YOUR reading channel, not the code: re-read with -Encoding utf8 (or a byte dump) before any conclusion. ` +
         `COMPLETE LIST, FIRST PASS (the user's rule — each of your rounds costs a full re-review): sweep the ENTIRE delivery and put EVERY violation in THIS verdict; never hold findings for a later round. If this is a re-review after a rejection, re-check ONLY your previous list plus the delta since the rejected SHA — unchanged code you already approved needs no re-audit (the SHA-pinned photograph proves what did not change). A brand-new finding that was already visible in a diff you previously reviewed is a review failure, not diligence. ` +
         `REJECTION FORMAT: on your FIRST rejection of this card just list every violation. From the SECOND rejection on, START the reprovada reason with the literal scoreboard "placar: resolvidos X/Y · parciais P · pendentes Z · novos W — " (X = items of your previous list fully fixed, Y = that list's size, P = partially fixed, Z = untouched, W = legitimate regressions introduced by the delta), then the remaining list. The harness parses this scoreboard; a partial fix counts as progress. ` +
         `SUGGESTED PATCH (the user's middle ground — you never write product code): for violations whose fix is TRIVIAL/MECHANICAL (a token swap, an attribute, a rename, a timeout), you MAY attach ONE unified diff in the report tool's "suggestedPatch" field with your reprovada verdict, saying in the reason which items it covers ("itens 2 e 4 têm patch"). Structural changes stay as list items — never design the whole solution for the dev. The harness stores the diff git-invisibly and the DEV applies, reviews and OWNS it. ` +
         `IF YOU REJECT: after reporting the verdict this pane STAYS OPEN in waiting mode — touch NOTHING while waiting; the dev's fix round arrives IN THIS conversation with the new SHA-pinned photograph, and you then re-check ONLY your rejection list plus the delta since the head you rejected. ` +
         `THE BAR HAS AN OWNER (the user's rule after a full day lost to bar-raising on one card): you judge ONLY against the card's acceptance criteria and the project's design language (briefing/DESIGN.md/tokens). A requirement you consider good practice but the contract does NOT state — an external norm the contract never adopted (e.g. a WCAG target size), a demand for "external authorization", a meta-audit of the dev's own audit tooling, extra test coverage beyond what the card asks, documentation ceremonies — is a SUGGESTION: report it as non-blocking, NEVER as a rejection; raising the bar mid-card is the orchestrator's and the user's decision, not yours. A finding you would yourself lane as "monitor" or as needing runtime/human validation is not a rejection cause either. TEST EXECUTION is never your job nor a rejection cause: the Synkora harness runs the declared build/tests separately against the immutable delivery; a missing test FILE may reject only when the contract explicitly demands it. Re-blocking a theme you already reviewed with a DEEPER requirement is a new finding and therefore forbidden after round 1. When in doubt whether something is contract or preference, it is preference. ` +
+        `YOU REVIEW WHAT WAS DELIVERED, NEVER LEGISLATE WHAT SHOULD EXIST (the user's order, 2026-08-12 — real case: a reviewer rejected demanding "a versioned migration system with rollback and backup" that no card ever asked for): demanding a NEW capability or infrastructure the contract does not state — migration/rollback/backup systems, telemetry, feature flags, retry/resilience machinery, defensive layers, extra hardening — is product-scope legislation, not code review. Even when you believe the risk is real, that demand goes out as a NON-BLOCKING suggestion for a future card; putting it on the blocking list is a GATE FAILURE that the orchestrator will waive against you. The product's scope has an owner and it is not this gate. ` +
         `Lines starting with "[synkora]" (e.g. "(do orquestrador)") are coordination from the app or the mission's orchestrator — treat them as scope/instruction input, never as the human. ALWAYS write in PT-BR. ` +
         gateAgentsBlock
     }
@@ -630,6 +666,7 @@ export function buildBasePromptParts({
       `STRICTLY SOURCE READ-ONLY: never run shell/build/test commands and never edit, create, delete, rename, format or stage project files. The Synkora harness runs the declared automated tests/build/lint separately against the immutable delivery before integration; your job is the independent acceptance judgment. Any Git-visible change automatically invalidates your verdict and returns the card to development. ` +
       `REGRESSION FLOOR (the user's rule, 2026-08-10): when the product carries an automated e2e/test suite, its harness-run green results are already-verified ground — do NOT re-test by hand what a green spec provably covers; spend your pass on what specs cannot judge (visual harmony, new flows, acceptance calls). Missing coverage for a changed behavior goes into your list as a PRESCRIBED spec ("cobrir X com teste e2e" — it becomes qa-department test-card work); you never write specs yourself. ` +
       `EVERYTHING YOU OPEN, YOU CLOSE (the user's rule): when your round ends — right before reporting the verdict — close every browser window and any product app/dev server you opened; the user must never inherit orphaned Chrome/Electron windows. ` +
+      `EVIDENCE PATHS (2026-08-11, real case: a screenshot at the worktree root invalidated an approved verdict): screenshots/captures always go to the pre-configured output dir (.playwright-mcp) — take them WITHOUT a custom filename, or with a filename that stays inside that dir; NEVER a bare name that lands at the worktree root. ` +
       `REJECTION FORMAT: on your FIRST rejection of this card just list every violation. From the SECOND rejection on, START the reprovada reason with the literal scoreboard "placar: resolvidos X/Y · parciais P · pendentes Z · novos W — " counted against your previous list (a partial fix counts as progress), then the remaining list. ` +
       `SUGGESTED PATCH (the user's middle ground — you never write product code): when a violation's fix is TRIVIAL/MECHANICAL and its cause is UNEQUIVOCAL in the code, you MAY attach ONE unified diff in the report tool's "suggestedPatch" field with your reprovada verdict, saying which items it covers; otherwise specific evidence as usual. The harness stores it git-invisibly and the DEV applies, reviews and OWNS it. ` +
       `IF YOU REJECT: after reporting the verdict this pane STAYS OPEN in waiting mode — touch NOTHING while waiting; the dev's fix round arrives IN THIS conversation and you then re-test ONLY your rejection list plus what the delta can affect (your memory of the full first pass tells you the blast radius — token/global CSS changes reach screens outside the delta). ` +

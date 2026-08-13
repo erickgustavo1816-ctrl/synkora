@@ -243,6 +243,7 @@ import {
   type ProjectAdapterDetection
 } from './projectAdapters'
 import { setQaRuntimeGuard, stopAllQaRuntimes } from './qaRuntime'
+import { releaseQaCdpPort } from './qaCdp'
 import { PaneMailbox, mailboxKeyOf } from './mailbox'
 import {
   PhaseLaunchCapacityGuard,
@@ -284,9 +285,13 @@ const helperSeen = new Set<string>()
 const helperCompletions = new HelperCompletionTracker()
 const plannedHelperAssignments = new Map<
   string,
-  { parentPhaseRun: string; agentId: string }
+  { parentPhaseRun: string; agentId?: string }
 >()
 const completedPlannedAgentsByPhaseRun = new Map<string, Set<string>>()
+// Uma delegação `parallel` é decisão do orquestrador, não sugestão textual.
+// Qualquer helper que conclui na rodada satisfaz a obrigação de paralelismo;
+// a coleção acima continua provando separadamente a persona escolhida.
+const completedHelperPhaseRuns = new Set<string>()
 // Check + spawn de helper atravessa awaits (catálogo, skills, armamento). Esta
 // reserva impede duas calls MCP concorrentes de consumirem o mesmo slot.
 const helperSpawnReservations = new HelperSpawnReservationRegistry()
@@ -1067,7 +1072,9 @@ function createWindow(): BrowserWindow {
   win.webContents.on('did-start-loading', () => {
     mainProgressRendererReady = false
   })
+  let mainLoadRetries = 0
   win.webContents.on('did-finish-load', () => {
+    mainLoadRetries = 0
     uiSender = win.webContents
     win.webContents.send('voice:overlay-visibility', synVoiceDetached)
     refreshProgressSnapshot()
@@ -1080,6 +1087,24 @@ function createWindow(): BrowserWindow {
     synVoiceExternalInput.discardOwner(mainWebContentsId)
     synVoiceGlobalActivation.stop()
     if (details.reason !== 'clean-exit') win.webContents.reload()
+  })
+  // AUTOCURA DO LOAD (crash real 2026-08-11: o Utility Network Service do
+  // Chromium morreu e o reload pós renderer-gone disparou com a rede interna
+  // ainda reiniciando — em dev o load do vite por HTTP falha e a janela fica
+  // MORTA com o main e os panes vivos; o dono percebe como "o app caiu").
+  // Load falho re-tenta com backoff; -3 (ERR_ABORTED) é navegação
+  // interrompida, não falha real.
+  win.webContents.on('did-fail-load', (_e, errorCode, errorDescription, _url, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) return
+    if (mainLoadRetries >= 5) return
+    mainLoadRetries += 1
+    logCrash(
+      'main-load-retry',
+      `did-fail-load ${errorCode} ${errorDescription} — tentativa ${mainLoadRetries}/5 em 2s`
+    )
+    setTimeout(() => {
+      if (!win.isDestroyed()) win.webContents.reload()
+    }, 2000)
   })
 
   const devUrl = !app.isPackaged ? process.env['ELECTRON_RENDERER_URL'] : undefined
@@ -2793,15 +2818,16 @@ app.whenReady().then(async () => {
   // panes e reinstala quando os bytes do app mudam. Assim a régua nova chega a
   // quem já tinha `sha: bundled`, sem rede, delay de boot ou versão manual.
   const bundledPackageMatches = (id: string): boolean => skillsLib.bundledPackageMatches(id)
+  const appOwnedSkillPackages = [...BUNDLED_SKILLS, ...BUNDLED_AGENTS]
   const staleBundled = selectStaleBundledIds(
-    BUNDLED_SKILLS,
+    appOwnedSkillPackages,
     skillsLib.listState(),
     bundledPackageMatches
   )
   if (staleBundled.length > 0) {
     const bundledInstall = await skillsLib.installMany(staleBundled)
     const unresolvedBundled = selectStaleBundledIds(
-      BUNDLED_SKILLS,
+      appOwnedSkillPackages,
       skillsLib.listState(),
       bundledPackageMatches
     )
@@ -2809,7 +2835,7 @@ app.whenReady().then(async () => {
       console.error(`[skills] falha ao atualizar contrato embutido: ${bundledInstall.msg}`)
       dialog.showErrorBox(
         'Não foi possível iniciar o Synkora',
-        'A régua visual obrigatória não pôde ser atualizada. Reinicie o aplicativo; se o problema continuar, verifique as permissões da pasta de dados.'
+        'Os contratos e especialistas nativos não puderam ser atualizados. Reinicie o aplicativo; se o problema continuar, verifique as permissões da pasta de dados.'
       )
       app.quit()
       return
@@ -3025,6 +3051,7 @@ app.whenReady().then(async () => {
     }
     skillPlanScopes.delete(paneId)
     completedPlannedAgentsByPhaseRun.delete(scope.phaseRun)
+    completedHelperPhaseRuns.delete(scope.phaseRun)
     try {
       skillRuntime.release({ paneId, phase: scope.phase, phaseRun: scope.phaseRun })
     } catch {
@@ -3082,7 +3109,21 @@ app.whenReady().then(async () => {
       })
     }
 
-    if (task.skillUsage?.phaseRun !== scope.phaseRun) return undefined
+    // CAS da rodada: a corrente do card é a MINHA (renovação normal) OU é de
+    // OUTRA fase com a minha preservada no history (intercalação legítima
+    // dev↔gate — caso real 2026-08-11: a reprovação reabria o dev, que
+    // sobrescrevia a corrente; o gate em espera nunca mais renovava e TODO
+    // reciclo de gate vivo caía no fallback, matando a conversa). Ilegítimo
+    // segue: corrente da MESMA fase com run diferente (outro pane desta fase
+    // renovou por baixo).
+    const currentUsageRun = task.skillUsage
+    const scopeRunKnown =
+      currentUsageRun &&
+      (currentUsageRun.phaseRun === scope.phaseRun ||
+        (currentUsageRun.history ?? []).some((run) => run.phaseRun === scope.phaseRun))
+    if (!scopeRunKnown) return undefined
+    if (currentUsageRun.phase === phase && currentUsageRun.phaseRun !== scope.phaseRun)
+      return undefined
     const phaseRun = randomUUID()
     const previousUsage = task.skillUsage
     const planned = skillRuntime.replacePanePlan(
@@ -3097,10 +3138,19 @@ app.whenReady().then(async () => {
       {
         commit: (_previousPlan, nextPlan) => {
           const latestTask = tasks.get(taskId)
+          // Mesmo CAS relaxado do pré-check acima: corrente minha, ou de
+          // outra fase com a minha rodada no history.
+          const commitUsage = latestTask?.skillUsage
+          const commitRunKnown =
+            commitUsage &&
+            (commitUsage.phaseRun === scope.phaseRun ||
+              (commitUsage.history ?? []).some((run) => run.phaseRun === scope.phaseRun))
           if (
             !latestTask ||
             latestTask.projectId !== projectId ||
-            latestTask.skillUsage?.phaseRun !== scope.phaseRun
+            !commitUsage ||
+            !commitRunKnown ||
+            (commitUsage.phase === phase && commitUsage.phaseRun !== scope.phaseRun)
           ) {
             throw new Error('skill usage mudou durante a renovacao')
           }
@@ -3119,7 +3169,7 @@ app.whenReady().then(async () => {
               status: 'planned' as const
             }))
           }
-          const currentUsage = latestTask.skillUsage
+          const currentUsage = commitUsage
           const priorHistory = [...(currentUsage.history ?? [])]
           if (!priorHistory.some((run) => run.phaseRun === currentUsage.phaseRun)) {
             priorHistory.push({
@@ -3723,6 +3773,28 @@ app.whenReady().then(async () => {
     } catch {
       // best-effort: no pior caso o TUI pergunta uma vez
     }
+    // TEMA DE FÁBRICA (pedido do dono, 2026-08-12): todo seat claude nasce com
+    // "Dark mode (ANSI colors only)" — a chave mora em settings.json do config
+    // dir (sondado: foi onde o picker /theme gravou "dark-ansi" nos seats
+    // reais). SÓ semeia quando ausente; escolha feita no TUI nunca é
+    // sobrescrita.
+    try {
+      const settingsFile = join(configDir, 'settings.json')
+      let seatSettings: Record<string, unknown> = {}
+      if (existsSync(settingsFile)) {
+        try {
+          seatSettings = JSON.parse(readFileSync(settingsFile, 'utf-8')) as Record<string, unknown>
+        } catch {
+          seatSettings = {}
+        }
+      }
+      if (typeof seatSettings['theme'] !== 'string') {
+        seatSettings['theme'] = 'dark-ansi'
+        writeFileSync(settingsFile, JSON.stringify(seatSettings, null, 2), 'utf-8')
+      }
+    } catch {
+      // best-effort: sem o seed o pane só nasce no tema default
+    }
   }
 
   // codex: pré-grava no config.toml do seat o TRUST do projeto e a escolha de
@@ -3852,6 +3924,9 @@ app.whenReady().then(async () => {
     if (activeWatchToRemove?.paneId && !terminatedPaneIds.has(activeWatchToRemove.paneId)) {
       terminatePaneNow(task.projectId, activeWatchToRemove.paneId)
     }
+    // Reserva CDP por card morre com o card (o fecho normal é o finalize/
+    // complete_task; remoção em cascata cobre o resto).
+    releaseQaCdpPort(task.id)
     // Só apaga o card depois que nenhum processo consegue mais escrever no
     // worktree ou reportar contra o estado removido.
     tasks.remove(task.id)
@@ -5936,7 +6011,8 @@ app.whenReady().then(async () => {
       securityWaiverOptions,
       planTaskForWorkTask,
       plannedHelperAssignments,
-      completedPlannedAgentsByPhaseRun
+      completedPlannedAgentsByPhaseRun,
+      completedHelperPhaseRuns
     }),
     ...buildMissionsApi(ctx, {
       emitMissionsChanged,
@@ -5974,6 +6050,7 @@ app.whenReady().then(async () => {
       helperSpawnReservations,
       helperOpenWatchdog,
       plannedHelperAssignments,
+      completedPlannedAgentsByPhaseRun,
       securityWaiverOptions,
       planTaskForWorkTask
     }),
@@ -6003,7 +6080,8 @@ app.whenReady().then(async () => {
       planTaskForWorkTask,
       missionWorkspacePath,
       skillPlanScopes,
-      completedPlannedAgentsByPhaseRun
+      completedPlannedAgentsByPhaseRun,
+      completedHelperPhaseRuns
     }),
     ...buildSkillsApi(ctx, { skillRuntime, skillPlanScopes, privateSkillRuntimeRoot }),
     ...buildPanesApi(ctx, { securityWaiverOptions, planTaskForWorkTask, agentModelPool }),

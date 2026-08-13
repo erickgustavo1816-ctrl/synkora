@@ -239,6 +239,10 @@ export interface McpApi {
    *  por juízo próprio — motivo auditado, gates faltantes viram 'waived';
    *  cercas restantes = verificação conjunta do plano + ⇪ do dono. */
   completeTask: (id: PaneIdentity, taskId: string, reason: string) => string
+  /** AUTORIDADE PLENA SOBRE OS PANES DA MISSÃO (ordem do dono 2026-08-12):
+   *  o gêmeo do complete_task — PARA a fase deliberadamente, preserva o
+   *  trabalho e devolve o card ao backlog; motivo auditado verbatim. */
+  stopTask: (id: PaneIdentity, taskId: string, reason: string) => string
   report: (
     id: PaneIdentity,
     content: string,
@@ -321,11 +325,13 @@ export interface McpApi {
   approveProjectPlan: (id: PaneIdentity) => string
   /** Abre uma missão pronta da onda autorizada do roadmap aprovado. */
   startProjectMission: (id: PaneIdentity, itemId: string) => string
-  /** PM decide a estratégia de um conflito da fila e a persiste para o orquestrador executar. */
+  /** PM decide a estratégia de um conflito da fila e a persiste para o orquestrador executar.
+   *  directResolution=true: o PM JÁ resolveu mecanicamente na branch da missão — re-lacra e retoma sem card. */
   guideIntegrationResolution: (
     id: PaneIdentity,
     missionId: string,
-    instruction: string
+    instruction: string,
+    directResolution?: boolean
   ) => string
   /** orquestrador propõe o card de PLANO da missão (substitui enquanto não aprovado) */
   createPlan: (id: PaneIdentity, input: NewPlanInput) => Promise<string>
@@ -568,10 +574,9 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                   'ID estável do item correspondente no grafo de create_plan. Obrigatório nos planos novos; o backend deriva as dependências dele.'
                 ),
               delegation: z
-                .enum(['none', 'optional', 'parallel'])
-                .optional()
+                .enum(['none', 'parallel'])
                 .describe(
-                  'none = executor direto; optional = só se houver ganho líquido; parallel = existem blocos substanciais e independentes. Modo rápido força none.'
+                  'OBRIGATÓRIO. none = o orquestrador decidiu execução direta; parallel = o orquestrador provou blocos longos e independentes, o backend roteia a persona e exige conclusão de ajudante. FAST força none.'
                 ),
               gates: z
                 .array(z.enum(['review', 'qa']))
@@ -602,7 +607,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                 .max(1)
                 .optional()
                 .describe(
-                  'at most ONE installed specialist persona for a concrete independent subproblem. The dev opens it through delegate.agent; omit when no such subproblem exists.'
+                  'manual override of at most ONE installed specialist persona. Only valid with delegation=parallel; normally omit it because Synkora deterministically routes the best compatible persona from the card text.'
                 )
             })
           )
@@ -1003,7 +1008,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     'delegate',
     {
       description:
-        'Abre UM pane com outro agente para um bloco independente que compensa o custo de coordenação. Cada card mantém no máximo um ajudante; ele trabalha no MESMO diretório e você é avisado quando reportar done. ESCOLHA deliberadamente seat/modelo/effort — chame list_seats e case a força do modelo com o trabalho.',
+        'Abre ajudante(s) para blocos independentes autorizados pelo plano. FAST não abre; STANDARD permite até 2 e DEEP até 4. Todos trabalham no MESMO diretório, usam o mesmo tier do DEV e você supervisiona/integra. Quando o ACTIVE SKILL PLAN selecionar uma persona, omitir agent usa automaticamente essa persona; não invente outra.',
       inputSchema: {
         affectsUi: z
           .boolean()
@@ -1250,7 +1255,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       'run_task',
       {
         description:
-          'DISPARA a execução de um card desta missão (pipeline real: dev → gates → merge na branch da missão). Só funciona com o plano APROVADO — é você quem inicia os cards, nunca o usuário. Recusa por limite de execuções paralelas = aguarde um evento de conclusão e tente de novo. Com phase:"review"/"qa", REABRE APENAS aquele gate sobre o worktree existente. Com phase:"finalize", RE-TENTA somente a integração de um card já APROVADO cujo merge foi bloqueado (reparo de integração — resolva antes a causa no destino; nenhuma fase é repetida). Com adjustment, uma correção pequena pós-entrega reabre ESTE MESMO card em fluxo FAST, sem novo plano/card.',
+          'DISPARA a execução de um card desta missão (pipeline real: dev → gates → merge na branch da missão). Só funciona com o plano APROVADO — é você quem inicia os cards, nunca o usuário. Recusa por limite de execuções paralelas = aguarde um evento de conclusão e tente de novo. Com phase:"review"/"qa", REABRE APENAS aquele gate sobre o worktree existente. Com phase:"finalize", RE-TENTA somente a integração de um card já APROVADO cujo merge foi bloqueado (reparo de integração — resolva antes a causa no destino; nenhuma fase é repetida). Com adjustment, uma correção pequena pós-entrega reabre ESTE MESMO card em rodada QUICK (ajuste rápido do dono): protocolo cortado — dev faz só o delta com checks/evidência proporcionais, review vira olhada-relâmpago só no diff, QA não abre; skills e barra de qualidade seguem INTEIRAS. Pedido pequeno do dono (copy, formatação, máscara, espaçamento, um elemento) = adjustment, sempre.',
         inputSchema: {
           id: z.string().describe('id do card (create_tasks devolve; board_status lista)'),
           phase: z
@@ -1438,7 +1443,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       'guide_integration_resolution',
       {
         description:
-          'SÓ depois de a fila de integração registrar um CONFLITO: persiste a estratégia decidida pelo Maestro e a envia ao orquestrador da missão para execução. Antes de chamar, inspecione o conflito, a intenção da missão e a linha de destino. O usuário só participa se existir uma decisão real de produto — não por mecânica de Git.',
+          'SÓ depois de a fila de integração registrar um CONFLITO: persiste a estratégia decidida pelo Maestro. Dois modos: (1) padrão — a estratégia vai ao orquestrador da missão num card de sincronização com gates; (2) directResolution=true — para conflito MECÂNICO (dep/lockfile/grafia, zero lógica nova) que VOCÊ mesmo já resolveu na branch da missão (merge do destino + commit ANTES de chamar): o ticket é re-lacrado no head novo e a fila retoma sozinha com o aval original do dono, sem card. A régua mecânico×semântico é seu julgamento e fica auditada verbatim; na dúvida, use o fluxo com card. O usuário só participa se existir uma decisão real de produto — não por mecânica de Git.',
         inputSchema: {
           missionId: z.string().min(1).max(120).describe('id da missão bloqueada na fila'),
           instruction: z
@@ -1446,12 +1451,18 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
             .min(1)
             .max(8000)
             .describe(
-              'orientação concreta e executável: intenção a preservar, arquivos/choques relevantes, estratégia escolhida e verificações exigidas'
+              'orientação concreta e executável: intenção a preservar, arquivos/choques relevantes, estratégia escolhida e verificações exigidas (no modo direto: o que você resolveu e por que é mecânico)'
+            ),
+          directResolution: z
+            .boolean()
+            .optional()
+            .describe(
+              'true = você JÁ resolveu o conflito mecanicamente na branch da missão e commitou; o harness valida (árvore limpa + destino contido), re-lacra e retoma a fila sem card'
             )
         }
       },
-      async ({ missionId, instruction }) =>
-        text(api.guideIntegrationResolution(identity, missionId, instruction))
+      async ({ missionId, instruction, directResolution }) =>
+        text(api.guideIntegrationResolution(identity, missionId, instruction, directResolution))
     )
 
     server.registerTool(
@@ -1638,6 +1649,22 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       }
     },
     async ({ id, reason }) => text(api.completeTask(identity, id, reason))
+  )
+
+  server.registerTool(
+    'stop_task',
+    {
+      description:
+        'SÓ Maestro/orquestrador — SUA AUTORIDADE sobre os panes da sua missão (o gêmeo do complete_task): PARA deliberadamente a fase em execução de um card — fecha o pane, preserva TODO o trabalho (worktree, commits e a conversa para resume futuro) e devolve o card ao BACKLOG como interrompido, SEM contar ciclo. Use quando um executor não deve continuar agora (ex.: test card que só roda depois do aceite do dono; retrabalho vindo; pane rodando à toa). NÃO fabrica veredito: parar um gate encerra a rodada SEM veredito e run_task {id, phase} reabre depois. run_task {id} retoma o card quando você decidir. reason é OBRIGATÓRIO (auditado verbatim).',
+      inputSchema: {
+        id: z.string().describe('id do card'),
+        reason: z
+          .string()
+          .max(600)
+          .describe('por que está parando este card agora — auditado verbatim')
+      }
+    },
+    async ({ id, reason }) => text(api.stopTask(identity, id, reason))
   )
 
   server.registerTool(

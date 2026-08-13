@@ -1004,7 +1004,14 @@ export function installDevMock(): void {
       reportVoiceFocus: () => undefined,
       voiceTarget: async () => null,
       voicePaste: () => undefined,
-      onVoicePaste: () => () => undefined
+      onVoicePaste: () => () => undefined,
+      // 2026-08-11: sem WebContentsView no browser — captura sempre falha
+      // (o App cai no fallback de esconder sem congelado) e tooltip nunca é
+      // roteado (panesViewVisibleRect devolve null sem anchor de view).
+      capture: async () => null,
+      tipShow: () => undefined,
+      tipHide: () => undefined,
+      onTip: () => () => undefined
     },
     maestro: {
       pendingQuestions: async () => [],

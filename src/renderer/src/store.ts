@@ -193,6 +193,10 @@ export interface Task {
       fingerprint?: string
       status: 'planned' | 'activated' | 'applied'
     }>
+    agents?: Array<{
+      id: string
+      status: 'planned' | 'completed'
+    }>
     history?: Array<{
       phase: 'dev' | 'review' | 'qa'
       phaseRun: string
@@ -205,6 +209,10 @@ export interface Task {
         version?: string
         fingerprint?: string
         status: 'planned' | 'activated' | 'applied'
+      }>
+      agents?: Array<{
+        id: string
+        status: 'planned' | 'completed'
       }>
     }>
   }
@@ -689,6 +697,12 @@ interface SynkoraState {
    *  overlay do host ficaria POR BAIXO dela (child view compõe por cima). */
   hostOverlayCount: number
   bumpHostOverlay: (delta: 1 | -1) => void
+  /** HOST (2026-08-11): última captura da view de panes, pintada no rect dela
+   *  ENQUANTO um overlay do host a esconde — sem isto a área virava um buraco
+   *  vazio atrás do popover. Setado pelo efeito de layout do App; consumido
+   *  pelo Universe (o stage é exatamente o rect da view). */
+  panesFreeze: { projectId: string; dataUrl: string } | null
+  setPanesFreeze: (freeze: { projectId: string; dataUrl: string } | null) => void
   /** VIEW: visibilidade real vinda do main (gate do rAF decorativo). */
   panesViewShown: boolean
   setPanesViewShown: (shown: boolean) => void
@@ -785,6 +799,28 @@ function readJson<T>(key: string, fallback: T): T {
   } catch {
     return fallback
   }
+}
+
+/** Fase 3 (2026-08-11): rect (coords da página do host) onde a WebContentsView
+ *  de panes está VISÍVEL agora — null quando escondida. FONTE ÚNICA da
+ *  composição de visibilidade (a mesma do efeito de layout do App): o Tooltip
+ *  usa isto para rotear tooltip do host que cruzaria o rect (a view compõe POR
+ *  CIMA do DOM do host e o clipava), e o App para decidir o congelado sob
+ *  overlay. `ignoreHostOverlay` responde "estaria visível SEM o overlay?" —
+ *  é o que distingue "escondeu por popover" (congela) de "saiu da aba" (não).
+ *  Na VIEW de panes este helper devolve sempre null (anchor nunca é setado lá),
+ *  o que também corta qualquer re-roteamento em loop. */
+export function panesViewVisibleRect(
+  s: Pick<
+    SynkoraState,
+    'appPage' | 'openProjectId' | 'universeTabByProject' | 'hostOverlayCount' | 'panesAnchorByProject'
+  >,
+  ignoreHostOverlay = false
+): { x: number; y: number; width: number; height: number } | null {
+  if (s.appPage !== 'workspace' || s.openProjectId === null) return null
+  if ((s.universeTabByProject[s.openProjectId] ?? 'board') !== 'panes') return null
+  if (!ignoreHostOverlay && s.hostOverlayCount > 0) return null
+  return s.panesAnchorByProject[s.openProjectId] ?? null
 }
 
 export const useStore = create<SynkoraState>((set, get) => ({
@@ -1405,6 +1441,14 @@ export const useStore = create<SynkoraState>((set, get) => ({
   hostOverlayCount: 0,
   bumpHostOverlay: (delta) =>
     set((s) => ({ hostOverlayCount: Math.max(0, s.hostOverlayCount + delta) })),
+  panesFreeze: null,
+  setPanesFreeze: (freeze) => {
+    // guard ANTES do set: o efeito de layout do App chama com null em toda
+    // rodada fora da aba Panes — sem isto cada troca de aba notificava a
+    // árvore inteira de subscribers à toa
+    if (get().panesFreeze === freeze) return
+    set({ panesFreeze: freeze })
+  },
   panesViewShown: true,
   setPanesViewShown: (shown) => set({ panesViewShown: shown }),
   applyHostViewState: (state) =>

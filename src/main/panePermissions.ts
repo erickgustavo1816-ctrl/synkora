@@ -184,11 +184,14 @@ export function panePermissionArgs(
   profile: PaneAccessProfile = 'write',
   context: PanePermissionContext = {}
 ): string[] {
-  const claudeSkillIsolation = [
-    '--disable-slash-commands',
-    '--disallowedTools',
-    'Skill,Agent,Task'
-  ]
+  // SEM --disable-slash-commands (removida 2026-08-11, ordem do dono após o
+  // caso real "Unknown command: /model" em TODO pane claude): slash é
+  // interface do HUMANO no composer — o agente invoca skill via tool, e essa
+  // porta já está trancada pelo --disallowedTools abaixo. A flag só punia o
+  // dono (provado por sonda A/B no claude 2.1.227: nu funciona; com a flag
+  // reproduz o sintoma exato). Não reintroduzir sem sonda provando
+  // auto-invocação POR SLASH pelo modelo.
+  const claudeSkillIsolation = ['--disallowedTools', 'Skill,Agent,Task']
   const codexSkillIsolation = [
     '--disable',
     'multi_agent',

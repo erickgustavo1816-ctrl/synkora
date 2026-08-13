@@ -158,6 +158,13 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
   )
   const maestroSeatId = useStore((s) => s.maestroSeatId)
   const maestroStateLoaded = useStore((s) => s.maestroStateLoaded)
+  // 2026-08-11: overlay do host aberto esconde a WebContentsView de panes (ela
+  // compõe POR CIMA do DOM — o popover ficaria por baixo). O App captura a
+  // view antes do hide e guarda aqui; o stage É o rect da view, então o img
+  // absoluto inset:0 pinta o congelado exatamente onde a view estava.
+  const panesFreeze = useStore((s) =>
+    s.panesFreeze && s.panesFreeze.projectId === projectId ? s.panesFreeze : null
+  )
   const seatGateOpen = useStore((s) => s.seatGateOpen)
   // universos ficam montados em segundo plano — portais (gate) só no ativo
   const isActive = useStore(
@@ -320,6 +327,18 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
         </div>
         {/* Fase 3: o canvas mora na WebContentsView — aqui fica só a régua. */}
         <PanesAnchor projectId={projectId} />
+        {/* Congelado da view sob overlay do host (2026-08-11). Fora do
+            PanesAnchor de propósito: o keepalive dele tem opacity:0 (que filho
+            nenhum desfaz); aqui o img participa do stacking normal do universo
+            — abaixo do menu ✦ Agente (z30), da titlebar (z90) e dos modais. */}
+        {panesFreeze && tab === 'panes' && (
+          <img
+            className="panes-freeze"
+            src={panesFreeze.dataUrl}
+            alt=""
+            draggable={false}
+          />
+        )}
         {/* Backlog/Arquivos não rodam processo nenhum — podem montar/desmontar
             à vontade (montar só quando ativo recarrega a lista fresca). */}
         {tab === 'backlog' && (
