@@ -13599,18 +13599,105 @@ body.progress-overlay-page #root {
   display: block;
 }
 
-/* ---------- PANE GUI (Synkora 2.0): o chat no lugar da TUI ---------- */
-/* Mesma moldura .term-window dos panes: corpo em PAINEL ESCURO, texto claro,
-   tipografia mono. O que muda em relação ao xterm é só o conteúdo. */
+/* ---------- PANE GUI (Synkora 2.0): o CHAT É PAPEL ----------
+   CONTRATO VISUAL: docs/MOCKUP_WORKSPACE.md § "Anatomia do chat", re-afirmado
+   pelo dono em 2026-08-14 depois de uma execução errada ("tá parecendo um pane
+   ainda, tá feio"). A regra que esta seção existe para não deixar quebrar de
+   novo: `--panel` (o painel escuro) é EXCLUSIVO do TerminalPane — NENHUMA
+   superfície de conversa o usa. Fundo `--paper`, texto `--ink`, linhas e
+   preenchimentos derivados do próprio ink (12% borda · 5-6% fundo · 28% no
+   input), acento só onde há decisão do dono (permissão, enviar, pergunta). */
 
 .gui-pane {
+  /* tokens locais: a régua do mockup em uma linha só, para nenhuma regra
+     abaixo inventar opacidade própria */
+  --gui-line: color-mix(in srgb, var(--ink) 12%, transparent);
+  --gui-line-strong: color-mix(in srgb, var(--ink) 28%, transparent);
+  --gui-fill: color-mix(in srgb, var(--ink) 5%, transparent);
+  --gui-fill-2: color-mix(in srgb, var(--ink) 6%, transparent);
+  --gui-column: 780px;
+
   position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--panel);
-  color: var(--panel-ink);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* ---- cabeçalho fino da conversa: UMA linha apagada, sem barra escura ---- */
+
+.gui-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  padding: 9px 18px 3px;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--ink-2);
+  min-width: 0;
+}
+
+.gui-head > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-head > * + *::before {
+  content: '·';
+  margin: 0 7px;
+  color: var(--ink-3);
+}
+
+.gui-head-role {
+  flex: none;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.gui-head-model {
+  flex: none;
+  text-transform: lowercase;
+}
+
+.gui-head-where {
+  color: var(--ink-3);
+}
+
+.gui-head-status {
+  flex: none;
+  margin-left: auto;
+  padding-left: 12px;
+}
+
+/* o estado vem sozinho na ponta direita — separador ali seria ruído */
+.gui-head-status::before {
+  content: none;
+}
+
+.gui-head-status.working,
+.gui-head-status.waiting-you,
+.gui-head-status.starting {
+  color: var(--accent);
+}
+
+.gui-head-status.dead {
+  color: var(--err);
+}
+
+/* ---- o fio da conversa: coluna legível, respirando ---- */
+
+/* Âncora do "ir para o fim": preso ao .gui-pane, o botão cairia POR CIMA do
+   card de permissão (que nasce entre o fio e o composer). */
+.gui-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .gui-log {
@@ -13618,19 +13705,90 @@ body.progress-overlay-page #root {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
   scrollbar-gutter: stable;
+  padding: 10px 0 18px;
 }
 
-/* ---- mensagens ---- */
+.gui-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: var(--gui-column);
+  margin: 0 auto;
+  padding: 0 18px;
+}
+
+.gui-empty {
+  margin-top: 22px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+/* ---- injeção / 1º prompt ---- */
+
+.gui-inject {
+  border: 1px solid var(--gui-line);
+  border-radius: 6px;
+  background: var(--gui-fill);
+  padding: 7px 10px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  animation: rise 160ms ease both;
+}
+
+.gui-inject > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.gui-inject > summary::-webkit-details-marker {
+  display: none;
+}
+
+.gui-inject-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.gui-inject-tag {
+  flex: none;
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.gui-inject-body {
+  margin: 8px 0 2px;
+  padding-left: 10px;
+  border-left: 2px solid var(--gui-line);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* ---- mensagens: o dev fala direto no papel; você fala num bloco ---- */
 
 .gui-msg {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   font-size: 12.5px;
   line-height: 1.55;
   animation: rise 160ms ease both;
@@ -13640,31 +13798,36 @@ body.progress-overlay-page #root {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
-  color: var(--panel-ink);
+  color: var(--ink);
 }
 
 .gui-msg.user {
   align-self: flex-end;
   align-items: flex-end;
-  max-width: 86%;
+  max-width: 84%;
 }
 
 .gui-msg.user .gui-msg-text {
-  background: var(--panel-2);
-  border: 1px solid var(--panel-line);
-  border-radius: 10px 10px 2px 10px;
-  padding: 7px 10px;
+  background: var(--gui-fill);
+  border: 1px solid var(--gui-line);
+  border-radius: 10px 10px 3px 10px;
+  padding: 7px 11px;
 }
 
 .gui-msg-tag {
-  color: var(--accent);
-  font-size: 10.5px;
-  letter-spacing: 0.06em;
+  font-size: 10px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* streaming: texto ink APAGADO + cursor piscando (o mockup, item 6) */
+.gui-msg.stream .gui-msg-text {
+  color: var(--ink-2);
 }
 
 .gui-note {
-  color: var(--panel-ink-3);
+  color: var(--ink-3);
   font-size: 11.5px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -13673,9 +13836,11 @@ body.progress-overlay-page #root {
 }
 
 .gui-error {
-  color: #e0655a;
+  color: var(--err);
   font-size: 12px;
   line-height: 1.5;
+  padding-left: 10px;
+  border-left: 2px solid color-mix(in srgb, var(--err) 45%, transparent);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
@@ -13684,32 +13849,58 @@ body.progress-overlay-page #root {
 .gui-thinking {
   display: flex;
   align-items: center;
-  gap: 7px;
-  color: var(--panel-ink-3);
+  gap: 8px;
+  color: var(--ink-3);
   font-size: 11.5px;
   font-style: italic;
 }
 
-.gui-thinking-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: blinkc 1s step-end infinite;
+.gui-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 
-/* ---- cards de ferramenta: uma linha, resultado sob demanda ---- */
+.gui-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: gui-dot 1.05s ease-in-out infinite;
+}
+
+.gui-dots i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.gui-dots i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes gui-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+/* ---- tool cards: linha clara com o desfecho à direita ---- */
 
 .gui-tool {
   display: flex;
   align-items: center;
-  gap: 7px;
-  border: 1px solid var(--panel-line);
-  border-radius: 8px;
-  background: var(--panel-2);
-  padding: 5px 9px;
+  gap: 8px;
+  border-radius: 6px;
+  background: var(--gui-fill-2);
+  padding: 6px 10px;
   font-size: 11.5px;
-  color: var(--panel-ink-2);
+  color: var(--ink-2);
   min-width: 0;
 }
 
@@ -13717,122 +13908,205 @@ details.gui-tool {
   display: block;
 }
 
-.gui-tool summary {
+.gui-tool > summary {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   cursor: pointer;
   list-style: none;
   min-width: 0;
 }
 
-.gui-tool summary::-webkit-details-marker {
+.gui-tool > summary::-webkit-details-marker {
   display: none;
 }
 
-.gui-tool summary::after {
+.gui-tool > summary::after {
   content: '⌄';
-  margin-left: auto;
-  color: var(--panel-ink-3);
+  flex: none;
+  margin-left: 8px;
+  color: var(--ink-3);
   font-size: 10px;
 }
 
-.gui-tool[open] summary::after {
+.gui-tool[open] > summary::after {
   content: '⌃';
 }
 
-.gui-tool-state {
+.gui-tool-icon {
   flex: none;
-  color: var(--panel-ink-3);
+  width: 12px;
+  text-align: center;
+  color: var(--ink-3);
 }
 
-.gui-tool-state.ok {
-  color: var(--ok);
-}
-
-.gui-tool-state.err {
-  color: #e0655a;
-}
-
-.gui-tool-state.run {
-  animation: blinkc 1s step-end infinite;
+.gui-tool-icon.run {
   color: var(--accent);
+  animation: blinkc 1s step-end infinite;
 }
 
 .gui-tool-name {
   flex: none;
-  color: var(--panel-ink);
+  color: var(--ink);
   font-weight: 700;
 }
 
+.gui-tool-sep {
+  flex: none;
+  color: var(--ink-3);
+}
+
 .gui-tool-summary {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--panel-ink-3);
+  color: var(--ink-2);
+}
+
+.gui-tool-out {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ok);
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-tool-out.err {
+  color: var(--err);
 }
 
 .gui-tool-detail {
-  margin: 6px 0 2px;
-  padding: 6px 8px;
-  border-left: 2px solid var(--panel-line);
-  color: var(--panel-ink-3);
+  margin: 8px 0 2px;
+  padding: 0 0 0 10px;
+  border-left: 2px solid var(--gui-line);
+  color: var(--ink-2);
   font-size: 11.5px;
+  line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
-  max-height: 200px;
+  max-height: 220px;
   overflow-y: auto;
 }
 
 .gui-perm-mark {
-  color: var(--panel-ink-3);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--ink-3);
   font-size: 11px;
 }
 
 .gui-perm-mark.deny {
-  color: #c98a82;
+  color: var(--err);
 }
 
-/* ---- card de permissão: a única superfície em ACENTO ---- */
+/* ---- pergunta com ação inline: a única outra superfície em acento ---- */
+
+.gui-ask {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--paper);
+  padding: 8px 11px;
+  animation: rise 160ms ease both;
+}
+
+.gui-ask-label {
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.gui-ask-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 7px;
+}
+
+/* ---- card de permissão ---- */
 
 .gui-perm {
   flex: none;
-  margin: 0 12px 10px;
-  padding: 10px 12px;
+  align-self: center;
+  width: min(var(--gui-column), calc(100% - 36px));
+  margin: 0 0 12px;
+  padding: 11px 13px;
   border: 1px solid var(--accent);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--panel-2));
+  background: color-mix(in srgb, var(--accent) 10%, var(--paper));
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
   animation: rise 160ms ease both;
 }
 
 .gui-perm-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font-size: 12.5px;
-  color: var(--panel-ink);
+  color: var(--ink);
   user-select: text;
+  min-width: 0;
 }
 
-.gui-perm-head b {
-  color: var(--accent);
+.gui-perm-icon {
+  flex: none;
+}
+
+.gui-perm-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gui-perm-title b {
+  color: var(--accent-deep);
+}
+
+.gui-perm-tool {
+  flex: none;
+  margin-left: auto;
+  padding-left: 10px;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
 }
 
 .gui-perm-reason,
-.gui-perm-input summary {
-  color: var(--panel-ink-3);
+.gui-perm-input > summary {
+  color: var(--ink-2);
   font-size: 11.5px;
 }
 
-.gui-perm-input summary {
+.gui-perm-input > summary {
   cursor: pointer;
   list-style: none;
 }
 
-.gui-perm-input summary::-webkit-details-marker {
+.gui-perm-input > summary::-webkit-details-marker {
   display: none;
+}
+
+.gui-perm-input > summary::after {
+  content: ' ⌄';
+  color: var(--ink-3);
+  font-size: 10px;
+}
+
+.gui-perm-input[open] > summary::after {
+  content: ' ⌃';
 }
 
 .gui-perm-actions {
@@ -13841,19 +14115,19 @@ details.gui-tool {
   flex-wrap: wrap;
 }
 
-/* ---- botões e composer ---- */
+/* ---- botões do papel ---- */
 
 .gui-btn {
   flex: none;
   background: transparent;
-  border: 1px solid var(--panel-line);
+  border: 1px solid var(--gui-line-strong);
   border-radius: 7px;
-  color: var(--panel-ink);
+  color: var(--ink);
   font-family: var(--mono);
-  font-size: 11.5px;
-  letter-spacing: 0.04em;
+  font-size: 11px;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  padding: 6px 12px;
+  padding: 5px 12px;
   cursor: pointer;
   transition:
     border-color 120ms ease,
@@ -13862,7 +14136,8 @@ details.gui-tool {
 }
 
 .gui-btn:hover:not(:disabled) {
-  border-color: var(--panel-ink-2);
+  border-color: var(--ink-2);
+  background: var(--gui-fill);
 }
 
 .gui-btn:disabled {
@@ -13871,86 +14146,129 @@ details.gui-tool {
 }
 
 .gui-btn.primary {
+  background: var(--accent);
   border-color: var(--accent);
-  color: var(--accent);
+  color: #fff;
 }
 
 .gui-btn.primary:hover:not(:disabled) {
-  background: var(--accent);
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
   color: #fff;
+}
+
+.gui-btn.deny {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 45%, transparent);
 }
 
 .gui-btn.deny:hover:not(:disabled) {
   border-color: var(--err);
-  color: #e0655a;
+  background: color-mix(in srgb, var(--err) 8%, transparent);
 }
 
 .gui-to-end {
   position: absolute;
-  right: 16px;
-  bottom: 74px;
+  right: 20px;
+  bottom: 14px;
   z-index: 2;
-  background: var(--panel-2);
-  border: 1px solid var(--panel-line);
+  background: var(--card);
+  border: 1px solid var(--gui-line-strong);
   border-radius: 999px;
-  color: var(--panel-ink-2);
+  color: var(--ink-2);
   font-family: var(--mono);
   font-size: 11px;
-  padding: 4px 11px;
+  padding: 4px 12px;
   cursor: pointer;
+  box-shadow: 0 6px 18px rgba(38, 32, 25, 0.14);
 }
 
 .gui-to-end:hover {
-  color: var(--panel-ink);
-  border-color: var(--panel-ink-3);
+  color: var(--ink);
+  border-color: var(--ink-2);
 }
+
+/* ---- composer ---- */
 
 .gui-composer {
   flex: none;
+  padding: 10px 18px 12px;
+  border-top: 1px solid var(--gui-line);
+  background: var(--paper);
+}
+
+.gui-composer-inner {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--panel-line);
-  background: var(--panel);
+  width: 100%;
+  max-width: var(--gui-column);
+  margin: 0 auto;
 }
 
-/* ---------- MODO DE PERMISSÃO POR CONVERSA (onda D) ----------
-   O interruptor global do universo morreu: quem decide o quanto o agente pode
-   agir sozinho é cada chat, aqui, colado no que se vai escrever. */
+/* MODO DE PERMISSÃO POR CONVERSA (onda D): o interruptor global do universo
+   morreu — quem decide o quanto o agente pode agir sozinho é cada chat, aqui,
+   colado no que se vai escrever. */
 .gui-perm-mode {
   position: relative;
   flex: none;
 }
 
 .gui-mode-btn {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
   white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    color 120ms ease,
+    background 120ms ease;
+}
+
+.gui-mode-btn:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--ink-2);
+  background: var(--gui-fill);
+}
+
+.gui-mode-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .gui-mode-btn.mode-bypass {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-deep);
 }
 
 .gui-mode-btn.mode-plan {
-  border-color: var(--panel-line);
-  color: var(--panel-ink-2);
+  color: var(--ink-3);
 }
 
 .gui-mode-menu {
   position: absolute;
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + 8px);
   left: 0;
   z-index: 40;
-  min-width: 280px;
+  min-width: 292px;
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 5px;
-  border: 1px solid var(--panel-line);
-  border-radius: 9px;
-  background: var(--panel-2);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow);
   animation: rise 130ms ease both;
 }
 
@@ -13962,11 +14280,11 @@ details.gui-tool {
   text-align: left;
   background: none;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 7px;
   padding: 7px 9px;
   cursor: pointer;
   font-family: var(--mono);
-  color: var(--panel-ink);
+  color: var(--ink);
 }
 
 .gui-mode-item b {
@@ -13975,11 +14293,11 @@ details.gui-tool {
 
 .gui-mode-item span {
   font-size: 10.5px;
-  color: var(--panel-ink-2);
+  color: var(--ink-2);
 }
 
 .gui-mode-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--gui-fill);
 }
 
 .gui-mode-item.active {
@@ -13990,28 +14308,137 @@ details.gui-tool {
   flex: 1;
   min-width: 0;
   resize: none;
-  background: var(--panel-2);
-  border: 1px solid var(--panel-line);
-  border-radius: 8px;
-  color: var(--panel-ink);
+  background: var(--card);
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 9px;
+  color: var(--ink);
   font-family: var(--mono);
   font-size: 12.5px;
   line-height: 1.5;
-  padding: 8px 10px;
+  padding: 8px 11px;
   max-height: 168px;
   overflow-y: auto;
   user-select: text;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .gui-input:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .gui-input::placeholder {
-  color: var(--panel-ink-3);
+  color: var(--ink-3);
 }
 
 .gui-input:disabled {
   opacity: 0.6;
+}
+
+/* mic e enviar: dois quadrados de 34px alinhados à base do input */
+.gui-sq {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    color 120ms ease,
+    background 120ms ease;
+}
+
+.gui-sq:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--ink-2);
+  background: var(--gui-fill);
+}
+
+.gui-sq:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.gui-send {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.gui-send:hover:not(:disabled) {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: #fff;
+}
+
+.gui-send:disabled {
+  background: color-mix(in srgb, var(--accent) 40%, var(--paper));
+  border-color: transparent;
+  color: #fff;
+  opacity: 1;
+}
+
+.gui-send.stop {
+  background: transparent;
+  border-color: var(--gui-line-strong);
+  color: var(--ink-2);
+}
+
+.gui-send.stop:hover:not(:disabled) {
+  background: transparent;
+  border-color: var(--err);
+  color: var(--err);
+}
+
+/* ---- o chat cabe em pane estreito sem virar sopa ---- */
+
+@container pane (max-width: 560px) {
+  .gui-thread,
+  .gui-composer-inner {
+    max-width: none;
+  }
+
+  .gui-perm {
+    width: calc(100% - 28px);
+  }
+
+  .gui-head-where {
+    display: none;
+  }
+}
+
+@container pane (max-width: 480px) {
+  /* a frase do composer é contrato ("dirija o dev — ou peça um reviewer"):
+     em pane estreito ela encolhe em vez de quebrar linha e ser cortada */
+  .gui-input::placeholder {
+    font-size: 11px;
+  }
+}
+
+@container pane (max-width: 430px) {
+  .gui-mode-text {
+    display: none;
+  }
+
+  .gui-thread,
+  .gui-head,
+  .gui-composer {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .gui-mode-menu {
+    min-width: 240px;
+  }
 }
