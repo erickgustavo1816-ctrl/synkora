@@ -115,7 +115,11 @@ export default function NewMissionModal({
       seatId: seatId || undefined,
       model: model.trim() || undefined,
       effort: effort || undefined,
-      versionId: versionId || undefined
+      versionId: versionId || undefined,
+      // MISSÃO 2.0 (onda B): TODA missão criada pelo usuário nasce DIRETA —
+      // sem orquestrador e sem plano; abrir a aba abre o chat no worktree.
+      // Missão legada (sem o campo) continua no fluxo antigo, intocada.
+      direct: true
     })
     if (!created) {
       setSubmitError(
@@ -182,7 +186,9 @@ export default function NewMissionModal({
         )}
         <div className="mission-exec-row">
           <label>
-            orquestrador (seat)
+            {/* missão nova é DIRETA (onda B): a conta escolhida é a do AGENTE
+                que vai conversar no worktree, não a de um orquestrador */}
+            {locked ? 'orquestrador (seat)' : 'conta do agente'}
             <Select
               value={seatId}
               onChange={(v) => {
@@ -257,7 +263,7 @@ export default function NewMissionModal({
               : confirmOnly
                 ? 'o Maestro criou esta missão — escolha conta, modelo e effort do ORQUESTRADOR; ele só abre depois desta escolha'
                 : versionId
-                  ? 'a missão integra na BRANCH DA VERSÃO — a main só recebe quando você subir a versão'
+                  ? 'a missão nasce em branch/worktree próprios e integra na BRANCH DA VERSÃO — a main só recebe quando você subir a versão'
                   : 'a missão nasce em branch/worktree próprios (sem git? o Synkora inicializa o repo)'}
           </span>
           <button className="btn ghost" onClick={onClose}>

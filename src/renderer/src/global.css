@@ -2802,9 +2802,12 @@ select {
 
 .maestro-window {
   /* coluna lateral: METADE DA TELA por padrão (decisão do usuário),
-     largura redimensionável pela alça da ESQUERDA, altura total */
+     largura redimensionável pela alça da ESQUERDA, altura total.
+     ONDA B: a coluna de missões (240px + gap) entrou na mesma linha, então o
+     teto passou a reservar espaço para ela TAMBÉM — senão o conteúdo do board
+     era espremido abaixo do legível quando o dono alargava o chat. */
   position: relative; /* âncora da alça */
-  width: min(var(--maestro-preferred-width, 50%), calc(100% - 432px));
+  width: min(var(--maestro-preferred-width, 50%), calc(100% - 684px));
   min-width: min(420px, 48%);
   max-width: 72%;
   overflow: hidden;
@@ -2843,10 +2846,11 @@ select {
   gap: 8px;
 }
 
-/* A troca de eixo só acontece abaixo do limite matemático de duas colunas de
-   420px + gap. Na faixa nativa do app o Maestro permanece lateral, sem o salto
-   de largura que ocorria quando o breakpoint era acionado cedo demais. */
-@container board (max-width: 851px) {
+/* A troca de eixo só acontece abaixo do limite matemático das colunas lado a
+   lado (2×420px + gap, mais os 240px da coluna de missões da onda B). Na faixa
+   nativa do app tudo permanece lateral, sem o salto de largura que ocorria
+   quando o breakpoint era acionado cedo demais. */
+@container board (max-width: 1103px) {
   .board-main {
     flex-direction: column;
   }
@@ -2866,6 +2870,67 @@ select {
 
   .maestro-resizer {
     display: none;
+  }
+
+  /* Empilhado o eixo NÃO é reverso: a ordem do DOM volta a valer, então a
+     coluna de missões (último filho) precisa de `order` para subir ao topo —
+     e ela vira uma FAIXA horizontal, não uma barra lateral de 240px. */
+  .mission-col,
+  .board-main.direct-mode .mission-col {
+    order: -1;
+    flex: none;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 6px;
+    padding-right: 0;
+    padding-bottom: 8px;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .board-main.direct-mode .maestro-window {
+    order: 0;
+    min-width: 0;
+    flex: 1 1 50%;
+  }
+
+  .board-main.direct-mode .board-content {
+    order: 1;
+    flex: 0 0 auto;
+  }
+
+  .mission-col-list {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-gutter: auto;
+  }
+
+  .mission-card {
+    flex: 0 0 200px;
+  }
+
+  .mission-col-general,
+  .mission-col-new {
+    flex: none;
+    align-self: center;
+    white-space: nowrap;
+  }
+
+  .mission-col-tools {
+    flex-direction: row;
+    align-items: center;
+    padding-top: 0;
+    padding-left: 8px;
+    border-top: none;
+    border-left: 1px solid var(--line);
+  }
+
+  .mission-col-empty {
+    align-self: center;
+    white-space: nowrap;
   }
 }
 
@@ -3186,9 +3251,11 @@ select {
   animation: perm-pulse 1.1s ease-in-out infinite;
 }
 
-/* ask_user (2026-08-06): Maestro/orquestrador perguntou ao DONO — a aba
-   pulsa até ser aberta. Mesmo vocabulário do needs-perm: "esperando você". */
-.mission-tab.asking {
+/* ask_user (2026-08-06): o agente perguntou ao DONO — o card da missão (ou a
+   entrada ✦ geral) pulsa até ser aberto. Mesmo vocabulário do needs-perm:
+   "esperando você". */
+.mission-card.asking,
+.mission-col-general.asking {
   border: 2px solid var(--accent);
   animation: perm-pulse 1.1s ease-in-out infinite;
 }
@@ -7024,114 +7091,161 @@ body.pane-docking .pane-bar.draggable {
   color: var(--panel-ink-3);
 }
 
-/* ---------- missões (F3.8): abas + orquestrador por missão ---------- */
-
-/* A barra tem DOIS papéis distintos e eles não podem se misturar: à esquerda
-   navegação (onde você trabalha), à direita controle do universo (como os
-   agentes se comportam). A divisória é o que impede o bypass de ser lido como
-   "mais uma aba". */
-.mission-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 8px;
-}
-
-.mission-tabs {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+/* ---------- COLUNA DE MISSÕES (Synkora 2.0, onda B) ----------
+   A fila de abas do topo virou a coluna da ESQUERDA do mockup aprovado: um
+   CARD por missão, com o worktree embaixo do título. Linguagem papel: borda de
+   tinta, sem sombra, sem card flutuante (isso é do mapa). */
+.mission-col {
+  flex: 0 0 240px;
   min-width: 0;
-  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 10px;
+  border-right: 1px solid var(--line);
+  overflow: hidden;
 }
 
-.mission-bar-tools {
+.mission-col-general {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex: none;
-}
-
-.bar-div {
-  width: 1px;
-  height: 20px;
-  background: var(--line-strong);
-  opacity: 0.7;
-}
-
-.mission-tab {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px;
   font-family: inherit;
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  padding: 5px 12px;
+  text-align: left;
+  padding: 7px 10px;
   border: 1.5px solid var(--ink-3);
   border-radius: 8px;
   background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    background var(--motion-fast) ease;
+}
+
+.mission-col-general:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.mission-col-general.active {
+  background: var(--panel);
+  border-color: var(--panel);
+  color: var(--panel-ink);
+}
+
+.mc-glyph {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.mission-col-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* a barra some e volta conforme a lista cresce; reservar a calha evita que
+     o card mude de largura no meio de uma leitura */
+  scrollbar-gutter: stable;
+}
+
+.mission-col-empty {
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  padding: 8px 2px;
+}
+
+/* Card da missão: 3 linhas fixas — título, meta e WORKTREE. */
+.mission-card {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  padding: 8px 10px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--card);
   color: var(--ink-2);
   cursor: pointer;
   overflow: hidden;
   transition:
     color var(--motion-fast) ease,
     border-color var(--motion-fast) ease,
-    background var(--motion-fast) ease,
-    transform var(--motion-fast) var(--ease-out);
+    background var(--motion-fast) ease;
 }
 
-.mt-glyph {
-  font-size: 11px;
-  line-height: 1;
-  transition: transform var(--motion-base) var(--ease-pop);
-}
-
-.mt-label {
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* progresso da missão direto na aba: dá para escolher onde entrar sem abrir */
-.mt-count {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  padding: 1px 5px;
-  border-radius: 999px;
-  background: rgba(38, 32, 25, 0.1);
-  color: var(--ink-3);
-}
-
-.mission-tab:hover {
+.mission-card:hover {
   border-color: var(--ink);
   color: var(--ink);
-  transform: translateY(-1px);
 }
 
-.mission-tab:hover .mt-glyph {
-  transform: scale(1.18) rotate(-6deg);
-}
-
-.mission-tab.active {
+.mission-card.active {
   background: var(--panel);
   border-color: var(--panel);
   color: var(--panel-ink);
 }
 
-.mission-tab.active .mt-count {
-  background: rgba(239, 232, 216, 0.14);
-  color: var(--panel-ink-2);
+.mc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
-.mt-queue {
+.mc-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+.mc-dot.ok {
+  background: var(--ok);
+}
+
+.mc-dot.busy {
+  background: var(--accent);
+}
+
+.mc-dot.ask {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(217, 108, 63, 0.22);
+}
+
+.mc-dot.err {
+  background: var(--err);
+}
+
+.mc-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.mission-card.active .mc-title {
+  color: var(--panel-ink);
+}
+
+.mc-badge {
+  flex: none;
   font-size: 8px;
   font-weight: 750;
   letter-spacing: 0.025em;
@@ -7139,83 +7253,268 @@ body.pane-docking .pane-bar.draggable {
   padding: 1px 5px;
   border: 1px solid rgba(70, 61, 48, 0.2);
   border-radius: 999px;
-  color: var(--ink-2);
   background: rgba(255, 255, 255, 0.28);
+  color: var(--ink-2);
 }
 
-.mt-queue.sync_required {
+.mc-badge.busy {
   color: var(--accent-deep);
   border-color: rgba(217, 108, 63, 0.38);
 }
 
-.mt-queue.blocked {
+.mc-badge.ask {
+  color: var(--accent-deep);
+  border-color: rgba(217, 108, 63, 0.5);
+  background: rgba(217, 108, 63, 0.14);
+}
+
+.mc-badge.err {
   color: #8a3e2c;
   border-color: rgba(138, 62, 44, 0.42);
   background: rgba(217, 108, 63, 0.12);
 }
 
-.mission-tab.active .mt-queue {
+.mission-card.active .mc-badge {
   color: var(--panel-ink-2);
   border-color: rgba(239, 232, 216, 0.24);
   background: rgba(239, 232, 216, 0.1);
 }
 
-.mission-tab.integrating {
-  border-color: var(--accent);
-  color: var(--accent-deep);
-}
-
-.mission-tab.integrating.active {
-  color: var(--accent);
-}
-
-/* missão integrando: a aba mostra o trabalho em curso na própria base */
-.mt-merging {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 2px;
+.mc-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
   overflow: hidden;
-  background: rgba(217, 108, 63, 0.25);
+  white-space: nowrap;
 }
 
-.mt-merging::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 40%;
-  background: var(--accent);
-  animation: merging-run 1.25s ease-in-out infinite;
+.mc-seat {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.mission-tab.add {
-  border-style: dashed;
-  text-transform: none;
+.mc-version,
+.mc-count {
+  flex: none;
+}
+
+/* O WORKTREE embaixo da missão (pedido do dono): é onde o agente daquela
+   conversa está de fato trabalhando. Mono, apagado, nunca disputa o título. */
+.mc-branch {
+  font-size: 9px;
+  letter-spacing: 0.01em;
+  color: var(--ink-3);
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.mission-card.active .mc-meta,
+.mission-card.active .mc-branch {
+  color: var(--panel-ink-2);
+}
+
+.mission-card.integrating {
+  border-color: var(--accent);
+}
+
+.mission-col-new {
+  flex: none;
+  font-family: inherit;
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 7px 10px;
+  border: 1.5px dashed var(--ink-3);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease;
 }
 
-.mission-tab.add:hover {
+.mission-col-new:hover:not(:disabled) {
   border-style: solid;
   border-color: var(--accent);
   color: var(--accent-deep);
 }
 
-.mission-tab.add:hover .mt-glyph {
-  transform: rotate(90deg) scale(1.15);
-}
-
-.mission-tab:disabled,
-.mission-tab.add:disabled:hover {
+.mission-col-new:disabled {
   opacity: 0.46;
   cursor: not-allowed;
-  transform: none;
-  border-color: var(--ink-3);
-  color: var(--ink-3);
 }
 
-.mission-tab:disabled:hover .mt-glyph {
-  transform: none;
+/* Controle do UNIVERSO (bypass): não é navegação, então fica no RODAPÉ da
+   coluna, separado da lista por uma régua. */
+.mission-col-tools {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+/* ---------- TRILHO DE ENTREGA (missão direta) ----------
+   O que sobra do board quando não há kanban: estado da branch + alavancas. */
+.delivery-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  padding: 12px;
+}
+
+.dr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dr-title {
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.dr-status {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.dr-status.integrando {
+  color: var(--accent-deep);
+  border-color: rgba(217, 108, 63, 0.4);
+}
+
+.dr-status.concluida {
+  color: var(--ok);
+  border-color: rgba(62, 155, 95, 0.42);
+}
+
+.dr-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 9px;
+  letter-spacing: 0.01em;
+  color: var(--ink-3);
+  min-width: 0;
+}
+
+.dr-facts > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dr-branch {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+.dr-queue {
+  color: var(--accent-deep);
+}
+
+.dr-btn {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.dr-integrate {
+  border-color: var(--accent);
+  color: var(--accent-deep);
+}
+
+.dr-integrate:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--paper);
+}
+
+.dr-danger {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.dr-quiet {
+  opacity: 0.75;
+}
+
+/* ---------- seletor de conversa no chrome da missão direta ---------- */
+.mission-gui-tab-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.mission-gui-tab {
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+  opacity: 0.6;
+}
+
+.mission-gui-tab.active {
+  opacity: 1;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.mission-gui-tab-close {
+  padding-left: 2px;
+  opacity: 0.5;
+}
+
+.mission-gui-tab-close:hover:not(:disabled) {
+  opacity: 1;
+}
+
+/* ---------- MODO MISSÃO DIRETA: conversa no CENTRO ----------
+   `.board-main` é row-reverse, então ORDER MAIOR renderiza mais à ESQUERDA.
+   A ordem visual muda só por CSS: reordenar os filhos no DOM remontaria os
+   TerminalPane e mataria os PTYs do Maestro e dos orquestradores. */
+.board-main.direct-mode .mission-col {
+  order: 2;
+}
+
+.board-main.direct-mode .maestro-window {
+  order: 1;
+  width: auto;
+  max-width: none;
+  min-width: 380px;
+  flex: 1 1 auto;
+}
+
+/* a largura do centro é dada pela sobra entre coluna e trilho — arrastar não
+   faz sentido aqui (os dois lados são fixos) */
+.board-main.direct-mode .maestro-resizer {
+  display: none;
+}
+
+.board-main.direct-mode .board-content {
+  order: 0;
+  flex: 0 0 268px;
 }
 
 /* ---------- INTERRUPTOR DE PERMISSÕES ----------
