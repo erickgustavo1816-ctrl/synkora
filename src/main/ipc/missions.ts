@@ -23,6 +23,7 @@ import { existsSync, mkdirSync, unlinkSync } from 'fs'
 import {
   ensureSynkoraGitExcludes,
   removeWorktreeAndBranch,
+  type MissionCommit,
   type MissionWorkspaceSummary
 } from '../worktree'
 import { gitOff } from '../gitAsync'
@@ -117,6 +118,19 @@ export interface MissionShellSpecResult {
 export interface MissionWorkspaceFilesResult {
   ok: boolean
   summary?: MissionWorkspaceSummary
+  error?: string
+}
+
+/**
+ * Resposta do `missions:commits` — o par do workspaceFiles para o trilho: os
+ * commits que a missão adicionou sobre a base, mais novos primeiro. Mesma
+ * disciplina de leitura PURA (nunca cria nem repara worktree) e mesma
+ * distinção honesta: `ok:true` com lista VAZIA = a missão ainda não commitou;
+ * `ok:false` = não deu para ler, e o motivo vai junto.
+ */
+export interface MissionCommitsResult {
+  ok: boolean
+  commits?: MissionCommit[]
   error?: string
 }
 
@@ -238,6 +252,29 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       const summary = await gitOff('missionWorkspaceSummary', mission.worktree, mission.baseBranch)
       if (!summary) return { ok: false, error: 'não consegui ler o diff do worktree desta missão' }
       return { ok: true, summary }
+    }
+  )
+
+  /**
+   * COMMITS DA MISSÃO — o histórico que o trilho mostra ao lado do diff vivo:
+   * o que esta branch adicionou sobre a base, mais novos primeiro. Irmão do
+   * workspaceFiles em tudo (leitura pura, nunca cria worktree, todo o git pelo
+   * gitWorker): o `ahead` de lá é o número, isto é a lista por trás dele.
+   */
+  ipcMain.handle(
+    'missions:commits',
+    async (_e, missionId: string): Promise<MissionCommitsResult> => {
+      const mission = missions.get(missionId)
+      if (!mission) return { ok: false, error: 'missão não encontrada' }
+      const project = projects.get(mission.projectId)
+      if (!project) return { ok: false, error: 'projeto não encontrado' }
+      if (!mission.worktree || !existsSync(mission.worktree))
+        return { ok: false, error: 'esta missão não tem worktree aberto' }
+      const commits = await gitOff('missionCommits', mission.worktree, mission.baseBranch)
+      // Lista vazia é resposta BOA (missão sem commit ainda); só `undefined`
+      // significa que a leitura falhou — o `!commits` cobriria os dois.
+      if (!commits) return { ok: false, error: 'não consegui ler os commits desta missão' }
+      return { ok: true, commits }
     }
   )
 

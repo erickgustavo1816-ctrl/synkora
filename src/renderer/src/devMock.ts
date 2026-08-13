@@ -760,6 +760,9 @@ export function installDevMock(): void {
       // não tem processo nenhum para abrir, então recusa em vez de fingir.
       shellSpec: async () => ({ ok: false, error: 'sem terminal no preview' }),
       workspaceFiles: async () => ({ ok: false, error: 'sem worktree no preview' }),
+      // Sem repositório no browser não há commit para listar — recusa honesta,
+      // nunca um histórico inventado que o dono leria como trabalho real.
+      commits: async () => ({ ok: false, error: 'sem worktree no preview' }),
       onChanged: () => () => undefined
     },
     files: {
