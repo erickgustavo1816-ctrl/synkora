@@ -99,6 +99,8 @@ import { registerSettingsIpc } from './ipc/settings'
 import { registerServicesIpc } from './ipc/services'
 import { registerHarnessIpc } from './ipc/harness'
 import { registerGuiIpc } from './ipc/gui'
+import type { GuiSessionRegistry } from './guiSessions'
+import { isGuiMissionPaneId } from './guiMissionContracts'
 import { registerProjectPlanIpc } from './ipc/projectPlan'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerProgressIpc } from './ipc/progress'
@@ -5758,6 +5760,17 @@ app.whenReady().then(async () => {
   // consumirem ctx.phase. codeReportGuard é arrow DE PROPÓSITO: o mcpApi é
   // const declarada ~5k linhas abaixo (TDZ na construção) e o tick só roda com
   // tudo construído.
+  // SESSÕES GUI (Synkora 2.0, onda B): o registro nasce no registerGuiIpc, lá
+  // no fim do whenReady — LATE-BOUND de propósito, como releasePaneSkillPlan.
+  // Os dois acessos abaixo são a fonte ÚNICA para engine/ipc/mcpApi: entregar
+  // texto na conversa de um pane e ceifar os chats de uma missão (dev,
+  // reviewer e ajudantes) quando o worktree dela vai embora.
+  let guiSessions: GuiSessionRegistry | undefined
+  const deliverToGuiPane = (paneId: string, text: string): boolean =>
+    guiSessions?.send(paneId, text).ok === true
+  const killMissionGuiPanes = (missionId: string): void => {
+    guiSessions?.killWhere((paneId) => isGuiMissionPaneId(paneId, missionId))
+  }
   // MISSÕES → missionEngine.ts (fase 1, commit 6d). Missões + fila de
   // integração nascem no engine; os aliases abaixo mantêm os call sites do
   // index (onExit do PTY, boot recovery, extras do mcpApi/) e os getters do
@@ -5772,7 +5785,9 @@ app.whenReady().then(async () => {
     versionIsolationIsValid,
     emitBacklogChanged,
     sweepProjectFiles,
-    closeTestServersUnder
+    closeTestServersUnder,
+    deliverToGuiPane,
+    killMissionGuiPanes
   })
   const {
     missionWatches,
@@ -6033,7 +6048,8 @@ app.whenReady().then(async () => {
       createIntegrationSyncTask,
       humanProjectPlanApprovals,
       humanProjectMissionStarts,
-      preparePlanningArtifactEvidence
+      preparePlanningArtifactEvidence,
+      killMissionGuiPanes
     }),
     ...buildHelpersApi(ctx, {
       armPane,
@@ -6817,12 +6833,13 @@ app.whenReady().then(async () => {
   registerHarnessIpc(ctx)
   // PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md): sessão de chat
   // por pane. Nenhum CLI filho sobrevive ao quit.
-  const guiSessions = registerGuiIpc(ctx, {
+  guiSessions = registerGuiIpc(ctx, {
     assertAppRendererSender,
     systemPromptFile: persistTrustedSystemPrompt,
     storeFile: join(app.getPath('userData'), 'gui-sessions.json')
   })
-  app.once('will-quit', () => guiSessions.killAll())
+  const guiSessionRegistry = guiSessions
+  app.once('will-quit', () => guiSessionRegistry.killAll())
   registerProjectPlanIpc(ctx, {
     humanProjectPlanApprovals,
     humanProjectMissionStarts,
@@ -6870,6 +6887,8 @@ app.whenReady().then(async () => {
     staggerPaneSpawn,
     armPane,
     releasePaneSkillPlan: (paneId) => releasePaneSkillPlan(paneId),
+    guiSessions: guiSessionRegistry,
+    killMissionGuiPanes
   })
   registerPtyIpc(ctx, {
     engine: paneLifecycle,

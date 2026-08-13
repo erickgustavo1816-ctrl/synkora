@@ -20,6 +20,14 @@ import { existsSync, mkdirSync, unlinkSync } from 'fs'
 import { ensureSynkoraGitExcludes, removeWorktreeAndBranch } from '../worktree'
 import { gitOff } from '../gitAsync'
 import { type NewMission } from '../missions'
+import {
+  guiMissionFirstPrompt,
+  guiMissionPaneId,
+  guiMissionSystemPrompt,
+  isGuiMissionRole,
+  type GuiMissionRole
+} from '../guiMissionContracts'
+import type { GuiPaneSpawn, GuiSessionRegistry } from '../guiSessions'
 import { assessMissionRisk } from '../orchestratorFlow'
 import { missionPersona } from '../maestro'
 import { buildIdleWaiterHint } from '../phasePrompts'
@@ -52,7 +60,23 @@ export interface MissionsIpcExtras {
   ): { paneId: string; cliArgs: string[] }
   /** Late-bound: let do index. */
   releasePaneSkillPlan(paneId: string): void
+  /** Registro das sessões de chat por pane (onda A) — o guiSpec consulta o
+   *  resume gravado e a vaga livre do ajudante. */
+  guiSessions: GuiSessionRegistry
+  /** 2.0: encerra dev/reviewer/ajudantes GUI da missão (fonte única no index). */
+  killMissionGuiPanes(missionId: string): void
 }
+
+/** Resposta do `missions:guiSpec` (contrato da onda B, §interface partilhada). */
+export interface MissionGuiSpecResult {
+  ok: boolean
+  spawn?: GuiPaneSpawn
+  error?: string
+}
+
+/** Teto de ajudantes GUI simultâneos por missão — o sufixo do paneId sobe até
+ *  achar vaga livre; acima disto o dono fecha um antes de abrir outro. */
+const MAX_MISSION_HELPERS = 8
 
 export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras): void {
   const {
@@ -80,6 +104,8 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     staggerPaneSpawn,
     armPane,
     releasePaneSkillPlan,
+    guiSessions,
+    killMissionGuiPanes
   } = extras
   const { maestroResumeOverBudget, skipMaestroResume, preparePlanningRun } = extras.maestroEngine
   const {
@@ -108,8 +134,113 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       })
       return null
     }
-    return createMissionImpl(projectId, input, 'user')
+    // SYNKORA 2.0 (onda B): missão criada PELO DONO nasce DIRETA — sem
+    // orquestrador, sem plano; o chat do dev é o centro. Missão nascida por
+    // agente (plano mestre, MCP) segue pelo createMissionImpl com o fluxo
+    // legado intacto, e o que já existe no disco não muda de natureza.
+    return createMissionImpl(projectId, { ...input, direct: input.direct ?? true }, 'user')
   })
+
+  /**
+   * SPEC DO PANE GUI DA MISSÃO (2.0 — docs/PLANO_2_0_GUI.md, onda B).
+   * Dev, reviewer e ajudante são conversas no MESMO worktree, com contrato
+   * curto por papel. O paneId é determinístico (guiMissionContracts) porque é
+   * ele que endereça o resume gravado pelo guiSessions — reabrir a missão
+   * precisa cair na MESMA conversa, não numa em branco.
+   */
+  ipcMain.handle(
+    'missions:guiSpec',
+    async (_e, missionId: string, role: GuiMissionRole): Promise<MissionGuiSpecResult> => {
+      if (!isGuiMissionRole(role)) return { ok: false, error: `papel desconhecido: ${String(role)}` }
+      // Mesmo escalonador do paneSpec (F6.10): reabrir a missão pode pedir
+      // dev + reviewer + ajudantes na mesma batida, e 4 CLIs no mesmo segundo
+      // era a rajada que travava o main. Único await do handler — todo o resto
+      // abaixo é síncrono, então não há janela para o estado envelhecer.
+      await staggerPaneSpawn()
+      const mission = missions.get(missionId)
+      if (!mission) return { ok: false, error: 'missão não encontrada' }
+      const project = projects.get(mission.projectId)
+      if (!project) return { ok: false, error: 'projeto não encontrado' }
+      if (!existsSync(project.path))
+        return { ok: false, error: 'a pasta do projeto não existe mais — relocalize o universo' }
+      if (mission.status === 'concluida' || mission.status === 'arquivada')
+        return { ok: false, error: 'esta missão já foi encerrada' }
+      if (mission.status === 'integrando')
+        return { ok: false, error: 'a missão está integrando agora — o worktree some no merge' }
+
+      // Isolamento é pré-condição: sem worktree provado o chat nasceria na
+      // branch principal do dono (é exatamente o que a missão existe p/ evitar).
+      const withWorktree = ensureMissionWorktree(missionId) ?? mission
+      const cwd = missionWorkspacePath(project.path, withWorktree)
+      if (!cwd)
+        return {
+          ok: false,
+          error: 'não consegui provar o worktree isolado desta missão; nada foi aberto na branch principal'
+        }
+
+      // Conta: a escolhida na criação da missão > a já usada pelo orquestrador
+      // desta missão > a do PM do projeto. Modelo/effort seguem a missão.
+      const seatId =
+        withWorktree.seatId ??
+        maestro.get(orchKey(withWorktree.projectId, missionId)).seatId ??
+        maestro.get(withWorktree.projectId).seatId
+      const seat = seatId ? seats.get(seatId) : undefined
+      if (!seat) return { ok: false, error: 'escolha uma conta para esta missão antes de abrir o chat' }
+      seats.preseed(seat)
+
+      let paneId = guiMissionPaneId(role, missionId)
+      if (role === 'helper') {
+        // Ajudante é o único papel plural: acha a 1ª vaga livre para não
+        // sequestrar a conversa de um ajudante que ainda está trabalhando.
+        let index = 1
+        while (index <= MAX_MISSION_HELPERS && guiSessions.has(guiMissionPaneId(role, missionId, index)))
+          index += 1
+        if (index > MAX_MISSION_HELPERS)
+          return {
+            ok: false,
+            error: `esta missão já tem ${MAX_MISSION_HELPERS} ajudantes abertos — feche um antes de abrir outro`
+          }
+        paneId = guiMissionPaneId(role, missionId, index)
+      }
+
+      // Resume: só vale a conversa gravada PARA ESTE pane e no MESMO CLI
+      // (sessão claude não se retoma no codex e vice-versa).
+      const remembered = guiSessions.remembered(paneId)
+      const resumeSessionId =
+        remembered && remembered.cli === seat.cli ? remembered.sessionId : undefined
+
+      const spawn: GuiPaneSpawn = {
+        paneId,
+        projectId: withWorktree.projectId,
+        cli: seat.cli,
+        configDir: seats.configDirOf(seat),
+        cwd,
+        model: withWorktree.model,
+        effort: withWorktree.effort,
+        systemPrompt: guiMissionSystemPrompt(role),
+        resumeSessionId,
+        // Conversa retomada JÁ tem o briefing: repetir o primeiro turno seria
+        // re-briefing perseguindo o pane (lição da F6.8i).
+        firstPrompt: resumeSessionId
+          ? undefined
+          : guiMissionFirstPrompt(role, {
+              title: withWorktree.title,
+              goal: withWorktree.goal,
+              scope: withWorktree.scope,
+              branch: withWorktree.branch,
+              baseBranch: withWorktree.baseBranch
+            })
+      }
+      blackbox.record({
+        cat: 'pane',
+        event: 'mission-gui-spec',
+        actor: 'user',
+        ids: { projectId: withWorktree.projectId, missionId, paneId, seatId: seat.id },
+        detail: { role, cli: seat.cli, resumed: Boolean(resumeSessionId), direct: Boolean(withWorktree.direct) }
+      })
+      return { ok: true, spawn }
+    }
+  )
 
   // Missão criada pelo PM: o usuário escolhe conta/modelo/effort do
   // orquestrador no modal do board — só então o paneSpec libera o pane
@@ -164,6 +295,10 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       const paneId = orchPaneId(projectId, missionId)
       if (ptys.has(paneId)) ptys.kill(paneId)
       unregisterPane(paneId)
+      // 2.0: as conversas GUI da missão nasceram com o config dir da conta
+      // ANTIGA — trocar a conta sem encerrá-las deixaria chats órfãos falando
+      // por um seat que a missão não usa mais. Reabrir dá o resume de sempre.
+      killMissionGuiPanes(missionId)
       const cwd = mission.worktree ?? projects.get(projectId)?.path
       const migrated = Boolean(
         prevSeat &&
@@ -296,6 +431,9 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
           const paneId = orchPaneId(updated.projectId, id)
           if (ptys.has(paneId)) ptys.kill(paneId)
           unregisterPane(paneId)
+          // 2.0: dev/reviewer/ajudantes da missão encerram junto (a conversa
+          // fica gravada; reativar reabre no resume).
+          killMissionGuiPanes(id)
         }
         // Arquivar/reativar é MARCO — o PM comenta (decisão do usuário: ele
         // fala em concluída/integrada/arquivada, não na rotina).
@@ -382,6 +520,8 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       'execução encerrada porque a missão arquivada foi excluída'
     )
     ptys.kill(orchPaneId(mission.projectId, missionId))
+    // 2.0: nenhum chat pode ficar com cwd dentro do worktree que vai sumir.
+    killMissionGuiPanes(missionId)
     if (mission.branch && mission.worktree) {
       ctx.codeIntelligence?.invalidateWorktreeNow(mission.worktree)
       removeWorktreeAndBranch(project.path, mission.worktree, mission.branch)
@@ -433,6 +573,10 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     // modal: o orquestrador NÃO nasce com fallback silencioso (decisão do
     // usuário, 02/08) — o Board mostra o modal e chama confirmOrchestrator.
     if (mission.pendingOrchestrator) return null
+    // SYNKORA 2.0: missão DIRETA não tem orquestrador. O silêncio é o contrato
+    // (o renderer nem pede a spec); esta é a cerca autoritativa do main para
+    // que nenhum caminho legado ressuscite um pane que a missão não quer.
+    if (mission.direct) return null
     // Integração EM VOO: o harness matou este pane DE PROPÓSITO
     // (completeMissionMerge fecha o orquestrador ANTES do merge — um processo
     // com cwd no worktree travaria a remoção) e o Board reage à morte
@@ -474,6 +618,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       if (!fresh || fresh.projectId !== projectId) return null
       if (fresh.status === 'concluida' || fresh.status === 'arquivada') return null
       if (fresh.pendingOrchestrator || fresh.status === 'integrando') return null
+      if (fresh.direct) return null
       mission = fresh
     }
     if (readout.excludesError) {

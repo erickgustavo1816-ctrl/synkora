@@ -43,6 +43,7 @@ import {
   resolveMissionWorkspace
 } from './worktree'
 import { type Mission, type NewMission } from './missions'
+import { guiMissionPaneId, missionConflictRecipe } from './guiMissionContracts'
 import { type IntegrationQueueTicketView } from './integrationQueue'
 import {
   completeProjectMission as completeStoredProjectMission,
@@ -93,6 +94,11 @@ export interface MissionEngineExtras {
   sweepProjectFiles(projectId: string, opts?: { preserveInterruptedHelpers?: boolean }): number
   /** Derruba servidor de teste com cwd sob o prefixo (antes do merge). */
   closeTestServersUnder(pathPrefix: string): void
+  /** 2.0: entrega texto na CONVERSA do pane GUI (false = sem sessão viva).
+   *  Late-bound no index — o registro do gui nasce depois deste engine. */
+  deliverToGuiPane(paneId: string, text: string): boolean
+  /** 2.0: encerra dev/reviewer/ajudantes GUI da missão (o worktree some). */
+  killMissionGuiPanes(missionId: string): void
 }
 
 export type MissionEngine = ReturnType<typeof createMissionEngine>
@@ -129,8 +135,15 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     versionIsolationIsValid,
     emitBacklogChanged,
     sweepProjectFiles,
-    closeTestServersUnder
+    closeTestServersUnder,
+    deliverToGuiPane,
+    killMissionGuiPanes
   } = extras
+
+  /** Missão 2.0: sem orquestrador e sem plano — o ⇪ tem caminho direto. */
+  function isDirectMission(mission: Pick<Mission, 'direct'> | undefined): boolean {
+    return mission?.direct === true
+  }
 
   // ————— MISSÕES (F3.8): fluxos de trabalho com orquestrador próprio —————
   // Missão = branch/worktree isolados (com git) + pane orquestrador + tarefas
@@ -1199,34 +1212,44 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         ? 'missão já integrada; backlog, versão e plano mestre foram reconciliados'
         : 'missão já integrada; a reconciliação ficou registrada para nova tentativa no próximo boot'
     }
-    const missionPlan = currentPlanOf(mission.projectId, missionId)
-    if (!missionPlan) {
-      return integrateBlocked(
-        'no-plan',
-        'integração bloqueada: esta missão ainda não tem um plano aprovado e concluído — abra a aba da missão e combine o plano com o orquestrador'
-      )
+    // MISSÃO 2.0 (direct): não existe plano, nem validação humana de plano,
+    // nem verificação conjunta — o contrato é a conversa do dev com o dono e
+    // o ⇪ é o aval. Tudo o que continua valendo (árvore limpa, heads, lacre,
+    // FIFO, identidade do destino, precheck de conflito) vale IGUAL abaixo.
+    const direct = isDirectMission(mission)
+    const missionPlan = direct ? undefined : currentPlanOf(mission.projectId, missionId)
+    if (!direct) {
+      if (!missionPlan) {
+        return integrateBlocked(
+          'no-plan',
+          'integração bloqueada: esta missão ainda não tem um plano aprovado e concluído — abra a aba da missão e combine o plano com o orquestrador'
+        )
+      }
+      if (
+        manualSecurityValidationPending(missionPlan.plan, securityWaiverOptions(mission.projectId))
+      ) {
+        return integrateBlocked(
+          'security-validation',
+          'integracao bloqueada: a validacao humana de seguranca deste plano continua pendente. Confirme a evidencia ou dispense com justificativa no card do plano.'
+        )
+      }
+      if (missionPlan.status !== 'done') {
+        return integrateBlocked(
+          'plan-not-done',
+          missionPlan.status === 'backlog'
+            ? 'integração bloqueada: o plano da missão ainda aguarda sua aprovação (ou está pausado)'
+            : 'integração bloqueada: o plano aprovado ainda está em execução — conclua todos os cards e o plano antes de integrar'
+        )
+      }
+      if (missionPlan.plan?.verification && !finalVerificationAccepted(missionPlan.plan.verification.final)) {
+        return integrateBlocked(
+          'final-verification',
+          'integração bloqueada: a verificação conjunta do plano não está aprovada'
+        )
+      }
     }
-    if (manualSecurityValidationPending(missionPlan.plan, securityWaiverOptions(mission.projectId))) {
-      return integrateBlocked(
-        'security-validation',
-        'integracao bloqueada: a validacao humana de seguranca deste plano continua pendente. Confirme a evidencia ou dispense com justificativa no card do plano.'
-      )
-    }
-    if (missionPlan.status !== 'done') {
-      return integrateBlocked(
-        'plan-not-done',
-        missionPlan.status === 'backlog'
-          ? 'integração bloqueada: o plano da missão ainda aguarda sua aprovação (ou está pausado)'
-          : 'integração bloqueada: o plano aprovado ainda está em execução — conclua todos os cards e o plano antes de integrar'
-      )
-    }
-    const verifiedFinal = missionPlan.plan?.verification?.final
-    if (missionPlan.plan?.verification && !finalVerificationAccepted(verifiedFinal)) {
-      return integrateBlocked(
-        'final-verification',
-        'integração bloqueada: a verificação conjunta do plano não está aprovada'
-      )
-    }
+    // Fotografia lacrada pela verificação conjunta — só existe no fluxo legado.
+    const verifiedFinal = missionPlan?.plan?.verification?.final
     const open = tasks
       .list(mission.projectId)
       .filter((t) => t.missionId === missionId && t.status !== 'done')
@@ -1335,6 +1358,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         'heads',
         'integração bloqueada: não consegui identificar os commits atuais da missão e do destino'
       )
+    // Missão 2.0 não tem verificação conjunta: `verifiedFinal` é undefined e
+    // esta cerca some sozinha — o lacre do ticket (sourceHead) segue valendo.
     if (verifiedFinal?.head && verifiedFinal.head !== sourceHead) {
       return integrateBlocked(
         'photo-stale',
@@ -1359,7 +1384,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         return `a missão mantém a posição #${existing.position} na fila e ainda precisa concluir o card de sincronização com ${target.branch}`
       }
       integrationQueue.requeueAfterSync(missionId, {
-        planId: missionPlan.id,
+        // 2.0: sem plano — o ticket entra sem planId (campo opcional da fila).
+        planId: missionPlan?.id,
         sourceHead,
         validatedTargetHead: targetHead,
         targetBranch: target.branch,
@@ -1372,7 +1398,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         requestedBy: actor,
         targetKind: target.kind,
         versionId: target.versionId,
-        planId: missionPlan.id,
+        planId: missionPlan?.id,
         sourceHead,
         validatedTargetHead: targetHead,
         targetBranch: target.branch,
@@ -1473,7 +1499,11 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
 
         // O ticket é uma fotografia do artefato aprovado. Nada que apareceu
         // depois (plano, card, commit ou arquivo solto) pode entrar escondido.
-        const approvedPlan = currentPlanOf(projectId, mission.id)
+        // Missão 2.0 não tem plano nem verificação conjunta: o lacre que
+        // sobrevive é o COMMIT (ticket.sourceHead) e a árvore limpa — as duas
+        // cercas que provam que o que entra é o que o dono aprovou.
+        const directTicket = isDirectMission(mission)
+        const approvedPlan = directTicket ? undefined : currentPlanOf(projectId, mission.id)
         const openCards = tasks
           .list(projectId)
           .filter(
@@ -1482,11 +1512,13 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           )
         const sourceHead = gitHead(missionSource)
         const snapshotProblems: string[] = []
-        if (!approvedPlan || approvedPlan.status !== 'done')
-          snapshotProblems.push('o plano aprovado não está concluído')
         const approvedFinal = approvedPlan?.plan?.verification?.final
-        if (approvedPlan?.plan?.verification && !finalVerificationAccepted(approvedFinal))
-          snapshotProblems.push('a verificação conjunta não está aprovada')
+        if (!directTicket) {
+          if (!approvedPlan || approvedPlan.status !== 'done')
+            snapshotProblems.push('o plano aprovado não está concluído')
+          if (approvedPlan?.plan?.verification && !finalVerificationAccepted(approvedFinal))
+            snapshotProblems.push('a verificação conjunta não está aprovada')
+        }
         if (ticket.planId && approvedPlan?.id !== ticket.planId)
           snapshotProblems.push('o plano corrente não é o plano que autorizou a entrada na fila')
         if (openCards.length > 0)
@@ -1575,33 +1607,40 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
             emitIntegrationBlockForMaestro(blocked, mission, target, pre.detail)
             return
           }
-          if (!createIntegrationSyncTask(ticket, mission, target, targetHead)) {
-            const detail =
-              'não consegui reabrir exatamente o plano aprovado para criar o card de sincronização'
-            const blocked = integrationQueue.block(mission.id, {
-              code: 'sync_task_unavailable',
-              owner: 'maestro',
-              detail
+          // MISSÃO 2.0: destino que andou NÃO vira card de sincronização (não
+          // há plano para reabrir nem orquestrador para disparar o card). O
+          // precheck acima acabou de provar que a mescla é limpa contra o
+          // destino ATUAL — cai fora do if e segue para o merge; conflito real
+          // parou no bloqueio acima e a receita chegou na conversa do dev.
+          if (!directTicket) {
+            if (!createIntegrationSyncTask(ticket, mission, target, targetHead)) {
+              const detail =
+                'não consegui reabrir exatamente o plano aprovado para criar o card de sincronização'
+              const blocked = integrationQueue.block(mission.id, {
+                code: 'sync_task_unavailable',
+                owner: 'maestro',
+                detail
+              })
+              emitIntegrationBlockForMaestro(blocked, mission, target, detail)
+              return
+            }
+            integrationQueue.requireSync(mission.id, {
+              code: 'target_advanced',
+              owner: 'orchestrator',
+              detail: `${target.branch} avançou desde a validação desta missão`
             })
-            emitIntegrationBlockForMaestro(blocked, mission, target, detail)
+            hub.publish({
+              projectId,
+              missionId: mission.id,
+              kind: 'info',
+              text: `chegou sua vez na fila, mas ${target.branch} avançou. A fila abriu um único card de sincronização + testes; conclua o plano e ela retomará automaticamente a autorização original`,
+              actor: 'harness',
+              urgent: true
+            })
+            emitMissionsChanged(projectId)
+            syncBoard(projectId)
             return
           }
-          integrationQueue.requireSync(mission.id, {
-            code: 'target_advanced',
-            owner: 'orchestrator',
-            detail: `${target.branch} avançou desde a validação desta missão`
-          })
-          hub.publish({
-            projectId,
-            missionId: mission.id,
-            kind: 'info',
-            text: `chegou sua vez na fila, mas ${target.branch} avançou. A fila abriu um único card de sincronização + testes; conclua o plano e ela retomará automaticamente a autorização original`,
-            actor: 'harness',
-            urgent: true
-          })
-          emitMissionsChanged(projectId)
-          syncBoard(projectId)
-          return
         }
 
         integrationQueue.beginMerge(mission.id)
@@ -1657,6 +1696,31 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     target: MissionIntegrationTarget | undefined,
     detail: string
   ): void {
+    // MISSÃO 2.0: o bloqueio volta para QUEM ESCREVEU — não há orquestrador
+    // para triar nem Maestro para decidir estratégia. O evento/auditoria de
+    // sempre continua saindo (o board e o journal não perdem nada); o que se
+    // soma é a receita chegando na conversa viva do dev.
+    if (isDirectMission(mission)) {
+      const paneId = guiMissionPaneId('dev', mission.id)
+      const delivered = deliverToGuiPane(
+        paneId,
+        missionConflictRecipe({
+          missionTitle: mission.title,
+          detail,
+          targetBranch: target?.branch,
+          sourceBranch: mission.branch
+        })
+      )
+      blackbox.record({
+        cat: 'queue',
+        event: 'direct-mission-block-to-dev',
+        actor: 'harness',
+        ids: { projectId: mission.projectId, missionId: mission.id, paneId },
+        reason: delivered
+          ? `receita do bloqueio entregue na conversa do dev: ${detail.slice(0, 300)}`
+          : `conversa do dev não está aberta — a receita fica no board: ${detail.slice(0, 300)}`
+      })
+    }
     const behind = integrationQueue
       .listPending(mission.projectId)
       .filter((candidate) => candidate.sequence > ticket.sequence)
@@ -2100,8 +2164,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     }
     // merge VAI acontecer: agora sim o orquestrador aposenta — fecha o pane
     // ANTES do merge real (o worktree some na limpeza; um processo com cwd
-    // nele travaria a remoção).
+    // nele travaria a remoção). Na missão 2.0 quem tem cwd lá dentro são os
+    // panes GUI (dev, reviewer e ajudantes) — mesmo motivo, mesma hora.
     ptys.kill(orchPaneId(projectId, missionId))
+    killMissionGuiPanes(missionId)
     ctx.codeIntelligence?.invalidateWorktreeNow(missionSource)
     const res = await gitOff(
       'mergeTaskWorktree',

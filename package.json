@@ -43,6 +43,7 @@
     "test:agent-routing": "node --experimental-strip-types --test scripts/test-agent-routing.mjs",
     "test:project-plan": "node --experimental-strip-types --test scripts/test-project-plan.mjs",
     "test:gui-sessions": "tsc --outDir .tmp/gui-sessions-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/guiSessions.ts && node --test scripts/test-gui-sessions.mjs",
+    "test:gui-mission-contracts": "node --experimental-strip-types --test scripts/test-gui-mission-contracts.mjs",
     "test:backlog": "tsc --outDir .tmp/backlog-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/backlog.ts src/main/jsonStore.ts && node --test scripts/test-backlog.mjs",
     "test:store-atomicity": "tsc --outDir .tmp/store-atomicity-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/backlog.ts src/main/missions.ts src/main/jsonStore.ts src/main/securityRedaction.ts && node --test scripts/test-store-atomicity.mjs",
     "test:integration-queue": "node --experimental-strip-types --test scripts/test-integration-queue.mjs",

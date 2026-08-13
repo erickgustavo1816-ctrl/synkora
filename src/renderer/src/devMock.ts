@@ -753,6 +753,9 @@ export function installDevMock(): void {
         return { ok: true, msg: 'conta trocada (mock)' }
       },
       paneSpec: async () => null,
+      // 2.0: no preview de browser não há CLI para conversar — a spec do chat
+      // da missão recusa com texto honesto em vez de fingir sessão.
+      guiSpec: async () => ({ ok: false, error: 'sem sessão de chat no preview' }),
       onChanged: () => () => undefined
     },
     files: {

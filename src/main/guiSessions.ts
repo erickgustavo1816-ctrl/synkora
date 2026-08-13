@@ -258,6 +258,21 @@ export class GuiSessionRegistry {
     return { ok: true }
   }
 
+  /**
+   * Encerra em bloco os panes cujo id casa com o predicado — o caso real é a
+   * missão 2.0 (dev, reviewer e ajudantes compartilham o worktree, e quando
+   * ele some no merge TODOS têm de sair antes). Devolve quantos morreram.
+   */
+  killWhere(match: (paneId: string) => boolean): number {
+    let killed = 0
+    for (const paneId of [...this.panes.keys()]) {
+      if (!match(paneId)) continue
+      this.dispose(paneId, 'kill-batch')
+      killed += 1
+    }
+    return killed
+  }
+
   /** Replay da remontagem: o que o pane perdeu enquanto estava desmontado. */
   state(paneId: string): { events: unknown[] } {
     return { events: this.panes.get(paneId)?.ring.snapshot() ?? [] }

@@ -85,6 +85,8 @@ export interface MissionsApiExtras {
   ):
     | { ok: true; evidence: PlanningMethodEvidence; accept: () => boolean }
     | { ok: false; message: string }
+  /** 2.0: encerra dev/reviewer/ajudantes GUI da missão (fonte única no index). */
+  killMissionGuiPanes(missionId: string): void
 }
 
 export function buildMissionsApi(
@@ -125,7 +127,8 @@ export function buildMissionsApi(
     createIntegrationSyncTask,
     humanProjectPlanApprovals,
     humanProjectMissionStarts,
-    preparePlanningArtifactEvidence
+    preparePlanningArtifactEvidence,
+    killMissionGuiPanes
   } = extras
   return {
     archiveMission: (id, query) => {
@@ -167,6 +170,9 @@ export function buildMissionsApi(
       const paneId = orchPaneId(id.projectId, m.id)
       if (ptys.has(paneId)) ptys.kill(paneId)
       unregisterPane(paneId)
+      // 2.0: missão direta não tem orquestrador, mas tem chats (dev/reviewer/
+      // ajudantes) com cwd no worktree — arquivar encerra os três.
+      killMissionGuiPanes(m.id)
       missions.update(m.id, { status: 'arquivada' })
       hub.publish({
         projectId: id.projectId,

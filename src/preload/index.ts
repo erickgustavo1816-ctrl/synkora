@@ -8,6 +8,8 @@ import type {
   GuiPermBehavior,
   GuiResult
 } from '../main/guiSessions'
+import type { GuiMissionRole } from '../main/guiMissionContracts'
+import type { MissionGuiSpecResult } from '../main/ipc/missions'
 
 /** entrada do diário da caixa-preta + linha legível pronta para exibição */
 export type BlackboxTailEntry = BlackboxEntry & { line: string }
@@ -15,6 +17,9 @@ export type BlackboxTailEntry = BlackboxEntry & { line: string }
 /** Contrato do pane GUI (docs/GUI_PANE_CONTRACT.md) — fonte única dos tipos;
  *  o renderer copia/reexporta pelo accessor tipado de guiApi.ts. */
 export type { GuiLivePayload, GuiPaneSpawn, GuiPermBehavior, GuiResult }
+
+/** Papéis do chat de missão 2.0 e a resposta do missions.guiSpec. */
+export type { GuiMissionRole, MissionGuiSpecResult }
 
 export type {
   MissionProgressState,
@@ -257,6 +262,9 @@ export interface Mission {
   effort?: string
   /** 'direta' = registro de trabalho de agente livre (sem cards/orquestrador) */
   kind?: 'direta'
+  /** SYNKORA 2.0: missão sem orquestrador e sem plano — o dono fala com o dev
+   *  no chat e o ⇪ integra direto. Carimbado no nascimento e imutável. */
+  direct?: true
   /** criada pelo PM: aguarda a escolha de conta/modelo/effort do orquestrador */
   pendingOrchestrator?: boolean
   /** agente pediu integrar via MCP: merge aguarda o AVAL do dono no botão ⇪ */
@@ -277,6 +285,9 @@ export interface NewMission {
   model?: string
   effort?: string
   versionId?: string
+  /** 2.0: omitido pelo renderer = DIRETA (o main carimba). Só o nascimento
+   *  decide; missão nenhuma muda de natureza depois. */
+  direct?: boolean
 }
 
 // Backlog de produto: versões como escopo de planejamento + itens desejados.
@@ -1260,6 +1271,11 @@ const api = {
       ipcRenderer.invoke('missions:setOrchestratorSeat', projectId, missionId, choice),
     paneSpec: (projectId: string, missionId: string): Promise<MaestroPaneSpec | null> =>
       ipcRenderer.invoke('missions:paneSpec', projectId, missionId),
+    /** SYNKORA 2.0: spec do CHAT da missão por papel (dev/reviewer/ajudante).
+     *  O paneId é determinístico — reabrir cai na mesma conversa. Missão
+     *  legada (com orquestrador) segue usando o paneSpec acima. */
+    guiSpec: (missionId: string, role: GuiMissionRole): Promise<MissionGuiSpecResult> =>
+      ipcRenderer.invoke('missions:guiSpec', missionId, role),
     onChanged: (cb: (projectId: string) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
       ipcRenderer.on('missions:changed', listener)
