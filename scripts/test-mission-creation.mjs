@@ -1,0 +1,186 @@
+// CRIAÇÃO DE MISSÃO PELO DONO — o canal `missions:create` do renderer.
+//
+// Por que este harness existe: até 2026-08-13 o handler carregava uma cerca da
+// era F6 que RECUSAVA (`return null`) toda missão criada pelo dono em projeto
+// modo `greenfield` cujo plano mestre não estivesse `done` — "missão avulsa
+// bloqueada: este projeto novo ainda segue o plano mestre". No 2.0 o dono É o
+// orquestrador e cria missão em qualquer projeto, então a cerca saiu. Este é o
+// teste que impede a volta dela: o handler REAL roda aqui, com o projeto no
+// estado exato que a cerca vigiava (greenfield + plano em rascunho).
+//
+// Mecânica: `src/main/ipc/missions.ts` é compilado para CJS (fecho de ~69
+// módulos por `tsc --noCheck`, precedente test-phase-verdict-races.mjs) e o
+// `electron` é trocado por um stub via `Module._load` — `ipcMain.handle` vira
+// um registro de handlers que o teste invoca à mão, como o renderer faria.
+import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import Module, { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+
+const require = createRequire(import.meta.url)
+const COMPILED = join(import.meta.dirname, '..', '.tmp', 'mission-creation-test')
+
+// ——— stub do electron, instalado ANTES de requerer o fecho compilado ———
+const userData = mkdtempSync(join(tmpdir(), 'synkora-mission-create-'))
+process.on('exit', () => rmSync(userData, { recursive: true, force: true }))
+
+/** canal → handler, preenchido pelo registerMissionsIpc real. */
+const handlers = new Map()
+const electronStub = {
+  app: {
+    getPath: () => userData,
+    isPackaged: false,
+    getName: () => 'synkora',
+    getVersion: () => '0.0.0-test',
+    // módulos do fecho registram will-quit/before-quit no require — no-ops
+    on: () => electronStub.app,
+    once: () => electronStub.app,
+    off: () => electronStub.app,
+    whenReady: () => Promise.resolve()
+  },
+  ipcMain: {
+    handle: (channel, handler) => handlers.set(channel, handler),
+    on: () => {},
+    removeHandler: (channel) => handlers.delete(channel)
+  },
+  shell: { openExternal: () => {} },
+  dialog: {},
+  BrowserWindow: class {},
+  clipboard: {},
+  nativeImage: {},
+  net: {},
+  safeStorage: { isEncryptionAvailable: () => false }
+}
+const loadModule = Module._load
+Module._load = function (request, parent, isMain) {
+  if (request === 'electron') return electronStub
+  return loadModule.call(this, request, parent, isMain)
+}
+
+const { registerMissionsIpc } = require(join(COMPILED, 'ipc', 'missions.js'))
+
+/**
+ * Registra o IPC real com o MÍNIMO que o `registerMissionsIpc` desestrutura na
+ * construção e devolve o handler de `missions:create` + os espiões.
+ *
+ * `projectMode`/`planStatus` reproduzem exatamente o estado que a cerca morta
+ * vigiava. `projectPlanOf` é um espião: se alguém reintroduzir a consulta ao
+ * plano mestre neste caminho, o teste denuncia mesmo que a recusa mude de
+ * texto.
+ */
+function createHarness({ projectMode = 'greenfield', planStatus = 'draft' } = {}) {
+  handlers.clear()
+  const calls = []
+  const planReads = []
+  const published = []
+  const ctx = {
+    projects: {},
+    seats: {},
+    missions: {},
+    tasks: {},
+    backlog: {},
+    maestro: {},
+    integrationQueue: {},
+    ptys: {},
+    blackbox: { record: () => {} },
+    hub: { publish: (event) => published.push(event) },
+    syncBoard: () => {},
+    projectModeOf: () => projectMode,
+    projectPlanOf: (projectId) => {
+      planReads.push(projectId)
+      return { status: planStatus }
+    },
+    orchPaneId: (projectId, missionId) => `${projectId}--${missionId}`,
+    unregisterPane: () => {},
+    releasePaneSkillLease: () => {}
+  }
+  const extras = {
+    engine: {
+      missionsWithIntegration: () => [],
+      createMissionImpl: (projectId, input, actor) => {
+        calls.push({ projectId, input, actor })
+        return { id: `mission-${calls.length}`, projectId, ...input }
+      },
+      emitMissionsChanged: () => {},
+      ensureMissionWorktree: () => undefined,
+      missionWorkspacePath: () => undefined,
+      scheduleIntegrationDrain: () => {},
+      startMissionIntegration: () => undefined,
+      stopMissionExecution: () => {},
+      transitionLinkedProjectPlanMission: () => {}
+    },
+    maestroEngine: {
+      maestroResumeOverBudget: () => false,
+      skipMaestroResume: () => {},
+      preparePlanningRun: () => undefined
+    },
+    orchKey: (projectId, missionId) => `${projectId}--${missionId}`,
+    emitBacklogChanged: () => {},
+    staggerPaneSpawn: () => {},
+    armPane: () => {},
+    releasePaneSkillPlan: () => {},
+    guiSessions: {},
+    killMissionGuiPanes: () => {}
+  }
+  registerMissionsIpc(ctx, extras)
+  const create = handlers.get('missions:create')
+  assert.ok(create, 'o canal missions:create precisa existir')
+  return { create, calls, planReads, published }
+}
+
+test('o dono cria missão DIRETA em projeto greenfield com plano mestre em rascunho', () => {
+  const { create, calls, planReads, published } = createHarness({
+    projectMode: 'greenfield',
+    planStatus: 'draft'
+  })
+
+  const mission = create({}, 'proj-1', { title: 'Ajustar a máscara de CNPJ' })
+
+  // A cerca morta devolvia null aqui. Missão de verdade = cerca enterrada.
+  assert.ok(mission, 'missão do dono não pode ser recusada por modo de projeto')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].projectId, 'proj-1')
+  assert.equal(calls[0].actor, 'user', 'a autoria é do DONO, nunca de um agente')
+  assert.equal(calls[0].input.title, 'Ajustar a máscara de CNPJ')
+  // 2.0: missão do dono nasce DIRETA — sem orquestrador, sem plano, chat no centro.
+  assert.equal(calls[0].input.direct, true)
+  assert.equal(mission.direct, true)
+
+  // O caminho do dono NÃO consulta o plano mestre: nem para recusar, nem para
+  // "avisar". Qualquer leitura aqui é a cerca voltando por outra porta.
+  assert.deepEqual(planReads, [])
+  assert.deepEqual(
+    published.filter((event) => event.kind === 'error'),
+    [],
+    'criar missão não publica erro no hub'
+  )
+})
+
+test('nenhum modo de projeto interdita a criação — greenfield ou existente', () => {
+  for (const mode of ['greenfield', 'existing']) {
+    for (const planStatus of ['draft', 'awaiting_approval', 'approved', 'done', undefined]) {
+      const { create, calls } = createHarness({ projectMode: mode, planStatus })
+      const mission = create({}, 'proj-1', { title: `missão em ${mode}/${planStatus}` })
+      assert.ok(mission, `recusa indevida em ${mode}/${planStatus}`)
+      assert.equal(calls.length, 1)
+      assert.equal(calls[0].input.direct, true)
+    }
+  }
+})
+
+test('título vazio continua sendo recusado pelo motor, não por política de plano', () => {
+  const { create } = createHarness()
+  // createMissionImpl real devolve null para título vazio; aqui o espião
+  // devolve objeto, então o que se prova é que o HANDLER não filtra nada
+  // antes dele — a validação de conteúdo é do motor, caminho único.
+  const mission = create({}, 'proj-1', { title: '   ' })
+  assert.ok(mission)
+})
+
+test('direct explícito é respeitado — o handler não force-flipa a natureza', () => {
+  const { create, calls } = createHarness()
+  create({}, 'proj-1', { title: 'missão legada', direct: false })
+  assert.equal(calls[0].input.direct, false)
+})

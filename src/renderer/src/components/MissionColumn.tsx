@@ -56,14 +56,12 @@ export default function MissionColumn({
   entries,
   selectedId,
   generalPulse,
-  greenfieldLocked,
   onSelect,
   onNewMission
 }: {
   entries: MissionColumnEntry[]
   selectedId: string | null
   generalPulse?: string
-  greenfieldLocked: boolean
   onSelect: (missionId: string | null) => void
   onNewMission: () => void
 }): React.JSX.Element {
@@ -136,17 +134,13 @@ export default function MissionColumn({
         })}
       </div>
 
+      {/* SEM TRAVA: no 2.0 o dono cria missão em QUALQUER modo de projeto —
+          a cerca greenfield ("as missões nascem pelo Maestro, na ordem do
+          plano mestre") saiu daqui junto com a recusa do `missions:create`. */}
       <button
         className="mission-col-new"
-        disabled={greenfieldLocked}
-        data-tip={
-          greenfieldLocked
-            ? 'Projeto novo: as missões nascem pelo Maestro, na ordem do plano mestre.'
-            : 'Nova missão: branch e worktree próprios, com o agente já dentro'
-        }
-        onClick={() => {
-          if (!greenfieldLocked) onNewMission()
-        }}
+        data-tip="Nova missão: branch e worktree próprios, com o agente já dentro"
+        onClick={onNewMission}
       >
         + nova missão
       </button>
