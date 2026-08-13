@@ -607,20 +607,35 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
                       (p) => p.testServer && p.versionId === version.id
                     )
                     return vPane ? (
-                      <button
-                        className="btn ghost tiny danger"
-                        data-tip="Derrubar o servidor de teste desta versão (fecha o pane e a árvore de processos)."
-                        onClick={() => window.synkora.panes.requestClose(projectId, vPane.id)}
-                      >
-                        ■ derrubar teste
-                      </button>
+                      <>
+                        {/* ONDA D: o terminal do teste é um SLOT da coluna do
+                            ✦ geral no Board (a aba Panes morreu) — o dono
+                            precisa saber para onde olhar. */}
+                        <button
+                          className="btn ghost tiny"
+                          data-tip="Ver o terminal deste teste (ele roda na coluna ✦ geral do Board)"
+                          onClick={() => {
+                            setMissionTab(projectId, null)
+                            setUniverseTab(projectId, 'board')
+                          }}
+                        >
+                          ▷ ver terminal
+                        </button>
+                        <button
+                          className="btn ghost tiny danger"
+                          data-tip="Derrubar o servidor de teste desta versão (fecha o terminal e a árvore de processos)."
+                          onClick={() => window.synkora.panes.requestClose(projectId, vPane.id)}
+                        >
+                          ■ derrubar teste
+                        </button>
+                      </>
                     ) : (
                       <button
                         className="btn ghost tiny"
                         disabled={!version.branch}
                         data-tip={
                           version.branch
-                            ? 'Subir o servidor da branch DESTA versão (missões já integradas, unificadas) num terminal para você testar. Você escolhe a porta.'
+                            ? 'Subir o servidor da branch DESTA versão (missões já integradas, unificadas) num terminal para você testar. Você escolhe a porta — o terminal abre na coluna ✦ geral do Board.'
                             : 'Ainda sem branch: nenhuma missão desta versão integrou'
                         }
                         onClick={() => setTestVersion(version)}

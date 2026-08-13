@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useStore } from '../store'
 import { hueOf, initialsOf } from '../util'
 import SynkoraMark from './SynkoraMark'
+import NewUniverseModal from './NewUniverseModal'
 
 // Referência estável para seletores (regra do projeto: nunca `?? []` inline).
 const NO_PANES: never[] = []
@@ -64,24 +65,9 @@ export default function ProjectRail(): React.JSX.Element {
   const openProjectId = useStore((s) => s.openProjectId)
   const appPage = useStore((s) => s.appPage)
   const openProject = useStore((s) => s.openProject)
-  const createProject = useStore((s) => s.createProject)
+  // ONDA D: o "+" abre o MESMO modal da Home — a pasta continua sendo o
+  // essencial, mas agora existe uma decisão a mais (link do GitHub).
   const [adding, setAdding] = useState(false)
-
-  // "+" do Discord: escolher a pasta JÁ é criar o universo. O nome sai da
-  // própria pasta (renomeável depois na página ✦ geral) — pedir nome antes
-  // seria um formulário para uma informação que o caminho já tem.
-  async function addUniverse(): Promise<void> {
-    if (adding) return
-    setAdding(true)
-    try {
-      const folder = await window.synkora.pickFolder()
-      if (!folder) return
-      const name = folder.split(/[\\/]/).filter(Boolean).pop() ?? 'universo'
-      await createProject(name, folder)
-    } finally {
-      setAdding(false)
-    }
-  }
 
   return (
     <nav className="project-rail">
@@ -99,12 +85,13 @@ export default function ProjectRail(): React.JSX.Element {
         ))}
         <button
           className={`rail-item rail-add${adding ? ' busy' : ''}`}
-          data-tip={'Novo universo\nescolha a pasta do projeto'}
-          onClick={() => void addUniverse()}
+          data-tip={'Novo universo\npasta do projeto · link do GitHub opcional'}
+          onClick={() => setAdding(true)}
         >
           +
         </button>
       </div>
+      {adding && <NewUniverseModal onClose={() => setAdding(false)} />}
     </nav>
   )
 }

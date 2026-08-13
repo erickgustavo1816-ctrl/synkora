@@ -5,6 +5,7 @@ import {
   guiApi,
   type GuiPaneSpawn,
   type GuiPermBehavior,
+  type GuiPermissionMode,
   type GuiSessionEvent
 } from '../guiApi'
 
@@ -31,6 +32,11 @@ interface Props {
   systemPrompt?: string
   resumeSessionId?: string
   firstPrompt?: string
+  /** modo de permissão DESTA conversa (onda D) — ausente = 'default' */
+  permissionMode?: GuiPermissionMode
+  /** o dono da spec guarda a escolha: sem isto, remontar o slot voltaria ao
+   *  modo antigo enquanto a sessão no main já está no novo. */
+  onPermissionMode?: (mode: GuiPermissionMode) => void
 }
 
 /**
@@ -71,6 +77,22 @@ function GuiToolCard({ item }: { item: Extract<GuiItem, { kind: 'tool' }> }): Re
       <pre className="gui-tool-detail">{item.result.text}</pre>
     </details>
   )
+}
+
+/** Vocabulário do seletor do composer (onda D): rótulo curto para o botão e
+ *  frase de uma linha para o menu — o dono escolhe SEM abrir documentação. */
+const PERM_MODES: { id: GuiPermissionMode; label: string; hint: string }[] = [
+  { id: 'default', label: 'padrão', hint: 'pergunta antes de agir fora do combinado' },
+  { id: 'acceptEdits', label: 'edições', hint: 'edita arquivos sem perguntar; o resto pergunta' },
+  { id: 'bypass', label: 'bypass', hint: 'segue reto, sem nenhuma aprovação' },
+  { id: 'plan', label: 'plano', hint: 'só estuda e propõe — não escreve nada' }
+]
+
+const PERM_MODE_LABEL: Record<GuiPermissionMode, string> = {
+  default: 'padrão',
+  acceptEdits: 'edições',
+  bypass: 'bypass',
+  plan: 'plano'
 }
 
 const PERM_LABEL: Record<GuiPermBehavior | 'cancelada', string> = {
@@ -152,7 +174,9 @@ export default function GuiPane({
   effort,
   systemPrompt,
   resumeSessionId,
-  firstPrompt
+  firstPrompt,
+  permissionMode,
+  onPermissionMode
 }: Props): React.JSX.Element {
   const gui = useStore((s) => s.guiPanes[paneId]) ?? EMPTY_GUI_PANE
   const handleGuiLive = useStore((s) => s.handleGuiLive)
@@ -174,8 +198,20 @@ export default function GuiPane({
     effort,
     systemPrompt,
     resumeSessionId,
-    firstPrompt
+    firstPrompt,
+    permissionMode: permissionMode ?? 'default'
   })
+
+  // MODO DE PERMISSÃO (onda D): estado local para o botão responder na hora,
+  // semeado pela spec. O pai (quando existe) guarda a escolha na spec dele —
+  // por isso o efeito só re-semeia quando a PROP muda de fato.
+  const [mode, setMode] = useState<GuiPermissionMode>(permissionMode ?? 'default')
+  const [modeOpen, setModeOpen] = useState(false)
+  const [modeBusy, setModeBusy] = useState(false)
+  useEffect(() => {
+    setMode(permissionMode ?? 'default')
+  }, [permissionMode])
+
   spawnRef.current = {
     paneId,
     projectId,
@@ -186,7 +222,8 @@ export default function GuiPane({
     effort,
     systemPrompt,
     resumeSessionId,
-    firstPrompt
+    firstPrompt,
+    permissionMode: mode
   }
 
   const [draft, setDraft] = useState('')
@@ -281,6 +318,48 @@ export default function GuiPane({
     void sendGuiMessage(paneId, text)
   }, [draft, dead, paneId, sendGuiMessage])
 
+  /**
+   * TROCA DE MODO EM VOO (onda D): re-emite `gui:create` com o MESMO paneId e
+   * o modo novo. O motor trata a mudança de fingerprint respawnando a sessão
+   * COM resume — a conversa continua, o modo é outro. A linha no transcript
+   * existe porque uma troca silenciosa seria indistinguível de um bug.
+   */
+  const changeMode = useCallback(
+    async (next: GuiPermissionMode): Promise<void> => {
+      setModeOpen(false)
+      if (next === mode || modeBusy || dead) return
+      setModeBusy(true)
+      setMode(next)
+      onPermissionMode?.(next)
+      const res = await guiApi.create({ ...spawnRef.current, permissionMode: next })
+      setModeBusy(false)
+      handleGuiLive(
+        paneId,
+        res.ok
+          ? {
+              type: 'command-output',
+              text: `modo de permissão: ${PERM_MODE_LABEL[next]} — sessão retomada`
+            }
+          : {
+              type: 'limit',
+              text: `não deu para trocar o modo de permissão: ${res.error ?? 'motivo desconhecido'}`
+            }
+      )
+    },
+    [mode, modeBusy, dead, onPermissionMode, paneId, handleGuiLive]
+  )
+
+  // fechar o menu clicando fora (mesmo padrão dos dropdowns do app)
+  const modeRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!modeOpen) return
+    const onDocDown = (e: MouseEvent): void => {
+      if (!modeRef.current?.contains(e.target as Node)) setModeOpen(false)
+    }
+    document.addEventListener('mousedown', onDocDown)
+    return () => document.removeEventListener('mousedown', onDocDown)
+  }, [modeOpen])
+
   const goToEnd = useCallback((): void => {
     const el = logRef.current
     if (!el) return
@@ -334,6 +413,36 @@ export default function GuiPane({
       )}
 
       <div className="gui-composer">
+        {/* PERMISSÃO POR CONVERSA (onda D): o interruptor global do universo
+            morreu — quem decide o quanto o agente pode agir sozinho é cada
+            chat, aqui, ao lado do que se vai escrever. */}
+        <div className="gui-perm-mode" ref={modeRef}>
+          <button
+            className={`gui-btn gui-mode-btn mode-${mode}`}
+            disabled={dead || modeBusy}
+            data-tip={`Permissão desta conversa: ${PERM_MODE_LABEL[mode]}\nTrocar retoma a mesma conversa com a regra nova.`}
+            aria-haspopup="menu"
+            aria-expanded={modeOpen}
+            onClick={() => setModeOpen((v) => !v)}
+          >
+            ⛭ {modeBusy ? 'trocando…' : PERM_MODE_LABEL[mode]}
+          </button>
+          {modeOpen && (
+            <div className="gui-mode-menu" role="menu">
+              {PERM_MODES.map((option) => (
+                <button
+                  key={option.id}
+                  className={`gui-mode-item${option.id === mode ? ' active' : ''}`}
+                  role="menuitem"
+                  onClick={() => void changeMode(option.id)}
+                >
+                  <b>{option.label}</b>
+                  <span>{option.hint}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <textarea
           ref={inputRef}
           className="gui-input"

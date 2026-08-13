@@ -1,218 +1,75 @@
-import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import CliMark from '../components/CliMark'
-import { useStore, type Seat } from '../store'
-import { hueOf } from '../util'
+import { useState } from 'react'
+import { useStore } from '../store'
+import { hueOf, initialsOf } from '../util'
 import Board from '../components/Board'
 import FilesView from '../components/FilesView'
 import BacklogView from '../components/BacklogView'
 import PlanMapView from '../components/PlanMapView'
 import SeatGate from '../components/SeatGate'
-import { ModelSelect } from '../components/ModelSelect'
-import Select from '../components/Select'
 
 interface Props {
   projectId: string
 }
 
-const NO_PANES: never[] = []
-
-// FASE 3: a aba Panes virou uma WebContentsView (renderer próprio). O host só
-// mantém este PLACEHOLDER — a régua de geometria da view: o rect medido aqui
-// vira o setBounds no main (o efeito central do App compõe com visibilidade).
-// visibility:hidden do keepalive não atrapalha: o layout box continua medível.
-function PanesAnchor({ projectId }: { projectId: string }): React.JSX.Element {
-  const setPanesAnchor = useStore((s) => s.setPanesAnchor)
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const report = (): void => {
-      const r = el.getBoundingClientRect()
-      setPanesAnchor(projectId, { x: r.x, y: r.y, width: r.width, height: r.height })
-    }
-    report()
-    const ro = new ResizeObserver(report)
-    ro.observe(el)
-    return () => {
-      ro.disconnect()
-      setPanesAnchor(projectId, null)
-    }
-  }, [projectId, setPanesAnchor])
-  return <div ref={ref} className="tab-content workspace-keepalive panes-view-anchor" />
-}
-
-// Modal do AGENTE LIVRE (decisão do usuário): escolher MODELO e EFFORT antes
-// de abrir — mesmo padrão do modal de missão (catálogo real do seat).
-function FreeAgentModal({
-  projectId,
-  seat,
-  onClose
-}: {
-  projectId: string
-  seat: Seat
-  onClose: () => void
-}): React.JSX.Element {
-  const setTab = useStore((s) => s.setUniverseTab)
-  const loadCatalog = useStore((s) => s.loadCatalog)
-  const catalog = useStore((s) => s.catalogByCli[`${seat.cli}:${seat.id}`])
-  const [model, setModel] = useState('')
-  const [effort, setEffort] = useState('')
-  const [err, setErr] = useState<string | null>(null)
-  useEffect(() => {
-    void loadCatalog(seat.cli, seat.id)
-  }, [seat.cli, seat.id, loadCatalog])
-  const effortOpts = catalog?.models.find((m) => m.id === model)?.efforts ?? catalog?.efforts ?? []
-
-  async function open(): Promise<void> {
-    // agente livre nasce ARMADO (MCP + persona de base limpa nos 2 CLIs). Spec
-    // nula = bridge velha ou pasta do projeto sumiu — abrir assim daria um CLI
-    // CRU na branch base, sem persona e sem MCP, que é exatamente o que o agente
-    // livre armado existe para impedir (ele pode commitar direto na base).
-    if (!window.synkora.panes) {
-      setErr('reinicie o app (npm run dev) para abrir o agente armado')
-      return
-    }
-    // F3-c3: o registro do pane chega por evento do main (panes:open-free) às
-    // duas views — o modal só arma e navega; o addPane local morreu.
-    const spec = await window.synkora.panes.freeSpec(
-      projectId,
-      seat.id,
-      effort || undefined,
-      model || undefined
-    )
-    if (!spec) {
-      setErr('não foi possível armar o agente — a pasta do projeto existe? reloque na Home')
-      return
-    }
-    onClose()
-    setTab(projectId, 'panes')
-  }
-
-  return createPortal(
-    <div className="overlay">
-      <div className="task-modal confirm-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="task-modal-head">
-          <span className="task-dept">✦ agente livre</span>
-          <span className="task-origin">{seat.name}</span>
-          <button className="pane-close dark-close" onClick={onClose}>
-            ×
-          </button>
-        </div>
-        <div className="mission-exec-row">
-          <label>
-            modelo
-            <ModelSelect
-              cli={seat.cli}
-              seatId={seat.id}
-              value={model}
-              onChange={(m) => {
-                setModel(m)
-                setEffort('')
-              }}
-            />
-          </label>
-          <label>
-            effort
-            <Select
-              value={effort}
-              onChange={setEffort}
-              options={[
-                { value: '', label: 'padrão do modelo' },
-                ...effortOpts.map((ef) => ({ value: ef, label: ef }))
-              ]}
-            />
-          </label>
-        </div>
-        {err && <div className="mission-msg">{err}</div>}
-        <div className="task-modal-actions">
-          <button className="btn ghost" onClick={onClose}>
-            cancelar
-          </button>
-          <span className="task-modal-meta" />
-          <button className="btn accent" onClick={() => void open()}>
-            ✦ abrir agente
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body
-  )
-}
-
 export default function Universe({ projectId }: Props): React.JSX.Element {
   const project = useStore((s) => s.projects.find((p) => p.id === projectId))
-  const seats = useStore((s) => s.seats)
-  const paneCount = useStore((s) => (s.panesByProject[projectId] ?? NO_PANES).length)
 
-  const tab = useStore((s) => s.universeTabByProject[projectId] ?? 'board')
+  // ONDA D: a aba PANES morreu (o deck de terminais saiu do caminho). Valor
+  // antigo/legado cai no board em vez de deixar a área central em branco.
+  const rawTab = useStore((s) => s.universeTabByProject[projectId] ?? 'board')
+  const tab = rawTab === 'panes' ? 'board' : rawTab
   const setTab = useStore((s) => s.setUniverseTab)
   // Atenção alcançável de QUALQUER aba (pedido do usuário, 2026-08-06): a aba
-  // Board pulsa quando há pergunta do ask_user esperando e o usuário está em
-  // outra aba; a aba Panes pulsa quando algum terminal pede permissão.
+  // Board pulsa quando há pergunta do ask_user esperando e o dono está em
+  // outra aba.
   const asking = useStore((s) =>
     Object.keys(s.askQuestions[projectId] ?? {}).length > 0
   )
-  const panesNeedPerm = useStore((s) =>
-    (s.panesByProject[projectId] ?? NO_PANES).some((p) => s.paneAttention[p.id])
-  )
   const maestroSeatId = useStore((s) => s.maestroSeatId)
   const maestroStateLoaded = useStore((s) => s.maestroStateLoaded)
-  // 2026-08-11: overlay do host aberto esconde a WebContentsView de panes (ela
-  // compõe POR CIMA do DOM — o popover ficaria por baixo). O App captura a
-  // view antes do hide e guarda aqui; o stage É o rect da view, então o img
-  // absoluto inset:0 pinta o congelado exatamente onde a view estava.
-  const panesFreeze = useStore((s) =>
-    s.panesFreeze && s.panesFreeze.projectId === projectId ? s.panesFreeze : null
-  )
   const seatGateOpen = useStore((s) => s.seatGateOpen)
   // universos ficam montados em segundo plano — portais (gate) só no ativo
   const isActive = useStore(
     (s) => s.appPage === 'workspace' && s.openProjectId === projectId
   )
-  const [menuOpen, setMenuOpen] = useState(false)
-  // seat escolhido no menu → modal de modelo/effort do agente livre
-  const [freeAgentSeat, setFreeAgentSeat] = useState<Seat | null>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const greenfieldLocked =
-    project?.mode === 'greenfield' && project.planStatus !== 'done'
-
-  useEffect(() => {
-    if (!greenfieldLocked) return
-    setMenuOpen(false)
-    setFreeAgentSeat(null)
-  }, [greenfieldLocked])
-
-  useEffect(() => {
-    if (!menuOpen) return
-    function onDocClick(e: MouseEvent): void {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
-    }
-    document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
-  }, [menuOpen])
-
-  // Fase 3 (D6): dropdown/modal do host abrindo com a aba Panes ativa ficaria
-  // POR BAIXO da WebContentsView — sinaliza overlay global e a view se esconde.
-  const bumpHostOverlay = useStore((s) => s.bumpHostOverlay)
-  useEffect(() => {
-    if (!menuOpen) return
-    bumpHostOverlay(1)
-    return () => bumpHostOverlay(-1)
-  }, [menuOpen, bumpHostOverlay])
-  useEffect(() => {
-    if (!freeAgentSeat) return
-    bumpHostOverlay(1)
-    return () => bumpHostOverlay(-1)
-  }, [freeAgentSeat, bumpHostOverlay])
+  // IDENTIDADE NA BARRA DE CIMA (onda D): nome e pasta subiram da página
+  // ✦ geral para cá — é a linha que já existe em toda tela do universo.
+  const renameProject = useStore((s) => s.renameProject)
+  const relocateProject = useStore((s) => s.relocateProject)
+  const [relocError, setRelocError] = useState<string | null>(null)
 
   if (!project) return <div className="bridge-warning">Projeto não encontrado.</div>
 
   return (
     <div className="workspace">
-      {/* Voltar e nome do projeto moram na TitleBar (Discord-mode) — o header
-          interno fica só com as abas e ações. */}
+      {/* ONDA D: a identidade do universo (avatar · nome · pasta) subiu para
+          esta barra — a página ✦ geral ficou só com a foto e o retrato por
+          versão. Nome edita no lugar; a pasta abre o seletor do main. */}
       <header className="ws-header">
+        <div className="ws-identity">
+          <span
+            className="ws-avatar"
+            style={{ ['--card-hue' as string]: hueOf(project.name) }}
+            aria-hidden="true"
+          >
+            {project.photo ? (
+              <img src={project.photo} alt="" draggable={false} />
+            ) : (
+              initialsOf(project.name)
+            )}
+          </span>
+          <input
+            key={project.name}
+            className="ws-name"
+            defaultValue={project.name}
+            data-tip="Nome do universo — Enter ou clique fora para salvar"
+            onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+            onBlur={(e) => {
+              const v = e.target.value.trim()
+              if (v && v !== project.name) void renameProject(projectId, v)
+            }}
+          />
+        </div>
         <nav className="tabs">
           <button
             className={`tab ${tab === 'board' ? 'active' : ''}${asking && tab !== 'board' ? ' tab-attn' : ''}`}
@@ -221,22 +78,14 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
           >
             Board {asking && tab !== 'board' && <span className="tab-attn-glyph">❓</span>}
           </button>
-          {/* Mapa = plano mestre visível (só existe em projeto greenfield) */}
-          {project.mode === 'greenfield' && (
-            <button
-              className={`tab ${tab === 'mapa' ? 'active' : ''}`}
-              onClick={() => setTab(projectId, 'mapa')}
-              data-tip="O plano mestre do projeto: ondas, missões e progresso"
-            >
-              Mapa
-            </button>
-          )}
+          {/* ONDA D: o mapa vale para TODO universo — ele lê as missões
+              (inclusive as diretas), não só o roadmap de um greenfield. */}
           <button
-            className={`tab ${tab === 'panes' ? 'active' : ''}${panesNeedPerm && tab !== 'panes' ? ' tab-attn tab-attn-perm' : ''}`}
-            onClick={() => setTab(projectId, 'panes')}
-            data-tip={panesNeedPerm && tab !== 'panes' ? 'Um terminal está esperando sua aprovação (Ctrl+Alt+P pula até ele)' : undefined}
+            className={`tab ${tab === 'mapa' ? 'active' : ''}`}
+            onClick={() => setTab(projectId, 'mapa')}
+            data-tip="O mapa do projeto: ondas, missões e progresso"
           >
-            Panes {paneCount > 0 && <span className="tab-badge">{paneCount}</span>}
+            Mapa
           </button>
           <button
             className={`tab ${tab === 'backlog' ? 'active' : ''}`}
@@ -253,71 +102,31 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
         </nav>
 
         <div className="ws-actions">
-          {/* Onde este universo mora. Fica colado no botão de agente porque é a
-              informação que importa na hora de abrir um: o agente nasce nesta
-              pasta. É só leitura — trocar de pasta é na página ✦ geral. */}
+          {/* Onde este universo mora — e o botão que corrige quando a pasta
+              foi renomeada/movida por fora do app. */}
           <span className="ws-path" data-tip={project.path}>
             <span className="ws-path-icon">▸</span>
             <span className="ws-path-text">{project.path}</span>
           </span>
-          <div className="menu-anchor" ref={menuRef}>
-            <button
-              className="btn accent"
-              disabled={greenfieldLocked}
-              title={
-                greenfieldLocked
-                  ? 'Agentes livres ficam disponíveis depois que o plano mestre for concluído e publicado.'
-                  : undefined
-              }
-              data-tip={
-                greenfieldLocked
-                  ? 'Projeto novo: siga as missões planejadas pelo Maestro. O agente livre aparece após a publicação final.'
-                  : 'Abrir um agente livre neste projeto'
-              }
-              onClick={() => {
-                if (!greenfieldLocked) setMenuOpen((v) => !v)
-              }}
-            >
-              <span className="btn-icon">✦</span> Agente <span className="caret">▾</span>
-            </button>
-            {menuOpen && !greenfieldLocked && (
-              <div className="menu">
-                {seats.length === 0 && (
-                  <div className="menu-note">
-                    Nenhum seat cadastrado — adicione em Configurações › Minhas contas para
-                    abrir agentes.
-                  </div>
-                )}
-                {seats.map((seat) => (
-                  <button
-                    key={seat.id}
-                    className="menu-item"
-                    onClick={() => {
-                      setMenuOpen(false)
-                      setFreeAgentSeat(seat)
-                    }}
-                  >
-                    <span
-                      className="seat-swatch"
-                      style={{ ['--card-hue' as string]: hueOf(seat.name) }}
-                    />
-                    <span className="menu-label">{seat.name}</span>
-                    <span className="seat-cli">
-                      <CliMark cli={seat.cli} size={12} />
-                    </span>
-                    <span className={`meta-dot ${seat.status === 'logado' ? 'run' : 'idle'}`} />
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <button
+            className="btn ghost tiny"
+            data-tip="Alterar a pasta deste universo (renomeou/moveu fora do app?)"
+            onClick={() => {
+              setRelocError(null)
+              void relocateProject(projectId).then(setRelocError)
+            }}
+          >
+            📁 pasta
+          </button>
         </div>
       </header>
 
+      {relocError && <div className="ws-reloc-error">✗ {relocError}</div>}
+
       <div className="workspace-stage">
-        {/* Board e Panes permanecem na caixa real, sobrepostos. A aba inativa
-            fica invisível e sem input, mas o FitAddon continua medindo todos
-            os terminais — trocar de aba não causa boot/reflow provisório. */}
+        {/* O Board permanece na caixa real mesmo fora da aba: ele hospeda as
+            conversas e os terminais das missões (onda D) — desmontar mataria
+            sessão viva. Aba inativa fica invisível e sem input. */}
         <div
           className={`tab-content workspace-keepalive${tab === 'board' ? ' is-active' : ''}`}
           aria-hidden={tab === 'board' ? undefined : true}
@@ -325,20 +134,6 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
         >
           <Board projectId={projectId} />
         </div>
-        {/* Fase 3: o canvas mora na WebContentsView — aqui fica só a régua. */}
-        <PanesAnchor projectId={projectId} />
-        {/* Congelado da view sob overlay do host (2026-08-11). Fora do
-            PanesAnchor de propósito: o keepalive dele tem opacity:0 (que filho
-            nenhum desfaz); aqui o img participa do stacking normal do universo
-            — abaixo do menu ✦ Agente (z30), da titlebar (z90) e dos modais. */}
-        {panesFreeze && tab === 'panes' && (
-          <img
-            className="panes-freeze"
-            src={panesFreeze.dataUrl}
-            alt=""
-            draggable={false}
-          />
-        )}
         {/* Backlog/Arquivos não rodam processo nenhum — podem montar/desmontar
             à vontade (montar só quando ativo recarrega a lista fresca). */}
         {tab === 'backlog' && (
@@ -362,14 +157,6 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
           sem default silencioso (fluxo lógico, decisão do usuário). */}
       {isActive && ((maestroStateLoaded && !maestroSeatId) || seatGateOpen) && (
         <SeatGate projectId={projectId} canCancel={Boolean(maestroSeatId)} />
-      )}
-
-      {freeAgentSeat && !greenfieldLocked && (
-        <FreeAgentModal
-          projectId={projectId}
-          seat={freeAgentSeat}
-          onClose={() => setFreeAgentSeat(null)}
-        />
       )}
     </div>
   )

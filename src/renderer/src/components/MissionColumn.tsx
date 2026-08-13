@@ -1,4 +1,4 @@
-import { useStore, type Mission } from '../store'
+import type { Mission } from '../store'
 
 // COLUNA DE MISSÕES (Synkora 2.0, onda B) — o mockup aprovado pelo dono: as
 // missões saem da fila de abas no topo e viram CARDS na coluna da ESQUERDA,
@@ -53,7 +53,6 @@ function badgeFor(entry: MissionColumnEntry): { glyph: string; kind: string } | 
 }
 
 export default function MissionColumn({
-  projectId,
   entries,
   selectedId,
   generalPulse,
@@ -61,7 +60,6 @@ export default function MissionColumn({
   onSelect,
   onNewMission
 }: {
-  projectId: string
   entries: MissionColumnEntry[]
   selectedId: string | null
   generalPulse?: string
@@ -69,14 +67,9 @@ export default function MissionColumn({
   onSelect: (missionId: string | null) => void
   onNewMission: () => void
 }): React.JSX.Element {
-  // Interruptores de permissão do UNIVERSO: eram a metade direita da barra de
-  // abas que esta coluna substitui. Continuam sendo controle, não navegação —
-  // por isso descem para o rodapé, longe da lista.
-  const maestroBypass = useStore((s) => s.maestroBypass)
-  const toggleBypass = useStore((s) => s.toggleBypass)
-  const sensitiveBypassOk = useStore((s) => s.sensitiveBypassOk)
-  const toggleSensitiveBypass = useStore((s) => s.toggleSensitiveBypass)
-
+  // ONDA D: os interruptores BYPASS/SENSÍVEL do universo morreram daqui — a
+  // permissão passou a ser POR CONVERSA, no composer do próprio chat (é lá
+  // que o dono decide o quanto aquele agente pode agir sozinho).
   return (
     <div className="mission-col">
       <button
@@ -157,46 +150,6 @@ export default function MissionColumn({
       >
         + nova missão
       </button>
-
-      <div className="mission-col-tools">
-        <button
-          className={`perm-switch ${maestroBypass ? 'bypass' : 'guard'}`}
-          role="switch"
-          aria-checked={maestroBypass}
-          data-tip={
-            maestroBypass
-              ? 'Permissões em BYPASS: os agentes seguem reto, sem pedir aprovação. Clique para religar as aprovações.'
-              : 'Aprovações RELIGADAS: os agentes pedem permissão. Clique para voltar ao fluxo reto (bypass).'
-          }
-          onClick={() => void toggleBypass(projectId, !maestroBypass)}
-        >
-          <span className="ps-track">
-            <span className="ps-knob">{maestroBypass ? '⏩' : '🛡'}</span>
-          </span>
-          <span className="ps-text">{maestroBypass ? 'bypass' : 'aprovações'}</span>
-        </button>
-        {/* Override do DONO para missão SENSÍVEL (classificador de risco): sem
-            ele, projeto de domínio fiscal/PII perde o bypass em TODO pane
-            escritor. Só faz sentido com bypass ligado. */}
-        {maestroBypass && (
-          <button
-            className={`perm-switch ${sensitiveBypassOk ? 'bypass' : 'guard'}`}
-            role="switch"
-            aria-checked={sensitiveBypassOk}
-            data-tip={
-              sensitiveBypassOk
-                ? 'Missões SENSÍVEIS (dados pessoais/fiscais, pagamentos…) também seguem em bypass — sua escolha, auditada na caixa-preta. Clique para voltar à proteção.'
-                : 'Missões classificadas como SENSÍVEIS pedem aprovação mesmo com bypass. Num projeto cujo domínio é fiscal/PII isso trava tudo — clique para liberar o bypass nelas.'
-            }
-            onClick={() => void toggleSensitiveBypass(projectId, !sensitiveBypassOk)}
-          >
-            <span className="ps-track">
-              <span className="ps-knob">{sensitiveBypassOk ? '⏩' : '🔒'}</span>
-            </span>
-            <span className="ps-text">{sensitiveBypassOk ? 'sensível ok' : 'sensível'}</span>
-          </button>
-        )}
-      </div>
     </div>
   )
 }
