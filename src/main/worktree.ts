@@ -1667,6 +1667,8 @@ export function missionWorkspaceFileDiff(
   } catch (error) {
     return { ok: false, error: fileDiffFailure(error) }
   }
+}
+
 export interface MissionCommit {
   /** SHA abreviado (%h) — o que o dono lê e cola; nunca usado como argumento. */
   sha: string
