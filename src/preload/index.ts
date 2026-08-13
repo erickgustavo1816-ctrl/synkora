@@ -11,12 +11,17 @@ import type {
 } from '../main/guiSessions'
 import type { GuiMissionRole } from '../main/guiMissionContracts'
 import type {
+  MissionCommitsResult,
   MissionFileDiffResult,
   MissionGuiSpecResult,
   MissionShellSpecResult,
   MissionWorkspaceFilesResult
 } from '../main/ipc/missions'
-import type { MissionWorkspaceFile, MissionWorkspaceSummary } from '../main/worktree'
+import type {
+  MissionCommit,
+  MissionWorkspaceFile,
+  MissionWorkspaceSummary
+} from '../main/worktree'
 import type { PlanningGuiSpecResult } from '../main/ipc/projects'
 
 /** entrada do diário da caixa-preta + linha legível pronta para exibição */
@@ -38,6 +43,9 @@ export type {
   MissionWorkspaceFilesResult,
   MissionWorkspaceSummary
 }
+
+/** Commits da missão — a lista por trás do `ahead` que o trilho já mostra. */
+export type { MissionCommit, MissionCommitsResult }
 
 export type {
   MissionProgressState,
@@ -1348,6 +1356,11 @@ const api = {
      *  qualquer coisa que aponte para fora dele). */
     fileDiff: (missionId: string, filePath: string): Promise<MissionFileDiffResult> =>
       ipcRenderer.invoke('missions:fileDiff', missionId, filePath),
+    /** SYNKORA 2.0: os COMMITS que esta missão adicionou sobre a base, mais
+     *  novos primeiro (teto 50). Mesma leitura pura do workspaceFiles — é a
+     *  lista por trás do "N commits à frente" que o trilho já mostra. */
+    commits: (missionId: string): Promise<MissionCommitsResult> =>
+      ipcRenderer.invoke('missions:commits', missionId),
     onChanged: (cb: (projectId: string) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
       ipcRenderer.on('missions:changed', listener)

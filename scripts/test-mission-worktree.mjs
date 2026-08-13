@@ -30,6 +30,7 @@ import {
   isExpectedVersionWorktree,
   isExecutableProjectPath,
   mergeTaskWorktree,
+  missionCommits,
   missionWorkspaceFileDiff,
   missionWorkspaceReadout,
   quarantineAndRevalidate,
@@ -994,4 +995,70 @@ test('devDeliveryFacts re-checa a fotografia e resolve base+changedPaths', (t) =
   })
   assert.equal(loose.snapshotStillExact, true)
   assert.equal(typeof loose.baseRef, 'string')
+})
+
+test('commits da missão vêm mais novos primeiro e sem o trabalho alheio da base', (t) => {
+  const root = initializeRepository(t, 'synkora-mission-commits-')
+  const baseBranch = git(root, ['branch', '--show-current'])
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-mission-commits-wt-')
+  const mission = createMissionWorktree(root, worktrees, 'commits-mission')
+  assert.ok(mission)
+
+  // Missão recém-nascida: leitura BOA e lista vazia — estado diferente de falha.
+  assert.deepEqual(missionCommits(mission.dir, baseBranch), [])
+
+  writeFileSync(join(mission.dir, 'primeiro.txt'), 'um\n', 'utf8')
+  git(mission.dir, ['add', '-A'])
+  git(mission.dir, ['commit', '-m', 'primeiro passo da missão'])
+  writeFileSync(join(mission.dir, 'segundo.txt'), 'dois\n', 'utf8')
+  git(mission.dir, ['add', '-A'])
+  git(mission.dir, ['commit', '-m', 'segundo passo da missão'])
+
+  // A BASE anda depois que a missão nasceu: é exatamente o caso em que diffar
+  // contra a ponta mostraria o trabalho DOS OUTROS como se fosse desta missão.
+  writeFileSync(join(root, 'de-outra-missao.txt'), 'alheio\n', 'utf8')
+  git(root, ['add', '-A'])
+  git(root, ['commit', '-m', 'entrega de outra missão'])
+
+  const commits = missionCommits(mission.dir, baseBranch)
+  assert.deepEqual(
+    commits.map((commit) => commit.subject),
+    ['segundo passo da missão', 'primeiro passo da missão']
+  )
+  for (const commit of commits) {
+    assert.match(commit.sha, /^[0-9a-f]{7,40}$/)
+    // ISO 8601 estrito (%aI), o formato que o preload promete ao renderer.
+    assert.match(commit.at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$/)
+    assert.equal(Number.isNaN(Date.parse(commit.at)), false)
+  }
+
+  // Sem base declarada não há "à frente de quê": zero provados, nunca o
+  // histórico inteiro do repositório.
+  assert.deepEqual(missionCommits(mission.dir), [])
+  // Worktree que não existe é FALHA de leitura, não missão sem commit.
+  assert.equal(missionCommits(join(worktrees, 'nao-existe'), baseBranch), undefined)
+})
+
+test('lista de commits sobrevive a assunto exótico e para no teto de 50', (t) => {
+  const root = initializeRepository(t, 'synkora-mission-commits-cap-')
+  const baseBranch = git(root, ['branch', '--show-current'])
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-mission-commits-cap-wt-')
+  const mission = createMissionWorktree(root, worktrees, 'commits-cap-mission')
+  assert.ok(mission)
+
+  // Assunto carregando o PRÓPRIO separador de campos (0x1f): a data vem antes
+  // do assunto no formato justamente para que o resto da linha seja o assunto
+  // inteiro. A verdade comparada é o que o GIT guardou (`%s`), não a string que
+  // mandamos — se o git normalizar a mensagem, quem acompanha é o teste.
+  const exotic = `refatora \u001f tabela — "aspas", acentuação e | pipe`
+  git(mission.dir, ['commit', '--allow-empty', '-m', exotic])
+  const stored = git(mission.dir, ['log', '-1', '--format=%s'])
+  assert.equal(missionCommits(mission.dir, baseBranch)[0].subject, stored)
+
+  for (let index = 0; index < 55; index += 1) {
+    git(mission.dir, ['commit', '--allow-empty', '-m', `passo ${index}`])
+  }
+  const capped = missionCommits(mission.dir, baseBranch)
+  assert.equal(capped.length, 50)
+  assert.equal(capped[0].subject, 'passo 54')
 })

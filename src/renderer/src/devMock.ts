@@ -763,6 +763,9 @@ export function installDevMock(): void {
       // 2.0: sem worktree não há diff para ler — recusa honesta em vez de um
       // patch inventado, que ensinaria a UI a confiar em texto que não existe.
       fileDiff: async () => ({ ok: false, error: 'sem worktree no preview' }),
+      // Sem repositório no browser não há commit para listar — recusa honesta,
+      // nunca um histórico inventado que o dono leria como trabalho real.
+      commits: async () => ({ ok: false, error: 'sem worktree no preview' }),
       onChanged: () => () => undefined
     },
     files: {

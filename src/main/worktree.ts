@@ -1667,6 +1667,79 @@ export function missionWorkspaceFileDiff(
   } catch (error) {
     return { ok: false, error: fileDiffFailure(error) }
   }
+export interface MissionCommit {
+  /** SHA abreviado (%h) — o que o dono lê e cola; nunca usado como argumento. */
+  sha: string
+  /** Primeira linha da mensagem: `%s` NÃO contém quebra de linha, por
+   *  definição, e é isso que mantém uma linha do log = um commit. */
+  subject: string
+  /** Data do AUTOR em ISO 8601 estrito (%aI) — a mesma que o `git log` mostra
+   *  por padrão, então o dono reconhece o horário do próprio trabalho. */
+  at: string
+}
+
+/** Teto do payload: o trilho lista o trabalho da missão, não o histórico do
+ *  repositório. Missão que passar disso já é grande demais para caber num
+ *  cabeçalho — a lista completa se lê no terminal do worktree. */
+const MISSION_COMMITS_CAP = 50
+
+/**
+ * Os commits que a missão ADICIONOU sobre a base, mais novos primeiro — a
+ * lista por trás do `ahead` que o missionWorkspaceSummary conta em número.
+ *
+ * SEM merge-base DE PROPÓSITO, e isto NÃO é uma divergência do irmão: o range
+ * `base..HEAD` já significa "alcançável de HEAD, não alcançável da base", que
+ * é exatamente o recorte que o merge-base compra no `diff`. SONDADO (base
+ * andando + missão mergeando a base + base andando de novo): as duas formas
+ * dão a MESMA lista e nenhuma vaza commit de outra missão. O summary precisa
+ * do merge-base porque `diff` compara duas ÁRVORES e mostraria o trabalho
+ * alheio; `log` não. Um subprocesso a menos num caminho que o trilho consulta
+ * com frequência — e, no caso patológico de merge-base múltiplo (criss-cross),
+ * `base..HEAD` ainda é o recorte correto.
+ *
+ * `undefined` = não deu para ler (worktree sumiu, base inalcançável) e o
+ * chamador diz isso ao dono; `[]` = leitura boa e a missão ainda não commitou
+ * nada. Os dois são estados honestos e diferentes — nunca colapsar num só.
+ */
+export function missionCommits(
+  worktreeDir: string,
+  baseBranch?: string
+): MissionCommit[] | undefined {
+  if (!existsSync(worktreeDir)) return undefined
+  const base = baseBranch?.trim()
+  // Sem base declarada não existe "à frente de quê": zero commits provados é a
+  // resposta honesta, e é a mesma que o summary dá em `ahead`.
+  if (!base) return []
+  // Separador 0x1f (unit separator) — `%x1f` no formato do git, o escape aqui:
+  // nenhum byte de controle solto no fonte, que editor e diff comeriam calados.
+  // A data vem ANTES do assunto de propósito: o resto da linha É o assunto
+  // inteiro, então assunto com caractere exótico não desloca campo nenhum.
+  const SEP = '\u001f'
+  let out: string
+  try {
+    out = gitRaw(worktreeDir, [
+      'log',
+      `--max-count=${MISSION_COMMITS_CAP}`,
+      '--format=%h%x1f%aI%x1f%s',
+      `${base}..HEAD`
+    ])
+  } catch {
+    return undefined
+  }
+  const commits: MissionCommit[] = []
+  for (const line of out.split(/\r?\n/)) {
+    if (!line) continue
+    const first = line.indexOf(SEP)
+    if (first < 0) continue
+    const second = line.indexOf(SEP, first + 1)
+    if (second < 0) continue
+    commits.push({
+      sha: line.slice(0, first),
+      at: line.slice(first + 1, second),
+      subject: line.slice(second + 1)
+    })
+  }
+  return commits
 }
 
 /** Worktree de MISSÃO: branch mission/<id8> onde as tarefas da missão nascem
