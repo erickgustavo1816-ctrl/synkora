@@ -277,6 +277,19 @@ export interface HomeStats {
 // Missão (F3.8): fluxo de trabalho com orquestrador, tarefas e branch próprios.
 export type MissionStatus = 'ativa' | 'integrando' | 'concluida' | 'arquivada'
 
+/** NATUREZA da missão (2.0) — espelho de `src/main/guiMissionContracts`:
+ *  - 'dev'          = a missão de sempre (branch/worktree isolados, ⇪ na fila);
+ *  - 'planejamento' = UMA conversa na RAIZ do projeto que escreve `plano/`.
+ *  Decidida no NASCIMENTO e nunca depois; missão legada não tem o carimbo. */
+export type MissionType = 'dev' | 'planejamento'
+
+/** Tipo EFETIVO da missão: ausente/desconhecido é 'dev' por definição — nada
+ *  do que já está no disco muda de natureza (mesma régua do `missionTypeOf`
+ *  do main, para os dois lados lerem a mesma missão do mesmo jeito). */
+export function missionTypeOf(mission?: { missionType?: MissionType } | null): MissionType {
+  return mission?.missionType === 'planejamento' ? 'planejamento' : 'dev'
+}
+
 export interface MissionIntegrationQueueView {
   state: 'queued' | 'sync_required' | 'blocked' | 'merging'
   position: number
@@ -304,6 +317,9 @@ export interface Mission {
    *  aba abre um CHAT GUI no worktree. TODA missão criada pelo usuário nasce
    *  com este carimbo; missão legada (sem o campo) mantém o fluxo de hoje. */
   direct?: boolean
+  /** 2.0: 'planejamento' abre a conversa que escreve `plano/` na RAIZ do
+   *  projeto (sem branch, sem worktree, fora da fila); ausente = 'dev'. */
+  missionType?: MissionType
   /** criada pelo PM: aguarda o usuário escolher conta/modelo/effort do
    *  orquestrador no modal — o pane só nasce depois */
   pendingOrchestrator?: boolean
@@ -328,6 +344,9 @@ export interface NewMissionInput {
   versionId?: string
   /** missão 2.0: sem orquestrador, chat GUI no worktree (onda B) */
   direct?: boolean
+  /** 2.0: 'planejamento' cria a missão que escreve `plano/` em vez de código;
+   *  omitido = 'dev'. Só o NASCIMENTO decide (o main carimba e nunca revisita). */
+  missionType?: MissionType
 }
 
 // Backlog de produto: versões como escopo de planejamento + itens desejados.
@@ -1588,15 +1607,10 @@ export const useStore = create<SynkoraState>((set, get) => ({
   },
   createMission: async (projectId, input) => {
     if (!window.synkora.missions) return null
-    // `direct` é campo da onda B e o tipo NewMission do preload é do agente
-    // MOTOR: até as duas frentes mesclarem, o campo viaja por um cast estreito
-    // (o main ignora o que não conhece, então missão legada não muda).
-    // TODO(onda B, motor): apagar o cast quando NewMission declarar `direct`.
-    const create = window.synkora.missions.create as unknown as (
-      projectId: string,
-      input: NewMissionInput
-    ) => Promise<Mission | null>
-    const created = await create(projectId, input)
+    // O preload já publica `direct` e `missionType` em NewMission (as duas
+    // frentes da onda B mesclaram): o input viaja TIPADO, sem cast. Campo que
+    // o main não conhece continua sendo ignorado por ele.
+    const created = await window.synkora.missions.create(projectId, input)
     await get().loadMissions(projectId)
     return created
   },
