@@ -756,6 +756,9 @@ export function installDevMock(): void {
       // 2.0: no preview de browser não há CLI para conversar — a spec do chat
       // da missão recusa com texto honesto em vez de fingir sessão.
       guiSpec: async () => ({ ok: false, error: 'sem sessão de chat no preview' }),
+      // 2.0: terminal do worktree é um PTY de verdade — o preview de browser
+      // não tem processo nenhum para abrir, então recusa em vez de fingir.
+      shellSpec: async () => ({ ok: false, error: 'sem terminal no preview' }),
       onChanged: () => () => undefined
     },
     files: {
@@ -820,6 +823,9 @@ export function installDevMock(): void {
         ok: true,
         project: projects.find((p) => p.id === id)
       }),
+      // 2.0: mesma honestidade do chat da missão — sem CLI no preview, a
+      // sessão de planejamento recusa em vez de simular conversa.
+      planningGuiSpec: async () => ({ ok: false, error: 'sem sessão de chat no preview' }),
       onFlowChanged: () => () => undefined
     },
     seats: {

@@ -414,7 +414,33 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
     if (!existsSync(project.path)) return null
     // Projeto ABERTO pelo usuário (o Board ativo pede a spec do PM): hora de
     // respawnar as fases que o reinício interrompeu — o renderer está de pé.
+    // Roda ANTES da cerca abaixo DE PROPÓSITO: card de tarefa solta (sem
+    // missão) também tem fase para retomar, e ela não pode depender de o PM
+    // nascer.
     ctx.phase.drainPendingRespawns(projectId)
+    // SYNKORA 2.0 (onda C): o PM permanente NÃO nasce mais por hábito. Ele
+    // existe para o ecossistema LEGADO — orquestrador, plano, fila, correio
+    // MCP —, então só nasce enquanto há missão legada VIVA neste universo.
+    // Sem nenhuma, a coluna "✦ geral" abre a sessão de PLANEJAMENTO
+    // (projects:planningGuiSpec) e ninguém paga um CLI permanente à toa.
+    // Esta é a cerca AUTORITATIVA do main: o renderer já nem pede a spec, mas
+    // nenhum caminho legado pode ressuscitar um pane que o universo não quer.
+    // NÃO afeta /estudar nem o catálogo: aqueles usam sessões headless
+    // (ensureSession/survey), que não passam por aqui.
+    const liveLegacyMissions = missions
+      .list(projectId)
+      .filter((m) => (m.status === 'ativa' || m.status === 'integrando') && !m.direct)
+    if (liveLegacyMissions.length === 0) {
+      blackbox.record({
+        cat: 'pane',
+        event: 'pm-pane-suppressed-no-legacy',
+        actor: 'harness',
+        ids: { projectId, paneId: maestroPaneId(projectId) },
+        reason:
+          'nenhuma missão legada viva neste universo: o Maestro permanente não nasce — o planejamento 2.0 ocupa a coluna geral'
+      })
+      return null
+    }
     try {
       // Fora do main (triagem 2026-08-08): os 2 gits do excludes pesavam
       // ~junto com o baseline no stall de abertura (ipc:maestro:paneSpec

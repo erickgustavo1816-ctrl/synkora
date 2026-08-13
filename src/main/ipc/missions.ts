@@ -1,7 +1,9 @@
 /**
  * IPC — domínio missions (fase 1, commit 6f).
  * Missões pelo renderer: CRUD, confirmação/troca de conta do orquestrador,
- * integração (botão ⇪) e a spec do pane TUI do orquestrador. A mecânica mora
+ * integração (botão ⇪), a spec do pane TUI do orquestrador e — no 2.0 — as
+ * duas specs do worktree: o CHAT por papel (guiSpec) e o TERMINAL avulso do
+ * dono (shellSpec), que compartilham a mesma prova de isolamento. A mecânica mora
  * no missionEngine (extras.engine); o lado maestro do paneSpec
  * (resume budget/planejamento) vem do maestroEngine pelos extras, e o pane
  * lifecycle (armPane/stagger) segue no index até a obra própria.
@@ -16,15 +18,17 @@
  */
 import { ipcMain } from 'electron'
 import { join } from 'path'
+import { randomUUID } from 'crypto'
 import { existsSync, mkdirSync, unlinkSync } from 'fs'
 import { ensureSynkoraGitExcludes, removeWorktreeAndBranch } from '../worktree'
 import { gitOff } from '../gitAsync'
-import { type NewMission } from '../missions'
+import { type Mission, type NewMission } from '../missions'
 import {
   guiMissionFirstPrompt,
   guiMissionPaneId,
   guiMissionSystemPrompt,
   isGuiMissionRole,
+  resumeSessionIdFor,
   type GuiMissionRole
 } from '../guiMissionContracts'
 import type { GuiPaneSpawn, GuiSessionRegistry } from '../guiSessions'
@@ -71,6 +75,27 @@ export interface MissionsIpcExtras {
 export interface MissionGuiSpecResult {
   ok: boolean
   spawn?: GuiPaneSpawn
+  error?: string
+}
+
+/**
+ * Spec do TERMINAL avulso da missão (2.0, onda C — o botão "terminal" do
+ * trilho de entrega). É um pane SHELL cru: PowerShell no worktree, sem
+ * cliArgs, sem armPane, sem MCP e sem persona — a utilidade do dono, não um
+ * agente. Por isso `kind` é literal 'shell' e não há seat nenhum aqui.
+ */
+export interface MissionShellSpec {
+  paneId: string
+  kind: 'shell'
+  projectId: string
+  missionId: string
+  cwd: string
+  title: string
+}
+
+export interface MissionShellSpecResult {
+  ok: boolean
+  spec?: MissionShellSpec
   error?: string
 }
 
@@ -142,6 +167,83 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   })
 
   /**
+   * ISOLAMENTO PROVADO — pré-condição de tudo que abre no worktree da missão
+   * (chat de qualquer papel E o terminal avulso do dono). Sem o worktree
+   * provado o pane nasceria na branch principal, que é exatamente o que a
+   * missão existe para evitar. Fonte única das duas specs abaixo: as guardas
+   * eram idênticas e divergir aqui seria abrir um caminho sem cerca.
+   */
+  function proveMissionWorkspace(
+    missionId: string
+  ): { ok: true; mission: Mission; cwd: string } | { ok: false; error: string } {
+    const mission = missions.get(missionId)
+    if (!mission) return { ok: false, error: 'missão não encontrada' }
+    const project = projects.get(mission.projectId)
+    if (!project) return { ok: false, error: 'projeto não encontrado' }
+    if (!existsSync(project.path))
+      return { ok: false, error: 'a pasta do projeto não existe mais — relocalize o universo' }
+    if (mission.status === 'concluida' || mission.status === 'arquivada')
+      return { ok: false, error: 'esta missão já foi encerrada' }
+    if (mission.status === 'integrando')
+      return { ok: false, error: 'a missão está integrando agora — o worktree some no merge' }
+    const withWorktree = ensureMissionWorktree(missionId) ?? mission
+    const cwd = missionWorkspacePath(project.path, withWorktree)
+    if (!cwd)
+      return {
+        ok: false,
+        error:
+          'não consegui provar o worktree isolado desta missão; nada foi aberto na branch principal'
+      }
+    return { ok: true, mission: withWorktree, cwd }
+  }
+
+  /**
+   * TERMINAL AVULSO DA MISSÃO (2.0, onda C): o botão "terminal" do trilho de
+   * entrega. Pane SHELL cru no worktree — PowerShell e mais nada: sem
+   * cliArgs, sem armPane, sem token/identidade no hub, sem config MCP e sem
+   * persona. O pty:create reconhece `kind === 'shell'` e nem cobra identidade.
+   *
+   * O pane entra no registro dos servidores de teste (com purpose próprio):
+   * não é para o mapa de portas — é porque processo com cwd DENTRO do
+   * worktree segura arquivos no Windows, e `closeTestServersUnder` é quem
+   * fecha esses panes antes do merge/release. Terminal esquecido aberto não
+   * pode travar a integração da missão.
+   */
+  ipcMain.handle('missions:shellSpec', (_e, missionId: string): MissionShellSpecResult => {
+    const proved = proveMissionWorkspace(missionId)
+    if (!proved.ok) return { ok: false, error: proved.error }
+    const { mission, cwd } = proved
+    const paneId = randomUUID()
+    const title = `>_ ${mission.title.slice(0, 26)}`
+    ctx.testServerPanes.set(paneId, {
+      projectId: mission.projectId,
+      cwd,
+      label: mission.title,
+      purpose: 'mission-shell'
+    })
+    blackbox.record({
+      cat: 'pane',
+      event: 'mission-shell-open',
+      actor: 'user',
+      ids: { projectId: mission.projectId, missionId, paneId },
+      reason: `terminal da missão "${mission.title}" aberto em ${cwd}`
+    })
+    // F3-c3: TODO nascimento de pane viaja por evento do main — as duas views
+    // populam a lista (o host como espelho, a view de panes MONTA). O
+    // renderer não chama addPane: ele só navega para a aba Panes.
+    ctx.pushAll('panes:open-free', mission.projectId, 'shell', {
+      id: paneId,
+      title,
+      cwd,
+      missionId
+    })
+    return {
+      ok: true,
+      spec: { paneId, kind: 'shell', projectId: mission.projectId, missionId, cwd, title }
+    }
+  })
+
+  /**
    * SPEC DO PANE GUI DA MISSÃO (2.0 — docs/PLANO_2_0_GUI.md, onda B).
    * Dev, reviewer e ajudante são conversas no MESMO worktree, com contrato
    * curto por papel. O paneId é determinístico (guiMissionContracts) porque é
@@ -157,26 +259,9 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       // era a rajada que travava o main. Único await do handler — todo o resto
       // abaixo é síncrono, então não há janela para o estado envelhecer.
       await staggerPaneSpawn()
-      const mission = missions.get(missionId)
-      if (!mission) return { ok: false, error: 'missão não encontrada' }
-      const project = projects.get(mission.projectId)
-      if (!project) return { ok: false, error: 'projeto não encontrado' }
-      if (!existsSync(project.path))
-        return { ok: false, error: 'a pasta do projeto não existe mais — relocalize o universo' }
-      if (mission.status === 'concluida' || mission.status === 'arquivada')
-        return { ok: false, error: 'esta missão já foi encerrada' }
-      if (mission.status === 'integrando')
-        return { ok: false, error: 'a missão está integrando agora — o worktree some no merge' }
-
-      // Isolamento é pré-condição: sem worktree provado o chat nasceria na
-      // branch principal do dono (é exatamente o que a missão existe p/ evitar).
-      const withWorktree = ensureMissionWorktree(missionId) ?? mission
-      const cwd = missionWorkspacePath(project.path, withWorktree)
-      if (!cwd)
-        return {
-          ok: false,
-          error: 'não consegui provar o worktree isolado desta missão; nada foi aberto na branch principal'
-        }
+      const proved = proveMissionWorkspace(missionId)
+      if (!proved.ok) return { ok: false, error: proved.error }
+      const { mission: withWorktree, cwd } = proved
 
       // Conta: a escolhida na criação da missão > a já usada pelo orquestrador
       // desta missão > a do PM do projeto. Modelo/effort seguem a missão.
@@ -204,10 +289,9 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       }
 
       // Resume: só vale a conversa gravada PARA ESTE pane e no MESMO CLI
-      // (sessão claude não se retoma no codex e vice-versa).
-      const remembered = guiSessions.remembered(paneId)
-      const resumeSessionId =
-        remembered && remembered.cli === seat.cli ? remembered.sessionId : undefined
+      // (sessão claude não se retoma no codex e vice-versa). A régua é a
+      // mesma do planejamento — mora em guiMissionContracts.
+      const resumeSessionId = resumeSessionIdFor(guiSessions.remembered(paneId), seat.cli)
 
       const spawn: GuiPaneSpawn = {
         paneId,

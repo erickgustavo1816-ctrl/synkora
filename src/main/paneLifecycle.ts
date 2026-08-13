@@ -414,9 +414,22 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
   // digitado. O pane dá log visível e morte limpa (job object mata a árvore
   // ao fechar); integração/release fecham o server daquele worktree ANTES do
   // merge (processo com cwd no worktree segura arquivos no Windows).
+  // 2.0 (onda C): o mesmo registro guarda o TERMINAL avulso da missão
+  // (missions:shellSpec — o botão "terminal" do trilho de entrega). Ele não
+  // roda script nem ocupa porta; entra aqui porque o que importa é a segunda
+  // metade do contrato acima: pane com cwd DENTRO do worktree tem de morrer
+  // antes do merge/release. `purpose` mantém os dois honestos — só o servidor
+  // de teste aparece no mapa de portas e só ele tem comando a digitar.
   const testServerPanes = new Map<
     string,
-    { projectId: string; cwd: string; command: string; port?: number; label?: string }
+    {
+      projectId: string
+      cwd: string
+      command?: string
+      port?: number
+      label?: string
+      purpose?: 'test-server' | 'mission-shell'
+    }
   >()
   // Mapa de portas do harness (decisão do dono, 2026-08-07): QA e modal do
   // ▶ testar veem as MESMAS entradas — runtime de QA com a porta REAL da URL
@@ -434,6 +447,9 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
     }
     for (const [paneId, srv] of testServerPanes) {
       if (srv.projectId !== projectId) continue
+      // Terminal avulso da missão não sobe servidor nenhum: anunciá-lo como
+      // "porta desconhecida" seria mentira no mapa que o QA e o dono leem.
+      if (srv.purpose === 'mission-shell') continue
       if (!ptys.has(paneId)) continue
       entries.push({
         port: srv.port,
@@ -467,7 +483,10 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
         event: 'test-server-closed',
         actor: 'harness',
         ids: { projectId: entry.projectId, paneId },
-        reason: 'servidor de teste fechado antes do merge/release do worktree'
+        reason:
+          entry.purpose === 'mission-shell'
+            ? 'terminal da missão fechado antes do merge/release do worktree'
+            : 'servidor de teste fechado antes do merge/release do worktree'
       })
     }
   }

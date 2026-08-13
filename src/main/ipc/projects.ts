@@ -3,6 +3,10 @@
  * Universos: listar/criar/renomear/foto e a RELOCAÇÃO (a cascata que
  * mata panes, repara worktrees e migra sessões claude por seat).
  *
+ * SYNKORA 2.0 (onda C): mora aqui também a spec da sessão de PLANEJAMENTO do
+ * universo — a conversa que ocupou o lugar do PM permanente na coluna
+ * "✦ geral". Ela é do PROJETO (cwd = raiz), por isso não vive no ipc/missions.
+ *
  * Corpo movido VERBATIM do whenReady do index.ts. CERCA VIVA da Fase 0:
  * register*Ipc é CHAMADO do whenReady (bloco único antes do createWindow),
  * NUNCA no import — instrumentIpcMain só cobre handlers registrados depois
@@ -15,6 +19,13 @@ import { ensureProjectSecurityBaseline } from '../projectSecurityBaseline'
 import { redactSensitiveText } from '../securityRedaction'
 import { cpSync, existsSync } from 'fs'
 import { ensureGreenfieldProjectPlan, isEffectivelyEmptyProject } from '../projectPlan'
+import {
+  guiPlanningFirstPrompt,
+  guiPlanningPaneId,
+  guiPlanningSystemPrompt,
+  resumeSessionIdFor
+} from '../guiMissionContracts'
+import type { GuiPaneSpawn, GuiSessionRegistry } from '../guiSessions'
 import type { MainContext } from '../mainContext'
 
 /** Dependências do closure do index ainda não migradas (mesmo padrão
@@ -24,6 +35,18 @@ export interface ProjectsIpcExtras {
   hasProjectPlanArtifacts(projectPath: string): boolean
   ensureBypassAccepted(configDir: string, trustCwd?: string): void
   discardUnstartedPane(paneId: string): void
+  /** Registro das conversas GUI (onda A) — o planningGuiSpec consulta o
+   *  resume gravado para este pane. */
+  guiSessions: GuiSessionRegistry
+  /** 2.0: encerra o chat de PLANEJAMENTO do projeto (fonte única no index). */
+  killProjectGuiPanes(projectId: string): void
+}
+
+/** Resposta do `projects:planningGuiSpec` (2.0, onda C). */
+export interface PlanningGuiSpecResult {
+  ok: boolean
+  spawn?: GuiPaneSpawn
+  error?: string
 }
 
 export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras): void {
@@ -33,6 +56,7 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     ptys,
     maestro,
     backlog,
+    blackbox,
     phaseWatches,
     syncBoard,
     scheduleProgressSnapshot,
@@ -44,7 +68,9 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     killMaestroSession,
     hasProjectPlanArtifacts,
     ensureBypassAccepted,
-    discardUnstartedPane
+    discardUnstartedPane,
+    guiSessions,
+    killProjectGuiPanes
   } = extras
   // `missing` é COMPUTADO na listagem (nunca persistido): pasta renomeada ou
   // movida fora do app → a UI mostra o estado quebrado e oferece relocação.
@@ -123,6 +149,10 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
   })
 
   ipcMain.handle('projects:remove', (_e, id: string) => {
+    // 2.0: o chat de planejamento tem cwd na RAIZ do projeto que está saindo
+    // do app — deixá-lo vivo seria um CLI conversando por um universo que não
+    // existe mais (e segurando a pasta no Windows).
+    killProjectGuiPanes(id)
     projects.remove(id)
     scheduleProgressSnapshot()
   })
@@ -193,6 +223,12 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     const oldPath = project.path
     // 1. derruba tudo que roda no projeto (panes no cwd velho ficariam zumbis)
     killMaestroSession(id)
+    // 2.0: o chat de PLANEJAMENTO roda na raiz do projeto — o caminho velho
+    // acabou de deixar de existir para o app, então ele morre aqui junto com
+    // os panes. A conversa fica gravada: reabrir dá o resume de sempre.
+    // (Os chats de MISSÃO rodam no worktree em userData, que não se moveu —
+    // mesma razão pela qual os orquestradores ficam intocados.)
+    killProjectGuiPanes(id)
     for (const pane of hub.panesOf(id)) {
       if (ptys.has(pane.paneId)) ptys.kill(pane.paneId)
       ctx.pushAll('panes:closeById', id, pane.paneId)
@@ -246,5 +282,78 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     })
     scheduleProgressSnapshot()
     return { ok: true, project: { ...projects.get(id)!, missing: false } }
+  })
+
+  /**
+   * SESSÃO DE PLANEJAMENTO DO UNIVERSO (2.0, onda C — docs/PLANO_2_0_GUI.md).
+   *
+   * O PM/Maestro permanente parou de nascer em projeto sem missão LEGADA viva
+   * (a cerca vive no maestro:paneSpec); no lugar dele a coluna "✦ geral" abre
+   * ESTA conversa: one-off, na RAIZ do projeto, que entrevista o dono e
+   * ESCREVE o roadmap em plano/. Ela não executa produto e não cria missão —
+   * quem cria é o dono, no app, a partir dos arquivos que ela deixou.
+   *
+   * paneId determinístico (`gui-plan-<id8>`) porque é ele que endereça o
+   * resume gravado pelo guiSessions: reabrir o universo cai na MESMA conversa
+   * de planejamento, nunca numa em branco.
+   */
+  ipcMain.handle('projects:planningGuiSpec', (_e, projectId: string): PlanningGuiSpecResult => {
+    const project = projects.get(projectId)
+    if (!project) return { ok: false, error: 'projeto não encontrado' }
+    if (!existsSync(project.path))
+      return { ok: false, error: 'a pasta do projeto não existe mais — relocalize o universo' }
+
+    // Conta do universo (a mesma do PM, escolhida no gate de entrada). Sem
+    // ela o planejamento não nasce com fallback silencioso: o dono escolhe.
+    const state = maestro.get(projectId)
+    const seat = state.seatId ? seats.get(state.seatId) : undefined
+    if (!seat)
+      return {
+        ok: false,
+        error: 'escolha uma conta para este universo antes de abrir o planejamento'
+      }
+    seats.preseed(seat)
+
+    const paneId = guiPlanningPaneId(projectId)
+    // Mesma régua de resume da missão: conversa gravada só vale no MESMO CLI.
+    const resumeSessionId = resumeSessionIdFor(guiSessions.remembered(paneId), seat.cli)
+    // Versão ABERTA mais antiga = o escopo natural do próximo plano (mesma
+    // régua do backlog); sem nenhuma aberta o planejador pergunta ao dono.
+    const openVersion = backlog
+      .listVersions(projectId)
+      .filter((v) => v.status === 'aberta')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]
+    const roadmapExists = existsSync(join(project.path, 'plano', 'roadmap.md'))
+
+    const spawn: GuiPaneSpawn = {
+      paneId,
+      projectId,
+      cli: seat.cli,
+      configDir: seats.configDirOf(seat),
+      // RAIZ do projeto: planejar é ler o produto inteiro e escrever plano/ —
+      // não há branch de missão aqui (o planejador não toca em produto).
+      cwd: project.path,
+      model: state.model,
+      effort: state.effort,
+      systemPrompt: guiPlanningSystemPrompt(),
+      resumeSessionId,
+      // Conversa retomada JÁ tem o briefing: repetir o 1º turno seria
+      // re-briefing perseguindo o pane (lição da F6.8i).
+      firstPrompt: resumeSessionId
+        ? undefined
+        : guiPlanningFirstPrompt({
+            projectName: project.name,
+            versionName: openVersion?.name,
+            roadmapExists
+          })
+    }
+    blackbox.record({
+      cat: 'pane',
+      event: 'planning-gui-spec',
+      actor: 'user',
+      ids: { projectId, paneId, seatId: seat.id },
+      detail: { cli: seat.cli, resumed: Boolean(resumeSessionId), roadmapExists }
+    })
+    return { ok: true, spawn }
   })
 }

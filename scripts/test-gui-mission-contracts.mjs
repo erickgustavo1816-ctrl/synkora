@@ -6,14 +6,20 @@ import {
   guiMissionPaneId,
   guiMissionRoleOf,
   guiMissionSystemPrompt,
+  guiPlanningFirstPrompt,
+  guiPlanningPaneId,
+  guiPlanningSystemPrompt,
   isGuiMissionPaneId,
   isGuiMissionRole,
+  isGuiPlanningPaneId,
   missionConflictRecipe,
-  missionShortId
+  missionShortId,
+  resumeSessionIdFor
 } from '../src/main/guiMissionContracts.ts'
 
 const MISSION = '7e31d314-1111-2222-3333-444455556666'
 const OTHER = 'aaaaaaaa-1111-2222-3333-444455556666'
+const PROJECT = 'c0dad302-9999-8888-7777-666655554444'
 
 // A CONVENÇÃO DE paneId é o endereço do resume: o guiSessions grava
 // paneId → sessionId, então id instável = conversa nascendo em branco a cada
@@ -150,4 +156,103 @@ test('sem branch conhecida a receita ainda é legível', () => {
   const text = missionConflictRecipe({ missionTitle: 'M', detail: 'destino sujo' })
   assert.match(text, /a branch de destino/)
   assert.match(text, /a branch desta missão/)
+})
+
+// PLANEJAMENTO (onda C): o PM permanente saiu da frente e esta sessão ocupou a
+// coluna "✦ geral". Mesma convenção de endereço estável — reabrir o universo
+// tem de cair na MESMA conversa, não numa em branco.
+
+test('o pane de planejamento tem endereço estável por projeto', () => {
+  assert.equal(guiPlanningPaneId(PROJECT), 'gui-plan-c0dad302')
+  assert.equal(guiPlanningPaneId(PROJECT), guiPlanningPaneId(PROJECT))
+  assert.notEqual(guiPlanningPaneId(PROJECT), guiPlanningPaneId(OTHER))
+})
+
+test('o ceifar por projeto pega o planejamento e NUNCA um chat de missão', () => {
+  assert.equal(isGuiPlanningPaneId(guiPlanningPaneId(PROJECT), PROJECT), true)
+  assert.equal(isGuiPlanningPaneId(guiPlanningPaneId(PROJECT), OTHER), false)
+  // O chat de missão roda no worktree (userData) e sobrevive a relocar/excluir
+  // o projeto — se caísse nesta ceifa, o dono perderia a conversa à toa.
+  for (const paneId of [
+    guiMissionPaneId('dev', MISSION),
+    guiMissionPaneId('reviewer', MISSION),
+    guiMissionPaneId('helper', MISSION, 2)
+  ]) {
+    assert.equal(isGuiPlanningPaneId(paneId, PROJECT), false, paneId)
+  }
+  // e o inverso: o planejamento nunca entra na ceifa de uma missão
+  assert.equal(isGuiPlanningPaneId(guiPlanningPaneId(PROJECT), PROJECT), true)
+  assert.equal(isGuiMissionPaneId(guiPlanningPaneId(PROJECT), MISSION), false)
+  assert.equal(guiMissionRoleOf(guiPlanningPaneId(PROJECT)), undefined)
+})
+
+test('o planejador escreve o roadmap, não executa produto nem cria missão', () => {
+  const contract = guiPlanningSystemPrompt()
+  assert.ok(contract.length > 200, 'contrato vazio demais')
+  assert.ok(contract.length < 2400, 'contrato virou constituição')
+  assert.match(contract, /PT-BR/)
+  assert.match(contract, /ONE-OFF/)
+  assert.match(contract, /do NOT execute product work/i)
+  assert.match(contract, /CREATED BY THE OWNER/)
+  // o formato dos arquivos é contrato: o dono cria a missão LENDO estes campos
+  assert.match(contract, /plano\/roadmap\.md/)
+  assert.match(contract, /plano\/NNN-slug\.md/)
+  for (const section of [
+    'Objetivo',
+    'Fora de escopo',
+    'Critério de pronto',
+    'Tier',
+    'Contexto'
+  ]) {
+    assert.ok(contract.includes(section), `sem a seção ${section}`)
+  }
+  // uma entrega por missão é a régua do dono ("título com 'e' = duas missões")
+  assert.match(contract, /ONE DELIVERABLE PER MISSION/)
+  // aval explícito antes de escrever: ausência nunca é consentimento
+  assert.match(contract, /silence is not consent/i)
+})
+
+test('o planejador é diferente de todos os contratos de missão', () => {
+  const planning = guiPlanningSystemPrompt()
+  for (const role of GUI_MISSION_ROLES) {
+    assert.notEqual(planning, guiMissionSystemPrompt(role), `contrato repetido com ${role}`)
+  }
+})
+
+test('o 1º turno do planejamento nomeia o caderno em vez de dizer "não existe"', () => {
+  const fresh = guiPlanningFirstPrompt({ projectName: 'PAINEL DE GESTÃO' })
+  assert.match(fresh, /PROJECT: PAINEL DE GESTÃO/)
+  assert.match(fresh, /no plano\/roadmap\.md yet/)
+  assert.match(fresh, /VERY FIRST output/)
+  // sem versão aberta o cabeçalho não inventa uma
+  assert.equal(/VERSION IN PROGRESS/.test(fresh), false)
+
+  const resumed = guiPlanningFirstPrompt({
+    projectName: 'PAINEL DE GESTÃO',
+    versionName: 'v1.2',
+    roadmapExists: true
+  })
+  assert.match(resumed, /VERSION IN PROGRESS: v1\.2/)
+  assert.match(resumed, /ALREADY has plano\/roadmap\.md/)
+  assert.equal(/no plano\/roadmap\.md yet/.test(resumed), false)
+})
+
+// GUARDA DO RESUME: conversa gravada só vale no MESMO CLI — sessão do claude
+// não se retoma no codex. Régua única do chat da missão e do planejamento.
+
+test('resume só sobrevive quando o CLI do seat continua o mesmo', () => {
+  const claude = { sessionId: 'sess-1', cli: 'claude' }
+  assert.equal(resumeSessionIdFor(claude, 'claude'), 'sess-1')
+  assert.equal(resumeSessionIdFor(claude, 'codex'), undefined)
+
+  const codex = { sessionId: 'codex-thread:abc', cli: 'codex' }
+  assert.equal(resumeSessionIdFor(codex, 'codex'), 'codex-thread:abc')
+  assert.equal(resumeSessionIdFor(codex, 'claude'), undefined)
+})
+
+test('registro ausente ou capenga nunca vira um --resume quebrado', () => {
+  assert.equal(resumeSessionIdFor(undefined, 'claude'), undefined)
+  assert.equal(resumeSessionIdFor({ cli: 'claude' }, 'claude'), undefined)
+  assert.equal(resumeSessionIdFor({ sessionId: '', cli: 'claude' }, 'claude'), undefined)
+  assert.equal(resumeSessionIdFor({ sessionId: 'x' }, 'claude'), undefined)
 })

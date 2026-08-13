@@ -772,10 +772,13 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
       helperOpenWatchdog.acknowledge(req.id)
       // Servidor de teste do dono: o pane shell nasce cru — o comando entra
       // digitado (inject fatiado) assim que o prompt do PowerShell assentar.
+      // 2.0: o terminal avulso da missão entra no MESMO registro (para morrer
+      // antes do merge) mas nasce sem comando — nada a digitar, o dono usa.
       const testSrv = testServerPanes.get(req.id)
-      if (req.kind === 'shell' && testSrv) {
+      const testSrvCommand = testSrv?.command?.trim()
+      if (req.kind === 'shell' && testSrvCommand) {
         setTimeout(() => {
-          if (ptys.has(req.id)) ptys.inject(req.id, testSrv.command)
+          if (ptys.has(req.id)) ptys.inject(req.id, testSrvCommand)
         }, 1200)
       }
       const spawnIdentity = hub.identityByPane(req.id)
