@@ -10,7 +10,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
 
 import {
@@ -30,10 +30,12 @@ import {
   isExpectedVersionWorktree,
   isExecutableProjectPath,
   mergeTaskWorktree,
+  missionWorkspaceFileDiff,
   missionWorkspaceReadout,
   quarantineAndRevalidate,
   removeWorktreeAndBranch,
   resolveMissionWorkspace,
+  resolveWorkspaceFilePath,
   snapshotTaskWorktree
 } from '../.tmp/mission-worktree-test/worktree.js'
 
@@ -195,6 +197,97 @@ test('leitura agrupada carrega o erro legivel de .synkora versionado', (t) => {
   const readout = missionWorkspaceReadout(root, 'qualquer-missao')
   assert.equal(readout.healthy, false)
   assert.match(readout.excludesError ?? '', /\.synkora já contém arquivos versionados/)
+})
+
+test('cerca de caminho do diff por arquivo: so o que MORA no worktree passa', () => {
+  const root = resolve('wt-raiz-do-teste')
+
+  // aceitos: relativos, normalizados e sempre devolvidos em barras normais
+  assert.equal(resolveWorkspaceFilePath(root, 'src/main/x.ts'), 'src/main/x.ts')
+  assert.equal(resolveWorkspaceFilePath(root, './src/x.ts'), 'src/x.ts')
+  assert.equal(resolveWorkspaceFilePath(root, 'a/b/../c.ts'), 'a/c.ts')
+  assert.equal(resolveWorkspaceFilePath(root, '  src/x.ts  '), 'src/x.ts')
+
+  // travessia em todas as formas
+  assert.equal(resolveWorkspaceFilePath(root, '..'), undefined)
+  assert.equal(resolveWorkspaceFilePath(root, '../fora.txt'), undefined)
+  assert.equal(resolveWorkspaceFilePath(root, 'src/../../fora.txt'), undefined)
+  // irmão com o MESMO PREFIXO: a checagem é por caminho, nunca por startsWith
+  assert.equal(resolveWorkspaceFilePath(root, '../wt-raiz-do-teste-extra/x.ts'), undefined)
+
+  // absoluto nunca vem do trilho — e é a metade fácil de um escape
+  assert.equal(resolveWorkspaceFilePath(root, resolve(root, '..', 'fora.txt')), undefined)
+  assert.equal(resolveWorkspaceFilePath(root, resolve(root, 'dentro.txt')), undefined)
+  assert.equal(resolveWorkspaceFilePath(root, 'C:relativo-ao-drive.txt'), undefined)
+  assert.equal(resolveWorkspaceFilePath(root, '//servidor/share/x.txt'), undefined)
+
+  // degenerados: o worktree em si não é arquivo, e NUL nem chega ao processo
+  assert.equal(resolveWorkspaceFilePath(root, ''), undefined)
+  assert.equal(resolveWorkspaceFilePath(root, '   '), undefined)
+  assert.equal(resolveWorkspaceFilePath(root, '.'), undefined)
+  assert.equal(resolveWorkspaceFilePath(root, 'a\u0000b'), undefined)
+})
+
+test('diff por arquivo: committed + nao committado, arquivo solto inteiro e teto', (t) => {
+  const root = initializeRepository(t, 'synkora-file-diff-')
+  const baseBranch = git(root, ['branch', '--show-current'])
+  writeFileSync(join(root, 'estavel.txt'), 'ja estava aqui\n', 'utf8')
+  git(root, ['add', 'estavel.txt'])
+  git(root, ['commit', '-m', 'arquivo que a missao nao toca'])
+  git(root, ['checkout', '-q', '-b', 'mission/file-diff'])
+
+  writeFileSync(join(root, 'committed.txt'), 'alfa\nbeta\n', 'utf8')
+  git(root, ['add', 'committed.txt'])
+  git(root, ['commit', '-m', 'entrega committada'])
+  // mudança AINDA NÃO committada: o trilho é vivo, não foto do último commit
+  writeFileSync(join(root, 'base.txt'), 'base\nlinha nova sem commit\n', 'utf8')
+  writeFileSync(join(root, 'solto.txt'), 'nasceu fora do git\n', 'utf8')
+
+  const committed = missionWorkspaceFileDiff(root, 'committed.txt', baseBranch)
+  assert.equal(committed.ok, true)
+  assert.match(committed.diff ?? '', /\+alfa/)
+  assert.equal(committed.truncated, undefined)
+
+  const working = missionWorkspaceFileDiff(root, 'base.txt', baseBranch)
+  assert.equal(working.ok, true)
+  assert.match(working.diff ?? '', /\+linha nova sem commit/)
+
+  // arquivo que o git ainda não conhece volta INTEIRO como adição
+  const untracked = missionWorkspaceFileDiff(root, 'solto.txt', baseBranch)
+  assert.equal(untracked.ok, true)
+  assert.match(untracked.diff ?? '', /--- \/dev\/null/)
+  assert.match(untracked.diff ?? '', /\+nasceu fora do git/)
+
+  // nada mudou / não existe = diff vazio com ok:true (resposta, não erro)
+  const quieto = missionWorkspaceFileDiff(root, 'inexistente.txt', baseBranch)
+  assert.equal(quieto.ok, true)
+  assert.equal(quieto.diff, '')
+
+  // rastreado E intocado NUNCA pode cair no diff-de-adição: o dono leria como
+  // "a missão criou este arquivo inteiro", que é mentira
+  const estavel = missionWorkspaceFileDiff(root, 'estavel.txt', baseBranch)
+  assert.equal(estavel.ok, true)
+  assert.equal(estavel.diff, '')
+
+  // a cerca de caminho vale no caminho real, antes de qualquer git nascer
+  const escapou = missionWorkspaceFileDiff(root, '../fora.txt', baseBranch)
+  assert.equal(escapou.ok, false)
+  assert.match(escapou.error ?? '', /fora do worktree/)
+
+  const semWorktree = missionWorkspaceFileDiff(join(root, 'nao-existe'), 'x.txt', baseBranch)
+  assert.equal(semWorktree.ok, false)
+
+  // teto: corta em linha inteira e ASSUME o corte
+  writeFileSync(
+    join(root, 'gigante.txt'),
+    Array.from({ length: 40_000 }, (_, i) => `linha ${i}`).join('\n') + '\n',
+    'utf8'
+  )
+  const grande = missionWorkspaceFileDiff(root, 'gigante.txt', baseBranch)
+  assert.equal(grande.ok, true)
+  assert.equal(grande.truncated, true)
+  assert.ok((grande.diff ?? '').length <= 200_000)
+  assert.ok((grande.diff ?? '').endsWith('\n'))
 })
 
 test('reconhece marcador literal de integração no histórico Git', (t) => {

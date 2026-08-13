@@ -760,6 +760,9 @@ export function installDevMock(): void {
       // não tem processo nenhum para abrir, então recusa em vez de fingir.
       shellSpec: async () => ({ ok: false, error: 'sem terminal no preview' }),
       workspaceFiles: async () => ({ ok: false, error: 'sem worktree no preview' }),
+      // 2.0: sem worktree não há diff para ler — recusa honesta em vez de um
+      // patch inventado, que ensinaria a UI a confiar em texto que não existe.
+      fileDiff: async () => ({ ok: false, error: 'sem worktree no preview' }),
       onChanged: () => () => undefined
     },
     files: {
