@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import test from 'node:test'
 import {
   GUI_PERMISSION_MODES,
@@ -10,6 +11,15 @@ import {
   isGuiPermissionMode,
   spawnFingerprint
 } from '../.tmp/gui-sessions-test/guiSessions.js'
+import {
+  GUI_ATTACHMENT_MAX_BYTES,
+  attachPayloadProblem,
+  attachmentTooLargeError,
+  base64ByteLength,
+  safeAttachmentName,
+  stripDataUrlPrefix,
+  uniqueAttachmentPath
+} from '../.tmp/gui-sessions-test/guiAttachments.js'
 
 // Anel de eventos — é ele que faz a remontagem do pane GUI não nascer vazia
 // enquanto a sessão segue viva (docs/GUI_PANE_CONTRACT.md, gui:state).
@@ -198,4 +208,91 @@ test('conversa de OUTRO cli nunca é herdada', () => {
     undefined,
     'sessão do claude não se retoma no codex'
   )
+})
+
+// ANEXOS DO COMPOSER (gui:attach). O destino sai do REGISTRO, nunca do
+// renderer; o resto são as três decisões puras: nome seguro, caminho único e
+// o teto de tamanho.
+
+test('o destino do anexo vem do pane; pane desconhecido não tem cwd', () => {
+  const gui = registry()
+  assert.equal(gui.cwdOf('fantasma'), undefined, 'sem sessão, nada de adivinhar pasta')
+})
+
+test('nome de anexo nunca vira travessia de diretório nem caractere ilegal', () => {
+  assert.equal(safeAttachmentName('print.png'), 'print.png')
+  // separadores das duas famílias: fica só o último segmento
+  assert.equal(safeAttachmentName('../../etc/passwd'), 'passwd')
+  assert.equal(safeAttachmentName('C:\\Windows\\System32\\drivers\\etc\\hosts'), 'hosts')
+  // ilegais do Windows viram hífen, e o nome nunca sai vazio
+  assert.equal(safeAttachmentName('re:latório<v2>?.pdf'), 're-latório-v2--.pdf')
+  for (const junk of ['', '   ', '...', '/', '\\']) {
+    assert.equal(safeAttachmentName(junk), 'anexo', `"${junk}" precisa de fallback`)
+  }
+  // dispositivo reservado do Windows (grava no NADA em qualquer extensão)
+  assert.equal(safeAttachmentName('nul.png'), 'nul-anexo.png')
+  assert.equal(safeAttachmentName('COM1.txt'), 'COM1-anexo.txt')
+  // arquivo que é só extensão continua com nome
+  assert.equal(safeAttachmentName('.env'), 'env')
+})
+
+test('nome gigante é cortado no MIOLO, preservando a extensão', () => {
+  const name = safeAttachmentName(`${'a'.repeat(400)}.png`)
+  assert.ok(name.length <= 120, `nome cortado (${name.length})`)
+  assert.ok(name.endsWith('.png'), 'a extensão sobrevive ao corte')
+})
+
+test('anexo NUNCA sobrescreve anexo: colisão ganha sufixo', () => {
+  const dir = join('C:', 'w', '.synkora', 'attachments')
+  const taken = new Set([join(dir, 'print.png'), join(dir, 'print-1.png')])
+  const exists = (p) => taken.has(p)
+
+  assert.equal(uniqueAttachmentPath(dir, 'livre.png', exists), join(dir, 'livre.png'))
+  assert.equal(uniqueAttachmentPath(dir, 'print.png', exists), join(dir, 'print-2.png'))
+  // o caminho devolvido é sempre ABSOLUTO (o prompt do agente cita ele)
+  assert.ok(uniqueAttachmentPath(dir, 'print.png', exists).startsWith(dir))
+  // e o nome é saneado ANTES de procurar vaga
+  assert.equal(uniqueAttachmentPath(dir, '../print.png', exists), join(dir, 'print-2.png'))
+})
+
+test('o tamanho do base64 é medido sem alocar o buffer', () => {
+  // 'oi' = 2 bytes → 'b2k=' (uma casa de padding)
+  assert.equal(base64ByteLength(Buffer.from('oi').toString('base64')), 2)
+  assert.equal(base64ByteLength(Buffer.from('a').toString('base64')), 1)
+  assert.equal(base64ByteLength(Buffer.from('abc').toString('base64')), 3)
+  assert.equal(base64ByteLength(''), 0)
+  // quebras de linha do transporte não contam como conteúdo
+  const grande = Buffer.alloc(9_000).toString('base64')
+  assert.equal(base64ByteLength(grande), 9_000)
+  assert.equal(base64ByteLength(grande.replace(/(.{76})/g, '$1\n')), 9_000)
+})
+
+test('o teto de 10 MB recusa em PT-BR e nomeia o limite', () => {
+  assert.equal(GUI_ATTACHMENT_MAX_BYTES, 10 * 1024 * 1024)
+  const msg = attachmentTooLargeError(12.5 * 1024 * 1024)
+  assert.match(msg, /12,5 MB/, 'tamanho do arquivo com vírgula decimal')
+  assert.match(msg, /10,0 MB/, 'a mensagem diz qual é o limite')
+  assert.match(msg, /grande demais/, 'texto de UI em PT-BR, não jargão em inglês')
+})
+
+test('data URL não vira bytes corrompidos', () => {
+  assert.equal(stripDataUrlPrefix('data:image/png;base64,QUJD'), 'QUJD')
+  assert.equal(stripDataUrlPrefix('data:;base64,QUJD'), 'QUJD')
+  assert.equal(stripDataUrlPrefix('  QUJD  '), 'QUJD')
+})
+
+test('payload torto é recusado antes de tocar o disco', () => {
+  assert.equal(attachPayloadProblem({ kind: 'clipboard-image' }), undefined)
+  assert.equal(attachPayloadProblem({ kind: 'file', name: 'a.png', bytesBase64: 'QUJD' }), undefined)
+
+  assert.equal(attachPayloadProblem(undefined), 'anexo sem conteúdo')
+  assert.equal(
+    attachPayloadProblem({ kind: 'file', name: ' ', bytesBase64: 'QUJD' }),
+    'anexo sem nome'
+  )
+  assert.equal(
+    attachPayloadProblem({ kind: 'file', name: 'a.png', bytesBase64: '' }),
+    'anexo sem conteúdo'
+  )
+  assert.match(attachPayloadProblem({ kind: 'pasta' }), /desconhecido/)
 })

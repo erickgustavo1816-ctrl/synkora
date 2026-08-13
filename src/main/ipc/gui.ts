@@ -11,15 +11,28 @@
  * pane é a WebContentsView do canvas (F3), então host-only trancaria o dono
  * legítimo do chat.
  */
-import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { clipboard, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import {
   GuiSessionRegistry,
   type GuiPaneSpawn,
   type GuiPermBehavior,
   type GuiResult
 } from '../guiSessions'
+import {
+  GUI_ATTACHMENT_MAX_BYTES,
+  attachPayloadProblem,
+  attachmentTooLargeError,
+  base64ByteLength,
+  stripDataUrlPrefix,
+  uniqueAttachmentPath,
+  type GuiAttachPayload,
+  type GuiAttachResult
+} from '../guiAttachments'
 import { guiMissionRoleOf, missionShortId } from '../guiMissionContracts'
 import { notifyDesktop } from '../desktopNotifications'
+import { ensureSynkoraGitExcludes } from '../worktree'
 import type { MainContext } from '../mainContext'
 
 export interface GuiIpcExtras {
@@ -56,6 +69,58 @@ function paneLabel(ctx: MainContext, paneId: string, projectId: string): string 
     .find((candidate) => missionShortId(candidate.id) === short)
   const who = ROLE_LABEL[role] ?? role
   return mission ? `${who} · ${mission.title}` : who
+}
+
+/**
+ * Grava UM anexo do composer na casa do pane. Fora do handler porque é o
+ * único trecho aqui com disco de verdade — as decisões (nome, unicidade,
+ * teto) moram no módulo puro `guiAttachments`.
+ */
+function writeAttachment(cwd: string, payload: GuiAttachPayload): GuiAttachResult {
+  // O `.synkora` do worktree tem de ser git-invisível ANTES da primeira
+  // escrita: anexo do dono nunca pode sujar a fotografia da missão.
+  try {
+    ensureSynkoraGitExcludes(cwd)
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error)
+    return { ok: false, error: `não consegui preparar a pasta de anexos: ${text}` }
+  }
+
+  let bytes: Buffer
+  let name: string
+  if (payload.kind === 'clipboard-image') {
+    const image = clipboard.readImage()
+    if (image.isEmpty()) return { ok: false, error: 'não há imagem na área de transferência' }
+    bytes = image.toPNG()
+    name = `clip-${Date.now()}.png`
+  } else {
+    const base64 = stripDataUrlPrefix(payload.bytesBase64)
+    // Pré-cheque SEM alocar: base64 de 10MB já são ~13MB de string, e decodar
+    // para depois recusar seria pagar a memória que o teto existe para evitar.
+    const declared = base64ByteLength(base64)
+    if (declared > GUI_ATTACHMENT_MAX_BYTES) {
+      return { ok: false, error: attachmentTooLargeError(declared) }
+    }
+    bytes = Buffer.from(base64, 'base64')
+    name = payload.name
+  }
+  if (bytes.length === 0) return { ok: false, error: 'anexo sem conteúdo' }
+  if (bytes.length > GUI_ATTACHMENT_MAX_BYTES) {
+    return { ok: false, error: attachmentTooLargeError(bytes.length) }
+  }
+
+  // `resolve` e não `join`: o caminho de volta é ABSOLUTO por contrato, e o
+  // prompt do agente não pode depender do cwd de quem lê.
+  const dir = resolve(cwd, '.synkora', 'attachments')
+  try {
+    mkdirSync(dir, { recursive: true })
+    const dest = uniqueAttachmentPath(dir, name, existsSync)
+    writeFileSync(dest, bytes)
+    return { ok: true, path: dest }
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error)
+    return { ok: false, error: `não consegui gravar o anexo: ${text}` }
+  }
 }
 
 export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessionRegistry {
@@ -115,6 +180,29 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
   ipcMain.handle('gui:state', (e, paneId: string): { events: unknown[] } => {
     extras.assertAppRendererSender(e)
     return registry.state(paneId)
+  })
+
+  // ANEXO DO COMPOSER: print colado ou arquivo solto vira arquivo em
+  // `<cwd do pane>/.synkora/attachments` e o renderer recebe o caminho
+  // ABSOLUTO para citar no prompt. O DESTINO NUNCA VEM DO RENDERER — sai do
+  // registro de sessões pelo paneId, então um pane sem sessão é recusado em
+  // vez de gravar num lugar adivinhado.
+  ipcMain.handle('gui:attach', (e, paneId: string, payload: GuiAttachPayload): GuiAttachResult => {
+    extras.assertAppRendererSender(e)
+    const problem = attachPayloadProblem(payload)
+    if (problem) return { ok: false, error: problem }
+    const cwd = registry.cwdOf(paneId)
+    if (!cwd) return { ok: false, error: 'este pane não tem sessão aberta' }
+
+    const result = writeAttachment(cwd, payload)
+    blackbox.record({
+      cat: 'pane',
+      event: result.ok ? 'gui-attachment-saved' : 'gui-attachment-failed',
+      actor: 'user',
+      ids: { paneId },
+      detail: { kind: payload.kind, ...(result.ok ? { path: result.path } : { err: result.error }) }
+    })
+    return result
   })
 
   return registry

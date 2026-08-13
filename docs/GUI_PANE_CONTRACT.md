@@ -57,6 +57,28 @@ export interface GuiLivePayload { paneId: string; evt: unknown /* SessionEvent *
 | `gui:interrupt` | `(paneId) => {ok}` | interrompe o turno |
 | `gui:kill` | `(paneId) => {ok}` | encerra a sessão do pane |
 | `gui:state` | `(paneId) => {events: GuiLivePayload['evt'][]}` | replay p/ remontagem (main guarda ring buffer ~500 eventos por pane) |
+| `gui:attach` | `(paneId, payload: GuiAttachPayload) => {ok, path?, error?}` | anexo do composer: grava e devolve o caminho ABSOLUTO |
+
+### Anexos (`gui:attach`)
+
+```ts
+type GuiAttachPayload =
+  | { kind: 'clipboard-image' }                          // o main lê o clipboard nativo
+  | { kind: 'file'; name: string; bytesBase64: string }   // arquivo escolhido/solto
+interface GuiAttachResult { ok: boolean; path?: string; error?: string }
+```
+
+- Destino: `<cwd do pane>/.synkora/attachments`, com o cwd vindo do REGISTRO de
+  sessões (`GuiSessionRegistry.cwdOf`) — nunca de um caminho do renderer; pane
+  sem sessão é recusado. A pasta é criada na hora e `.synkora` entra no
+  git-exclude antes da primeira escrita.
+- O `path` de volta é ABSOLUTO: é ele que o composer cita no prompt para o
+  agente abrir o arquivo.
+- Anexo nunca sobrescreve anexo: nome colidido ganha sufixo `-1`, `-2`…
+- Teto de **10 MB por arquivo** (`GUI_ATTACHMENT_MAX_BYTES`), medido no base64
+  ANTES de alocar o buffer; acima disso volta `{ok:false, error}` em PT-BR.
+- As decisões puras (nome seguro, unicidade, teto) moram em
+  `src/main/guiAttachments.ts` e são cobertas por `npm run test:gui-sessions`.
 
 ## Push (main → renderer)
 

@@ -9,6 +9,7 @@ import type {
   GuiPermissionMode,
   GuiResult
 } from '../main/guiSessions'
+import type { GuiAttachPayload, GuiAttachResult } from '../main/guiAttachments'
 import type { GuiMissionRole } from '../main/guiMissionContracts'
 import type {
   MissionCommitsResult,
@@ -30,6 +31,11 @@ export type BlackboxTailEntry = BlackboxEntry & { line: string }
 /** Contrato do pane GUI (docs/GUI_PANE_CONTRACT.md) — fonte única dos tipos;
  *  o renderer copia/reexporta pelo accessor tipado de guiApi.ts. */
 export type { GuiLivePayload, GuiPaneSpawn, GuiPermBehavior, GuiPermissionMode, GuiResult }
+
+/** Anexos do composer do chat: print colado ou arquivo, gravados na pasta de
+ *  trabalho do PANE (`.synkora/attachments`) — a resposta traz o path absoluto
+ *  que o renderer cita no prompt. */
+export type { GuiAttachPayload, GuiAttachResult }
 
 /** Papéis do chat de missão 2.0 e as respostas das specs que o 2.0 abriu:
  *  chat da missão, terminal avulso do worktree e sessão de planejamento. */
@@ -1211,6 +1217,11 @@ const api = {
     /** Replay para a remontagem (o main guarda ~500 eventos por pane). */
     state: (paneId: string): Promise<{ events: unknown[] }> =>
       ipcRenderer.invoke('gui:state', paneId),
+    /** Anexa print da área de transferência ou arquivo ao chat: o main grava
+     *  em `<cwd do pane>/.synkora/attachments` e devolve o caminho ABSOLUTO
+     *  para o composer citar no prompt (teto de 10 MB por arquivo). */
+    attach: (paneId: string, payload: GuiAttachPayload): Promise<GuiAttachResult> =>
+      ipcRenderer.invoke('gui:attach', paneId, payload),
     /** Evento vivo; devolve a função de cancelar a assinatura. */
     onLive: (cb: (payload: GuiLivePayload) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, payload: GuiLivePayload): void => cb(payload)
