@@ -3,6 +3,7 @@ import { useStore, type CliStatus } from '../store'
 import SynkoraMark from '../components/SynkoraMark'
 import HomeField, { type FieldAnchor, type HomeFieldHandle } from '../components/HomeField'
 import UniverseCard from '../components/UniverseCard'
+import NewUniverseModal from '../components/NewUniverseModal'
 
 // ————————————————————————————————————————————————————————————————————————
 // A HOME — o SAGUÃO do universo Synkora.
@@ -34,7 +35,6 @@ export default function Home(): React.JSX.Element {
   const panesByProject = useStore((s) => s.panesByProject)
   const paneActivity = useStore((s) => s.paneActivity)
   const paneAttention = useStore((s) => s.paneAttention)
-  const createProject = useStore((s) => s.createProject)
   const loadHomeStats = useStore((s) => s.loadHomeStats)
   const openSettings = useStore((s) => s.openSettings)
 
@@ -44,6 +44,9 @@ export default function Home(): React.JSX.Element {
   const hoverRef = useRef<string | null>(null)
 
   const [clis, setClis] = useState<CliStatus[]>([])
+  // ONDA D: criar universo virou um passo com decisão (link do GitHub
+  // opcional), então deixou de ser só o seletor de pasta.
+  const [novoOpen, setNovoOpen] = useState(false)
 
   // ---- âncoras: cada card registra sua caixa; o campo mede e vira gravidade --
   const anchor = useCallback((key: string, el: HTMLElement | null): void => {
@@ -297,14 +300,6 @@ export default function Home(): React.JSX.Element {
   ).length
   const expiradas = seats.filter((s) => s.status === 'expirado').length
 
-  async function novoUniverso(): Promise<void> {
-    const folder = await window.synkora.pickFolder()
-    if (!folder) return
-    // o nome sai da pasta, igual ao "+" do rail — pedir nome antes da pasta era
-    // o único lugar do app que fazia isso
-    await createProject(folder.split(/[\\/]/).filter(Boolean).pop() ?? 'universo', folder)
-  }
-
   return (
     <div
       className={`home${alerta ? ' has-alert' : ''}`}
@@ -389,15 +384,17 @@ export default function Home(): React.JSX.Element {
             {projects.map((p, i) => (
               <UniverseCard key={p.id} projectId={p.id} index={i} anchor={anchor} />
             ))}
-            <button className="universe-card add" onClick={() => void novoUniverso()}>
+            <button className="universe-card add" onClick={() => setNovoOpen(true)}>
               <span className="add-plus">+</span>
               <span className="add-title">novo universo</span>
-              <span className="add-hint">conecte a pasta do projeto</span>
+              <span className="add-hint">pasta do projeto · GitHub opcional</span>
             </button>
           </div>
 
         </div>
       </div>
+
+      {novoOpen && <NewUniverseModal onClose={() => setNovoOpen(false)} />}
     </div>
   )
 }

@@ -35,7 +35,7 @@ import {
   type Version
 } from '../store'
 import { DEPARTMENTS, DEPT_BY_KEY, deptHueVar, STATUS_LABEL, STATUS_ORDER } from '../departments'
-import type { GuiPaneSpawn } from '../guiApi'
+import type { GuiPaneSpawn, GuiPermissionMode } from '../guiApi'
 import { missionGui, type MissionGuiRole } from '../missionGui'
 import { missionShell } from '../missionShell'
 import { planningGui, planningPaneId } from '../planningGui'
@@ -1257,6 +1257,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const paneModel = useStore((s) => s.paneModel)
   const paneActivity = useStore((s) => s.paneActivity)
   const guiPanes = useStore((s) => s.guiPanes)
+  const clearPaneAttention = useStore((s) => s.clearPaneAttention)
   const resetPaneTelemetry = useStore((s) => s.resetPaneTelemetry)
   // Vários universos ficam montados ao mesmo tempo (troca estilo Discord) —
   // efeitos que mexem em estado global/processos só rodam no projeto ATIVO.
@@ -1291,6 +1292,13 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const [planningSpawn, setPlanningSpawn] = useState<GuiPaneSpawn | null>(null)
   const [planningError, setPlanningError] = useState<string | null>(null)
   const [planningBusy, setPlanningBusy] = useState(false)
+  // ONDA D: a aba PANES morreu e o terminal virou SLOT aqui no centro. Estas
+  // duas seleções dizem qual slot de TERMINAL está no ar; null = a conversa
+  // (chat da missão / planejamento) ocupa a coluna, como antes.
+  const [missionTerm, setMissionTerm] = useState<Record<string, string | null>>({})
+  const [generalTerm, setGeneralTerm] = useState<string | null>(null)
+  // O trilho de entrega re-mede o diff quando isto muda (⇪, arquivar…).
+  const [railReload, setRailReload] = useState(0)
   // Escape do caso de borda: a última missão legada terminou com o pane do PM
   // ainda VIVO. A casa do planejamento assume a coluna, mas a conversa dele
   // continua a um clique — ninguém perde texto por causa de um merge.
@@ -1478,10 +1486,8 @@ export default function Board({ projectId }: Props): React.JSX.Element {
 
   const loadPolicies = useStore((s) => s.loadPolicies)
   const taskAttention = useStore((s) => s.taskAttention)
-  const maestroBypass = useStore((s) => s.maestroBypass)
-  const toggleBypass = useStore((s) => s.toggleBypass)
-  const sensitiveBypassOk = useStore((s) => s.sensitiveBypassOk)
-  const toggleSensitiveBypass = useStore((s) => s.toggleSensitiveBypass)
+  // ONDA D: o bypass do UNIVERSO saiu da tela (a permissão é por conversa
+  // agora). As ações seguem no store, dormentes, para o pipeline legado.
 
   useEffect(() => {
     void loadTasks(projectId)
@@ -1769,6 +1775,46 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     })
   }, [missions, dropGuiPane])
 
+  // ————— TERMINAIS COMO SLOT (onda D) —————
+  // Com a aba PANES fora, o único lugar SEMPRE MONTADO do universo é esta
+  // coluna — e é aqui que todo terminal passa a viver. Não é só estética: o
+  // PTY nasce no `pty:create` do TerminalPane, então pane sem lugar para
+  // montar é pane que nunca roda. Por isso a lista cobre TODO pane que não é
+  // chat (surface 'gui' já tem casa nos slots de conversa): o shell da missão
+  // (▷ terminal · ▶ teste), o teste de VERSÃO (sem missão, vai para a coluna
+  // do ✦ geral) e os panes do pipeline legado.
+  // Todos ficam MONTADOS: desmontar mata o PTY, e com ele o servidor.
+  const termPanes = panes.filter((p) => p.surface !== 'gui')
+  const missionTermPanes = termPanes.filter((p) => p.missionId)
+  const generalTermPanes = termPanes.filter((p) => !p.missionId)
+  const missionTermId =
+    selMission && missionTermPanes.some((p) => p.id === missionTerm[selMission.id])
+      ? (missionTerm[selMission.id] as string)
+      : null
+  const generalTermId = generalTermPanes.some((p) => p.id === generalTerm) ? generalTerm : null
+
+  // Terminal recém-nascido ganha o foco: o dono acabou de clicar em "▷
+  // terminal"/"▶ testar" — mostrar a conversa no lugar seria engolir o que ele
+  // pediu. Só a PRIMEIRA aparição de cada pane conta (o ref é a memória).
+  const seenTermPanes = useRef<Set<string>>(new Set())
+  // `termPanes` é array novo a cada render — a chave é a LISTA de ids, então
+  // o efeito só acorda quando um terminal nasce ou morre de verdade.
+  const termPaneKey = termPanes.map((p) => `${p.id}:${p.missionId ?? ''}`).join('|')
+  useEffect(() => {
+    if (!isActive) return
+    const live = new Set<string>()
+    for (const entry of termPaneKey ? termPaneKey.split('|') : []) {
+      const [id, mid] = entry.split(':')
+      live.add(id)
+      if (seenTermPanes.current.has(id)) continue
+      seenTermPanes.current.add(id)
+      if (mid) setMissionTerm((prev) => ({ ...prev, [mid]: id }))
+      else setGeneralTerm(id)
+    }
+    // pane morto sai da memória — reabrir com o MESMO id volta a focar
+    for (const id of seenTermPanes.current) if (!live.has(id)) seenTermPanes.current.delete(id)
+  }, [isActive, termPaneKey])
+
   /** Abre (ou volta o foco para) uma conversa da missão direta. */
   async function openMissionGuiRole(missionId: string, role: MissionGuiRole): Promise<void> {
     const slots = missionGuiSlots[missionId] ?? []
@@ -1830,17 +1876,35 @@ export default function Board({ projectId }: Props): React.JSX.Element {
 
   /** Terminal CRU no worktree da missão (trilho de entrega → "▷ terminal").
    *  F3-c3: TODO nascimento de pane viaja por evento do main — o handler do
-   *  `missions:shellSpec` já transmitiu `panes:open-free`, então a view de
-   *  panes MONTA o pane e o host espelha a lista sozinho. Aqui NÃO se chama
-   *  addPane (seria uma segunda entrada do mesmo pane): o botão só leva o
-   *  dono até onde o terminal nasceu, igual ao ▶ testar. */
+   *  `missions:shellSpec` já transmitiu `panes:open-free` e o store montou a
+   *  lista. Aqui NÃO se chama addPane (seria uma segunda entrada do mesmo
+   *  pane): ONDA D — o terminal nasce como SLOT desta coluna e o efeito de
+   *  foco automático já o coloca no ar. */
   async function openMissionShell(missionId: string): Promise<void> {
     const res = await missionShell.spec(missionId)
     if (!res.ok || !res.spec) {
       setMissionMsg(res.error ?? 'não deu para abrir o terminal desta missão')
-      return
     }
-    useStore.getState().setUniverseTab(projectId, 'panes')
+  }
+
+  /** Guarda o modo de permissão que o dono escolheu NO CHAT (onda D). O motor
+   *  também persiste do lado dele; aqui é para o slot remontado nascer com a
+   *  regra certa em vez de voltar ao padrão. */
+  function setMissionSlotPermission(
+    missionId: string,
+    paneId: string,
+    permissionMode: GuiPermissionMode
+  ): void {
+    setMissionGuiSlots((prev) => {
+      const cur = prev[missionId]
+      if (!cur) return prev
+      return {
+        ...prev,
+        [missionId]: cur.map((s) =>
+          s.spawn.paneId === paneId ? { ...s, spawn: { ...s.spawn, permissionMode } } : s
+        )
+      }
+    })
   }
 
   /** Fecha UMA conversa (revisor/ajudante). O chat do agente não fecha por
@@ -1872,6 +1936,8 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   async function onIntegrate(): Promise<void> {
     if (!selMission) return
     setMissionMsg(await integrateMission(selMission.id))
+    // o ⇪ mexe na branch: o diffstat do trilho re-mede sozinho (onda D)
+    setRailReload((n) => n + 1)
   }
 
   // Tarefa travada = há um pane executando ela agora.
@@ -1900,12 +1966,20 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const directSeat = directSlot
     ? seats.find((x) => x.configDir && x.configDir === directSlot.spawn.configDir)
     : undefined
+  // TERMINAL EM FOCO (onda D): quando existe, é ele que o chrome descreve —
+  // papel, marca, título e telemetria saem do PTY, não da conversa que ficou
+  // montada atrás dele.
+  const activeTermPane = missionTab
+    ? missionTermPanes.find((p) => p.id === missionTermId)
+    : generalTermPanes.find((p) => p.id === generalTermId)
   // ✦ GERAL — CASA DO PLANEJAMENTO (2.0). Sem missão legada viva não há PM
   // para mostrar: a coluna passa a oferecer a sessão pontual de planejamento
   // (ou a própria conversa dela, se já aberta). Com missão legada viva nada
   // muda — o slot do PM continua exatamente como era.
   const planningHome = !missionTab && !hasLegacyLiveMission && !showMaestroAnyway
-  const planningActive = planningHome && Boolean(planningSpawn)
+  // ONDA D: um terminal em foco cobre a conversa da coluna (a escolha é do
+  // dono, feita nas abas do chrome). Nada desmonta — só troca quem aparece.
+  const planningActive = planningHome && Boolean(planningSpawn) && !generalTermId
   const planningSeat = planningSpawn
     ? seats.find((x) => x.configDir && x.configDir === planningSpawn.configDir)
     : undefined
@@ -1914,7 +1988,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // vale mesmo antes de a spec voltar.
   const planningId = planningPaneId(projectId)
   const planningGuiState = planningSpawn ? guiPanes[planningId] : undefined
-  const maestroSlotActive = !missionTab && !planningHome
+  const maestroSlotActive = !missionTab && !planningHome && !generalTermId
   const measuredMaestroBox = maestroTerminalBox.w > 0 ? maestroTerminalBox : undefined
   const maestroTerminalFont = settings?.terminalFontSize ?? TERMINAL_DEFAULT_FONT_SIZE
   const maestroTerminalLineHeight =
@@ -2062,37 +2136,45 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           // ajudante), não "orquestrador" — não existe orquestrador aqui. Na
           // casa do planejamento o papel é PLANO: sessão pontual, não PM.
           role={
-            planningHome
-              ? 'plano'
-              : isDirect
-                ? MISSION_GUI_PANE_ROLE[directSlot?.role ?? 'dev']
-                : selMission
-                  ? 'orquestrador'
-                  : 'maestro'
+            activeTermPane
+              ? 'livre'
+              : planningHome
+                ? 'plano'
+                : isDirect
+                  ? MISSION_GUI_PANE_ROLE[directSlot?.role ?? 'dev']
+                  : selMission
+                    ? 'orquestrador'
+                    : 'maestro'
           }
           kind={
-            planningHome
-              ? (planningSpawn?.cli ?? maestroSeat?.cli ?? 'claude')
-              : isDirect
-                ? (directSlot?.spawn.cli ?? maestroSeat?.cli ?? 'claude')
-                : selMission
-                  ? (selSpec?.kind ?? maestroSeat?.cli ?? 'claude')
-                  : (maestroSeat?.cli ?? 'claude')
+            activeTermPane
+              ? 'shell'
+              : planningHome
+                ? (planningSpawn?.cli ?? maestroSeat?.cli ?? 'claude')
+                : isDirect
+                  ? (directSlot?.spawn.cli ?? maestroSeat?.cli ?? 'claude')
+                  : selMission
+                    ? (selSpec?.kind ?? maestroSeat?.cli ?? 'claude')
+                    : (maestroSeat?.cli ?? 'claude')
           }
           seatName={
-            planningHome
-              ? (planningSeat?.name ?? maestroSeat?.name)
-              : isDirect
-                ? directSeat?.name
-                : selMission
-                  ? selSeat?.name
-                  : maestroSeat?.name
+            activeTermPane
+              ? undefined
+              : planningHome
+                ? (planningSeat?.name ?? maestroSeat?.name)
+                : isDirect
+                  ? directSeat?.name
+                  : selMission
+                    ? selSeat?.name
+                    : maestroSeat?.name
           }
           // valor VIVO do TUI (pty:model/pty:effort, muda na hora da troca via
           // /model) > configurado. No chat quem publica o modelo real é o
           // evento `init`/`result` da sessão (guiPanes), não o PTY.
           model={
-            planningHome
+            activeTermPane
+              ? undefined
+              : planningHome
               ? (planningGuiState?.model ?? planningSpawn?.model ?? maestroModel ?? undefined)
               : isDirect
                 ? (directGui?.model ?? directSlot?.spawn.model)
@@ -2105,7 +2187,9 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                     undefined)
           }
           effort={
-            planningHome
+            activeTermPane
+              ? undefined
+              : planningHome
               ? (planningSpawn?.effort ?? maestroEffort ?? undefined)
               : isDirect
                 ? (directSlot?.spawn.effort ?? selMission?.effort)
@@ -2117,9 +2201,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           }
           // sem repetição: o chip de papel já diz MAESTRO/ORQUESTRADOR — o
           // título é SÓ o nome da missão (PM fica sem título)
-          title={selMission ? selMission.title : ''}
+          title={activeTermPane ? activeTermPane.title : selMission ? selMission.title : ''}
           stats={
-            planningHome
+            activeTermPane
+              ? (paneStats[activeTermPane.id] ?? ZERO_STATS)
+              : planningHome
               ? planningSpawn
                 ? {
                     model: planningGuiState?.model ?? undefined,
@@ -2148,10 +2234,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                     : undefined
           }
           // o chat não conta tokens de entrada/saída como o JSONL do TUI
-          hideTokens={isDirect || planningHome}
+          hideTokens={!activeTermPane && (isDirect || planningHome)}
           pinStats={Boolean(selMission)}
           activity={
-            planningHome
+            activeTermPane
+              ? paneActivity[activeTermPane.id]
+              : planningHome
               ? planningSpawn
                 ? GUI_ACTIVITY[planningGuiState?.status ?? 'starting']
                 : undefined
@@ -2228,18 +2316,20 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                 slot.role === 'helper'
                   ? `ajudante ${helperN}`
                   : MISSION_GUI_ROLE_LABEL[slot.role]
-              const active = directSlot?.spawn.paneId === slot.spawn.paneId
+              const active =
+                !missionTermId && directSlot?.spawn.paneId === slot.spawn.paneId
               return (
                 <span key={slot.spawn.paneId} className="mission-gui-tab-wrap">
                   <button
                     className={`term-btn ghost-dim mission-gui-tab${active ? ' active' : ''}`}
                     data-tip={`Ver a conversa "${label}" desta missão`}
-                    onClick={() =>
+                    onClick={() => {
+                      setMissionTerm((prev) => ({ ...prev, [selMission.id]: null }))
                       setMissionGuiActive((prev) => ({
                         ...prev,
                         [selMission.id]: slot.spawn.paneId
                       }))
-                    }
+                    }}
                   >
                     {label}
                   </button>
@@ -2256,6 +2346,76 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                 </span>
               )
             })}
+          {/* ONDA D — CHAT ↔ TERMINAL: os terminais da missão (▷ terminal,
+              ▶ teste e, em missão legada, os panes do pipeline) entram como
+              aba nesta mesma barra. Fechar é no × — e fechar DERRUBA o
+              processo (é o mesmo requestClose do trilho), por isso o tooltip
+              diz isso com todas as letras. */}
+          {selMission &&
+            missionTermPanes
+              .filter((p) => p.missionId === selMission.id)
+              .map((pane) => (
+                <span key={pane.id} className="mission-gui-tab-wrap">
+                  <button
+                    className={`term-btn ghost-dim mission-gui-tab${
+                      missionTermId === pane.id ? ' active' : ''
+                    }`}
+                    data-tip={`Ver o terminal "${pane.title}" desta missão`}
+                    onClick={() =>
+                      setMissionTerm((prev) => ({ ...prev, [selMission.id]: pane.id }))
+                    }
+                  >
+                    ▷{' '}
+                    {pane.kind === 'shell'
+                      ? pane.testServer
+                        ? 'teste'
+                        : 'terminal'
+                      : pane.title || 'terminal'}
+                  </button>
+                  <button
+                    className="term-btn ghost-dim mission-gui-tab-close"
+                    data-tip="Fechar o terminal (derruba o que estiver rodando nele)"
+                    aria-label={`Fechar ${pane.title}`}
+                    onClick={() => window.synkora.panes.requestClose(projectId, pane.id)}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+          {/* Terminal de VERSÃO (▶ testar da aba Versões) e panes sem missão:
+              não pertencem a missão nenhuma, então moram no ✦ geral. */}
+          {!selMission &&
+            generalTermPanes.map((pane) => (
+              <span key={pane.id} className="mission-gui-tab-wrap">
+                <button
+                  className={`term-btn ghost-dim mission-gui-tab${
+                    generalTermId === pane.id ? ' active' : ''
+                  }`}
+                  data-tip={`Ver o terminal "${pane.title}"`}
+                  onClick={() => setGeneralTerm(pane.id)}
+                >
+                  ▷ {pane.title}
+                </button>
+                <button
+                  className="term-btn ghost-dim mission-gui-tab-close"
+                  data-tip="Fechar o terminal (derruba o que estiver rodando nele)"
+                  aria-label={`Fechar ${pane.title}`}
+                  onClick={() => window.synkora.panes.requestClose(projectId, pane.id)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          {/* Volta do terminal para a conversa da coluna ✦ geral. */}
+          {!selMission && generalTermId && (
+            <button
+              className="term-btn ghost-dim mission-gui-tab"
+              data-tip="Voltar para a conversa desta coluna"
+              onClick={() => setGeneralTerm(null)}
+            >
+              ← conversa
+            </button>
+          )}
           {!selMission && maestroBusy && <span className="spinner" />}
           {/* A sessão de planejamento é pontual: quando ela termina o dono a
               encerra aqui e a coluna volta ao convite (o plano fica no repo). */}
@@ -2389,7 +2549,9 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           {Object.entries(missionGuiSlots).flatMap(([mid, slots]) =>
             slots.map((slot) => {
               const active =
-                mid === missionTab && directSlot?.spawn.paneId === slot.spawn.paneId
+                mid === missionTab &&
+                !missionTermId &&
+                directSlot?.spawn.paneId === slot.spawn.paneId
               return (
                 <div
                   key={slot.spawn.paneId}
@@ -2408,12 +2570,14 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                     systemPrompt={slot.spawn.systemPrompt}
                     resumeSessionId={slot.spawn.resumeSessionId}
                     firstPrompt={slot.spawn.firstPrompt}
+                    permissionMode={slot.spawn.permissionMode}
+                    onPermissionMode={(pm) => setMissionSlotPermission(mid, slot.spawn.paneId, pm)}
                   />
                 </div>
               )
             })
           )}
-          {selMission?.direct && directSlots.length === 0 && (
+          {selMission?.direct && directSlots.length === 0 && !missionTermId && (
             <div className="maestro-empty">
               {missionGuiError[selMission.id] ? (
                 <div style={{ display: 'grid', gap: 10, justifyItems: 'center' }}>
@@ -2504,10 +2668,14 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                 systemPrompt={planningSpawn.systemPrompt}
                 resumeSessionId={planningSpawn.resumeSessionId}
                 firstPrompt={planningSpawn.firstPrompt}
+                permissionMode={planningSpawn.permissionMode}
+                onPermissionMode={(pm) =>
+                  setPlanningSpawn((prev) => (prev ? { ...prev, permissionMode: pm } : prev))
+                }
               />
             </div>
           )}
-          {planningHome && !planningSpawn && (
+          {planningHome && !planningSpawn && !generalTermId && (
             <div className="maestro-slot is-active">
               <div className="maestro-empty planning-home">
                 <span className="ph-title">planejamento</span>
@@ -2540,6 +2708,48 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               </div>
             </div>
           )}
+          {/* TERMINAIS (onda D) — ÚLTIMOS filhos de propósito, pela MESMA razão
+              do bloco de planejamento: acrescentar no FIM não desloca nenhum
+              irmão anterior, e deslocar remontaria os TerminalPane vizinhos
+              (PTY morto). Todos ficam montados: quem some é o servidor junto
+              com o terminal, e ninguém pediu isso ao trocar de aba. */}
+          {termPanes.map((pane) => {
+            const active = pane.missionId
+              ? pane.missionId === missionTab && missionTermId === pane.id
+              : !missionTab && generalTermId === pane.id
+            return (
+              <div
+                key={pane.id}
+                className={`maestro-slot${active ? ' is-active' : ''}`}
+                aria-hidden={active ? undefined : true}
+                inert={active ? undefined : true}
+              >
+                <TerminalPane
+                  paneId={pane.id}
+                  cwd={pane.cwd ?? projectFlow?.path ?? ''}
+                  kind={pane.kind}
+                  projectId={projectId}
+                  seatId={pane.seatId}
+                  taskId={pane.taskId}
+                  initialPrompt={pane.initialPrompt}
+                  model={pane.model}
+                  cliArgs={pane.cliArgs}
+                  appendSystemPrompt={pane.appendSystemPrompt}
+                  logFile={pane.logFile}
+                  imagePasteProjectId={projectId}
+                  fontSize={maestroTerminalFont}
+                  lineHeight={maestroTerminalLineHeight}
+                  fontFamily={maestroTerminalFontFamily}
+                  minCols={terminalMinColsForBox(pane.kind, maestroTerminalFallbackFor(pane.kind))}
+                  minRows={pane.kind === 'claude' ? 12 : 6}
+                  fallbackSize={maestroTerminalFallbackFor(pane.kind)}
+                  sizeGroup={`${maestroSizeGroup}:${pane.kind}`}
+                  voiceLabel={pane.title}
+                  onUserInput={() => clearPaneAttention(projectId, pane.id)}
+                />
+              </div>
+            )
+          })}
         </div>
         {/* ÚLTIMO filho de propósito: inserir a alça antes do .maestro-body
             deslocaria os índices dos filhos não-keyados e o React remontaria o
@@ -2548,7 +2758,9 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       </div>
 
       <div className="board-content">
-      {/* Aba GERAL = página de configurações do projeto (identidade + funções) */}
+      {/* Aba GERAL = retrato do universo (foto + trabalho por versão). Onda D:
+          funções, políticas e reviewer saíram; nome/pasta subiram para a barra
+          de abas do universo. */}
       {!selMission && <ProjectGeneral projectId={projectId} />}
 
       {/* MISSÃO DIRETA: sem kanban e sem filtro de função — o que resta do
@@ -2561,6 +2773,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           guiAvailable={missionGui.available()}
           shellAvailable={missionShell.available()}
           testServerOpen={panes.some((p) => p.testServer && p.missionId === selMission.id)}
+          reloadToken={railReload}
           onIntegrate={() => void onIntegrate()}
           onReview={() => void openMissionGuiRole(selMission.id, 'reviewer')}
           onHelper={() => void openMissionGuiRole(selMission.id, 'helper')}
@@ -2979,7 +3192,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           acrescentar no fim não desloca `.maestro-window` nem `.board-content`
           (deslocar remontaria os TerminalPane e mataria os PTYs). */}
       <MissionColumn
-        projectId={projectId}
         entries={missionColumnEntries}
         selectedId={missionTab}
         generalPulse={tabPulse['geral']}

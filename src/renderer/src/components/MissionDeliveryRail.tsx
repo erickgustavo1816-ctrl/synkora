@@ -1,16 +1,40 @@
+import { useCallback, useEffect, useState } from 'react'
 import type { Mission } from '../store'
+import { missionWorkspace, type MissionWorkspaceSummary } from '../missionWorkspace'
 
-// TRILHO DE ENTREGA (Synkora 2.0, onda B) — a coluna da DIREITA do mockup.
+// TRILHO DE ENTREGA (Synkora 2.0, onda B; enriquecido na onda D) — a coluna da
+// DIREITA do mockup.
 //
 // Vale só para missão DIRETA: ela não tem card de plano nem kanban, então o
 // que sobra do board é exatamente isto — o estado da branch e as alavancas de
 // entrega. Missão legada continua com a linha `.mission-actions` de sempre.
+//
+// ONDA D: o cabeçalho passou a mostrar o DIFF VIVO da branch (+N −M · X
+// arquivos) com um expansor "ver arquivos". A pergunta que o dono fazia antes
+// de todo ⇪ ("o que mudou aí?") tinha uma única resposta possível: abrir um
+// terminal e rodar git. Agora ela está na tela onde a decisão é tomada.
 
 const STATUS_LABEL: Record<Mission['status'], string> = {
   ativa: 'em andamento',
   integrando: 'integrando agora',
   concluida: 'integrada',
   arquivada: 'arquivada'
+}
+
+/** Glifo + rótulo por status do git. Status desconhecido cai no neutro: o
+ *  vocabulário do motor pode crescer sem quebrar esta lista. */
+const FILE_STATUS: Record<string, { glyph: string; label: string; cls: string }> = {
+  A: { glyph: '+', label: 'novo', cls: 'add' },
+  '?': { glyph: '+', label: 'novo (ainda fora do git)', cls: 'add' },
+  M: { glyph: '~', label: 'alterado', cls: 'mod' },
+  D: { glyph: '−', label: 'apagado', cls: 'del' },
+  R: { glyph: '→', label: 'renomeado', cls: 'mov' },
+  C: { glyph: '⧉', label: 'copiado', cls: 'mov' },
+  U: { glyph: '!', label: 'em conflito', cls: 'err' }
+}
+
+function fileStatus(status: string): { glyph: string; label: string; cls: string } {
+  return FILE_STATUS[status] ?? { glyph: '·', label: status, cls: 'mod' }
 }
 
 export default function MissionDeliveryRail({
@@ -20,6 +44,7 @@ export default function MissionDeliveryRail({
   guiAvailable,
   shellAvailable,
   testServerOpen,
+  reloadToken,
   onIntegrate,
   onReview,
   onHelper,
@@ -37,6 +62,9 @@ export default function MissionDeliveryRail({
   shellAvailable: boolean
   /** já existe um pane de servidor de teste desta missão */
   testServerOpen: boolean
+  /** o Board incrementa depois do ⇪ (e de qualquer ação que mexa na branch):
+   *  o diffstat re-mede sem o dono precisar clicar em nada */
+  reloadToken?: number
   onIntegrate: () => void
   onReview: () => void
   onHelper: () => void
@@ -48,12 +76,105 @@ export default function MissionDeliveryRail({
   const integration = mission.integration
   const live = mission.status === 'ativa'
 
+  // ——— diff vivo da branch (onda D) ———
+  const [summary, setSummary] = useState<MissionWorkspaceSummary | null>(null)
+  const [diffError, setDiffError] = useState<string | null>(null)
+  const [filesOpen, setFilesOpen] = useState(false)
+  const [diffBusy, setDiffBusy] = useState(false)
+
+  const refreshDiff = useCallback(async (): Promise<void> => {
+    if (!missionWorkspace.available()) {
+      setDiffError(null)
+      setSummary(null)
+      return
+    }
+    setDiffBusy(true)
+    const res = await missionWorkspace.files(mission.id)
+    setDiffBusy(false)
+    if (!res.ok) {
+      setDiffError(res.error ?? 'não deu para ler o diff desta branch')
+      return
+    }
+    setDiffError(null)
+    setSummary(res.summary ?? null)
+  }, [mission.id])
+
+  // Mede ao entrar na missão e a cada sinal do Board (⇪, arquivar…). Abrir a
+  // lista re-mede também: quem abre quer o estado de AGORA, não o do minuto
+  // passado.
+  useEffect(() => {
+    void refreshDiff()
+  }, [refreshDiff, reloadToken])
+
+  const files = summary?.files ?? []
+  const diffLabel = summary
+    ? `+${summary.insertions} −${summary.deletions} · ${files.length} ${
+        files.length === 1 ? 'arquivo' : 'arquivos'
+      }`
+    : diffBusy
+      ? 'medindo o diff…'
+      : null
+
   return (
     <div className="delivery-rail">
       <div className="dr-head">
         <span className="dr-title">entrega</span>
         <span className={`dr-status ${mission.status}`}>{STATUS_LABEL[mission.status]}</span>
       </div>
+
+      {/* DIFF VIVO: o que esta branch mudou, sem sair da tela da decisão. */}
+      {(diffLabel || diffError) && (
+        <div className="dr-diff">
+          {diffError ? (
+            <span className="dr-diff-error">// {diffError}</span>
+          ) : (
+            <>
+              <span
+                className="dr-diff-stat"
+                data-tip={
+                  summary
+                    ? `${summary.ahead} ${summary.ahead === 1 ? 'commit' : 'commits'} à frente de ${
+                        mission.baseBranch ?? 'base'
+                      }`
+                    : undefined
+                }
+              >
+                {diffLabel}
+              </span>
+              {summary && (
+                <button
+                  className="dr-diff-toggle"
+                  aria-expanded={filesOpen}
+                  data-tip={filesOpen ? 'Esconder a lista' : 'Ver os arquivos que esta branch mudou'}
+                  onClick={() => {
+                    const next = !filesOpen
+                    setFilesOpen(next)
+                    if (next) void refreshDiff()
+                  }}
+                >
+                  {filesOpen ? '▾ ver arquivos' : '▸ ver arquivos'}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {filesOpen && summary && (
+        <div className="dr-files">
+          {files.length === 0 && <span className="dr-files-empty">nada mudou ainda</span>}
+          {files.map((file) => {
+            const st = fileStatus(file.status)
+            return (
+              <span key={file.path} className="dr-file" data-tip={`${st.label}: ${file.path}`}>
+                <i className={`dr-file-status ${st.cls}`} aria-hidden="true">
+                  {st.glyph}
+                </i>
+                <span className="dr-file-path">{file.path}</span>
+              </span>
+            )
+          })}
+        </div>
+      )}
 
       <div className="dr-facts">
         <span className="dr-branch" data-tip={`Worktree da missão: ${mission.worktree ?? '—'}`}>

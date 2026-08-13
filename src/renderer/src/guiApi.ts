@@ -13,6 +13,13 @@
 
 // ————— tipos do contrato (cópia VERBATIM — fonte única dos dois lados) —————
 
+/** MODO DE PERMISSÃO POR CONVERSA (onda D, item 3 — ordem do dono): o
+ *  interruptor global de bypass do universo morreu; quem decide o quanto o
+ *  agente pode agir sozinho é CADA conversa, no próprio composer.
+ *  padrão = pergunta o que for sensível · edições = edita sem perguntar ·
+ *  bypass = segue reto · plano = só planeja, não escreve. */
+export type GuiPermissionMode = 'default' | 'acceptEdits' | 'bypass' | 'plan'
+
 export interface GuiPaneSpawn {
   paneId: string
   projectId: string
@@ -29,6 +36,12 @@ export interface GuiPaneSpawn {
   resumeSessionId?: string
   /** Primeiro turno injetado logo após o spawn (ex.: conteúdo do plano da missão). */
   firstPrompt?: string
+  /** Modo de permissão desta conversa (onda D). Trocar em voo = novo
+   *  `gui:create` com o mesmo paneId: o motor respawna com resume, então a
+   *  conversa continua.
+   *  TODO(onda D, motor): o main é o dono canônico deste campo — quando ele
+   *  publicar o tipo, esta cópia some junto com o resto do bloco. */
+  permissionMode?: GuiPermissionMode
 }
 
 export type GuiPermBehavior = 'allow' | 'allow-always' | 'deny'

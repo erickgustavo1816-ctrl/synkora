@@ -2561,63 +2561,9 @@ select {
   color: var(--panel-ink);
 }
 
-/* ---------- Menu de agentes ---------- */
-
-.menu-anchor {
-  position: relative;
-}
-
-.caret {
-  font-size: 9px;
-  opacity: 0.8;
-}
-
-.menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 30;
-  min-width: 260px;
-  background: var(--card);
-  border: 1px solid var(--ink);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
-  padding: 5px;
-  animation: rise 130ms ease both;
-}
-
-.menu-note {
-  color: var(--ink-3);
-  font-size: 11px;
-  padding: 8px 10px;
-  max-width: 250px;
-}
-
-.menu-item {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  background: none;
-  border: none;
-  border-radius: 5px;
-  color: var(--ink);
-  font-size: 12px;
-  padding: 8px 10px;
-  cursor: pointer;
-  text-align: left;
-}
-
-.menu-item:hover {
-  background: var(--paper-2);
-}
-
-.menu-label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* ONDA D: o botão "✦ Agente" do universo morreu — com ele foram embora
+   .menu-anchor/.menu/.menu-note/.menu-item/.menu-label/.caret, que só ele
+   usava. Os popovers do titlebar e do card de universo têm classe própria. */
 
 /* ---------- Tabs ---------- */
 
@@ -2653,16 +2599,8 @@ select {
   color: var(--paper);
 }
 
-.tab-badge {
-  font-size: 9.5px;
-  background: var(--accent);
-  color: #fff;
-  border-radius: 999px;
-  padding: 1px 6px;
-}
-
-/* aba do universo chamando o dono: Board com pergunta do ask_user esperando,
-   Panes com terminal pedindo permissão (pedido do usuário, 2026-08-06) */
+/* aba do universo chamando o dono: Board com pergunta do ask_user esperando
+   (onda D: a aba Panes morreu e levou junto o .tab-badge dela). */
 .tab.tab-attn {
   border: 2px solid var(--accent);
   animation: perm-pulse 1.1s ease-in-out infinite;
@@ -2705,23 +2643,8 @@ select {
   pointer-events: auto;
 }
 
-/* Fase 3 (2026-08-11): overlay do host esconde a WebContentsView de panes (ela
-   compõe POR CIMA do DOM — o popover ficaria por baixo dela). Sem isto a área
-   virava um buraco vazio atrás do popover: este img é a última captura da
-   view, pintado exatamente no rect dela (o stage É o rect que vira o setBounds)
-   enquanto ela está oculta. pointer-events none: o fechar-popover-clicando-fora
-   vive em listeners de documento e segue funcionando; z-index 2 fica acima do
-   keepalive do Board (z1) e abaixo do menu do universo (z30), da titlebar (z90)
-   e dos modais. */
-.panes-freeze {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 2;
-  pointer-events: none;
-  object-fit: fill;
-}
+/* ONDA D: .panes-freeze morreu com a aba PANES — sem view de panes composta
+   por cima do DOM, não há o que congelar sob os popovers do host. */
 
 /* ---------- Board / Maestro ---------- */
 
@@ -2917,15 +2840,6 @@ select {
     flex: none;
     align-self: center;
     white-space: nowrap;
-  }
-
-  .mission-col-tools {
-    flex-direction: row;
-    align-items: center;
-    padding-top: 0;
-    padding-left: 8px;
-    border-top: none;
-    border-left: 1px solid var(--line);
   }
 
   .mission-col-empty {
@@ -4129,6 +4043,79 @@ select {
   gap: 14px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--line-strong);
+  background: var(--paper);
+}
+
+/* IDENTIDADE DO UNIVERSO na barra de abas (onda D): avatar + nome editável.
+   Ela abre a linha — é a primeira coisa que se lê ao entrar. */
+.ws-identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.ws-avatar {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: hsl(var(--card-hue) 45% 28%);
+  background: hsl(var(--card-hue) 45% 88%);
+  border: 1px solid hsl(var(--card-hue) 40% 70%);
+}
+
+/* foto ocupa o quadro inteiro — a "roupa" por hue é EXCLUSIVA das iniciais
+   (PNG com margem transparente mostrava o fundo colorido por baixo) */
+.ws-avatar:has(img) {
+  background: transparent;
+  border-color: transparent;
+}
+
+.ws-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+.ws-name {
+  min-width: 0;
+  max-width: 22vw;
+  box-sizing: border-box;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin-left: -8px;
+  text-overflow: ellipsis;
+}
+
+.ws-name:hover,
+.ws-name:focus {
+  border-color: var(--line-strong);
+  background: var(--card);
+  outline: none;
+}
+
+/* falha de relocação: linha honesta abaixo da barra, some no próximo clique */
+.ws-reloc-error {
+  flex: none;
+  font-size: 11px;
+  color: var(--err);
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--line);
   background: var(--paper);
 }
 
@@ -7389,17 +7376,7 @@ body.pane-docking .pane-bar.draggable {
   cursor: not-allowed;
 }
 
-/* Controle do UNIVERSO (bypass): não é navegação, então fica no RODAPÉ da
-   coluna, separado da lista por uma régua. */
-.mission-col-tools {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-}
+/* ONDA D: .mission-col-tools morreu junto com os interruptores do rodapé. */
 
 /* ---------- TRILHO DE ENTREGA (missão direta) ----------
    O que sobra do board quando não há kanban: estado da branch + alavancas. */
@@ -7447,6 +7424,107 @@ body.pane-docking .pane-bar.draggable {
 .dr-status.concluida {
   color: var(--ok);
   border-color: rgba(62, 155, 95, 0.42);
+}
+
+/* ---------- DIFF VIVO DA BRANCH (onda D) ----------
+   A pergunta que precede todo ⇪ ("o que mudou aí?") respondida na própria
+   tela da decisão: número no cabeçalho, lista sob demanda. */
+.dr-diff {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.dr-diff-stat {
+  font-family: var(--mono);
+  color: var(--ink-2);
+  cursor: default;
+}
+
+.dr-diff-error {
+  color: var(--ink-3);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dr-diff-toggle {
+  flex: none;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 10px;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.dr-diff-toggle:hover {
+  color: var(--accent-deep);
+}
+
+.dr-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.36);
+}
+
+.dr-files-empty {
+  font-size: 11px;
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.dr-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 10.5px;
+  font-family: var(--mono);
+  color: var(--ink-2);
+  cursor: default;
+}
+
+.dr-file-path {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl; /* corta o COMEÇO: o nome do arquivo é o que identifica */
+  text-align: left;
+}
+
+.dr-file-status {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.dr-file-status.add {
+  color: var(--ok);
+}
+
+.dr-file-status.mod {
+  color: var(--accent-deep);
+}
+
+.dr-file-status.del,
+.dr-file-status.err {
+  color: var(--err);
+}
+
+.dr-file-status.mov {
+  color: var(--ink-3);
 }
 
 .dr-facts {
@@ -7553,87 +7631,9 @@ body.pane-docking .pane-bar.draggable {
   flex: 0 0 268px;
 }
 
-/* ---------- INTERRUPTOR DE PERMISSÕES ----------
-   Era um chip que trocava de texto — para saber o estado era preciso LER.
-   Interruptor tem posição: o botão à esquerda é guarda, à direita é bypass, e
-   o knob desliza entre os dois. */
-.perm-switch {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 10px 3px 4px;
-  border: 1.5px solid var(--line-strong);
-  border-radius: 999px;
-  background: var(--card);
-  cursor: pointer;
-  font-family: inherit;
-  transition:
-    border-color var(--motion-base) ease,
-    background var(--motion-base) ease;
-}
-
-.ps-track {
-  position: relative;
-  width: 42px;
-  height: 20px;
-  border-radius: 999px;
-  background: var(--paper-2);
-  border: 1px solid var(--line);
-  flex: none;
-  transition: background var(--motion-base) ease;
-}
-
-.ps-knob {
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 9px;
-  background: var(--ok);
-  color: #fff;
-  /* o deslize é a informação: o texto só confirma */
-  transition:
-    transform var(--motion-base) var(--ease-pop),
-    background var(--motion-base) ease;
-}
-
-.ps-text {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-2);
-}
-
-.perm-switch.bypass {
-  border-color: var(--accent);
-}
-
-.perm-switch.bypass .ps-track {
-  background: rgba(217, 108, 63, 0.18);
-  border-color: rgba(217, 108, 63, 0.4);
-}
-
-.perm-switch.bypass .ps-knob {
-  transform: translateX(22px);
-  background: var(--accent);
-}
-
-.perm-switch.bypass .ps-text {
-  color: var(--accent-deep);
-}
-
-.perm-switch:hover {
-  border-color: var(--ink);
-}
-
-.perm-switch.bypass:hover {
-  border-color: var(--accent-deep);
-}
+/* ONDA D: o INTERRUPTOR DE PERMISSÕES do universo (.perm-switch/.ps-track/
+   .ps-knob/.ps-text) morreu — a permissão passou a ser POR CONVERSA, no
+   composer do chat (.gui-perm-mode). */
 
 .mission-history {
   font-family: inherit;
@@ -7827,6 +7827,26 @@ body.pane-docking .pane-bar.draggable {
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 10px;
+}
+
+/* NOVO UNIVERSO (onda D): a linha da pasta — botão + caminho escolhido. */
+.nu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.nu-path {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl; /* corta o COMEÇO: o nome da pasta é o que identifica */
+  text-align: left;
 }
 
 .mission-exec-row label {
@@ -8759,55 +8779,8 @@ body.pane-docking .pane-bar.draggable {
   border-color: transparent;
 }
 
-.pg-fields {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.pg-name {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  font-family: var(--mono);
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--ink);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 4px 8px;
-  margin-left: -8px;
-}
-
-.pg-name:hover,
-.pg-name:focus {
-  border-color: var(--line-strong);
-  background: var(--paper);
-  outline: none;
-}
-
-.pg-path-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.pg-path {
-  font-size: 11px;
-  color: var(--ink-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pg-error {
-  font-size: 11px;
-  color: var(--err);
-}
+/* ONDA D: nome/pasta do universo subiram para a barra de abas (.ws-identity),
+   então .pg-fields/.pg-name/.pg-path-row/.pg-path/.pg-error morreram aqui. */
 
 .btn.tiny {
   font-size: 10px;
@@ -8817,11 +8790,12 @@ body.pane-docking .pane-bar.draggable {
 
 /* Stats POR VERSÃO em dev (2026-07-29): uma linha por versão aberta, colunas
    alinhadas num grid único (Fragment por versão — wrapper por linha
-   desalinharia as colunas entre versões). Substitui o .pg-stats global. */
+   desalinharia as colunas entre versões). Substitui o .pg-stats global.
+   ONDA D: com o nome/pasta fora da página, o retrato herdou a largura que
+   sobrou — ele é o conteúdo da tela agora, não um apêndice do cabeçalho. */
 .pg-versions {
-  flex-shrink: 0;
+  flex: 1;
   min-width: 0;
-  max-width: 46%;
 }
 
 .pgv-grid {
@@ -8871,118 +8845,12 @@ body.pane-docking .pane-bar.draggable {
   padding: 10px 12px;
 }
 
-/* Editor de COR da função (func-card): dot de amostra + slider de hue. */
-.hue-editor {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.hue-dot {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 1px solid var(--line-strong);
-  flex: none;
-}
-
-.hue-editor input[type='range'] {
-  flex: 1;
-  max-width: 260px;
-  height: 10px;
-  appearance: none;
-  border-radius: 5px;
-  border: 1px solid var(--line-strong);
-  /* trilho = a roda de matiz inteira, na saturação/luz dos chips */
-  background: linear-gradient(
-    to right,
-    hsl(0 55% 45%),
-    hsl(60 55% 45%),
-    hsl(120 55% 45%),
-    hsl(180 55% 45%),
-    hsl(240 55% 45%),
-    hsl(300 55% 45%),
-    hsl(360 55% 45%)
-  );
-}
-
-.hue-editor input[type='range']::-webkit-slider-thumb {
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--card);
-  border: 2px solid var(--ink);
-  cursor: pointer;
-}
-
-.hue-val {
-  font-size: 11px;
-  color: var(--ink-2);
-  min-width: 34px;
-  text-align: right;
-}
-
-.pg-funcs {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.func-card {
-  background: var(--card);
-  border: 1px solid var(--line-strong);
-  border-left: 3px solid hsl(var(--dept-hue) 55% 55%);
-  border-radius: 9px;
-  overflow: hidden;
-}
-
-.func-head {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-family: var(--mono);
-  text-align: left;
-}
-
-.func-head:hover {
-  background: var(--paper);
-}
-
-.func-icon {
-  font-size: 15px;
-}
-
-.func-name {
-  font-size: 13px;
-  font-weight: 700;
-  color: hsl(var(--dept-hue) 50% 32%);
-}
-
-.func-desc {
-  flex: 1;
-  min-width: 0;
-  font-size: 11px;
-  color: var(--ink-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.func-badges {
-  display: flex;
-  gap: 6px;
-  min-width: 0;
-  flex-shrink: 0;
-}
-
+/* ONDA D: as FUNÇÕES (política de modelos, cor da função, skills e
+   subagentes) e o reviewer de código saíram da página ✦ geral. Foram embora
+   com elas: .hue-editor/.hue-dot/.hue-val, .pg-funcs, .func-card/-head/
+   -icon/-name/-desc/-badges/-caret/-body/-section/-section-title,
+   .func-policy e .reviewer-card. O .func-badge FICA: a biblioteca de skills
+   (Configurações) ainda o usa. */
 .func-badge {
   font-size: 10px;
   color: var(--ink-2);
@@ -8995,92 +8863,18 @@ body.pane-docking .pane-bar.draggable {
   text-overflow: ellipsis;
 }
 
-/* o label "funções" herda margin-bottom de 14px da Home — aqui o gap do
-   container já espaça; o dobro virava um buraco */
-.project-general .section-label {
-  margin-bottom: -4px;
-}
-
-.func-badge.ok {
-  color: var(--ok);
-  border-color: var(--ok);
-}
-
 .func-badge.warn {
   color: var(--ink-3);
   border-style: dashed;
 }
 
-.func-caret {
-  color: var(--ink-3);
-  font-size: 11px;
-}
-
-.func-body {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 14px 16px 16px;
-  border-top: 1px solid var(--line-strong);
-  background: var(--paper);
-}
-
-.func-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.func-section-title {
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: hsl(var(--dept-hue, 21) 45% 40%);
-  font-weight: 700;
-}
-
-.func-policy {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* linhas da política ALINHADAS em grade: rótulo | seat | modelo */
-.func-policy .policy-row {
-  display: grid;
-  grid-template-columns: 72px 200px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-  max-width: 640px;
-}
-
-/* reviewer de integração: rótulo | seat | modelo | effort */
-.reviewer-card .func-policy .policy-row {
-  grid-template-columns: 72px 220px minmax(0, 1fr) 150px;
-  max-width: 820px;
-}
-
-.func-policy .policy-row select {
-  width: 100%;
-}
-
-.func-policy .policy-row .model-select,
-.func-policy .policy-row .model-input {
-  width: 100%;
-  max-width: none;
-}
-
 /* A página Geral divide espaço com o Maestro, portanto responde à largura da
-   própria coluna — não à janela inteira. Cada mudança de modo acontece antes
-   do overflow: primeiro identidade, depois cards e por fim formulários. */
+   própria coluna — não à janela inteira. Onda D: sobrou identidade + retrato
+   por versão, então o único ajuste é a grade das versões. */
 @container boardcontent (max-width: 820px) {
   .pg-identity {
     align-items: flex-start;
     flex-wrap: wrap;
-  }
-
-  .pg-fields {
-    flex: 1 1 220px;
   }
 
   .pg-versions {
@@ -9091,59 +8885,6 @@ body.pane-docking .pane-bar.draggable {
 
   .pgv-grid {
     grid-template-columns: auto repeat(3, minmax(0, 1fr));
-  }
-
-  .func-head {
-    display: grid;
-    grid-template-columns: auto auto minmax(0, 1fr) auto;
-    gap: 5px 9px;
-    align-items: center;
-  }
-
-  .func-icon {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .func-name {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .func-caret {
-    grid-column: 4;
-    grid-row: 1;
-  }
-
-  .func-desc {
-    grid-column: 3;
-    grid-row: 1;
-    width: 100%;
-  }
-
-  .func-badges {
-    grid-column: 2 / 4;
-    grid-row: 2;
-    flex-wrap: wrap;
-  }
-
-  .func-badge {
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  .func-policy .policy-row,
-  .reviewer-card .func-policy .policy-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    max-width: none;
-  }
-
-  .func-policy .policy-label {
-    grid-column: 1 / -1;
-  }
-
-  .reviewer-card .func-policy .policy-row > :last-child {
-    grid-column: 1 / -1;
   }
 }
 
@@ -9160,76 +8901,17 @@ body.pane-docking .pane-bar.draggable {
     min-width: 0;
     padding-inline: 4px;
   }
-
-  .func-head {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .func-name {
-    grid-column: 2;
-  }
-
-  .func-caret {
-    grid-column: 3;
-  }
-
-  .func-desc {
-    display: none;
-  }
-
-  .func-badges {
-    grid-column: 2 / 3;
-    grid-row: 2;
-  }
 }
 
 @container boardcontent (max-width: 360px) {
-  .pg-avatar-wrap,
-  .pg-fields {
-    flex-basis: 100%;
-  }
-
   .pg-avatar-wrap {
     align-items: flex-start;
-  }
-
-  .pg-path-row {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .func-policy .policy-row,
-  .reviewer-card .func-policy .policy-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .func-policy .policy-row > * {
-    grid-column: 1;
+    flex-basis: 100%;
   }
 }
 
-.chips-line {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-
-.chips-line.suggestions {
-  opacity: 0.85;
-}
-
-.chips-suggest-label {
-  font-size: 10px;
-  color: var(--ink-3);
-  font-style: italic;
-}
-
-.chips-empty {
-  font-size: 11px;
-  color: var(--ink-3);
-  font-style: italic;
-}
+/* ONDA D: .chips-line/.chips-empty (e o resto do editor de chips) morreram
+   com a seção de FUNÇÕES da página ✦ geral. */
 
 /* Biblioteca de skills da função (F4): linhas densas — nome + ★ padrão à
    esquerda, estado/ações à direita. Mesma família visual dos chips. */
@@ -9482,32 +9164,8 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink-2);
 }
 
-/* Chips das skills INSTALADAS no func-card (a lista completa mora em Configurações). */
-.skill-chip-inst {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.chip-star {
-  border: 0;
-  background: none;
-  padding: 0;
-  font-size: 11px;
-  color: var(--ink-3);
-  cursor: pointer;
-  line-height: 1;
-}
-
-.chip-star.on {
-  color: var(--accent);
-}
-
-.chip-upd {
-  font-size: 10px;
-  color: var(--accent);
-  cursor: default;
-}
+/* ONDA D: .skill-chip-inst/.chip-star/.chip-upd viviam no func-card da página
+   ✦ geral, que morreu — a biblioteca completa segue em Configurações. */
 
 .skills-lib-grid {
   display: grid;
@@ -10201,8 +9859,7 @@ body.pane-docking .pane-bar.draggable {
 .image-settings .sel,
 .mission-exec-row .sel,
 .ms-filters .sel,
-.bl-quickadd .sel,
-.func-policy .policy-row .sel {
+.bl-quickadd .sel {
   width: 100%;
   min-width: 0;
   max-width: none;
@@ -10225,7 +9882,6 @@ body.pane-docking .pane-bar.draggable {
    pintura antiga (fundo/borda/padding) não pode vazar para ele; largura/flex
    dos containers seguem valendo. O visual é todo do .sel-trigger. */
 .sel.model-select,
-.func-policy .policy-row .sel,
 .task-modal-exec .sel,
 .policy-row .sel {
   background: none;
@@ -14201,6 +13857,77 @@ details.gui-tool {
   padding: 10px 12px;
   border-top: 1px solid var(--panel-line);
   background: var(--panel);
+}
+
+/* ---------- MODO DE PERMISSÃO POR CONVERSA (onda D) ----------
+   O interruptor global do universo morreu: quem decide o quanto o agente pode
+   agir sozinho é cada chat, aqui, colado no que se vai escrever. */
+.gui-perm-mode {
+  position: relative;
+  flex: none;
+}
+
+.gui-mode-btn {
+  white-space: nowrap;
+}
+
+.gui-mode-btn.mode-bypass {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.gui-mode-btn.mode-plan {
+  border-color: var(--panel-line);
+  color: var(--panel-ink-2);
+}
+
+.gui-mode-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--panel-line);
+  border-radius: 9px;
+  background: var(--panel-2);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
+  animation: rise 130ms ease both;
+}
+
+.gui-mode-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-start;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 7px 9px;
+  cursor: pointer;
+  font-family: var(--mono);
+  color: var(--panel-ink);
+}
+
+.gui-mode-item b {
+  font-size: 12px;
+}
+
+.gui-mode-item span {
+  font-size: 10.5px;
+  color: var(--panel-ink-2);
+}
+
+.gui-mode-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.gui-mode-item.active {
+  border-color: var(--accent);
 }
 
 .gui-input {

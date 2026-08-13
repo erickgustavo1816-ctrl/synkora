@@ -20,6 +20,7 @@ export function TestServerModal({
   onClose: () => void
 }): React.JSX.Element {
   const setTab = useStore((s) => s.setUniverseTab)
+  const setMissionTab = useStore((s) => s.setMissionTab)
   const [port, setPort] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -55,8 +56,12 @@ export function TestServerModal({
       return
     }
     // F3-c3: o registro do pane chega por evento do main (panes:open-free).
+    // ONDA D: a aba PANES morreu — o terminal nasce como SLOT no centro do
+    // Board (o de VERSÃO mora na coluna do ✦ geral, por isso a missão sai de
+    // foco) e o Board já o coloca no ar sozinho.
     onClose()
-    setTab(projectId, 'panes')
+    if (!target.missionId) setMissionTab(projectId, null)
+    setTab(projectId, 'board')
   }
 
   return createPortal(

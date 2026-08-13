@@ -1062,7 +1062,10 @@ interface SynkoraState {
   clearCatalogs: () => void
 
   loadProjects: () => Promise<void>
-  createProject: (name: string, path: string) => Promise<void>
+  /** cria o universo. `gitUrl` (onda D) conecta o repositório no nascimento;
+   *  devolve o AVISO em PT-BR quando o main criou o projeto mas o GitHub não
+   *  fechou (auth/push) — null = tudo certo. Aviso nunca cancela a criação. */
+  createProject: (name: string, path: string, gitUrl?: string) => Promise<string | null>
   removeProject: (id: string) => Promise<void>
   setProjectPhoto: (id: string) => Promise<void>
   removeProjectPhoto: (id: string) => Promise<void>
@@ -1222,6 +1225,19 @@ function persistJson(key: string, value: unknown): void {
   } catch {
     // cota estourada não pode derrubar a UI
   }
+}
+
+/** Aviso PT-BR devolvido pelo `projects:create` quando o universo nasceu mas o
+ *  GitHub não fechou (onda D). Lê defensivamente: o motor é o dono do nome do
+ *  campo e um payload sem aviso nenhum vale como sucesso. */
+function projectCreateWarning(res: unknown): string | null {
+  if (!res || typeof res !== 'object') return null
+  const bag = res as Record<string, unknown>
+  for (const key of ['warning', 'aviso', 'msg']) {
+    const value = bag[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return null
 }
 
 function readJson<T>(key: string, fallback: T): T {
@@ -1412,7 +1428,8 @@ export const useStore = create<SynkoraState>((set, get) => ({
     const spec = await window.synkora.tasks.run(projectId, taskId, seatId, model, effort)
     if (!spec) return
     get().openDevPane(projectId, taskId, spec)
-    get().setUniverseTab(projectId, 'panes')
+    // ONDA D: a aba PANES morreu; navegar para ela deixaria a área central
+    // vazia. O pane do pipeline legado segue registrado na lista.
     await get().loadTasks(projectId)
   },
 
@@ -1668,9 +1685,19 @@ export const useStore = create<SynkoraState>((set, get) => ({
     set({ projects })
   },
 
-  createProject: async (name, path) => {
-    await window.synkora.projects.create(name, path)
+  createProject: async (name, path, gitUrl) => {
+    // TODO(onda D, motor): `projects:create` ganha o 3º parâmetro (gitUrl) e
+    // passa a devolver o aviso do GitHub. Enquanto o preload não publica a
+    // assinatura nova, o cast estreito mora AQUI — main antigo simplesmente
+    // ignora o argumento extra e nunca devolve aviso.
+    const create = window.synkora.projects.create as (
+      name: string,
+      path: string,
+      gitUrl?: string
+    ) => Promise<unknown>
+    const res = await create(name, path, gitUrl)
     await get().loadProjects()
+    return projectCreateWarning(res)
   },
 
   removeProject: async (id) => {
