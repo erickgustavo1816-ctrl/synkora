@@ -15,6 +15,7 @@
 import { app, dialog, ipcMain, nativeImage } from 'electron'
 import { isAbsolute, join, resolve } from 'path'
 import { ensureSynkoraGitExcludes, hasGitCommit, repairWorktrees } from '../worktree'
+import { gitOff } from '../gitAsync'
 import { ensureProjectSecurityBaseline } from '../projectSecurityBaseline'
 import { redactSensitiveText } from '../securityRedaction'
 import { cpSync, existsSync } from 'fs'
@@ -25,7 +26,12 @@ import {
   guiPlanningSystemPrompt,
   resumeSessionIdFor
 } from '../guiMissionContracts'
-import type { GuiPaneSpawn, GuiSessionRegistry } from '../guiSessions'
+import {
+  isGuiPermissionMode,
+  type GuiPaneSpawn,
+  type GuiPermissionMode,
+  type GuiSessionRegistry
+} from '../guiSessions'
 import type { MainContext } from '../mainContext'
 
 /** Dependências do closure do index ainda não migradas (mesmo padrão
@@ -89,7 +95,7 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     })
   )
 
-  ipcMain.handle('projects:create', (_e, name: string, path: string) => {
+  ipcMain.handle('projects:create', async (_e, name: string, path: string, gitUrl?: string) => {
     // GUARDA DE PATH (CHECK 12, 2026-08-07): um path RELATIVO/amassado vira
     // pasta fantasma no cwd do app (caso real: o driver E2E perdeu as barras
     // no escape e "C:\Users\Erick\.synkora-e2e\p1" materializou como
@@ -104,6 +110,26 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     const appRoot = app.getAppPath().replace(/\\/g, '/').toLowerCase()
     if (path.replace(/\\/g, '/').toLowerCase().startsWith(appRoot)) {
       throw new Error('caminho recusado: a pasta cairia dentro do diretório do próprio Synkora')
+    }
+    // GITHUB NO NASCIMENTO (2.0, onda D, item 6): o link é OPCIONAL e decide
+    // dois caminhos opostos — pasta vazia CLONA (o universo é o repositório
+    // remoto), pasta com conteúdo PUBLICA (init + origin + push). Tudo pelo
+    // gitWorker: clone e push falam com a rede e travariam o main.
+    const remote = gitUrl?.trim()
+    let gitWarning: string | undefined
+    if (remote) {
+      const empty = !existsSync(path) || isEffectivelyEmptyProject(path)
+      if (empty) {
+        const cloned = await gitOff('cloneRepository', remote, path)
+        // Falha de clone é DURA: cadastrar um universo apontando para pasta
+        // sem o código seria pior que não cadastrar.
+        if (!cloned.ok) throw new Error(cloned.error ?? 'não consegui clonar o repositório')
+      } else {
+        const attached = await gitOff('attachGitRemote', path, remote)
+        // Push best-effort POR DESENHO: sem credencial na máquina ele recusa e
+        // o universo nasce assim mesmo, com o aviso honesto na resposta.
+        gitWarning = attached.warning
+      }
     }
     // A classificação acontece ANTES de qualquer injeção de skills, que cria
     // .agents/.claude e faria uma pasta vazia parecer um projeto existente.
@@ -145,7 +171,9 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
       }
     }
     scheduleProgressSnapshot()
-    return project
+    // O aviso viaja NO projeto (campo extra, nunca persistido): o renderer
+    // mostra e segue — a criação já aconteceu.
+    return gitWarning ? { ...project, gitWarning } : project
   })
 
   ipcMain.handle('projects:remove', (_e, id: string) => {
@@ -297,11 +325,15 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
    * resume gravado pelo guiSessions: reabrir o universo cai na MESMA conversa
    * de planejamento, nunca numa em branco.
    */
-  ipcMain.handle('projects:planningGuiSpec', (_e, projectId: string): PlanningGuiSpecResult => {
+  ipcMain.handle(
+    'projects:planningGuiSpec',
+    (_e, projectId: string, permissionMode?: GuiPermissionMode): PlanningGuiSpecResult => {
     const project = projects.get(projectId)
     if (!project) return { ok: false, error: 'projeto não encontrado' }
     if (!existsSync(project.path))
       return { ok: false, error: 'a pasta do projeto não existe mais — relocalize o universo' }
+    if (permissionMode !== undefined && !isGuiPermissionMode(permissionMode))
+      return { ok: false, error: `modo de permissão desconhecido: ${String(permissionMode)}` }
 
     // Conta do universo (a mesma do PM, escolhida no gate de entrada). Sem
     // ela o planejamento não nasce com fallback silencioso: o dono escolhe.
@@ -316,7 +348,10 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
 
     const paneId = guiPlanningPaneId(projectId)
     // Mesma régua de resume da missão: conversa gravada só vale no MESMO CLI.
-    const resumeSessionId = resumeSessionIdFor(guiSessions.remembered(paneId), seat.cli)
+    const remembered = guiSessions.remembered(paneId)
+    const resumeSessionId = resumeSessionIdFor(remembered, seat.cli)
+    // Sem escolha explícita vale a ÚLTIMA do dono para este pane (onda D).
+    const effectiveMode = permissionMode ?? remembered?.permissionMode
     // Versão ABERTA mais antiga = o escopo natural do próximo plano (mesma
     // régua do backlog); sem nenhuma aberta o planejador pergunta ao dono.
     const openVersion = backlog
@@ -337,6 +372,7 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
       effort: state.effort,
       systemPrompt: guiPlanningSystemPrompt(),
       resumeSessionId,
+      permissionMode: effectiveMode,
       // Conversa retomada JÁ tem o briefing: repetir o 1º turno seria
       // re-briefing perseguindo o pane (lição da F6.8i).
       firstPrompt: resumeSessionId
@@ -352,8 +388,14 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
       event: 'planning-gui-spec',
       actor: 'user',
       ids: { projectId, paneId, seatId: seat.id },
-      detail: { cli: seat.cli, resumed: Boolean(resumeSessionId), roadmapExists }
+      detail: {
+        cli: seat.cli,
+        resumed: Boolean(resumeSessionId),
+        roadmapExists,
+        permissionMode: effectiveMode ?? 'default'
+      }
     })
     return { ok: true, spawn }
-  })
+    }
+  )
 }

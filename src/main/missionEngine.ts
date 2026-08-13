@@ -44,6 +44,7 @@ import {
 } from './worktree'
 import { type Mission, type NewMission } from './missions'
 import { guiMissionPaneId, missionConflictRecipe } from './guiMissionContracts'
+import { notifyDesktop } from './desktopNotifications'
 import { type IntegrationQueueTicketView } from './integrationQueue'
 import {
   completeProjectMission as completeStoredProjectMission,
@@ -1604,7 +1605,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
               owner: 'maestro',
               detail: pre.detail
             })
-            emitIntegrationBlockForMaestro(blocked, mission, target, pre.detail)
+            emitIntegrationBlockForMaestro(blocked, mission, target, pre.detail, pre.conflictFiles)
             return
           }
           // MISSÃO 2.0: destino que andou NÃO vira card de sincronização (não
@@ -1694,7 +1695,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     ticket: IntegrationQueueTicketView,
     mission: Mission,
     target: MissionIntegrationTarget | undefined,
-    detail: string
+    detail: string,
+    /** Lista ESTRUTURADA vinda do merge-tree (só o bloqueio de conflito a tem);
+     *  serve à notificação de desktop, que não faz parsing de prosa. */
+    conflictFiles?: string[]
   ): void {
     // MISSÃO 2.0: o bloqueio volta para QUEM ESCREVEU — não há orquestrador
     // para triar nem Maestro para decidir estratégia. O evento/auditoria de
@@ -1719,6 +1723,18 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         reason: delivered
           ? `receita do bloqueio entregue na conversa do dev: ${detail.slice(0, 300)}`
           : `conversa do dev não está aberta — a receita fica no board: ${detail.slice(0, 300)}`
+      })
+      // ONDA D: a fila parou e o dono pode estar em outra janela. Com o app em
+      // foco os sinais internos bastam — o notifyDesktop só fala fora dele.
+      notifyDesktop({
+        kind: 'conflict',
+        key: mission.id,
+        title: 'Synkora — a integração parou',
+        body:
+          `"${mission.title}" não integrou com ${target?.label ?? 'o destino'}` +
+          (conflictFiles?.length
+            ? ` · ${conflictFiles.length} arquivo(s) em conflito`
+            : `: ${detail.slice(0, 120)}`)
       })
     }
     const behind = integrationQueue
@@ -2223,6 +2239,16 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         text: `missão "${mission.title}" INTEGRADA na ${mergeTarget} (${mergeDetail})${doneItems > 0 ? ` · ${doneItems} item(ns) do backlog concluído(s)` : ''}${target.kind === 'version' ? ' — a main só recebe quando o usuário subir a versão' : ''}`,
         actor: 'harness'
       })
+      // ONDA D: o merge é o marco que o dono espera de longe — avisa fora do
+      // app (dentro dele o blip/board já contam). Missão 2.0 apenas: a legada
+      // tem orquestrador e board próprios para narrar o desfecho.
+      if (isDirectMission(mission))
+        notifyDesktop({
+          kind: 'merged',
+          key: missionId,
+          title: 'Synkora — missão integrada',
+          body: `"${mission.title}" foi integrada na ${mergeTarget}`
+        })
       if (target.kind === 'version') {
         // versão avançou: só as missões da MESMA versão precisam de sync
         for (const other of missions.list(projectId)) {
