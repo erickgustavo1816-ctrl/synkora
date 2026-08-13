@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { hueOf, initialsOf } from '../util'
 import Board from '../components/Board'
@@ -38,7 +38,31 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
   const relocateProject = useStore((s) => s.relocateProject)
   const [relocError, setRelocError] = useState<string | null>(null)
 
+  // OS NÚMEROS SOBEM (mockup 2026-08-14): "Os números do projeto (◈ versão,
+  // contadores de missão, fila) são CHIPS NA TOPBAR — nunca um cartão ocupando
+  // o centro." O centro é da conversa; aqui fica o placar, visível de QUALQUER
+  // aba do universo.
+  const missions = useStore((s) => s.missions)
+  const stats = useStore((s) => s.homeStats[projectId])
+  const loadHomeStats = useStore((s) => s.loadHomeStats)
+  useEffect(() => {
+    if (!stats) void loadHomeStats(projectId)
+  }, [stats, loadHomeStats, projectId])
+
   if (!project) return <div className="bridge-warning">Projeto não encontrado.</div>
+
+  const mine = missions.filter((m) => m.projectId === projectId)
+  const vivas = mine.filter((m) => m.status === 'ativa' || m.status === 'integrando')
+  const integradas = mine.filter((m) => m.status === 'concluida').length
+  // Fila = tickets de integração + o que espera o ⇪ do dono (a porteira é
+  // mecânica: pedido do agente NUNCA mergeia sozinho).
+  const naFila = vivas.filter(
+    (m) => m.integration || m.status === 'integrando' || m.pendingIntegrationApproval
+  ).length
+  const esperandoVoce = vivas.some((m) => m.pendingIntegrationApproval)
+  // Versão de referência: a primeira ABERTA (é nela que tudo integra); sem
+  // nenhuma aberta, a última lançada entra com ✓.
+  const versao = stats?.versoes.find((v) => !v.lancada) ?? stats?.versoes[0]
 
   return (
     <div className="workspace">
@@ -69,6 +93,41 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
               if (v && v !== project.name) void renameProject(projectId, v)
             }}
           />
+          {/* CHIPS DO PROJETO — o placar que antes ocupava o centro do board. */}
+          <span className="ws-chips">
+            {versao && (
+              <span
+                className={`ws-chip${versao.lancada ? ' quiet' : ''}`}
+                data-tip={
+                  versao.lancada
+                    ? `Última versão lançada — ${versao.name} já está na main`
+                    : `Versão em construção: toda missão desta linha integra na branch da ${versao.name}`
+                }
+              >
+                ◈ {versao.name}
+                {versao.lancada && ' ✓'}
+              </span>
+            )}
+            <span
+              className="ws-chip"
+              data-tip={`${vivas.length} ${vivas.length === 1 ? 'missão viva' : 'missões vivas'} · ${integradas} já ${integradas === 1 ? 'integrada' : 'integradas'}`}
+            >
+              ✦ {vivas.length}
+              <span className="ws-chip-sep">·</span>✓ {integradas}
+            </span>
+            {naFila > 0 && (
+              <span
+                className={`ws-chip accent${esperandoVoce ? ' pulse' : ''}`}
+                data-tip={
+                  esperandoVoce
+                    ? 'Uma missão pediu integração — o merge SÓ anda com o SEU clique no trilho de entrega'
+                    : `${naFila} ${naFila === 1 ? 'missão' : 'missões'} na fila serial de integração`
+                }
+              >
+                fila ⇪ {naFila}
+              </span>
+            )}
+          </span>
         </div>
         <nav className="tabs">
           <button
@@ -78,12 +137,12 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
           >
             Board {asking && tab !== 'board' && <span className="tab-attn-glyph">❓</span>}
           </button>
-          {/* ONDA D: o mapa vale para TODO universo — ele lê as missões
-              (inclusive as diretas), não só o roadmap de um greenfield. */}
+          {/* MAPA = PLANEJAMENTO (mockup): o quadro de rotas — uma linha por
+              versão, uma coluna por etapa. A constelação ficou dormente. */}
           <button
             className={`tab ${tab === 'mapa' ? 'active' : ''}`}
             onClick={() => setTab(projectId, 'mapa')}
-            data-tip="A constelação do projeto: cada missão viva é um card ligado ao núcleo (em projeto criado do zero, o plano mestre fica ao lado)"
+            data-tip="O planejamento do projeto: cada versão é uma linha, cada missão anda de backlog → rodando → fila ⇪ → integrada (em projeto criado do zero, o plano mestre fica ao lado)"
           >
             Mapa
           </button>
