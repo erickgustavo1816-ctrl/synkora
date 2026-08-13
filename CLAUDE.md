@@ -1,15 +1,34 @@
 # Synkora
 
-ADE (Agentic Development Environment) desktop: projetos como "universos" com departamentos
-(PM/Front/Back/QA), orquestradores que delegam tarefas via harness automático para múltiplas
-contas de CLIs de IA ("seats").
+ADE (Agentic Development Environment) desktop: projetos como "universos", missões com
+dev em CHAT GUI (era 2.0) rodando em worktrees isolados sobre múltiplas contas de CLIs
+de IA ("seats"). O dono é o orquestrador.
 
 **Sempre responda ao usuário em PT-BR.**
 
+## ⚡ ERA 2.0 (2026-08-13) — LER PRIMEIRO: docs/PLANO_2_0_GUI.md + docs/GUI_PANE_CONTRACT.md
+
+Decisão do dono: **o pane TUI morreu para missões novas; o GUI mora dentro do Synkora**.
+Toda missão criada pelo usuário nasce `Mission.direct`: SEM maestro, SEM orquestrador,
+SEM plano/gates — um CHAT (GuiPane) abre no centro do Board com o dev no worktree da
+missão; reviewer/ajudantes só quando o dono pedir; ⇪ vai DIRETO pra fila (guardas de
+plano desviadas só p/ direct; conflito volta pra conversa do dev). Peças: motor
+`src/main/guiSessions.ts` (MaestroSession/CodexSession POR PANE) + `src/main/ipc/gui.ts`
++ `window.synkora.gui`; contratos `src/main/guiMissionContracts.ts`; `missions:guiSpec`;
+renderer `GuiPane.tsx` (Pane.surface 'tui'|'gui'), `MissionColumn.tsx` (missões à
+ESQUERDA, worktree embaixo de cada card — o layout aprovado pelo dono),
+`MissionDeliveryRail.tsx` (⇪/revisar/ajudante/teste). Missões LEGADAS (sem `direct`)
+mantêm todo o pipeline F6 abaixo — que segue válido SÓ para elas; suprimir, não demolir,
+enquanto existirem. O fork claudecodeui em Desktop/Synkora2 foi REJEITADO como produto
+(fica como pedreira de ideias). Skills: decisão adiada pelo dono (kit mínimo quando
+voltar). Tudo abaixo desta seção descreve a era F6 (legado).
+
 ## Documentos de referência (ler antes de mudanças grandes)
 
-- `docs/PLANO.md` — plano completo v1.1: conceito, stack, domínio, cadeia de comando, roadmap F0–F5, decisões confirmadas.
-- `docs/SKILLS.md` — curadoria da biblioteca de skills por departamento (F4).
+- `docs/PLANO_2_0_GUI.md` — a virada 2.0 (GUI dentro do Synkora) + ondas A/B/C.
+- `docs/GUI_PANE_CONTRACT.md` — contrato do pane GUI (canais, tipos, papéis).
+- `docs/PLANO.md` — plano completo v1.1 (era F6): conceito, stack, domínio, roadmap F0–F5.
+- `docs/SKILLS.md` — curadoria da biblioteca de skills por departamento (F4, era F6).
 
 ## Estado mais recente do fluxo (F6.8 — 2026-08-05, bloco do teste da M02c: gates vivos + renascimento no boot + árvore de processos)
 
