@@ -3,6 +3,7 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
 import { redactSensitiveStrings } from './securityRedaction'
+import { missionTypeOf, type MissionType } from './guiMissionContracts'
 import type { PlanningMethodEvidence } from './skillRuntime'
 
 // Missões (F3.8): a unidade de trabalho do universo. Cada missão tem seu
@@ -43,6 +44,12 @@ export interface Mission {
    *  Carimbado no NASCIMENTO e nunca mais: missão legada (sem o campo) segue
    *  com o fluxo de sempre, intacto. */
   direct?: true
+  /** NATUREZA da missão (2.0): 'planejamento' = UMA conversa na RAIZ do
+   *  projeto que entrevista o dono e escreve plano/ — sem worktree (não há o
+   *  que mesclar) e fora da fila de integração. Ausente = 'dev', a missão de
+   *  sempre. Carimbo de NASCIMENTO: fora do Pick do `update`, como `direct`,
+   *  então missão nenhuma troca de natureza depois de existir. */
+  missionType?: MissionType
   /** Missão criada pelo PM aguardando o usuário escolher conta/modelo/effort
    *  do orquestrador no modal (decisão do usuário, 02/08) — enquanto true o
    *  paneSpec recusa abrir o orquestrador. */
@@ -75,6 +82,10 @@ export interface NewMission {
   pendingOrchestrator?: boolean
   /** Missão 2.0 (sem orquestrador/plano). Só o nascimento decide. */
   direct?: boolean
+  /** 2.0: 'planejamento' abre a conversa que escreve plano/ na raiz do
+   *  projeto; omitido/'dev' = missão de desenvolvimento. Só o nascimento
+   *  decide. */
+  missionType?: MissionType
 }
 
 export class MissionStore {
@@ -130,6 +141,9 @@ export class MissionStore {
       // Carimbo de nascimento: `update` não lista `direct` no Pick, então
       // ninguém converte missão legada em 2.0 (nem o contrário) depois.
       direct: input.direct ? true : undefined,
+      // Mesma regra para a NATUREZA: só 'planejamento' é persistido; 'dev' é a
+      // ausência do campo (é o que toda missão do disco já é hoje).
+      missionType: missionTypeOf(input) === 'planejamento' ? 'planejamento' : undefined,
       status: 'ativa',
       createdAt: now,
       updatedAt: now

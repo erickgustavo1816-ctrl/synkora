@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   GUI_MISSION_ROLES,
+  MISSION_PLANNING_NOT_QUEUEABLE,
+  MISSION_TYPES,
   guiMissionFirstPrompt,
   guiMissionPaneId,
   guiMissionRoleOf,
@@ -12,9 +14,12 @@ import {
   isGuiMissionPaneId,
   isGuiMissionRole,
   isGuiPlanningPaneId,
+  isMissionType,
   missionConflictRecipe,
   missionShortId,
-  resumeSessionIdFor
+  missionTypeOf,
+  resumeSessionIdFor,
+  routeGuiMissionPane
 } from '../src/main/guiMissionContracts.ts'
 
 const MISSION = '7e31d314-1111-2222-3333-444455556666'
@@ -235,6 +240,102 @@ test('o 1º turno do planejamento nomeia o caderno em vez de dizer "não existe"
   assert.match(resumed, /VERSION IN PROGRESS: v1\.2/)
   assert.match(resumed, /ALREADY has plano\/roadmap\.md/)
   assert.equal(/no plano\/roadmap\.md yet/.test(resumed), false)
+})
+
+// TIPO DA MISSÃO: o planejamento deixou de ser um convite que aparece sozinho
+// na coluna "✦ geral" e virou algo que o dono CRIA. O carimbo é de NASCIMENTO,
+// e ausência é 'dev' — senão toda missão que já está no disco mudaria de
+// natureza no primeiro boot depois desta mudança.
+
+test('missão sem carimbo é de desenvolvimento, e o carimbo só aceita o que existe', () => {
+  assert.deepEqual([...MISSION_TYPES], ['dev', 'planejamento'])
+  for (const type of MISSION_TYPES) assert.equal(isMissionType(type), true)
+  for (const bad of ['plan', 'planning', 'DEV', '', null, undefined, 7, {}]) {
+    assert.equal(isMissionType(bad), false)
+  }
+  // legado (o disco de hoje) e ruído nunca viram planejamento por acidente
+  assert.equal(missionTypeOf(undefined), 'dev')
+  assert.equal(missionTypeOf({}), 'dev')
+  assert.equal(missionTypeOf({ missionType: undefined }), 'dev')
+  assert.equal(missionTypeOf({ missionType: 'dev' }), 'dev')
+  assert.equal(missionTypeOf({ missionType: 'planning' }), 'dev')
+  assert.equal(missionTypeOf({ missionType: 'planejamento' }), 'planejamento')
+})
+
+test('missão de dev abre os três papéis no worktree isolado', () => {
+  for (const role of GUI_MISSION_ROLES) {
+    for (const mission of [{}, { missionType: 'dev' }, { missionType: 'planning' }]) {
+      const route = routeGuiMissionPane(mission, role)
+      assert.equal(route.ok, true, `${role}: recusado`)
+      assert.equal(route.missionType, 'dev')
+      // a razão de a missão existir: o pane NUNCA nasce na branch principal
+      assert.equal(route.workspace, 'worktree')
+      assert.equal(route.systemPrompt, guiMissionSystemPrompt(role))
+    }
+  }
+})
+
+test('missão de planejamento é UMA conversa, na raiz, com o contrato do planejador', () => {
+  const planning = { missionType: 'planejamento' }
+  const route = routeGuiMissionPane(planning, 'dev')
+  assert.equal(route.ok, true)
+  assert.equal(route.missionType, 'planejamento')
+  // RAIZ do projeto: ela lê o produto inteiro e escreve plano/ — pedir
+  // worktree aqui criaria uma branch que ninguém jamais mesclaria.
+  assert.equal(route.workspace, 'project-root')
+  assert.equal(route.systemPrompt, guiPlanningSystemPrompt())
+  assert.notEqual(route.systemPrompt, guiMissionSystemPrompt('dev'))
+  // e o endereço do resume continua sendo o da missão: uma conversa por missão
+  assert.equal(guiMissionPaneId('dev', MISSION), `gui-dev-${missionShortId(MISSION)}`)
+})
+
+test('planejamento não abre revisor nem ajudante', () => {
+  for (const role of ['reviewer', 'helper']) {
+    const route = routeGuiMissionPane({ missionType: 'planejamento' }, role)
+    assert.equal(route.ok, false, `${role}: deixou abrir`)
+    assert.match(route.error, /uma conversa só/)
+  }
+})
+
+test('papel desconhecido é recusado antes do roteamento, em qualquer tipo', () => {
+  for (const mission of [{}, { missionType: 'planejamento' }]) {
+    for (const bad of ['maestro', 'qa', '', null, undefined]) {
+      const route = routeGuiMissionPane(mission, bad)
+      assert.equal(route.ok, false)
+      assert.match(route.error, /papel desconhecido/)
+    }
+  }
+})
+
+test('a fila explica a porta errada em vez de acusar bloqueio', () => {
+  // A mesma string que o motor devolve no ⇪ — o teste lê a fonte, não uma cópia.
+  assert.match(MISSION_PLANNING_NOT_QUEUEABLE, /planejamento/)
+  assert.match(MISSION_PLANNING_NOT_QUEUEABLE, /não entra na fila/)
+  assert.match(MISSION_PLANNING_NOT_QUEUEABLE, /plano\//)
+})
+
+// PRIMEIRO TURNO DO PLANEJAMENTO COMO MISSÃO: o convite genérico da coluna
+// "✦ geral" não tinha recorte nenhum; a missão tem o que o dono escreveu.
+
+test('o recorte que o dono escreveu na missão viaja no 1º turno', () => {
+  const prompt = guiPlanningFirstPrompt({
+    projectName: 'PAINEL DE GESTÃO',
+    focus: 'Planejar a v1.3\nFoco em créditos e PERDCOMP'
+  })
+  assert.match(prompt, /WHAT THE OWNER ASKED FOR:/)
+  assert.match(prompt, /Planejar a v1\.3/)
+  assert.match(prompt, /Foco em créditos e PERDCOMP/)
+  // sem recorte (o convite do universo) o cabeçalho não inventa a seção
+  const bare = guiPlanningFirstPrompt({ projectName: 'PAINEL DE GESTÃO' })
+  assert.equal(/WHAT THE OWNER ASKED FOR/.test(bare), false)
+  for (const empty of ['', '   ']) {
+    assert.equal(
+      /WHAT THE OWNER ASKED FOR/.test(
+        guiPlanningFirstPrompt({ projectName: 'X', focus: empty })
+      ),
+      false
+    )
+  }
 })
 
 // GUARDA DO RESUME: conversa gravada só vale no MESMO CLI — sessão do claude

@@ -192,6 +192,11 @@ export interface GuiPlanningBriefing {
   versionName?: string
   /** plano/roadmap.md JÁ existe no repo: retomar em vez de recomeçar. */
   roadmapExists?: boolean
+  /** MISSÃO de planejamento: o recorte que o DONO escreveu ao criá-la (título
+   *  + objetivo). O convite genérico da coluna "✦ geral" não tem isto; a
+   *  missão tem, e abrir o chat ignorando o que ele acabou de pedir seria
+   *  perder a única instrução que já existe. */
+  focus?: string
 }
 
 /**
@@ -202,7 +207,8 @@ export interface GuiPlanningBriefing {
 export function guiPlanningFirstPrompt(input: GuiPlanningBriefing): string {
   const head = [
     `PROJECT: ${input.projectName}`,
-    input.versionName?.trim() ? `VERSION IN PROGRESS: ${input.versionName.trim()}` : undefined
+    input.versionName?.trim() ? `VERSION IN PROGRESS: ${input.versionName.trim()}` : undefined,
+    input.focus?.trim() ? `WHAT THE OWNER ASKED FOR:\n${input.focus.trim()}` : undefined
   ]
     .filter(Boolean)
     .join('\n')
@@ -215,6 +221,93 @@ ${roadmap}
 
 Your VERY FIRST output — before any tool call — is a 2-3 line note in PT-BR: that you are the planning session for this universe, that you plan and write the roadmap but never execute the work, and the ONE question that unblocks the plan. Only then study what already exists here.`
 }
+
+// ————— TIPO DA MISSÃO: o planejamento vira algo que o dono CRIA —————
+//
+// Antes o planejamento aparecia SOZINHO como um convite na coluna "✦ geral";
+// agora ele é uma MISSÃO, criada como qualquer outra. São duas naturezas,
+// decididas no NASCIMENTO e nunca depois:
+//
+// - 'dev'          — a missão de sempre: branch/worktree isolados, dev +
+//                    reviewer + ajudantes sobre o mesmo diff, ⇪ para a fila.
+// - 'planejamento' — UMA conversa, na RAIZ do projeto, que entrevista o dono e
+//                    ESCREVE plano/. Não tem branch (não há o que mesclar), não
+//                    abre reviewer/ajudante e não entra na fila de integração.
+//
+// Missão legada não tem o carimbo — e ausência é 'dev' por definição, então
+// nada do que já está no disco muda de natureza.
+
+export type MissionType = 'dev' | 'planejamento'
+
+export const MISSION_TYPES: readonly MissionType[] = ['dev', 'planejamento']
+
+export function isMissionType(value: unknown): value is MissionType {
+  return typeof value === 'string' && (MISSION_TYPES as readonly string[]).includes(value)
+}
+
+/** Tipo EFETIVO da missão: ausente/desconhecido cai em 'dev' (nunca lança e
+ *  nunca inventa uma natureza que o dono não escolheu). */
+export function missionTypeOf(mission: { missionType?: string } | undefined): MissionType {
+  return mission?.missionType === 'planejamento' ? 'planejamento' : 'dev'
+}
+
+/** Onde o chat da missão nasce: worktree isolado × raiz do projeto. */
+export type GuiMissionWorkspace = 'worktree' | 'project-root'
+
+export type GuiMissionRoute =
+  | {
+      ok: true
+      missionType: MissionType
+      workspace: GuiMissionWorkspace
+      /** contrato de sistema do pane que vai nascer */
+      systemPrompt: string
+    }
+  | { ok: false; error: string }
+
+/**
+ * ROTEAMENTO POR TIPO — a decisão que o `missions:guiSpec` toma antes de abrir
+ * qualquer coisa. Fica aqui, puro, porque é contrato: o worktree da missão de
+ * dev e a raiz do projeto na de planejamento não podem divergir entre o que o
+ * handler faz e o que o teste prova.
+ */
+export function routeGuiMissionPane(
+  mission: { missionType?: string } | undefined,
+  role: GuiMissionRole
+): GuiMissionRoute {
+  if (!isGuiMissionRole(role)) return { ok: false, error: `papel desconhecido: ${String(role)}` }
+  const missionType = missionTypeOf(mission)
+  if (missionType === 'dev') {
+    return {
+      ok: true,
+      missionType,
+      workspace: 'worktree',
+      systemPrompt: guiMissionSystemPrompt(role)
+    }
+  }
+  // Planejamento é UMA conversa: não existe diff para revisar nem fatia para
+  // repartir com ajudante — o entregável é plano/, escrito por quem conversa.
+  if (role !== 'dev') {
+    return {
+      ok: false,
+      error:
+        'missão de planejamento tem uma conversa só — ela escreve o plano/ e não abre revisor nem ajudante'
+    }
+  }
+  return {
+    ok: true,
+    missionType,
+    workspace: 'project-root',
+    systemPrompt: guiPlanningSystemPrompt()
+  }
+}
+
+/**
+ * A PORTA ERRADA: missão de planejamento não tem branch para mesclar, então o
+ * ⇪ não se aplica a ela. Mensagem única — o motor da fila e o teste leem a
+ * MESMA string, e o dono lê uma frase que explica em vez de acusar.
+ */
+export const MISSION_PLANNING_NOT_QUEUEABLE =
+  'missão de planejamento não entra na fila — ela escreve o plano/ e conclui'
 
 /**
  * Guarda do resume (2.0): conversa gravada só vale no MESMO CLI. Sessão do
