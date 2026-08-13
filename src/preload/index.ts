@@ -258,6 +258,11 @@ export interface SkillState {
 // Missões (F3.8): fluxo de trabalho com orquestrador, tarefas e branch próprios.
 export type MissionStatus = 'ativa' | 'integrando' | 'concluida' | 'arquivada'
 
+/** NATUREZA da missão (2.0): 'planejamento' = UMA conversa na raiz do projeto
+ *  que escreve plano/ (sem worktree, fora da fila de integração); ausente ou
+ *  'dev' = missão de desenvolvimento. Espelho de src/main/guiMissionContracts. */
+export type MissionType = 'dev' | 'planejamento'
+
 export interface MissionIntegrationQueueView {
   state: 'queued' | 'sync_required' | 'blocked' | 'merging'
   position: number
@@ -284,6 +289,9 @@ export interface Mission {
   /** SYNKORA 2.0: missão sem orquestrador e sem plano — o dono fala com o dev
    *  no chat e o ⇪ integra direto. Carimbado no nascimento e imutável. */
   direct?: true
+  /** 2.0: 'planejamento' abre a conversa que escreve plano/ na raiz do projeto
+   *  (sem worktree, sem ⇪); ausente = 'dev'. Carimbado no nascimento. */
+  missionType?: MissionType
   /** criada pelo PM: aguarda a escolha de conta/modelo/effort do orquestrador */
   pendingOrchestrator?: boolean
   /** agente pediu integrar via MCP: merge aguarda o AVAL do dono no botão ⇪ */
@@ -307,6 +315,9 @@ export interface NewMission {
   /** 2.0: omitido pelo renderer = DIRETA (o main carimba). Só o nascimento
    *  decide; missão nenhuma muda de natureza depois. */
   direct?: boolean
+  /** 2.0: 'planejamento' cria a missão que escreve plano/ em vez de código;
+   *  omitido = 'dev'. Também só o nascimento decide. */
+  missionType?: MissionType
 }
 
 // Backlog de produto: versões como escopo de planejamento + itens desejados.

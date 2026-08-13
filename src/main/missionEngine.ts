@@ -43,7 +43,12 @@ import {
   resolveMissionWorkspace
 } from './worktree'
 import { type Mission, type NewMission } from './missions'
-import { guiMissionPaneId, missionConflictRecipe } from './guiMissionContracts'
+import {
+  guiMissionPaneId,
+  missionConflictRecipe,
+  missionTypeOf,
+  MISSION_PLANNING_NOT_QUEUEABLE
+} from './guiMissionContracts'
 import { notifyDesktop } from './desktopNotifications'
 import { type IntegrationQueueTicketView } from './integrationQueue'
 import {
@@ -206,6 +211,13 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     const mission = missions.get(missionId)
     if (!mission) return undefined
     if (mission.status === 'concluida' || mission.status === 'arquivada') return mission
+    // MISSÃO DE PLANEJAMENTO (2.0) não produz código: ela roda na RAIZ e
+    // entrega escrevendo plano/. Isolamento aqui criaria uma branch que
+    // ninguém jamais mesclaria — e o git init automático seria um efeito
+    // colateral do nada num projeto que talvez nem queira repo. A cerca fica
+    // NESTA função de propósito: é o ponto único por onde todo caminho (o
+    // nascimento da missão inclusive) pede worktree.
+    if (missionTypeOf(mission) === 'planejamento') return mission
     const project = projects.get(mission.projectId)
     if (!project) return mission
     if (!hasGitCommit(project.path)) {
@@ -347,14 +359,23 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       { ...input, versionId, title: input.title.trim() },
       reservedId
     )
+    // Missão de PLANEJAMENTO sai daqui sem branch por desenho (a cerca mora no
+    // próprio ensureMissionWorktree) — nada a isolar quando o entregável é
+    // plano/ na raiz.
     ensureMissionWorktree(mission.id)
     const fresh = missions.get(mission.id) ?? mission
+    const naturezaNota =
+      missionTypeOf(fresh) === 'planejamento'
+        ? ' (planejamento: escreve plano/ na raiz do projeto, sem branch)'
+        : fresh.branch
+          ? ` (branch ${fresh.branch})`
+          : ' (projeto sem git — roda direto no diretório)'
     // quiet: quem criou foi o usuário (ou o próprio PM) — o PM não precisa
     // comentar; ele volta a falar nos MARCOS (integrada/reprovada/arquivada).
     hub.publish({
       projectId,
       kind: 'info',
-      text: `missão criada: "${fresh.title}"${fresh.branch ? ` (branch ${fresh.branch})` : ' (projeto sem git — roda direto no diretório)'}${fresh.scope ? ` · escopo: ${fresh.scope}` : ''}`,
+      text: `missão criada: "${fresh.title}"${naturezaNota}${fresh.scope ? ` · escopo: ${fresh.scope}` : ''}`,
       actor,
       quiet: true
     })
@@ -1193,6 +1214,13 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         })
       return msg
     }
+    // MISSÃO DE PLANEJAMENTO (2.0): a porta errada, não um bloqueio. Ela roda
+    // na raiz do projeto e entrega ESCREVENDO plano/ — não existe branch para
+    // mesclar nem fotografia para lacrar, então a fila não tem o que fazer com
+    // ela. Fica ANTES de tudo (inclusive de 'concluida', que reconciliaria uma
+    // integração que nunca houve): tipo é o fato mais fundamental da missão.
+    if (missionTypeOf(mission) === 'planejamento')
+      return integrateBlocked('planning-mission', MISSION_PLANNING_NOT_QUEUEABLE)
     if (mission.status === 'arquivada')
       return 'a missão está ARQUIVADA — reative-a antes de pedir integração'
     if (mission.status === 'integrando') {

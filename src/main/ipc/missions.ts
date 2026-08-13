@@ -27,13 +27,17 @@ import {
 } from '../worktree'
 import { gitOff } from '../gitAsync'
 import { type Mission, type NewMission } from '../missions'
+import type { Project } from '../projects'
 import {
   guiMissionFirstPrompt,
   guiMissionPaneId,
-  guiMissionSystemPrompt,
+  guiPlanningFirstPrompt,
   isGuiMissionRole,
+  missionTypeOf,
   resumeSessionIdFor,
-  type GuiMissionRole
+  routeGuiMissionPane,
+  type GuiMissionRole,
+  type GuiMissionWorkspace
 } from '../guiMissionContracts'
 import {
   isGuiPermissionMode,
@@ -188,15 +192,23 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   })
 
   /**
-   * ISOLAMENTO PROVADO — pré-condição de tudo que abre no worktree da missão
-   * (chat de qualquer papel E o terminal avulso do dono). Sem o worktree
-   * provado o pane nasceria na branch principal, que é exatamente o que a
-   * missão existe para evitar. Fonte única das duas specs abaixo: as guardas
-   * eram idênticas e divergir aqui seria abrir um caminho sem cerca.
+   * ISOLAMENTO PROVADO — pré-condição de tudo que abre no espaço da missão
+   * (chat de qualquer papel E o terminal avulso do dono). Numa missão de DEV,
+   * sem o worktree provado o pane nasceria na branch principal, que é
+   * exatamente o que a missão existe para evitar. Fonte única das specs
+   * abaixo: as guardas eram idênticas e divergir aqui seria abrir um caminho
+   * sem cerca.
+   *
+   * MISSÃO DE PLANEJAMENTO é a exceção declarada: ela não produz código, então
+   * não tem branch nem worktree — chamar `ensureMissionWorktree` aqui criaria
+   * uma branch que ninguém jamais mesclaria. Ela roda na RAIZ do projeto, que
+   * é onde plano/ mora e onde o produto inteiro pode ser lido.
    */
   function proveMissionWorkspace(
     missionId: string
-  ): { ok: true; mission: Mission; cwd: string } | { ok: false; error: string } {
+  ):
+    | { ok: true; mission: Mission; project: Project; cwd: string; workspace: GuiMissionWorkspace }
+    | { ok: false; error: string } {
     const mission = missions.get(missionId)
     if (!mission) return { ok: false, error: 'missão não encontrada' }
     const project = projects.get(mission.projectId)
@@ -207,6 +219,8 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       return { ok: false, error: 'esta missão já foi encerrada' }
     if (mission.status === 'integrando')
       return { ok: false, error: 'a missão está integrando agora — o worktree some no merge' }
+    if (missionTypeOf(mission) === 'planejamento')
+      return { ok: true, mission, project, cwd: project.path, workspace: 'project-root' }
     const withWorktree = ensureMissionWorktree(missionId) ?? mission
     const cwd = missionWorkspacePath(project.path, withWorktree)
     if (!cwd)
@@ -215,7 +229,27 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         error:
           'não consegui provar o worktree isolado desta missão; nada foi aberto na branch principal'
       }
-    return { ok: true, mission: withWorktree, cwd }
+    return { ok: true, mission: withWorktree, project, cwd, workspace: 'worktree' }
+  }
+
+  /**
+   * Briefing do 1º turno da MISSÃO DE PLANEJAMENTO. Mesma régua do convite que
+   * a coluna "✦ geral" usava (projeto + versão aberta + plano/roadmap.md já
+   * existir), somada ao RECORTE que o dono escreveu ao criar a missão — o
+   * convite genérico não tinha isso, a missão tem, e abrir o chat ignorando o
+   * que ele acabou de pedir seria jogar fora a única instrução que já existe.
+   */
+  function planningMissionFirstPrompt(mission: Mission, project: Project): string {
+    const openVersion = backlog
+      .listVersions(mission.projectId)
+      .filter((v) => v.status === 'aberta')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]
+    return guiPlanningFirstPrompt({
+      projectName: project.name,
+      versionName: openVersion?.name,
+      roadmapExists: existsSync(join(project.path, 'plano', 'roadmap.md')),
+      focus: [mission.title, mission.goal?.trim()].filter(Boolean).join('\n')
+    })
   }
 
   /**
@@ -297,6 +331,11 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
    * `permissionMode` (onda D) é o seletor do composer: ausente = a ÚLTIMA
    * escolha gravada para este pane (reabrir a missão mantém o modo do dono),
    * e só depois o padrão do binário.
+   *
+   * MISSÃO DE PLANEJAMENTO entra pelo MESMO canal e no MESMO endereço
+   * (`gui-dev-<id8>` — uma conversa por missão, um resume por missão), só que
+   * com o contrato do planejador e a raiz do projeto como cwd. Quem decide é
+   * `routeGuiMissionPane`, puro e testado: o handler só obedece.
    */
   ipcMain.handle(
     'missions:guiSpec',
@@ -316,14 +355,21 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       await staggerPaneSpawn()
       const proved = proveMissionWorkspace(missionId)
       if (!proved.ok) return { ok: false, error: proved.error }
-      const { mission: withWorktree, cwd } = proved
+      // `mission` já vem com o worktree provado quando é missão de dev; na de
+      // planejamento vem como está, porque worktree ela não tem.
+      const { mission, project, cwd } = proved
+      // Roteamento por TIPO antes de qualquer coisa nascer. Missão de
+      // planejamento não abre reviewer nem ajudante — e a recusa chega aqui,
+      // sem worktree criado e sem sessão gasta.
+      const route = routeGuiMissionPane(mission, role)
+      if (!route.ok) return { ok: false, error: route.error }
 
       // Conta: a escolhida na criação da missão > a já usada pelo orquestrador
       // desta missão > a do PM do projeto. Modelo/effort seguem a missão.
       const seatId =
-        withWorktree.seatId ??
-        maestro.get(orchKey(withWorktree.projectId, missionId)).seatId ??
-        maestro.get(withWorktree.projectId).seatId
+        mission.seatId ??
+        maestro.get(orchKey(mission.projectId, missionId)).seatId ??
+        maestro.get(mission.projectId).seatId
       const seat = seatId ? seats.get(seatId) : undefined
       if (!seat) return { ok: false, error: 'escolha uma conta para esta missão antes de abrir o chat' }
       seats.preseed(seat)
@@ -352,37 +398,43 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
 
       const spawn: GuiPaneSpawn = {
         paneId,
-        projectId: withWorktree.projectId,
+        projectId: mission.projectId,
         cli: seat.cli,
         configDir: seats.configDirOf(seat),
         cwd,
-        model: withWorktree.model,
-        effort: withWorktree.effort,
-        systemPrompt: guiMissionSystemPrompt(role),
+        model: mission.model,
+        effort: mission.effort,
+        systemPrompt: route.systemPrompt,
         resumeSessionId,
         permissionMode: effectiveMode,
         // Conversa retomada JÁ tem o briefing: repetir o primeiro turno seria
-        // re-briefing perseguindo o pane (lição da F6.8i).
+        // re-briefing perseguindo o pane (lição da F6.8i). O briefing é do TIPO
+        // da missão: dev/reviewer/ajudante recebem goal + branch do worktree;
+        // o planejamento recebe o caderno plano/ e o recorte do dono.
         firstPrompt: resumeSessionId
           ? undefined
-          : guiMissionFirstPrompt(role, {
-              title: withWorktree.title,
-              goal: withWorktree.goal,
-              scope: withWorktree.scope,
-              branch: withWorktree.branch,
-              baseBranch: withWorktree.baseBranch
-            })
+          : route.missionType === 'planejamento'
+            ? planningMissionFirstPrompt(mission, project)
+            : guiMissionFirstPrompt(role, {
+                title: mission.title,
+                goal: mission.goal,
+                scope: mission.scope,
+                branch: mission.branch,
+                baseBranch: mission.baseBranch
+              })
       }
       blackbox.record({
         cat: 'pane',
         event: 'mission-gui-spec',
         actor: 'user',
-        ids: { projectId: withWorktree.projectId, missionId, paneId, seatId: seat.id },
+        ids: { projectId: mission.projectId, missionId, paneId, seatId: seat.id },
         detail: {
           role,
           cli: seat.cli,
           resumed: Boolean(resumeSessionId),
-          direct: Boolean(withWorktree.direct),
+          direct: Boolean(mission.direct),
+          missionType: route.missionType,
+          workspace: route.workspace,
           permissionMode: effectiveMode ?? 'default'
         }
       })
