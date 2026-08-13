@@ -20,7 +20,11 @@ import { ipcMain } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { existsSync, mkdirSync, unlinkSync } from 'fs'
-import { ensureSynkoraGitExcludes, removeWorktreeAndBranch } from '../worktree'
+import {
+  ensureSynkoraGitExcludes,
+  removeWorktreeAndBranch,
+  type MissionWorkspaceSummary
+} from '../worktree'
 import { gitOff } from '../gitAsync'
 import { type Mission, type NewMission } from '../missions'
 import {
@@ -31,7 +35,12 @@ import {
   resumeSessionIdFor,
   type GuiMissionRole
 } from '../guiMissionContracts'
-import type { GuiPaneSpawn, GuiSessionRegistry } from '../guiSessions'
+import {
+  isGuiPermissionMode,
+  type GuiPaneSpawn,
+  type GuiPermissionMode,
+  type GuiSessionRegistry
+} from '../guiSessions'
 import { assessMissionRisk } from '../orchestratorFlow'
 import { missionPersona } from '../maestro'
 import { buildIdleWaiterHint } from '../phasePrompts'
@@ -96,6 +105,18 @@ export interface MissionShellSpec {
 export interface MissionShellSpecResult {
   ok: boolean
   spec?: MissionShellSpec
+  error?: string
+}
+
+/**
+ * Resposta do `missions:workspaceFiles` (2.0, onda D, item 4 — o trilho rico).
+ * Leitura PURA: nunca cria nem repara worktree (o trilho consulta com
+ * frequência, e criar coisa em caminho de leitura seria efeito colateral
+ * escondido). Sem worktree provado, `ok:false` com o motivo.
+ */
+export interface MissionWorkspaceFilesResult {
+  ok: boolean
+  summary?: MissionWorkspaceSummary
   error?: string
 }
 
@@ -198,6 +219,29 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   }
 
   /**
+   * DIFF VIVO DA MISSÃO (2.0, onda D): o cabeçalho do trilho de entrega —
+   * commits à frente da base, +N/−M e a lista de arquivos por status. Todo o
+   * git viaja pelo gitWorker: é leitura barata, mas é leitura CHAMADA MUITAS
+   * VEZES, e nada de git roda no main thread desde a F6.7.
+   */
+  ipcMain.handle(
+    'missions:workspaceFiles',
+    async (_e, missionId: string): Promise<MissionWorkspaceFilesResult> => {
+      const mission = missions.get(missionId)
+      if (!mission) return { ok: false, error: 'missão não encontrada' }
+      const project = projects.get(mission.projectId)
+      if (!project) return { ok: false, error: 'projeto não encontrado' }
+      // Leitura NUNCA cria worktree (nem chama ensureMissionWorktree): missão
+      // concluída/arquivada simplesmente não tem mais o que mostrar.
+      if (!mission.worktree || !existsSync(mission.worktree))
+        return { ok: false, error: 'esta missão não tem worktree aberto' }
+      const summary = await gitOff('missionWorkspaceSummary', mission.worktree, mission.baseBranch)
+      if (!summary) return { ok: false, error: 'não consegui ler o diff do worktree desta missão' }
+      return { ok: true, summary }
+    }
+  )
+
+  /**
    * TERMINAL AVULSO DA MISSÃO (2.0, onda C): o botão "terminal" do trilho de
    * entrega. Pane SHELL cru no worktree — PowerShell e mais nada: sem
    * cliArgs, sem armPane, sem token/identidade no hub, sem config MCP e sem
@@ -249,11 +293,22 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
    * curto por papel. O paneId é determinístico (guiMissionContracts) porque é
    * ele que endereça o resume gravado pelo guiSessions — reabrir a missão
    * precisa cair na MESMA conversa, não numa em branco.
+   *
+   * `permissionMode` (onda D) é o seletor do composer: ausente = a ÚLTIMA
+   * escolha gravada para este pane (reabrir a missão mantém o modo do dono),
+   * e só depois o padrão do binário.
    */
   ipcMain.handle(
     'missions:guiSpec',
-    async (_e, missionId: string, role: GuiMissionRole): Promise<MissionGuiSpecResult> => {
+    async (
+      _e,
+      missionId: string,
+      role: GuiMissionRole,
+      permissionMode?: GuiPermissionMode
+    ): Promise<MissionGuiSpecResult> => {
       if (!isGuiMissionRole(role)) return { ok: false, error: `papel desconhecido: ${String(role)}` }
+      if (permissionMode !== undefined && !isGuiPermissionMode(permissionMode))
+        return { ok: false, error: `modo de permissão desconhecido: ${String(permissionMode)}` }
       // Mesmo escalonador do paneSpec (F6.10): reabrir a missão pode pedir
       // dev + reviewer + ajudantes na mesma batida, e 4 CLIs no mesmo segundo
       // era a rajada que travava o main. Único await do handler — todo o resto
@@ -291,7 +346,9 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       // Resume: só vale a conversa gravada PARA ESTE pane e no MESMO CLI
       // (sessão claude não se retoma no codex e vice-versa). A régua é a
       // mesma do planejamento — mora em guiMissionContracts.
-      const resumeSessionId = resumeSessionIdFor(guiSessions.remembered(paneId), seat.cli)
+      const remembered = guiSessions.remembered(paneId)
+      const resumeSessionId = resumeSessionIdFor(remembered, seat.cli)
+      const effectiveMode = permissionMode ?? remembered?.permissionMode
 
       const spawn: GuiPaneSpawn = {
         paneId,
@@ -303,6 +360,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         effort: withWorktree.effort,
         systemPrompt: guiMissionSystemPrompt(role),
         resumeSessionId,
+        permissionMode: effectiveMode,
         // Conversa retomada JÁ tem o briefing: repetir o primeiro turno seria
         // re-briefing perseguindo o pane (lição da F6.8i).
         firstPrompt: resumeSessionId
@@ -320,7 +378,13 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         event: 'mission-gui-spec',
         actor: 'user',
         ids: { projectId: withWorktree.projectId, missionId, paneId, seatId: seat.id },
-        detail: { role, cli: seat.cli, resumed: Boolean(resumeSessionId), direct: Boolean(withWorktree.direct) }
+        detail: {
+          role,
+          cli: seat.cli,
+          resumed: Boolean(resumeSessionId),
+          direct: Boolean(withWorktree.direct),
+          permissionMode: effectiveMode ?? 'default'
+        }
       })
       return { ok: true, spawn }
     }

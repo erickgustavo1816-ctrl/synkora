@@ -6,10 +6,16 @@ import type {
   GuiLivePayload,
   GuiPaneSpawn,
   GuiPermBehavior,
+  GuiPermissionMode,
   GuiResult
 } from '../main/guiSessions'
 import type { GuiMissionRole } from '../main/guiMissionContracts'
-import type { MissionGuiSpecResult, MissionShellSpecResult } from '../main/ipc/missions'
+import type {
+  MissionGuiSpecResult,
+  MissionShellSpecResult,
+  MissionWorkspaceFilesResult
+} from '../main/ipc/missions'
+import type { MissionWorkspaceFile, MissionWorkspaceSummary } from '../main/worktree'
 import type { PlanningGuiSpecResult } from '../main/ipc/projects'
 
 /** entrada do diário da caixa-preta + linha legível pronta para exibição */
@@ -17,11 +23,14 @@ export type BlackboxTailEntry = BlackboxEntry & { line: string }
 
 /** Contrato do pane GUI (docs/GUI_PANE_CONTRACT.md) — fonte única dos tipos;
  *  o renderer copia/reexporta pelo accessor tipado de guiApi.ts. */
-export type { GuiLivePayload, GuiPaneSpawn, GuiPermBehavior, GuiResult }
+export type { GuiLivePayload, GuiPaneSpawn, GuiPermBehavior, GuiPermissionMode, GuiResult }
 
 /** Papéis do chat de missão 2.0 e as respostas das specs que o 2.0 abriu:
  *  chat da missão, terminal avulso do worktree e sessão de planejamento. */
 export type { GuiMissionRole, MissionGuiSpecResult, MissionShellSpecResult, PlanningGuiSpecResult }
+
+/** Diff vivo do worktree da missão (2.0, onda D) — o cabeçalho do trilho. */
+export type { MissionWorkspaceFile, MissionWorkspaceFilesResult, MissionWorkspaceSummary }
 
 export type {
   MissionProgressState,
@@ -66,6 +75,14 @@ export interface Project {
    *  do app) — a Home oferece "alterar pasta" */
   missing?: boolean
 }
+
+/**
+ * Resultado de projects:create. É o Project de sempre; `gitWarning` só aparece
+ * quando o link do GitHub ficou pela metade (push recusado por autenticação,
+ * remoto não prendido) — o universo NASCE assim mesmo, e o aviso é para a UI
+ * contar a verdade em vez de fingir que subiu.
+ */
+export type ProjectCreateResult = Project & { gitWarning?: string }
 
 /** Resultado de projects:relocate (troca de pasta do projeto). */
 export interface RelocateResult {
@@ -877,8 +894,11 @@ const api = {
   },
   projects: {
     list: (): Promise<Project[]> => ipcRenderer.invoke('projects:list'),
-    create: (name: string, path: string): Promise<Project> =>
-      ipcRenderer.invoke('projects:create', name, path),
+    /** `gitUrl` (2.0, onda D): pasta vazia CLONA o repositório; pasta com
+     *  conteúdo ganha `origin` + push best-effort. Push recusado NÃO impede a
+     *  criação — o aviso PT-BR volta em `gitWarning` para a UI mostrar. */
+    create: (name: string, path: string, gitUrl?: string): Promise<ProjectCreateResult> =>
+      ipcRenderer.invoke('projects:create', name, path, gitUrl),
     remove: (id: string): Promise<void> => ipcRenderer.invoke('projects:remove', id),
     rename: (id: string, name: string): Promise<Project | null> =>
       ipcRenderer.invoke('projects:rename', id, name),
@@ -891,8 +911,11 @@ const api = {
     /** SYNKORA 2.0: spec do CHAT de PLANEJAMENTO do universo (a casa da coluna
      *  "✦ geral" quando não há missão legada viva). paneId determinístico —
      *  reabrir o universo cai na mesma conversa. */
-    planningGuiSpec: (projectId: string): Promise<PlanningGuiSpecResult> =>
-      ipcRenderer.invoke('projects:planningGuiSpec', projectId),
+    planningGuiSpec: (
+      projectId: string,
+      permissionMode?: GuiPermissionMode
+    ): Promise<PlanningGuiSpecResult> =>
+      ipcRenderer.invoke('projects:planningGuiSpec', projectId, permissionMode),
     onFlowChanged: (cb: (projectId: string) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
       ipcRenderer.on('projects:flowChanged', listener)
@@ -1280,15 +1303,26 @@ const api = {
       ipcRenderer.invoke('missions:paneSpec', projectId, missionId),
     /** SYNKORA 2.0: spec do CHAT da missão por papel (dev/reviewer/ajudante).
      *  O paneId é determinístico — reabrir cai na mesma conversa. Missão
-     *  legada (com orquestrador) segue usando o paneSpec acima. */
-    guiSpec: (missionId: string, role: GuiMissionRole): Promise<MissionGuiSpecResult> =>
-      ipcRenderer.invoke('missions:guiSpec', missionId, role),
+     *  legada (com orquestrador) segue usando o paneSpec acima.
+     *  `permissionMode` (onda D) omitido = a última escolha gravada do dono
+     *  para aquele pane; trocar o modo respawna a sessão COM o resume. */
+    guiSpec: (
+      missionId: string,
+      role: GuiMissionRole,
+      permissionMode?: GuiPermissionMode
+    ): Promise<MissionGuiSpecResult> =>
+      ipcRenderer.invoke('missions:guiSpec', missionId, role, permissionMode),
     /** SYNKORA 2.0: TERMINAL avulso no worktree da missão (botão do trilho de
      *  entrega). Pane shell cru — sem CLI, sem persona, sem MCP. O main já
      *  emitiu `panes:open-free`, então a view MONTA o pane sozinha: o chamador
      *  só navega para a aba Panes (mesmo padrão do ▶ testar). */
     shellSpec: (missionId: string): Promise<MissionShellSpecResult> =>
       ipcRenderer.invoke('missions:shellSpec', missionId),
+    /** SYNKORA 2.0 (onda D): diff VIVO do worktree — commits à frente da base,
+     *  +N/−M e a lista de arquivos por status. Leitura pura: nunca cria nem
+     *  repara worktree, então pode ser chamada com frequência pelo trilho. */
+    workspaceFiles: (missionId: string): Promise<MissionWorkspaceFilesResult> =>
+      ipcRenderer.invoke('missions:workspaceFiles', missionId),
     onChanged: (cb: (projectId: string) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
       ipcRenderer.on('missions:changed', listener)

@@ -1037,6 +1037,140 @@ export function initGitRepo(projectPath: string): boolean {
   }
 }
 
+// ————— GITHUB NO NASCIMENTO DO UNIVERSO (2.0, onda D, item 6) —————
+//
+// Duas operações que FALAM COM A REDE, e por isso viajam pelo gitWorker como
+// todo o resto: clonar um repositório para dentro da pasta nova e prender um
+// remoto (com push best-effort) a uma pasta que já tem conteúdo. A regra que
+// vale nas duas: NENHUM PROMPT. Sem `GIT_TERMINAL_PROMPT=0` uma credencial
+// ausente pendura o git num diálogo invisível para o app, e a criação do
+// universo ficaria travada para sempre em vez de falhar com um texto honesto.
+
+/** Env do git de REDE: falha rápido em vez de esperar credencial que ninguém
+ *  vai digitar (o pedido de senha do git não tem tela dentro do Synkora). */
+function gitNetworkEnv(): Record<string, string> {
+  return {
+    ...(process.env as Record<string, string>),
+    PATH: freshWindowsPath(),
+    GIT_TERMINAL_PROMPT: '0',
+    // askpass vazio cobre o caminho GUI (credential helper gráfico do Windows).
+    GIT_ASKPASS: '',
+    SSH_ASKPASS: '',
+    GIT_SSH_COMMAND: 'ssh -oBatchMode=yes'
+  }
+}
+
+function gitNetwork(cwd: string, args: string[], timeoutMs = 180_000): string {
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf-8',
+    env: gitNetworkEnv(),
+    timeout: timeoutMs,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe']
+  }).trim()
+}
+
+/** Primeira linha útil do erro do git — é o que vira texto de UI. */
+function gitFailureText(error: unknown): string {
+  const raw =
+    error && typeof error === 'object' && 'stderr' in error
+      ? String((error as { stderr?: unknown }).stderr ?? '')
+      : ''
+  const line = (raw || (error instanceof Error ? error.message : String(error)))
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .filter((entry) => !/^Cloning into/i.test(entry))
+    .pop()
+  return (line ?? 'o git não explicou o motivo').slice(0, 240)
+}
+
+/**
+ * URL de remoto aceita. A cerca importante é a PRIMEIRA: valor começando com
+ * '-' seria lido pelo git como FLAG (`--upload-pack=...` executa comando), e
+ * este campo vem digitado pelo dono. Espaço/controle também caem fora.
+ */
+export function isSupportedGitRemoteUrl(url: string): boolean {
+  const clean = url.trim()
+  if (!clean || clean.startsWith('-')) return false
+  if (clean.split('').some((ch) => ch.charCodeAt(0) <= 0x20)) return false
+  return /^https:\/\/\S+$/i.test(clean) || /^ssh:\/\/\S+$/i.test(clean) || /^[\w.-]+@[\w.-]+:\S+$/.test(clean)
+}
+
+export interface GitRemoteSetupResult {
+  ok: boolean
+  /** Falha DURA: o universo não deve nascer assim (clone que não aconteceu). */
+  error?: string
+  /** Ficou pela metade e o universo nasce mesmo assim (push recusado etc.). */
+  warning?: string
+}
+
+/**
+ * (a) do item 6: pasta ausente/vazia + link → o universo É o clone. Falha aqui
+ * é DURA: cadastrar um universo apontando para uma pasta que não recebeu o
+ * código seria pior que não cadastrar.
+ */
+export function cloneRepository(url: string, targetPath: string): GitRemoteSetupResult {
+  if (!isSupportedGitRemoteUrl(url))
+    return { ok: false, error: 'link do repositório inválido — use https://…, ssh://… ou git@host:dono/repo.git' }
+  try {
+    if (existsSync(targetPath) && readdirSync(targetPath).length > 0)
+      return { ok: false, error: 'a pasta escolhida já tem conteúdo — clonar aqui apagaria o que existe' }
+    mkdirSync(dirname(targetPath), { recursive: true })
+    gitNetwork(dirname(targetPath), ['clone', '--', url.trim(), targetPath])
+    if (!existsSync(join(targetPath, '.git')))
+      return { ok: false, error: 'o clone terminou sem repositório na pasta' }
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: `não consegui clonar: ${gitFailureText(error)}` }
+  }
+}
+
+/**
+ * (b) do item 6: pasta com conteúdo + link → garante repo (init + commit
+ * inicial), prende o `origin` e TENTA o push. O push é BEST-EFFORT por
+ * desenho: sem credencial na máquina ele falha, e o universo tem de nascer
+ * assim mesmo — o dono resolve a autenticação depois e empurra quando quiser.
+ */
+export function attachGitRemote(projectPath: string, url: string): GitRemoteSetupResult {
+  const clean = url.trim()
+  if (!isSupportedGitRemoteUrl(clean))
+    return { ok: false, warning: 'link do repositório inválido — o universo nasceu sem remoto; confira o endereço e prenda o origin depois' }
+  try {
+    if (!hasGitCommit(projectPath)) {
+      // `-b main` é o nome que o dono espera ver no GitHub; git < 2.28 não
+      // conhece a flag e cai no default — o initGitRepo abaixo cobre o resto.
+      try {
+        if (!existsSync(join(projectPath, '.git'))) git(projectPath, ['init', '-b', 'main'])
+      } catch {
+        // versão antiga do git: o init sem flag acontece dentro do initGitRepo
+      }
+      if (!initGitRepo(projectPath))
+        return { ok: false, warning: 'não consegui inicializar o repositório local — o universo nasceu sem remoto' }
+    }
+    const existing = (() => {
+      try {
+        return git(projectPath, ['remote', 'get-url', 'origin'])
+      } catch {
+        return ''
+      }
+    })()
+    git(projectPath, existing ? ['remote', 'set-url', 'origin', clean] : ['remote', 'add', 'origin', clean])
+  } catch (error) {
+    return { ok: false, warning: `não consegui prender o remoto: ${gitFailureText(error)}` }
+  }
+  try {
+    gitNetwork(projectPath, ['push', '-u', 'origin', 'HEAD'])
+    return { ok: true }
+  } catch (error) {
+    return {
+      ok: false,
+      warning: `remoto prendido, mas o push não passou: ${gitFailureText(error)} — o universo foi criado; autentique o git e envie quando quiser`
+    }
+  }
+}
+
 /** Pasta do projeto movida/renomeada: o `.git` de cada worktree
  *  (userData/worktrees) aponta para o caminho ANTIGO do repo — `git worktree
  *  repair` rodado do repo no caminho novo reescreve os ponteiros dos dois
@@ -1287,6 +1421,103 @@ export function missionWorkspaceReadout(
   return { healthy: true, workspace: worktree }
 }
 
+// ————— DIFF VIVO DA MISSÃO (2.0, onda D, item 4: o trilho rico) —————
+
+export interface MissionWorkspaceFile {
+  path: string
+  /** A(dicionado) · M(odificado) · D(eletado) · R(enomeado) · '?' (ainda fora do git). */
+  status: string
+}
+
+export interface MissionWorkspaceSummary {
+  /** Commits desta branch à frente da base — o que a integração vai levar. */
+  ahead: number
+  insertions: number
+  deletions: number
+  files: MissionWorkspaceFile[]
+}
+
+/** Teto do payload: o trilho mostra uma lista, não um dump do repositório. */
+const WORKSPACE_FILES_CAP = 400
+
+/**
+ * O que a missão MUDOU até agora, do ponto de vista do dono: commits à frente
+ * da base + o diff da base até a ÁRVORE DE TRABALHO (committed E não
+ * committed — o trilho é vivo, não uma foto do último commit).
+ *
+ * HONESTIDADE DO NÚMERO: insertions/deletions saem do `--numstat`, que só vê
+ * arquivo RASTREADO. Arquivo novo ainda fora do git entra na LISTA com status
+ * '?' e contribui 0/0 — melhor um total que se pode provar do que somar linhas
+ * de qualquer arquivo que apareceu na pasta (binário, build, evidência).
+ */
+export function missionWorkspaceSummary(
+  worktreeDir: string,
+  baseBranch?: string
+): MissionWorkspaceSummary | undefined {
+  if (!existsSync(worktreeDir)) return undefined
+  let ahead = 0
+  let from = 'HEAD'
+  const base = baseBranch?.trim()
+  if (base) {
+    // merge-base: a base pode ter andado depois que a missão nasceu, e diffar
+    // contra a ponta dela mostraria o trabalho DOS OUTROS como se fosse desta
+    // missão.
+    try {
+      from = git(worktreeDir, ['merge-base', base, 'HEAD']) || base
+    } catch {
+      from = base
+    }
+    try {
+      ahead = Number.parseInt(git(worktreeDir, ['rev-list', '--count', `${from}..HEAD`]), 10) || 0
+    } catch {
+      ahead = 0
+    }
+  }
+  let insertions = 0
+  let deletions = 0
+  const files: MissionWorkspaceFile[] = []
+  const seen = new Set<string>()
+  try {
+    for (const line of git(worktreeDir, ['diff', '--numstat', from]).split(/\r?\n/)) {
+      const parts = line.split('\t')
+      if (parts.length < 3) continue
+      // '-' nas duas colunas = binário: entra na lista, fora da soma.
+      insertions += Number.parseInt(parts[0], 10) || 0
+      deletions += Number.parseInt(parts[1], 10) || 0
+    }
+  } catch {
+    // sem base utilizável — a lista abaixo ainda vale
+  }
+  try {
+    for (const line of git(worktreeDir, ['diff', '--name-status', from]).split(/\r?\n/)) {
+      const parts = line.split('\t').filter(Boolean)
+      if (parts.length < 2) continue
+      // Rename/copy vêm como `R100 velho novo`: o que importa é o destino.
+      const path = parts[parts.length - 1]
+      if (seen.has(path)) continue
+      seen.add(path)
+      files.push({ path, status: parts[0].charAt(0) })
+    }
+  } catch {
+    // idem
+  }
+  try {
+    for (const line of git(worktreeDir, [
+      'ls-files',
+      '--others',
+      '--exclude-standard'
+    ]).split(/\r?\n/)) {
+      const path = line.trim()
+      if (!path || seen.has(path)) continue
+      seen.add(path)
+      files.push({ path, status: '?' })
+    }
+  } catch {
+    // repositório sem index utilizável
+  }
+  return { ahead, insertions, deletions, files: files.slice(0, WORKSPACE_FILES_CAP) }
+}
+
 /** Worktree de MISSÃO: branch mission/<id8> onde as tarefas da missão nascem
  *  e mergeiam — a main só vê a missão na integração final. */
 export function missionWorktreeDescriptor(baseDir: string, missionId: string): TaskWorktree {
@@ -1365,6 +1596,10 @@ export interface MergeResult {
   /** Receipt suficiente para alinhar o worktree sem apagar edição inesperada. */
   previousTargetHead?: string
   committedHead?: string
+  /** Arquivos em conflito, quando o veredito veio do merge-tree. Dado ESTRUTURADO
+   *  ao lado do `detail` em prosa — quem precisa contar (notificação de desktop
+   *  da onda D) nunca deve fazer parsing de mensagem de UI. */
+  conflictFiles?: string[]
 }
 
 export interface MergeTargetSnapshot {
@@ -1685,15 +1920,15 @@ export function missionMergePrecheck(
     // contrato do merge-tree: exit 1 = CONFLITO (1ª linha = OID, depois os
     // arquivos conflitados); outros códigos = sem veredito (git velho etc.)
     if (err.status === 1) {
-      const files = (err.stdout ?? '')
+      const conflictFiles = (err.stdout ?? '')
         .split('\n')
         .slice(1)
         .map((l) => l.trim())
         .filter(Boolean)
-        .slice(0, 6)
-        .join(', ')
+      const files = conflictFiles.slice(0, 6).join(', ')
       return {
         ok: false,
+        conflictFiles,
         detail: `CONFLITO com o destino${files ? ` em: ${files.slice(0, 200)}` : ''} — traga a base para a branch da missão (merge da base) e resolva antes de integrar`
       }
     }

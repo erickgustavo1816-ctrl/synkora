@@ -41,9 +41,63 @@ export interface GuiPaneSpawn {
   resumeSessionId?: string
   /** Primeiro turno injetado logo após o spawn (ex.: conteúdo do plano da missão). */
   firstPrompt?: string
+  /** Modo de permissão DESTA conversa (onda D — o seletor do composer).
+   *  Ausente = 'default' (o padrão do binário). */
+  permissionMode?: GuiPermissionMode
 }
 
 export type GuiPermBehavior = 'allow' | 'allow-always' | 'deny'
+
+// ————— modo de permissão POR CONVERSA (2.0, onda D) —————
+
+/**
+ * O seletor do composer, na régua do dono: padrão (pergunta tudo) / edições
+ * (edita sem perguntar) / bypass (não pergunta nada) / plano (só lê).
+ * Vocabulário ÚNICO — cada CLI recebe a tradução dele em `guiPermissionProfile`.
+ */
+export type GuiPermissionMode = 'default' | 'acceptEdits' | 'bypass' | 'plan'
+
+export const GUI_PERMISSION_MODES: readonly GuiPermissionMode[] = [
+  'default',
+  'acceptEdits',
+  'bypass',
+  'plan'
+]
+
+export function isGuiPermissionMode(value: unknown): value is GuiPermissionMode {
+  return typeof value === 'string' && (GUI_PERMISSION_MODES as readonly string[]).includes(value)
+}
+
+/** As chaves REAIS de cada CLI. Campo ausente = não passa flag nenhuma. */
+export interface GuiPermissionProfile {
+  /** claude: `--permission-mode` (validado no binário: acceptEdits, plan, bypassPermissions). */
+  permissionMode?: string
+  /** codex: SandboxMode do `thread/start`. */
+  sandbox?: string
+  /** codex: política de aprovação do `turn/start`. */
+  approvalPolicy?: string
+}
+
+/**
+ * Tradução do modo para o CLI. O claude tem UMA chave (`--permission-mode`);
+ * o codex separa o que o agente PODE fazer (sandbox) de quando ele PERGUNTA
+ * (approvalPolicy) — 'bypass' e 'plano' precisam dos dois, senão o pane cairia
+ * num diálogo de aprovação que o chat não tem como mostrar duas vezes.
+ */
+export function guiPermissionProfile(
+  cli: 'claude' | 'codex',
+  mode: GuiPermissionMode | undefined
+): GuiPermissionProfile {
+  if (!mode || mode === 'default') return {}
+  if (cli === 'claude') {
+    if (mode === 'acceptEdits') return { permissionMode: 'acceptEdits' }
+    if (mode === 'bypass') return { permissionMode: 'bypassPermissions' }
+    return { permissionMode: 'plan' }
+  }
+  if (mode === 'acceptEdits') return { sandbox: 'workspace-write' }
+  if (mode === 'bypass') return { sandbox: 'danger-full-access', approvalPolicy: 'never' }
+  return { sandbox: 'read-only', approvalPolicy: 'never' }
+}
 
 /** Evento vivo empurrado ao renderer. `evt` é o SessionEvent dos backends
  *  (maestroSession.ts — kinds: init, delta, thinking, text, tool, tool-result,
@@ -96,10 +150,14 @@ export class GuiEventRing {
 // ————— documento de resume (userData/gui-sessions.json) —————
 
 export interface GuiSessionRecord {
-  sessionId: string
+  /** Ausente enquanto o CLI não anunciou a conversa (o modo já é gravado no
+   *  create; o id chega no `init`/`session-id`). */
+  sessionId?: string
   cli: 'claude' | 'codex'
   projectId: string
   updatedAt: string
+  /** Último modo ESCOLHIDO para este pane (onda D): reabrir mantém a escolha. */
+  permissionMode?: GuiPermissionMode
 }
 
 interface GuiSessionsDoc {
@@ -144,6 +202,14 @@ export interface GuiSessionDeps {
     ids: { paneId: string; projectId?: string },
     detail?: Record<string, unknown>
   ): void
+  /** 2.0 onda D: a conversa parou pedindo permissão. A NOTIFICAÇÃO de desktop
+   *  é costurada no ipc/gui — este módulo nunca importa electron (é o que
+   *  mantém a suíte test:gui-sessions rodando em node puro). */
+  onPermissionPending?(input: {
+    paneId: string
+    projectId: string
+    toolName: string
+  }): void
 }
 
 /** Espera do handshake antes de soltar o firstPrompt (waitCaps resolve antes
@@ -172,15 +238,20 @@ export class GuiSessionRegistry {
     return this.doc.panes[paneId]
   }
 
-  create(spawn: GuiPaneSpawn): GuiResult {
-    if (!spawn.paneId) return { ok: false, error: 'pane sem identificador' }
-    if (!spawn.cwd) return { ok: false, error: 'pane sem pasta de trabalho' }
-    if (spawn.cli !== 'claude' && spawn.cli !== 'codex') {
-      return { ok: false, error: `CLI desconhecido: ${String(spawn.cli)}` }
+  create(input: GuiPaneSpawn): GuiResult {
+    if (!input.paneId) return { ok: false, error: 'pane sem identificador' }
+    if (!input.cwd) return { ok: false, error: 'pane sem pasta de trabalho' }
+    if (input.cli !== 'claude' && input.cli !== 'codex') {
+      return { ok: false, error: `CLI desconhecido: ${String(input.cli)}` }
     }
 
+    const current = this.panes.get(input.paneId)
+    // TROCA DE MODO NÃO PERDE A CONVERSA (onda D): mudar o modo de permissão
+    // muda o fingerprint, e o fingerprint manda respawnar. Sem esta herança o
+    // processo novo nasceria em branco no meio do trabalho — o modo é uma
+    // alavanca do dono, não um /clear disfarçado.
+    const spawn = current ? this.inheritConversation(input, current) : input
     const fingerprint = spawnFingerprint(spawn)
-    const current = this.panes.get(spawn.paneId)
     if (current) {
       // Remontagem do MESMO pane (troca de aba, reload da view): sessão viva e
       // idêntica se reusa — matar aqui jogaria a conversa fora. O replay vem
@@ -200,6 +271,12 @@ export class GuiSessionRegistry {
       ring.push(evt)
       this.deps.push({ paneId: spawn.paneId, evt })
       if (evt.type === 'init' || evt.type === 'session-id') this.remember(spawn, evt.sessionId)
+      if (evt.type === 'permission')
+        this.deps.onPermissionPending?.({
+          paneId: spawn.paneId,
+          projectId: spawn.projectId,
+          toolName: evt.toolName
+        })
     }
 
     let session: GuiBackend
@@ -217,10 +294,17 @@ export class GuiSessionRegistry {
     }
 
     this.panes.set(spawn.paneId, { spawn, fingerprint, session, ring, token })
+    // O modo é gravado JÁ no create (não espera o `init`): reabrir a conversa
+    // sem escolher nada tem de cair na última escolha do dono.
+    this.remember(spawn)
     this.deps.record?.(
       'gui-session-created',
       { paneId: spawn.paneId, projectId: spawn.projectId },
-      { cli: spawn.cli, resumed: Boolean(spawn.resumeSessionId) }
+      {
+        cli: spawn.cli,
+        resumed: Boolean(spawn.resumeSessionId),
+        permissionMode: spawn.permissionMode ?? 'default'
+      }
     )
 
     if (spawn.firstPrompt?.trim()) this.sendFirstPrompt(spawn.paneId, token, spawn.firstPrompt)
@@ -285,13 +369,30 @@ export class GuiSessionRegistry {
 
   // ————— internos —————
 
+  /**
+   * RESPAWN QUE PRESERVA A CONVERSA. Trocar o modo de permissão (ou qualquer
+   * campo do fingerprint) mata o processo e abre outro; a conversa mora no
+   * disco do CLI e se retoma por id. Quem tem o id mais fresco é o documento
+   * (o `remember` grava a cada `init`/`session-id`), então ele vem primeiro.
+   * Conversa retomada JÁ tem o briefing: o firstPrompt cai junto — repeti-lo
+   * seria re-briefing perseguindo o pane (lição da F6.8i).
+   */
+  private inheritConversation(spawn: GuiPaneSpawn, previous: GuiPaneEntry): GuiPaneSpawn {
+    const inherited = inheritedResumeSessionId(spawn, this.doc.panes[spawn.paneId], previous.spawn)
+    if (!inherited || inherited === spawn.resumeSessionId) return spawn
+    return { ...spawn, resumeSessionId: inherited, firstPrompt: undefined }
+  }
+
   private spawnSession(spawn: GuiPaneSpawn, sink: (evt: SessionEvent) => void): GuiBackend {
     const persona = spawn.systemPrompt?.trim() ?? ''
+    const permissions = guiPermissionProfile(spawn.cli, spawn.permissionMode)
     const opts = {
       cwd: spawn.cwd,
       configDir: spawn.configDir || undefined,
       model: spawn.model,
       effort: spawn.effort,
+      // Modo de permissão DESTA conversa, na chave que cada CLI entende.
+      ...permissions,
       // Chat aberto não morre por tédio (contrato do pane GUI).
       idleTimeoutMs: 0
     }
@@ -350,16 +451,30 @@ export class GuiSessionRegistry {
     )
   }
 
-  /** Grava a conversa do pane para o resume pós-boot (nunca apaga no kill). */
-  private remember(spawn: GuiPaneSpawn, sessionId: string): void {
-    if (!sessionId) return
+  /**
+   * Grava conversa + modo do pane (nunca apaga no kill: retomar é decisão de
+   * quem reabre). `sessionId` ausente = só o modo mudou — é o caminho do
+   * create, que carimba a escolha do dono antes de o CLI anunciar a conversa.
+   */
+  private remember(spawn: GuiPaneSpawn, sessionId?: string): void {
     const previous = this.doc.panes[spawn.paneId]
-    if (previous?.sessionId === sessionId && previous.cli === spawn.cli) return
+    const mode = spawn.permissionMode ?? 'default'
+    // Sessão do CLI ANTERIOR não vale para o CLI de agora (trocar a conta do
+    // universo/da missão para outro binário zera o id, nunca o herda).
+    const kept = previous?.cli === spawn.cli ? previous.sessionId : undefined
+    const nextSession = sessionId || kept
+    if (
+      previous?.cli === spawn.cli &&
+      previous.sessionId === nextSession &&
+      previous.permissionMode === mode
+    )
+      return
     this.doc.panes[spawn.paneId] = {
-      sessionId,
+      ...(nextSession ? { sessionId: nextSession } : {}),
       cli: spawn.cli,
       projectId: spawn.projectId,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      permissionMode: mode
     }
     if (!this.deps.storeFile) return
     try {
@@ -370,8 +485,28 @@ export class GuiSessionRegistry {
   }
 }
 
-/** Identidade do spawn: o que só muda com processo novo. */
-function spawnFingerprint(spawn: GuiPaneSpawn): string {
+/**
+ * Qual conversa o RESPAWN retoma (pura, exportada para teste). O caso que ela
+ * existe para resolver: o dono troca o modo de permissão no meio do trabalho,
+ * o fingerprint muda, o processo é substituído — e sem herdar o id a conversa
+ * nasceria em branco. Ordem: o que o chamador pediu > o documento (id mais
+ * fresco, gravado a cada `init`/`session-id`) > o spawn anterior. Sempre no
+ * MESMO CLI: sessão do claude não se retoma no codex e vice-versa.
+ */
+export function inheritedResumeSessionId(
+  next: Pick<GuiPaneSpawn, 'cli' | 'resumeSessionId'>,
+  remembered: Pick<GuiSessionRecord, 'cli' | 'sessionId'> | undefined,
+  previous: Pick<GuiPaneSpawn, 'cli' | 'resumeSessionId'> | undefined
+): string | undefined {
+  if (next.resumeSessionId) return next.resumeSessionId
+  if (remembered?.cli === next.cli && remembered.sessionId) return remembered.sessionId
+  if (previous?.cli === next.cli && previous.resumeSessionId) return previous.resumeSessionId
+  return undefined
+}
+
+/** Identidade do spawn: o que só muda com processo novo. Exportada para teste
+ *  — é ela que decide respawn, e a troca de modo TEM de cair nesse caminho. */
+export function spawnFingerprint(spawn: GuiPaneSpawn): string {
   return [
     spawn.cli,
     spawn.cwd,
@@ -379,6 +514,10 @@ function spawnFingerprint(spawn: GuiPaneSpawn): string {
     spawn.model ?? '',
     spawn.effort ?? '',
     spawn.resumeSessionId ?? '',
+    // Trocar o modo TEM de respawnar: as flags moram no SPAWN do processo
+    // (--permission-mode do claude, sandbox do thread/start do codex) e
+    // nenhum dos dois binários troca isso na conversa em andamento.
+    spawn.permissionMode ?? 'default',
     spawn.systemPrompt ?? ''
   ].join(' ')
 }

@@ -101,6 +101,7 @@ import { registerHarnessIpc } from './ipc/harness'
 import { registerGuiIpc } from './ipc/gui'
 import type { GuiSessionRegistry } from './guiSessions'
 import { isGuiMissionPaneId, isGuiPlanningPaneId } from './guiMissionContracts'
+import { initDesktopNotifications } from './desktopNotifications'
 import { registerProjectPlanIpc } from './ipc/projectPlan'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerProgressIpc } from './ipc/progress'
@@ -6693,6 +6694,11 @@ app.whenReady().then(async () => {
   // registrar tarde e identico a registrar cedo, e aqui TODO simbolo do
   // closure ja foi declarado: zero TDZ). NUNCA registrar no import.
   registerSkillsIpc(ctx)
+  // NOTIFICAÇÕES DE DESKTOP (2.0, onda D): acessor PREGUIÇOSO da janela — o
+  // createWindow só roda no fim deste bloco, e o módulo só consulta a janela
+  // na hora de notificar (é ela que decide se o app está em foco; em foco,
+  // nada é notificado). Mesmo padrão do `window: () => mainWindow` da view.
+  initDesktopNotifications(() => mainWindow)
   // A view de panes (F3-c1) fica DORMENTE até o host emitir o primeiro
   // panes-view:layout (F3-c2) — instanciar/registrar aqui não cria nada.
   panesViewManager = new PanesViewManager({
