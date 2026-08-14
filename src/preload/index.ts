@@ -33,6 +33,13 @@ import type {
   MissionWorkspaceSummary
 } from '../main/worktree'
 import type { PlanningGuiSpecResult } from '../main/ipc/projects'
+import type {
+  FilePreviewKind,
+  FilePreviewResult,
+  FileTreeEntry,
+  FileTreeResult,
+  FileTreeRoot
+} from '../main/filePreview'
 
 /** entrada do diário da caixa-preta + linha legível pronta para exibição */
 export type BlackboxTailEntry = BlackboxEntry & { line: string }
@@ -418,6 +425,9 @@ export interface DocFile {
   mtime: number
   size: number
 }
+
+/** Raiz autorizada pela main para a árvore/preview somente leitura. */
+export type { FilePreviewKind, FilePreviewResult, FileTreeEntry, FileTreeResult, FileTreeRoot }
 
 export interface TerminalFileLink {
   start: number
@@ -1526,6 +1536,18 @@ const api = {
     }
   },
   files: {
+    /** Árvore somente leitura: a main resolve a raiz pelo ID e devolve apenas
+     * caminhos relativos, nunca caminhos absolutos ou URLs locais diretas. */
+    listTree: (projectId: string, root: FileTreeRoot): Promise<FileTreeResult> =>
+      ipcRenderer.invoke('files:listTree', projectId, root),
+    /** Preview somente leitura. O caminho é relativo à raiz autorizada; não
+     * existe operação de edição, download ou salvamento neste contrato. */
+    preview: (
+      projectId: string,
+      root: FileTreeRoot,
+      relativePath: string
+    ): Promise<FilePreviewResult | null> =>
+      ipcRenderer.invoke('files:preview', projectId, root, relativePath),
     listDocs: (projectId: string): Promise<DocFile[]> =>
       ipcRenderer.invoke('files:listDocs', projectId),
     readDoc: (

@@ -8809,6 +8809,300 @@ body.pane-docking .pane-bar.draggable {
   max-width: 100%;
 }
 
+/* ---------- P25: árvore e prévia de arquivos, somente leitura ---------- */
+
+.files-view-tree {
+  gap: 12px;
+}
+
+.files-tree-pane {
+  display: flex;
+  flex-direction: column;
+  width: 310px;
+  overflow: hidden;
+}
+
+.files-tree-pane .files-list-head {
+  flex: none;
+  align-items: flex-start;
+}
+
+.files-root-label {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink-3);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.files-root-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+  margin: 0 0 8px;
+}
+
+.files-root-picker > span {
+  color: var(--ink-3);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.files-root-picker select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: 10px;
+  padding: 6px 7px;
+}
+
+.files-root-picker select:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 1px;
+}
+
+.files-readonly-note {
+  flex: none;
+  margin: 0 2px 8px;
+  color: var(--ink-3);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+
+.files-terminal-source,
+.files-tree-terminal-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-width: 0;
+  margin: 0 0 7px;
+  padding: 5px 7px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 5px;
+  color: var(--ink-2);
+  font-size: 10px;
+}
+
+.files-tree-terminal-path {
+  margin: 7px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-tree-notice {
+  flex: none;
+  margin: 0 0 7px;
+  padding: 6px 7px;
+  border-left: 2px solid var(--accent);
+  color: var(--ink-2);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.file-tree {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.file-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 28px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  text-align: left;
+}
+
+.file-tree-row:hover {
+  border-color: var(--line-strong);
+  background: rgba(232, 225, 208, 0.55);
+}
+
+.file-tree-row:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: -1px;
+}
+
+.file-tree-row.is-selected {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.file-tree-row.is-directory {
+  color: var(--ink-2);
+  font-weight: 700;
+}
+
+.file-tree-glyph {
+  width: 22px;
+  flex: none;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: center;
+}
+
+.file-tree-row.is-selected .file-tree-glyph,
+.file-tree-row.is-selected .file-tree-size {
+  color: var(--paper-2);
+}
+
+.file-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-tree-size {
+  margin-left: auto;
+  flex: none;
+  color: var(--ink-3);
+  font-size: 9px;
+}
+
+.file-tree-empty {
+  padding: 12px 3px;
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.file-preview-panel {
+  min-width: 0;
+}
+
+.file-preview-head {
+  min-height: 42px;
+}
+
+.file-preview-badge {
+  flex: none;
+  padding: 3px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--ink-3);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.file-preview-readonly,
+.file-preview-status-detail {
+  color: var(--ink-3);
+  font-size: 10px;
+}
+
+.file-preview-empty,
+.file-preview-status {
+  gap: 9px;
+  padding: 20px;
+  text-align: center;
+}
+
+.file-preview-empty p,
+.file-preview-status p {
+  max-width: 360px;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.file-code,
+.file-text {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  overflow: auto;
+  padding: 20px 24px 38px;
+  background: var(--panel);
+  color: var(--panel-ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.65;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.file-code code {
+  font: inherit;
+}
+
+.file-code-token.comment {
+  color: #9ca795;
+}
+
+.file-code-token.string {
+  color: #e1b37b;
+}
+
+.file-code-token.keyword {
+  color: #9bc4e7;
+  font-weight: 700;
+}
+
+.file-code-token.number,
+.file-code-token.literal {
+  color: #d7a8d9;
+}
+
+.file-image-preview {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  place-items: center;
+  overflow: auto;
+  padding: 24px;
+  background: var(--paper);
+}
+
+.file-image-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border: 1px solid var(--line-strong);
+  background: var(--paper-2);
+}
+
+@media (max-width: 760px) {
+  .files-view-tree {
+    flex-direction: column;
+  }
+
+  .files-tree-pane {
+    width: auto;
+    min-height: 190px;
+    max-height: 42%;
+  }
+
+  .file-preview-panel {
+    min-height: 0;
+  }
+
+  .file-preview-badge {
+    display: none;
+  }
+}
+
 /* ---------- aba Backlog: versões (escopo) + itens de produto ---------- */
 
 .backlog-view {

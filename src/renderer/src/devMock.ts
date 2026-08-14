@@ -12,7 +12,9 @@ import type {
   SynVoiceProvider,
   SynkoraApi,
   SynkoraSettings,
-  Task
+  Task,
+  FilePreviewResult,
+  FileTreeResult
 } from '../../preload/index'
 
 // Mock do bridge para desenvolver a UI num browser comum (sem Electron).
@@ -785,6 +787,28 @@ export function installDevMock(): void {
       onChanged: () => () => undefined
     },
     files: {
+      listTree: async (): Promise<FileTreeResult> => ({
+        entries: [
+          { path: 'src', name: 'src', kind: 'directory', depth: 0 },
+          { path: 'src/App.tsx', name: 'App.tsx', kind: 'file', depth: 1, size: 2400, mtime: Date.now(), previewKind: 'code' },
+          { path: 'docs', name: 'docs', kind: 'directory', depth: 0 },
+          { path: 'docs/PLANO.md', name: 'PLANO.md', kind: 'file', depth: 1, size: 9000, mtime: Date.now() - 86_400_000, previewKind: 'markdown' },
+          { path: 'README.md', name: 'README.md', kind: 'file', depth: 0, size: 1200, mtime: Date.now() - 3 * 86_400_000, previewKind: 'markdown' }
+        ],
+        truncated: false,
+        skipped: 0
+      }),
+      preview: async (_projectId: string, _root: unknown, relativePath: string): Promise<FilePreviewResult> => ({
+        ok: true,
+        path: relativePath,
+        name: relativePath.split('/').at(-1) ?? relativePath,
+        size: 420,
+        mtime: Date.now(),
+        kind: relativePath.endsWith('.md') ? 'markdown' : 'code',
+        content: relativePath.endsWith('.md')
+          ? `# ${relativePath}\n\nConteúdo **mockado** do preview somente leitura.`
+          : `const preview = true\nexport default preview\n`
+      }),
       listDocs: async () => [
         { path: '.synkora/CONTEXT.md', name: 'CONTEXT.md', group: 'synkora', mtime: Date.now(), size: 4200 },
         { path: 'docs/PLANO.md', name: 'PLANO.md', group: 'docs', mtime: Date.now() - 86_400_000, size: 9000 },

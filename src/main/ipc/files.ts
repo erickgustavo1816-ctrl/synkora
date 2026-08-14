@@ -19,6 +19,11 @@ import {
   type TerminalFileRoot
 } from '../terminalFileLinks'
 import type { MainContext } from '../mainContext'
+import {
+  listReadOnlyFileTree,
+  readReadOnlyFilePreview,
+  type FileTreeRoot
+} from '../filePreview'
 
 export function registerFilesIpc(ctx: MainContext): void {
   const {
@@ -49,6 +54,48 @@ export function registerFilesIpc(ctx: MainContext): void {
     }
     return roots
   }
+
+  /**
+   * Resolve the logical root in the main process. The renderer can submit only
+   * a project/mission ID here; it never gets to choose an absolute root path.
+   * Mission worktrees are authoritative state owned by MissionStore. The
+   * read-only helper performs the second, physical containment check.
+   */
+  const readOnlyRootPath = (
+    projectId: unknown,
+    rawRoot: unknown
+  ): { kind: FileTreeRoot['kind']; path: string } | null => {
+    if (typeof projectId !== 'string' || projectId.length === 0 || projectId.length > 256) return null
+    const project = projects.get(projectId)
+    if (!project || typeof project.path !== 'string') return null
+    if (!rawRoot || typeof rawRoot !== 'object') return null
+    const root = rawRoot as { kind?: unknown; missionId?: unknown }
+    if (root.kind === 'project') return { kind: 'project', path: project.path }
+    if (root.kind !== 'mission' || typeof root.missionId !== 'string' || root.missionId.length > 256) {
+      return null
+    }
+    const mission = missions.get(root.missionId)
+    if (!mission || mission.projectId !== projectId) return null
+    return {
+      kind: 'mission',
+      path: typeof mission.worktree === 'string' && mission.worktree ? mission.worktree : project.path
+    }
+  }
+
+  ipcMain.handle('files:listTree', (_e, projectId: unknown, rawRoot: unknown) => {
+    const root = readOnlyRootPath(projectId, rawRoot)
+    if (!root) return { entries: [], truncated: false, skipped: 0, error: 'raiz de arquivos indisponível' }
+    return listReadOnlyFileTree(root.path)
+  })
+
+  ipcMain.handle(
+    'files:preview',
+    (_e, projectId: unknown, rawRoot: unknown, relativePath: unknown) => {
+      const root = readOnlyRootPath(projectId, rawRoot)
+      if (!root || typeof relativePath !== 'string') return null
+      return readReadOnlyFilePreview(root.path, relativePath)
+    }
+  )
 
   ipcMain.handle('files:listDocs', (_e, projectId: string): DocFile[] => {
     const project = projects.get(projectId)

@@ -31,6 +31,7 @@
     "test:terminal-file-links": "node --experimental-strip-types --test scripts/test-terminal-file-links.mjs",
     "test:settings-secrets": "node --experimental-strip-types --test scripts/test-settings-secrets.mjs",
     "test:project-documents": "node --experimental-strip-types --test scripts/test-project-documents.mjs",
+    "test:file-preview": "node --experimental-strip-types --test scripts/test-file-preview.mjs",
     "test:diagnostics": "node --experimental-strip-types --test scripts/test-diagnostics-sanitization.mjs",
     "test:pty-recovery": "node --experimental-strip-types --test scripts/test-pty-recovery.mjs",
     "test:skills-routing": "node --experimental-strip-types --test scripts/test-skills-routing.mjs",

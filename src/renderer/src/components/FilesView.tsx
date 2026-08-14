@@ -1,62 +1,112 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
-import type { DocFile } from '../store'
-import type { TerminalMarkdownTarget } from '../../../preload/index'
+import { useCallback, useEffect, useState } from 'react'
+import type {
+  FilePreviewResult,
+  FileTreeEntry,
+  FileTreeRoot,
+  Mission,
+  TerminalMarkdownTarget
+} from '../../../preload/index'
+import FilePreviewPanel from './FilePreviewPanel'
+import FileTree from './FileTree'
 import { onMarkdownOpen, takeMarkdownOpen } from '../projectFileNavigation'
-
-// Aba ARQUIVOS: os .md do projeto (planos que o Maestro escreve, dossiê,
-// docs, transcripts) listados e abertos DENTRO do Synkora, renderizados
-// bonitos no tema papel — sem precisar de editor externo.
-
-const GROUP_LABEL: Record<DocFile['group'], string> = {
-  projeto: 'raiz do projeto',
-  docs: 'docs/',
-  synkora: '.synkora (maestro)',
-  transcripts: 'transcripts de execução'
-}
-
-const GROUP_ORDER: DocFile['group'][] = ['synkora', 'docs', 'projeto', 'transcripts']
-
-function fmtWhen(mtime: number): string {
-  const d = new Date(mtime)
-  const today = new Date()
-  const sameDay = d.toDateString() === today.toDateString()
-  return sameDay
-    ? d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-    : d.toLocaleDateString('pt-BR')
-}
 
 interface Props {
   projectId: string
+  /** Quando presente, abre a raiz física do worktree desta missão. */
+  missionId?: string
 }
 
-export default function FilesView({ projectId }: Props): React.JSX.Element {
-  const [docs, setDocs] = useState<DocFile[]>([])
-  const [selected, setSelected] = useState<string | null>(null)
-  const [terminalDoc, setTerminalDoc] = useState<TerminalMarkdownTarget | null>(null)
-  const [content, setContent] = useState<string | null>(null)
-  const [contentMtime, setContentMtime] = useState<number | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [readerRevision, setReaderRevision] = useState(0)
-  const activeFileRef = useRef<HTMLButtonElement | null>(null)
+type TerminalPreview = {
+  ok: true
+  kind: 'markdown'
+  path: string
+  name: string
+  size: number
+  mtime: number
+  content: string
+}
 
-  const bridgeOk = Boolean(window.synkora.files)
+function terminalMarkdownPreview(
+  target: TerminalMarkdownTarget,
+  doc: { content: string; mtime: number } | null
+): TerminalPreview | null {
+  if (!doc) return null
+  return {
+    ok: true,
+    kind: 'markdown',
+    path: target.path.replace(/\\/g, '/'),
+    name: target.name,
+    size: new TextEncoder().encode(doc.content).byteLength,
+    mtime: doc.mtime,
+    content: doc.content
+  }
+}
+
+/**
+ * Aba Arquivos: árvore + preview somente leitura.
+ *
+ * A lista e a leitura passam pela main; o renderer envia apenas o ID da raiz
+ * lógica e o caminho relativo devolvido pela própria árvore. Não há textarea,
+ * editor, save, download ou URL local direta nesta superfície.
+ */
+export default function FilesView({ projectId, missionId }: Props): React.JSX.Element {
+  const [missionOptions, setMissionOptions] = useState<Mission[]>([])
+  const [selectedRoot, setSelectedRoot] = useState<FileTreeRoot>(
+    () => (missionId ? { kind: 'mission', missionId } : { kind: 'project' })
+  )
+  const root = selectedRoot
+  const [entries, setEntries] = useState<FileTreeEntry[]>([])
+  const [treeError, setTreeError] = useState<string | null>(null)
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [terminalDoc, setTerminalDoc] = useState<TerminalMarkdownTarget | null>(null)
+  const [preview, setPreview] = useState<FilePreviewResult | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [revision, setRevision] = useState(0)
+
+  const bridgeOk = typeof window.synkora.files !== 'undefined'
+
+  useEffect(() => {
+    setSelectedRoot(missionId ? { kind: 'mission', missionId } : { kind: 'project' })
+  }, [missionId, projectId])
+
+  useEffect(() => {
+    let stale = false
+    void window.synkora.missions.list(projectId).then((missions) => {
+      if (!stale) setMissionOptions(missions)
+    }).catch(() => {
+      if (!stale) setMissionOptions([])
+    })
+    return () => {
+      stale = true
+    }
+  }, [projectId])
 
   const refresh = useCallback(async () => {
-    if (!window.synkora.files) return
-    const list = await window.synkora.files.listDocs(projectId)
-    setDocs(list)
-  }, [projectId])
+    if (!window.synkora.files?.listTree) return
+    try {
+      const result = await window.synkora.files.listTree(projectId, root)
+      setEntries(result.entries)
+      setTreeError(
+        result.error ?? (result.truncated ? 'árvore limitada ao teto de segurança' : null)
+      )
+      if (!terminalDoc && selectedPath && !result.entries.some((entry) => entry.path === selectedPath)) {
+        setSelectedPath(null)
+      }
+    } catch {
+      setEntries([])
+      setTreeError('não foi possível carregar a árvore de arquivos')
+    }
+  }, [projectId, root, selectedPath, terminalDoc])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
 
   const openFromTerminal = useCallback((target: TerminalMarkdownTarget): void => {
-    setSelected(null)
+    setSelectedPath(target.path.replace(/\\/g, '/'))
     setTerminalDoc(target)
-    setReaderRevision((value) => value + 1)
+    setPreview(null)
+    setRevision((value) => value + 1)
   }, [])
 
   useEffect(() => {
@@ -65,172 +115,138 @@ export default function FilesView({ projectId }: Props): React.JSX.Element {
     return onMarkdownOpen(projectId, openFromTerminal)
   }, [openFromTerminal, projectId])
 
-  // Se o .md já faz parte do catálogo normal, seleciona sua posição real na
-  // lista. Arquivos válidos fora das pastas indexadas continuam no grupo
-  // efêmero "aberto do terminal" logo acima.
+  // Se o terminal abriu um arquivo da raiz exibida, deixa a árvore ser a única
+  // indicação visual da seleção. Alvos do pane continuam no marcador acima da
+  // árvore, sem inventar uma entrada fora da raiz autoritativa.
   useEffect(() => {
     if (
       terminalDoc?.root === 'project' &&
-      docs.some((doc) => doc.path === terminalDoc.path)
+      entries.some((entry) => entry.kind === 'file' && entry.path === terminalDoc.path)
     ) {
-      setSelected(terminalDoc.path)
       setTerminalDoc(null)
     }
-  }, [docs, terminalDoc])
-
-  // A navegação veio de um clique explícito no terminal: mantém o arquivo
-  // selecionado visível na lista e entrega o foco de teclado para a nova aba.
-  useEffect(() => {
-    if (!selected && !terminalDoc) return
-    const frame = requestAnimationFrame(() => {
-      activeFileRef.current?.focus({ preventScroll: true })
-      activeFileRef.current?.scrollIntoView({ block: 'nearest' })
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [selected, terminalDoc])
+  }, [entries, terminalDoc])
 
   useEffect(() => {
-    if ((!selected && !terminalDoc) || !window.synkora.files) return
+    if (!selectedPath || !window.synkora.files) return
     let stale = false
     setLoading(true)
-    setContent(null)
-    setContentMtime(null)
-    const request = terminalDoc
-      ? window.synkora.files.readTerminalDoc(
-          projectId,
-          terminalDoc.paneId,
-          terminalDoc.root,
-          terminalDoc.path
-        )
-      : window.synkora.files.readDoc(projectId, selected as string)
+    setPreview(null)
+
+    const request: Promise<FilePreviewResult | null> =
+      terminalDoc?.root === 'pane'
+        ? window.synkora.files.readTerminalDoc(
+            projectId,
+            terminalDoc.paneId,
+            terminalDoc.root,
+            terminalDoc.path
+          ).then((doc) => terminalMarkdownPreview(terminalDoc, doc))
+        : window.synkora.files.preview(projectId, root, selectedPath)
+
     void request
-      .then((doc) => {
+      .then((result) => {
         if (stale) return
-        setContent(doc?.content ?? '_arquivo não encontrado (foi movido/apagado?)_')
-        setContentMtime(doc?.mtime ?? null)
+        setPreview(result)
         setLoading(false)
       })
       .catch(() => {
         if (stale) return
-        setContent('_não foi possível abrir este arquivo agora_')
+        setPreview({ ok: false, error: 'não foi possível abrir este arquivo agora', path: selectedPath })
         setLoading(false)
       })
     return () => {
       stale = true
     }
-  }, [projectId, readerRevision, selected, terminalDoc])
-
-  // marked (GFM) + DOMPurify: o markdown vem de agentes/arquivos locais — o
-  // sanitize evita qualquer HTML embutido esperto virar script no renderer.
-  const html = useMemo(() => {
-    if (content == null) return ''
-    const raw = marked.parse(content, { async: false, gfm: true, breaks: false })
-    return DOMPurify.sanitize(raw)
-  }, [content])
+  }, [projectId, revision, root, selectedPath, terminalDoc])
 
   if (!bridgeOk) {
     return (
       <div className="ws-empty">
         <p className="empty-title">Arquivos indisponíveis</p>
         <p className="hint">
-          Reinicie o app (<code>npm run dev</code>) para carregar a API nova de arquivos.
+          Reinicie o app (<code>npm run dev</code>) para carregar a API de leitura.
         </p>
       </div>
     )
   }
 
-  const grouped = GROUP_ORDER.map((g) => ({
-    group: g,
-    files: docs.filter((d) => d.group === g)
-  })).filter((g) => g.files.length > 0)
-
-  const current = selected ? docs.find((d) => d.path === selected) : undefined
-  const activePath = terminalDoc?.displayPath ?? selected
-  const activeMtime = contentMtime ?? current?.mtime
+  const activeMission = selectedRoot.kind === 'mission'
+    ? missionOptions.find((mission) => mission.id === selectedRoot.missionId)
+    : undefined
+  const rootLabel = selectedRoot.kind === 'mission'
+    ? activeMission ? `missão · ${activeMission.title}` : 'worktree da missão'
+    : 'raiz do projeto'
+  // displayPath is retained only for the legacy terminal-navigation contract;
+  // P25 displays the normalized relative path, never an absolute candidate.
+  const activePath = selectedPath
 
   return (
-    <div className="files-view">
-      <aside className="files-list">
+    <div className="files-view files-view-tree">
+      <aside className="files-list files-tree-pane">
         <div className="files-list-head">
-          <span className="files-title">arquivos .md</span>
-          <button className="term-btn ghost-dim" data-tip="Recarregar a lista" onClick={() => void refresh()}>
+          <div>
+            <span className="files-title">arquivos</span>
+            <span className="files-root-label">{rootLabel}</span>
+          </div>
+          <button
+            type="button"
+            className="term-btn ghost-dim"
+            data-tip="Recarregar a árvore"
+            aria-label="Recarregar a árvore"
+            onClick={() => void refresh()}
+          >
             ↻
           </button>
         </div>
-        {terminalDoc && (
-          <div className="files-group">
-            <div className="files-group-label">aberto do terminal</div>
-            <button
-              ref={activeFileRef}
-              className="files-item active"
-              data-tip={terminalDoc.displayPath}
-              onClick={() => setReaderRevision((value) => value + 1)}
-            >
-              <span className="files-item-name">{terminalDoc.name}</span>
-              <span className="files-item-when">agora</span>
-            </button>
-          </div>
-        )}
-        {grouped.length === 0 && (
-          <div className="files-empty">
-            nenhum .md encontrado — peça um plano ao Maestro (ele salva em .synkora/) ou rode 📚
-            estudar
-          </div>
-        )}
-        {grouped.map(({ group, files }) => (
-          <div key={group} className="files-group">
-            <div className="files-group-label">{GROUP_LABEL[group]}</div>
-            {files.map((f) => (
-              <button
-                key={f.path}
-                ref={selected === f.path ? activeFileRef : undefined}
-                className={`files-item ${selected === f.path ? 'active' : ''}`}
-                data-tip={f.path}
-                onClick={() => {
-                  setTerminalDoc(null)
-                  setSelected(f.path)
-                }}
-              >
-                <span className="files-item-name">{f.name}</span>
-                <span className="files-item-when">{fmtWhen(f.mtime)}</span>
-              </button>
+        <label className="files-root-picker">
+          <span>origem da leitura</span>
+          <select
+            value={selectedRoot.kind === 'project' ? 'project' : selectedRoot.missionId}
+            onChange={(event) => {
+              const value = event.currentTarget.value
+              setSelectedRoot(value === 'project' ? { kind: 'project' } : { kind: 'mission', missionId: value })
+              setSelectedPath(null)
+              setTerminalDoc(null)
+              setPreview(null)
+            }}
+          >
+            <option value="project">raiz do projeto</option>
+            {missionOptions.map((mission) => (
+              <option key={mission.id} value={mission.id}>
+                missão · {mission.title}
+              </option>
             ))}
+          </select>
+        </label>
+        <div className="files-readonly-note">somente leitura · sem salvar</div>
+        {terminalDoc && (
+          <div className="files-terminal-source" data-tip={terminalDoc.path}>
+            <span aria-hidden="true">↳</span>
+            <span>aberto do terminal</span>
           </div>
-        ))}
-      </aside>
-      <section className="files-reader">
-        {!activePath ? (
-          <div className="files-placeholder">
-            <span className="files-placeholder-icon">▤</span>
-            <p>escolha um arquivo ao lado para ler aqui, formatado</p>
-          </div>
-        ) : (
-          <>
-            <div className="files-reader-head">
-              <span className="files-reader-path" data-tip={activePath}>
-                {activePath}
-              </span>
-              {activeMtime != null && (
-                <span className="files-reader-when">atualizado {fmtWhen(activeMtime)}</span>
-              )}
-              <button
-                className="term-btn ghost-dim"
-                data-tip="Recarregar este arquivo"
-                onClick={() => setReaderRevision((value) => value + 1)}
-              >
-                ↻
-              </button>
-            </div>
-            {loading ? (
-              <div className="files-placeholder">
-                <p>carregando…</p>
-              </div>
-            ) : (
-              <article className="md-view" dangerouslySetInnerHTML={{ __html: html }} />
-            )}
-          </>
         )}
-      </section>
+        {treeError && <div className="files-tree-notice">{treeError}</div>}
+        <FileTree
+          entries={entries}
+          selectedPath={selectedPath}
+          onSelect={(path) => {
+            setTerminalDoc(null)
+            setSelectedPath(path)
+            setRevision((value) => value + 1)
+          }}
+        />
+        {activePath && terminalDoc?.root === 'pane' && (
+          <div className="files-tree-terminal-path" data-tip={terminalDoc.path}>
+            {terminalDoc.name}
+          </div>
+        )}
+      </aside>
+      <FilePreviewPanel
+        path={activePath}
+        preview={preview}
+        loading={loading}
+        onReload={() => setRevision((value) => value + 1)}
+      />
     </div>
   )
 }
