@@ -1,3 +1,11 @@
+import type {
+  GuiAlertPayload,
+  GuiAttachPayload,
+  GuiAttachResult,
+  GuiAttachmentDescriptor,
+  GuiQueuedDeliveryInput
+} from '../../preload'
+
 // Ponte tipada do PANE GUI (Synkora 2.0, onda A).
 //
 // O contrato vive em docs/GUI_PANE_CONTRACT.md e tem duas metades: o agente
@@ -18,6 +26,9 @@
  *  agente pode agir sozinho é CADA conversa, no próprio composer.
  *  padrão = pergunta o que for sensível · edições = edita sem perguntar ·
  *  bypass = segue reto · plano = só planeja, não escreve. */
+/** Espelho do limite autoritativo validado no main antes do clone IPC. */
+export const GUI_PROMPT_MAX_CHARS = 256 * 1024
+
 export type GuiPermissionMode = 'default' | 'acceptEdits' | 'bypass' | 'plan'
 
 export interface GuiPaneSpawn {
@@ -54,7 +65,29 @@ export type GuiPermBehavior = 'allow' | 'allow-always' | 'deny'
  *  result, fatal, closed). */
 export interface GuiLivePayload {
   paneId: string
+  seq: number
   evt: unknown /* SessionEvent */
+}
+
+export interface GuiExecutorPatch {
+  model?: string | null
+  effort?: string | null
+}
+
+export type GuiExecutorResult =
+  | { ok: true; model: string | null; effort: string | null }
+  | { ok: false; error: string }
+
+export interface GuiReplayEvent {
+  seq: number
+  evt: GuiSessionEvent
+}
+
+export interface GuiReplayState {
+  events: GuiReplayEvent[]
+  cursor: number
+  exists: boolean
+  alive: boolean
 }
 
 // ————— espelho do SessionEvent do main —————
@@ -112,28 +145,73 @@ export type GuiSessionEvent =
     }
   | { type: 'delta'; text: string }
   | { type: 'thinking'; text?: string }
+  | { type: 'turn-started' }
+  | { type: 'turn-continuation'; continues: boolean }
+  | {
+      type: 'session-restarted'
+      ready: boolean
+      contextTokens?: number | null
+      contextWindow?: number | null
+    }
+  | { type: 'conversation-cleared' }
+  | { type: 'executor-changed'; model: string | null; effort: string | null }
+  | {
+      type: 'user-message'
+      id: string
+      text: string
+      attachments?: GuiAttachmentDescriptor[]
+      at: number
+    }
   | { type: 'text'; text: string }
-  | { type: 'tool'; name: string; input: Record<string, unknown> }
-  | { type: 'tool-result'; text: string; isError: boolean }
+  | { type: 'tool'; name: string; input: Record<string, unknown>; toolUseId?: string }
+  | {
+      type: 'tool-result'
+      text: string
+      isError: boolean
+      outcome?: 'completed' | 'failed' | 'denied' | 'cancelled'
+      toolUseId?: string
+      lineCount?: number
+      truncated?: boolean
+    }
   | {
       type: 'permission'
       requestId: string
+      toolUseId?: string
       toolName: string
       description: string
       inputPretty: string
       reason?: string
+      permissionRule?: string
       canAlways: boolean
     }
   | { type: 'permission-cancel'; requestId: string }
+  | {
+      type: 'interaction-resolved'
+      requestId: string
+      resolution:
+        | {
+            kind: 'permission'
+            toolUseId?: string
+            toolName: string
+            behavior: GuiPermBehavior
+          }
+        | { kind: 'question'; entries: { question: string; answer: string }[] }
+        | { kind: 'plan'; approve: boolean }
+        | { kind: 'stale' }
+    }
   | { type: 'question'; requestId: string; questions: GuiQuestion[] }
   | { type: 'plan-review'; requestId: string; plan: string }
   | { type: 'session-id'; sessionId: string }
   | { type: 'ready'; caps: GuiCliCaps }
   | { type: 'command-output'; text: string }
+  | { type: 'context-usage'; contextTokens: number | null; contextWindow: number | null }
+  | { type: 'command-completed'; isError: boolean; continues: boolean; errorText?: string }
   | { type: 'limit'; text: string }
   | {
       type: 'result'
       isError: boolean
+      outcome?: 'completed' | 'failed' | 'cancelled'
+      continues?: boolean
       errorText?: string
       resultText?: string
       contextTokens?: number
@@ -156,7 +234,20 @@ export function asGuiEvent(evt: unknown): GuiSessionEvent | null {
 
 interface GuiBridge {
   create: (spawn: GuiPaneSpawn) => Promise<{ ok: boolean; error?: string }>
-  send: (paneId: string, text: string) => Promise<{ ok: boolean }>
+  configureExecutor: (
+    paneId: string,
+    patch: GuiExecutorPatch
+  ) => Promise<GuiExecutorResult>
+  send: (
+    paneId: string,
+    text: string,
+    messageId: string,
+    attachments?: GuiAttachmentDescriptor[]
+  ) => Promise<{ ok: boolean; error?: string }>
+  deliverQueued: (
+    paneId: string,
+    input: GuiQueuedDeliveryInput
+  ) => Promise<{ ok: boolean; error?: string }>
   permission: (
     paneId: string,
     requestId: string,
@@ -172,10 +263,20 @@ interface GuiBridge {
     requestId: string,
     approve: boolean
   ) => Promise<{ ok: boolean; error?: string }>
-  interrupt: (paneId: string) => Promise<{ ok: boolean }>
+  interrupt: (paneId: string) => Promise<{ ok: boolean; error?: string }>
   kill: (paneId: string) => Promise<{ ok: boolean }>
-  state: (paneId: string) => Promise<{ events: unknown[] }>
+  state: (paneId: string) => Promise<{
+    events: unknown[]
+    cursor?: number
+    exists?: boolean
+    alive?: boolean
+  }>
+  attach: (paneId: string, payload: GuiAttachPayload) => Promise<GuiAttachResult>
+  attachFolder: (paneId: string) => Promise<GuiAttachResult>
+  visibility: (paneId: string, active: boolean) => void
+  presented: (paneId: string, terminalSeq: number) => void
   onLive: (cb: (payload: GuiLivePayload) => void) => () => void
+  onAlert: (cb: (payload: GuiAlertPayload) => void) => () => void
 }
 
 function bridge(): Partial<GuiBridge> | undefined {
@@ -201,13 +302,18 @@ export const guiApi = {
     }
   },
 
-  async send(paneId: string, text: string): Promise<{ ok: boolean }> {
+  async send(
+    paneId: string,
+    text: string,
+    messageId: string,
+    attachments?: GuiAttachmentDescriptor[]
+  ): Promise<{ ok: boolean; error?: string }> {
     const api = bridge()
-    if (!api?.send) return { ok: false }
+    if (!api?.send) return { ok: false, error: NO_BRIDGE }
     try {
-      return (await api.send(paneId, text)) ?? { ok: true }
-    } catch {
-      return { ok: false }
+      return (await api.send(paneId, text, messageId, attachments)) ?? { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   },
 
@@ -215,13 +321,43 @@ export const guiApi = {
     paneId: string,
     requestId: string,
     behavior: GuiPermBehavior
-  ): Promise<{ ok: boolean }> {
+  ): Promise<{ ok: boolean; error?: string; retryable?: boolean }> {
     const api = bridge()
-    if (!api?.permission) return { ok: false }
+    if (!api?.permission) return { ok: false, error: NO_BRIDGE, retryable: true }
     try {
       return (await api.permission(paneId, requestId, behavior)) ?? { ok: true }
-    } catch {
-      return { ok: false }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        retryable: true
+      }
+    }
+  },
+
+  async deliverQueued(
+    paneId: string,
+    input: GuiQueuedDeliveryInput
+  ): Promise<{ ok: boolean; error?: string }> {
+    const api = bridge()
+    if (!api?.deliverQueued) return { ok: false, error: NO_BRIDGE }
+    try {
+      return (await api.deliverQueued(paneId, input)) ?? { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+
+  async configureExecutor(
+    paneId: string,
+    patch: GuiExecutorPatch
+  ): Promise<GuiExecutorResult> {
+    const api = bridge()
+    if (!api?.configureExecutor) return { ok: false, error: NO_BRIDGE }
+    try {
+      return await api.configureExecutor(paneId, patch)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   },
 
@@ -231,13 +367,17 @@ export const guiApi = {
     paneId: string,
     requestId: string,
     answers: Record<string, string>
-  ): Promise<{ ok: boolean; error?: string }> {
+  ): Promise<{ ok: boolean; error?: string; retryable?: boolean }> {
     const api = bridge()
-    if (!api?.answerQuestion) return { ok: false, error: NO_BRIDGE }
+    if (!api?.answerQuestion) return { ok: false, error: NO_BRIDGE, retryable: true }
     try {
       return (await api.answerQuestion(paneId, requestId, answers)) ?? { ok: true }
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+        retryable: true
+      }
     }
   },
 
@@ -246,23 +386,27 @@ export const guiApi = {
     paneId: string,
     requestId: string,
     approve: boolean
-  ): Promise<{ ok: boolean; error?: string }> {
+  ): Promise<{ ok: boolean; error?: string; retryable?: boolean }> {
     const api = bridge()
-    if (!api?.answerPlan) return { ok: false, error: NO_BRIDGE }
+    if (!api?.answerPlan) return { ok: false, error: NO_BRIDGE, retryable: true }
     try {
       return (await api.answerPlan(paneId, requestId, approve)) ?? { ok: true }
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+        retryable: true
+      }
     }
   },
 
-  async interrupt(paneId: string): Promise<{ ok: boolean }> {
+  async interrupt(paneId: string): Promise<{ ok: boolean; error?: string }> {
     const api = bridge()
-    if (!api?.interrupt) return { ok: false }
+    if (!api?.interrupt) return { ok: false, error: NO_BRIDGE }
     try {
       return (await api.interrupt(paneId)) ?? { ok: true }
-    } catch {
-      return { ok: false }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   },
 
@@ -278,15 +422,56 @@ export const guiApi = {
 
   /** Replay para remontagem: o main guarda um ring buffer (~500 eventos) por
    *  pane. Devolve a lista já filtrada pelo espelho de tipos. */
-  async state(paneId: string): Promise<GuiSessionEvent[]> {
+  async state(paneId: string): Promise<GuiReplayState> {
     const api = bridge()
-    if (!api?.state) return []
+    if (!api?.state) return { events: [], cursor: 0, exists: false, alive: false }
     try {
       const res = await api.state(paneId)
-      const events = Array.isArray(res?.events) ? res.events : []
-      return events.map(asGuiEvent).filter((e): e is GuiSessionEvent => e !== null)
+      const rawEvents = Array.isArray(res?.events) ? res.events : []
+      const events: GuiReplayEvent[] = []
+      for (let index = 0; index < rawEvents.length; index += 1) {
+        const raw = rawEvents[index]
+        const record = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null
+        const sequenced = record && typeof record['seq'] === 'number' ? record : null
+        const evt = asGuiEvent(sequenced ? sequenced['evt'] : raw)
+        if (!evt) continue
+        events.push({ seq: sequenced ? (sequenced['seq'] as number) : index + 1, evt })
+      }
+      const fallbackCursor = events.reduce((max, event) => Math.max(max, event.seq), 0)
+      const exists = typeof res?.exists === 'boolean' ? res.exists : events.length > 0
+      return {
+        events,
+        cursor:
+          typeof res?.cursor === 'number' && Number.isSafeInteger(res.cursor)
+            ? res.cursor
+            : fallbackCursor,
+        exists,
+        // Ponte antiga nao informava vida; assumir viva quando ela afirmava
+        // que a entrada existia evita abrir dois processos durante upgrade.
+        alive: typeof res?.alive === 'boolean' ? res.alive : exists
+      }
     } catch {
-      return []
+      return { events: [], cursor: 0, exists: false, alive: false }
+    }
+  },
+
+  async attach(paneId: string, payload: GuiAttachPayload): Promise<GuiAttachResult> {
+    const api = bridge()
+    if (!api?.attach) return { ok: false, error: NO_BRIDGE }
+    try {
+      return await api.attach(paneId, payload)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+
+  async attachFolder(paneId: string): Promise<GuiAttachResult> {
+    const api = bridge()
+    if (!api?.attachFolder) return { ok: false, error: NO_BRIDGE }
+    try {
+      return await api.attachFolder(paneId)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   },
 
@@ -296,6 +481,38 @@ export const guiApi = {
     if (!api?.onLive) return () => undefined
     try {
       return api.onLive(cb) ?? (() => undefined)
+    } catch {
+      return () => undefined
+    }
+  },
+
+  visibility(paneId: string, active: boolean): void {
+    const api = bridge()
+    try {
+      api?.visibility?.(paneId, active)
+    } catch {
+      // Visibilidade é um sinal auxiliar; o chat continua utilizável sem ele.
+    }
+  },
+
+  /**
+   * ACK visual: a interface informa somente o seq; o resultado continua sendo
+   * escolhido pelo evento canônico que ficou retido no processo principal.
+   */
+  presented(paneId: string, terminalSeq: number): void {
+    const api = bridge()
+    try {
+      api?.presented?.(paneId, terminalSeq)
+    } catch {
+      // Uma desmontagem concorrente não pode quebrar a conversa.
+    }
+  },
+
+  onAlert(cb: (payload: GuiAlertPayload) => void): () => void {
+    const api = bridge()
+    if (!api?.onAlert) return () => undefined
+    try {
+      return api.onAlert(cb) ?? (() => undefined)
     } catch {
       return () => undefined
     }

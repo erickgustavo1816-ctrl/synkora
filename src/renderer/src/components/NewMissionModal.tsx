@@ -4,6 +4,11 @@ import { useStore, type Mission, type MissionType, type Version } from '../store
 import { ModelSelect } from './ModelSelect'
 import Select from './Select'
 
+type MissionVersionChoices = {
+  versions: Version[]
+  defaultVersionId?: string
+}
+
 // Modal 🚀 NOVA MISSÃO — COMPARTILHADO entre o board (+ missão), a aba
 // Versões (criar missão a partir de itens: título/goal/versão chegam
 // pré-preenchidos; a versão vem travada) e a CONFIRMAÇÃO de missão criada
@@ -56,6 +61,9 @@ export default function NewMissionModal({
   const [effort, setEffort] = useState(reseatMission?.effort ?? '')
   const [versionId, setVersionId] = useState(lockedMission?.versionId ?? initialVersionId ?? '')
   const [versions, setVersions] = useState<Version[]>([])
+  const [versionChoices, setVersionChoices] = useState<MissionVersionChoices | null>(null)
+  const [versionChoicesLoading, setVersionChoicesLoading] = useState(true)
+  const [versionChoicesError, setVersionChoicesError] = useState('')
   // NATUREZA da missão (2.0): o planejamento deixou de aparecer sozinho no
   // ✦ geral e virou algo que o DONO cria, aqui, como qualquer missão. A
   // escolha vale só no NASCIMENTO — missão nenhuma troca de natureza depois,
@@ -68,10 +76,79 @@ export default function NewMissionModal({
   const locked = confirmOnly || reseatOnly
   const typeChoosable = !locked && !lockVersion
   const planning = typeChoosable && missionType === 'planejamento'
+  const eligibleVersions = versionChoices?.versions ?? []
+  const defaultVersion = eligibleVersions.find(
+    (version) => version.id === versionChoices?.defaultVersionId
+  )
+  const versionLookupBlocksCreation =
+    !locked && !lockVersion && !planning && (versionChoicesLoading || Boolean(versionChoicesError))
+  const versionSelectorDisabled =
+    planning || versionChoicesLoading || Boolean(versionChoicesError) || eligibleVersions.length === 0
+  const versionSelectOptions = planning
+    ? [{ value: '', label: '— planejamento n\u00e3o entra em vers\u00e3o —' }]
+    : versionChoicesLoading
+      ? [{ value: versionId, label: 'carregando vers\u00f5es eleg\u00edveis...' }]
+      : versionChoicesError
+        ? [{ value: versionId, label: 'vers\u00f5es indispon\u00edveis' }]
+        : eligibleVersions.length === 0
+          ? [{ value: '', label: 'nenhuma aberta — a pr\u00f3xima ser\u00e1 criada' }]
+          : eligibleVersions.map((version) => ({
+              value: version.id,
+              label: `◈ ${version.name}${version.id === versionChoices?.defaultVersionId ? ' — padr\u00e3o' : ''}`,
+              hint: version.theme
+            }))
+  const versionSelectNote = planning
+    ? 'planejamento escreve plano/ e fica fora de vers\u00e3o'
+    : versionChoicesLoading
+      ? 'consultando os destinos que aceitam novas miss\u00f5es'
+      : versionChoicesError
+        ? versionChoicesError
+        : eligibleVersions.length === 0
+          ? 'ao criar, o Synkora abrir\u00e1 a pr\u00f3xima vers\u00e3o automaticamente'
+          : defaultVersion
+            ? `${defaultVersion.name} \u00e9 o destino corrente por padr\u00e3o`
+            : ''
 
   useEffect(() => {
     if (window.synkora.backlog) void window.synkora.backlog.listVersions(projectId).then(setVersions)
   }, [projectId])
+
+  useEffect(() => {
+    let current = true
+    setVersionChoicesLoading(true)
+    setVersionChoicesError('')
+    const readChoices = window.synkora.missions?.versionChoices
+    if (!readChoices) {
+      setVersionChoices(null)
+      setVersionChoicesLoading(false)
+      setVersionChoicesError('reinicie o Synkora para carregar as vers\u00f5es eleg\u00edveis')
+      return () => {
+        current = false
+      }
+    }
+    void readChoices(projectId)
+      .then((choices) => {
+        if (!current) return
+        setVersionChoices(choices)
+        // O default vem do main, que aplica a mesma regra na criaÃ§Ã£o. O
+        // seletor fica bloqueado enquanto esta leitura acontece, entÃ£o nunca
+        // sobrescreve uma escolha manual do dono.
+        if (!locked && !lockVersion && !initialVersionId) {
+          setVersionId(choices.defaultVersionId ?? '')
+        }
+      })
+      .catch(() => {
+        if (!current) return
+        setVersionChoices(null)
+        setVersionChoicesError('n\u00e3o consegui carregar as vers\u00f5es eleg\u00edveis')
+      })
+      .finally(() => {
+        if (current) setVersionChoicesLoading(false)
+      })
+    return () => {
+      current = false
+    }
+  }, [initialVersionId, lockVersion, locked, projectId])
 
   // Catálogo REAL do CLI do seat escolhido (ou herdado do PM) — alimenta o
   // seletor de modelo e a lista de efforts. SÓ nos modos travados: a criação
@@ -124,6 +201,10 @@ export default function NewMissionModal({
       return
     }
     if (!title.trim()) return
+    if (versionLookupBlocksCreation) {
+      setSubmitError(versionChoicesError || 'aguarde o carregamento das versoes elegiveis')
+      return
+    }
     setSubmitError('')
     // Criação enxuta: título + natureza, e só. Sem seat/model/effort — a
     // escolha mora dentro da missão (card de seat + composer do chat). A
@@ -229,6 +310,21 @@ export default function NewMissionModal({
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && void submit()}
         />
+        {!locked && !lockVersion && (
+          <label className="mission-version-choice">
+            {'vers\u00e3o de destino'}
+            <Select
+              value={planning ? '' : versionId}
+              disabled={versionSelectorDisabled}
+              tip={'Vers\u00e3o que receber\u00e1 esta miss\u00e3o'}
+              onChange={setVersionId}
+              options={versionSelectOptions}
+            />
+            <span className="mission-version-note" aria-live="polite">
+              {versionSelectNote}
+            </span>
+          </label>
+        )}
         {/* Goal/escopo/executor SÓ nos modos travados (pipeline legado): a
             criação 2.0 pergunta apenas o título — o resto se decide dentro
             da missão, na primeira conversa. */}
@@ -325,16 +421,22 @@ export default function NewMissionModal({
                 ? 'o Maestro criou esta missão — escolha conta, modelo e effort do ORQUESTRADOR; ele só abre depois desta escolha'
                 : planning
                   ? 'a conversa abre na RAIZ do projeto e entrega escrevendo plano/ — sem branch, sem worktree e fora da fila de integração'
-                  : versionId
-                    ? 'a missão nasce em branch/worktree próprios e integra na BRANCH DA VERSÃO — conta, modelo e permissões você escolhe dentro da missão, na primeira conversa'
-                    : 'a missão nasce em branch/worktree próprios — conta, modelo e permissões você escolhe dentro da missão, na primeira conversa'}
+                  : versionChoicesLoading
+                    ? 'consultando as versoes abertas antes de criar a missao'
+                    : versionChoicesError
+                      ? versionChoicesError
+                      : eligibleVersions.length === 0
+                        ? 'n\u00e3o h\u00e1 vers\u00e3o aberta: ao criar, o Synkora abre a pr\u00f3xima vers\u00e3o e a miss\u00e3o integra nela'
+                        : versionId
+                          ? 'a missão nasce em branch/worktree próprios e integra na BRANCH DA VERSÃO — conta, modelo e permissões você escolhe dentro da missão, na primeira conversa'
+                          : 'a missão nasce em branch/worktree próprios — conta, modelo e permissões você escolhe dentro da missão, na primeira conversa'}
           </span>
           <button className="btn ghost" onClick={onClose}>
             {locked ? 'depois' : 'cancelar'}
           </button>
           <button
             className="btn accent"
-            disabled={reseatOnly ? !seatId : !title.trim()}
+            disabled={reseatOnly ? !seatId : !title.trim() || versionLookupBlocksCreation}
             onClick={() => void submit()}
           >
             {reseatOnly

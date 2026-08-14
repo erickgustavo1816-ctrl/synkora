@@ -347,13 +347,21 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   ): Mission | null {
     const project = projects.get(projectId)
     if (!project || !input.title.trim()) return null
-    const selectedVersion = input.versionId ? backlog.getVersion(input.versionId) : undefined
-    if (input.versionId && selectedVersion?.projectId !== projectId) return null
+    const planning = missionTypeOf(input) === 'planejamento'
+    const versionChoices = backlog.missionVersionChoices(projectId)
+    const selectedVersion = input.versionId
+      ? versionChoices.versions.find((version) => version.id === input.versionId)
+      : undefined
+    // The renderer only offers this list, but IPC is a trust boundary: an
+    // unknown, released, foreign, or planning version must not persist.
+    if (input.versionId && (planning || !selectedVersion)) return null
     // Sem versão explícita a missão cai na versão CORRENTE (aberta mais
     // antiga; sem nenhuma, "V1.0" nasce sozinha) — decisão do usuário: a tela
     // de versões precisa fazer sentido sempre; branch da versão segue lazy
     // (criada no 1º merge de missão).
-    const versionId = input.versionId ?? backlog.ensureDefaultVersion(projectId).id
+    const versionId = planning
+      ? undefined
+      : (selectedVersion?.id ?? backlog.ensureDefaultVersion(projectId).id)
     const mission = missions.create(
       projectId,
       { ...input, versionId, title: input.title.trim() },

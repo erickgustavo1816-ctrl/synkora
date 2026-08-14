@@ -15,6 +15,10 @@ export interface SynkoraPreferences {
   terminalLineHeight: number
   terminalFontFamily: string
   synVoiceInputDeviceId?: string
+  chatNotifyNeedsYou: boolean
+  chatNotifyFinished: boolean
+  chatNotifyFailed: boolean
+  chatSoundsEnabled: boolean
 }
 
 /** Estado completo, restrito ao processo principal. */
@@ -59,7 +63,11 @@ const DEFAULTS: SynkoraPreferences = {
   imageProvider: 'codex',
   terminalFontSize: 13,
   terminalLineHeight: 1.25,
-  terminalFontFamily: 'Cascadia Code'
+  terminalFontFamily: 'Cascadia Code',
+  chatNotifyNeedsYou: true,
+  chatNotifyFinished: true,
+  chatNotifyFailed: true,
+  chatSoundsEnabled: true
 }
 
 function recordOf(value: unknown): Record<string, unknown> {
@@ -93,7 +101,11 @@ function sanitizePreferences(value: unknown): SynkoraPreferences {
     terminalFontSize: Math.max(8, Math.min(24, Number(source.terminalFontSize) || 13)),
     terminalLineHeight: Math.max(1, Math.min(1.8, Number(source.terminalLineHeight) || 1.25)),
     terminalFontFamily: (fontFamily ?? DEFAULTS.terminalFontFamily).slice(0, 200),
-    ...(synVoiceInputDeviceId ? { synVoiceInputDeviceId } : {})
+    ...(synVoiceInputDeviceId ? { synVoiceInputDeviceId } : {}),
+    chatNotifyNeedsYou: source.chatNotifyNeedsYou !== false,
+    chatNotifyFinished: source.chatNotifyFinished !== false,
+    chatNotifyFailed: source.chatNotifyFailed !== false,
+    chatSoundsEnabled: source.chatSoundsEnabled !== false
   }
 }
 

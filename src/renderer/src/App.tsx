@@ -17,6 +17,9 @@ import ProjectRail from './components/ProjectRail'
 import TitleBar from './components/TitleBar'
 import TooltipLayer from './components/Tooltip'
 import { TERMINAL_DEFAULT_FONT_SIZE } from './terminalGeometry'
+import { installGlobalGuiEscape } from './guiEscape'
+import { guiApi } from './guiApi'
+import GuiQueueDispatcher from './components/GuiQueueDispatcher'
 
 export default function App(): React.JSX.Element {
   const openProjectId = useStore((s) => s.openProjectId)
@@ -64,6 +67,12 @@ export default function App(): React.JSX.Element {
     // missão/card integrado = nota de conclusão (bem baixa, throttle próprio)
     const offHubSound = window.synkora.hub.onEvent((evt) => {
       if (evt.kind === 'merge') playSoftBlip('done')
+    })
+    // Alerta canônico vem somente ao host; a WebContentsView nunca toca áudio.
+    const offGuiAlert = guiApi.onAlert(({ kind }) => {
+      if (useStore.getState().settings?.chatSoundsEnabled === false) return
+      if (kind === 'needs-you') playAttentionChime()
+      else if (kind === 'finished') playSoftBlip('done')
     })
     // O WebContents e os PTYs do main sobrevivem a um reload do renderer, mas
     // o store React nasce vazio. Assinamos o evento primeiro para fechar a
@@ -186,6 +195,7 @@ export default function App(): React.JSX.Element {
       offLive()
       offPaneOpen()
       offHubSound()
+      offGuiAlert()
       offPaneClose()
       offAttention()
       offUserQuestion()
@@ -267,6 +277,19 @@ export default function App(): React.JSX.Element {
     })
   }, [bridgeOk, openProjectId, mountedForView, remountNonceForView])
 
+  // Esc pertence ao CHAT ativo mesmo quando o foco está na lateral/header.
+  // O registro dá prioridade ao card de pergunta e aos menus do composer.
+  useEffect(
+    () =>
+      installGlobalGuiEscape({
+        relay: () => window.synkora.panesView.guiEscape(),
+        // A view compõe por cima do Board, que continua montado atrás dela.
+        // Sem esta preferência, o host interromperia o chat invisível de baixo.
+        preferRelay: () => Boolean(panesViewVisibleRect(useStore.getState()))
+      }),
+    []
+  )
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if ((!event.ctrlKey && !event.metaKey) || event.altKey) return
@@ -301,6 +324,7 @@ export default function App(): React.JSX.Element {
   // projeto não derruba panes/maestro nem deixa PTY numa geometria antiga.
   return (
     <div className="app-shell">
+      <GuiQueueDispatcher />
       <TooltipLayer />
       <TitleBar />
       <div className="app-body">

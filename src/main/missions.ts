@@ -198,17 +198,20 @@ export class MissionStore {
     return mission
   }
 
-  /** Conta da CONVERSA da missão direta (2.0, missions:setChatSeat): grava SÓ
-   *  o seat, PRESERVANDO model/effort. O Pick do `update` exclui seatId de
-   *  propósito e continua assim (carimbo de executor não é patch genérico);
-   *  confirmOrchestrator não serve aqui — ele grava os três incondicionalmente
-   *  e apagaria a escolha de modelo do dono. */
-  setExecutorSeat(id: string, seatId: string): Mission | undefined {
+  /** Conta da CONVERSA da missão direta (2.0, missions:setChatSeat). Modelo e
+   *  effort sobrevivem entre contas do MESMO CLI; ao atravessar Claude/Codex,
+   *  o chamador pede reset porque os vocabulários não são portáveis. */
+  setExecutorSeat(
+    id: string,
+    seatId: string,
+    options: { resetExecutor?: boolean } = {}
+  ): Mission | undefined {
     const index = this.missions.findIndex((m) => m.id === id)
     if (index < 0) return undefined
     const mission: Mission = {
       ...this.missions[index],
       seatId,
+      ...(options.resetExecutor ? { model: undefined, effort: undefined } : {}),
       updatedAt: new Date().toISOString()
     }
     const next = [...this.missions]

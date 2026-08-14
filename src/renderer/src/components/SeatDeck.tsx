@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import CliMark from './CliMark'
 import TerminalPane from './TerminalPane'
+import GuiPanelErrorBoundary from './GuiPanelErrorBoundary'
 import Select from './Select'
 import { useStore, type Seat, type SeatCli } from '../store'
 import { hueOf, initialsOf } from '../util'
@@ -346,6 +347,11 @@ export default function SeatDeck({
                   [ concluir ]
                 </button>
               </div>
+              <GuiPanelErrorBoundary
+                paneId={`login-${openLogin.id}`}
+                label={`o login de ${openLogin.name}`}
+                onClose={closeLogin}
+              >
               <TerminalPane
                 paneId={`login-${openLogin.id}`}
                 cwd=""
@@ -357,6 +363,7 @@ export default function SeatDeck({
                 voiceEnabled={false}
                 startupMessage="preparando o ambiente de login…"
               />
+              </GuiPanelErrorBoundary>
             </div>
           </div>,
           document.body

@@ -46,11 +46,13 @@ export function filterSlashCommands(
 }
 
 export default function GuiSlashMenu({
+  id,
   commands,
   index,
   onPick,
   onHover
 }: {
+  id: string
   commands: GuiCliCommand[]
   index: number
   onPick: (command: GuiCliCommand) => void
@@ -66,11 +68,13 @@ export default function GuiSlashMenu({
   }, [index])
 
   return (
-    <div className="gui-slash-menu" role="listbox" aria-label="Comandos" ref={listRef}>
+    <div id={id} className="gui-slash-menu" role="listbox" aria-label="Comandos" ref={listRef}>
       {commands.map((command, i) => (
         <button
           key={command.name}
+          id={`${id}-option-${i}`}
           type="button"
+          tabIndex={-1}
           role="option"
           aria-selected={i === index}
           className={`gui-slash-item${i === index ? ' active' : ''}`}

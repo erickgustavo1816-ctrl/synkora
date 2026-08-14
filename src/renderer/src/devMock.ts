@@ -390,7 +390,11 @@ export function installDevMock(): void {
     githubTokenConfigured: false,
     terminalFontSize: 13,
     terminalLineHeight: 1.25,
-    terminalFontFamily: 'Cascadia Code'
+    terminalFontFamily: 'Cascadia Code',
+    chatNotifyNeedsYou: true,
+    chatNotifyFinished: true,
+    chatNotifyFailed: true,
+    chatSoundsEnabled: true
   }
 
   const servicesSnapshot = (): ServicesSnapshot => ({
@@ -701,6 +705,7 @@ export function installDevMock(): void {
     },
     missions: {
       list: async (projectId: string) => missions.filter((m) => m.projectId === projectId),
+      versionChoices: async () => ({ versions: [], defaultVersionId: undefined }),
       create: async (projectId: string, input) => {
         const now = new Date().toISOString()
         const m: Mission = {
@@ -1019,6 +1024,8 @@ export function installDevMock(): void {
       state: () => undefined,
       onState: () => () => undefined,
       onShown: () => () => undefined,
+      guiEscape: () => undefined,
+      onGuiEscape: () => () => undefined,
       navigateHost: () => undefined,
       reportActivity: () => undefined,
       reportAttentionCleared: () => undefined,
@@ -1224,17 +1231,27 @@ export function installDevMock(): void {
     // as chamadas respondem ok e nenhum evento vivo chega.
     gui: {
       create: async () => ({ ok: true }),
+      configureExecutor: async (_paneId, patch) => ({
+        ok: true,
+        model: patch.model ?? null,
+        effort: patch.effort ?? null
+      }),
       send: async () => ({ ok: true }),
+      deliverQueued: async () => ({ ok: true }),
       permission: async () => ({ ok: true }),
       answerQuestion: async () => ({ ok: true }),
       answerPlan: async () => ({ ok: true }),
       interrupt: async () => ({ ok: true }),
       kill: async () => ({ ok: true }),
-      state: async () => ({ events: [] }),
+      state: async () => ({ events: [], cursor: 0, exists: false, alive: false }),
       onLive: () => () => undefined,
+      visibility: () => undefined,
+      presented: () => undefined,
+      onAlert: () => () => undefined,
       // Anexo no browser puro não tem disco nem pane vivo: recusa honesta com
       // o mesmo texto de UI do main (nunca um path falso que o prompt citaria).
-      attach: async () => ({ ok: false, error: 'anexos só funcionam no app' })
+      attach: async () => ({ ok: false, error: 'anexos só funcionam no app' }),
+      attachFolder: async () => ({ ok: false, error: 'anexos só funcionam no app' })
     },
     projectPlan: {
       get: async () => null,

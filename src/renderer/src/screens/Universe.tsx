@@ -6,6 +6,7 @@ import FilesView from '../components/FilesView'
 import BacklogView from '../components/BacklogView'
 import UniverseMapView from '../components/UniverseMapView'
 import SeatGate from '../components/SeatGate'
+import GuiPanelErrorBoundary from '../components/GuiPanelErrorBoundary'
 
 interface Props {
   projectId: string
@@ -191,18 +192,24 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
           aria-hidden={tab === 'board' ? undefined : true}
           inert={tab === 'board' ? undefined : true}
         >
-          <Board projectId={projectId} />
+          <GuiPanelErrorBoundary paneId={`view:${projectId}:board`} label="o board">
+            <Board projectId={projectId} />
+          </GuiPanelErrorBoundary>
         </div>
         {/* Backlog/Arquivos não rodam processo nenhum — podem montar/desmontar
             à vontade (montar só quando ativo recarrega a lista fresca). */}
         {tab === 'backlog' && (
           <div className="tab-content">
-            <BacklogView projectId={projectId} />
+            <GuiPanelErrorBoundary paneId={`view:${projectId}:backlog`} label="o backlog">
+              <BacklogView projectId={projectId} />
+            </GuiPanelErrorBoundary>
           </div>
         )}
         {tab === 'arquivos' && (
           <div className="tab-content">
-            <FilesView projectId={projectId} />
+            <GuiPanelErrorBoundary paneId={`view:${projectId}:arquivos`} label="os arquivos">
+              <FilesView projectId={projectId} />
+            </GuiPanelErrorBoundary>
           </div>
         )}
         {/* MAPA = a CONSTELAÇÃO (2.0): ela perdeu a casa quando o deck de panes
@@ -212,7 +219,9 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
             no seletor interno, só em projeto greenfield. */}
         {tab === 'mapa' && (
           <div className="tab-content">
-            <UniverseMapView projectId={projectId} />
+            <GuiPanelErrorBoundary paneId={`view:${projectId}:mapa`} label="o mapa">
+              <UniverseMapView projectId={projectId} />
+            </GuiPanelErrorBoundary>
           </div>
         )}
       </div>

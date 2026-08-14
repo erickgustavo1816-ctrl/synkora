@@ -3,14 +3,22 @@ import { release } from 'node:os'
 import type { ProgressOverlaySnapshot } from '../main/progressSnapshot'
 import type { BlackboxEntry } from '../main/blackbox'
 import type {
+  GuiExecutorPatch,
+  GuiExecutorResult,
   GuiLivePayload,
   GuiPaneSpawn,
   GuiPermBehavior,
   GuiPermissionMode,
+  GuiQueuedDeliveryInput,
   GuiResult
 } from '../main/guiSessions'
-import type { GuiAttachPayload, GuiAttachResult } from '../main/guiAttachments'
+import type {
+  GuiAttachPayload,
+  GuiAttachResult,
+  GuiAttachmentDescriptor
+} from '../main/guiAttachments'
 import type { GuiMissionRole } from '../main/guiMissionContracts'
+import type { GuiAlertPayload } from '../main/guiNotices'
 import type {
   MissionCommitsResult,
   MissionFileDiffResult,
@@ -30,12 +38,22 @@ export type BlackboxTailEntry = BlackboxEntry & { line: string }
 
 /** Contrato do pane GUI (docs/GUI_PANE_CONTRACT.md) — fonte única dos tipos;
  *  o renderer copia/reexporta pelo accessor tipado de guiApi.ts. */
-export type { GuiLivePayload, GuiPaneSpawn, GuiPermBehavior, GuiPermissionMode, GuiResult }
+export type {
+  GuiExecutorPatch,
+  GuiExecutorResult,
+  GuiLivePayload,
+  GuiPaneSpawn,
+  GuiPermBehavior,
+  GuiPermissionMode,
+  GuiQueuedDeliveryInput,
+  GuiResult
+}
+export type { GuiAlertPayload }
 
 /** Anexos do composer do chat: print colado ou arquivo, gravados na pasta de
  *  trabalho do PANE (`.synkora/attachments`) — a resposta traz o path absoluto
  *  que o renderer cita no prompt. */
-export type { GuiAttachPayload, GuiAttachResult }
+export type { GuiAttachPayload, GuiAttachResult, GuiAttachmentDescriptor }
 
 /** Papéis do chat de missão 2.0 e as respostas das specs que o 2.0 abriu:
  *  chat da missão, terminal avulso do worktree e sessão de planejamento. */
@@ -372,6 +390,12 @@ export interface Version {
   updatedAt: string
 }
 
+/** Versoes abertas que uma nova missao pode escolher, mais o destino padrao. */
+export interface MissionVersionChoices {
+  versions: Version[]
+  defaultVersionId?: string
+}
+
 export interface BacklogItem {
   id: string
   projectId: string
@@ -549,6 +573,7 @@ export type MaestroLiveEvent =
       description: string
       inputPretty: string
       reason?: string
+      permissionRule?: string
       canAlways: boolean
     }
   | { type: 'permission-cancel'; requestId: string }
@@ -640,6 +665,11 @@ export interface SynkoraPreferences {
   terminalFontFamily: string
   /** vazio/ausente usa o microfone padrão do sistema */
   synVoiceInputDeviceId?: string
+  /** Avisos do chat e seu vocabulário sonoro (globais à máquina). */
+  chatNotifyNeedsYou: boolean
+  chatNotifyFinished: boolean
+  chatNotifyFailed: boolean
+  chatSoundsEnabled: boolean
 }
 
 /** Snapshot seguro do main. Nenhum segredo bruto cruza esta fronteira. */
@@ -1135,6 +1165,14 @@ const api = {
       ipcRenderer.on('panes-view:shown', listener)
       return () => ipcRenderer.removeListener('panes-view:shown', listener)
     },
+    /** HOST → VIEW: Esc nasceu fora do canvas; a view resolve seu chat ativo. */
+    guiEscape: (): void => ipcRenderer.send('panes-view:gui-escape'),
+    /** VIEW: recebe o Esc global encaminhado pelo host. */
+    onGuiEscape: (cb: () => void): (() => void) => {
+      const listener = (): void => cb()
+      ipcRenderer.on('panes-view:gui-escape', listener)
+      return () => ipcRenderer.removeListener('panes-view:gui-escape', listener)
+    },
     // ——— relays VIEW→host (F3-c4): a view não alcança o shell do host ———
     /** VIEW: pedir navegação no host (mapa → "abrir board"). */
     navigateHost: (projectId: string, tab: string): void =>
@@ -1201,9 +1239,24 @@ const api = {
   gui: {
     /** Instancia a sessão do pane; os eventos começam a chegar em onLive. */
     create: (spawn: GuiPaneSpawn): Promise<GuiResult> => ipcRenderer.invoke('gui:create', spawn),
-    /** Turno novo (ocupado = steering/fila do próprio backend). */
-    send: (paneId: string, text: string): Promise<GuiResult> =>
-      ipcRenderer.invoke('gui:send', paneId, text),
+    /** Troca modelo/effort na sessão viva; sucesso não gera evento visual. */
+    configureExecutor: (
+      paneId: string,
+      patch: GuiExecutorPatch
+    ): Promise<GuiExecutorResult> =>
+      ipcRenderer.invoke('gui:configureExecutor', paneId, patch),
+    /** Turno novo com descritores revalidados pelo main antes de chegar ao CLI. */
+    send: (
+      paneId: string,
+      text: string,
+      messageId: string,
+      attachments?: GuiAttachmentDescriptor[]
+    ): Promise<GuiResult> => ipcRenderer.invoke('gui:send', paneId, text, messageId, attachments),
+    /** A fila viaja com texto, anexos e opcoes numa unica operacao do main. */
+    deliverQueued: (
+      paneId: string,
+      input: GuiQueuedDeliveryInput
+    ): Promise<GuiResult> => ipcRenderer.invoke('gui:deliverQueued', paneId, input),
     /** Responde o card de permissão. */
     permission: (
       paneId: string,
@@ -1228,18 +1281,40 @@ const api = {
       ipcRenderer.invoke('gui:interrupt', paneId),
     kill: (paneId: string): Promise<GuiResult> => ipcRenderer.invoke('gui:kill', paneId),
     /** Replay para a remontagem (o main guarda ~500 eventos por pane). */
-    state: (paneId: string): Promise<{ events: unknown[] }> =>
+    state: (paneId: string): Promise<{
+      events: unknown[]
+      cursor: number
+      exists: boolean
+      alive: boolean
+    }> =>
       ipcRenderer.invoke('gui:state', paneId),
     /** Anexa print da área de transferência ou arquivo ao chat: o main grava
      *  em `<cwd do pane>/.synkora/attachments` e devolve o caminho ABSOLUTO
      *  para o composer citar no prompt (teto de 10 MB por arquivo). */
     attach: (paneId: string, payload: GuiAttachPayload): Promise<GuiAttachResult> =>
       ipcRenderer.invoke('gui:attach', paneId, payload),
+    /** Abre o seletor nativo do sistema e anexa uma referência a qualquer
+     *  pasta local escolhida. O renderer nunca envia o caminho como autoridade.
+     */
+    attachFolder: (paneId: string): Promise<GuiAttachResult> =>
+      ipcRenderer.invoke('gui:attachFolder', paneId),
+    /** Pane realmente visível; alimenta o título [pronto] da janela. */
+    visibility: (paneId: string, active: boolean): void =>
+      ipcRenderer.send('gui:visibility', paneId, active),
+    /** Confirma que o evento terminal terminou de aparecer na conversa. */
+    presented: (paneId: string, terminalSeq: number): void =>
+      ipcRenderer.send('gui:presented', paneId, terminalSeq),
     /** Evento vivo; devolve a função de cancelar a assinatura. */
     onLive: (cb: (payload: GuiLivePayload) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, payload: GuiLivePayload): void => cb(payload)
       ipcRenderer.on('gui:live', listener)
       return () => ipcRenderer.removeListener('gui:live', listener)
+    },
+    /** Alerta canônico e não-replayável; somente o host toca áudio. */
+    onAlert: (cb: (payload: GuiAlertPayload) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, payload: GuiAlertPayload): void => cb(payload)
+      ipcRenderer.on('gui:alert', listener)
+      return () => ipcRenderer.removeListener('gui:alert', listener)
     }
   },
   maestro: {
@@ -1322,6 +1397,9 @@ const api = {
   missions: {
     list: (projectId: string): Promise<Mission[]> =>
       ipcRenderer.invoke('missions:list', projectId),
+    /** Fonte canonica de destinos elegiveis para uma nova missao. */
+    versionChoices: (projectId: string): Promise<MissionVersionChoices> =>
+      ipcRenderer.invoke('missions:versionChoices', projectId),
     create: (projectId: string, input: NewMission): Promise<Mission | null> =>
       ipcRenderer.invoke('missions:create', projectId, input),
     update: (

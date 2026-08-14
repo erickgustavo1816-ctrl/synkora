@@ -8239,6 +8239,31 @@ body.pane-docking .pane-bar.draggable {
   font-style: italic;
 }
 
+/* Destination stays in the modal form rail; it does not create a new band. */
+.mission-version-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.mission-version-choice .sel {
+  width: 100%;
+  min-width: 0;
+}
+
+.mission-version-note {
+  font-size: 10.5px;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--ink-3);
+}
+
 /* NOVO UNIVERSO (onda D): a linha da pasta — botão + caminho escolhido. */
 .nu-row {
   display: flex;
@@ -11410,10 +11435,19 @@ body.pane-docking .pane-bar.draggable {
   outline: 1px dotted currentColor;
 }
 
-input.synvoice-target:not([type='password']),
-textarea.synvoice-target {
+input.synvoice-target:not([type='password']):not(.gui-input),
+textarea.synvoice-target:not(.gui-input) {
   outline: 2px solid rgba(217, 108, 63, 0.52);
   outline-offset: 1px;
+}
+
+/* O composer também é um destino válido do SynVoice, mas não deve virar um
+   retângulo laranja persistente quando o foco já saiu dele. O marcador de
+   destino continua no DOM para o ditado; só removemos a decoração intrusiva. */
+.gui-input.synvoice-target {
+  border: 0;
+  outline: none;
+  box-shadow: none;
 }
 
 /* ============================================================
@@ -11725,6 +11759,134 @@ textarea.synvoice-target {
 }
 
 /* Aparência */
+.section-appearance {
+  display: grid;
+  gap: 16px;
+}
+
+.chat-notice-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(250px, 0.85fr);
+  gap: 20px;
+  padding: 20px;
+}
+
+.chat-notice-layout fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.chat-notice-layout legend {
+  margin-bottom: 8px;
+  color: var(--ink-3);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.chat-notice-switch {
+  display: flex;
+  width: 100%;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 10px 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  transition: border-color 130ms ease, background-color 130ms ease;
+}
+
+.chat-notice-switch + .chat-notice-switch {
+  border-top-color: var(--line);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.chat-notice-switch:hover {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--paper-2) 76%, transparent);
+}
+
+.chat-notice-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chat-notice-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.chat-notice-copy strong {
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.chat-notice-copy small,
+.chat-notice-note {
+  color: var(--ink-3);
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
+.chat-notice-switch-state {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-notice-switch-state em {
+  color: var(--ink-3);
+  font-size: 8.5px;
+  font-style: normal;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.chat-notice-switch-state > i {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--paper-3);
+  transition: background-color 130ms ease, border-color 130ms ease;
+}
+
+.chat-notice-switch-state b {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  transition: transform 130ms ease, background-color 130ms ease;
+}
+
+.chat-notice-switch.is-on .chat-notice-switch-state > i {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+  background: color-mix(in srgb, var(--accent) 18%, var(--paper-2));
+}
+
+.chat-notice-switch.is-on .chat-notice-switch-state b {
+  background: var(--accent);
+  transform: translateX(16px);
+}
+
+.chat-notice-note {
+  margin: 10px 11px 0;
+}
+
 .typography-layout {
   display: grid;
   grid-template-columns: minmax(280px, 0.82fr) minmax(330px, 1.18fr);
@@ -12267,6 +12429,10 @@ textarea.synvoice-target {
   }
 
   .typography-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chat-notice-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -14327,6 +14493,23 @@ body.progress-overlay-page #root {
   background: var(--gui-fill);
 }
 
+.gui-head-seat-btn:disabled {
+  opacity: 0.62;
+  cursor: wait;
+}
+
+.gui-seat-error {
+  flex: none;
+  width: min(var(--gui-column), calc(100% - 36px));
+  margin: 7px auto 0;
+  padding: 6px 9px;
+  border-left: 2px solid var(--err);
+  background: color-mix(in srgb, var(--err) 6%, transparent);
+  color: var(--err);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .gui-head-seat-btn .ghs-name {
   font-weight: 700;
   white-space: nowrap;
@@ -14362,7 +14545,13 @@ body.progress-overlay-page #root {
   bottom: auto;
   left: 0;
   z-index: 40;
-  min-width: 260px;
+  width: min(320px, calc(100cqw - 36px));
+  min-width: min(260px, calc(100cqw - 36px));
+  max-height: min(320px, calc(100dvh - 72px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -14372,6 +14561,7 @@ body.progress-overlay-page #root {
   background: var(--card);
   box-shadow: var(--shadow);
   animation: rise 130ms ease both;
+  white-space: normal;
 }
 
 .gui-head-effort {
@@ -14385,6 +14575,15 @@ body.progress-overlay-page #root {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* HARDEN thesis: metadata in the chat header may truncate, but the account
+   menu is an overlay owned by this one child. Letting the generic truncation
+   rule clip it makes a successful click look like it did nothing. */
+.gui-head > .gui-head-seat {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .gui-head > * + *::before {
@@ -14587,17 +14786,102 @@ body.progress-overlay-page #root {
   color: var(--ink-2);
 }
 
+.gui-copy-row {
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-3);
+  font-size: 10.5px;
+}
+
+.gui-copy-action {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease,
+    background 120ms ease,
+    transform 120ms ease;
+}
+
+.gui-copy-action:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--gui-line);
+  background: var(--gui-fill);
+}
+
+.gui-copy-action:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.gui-copy-action.copying {
+  color: var(--accent);
+}
+
+.gui-copy-action.success {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 7%, transparent);
+}
+
+.gui-copy-action:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.gui-copy-action:focus-visible,
+.gui-tool > summary:focus-visible,
+.gui-tool-group > summary:focus-visible,
+.gui-command > summary:focus-visible,
+.gui-diff-card > summary:focus-visible,
+.gui-error-line > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.gui-copy-feedback {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.gui-copy-feedback.error {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+  color: var(--err);
+}
+
 /* ---- markdown das respostas: o agente escreve em markdown, o chat lê ---- */
 
 .gui-md {
   white-space: normal;
 }
 
-.gui-md > :first-child {
+.gui-md-content > :first-child {
   margin-top: 0;
 }
 
-.gui-md > :last-child {
+.gui-md-content > :last-child {
   margin-bottom: 0;
 }
 
@@ -14636,8 +14920,55 @@ body.progress-overlay-page #root {
 
 .gui-md a {
   color: var(--accent-deep);
+  border-radius: 3px;
+  cursor: pointer;
   text-decoration: underline;
+  text-decoration-thickness: 1px;
   text-underline-offset: 2px;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease,
+    text-decoration-thickness 120ms ease;
+}
+
+.gui-md a:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  text-decoration-thickness: 2px;
+}
+
+.gui-md a:focus-visible {
+  color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  text-decoration-thickness: 2px;
+}
+
+.gui-md a.gui-link-opening {
+  color: var(--accent-deep);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 46%, transparent);
+  text-decoration-thickness: 2px;
+}
+
+.gui-link-opening-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gui-md a {
+    transition: none;
+  }
 }
 
 .gui-md code {
@@ -14702,6 +15033,30 @@ body.progress-overlay-page #root {
   border-radius: 6px;
 }
 
+/* JSON puro recebe a mesma superfície discreta dos blocos de código, mas sem
+   passar pelo Markdown: texto misto continua usando a leitura normal acima. */
+.gui-json-card {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 0 8px;
+  padding: 9px 11px;
+  overflow-x: auto;
+  border: 1px solid var(--gui-line);
+  border-radius: 7px;
+  background: var(--gui-fill-2);
+  color: var(--ink);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.gui-json-card code {
+  font: inherit;
+  color: inherit;
+}
+
 /* ---- pergunta respondida: fica no fio como registro do que foi escolhido ---- */
 
 .gui-answered {
@@ -14763,9 +15118,17 @@ body.progress-overlay-page #root {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   color: var(--ink-3);
   font-size: 11.5px;
   font-style: italic;
+}
+
+.gui-thinking-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gui-dots {
@@ -14895,6 +15258,28 @@ details.gui-tool {
   color: var(--err);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .gui-dots i {
+    animation: none;
+  }
+}
+
+.gui-tool-out.denied {
+  color: var(--warn);
+}
+
+.gui-tool-out.cancel {
+  color: var(--ink-3);
+}
+
+.gui-tool.err {
+  box-shadow: inset 2px 0 color-mix(in srgb, var(--err) 62%, transparent);
+}
+
+.gui-tool.denied {
+  box-shadow: inset 2px 0 color-mix(in srgb, var(--warn) 68%, transparent);
+}
+
 .gui-tool-detail {
   margin: 8px 0 2px;
   padding: 0 0 0 10px;
@@ -14907,6 +15292,515 @@ details.gui-tool {
   user-select: text;
   max-height: 220px;
   overflow-y: auto;
+}
+
+/* ---- ferramentas repetidas: UMA linha, estado cru preservado no store ---- */
+
+.gui-tool-group {
+  border: 1px solid var(--gui-line);
+  border-radius: 7px;
+  background: var(--gui-fill-2);
+  overflow: hidden;
+}
+
+.gui-tool-group.err {
+  border-color: color-mix(in srgb, var(--err) 42%, var(--gui-line));
+}
+
+.gui-tool-group.denied {
+  border-color: color-mix(in srgb, var(--warn) 52%, var(--gui-line));
+}
+
+.gui-tool-group > summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ink-2);
+  font-size: 11.5px;
+}
+
+.gui-tool-group > summary::-webkit-details-marker,
+.gui-command > summary::-webkit-details-marker {
+  display: none;
+}
+
+.gui-tool-group-chevron,
+.gui-command-chevron {
+  flex: none;
+  color: var(--ink-3);
+  transition: transform 140ms ease;
+}
+
+.gui-tool-group[open] > summary .gui-tool-group-chevron,
+.gui-command[open] > summary .gui-command-chevron {
+  transform: rotate(90deg);
+}
+
+.gui-tool-group-count {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--gui-fill);
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gui-tool-group-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
+.gui-tool-group-out {
+  flex: none;
+  margin-left: auto;
+  font-size: 10.5px;
+}
+
+.gui-tool-group-out.ok {
+  color: var(--ok);
+}
+
+.gui-tool-group-out.err {
+  color: var(--err);
+}
+
+.gui-tool-group-out.denied {
+  color: var(--warn);
+}
+
+.gui-tool-group-out.cancel {
+  color: var(--ink-3);
+}
+
+.gui-tool-group-items {
+  display: grid;
+  gap: 5px;
+  padding: 0 7px 7px 24px;
+  border-top: 1px solid var(--gui-line);
+}
+
+.gui-tool-group-items > :first-child {
+  margin-top: 7px;
+}
+
+/* ---- comando de terminal: compacto, saída dentro da própria linha ---- */
+
+.gui-command {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--gui-line);
+  border-radius: 7px;
+  background: var(--gui-fill-2);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  overflow: hidden;
+}
+
+details.gui-command {
+  display: block;
+}
+
+.gui-command > summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.gui-command.error,
+.gui-command.err {
+  border-color: color-mix(in srgb, var(--err) 42%, var(--gui-line));
+}
+
+.gui-command.denied {
+  border-color: color-mix(in srgb, var(--warn) 52%, var(--gui-line));
+}
+
+.gui-command-chevron.empty {
+  opacity: 0;
+}
+
+.gui-command-dollar {
+  flex: none;
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.gui-command-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.gui-command[open] .gui-command-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.gui-command-status,
+.gui-command-lines {
+  flex: none;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gui-command-status.running {
+  color: var(--accent-deep);
+  animation: blinkc 1s step-end infinite;
+}
+
+.gui-command-status.ok {
+  color: var(--ok);
+}
+
+.gui-command-status.error,
+.gui-command-status.err {
+  color: var(--err);
+}
+
+.gui-command-status.denied {
+  color: var(--warn);
+}
+
+.gui-command-status.cancelled,
+.gui-command-status.cancel {
+  color: var(--ink-3);
+}
+
+.gui-command-lines {
+  color: var(--ink-3);
+}
+
+.gui-command-output {
+  max-height: 240px;
+  margin: 7px -10px -6px;
+  padding: 8px 12px 9px 35px;
+  border-top: 1px solid var(--gui-line);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+  font-size: 11px;
+  line-height: 1.5;
+  user-select: text;
+}
+
+.gui-error-line {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--err) 38%, var(--gui-line));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--err) 5%, var(--gui-fill-2));
+  color: var(--err);
+  font-size: 11.5px;
+  line-height: 1.4;
+  overflow: hidden;
+}
+
+details.gui-error-line {
+  display: block;
+}
+
+.gui-error-line > summary {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.gui-error-line > summary::-webkit-details-marker {
+  display: none;
+}
+
+.gui-error-line > summary span:last-child,
+.gui-error-line > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+
+.gui-error-line pre {
+  max-height: 220px;
+  margin: 7px -9px -5px;
+  padding: 8px 10px 9px 30px;
+  border-top: 1px solid color-mix(in srgb, var(--err) 22%, var(--gui-line));
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 3%, transparent);
+  font-size: 11px;
+  user-select: text;
+}
+
+.gui-error-mark {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--err) 14%, transparent);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.gui-command.error .gui-command-output,
+.gui-command.err .gui-command-output {
+  color: var(--err);
+}
+
+.gui-command-truncated {
+  display: block;
+  margin: 6px 0 0 25px;
+  color: var(--ink-3);
+  font-size: 10px;
+}
+
+/* ---- edição de arquivo: resumo compacto + diff limitado e sob demanda ---- */
+
+.gui-diff-card {
+  min-width: 0;
+  border: 1px solid var(--gui-line);
+  border-radius: 7px;
+  background: var(--gui-fill-2);
+  overflow: hidden;
+}
+
+.gui-diff-card.err {
+  border-color: color-mix(in srgb, var(--err) 42%, var(--gui-line));
+}
+
+.gui-diff-card.denied {
+  border-color: color-mix(in srgb, var(--warn) 52%, var(--gui-line));
+}
+
+.gui-diff-card > summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ink-2);
+  font-size: 11.5px;
+}
+
+.gui-diff-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.gui-diff-chevron {
+  flex: none;
+  color: var(--ink-3);
+  transition: transform 140ms ease;
+}
+
+.gui-diff-card[open] > summary .gui-diff-chevron {
+  transform: rotate(90deg);
+}
+
+.gui-diff-icon {
+  flex: none;
+  color: var(--accent-deep);
+}
+
+.gui-diff-card > summary > b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.gui-diff-operation {
+  flex: none;
+  color: var(--ink-3);
+}
+
+.gui-diff-totals {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gui-diff-add {
+  color: var(--ok);
+}
+
+.gui-diff-remove {
+  color: var(--err);
+}
+
+.gui-diff-status {
+  flex: none;
+  font-size: 10.5px;
+}
+
+.gui-diff-status.running {
+  color: var(--accent-deep);
+  animation: blinkc 1s step-end infinite;
+}
+
+.gui-diff-status.ok {
+  color: var(--ok);
+}
+
+.gui-diff-status.err {
+  color: var(--err);
+}
+
+.gui-diff-status.denied {
+  color: var(--warn);
+}
+
+.gui-diff-status.cancel {
+  color: var(--ink-3);
+}
+
+.gui-diff-files {
+  display: grid;
+  gap: 8px;
+  padding: 0 8px 8px;
+  border-top: 1px solid var(--gui-line);
+}
+
+.gui-file-diff {
+  min-width: 0;
+  margin-top: 8px;
+  border: 1px solid var(--gui-line);
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+.gui-file-diff > header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--gui-line);
+  color: var(--ink-3);
+  font-size: 10.5px;
+}
+
+.gui-file-diff > header > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+  font-family: var(--mono);
+}
+
+.gui-diff-code {
+  max-height: 320px;
+  overflow: auto;
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  user-select: text;
+}
+
+.gui-diff-line {
+  min-width: max-content;
+  display: grid;
+  grid-template-columns: 34px 34px 17px minmax(0, 1fr);
+  align-items: baseline;
+}
+
+.gui-diff-line.add {
+  background: color-mix(in srgb, var(--ok) 9%, transparent);
+}
+
+.gui-diff-line.remove {
+  background: color-mix(in srgb, var(--err) 9%, transparent);
+}
+
+.gui-diff-line.meta {
+  color: var(--ink-3);
+  background: var(--gui-fill);
+}
+
+.gui-diff-number {
+  padding-right: 6px;
+  color: var(--ink-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.gui-diff-sign {
+  color: var(--ink-3);
+  text-align: center;
+  font-weight: 800;
+  user-select: none;
+}
+
+.gui-diff-line.add .gui-diff-sign {
+  color: var(--ok);
+}
+
+.gui-diff-line.remove .gui-diff-sign {
+  color: var(--err);
+}
+
+.gui-diff-line code {
+  padding-right: 10px;
+  white-space: pre;
+  color: var(--ink);
+  font: inherit;
+}
+
+.gui-diff-note {
+  margin: 0;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--gui-line);
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.gui-sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
 }
 
 .gui-perm-mark {
@@ -15001,6 +15895,20 @@ details.gui-tool {
 .gui-perm-input > summary {
   color: var(--ink-2);
   font-size: 11.5px;
+}
+
+.gui-perm-rule {
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.gui-perm-rule code {
+  font-family: var(--mono);
+  color: var(--accent-deep);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .gui-perm-input > summary {
@@ -15343,15 +16251,20 @@ details.gui-tool {
   margin: 0 auto 8px;
   max-height: 260px;
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
   display: flex;
   flex-direction: column;
   gap: 1px;
   padding: 5px;
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: 7px;
   background: var(--card);
-  box-shadow: var(--shadow);
   animation: rise 120ms ease both;
+}
+
+.gui-slash-menu::-webkit-scrollbar {
+  display: none;
 }
 
 .gui-slash-item {
@@ -15450,6 +16363,7 @@ details.gui-tool {
 }
 
 .gsp-seat {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -15460,19 +16374,53 @@ details.gui-tool {
   color: var(--ink);
   font-family: var(--mono);
   font-size: 12px;
+  text-align: left;
   cursor: pointer;
+  /* Trilho interno: sinaliza escolha sem deslocar a geometria da linha. */
+  box-shadow: inset 2px 0 0 transparent;
   transition:
     border-color 120ms ease,
-    background 120ms ease;
+    background 120ms ease,
+    box-shadow 120ms ease;
 }
 
-.gsp-seat:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--gui-fill);
+.gsp-seat:hover:not(:disabled),
+.gsp-seat:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--gui-line-strong));
+  background: color-mix(in srgb, var(--accent) 5%, var(--paper));
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
-.gsp-seat:disabled {
-  opacity: 0.6;
+.gsp-seat:focus-visible {
+  z-index: 1;
+  outline: 2px solid color-mix(in srgb, var(--accent) 76%, transparent);
+  outline-offset: 2px;
+}
+
+.gsp-seat:hover:not(:disabled) .gsp-name,
+.gsp-seat:focus-visible .gsp-name {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.gsp-seat:hover:not(:disabled) .gsp-go,
+.gsp-seat:focus-visible .gsp-go {
+  color: var(--accent-deep);
+}
+
+/* O main ainda confirma a troca: a escolha pendente fica legivel por
+   trilho, texto e cursor, sem depender apenas da cor. */
+.gsp-seat.busy {
+  border-color: color-mix(in srgb, var(--accent) 68%, var(--gui-line-strong));
+  background: color-mix(in srgb, var(--accent) 7%, var(--paper));
+  box-shadow: inset 2px 0 0 var(--accent-deep);
+  cursor: progress;
+  opacity: 1;
+}
+
+.gsp-seat:disabled:not(.busy) {
+  opacity: 0.52;
   cursor: default;
 }
 
@@ -15492,25 +16440,219 @@ details.gui-tool {
   color: var(--err);
 }
 
+.gsp-pending {
+  flex: none;
+  color: var(--accent-deep);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
 .gsp-go {
+  flex: none;
   margin-left: auto;
   color: var(--ink-3);
+}
+
+@media (forced-colors: active) {
+  .gsp-seat:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .gsp-seat.busy {
+    border-color: Highlight;
+    box-shadow: inset 2px 0 0 Highlight;
+  }
 }
 
 .gui-composer {
   flex: none;
   padding: 10px 18px 12px;
   border-top: 1px solid var(--gui-line);
-  background: var(--paper);
+  background: color-mix(in srgb, var(--paper) 92%, var(--card));
 }
 
-.gui-composer-inner {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
+.gui-composer-surface {
   width: 100%;
   max-width: var(--gui-column);
   margin: 0 auto;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 7px;
+  background: var(--card);
+  transition: border-color 120ms ease;
+}
+
+.gui-composer-surface:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--gui-line-strong));
+}
+
+.gui-composer-inner {
+  display: grid;
+  grid-template-columns: auto auto minmax(8px, 1fr) auto auto auto auto;
+  grid-template-areas:
+    "input input input input input input input"
+    "attach mode spacer context model effort send";
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 6px;
+  width: 100%;
+  padding: 7px;
+}
+
+.gui-composer-inner:has(.gui-composer-attachments) {
+  grid-template-areas:
+    "input input input input input input input"
+    "attachments attachments attachments attachments attachments attachments attachments"
+    "attach mode spacer context model effort send";
+}
+
+.gui-composer-attach {
+  grid-area: attach;
+}
+
+.gui-composer-mode {
+  grid-area: mode;
+}
+
+.gui-composer-model {
+  grid-area: model;
+}
+
+.gui-composer-effort {
+  grid-area: effort;
+}
+
+.gui-composer-context {
+  grid-area: context;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Anexos são estado do composer, não texto escondido no textarea. O trilho
+   inteiro pode encolher e cada chip preserva o próprio foco/remover sem criar
+   uma barra lateral ou uma prévia `file://` de caminho persistido. */
+.gui-composer-attachments {
+  grid-area: attachments;
+  min-width: 0;
+  padding: 0 3px 1px;
+}
+
+.gui-attachment-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gui-attachment-chip {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: min(250px, 100%);
+  min-height: 34px;
+  padding: 4px 5px 4px 4px;
+  border: 1px solid var(--gui-line);
+  border-radius: 5px;
+  background: var(--gui-fill);
+  color: var(--ink);
+}
+
+.gui-attachment-chip[data-kind='image'] .gui-attachment-kind {
+  color: color-mix(in srgb, var(--accent-deep) 72%, var(--ink));
+}
+
+.gui-attachment-chip[data-kind='folder'] .gui-attachment-kind {
+  color: var(--ink-2);
+}
+
+.gui-attachment-kind {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--gui-line-strong) 72%, transparent);
+  border-radius: 4px;
+  color: var(--ink-2);
+  font-size: 11px;
+}
+
+.gui-attachment-copy {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.gui-attachment-name,
+.gui-attachment-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-attachment-name {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.2;
+}
+
+.gui-attachment-meta {
+  color: var(--ink-3);
+  font-size: 9.5px;
+  line-height: 1.15;
+}
+
+.gui-attachment-remove {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.gui-attachment-remove:hover {
+  border-color: color-mix(in srgb, var(--err) 30%, transparent);
+  background: color-mix(in srgb, var(--err) 8%, transparent);
+  color: var(--err);
+}
+
+.gui-attachment-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.gui-msg-attachments {
+  margin: 3px 0 6px;
+}
+
+.gui-msg.user .gui-attachment-chip {
+  background: color-mix(in srgb, var(--accent) 7%, var(--card));
+}
+
+.gui-queued-attachments {
+  margin-top: 6px;
+}
+
+.gui-queued-attachments .gui-attachment-chip {
+  max-width: 210px;
 }
 
 /* OS CONTROLES DA CONVERSA (2.0): permissão · modelo · effort. O interruptor
@@ -15525,13 +16667,13 @@ details.gui-tool {
 }
 
 .gui-mode-btn {
-  height: 34px;
+  height: 30px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 0 10px;
-  border: 1px solid var(--gui-line-strong);
-  border-radius: 8px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: transparent;
   color: var(--ink-2);
   font-family: var(--mono);
@@ -15547,21 +16689,33 @@ details.gui-tool {
 
 .gui-mode-btn:hover:not(:disabled) {
   color: var(--ink);
-  border-color: var(--ink-2);
-  background: var(--gui-fill);
+  border-color: var(--gui-line);
+  background: var(--gui-fill-2);
 }
 
 .gui-mode-btn:disabled {
-  opacity: 0.45;
+  opacity: 0.62;
   cursor: default;
 }
 
 /* Identidade por MODO: a cor diz o quanto o agente pode agir sozinho antes de
-   se ler a palavra. Bypass é o único que grita (é o que dispensa você). */
+   se ler a palavra. Acesso completo é explícito sem virar uma pílula solta. */
 .gui-mode-btn.mode-bypass {
-  border-color: var(--accent);
+  border-color: transparent;
   color: var(--accent-deep);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  background: transparent;
+}
+
+.gui-mode-btn.mode-bypass > span:first-child {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 800;
 }
 
 .gui-mode-btn.mode-acceptEdits {
@@ -15587,15 +16741,90 @@ details.gui-tool {
   min-width: 292px;
   max-height: 320px;
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 5px;
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: 7px;
   background: var(--card);
-  box-shadow: var(--shadow);
   animation: rise 130ms ease both;
+}
+
+.gui-mode-menu::-webkit-scrollbar {
+  display: none;
+}
+
+/* Controles do lado direito abrem para dentro do pane. O palco recorta tudo
+   que ultrapassa sua janela, então um menu ancorado à esquerda nesses hosts
+   perderia opções justamente nos panes estreitos. */
+.gui-composer-model .gui-mode-menu,
+.gui-composer-effort .gui-mode-menu {
+  right: 0;
+  left: auto;
+}
+
+/* IMPECCABLE polish thesis: o seletor de modelo deve ocupar só o espaço que
+   os nomes realmente pedem. A largura mínima genérica fazia quatro opções
+   curtas parecerem um modal gigante; o teto é apenas a proteção proporcional
+   para catálogo longo, pane estreito e viewport baixo. */
+.gui-composer-model .gui-mode-menu {
+  width: max-content;
+  min-width: 0;
+  max-width: min(240px, calc(100cqw - 64px));
+  max-height: min(288px, calc(100dvh - 112px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.gui-composer-model .gui-mode-menu::-webkit-scrollbar {
+  display: block;
+  width: 6px;
+}
+
+.gui-composer-model .gui-mode-menu .gui-menu-item {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.gui-composer-model .gui-mode-menu .gui-menu-item b {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* Esforço tem só rótulos curtos: ele não deve herdar a largura do catálogo de
+   modelos. A altura segue o conteúdo; o teto só mantém as últimas opções
+   dentro da viewport e deixa a rolagem do próprio menu alcançável. */
+.gui-composer-effort .gui-effort-menu {
+  width: max-content;
+  min-width: 0;
+  /* preserva o rail do enviar e as bordas do composer no pane mais estreito */
+  max-width: min(184px, calc(100cqw - 64px));
+  max-height: min(288px, calc(100dvh - 112px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.gui-effort-menu::-webkit-scrollbar {
+  display: block;
+  width: 6px;
+}
+
+.gui-effort-menu .gui-menu-item {
+  min-width: 0;
+  min-height: 36px;
+  justify-content: center;
+  padding: 7px 10px;
+}
+
+.gui-effort-menu .gui-menu-item b {
+  overflow-wrap: anywhere;
 }
 
 .gui-mode-item,
@@ -15682,6 +16911,16 @@ details.gui-tool {
   grid-template-columns: auto 1fr auto;
   grid-template-rows: auto;
   align-items: center;
+  min-width: 0;
+}
+
+/* A label visual cede antes do rail do CLI; o texto completo continua no DOM
+   e no nome acessível do botão. */
+.gui-seat-menu .gui-menu-item b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gui-seat-menu .gui-menu-item .cli-mark {
@@ -15706,17 +16945,19 @@ details.gui-tool {
 }
 
 .gui-input {
-  flex: 1;
+  grid-area: input;
+  width: 100%;
   min-width: 0;
+  min-height: 46px;
   resize: none;
-  background: var(--card);
-  border: 1px solid var(--gui-line-strong);
-  border-radius: 9px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   color: var(--ink);
   font-family: var(--mono);
-  font-size: 12.5px;
-  line-height: 1.5;
-  padding: 8px 11px;
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 6px 7px 3px;
   /* A caixa CRESCE em vez de ganhar barra de rolagem (ordem do dono): o teto
      é alto e a barra é invisível — quem escreve texto longo vê o texto, não
      um trilho cinza. O JS grampeia a altura no mesmo valor. */
@@ -15724,40 +16965,37 @@ details.gui-tool {
   overflow-y: auto;
   scrollbar-width: none;
   user-select: text;
-  transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease;
 }
 
 .gui-input::-webkit-scrollbar {
   display: none;
 }
 
-.gui-input:focus {
+.gui-composer-surface .gui-input:focus {
+  border: 0;
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: none;
 }
 
 .gui-input::placeholder {
-  color: var(--ink-3);
+  color: var(--ink-2);
 }
 
 .gui-input:disabled {
-  opacity: 0.6;
+  opacity: 0.68;
 }
 
-/* mic e enviar: dois quadrados de 34px alinhados à base do input */
+/* Ações quadradas alinhadas no centro da superfície do composer. */
 .gui-sq {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--gui-line-strong);
-  border-radius: 8px;
-  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--gui-fill-2);
   color: var(--ink-2);
   font-family: var(--mono);
   font-size: 12px;
@@ -15770,16 +17008,51 @@ details.gui-tool {
 
 .gui-sq:hover:not(:disabled) {
   color: var(--ink);
-  border-color: var(--ink-2);
-  background: var(--gui-fill);
+  border-color: var(--gui-line);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .gui-sq:disabled {
-  opacity: 0.4;
+  opacity: 0.62;
   cursor: default;
 }
 
+.gui-attach-btn {
+  grid-area: attach;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 20px;
+  font-weight: 300;
+}
+
+.gui-attach-btn:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--gui-fill-2);
+}
+
+.gui-file-input {
+  display: none;
+}
+
+.gui-attach-menu {
+  min-width: 250px;
+}
+
+.gui-attach-error {
+  grid-column: 1 / -1;
+  color: var(--err);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
 .gui-send {
+  grid-area: send;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
@@ -15792,29 +17065,41 @@ details.gui-tool {
 }
 
 .gui-send:disabled {
-  background: color-mix(in srgb, var(--accent) 40%, var(--paper));
+  background: color-mix(in srgb, var(--ink) 7%, var(--card));
   border-color: transparent;
-  color: #fff;
+  color: var(--ink-3);
   opacity: 1;
 }
 
 .gui-send.stop {
-  background: transparent;
-  border-color: var(--gui-line-strong);
-  color: var(--ink-2);
+  background: color-mix(in srgb, var(--accent) 7%, var(--card));
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--gui-line-strong));
+  color: var(--accent-deep);
 }
 
 .gui-send.stop:hover:not(:disabled) {
-  background: transparent;
-  border-color: var(--err);
-  color: var(--err);
+  background: color-mix(in srgb, var(--accent) 14%, var(--card));
+  border-color: var(--accent);
+  color: var(--accent-deep);
+}
+
+.gui-send.stop:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, var(--card));
+  outline-offset: 2px;
+}
+
+.gui-send-stop-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 1.5px;
+  background: currentColor;
 }
 
 /* ---- o chat cabe em pane estreito sem virar sopa ---- */
 
 @container pane (max-width: 560px) {
   .gui-thread,
-  .gui-composer-inner,
+  .gui-composer-surface,
   .gui-question,
   .gui-slash-menu {
     max-width: none;
@@ -15828,6 +17113,7 @@ details.gui-tool {
   .gui-head-seat-btn .ghs-mail {
     display: none;
   }
+
 }
 
 @container pane (max-width: 480px) {
@@ -15855,6 +17141,42 @@ details.gui-tool {
   }
 
   .gui-mode-menu {
-    min-width: 240px;
+    width: min(240px, calc(100cqw - 40px));
+    min-width: 0;
+  }
+
+  .gui-composer-inner {
+    grid-template-columns: auto auto minmax(4px, 1fr) auto auto auto auto;
+    column-gap: 4px;
+    padding: 7px;
+  }
+
+  .gui-composer-context {
+    font-size: 10px;
+  }
+}
+
+@container pane (max-width: 350px) {
+  .gui-mode-btn {
+    padding-right: 7px;
+    padding-left: 7px;
+  }
+
+  .gui-composer-model {
+    display: none;
+  }
+
+  .gui-composer-inner {
+    grid-template-columns: auto auto minmax(4px, 1fr) auto auto auto;
+    grid-template-areas:
+      "input input input input input input"
+      "attach mode spacer context effort send";
+  }
+
+  .gui-composer-inner:has(.gui-composer-attachments) {
+    grid-template-areas:
+      "input input input input input input"
+      "attachments attachments attachments attachments attachments attachments"
+      "attach mode spacer context effort send";
   }
 }

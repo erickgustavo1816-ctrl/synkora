@@ -1,25 +1,130 @@
 import assert from 'node:assert/strict'
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
   GUI_PERMISSION_MODES,
+  GUI_RING_BYTE_CAP,
   GUI_RING_CAP,
+  GUI_TRANSCRIPT_STORE_BYTE_CAP,
+  GUI_TRANSCRIPT_STORE_PANE_CAP,
   GuiEventRing,
   GuiSessionRegistry,
+  GUI_PROMPT_MAX_CHARS,
+  guiMessageIdProblem,
+  guiQueuedDeliveryProblem,
+  guiPromptProblem,
   guiPermissionProfile,
+  rememberedGuiExecutorValue,
+  guiSessionWithoutIdentity,
+  guiSessionWithoutResume,
   inheritedResumeSessionId,
+  isGuiPersistedEvent,
   isGuiPermissionMode,
+  pruneGuiTranscripts,
   spawnFingerprint
 } from '../.tmp/gui-sessions-test/guiSessions.js'
+import { MaestroSession } from '../.tmp/gui-sessions-test/maestroSession.js'
+import { CodexSession } from '../.tmp/gui-sessions-test/codexSession.js'
+import {
+  guiChildNeedsTermination,
+  guiTreeKillCommand
+} from '../.tmp/gui-sessions-test/guiProcessTree.js'
 import {
   GUI_ATTACHMENT_MAX_BYTES,
+  GUI_ATTACHMENT_MAX_BASE64_CHARS,
+  GUI_ATTACHMENT_MAX_FILES,
+  GUI_ATTACHMENT_MAX_TOTAL_BYTES,
   attachPayloadProblem,
+  attachmentBase64Problem,
   attachmentTooLargeError,
   base64ByteLength,
+  guiAttachmentKindForName,
+  isGuiAttachmentDescriptor,
   safeAttachmentName,
   stripDataUrlPrefix,
-  uniqueAttachmentPath
+  uniqueAttachmentPath,
+  withGuiAttachmentReferences
 } from '../.tmp/gui-sessions-test/guiAttachments.js'
+import {
+  chatPermissionRuleLabel,
+  fallbackBashPermissionRule,
+  resolveChatPermissionSuggestions
+} from '../.tmp/gui-sessions-test/chatPermissions.js'
+import {
+  prepareGuiAttachmentDirectory,
+  resolveGuiExternalFolderReference,
+  resolveGuiFolderReference,
+  validateGuiAttachmentReferences,
+  writeGuiAttachmentExclusive
+} from '../.tmp/gui-sessions-test/guiAttachmentStorage.js'
+
+test('permissão permanente mostra e grava apenas a regra Bash estreita', () => {
+  assert.equal(
+    fallbackBashPermissionRule('Bash', { command: 'git commit -m "ok"' }),
+    'Bash(git commit:*)'
+  )
+  assert.deepEqual(
+    resolveChatPermissionSuggestions('Bash', { command: 'git commit -m "ok"' }, []),
+    [
+      {
+        type: 'addRules',
+        rules: [{ toolName: 'Bash', ruleContent: 'git commit:*' }],
+        behavior: 'allow',
+        destination: 'localSettings'
+      }
+    ]
+  )
+  assert.deepEqual(
+    resolveChatPermissionSuggestions('Bash', { command: 'git status' }, [
+      {
+        type: 'addRules',
+        rules: [{ toolName: 'Bash', ruleContent: 'git status:*' }],
+        behavior: 'allow',
+        destination: 'localSettings'
+      }
+    ]),
+    [
+      {
+        type: 'addRules',
+        rules: [{ toolName: 'Bash', ruleContent: 'git status:*' }],
+        behavior: 'allow',
+        destination: 'localSettings'
+      }
+    ],
+    'sugestão do CLI vence o fallback'
+  )
+  assert.equal(
+    chatPermissionRuleLabel([
+      {
+        type: 'addRules',
+        rules: [{ toolName: 'Bash', ruleContent: 'git commit:*' }],
+        behavior: 'allow',
+        destination: 'localSettings'
+      }
+    ]),
+    'Bash(git commit:*)',
+    'o card consegue mostrar a regra antes do clique'
+  )
+  assert.deepEqual(
+    resolveChatPermissionSuggestions('Write', { file_path: 'fora.txt' }, []),
+    [],
+    'ferramenta fora da família Bash não recebe uma regra inventada'
+  )
+  assert.equal(
+    fallbackBashPermissionRule('Bash', { command: 'git && commit' }),
+    undefined,
+    'metacaracteres de shell não entram no fallback'
+  )
+})
 
 // Anel de eventos — é ele que faz a remontagem do pane GUI não nascer vazia
 // enquanto a sessão segue viva (docs/GUI_PANE_CONTRACT.md, gui:state).
@@ -37,9 +142,126 @@ test('o anel preserva a ordem e devolve uma cópia', () => {
   assert.equal(ring.size, 2, 'mexer no snapshot nunca muda o anel')
 })
 
+test('cursor monotônico compacta deltas sem perder chunks repetidos', () => {
+  const ring = new GuiEventRing(4)
+  const first = ring.push({ type: 'delta', text: 'a' })
+  const second = ring.push({ type: 'delta', text: 'a' })
+  assert.equal(second, first + 1)
+  assert.equal(ring.cursor, second)
+  assert.deepEqual(ring.sequencedSnapshot(), [
+    { seq: second, evt: { type: 'delta', text: 'aa' } }
+  ])
+})
+
+test('nova geração substitui o executor sticky da conta anterior', () => {
+  const ring = new GuiEventRing()
+  ring.push({ type: 'executor-changed', model: 'opus', effort: 'high' })
+  ring.push({ type: 'session-restarted', ready: false })
+  ring.push({ type: 'executor-changed', model: null, effort: null })
+  assert.deepEqual(ring.snapshot(), [
+    { type: 'session-restarted', ready: false },
+    { type: 'executor-changed', model: null, effort: null }
+  ])
+})
+
+test('barreira de resume não deixa medição de contexto antiga sobreviver sozinha', () => {
+  const ring = new GuiEventRing(2)
+  ring.push({ type: 'context-usage', contextTokens: 120_000, contextWindow: 258_400 })
+  ring.push({ type: 'session-restarted', ready: true })
+  ring.push({ type: 'command-output', text: 'nova geração' })
+  ring.push({ type: 'command-output', text: 'continua' })
+
+  // O redutor recebe primeiro a medida antiga e logo a barreira, que a limpa.
+  // Sem reter essa barreira, um replay posterior mostraria contexto do processo morto.
+  assert.deepEqual(
+    ring.snapshot().filter((event) => event.type === 'context-usage' || event.type === 'session-restarted'),
+    [
+      { type: 'context-usage', contextTokens: 120_000, contextWindow: 258_400 },
+      { type: 'session-restarted', ready: true }
+    ]
+  )
+})
+
+test('limpeza explícita esvazia o fio sem reciclar seq do listener vivo', () => {
+  const ring = new GuiEventRing()
+  ring.push({ type: 'text', text: 'antiga' })
+  const before = ring.cursor
+  ring.clear(true)
+  const cleared = ring.push({ type: 'conversation-cleared' })
+  assert.equal(cleared, before + 1)
+  assert.deepEqual(ring.snapshot(), [{ type: 'conversation-cleared' }])
+})
+
+test('hidratação aceita só eventos completos do contrato conhecido', () => {
+  assert.equal(
+    isGuiPersistedEvent({
+      type: 'ready',
+      caps: {
+        commands: [{ name: '/status', description: 'mostra o estado' }],
+        models: [{ value: 'opus', displayName: 'Opus' }]
+      }
+    }),
+    true
+  )
+  assert.equal(
+    isGuiPersistedEvent({
+      type: 'permission',
+      requestId: 'req-1',
+      toolName: 'Bash',
+      description: 'npm test',
+      inputPretty: '{}',
+      canAlways: false
+    }),
+    true
+  )
+  assert.equal(
+    isGuiPersistedEvent({
+      type: 'context-usage',
+      contextTokens: 1_312,
+      contextWindow: 258_400
+    }),
+    true
+  )
+  assert.equal(
+    isGuiPersistedEvent({ type: 'context-usage', contextTokens: 1_312 }),
+    false,
+    'fotografia parcial não pode reintroduzir uma janela estimada'
+  )
+  assert.equal(isGuiPersistedEvent({ type: 'delta', text: 7 }), false)
+  assert.equal(isGuiPersistedEvent({ type: 'ready', caps: { commands: {}, models: [] } }), false)
+  assert.equal(isGuiPersistedEvent({ type: 'inventado', text: 'não hidratar' }), false)
+})
+
+test('documento limita globalmente panes e bytes, preservando a foto recém-salva', () => {
+  const transcript = (updatedAt, text) => ({
+    events: [{ type: 'text', text }],
+    cursor: 1,
+    updatedAt
+  })
+  const byCount = {
+    old: transcript('2026-08-01T00:00:00.000Z', 'a'),
+    middle: transcript('2026-08-02T00:00:00.000Z', 'b'),
+    current: transcript('2026-08-03T00:00:00.000Z', 'c')
+  }
+  assert.deepEqual(
+    pruneGuiTranscripts(byCount, 'old', Number.MAX_SAFE_INTEGER, 2),
+    ['middle']
+  )
+  assert.deepEqual(Object.keys(byCount).sort(), ['current', 'old'])
+
+  const byBytes = {
+    old: transcript('2026-08-01T00:00:00.000Z', 'a'.repeat(200)),
+    current: transcript('2026-08-03T00:00:00.000Z', 'b'.repeat(200))
+  }
+  assert.deepEqual(pruneGuiTranscripts(byBytes, 'current', 1, 10), ['old', 'current'])
+  assert.deepEqual(Object.keys(byBytes), [], 'nem o pane atual pode furar o teto duro')
+  assert.equal(GUI_TRANSCRIPT_STORE_BYTE_CAP, 32 * 1024 * 1024)
+  assert.equal(GUI_TRANSCRIPT_STORE_PANE_CAP, 64)
+})
+
 test('estourar o teto descarta os MAIS ANTIGOS e mantém a janela cheia', () => {
   const ring = new GuiEventRing(3)
-  for (const text of ['a', 'b', 'c', 'd', 'e']) ring.push({ type: 'delta', text })
+  for (const text of ['a', 'b', 'c', 'd', 'e']) ring.push({ type: 'command-output', text })
 
   assert.equal(ring.size, 3)
   assert.deepEqual(
@@ -48,12 +270,69 @@ test('estourar o teto descarta os MAIS ANTIGOS e mantém a janela cheia', () => 
   )
 })
 
+test('o anel também respeita orçamento agregado de bytes', () => {
+  const ring = new GuiEventRing(20, 180)
+  ring.push({ type: 'tool', input: { content: 'a'.repeat(90) } })
+  ring.push({ type: 'tool', input: { content: 'b'.repeat(90) } })
+  assert.equal(ring.size, 1)
+  assert.match(ring.snapshot()[0].input.content, /^b+$/u)
+
+  const oversized = new GuiEventRing(20, 8)
+  oversized.push({ type: 'fatal', text: 'o evento terminal mais novo sobrevive' })
+  assert.equal(oversized.size, 1)
+  assert.equal(GUI_RING_BYTE_CAP, 4 * 1024 * 1024)
+})
+
+test('metadados essenciais sobrevivem à evicção e remontam a sessão pronta', () => {
+  const ring = new GuiEventRing(30, 900)
+  ring.push({ type: 'init', model: 'claude', sessionId: 's-1' })
+  ring.push({ type: 'ready', caps: { commands: [], models: [] } })
+  for (let index = 0; index < 20; index += 1) {
+    ring.push({ type: 'tool', input: { content: String(index).repeat(120) } })
+  }
+  const replay = ring.snapshot()
+  assert.equal(replay[0].type, 'init')
+  assert.equal(replay[1].type, 'ready')
+  assert.ok(replay.some((event) => event.type === 'tool'))
+})
+
 test('teto inválido cai no padrão do contrato', () => {
   for (const cap of [0, -10]) {
     const ring = new GuiEventRing(cap)
     for (let i = 0; i < GUI_RING_CAP + 5; i += 1) ring.push(i)
     assert.equal(ring.size, GUI_RING_CAP)
   }
+})
+
+test('interacoes pendentes sobrevivem ao trafego e saem por requestId ou terminal', () => {
+  const ring = new GuiEventRing(4, 900)
+  ring.push({ type: 'result', text: 'turno anterior', isError: false })
+  ring.push({ type: 'permission', requestId: 'req-a', toolName: 'Bash' })
+  ring.push({ type: 'question', requestId: 'req-b', questions: [] })
+  for (let index = 0; index < 8; index += 1) {
+    ring.push({ type: 'delta', text: String(index).repeat(90) })
+  }
+
+  let replay = ring.snapshot()
+  assert.deepEqual(
+    replay.filter((event) => event.type === 'permission' || event.type === 'question'),
+    [
+      { type: 'permission', requestId: 'req-a', toolName: 'Bash' },
+      { type: 'question', requestId: 'req-b', questions: [] }
+    ]
+  )
+  assert.deepEqual(replay.slice(-2).map((event) => event.requestId), ['req-a', 'req-b'])
+
+  ring.push({ type: 'interaction-resolved', requestId: 'req-a', resolution: { kind: 'stale' } })
+  replay = ring.snapshot()
+  assert.equal(replay.some((event) => event.requestId === 'req-a' && event.type === 'permission'), false)
+  assert.equal(replay.some((event) => event.requestId === 'req-a' && event.type === 'interaction-resolved'), true)
+  assert.equal(replay.some((event) => event.requestId === 'req-b' && event.type === 'question'), true)
+
+  ring.push({ type: 'result', text: '', isError: false })
+  replay = ring.snapshot()
+  assert.equal(replay.some((event) => event.requestId === 'req-b' && event.type === 'question'), false)
+  assert.equal(replay.at(-1).type, 'result')
 })
 
 test('clear zera o replay', () => {
@@ -72,6 +351,588 @@ const registry = () =>
     systemPromptFile: () => undefined
   })
 
+test('decisões interativas entram no replay canônico com o requestId correto', () => {
+  const gui = registry()
+  const ring = new GuiEventRing()
+  const session = Object.create(MaestroSession.prototype)
+  session.answerPermission = () => ({
+    toolUseId: 'tool-a',
+    toolName: 'Bash',
+    description: 'npm test'
+  })
+  session.answerQuestion = () => true
+  session.answerPlanReview = () => true
+  const sink = (evt) => ring.push(evt)
+  gui.panes.set('p-canonico', {
+    spawn: {
+      paneId: 'p-canonico',
+      projectId: 'proj',
+      cli: 'claude',
+      configDir: 'c',
+      cwd: '/tmp'
+    },
+    fingerprint: 'teste',
+    session,
+    ring,
+    token: { alive: true },
+    sink
+  })
+
+  assert.equal(gui.permission('p-canonico', 'req-perm', 'deny').ok, true)
+  assert.equal(
+    gui.answerQuestion('p-canonico', 'req-question', { 'Qual opção?': 'A' }).ok,
+    true
+  )
+  assert.equal(gui.answerPlan('p-canonico', 'req-plan', false).ok, true)
+
+  assert.deepEqual(ring.snapshot(), [
+    {
+      type: 'interaction-resolved',
+      requestId: 'req-perm',
+      resolution: {
+        kind: 'permission',
+        toolUseId: 'tool-a',
+        toolName: 'Bash',
+        behavior: 'deny'
+      }
+    },
+    {
+      type: 'interaction-resolved',
+      requestId: 'req-question',
+      resolution: {
+        kind: 'question',
+        entries: [{ question: 'Qual opção?', answer: 'A' }]
+      }
+    },
+    {
+      type: 'interaction-resolved',
+      requestId: 'req-plan',
+      resolution: { kind: 'plan', approve: false }
+    }
+  ])
+})
+
+test('todo envio anuncia início de turno no replay antes de tocar no backend', () => {
+  const gui = registry()
+  const ring = new GuiEventRing()
+  const sent = []
+  const session = { alive: true, send: (text) => sent.push(text) }
+  const sink = (evt) => ring.push(evt)
+  gui.panes.set('p-send', {
+    spawn: {
+      paneId: 'p-send',
+      projectId: 'proj',
+      cli: 'claude',
+      configDir: 'c',
+      cwd: '/tmp'
+    },
+    fingerprint: 'teste',
+    session,
+    ring,
+    token: { alive: true },
+    sink
+  })
+
+  assert.equal(gui.send('p-send', 'mensagem', 'g-test').ok, true)
+  assert.equal(gui.send('p-send', 'mensagem duplicada', 'g-test').ok, true)
+  assert.deepEqual(sent, ['mensagem'])
+  const replay = ring.snapshot()
+  assert.equal(replay.length, 2)
+  assert.deepEqual(
+    { ...replay[0], at: typeof replay[0].at },
+    { type: 'user-message', id: 'g-test', text: 'mensagem', at: 'number' }
+  )
+  assert.deepEqual(replay[1], { type: 'turn-started' })
+})
+
+test('modelo e effort mudam em voo sem respawn nem linha visual no transcript', async () => {
+  const gui = registry()
+  const ring = new GuiEventRing()
+  ring.push({ type: 'text', text: 'fio preservado' })
+  const applied = []
+  const session = {
+    alive: true,
+    turnActive: false,
+    caps: {
+      commands: [],
+      models: [
+        {
+          value: 'opus',
+          displayName: 'Opus',
+          supportedEffortLevels: ['low', 'high']
+        }
+      ]
+    },
+    setExecutor: async (input) => {
+      applied.push(input)
+      return true
+    }
+  }
+  const spawn = {
+    paneId: 'p-executor-live',
+    projectId: 'proj',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp',
+    model: 'opus',
+    effort: 'high'
+  }
+  gui.panes.set(spawn.paneId, {
+    spawn,
+    fingerprint: spawnFingerprint(spawn),
+    session,
+    ring,
+    token: { alive: true },
+    sink: (event) => ring.push(event)
+  })
+  assert.deepEqual(await gui.configureExecutor(spawn.paneId, { effort: 'low' }), {
+    ok: true,
+    model: 'opus',
+    effort: 'low'
+  })
+  assert.deepEqual(applied, [{ model: 'opus', effort: 'low' }])
+  assert.deepEqual(ring.snapshot(), [
+    { type: 'text', text: 'fio preservado' },
+    { type: 'executor-changed', model: 'opus', effort: 'low' }
+  ])
+  assert.equal(gui.panes.get(spawn.paneId).session, session, 'o backend vivo é o mesmo')
+  assert.equal(gui.remembered(spawn.paneId).effort, 'low')
+
+  assert.equal((await gui.configureExecutor(spawn.paneId, { effort: null })).ok, true)
+  assert.equal(gui.remembered(spawn.paneId).effort, null, 'padrão explícito fica persistido')
+  assert.deepEqual(ring.snapshot(), [
+    { type: 'text', text: 'fio preservado' },
+    { type: 'executor-changed', model: 'opus', effort: null }
+  ])
+})
+
+test('fila aplica permissao e executor do bilhete antes de enviar, com retry idempotente', async () => {
+  const sent = []
+  const applied = []
+  const spawns = []
+  let generation = 0
+  const gui = registry()
+  gui.spawnSession = (spawn, sink) => {
+    spawns.push({ ...spawn })
+    generation += 1
+    const caps = {
+      commands: [],
+      models: [
+        {
+          value: 'opus',
+          displayName: 'Opus',
+          supportedEffortLevels: ['high']
+        }
+      ]
+    }
+    sink({
+      type: 'init',
+      model: 'opus',
+      sessionId: `queued-session-${generation}`,
+      permissionMode: spawn.permissionMode ?? 'default',
+      toolCount: 0
+    })
+    sink({ type: 'ready', caps })
+    return {
+      alive: true,
+      turnActive: false,
+      caps,
+      waitCaps: async () => caps,
+      setExecutor: async (options) => {
+        applied.push(options)
+        return true
+      },
+      send: (text) => sent.push(text),
+      kill: () => undefined
+    }
+  }
+  const spawn = {
+    paneId: 'p-queued-delivery',
+    projectId: 'proj',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp',
+    permissionMode: 'default'
+  }
+  assert.equal(gui.create(spawn).ok, true)
+  const input = {
+    id: 'queued-once',
+    text: 'envie com a fotografia',
+    at: Date.now(),
+    options: { model: 'opus', effort: 'high', permissionMode: 'plan' },
+    attachments: []
+  }
+  assert.equal(guiQueuedDeliveryProblem(input), null)
+  const [firstDelivery, concurrentDelivery] = await Promise.all([
+    gui.deliverQueued(spawn.paneId, input),
+    gui.deliverQueued(spawn.paneId, input)
+  ])
+  assert.deepEqual(firstDelivery, { ok: true })
+  assert.deepEqual(concurrentDelivery, { ok: true })
+  assert.equal(spawns.length, 2)
+  assert.equal(spawns[1].permissionMode, 'plan')
+  assert.equal(spawns[1].resumeSessionId, 'queued-session-1')
+  assert.deepEqual(applied, [{ model: 'opus', effort: 'high' }])
+  assert.deepEqual(sent, ['envie com a fotografia'])
+
+  assert.deepEqual(await gui.deliverQueued(spawn.paneId, input), { ok: true })
+  assert.equal(spawns.length, 2, 'ACK perdido nao respawna novamente')
+  assert.deepEqual(sent, ['envie com a fotografia'], 'o mesmo id nunca executa duas vezes')
+})
+
+test('recibo da fila sobrevive ao restart mesmo depois de o evento sair do replay', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-queued-receipt-'))
+  const storeFile = join(root, 'gui-sessions.json')
+  const sent = []
+  const spawn = {
+    paneId: 'p-queued-restart',
+    projectId: 'proj',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp',
+    permissionMode: 'default'
+  }
+  const caps = { commands: [], models: [] }
+  const makeRegistry = () => {
+    const gui = new GuiSessionRegistry({
+      push: () => undefined,
+      systemPromptFile: () => undefined,
+      storeFile
+    })
+    gui.spawnSession = (_spawn, sink) => {
+      sink({
+        type: 'init',
+        model: 'default',
+        sessionId: 'queued-restart-session',
+        permissionMode: 'default',
+        toolCount: 0
+      })
+      sink({ type: 'ready', caps })
+      return {
+        alive: true,
+        turnActive: false,
+        caps,
+        waitCaps: async () => caps,
+        setExecutor: async () => true,
+        send: (text) => sent.push(text),
+        kill: () => undefined
+      }
+    }
+    return gui
+  }
+  const input = {
+    id: 'queued-durable-receipt',
+    text: 'execute uma vez',
+    at: Date.now(),
+    options: { model: null, effort: null, permissionMode: 'default' },
+    attachments: []
+  }
+
+  try {
+    const first = makeRegistry()
+    assert.equal(first.create(spawn).ok, true)
+    assert.deepEqual(await first.deliverQueued(spawn.paneId, input), { ok: true })
+    assert.deepEqual(sent, ['execute uma vez'])
+
+    const persisted = JSON.parse(readFileSync(storeFile, 'utf8'))
+    persisted.transcripts = {}
+    writeFileSync(storeFile, JSON.stringify(persisted), 'utf8')
+
+    const reopened = makeRegistry()
+    assert.equal(reopened.create(spawn).ok, true)
+    assert.deepEqual(await reopened.deliverQueued(spawn.paneId, input), { ok: true })
+    assert.deepEqual(sent, ['execute uma vez'])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('envelope da fila falha fechado antes de tocar na sessao', () => {
+  assert.match(
+    guiQueuedDeliveryProblem({
+      id: 'queued-bad',
+      text: 'mensagem',
+      at: Date.now(),
+      options: { model: null, effort: null, permissionMode: 'superuser' },
+      attachments: []
+    }),
+    /permissao|permissão/u
+  )
+  assert.match(
+    guiQueuedDeliveryProblem({
+      id: 'queued-empty',
+      text: '',
+      at: Date.now(),
+      options: { model: null, effort: null, permissionMode: 'default' },
+      attachments: []
+    }),
+    /vazia/u
+  )
+})
+
+test('padrão explícito do executor não volta a herdar a missão ao reabrir', () => {
+  const remembered = {
+    cli: 'claude',
+    projectId: 'proj',
+    updatedAt: '2026-08-14T00:00:00.000Z',
+    model: null,
+    effort: null
+  }
+  assert.equal(rememberedGuiExecutorValue(remembered, 'claude', 'model', 'opus'), undefined)
+  assert.equal(rememberedGuiExecutorValue(remembered, 'claude', 'effort', 'high'), undefined)
+  assert.equal(
+    rememberedGuiExecutorValue({ ...remembered, model: 'sonnet' }, 'claude', 'model', 'opus'),
+    'sonnet'
+  )
+  assert.equal(
+    rememberedGuiExecutorValue(undefined, 'claude', 'model', 'opus'),
+    'opus',
+    'sem escolha do chat a missão continua sendo o fallback'
+  )
+})
+
+test('effort continua disponível quando o modelo usa o padrão da conta', async () => {
+  const gui = registry()
+  const applied = []
+  const session = {
+    alive: true,
+    turnActive: false,
+    caps: {
+      commands: [],
+      models: [
+        {
+          value: 'default',
+          resolvedModel: 'claude-opus-4-8[1m]',
+          displayName: 'Default (recommended)',
+          supportedEffortLevels: ['low', 'high']
+        }
+      ]
+    },
+    setExecutor: async (input) => {
+      applied.push(input)
+      return true
+    }
+  }
+  const spawn = {
+    paneId: 'p-default-effort',
+    projectId: 'proj',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp'
+  }
+  gui.panes.set(spawn.paneId, {
+    spawn,
+    fingerprint: spawnFingerprint(spawn),
+    session,
+    ring: new GuiEventRing(),
+    token: { alive: true },
+    sink: () => undefined
+  })
+
+  assert.equal((await gui.configureExecutor(spawn.paneId, { effort: 'high' })).ok, true)
+  assert.deepEqual(applied, [{ model: undefined, effort: 'high' }])
+})
+
+test('/model usa a troca canônica e limpa effort incompatível', async () => {
+  const gui = registry()
+  const applied = []
+  const session = Object.create(MaestroSession.prototype)
+  session.killed = false
+  session.closed = false
+  session.child = { exitCode: null, signalCode: null }
+  session.activeTurnGeneration = null
+  session.pendingTurnGenerations = []
+  session.caps = {
+    commands: [],
+    models: [
+      { value: 'opus', displayName: 'Opus', supportedEffortLevels: ['high'] },
+      { value: 'haiku', displayName: 'Haiku', supportedEffortLevels: ['low'] }
+    ]
+  }
+  session.setExecutor = async (input) => {
+    applied.push(input)
+    return true
+  }
+  const spawn = {
+    paneId: 'p-slash-model',
+    projectId: 'proj',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp',
+    model: 'opus',
+    effort: 'high'
+  }
+  const ring = new GuiEventRing()
+  gui.panes.set(spawn.paneId, {
+    spawn,
+    fingerprint: spawnFingerprint(spawn),
+    session,
+    ring,
+    token: { alive: true },
+    sink: (event) => ring.push(event)
+  })
+
+  assert.equal(gui.send(spawn.paneId, '/model haiku', 'g-slash-model').ok, true)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(applied, [{ model: 'haiku', effort: undefined }])
+  assert.equal(spawn.model, 'haiku')
+  assert.equal(spawn.effort, undefined)
+  assert.ok(
+    ring.snapshot().some(
+      (event) =>
+        event.type === 'executor-changed' && event.model === 'haiku' && event.effort === null
+    )
+  )
+})
+
+test('troca recusada ou durante turno falha fechada e conserva a escolha', async () => {
+  const gui = registry()
+  let calls = 0
+  const session = {
+    alive: true,
+    turnActive: false,
+    caps: {
+      commands: [],
+      models: [
+        {
+          value: 'opus',
+          displayName: 'Opus',
+          supportedEffortLevels: ['low', 'high']
+        }
+      ]
+    },
+    setExecutor: async () => {
+      calls += 1
+      return false
+    }
+  }
+  const spawn = {
+    paneId: 'p-executor-closed',
+    projectId: 'proj',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp',
+    model: 'opus',
+    effort: 'high'
+  }
+  gui.panes.set(spawn.paneId, {
+    spawn,
+    fingerprint: spawnFingerprint(spawn),
+    session,
+    ring: new GuiEventRing(),
+    token: { alive: true },
+    sink: () => undefined
+  })
+
+  assert.equal((await gui.configureExecutor(spawn.paneId, { effort: 'low' })).ok, false)
+  assert.equal(spawn.effort, 'high')
+  assert.equal(calls, 1)
+
+  session.turnActive = true
+  assert.match(
+    (await gui.configureExecutor(spawn.paneId, { effort: 'low' })).error,
+    /resposta atual terminar/u
+  )
+  session.turnActive = false
+  assert.equal(calls, 1, 'turno ativo é recusado antes de tocar no backend')
+
+  assert.match(
+    (await gui.configureExecutor(spawn.paneId, { effort: 'max' })).error,
+    /não está disponível/u
+  )
+  assert.equal(calls, 1, 'valor fora das caps também não toca no backend')
+})
+
+test('Claude aplica modelo e effort num único control_request confirmado', async () => {
+  const session = Object.create(MaestroSession.prototype)
+  session.opts = { cwd: '/tmp', model: 'opus', effort: 'high' }
+  session.killed = false
+  session.closed = false
+  session.child = { exitCode: null, signalCode: null }
+  session.activeTurnGeneration = null
+  session.pendingTurnGenerations = []
+  session.controlWaiters = new Map()
+  let request
+  session.write = (message) => {
+    request = message
+    queueMicrotask(() => session.controlWaiters.get(message.request_id)?.(true))
+  }
+
+  assert.equal(await session.setExecutor({ model: 'opus', effort: 'low' }), true)
+  assert.deepEqual(request.request, {
+    subtype: 'apply_flag_settings',
+    settings: { model: 'opus', effortLevel: 'low' }
+  })
+  assert.equal(session.opts.effort, 'low')
+})
+
+test('timeout da troca Claude encerra o estado ambíguo antes do próximo turno', async () => {
+  const session = Object.create(MaestroSession.prototype)
+  session.opts = { cwd: '/tmp', model: 'opus', effort: 'high' }
+  session.killed = false
+  session.closed = false
+  session.child = { exitCode: null, signalCode: null }
+  session.activeTurnGeneration = null
+  session.pendingTurnGenerations = []
+  session.controlWaiters = new Map()
+  session.write = () => undefined
+  const events = []
+  session.emit = (event) => events.push(event)
+  let killed = false
+  session.kill = () => {
+    killed = true
+    session.killed = true
+  }
+
+  let timeout
+  const originalSetTimeout = globalThis.setTimeout
+  globalThis.setTimeout = (callback) => {
+    timeout = callback
+    return 1
+  }
+  try {
+    const pending = session.setExecutor({ model: 'sonnet', effort: 'low' })
+    assert.equal(typeof timeout, 'function')
+    timeout()
+    assert.equal(await pending, false)
+  } finally {
+    globalThis.setTimeout = originalSetTimeout
+  }
+
+  assert.equal(killed, true)
+  assert.equal(session.controlWaiters.size, 0, 'ACK tardio não encontra mais waiter')
+  assert.equal(session.opts.model, 'opus', 'UI/opções antigas não são carimbadas como sucesso')
+  assert.match(events.at(-1).text, /estado incerto/u)
+})
+
+test('/model não contorna o bloqueio enquanto uma resposta está em curso', async () => {
+  const claude = Object.create(MaestroSession.prototype)
+  claude.opts = { cwd: '/tmp', model: 'opus' }
+  claude.killed = false
+  claude.closed = false
+  claude.child = { exitCode: null, signalCode: null }
+  claude.activeTurnGeneration = 1
+  claude.pendingTurnGenerations = []
+  let writes = 0
+  claude.write = () => {
+    writes += 1
+  }
+  assert.equal(await claude.setModel('sonnet'), false)
+  assert.equal(writes, 0)
+  assert.equal(claude.opts.model, 'opus')
+
+  const codex = Object.create(CodexSession.prototype)
+  codex.opts = { cwd: '/tmp', model: 'gpt-5.6' }
+  codex.killed = false
+  codex.closed = false
+  codex.child = { exitCode: null, signalCode: null }
+  codex.turnId = 'turn-running'
+  codex.pendingTurnStart = null
+  codex.pendingSendOperations = new Set()
+  assert.equal(await codex.setModel('gpt-5.6-mini'), false)
+  assert.equal(codex.opts.model, 'gpt-5.6')
+})
+
 test('spawn inválido é recusado antes de qualquer processo nascer', () => {
   const gui = registry()
   const base = { paneId: 'p1', projectId: 'proj', cli: 'claude', configDir: 'c', cwd: '/tmp' }
@@ -88,6 +949,202 @@ test('spawn inválido é recusado antes de qualquer processo nascer', () => {
   assert.equal(gui.has('p1'), false, 'recusa não deixa entrada pendurada no Map')
 })
 
+test('mensagens e prompts grandes falham antes do processo e do IPC', () => {
+  const atLimit = 'a'.repeat(GUI_PROMPT_MAX_CHARS)
+  assert.equal(guiPromptProblem(atLimit), null)
+  assert.match(guiPromptProblem(`${atLimit}a`), /grande demais/u)
+  assert.match(guiPromptProblem(''), /vazia/u)
+  assert.match(guiPromptProblem(false), /formato inválido/u)
+  assert.equal(guiMessageIdProblem('g-1'), null)
+  assert.match(guiMessageIdProblem('../quebrado'), /identificador/u)
+
+  const gui = registry()
+  const base = { paneId: 'p-limite', projectId: 'proj', cli: 'claude', configDir: 'c', cwd: '/tmp' }
+  assert.match(gui.create({ ...base, firstPrompt: `${atLimit}a` }).error, /grande demais/u)
+  assert.equal(gui.has('p-limite'), false)
+})
+
+test('encerramento do chat mata a árvore inteira no Windows', () => {
+  assert.deepEqual(guiTreeKillCommand('win32', 4321), {
+    file: 'taskkill.exe',
+    args: ['/pid', '4321', '/t', '/f']
+  })
+  assert.equal(guiTreeKillCommand('linux', 4321), null)
+  assert.equal(guiTreeKillCommand('win32', undefined), null)
+  assert.equal(guiChildNeedsTermination(null, null), true)
+  assert.equal(guiChildNeedsTermination(0, null), false)
+  assert.equal(guiChildNeedsTermination(null, 'SIGTERM'), false)
+})
+
+test('processo encerrado por sinal nunca continua vivo no registro', () => {
+  for (const Session of [MaestroSession, CodexSession]) {
+    const session = Object.create(Session.prototype)
+    session.killed = false
+    session.closed = false
+    session.child = { exitCode: null, signalCode: 'SIGTERM' }
+    assert.equal(session.alive, false)
+    session.child.signalCode = null
+    assert.equal(session.alive, true)
+    session.closed = true
+    assert.equal(session.alive, false)
+  }
+})
+
+test('initialize recusado pelo Claude falha fechado e libera os waiters', () => {
+  const session = Object.create(MaestroSession.prototype)
+  const events = []
+  let waited = 'pendente'
+  let killed = 0
+  session.initReqId = 'init-1'
+  session.interruptRequestId = null
+  session.initTimer = null
+  session.caps = null
+  session.capsWaiters = [(caps) => (waited = caps)]
+  session.emit = (event) => events.push(event)
+  session.kill = () => {
+    killed += 1
+  }
+
+  session.handleLine(
+    JSON.stringify({
+      type: 'control_response',
+      response: { request_id: 'init-1', subtype: 'error', error: 'recusado' }
+    })
+  )
+  assert.equal(killed, 1)
+  assert.equal(waited, null)
+  assert.equal(events[0].type, 'fatal')
+  assert.match(events[0].text, /handshake do Claude falhou/u)
+})
+
+test('firstPrompt nunca sai quando o handshake não produziu capacidades', async () => {
+  const gui = registry()
+  const ring = new GuiEventRing()
+  let sent = 0
+  const session = {
+    alive: true,
+    waitCaps: async () => null,
+    send: () => {
+      sent += 1
+    }
+  }
+  gui.panes.set('p-first', {
+    spawn: { paneId: 'p-first', projectId: 'proj', cli: 'claude', configDir: 'c', cwd: '/tmp' },
+    fingerprint: 'teste',
+    session,
+    ring,
+    token: { alive: true },
+    sink: (event) => ring.push(event)
+  })
+  gui.sendFirstPrompt('p-first', { alive: true }, 'não enviar')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(sent, 0)
+  assert.equal(ring.size, 0)
+})
+
+test('interrupt repetido do Codex é idempotente no mesmo turno', () => {
+  const session = Object.create(CodexSession.prototype)
+  session.threadId = 'thread-1'
+  session.turnId = 'turn-1'
+  session.interruptedTurnId = null
+  session.interruptTimer = null
+  let requests = 0
+  session.request = async () => {
+    requests += 1
+    return {}
+  }
+  assert.equal(session.interrupt(), true)
+  assert.equal(session.interrupt(), true)
+  assert.equal(requests, 1)
+  session.clearInterruptGuard()
+})
+
+test('Codex repassa somente o contexto vivo, nunca o acumulado da sessão', () => {
+  const session = Object.create(CodexSession.prototype)
+  const events = []
+  session.emit = (event) => events.push(event)
+
+  // Quatro mensagens curtas já podem ter processado centenas de milhares de
+  // tokens cumulativos. A tela só pode usar `last`, a fotografia vigente.
+  session.handleNotification('thread/tokenUsage/updated', {
+    tokenUsage: {
+      total: { totalTokens: 356_000 },
+      last: { totalTokens: 1_312 },
+      modelContextWindow: 258_400
+    }
+  })
+  assert.deepEqual(events, [
+    { type: 'context-usage', contextTokens: 1_312, contextWindow: 258_400 }
+  ])
+  assert.equal(Math.min(100, Math.round((356_000 / 258_400) * 100)), 100)
+  assert.equal(Math.round((events[0].contextTokens / events[0].contextWindow) * 100), 1)
+
+  // Sem `last`/janela, não há uma régua honesta: não reutiliza a medida velha
+  // nem cai no `total` só porque ele continua disponível.
+  events.length = 0
+  session.handleNotification('thread/tokenUsage/updated', {
+    tokenUsage: { total: { totalTokens: 400_000 } }
+  })
+  assert.deepEqual(events, [{ type: 'context-usage', contextTokens: null, contextWindow: null }])
+  assert.equal(session.lastTokens, undefined)
+  assert.equal(session.lastWindow, undefined)
+
+  // Compactar também invalida a fotografia até o protocolo publicar uma nova.
+  session.lastTokens = 20_000
+  session.lastWindow = 258_400
+  events.length = 0
+  session.handleNotification('thread/compacted', {})
+  assert.deepEqual(events, [
+    { type: 'context-usage', contextTokens: null, contextWindow: null },
+    { type: 'command-output', text: 'contexto da thread compactado' }
+  ])
+})
+
+test('resultado Codex tardio reconcilia somente depois que todos os envios assentam', () => {
+  const session = Object.create(CodexSession.prototype)
+  const events = []
+  session.killed = false
+  session.closed = false
+  session.child = { exitCode: null, signalCode: null }
+  session.pendingTurnStart = null
+  session.turnId = null
+  session.pendingSendOperations = new Set([2, 3])
+  session.terminalReconcilePending = false
+  session.emit = (event) => events.push(event)
+
+  session.emitTurnResult({ type: 'result', isError: true, errorText: 'B falhou' }, 2)
+  assert.equal(events.at(-1).continues, true)
+  assert.equal(session.terminalReconcilePending, true)
+
+  session.pendingSendOperations.delete(2)
+  session.reconcileTerminalContinuation()
+  assert.equal(events.length, 1, 'C ainda sem destino conserva o turno visual ativo')
+
+  session.pendingSendOperations.delete(3)
+  session.reconcileTerminalContinuation()
+  assert.deepEqual(events.at(-1), { type: 'turn-continuation', continues: false })
+  assert.equal(session.terminalReconcilePending, false)
+})
+
+test('interrupt repetido do Claude reutiliza a mesma solicitação do turno', () => {
+  const session = Object.create(MaestroSession.prototype)
+  session.activeTurnGeneration = 7
+  session.interruptGeneration = null
+  session.interruptRequestId = null
+  session.interruptTimer = null
+  let requests = 0
+  session.write = () => {
+    requests += 1
+  }
+
+  assert.equal(session.interrupt(), true)
+  const requestId = session.interruptRequestId
+  assert.equal(session.interrupt(), true)
+  assert.equal(requests, 1)
+  assert.equal(session.interruptRequestId, requestId)
+  session.clearInterruptGuard()
+})
+
 test('pane sem sessão responde honesto em vez de fingir', () => {
   const gui = registry()
 
@@ -97,7 +1154,12 @@ test('pane sem sessão responde honesto em vez de fingir', () => {
   })
   assert.equal(gui.permission('fantasma', 'req-1', 'allow').ok, false)
   assert.equal(gui.interrupt('fantasma').ok, false)
-  assert.deepEqual(gui.state('fantasma'), { events: [] })
+  assert.deepEqual(gui.state('fantasma'), {
+    events: [],
+    cursor: 0,
+    exists: false,
+    alive: false
+  })
   // kill de pane que já não existe é sucesso: fechar duas vezes não é erro.
   assert.deepEqual(gui.kill('fantasma'), { ok: true })
 })
@@ -105,6 +1167,363 @@ test('pane sem sessão responde honesto em vez de fingir', () => {
 test('sem documento de resume, lembrar é no-op (nada de disco em teste)', () => {
   const gui = registry()
   assert.equal(gui.remembered('p1'), undefined)
+})
+
+test('histórico visual persiste no fechamento e reabre sem duplicar eventos', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-gui-history-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const storeFile = join(root, 'gui-sessions.json')
+  const spawn = {
+    paneId: 'gui-dev-history1',
+    projectId: 'proj-history',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp'
+  }
+
+  let emitFirst
+  const first = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile
+  })
+  first.spawnSession = (_input, sink) => {
+    emitFirst = sink
+    return {
+      alive: true,
+      turnActive: false,
+      waitCaps: async () => ({ commands: [], models: [] }),
+      send: () => undefined,
+      kill: () => undefined
+    }
+  }
+  assert.equal(first.create(spawn).ok, true)
+  emitFirst({
+    type: 'init',
+    model: 'claude',
+    sessionId: 'session-history',
+    permissionMode: 'default',
+    toolCount: 0,
+    contextWindow: 200_000
+  })
+  emitFirst({ type: 'ready', caps: { commands: [], models: [] } })
+  assert.equal(first.send(spawn.paneId, 'Guarde isto', 'msg-history-1').ok, true)
+  emitFirst({ type: 'delta', text: 'Resposta ' })
+  emitFirst({ type: 'delta', text: 'guardada' })
+  emitFirst({ type: 'text', text: 'Resposta guardada' })
+  emitFirst({
+    type: 'result',
+    isError: false,
+    outcome: 'completed',
+    contextTokens: 4_200
+  })
+  assert.deepEqual(
+    {
+      contextTokens: first.remembered(spawn.paneId).contextTokens,
+      contextWindow: first.remembered(spawn.paneId).contextWindow,
+      contextSessionId: first.remembered(spawn.paneId).contextSessionId
+    },
+    {
+      contextTokens: 4_200,
+      contextWindow: 200_000,
+      contextSessionId: 'session-history'
+    },
+    'o último contexto canônico fica no registro da mesma sessão'
+  )
+  assert.equal(first.kill(spawn.paneId).ok, true)
+
+  const afterClose = first.state(spawn.paneId)
+  assert.equal(afterClose.exists, true)
+  assert.equal(afterClose.alive, false)
+  assert.equal(
+    afterClose.events.filter(({ evt }) => evt.type === 'user-message').length,
+    1
+  )
+  assert.equal(
+    afterClose.events.filter(({ evt }) => evt.type === 'delta').length,
+    1,
+    'deltas do mesmo bloco ficam compactados na fotografia'
+  )
+
+  const second = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile
+  })
+  const beforeCreate = second.state(spawn.paneId)
+  assert.equal(beforeCreate.exists, true, 'novo processo encontra o fio salvo')
+  assert.equal(beforeCreate.alive, false)
+  assert.equal(second.remembered(spawn.paneId).sessionId, 'session-history')
+  assert.equal(second.remembered(spawn.paneId).contextTokens, 4_200)
+  assert.equal(second.remembered(spawn.paneId).contextWindow, 200_000)
+
+  second.spawnSession = (_input, sink) => {
+    sink({
+      type: 'init',
+      model: 'claude',
+      sessionId: 'session-history',
+      permissionMode: 'default',
+      toolCount: 0,
+      contextWindow: 200_000
+    })
+    sink({ type: 'ready', caps: { commands: [], models: [] } })
+    return { alive: true, turnActive: false, kill: () => undefined }
+  }
+  assert.equal(
+    second.create({ ...spawn, resumeSessionId: second.remembered(spawn.paneId).sessionId }).ok,
+    true
+  )
+
+  const reopened = second.state(spawn.paneId)
+  assert.equal(reopened.alive, true)
+  assert.equal(
+    reopened.events.filter(({ evt }) => evt.type === 'user-message').length,
+    1,
+    'hidratação + eventos vivos não duplicam a mensagem do dono'
+  )
+  assert.equal(
+    reopened.events.filter(({ evt }) => evt.type === 'text' && evt.text === 'Resposta guardada').length,
+    1
+  )
+  assert.ok(
+    reopened.events
+      .filter(({ seq }) => seq > beforeCreate.cursor)
+      .some(({ evt }) => evt.type === 'session-restarted'),
+    'a geração retomada fica depois do cursor entregue ao renderer'
+  )
+  assert.deepEqual(
+    reopened.events.find(({ evt }) => evt.type === 'session-restarted')?.evt,
+    {
+      type: 'session-restarted',
+      ready: true,
+      contextTokens: 4_200,
+      contextWindow: 200_000
+    },
+    'o restart carrega o contexto antes de qualquer nova mensagem'
+  )
+})
+
+test('contexto não atravessa troca de identidade mesmo com transcript antigo', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-gui-context-identity-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const storeFile = join(root, 'gui-sessions.json')
+  const paneId = 'gui-context-identity'
+  writeFileSync(
+    storeFile,
+    JSON.stringify({
+      panes: {
+        [paneId]: {
+          sessionId: 'claude-old',
+          cli: 'claude',
+          projectId: 'proj-context',
+          updatedAt: new Date().toISOString(),
+          permissionMode: 'default',
+          contextTokens: 88_000,
+          contextWindow: 200_000,
+          contextSessionId: 'claude-old'
+        }
+      },
+      transcripts: {
+        [paneId]: {
+          events: [
+            {
+              type: 'init',
+              model: 'claude',
+              sessionId: 'claude-old',
+              permissionMode: 'default',
+              toolCount: 0,
+              contextWindow: 200_000
+            },
+            { type: 'context-usage', contextTokens: 88_000, contextWindow: 200_000 }
+          ],
+          cursor: 2,
+          updatedAt: new Date().toISOString()
+        }
+      }
+    }),
+    'utf8'
+  )
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile
+  })
+  gui.spawnSession = (_input, sink) => {
+    sink({
+      type: 'init',
+      model: 'claude',
+      sessionId: 'claude-new',
+      permissionMode: 'default',
+      toolCount: 0,
+      contextWindow: 200_000
+    })
+    return { alive: true, kill: () => undefined }
+  }
+  assert.equal(
+    gui.create({
+      paneId,
+      projectId: 'proj-context',
+      cli: 'claude',
+      configDir: 'new-seat',
+      cwd: '/tmp'
+    }).ok,
+    true
+  )
+  const restarted = gui.state(paneId).events.find(({ evt }) => evt.type === 'session-restarted')
+  assert.deepEqual(
+    restarted?.evt,
+    { type: 'session-restarted', ready: false },
+    'sem resume da identidade persistida a foto antiga é descartada'
+  )
+  assert.equal(gui.remembered(paneId).contextTokens, undefined)
+  assert.equal(gui.remembered(paneId).contextWindow, 200_000)
+})
+
+test('documento adulterado não injeta eventos desconhecidos no replay', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-gui-hydrate-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const storeFile = join(root, 'gui-sessions.json')
+  writeFileSync(
+    storeFile,
+    JSON.stringify({
+      panes: {},
+      transcripts: {
+        'p-hydrate': {
+          events: [
+            { type: 'user-message', id: 'msg-1', text: 'válida', at: 1 },
+            { type: 'delta', text: 42 },
+            { type: 'evento-inventado', payload: { perigoso: true } }
+          ],
+          cursor: 9,
+          updatedAt: '2026-08-14T00:00:00.000Z'
+        },
+        'p-record-invalido': {
+          events: 'não é lista',
+          cursor: 1,
+          updatedAt: 'ontem'
+        }
+      }
+    }),
+    'utf8'
+  )
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile
+  })
+  const state = gui.state('p-hydrate')
+  assert.equal(state.cursor, 9, 'eventos descartados não fazem o cursor voltar')
+  assert.deepEqual(state.events, [
+    { seq: 9, evt: { type: 'user-message', id: 'msg-1', text: 'válida', at: 1 } }
+  ])
+  assert.equal(gui.state('p-record-invalido').exists, false)
+  const repaired = JSON.parse(readFileSync(storeFile, 'utf8'))
+  assert.equal(repaired.transcripts['p-record-invalido'], undefined)
+})
+
+test('carga repara no disco um documento acima do teto global de panes', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-gui-budget-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const storeFile = join(root, 'gui-sessions.json')
+  const transcripts = Object.fromEntries(
+    Array.from({ length: GUI_TRANSCRIPT_STORE_PANE_CAP + 2 }, (_, index) => [
+      `p-${String(index).padStart(2, '0')}`,
+      {
+        events: [{ type: 'text', text: String(index) }],
+        cursor: 1,
+        updatedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString()
+      }
+    ])
+  )
+  writeFileSync(storeFile, JSON.stringify({ panes: {}, transcripts }), 'utf8')
+  new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile
+  })
+  const repaired = JSON.parse(readFileSync(storeFile, 'utf8'))
+  assert.equal(Object.keys(repaired.transcripts).length, GUI_TRANSCRIPT_STORE_PANE_CAP)
+  assert.equal(repaired.transcripts['p-00'], undefined)
+  assert.equal(repaired.transcripts['p-01'], undefined)
+})
+
+test('/clear troca o backend, apaga fio e resume; kill sozinho preserva até exclusão', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-gui-clear-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const storeFile = join(root, 'gui-sessions.json')
+  const live = []
+  const spawns = []
+  const sinks = []
+  const gui = new GuiSessionRegistry({
+    push: (payload) => live.push(payload),
+    systemPromptFile: () => undefined,
+    storeFile
+  })
+  gui.spawnSession = (input, sink) => {
+    spawns.push({ ...input })
+    sinks.push(sink)
+    const generation = spawns.length
+    sink({
+      type: 'init',
+      model: 'claude',
+      sessionId: `session-${generation}`,
+      permissionMode: 'default',
+      toolCount: 0,
+      contextWindow: 200_000
+    })
+    sink({ type: 'ready', caps: { commands: [], models: [] } })
+    return {
+      alive: true,
+      turnActive: false,
+      waitCaps: async () => ({ commands: [], models: [] }),
+      send: () => undefined,
+      kill: () => undefined
+    }
+  }
+  const spawn = {
+    paneId: 'gui-dev-clear12',
+    projectId: 'proj-clear',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp',
+    firstPrompt: 'briefing inicial'
+  }
+  assert.equal(gui.create(spawn).ok, true)
+  assert.equal(gui.send(spawn.paneId, 'mensagem antiga', 'msg-old').ok, true)
+  sinks[0]({ type: 'text', text: 'resposta antiga' })
+  sinks[0]({ type: 'result', isError: false, contextTokens: 3_200 })
+  assert.equal(gui.remembered(spawn.paneId).contextTokens, 3_200)
+  const cursorBeforeClear = gui.state(spawn.paneId).cursor
+
+  assert.equal(gui.send(spawn.paneId, '/clear', 'msg-clear').ok, true)
+  assert.equal(spawns.length, 2)
+  assert.equal(spawns[1].resumeSessionId, undefined)
+  assert.equal(spawns[1].firstPrompt, undefined, 'briefing não persegue a conversa nova')
+  assert.equal(gui.remembered(spawn.paneId).sessionId, 'session-2')
+  assert.equal(gui.remembered(spawn.paneId).contextTokens, undefined)
+  assert.equal(gui.remembered(spawn.paneId).contextWindow, 200_000)
+  assert.ok(
+    live.some(
+      ({ seq, evt }) => evt.type === 'conversation-cleared' && seq > cursorBeforeClear
+    ),
+    'o listener montado recebe um marco posterior ao cursor antigo'
+  )
+  const cleared = gui.state(spawn.paneId)
+  assert.equal(cleared.events.some(({ evt }) => evt.type === 'user-message'), false)
+  assert.equal(cleared.events.some(({ evt }) => evt.type === 'text'), false)
+  assert.equal(
+    cleared.events.filter(({ evt }) => evt.type === 'conversation-cleared').length,
+    1
+  )
+
+  assert.equal(gui.kill(spawn.paneId).ok, true)
+  assert.equal(gui.state(spawn.paneId).exists, true, 'arquivar/fechar conserva o fio')
+  assert.equal(
+    gui.forgetWhere((_paneId, record) => record?.projectId === spawn.projectId),
+    1
+  )
+  assert.equal(gui.state(spawn.paneId).exists, false, 'exclusão definitiva purga o fio')
+  assert.equal(gui.remembered(spawn.paneId), undefined)
 })
 
 // MODO DE PERMISSÃO POR CONVERSA (onda D — item 3 do docs/PLANO_2_0_GUI.md).
@@ -210,6 +1629,185 @@ test('conversa de OUTRO cli nunca é herdada', () => {
   )
 })
 
+test('entrada morta preserva replay e o create abre um único processo novo', () => {
+  const gui = registry()
+  const spawn = {
+    paneId: 'p-retry',
+    projectId: 'proj',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp'
+  }
+  const ring = new GuiEventRing()
+  ring.push({ type: 'fatal', text: 'falha transitória' })
+  ring.push({ type: 'closed', code: 1 })
+  const oldSession = { alive: false, kill: () => undefined }
+  gui.panes.set(spawn.paneId, {
+    spawn,
+    fingerprint: spawnFingerprint(spawn),
+    session: oldSession,
+    ring,
+    token: { alive: true },
+    sink: (event) => ring.push(event)
+  })
+
+  assert.equal(gui.state(spawn.paneId).exists, true)
+  assert.equal(gui.state(spawn.paneId).alive, false)
+
+  let spawned = 0
+  gui.spawnSession = (_input, sink) => {
+    spawned += 1
+    sink({ type: 'init', model: 'novo' })
+    sink({ type: 'ready', caps: { commands: [], models: [] } })
+    return { alive: true, kill: () => undefined }
+  }
+  assert.equal(gui.create(spawn).ok, true)
+  assert.equal(gui.create(spawn).ok, true)
+  assert.equal(spawned, 1)
+  assert.equal(gui.state(spawn.paneId).alive, true)
+  assert.deepEqual(
+    gui.state(spawn.paneId).events.map(({ evt }) => evt.type),
+    ['fatal', 'closed', 'init', 'ready', 'session-restarted', 'executor-changed'],
+    'uma segunda remontagem reaplica o terminal antigo antes da nova geração viva'
+  )
+  assert.deepEqual(gui.state(spawn.paneId).events.at(-2).evt, {
+    type: 'session-restarted',
+    ready: true
+  })
+  assert.deepEqual(gui.state(spawn.paneId).events.at(-1).evt, {
+    type: 'executor-changed',
+    model: null,
+    effort: null
+  })
+  assert.match(gui.state(spawn.paneId).events[0].evt.text, /falha transitória/u)
+})
+
+test('registro publica alertas somente no sink vivo e nunca durante replay', () => {
+  const observed = []
+  const live = []
+  const gui = new GuiSessionRegistry({
+    push: (payload) => live.push(payload),
+    systemPromptFile: () => undefined,
+    onChatAlert: (alert) => observed.push(alert)
+  })
+  let emit
+  gui.spawnSession = (_input, sink) => {
+    emit = sink
+    return { alive: true, kill: () => undefined }
+  }
+  const spawn = {
+    paneId: 'p-alerta',
+    projectId: 'proj-alerta',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp'
+  }
+  assert.equal(gui.create(spawn).ok, true)
+
+  emit({ type: 'plan-review', requestId: 'plan-1', plan: 'Plano' })
+  emit({ type: 'result', isError: false, continues: true })
+  emit({ type: 'turn-continuation', continues: false })
+  assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you'])
+  assert.equal(gui.presented(spawn.paneId, live.at(-1).seq).ok, true)
+  assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you', 'finished'])
+
+  emit({ type: 'fatal', text: 'caiu' })
+  const fatalSeq = live.at(-1).seq
+  emit({ type: 'closed', code: 1 })
+  assert.equal(observed.length, 2, 'falha também aguarda a apresentação')
+  assert.equal(gui.presented(spawn.paneId, fatalSeq).ok, true)
+  assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you', 'finished', 'failed'])
+  assert.ok(observed.every((alert) => alert.paneId === spawn.paneId))
+
+  gui.state(spawn.paneId)
+  gui.state(spawn.paneId)
+  assert.equal(observed.length, 3, 'replay nunca republica alerta')
+})
+
+test('teardown canônico limpa o pane em respawn, kill direto e kill em lote', () => {
+  const disposed = []
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    onPaneDisposed: (entry) => disposed.push(entry)
+  })
+  gui.spawnSession = () => ({ alive: true, kill: () => undefined })
+
+  const spawn = {
+    paneId: 'p-teardown',
+    projectId: 'proj-teardown',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp'
+  }
+  assert.equal(gui.create(spawn).ok, true)
+  assert.equal(gui.create({ ...spawn, permissionMode: 'plan' }).ok, true)
+  assert.equal(gui.kill(spawn.paneId).ok, true)
+
+  assert.equal(gui.create({ ...spawn, paneId: 'p-batch-a' }).ok, true)
+  assert.equal(gui.create({ ...spawn, paneId: 'p-batch-b' }).ok, true)
+  assert.equal(gui.killWhere((paneId) => paneId.startsWith('p-batch-')), 2)
+
+  assert.deepEqual(
+    disposed.map(({ paneId, reason }) => [paneId, reason]),
+    [
+      ['p-teardown', 'respawn'],
+      ['p-teardown', 'kill'],
+      ['p-batch-a', 'kill-batch'],
+      ['p-batch-b', 'kill-batch']
+    ]
+  )
+  assert.ok(disposed.every(({ projectId }) => projectId === spawn.projectId))
+})
+
+test('seat sem identidade limpa conversa e executor, mas preserva a permissão', () => {
+  const remembered = {
+    sessionId: 'sessao-do-seat-removido',
+    cli: 'claude',
+    projectId: 'proj',
+    updatedAt: '2026-08-13T00:00:00.000Z',
+    permissionMode: 'acceptEdits',
+    model: 'opus',
+    effort: 'high'
+  }
+  assert.deepEqual(guiSessionWithoutIdentity(remembered), {
+    cli: 'claude',
+    projectId: 'proj',
+    updatedAt: '2026-08-13T00:00:00.000Z',
+    permissionMode: 'acceptEdits'
+  })
+  assert.deepEqual(remembered, {
+    sessionId: 'sessao-do-seat-removido',
+    cli: 'claude',
+    projectId: 'proj',
+    updatedAt: '2026-08-13T00:00:00.000Z',
+    permissionMode: 'acceptEdits',
+    model: 'opus',
+    effort: 'high'
+  })
+})
+
+test('transplante falho apaga só o resume e preserva escolhas do pane', () => {
+  const remembered = {
+    sessionId: 'sess-antiga',
+    cli: 'codex',
+    projectId: 'proj',
+    updatedAt: '2026-08-13T00:00:00.000Z',
+    permissionMode: 'plan',
+    model: 'gpt-5.6',
+    effort: 'high'
+  }
+  assert.deepEqual(guiSessionWithoutResume(remembered), {
+    cli: 'codex',
+    projectId: 'proj',
+    updatedAt: '2026-08-13T00:00:00.000Z',
+    permissionMode: 'plan',
+    model: 'gpt-5.6',
+    effort: 'high'
+  })
+  assert.equal(remembered.sessionId, 'sess-antiga', 'a transformação não muta o registro')
+})
+
 // ANEXOS DO COMPOSER (gui:attach). O destino sai do REGISTRO, nunca do
 // renderer; o resto são as três decisões puras: nome seguro, caminho único e
 // o teto de tamanho.
@@ -295,4 +1893,106 @@ test('payload torto é recusado antes de tocar o disco', () => {
     'anexo sem conteúdo'
   )
   assert.match(attachPayloadProblem({ kind: 'pasta' }), /desconhecido/)
+  assert.match(
+    attachmentBase64Problem('!'.repeat(GUI_ATTACHMENT_MAX_BASE64_CHARS + 257)),
+    /codificado grande demais/u,
+    'lixo enorme é barrado pelo tamanho bruto antes de qualquer decoder'
+  )
+  assert.match(
+    attachPayloadProblem({ kind: 'file', name: 'a.png', bytesBase64: 'QU?D' }),
+    /base64 inválido/u
+  )
+})
+
+test('pasta de anexos recusa junction e criação exclusiva não sobrescreve', () => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-attach-root-'))
+  const outside = mkdtempSync(join(tmpdir(), 'synkora-attach-outside-'))
+  try {
+    symlinkSync(outside, join(root, '.synkora'), process.platform === 'win32' ? 'junction' : 'dir')
+    assert.throws(
+      () => prepareGuiAttachmentDirectory(root),
+      /link simbólico|junction/u,
+      'junction nunca pode redirecionar bytes para fora do worktree'
+    )
+    rmSync(join(root, '.synkora'), { recursive: true, force: true })
+
+    const dir = prepareGuiAttachmentDirectory(root)
+    const first = writeGuiAttachmentExclusive(dir, 'nota.txt', Buffer.from('primeiro'))
+    const second = writeGuiAttachmentExclusive(dir, 'nota.txt', Buffer.from('segundo'))
+    assert.notEqual(first, second)
+    assert.equal(readFileSync(first, 'utf8'), 'primeiro')
+    assert.equal(readFileSync(second, 'utf8'), 'segundo')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test('descritores de arquivo, imagem e pasta são revalidados antes do CLI', () => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-attach-reference-root-'))
+  const outside = mkdtempSync(join(tmpdir(), 'synkora-attach-reference-outside-'))
+  try {
+    const folder = join(root, 'referencias')
+    mkdirSync(folder)
+    const dir = prepareGuiAttachmentDirectory(root)
+    const image = writeGuiAttachmentExclusive(dir, 'print.png', Buffer.from('png'))
+    const text = writeGuiAttachmentExclusive(dir, 'nota.txt', Buffer.from('nota'))
+    const input = [
+      { id: 'att-image', kind: 'image', name: 'qualquer.png', path: image, size: 3 },
+      { id: 'att-file', kind: 'file', name: 'qualquer.txt', path: text, size: 4 },
+      { id: 'att-folder', kind: 'folder', name: 'referencias', path: folder, size: null }
+    ]
+    const checked = validateGuiAttachmentReferences(root, input)
+    assert.equal(checked.ok, true)
+    assert.equal(GUI_ATTACHMENT_MAX_FILES, 20)
+    assert.equal(GUI_ATTACHMENT_MAX_TOTAL_BYTES, 50 * 1024 * 1024)
+    if (!checked.ok) throw new Error(checked.error)
+    assert.deepEqual(
+      checked.attachments.map((attachment) => attachment.kind),
+      ['image', 'file', 'folder']
+    )
+    assert.ok(checked.attachments.every(isGuiAttachmentDescriptor))
+    assert.equal(guiAttachmentKindForName('foto.WEBP'), 'image')
+    assert.equal(guiAttachmentKindForName('relatorio.pdf'), 'file')
+    const prompt = withGuiAttachmentReferences('veja isto', checked.attachments)
+    assert.match(prompt, /\[Anexos desta mensagem/u)
+    assert.match(prompt, /\[\/Anexos\]/u)
+    assert.match(prompt, new RegExp(image.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&'), 'u'))
+
+    assert.equal(resolveGuiFolderReference(root, folder).ok, true)
+    const escape = resolveGuiFolderReference(root, outside)
+    assert.equal(escape.ok, false)
+    if (!escape.ok) assert.match(escape.error, /dentro da pasta de trabalho/u)
+
+    // O anexo do composer usa o diálogo nativo e pode referenciar qualquer
+    // pasta local; o alvo ainda precisa ser um diretório físico real.
+    const external = resolveGuiExternalFolderReference(outside)
+    assert.equal(external.ok, true)
+    if (external.ok) assert.equal(external.path, outside)
+
+    const folderLink = join(root, 'link-fora')
+    symlinkSync(outside, folderLink, process.platform === 'win32' ? 'junction' : 'dir')
+    const link = resolveGuiFolderReference(root, folderLink)
+    assert.equal(link.ok, false)
+    if (!link.ok) assert.match(link.error, /link simbólico|junction/u)
+    const externalLink = resolveGuiExternalFolderReference(folderLink)
+    assert.equal(externalLink.ok, false)
+    if (!externalLink.ok) assert.match(externalLink.error, /link simbólico|junction/u)
+
+    const nestedFolder = join(folder, 'aninhada')
+    mkdirSync(nestedFolder)
+    const internalLink = join(root, 'atalho-interno')
+    symlinkSync(folder, internalLink, process.platform === 'win32' ? 'junction' : 'dir')
+    const throughInternalLink = resolveGuiFolderReference(root, join(internalLink, 'aninhada'))
+    assert.equal(throughInternalLink.ok, false, 'link interno também falha fechado')
+
+    const forged = validateGuiAttachmentReferences(root, [
+      { id: 'fora', kind: 'file', name: 'segredo.txt', path: join(outside, 'segredo.txt'), size: 0 }
+    ])
+    assert.equal(forged.ok, false)
+    if (!forged.ok) assert.doesNotMatch(forged.error, /segredo|outside|root/u)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  }
 })

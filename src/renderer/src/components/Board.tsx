@@ -5,6 +5,7 @@ import DOMPurify from 'dompurify'
 import PaneChrome, { ZERO_STATS, prettyModel } from './PaneChrome'
 import TerminalPane from './TerminalPane'
 import GuiPane from './GuiPane'
+import GuiPanelErrorBoundary from './GuiPanelErrorBoundary'
 import ProjectGeneral from './ProjectGeneral'
 import NewMissionModal from './NewMissionModal'
 import MissionColumn, { type MissionColumnEntry } from './MissionColumn'
@@ -36,7 +37,9 @@ import {
 } from '../store'
 import { DEPARTMENTS, DEPT_BY_KEY, deptHueVar, STATUS_LABEL, STATUS_ORDER } from '../departments'
 import type { GuiPaneSpawn, GuiPermissionMode } from '../guiApi'
+import { guiModelLabel } from '../guiComposerPresentation'
 import { missionGui, type MissionGuiRole } from '../missionGui'
+import { GuiRequestEpoch, withoutMissionGuiSlots } from '../guiRequestEpoch'
 import GuiSeatPick from './GuiSeatPick'
 import { missionShell } from '../missionShell'
 // `planningGui` (projects:planningGuiSpec) NÃO é importado de propósito: o
@@ -1256,6 +1259,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // Vários universos ficam montados ao mesmo tempo (troca estilo Discord) —
   // efeitos que mexem em estado global/processos só rodam no projeto ATIVO.
   const isActive = useStore((s) => s.openProjectId === projectId)
+  const appPage = useStore((s) => s.appPage)
   const projectFlow = useStore((s) => s.projects.find((p) => p.id === projectId))
   // Trava greenfield da era F6 — hoje vale SÓ para a TAREFA AVULSA do quick-add
   // (o `tasks:create` do main ainda a recusa em projeto novo com plano mestre
@@ -1286,7 +1290,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // lugar da conversa. `seatBusy` trava o card enquanto o main troca a conta.
   const [missionNeedsSeat, setMissionNeedsSeat] = useState<Record<string, boolean>>({})
   const [seatBusy, setSeatBusy] = useState<string | null>(null)
-  const missionGuiInFlight = useRef<Set<string>>(new Set())
+  // A geração é o valor, não só uma trava booleana: uma Promise velha
+  // nunca pode apagar a trava do pedido novo que reutilizou a mesma chave.
+  const missionGuiInFlight = useRef<Map<string, number>>(new Map())
+  const missionGuiEpoch = useRef(new GuiRequestEpoch())
+  const seatChangeInFlight = useRef(false)
   const dropGuiPane = useStore((s) => s.dropGuiPane)
   // PLANEJAMENTO (2.0): o estado da sessão avulsa saiu daqui. Planejar é uma
   // MISSÃO de tipo 'planejamento' — o chat dela nasce e vive nos mesmos
@@ -1719,11 +1727,13 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     const mid = selMission.id
     if (missionGuiSlots[mid]?.length) return
     const key = `${mid}:dev`
-    if (missionGuiInFlight.current.has(key)) return
-    missionGuiInFlight.current.add(key)
+    const epoch = missionGuiEpoch.current.capture(mid)
+    if (missionGuiInFlight.current.get(key) === epoch) return
+    missionGuiInFlight.current.set(key, epoch)
     void missionGui
       .spec(mid, 'dev')
       .then((res) => {
+        if (!missionGuiEpoch.current.isCurrent(mid, epoch)) return
         if (!res.ok || !res.spawn) {
           // Falta de conta tem tela PRÓPRIA (o card de escolha) — tratá-la
           // como erro mandaria o dono procurar um problema que não existe.
@@ -1755,7 +1765,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           return next
         })
       })
-      .finally(() => missionGuiInFlight.current.delete(key))
+      .finally(() => {
+        if (missionGuiInFlight.current.get(key) === epoch) {
+          missionGuiInFlight.current.delete(key)
+        }
+      })
   }, [isActive, selMission?.id, selMission?.direct, missionGuiSlots])
 
   // Missão saiu de viva: as sessões dela morrem no main (gui:kill) e os slots
@@ -1843,10 +1857,14 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       }
     }
     const key = `${missionId}:${role}`
-    if (missionGuiInFlight.current.has(key)) return
-    missionGuiInFlight.current.add(key)
+    const epoch = missionGuiEpoch.current.capture(missionId)
+    if (missionGuiInFlight.current.get(key) === epoch) return
+    missionGuiInFlight.current.set(key, epoch)
     const res = await missionGui.spec(missionId, role)
-    missionGuiInFlight.current.delete(key)
+    if (missionGuiInFlight.current.get(key) === epoch) {
+      missionGuiInFlight.current.delete(key)
+    }
+    if (!missionGuiEpoch.current.isCurrent(missionId, epoch)) return
     if (!res.ok || !res.spawn) {
       // Sem conta escolhida NENHUM papel abre — e a resposta é o card de
       // escolha, não um erro (o revisor abre sozinho depois da escolha).
@@ -1930,36 +1948,53 @@ export default function Board({ projectId }: Props): React.JSX.Element {
    * slots são descartados e o chat reabre já no seat novo.
    */
   async function chooseChatSeat(missionId: string, seatId: string): Promise<void> {
-    setSeatBusy(seatId)
-    const res = await missionGui.setChatSeat(projectId, missionId, seatId)
-    setSeatBusy(null)
-    if (!res.ok) {
-      setMissionGuiError((prev) => ({
-        ...prev,
-        [missionId]: res.msg ?? 'não deu para escolher a conta desta conversa'
-      }))
-      return
-    }
-    for (const slot of missionGuiSlots[missionId] ?? []) dropGuiPane(slot.spawn.paneId)
-    setMissionGuiSlots((prev) => {
-      if (!prev[missionId]) return prev
-      const next = { ...prev }
-      delete next[missionId]
-      return next
-    })
-    setMissionNeedsSeat((prev) => {
-      const next = { ...prev }
-      delete next[missionId]
-      return next
-    })
+    if (seatChangeInFlight.current) return
+    seatChangeInFlight.current = true
+    // Specs pedidas antes deste ponto pertencem à conta anterior.
+    missionGuiEpoch.current.invalidate(missionId)
     setMissionGuiError((prev) => {
       if (!prev[missionId]) return prev
       const next = { ...prev }
       delete next[missionId]
       return next
     })
-    await loadMissions(projectId)
-    await openMissionGuiRole(missionId, 'dev')
+    setSeatBusy(seatId)
+    try {
+      const res = await missionGui.setChatSeat(projectId, missionId, seatId)
+      if (!res.ok) {
+        setMissionGuiError((prev) => ({
+          ...prev,
+          [missionId]: res.msg ?? 'não deu para escolher a conta desta conversa'
+        }))
+        return
+      }
+      for (const slot of missionGuiSlots[missionId] ?? []) dropGuiPane(slot.spawn.paneId)
+      setMissionGuiSlots((prev) => withoutMissionGuiSlots(prev, missionId))
+      setMissionNeedsSeat((prev) => {
+        const next = { ...prev }
+        delete next[missionId]
+        return next
+      })
+      setMissionGuiError((prev) => {
+        if (!prev[missionId]) return prev
+        const next = { ...prev }
+        delete next[missionId]
+        return next
+      })
+      await loadMissions(projectId)
+      // NÃO chamar openMissionGuiRole daqui: esta closure ainda enxerga os
+      // slots antigos e focaria o pane que o main acabou de matar. A remoção
+      // acima dispara o efeito canônico de slots vazios, que pede uma spec nova
+      // já resolvida para o seat novo.
+    } catch {
+      setMissionGuiError((prev) => ({
+        ...prev,
+        [missionId]: 'não deu para trocar a conta desta conversa'
+      }))
+    } finally {
+      setSeatBusy(null)
+      seatChangeInFlight.current = false
+    }
   }
 
   /** Fecha UMA conversa (revisor/ajudante). O chat do agente não fecha por
@@ -2061,14 +2096,16 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const stageRoleLabel = isPlanningMission
     ? 'planejamento'
     : MISSION_GUI_ROLE_LABEL[directSlot?.role ?? 'dev']
-  const stageGui = directGui
   const stageSeat = directSeat
-  const stageModel = directGui?.model ?? directSlot?.spawn.model
-  const stageEffort = directSlot?.spawn.effort ?? selMission?.effort
-  const stageCtxPct =
-    stageGui?.contextTokens && stageGui.contextWindow
-      ? Math.min(999, Math.round((stageGui.contextTokens / stageGui.contextWindow) * 100))
-      : null
+  const stageModel = directGui?.executorKnown
+    ? directGui.executorModel ?? directGui.model ?? directSlot?.spawn.model
+    : directSlot?.spawn.model ?? directGui?.model ?? undefined
+  const stageModelLabel = stageModel
+    ? guiModelLabel(directGui?.caps?.models ?? [], stageModel, prettyModel(stageModel))
+    : null
+  const stageEffort = directGui?.executorKnown
+    ? directGui.effort ?? undefined
+    : directSlot?.spawn.effort ?? selMission?.effort
 
   /** As pílulas do seletor de conversas — a linha fina no topo do palco. A
    *  PÍLULA DE PLANEJAMENTO só nasce aqui, e só quando a missão selecionada é
@@ -2145,14 +2182,8 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         </span>
       )
       if (stageSeat?.name) stageMetaParts.push(<span key="seat">{stageSeat.name}</span>)
-      if (stageModel) stageMetaParts.push(<span key="model">{prettyModel(stageModel)}</span>)
+      if (stageModelLabel) stageMetaParts.push(<span key="model">{stageModelLabel}</span>)
       if (stageEffort) stageMetaParts.push(<span key="effort">{stageEffort}</span>)
-      if (stageCtxPct !== null)
-        stageMetaParts.push(
-          <span key="ctx" data-tip="Quanto da janela de contexto desta conversa já foi usado">
-            ctx {stageCtxPct}%
-          </span>
-        )
     }
     // O chip do código da missão virou ESTE ⎇: mesma função de sempre (clicar
     // copia o id completo), agora dentro da linha fina em vez de um chip solto
@@ -2285,7 +2316,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       done: cards.filter((t) => t.status === 'done').length,
       total: cards.length,
       seatName: seat?.name,
-      model: guiPanes[slots[0]?.spawn.paneId ?? '']?.model ?? guiSpawn?.model ?? spec?.model ?? m.model,
+      model: (() => {
+        const guiState = guiPanes[slots[0]?.spawn.paneId ?? '']
+        return guiState?.executorKnown
+          ? guiState.executorModel ?? guiState.model ?? guiSpawn?.model
+          : guiSpawn?.model ?? guiState?.model ?? spec?.model ?? m.model
+      })(),
       versionLabel: versionName(m.versionId),
       pulse: tabPulse[m.id] ?? waitingKind,
       queueLabel: integrationQueueLabel(m)
@@ -2582,6 +2618,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
             inert={maestroSlotActive ? undefined : true}
           >
             {maestroSpec ? (
+              <GuiPanelErrorBoundary paneId={maestroSpec.paneId} label="o painel do Maestro">
               <TerminalPane
                 key={`${maestroSpec.seatId}:${maestroSpec.kind}`}
                 paneId={maestroSpec.paneId}
@@ -2606,6 +2643,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                 sizeGroup={`${maestroSizeGroup}:${maestroSpec.kind}`}
                 voiceLabel="Maestro"
               />
+              </GuiPanelErrorBoundary>
             ) : (
               <div className="maestro-empty">
                 // escolha o seat do Maestro para abrir o terminal do orquestrador
@@ -2620,6 +2658,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               aria-hidden={spec.missionId === missionTab ? undefined : true}
               inert={spec.missionId === missionTab ? undefined : true}
             >
+              <GuiPanelErrorBoundary
+                paneId={spec.paneId}
+                label={`o painel de ${
+                  missions.find((mission) => mission.id === spec.missionId)?.title ?? 'missão'
+                }`}
+              >
               <TerminalPane
                 key={`${spec.seatId}:${spec.kind}`}
                 paneId={spec.paneId}
@@ -2643,6 +2687,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                   missions.find((mission) => mission.id === spec.missionId)?.title ?? 'missão'
                 }`}
               />
+              </GuiPanelErrorBoundary>
             </div>
           ))}
           {/* MISSÃO DIRETA (2.0): as conversas GUI do worktree. Lista KEYADA e
@@ -2651,6 +2696,9 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           {Object.entries(missionGuiSlots).flatMap(([mid, slots]) =>
             slots.map((slot) => {
               const active =
+                appPage === 'workspace' &&
+                isActive &&
+                uniTab === 'board' &&
                 mid === missionTab &&
                 !missionTermId &&
                 directSlot?.spawn.paneId === slot.spawn.paneId
@@ -2661,8 +2709,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                   aria-hidden={active ? undefined : true}
                   inert={active ? undefined : true}
                 >
+                  <GuiPanelErrorBoundary paneId={slot.spawn.paneId} label="esta conversa">
                   <GuiPane
                     paneId={slot.spawn.paneId}
+                    active={active}
                     projectId={projectId}
                     cli={slot.spawn.cli}
                     configDir={slot.spawn.configDir}
@@ -2680,7 +2730,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                     seats={seats}
                     seatId={slot.spawn.seatId}
                     onChangeSeat={(next) => void chooseChatSeat(mid, next)}
+                    seatChanging={seatBusy !== null}
+                    seatError={missionGuiError[mid]}
                   />
+                  </GuiPanelErrorBoundary>
                 </div>
               )
             })
@@ -2800,6 +2853,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                 aria-hidden={active ? undefined : true}
                 inert={active ? undefined : true}
               >
+                <GuiPanelErrorBoundary
+                  paneId={pane.id}
+                  label={pane.title || 'este terminal'}
+                  onClose={() => window.synkora.panes.requestClose(projectId, pane.id)}
+                >
                 <TerminalPane
                   paneId={pane.id}
                   cwd={pane.cwd ?? projectFlow?.path ?? ''}
@@ -2823,6 +2881,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                   voiceLabel={pane.title}
                   onUserInput={() => clearPaneAttention(projectId, pane.id)}
                 />
+                </GuiPanelErrorBoundary>
               </div>
             )
           })}
@@ -2868,30 +2927,39 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       {/* Aba GERAL = retrato do universo (foto + trabalho por versão). Onda D:
           funções, políticas e reviewer saíram; nome/pasta subiram para a barra
           de abas do universo. */}
-      {!selMission && <ProjectGeneral projectId={projectId} />}
+      {!selMission && (
+        <GuiPanelErrorBoundary paneId={`board-general:${projectId}`} label="o resumo do projeto">
+          <ProjectGeneral projectId={projectId} />
+        </GuiPanelErrorBoundary>
+      )}
 
       {/* MISSÃO DIRETA: sem kanban e sem filtro de função — o que resta do
           board é o TRILHO DE ENTREGA (estado da branch + alavancas). */}
       {isDirect && selMission && (
-        <MissionDeliveryRail
-          mission={selMission}
-          versionLabel={versionName(selMission.versionId)}
-          queueLabel={integrationQueueLabel(selMission)}
-          guiAvailable={missionGui.available()}
-          shellAvailable={missionShell.available()}
-          testServerOpen={panes.some((p) => p.testServer && p.missionId === selMission.id)}
-          reloadToken={railReload}
-          onIntegrate={() => void onIntegrate()}
-          onReview={() => void openMissionGuiRole(selMission.id, 'reviewer')}
-          onHelper={() => void openMissionGuiRole(selMission.id, 'helper')}
-          onTerminal={() => void openMissionShell(selMission.id)}
-          onTestServer={() => setTestServerOpen(true)}
-          onKillTestServer={() => {
-            const testPane = panes.find((p) => p.testServer && p.missionId === selMission.id)
-            if (testPane) window.synkora.panes.requestClose(projectId, testPane.id)
-          }}
-          onArchive={() => void archiveMission(selMission.id, selMission.status === 'ativa')}
-        />
+        <GuiPanelErrorBoundary
+          paneId={`mission-delivery:${selMission.id}`}
+          label="o trilho de entrega"
+        >
+          <MissionDeliveryRail
+            mission={selMission}
+            versionLabel={versionName(selMission.versionId)}
+            queueLabel={integrationQueueLabel(selMission)}
+            guiAvailable={missionGui.available()}
+            shellAvailable={missionShell.available()}
+            testServerOpen={panes.some((p) => p.testServer && p.missionId === selMission.id)}
+            reloadToken={railReload}
+            onIntegrate={() => void onIntegrate()}
+            onReview={() => void openMissionGuiRole(selMission.id, 'reviewer')}
+            onHelper={() => void openMissionGuiRole(selMission.id, 'helper')}
+            onTerminal={() => void openMissionShell(selMission.id)}
+            onTestServer={() => setTestServerOpen(true)}
+            onKillTestServer={() => {
+              const testPane = panes.find((p) => p.testServer && p.missionId === selMission.id)
+              if (testPane) window.synkora.panes.requestClose(projectId, testPane.id)
+            }}
+            onArchive={() => void archiveMission(selMission.id, selMission.status === 'ativa')}
+          />
+        </GuiPanelErrorBoundary>
       )}
 
       {!isDirect && (showKanban || selMission) && (
@@ -3298,13 +3366,15 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           row-reverse, então o último do DOM é o PRIMEIRO da tela, e
           acrescentar no fim não desloca `.maestro-window` nem `.board-content`
           (deslocar remontaria os TerminalPane e mataria os PTYs). */}
-      <MissionColumn
-        entries={missionColumnEntries}
-        selectedId={missionTab}
-        generalPulse={tabPulse['geral']}
-        onSelect={(id) => setMissionTab(projectId, id)}
-        onNewMission={() => setNewMissionOpen(true)}
-      />
+      <GuiPanelErrorBoundary paneId={`mission-column:${projectId}`} label="a lista de missões">
+        <MissionColumn
+          entries={missionColumnEntries}
+          selectedId={missionTab}
+          generalPulse={tabPulse['geral']}
+          onSelect={(id) => setMissionTab(projectId, id)}
+          onNewMission={() => setNewMissionOpen(true)}
+        />
+      </GuiPanelErrorBoundary>
       </div>
 
       {openTaskId &&

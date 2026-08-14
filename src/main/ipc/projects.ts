@@ -24,10 +24,12 @@ import {
   guiPlanningFirstPrompt,
   guiPlanningPaneId,
   guiPlanningSystemPrompt,
+  isGuiPlanningPaneId,
   resumeSessionIdFor
 } from '../guiMissionContracts'
 import {
   isGuiPermissionMode,
+  rememberedGuiExecutorValue,
   type GuiPaneSpawn,
   type GuiPermissionMode,
   type GuiSessionRegistry
@@ -181,7 +183,13 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     // do app — deixá-lo vivo seria um CLI conversando por um universo que não
     // existe mais (e segurando a pasta no Windows).
     killProjectGuiPanes(id)
+    // Na exclusão (diferente da relocação), missões órfãs também não podem
+    // continuar gravando de volta um histórico cujo projeto já saiu do app.
+    guiSessions.killWhere((paneId) => guiSessions.remembered(paneId)?.projectId === id)
     projects.remove(id)
+    guiSessions.forgetWhere(
+      (paneId, record) => record?.projectId === id || isGuiPlanningPaneId(paneId, id)
+    )
     scheduleProgressSnapshot()
   })
 
@@ -368,8 +376,8 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
       // RAIZ do projeto: planejar é ler o produto inteiro e escrever plano/ —
       // não há branch de missão aqui (o planejador não toca em produto).
       cwd: project.path,
-      model: state.model,
-      effort: state.effort,
+      model: rememberedGuiExecutorValue(remembered, seat.cli, 'model', state.model),
+      effort: rememberedGuiExecutorValue(remembered, seat.cli, 'effort', state.effort),
       systemPrompt: guiPlanningSystemPrompt(),
       resumeSessionId,
       permissionMode: effectiveMode,

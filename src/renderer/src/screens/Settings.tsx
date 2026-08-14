@@ -1,5 +1,6 @@
 import { useStore, type SettingsSection } from '../store'
 import AppearanceSettings from '../components/AppearanceSettings'
+import ChatNoticeSettings from '../components/ChatNoticeSettings'
 import SeatDeck from '../components/SeatDeck'
 import SettingsPanel from '../components/SettingsPanel'
 import ServicesSettings from '../components/ServicesSettings'
@@ -125,7 +126,12 @@ export default function Settings(): React.JSX.Element {
               </header>
 
               <div className={`settings-section-body section-${section}`}>
-                {section === 'appearance' && <AppearanceSettings />}
+                {section === 'appearance' && (
+                  <>
+                    <AppearanceSettings />
+                    <ChatNoticeSettings />
+                  </>
+                )}
                 {section === 'accounts' && <SeatDeck />}
                 {section === 'skills' && <SkillsLibrary kind="skill" openByDefault />}
                 {section === 'agents' && <SkillsLibrary kind="agent" openByDefault />}

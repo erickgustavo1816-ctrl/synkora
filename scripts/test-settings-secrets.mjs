@@ -86,3 +86,29 @@ test('cofre indisponível não devolve o legado ao renderer nem aceita segredo n
   assert.equal('githubToken' in store.view(), false)
   assert.throws(() => store.setSecret('githubToken', 'new-token'), /cofre seguro/)
 })
+
+test('preferências de aviso nascem ligadas e persistem cada escolha desligada', (t) => {
+  const root = tempStore(t)
+  const store = new SettingsStoreCore({ userDataPath: root, protector })
+  assert.deepEqual(
+    {
+      needsYou: store.view().chatNotifyNeedsYou,
+      finished: store.view().chatNotifyFinished,
+      failed: store.view().chatNotifyFailed,
+      sounds: store.view().chatSoundsEnabled
+    },
+    { needsYou: true, finished: true, failed: true, sounds: true }
+  )
+
+  store.update({
+    chatNotifyNeedsYou: false,
+    chatNotifyFinished: false,
+    chatNotifyFailed: false,
+    chatSoundsEnabled: false
+  })
+  const reloaded = new SettingsStoreCore({ userDataPath: root, protector })
+  assert.equal(reloaded.view().chatNotifyNeedsYou, false)
+  assert.equal(reloaded.view().chatNotifyFinished, false)
+  assert.equal(reloaded.view().chatNotifyFailed, false)
+  assert.equal(reloaded.view().chatSoundsEnabled, false)
+})

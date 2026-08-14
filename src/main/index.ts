@@ -99,9 +99,14 @@ import { registerSettingsIpc } from './ipc/settings'
 import { registerServicesIpc } from './ipc/services'
 import { registerHarnessIpc } from './ipc/harness'
 import { registerGuiIpc } from './ipc/gui'
+import { waitForGuiCliStable } from './guiCliLaunch'
 import type { GuiSessionRegistry } from './guiSessions'
 import { isGuiMissionPaneId, isGuiPlanningPaneId } from './guiMissionContracts'
 import { initDesktopNotifications } from './desktopNotifications'
+import {
+  WINDOWS_TOAST_ACTIVATOR_CLSID,
+  windowsNotificationShortcutSpec
+} from './desktopNotificationPolicy'
 import { registerProjectPlanIpc } from './ipc/projectPlan'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerProgressIpc } from './ipc/progress'
@@ -124,7 +129,13 @@ import { redactSensitiveText } from './securityRedaction'
 import { BacklogStore, type BacklogItemType, type Version } from './backlog'
 import { PolicyStore, type DeptPolicy, type PolicySlot } from './policies'
 import { clearCatalogCache, getCatalog } from './catalog'
-import { getCliStatus, onCliStatus, updateAllClis, type CliStatus } from './cliUpdate'
+import {
+  getCliStatus,
+  isUpdatingClis,
+  onCliStatus,
+  updateAllClis,
+  type CliStatus
+} from './cliUpdate'
 import type { Department } from './tasks'
 import { appendFileSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'fs'
 import { StallAttribution, instrumentIpcMain } from './stallAttribution'
@@ -2472,12 +2483,43 @@ if (!app.requestSingleInstanceLock()) {
   })
 }
 
+// TOAST DO WINDOWS: o AUMID e o ativador precisam existir antes do primeiro
+// aviso. Em desenvolvimento a identidade correta é o electron.exe; no pacote,
+// é o appId declarado no electron-builder.
+const windowsNotificationShortcut = process.platform === 'win32'
+  ? windowsNotificationShortcutSpec({
+      isPackaged: app.isPackaged,
+      execPath: process.execPath,
+      appPath: app.getAppPath()
+    })
+  : null
+if (windowsNotificationShortcut) {
+  app.setAppUserModelId(windowsNotificationShortcut.appUserModelId)
+  app.setToastActivatorCLSID(WINDOWS_TOAST_ACTIVATOR_CLSID)
+}
+
 app.whenReady().then(async () => {
-  // AppUserModelID: é por ele que o Windows amarra a JANELA ao APP. Sem isso o
-  // shell trata a janela como avulsa — atalho fixado e entrada do Explorer
-  // continuam mostrando o ícone do binário que a lançou (o electron.exe, em
-  // desenvolvimento). Precisa bater com o `appId` do electron-builder.yml.
-  if (process.platform === 'win32') app.setAppUserModelId('dev.synkora.app')
+  // NSIS cria o atalho do pacote, mas o desenvolvimento não passa pelo
+  // instalador. Atualizar/criar esta entrada também grava o ToastActivatorCLSID
+  // correspondente, requisito do Windows para o aviso chegar ao Action Center.
+  if (windowsNotificationShortcut) {
+    try {
+      const programsDir = join(
+        app.getPath('appData'),
+        'Microsoft',
+        'Windows',
+        'Start Menu',
+        'Programs'
+      )
+      mkdirSync(programsDir, { recursive: true })
+      const { shortcutName, ...details } = windowsNotificationShortcut
+      if (!shell.writeShortcutLink(join(programsDir, shortcutName), 'create', details)) {
+        logCrash('notification-shortcut', 'o Windows recusou o atalho de notificações')
+      }
+    } catch (error) {
+      logCrash('notification-shortcut', error)
+    }
+  }
 
   // MORTE SUJA da sessão anterior (crash nativo/kill não passa pelo JS): o
   // marcador session.alive fica órfão e o boot seguinte registra na
@@ -6848,6 +6890,12 @@ app.whenReady().then(async () => {
   // por pane. Nenhum CLI filho sobrevive ao quit.
   guiSessions = registerGuiIpc(ctx, {
     assertAppRendererSender,
+    waitForCliStable: (cli) =>
+      waitForGuiCliStable(cli, {
+        getStatus: getCliStatus,
+        isUpdating: isUpdatingClis,
+        updateAll: updateAllClis
+      }),
     systemPromptFile: persistTrustedSystemPrompt,
     storeFile: join(app.getPath('userData'), 'gui-sessions.json')
   })
@@ -6931,14 +6979,21 @@ app.whenReady().then(async () => {
   // CLIs SEMPRE ATUALIZADOS (decisão do usuário, 2026-07-24): pane roda o
   // binário do PATH, então CLI velho = modelo novo que não existe no seletor
   // (o Opus 5 saiu e os panes seguiam no catálogo do 2.1.218). A checagem
-  // roda no boot, ANTES de qualquer pane nascer — trocar o binário com pane
-  // vivo é que daria arquivo travado.
+  // roda no boot; `gui:create` compartilha esta mesma barreira single-flight,
+  // então nenhum pane nasce enquanto o executável global está sendo trocado.
   setTimeout(() => {
     // Fase 0: o tick de 2,5s coincide com o stall de boot medido — o trecho
     // SYNC do kickoff (PATH do registro etc.) entra no sensor; o trabalho
     // async segue fora (se o culpado for ele, culprits continua vazio aqui).
     mainStalls.wrap('boot:cli-skills-kickoff', undefined, () => {
-      void updateAllClis().then((all) => {
+      const before = getCliStatus()
+      // Um `gui:create` antes deste timer já pode ter concluído a checagem.
+      // Nesse caso não abre uma segunda rodada sobre o pane que acabou de nascer.
+      const cliUpdate =
+        isUpdatingClis() || before.some(({ state }) => state === 'unknown' || state === 'updating')
+          ? updateAllClis()
+          : Promise.resolve(before)
+      void cliUpdate.then((all) => {
         for (const s of all) {
           console.log(
             `[cli] ${s.cli} ${s.version ?? '—'} · ${s.state}${s.from ? ` (era ${s.from})` : ''}`

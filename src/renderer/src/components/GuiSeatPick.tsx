@@ -51,23 +51,32 @@ export default function GuiSeatPick({
               nenhuma conta cadastrada — abra a Home e conecte um CLI primeiro
             </span>
           )}
-          {seats.map((seat) => (
-            <button
-              key={seat.id}
-              type="button"
-              className={`gsp-seat${busySeatId === seat.id ? ' busy' : ''}`}
-              disabled={Boolean(busySeatId)}
-              onClick={() => onPick(seat.id)}
-            >
-              <CliMark cli={seat.cli} size={14} />
-              <span className="gsp-name">{seat.name}</span>
-              <span className="gsp-cli">{seat.cli}</span>
-              {seat.status === 'expirado' && <span className="gsp-warn">login vencido</span>}
-              <span className="gsp-go" aria-hidden="true">
-                {busySeatId === seat.id ? '…' : '→'}
-              </span>
-            </button>
-          ))}
+          {seats.map((seat) => {
+            // O seletor ainda não tem escolha confirmada; durante a resposta
+            // do main, só esta linha representa uma escolha pendente.
+            const isBusy = busySeatId === seat.id
+
+            return (
+              <button
+                key={seat.id}
+                type="button"
+                className={`gsp-seat${isBusy ? ' busy' : ''}`}
+                data-state={isBusy ? 'pending' : undefined}
+                aria-busy={isBusy || undefined}
+                disabled={Boolean(busySeatId)}
+                onClick={() => onPick(seat.id)}
+              >
+                <CliMark cli={seat.cli} size={14} />
+                <span className="gsp-name">{seat.name}</span>
+                <span className="gsp-cli">{seat.cli}</span>
+                {seat.status === 'expirado' && <span className="gsp-warn">login vencido</span>}
+                {isBusy && <span className="gsp-pending">selecionando</span>}
+                <span className="gsp-go" aria-hidden="true">
+                  {busySeatId === seat.id ? '…' : '→'}
+                </span>
+              </button>
+            )
+          })}
         </div>
       </div>
     </div>

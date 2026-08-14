@@ -9,12 +9,62 @@ import {
   type GuiSessionEvent
 } from './guiApi'
 import type {
+  GuiAttachmentDescriptor,
   SettingsSecretName,
   SkillState,
   SynkoraSettings,
   SynkoraSettingsPatch
 } from '../../preload/index'
 import { applyDeptHueVars, DEPT_HUES_LS_KEY, loadDeptHues } from './departments'
+import { transitionGuiStartedAt } from './guiActivity'
+import {
+  countGuiOutputLines,
+  denyLatestPendingGuiTool,
+  guiToolResultTargetIndex,
+  guiToolActivityText,
+  lastPendingGuiToolActivity
+} from './guiToolPresentation'
+import {
+  beginGuiSendBatch,
+  canSendGuiMessage,
+  guiCommandCompletionStatus,
+  guiBackendReadyStatus,
+  guiSessionRestartState,
+  settleGuiRespawnStream,
+  guiTransportFailureStatus,
+  settleGuiActionFailure,
+  settleGuiSendBatch,
+  type GuiSendBatch
+} from './guiTransport'
+import {
+  enqueueGuiInteraction as enqueueGuiInteractionQueue,
+  removeGuiInteraction as removeGuiInteractionFromQueue,
+  settleGuiInteractionFailure
+} from './guiInteractionQueue'
+import {
+  closePendingGuiTools,
+  guiClosedLine,
+  hasPendingGuiTools
+} from './guiTerminalTools'
+import {
+  guiToolDiffInputSummary,
+  normalizeGuiToolDiff,
+  type GuiFileDiffSource
+} from './guiToolDiff'
+import type { GuiToolOutcome } from './guiToolOutcome'
+import { pruneGuiDiffHistory } from './guiDiffHistory'
+import {
+  acknowledgeGuiQueuedMessage as acknowledgeGuiQueuedMessageStorage,
+  claimGuiQueuedMessage as claimGuiQueuedMessageStorage,
+  readGuiQueuedMessage,
+  releaseGuiQueuedMessageClaim,
+  removeGuiQueuedMessage as removeGuiQueuedMessageStorage,
+  writeGuiQueuedMessage,
+  type GuiQueuedMessage,
+  type GuiQueuedOptions
+} from './guiMessageQueue'
+import { isGuiComposerAttachment } from './guiComposerAttachmentStorage'
+import { GUI_COMPOSER_ATTACHMENT_MAX_FILES } from './guiComposerAttachments'
 
 export interface Project {
   id: string
@@ -468,6 +518,7 @@ export interface MaestroPermRequest {
   description: string
   inputPretty: string
   reason?: string
+  permissionRule?: string
   canAlways: boolean
 }
 
@@ -509,13 +560,43 @@ export type GuiPaneStatus = 'starting' | 'working' | 'waiting-you' | 'idle' | 'd
 /** Item cronológico do chat. Tool card e marcador de permissão entram na MESMA
  *  lista das mensagens — a ordem do que aconteceu É a informação. */
 export type GuiItem =
-  | { id: string; kind: 'user' | 'assistant' | 'note' | 'error'; text: string; at: number }
+  | {
+      id: string
+      kind: 'user'
+      text: string
+      /** Metadados já validados pelo main; caminhos nunca são renderizados. */
+      attachments?: GuiAttachmentDescriptor[]
+      at: number
+    }
+  | { id: string; kind: 'note' | 'error'; text: string; at: number }
+  | {
+      id: string
+      kind: 'assistant'
+      text: string
+      at: number
+      /** true enquanto ainda podem chegar deltas para ESTE mesmo item */
+      live: boolean
+      /** prefixo já revelado; replay começa no fim para não redigitar histórico */
+      animateFrom: number
+    }
   | {
       id: string
       kind: 'tool'
       name: string
       summary: string
-      result?: { text: string; isError: boolean }
+      toolUseId?: string
+      /** Payload de edição já normalizado e limitado; o input cru não fica no store. */
+      fileDiffs?: GuiFileDiffSource[]
+      result?: {
+        text: string
+        isError: boolean
+        /** `cancelled` é terminal sem conclusão (Esc/encerramento); não pode
+         *  parecer sucesso nem continuar pulsando como se ainda rodasse. */
+        status?: GuiToolOutcome
+        /** Calculado no backend ANTES do corte de memória. */
+        lineCount: number
+        truncated: boolean
+      }
       at: number
     }
   | {
@@ -538,20 +619,42 @@ export type GuiItem =
 /** Pedido de permissão vivo do CLI (mesma forma do PermPicker do espelho). */
 export interface GuiPendingPerm {
   requestId: string
+  toolUseId?: string
   toolName: string
   description: string
   inputPretty: string
   reason?: string
+  /** Regra exata que será gravada ao escolher "sempre". */
+  permissionRule?: string
   canAlways: boolean
 }
+
+export type GuiPendingInteraction =
+  | { kind: 'permission'; requestId: string; perm: GuiPendingPerm }
+  | {
+      kind: 'question'
+      requestId: string
+      question: { requestId: string; questions: GuiQuestion[] }
+    }
+  | {
+      kind: 'plan'
+      requestId: string
+      planReview: { requestId: string; plan: string }
+    }
 
 export interface GuiPaneState {
   items: GuiItem[]
   /** turno em curso: deltas acumulados até o `text` final fechar a mensagem */
   stream: string
+  /** item assistant estável alimentado pelos deltas do turno */
+  activeAssistantId: string | null
   thinking: boolean
   /** delta do raciocínio, quando o backend fornece (campo aditivo do contrato) */
   thinkingText: string
+  /** Fila canônica por requestId; os campos escalares abaixo são apenas a
+   * interação da frente, para manter os componentes pequenos. */
+  interactionQueue: GuiPendingInteraction[]
+  interactionSubmitting: string | null
   perm: GuiPendingPerm | null
   /** pergunta com opções esperando o dono (AskUserQuestion) */
   question: { requestId: string; questions: GuiQuestion[] } | null
@@ -561,40 +664,122 @@ export interface GuiPaneState {
    *  de modelos/efforts dos seletores do composer */
   caps: GuiCliCaps | null
   status: GuiPaneStatus
+  /** relógio do turno; sobrevive a waiting-you e zera em idle/dead */
+  startedAt: number | null
+  /** atividade factual (ex.: ferramenta real); vence o verbo cosmético */
+  activityText: string | null
   sessionId: string | null
+  /** Modelo efetivo anunciado pelo backend (`init`). */
   model: string | null
+  /** Override escolhido no composer; `null` = padrão do CLI. */
+  executorModel: string | null
+  /** Override de raciocínio; `null` = padrão do modelo. */
+  effort: string | null
+  /** Houve uma escolha canônica no composer, inclusive `null` = padrão. */
+  executorKnown: boolean
   contextTokens: number | null
   contextWindow: number | null
   costUsd: number | null
   /** handshake concluído (evento `ready` com as caps reais do CLI) */
   ready: boolean
+  /** versão monotônica dos eventos reais do backend; operações assíncronas
+   *  antigas nunca podem sobrescrever um turno que já avançou. */
+  eventRevision: number
+  /** lote de envios IPC sobrepostos, usado para fechar apenas o turno otimista
+   *  que nenhuma das mensagens conseguiu iniciar. */
+  sendBatch: GuiSendBatch | null
   error: string | null
   /** já houve mensagem do assistente NESTE turno — sem isso o `resultText`
    *  (que só existe para comandos locais) duplicaria a resposta */
   turnHadText: boolean
   /** `gui:create` já foi pedido para este pane nesta janela */
   spawned: boolean
+  queued: GuiQueuedMessage | null
 }
 
 export const EMPTY_GUI_PANE: GuiPaneState = {
   items: [],
   stream: '',
+  activeAssistantId: null,
   thinking: false,
   thinkingText: '',
+  interactionQueue: [],
+  interactionSubmitting: null,
   perm: null,
   question: null,
   planReview: null,
   caps: null,
   status: 'starting',
+  startedAt: null,
+  activityText: null,
   sessionId: null,
   model: null,
+  executorModel: null,
+  effort: null,
+  executorKnown: false,
   contextTokens: null,
   contextWindow: null,
   costUsd: null,
   ready: false,
+  eventRevision: 0,
+  sendBatch: null,
   error: null,
   turnHadText: false,
-  spawned: false
+  spawned: false,
+  queued: null
+}
+
+function safeGuiItemAttachments(value: unknown): GuiAttachmentDescriptor[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined
+  if (value.length > GUI_COMPOSER_ATTACHMENT_MAX_FILES) return undefined
+  const attachments = value.filter(isGuiComposerAttachment).map((attachment) => ({ ...attachment }))
+  if (attachments.length !== value.length) return undefined
+  const ids = new Set<string>()
+  const paths = new Set<string>()
+  for (const attachment of attachments) {
+    if (ids.has(attachment.id) || paths.has(attachment.path)) return undefined
+    ids.add(attachment.id)
+    paths.add(attachment.path)
+  }
+  return attachments
+}
+
+function guiInteractionPatch(
+  queue: GuiPendingInteraction[],
+  submitting: string | null = null
+): Pick<
+  GuiPaneState,
+  'interactionQueue' | 'interactionSubmitting' | 'perm' | 'question' | 'planReview'
+> {
+  const active = queue[0]
+  return {
+    interactionQueue: queue,
+    interactionSubmitting:
+      submitting && queue.some((item) => item.requestId === submitting) ? submitting : null,
+    perm: active?.kind === 'permission' ? active.perm : null,
+    question: active?.kind === 'question' ? active.question : null,
+    planReview: active?.kind === 'plan' ? active.planReview : null
+  }
+}
+
+function enqueueGuiInteraction(
+  state: GuiPaneState,
+  interaction: GuiPendingInteraction
+): ReturnType<typeof guiInteractionPatch> {
+  return guiInteractionPatch(
+    enqueueGuiInteractionQueue(state.interactionQueue, interaction),
+    state.interactionSubmitting
+  )
+}
+
+function removeGuiInteraction(
+  state: GuiPaneState,
+  requestId: string
+): ReturnType<typeof guiInteractionPatch> {
+  return guiInteractionPatch(
+    removeGuiInteractionFromQueue(state.interactionQueue, requestId),
+    state.interactionSubmitting === requestId ? null : state.interactionSubmitting
+  )
 }
 
 /** Teto de itens por pane: o main guarda ~500 eventos no ring buffer, então
@@ -612,7 +797,10 @@ function guiItemId(): string {
 
 function pushGuiItem(items: GuiItem[], item: GuiItem): GuiItem[] {
   const next = [...items, item]
-  return next.length > GUI_ITEM_CAP ? next.slice(next.length - GUI_ITEM_CAP) : next
+  const capped = next.length > GUI_ITEM_CAP ? next.slice(next.length - GUI_ITEM_CAP) : next
+  return item.kind === 'tool' && item.fileDiffs?.length
+    ? pruneGuiDiffHistory(capped)
+    : capped
 }
 
 function guiOneLine(text: string, cap = 140): string {
@@ -640,6 +828,8 @@ export function guiToolSummary(input: Record<string, unknown> | undefined): stri
     const value = input[key]
     if (typeof value === 'string' && value.trim()) return guiOneLine(value)
   }
+  const diffSummary = guiToolDiffInputSummary(input)
+  if (diffSummary !== undefined) return guiOneLine(diffSummary)
   const keys = Object.keys(input)
   if (!keys.length) return ''
   try {
@@ -649,21 +839,84 @@ export function guiToolSummary(input: Record<string, unknown> | undefined): stri
   }
 }
 
-/** Fecha o turno visual: o que estava streamando vira mensagem definitiva. O
- *  caminho normal é o evento `text` fechar; isto cobre backend que encerra o
- *  turno sem repetir o bloco inteiro. */
-function flushGuiStream(state: GuiPaneState): GuiPaneState {
-  if (!state.stream.trim()) return state.stream ? { ...state, stream: '' } : state
+function guiStatusPatch(
+  state: GuiPaneState,
+  status: GuiPaneStatus,
+  now = Date.now()
+): Pick<GuiPaneState, 'status' | 'startedAt'> {
+  return {
+    status,
+    startedAt: transitionGuiStartedAt(state.startedAt, status, now)
+  }
+}
+
+/**
+ * O assistant já nasce no primeiro delta e conserva o MESMO id até o fim.
+ * Finalizar só fecha esse item — não o desmonta/recria — para o revelador
+ * palavra a palavra drenar mesmo se `text`, `tool` e `result` chegarem juntos.
+ */
+function finalizeGuiStream(state: GuiPaneState): GuiPaneState {
+  if (!state.activeAssistantId) return state.stream ? { ...state, stream: '' } : state
+  const activeId = state.activeAssistantId
+  let found = false
+  const items = state.items.map((item) => {
+    if (item.id !== activeId || item.kind !== 'assistant') return item
+    found = true
+    return { ...item, live: false }
+  })
   return {
     ...state,
-    items: pushGuiItem(state.items, {
+    items,
+    stream: '',
+    activeAssistantId: null,
+    turnHadText: state.turnHadText || found
+  }
+}
+
+/** Replay é fotografia, não espetáculo: histórico entra integralmente. Se o
+ *  último item ainda está vivo, só os deltas NOVOS animam a partir do fim. */
+function settleGuiReplay(state: GuiPaneState): GuiPaneState {
+  return {
+    ...state,
+    items: state.items.map((item) =>
+      item.kind === 'assistant' ? { ...item, animateFrom: item.text.length } : item
+    )
+  }
+}
+
+function guiInteractiveFailure(
+  state: GuiPaneState,
+  requestId: string,
+  label: string,
+  error: string | undefined,
+  retryable: boolean
+): GuiPaneState {
+  const stillPending = state.interactionQueue.some((item) => item.requestId === requestId)
+  const queue = settleGuiInteractionFailure(
+    state.interactionQueue,
+    requestId,
+    retryable && state.status !== 'dead'
+  )
+  const interaction = guiInteractionPatch(queue)
+  const base = { ...state, ...interaction }
+  const status =
+    base.status === 'dead'
+      ? 'dead'
+      : base.interactionQueue.length > 0
+        ? 'waiting-you'
+        : stillPending
+          ? 'idle'
+          : base.status
+  return {
+    ...base,
+    items: pushGuiItem(base.items, {
       id: guiItemId(),
-      kind: 'assistant',
-      text: state.stream,
+      kind: 'error',
+      text: label + ' — ' + (error ?? 'a sessão não respondeu'),
       at: Date.now()
     }),
-    stream: '',
-    turnHadText: true
+    activityText: status === 'waiting-you' ? null : base.activityText,
+    ...guiStatusPatch(base, status)
   }
 }
 
@@ -672,188 +925,404 @@ function flushGuiStream(state: GuiPaneState): GuiPaneState {
  * o replay de `gui:state` na remontagem — é isso que faz reabrir a aba
  * reconstruir a conversa exatamente como ela estava.
  */
-export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState {
+function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState {
   // Tudo que PARA a conversa esperando o dono conta igual: permissão,
   // pergunta com opções e veredito de plano.
-  const halted = (s: GuiPaneState): boolean =>
-    Boolean(s.perm) || Boolean(s.question) || Boolean(s.planReview)
+  const halted = (s: GuiPaneState): boolean => s.interactionQueue.length > 0
   const busy = (s: GuiPaneState): GuiPaneStatus =>
     halted(s) ? 'waiting-you' : s.status === 'dead' ? 'dead' : 'working'
 
   switch (evt.type) {
     case 'init':
+      {
+        const status = guiBackendReadyStatus(state.status)
+        return {
+          ...state,
+          model: evt.model || state.model,
+          sessionId: evt.sessionId || state.sessionId,
+          contextWindow: evt.contextWindow ?? state.contextWindow,
+          ...guiStatusPatch(state, status)
+        }
+      }
+
+    case 'context-usage':
+      // O main já validou a telemetria do backend. Atribuição direta é
+      // intencional: `null` apaga uma medição antiga quando não há métrica
+      // canônica para a geração atual.
       return {
         ...state,
-        model: evt.model || state.model,
-        sessionId: evt.sessionId || state.sessionId,
-        contextWindow: evt.contextWindow ?? state.contextWindow,
-        status: state.status === 'starting' ? 'idle' : state.status
+        contextTokens: evt.contextTokens,
+        contextWindow: evt.contextWindow
       }
 
     case 'session-id':
       return { ...state, sessionId: evt.sessionId }
 
+    case 'executor-changed':
+      return {
+        ...state,
+        executorModel: evt.model,
+        effort: evt.effort,
+        executorKnown: true
+      }
+
+    case 'session-restarted':
+      {
+        const restart = guiSessionRestartState(state.ready, evt.ready)
+        return {
+          ...state,
+          ready: restart.ready,
+          caps: restart.ready ? state.caps : null,
+          executorModel: null,
+          effort: null,
+          executorKnown: false,
+          // O main anexa a fotografia somente quando este restart retoma a
+          // mesma identidade. Sem os campos, a geração é nova e a medição
+          // antiga deve desaparecer; com eles, o contexto já usado volta
+          // imediatamente antes do primeiro novo envio.
+          contextTokens: evt.contextTokens ?? null,
+          contextWindow: evt.contextWindow ?? null,
+          activityText: null,
+          sendBatch: null,
+          error: null,
+          ...guiStatusPatch(state, restart.status)
+        }
+      }
+
+    case 'conversation-cleared':
+      // O processo novo pode ter emitido init/ready antes deste marco. Limpa
+      // somente o fio antigo e conserva a identidade/capacidades JÁ novas.
+      return {
+        ...EMPTY_GUI_PANE,
+        spawned: state.spawned,
+        ready: state.ready,
+        caps: state.caps,
+        sessionId: state.sessionId,
+        model: state.model,
+        executorModel: state.executorModel,
+        effort: state.effort,
+        executorKnown: state.executorKnown,
+        status: state.ready ? 'idle' : 'starting',
+        eventRevision: state.eventRevision
+      }
+
     case 'ready':
       // As caps FICAM: são elas que alimentam o autocomplete de comandos e os
       // seletores de modelo/effort do composer (antes eram descartadas aqui).
-      return {
-        ...state,
-        ready: true,
-        caps: evt.caps ?? state.caps,
-        status: state.status === 'starting' ? 'idle' : state.status
+      {
+        const status = guiBackendReadyStatus(state.status)
+        return {
+          ...state,
+          ready: true,
+          caps: evt.caps ?? state.caps,
+          ...guiStatusPatch(state, status)
+        }
       }
 
-    case 'delta':
+    case 'delta': {
+      const text = state.stream + evt.text
+      let activeAssistantId = state.activeAssistantId
+      let found = false
+      let items = state.items.map((item) => {
+        if (item.id !== activeAssistantId || item.kind !== 'assistant') return item
+        found = true
+        return { ...item, text, live: true }
+      })
+      if (!activeAssistantId || !found) {
+        activeAssistantId = guiItemId()
+        items = pushGuiItem(items, {
+          id: activeAssistantId,
+          kind: 'assistant',
+          text,
+          at: Date.now(),
+          live: true,
+          animateFrom: 0
+        })
+      }
       return {
         ...state,
-        stream: state.stream + evt.text,
+        items,
+        stream: text,
+        activeAssistantId,
         thinking: false,
-        status: busy(state)
+        activityText: null,
+        turnHadText: true,
+        ...guiStatusPatch(state, busy(state))
       }
+    }
 
     case 'thinking':
       return {
         ...state,
         thinking: true,
         thinkingText: evt.text ? state.thinkingText + evt.text : state.thinkingText,
-        status: busy(state)
+        ...guiStatusPatch(state, busy(state))
       }
 
-    case 'text': {
-      if (!evt.text.trim()) return state.stream ? { ...state, stream: '' } : state
+    case 'user-message': {
+      if (state.items.some((item) => item.kind === 'user' && item.id === evt.id)) return state
+      const attachments = safeGuiItemAttachments(evt.attachments)
       return {
         ...state,
         items: pushGuiItem(state.items, {
+          id: evt.id,
+          kind: 'user',
+          text: evt.text,
+          ...(attachments ? { attachments } : {}),
+          at: evt.at
+        })
+      }
+    }
+
+    case 'turn-started': {
+      const startingNewTurn = state.status !== 'working'
+      return {
+        ...state,
+        thinking: false,
+        activityText: startingNewTurn ? null : state.activityText,
+        turnHadText: startingNewTurn ? false : state.turnHadText,
+        ...guiStatusPatch(state, busy(state))
+      }
+    }
+
+    case 'text': {
+      if (!evt.text.trim()) return finalizeGuiStream(state)
+      const activeId = state.activeAssistantId
+      let found = false
+      let items = state.items.map((item) => {
+        if (item.id !== activeId || item.kind !== 'assistant') return item
+        found = true
+        return {
+          ...item,
+          text: evt.text,
+          live: false,
+          animateFrom: Math.min(item.animateFrom, evt.text.length)
+        }
+      })
+      if (!activeId || !found) {
+        items = pushGuiItem(items, {
           id: guiItemId(),
           kind: 'assistant',
           text: evt.text,
-          at: Date.now()
-        }),
+          at: Date.now(),
+          live: false,
+          animateFrom: 0
+        })
+      }
+      return {
+        ...state,
+        items,
         stream: '',
+        activeAssistantId: null,
         thinking: false,
         thinkingText: '',
-        turnHadText: true
+        activityText: null,
+        turnHadText: true,
+        ...guiStatusPatch(state, busy(state))
       }
     }
 
     case 'tool': {
-      const base = flushGuiStream(state)
+      const base = finalizeGuiStream(state)
+      const summary = guiToolSummary(evt.input)
+      const fileDiffs = normalizeGuiToolDiff(evt.name, evt.input)
       return {
         ...base,
         items: pushGuiItem(base.items, {
           id: guiItemId(),
           kind: 'tool',
           name: evt.name,
-          summary: guiToolSummary(evt.input),
+          summary,
+          toolUseId: evt.toolUseId,
+          ...(fileDiffs ? { fileDiffs } : {}),
           at: Date.now()
         }),
         thinking: false,
-        status: busy(base)
+        activityText: guiToolActivityText(evt.name, summary),
+        ...guiStatusPatch(base, busy(base))
       }
     }
 
     case 'tool-result': {
-      // anexa ao ÚLTIMO card de ferramenta ainda sem resultado
+      // Id do protocolo vence; o último card pendente é só compatibilidade
+      // com payloads gravados antes de os backends propagarem toolUseId.
       const items = [...state.items]
-      for (let i = items.length - 1; i >= 0; i -= 1) {
-        const item = items[i]
-        if (item.kind === 'tool' && !item.result) {
-          items[i] = {
-            ...item,
-            result: {
-              text: evt.text.slice(0, GUI_TOOL_RESULT_CAP),
-              isError: evt.isError
-            }
-          }
-          return { ...state, items }
+      const target = guiToolResultTargetIndex(items, evt.toolUseId)
+      if (target < 0) return state
+      const item = items[target]
+      if (item.kind !== 'tool') return state
+      const text = evt.text.slice(0, GUI_TOOL_RESULT_CAP)
+      items[target] = {
+        ...item,
+        result: {
+          text,
+          isError: evt.isError,
+          status: evt.outcome ?? (evt.isError ? 'failed' : 'completed'),
+          lineCount: evt.lineCount ?? countGuiOutputLines(evt.text),
+          truncated: Boolean(evt.truncated) || evt.text.length > GUI_TOOL_RESULT_CAP
         }
       }
-      return state
+      return { ...state, items, activityText: lastPendingGuiToolActivity(items) }
     }
 
     case 'permission': {
-      const base = flushGuiStream(state)
+      const base = finalizeGuiStream(state)
+      const perm: GuiPendingPerm = {
+        requestId: evt.requestId,
+        ...(evt.toolUseId ? { toolUseId: evt.toolUseId } : {}),
+        toolName: evt.toolName,
+        description: evt.description,
+        inputPretty: evt.inputPretty,
+        reason: evt.reason,
+        ...(evt.permissionRule ? { permissionRule: evt.permissionRule } : {}),
+        canAlways: evt.canAlways
+      }
       return {
         ...base,
-        perm: {
+        ...enqueueGuiInteraction(base, {
+          kind: 'permission',
           requestId: evt.requestId,
-          toolName: evt.toolName,
-          description: evt.description,
-          inputPretty: evt.inputPretty,
-          reason: evt.reason,
-          canAlways: evt.canAlways
-        },
+          perm
+        }),
         thinking: false,
-        status: 'waiting-you'
+        activityText: null,
+        ...guiStatusPatch(base, 'waiting-you')
       }
     }
 
     case 'question': {
-      const base = flushGuiStream(state)
+      const base = finalizeGuiStream(state)
+      const question = { requestId: evt.requestId, questions: evt.questions }
       return {
         ...base,
-        question: { requestId: evt.requestId, questions: evt.questions },
+        ...enqueueGuiInteraction(base, {
+          kind: 'question',
+          requestId: evt.requestId,
+          question
+        }),
         thinking: false,
-        status: 'waiting-you'
+        activityText: null,
+        ...guiStatusPatch(base, 'waiting-you')
       }
     }
 
     case 'plan-review': {
-      const base = flushGuiStream(state)
+      const base = finalizeGuiStream(state)
+      const planReview = { requestId: evt.requestId, plan: evt.plan }
       return {
         ...base,
-        planReview: { requestId: evt.requestId, plan: evt.plan },
+        ...enqueueGuiInteraction(base, {
+          kind: 'plan',
+          requestId: evt.requestId,
+          planReview
+        }),
         thinking: false,
-        status: 'waiting-you'
+        activityText: null,
+        ...guiStatusPatch(base, 'waiting-you')
+      }
+    }
+
+    case 'interaction-resolved': {
+      const hadPending = state.interactionQueue.some(
+        (item) => item.requestId === evt.requestId
+      )
+      const interaction = removeGuiInteraction(state, evt.requestId)
+      let items = state.items
+      if (evt.resolution.kind === 'permission') {
+        items = pushGuiItem(items, {
+          id: guiItemId(),
+          kind: 'permission',
+          toolName: evt.resolution.toolName,
+          behavior: evt.resolution.behavior,
+          at: Date.now()
+        })
+        if (evt.resolution.behavior === 'deny') {
+          items = denyLatestPendingGuiTool(
+            items,
+            evt.resolution.toolName,
+            evt.resolution.toolUseId
+          )
+        }
+      } else if (evt.resolution.kind === 'question') {
+        items = pushGuiItem(items, {
+          id: guiItemId(),
+          kind: 'question',
+          entries: evt.resolution.entries,
+          at: Date.now()
+        })
+      } else if (evt.resolution.kind === 'plan') {
+        items = pushGuiItem(items, {
+          id: guiItemId(),
+          kind: 'note',
+          text: evt.resolution.approve
+            ? 'plano aprovado — o agente começou a construir'
+            : 'plano devolvido para revisão',
+          at: Date.now()
+        })
+      }
+      const base = { ...state, ...interaction, items }
+      const status =
+        base.status === 'dead'
+          ? 'dead'
+          : base.interactionQueue.length > 0
+            ? 'waiting-you'
+            : hadPending
+              ? 'working'
+              : base.status
+      return {
+        ...base,
+        activityText: base.interactionQueue.length > 0 ? null : lastPendingGuiToolActivity(items),
+        ...guiStatusPatch(base, status)
       }
     }
 
     case 'permission-cancel': {
-      // Um cancelamento só: permissão, pergunta e plano moram no mesmo
-      // `pending` do main e chegam aqui pelo MESMO requestId.
-      if (state.question?.requestId === evt.requestId) {
-        return {
-          ...state,
-          items: pushGuiItem(state.items, {
-            id: guiItemId(),
-            kind: 'note',
-            text: 'a pergunta foi cancelada pelo agente',
-            at: Date.now()
-          }),
-          question: null,
-          status: state.status === 'dead' ? 'dead' : 'working'
-        }
-      }
-      if (state.planReview?.requestId === evt.requestId) {
-        return {
-          ...state,
-          items: pushGuiItem(state.items, {
-            id: guiItemId(),
-            kind: 'note',
-            text: 'o plano foi retirado pelo agente',
-            at: Date.now()
-          }),
-          planReview: null,
-          status: state.status === 'dead' ? 'dead' : 'working'
-        }
-      }
-      if (state.perm?.requestId !== evt.requestId) return state
-      return {
+      const pending = state.interactionQueue.find((item) => item.requestId === evt.requestId)
+      if (!pending) return state
+      const interaction = removeGuiInteraction(state, evt.requestId)
+      const audit: GuiItem =
+        pending.kind === 'question'
+          ? {
+              id: guiItemId(),
+              kind: 'note',
+              text: 'a pergunta foi cancelada pelo agente',
+              at: Date.now()
+            }
+          : pending.kind === 'plan'
+            ? {
+                id: guiItemId(),
+                kind: 'note',
+                text: 'o plano foi retirado pelo agente',
+                at: Date.now()
+              }
+            : {
+                id: guiItemId(),
+                kind: 'permission',
+                toolName: pending.perm.toolName,
+                behavior: 'cancelada',
+                at: Date.now()
+              }
+      const base = {
         ...state,
-        items: pushGuiItem(state.items, {
-          id: guiItemId(),
-          kind: 'permission',
-          toolName: state.perm.toolName,
-          behavior: 'cancelada',
-          at: Date.now()
-        }),
-        perm: null,
-        status: state.status === 'dead' ? 'dead' : 'working'
+        ...interaction,
+        items: pushGuiItem(state.items, audit)
+      }
+      const status =
+        base.status === 'dead'
+          ? 'dead'
+          : base.interactionQueue.length > 0
+            ? 'waiting-you'
+            : 'working'
+      return {
+        ...base,
+        activityText:
+          base.interactionQueue.length > 0 ? null : lastPendingGuiToolActivity(base.items),
+        ...guiStatusPatch(base, status)
       }
     }
 
     case 'command-output': {
-      const base = flushGuiStream(state)
+      const base = finalizeGuiStream(state)
       return {
         ...base,
         items: pushGuiItem(base.items, {
@@ -866,7 +1335,7 @@ export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPan
     }
 
     case 'limit': {
-      const base = flushGuiStream(state)
+      const base = finalizeGuiStream(state)
       return {
         ...base,
         items: pushGuiItem(base.items, {
@@ -879,14 +1348,20 @@ export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPan
     }
 
     case 'result': {
-      let next = flushGuiStream(state)
-      if (evt.isError && evt.errorText?.trim()) {
+      let next = finalizeGuiStream(state)
+      const orphanedTool = hasPendingGuiTools(next.items) && evt.outcome !== 'cancelled'
+      next = { ...next, items: closePendingGuiTools(next.items, evt) }
+      if (evt.isError || evt.outcome === 'failed' || orphanedTool) {
         next = {
           ...next,
           items: pushGuiItem(next.items, {
             id: guiItemId(),
             kind: 'error',
-            text: evt.errorText,
+            text:
+              evt.errorText?.trim() ||
+              (orphanedTool
+                ? 'o turno terminou sem receber o resultado de uma ferramenta'
+                : 'o turno falhou sem detalhes'),
             at: Date.now()
           })
         }
@@ -902,6 +1377,10 @@ export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPan
           })
         }
       }
+      next = { ...next, ...guiInteractionPatch([]) }
+      const status = halted(next) ? 'waiting-you' : next.status === 'dead' ? 'dead' : 'idle'
+      const terminalStatus =
+        status === 'idle' && evt.continues ? 'working' : status
       return {
         ...next,
         thinking: false,
@@ -910,47 +1389,76 @@ export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPan
         contextTokens: evt.contextTokens ?? next.contextTokens,
         contextWindow: evt.contextWindow ?? next.contextWindow,
         costUsd: evt.costUsd ?? next.costUsd,
-        status: halted(next) ? 'waiting-you' : next.status === 'dead' ? 'dead' : 'idle'
+        activityText: null,
+        ...guiStatusPatch(next, terminalStatus)
+      }
+    }
+
+    case 'command-completed': {
+      const items = evt.isError
+        ? pushGuiItem(state.items, {
+            id: guiItemId(),
+            kind: 'error',
+            text: evt.errorText?.trim() || 'o comando falhou sem detalhes',
+            at: Date.now()
+          })
+        : state.items
+      const status = guiCommandCompletionStatus(state.status, evt.continues, halted(state))
+      return {
+        ...state,
+        items,
+        thinking: evt.continues ? state.thinking : false,
+        thinkingText: evt.continues ? state.thinkingText : '',
+        activityText: evt.continues ? state.activityText : null,
+        ...guiStatusPatch(state, status)
+      }
+    }
+
+    case 'turn-continuation': {
+      const status = guiCommandCompletionStatus(state.status, evt.continues, halted(state))
+      return {
+        ...state,
+        activityText: evt.continues ? state.activityText : null,
+        ...guiStatusPatch(state, status)
       }
     }
 
     case 'fatal': {
-      const base = flushGuiStream(state)
+      const base = finalizeGuiStream(state)
+      const items = closePendingGuiTools(base.items, evt)
       return {
         ...base,
-        items: pushGuiItem(base.items, {
+        items: pushGuiItem(items, {
           id: guiItemId(),
           kind: 'error',
           text: evt.text,
           at: Date.now()
         }),
-        perm: null,
-        question: null,
-        planReview: null,
+        ...guiInteractionPatch([]),
         thinking: false,
         error: evt.text,
-        status: 'dead'
+        activityText: null,
+        ...guiStatusPatch(base, 'dead')
       }
     }
 
     case 'closed': {
-      const base = flushGuiStream(state)
+      const base = finalizeGuiStream(state)
+      const hadPendingTool = hasPendingGuiTools(base.items)
+      const items = closePendingGuiTools(base.items, evt)
+      const closed = guiClosedLine(evt.code, hadPendingTool)
       return {
         ...base,
-        items: pushGuiItem(base.items, {
+        items: pushGuiItem(items, {
           id: guiItemId(),
-          kind: 'note',
-          text:
-            evt.code === null || evt.code === 0
-              ? 'sessão encerrada'
-              : `sessão encerrada (código ${evt.code})`,
+          kind: closed.kind,
+          text: closed.text,
           at: Date.now()
         }),
-        perm: null,
-        question: null,
-        planReview: null,
+        ...guiInteractionPatch([]),
         thinking: false,
-        status: 'dead'
+        activityText: null,
+        ...guiStatusPatch(base, 'dead')
       }
     }
 
@@ -958,6 +1466,16 @@ export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPan
       // kind novo do main nunca quebra a UI: ignora e segue
       return state
   }
+}
+
+/**
+ * Todo evento que realmente alterou o pane avança sua identidade. Promises de
+ * envio/interrupção guardam essa revisão e não podem rebaixar um turno novo.
+ */
+export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState {
+  const next = reduceGuiEvent(state, evt)
+  if (next === state) return state
+  return { ...next, eventRevision: state.eventRevision + 1 }
 }
 
 export interface Pane {
@@ -1238,10 +1756,42 @@ interface SynkoraState {
   /** evento vivo do canal `gui:live` (payload cru — o redutor valida) */
   handleGuiLive: (paneId: string, evt: unknown) => void
   /** remontagem: refaz o estado do zero a partir do ring buffer do main */
-  replayGuiPane: (paneId: string, events: GuiSessionEvent[]) => void
+  replayGuiPane: (
+    paneId: string,
+    events: GuiSessionEvent[],
+    prepareForRespawn?: boolean
+  ) => void
   /** carimba que `gui:create` já foi pedido (não spawnar duas vezes) */
   markGuiSpawned: (paneId: string) => void
-  sendGuiMessage: (paneId: string, text: string) => Promise<void>
+  /** revelador terminou: a mensagem vira markdown estático sem piscar/remontar */
+  finishGuiReveal: (paneId: string, itemId: string, revealedLength: number) => void
+  queueGuiMessage: (
+    paneId: string,
+    text: string,
+    options: GuiQueuedOptions,
+    attachments?: readonly GuiAttachmentDescriptor[]
+  ) => GuiQueuedMessage | null
+  discardGuiQueuedMessage: (paneId: string, expectedId?: string) => void
+  claimGuiQueuedMessage: (paneId: string, ownerToken: string) => GuiQueuedMessage | null
+  acknowledgeGuiQueuedMessage: (
+    paneId: string,
+    expectedId: string,
+    ownerToken: string
+  ) => boolean
+  restoreGuiQueuedMessage: (
+    paneId: string,
+    message: GuiQueuedMessage,
+    error: string,
+    ownerToken: string
+  ) => void
+  refreshGuiQueuedMessage: (paneId: string) => GuiQueuedMessage | null
+  retryGuiQueuedMessage: (paneId: string, expectedId: string) => void
+  sendGuiMessage: (
+    paneId: string,
+    text: string,
+    messageId?: string,
+    attachments?: readonly GuiAttachmentDescriptor[]
+  ) => Promise<boolean>
   answerGuiPerm: (
     projectId: string,
     paneId: string,
@@ -2159,32 +2709,63 @@ export const useStore = create<SynkoraState>((set, get) => ({
     set((s) => {
       const evt = asGuiEvent(raw)
       if (!evt) return {}
-      const prev = s.guiPanes[paneId] ?? EMPTY_GUI_PANE
+      const prev =
+        s.guiPanes[paneId] ?? {
+          ...EMPTY_GUI_PANE,
+          queued: readGuiQueuedMessage(paneId)
+        }
       const next = applyGuiEvent(prev, evt)
       if (next === prev) return {}
       const patch: Partial<SynkoraState> = {
         guiPanes: { ...s.guiPanes, [paneId]: next }
       }
-      if (!!next.perm !== !!s.paneAttention[paneId]) {
+      if ((next.interactionQueue.length > 0) !== !!s.paneAttention[paneId]) {
         const paneAttention = { ...s.paneAttention }
-        if (next.perm) paneAttention[paneId] = true
+        if (next.interactionQueue.length > 0) paneAttention[paneId] = true
         else delete paneAttention[paneId]
         patch.paneAttention = paneAttention
       }
       return patch
     }),
 
-  replayGuiPane: (paneId, events) =>
+  replayGuiPane: (paneId, events, prepareForRespawn = false) =>
     set((s) => {
       const prev = s.guiPanes[paneId]
-      let next: GuiPaneState = { ...EMPTY_GUI_PANE, spawned: prev?.spawned ?? false }
+      const queued = prev?.queued ?? readGuiQueuedMessage(paneId)
+      let next: GuiPaneState = {
+        ...EMPTY_GUI_PANE,
+        spawned: prev?.spawned ?? false,
+        queued
+      }
       for (const evt of events) next = applyGuiEvent(next, evt)
+      // A fila é estado local posterior ao transcript; um /clear histórico no
+      // replay nunca pode apagar uma mensagem enfileirada agora.
+      next = { ...next, queued }
+      if (prepareForRespawn) {
+        next = {
+          ...next,
+          ...settleGuiRespawnStream(next.items, next.activeAssistantId, next.turnHadText)
+        }
+      }
+      next = settleGuiReplay(next)
+      if (prepareForRespawn) {
+        next = {
+          ...next,
+          status: 'starting',
+          ready: false,
+          caps: null,
+          startedAt: null,
+          activityText: null,
+          sendBatch: null,
+          error: null
+        }
+      }
       const patch: Partial<SynkoraState> = {
         guiPanes: { ...s.guiPanes, [paneId]: next }
       }
-      if (!!next.perm !== !!s.paneAttention[paneId]) {
+      if ((next.interactionQueue.length > 0) !== !!s.paneAttention[paneId]) {
         const paneAttention = { ...s.paneAttention }
-        if (next.perm) paneAttention[paneId] = true
+        if (next.interactionQueue.length > 0) paneAttention[paneId] = true
         else delete paneAttention[paneId]
         patch.paneAttention = paneAttention
       }
@@ -2193,43 +2774,253 @@ export const useStore = create<SynkoraState>((set, get) => ({
 
   markGuiSpawned: (paneId) =>
     set((s) => {
-      const prev = s.guiPanes[paneId] ?? EMPTY_GUI_PANE
+      const prev =
+        s.guiPanes[paneId] ?? {
+          ...EMPTY_GUI_PANE,
+          queued: readGuiQueuedMessage(paneId)
+        }
       if (prev.spawned) return {}
       return { guiPanes: { ...s.guiPanes, [paneId]: { ...prev, spawned: true } } }
     }),
 
-  sendGuiMessage: async (paneId, text) => {
-    const message = text.trim()
-    if (!message) return
+  finishGuiReveal: (paneId, itemId, revealedLength) =>
     set((s) => {
-      const prev = s.guiPanes[paneId] ?? EMPTY_GUI_PANE
+      const prev = s.guiPanes[paneId]
+      if (!prev) return {}
+      let changed = false
+      const items = prev.items.map((item) => {
+        if (item.id !== itemId || item.kind !== 'assistant') return item
+        const animateFrom = Math.max(
+          item.animateFrom,
+          Math.min(Math.max(0, revealedLength), item.text.length)
+        )
+        if (animateFrom === item.animateFrom) return item
+        changed = true
+        return { ...item, animateFrom }
+      })
+      if (!changed) return {}
+      return { guiPanes: { ...s.guiPanes, [paneId]: { ...prev, items } } }
+    }),
+
+  queueGuiMessage: (paneId, text, options, attachmentInput = []) => {
+    const message = text.trim()
+    const attachments = safeGuiItemAttachments(attachmentInput) ?? []
+    if (attachmentInput.length !== attachments.length) return null
+    const before = get().guiPanes[paneId]
+    if (
+      (!message && attachments.length === 0) ||
+      (before?.status !== 'working' && before?.status !== 'waiting-you') ||
+      before.queued
+    )
+      return null
+    const queued: GuiQueuedMessage = {
+      id: guiItemId(),
+      text: message,
+      at: Date.now(),
+      options,
+      attachments
+    }
+    if (!writeGuiQueuedMessage(paneId, queued)) return null
+    let accepted = false
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (
+        !prev ||
+        (prev.status !== 'working' && prev.status !== 'waiting-you') ||
+        prev.queued
+      )
+        return {}
+      accepted = true
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: { ...prev, queued }
+        }
+      }
+    })
+    if (!accepted) {
+      removeGuiQueuedMessageStorage(paneId, queued.id)
+      return null
+    }
+    return queued
+  },
+
+  discardGuiQueuedMessage: (paneId, expectedId) => {
+    removeGuiQueuedMessageStorage(paneId, expectedId)
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (!prev?.queued || (expectedId && prev.queued.id !== expectedId)) return {}
+      if (prev.queued.deliveryInFlight) return {}
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: { ...prev, queued: null }
+        }
+      }
+    })
+  },
+
+  claimGuiQueuedMessage: (paneId, ownerToken) => {
+    const claimed = claimGuiQueuedMessageStorage(paneId, ownerToken)
+    if (!claimed) return null
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (!prev || (prev.queued && prev.queued.id !== claimed.id)) return {}
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: { ...prev, queued: claimed }
+        }
+      }
+    })
+    return claimed
+  },
+
+  acknowledgeGuiQueuedMessage: (paneId, expectedId, ownerToken) => {
+    const acknowledged = acknowledgeGuiQueuedMessageStorage(paneId, expectedId, ownerToken)
+    if (!acknowledged) return false
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (!prev?.queued || prev.queued.id !== expectedId) return {}
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: { ...prev, queued: null }
+        }
+      }
+    })
+    return true
+  },
+
+  restoreGuiQueuedMessage: (paneId, message, error, ownerToken) => {
+    const restored = releaseGuiQueuedMessageClaim(paneId, ownerToken, message, error)
+    // Uma lease mais nova torna esta falha obsoleta; nunca ressuscitar uma fila
+    // falsa por cima do renderer que realmente ganhou a entrega.
+    const next = restored ?? readGuiQueuedMessage(paneId)
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (!prev) return {}
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: { ...prev, queued: next }
+        }
+      }
+    })
+  },
+
+  refreshGuiQueuedMessage: (paneId) => {
+    const queued = readGuiQueuedMessage(paneId)
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (!prev) return {}
+      const current = prev.queued
+      if (
+        current?.id === queued?.id &&
+        current?.deliveryError === queued?.deliveryError &&
+        current?.deliveryInFlight === queued?.deliveryInFlight &&
+        current?.deliveryClaimedUntil === queued?.deliveryClaimedUntil
+      )
+        return {}
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: { ...prev, queued }
+        }
+      }
+    })
+    return queued
+  },
+
+  retryGuiQueuedMessage: (paneId, expectedId) => {
+    const current = get().guiPanes[paneId]?.queued ?? readGuiQueuedMessage(paneId)
+    if (!current || current.id !== expectedId || current.deliveryInFlight) return
+    const retrying: GuiQueuedMessage = { ...current }
+    delete retrying.deliveryError
+    delete retrying.deliveryInFlight
+    delete retrying.deliveryClaimedUntil
+    writeGuiQueuedMessage(paneId, retrying)
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (!prev || prev.queued?.id !== expectedId) return {}
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: { ...prev, queued: retrying }
+        }
+      }
+    })
+  },
+
+  sendGuiMessage: async (paneId, text, messageId, attachmentInput = []) => {
+    const message = text.trim()
+    const attachments = safeGuiItemAttachments(attachmentInput) ?? []
+    if (attachmentInput.length !== attachments.length) return false
+    if (!message && attachments.length === 0) return false
+    const before = get().guiPanes[paneId]
+    // O composer pode receber texto enquanto abre, mas o transporte só existe
+    // depois do `ready`. Enviar antes dele criava um falso "pane morto".
+    if (!before || !canSendGuiMessage(before.status, before.ready)) return false
+    const userItemId = messageId ?? guiItemId()
+    const batchId =
+      before.sendBatch?.eventRevision === before.eventRevision
+        ? before.sendBatch.id
+        : userItemId
+    const sentAt = Date.now()
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (!prev || !canSendGuiMessage(prev.status, prev.ready)) return {}
+      const startedTurn = prev.status !== 'working'
       return {
         guiPanes: {
           ...s.guiPanes,
           [paneId]: {
             ...prev,
             items: pushGuiItem(prev.items, {
-              id: guiItemId(),
+              id: userItemId,
               kind: 'user',
               text: message,
-              at: Date.now()
+              ...(attachments.length > 0 ? { attachments } : {}),
+              at: sentAt
             }),
             // backend ocupado enfileira/steera sozinho — a UI nunca trava o input
-            status: prev.status === 'dead' ? 'dead' : 'working',
-            turnHadText: false
+            ...guiStatusPatch(prev, 'working', sentAt),
+            activityText: startedTurn ? null : prev.activityText,
+            turnHadText: startedTurn ? false : prev.turnHadText,
+            sendBatch: beginGuiSendBatch(
+              prev.sendBatch,
+              batchId,
+              userItemId,
+              prev.eventRevision,
+              startedTurn
+            )
           }
         }
       }
     })
-    await guiApi.send(paneId, message)
-  },
-
-  answerGuiPerm: async (projectId, paneId, behavior) => {
-    const perm = get().guiPanes[paneId]?.perm
-    if (!perm) return
+    const result = await guiApi.send(paneId, message, userItemId, attachments)
     set((s) => {
       const prev = s.guiPanes[paneId]
-      if (!prev?.perm) return {}
+      if (!prev) return {}
+      const settled = settleGuiSendBatch(
+        prev.sendBatch,
+        batchId,
+        userItemId,
+        result.ok,
+        prev.eventRevision
+      )
+      if (result.ok) {
+        if (settled.batch === prev.sendBatch) return {}
+        return {
+          guiPanes: {
+            ...s.guiPanes,
+            [paneId]: { ...prev, sendBatch: settled.batch }
+          }
+        }
+      }
+      const status = settled.closeTurn
+        ? guiTransportFailureStatus(prev.status, result.error)
+        : prev.status
       return {
         guiPanes: {
           ...s.guiPanes,
@@ -2237,84 +3028,147 @@ export const useStore = create<SynkoraState>((set, get) => ({
             ...prev,
             items: pushGuiItem(prev.items, {
               id: guiItemId(),
-              kind: 'permission',
-              toolName: prev.perm.toolName,
-              behavior,
+              kind: 'error',
+              text: `não deu para enviar a mensagem — ${result.error ?? 'a sessão não respondeu'}`,
               at: Date.now()
             }),
-            perm: null,
-            status: prev.status === 'dead' ? 'dead' : 'working'
+            sendBatch: settled.batch,
+            activityText: settled.closeTurn ? null : prev.activityText,
+            ...guiStatusPatch(prev, status)
           }
         }
       }
     })
-    // responder É a interação do usuário: apaga o pulso do pane (e do card,
-    // quando nenhum irmão da mesma tarefa segue esperando)
-    get().clearPaneAttention(projectId, paneId)
-    await guiApi.permission(paneId, perm.requestId, behavior)
+    return result.ok
   },
 
-  answerGuiQuestion: async (projectId, paneId, answers) => {
-    const pending = get().guiPanes[paneId]?.question
-    if (!pending) return
-    const entries = pending.questions
-      .map((q) => ({ question: q.question, answer: answers[q.question] ?? '' }))
-      .filter((entry) => entry.answer.trim().length > 0)
+  answerGuiPerm: async (_projectId, paneId, behavior) => {
+    const before = get().guiPanes[paneId]
+    const perm = before?.perm
+    if (!before || !perm || before.interactionSubmitting) return
     set((s) => {
       const prev = s.guiPanes[paneId]
-      if (!prev?.question) return {}
+      if (
+        !prev?.perm ||
+        prev.perm.requestId !== perm.requestId ||
+        prev.interactionSubmitting
+      )
+        return {}
       return {
         guiPanes: {
           ...s.guiPanes,
-          [paneId]: {
-            ...prev,
-            items: pushGuiItem(prev.items, {
-              id: guiItemId(),
-              kind: 'question',
-              header: prev.question.questions[0]?.header,
-              entries,
-              at: Date.now()
-            }),
-            question: null,
-            status: prev.status === 'dead' ? 'dead' : 'working'
-          }
+          [paneId]: { ...prev, interactionSubmitting: perm.requestId }
         }
       }
     })
-    get().clearPaneAttention(projectId, paneId)
-    await guiApi.answerQuestion(paneId, pending.requestId, answers)
+    const result = await guiApi.permission(paneId, perm.requestId, behavior)
+    if (!result.ok) {
+      set((s) => {
+        const prev = s.guiPanes[paneId]
+        if (!prev) return {}
+        return {
+          guiPanes: {
+            ...s.guiPanes,
+            [paneId]: guiInteractiveFailure(
+              prev,
+              perm.requestId,
+              'não deu para responder à permissão',
+              result.error,
+              Boolean(result.retryable)
+            )
+          }
+        }
+      })
+    }
   },
 
-  answerGuiPlan: async (projectId, paneId, approve) => {
-    const pending = get().guiPanes[paneId]?.planReview
-    if (!pending) return
+  answerGuiQuestion: async (_projectId, paneId, answers) => {
+    const before = get().guiPanes[paneId]
+    const pending = before?.question
+    if (!before || !pending || before.interactionSubmitting) return
     set((s) => {
       const prev = s.guiPanes[paneId]
-      if (!prev?.planReview) return {}
+      if (
+        !prev?.question ||
+        prev.question.requestId !== pending.requestId ||
+        prev.interactionSubmitting
+      )
+        return {}
       return {
         guiPanes: {
           ...s.guiPanes,
-          [paneId]: {
-            ...prev,
-            items: pushGuiItem(prev.items, {
-              id: guiItemId(),
-              kind: 'note',
-              text: approve
-                ? 'plano aprovado — o agente começou a construir'
-                : 'plano devolvido para revisão',
-              at: Date.now()
-            }),
-            planReview: null,
-            status: prev.status === 'dead' ? 'dead' : 'working'
-          }
+          [paneId]: { ...prev, interactionSubmitting: pending.requestId }
         }
       }
     })
-    get().clearPaneAttention(projectId, paneId)
-    await guiApi.answerPlan(paneId, pending.requestId, approve)
+    const result = await guiApi.answerQuestion(paneId, pending.requestId, answers)
+    if (!result.ok) {
+      set((s) => {
+        const prev = s.guiPanes[paneId]
+        if (!prev) return {}
+        return {
+          guiPanes: {
+            ...s.guiPanes,
+            [paneId]: guiInteractiveFailure(
+              prev,
+              pending.requestId,
+              'não deu para responder à pergunta',
+              result.error,
+              Boolean(result.retryable)
+            )
+          }
+        }
+      })
+    }
+  },
+
+  answerGuiPlan: async (_projectId, paneId, approve) => {
+    const before = get().guiPanes[paneId]
+    const pending = before?.planReview
+    if (!before || !pending || before.interactionSubmitting) return
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (
+        !prev?.planReview ||
+        prev.planReview.requestId !== pending.requestId ||
+        prev.interactionSubmitting
+      )
+        return {}
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: { ...prev, interactionSubmitting: pending.requestId }
+        }
+      }
+    })
+    const result = await guiApi.answerPlan(paneId, pending.requestId, approve)
+    if (!result.ok) {
+      set((s) => {
+        const prev = s.guiPanes[paneId]
+        if (!prev) return {}
+        return {
+          guiPanes: {
+            ...s.guiPanes,
+            [paneId]: guiInteractiveFailure(
+              prev,
+              pending.requestId,
+              'não deu para responder ao plano',
+              result.error,
+              Boolean(result.retryable)
+            )
+          }
+        }
+      })
+    }
   },
 
   interruptGuiPane: async (paneId) => {
+    const before = get().guiPanes[paneId]
+    if (!before || before.status !== 'working') return
+    const turnIdentity = {
+      eventRevision: before.eventRevision,
+      startedAt: before.startedAt
+    }
     set((s) => {
       const prev = s.guiPanes[paneId]
       if (!prev) return {}
@@ -2333,11 +3187,34 @@ export const useStore = create<SynkoraState>((set, get) => ({
         }
       }
     })
-    await guiApi.interrupt(paneId)
+    const result = await guiApi.interrupt(paneId)
+    if (result.ok) return
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (!prev) return {}
+      const { sameTurn, status } = settleGuiActionFailure(prev, turnIdentity, result.error)
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: {
+            ...prev,
+            items: pushGuiItem(prev.items, {
+              id: guiItemId(),
+              kind: 'error',
+              text: `não deu para interromper o turno — ${result.error ?? 'a sessão não respondeu'}`,
+              at: Date.now()
+            }),
+            activityText: sameTurn ? null : prev.activityText,
+            ...guiStatusPatch(prev, status)
+          }
+        }
+      }
+    })
   },
 
   dropGuiPane: (paneId) => {
     void guiApi.kill(paneId)
+    removeGuiQueuedMessageStorage(paneId)
     set((s) => {
       if (!s.guiPanes[paneId]) return {}
       const guiPanes = { ...s.guiPanes }

@@ -14,14 +14,27 @@
  * - Persona do claude vai por ARQUIVO (--append-system-prompt-file): argv tem
  *   teto de 32767 chars no Windows (caso 02/08). No codex ela é
  *   developerInstructions do thread/start, então viaja como string.
- * - `paneId → {sessionId, cli}` é persistido para o resume pós-boot; a morte
- *   do pane NÃO apaga o registro (retomar é decisão de quem reabre).
+ * - `paneId → {sessionId, cli}` e o transcript visível limitado são
+ *   persistidos para o resume pós-boot; a morte do pane NÃO apaga nenhum dos
+ *   dois (retomar é decisão de quem reabre).
  * - Higiene de env (deletar os marcadores CLAUDE_CODE_ e CLAUDECODE herdados)
  *   já é feita dentro das classes de sessão — nada a repetir aqui.
  */
 import { CodexSession } from './codexSession'
 import { MaestroSession, type SessionEvent } from './maestroSession'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
+import { limitGuiToolInput } from './guiToolInput'
+import { GuiAlertSequencer, type GuiNoticeKind } from './guiNotices'
+import {
+  GUI_ATTACHMENT_MAX_FILES,
+  isGuiAttachmentDescriptor,
+  withGuiAttachmentReferences,
+  type GuiAttachmentDescriptor
+} from './guiAttachments'
+import { validateGuiAttachmentReferences } from './guiAttachmentStorage'
+
+export const GUI_PROMPT_MAX_CHARS = 256 * 1024
+export const GUI_PROMPT_MAX_BYTES = 1024 * 1024
 
 // ————— tipos do contrato (fonte única — o renderer copia VERBATIM) —————
 
@@ -105,7 +118,21 @@ export function guiPermissionProfile(
  *  (maestroSession.ts — kinds: init, delta, thinking, text, tool, tool-result,
  *  permission, permission-cancel, session-id, ready, command-output, limit,
  *  result, fatal, closed). */
-export interface GuiLivePayload { paneId: string; evt: unknown /* SessionEvent */ }
+export interface GuiSequencedEvent {
+  seq: number
+  evt: unknown /* SessionEvent */
+}
+
+export interface GuiLivePayload extends GuiSequencedEvent {
+  paneId: string
+}
+
+export interface GuiStatePayload {
+  events: GuiSequencedEvent[]
+  cursor: number
+  exists: boolean
+  alive: boolean
+}
 
 /** Resposta padrão dos canais gui:* — `error` em PT-BR, é texto de UI. */
 export interface GuiResult {
@@ -113,40 +140,600 @@ export interface GuiResult {
   error?: string
 }
 
+/** Mudança de executor solicitada pelo composer. `null` limpa o override;
+ *  campo ausente conserva a escolha atual. O main valida contra as caps da
+ *  sessão viva antes de tocar no backend. */
+export interface GuiExecutorPatch {
+  model?: string | null
+  effort?: string | null
+}
+
+export type GuiExecutorResult =
+  | { ok: true; model: string | null; effort: string | null }
+  | { ok: false; error: string }
+
+export const GUI_QUEUED_DELIVERY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000
+const GUI_QUEUED_RECEIPT_TTL_MS = GUI_QUEUED_DELIVERY_MAX_AGE_MS + 24 * 60 * 60 * 1_000
+const GUI_QUEUED_RECEIPT_CAP = 256
+
+/** Envelope autoritativo do P1. O main recebe texto, anexos e a fotografia
+ * inteira das opcoes numa unica operacao; assim nunca prepara um bilhete e
+ * envia outro por uma corrida entre os dois renderers. */
+export interface GuiQueuedDeliveryInput {
+  id: string
+  text: string
+  at: number
+  options: {
+    model: string | null
+    effort: string | null
+    permissionMode: string
+  }
+  attachments: GuiAttachmentDescriptor[]
+}
+
+export function guiQueuedDeliveryProblem(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return 'mensagem da fila em formato inválido'
+  }
+  const candidate = value as Partial<GuiQueuedDeliveryInput>
+  const options = candidate.options
+  const idProblem = guiMessageIdProblem(candidate.id)
+  if (idProblem) return idProblem
+  const now = Date.now()
+  if (
+    typeof candidate.at !== 'number' ||
+    !Number.isFinite(candidate.at) ||
+    candidate.at > now + 5 * 60_000 ||
+    candidate.at < now - GUI_QUEUED_DELIVERY_MAX_AGE_MS
+  )
+    return 'mensagem da fila expirou; edite para criar um novo envio'
+  const promptProblem = guiPromptProblem(candidate.text, 'mensagem da fila', true)
+  if (promptProblem) return promptProblem
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    return 'opções da fila em formato inválido'
+  }
+  if (!isGuiPermissionMode(options.permissionMode)) return 'modo de permissão da fila inválido'
+  for (const [label, option] of [
+    ['modelo', options.model],
+    ['effort', options.effort]
+  ] as const) {
+    if (
+      option !== null &&
+      (typeof option !== 'string' || !option.trim() || option.length > 128)
+    ) {
+      return `${label} da fila inválido`
+    }
+  }
+  if (
+    !Array.isArray(candidate.attachments) ||
+    candidate.attachments.length > GUI_ATTACHMENT_MAX_FILES ||
+    !candidate.attachments.every(isGuiAttachmentDescriptor)
+  ) {
+    return 'anexos da fila em formato inválido'
+  }
+  if (!candidate.text?.trim() && candidate.attachments.length === 0) return 'mensagem da fila vazia'
+  return null
+}
+
+/** Valida antes de guardar, clonar por IPC ou serializar para qualquer CLI. */
+export function guiPromptProblem(
+  value: unknown,
+  label = 'mensagem',
+  allowEmpty = false
+): string | null {
+  if (typeof value !== 'string') return `${label} em formato inválido`
+  if (value.length > GUI_PROMPT_MAX_CHARS || Buffer.byteLength(value, 'utf8') > GUI_PROMPT_MAX_BYTES)
+    return `${label} grande demais (limite de 256 mil caracteres)`
+  if (!allowEmpty && !value.trim()) return `${label} vazia`
+  return null
+}
+
 // ————— anel de eventos (replay da remontagem) —————
 
+export function guiMessageIdProblem(value: unknown): string | null {
+  return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/u.test(value)
+    ? null
+    : 'mensagem sem identificador válido'
+}
+
 export const GUI_RING_CAP = 500
+export const GUI_RING_BYTE_CAP = 4 * 1024 * 1024
+/** O documento guarda muitos panes; o teto global impede 4 MiB × N sem fim. */
+export const GUI_TRANSCRIPT_STORE_BYTE_CAP = 32 * 1024 * 1024
+export const GUI_TRANSCRIPT_STORE_PANE_CAP = 64
+const GUI_TRANSCRIPT_HYDRATE_EVENT_CAP = GUI_RING_CAP * 4
+
+function guiEventSize(evt: unknown): number {
+  try {
+    const serialized = JSON.stringify(evt)
+    return serialized === undefined ? 0 : Buffer.byteLength(serialized, 'utf8')
+  } catch {
+    return GUI_RING_BYTE_CAP
+  }
+}
+
+type GuiStickyEvent =
+  | 'init'
+  | 'session-id'
+  | 'ready'
+  | 'session-restarted'
+  | 'executor-changed'
+  | 'context-usage'
+
+type GuiPendingInteractionEvent = 'permission' | 'question' | 'plan-review'
+
+function guiStickyEvent(evt: unknown): GuiStickyEvent | null {
+  if (!evt || typeof evt !== 'object') return null
+  const type = (evt as { type?: unknown }).type
+  return type === 'init' ||
+    type === 'session-id' ||
+    type === 'ready' ||
+    type === 'session-restarted' ||
+    type === 'executor-changed' ||
+    type === 'context-usage'
+    ? type
+    : null
+}
+
+function guiEventRecord(evt: unknown): Record<string, unknown> | null {
+  return evt && typeof evt === 'object' ? (evt as Record<string, unknown>) : null
+}
+
+function guiPendingInteraction(evt: unknown): { requestId: string; type: GuiPendingInteractionEvent } | null {
+  const record = guiEventRecord(evt)
+  if (!record || typeof record['requestId'] !== 'string' || !record['requestId']) return null
+  const type = record['type']
+  if (type !== 'permission' && type !== 'question' && type !== 'plan-review') return null
+  return { requestId: record['requestId'], type }
+}
+
+function guiResolvedInteractionId(evt: unknown): string | null {
+  const record = guiEventRecord(evt)
+  if (!record || typeof record['requestId'] !== 'string' || !record['requestId']) return null
+  return record['type'] === 'interaction-resolved' || record['type'] === 'permission-cancel'
+    ? record['requestId']
+    : null
+}
+
+function guiTerminalEvent(evt: unknown): boolean {
+  const type = guiEventRecord(evt)?.['type']
+  return type === 'result' || type === 'fatal' || type === 'closed'
+}
+
+function guiPlainRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function guiRequestId(value: unknown): boolean {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256
+}
+
+function guiOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === 'string'
+}
+
+function guiOptionalFinite(value: unknown): boolean {
+  return value === undefined || (typeof value === 'number' && Number.isFinite(value))
+}
+
+function guiNullableContextTokens(value: unknown): boolean {
+  return value === null || (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
+}
+
+function guiNullableContextWindow(value: unknown): boolean {
+  return value === null || (typeof value === 'number' && Number.isSafeInteger(value) && value > 0)
+}
+
+function guiOptionalContextTokens(value: unknown): boolean {
+  return value === undefined || guiNullableContextTokens(value)
+}
+
+function guiOptionalContextWindow(value: unknown): boolean {
+  return value === undefined || guiNullableContextWindow(value)
+}
+
+function guiPersistedCaps(value: unknown): boolean {
+  const caps = guiPlainRecord(value)
+  if (!caps || !Array.isArray(caps['commands']) || !Array.isArray(caps['models'])) return false
+  const commandsOk = caps['commands'].every((command) => {
+    const item = guiPlainRecord(command)
+    return Boolean(
+      item &&
+        typeof item['name'] === 'string' &&
+        typeof item['description'] === 'string' &&
+        guiOptionalString(item['argumentHint'])
+    )
+  })
+  const modelsOk = caps['models'].every((model) => {
+    const item = guiPlainRecord(model)
+    return Boolean(
+      item &&
+        typeof item['value'] === 'string' &&
+        typeof item['displayName'] === 'string' &&
+        guiOptionalString(item['description']) &&
+        (item['supportedEffortLevels'] === undefined ||
+          (Array.isArray(item['supportedEffortLevels']) &&
+            item['supportedEffortLevels'].every((level) => typeof level === 'string')))
+    )
+  })
+  return commandsOk && modelsOk
+}
+
+function guiPersistedQuestions(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 8) return false
+  return value.every((question) => {
+    const item = guiPlainRecord(question)
+    if (
+      !item ||
+      typeof item['question'] !== 'string' ||
+      !item['question'].trim() ||
+      !guiOptionalString(item['header']) ||
+      (item['multiSelect'] !== undefined && typeof item['multiSelect'] !== 'boolean') ||
+      !Array.isArray(item['options']) ||
+      item['options'].length === 0 ||
+      item['options'].length > 12
+    )
+      return false
+    return item['options'].every((option) => {
+      const parsed = guiPlainRecord(option)
+      return Boolean(
+        parsed &&
+          typeof parsed['label'] === 'string' &&
+          parsed['label'].trim() &&
+          guiOptionalString(parsed['description'])
+      )
+    })
+  })
+}
+
+function guiPersistedResolution(value: unknown): boolean {
+  const resolution = guiPlainRecord(value)
+  if (!resolution) return false
+  if (resolution['kind'] === 'stale') return true
+  if (resolution['kind'] === 'plan') return typeof resolution['approve'] === 'boolean'
+  if (resolution['kind'] === 'permission')
+    return (
+      typeof resolution['toolName'] === 'string' &&
+      guiOptionalString(resolution['toolUseId']) &&
+      (resolution['behavior'] === 'allow' ||
+        resolution['behavior'] === 'allow-always' ||
+        resolution['behavior'] === 'deny')
+    )
+  if (resolution['kind'] !== 'question' || !Array.isArray(resolution['entries'])) return false
+  return resolution['entries'].every((entry) => {
+    const item = guiPlainRecord(entry)
+    return Boolean(
+      item && typeof item['question'] === 'string' && typeof item['answer'] === 'string'
+    )
+  })
+}
+
+/** Eventos do transcript vieram de JSON local, não do backend vivo. A
+ *  hidratação aceita somente o contrato conhecido e formas que o redutor
+ *  consegue consumir sem coerção/exceção. */
+export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
+  const event = guiPlainRecord(value)
+  if (!event || guiEventSize(value) > GUI_RING_BYTE_CAP) return false
+  switch (event['type']) {
+    case 'init':
+      return (
+        typeof event['model'] === 'string' &&
+        typeof event['sessionId'] === 'string' &&
+        typeof event['permissionMode'] === 'string' &&
+        Number.isSafeInteger(event['toolCount']) &&
+        guiOptionalFinite(event['contextWindow'])
+      )
+    case 'delta':
+    case 'text':
+    case 'command-output':
+    case 'limit':
+    case 'fatal':
+      return typeof event['text'] === 'string'
+    case 'thinking':
+      return guiOptionalString(event['text'])
+    case 'turn-started':
+    case 'conversation-cleared':
+      return true
+    case 'turn-continuation':
+      return typeof event['continues'] === 'boolean'
+    case 'session-restarted':
+      return (
+        typeof event['ready'] === 'boolean' &&
+        guiOptionalContextTokens(event['contextTokens']) &&
+        guiOptionalContextWindow(event['contextWindow'])
+      )
+    case 'executor-changed':
+      return (
+        (event['model'] === null || typeof event['model'] === 'string') &&
+        (event['effort'] === null || typeof event['effort'] === 'string')
+      )
+    case 'user-message':
+      return (
+        guiMessageIdProblem(event['id']) === null &&
+        guiPromptProblem(event['text']) === null &&
+        (event['attachments'] === undefined ||
+          (Array.isArray(event['attachments']) &&
+            event['attachments'].length <= 20 &&
+            event['attachments'].every(isGuiAttachmentDescriptor))) &&
+        typeof event['at'] === 'number' &&
+        Number.isFinite(event['at'])
+      )
+    case 'tool':
+      return (
+        typeof event['name'] === 'string' &&
+        Boolean(guiPlainRecord(event['input'])) &&
+        guiOptionalString(event['toolUseId'])
+      )
+    case 'tool-result':
+      return (
+        typeof event['text'] === 'string' &&
+        typeof event['isError'] === 'boolean' &&
+        guiOptionalString(event['toolUseId']) &&
+        guiOptionalFinite(event['lineCount']) &&
+        (event['truncated'] === undefined || typeof event['truncated'] === 'boolean') &&
+        (event['outcome'] === undefined ||
+          event['outcome'] === 'completed' ||
+          event['outcome'] === 'failed' ||
+          event['outcome'] === 'denied' ||
+          event['outcome'] === 'cancelled')
+      )
+    case 'permission':
+      return (
+        guiRequestId(event['requestId']) &&
+        guiOptionalString(event['toolUseId']) &&
+        typeof event['toolName'] === 'string' &&
+        typeof event['description'] === 'string' &&
+        typeof event['inputPretty'] === 'string' &&
+        guiOptionalString(event['reason']) &&
+        guiOptionalString(event['permissionRule']) &&
+        typeof event['canAlways'] === 'boolean'
+      )
+    case 'permission-cancel':
+      return guiRequestId(event['requestId'])
+    case 'interaction-resolved':
+      return guiRequestId(event['requestId']) && guiPersistedResolution(event['resolution'])
+    case 'question':
+      return guiRequestId(event['requestId']) && guiPersistedQuestions(event['questions'])
+    case 'plan-review':
+      return (
+        guiRequestId(event['requestId']) &&
+        typeof event['plan'] === 'string' &&
+        event['plan'].length <= 64 * 1024
+      )
+    case 'session-id':
+      return typeof event['sessionId'] === 'string' && event['sessionId'].length > 0
+    case 'ready':
+      return guiPersistedCaps(event['caps'])
+    case 'command-completed':
+      return (
+        typeof event['isError'] === 'boolean' &&
+        typeof event['continues'] === 'boolean' &&
+        guiOptionalString(event['errorText'])
+      )
+    case 'context-usage':
+      return (
+        guiNullableContextTokens(event['contextTokens']) &&
+        guiNullableContextWindow(event['contextWindow'])
+      )
+    case 'result':
+      return (
+        typeof event['isError'] === 'boolean' &&
+        (event['outcome'] === undefined ||
+          event['outcome'] === 'completed' ||
+          event['outcome'] === 'failed' ||
+          event['outcome'] === 'cancelled') &&
+        (event['continues'] === undefined || typeof event['continues'] === 'boolean') &&
+        guiOptionalString(event['errorText']) &&
+        guiOptionalString(event['resultText']) &&
+        guiOptionalString(event['fastModeState']) &&
+        guiOptionalContextTokens(event['contextTokens']) &&
+        guiOptionalContextWindow(event['contextWindow']) &&
+        guiOptionalFinite(event['costUsd'])
+      )
+    case 'closed':
+      return event['code'] === null || Number.isSafeInteger(event['code'])
+    default:
+      return false
+  }
+}
+
+/** Pontos que mudam o fio legível. Metadados de handshake já são gravados
+ *  por `remember`; delta/thinking/tool-start ficam no anel e entram no próximo
+ *  checkpoint ou na barreira final de `dispose`. */
+function guiTranscriptCheckpoint(evt: SessionEvent): boolean {
+  switch (evt.type) {
+    case 'user-message':
+    case 'text':
+    case 'tool-result':
+    case 'permission':
+    case 'permission-cancel':
+    case 'interaction-resolved':
+    case 'question':
+    case 'plan-review':
+    case 'turn-continuation':
+    case 'session-restarted':
+    case 'conversation-cleared':
+    case 'executor-changed':
+    case 'context-usage':
+    case 'command-output':
+    case 'command-completed':
+    case 'limit':
+    case 'result':
+    case 'fatal':
+    case 'closed':
+      return true
+    default:
+      return false
+  }
+}
 
 /**
  * Buffer circular por pane. O renderer remonta (troca de aba, reload da view)
  * e pede `gui:state` — sem isto a conversa nasceria vazia com a sessão viva.
- * Cap por CONTAGEM: evento de tool grande é raro e já vem truncado pelas
- * classes de sessão (firstLines).
+ * Dois tetos independentes protegem o replay: contagem e bytes serializados.
+ * O evento mais novo é preservado mesmo quando, sozinho, ultrapassa o teto.
  */
 export class GuiEventRing {
-  private items: unknown[] = []
+  private items: { seq: number; evt: unknown; size: number }[] = []
+  private sticky = new Map<GuiStickyEvent, { seq: number; evt: unknown; size: number }>()
+  /**
+   * Pedidos ainda sem resposta não podem competir com deltas pela janela do
+   * replay: se um deles sumir, o backend continua esperando mas o dono perde o
+   * único controle capaz de respondê-lo. O requestId é a identidade canônica.
+   */
+  private interactions = new Map<string, { seq: number; evt: unknown; size: number }>()
+  private bytes = 0
+  private stickyBytes = 0
+  private interactionBytes = 0
+  private nextSeq = 0
   private readonly cap: number
+  private readonly byteCap: number
 
-  constructor(cap: number = GUI_RING_CAP) {
+  constructor(
+    cap: number = GUI_RING_CAP,
+    byteCap: number = GUI_RING_BYTE_CAP,
+    initialCursor = 0
+  ) {
     this.cap = cap > 0 ? cap : GUI_RING_CAP
+    this.byteCap = byteCap > 0 ? byteCap : GUI_RING_BYTE_CAP
+    this.nextSeq = Number.isSafeInteger(initialCursor) && initialCursor > 0 ? initialCursor : 0
   }
 
-  push(evt: unknown): void {
-    this.items.push(evt)
-    if (this.items.length > this.cap) this.items.splice(0, this.items.length - this.cap)
+  push(evt: unknown): number {
+    const seq = ++this.nextSeq
+    const size = guiEventSize(evt)
+
+    // O backend pode mandar milhares de deltas para UMA fala. Ao vivo cada
+    // chunk continua saindo com seu seq pelo IPC, mas no replay eles formam um
+    // único delta acumulado. Sem esta compactação, uma resposta longa expulsava
+    // turnos inteiros do histórico de 500 eventos antes mesmo de terminar.
+    const event = guiEventRecord(evt)
+    const previous = this.items.at(-1)
+    const previousEvent = previous ? guiEventRecord(previous.evt) : null
+    if (
+      event?.['type'] === 'delta' &&
+      typeof event['text'] === 'string' &&
+      previous?.seq === seq - 1 &&
+      previousEvent?.['type'] === 'delta' &&
+      typeof previousEvent['text'] === 'string'
+    ) {
+      const merged = { type: 'delta', text: previousEvent['text'] + event['text'] }
+      const mergedSize = guiEventSize(merged)
+      this.bytes += mergedSize - previous.size
+      previous.seq = seq
+      previous.evt = merged
+      previous.size = mergedSize
+      this.trim()
+      return seq
+    }
+
+    const stickyKey = guiStickyEvent(evt)
+    if (stickyKey) {
+      const previous = this.sticky.get(stickyKey)
+      if (previous) this.stickyBytes -= previous.size
+      this.sticky.set(stickyKey, { seq, evt, size })
+      this.stickyBytes += size
+      this.trim()
+      return seq
+    }
+
+    const pending = guiPendingInteraction(evt)
+    if (pending) {
+      const previous = this.interactions.get(pending.requestId)
+      if (previous) this.interactionBytes -= previous.size
+      this.interactions.set(pending.requestId, { seq, evt, size })
+      this.interactionBytes += size
+      this.trim()
+      return seq
+    }
+
+    const resolvedRequestId = guiResolvedInteractionId(evt)
+    if (resolvedRequestId) {
+      const previous = this.interactions.get(resolvedRequestId)
+      if (previous) {
+        this.interactions.delete(resolvedRequestId)
+        this.interactionBytes -= previous.size
+      }
+    } else if (guiTerminalEvent(evt)) {
+      this.interactions.clear()
+      this.interactionBytes = 0
+    }
+
+    this.items.push({ seq, evt, size })
+    this.bytes += size
+    this.trim()
+    return seq
+  }
+
+  private trim(): void {
+    while (
+      this.items.length > 1 &&
+      (this.items.length + this.sticky.size + this.interactions.size > this.cap ||
+        this.bytes + this.stickyBytes + this.interactionBytes > this.byteCap)
+    ) {
+      const removed = this.items.shift()
+      if (removed) this.bytes -= removed.size
+    }
   }
 
   get size(): number {
-    return this.items.length
+    return this.items.length + this.sticky.size + this.interactions.size
   }
 
   snapshot(): unknown[] {
-    return this.items.slice()
+    // Metadados sao retidos fora da janela, mas continuam na posicao da sua
+    // geracao. Isto e decisivo no retry: fatal antigo -> init/ready novos deve
+    // reanimar o replay, nunca ser invertido para init novo -> fatal antigo.
+    const history = [...this.sticky.values(), ...this.items].sort((a, b) => a.seq - b.seq)
+    return [
+      ...history.map((item) => item.evt),
+      // Pendências remanescentes são necessariamente posteriores ao último
+      // terminal/resolution observado. Reproduzi-las por último impede que um
+      // `result` histÃ³rico apague o card atual durante a remontagem.
+      ...Array.from(this.interactions.values(), (item) => item.evt)
+    ]
   }
 
-  clear(): void {
-    this.items = []
+  sequencedSnapshot(): GuiSequencedEvent[] {
+    const history = [...this.sticky.values(), ...this.items].sort((a, b) => a.seq - b.seq)
+    return [
+      ...history.map((item) => ({ seq: item.seq, evt: item.evt })),
+      ...Array.from(this.interactions.values(), (item) => ({ seq: item.seq, evt: item.evt }))
+    ]
   }
+
+  get cursor(): number {
+    return this.nextSeq
+  }
+
+  clear(preserveCursor = false): void {
+    this.items = []
+    this.sticky.clear()
+    this.interactions.clear()
+    this.bytes = 0
+    this.stickyBytes = 0
+    this.interactionBytes = 0
+    if (!preserveCursor) this.nextSeq = 0
+  }
+}
+
+/** Última medição canônica disponível no fio salvo. O anel já retém init e
+ * context-usage como sticky; resultados entram apenas quando carregam números
+ * reais. Eventos de outra geração são descartados pela barreira de restart. */
+function guiContextSnapshotFromRing(ring: GuiEventRing): GuiContextUsageSnapshot | undefined {
+  let current: GuiContextUsageSnapshot | undefined
+  for (const raw of ring.snapshot()) {
+    const event = raw as SessionEvent
+    if (event.type === 'session-restarted' && event.contextTokens === undefined && event.contextWindow === undefined) {
+      current = undefined
+      continue
+    }
+    const next = guiContextSnapshotFromEvent(event, current)
+    if (next !== undefined) current = next
+  }
+  return current
 }
 
 // ————— documento de resume (userData/gui-sessions.json) —————
@@ -163,22 +750,264 @@ export interface GuiSessionRecord {
   /** Último modelo/effort ESCOLHIDOS para este pane (2.0, seletores do
    *  composer): mesma régua do permissionMode — reabrir a conversa cai na
    *  última escolha do dono, nunca de volta na da criação da missão. */
-  model?: string
-  effort?: string
+  /** `null` é uma escolha explícita: usar o padrão do CLI/modelo. Ausente
+   *  significa que esta conversa ainda não escolheu e pode herdar a missão. */
+  model?: string | null
+  effort?: string | null
+  /** Última fotografia canônica de contexto desta identidade de sessão. */
+  contextTokens?: number | null
+  contextWindow?: number | null
+  contextSessionId?: string
+  /** Recibos duráveis das entregas da fila. O TTL é maior que a validade do
+   * envelope, então um ACK perdido nunca volta a executar após replay/evicção. */
+  queuedDeliveryReceipts?: Array<{ id: string; deliveredAt: string }>
+}
+
+export interface GuiContextUsageSnapshot {
+  contextTokens: number | null
+  contextWindow: number | null
+}
+
+function guiContextSnapshotFromRecord(
+  record: GuiSessionRecord | undefined
+): GuiContextUsageSnapshot | undefined {
+  if (
+    !record ||
+    (!Object.prototype.hasOwnProperty.call(record, 'contextTokens') &&
+      !Object.prototype.hasOwnProperty.call(record, 'contextWindow'))
+  )
+    return undefined
+  if (record.contextSessionId && record.contextSessionId !== record.sessionId) return undefined
+  if (!guiNullableContextTokens(record.contextTokens ?? null)) return undefined
+  if (!guiNullableContextWindow(record.contextWindow ?? null)) return undefined
+  return {
+    contextTokens: record.contextTokens ?? null,
+    contextWindow: record.contextWindow ?? null
+  }
+}
+
+function guiContextSnapshotFromEvent(
+  event: SessionEvent,
+  current: GuiContextUsageSnapshot | undefined
+): GuiContextUsageSnapshot | undefined {
+  switch (event.type) {
+    case 'init':
+      return event.contextWindow === undefined || !guiNullableContextWindow(event.contextWindow)
+        ? undefined
+        : {
+            contextTokens: current?.contextTokens ?? null,
+            contextWindow: event.contextWindow
+          }
+    case 'context-usage':
+      return {
+        contextTokens: event.contextTokens,
+        contextWindow: event.contextWindow
+      }
+    case 'result': {
+      if (event.contextTokens === undefined && event.contextWindow === undefined) return undefined
+      if (!guiOptionalContextTokens(event.contextTokens) || !guiOptionalContextWindow(event.contextWindow))
+        return undefined
+      return {
+        contextTokens: event.contextTokens ?? current?.contextTokens ?? null,
+        contextWindow: event.contextWindow ?? current?.contextWindow ?? null
+      }
+    }
+    case 'session-restarted':
+      if (event.contextTokens === undefined && event.contextWindow === undefined) return undefined
+      if (!guiOptionalContextTokens(event.contextTokens) || !guiOptionalContextWindow(event.contextWindow))
+        return undefined
+      return {
+        contextTokens: event.contextTokens ?? null,
+        contextWindow: event.contextWindow ?? null
+      }
+    case 'conversation-cleared':
+      return { contextTokens: null, contextWindow: null }
+    default:
+      return undefined
+  }
+}
+
+function validQueuedDeliveryReceipts(
+  record: GuiSessionRecord | undefined,
+  now = Date.now()
+): Array<{ id: string; deliveredAt: string }> {
+  if (!Array.isArray(record?.queuedDeliveryReceipts)) return []
+  const seen = new Set<string>()
+  const receipts: Array<{ id: string; deliveredAt: string }> = []
+  for (const receipt of record.queuedDeliveryReceipts) {
+    if (!receipt || guiMessageIdProblem(receipt.id) !== null || typeof receipt.deliveredAt !== 'string') {
+      continue
+    }
+    const deliveredAt = Date.parse(receipt.deliveredAt)
+    if (!Number.isFinite(deliveredAt) || deliveredAt < now - GUI_QUEUED_RECEIPT_TTL_MS) continue
+    if (seen.has(receipt.id)) continue
+    seen.add(receipt.id)
+    receipts.push({ id: receipt.id, deliveredAt: receipt.deliveredAt })
+  }
+  return receipts.slice(-GUI_QUEUED_RECEIPT_CAP)
+}
+
+/** Resolve a escolha persistida sem confundir `null` (padrão explícito) com
+ * campo ausente (a conversa ainda pode herdar a configuração da missão). */
+export function rememberedGuiExecutorValue(
+  record: GuiSessionRecord | undefined,
+  cli: 'claude' | 'codex',
+  field: 'model' | 'effort',
+  fallback: string | undefined
+): string | undefined {
+  if (!record || record.cli !== cli || !Object.prototype.hasOwnProperty.call(record, field)) {
+    return fallback
+  }
+  const value = record[field]
+  if (value === null) return undefined
+  return typeof value === 'string' && value.trim() ? value : fallback
+}
+
+/**
+ * Um transplante de conversa que falhou invalida somente o endereço de
+ * resume. As escolhas do pane continuam úteis quando ele recomeçar.
+ */
+export function guiSessionWithoutResume(record: GuiSessionRecord): GuiSessionRecord {
+  const next = { ...record }
+  delete next.sessionId
+  delete next.contextTokens
+  delete next.contextWindow
+  delete next.contextSessionId
+  return next
+}
+
+/**
+ * A conta anterior sumiu ou o CLI mudou: além do endereço da conversa, modelo
+ * e effort deixam de ter procedência confiável. A permissão continua sendo uma
+ * escolha portátil do dono e pode sobreviver.
+ */
+export function guiSessionWithoutIdentity(record: GuiSessionRecord): GuiSessionRecord {
+  const next = guiSessionWithoutResume(record)
+  delete next.model
+  delete next.effort
+  return next
+}
+
+export interface GuiPersistedTranscript {
+  events: unknown[]
+  cursor: number
+  updatedAt: string
 }
 
 interface GuiSessionsDoc {
   panes: Record<string, GuiSessionRecord>
+  /** Fotografia limitada do fio visível. Separada do record de resume para
+   *  trocar/invalidar a identidade do CLI nunca apagar a conversa da tela. */
+  transcripts?: Record<string, GuiPersistedTranscript>
 }
 
 function emptyDoc(): GuiSessionsDoc {
-  return { panes: {} }
+  return { panes: {}, transcripts: {} }
 }
 
 function isDoc(value: unknown): value is GuiSessionsDoc {
   if (!value || typeof value !== 'object') return false
-  const panes = (value as GuiSessionsDoc).panes
-  return Boolean(panes) && typeof panes === 'object'
+  const doc = value as GuiSessionsDoc
+  const panes = doc.panes
+  const transcripts = doc.transcripts
+  return (
+    Boolean(panes) &&
+    typeof panes === 'object' &&
+    !Array.isArray(panes) &&
+    (transcripts === undefined ||
+      (Boolean(transcripts) && typeof transcripts === 'object' && !Array.isArray(transcripts)))
+  )
+}
+
+function sanitizeGuiTranscripts(value: unknown): {
+  transcripts: Record<string, GuiPersistedTranscript>
+  changed: boolean
+} {
+  const source = guiPlainRecord(value)
+  if (!source) return { transcripts: {}, changed: value !== undefined }
+  const transcripts: Record<string, GuiPersistedTranscript> = {}
+  let changed = false
+  for (const [paneId, raw] of Object.entries(source)) {
+    const record = guiPlainRecord(raw)
+    if (
+      !paneId ||
+      paneId.length > 512 ||
+      !record ||
+      !Array.isArray(record['events']) ||
+      record['events'].length === 0 ||
+      !Number.isSafeInteger(record['cursor']) ||
+      (record['cursor'] as number) <= 0 ||
+      typeof record['updatedAt'] !== 'string' ||
+      !Number.isFinite(Date.parse(record['updatedAt']))
+    ) {
+      changed = true
+      continue
+    }
+    const events = record['events'].slice(-GUI_TRANSCRIPT_HYDRATE_EVENT_CAP)
+    if ((record['cursor'] as number) < events.length) {
+      changed = true
+      continue
+    }
+    if (events.length !== record['events'].length) changed = true
+    transcripts[paneId] = {
+      events,
+      cursor: record['cursor'] as number,
+      updatedAt: record['updatedAt']
+    }
+  }
+  return { transcripts, changed }
+}
+
+function guiPersistedTranscriptSize(paneId: string, transcript: GuiPersistedTranscript): number {
+  // Inclui a chave e a moldura do record. A soma fica ligeiramente
+  // conservadora em relação ao JSON final, nunca otimista.
+  return Math.max(1, guiEventSize({ [paneId]: transcript }))
+}
+
+/**
+ * Orçamento GLOBAL do documento. O anel limita um pane; esta segunda cerca
+ * impede que panes antigos multipliquem esse teto sem fim. A fotografia que
+ * acabou de ser salva pode ser protegida enquanto as mais antigas saem.
+ */
+export function pruneGuiTranscripts(
+  transcripts: Record<string, GuiPersistedTranscript>,
+  keepPaneId?: string,
+  byteCap = GUI_TRANSCRIPT_STORE_BYTE_CAP,
+  paneCap = GUI_TRANSCRIPT_STORE_PANE_CAP
+): string[] {
+  const safeByteCap =
+    Number.isSafeInteger(byteCap) && byteCap > 0 ? byteCap : GUI_TRANSCRIPT_STORE_BYTE_CAP
+  const safePaneCap =
+    Number.isSafeInteger(paneCap) && paneCap > 0 ? paneCap : GUI_TRANSCRIPT_STORE_PANE_CAP
+  const entries = Object.entries(transcripts)
+    .map(([paneId, transcript]) => ({
+      paneId,
+      transcript,
+      bytes: guiPersistedTranscriptSize(paneId, transcript),
+      updatedAt: Date.parse(transcript.updatedAt) || 0
+    }))
+    .sort((a, b) => a.updatedAt - b.updatedAt || a.paneId.localeCompare(b.paneId))
+  let totalBytes = entries.reduce((total, entry) => total + entry.bytes, 0)
+  let totalPanes = entries.length
+  const removed: string[] = []
+  for (const entry of entries) {
+    if (totalPanes <= safePaneCap && totalBytes <= safeByteCap) break
+    if (entry.paneId === keepPaneId) continue
+    delete transcripts[entry.paneId]
+    totalPanes -= 1
+    totalBytes -= entry.bytes
+    removed.push(entry.paneId)
+  }
+  // `keepPaneId` define a ordem de descarte, não uma exceção ao orçamento.
+  // Um record isolado e ilegítimo nunca pode furar o teto duro do documento.
+  if ((totalPanes > safePaneCap || totalBytes > safeByteCap) && keepPaneId) {
+    const kept = entries.find((entry) => entry.paneId === keepPaneId)
+    if (kept && transcripts[keepPaneId]) {
+      delete transcripts[keepPaneId]
+      removed.push(keepPaneId)
+    }
+  }
+  return removed
 }
 
 // ————— registro —————
@@ -191,6 +1020,8 @@ interface GuiPaneEntry {
   fingerprint: string
   session: GuiBackend
   ring: GuiEventRing
+  /** Desfecho canônico aguardando o renderer apresentar o seq terminal. */
+  alerts: GuiAlertSequencer
   /** Guarda de geração: o `dispose` apaga a chama e o sink da sessão MORTA
    *  cala na hora — evento atrasado nunca fala pelo pane que a substituiu. */
   token: { alive: boolean }
@@ -198,6 +1029,35 @@ interface GuiPaneEntry {
    *  do roteamento de slash saem — nunca por fora, senão a remontagem perderia
    *  o replay do que o comando respondeu. */
   sink: (evt: SessionEvent) => void
+  /** Idempotência do boundary IPC: dois renderers nunca enviam o mesmo bilhete duas vezes. */
+  messageIds?: Set<string>
+}
+
+interface GuiQueuedDeliveryLock {
+  id: string
+  token: symbol
+  promise: Promise<GuiResult>
+}
+
+function deliveredGuiMessageIds(ring: GuiEventRing): Set<string> {
+  const ids = new Set<string>()
+  for (const event of ring.snapshot()) {
+    const record = guiPlainRecord(event)
+    const id = record?.['id']
+    if (record?.['type'] === 'user-message' && guiMessageIdProblem(id) === null) {
+      ids.add(id as string)
+    }
+  }
+  return ids
+}
+
+function rememberedGuiMessageIds(
+  ring: GuiEventRing,
+  record: GuiSessionRecord | undefined
+): Set<string> {
+  const ids = deliveredGuiMessageIds(ring)
+  for (const receipt of validQueuedDeliveryReceipts(record)) ids.add(receipt.id)
+  return ids
 }
 
 export interface GuiSessionDeps {
@@ -224,22 +1084,56 @@ export interface GuiSessionDeps {
     toolName: string
     kind?: 'permission' | 'question'
   }): void
+  /** Evento canônico, somente ao vivo; replay nunca toca avisos ou sons. */
+  onChatAlert?(input: {
+    paneId: string
+    projectId: string
+    kind: GuiNoticeKind
+  }): void
+  /** Teardown canônico do pane, inclusive kill em lote e respawn. */
+  onPaneDisposed?(input: {
+    paneId: string
+    projectId: string
+    reason: string
+  }): void
 }
 
 /** Espera do handshake antes de soltar o firstPrompt (waitCaps resolve antes
  *  disso no caminho feliz; o teto só existe para o CLI que não responde). */
-const READY_TIMEOUT_MS = 20_000
+// Codex: initialize (até 20 s) + loadCaps (até 20 s) são sequenciais.
+const READY_TIMEOUT_MS = 45_000
 
 export class GuiSessionRegistry {
   private readonly deps: GuiSessionDeps
   private readonly panes = new Map<string, GuiPaneEntry>()
+  /** Cursor salvo por INSTÂNCIA do anel. O cursor persistido não serve para
+   *  dedupe depois do boot porque a hidratação renumera a janela limitada. */
+  private readonly savedTranscriptCursors = new WeakMap<GuiEventRing, number>()
   private doc: GuiSessionsDoc
+  private nextMessageId = 0
+  /** Serializa a troca por pane. O renderer fecha o menu, mas o main continua
+   *  sendo a barreira contra dois IPCs concorrentes ou um envio no intervalo. */
+  private readonly executorChanges = new Set<GuiPaneEntry>()
+  /** A entrega enfileirada reaplica opcoes e envia sob uma unica trava. */
+  private readonly queuedDeliveries = new Map<string, GuiQueuedDeliveryLock>()
 
   constructor(deps: GuiSessionDeps) {
     this.deps = deps
-    this.doc = deps.storeFile
+    const loaded = deps.storeFile
       ? loadJsonStore<GuiSessionsDoc>(deps.storeFile, emptyDoc, isDoc)
       : emptyDoc()
+    const sanitized = sanitizeGuiTranscripts(loaded.transcripts)
+    loaded.transcripts = sanitized.transcripts
+    const pruned = pruneGuiTranscripts(loaded.transcripts)
+    this.doc = loaded
+    if (deps.storeFile && (sanitized.changed || pruned.length > 0)) {
+      try {
+        persistJsonStore(deps.storeFile, this.doc)
+      } catch {
+        // A cópia em memória já está cercada; uma próxima gravação tenta
+        // substituir o documento antigo sem impedir a abertura do app.
+      }
+    }
   }
 
   /** Sessão do pane (undefined = nunca criada ou já encerrada). */
@@ -252,6 +1146,40 @@ export class GuiSessionRegistry {
     return this.doc.panes[paneId]
   }
 
+  /** Transplante de seat falhou: conserva preferências genéricas, mas o id
+   *  não pode ser retomado num config dir onde o arquivo da conversa não existe. */
+  forgetSession(paneId: string): void {
+    const previous = this.doc.panes[paneId]
+    if (!previous?.sessionId) return
+    this.doc.panes[paneId] = guiSessionWithoutResume(previous)
+    if (!this.deps.storeFile) return
+    try {
+      persistJsonStore(this.deps.storeFile, this.doc)
+    } catch {
+      // Resume é conveniência; falha de disco não derruba a troca de conta.
+    }
+  }
+
+  /** Invalida resume + executor quando não dá para provar a identidade do seat. */
+  forgetSessionIdentity(paneId: string): void {
+    const previous = this.doc.panes[paneId]
+    if (!previous) return
+    const next = guiSessionWithoutIdentity(previous)
+    if (
+      previous.sessionId === undefined &&
+      previous.model === undefined &&
+      previous.effort === undefined
+    )
+      return
+    this.doc.panes[paneId] = next
+    if (!this.deps.storeFile) return
+    try {
+      persistJsonStore(this.deps.storeFile, this.doc)
+    } catch {
+      // Resume é conveniência; falha de disco não derruba a troca de conta.
+    }
+  }
+
   /**
    * Pasta de trabalho do pane VIVO (worktree da missão, ou raiz do projeto no
    * planejamento). É por aqui que o `gui:attach` descobre onde gravar o anexo:
@@ -262,14 +1190,30 @@ export class GuiSessionRegistry {
     return this.panes.get(paneId)?.spawn.cwd
   }
 
-  create(input: GuiPaneSpawn): GuiResult {
+  create(input: GuiPaneSpawn, queuedToken?: symbol): GuiResult {
     if (!input.paneId) return { ok: false, error: 'pane sem identificador' }
+    const queuedLock = this.queuedDeliveries.get(input.paneId)
+    if (queuedLock && queuedLock.token !== queuedToken) {
+      return { ok: false, error: 'aguarde a mensagem da fila terminar de sair' }
+    }
     if (!input.cwd) return { ok: false, error: 'pane sem pasta de trabalho' }
     if (input.cli !== 'claude' && input.cli !== 'codex') {
       return { ok: false, error: `CLI desconhecido: ${String(input.cli)}` }
     }
+    if (input.systemPrompt !== undefined) {
+      const problem = guiPromptProblem(input.systemPrompt, 'instrução do sistema', true)
+      if (problem) return { ok: false, error: problem }
+    }
+    if (input.firstPrompt !== undefined) {
+      const problem = guiPromptProblem(input.firstPrompt, 'primeira mensagem', true)
+      if (problem) return { ok: false, error: problem }
+    }
 
     const current = this.panes.get(input.paneId)
+    // O fio visível é a fonte da remontagem. Um respawn reaproveita o anel
+    // vivo; depois de fechar o pane/app, ele nasce da fotografia persistida.
+    // A hidratação NÃO passa pelo sink: replay nunca dispara alerta/som.
+    const replayRing = current?.ring ?? this.restoreTranscript(input.paneId)
     // TROCA DE MODO NÃO PERDE A CONVERSA (onda D): mudar o modo de permissão
     // muda o fingerprint, e o fingerprint manda respawnar. Sem esta herança o
     // processo novo nasceria em branco no meio do trabalho — o modo é uma
@@ -281,30 +1225,72 @@ export class GuiSessionRegistry {
       // idêntica se reusa — matar aqui jogaria a conversa fora. O replay vem
       // do anel via gui:state.
       if (current.session.alive && current.fingerprint === fingerprint) return { ok: true }
-      this.dispose(spawn.paneId, 'respawn')
+      this.dispose(spawn.paneId, 'respawn', true)
     }
 
-    const ring = new GuiEventRing()
+    const ring = replayRing ?? new GuiEventRing()
     // Vale já DURANTE o construtor da sessão (um 'fatal' síncrono é captado
     // antes de a entrada existir no Map).
     const token = { alive: true }
+    let replaySawReady = false
+    const alertSequencer = new GuiAlertSequencer()
     const sink = (evt: SessionEvent): void => {
       // Sessão substituída/encerrada: o sink da anterior morre calado — nunca
       // fala pelo pane novo nem re-suja o anel dele.
       if (!token.alive) return
-      ring.push(evt)
-      this.deps.push({ paneId: spawn.paneId, evt })
-      if (evt.type === 'init' || evt.type === 'session-id') this.remember(spawn, evt.sessionId)
-      if (evt.type === 'permission')
+      if (replayRing && evt.type === 'ready') replaySawReady = true
+      // O backend conserva o input integral apenas no estado privado que
+      // executa a tool. Replay e IPC recebem uma cópia orçada.
+      const visibleEvt: SessionEvent =
+        evt.type === 'tool' ? { ...evt, input: limitGuiToolInput(evt.input) } : evt
+      const seq = ring.push(visibleEvt)
+      // Eventos intermediários ficam no anel; o próximo ponto legível captura
+      // o snapshot inteiro, e dispose captura inclusive um stream parcial.
+      // Assim o histórico é durável sem escrever disco por token/tool-start.
+      if (guiTranscriptCheckpoint(visibleEvt)) this.saveTranscript(spawn.paneId, ring)
+      this.deps.push({ paneId: spawn.paneId, seq, evt: visibleEvt })
+      const alertKind = alertSequencer.accept(visibleEvt, seq)
+      if (alertKind) {
+        this.deps.onChatAlert?.({
+          paneId: spawn.paneId,
+          projectId: spawn.projectId,
+          kind: alertKind
+        })
+      }
+      if (visibleEvt.type === 'init' || visibleEvt.type === 'session-id')
+        {
+          const previous = this.doc.panes[spawn.paneId]
+          if (
+            visibleEvt.type === 'session-id' &&
+            previous?.sessionId &&
+            previous.sessionId !== visibleEvt.sessionId
+          ) {
+            // Resume/fork mudou a identidade: números da sessão anterior não
+            // podem aparecer como se fossem da geração nova.
+            this.rememberContextUsage(spawn.paneId, undefined)
+          }
+          this.remember(spawn, visibleEvt.sessionId)
+        }
+      if (
+        visibleEvt.type === 'init' ||
+        visibleEvt.type === 'context-usage' ||
+        visibleEvt.type === 'result' ||
+        visibleEvt.type === 'conversation-cleared'
+      ) {
+        const currentContext = guiContextSnapshotFromRecord(this.doc.panes[spawn.paneId])
+        const nextContext = guiContextSnapshotFromEvent(visibleEvt, currentContext)
+        if (nextContext !== undefined) this.rememberContextUsage(spawn.paneId, nextContext)
+      }
+      if (visibleEvt.type === 'permission')
         this.deps.onPermissionPending?.({
           paneId: spawn.paneId,
           projectId: spawn.projectId,
-          toolName: evt.toolName,
+          toolName: visibleEvt.toolName,
           kind: 'permission'
         })
       // Pergunta estruturada TAMBÉM acorda o dono: ela não passa pelo evento
       // de permissão, e sem este gancho a conversa pararia em silêncio.
-      if (evt.type === 'question')
+      if (visibleEvt.type === 'question')
         this.deps.onPermissionPending?.({
           paneId: spawn.paneId,
           projectId: spawn.projectId,
@@ -327,7 +1313,48 @@ export class GuiSessionRegistry {
       return { ok: false, error: `não consegui abrir a sessão: ${text}` }
     }
 
-    this.panes.set(spawn.paneId, { spawn, fingerprint, session, ring, token, sink })
+    // Boundary canonico da nova geracao. Init/ready atrasados, sem este marco,
+    // jamais podem ressuscitar uma sessao que ja terminou.
+    if (replayRing) {
+      const remembered = this.doc.panes[spawn.paneId]
+      // Contexto só atravessa a barreira quando o pane está retomando a
+      // identidade exata persistida. Troca de CLI/conta ou sessão nova recebe
+      // uma fotografia vazia, mesmo que o transcript antigo ainda exista.
+      const sameConversation = Boolean(
+        remembered &&
+          remembered.cli === spawn.cli &&
+          remembered.projectId === spawn.projectId &&
+          remembered.sessionId &&
+          spawn.resumeSessionId === remembered.sessionId
+      )
+      const replayContext = sameConversation
+        ? guiContextSnapshotFromRecord(remembered) ?? guiContextSnapshotFromRing(replayRing)
+        : undefined
+      sink({
+        type: 'session-restarted',
+        ready: replaySawReady,
+        ...(replayContext ?? {})
+      })
+      // A geração nova substitui qualquer override sticky da conta/CLI
+      // anterior. `null` é intencional: padrão do CLI/modelo, não “desconhecido”.
+      sink({
+        type: 'executor-changed',
+        model: spawn.model ?? null,
+        effort: spawn.effort ?? null
+      })
+    }
+
+    this.panes.set(spawn.paneId, {
+      spawn,
+      fingerprint,
+      session,
+      ring,
+      alerts: alertSequencer,
+      token,
+      sink,
+      messageIds:
+        current?.messageIds ?? rememberedGuiMessageIds(ring, this.doc.panes[spawn.paneId])
+    })
     // O modo é gravado JÁ no create (não espera o `init`): reabrir a conversa
     // sem escolher nada tem de cair na última escolha do dono.
     this.remember(spawn)
@@ -345,16 +1372,255 @@ export class GuiSessionRegistry {
     return { ok: true }
   }
 
-  send(paneId: string, text: string): GuiResult {
+  send(
+    paneId: string,
+    text: string,
+    clientMessageId?: string,
+    attachmentInput?: unknown,
+    queuedToken?: symbol
+  ): GuiResult {
+    const problem = guiPromptProblem(text, 'mensagem', true)
+    if (problem) return { ok: false, error: problem }
+    if (clientMessageId !== undefined) {
+      const idProblem = guiMessageIdProblem(clientMessageId)
+      if (idProblem) return { ok: false, error: idProblem }
+    }
+    const entry = this.panes.get(paneId)
+    const queuedLock = this.queuedDeliveries.get(paneId)
+    if (queuedLock && queuedLock.token !== queuedToken) {
+      return { ok: false, error: 'aguarde a mensagem da fila terminar de sair' }
+    }
+    if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
+    if (!entry.session.alive) return { ok: false, error: 'a sessão deste pane encerrou' }
+    if (this.executorChanges.has(entry)) {
+      return { ok: false, error: 'aguarde a troca de modelo ou effort terminar' }
+    }
+    const messageId = clientMessageId ?? `main-${++this.nextMessageId}`
+    const messageIds = entry.messageIds ?? (entry.messageIds = new Set<string>())
+    if (messageIds.has(messageId)) return { ok: true }
+    const validatedAttachments = validateGuiAttachmentReferences(entry.spawn.cwd, attachmentInput)
+    if (!validatedAttachments.ok) return { ok: false, error: validatedAttachments.error }
+    if (!text.trim() && validatedAttachments.attachments.length === 0) {
+      return { ok: false, error: 'mensagem vazia' }
+    }
+    const prompt = withGuiAttachmentReferences(text, validatedAttachments.attachments)
+    const promptProblem = guiPromptProblem(prompt)
+    if (promptProblem) return { ok: false, error: 'mensagem e anexos grandes demais' }
+    const trimmed = text.trim()
+    if (
+      validatedAttachments.attachments.length === 0 &&
+      (trimmed === '/clear' || (entry.spawn.cli === 'codex' && trimmed === '/new'))
+    )
+      return this.clearConversation(entry)
+    messageIds.add(messageId)
+    if (messageIds.size > 2_048) {
+      const oldest = messageIds.values().next().value
+      if (oldest) messageIds.delete(oldest)
+    }
+    entry.sink({
+      type: 'user-message',
+      id: messageId,
+      text,
+      ...(validatedAttachments.attachments.length > 0
+        ? { attachments: validatedAttachments.attachments }
+        : {}),
+      at: Date.now()
+    })
+    entry.sink({ type: 'turn-started' })
+    if (
+      validatedAttachments.attachments.length === 0 &&
+      trimmed.startsWith('/') &&
+      this.routeSlash(entry, trimmed)
+    )
+      return { ok: true }
+    // Turno durante turno é problema RESOLVIDO dos backends (claude enfileira,
+    // codex faz steer) — o motor não tem fila própria.
+    entry.session.send(prompt)
+    return { ok: true }
+  }
+
+  /**
+   * Entrega transacional da unica mensagem em fila. A fotografia de permissao,
+   * modelo e effort e aplicada no main antes do envio; o mesmo id atravessa
+   * retries e o transcript persistido, portanto uma resposta IPC perdida nao
+   * executa a mensagem duas vezes.
+   */
+  async deliverQueued(paneId: string, raw: unknown): Promise<GuiResult> {
+    const problem = guiQueuedDeliveryProblem(raw)
+    if (problem) return { ok: false, error: problem }
+    const input = raw as GuiQueuedDeliveryInput
+    if (this.hasQueuedDeliveryReceipt(paneId, input.id)) return { ok: true }
+    const current = this.panes.get(paneId)
+    if (!current) return { ok: false, error: 'este pane não tem sessão aberta' }
+    if (current.messageIds?.has(input.id)) {
+      this.rememberQueuedDeliveryReceipt(paneId, input.id)
+      return { ok: true }
+    }
+    if (!current.session.alive) return { ok: false, error: 'a sessão deste pane encerrou' }
+    if (current.session.turnActive) {
+      return { ok: false, error: 'a resposta anterior ainda não terminou' }
+    }
+    const existing = this.queuedDeliveries.get(paneId)
+    if (existing) {
+      if (existing.id === input.id) return existing.promise
+      return { ok: false, error: 'outra entrega da fila já está em andamento' }
+    }
+
+    const token = Symbol(`queued:${paneId}`)
+    const delivery = Promise.resolve().then(() => this.performQueuedDelivery(paneId, input, token))
+    this.queuedDeliveries.set(paneId, { id: input.id, token, promise: delivery })
+    try {
+      return await delivery
+    } finally {
+      const lock = this.queuedDeliveries.get(paneId)
+      if (lock?.token === token) this.queuedDeliveries.delete(paneId)
+    }
+  }
+
+  private async performQueuedDelivery(
+    paneId: string,
+    input: GuiQueuedDeliveryInput,
+    token: symbol
+  ): Promise<GuiResult> {
+    let entry = this.panes.get(paneId)
+    if (!entry || !entry.session.alive) {
+      return { ok: false, error: 'a sessão deste pane encerrou' }
+    }
+
+    const permissionMode = input.options.permissionMode as GuiPermissionMode
+    if ((entry.spawn.permissionMode ?? 'default') !== permissionMode) {
+      const created = this.create({ ...entry.spawn, permissionMode, firstPrompt: undefined }, token)
+      if (!created.ok) return created
+      entry = this.panes.get(paneId)
+      if (!entry) return { ok: false, error: 'não consegui retomar a conversa' }
+      const caps = await entry.session.waitCaps(READY_TIMEOUT_MS)
+      if (!caps || !entry.session.alive || this.panes.get(paneId) !== entry) {
+        return { ok: false, error: 'o CLI não confirmou a retomada da conversa' }
+      }
+    }
+
+    const configured = await this.configureExecutor(
+      paneId,
+      { model: input.options.model, effort: input.options.effort },
+      token
+    )
+    if (!configured.ok) return configured
+
+    entry = this.panes.get(paneId)
+    if (!entry || !entry.session.alive || entry.session.turnActive) {
+      return { ok: false, error: 'a conversa mudou antes do envio da fila' }
+    }
+    const sent = this.send(paneId, input.text, input.id, input.attachments, token)
+    if (sent.ok) this.rememberQueuedDeliveryReceipt(paneId, input.id)
+    return sent
+  }
+
+  /**
+   * Troca modelo/effort SEM recriar o processo e SEM escrever uma linha no
+   * transcript. Nos dois backends esses valores são overrides do próximo
+   * turno: Codex os leva no `turn/start`; Claude aplica a camada de flag
+   * settings pelo protocolo de controle. A seleção só é carimbada depois
+   * do ACK do backend, portanto uma recusa deixa UI, spawn e documento iguais.
+   */
+  async configureExecutor(
+    paneId: string,
+    patch: GuiExecutorPatch,
+    queuedToken?: symbol
+  ): Promise<GuiExecutorResult> {
+    if (!paneId || paneId.length > 256) return { ok: false, error: 'pane sem identificador válido' }
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+      return { ok: false, error: 'troca de executor em formato inválido' }
+    }
+    const keys = Object.keys(patch)
+    if (keys.length === 0 || keys.some((key) => key !== 'model' && key !== 'effort')) {
+      return { ok: false, error: 'troca de executor sem campo válido' }
+    }
+    for (const [label, value] of [
+      ['modelo', patch.model],
+      ['effort', patch.effort]
+    ] as const) {
+      if (value !== undefined && value !== null) {
+        if (typeof value !== 'string' || !value.trim() || value.length > 128) {
+          return { ok: false, error: `${label} inválido` }
+        }
+      }
+    }
+
+    const queuedLock = this.queuedDeliveries.get(paneId)
+    if (queuedLock && queuedLock.token !== queuedToken) {
+      return { ok: false, error: 'aguarde a mensagem da fila terminar de sair' }
+    }
     const entry = this.panes.get(paneId)
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
     if (!entry.session.alive) return { ok: false, error: 'a sessão deste pane encerrou' }
-    const trimmed = text.trim()
-    if (trimmed.startsWith('/') && this.routeSlash(entry, trimmed)) return { ok: true }
-    // Turno durante turno é problema RESOLVIDO dos backends (claude enfileira,
-    // codex faz steer) — o motor não tem fila própria.
-    entry.session.send(text)
-    return { ok: true }
+    if (entry.session.turnActive) {
+      return { ok: false, error: 'aguarde a resposta atual terminar antes de trocar o executor' }
+    }
+    if (this.executorChanges.has(entry)) {
+      return { ok: false, error: 'uma troca de executor já está em andamento' }
+    }
+
+    const model = patch.model === undefined ? entry.spawn.model : patch.model ?? undefined
+    const effort = patch.effort === undefined ? entry.spawn.effort : patch.effort ?? undefined
+    if (model === entry.spawn.model && effort === entry.spawn.effort) {
+      return { ok: true, model: model ?? null, effort: effort ?? null }
+    }
+
+    const models = entry.session.caps?.models ?? []
+    const selectedModel = model
+      ? models.find(
+          (candidate) => candidate.value === model || candidate.resolvedModel === model
+        )
+      : models.find(
+          (candidate) =>
+            candidate.value.toLowerCase() === 'default' ||
+            candidate.displayName.toLowerCase().startsWith('default')
+        )
+    if (model && !selectedModel) {
+      return { ok: false, error: 'esse modelo não está disponível nesta conta' }
+    }
+    if (effort) {
+      if (!selectedModel?.supportedEffortLevels?.includes(effort)) {
+        return { ok: false, error: 'esse effort não está disponível para o modelo escolhido' }
+      }
+    }
+
+    this.executorChanges.add(entry)
+    try {
+      const changed = await entry.session.setExecutor({ model, effort })
+      // Kill/troca de seat durante o ACK: a resposta antiga nunca pode
+      // carimbar a geração que tomou o lugar dela.
+      if (
+        !changed ||
+        !entry.token.alive ||
+        !entry.session.alive ||
+        this.panes.get(paneId) !== entry
+      ) {
+        return { ok: false, error: 'o CLI não confirmou a troca de executor' }
+      }
+      entry.spawn.model = model
+      entry.spawn.effort = effort
+      entry.fingerprint = spawnFingerprint(entry.spawn)
+      this.remember(entry.spawn, undefined, {
+        model: model ?? null,
+        effort: effort ?? null
+      })
+      entry.sink({
+        type: 'executor-changed',
+        model: model ?? null,
+        effort: effort ?? null
+      })
+      this.deps.record?.(
+        'gui-executor-changed',
+        { paneId, projectId: entry.spawn.projectId },
+        { model: model ?? 'default', effort: effort ?? 'default' }
+      )
+      return { ok: true, model: model ?? null, effort: effort ?? null }
+    } catch {
+      return { ok: false, error: 'o CLI não confirmou a troca de executor' }
+    } finally {
+      this.executorChanges.delete(entry)
+    }
   }
 
   /**
@@ -375,7 +1641,7 @@ export class GuiSessionRegistry {
         type: 'command-output',
         text: codexUnknownSlashReply(slashCommandName(trimmed))
       })
-      entry.sink({ type: 'result', isError: false })
+      entry.sink({ type: 'command-completed', isError: false, continues: entry.session.turnActive })
       return true
     }
     const route = routeClaudeSlash(trimmed)
@@ -385,7 +1651,7 @@ export class GuiSessionRegistry {
         type: 'command-output',
         text: 'o /fast do claude ainda não está disponível no chat — por enquanto use um pane de terminal'
       })
-      entry.sink({ type: 'result', isError: false })
+      entry.sink({ type: 'command-completed', isError: false, continues: entry.session.turnActive })
       return true
     }
     if (route.kind === 'model-list') {
@@ -396,27 +1662,35 @@ export class GuiSessionRegistry {
           ? models.map((m) => `${m.value} — ${m.displayName}`).join('\n')
           : 'a lista de modelos ainda não chegou do CLI — tente de novo em instantes'
       })
-      entry.sink({ type: 'result', isError: false })
+      entry.sink({ type: 'command-completed', isError: false, continues: entry.session.turnActive })
       return true
     }
     const model = route.model
-    void entry.session.setModel(model).then((ok) => {
+    const modelValue = model === 'default' ? null : model
+    const selected = (entry.session.caps?.models ?? []).find((candidate) =>
+      modelValue === null
+        ? candidate.value.toLowerCase() === 'default' ||
+          candidate.displayName.toLowerCase().startsWith('default')
+        : candidate.value === modelValue || candidate.resolvedModel === modelValue
+    )
+    const effort =
+      entry.spawn.effort && selected?.supportedEffortLevels?.includes(entry.spawn.effort)
+        ? entry.spawn.effort
+        : null
+    void this.configureExecutor(entry.spawn.paneId, { model: modelValue, effort }).then((result) => {
       if (!entry.token.alive) return
-      if (ok) {
-        // O modelo novo vira o CARIMBO do spawn: sem isto uma remontagem
-        // posterior compararia o fingerprint velho e respawnaria à toa — e o
-        // documento reabriria a conversa na escolha antiga.
-        entry.spawn.model = model === 'default' ? undefined : model
-        entry.fingerprint = spawnFingerprint(entry.spawn)
-        this.remember(entry.spawn)
-      }
       entry.sink({
         type: 'command-output',
-        text: ok
+        text: result.ok
           ? `modelo: ${model}`
-          : `não consegui trocar o modelo para ${model} — confira o id com /model`
+          : `não consegui trocar o modelo para ${model}: ${result.error}`
       })
-      entry.sink({ type: 'result', isError: false })
+      entry.sink({
+        type: 'command-completed',
+        isError: !result.ok,
+        continues: entry.session.turnActive,
+        ...(!result.ok ? { errorText: result.error } : {})
+      })
     })
     return true
   }
@@ -425,7 +1699,20 @@ export class GuiSessionRegistry {
     const entry = this.panes.get(paneId)
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
     const answered = entry.session.answerPermission(requestId, behavior)
-    if (!answered) return { ok: false, error: 'este pedido de permissão não está mais pendente' }
+    if (!answered) {
+      entry.sink({ type: 'interaction-resolved', requestId, resolution: { kind: 'stale' } })
+      return { ok: false, error: 'este pedido de permissão não está mais pendente' }
+    }
+    entry.sink({
+      type: 'interaction-resolved',
+      requestId,
+      resolution: {
+        kind: 'permission',
+        ...(answered.toolUseId ? { toolUseId: answered.toolUseId } : {}),
+        toolName: answered.toolName,
+        behavior
+      }
+    })
     return { ok: true }
   }
 
@@ -436,8 +1723,23 @@ export class GuiSessionRegistry {
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
     if (!(entry.session instanceof MaestroSession))
       return { ok: false, error: 'este CLI não tem perguntas interativas' }
-    if (!entry.session.answerQuestion(requestId, answers))
+    if (!entry.session.answerQuestion(requestId, answers)) {
+      entry.sink({ type: 'interaction-resolved', requestId, resolution: { kind: 'stale' } })
       return { ok: false, error: 'esta pergunta não está mais pendente' }
+    }
+    entry.sink({
+      type: 'interaction-resolved',
+      requestId,
+      resolution: {
+        kind: 'question',
+        entries: Object.entries(answers)
+          .slice(0, 8)
+          .map(([question, answer]) => ({
+            question: question.slice(0, 2_000),
+            answer: answer.slice(0, 4_000)
+          }))
+      }
+    })
     return { ok: true }
   }
 
@@ -447,15 +1749,44 @@ export class GuiSessionRegistry {
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
     if (!(entry.session instanceof MaestroSession))
       return { ok: false, error: 'este CLI não tem perguntas interativas' }
-    if (!entry.session.answerPlanReview(requestId, approve))
+    if (!entry.session.answerPlanReview(requestId, approve)) {
+      entry.sink({ type: 'interaction-resolved', requestId, resolution: { kind: 'stale' } })
       return { ok: false, error: 'este plano não está mais pendente' }
+    }
+    entry.sink({
+      type: 'interaction-resolved',
+      requestId,
+      resolution: { kind: 'plan', approve }
+    })
     return { ok: true }
   }
 
   interrupt(paneId: string): GuiResult {
     const entry = this.panes.get(paneId)
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
-    entry.session.interrupt()
+    if (!entry.session.interrupt())
+      return { ok: false, error: 'não há turno ativo para interromper' }
+    return { ok: true }
+  }
+
+  /**
+   * A interface confirma apenas QUAL seq terminou de aparecer. O tipo do
+   * alerta nunca vem do renderer: ele permanece retido no sequenciador que
+   * observou o resultado real do CLI.
+   */
+  presented(paneId: string, terminalSeq: number): GuiResult {
+    if (!Number.isSafeInteger(terminalSeq) || terminalSeq <= 0)
+      return { ok: false, error: 'confirmação visual inválida' }
+    const entry = this.panes.get(paneId)
+    if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
+    const kind = entry.alerts.presented(terminalSeq)
+    if (kind) {
+      try {
+        this.deps.onChatAlert?.({ paneId, projectId: entry.spawn.projectId, kind })
+      } catch {
+        // Aviso auxiliar nunca pode derrubar ou alterar o turno concluído.
+      }
+    }
     return { ok: true }
   }
 
@@ -480,9 +1811,50 @@ export class GuiSessionRegistry {
     return killed
   }
 
+  /**
+   * Esquecimento definitivo, usado somente depois que o domínio dono excluiu
+   * a missão/projeto. Arquivar chama apenas `killWhere`: identidade e fio
+   * continuam gravados para a reativação.
+   */
+  forgetWhere(match: (paneId: string, record?: GuiSessionRecord) => boolean): number {
+    const transcriptKeys = Object.keys(this.doc.transcripts ?? {})
+    const paneIds = new Set([...Object.keys(this.doc.panes), ...transcriptKeys])
+    let forgotten = 0
+    for (const paneId of paneIds) {
+      if (!match(paneId, this.doc.panes[paneId])) continue
+      delete this.doc.panes[paneId]
+      if (this.doc.transcripts) delete this.doc.transcripts[paneId]
+      forgotten += 1
+    }
+    if (forgotten === 0 || !this.deps.storeFile) return forgotten
+    try {
+      persistJsonStore(this.deps.storeFile, this.doc)
+    } catch {
+      // O domínio já concluiu a exclusão. Mantemos o documento em memória
+      // limpo e não transformamos lixo de conveniência em falha da operação.
+    }
+    return forgotten
+  }
+
   /** Replay da remontagem: o que o pane perdeu enquanto estava desmontado. */
-  state(paneId: string): { events: unknown[] } {
-    return { events: this.panes.get(paneId)?.ring.snapshot() ?? [] }
+  state(paneId: string): GuiStatePayload {
+    const entry = this.panes.get(paneId)
+    if (!entry) {
+      const ring = this.restoreTranscript(paneId)
+      if (!ring) return { events: [], cursor: 0, exists: false, alive: false }
+      return {
+        events: ring.sequencedSnapshot(),
+        cursor: ring.cursor,
+        exists: true,
+        alive: false
+      }
+    }
+    return {
+      events: entry.ring.sequencedSnapshot(),
+      cursor: entry.ring.cursor,
+      exists: true,
+      alive: entry.session.alive
+    }
   }
 
   /** Encerramento do app: nenhum CLI filho sobrevive ao quit. */
@@ -547,8 +1919,9 @@ export class GuiSessionRegistry {
     if (!entry) return
     void entry.session
       .waitCaps(READY_TIMEOUT_MS)
-      .then(() => {
-        if (!token.alive || !entry.session.alive) return
+      .then((caps) => {
+        if (!caps || !token.alive || !entry.session.alive) return
+        entry.sink({ type: 'turn-started' })
         entry.session.send(prompt)
       })
       .catch(() => {
@@ -556,12 +1929,45 @@ export class GuiSessionRegistry {
       })
   }
 
-  private dispose(paneId: string, reason: string): void {
+  /** /clear (e /new do Codex) é uma troca deliberada de conversa. O cursor
+   *  segue monotônico para o listener já montado, mas o fio e o resume antigos
+   *  saem juntos antes de o processo novo nascer. */
+  private clearConversation(entry: GuiPaneEntry): GuiResult {
+    const paneId = entry.spawn.paneId
+    const spawn: GuiPaneSpawn = {
+      ...entry.spawn,
+      resumeSessionId: undefined,
+      firstPrompt: undefined
+    }
+    const previous = this.doc.panes[paneId]
+    if (previous) {
+      this.doc.panes[paneId] = {
+        ...guiSessionWithoutResume(previous),
+        updatedAt: new Date().toISOString()
+      }
+    }
+    entry.ring.clear(true)
+    // O checkpoint grava numa única fotografia o fio vazio E a identidade sem
+    // sessionId. Ao vivo, o mesmo marco remove o /clear otimista do composer.
+    entry.sink({ type: 'conversation-cleared' })
+    this.dispose(paneId, 'clear')
+    return this.create(spawn)
+  }
+
+  private dispose(paneId: string, reason: string, preserveRing = false): void {
     const entry = this.panes.get(paneId)
     if (!entry) return
+    // Última barreira antes de apagar a geração: inclui deltas parciais que
+    // ainda não tinham alcançado um checkpoint semântico.
+    this.saveTranscript(paneId, entry.ring)
     this.panes.delete(paneId)
     entry.token.alive = false
-    entry.ring.clear()
+    try {
+      this.deps.onPaneDisposed?.({ paneId, projectId: entry.spawn.projectId, reason })
+    } catch {
+      // Limpeza visual auxiliar nunca pode impedir o encerramento do processo.
+    }
+    if (!preserveRing) entry.ring.clear()
     try {
       entry.session.kill()
     } catch {
@@ -574,6 +1980,118 @@ export class GuiSessionRegistry {
     )
   }
 
+  /** Reconstrói um anel NOVO: quem chamar pode continuar incrementando seq sem
+   *  compartilhar referências com o documento carregado do disco. */
+  private restoreTranscript(paneId: string): GuiEventRing | null {
+    const transcript = this.doc.transcripts?.[paneId]
+    if (!transcript) return null
+    const events = transcript.events.filter(isGuiPersistedEvent)
+    if (events.length === 0) return null
+    // A fotografia não guarda cada seq (só a barreira terminal), mas o cursor
+    // permite recolocar a janela no mesmo intervalo e manter o próximo evento
+    // estritamente posterior para quem já está ouvindo o pane.
+    const initialCursor = Math.max(0, transcript.cursor - events.length)
+    const ring = new GuiEventRing(GUI_RING_CAP, GUI_RING_BYTE_CAP, initialCursor)
+    for (const event of events) ring.push(event)
+    return ring.size > 0 ? ring : null
+  }
+
+  /** Persiste somente a fotografia limitada do anel. `cursor` evita regravar
+   *  a mesma fotografia no checkpoint terminal e logo depois no dispose. */
+  private saveTranscript(paneId: string, ring: GuiEventRing): void {
+    if (ring.size === 0) return
+    if (this.savedTranscriptCursors.get(ring) === ring.cursor) return
+    const transcripts = (this.doc.transcripts ??= {})
+    transcripts[paneId] = {
+      events: ring.snapshot(),
+      cursor: ring.cursor,
+      updatedAt: new Date().toISOString()
+    }
+    pruneGuiTranscripts(transcripts, paneId)
+    if (!this.deps.storeFile) {
+      this.savedTranscriptCursors.set(ring, ring.cursor)
+      return
+    }
+    try {
+      persistJsonStore(this.deps.storeFile, this.doc)
+      this.savedTranscriptCursors.set(ring, ring.cursor)
+    } catch {
+      // Histórico em memória continua válido; o próximo checkpoint tenta de novo.
+    }
+  }
+
+  private hasQueuedDeliveryReceipt(paneId: string, messageId: string): boolean {
+    return validQueuedDeliveryReceipts(this.doc.panes[paneId]).some(
+      (receipt) => receipt.id === messageId
+    )
+  }
+
+  private rememberQueuedDeliveryReceipt(paneId: string, messageId: string): void {
+    const previous = this.doc.panes[paneId]
+    if (!previous) return
+    const receipts = validQueuedDeliveryReceipts(previous).filter(
+      (receipt) => receipt.id !== messageId
+    )
+    receipts.push({ id: messageId, deliveredAt: new Date().toISOString() })
+    this.doc.panes[paneId] = {
+      ...previous,
+      updatedAt: new Date().toISOString(),
+      queuedDeliveryReceipts: receipts.slice(-GUI_QUEUED_RECEIPT_CAP)
+    }
+    this.panes.get(paneId)?.messageIds?.add(messageId)
+    if (!this.deps.storeFile) return
+    try {
+      persistJsonStore(this.deps.storeFile, this.doc)
+    } catch {
+      // O Set vivo ainda impede repetição nesta execução. Se o disco voltar,
+      // o próximo checkpoint/recibo tenta persistir novamente.
+    }
+  }
+
+  /** Persiste somente a fotografia canônica do contexto vivo. Não aceita
+   * valores de outro pane/generation e remove a foto quando o backend
+   * explicitamente invalida a medição (compactação/clear). */
+  private rememberContextUsage(
+    paneId: string,
+    snapshot: GuiContextUsageSnapshot | undefined
+  ): void {
+    const previous = this.doc.panes[paneId]
+    if (!previous || !previous.sessionId) return
+    const next = { ...previous }
+    if (
+      !snapshot ||
+      (snapshot.contextTokens === null && snapshot.contextWindow === null)
+    ) {
+      delete next.contextTokens
+      delete next.contextWindow
+      delete next.contextSessionId
+    } else {
+      // Uma init nova pode anunciar só a janela. Não grave `null` como se
+      // fosse uma medição: o token só entra quando context-usage/result o
+      // fornecer de forma canônica.
+      if (snapshot.contextTokens === null && previous.contextTokens === undefined)
+        delete next.contextTokens
+      else next.contextTokens = snapshot.contextTokens
+      next.contextWindow = snapshot.contextWindow
+      next.contextSessionId = previous.sessionId
+    }
+    if (
+      previous.contextTokens === next.contextTokens &&
+      previous.contextWindow === next.contextWindow &&
+      previous.contextSessionId === next.contextSessionId
+    )
+      return
+    next.updatedAt = new Date().toISOString()
+    this.doc.panes[paneId] = next
+    if (!this.deps.storeFile) return
+    try {
+      persistJsonStore(this.deps.storeFile, this.doc)
+    } catch {
+      // A fotografia viva continua correta em memória; o próximo checkpoint
+      // tenta persisti-la de novo.
+    }
+  }
+
   /**
    * Grava conversa + modo + modelo/effort do pane (nunca apaga no kill:
    * retomar é decisão de quem reabre). `sessionId` ausente = só a escolha
@@ -581,19 +2099,43 @@ export class GuiSessionRegistry {
    * CLI anunciar a conversa. Modelo/effort seguem a régua do permissionMode:
    * cada create regrava a última escolha, e reabrir cai nela.
    */
-  private remember(spawn: GuiPaneSpawn, sessionId?: string): void {
+  private remember(
+    spawn: GuiPaneSpawn,
+    sessionId?: string,
+    executor?: { model: string | null; effort: string | null }
+  ): void {
     const previous = this.doc.panes[spawn.paneId]
     const mode = spawn.permissionMode ?? 'default'
     // Sessão do CLI ANTERIOR não vale para o CLI de agora (trocar a conta do
     // universo/da missão para outro binário zera o id, nunca o herda).
     const kept = previous?.cli === spawn.cli ? previous.sessionId : undefined
     const nextSession = sessionId || kept
+    const sameIdentity = previous?.cli === spawn.cli && previous.projectId === spawn.projectId
+    const queuedDeliveryReceipts = validQueuedDeliveryReceipts(previous)
+    const rememberedContext =
+      sameIdentity && Boolean(previous?.sessionId) && previous?.sessionId === nextSession
+        ? guiContextSnapshotFromRecord(previous)
+        : undefined
+    const rememberedModel = executor
+      ? executor.model
+      : spawn.model !== undefined
+        ? spawn.model
+        : sameIdentity && Object.prototype.hasOwnProperty.call(previous, 'model')
+          ? previous.model
+          : undefined
+    const rememberedEffort = executor
+      ? executor.effort
+      : spawn.effort !== undefined
+        ? spawn.effort
+        : sameIdentity && Object.prototype.hasOwnProperty.call(previous, 'effort')
+          ? previous.effort
+          : undefined
     if (
       previous?.cli === spawn.cli &&
       previous.sessionId === nextSession &&
       previous.permissionMode === mode &&
-      previous.model === spawn.model &&
-      previous.effort === spawn.effort
+      previous.model === rememberedModel &&
+      previous.effort === rememberedEffort
     )
       return
     this.doc.panes[spawn.paneId] = {
@@ -602,8 +2144,18 @@ export class GuiSessionRegistry {
       projectId: spawn.projectId,
       updatedAt: new Date().toISOString(),
       permissionMode: mode,
-      ...(spawn.model ? { model: spawn.model } : {}),
-      ...(spawn.effort ? { effort: spawn.effort } : {})
+      ...(rememberedModel !== undefined ? { model: rememberedModel } : {}),
+      ...(rememberedEffort !== undefined ? { effort: rememberedEffort } : {}),
+      ...(rememberedContext
+        ? {
+            contextTokens: rememberedContext.contextTokens,
+            contextWindow: rememberedContext.contextWindow,
+            ...(previous?.contextSessionId || nextSession
+              ? { contextSessionId: previous?.contextSessionId ?? nextSession }
+              : {})
+          }
+        : {}),
+      ...(queuedDeliveryReceipts.length > 0 ? { queuedDeliveryReceipts } : {})
     }
     if (!this.deps.storeFile) return
     try {
@@ -685,5 +2237,5 @@ export function spawnFingerprint(spawn: GuiPaneSpawn): string {
     // nenhum dos dois binários troca isso na conversa em andamento.
     spawn.permissionMode ?? 'default',
     spawn.systemPrompt ?? ''
-  ].join(' ')
+  ].join('\0')
 }

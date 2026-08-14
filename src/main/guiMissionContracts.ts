@@ -324,6 +324,18 @@ export function resumeSessionIdFor(
 }
 
 /**
+ * Conta anterior removida é identidade desconhecida: falha fechada e limpa
+ * modelo/effort, pois não há como provar que pertencem ao mesmo CLI.
+ */
+export function guiSeatNeedsExecutorReset(
+  previous: { cli: string } | undefined,
+  next: { cli: string },
+  hadRecordedSeat: boolean
+): boolean {
+  return previous ? previous.cli !== next.cli : hadRecordedSeat
+}
+
+/**
  * Receita do conflito de integração ENTREGUE NA CONVERSA do dev (2.0: não há
  * orquestrador para triar — quem resolve é quem escreveu). `detail` já vem da
  * fila com os arquivos/causa; a receita diz o movimento.

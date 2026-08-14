@@ -1,5 +1,26 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { freshWindowsPath } from './winPath'
+import { guiToolResultDetails } from './guiToolResults'
+import {
+  GuiProtocolStream,
+  isGuiCodexProtocolEnvelope,
+  parseGuiProtocolLine
+} from './guiProtocolLine'
+import {
+  canFlushGuiTurnResult,
+  GUI_ACTIVE_TURN_SILENCE_TIMEOUT,
+  ownsFailedGuiSteer,
+  shouldArmGuiTurnWatchdog
+} from './guiTurnQueue'
+import { limitGuiToolInput } from './guiToolInput'
+import { terminateGuiProcessTree } from './guiProcessTree'
+import {
+  guiCodexErrorWillRetry,
+  guiCodexToolCompletion,
+  guiCodexTurnOutcome,
+  isGuiCodexToolType,
+  type GuiCodexCompletedItem
+} from './guiCodexTools'
 import type {
   CliCaps,
   MaestroSessionOpts,
@@ -16,7 +37,19 @@ import type {
 
 interface RpcResponse {
   result?: Record<string, unknown>
-  error?: { message?: string }
+  error?: { message?: string; timeout?: boolean }
+}
+
+interface PendingRpc {
+  resolve: (msg: RpcResponse) => void
+  timer: NodeJS.Timeout
+}
+
+interface PendingTurnStart {
+  generation: number
+  operationId: number | null
+  done: Promise<void>
+  resolve: () => void
 }
 
 interface JsonRpcMsg {
@@ -27,7 +60,7 @@ interface JsonRpcMsg {
   error?: { message?: string }
 }
 
-interface CodexItem {
+interface CodexItem extends GuiCodexCompletedItem {
   type?: string
   id?: string
   text?: string
@@ -36,14 +69,14 @@ interface CodexItem {
   query?: string
   tool?: string
   server?: string
-  status?: string
-  exitCode?: number
-  aggregatedOutput?: string
   changes?: unknown
 }
 
 const IDLE_TIMEOUT = 600_000
-const RESULT_MAX = 400
+const INTERRUPT_CONFIRM_TIMEOUT = 10_000
+const RPC_TIMEOUT = 20_000
+const TURN_START_CONFIRM_TIMEOUT = 10_000
+const TURN_ERROR_CONFIRM_TIMEOUT = 10_000
 
 // Comandos slash do painel codex — cada um mapeado para o MÉTODO REAL do
 // app-server (o TUI do Codex usa esses mesmos por trás dos comandos dele).
@@ -109,13 +142,64 @@ function fmtReset(epochSecs: unknown): string {
 }
 
 function firstLines(text: string, max: number): string {
-  const clean = text.trim()
-  return clean.length <= max ? clean : clean.slice(0, max) + '…'
+  const sliced = text.slice(0, Math.max(0, max) + 1).trim()
+  return sliced.length <= max ? sliced : sliced.slice(0, max) + '…'
+}
+
+/**
+ * `thread/tokenUsage/updated` já vem em tokens inteiros. Só a fotografia
+ * `last` descreve o contexto vivo; `total` é acumulado de todos os turnos e
+ * jamais pode alimentar a régua de contexto.
+ */
+function codexContextTokenCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function codexContextWindow(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
+function boundedJson(value: Record<string, unknown>, max = 2000): string {
+  try {
+    return firstLines(JSON.stringify(limitGuiToolInput(value), null, 2), max)
+  } catch {
+    return '{ pedido indisponível para visualização }'
+  }
+}
+
+function commandResultEvent(
+  raw: string,
+  isError: boolean,
+  toolUseId?: string,
+  outcome?: 'completed' | 'failed' | 'denied' | 'cancelled'
+): Extract<SessionEvent, { type: 'tool-result' }> {
+  const details = guiToolResultDetails(raw)
+  return {
+    type: 'tool-result',
+    text: details.text,
+    isError,
+    outcome: outcome ?? (isError ? 'failed' : 'completed'),
+    toolUseId,
+    lineCount: details.lineCount,
+    truncated: details.truncated
+  }
 }
 
 function commandText(command: unknown): string {
-  if (Array.isArray(command)) return command.map(String).join(' ')
-  return typeof command === 'string' ? command : JSON.stringify(command)
+  if (typeof command === 'string') return firstLines(command, 64 * 1024)
+  if (Array.isArray(command)) {
+    let output = ''
+    for (const part of command.slice(0, 256)) {
+      const next = typeof part === 'string' ? part : boundedJson({ part }, 4_000)
+      const separator = output ? ' ' : ''
+      const room = 64 * 1024 - output.length - separator.length
+      if (room <= 0) return `${output}…`
+      output += `${separator}${next.slice(0, room)}`
+      if (next.length > room) return `${output}…`
+    }
+    return output
+  }
+  return boundedJson({ command }, 64 * 1024)
 }
 
 export class CodexSession {
@@ -127,15 +211,17 @@ export class CodexSession {
   private child: ChildProcessWithoutNullStreams
   private emit: (evt: SessionEvent) => void
   private persona: string
-  private buffer = ''
+  private protocol = new GuiProtocolStream()
   private stderrTail = ''
   private killed = false
+  private closed = false
   private idleTimer: NodeJS.Timeout | null = null
+  private turnSilenceTimer: NodeJS.Timeout | null = null
   private nextId = 1
-  private pending = new Map<number, (msg: RpcResponse) => void>()
+  private pending = new Map<number, PendingRpc>()
   private approvals = new Map<
     string,
-    { rpcId: number | string; toolName: string; description: string }
+    { rpcId: number | string; toolUseId?: string; toolName: string; description: string }
   >()
   private capsWaiters: ((caps: CliCaps | null) => void)[] = []
   private initDone: Promise<void>
@@ -146,7 +232,17 @@ export class CodexSession {
   private lastWindow: number | undefined
   // /fast: service tier "priority" (1.5x speed) aplicado como override por turno.
   private fastTier = false
-  private wantInterrupt = false
+  private interruptTimer: NodeJS.Timeout | null = null
+  private interruptedTurnId: string | null = null
+  private turnStartGeneration = 0
+  private pendingTurnStart: PendingTurnStart | null = null
+  private turnStartTimer: NodeJS.Timeout | null = null
+  private interruptedStartGeneration: number | null = null
+  private turnErrorTimer: NodeJS.Timeout | null = null
+  /** Sends aceitos cujo steer/start ainda não encontrou destino definitivo. */
+  private nextSendOperation = 0
+  private pendingSendOperations = new Set<number>()
+  private terminalReconcilePending = false
 
   constructor(opts: MaestroSessionOpts, persona: string, emit: (evt: SessionEvent) => void) {
     this.opts = opts
@@ -167,23 +263,46 @@ export class CodexSession {
     })
 
     this.child.stdout.on('data', (d: Buffer) => {
-      this.buffer += d.toString()
-      const lines = this.buffer.split('\n')
-      this.buffer = lines.pop() ?? ''
-      for (const line of lines) this.handleLine(line)
+      const chunk = this.protocol.push(d)
+      for (const line of chunk.lines) {
+        this.handleLine(line)
+        if (!this.alive) return
+      }
+      if (chunk.overflow) {
+        this.emit({ type: 'fatal', text: 'o Codex excedeu o limite de uma mensagem de protocolo' })
+        this.kill()
+        return
+      }
       this.resetIdle()
     })
     this.child.stderr.on('data', (d: Buffer) => {
       this.stderrTail = (this.stderrTail + d.toString()).slice(-1000)
     })
     this.child.on('error', (e) => {
+      this.closed = true
       this.clearIdle()
+      this.clearTurnSilence()
+      this.clearInterruptGuard()
+      this.clearTurnStartGuard()
+      this.clearTurnErrorGuard()
+      this.cancelPendingInteractions()
+      this.failPendingRpcs(e.message)
       this.emit({ type: 'fatal', text: e.message })
     })
     this.child.on('close', (code) => {
+      const failedBeforeClose = this.closed
+      this.closed = true
+      const final = this.protocol.end()
+      for (const line of final.lines) this.handleLine(line)
       this.clearIdle()
+      this.clearTurnSilence()
+      this.clearInterruptGuard()
+      this.clearTurnStartGuard()
+      this.clearTurnErrorGuard()
+      this.cancelPendingInteractions()
+      this.failPendingRpcs('o painel codex encerrou')
       for (const w of this.capsWaiters.splice(0)) w(this.caps)
-      if (!this.killed) {
+      if (!this.killed && !failedBeforeClose) {
         const err = this.stderrTail.trim()
         this.emit({
           type: 'fatal',
@@ -198,6 +317,7 @@ export class CodexSession {
     }).then((resp) => {
       if (resp.error) {
         this.emit({ type: 'fatal', text: `handshake do codex falhou: ${resp.error.message}` })
+        this.kill()
         return
       }
       this.notify('initialized', {})
@@ -206,7 +326,7 @@ export class CodexSession {
   }
 
   get alive(): boolean {
-    return !this.killed && this.child.exitCode === null
+    return !this.killed && !this.closed && this.child.exitCode === null && this.child.signalCode === null
   }
 
   /** Modelo/effort são por turno no Codex — só cwd/seat exigem processo novo. */
@@ -217,8 +337,12 @@ export class CodexSession {
   }
 
   send(text: string): void {
-    void this.startTurn(text).catch((e: unknown) => {
-      this.emit({
+    const operationId = ++this.nextSendOperation
+    this.pendingSendOperations.add(operationId)
+    void this.startTurn(text, operationId).catch((e: unknown) => {
+      const pending = this.pendingTurnStart
+      if (pending?.operationId === operationId) this.clearTurnStartGuard(pending.generation)
+      this.emitTurnResult({
         type: 'result',
         isError: true,
         errorText: e instanceof Error ? e.message : String(e)
@@ -229,7 +353,7 @@ export class CodexSession {
   answerPermission(
     requestId: string,
     choice: PermissionChoice
-  ): { toolName: string; description: string } | null {
+  ): { toolUseId?: string; toolName: string; description: string } | null {
     const req = this.approvals.get(requestId)
     if (!req) return null
     this.approvals.delete(requestId)
@@ -237,22 +361,48 @@ export class CodexSession {
       choice === 'deny' ? 'decline' : choice === 'allow-always' ? 'acceptForSession' : 'accept'
     this.respond(req.rpcId, { decision })
     this.resetIdle()
-    return { toolName: req.toolName, description: req.description }
+    return {
+      ...(req.toolUseId ? { toolUseId: req.toolUseId } : {}),
+      toolName: req.toolName,
+      description: req.description
+    }
   }
 
-  interrupt(): void {
+  interrupt(): boolean {
     if (this.threadId && this.turnId) {
+      const interruptedTurnId = this.turnId
+      // Enquanto a tentativa deste mesmo turno está aguardando o terminal,
+      // cliques repetidos são idempotentes. Assim uma resposta antiga nunca
+      // pode invalidar uma tentativa mais nova.
+      if (this.interruptedTurnId === interruptedTurnId && this.interruptTimer) return true
+      this.clearInterruptGuard()
+      this.interruptedTurnId = interruptedTurnId
+      this.interruptTimer = setTimeout(() => {
+        this.failInterrupt(interruptedTurnId, 'o Codex não confirmou a interrupção')
+      }, INTERRUPT_CONFIRM_TIMEOUT)
       void this.request('turn/interrupt', {
         threadId: this.threadId,
-        turnId: this.turnId
+        turnId: interruptedTurnId
       }).then((r) => {
-        if (r.error) this.emit({ type: 'limit', text: `interrupt falhou: ${r.error.message}` })
+        if (r.error)
+          this.failInterrupt(
+            interruptedTurnId,
+            `não deu para interromper o turno: ${r.error.message ?? 'erro sem detalhe'}`
+          )
       })
-    } else {
-      // Turno ainda subindo (turn/start em voo) — interrompe assim que o
-      // turn/started trouxer o id.
-      this.wantInterrupt = true
+      return true
     }
+    if (this.pendingTurnStart) {
+      const generation = this.pendingTurnStart.generation
+      this.interruptedStartGeneration = generation
+      this.armTurnStartGuard(generation)
+      return true
+    }
+    return false
+  }
+
+  get turnActive(): boolean {
+    return Boolean(this.turnId || this.pendingTurnStart || this.pendingSendOperations.size > 0)
   }
 
   waitCaps(timeoutMs = 10_000): Promise<CliCaps | null> {
@@ -269,7 +419,17 @@ export class CodexSession {
 
   /** Override por turno: só atualiza o opts — o próximo turn/start aplica. */
   setModel(model: string): Promise<boolean> {
+    if (!this.alive || this.turnActive) return Promise.resolve(false)
     this.opts.model = model && model !== 'default' ? model : undefined
+    return Promise.resolve(true)
+  }
+
+  /** Overrides por turno: a conversa e o processo continuam intactos; o
+   *  próximo `turn/start` lê o novo par de `opts`. */
+  setExecutor(input: { model?: string; effort?: string }): Promise<boolean> {
+    if (!this.alive || this.turnActive) return Promise.resolve(false)
+    this.opts.model = input.model
+    this.opts.effort = input.effort
     return Promise.resolve(true)
   }
 
@@ -280,12 +440,7 @@ export class CodexSession {
     const arg = trimmed.slice(cmd.length).trim()
     const run = (fn: () => Promise<void>): boolean => {
       void fn().catch((e: unknown) => {
-        this.emit({
-          type: 'result',
-          isError: true,
-          errorText: e instanceof Error ? e.message : String(e),
-          contextTokens: this.lastTokens
-        })
+        this.finishCommand(e instanceof Error ? e.message : String(e), true)
       })
       return true
     }
@@ -331,9 +486,14 @@ export class CodexSession {
     }
   }
 
-  private finishCommand(text: string): void {
-    this.emit({ type: 'command-output', text })
-    this.emit({ type: 'result', isError: false, contextTokens: this.lastTokens })
+  private finishCommand(text: string, isError = false): void {
+    if (!isError) this.emit({ type: 'command-output', text })
+    this.emit({
+      type: 'command-completed',
+      isError,
+      continues: this.turnActive,
+      ...(isError ? { errorText: text } : {})
+    })
   }
 
   private async cmdStatus(): Promise<void> {
@@ -387,14 +547,28 @@ export class CodexSession {
   }
 
   private async cmdReview(): Promise<void> {
-    const ok = await this.ensureThread()
-    if (!ok) throw new Error('painel codex sem thread')
-    const resp = await this.request('review/start', {
-      threadId: this.threadId,
-      target: { type: 'uncommittedChanges' },
-      delivery: 'inline'
-    })
-    if (resp.error) throw new Error(resp.error.message ?? 'review/start falhou')
+    if (this.turnActive) {
+      this.finishCommand('o /review só pode começar entre turnos — interrompa ou aguarde o trabalho atual')
+      return
+    }
+    const pending = this.beginTurnStart(null)
+    try {
+      const ok = await this.ensureThread()
+      if (!ok) throw new Error('painel codex sem thread')
+      const resp = await this.request('review/start', {
+        threadId: this.threadId,
+        target: { type: 'uncommittedChanges' },
+        delivery: 'inline'
+      })
+      // A notificação turn/started pode preceder a resposta RPC; nesse caso
+      // ela já provou o sucesso e limpou esta guarda.
+      if (resp.error && this.isPendingTurnStart(pending.generation))
+        throw new Error(resp.error.message ?? 'review/start falhou')
+      if (this.isPendingTurnStart(pending.generation)) this.armTurnStartGuard(pending.generation)
+    } catch (error) {
+      this.clearTurnStartGuard(pending.generation)
+      throw error
+    }
     // A review roda como um turno normal — achados chegam pela stream,
     // e o turn/completed dela encerra o busy.
     this.emit({
@@ -534,14 +708,18 @@ export class CodexSession {
   }
 
   kill(): void {
+    if (this.killed) return
     this.killed = true
+    this.cancelPendingInteractions()
+    this.pendingSendOperations.clear()
+    this.terminalReconcilePending = false
     this.clearIdle()
-    try {
-      this.child.stdin.end()
-    } catch {
-      // stdin já fechado
-    }
-    this.child.kill()
+    this.clearTurnSilence()
+    this.clearInterruptGuard()
+    this.clearTurnStartGuard()
+    this.clearTurnErrorGuard()
+    this.failPendingRpcs('painel codex encerrado')
+    terminateGuiProcessTree(this.child)
   }
 
   // ————— internos —————
@@ -550,9 +728,26 @@ export class CodexSession {
     if (!this.alive) return Promise.resolve({ error: { message: 'painel codex morto' } })
     const id = this.nextId++
     return new Promise((resolve) => {
-      this.pending.set(id, resolve)
+      const timer = setTimeout(() => {
+        if (!this.pending.delete(id)) return
+        resolve({
+          error: {
+            message: 'o Codex não respondeu ao pedido ' + method,
+            timeout: true
+          }
+        })
+      }, RPC_TIMEOUT)
+      this.pending.set(id, { resolve, timer })
       this.write({ jsonrpc: '2.0', id, method, params })
     })
+  }
+
+  private failPendingRpcs(message: string): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer)
+      pending.resolve({ error: { message } })
+    }
+    this.pending.clear()
   }
 
   private notify(method: string, params: Record<string, unknown>): void {
@@ -573,7 +768,22 @@ export class CodexSession {
 
   private resetIdle(): void {
     this.clearIdle()
+    this.clearTurnSilence()
     if (this.approvals.size > 0) return // esperando o humano
+    if (
+      shouldArmGuiTurnWatchdog(
+        this.opts.idleTimeoutMs,
+        Boolean(this.turnId || this.pendingTurnStart),
+        false
+      )
+    ) {
+      this.turnSilenceTimer = setTimeout(() => {
+        if (!this.alive || (!this.turnId && !this.pendingTurnStart) || this.approvals.size > 0)
+          return
+        this.emit({ type: 'fatal', text: 'o Codex ficou sem responder durante o turno' })
+        this.kill()
+      }, GUI_ACTIVE_TURN_SILENCE_TIMEOUT)
+    }
     const timeout = this.opts.idleTimeoutMs ?? IDLE_TIMEOUT
     if (timeout <= 0) return // relógio desligado (pane GUI)
     this.idleTimer = setTimeout(() => {
@@ -585,6 +795,113 @@ export class CodexSession {
   private clearIdle(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer)
     this.idleTimer = null
+  }
+
+  private clearTurnSilence(): void {
+    if (this.turnSilenceTimer) clearTimeout(this.turnSilenceTimer)
+    this.turnSilenceTimer = null
+  }
+
+  private cancelPendingInteractions(): void {
+    const requestIds = [...this.approvals.keys()]
+    this.approvals.clear()
+    for (const requestId of requestIds) {
+      this.emit({ type: 'permission-cancel', requestId })
+    }
+  }
+
+  private clearInterruptGuard(): void {
+    if (this.interruptTimer) clearTimeout(this.interruptTimer)
+    this.interruptTimer = null
+    this.interruptedTurnId = null
+  }
+
+  private beginTurnStart(operationId: number | null): PendingTurnStart {
+    const generation = ++this.turnStartGeneration
+    let resolve = (): void => undefined
+    const done = new Promise<void>((release) => {
+      resolve = release
+    })
+    const pending = { generation, operationId, done, resolve }
+    this.pendingTurnStart = pending
+    this.resetIdle()
+    this.reconcileTerminalContinuation()
+    return pending
+  }
+
+  private emitTurnResult(
+    result: Extract<SessionEvent, { type: 'result' }>,
+    ignoreOperationId?: number
+  ): void {
+    const pendingOperations =
+      this.pendingSendOperations.size -
+      (ignoreOperationId !== undefined && this.pendingSendOperations.has(ignoreOperationId)
+        ? 1
+        : 0)
+    const hasTurnDestination = Boolean(this.pendingTurnStart || this.turnId)
+    this.emit({ ...result, continues: pendingOperations > 0 || hasTurnDestination })
+    this.terminalReconcilePending = pendingOperations > 0 && !hasTurnDestination
+  }
+
+  private reconcileTerminalContinuation(): void {
+    if (!this.terminalReconcilePending || !this.alive) return
+    const hasTurnDestination = Boolean(this.pendingTurnStart || this.turnId)
+    if (!canFlushGuiTurnResult(this.pendingSendOperations.size, hasTurnDestination)) return
+    this.terminalReconcilePending = false
+    this.emit({
+      type: 'turn-continuation',
+      continues: this.pendingSendOperations.size > 0 || hasTurnDestination
+    })
+  }
+
+  private isPendingTurnStart(generation: number): boolean {
+    return this.pendingTurnStart?.generation === generation
+  }
+
+  private clearTurnStartGuard(generation?: number): void {
+    const pending = this.pendingTurnStart
+    if (generation !== undefined && pending?.generation !== generation) return
+    if (this.turnStartTimer) clearTimeout(this.turnStartTimer)
+    this.turnStartTimer = null
+    this.pendingTurnStart = null
+    this.interruptedStartGeneration = null
+    pending?.resolve()
+  }
+
+  private armTurnStartGuard(generation: number): void {
+    if (this.turnStartTimer) clearTimeout(this.turnStartTimer)
+    this.turnStartTimer = setTimeout(() => {
+      if (!this.alive || this.pendingTurnStart?.generation !== generation) return
+      this.clearTurnStartGuard(generation)
+      this.emit({ type: 'fatal', text: 'o Codex não confirmou o início do turno' })
+      this.kill()
+    }, TURN_START_CONFIRM_TIMEOUT)
+  }
+
+  private clearTurnErrorGuard(): void {
+    if (this.turnErrorTimer) clearTimeout(this.turnErrorTimer)
+    this.turnErrorTimer = null
+  }
+
+  private armTurnErrorGuard(message: string): void {
+    this.clearTurnErrorGuard()
+    if (!this.turnId && !this.pendingTurnStart) return
+    this.turnErrorTimer = setTimeout(() => {
+      if (!this.alive || (!this.turnId && !this.pendingTurnStart)) return
+      this.clearTurnErrorGuard()
+      this.emit({ type: 'fatal', text: message })
+      this.kill()
+    }, TURN_ERROR_CONFIRM_TIMEOUT)
+  }
+
+  private failInterrupt(turnId: string, message: string): void {
+    if (!this.alive || this.turnId !== turnId || this.interruptedTurnId !== turnId) return
+    this.clearInterruptGuard()
+    this.turnId = null
+    this.emit({ type: 'fatal', text: message })
+    // Se não foi possível provar que o turno parou, encerra o processo:
+    // deixar uma tool seguir sem controle seria pior do que perder o resume vivo.
+    this.kill()
   }
 
   private async loadCaps(): Promise<void> {
@@ -641,6 +958,11 @@ export class CodexSession {
         threadId: this.opts.resumeSessionId,
         ...base
       })
+      if (resp.error?.timeout) {
+        this.emit({ type: 'fatal', text: resp.error.message ?? 'o Codex parou de responder' })
+        this.kill()
+        return false
+      }
       if (resp.error) resp = null // thread sumiu — abre nova
     }
     if (!resp) resp = await this.request('thread/start', base)
@@ -650,6 +972,7 @@ export class CodexSession {
         type: 'fatal',
         text: `não consegui abrir a thread do codex${resp.error?.message ? ` · ${resp.error.message}` : ''}`
       })
+      this.kill()
       return false
     }
     this.threadId = thread.id
@@ -657,53 +980,117 @@ export class CodexSession {
     return true
   }
 
-  private async startTurn(text: string): Promise<void> {
-    const ok = await this.ensureThread()
-    if (!ok) {
-      this.emit({ type: 'result', isError: true, errorText: 'painel codex sem thread' })
-      return
-    }
-    // Mensagem NO MEIO de um turno ativo = steering (igual ao TUI): entra no
-    // turno em andamento via turn/steer. Se o turno acabou na corrida, cai
-    // no turn/start normal.
-    if (this.turnId) {
-      const steer = await this.request('turn/steer', {
-        threadId: this.threadId,
-        expectedTurnId: this.turnId,
-        input: [{ type: 'text', text }]
-      })
-      if (!steer.error) return
-    }
-    const params: Record<string, unknown> = {
-      threadId: this.threadId,
-      input: [{ type: 'text', text }]
-    }
-    // id em minúsculas: "GPT-5.6-Luna" (display name vazado) dá 400 na API
-    if (this.opts.model) params['model'] = this.opts.model.toLowerCase()
-    if (this.opts.effort) params['effort'] = this.opts.effort
-    if (this.opts.approvalPolicy) params['approvalPolicy'] = this.opts.approvalPolicy
-    if (this.fastTier) params['serviceTier'] = 'priority'
-    const resp = await this.request('turn/start', params)
-    if (resp.error) {
-      this.emit({ type: 'result', isError: true, errorText: resp.error.message ?? 'turn falhou' })
+  private async startTurn(text: string, operationId: number): Promise<void> {
+    try {
+      while (this.alive) {
+        // Mensagem NO MEIO de um turno ativo = steering (igual ao TUI): entra no
+        // turno em andamento via turn/steer. Se o turno acabou na corrida, cai
+        // no turn/start normal.
+        if (this.turnId) {
+          const expectedTurnId = this.turnId
+          const steer = await this.request('turn/steer', {
+            threadId: this.threadId,
+            expectedTurnId,
+            input: [{ type: 'text', text }]
+          })
+          if (!steer.error) return
+          // Timeout não prova rejeição: reenviar poderia executar a mensagem
+          // duas vezes. Falha fechada antes de qualquer retry.
+          if (steer.error.timeout) {
+            this.emit({
+              type: 'fatal',
+              text: steer.error.message ?? 'o Codex parou de responder'
+            })
+            this.kill()
+            return
+          }
+          // Uma resposta tardia do steer(A) não pode apagar um turnId=B que já
+          // nasceu enquanto o RPC anterior estava em voo.
+          if (!ownsFailedGuiSteer(this.turnId, expectedTurnId)) continue
+          this.turnId = null
+        }
+        if (this.pendingTurnStart) {
+          await this.pendingTurnStart.done
+          continue
+        }
+
+        const pending = this.beginTurnStart(operationId)
+        const ok = await this.ensureThread()
+        if (!this.isPendingTurnStart(pending.generation)) return
+        if (!ok) {
+          this.clearTurnStartGuard(pending.generation)
+          this.emitTurnResult({
+            type: 'result',
+            isError: true,
+            errorText: 'painel codex sem thread'
+          }, operationId)
+          return
+        }
+        if (this.interruptedStartGeneration === pending.generation) {
+          this.clearTurnStartGuard(pending.generation)
+          this.emitTurnResult({
+            type: 'result',
+            isError: false,
+            outcome: 'cancelled'
+          }, operationId)
+          return
+        }
+        const params: Record<string, unknown> = {
+          threadId: this.threadId,
+          input: [{ type: 'text', text }]
+        }
+        // id em minúsculas: "GPT-5.6-Luna" (display name vazado) dá 400 na API
+        if (this.opts.model) params['model'] = this.opts.model.toLowerCase()
+        if (this.opts.effort) params['effort'] = this.opts.effort
+        if (this.opts.approvalPolicy) params['approvalPolicy'] = this.opts.approvalPolicy
+        if (this.fastTier) params['serviceTier'] = 'priority'
+        const resp = await this.request('turn/start', params)
+        if (!this.isPendingTurnStart(pending.generation)) return
+        if (resp.error) {
+          this.clearTurnStartGuard(pending.generation)
+          if (resp.error.timeout) {
+            this.emit({
+              type: 'fatal',
+              text: resp.error.message ?? 'o Codex parou de responder'
+            })
+            this.kill()
+            return
+          }
+          this.emitTurnResult({
+            type: 'result',
+            isError: true,
+            errorText: resp.error.message ?? 'turn falhou'
+          }, operationId)
+          return
+        }
+        this.armTurnStartGuard(pending.generation)
+        return
+      }
+    } finally {
+      // Este finally pertence à MESMA continuação do RPC. Assim, um
+      // turn/completed no mesmo chunk observa o Set já assentado.
+      this.pendingSendOperations.delete(operationId)
+      this.reconcileTerminalContinuation()
     }
   }
 
   private handleLine(line: string): void {
     if (!line.trim()) return
-    let msg: JsonRpcMsg
-    try {
-      msg = JSON.parse(line) as JsonRpcMsg
-    } catch {
+    const parsed = parseGuiProtocolLine<unknown>(line)
+    if (!parsed.ok || !isGuiCodexProtocolEnvelope(parsed.value)) {
+      this.emit({ type: 'fatal', text: 'o Codex enviou uma resposta de protocolo inválida' })
+      this.kill()
       return
     }
+    const msg = parsed.value as JsonRpcMsg
 
     // Resposta a um request nosso.
     if (msg.id !== undefined && msg.method === undefined) {
       const waiter = this.pending.get(msg.id as number)
       if (waiter) {
         this.pending.delete(msg.id as number)
-        waiter({ result: msg.result, error: msg.error })
+        clearTimeout(waiter.timer)
+        waiter.resolve({ result: msg.result, error: msg.error })
       }
       return
     }
@@ -724,39 +1111,53 @@ export class CodexSession {
     p: Record<string, unknown>
   ): void {
     const requestId = `rpc-${String(id)}`
+    const toolUseId = typeof p['itemId'] === 'string' ? p['itemId'] : undefined
     if (method === 'item/commandExecution/requestApproval' || method === 'execCommandApproval') {
       const desc = commandText(p['command'])
-      this.approvals.set(requestId, { rpcId: id, toolName: 'comando', description: desc })
-      this.clearIdle()
+      const visibleDescription = firstLines(desc, 500)
+      const visibleCwd = firstLines(
+        typeof p['cwd'] === 'string' ? p['cwd'] : this.opts.cwd,
+        500
+      )
+      this.approvals.set(requestId, {
+        rpcId: id,
+        ...(toolUseId ? { toolUseId } : {}),
+        toolName: 'comando',
+        description: visibleDescription
+      })
+      this.resetIdle()
       this.emit({
         type: 'permission',
         requestId,
+        ...(toolUseId ? { toolUseId } : {}),
         toolName: 'comando',
-        description: firstLines(desc, 160),
-        inputPretty: firstLines(
-          JSON.stringify({ command: desc, cwd: p['cwd'] ?? this.opts.cwd }, null, 2),
-          2000
-        ),
-        reason: typeof p['reason'] === 'string' ? p['reason'] : undefined,
+        description: firstLines(visibleDescription, 160),
+        inputPretty: boundedJson({ command: visibleDescription, cwd: visibleCwd }),
+        reason: typeof p['reason'] === 'string' ? firstLines(p['reason'], 500) : undefined,
         canAlways: true
       })
       return
     }
     if (method === 'item/fileChange/requestApproval' || method === 'applyPatchApproval') {
-      const root = typeof p['grantRoot'] === 'string' ? p['grantRoot'] : this.opts.cwd
+      const root = firstLines(
+        typeof p['grantRoot'] === 'string' ? p['grantRoot'] : this.opts.cwd,
+        500
+      )
       this.approvals.set(requestId, {
         rpcId: id,
+        ...(toolUseId ? { toolUseId } : {}),
         toolName: 'edição de arquivos',
         description: root
       })
-      this.clearIdle()
+      this.resetIdle()
       this.emit({
         type: 'permission',
         requestId,
+        ...(toolUseId ? { toolUseId } : {}),
         toolName: 'edição de arquivos',
         description: root,
-        inputPretty: firstLines(JSON.stringify(p, null, 2), 2000),
-        reason: typeof p['reason'] === 'string' ? p['reason'] : undefined,
+        inputPretty: boundedJson(p),
+        reason: typeof p['reason'] === 'string' ? firstLines(p['reason'], 500) : undefined,
         canAlways: true
       })
       return
@@ -782,10 +1183,21 @@ export class CodexSession {
       }
       case 'turn/started': {
         const turn = p['turn'] as { id?: string } | undefined
-        if (turn?.id) this.turnId = turn.id
-        if (this.wantInterrupt) {
-          this.wantInterrupt = false
-          this.interrupt()
+        if (turn?.id) {
+          const pending = this.pendingTurnStart
+          const shouldInterrupt =
+            pending !== null && this.interruptedStartGeneration === pending.generation
+          this.turnId = turn.id
+          if (pending) {
+            // A notificação autoritativa dá destino a ESTE envio mesmo quando
+            // a resposta RPC chega depois de turn/completed. Retirá-lo aqui
+            // faz o resultado distinguir "A terminou" de "B ainda espera".
+            if (pending.operationId !== null)
+              this.pendingSendOperations.delete(pending.operationId)
+            this.clearTurnStartGuard(pending.generation)
+          }
+          this.reconcileTerminalContinuation()
+          if (shouldInterrupt) this.interrupt()
         }
         break
       }
@@ -796,17 +1208,29 @@ export class CodexSession {
           this.emit({
             type: 'tool',
             name: 'Bash',
-            input: { command: commandText(item.command), cwd: item.cwd }
+            input: { command: commandText(item.command), cwd: item.cwd },
+            toolUseId: item.id
           })
         } else if (item.type === 'fileChange') {
-          this.emit({ type: 'tool', name: 'Patch', input: { changes: item.changes } })
+          this.emit({
+            type: 'tool',
+            name: 'Patch',
+            input: { changes: item.changes },
+            toolUseId: item.id
+          })
         } else if (item.type === 'webSearch') {
-          this.emit({ type: 'tool', name: 'WebSearch', input: { query: item.query } })
+          this.emit({
+            type: 'tool',
+            name: 'WebSearch',
+            input: { query: item.query },
+            toolUseId: item.id
+          })
         } else if (item.type === 'mcpToolCall') {
           this.emit({
             type: 'tool',
             name: item.tool ?? 'mcp',
-            input: { server: item.server }
+            input: { server: item.server },
+            toolUseId: item.id
           })
         }
         break
@@ -816,51 +1240,77 @@ export class CodexSession {
         if (!item) break
         if (item.type === 'agentMessage' && item.text) {
           this.emit({ type: 'text', text: item.text })
-        } else if (item.type === 'commandExecution') {
-          const out = item.aggregatedOutput ?? ''
-          if (out.trim()) {
-            this.emit({
-              type: 'tool-result',
-              text: firstLines(out, RESULT_MAX),
-              isError: (item.exitCode ?? 0) !== 0
-            })
-          }
+        } else if (isGuiCodexToolType(item.type)) {
+          const completed = guiCodexToolCompletion(item)
+          // Cada card aberto no item/started fecha pelo id autoritativo, mesmo
+          // quando Patch/WebSearch/MCP terminam sem texto visível.
+          this.emit(
+            commandResultEvent(completed.text, completed.isError, item.id, completed.outcome)
+          )
         }
         break
       }
       case 'thread/compacted':
+        // A compactação invalida a fotografia anterior. Esperamos a próxima
+        // medição `last` do protocolo em vez de estimar o quanto ela reduziu.
+        this.lastTokens = undefined
+        this.lastWindow = undefined
+        this.emit({ type: 'context-usage', contextTokens: null, contextWindow: null })
         this.emit({ type: 'command-output', text: 'contexto da thread compactado' })
         break
       case 'thread/tokenUsage/updated': {
         const usage = p['tokenUsage'] as
-          | { total?: { totalTokens?: number }; modelContextWindow?: number }
+          | {
+              /** Acumulado da sessão — deliberadamente não é contexto. */
+              total?: { totalTokens?: unknown }
+              /** Fotografia do último turno = contexto atualmente carregado. */
+              last?: { totalTokens?: unknown }
+              modelContextWindow?: unknown
+            }
           | undefined
-        if (usage?.total?.totalTokens) this.lastTokens = usage.total.totalTokens
-        // Janela REAL do modelo, direto do protocolo (ex.: 258400 no GPT-5.6).
-        if (usage?.modelContextWindow) this.lastWindow = usage.modelContextWindow
+        const contextTokens = codexContextTokenCount(usage?.last?.totalTokens)
+        const contextWindow = codexContextWindow(usage?.modelContextWindow)
+        // Ausência não vira fallback para `total`: sem `last`/janela, a UI
+        // remove a régua até o app-server voltar a publicar uma medida válida.
+        this.lastTokens = contextTokens
+        this.lastWindow = contextWindow
+        this.emit({
+          type: 'context-usage',
+          contextTokens: contextTokens ?? null,
+          contextWindow: contextWindow ?? null
+        })
         break
       }
       case 'turn/completed': {
         const turn = p['turn'] as
           | { status?: string; error?: { message?: string } }
           | undefined
+        const outcome = guiCodexTurnOutcome(turn?.status)
+        this.cancelPendingInteractions()
+        this.clearInterruptGuard()
+        this.clearTurnErrorGuard()
         this.turnId = null
-        this.wantInterrupt = false
-        this.emit({
+        const result: Extract<SessionEvent, { type: 'result' }> = {
           type: 'result',
-          isError: turn?.status === 'failed',
-          errorText: turn?.error?.message,
-          contextTokens: this.lastTokens,
-          contextWindow: this.lastWindow
-        })
+          isError: outcome === 'failed',
+          outcome,
+          errorText: turn?.error?.message
+        }
+        // Respostas RPC resolvidas no mesmo chunk retomam em microtask. Só
+        // depois delas sabemos se uma mensagem aceita precisa abrir outro turno.
+        queueMicrotask(() => this.emitTurnResult(result))
         break
       }
       case 'error': {
-        const m = p['message']
+        const payload = p['error'] as { message?: unknown; willRetry?: boolean } | undefined
+        const m = payload?.message ?? p['message']
+        const message = `codex: ${typeof m === 'string' ? firstLines(m, 500) : boundedJson(p, 200)}`
         this.emit({
           type: 'limit',
-          text: `codex: ${typeof m === 'string' ? m : JSON.stringify(p).slice(0, 200)}`
+          text: message
         })
+        if (!guiCodexErrorWillRetry(p))
+          this.armTurnErrorGuard(message + ' — o turno não encerrou corretamente')
         break
       }
       default:

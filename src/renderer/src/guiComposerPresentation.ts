@@ -1,0 +1,166 @@
+import type { GuiCliModel } from './guiApi'
+
+type GuiModelIdentity = Pick<GuiCliModel, 'value' | 'displayName' | 'resolvedModel'>
+
+function stripModelMetadata(source: string): string {
+  return source
+    .replace(
+      /\s*(?:\([^)]*(?:context|recommended|recomendado)[^)]*\)|\[[^\]]*(?:context|recommended|recomendado)[^\]]*\])\s*$/iu,
+      ''
+    )
+    .replace(/\s+(?:·|—|-|:)\s+.*\b(?:context|recommended|recomendado)\b.*$/iu, '')
+    .trim()
+}
+
+function hasNumericVersion(source: string): boolean {
+  return /\b\d+(?:[.-]\d+)+\b|\b\d+\b/u.test(source)
+}
+
+function isBuildStamp(source: string): boolean {
+  return /^(?:19|20)\d{6}$/u.test(source)
+}
+
+/** Mantém major + uma casa útil; datas e patch ficam fora do label visual. */
+function compactVersionParts(parts: readonly string[]): string | null {
+  const segments = parts.flatMap((part) => part.split('.')).filter(Boolean)
+  const useful: string[] = []
+  for (const segment of segments) {
+    if (!/^\d+$/u.test(segment) || isBuildStamp(segment)) break
+    useful.push(segment)
+    if (useful.length === 2) break
+  }
+  if (useful.length === 0) return null
+  const major = String(Number.parseInt(useful[0], 10))
+  const minor = useful[1]
+  if (!minor || /^0+$/u.test(minor)) return major
+  return `${major}.${minor.charAt(0)}`
+}
+
+/** Também limpa displayName que já chega com data/build embutido. */
+function compactDisplayedVersion(source: string): string {
+  return source
+    .replace(
+      /\b(\d+(?:\.\d+)+)[-_](?:19|20)\d{6}\b/gu,
+      (_full, version: string) => compactVersionParts([version]) ?? ''
+    )
+    .replace(
+      /\b(\d+(?:[-_]\d+)+)[-_](?:19|20)\d{6}\b/gu,
+      (_full, version: string) => compactVersionParts([version.replace(/[-_]/gu, '.')]) ?? ''
+    )
+    .replace(/\b\d+(?:\.\d+)+\b/gu, (version) => compactVersionParts([version]) ?? version)
+    .replace(/[-_](?:19|20)\d{6}\b/gu, '')
+    .replace(/\s{2,}/gu, ' ')
+    .trim()
+}
+
+/** Lê os blocos numéricos do identificador canônico sem inventar uma versão. */
+function canonicalVersion(source: string): { family: string; version: string } | null {
+  const tokens = source
+    .replace(/\[[^\]]*\]/gu, '')
+    .split(/[-_/]/u)
+    .map((token) => token.trim())
+    .filter(Boolean)
+  const firstNumber = tokens.findIndex((token) => /^\d+(?:\.\d+)*$/u.test(token))
+  if (firstNumber < 0) return null
+  const versions: string[] = []
+  for (const token of tokens.slice(firstNumber)) {
+    if (!/^\d+(?:\.\d+)*$/u.test(token)) break
+    versions.push(token)
+  }
+  if (versions.length === 0) return null
+  const family = tokens[firstNumber - 1] ?? ''
+  const version = compactVersionParts(versions)
+  return version ? { family, version } : null
+}
+
+function titleFamily(source: string): string {
+  if (!source) return ''
+  return source.charAt(0).toUpperCase() + source.slice(1)
+}
+
+/**
+ * O CLI pode mandar displayName sem geração ("Fable") e reservar a versão
+ * exata para resolvedModel ("claude-fable-5"). O composer mostra a versão
+ * canônica quando ela existe; quando não existe, preserva o displayName sem
+ * adivinhar. Descrições longas continuam fora do label.
+ */
+export function guiModelShortName(
+  model: GuiModelIdentity | undefined,
+  fallback = ''
+): string {
+  const source = model?.displayName?.trim() || fallback.trim() || model?.value.trim() || 'modelo'
+  const label = compactDisplayedVersion(stripModelMetadata(source)) || source
+  const canonical = model?.resolvedModel?.trim() || model?.value?.trim() || ''
+  if (!canonical || hasNumericVersion(label)) return label
+
+  const version = canonicalVersion(canonical)
+  if (!version) return label
+  const family = /^default\b/iu.test(label) ? titleFamily(version.family) : label
+  return family ? `${family} ${version.version}` : label
+}
+
+/** O CLI trata value=default/displayName=Default como a mesma escolha. */
+export function guiModelIsDefault(model: GuiModelIdentity | undefined): boolean {
+  if (!model) return false
+  return (
+    model.value.trim().toLowerCase() === 'default' ||
+    model.displayName.trim().toLowerCase().startsWith('default')
+  )
+}
+
+/**
+ * O protocolo mantém identidade (`value`) e rótulo (`displayName`) separados.
+ * Alguns CLIs devolvem o id resolvido no evento de init; por isso o segundo
+ * casamento usa `resolvedModel`, sem trocar a chave real usada no clique.
+ */
+export function guiModelForSelection(
+  models: readonly GuiCliModel[],
+  selected: string | null | undefined
+): GuiCliModel | undefined {
+  const id = selected?.trim()
+  if (!id) return undefined
+  return models.find((model) => model.value === id) ?? models.find((model) => model.resolvedModel === id)
+}
+
+export function guiModelLabel(
+  models: readonly GuiCliModel[],
+  selected: string | null | undefined,
+  fallback = 'modelo'
+): string {
+  return guiModelShortName(guiModelForSelection(models, selected), fallback)
+}
+
+function compactTokens(value: number): string {
+  const safe = Math.max(0, Math.round(value))
+  if (safe >= 1_000_000) return `${(safe / 1_000_000).toFixed(safe >= 10_000_000 ? 0 : 1)} mi`
+  if (safe >= 1_000) return `${(safe / 1_000).toFixed(safe >= 100_000 ? 0 : 1)} mil`
+  return String(safe)
+}
+
+export interface GuiContextUsagePresentation {
+  percent: number
+  label: string
+  title: string
+}
+
+/** Fonte única da régua no composer; valores incompletos não viram chute. */
+export function guiContextUsagePresentation(
+  contextTokens: number | null | undefined,
+  contextWindow: number | null | undefined
+): GuiContextUsagePresentation | null {
+  if (
+    typeof contextTokens !== 'number' ||
+    !Number.isFinite(contextTokens) ||
+    contextTokens < 0 ||
+    typeof contextWindow !== 'number' ||
+    !Number.isFinite(contextWindow) ||
+    contextWindow <= 0
+  ) return null
+
+  const percent = Math.max(0, Math.min(100, Math.round((contextTokens / contextWindow) * 100)))
+  return {
+    percent,
+    label: `${percent}% contexto`,
+    title: `${compactTokens(contextTokens)} de ${compactTokens(contextWindow)} tokens usados`
+  }
+}

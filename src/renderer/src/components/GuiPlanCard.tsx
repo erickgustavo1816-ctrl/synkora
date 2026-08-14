@@ -9,10 +9,12 @@ import GuiMarkdown from './GuiMarkdown'
 
 export default function GuiPlanCard({
   plan,
-  onDecide
+  onDecide,
+  disabled = false
 }: {
   plan: string
   onDecide: (approve: boolean) => void
+  disabled?: boolean
 }): React.JSX.Element {
   return (
     <div className="gui-plan">
@@ -27,10 +29,10 @@ export default function GuiPlanCard({
         <GuiMarkdown text={plan} />
       </div>
       <div className="gui-plan-actions">
-        <button className="gui-btn primary" onClick={() => onDecide(true)}>
+        <button className="gui-btn primary" disabled={disabled} onClick={() => onDecide(true)}>
           ▶ construir
         </button>
-        <button className="gui-btn" onClick={() => onDecide(false)}>
+        <button className="gui-btn" disabled={disabled} onClick={() => onDecide(false)}>
           ✎ revisar
         </button>
       </div>

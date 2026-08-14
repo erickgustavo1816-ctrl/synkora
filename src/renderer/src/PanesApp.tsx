@@ -5,6 +5,8 @@ import TooltipLayer from './components/Tooltip'
 import { guiApi } from './guiApi'
 import { getSynVoiceTarget } from './synVoiceTarget'
 import { TERMINAL_DEFAULT_FONT_SIZE } from './terminalGeometry'
+import { installGlobalGuiEscape, requestActiveGuiEscape } from './guiEscape'
+import GuiQueueDispatcher from './components/GuiQueueDispatcher'
 
 /**
  * PANESAPP — raiz do renderer da WebContentsView de panes (Fase 3,
@@ -30,6 +32,15 @@ export default function PanesApp(): React.JSX.Element {
   const projects = useStore((s) => s.projects)
 
   const bridgeOk = typeof window.synkora !== 'undefined'
+
+  useEffect(() => {
+    const uninstall = installGlobalGuiEscape()
+    const offRelay = window.synkora.panesView.onGuiEscape(() => requestActiveGuiEscape())
+    return () => {
+      offRelay()
+      uninstall()
+    }
+  }, [])
 
   useEffect(() => {
     if (!bridgeOk) return
@@ -200,6 +211,7 @@ export default function PanesApp(): React.JSX.Element {
   // panes de fundo continuam medidos e vivos ao trocar de projeto.
   return (
     <div className="app-shell panes-view-shell">
+      <GuiQueueDispatcher />
       <TooltipLayer />
       {mountedProjects.map((id) => {
         const project = projects.find((p) => p.id === id)

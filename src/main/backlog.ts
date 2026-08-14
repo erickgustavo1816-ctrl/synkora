@@ -43,6 +43,22 @@ export interface Version {
   updatedAt: string
 }
 
+/**
+ * Recorte que uma missão nova pode efetivamente escolher. A regra Ã© de
+ * domÃ­nio, nÃ£o de tela: somente versÃµes abertas do mesmo projeto aceitam
+ * trabalho, e a mais antiga continua sendo a versÃ£o corrente por padrÃ£o.
+ */
+export interface MissionVersionChoices {
+  versions: Version[]
+  defaultVersionId?: string
+}
+
+function eligibleMissionVersions(versions: readonly Version[], projectId: string): Version[] {
+  return versions
+    .filter((version) => version.projectId === projectId && version.status === 'aberta')
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+}
+
 export interface BacklogItem {
   id: string
   projectId: string
@@ -138,6 +154,12 @@ export class BacklogStore {
     return this.data.versions.filter((v) => v.projectId === projectId)
   }
 
+  /** Fonte Ãºnica para o seletor e para a criaÃ§Ã£o de missÃµes. */
+  missionVersionChoices(projectId: string): MissionVersionChoices {
+    const versions = eligibleMissionVersions(this.data.versions, projectId)
+    return { versions, defaultVersionId: versions[0]?.id }
+  }
+
   createVersion(projectId: string, input: { name: string; theme?: string; goal?: string }): Version {
     const now = new Date().toISOString()
     const version: Version = {
@@ -215,9 +237,7 @@ export class BacklogStore {
     data: BacklogData,
     projectId: string
   ): { data: BacklogData; version: Version } {
-    const open = data.versions
-      .filter((version) => version.projectId === projectId && version.status === 'aberta')
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    const open = eligibleMissionVersions(data.versions, projectId)
     if (open[0]) return { data, version: open[0] }
 
     const highestNumeric = data.versions

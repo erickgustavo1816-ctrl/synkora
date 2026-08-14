@@ -34,7 +34,9 @@ import {
   GUI_MISSION_ROLES,
   guiMissionFirstPrompt,
   guiMissionPaneId,
+  guiSeatNeedsExecutorReset,
   guiPlanningFirstPrompt,
+  isGuiMissionPaneId,
   isGuiMissionRole,
   missionTypeOf,
   resumeSessionIdFor,
@@ -44,6 +46,7 @@ import {
 } from '../guiMissionContracts'
 import {
   isGuiPermissionMode,
+  rememberedGuiExecutorValue,
   type GuiPaneSpawn,
   type GuiPermissionMode,
   type GuiSessionRegistry
@@ -198,6 +201,14 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   } = engine
 
   ipcMain.handle('missions:list', (_e, projectId: string) => missionsWithIntegration(projectId))
+
+  // A tela recebe o mesmo recorte que o motor aceita. Versoes lancadas nunca
+  // aparecem como destino de uma missao nova, e a primeira e o padrao atual.
+  ipcMain.handle('missions:versionChoices', (_e, projectId: string) =>
+    projects.get(projectId)
+      ? backlog.missionVersionChoices(projectId)
+      : { versions: [], defaultVersionId: undefined }
+  )
 
   /**
    * SYNKORA 2.0 (onda B): missão criada PELO DONO nasce DIRETA — sem
@@ -487,7 +498,8 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       // (sessão claude não se retoma no codex e vice-versa). A régua é a
       // mesma do planejamento — mora em guiMissionContracts.
       const remembered = guiSessions.remembered(paneId)
-      const resumeSessionId = resumeSessionIdFor(remembered, seat.cli)
+      const rememberedExecutor = remembered?.cli === seat.cli ? remembered : undefined
+      const resumeSessionId = resumeSessionIdFor(rememberedExecutor, seat.cli)
       const effectiveMode = permissionMode ?? remembered?.permissionMode
 
       const spawn: GuiPaneSpawn = {
@@ -500,8 +512,8 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         // A escolha feita NO CHAT vence a da criação: os seletores do composer
         // gravam modelo/effort por pane, e reabrir tem de cair na última
         // escolha do dono — não na que a missão nasceu.
-        model: remembered?.model ?? mission.model,
-        effort: remembered?.effort ?? mission.effort,
+        model: rememberedGuiExecutorValue(rememberedExecutor, seat.cli, 'model', mission.model),
+        effort: rememberedGuiExecutorValue(rememberedExecutor, seat.cli, 'effort', mission.effort),
         systemPrompt: route.systemPrompt,
         resumeSessionId,
         permissionMode: effectiveMode,
@@ -574,50 +586,84 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         missionTypeOf(mission) === 'planejamento'
           ? projects.get(projectId)?.path
           : (mission.worktree ?? projects.get(projectId)?.path)
+      const paneIds = [
+        ...GUI_MISSION_ROLES.filter((role) => role !== 'helper').map((role) =>
+          guiMissionPaneId(role, missionId)
+        ),
+        ...Array.from({ length: MAX_MISSION_HELPERS }, (_, i) =>
+          guiMissionPaneId('helper', missionId, i + 1)
+        )
+      ]
       let migrated = 0
+      const panesWithoutMigratedHistory: string[] = []
       if (prevSeat && cwd && prevSeat.cli === nextSeat.cli) {
-        const paneIds = [
-          ...GUI_MISSION_ROLES.filter((role) => role !== 'helper').map((role) =>
-            guiMissionPaneId(role, missionId)
-          ),
-          ...Array.from({ length: MAX_MISSION_HELPERS }, (_, i) =>
-            guiMissionPaneId('helper', missionId, i + 1)
-          )
-        ]
         for (const paneId of paneIds) {
           const remembered = guiSessions.remembered(paneId)
           if (!remembered?.sessionId || remembered.cli !== nextSeat.cli) continue
-          if (
-            migrateCliSessionBetweenSeats(
-              nextSeat.cli,
-              prevSeat.id,
-              nextSeat.id,
-              cwd,
-              remembered.sessionId
-            )
+          const copied = migrateCliSessionBetweenSeats(
+            nextSeat.cli,
+            prevSeat.id,
+            nextSeat.id,
+            cwd,
+            remembered.sessionId
           )
+          if (copied) {
             migrated += 1
+          } else {
+            // O id aponta para um arquivo ausente no config dir novo. Manter o
+            // resume faria o pane nascer quebrado; recomeçar é o fallback honesto.
+            panesWithoutMigratedHistory.push(paneId)
+          }
         }
       }
-      killMissionGuiPanes(missionId)
-      // `setExecutorSeat` e não `confirmOrchestrator`: aquele grava os três
-      // campos incondicionalmente e apagaria o modelo escolhido pelo dono.
-      const updated = missions.setExecutorSeat(missionId, nextSeat.id)
+      const crossedCli = Boolean(prevSeat && prevSeat.cli !== nextSeat.cli)
+      const previousSeatMissing = Boolean(mission.seatId && !prevSeat)
+      const resetExecutor = guiSeatNeedsExecutorReset(
+        prevSeat,
+        nextSeat,
+        Boolean(mission.seatId)
+      )
+      const updated = missions.setExecutorSeat(missionId, nextSeat.id, {
+        // gpt-* nunca vaza para Claude, nem sonnet/opus para Codex.
+        resetExecutor
+      })
       if (!updated) return { ok: false, msg: 'não consegui gravar a conta desta missão' }
+      // Só desmonta/muda o registro de resume depois que o seat novo pousou.
+      if (crossedCli || previousSeatMissing) {
+        // Sem uma identidade anterior comprovável não basta limpar o id: um
+        // registro do mesmo CLI reaplicaria também modelo/effort do seat órfão.
+        for (const paneId of paneIds) guiSessions.forgetSessionIdentity(paneId)
+      } else {
+        for (const paneId of panesWithoutMigratedHistory) guiSessions.forgetSession(paneId)
+      }
+      killMissionGuiPanes(missionId)
+      const resetAfterFailedMigration = panesWithoutMigratedHistory.length
       blackbox.record({
         cat: 'user',
         event: 'mission-chat-seat-set',
         actor: 'user',
         ids: { projectId, missionId, seatId: nextSeat.id },
-        detail: { prevSeatId: prevSeat?.id, cli: nextSeat.cli, migrated }
+        detail: {
+          prevSeatId: prevSeat?.id,
+          cli: nextSeat.cli,
+          migrated,
+          resetAfterFailedMigration,
+          crossedCli,
+          previousSeatMissing,
+          resetExecutor
+        }
       })
       emitMissionsChanged(projectId)
       return {
         ok: true,
-        msg: migrated
+        msg: resetAfterFailedMigration
+          ? `conta trocada para ${nextSeat.name} — ${resetAfterFailedMigration === 1 ? 'uma conversa recomeçou' : `${resetAfterFailedMigration} conversas recomeçaram`} porque não deu para transportar o histórico`
+          : migrated
           ? `conta trocada para ${nextSeat.name} — a conversa foi junto`
-          : prevSeat && prevSeat.cli !== nextSeat.cli
+          : crossedCli
             ? `conta trocada para ${nextSeat.name} — CLI diferente, a conversa recomeça`
+            : previousSeatMissing
+              ? `conta trocada para ${nextSeat.name} — a conta anterior não existe mais, a conversa recomeça`
             : `conta desta conversa: ${nextSeat.name}`
       }
     }
@@ -912,6 +958,9 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     }
     backlog.releaseMissionItems(missionId) // itens não-feitos voltam a pendente
     missions.remove(missionId)
+    // Exclusão definitiva, ao contrário de arquivar, remove também resume e
+    // fotografia dos chats desta missão.
+    guiSessions.forgetWhere((paneId) => isGuiMissionPaneId(paneId, missionId))
     emitBacklogChanged(mission.projectId)
     // rastro da missão some junto: plano, transcript/veredito do gate e o
     // estado do orquestrador no maestroStore

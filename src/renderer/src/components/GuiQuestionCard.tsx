@@ -17,11 +17,13 @@ import type { GuiQuestion } from '../guiApi'
 export default function GuiQuestionCard({
   questions,
   onAnswer,
-  onSkip
+  onSkip,
+  disabled = false
 }: {
   questions: GuiQuestion[]
   onAnswer: (answers: Record<string, string>) => void
   onSkip: () => void
+  disabled?: boolean
 }): React.JSX.Element {
   const [step, setStep] = useState(0)
   // Escolhas por índice de pergunta: Set de labels + o texto livre do "outra".
@@ -43,6 +45,7 @@ export default function GuiQuestionCard({
 
   const toggle = useCallback(
     (label: string): void => {
+      if (disabled) return
       setPicked((prev) => {
         const set = new Set(prev[step] ?? [])
         if (multi) {
@@ -55,13 +58,14 @@ export default function GuiQuestionCard({
         return { ...prev, [step]: set }
       })
     },
-    [multi, step]
+    [disabled, multi, step]
   )
 
   const openCustom = useCallback((): void => {
+    if (disabled) return
     setCustomOpen((prev) => ({ ...prev, [step]: !prev[step] }))
     window.setTimeout(() => customRef.current?.focus({ preventScroll: true }), 0)
-  }, [step])
+  }, [disabled, step])
 
   /** O mapa que viaja ao CLI: labels escolhidos + o texto livre, na ordem em
    *  que aparecem. Pergunta sem resposta simplesmente não entra. */
@@ -77,12 +81,14 @@ export default function GuiQuestionCard({
   }, [custom, picked, questions])
 
   const advance = useCallback((): void => {
+    if (disabled) return
     if (step + 1 < total) setStep(step + 1)
     else onAnswer(buildAnswers())
-  }, [buildAnswers, onAnswer, step, total])
+  }, [buildAnswers, disabled, onAnswer, step, total])
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>): void => {
+      if (disabled) return
       // Digitando no "outra resposta" o teclado é dele: só Enter/Esc sobem.
       const typing = e.target instanceof HTMLInputElement
       if (e.key === 'Escape') {
@@ -107,7 +113,7 @@ export default function GuiQuestionCard({
         toggle(current.options[n - 1].label)
       }
     },
-    [advance, current, onSkip, openCustom, toggle]
+    [advance, current, disabled, onSkip, openCustom, toggle]
   )
 
   if (!current) return <div className="gui-question" />
@@ -139,6 +145,7 @@ export default function GuiQuestionCard({
                 className={`gq-dot${i === step ? ' active' : ''}${
                   (picked[i]?.size ?? 0) > 0 || custom[i]?.trim() ? ' done' : ''
                 }`}
+                disabled={disabled}
                 aria-label={`Ir para a pergunta ${i + 1}`}
                 onClick={() => setStep(i)}
               />
@@ -165,6 +172,7 @@ export default function GuiQuestionCard({
               type="button"
               role={multi ? 'checkbox' : 'radio'}
               aria-checked={active}
+              disabled={disabled}
               className={`gq-option${active ? ' active' : ''}`}
               onClick={() => toggle(option.label)}
             >
@@ -184,6 +192,7 @@ export default function GuiQuestionCard({
 
         <button
           type="button"
+          disabled={disabled}
           className={`gq-option other${customOpen[step] ? ' active' : ''}`}
           onClick={openCustom}
         >
@@ -196,6 +205,7 @@ export default function GuiQuestionCard({
           <input
             ref={customRef}
             className="gq-custom"
+            disabled={disabled}
             placeholder="escreva sua resposta"
             value={custom[step] ?? ''}
             onChange={(e) => setCustom((prev) => ({ ...prev, [step]: e.target.value }))}
@@ -208,14 +218,18 @@ export default function GuiQuestionCard({
           {multi ? 'pode escolher mais de uma · ' : ''}teclas 1-9 · enter segue · esc pula
         </span>
         {step > 0 && (
-          <button className="gui-btn" onClick={() => setStep(step - 1)}>
+          <button className="gui-btn" disabled={disabled} onClick={() => setStep(step - 1)}>
             voltar
           </button>
         )}
-        <button className="gui-btn" onClick={onSkip}>
+        <button className="gui-btn" disabled={disabled} onClick={onSkip}>
           pular
         </button>
-        <button className="gui-btn primary" disabled={!hasAnswer && last} onClick={advance}>
+        <button
+          className="gui-btn primary"
+          disabled={disabled || (!hasAnswer && last)}
+          onClick={advance}
+        >
           {last ? 'responder' : 'próxima'}
         </button>
       </div>

@@ -7,6 +7,7 @@ import {
   guiMissionFirstPrompt,
   guiMissionPaneId,
   guiMissionRoleOf,
+  guiSeatNeedsExecutorReset,
   guiMissionSystemPrompt,
   guiPlanningFirstPrompt,
   guiPlanningPaneId,
@@ -356,4 +357,15 @@ test('registro ausente ou capenga nunca vira um --resume quebrado', () => {
   assert.equal(resumeSessionIdFor({ cli: 'claude' }, 'claude'), undefined)
   assert.equal(resumeSessionIdFor({ sessionId: '', cli: 'claude' }, 'claude'), undefined)
   assert.equal(resumeSessionIdFor({ sessionId: 'x' }, 'claude'), undefined)
+})
+
+test('troca de seat só reseta modelo e effort quando atravessa CLI', () => {
+  assert.equal(guiSeatNeedsExecutorReset({ cli: 'claude' }, { cli: 'claude' }, true), false)
+  assert.equal(guiSeatNeedsExecutorReset({ cli: 'claude' }, { cli: 'codex' }, true), true)
+  assert.equal(guiSeatNeedsExecutorReset(undefined, { cli: 'codex' }, false), false)
+  assert.equal(
+    guiSeatNeedsExecutorReset(undefined, { cli: 'codex' }, true),
+    true,
+    'seat gravado mas removido falha fechado'
+  )
 })

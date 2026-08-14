@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import GuiMarkdown from './GuiMarkdown'
+import { GUI_WORD_REVEAL_MS, nextGuiWordEnd } from '../guiStreamReveal'
 
 // A RESPOSTA APARECE COMO SE FOSSE DIGITADA (ordem do dono, 2026-08-13:
 // "tá pulando de uma palavra pra dez, aí pula quinze de uma vez").
@@ -9,31 +10,13 @@ import GuiMarkdown from './GuiMarkdown'
 // cada rajada inteira de uma vez. Aqui o buffer que chega é a FILA e a tela
 // consome dela em ritmo próprio, palavra a palavra.
 //
-// Duas regras que fazem parecer digitação de verdade:
-//  1. cadência por PALAVRA, não por caractere — caractere a caractere fica
-//     lento e nervoso num texto longo;
-//  2. o ritmo ACELERA com o tamanho da fila: quanto mais atrasado, mais
-//     palavras por quadro. Sem isso uma resposta grande demoraria minutos
-//     para terminar de aparecer depois de o agente já ter acabado.
+// A regra que não pode regredir: CADA passo revela UMA palavra. A versão
+// anterior acelerava pelo número de CARACTERES pendentes e gastava o crédito
+// em PALAVRAS; uma rajada de 2.000 caracteres pintava 10-15 palavras no mesmo
+// quadro. O transporte pode chegar em rajadas, a leitura nunca chega.
 //
 // `prefers-reduced-motion` desliga tudo: quem pediu menos movimento vê o
 // texto completo na hora.
-
-/** Alvo de atraso: com a fila acima disso o revelador acelera para alcançar. */
-const TARGET_LAG_MS = 900
-/** Ritmo base de uma conversa tranquila. */
-const BASE_WORD_MS = 34
-/** Intervalo mínimo entre repinturas (o markdown é re-parseado a cada uma). */
-const MIN_PAINT_MS = 33
-
-/** Fim da próxima palavra a partir de `from` (espaço que a sucede incluso —
- *  revelar a palavra sem o espaço faria o texto "grudar" no quadro seguinte). */
-function nextWordEnd(text: string, from: number): number {
-  let i = from
-  while (i < text.length && /\s/u.test(text[i])) i += 1
-  while (i < text.length && !/\s/u.test(text[i])) i += 1
-  return i
-}
 
 function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined'
@@ -41,80 +24,67 @@ function prefersReducedMotion(): boolean {
     : false
 }
 
-export default function GuiStreamText({ text }: { text: string }): React.JSX.Element {
-  const [shown, setShown] = useState(0)
-  const shownRef = useRef(0)
+export default function GuiStreamText({
+  text,
+  initialShown = 0,
+  complete,
+  onComplete,
+  onProgress
+}: {
+  text: string
+  initialShown?: number
+  complete: boolean
+  onComplete?: () => void
+  onProgress?: () => void
+}): React.JSX.Element {
+  const [shown, setShown] = useState(() => Math.min(initialShown, text.length))
   const textRef = useRef(text)
-  const prevLenRef = useRef(text.length)
+  const completedRef = useRef(false)
+  const reducedMotionRef = useRef(prefersReducedMotion())
+  const onCompleteRef = useRef(onComplete)
+  const onProgressRef = useRef(onProgress)
   textRef.current = text
+  onCompleteRef.current = onComplete
+  onProgressRef.current = onProgress
 
-  // TURNO NOVO: o buffer ENCOLHEU porque o anterior fechou e virou mensagem.
-  // Sem zerar o cursor aqui, a resposta seguinte apareceria inteira de uma vez
-  // (o clamp mostraria tudo) — justamente o pulo que este componente existe
-  // para matar.
+  // O cursor acompanha correções do texto final e o ponto de replay, mas nunca
+  // volta durante um item vivo. Cada turno tem id/key próprio no pai.
   useEffect(() => {
-    if (text.length < prevLenRef.current) {
-      shownRef.current = 0
-      setShown(0)
-    }
-    prevLenRef.current = text.length
-  }, [text])
+    setShown((current) =>
+      reducedMotionRef.current
+        ? text.length
+        : Math.min(text.length, Math.max(current, initialShown))
+    )
+  }, [initialShown, text.length])
 
+  // Relógio ESTÁVEL: deltas podem chegar a cada 10 ms. Se o timer dependesse
+  // de `text`, cada rajada cancelaria e rearmaria os 52 ms, congelando a tela
+  // até o transporte parar. O ref recebe a fila nova sem reiniciar a cadência.
   useEffect(() => {
-    if (prefersReducedMotion()) {
-      shownRef.current = textRef.current.length
-      setShown(shownRef.current)
-      return
-    }
-    let frame = 0
-    let last = performance.now()
-    let painted = last
-    let credit = 0
-
-    const tick = (now: number): void => {
-      const full = textRef.current
-      const elapsed = now - last
-      last = now
-      const pending = full.length - shownRef.current
-      if (pending <= 0) {
-        // Nada na fila: segue armado — o próximo delta cai no mesmo laço.
-        frame = requestAnimationFrame(tick)
-        return
-      }
-      // Quanto mais texto esperando, mais rápido cada palavra sai. O divisor é
-      // o atraso que aceitamos; abaixo dele o ritmo é o base.
-      const speed = Math.max(1, pending / ((TARGET_LAG_MS / BASE_WORD_MS) * 5))
-      credit += (elapsed / BASE_WORD_MS) * speed
-      let words = Math.floor(credit)
-      // Teto de repintura: acelerado, o revelador andaria a cada quadro e o
-      // markdown seria re-parseado 60×/s numa resposta longa. Um quadro a
-      // cada ~33ms é indistinguível a olho e devolve o resto da CPU ao app.
-      if (words > 0 && now - painted >= MIN_PAINT_MS) {
-        credit -= words
-        painted = now
-        let cursor = shownRef.current
-        while (words > 0 && cursor < full.length) {
-          cursor = nextWordEnd(full, cursor)
-          words -= 1
-        }
-        shownRef.current = cursor
-        setShown(cursor)
-      }
-      frame = requestAnimationFrame(tick)
-    }
-
-    frame = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frame)
+    if (reducedMotionRef.current) return
+    const timer = window.setInterval(() => {
+      setShown((current) => nextGuiWordEnd(textRef.current, current))
+    }, GUI_WORD_REVEAL_MS)
+    return () => window.clearInterval(timer)
   }, [])
+
+  useEffect(() => {
+    onProgressRef.current?.()
+    if (!complete || shown < text.length || completedRef.current) return
+    completedRef.current = true
+    onCompleteRef.current?.()
+  }, [complete, shown, text.length])
 
   const visible = text.slice(0, Math.min(shown, text.length))
   return (
     <div className="gui-msg dev stream">
       <div className="gui-msg-text">
         <GuiMarkdown text={visible} />
-        <span className="stream-cursor" aria-hidden="true">
-          ▍
-        </span>
+        {(!complete || shown < text.length) && (
+          <span className="stream-cursor" aria-hidden="true">
+            ▍
+          </span>
+        )}
       </div>
     </div>
   )

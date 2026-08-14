@@ -8,6 +8,7 @@ import {
 import TerminalPane from './TerminalPane'
 import GuiPane from './GuiPane'
 import PaneChrome, { ZERO_STATS } from './PaneChrome'
+import GuiPanelErrorBoundary from './GuiPanelErrorBoundary'
 import PhaseSeatModal from './PhaseSeatModal'
 import ConstellationMap from './ConstellationMap'
 import { DEPT_BY_KEY, deptHueVar } from '../departments'
@@ -933,6 +934,7 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
   // bloqueia o repasse. NUNCA usar Esc nem Esc-Esc: o claude usa os dois
   // (cancelar / editar a mensagem anterior).
   const isActive = useStore((s) => s.openProjectId === projectId)
+  const panesViewShown = useStore((s) => s.panesViewShown)
   const tab = useStore((s) => s.universeTabByProject[projectId])
   useEffect(() => {
     if (!isActive || tab !== 'panes') return
@@ -1217,6 +1219,11 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
                 aria-hidden={visible ? undefined : true}
                 inert={visible ? undefined : true}
               >
+                <GuiPanelErrorBoundary
+                  paneId={pane.id}
+                  label={pane.title || 'este painel'}
+                  onClose={() => closePane(projectId, pane.id)}
+                >
                 <PaneChrome
                   role={pane.role ?? (pane.kind === 'shell' ? undefined : 'livre')}
                   kind={pane.kind}
@@ -1270,6 +1277,7 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
                 {isGui ? (
                   <GuiPane
                     paneId={pane.id}
+                    active={visible && isActive && panesViewShown}
                     projectId={projectId}
                     cli={pane.kind === 'codex' ? 'codex' : 'claude'}
                     configDir={seat?.configDir}
@@ -1309,6 +1317,7 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
                     }}
                   />
                 )}
+                </GuiPanelErrorBoundary>
               </div>
             )
           })}

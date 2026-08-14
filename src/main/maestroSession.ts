@@ -1,6 +1,25 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { randomUUID } from 'crypto'
 import { freshWindowsPath } from './winPath'
+import type { GuiAttachmentDescriptor } from './guiAttachments'
+import { guiToolResultDetails } from './guiToolResults'
+import {
+  GuiProtocolStream,
+  isGuiClaudeProtocolEnvelope,
+  parseGuiProtocolLine
+} from './guiProtocolLine'
+import { limitGuiToolInput } from './guiToolInput'
+import { terminateGuiProcessTree } from './guiProcessTree'
+import {
+  advanceGuiTurn,
+  enqueueGuiTurn,
+  GUI_ACTIVE_TURN_SILENCE_TIMEOUT,
+  shouldArmGuiTurnWatchdog
+} from './guiTurnQueue'
+import {
+  chatPermissionRuleLabel,
+  resolveChatPermissionSuggestions
+} from './chatPermissions'
 
 // Sessão PERSISTENTE do Maestro: um processo `claude` vivo em stream-json
 // bidirecional — o mesmo motor do TUI, rodando como "painel de fundo".
@@ -70,6 +89,15 @@ export interface GuiQuestion {
   options: GuiQuestionOption[]
 }
 
+export const GUI_QUESTION_MAX_COUNT = 8
+export const GUI_QUESTION_OPTION_MAX_COUNT = 12
+export const GUI_PLAN_MAX_CHARS = 64 * 1024
+
+function boundedGuiText(value: unknown, cap: number): string | undefined {
+  if (typeof value !== 'string') return undefined
+  return value.length <= cap ? value : value.slice(0, Math.max(0, cap - 1)) + '…'
+}
+
 /** Parse DEFENSIVO do input do AskUserQuestion. Qualquer coisa fora do molde
  *  devolve undefined e o pedido segue como permissão genérica — pergunta
  *  ilegível nunca some muda. */
@@ -77,27 +105,29 @@ export function parseGuiQuestions(input: Record<string, unknown>): GuiQuestion[]
   const raw = input['questions']
   if (!Array.isArray(raw) || raw.length === 0) return undefined
   const questions: GuiQuestion[] = []
-  for (const item of raw) {
+  for (const item of raw.slice(0, GUI_QUESTION_MAX_COUNT)) {
     if (!item || typeof item !== 'object') return undefined
     const q = item as Record<string, unknown>
-    const questionText = q['question']
-    if (typeof questionText !== 'string' || !questionText.trim()) return undefined
+    const questionText = boundedGuiText(q['question'], 2_000)
+    if (!questionText?.trim()) return undefined
     const rawOptions = q['options']
     if (!Array.isArray(rawOptions) || rawOptions.length === 0) return undefined
     const options: GuiQuestionOption[] = []
-    for (const opt of rawOptions) {
+    for (const opt of rawOptions.slice(0, GUI_QUESTION_OPTION_MAX_COUNT)) {
       if (!opt || typeof opt !== 'object') return undefined
       const o = opt as Record<string, unknown>
-      const label = o['label']
-      if (typeof label !== 'string' || !label.trim()) return undefined
+      const label = boundedGuiText(o['label'], 240)
+      if (!label?.trim()) return undefined
+      const description = boundedGuiText(o['description'], 1_000)
       options.push({
         label,
-        ...(typeof o['description'] === 'string' ? { description: o['description'] } : {})
+        ...(description ? { description } : {})
       })
     }
+    const header = boundedGuiText(q['header'], 160)
     questions.push({
       question: questionText,
-      ...(typeof q['header'] === 'string' ? { header: q['header'] } : {}),
+      ...(header ? { header } : {}),
       ...(typeof q['multiSelect'] === 'boolean' ? { multiSelect: q['multiSelect'] } : {}),
       options
     })
@@ -118,19 +148,66 @@ export type SessionEvent =
   /** `text` = delta do raciocínio quando o backend o entrega (aditivo: quem
    *  só acende um spinner continua funcionando sem ler o campo). */
   | { type: 'thinking'; text?: string }
+  | { type: 'turn-started' }
+  | { type: 'turn-continuation'; continues: boolean }
+  | {
+      type: 'session-restarted'
+      ready: boolean
+      /** Fotografia canônica já persistida para a mesma conversa. */
+      contextTokens?: number | null
+      contextWindow?: number | null
+    }
+  /** /clear explícito: zera somente o fio desta conversa no renderer. */
+  | { type: 'conversation-cleared' }
+  /** Estado silencioso do composer. `null` significa usar o padrão do CLI. */
+  | { type: 'executor-changed'; model: string | null; effort: string | null }
+  | {
+      type: 'user-message'
+      id: string
+      text: string
+      /** Anexos já validados pelo main; o transcript mostra chips, nunca paths
+       * despejados dentro da fala do usuário. */
+      attachments?: GuiAttachmentDescriptor[]
+      at: number
+    }
   | { type: 'text'; text: string }
-  | { type: 'tool'; name: string; input: Record<string, unknown> }
-  | { type: 'tool-result'; text: string; isError: boolean }
+  | { type: 'tool'; name: string; input: Record<string, unknown>; toolUseId?: string }
+  | {
+      type: 'tool-result'
+      text: string
+      isError: boolean
+      outcome?: 'completed' | 'failed' | 'denied' | 'cancelled'
+      toolUseId?: string
+      /** Metadados do output INTEIRO, calculados antes do preview capado. */
+      lineCount?: number
+      truncated?: boolean
+    }
   | {
       type: 'permission'
       requestId: string
+      toolUseId?: string
       toolName: string
       description: string
       inputPretty: string
       reason?: string
+      permissionRule?: string
       canAlways: boolean
     }
   | { type: 'permission-cancel'; requestId: string }
+  | {
+      type: 'interaction-resolved'
+      requestId: string
+      resolution:
+        | {
+            kind: 'permission'
+            toolUseId?: string
+            toolName: string
+            behavior: PermissionChoice
+          }
+        | { kind: 'question'; entries: { question: string; answer: string }[] }
+        | { kind: 'plan'; approve: boolean }
+        | { kind: 'stale' }
+    }
   /** AskUserQuestion virou card de opções (2.0): a resposta volta por
    *  answerQuestion, no mesmo canal de control_response da permissão. */
   | { type: 'question'; requestId: string; questions: GuiQuestion[] }
@@ -140,10 +217,16 @@ export type SessionEvent =
   | { type: 'session-id'; sessionId: string }
   | { type: 'ready'; caps: CliCaps }
   | { type: 'command-output'; text: string }
+  /** Medição canônica do contexto vivo; `null` significa que o backend não a informou. */
+  | { type: 'context-usage'; contextTokens: number | null; contextWindow: number | null }
+  | { type: 'command-completed'; isError: boolean; continues: boolean; errorText?: string }
   | { type: 'limit'; text: string }
   | {
       type: 'result'
       isError: boolean
+      outcome?: 'completed' | 'failed' | 'cancelled'
+      /** Outra mensagem já foi aceita pelo stream e continua trabalhando. */
+      continues?: boolean
       errorText?: string
       /* texto final do turno — comandos locais (ex.: /usage) respondem por
          mensagem assistant SINTÉTICA e o texto só aparece aqui, não em
@@ -160,6 +243,7 @@ export type SessionEvent =
 export type PermissionChoice = 'allow' | 'allow-always' | 'deny'
 
 interface PendingPermission {
+  toolUseId?: string
   toolName: string
   description: string
   input: Record<string, unknown>
@@ -197,6 +281,7 @@ interface StreamLine {
   rate_limit_info?: { status?: string; resetsAt?: number }
   request?: {
     subtype?: string
+    tool_use_id?: string
     tool_name?: string
     display_name?: string
     description?: string
@@ -214,6 +299,8 @@ interface StreamLine {
       | string
       | {
           type?: string
+          id?: string
+          tool_use_id?: string
           text?: string
           name?: string
           input?: Record<string, unknown>
@@ -225,13 +312,38 @@ interface StreamLine {
 }
 
 const IDLE_TIMEOUT = 600_000 // 10 min sem NENHUM evento (permissão pendente pausa)
+const INTERRUPT_CONFIRM_TIMEOUT = 10_000
+const INIT_CONFIRM_TIMEOUT = 20_000
 const DETAIL_MAX = 2000
-const RESULT_MAX = 400
 
 function firstLines(text: string, max: number): string {
-  const clean = text.trim()
-  if (clean.length <= max) return clean
-  return clean.slice(0, max) + '…'
+  const sliced = text.slice(0, Math.max(0, max) + 1).trim()
+  return sliced.length <= max ? sliced : sliced.slice(0, max) + '…'
+}
+
+function prettyGuiInput(input: Record<string, unknown>): string {
+  try {
+    return firstLines(JSON.stringify(limitGuiToolInput(input), null, 2), DETAIL_MAX)
+  } catch {
+    return '{ pedido indisponível para visualização }'
+  }
+}
+
+function toolResultEvent(
+  raw: string,
+  isError: boolean,
+  toolUseId?: string
+): Extract<SessionEvent, { type: 'tool-result' }> {
+  const details = guiToolResultDetails(raw)
+  return {
+    type: 'tool-result',
+    text: details.text,
+    isError,
+    outcome: isError ? 'failed' : 'completed',
+    toolUseId,
+    lineCount: details.lineCount,
+    truncated: details.truncated
+  }
 }
 
 export class MaestroSession {
@@ -242,15 +354,24 @@ export class MaestroSession {
   caps: CliCaps | null = null
   private child: ChildProcessWithoutNullStreams
   private emit: (evt: SessionEvent) => void
-  private buffer = ''
+  private protocol = new GuiProtocolStream()
   private stderrTail = ''
   private announced = false
   private killed = false
+  private closed = false
+  private initTimer: NodeJS.Timeout | null = null
   private idleTimer: NodeJS.Timeout | null = null
+  private turnSilenceTimer: NodeJS.Timeout | null = null
   private pending = new Map<string, PendingPermission>()
   private initReqId = randomUUID()
   private capsWaiters: ((caps: CliCaps | null) => void)[] = []
   private controlWaiters = new Map<string, (ok: boolean) => void>
+  private turnGeneration = 0
+  private pendingTurnGenerations: number[] = []
+  private activeTurnGeneration: number | null = null
+  private interruptGeneration: number | null = null
+  private interruptRequestId: string | null = null
+  private interruptTimer: NodeJS.Timeout | null = null
 
   constructor(opts: MaestroSessionOpts, emit: (evt: SessionEvent) => void) {
     this.opts = opts
@@ -305,17 +426,30 @@ export class MaestroSession {
     })
 
     this.child.stdout.on('data', (d: Buffer) => {
-      this.buffer += d.toString()
-      const lines = this.buffer.split('\n')
-      this.buffer = lines.pop() ?? ''
-      for (const line of lines) this.handleLine(line)
+      const chunk = this.protocol.push(d)
+      for (const line of chunk.lines) {
+        this.handleLine(line)
+        if (!this.alive) return
+      }
+      if (chunk.overflow) {
+        this.emit({ type: 'fatal', text: 'o Claude excedeu o limite de uma mensagem de protocolo' })
+        this.kill()
+        return
+      }
       this.resetIdle()
     })
     this.child.stderr.on('data', (d: Buffer) => {
       this.stderrTail = (this.stderrTail + d.toString()).slice(-1000)
     })
     this.child.on('error', (e) => {
+      this.closed = true
+      this.clearInitGuard()
       this.clearIdle()
+      this.clearTurnSilence()
+      this.clearInterruptGuard()
+      this.cancelPendingInteractions()
+      this.pendingTurnGenerations = []
+      this.activeTurnGeneration = null
       this.emit({ type: 'fatal', text: e.message })
     })
     // Handshake: a resposta traz comandos, modelos e conta REAIS do CLI.
@@ -324,12 +458,26 @@ export class MaestroSession {
       request_id: this.initReqId,
       request: { subtype: 'initialize' }
     })
+    this.initTimer = setTimeout(() => {
+      if (!this.alive || this.caps) return
+      this.emit({ type: 'fatal', text: 'o Claude não confirmou a abertura da conversa' })
+      this.kill()
+    }, INIT_CONFIRM_TIMEOUT)
 
     this.child.on('close', (code) => {
+      const failedBeforeClose = this.closed
+      this.closed = true
+      this.clearInitGuard()
+      const final = this.protocol.end()
+      for (const line of final.lines) this.handleLine(line)
       this.clearIdle()
-      if (this.buffer) this.handleLine(this.buffer)
+      this.clearTurnSilence()
+      this.clearInterruptGuard()
+      this.cancelPendingInteractions()
+      this.pendingTurnGenerations = []
+      this.activeTurnGeneration = null
       for (const w of this.capsWaiters.splice(0)) w(this.caps)
-      if (!this.killed) {
+      if (!this.killed && !failedBeforeClose) {
         const err = this.stderrTail.trim()
         this.emit({
           type: 'fatal',
@@ -341,7 +489,7 @@ export class MaestroSession {
   }
 
   get alive(): boolean {
-    return !this.killed && this.child.exitCode === null
+    return !this.killed && !this.closed && this.child.exitCode === null && this.child.signalCode === null
   }
 
   /** Mesmo destino de spawn? (mudar seat/modelo/effort/fast exige processo novo) */
@@ -357,6 +505,9 @@ export class MaestroSession {
   }
 
   send(text: string): void {
+    const generation = ++this.turnGeneration
+    this.pendingTurnGenerations = enqueueGuiTurn(this.pendingTurnGenerations, generation)
+    this.activeTurnGeneration = this.pendingTurnGenerations[0] ?? null
     this.write({
       type: 'user',
       message: { role: 'user', content: [{ type: 'text', text }] }
@@ -368,7 +519,7 @@ export class MaestroSession {
   answerPermission(
     requestId: string,
     choice: PermissionChoice
-  ): { toolName: string; description: string } | null {
+  ): { toolUseId?: string; toolName: string; description: string } | null {
     const req = this.pending.get(requestId)
     if (!req) return null
     this.pending.delete(requestId)
@@ -387,7 +538,11 @@ export class MaestroSession {
       response: { subtype: 'success', request_id: requestId, response }
     })
     this.resetIdle()
-    return { toolName: req.toolName, description: req.description }
+    return {
+      ...(req.toolUseId ? { toolUseId: req.toolUseId } : {}),
+      toolName: req.toolName,
+      description: req.description
+    }
   }
 
   /** Responde a AskUserQuestion pendente: allow com as escolhas DENTRO do
@@ -427,12 +582,32 @@ export class MaestroSession {
     return true
   }
 
-  interrupt(): void {
+  interrupt(): boolean {
+    if (this.activeTurnGeneration === null) return false
+    const generation = this.activeTurnGeneration
+    if (
+      this.interruptGeneration === generation &&
+      this.interruptRequestId !== null &&
+      this.interruptTimer !== null
+    )
+      return true
+    this.clearInterruptGuard()
+    const requestId = randomUUID()
+    this.interruptGeneration = generation
+    this.interruptRequestId = requestId
+    this.interruptTimer = setTimeout(() => {
+      this.failInterrupt(generation, 'o Claude não confirmou a interrupção')
+    }, INTERRUPT_CONFIRM_TIMEOUT)
     this.write({
       type: 'control_request',
-      request_id: randomUUID(),
+      request_id: requestId,
       request: { subtype: 'interrupt' }
     })
+    return true
+  }
+
+  get turnActive(): boolean {
+    return this.activeTurnGeneration !== null || this.pendingTurnGenerations.length > 0
   }
 
   /** Espera o handshake initialize responder (caps reais do CLI). */
@@ -450,12 +625,17 @@ export class MaestroSession {
 
   /** Troca de modelo AO VIVO via protocolo de controle (sem matar a sessão). */
   setModel(model: string): Promise<boolean> {
-    if (!this.alive) return Promise.resolve(false)
+    if (!this.alive || this.turnActive) return Promise.resolve(false)
     const id = randomUUID()
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
-        this.controlWaiters.delete(id)
+        if (!this.controlWaiters.delete(id)) return
+        this.emit({
+          type: 'fatal',
+          text: 'o Claude não confirmou a troca de executor; encerrei a sessão para não usar um estado incerto'
+        })
         resolve(false)
+        this.kill()
       }, 10_000)
       this.controlWaiters.set(id, (ok) => {
         clearTimeout(timer)
@@ -471,14 +651,62 @@ export class MaestroSession {
   }
 
   kill(): void {
+    if (this.killed) return
     this.killed = true
+    this.clearInitGuard()
+    this.cancelPendingInteractions()
+    this.pendingTurnGenerations = []
+    this.activeTurnGeneration = null
     this.clearIdle()
-    try {
-      this.child.stdin.end()
-    } catch {
-      // stdin já fechado
-    }
-    this.child.kill()
+    this.clearTurnSilence()
+    this.clearInterruptGuard()
+    for (const waiter of this.capsWaiters.splice(0)) waiter(null)
+    for (const waiter of this.controlWaiters.values()) waiter(false)
+    this.controlWaiters.clear()
+    terminateGuiProcessTree(this.child)
+  }
+
+  /** Modelo + effort na camada de flags da sessão viva. Um único request
+   *  evita sucesso parcial: ou o CLI confirma o par inteiro, ou o chamador
+   *  mantém a seleção anterior. `null` remove o override daquela chave. */
+  setExecutor(input: { model?: string; effort?: string }): Promise<boolean> {
+    if (!this.alive || this.turnActive) return Promise.resolve(false)
+    const id = randomUUID()
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (!this.controlWaiters.delete(id)) return
+        this.emit({
+          type: 'fatal',
+          text: 'o Claude não confirmou a troca; encerrei a sessão para não usar um estado incerto'
+        })
+        resolve(false)
+        this.kill()
+      }, 10_000)
+      this.controlWaiters.set(id, (ok) => {
+        clearTimeout(timer)
+        if (ok) {
+          this.opts.model = input.model
+          this.opts.effort = input.effort
+        }
+        resolve(ok)
+      })
+      this.write({
+        type: 'control_request',
+        request_id: id,
+        request: {
+          subtype: 'apply_flag_settings',
+          settings: {
+            model: input.model ?? null,
+            effortLevel: input.effort ?? null
+          }
+        }
+      })
+    })
+  }
+
+  private clearInitGuard(): void {
+    if (this.initTimer) clearTimeout(this.initTimer)
+    this.initTimer = null
   }
 
   private write(obj: unknown): void {
@@ -491,8 +719,22 @@ export class MaestroSession {
 
   private resetIdle(): void {
     this.clearIdle()
+    this.clearTurnSilence()
     // Permissão pendente = esperando o HUMANO, não o CLI. Sem timeout.
     if (this.pending.size > 0) return
+    if (
+      shouldArmGuiTurnWatchdog(
+        this.opts.idleTimeoutMs,
+        this.activeTurnGeneration !== null,
+        false
+      )
+    ) {
+      this.turnSilenceTimer = setTimeout(() => {
+        if (!this.alive || this.activeTurnGeneration === null || this.pending.size > 0) return
+        this.emit({ type: 'fatal', text: 'o Claude ficou sem responder durante o turno' })
+        this.kill()
+      }, GUI_ACTIVE_TURN_SILENCE_TIMEOUT)
+    }
     const timeout = this.opts.idleTimeoutMs ?? IDLE_TIMEOUT
     if (timeout <= 0) return // relógio desligado (pane GUI)
     this.idleTimer = setTimeout(() => {
@@ -506,14 +748,48 @@ export class MaestroSession {
     this.idleTimer = null
   }
 
+  private clearTurnSilence(): void {
+    if (this.turnSilenceTimer) clearTimeout(this.turnSilenceTimer)
+    this.turnSilenceTimer = null
+  }
+
+  private cancelPendingInteractions(): void {
+    const requestIds = [...this.pending.keys()]
+    this.pending.clear()
+    for (const requestId of requestIds) {
+      this.emit({ type: 'permission-cancel', requestId })
+    }
+  }
+
+  private clearInterruptGuard(): void {
+    if (this.interruptTimer) clearTimeout(this.interruptTimer)
+    this.interruptTimer = null
+    this.interruptGeneration = null
+    this.interruptRequestId = null
+  }
+
+  private failInterrupt(generation: number, message: string): void {
+    if (
+      !this.alive ||
+      this.activeTurnGeneration !== generation ||
+      this.interruptGeneration !== generation
+    )
+      return
+    this.clearInterruptGuard()
+    this.activeTurnGeneration = null
+    this.emit({ type: 'fatal', text: message })
+    this.kill()
+  }
+
   private handleLine(line: string): void {
     if (!line.trim()) return
-    let evt: StreamLine
-    try {
-      evt = JSON.parse(line) as StreamLine
-    } catch {
-      return // linha parcial/não-JSON
+    const parsed = parseGuiProtocolLine<unknown>(line)
+    if (!parsed.ok || !isGuiClaudeProtocolEnvelope(parsed.value)) {
+      this.emit({ type: 'fatal', text: 'o Claude enviou uma resposta de protocolo inválida' })
+      this.kill()
+      return
     }
+    const evt = parsed.value as StreamLine
 
     switch (evt.type) {
       case 'system':
@@ -552,7 +828,12 @@ export class MaestroSession {
           if (block.type === 'text' && block.text) {
             this.emit({ type: 'text', text: block.text })
           } else if (block.type === 'tool_use' && block.name) {
-            this.emit({ type: 'tool', name: block.name, input: block.input ?? {} })
+            this.emit({
+              type: 'tool',
+              name: block.name,
+              input: block.input ?? {},
+              toolUseId: block.id
+            })
           }
         }
         break
@@ -561,7 +842,17 @@ export class MaestroSession {
       case 'control_response': {
         const resp = evt.response
         if (!resp?.request_id) break
-        if (resp.request_id === this.initReqId) {
+        if (resp.request_id === this.interruptRequestId) {
+          if (resp.subtype !== 'success' && this.interruptGeneration !== null) {
+            this.failInterrupt(
+              this.interruptGeneration,
+              resp.error
+                ? 'não deu para interromper o Claude — ' + firstLines(resp.error, 300)
+                : 'o Claude recusou a interrupção'
+            )
+          }
+        } else if (resp.request_id === this.initReqId) {
+          this.clearInitGuard()
           if (resp.subtype === 'success' && resp.response) {
             this.caps = {
               commands: resp.response.commands ?? [],
@@ -569,6 +860,12 @@ export class MaestroSession {
               account: resp.response.account
             }
             this.emit({ type: 'ready', caps: this.caps })
+          } else {
+            const detail = resp.error ? `: ${firstLines(resp.error, 300)}` : ''
+            this.emit({ type: 'fatal', text: `handshake do Claude falhou${detail}` })
+            for (const w of this.capsWaiters.splice(0)) w(null)
+            this.kill()
+            break
           }
           for (const w of this.capsWaiters.splice(0)) w(this.caps)
         } else {
@@ -607,13 +904,9 @@ export class MaestroSession {
                       .map((c) => c.text ?? '')
                       .join('\n')
                   : ''
-          if (raw.trim()) {
-            this.emit({
-              type: 'tool-result',
-              text: firstLines(raw, RESULT_MAX),
-              isError: Boolean(block.is_error)
-            })
-          }
+          // Resultado vazio também FECHA o card: comando silencioso não pode
+          // ficar com spinner eterno. A contagem nasce antes do preview capado.
+          this.emit(toolResultEvent(raw, Boolean(block.is_error), block.tool_use_id))
         }
         break
       }
@@ -621,18 +914,26 @@ export class MaestroSession {
       case 'control_request': {
         const req = evt.request
         if (req?.subtype === 'can_use_tool' && evt.request_id && req.tool_name) {
-          const suggestions = req.permission_suggestions ?? []
           const input = req.input ?? {}
+          const suggestions = resolveChatPermissionSuggestions(
+            req.tool_name,
+            input,
+            req.permission_suggestions
+          )
+          const permissionRule = chatPermissionRuleLabel(suggestions)
+          const toolName = firstLines(req.display_name ?? req.tool_name, 160)
+          const description = firstLines(req.description ?? '', 500)
           // Interativo ou não, o pedido mora no MESMO `pending`: a resposta de
           // question/plan-review reusa o control_response da permissão, e o
           // control_cancel_request abaixo cobre os três tipos de graça.
           this.pending.set(evt.request_id, {
-            toolName: req.display_name ?? req.tool_name,
-            description: req.description ?? '',
+            ...(req.tool_use_id ? { toolUseId: req.tool_use_id } : {}),
+            toolName,
+            description,
             input,
             suggestions
           })
-          this.clearIdle() // esperando o humano — interativo NUNCA expira
+          this.resetIdle() // esperando o humano — nenhum relógio corre
           // PERGUNTA ESTRUTURADA (2.0): AskUserQuestion vira card de opções.
           // GOTCHA documentado no fork (claudecodeui): em acceptEdits/
           // bypassPermissions o caminho de permissão pode resolver ANTES do
@@ -649,17 +950,20 @@ export class MaestroSession {
           // MODO PLANO: ExitPlanMode carrega o plano em markdown (o fork
           // desfaz o \n escapado — mesma regra aqui).
           if (req.tool_name === 'ExitPlanMode' || req.tool_name === 'exit_plan_mode') {
-            const plan = String(input['plan'] ?? '').replace(/\\n/g, '\n')
+            const rawPlan = boundedGuiText(input['plan'], GUI_PLAN_MAX_CHARS) ?? ''
+            const plan = rawPlan.replace(/\\n/g, '\n')
             this.emit({ type: 'plan-review', requestId: evt.request_id, plan })
             break
           }
           this.emit({
             type: 'permission',
             requestId: evt.request_id,
-            toolName: req.display_name ?? req.tool_name,
-            description: req.description ?? '',
-            inputPretty: firstLines(JSON.stringify(input, null, 2), DETAIL_MAX),
-            reason: req.decision_reason,
+            ...(req.tool_use_id ? { toolUseId: req.tool_use_id } : {}),
+            toolName,
+            description,
+            inputPretty: prettyGuiInput(input),
+            reason: boundedGuiText(req.decision_reason, 500),
+            ...(permissionRule ? { permissionRule } : {}),
             canAlways: suggestions.length > 0
           })
         }
@@ -688,6 +992,14 @@ export class MaestroSession {
       }
 
       case 'result': {
+        this.cancelPendingInteractions()
+        const advanced = advanceGuiTurn(this.pendingTurnGenerations)
+        const generation = advanced.completed ?? this.activeTurnGeneration
+        const interrupted =
+          generation !== null && this.interruptGeneration === generation
+        this.pendingTurnGenerations = advanced.pending
+        this.activeTurnGeneration = advanced.active
+        this.clearInterruptGuard()
         const u = evt.usage
         const contextTokens = u
           ? (u.input_tokens ?? 0) +
@@ -699,9 +1011,16 @@ export class MaestroSession {
           // resume/fork pode mudar o id — o result é a palavra final do turno.
           this.emit({ type: 'session-id', sessionId: evt.session_id })
         }
+        const outcome = evt.is_error
+          ? 'failed'
+          : interrupted
+            ? 'cancelled'
+            : 'completed'
         this.emit({
           type: 'result',
           isError: Boolean(evt.is_error),
+          outcome,
+          continues: this.activeTurnGeneration !== null,
           errorText: evt.is_error ? (evt.result ?? 'erro sem detalhe') : undefined,
           resultText: typeof evt.result === 'string' && evt.result.trim() ? evt.result : undefined,
           contextTokens,

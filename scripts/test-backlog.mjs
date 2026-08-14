@@ -85,3 +85,24 @@ test('backlog items reject versions owned by another project', (t) => {
   assert.equal(store.updateItem(item.id, { versionId: foreign.id }), undefined)
   assert.equal(store.getItem(item.id)?.versionId, own.id)
 })
+
+test('mission version choices expose only open versions and their current default', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-backlog-mission-version-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const store = new BacklogStore(join(root, 'backlog.json'))
+  const current = store.createVersion('project-1', { name: 'V1.2' })
+  const next = store.createVersion('project-1', { name: 'V2.0' })
+  const released = store.createVersion('project-1', { name: 'V1.1' })
+  const foreign = store.createVersion('project-2', { name: 'V9.0' })
+  store.markVersionReleased(released.id)
+
+  const choices = store.missionVersionChoices('project-1')
+
+  assert.equal(choices.defaultVersionId, current.id)
+  assert.deepEqual(
+    choices.versions.map((version) => version.id),
+    [current.id, next.id]
+  )
+  assert.equal(choices.versions.some((version) => version.id === released.id), false)
+  assert.equal(choices.versions.some((version) => version.id === foreign.id), false)
+})

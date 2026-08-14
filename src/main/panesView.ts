@@ -80,6 +80,13 @@ export class PanesViewManager {
       const wc = this.liveWebContents()
       if (wc) wc.send('panes-view:state', state)
     })
+    // Esc pode nascer na sidebar/titlebar do HOST enquanto o chat ativo mora
+    // nesta WebContentsView. O main só encaminha se a view estiver visível.
+    ipcMain.on('panes-view:gui-escape', (e) => {
+      if (!this.guardHost(e, 'panes-view:gui-escape') || !this.lastLayout?.visible) return
+      const wc = this.liveWebContents()
+      if (wc) wc.send('panes-view:gui-escape')
+    })
     // ——— relays da VIEW para o host (F3-c4) — volume baixo (transições) ———
     ipcMain.on('panes-view:navigate', (e, projectId: string, tab: string) => {
       if (!this.guardView(e, 'panes-view:navigate')) return

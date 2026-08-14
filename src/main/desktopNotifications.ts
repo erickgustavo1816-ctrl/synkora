@@ -1,11 +1,17 @@
 import { Notification, type BrowserWindow } from 'electron'
+import {
+  canShowDesktopNotification,
+  resetNotifyThrottleForTests,
+  shouldNotify,
+  type DesktopNotifyKind
+} from './desktopNotificationPolicy'
 
 // Notificações de desktop do Synkora 2.0 (onda D): avisam o dono quando o app
 // não está em foco — missão esperando você (permissão/pergunta no chat GUI),
 // conflito na fila, merge concluído, fila pronta pro ⇪. Com o app em foco os
 // pulsos internos bastam; notificar por cima seria ruído.
 
-export type DesktopNotifyKind = 'attention' | 'conflict' | 'merged' | 'queue-ready'
+export type { DesktopNotifyKind } from './desktopNotificationPolicy'
 
 export interface DesktopNotifyInput {
   kind: DesktopNotifyKind
@@ -15,29 +21,17 @@ export interface DesktopNotifyInput {
   key: string
   /** Navegação ao clicar (além do foco na janela, que é automático). */
   onClick?: () => void
-}
-
-const THROTTLE_MS: Record<DesktopNotifyKind, number> = {
-  attention: 30_000,
-  conflict: 15_000,
-  merged: 5_000,
-  'queue-ready': 30_000,
-}
-
-const lastShownAt = new Map<string, number>()
-
-/** Regra pura de throttle — exportada para teste. */
-export function shouldNotify(kind: DesktopNotifyKind, key: string, now: number): boolean {
-  const mapKey = `${kind}:${key}`
-  const last = lastShownAt.get(mapKey) ?? 0
-  if (now - last < THROTTLE_MS[kind]) return false
-  lastShownAt.set(mapKey, now)
-  return true
+  /** Avisos do chat usam o som próprio do renderer, se habilitado. */
+  silent?: boolean
+  /** Chat: mostra o toast do sistema mesmo durante o uso do app. */
+  showWhenFocused?: boolean
 }
 
 export function __resetNotifyThrottleForTests(): void {
-  lastShownAt.clear()
+  resetNotifyThrottleForTests()
 }
+
+export { shouldNotify }
 
 let getWindow: () => BrowserWindow | null = () => null
 
@@ -48,16 +42,19 @@ export function initDesktopNotifications(accessor: () => BrowserWindow | null): 
 
 export function notifyDesktop(input: DesktopNotifyInput): void {
   try {
-    if (!Notification.isSupported()) return
     const win = getWindow()
-    // Janela em foco = o dono está olhando; os sinais internos cobrem.
-    if (win && !win.isDestroyed() && win.isFocused()) return
+    const windowFocused = Boolean(win && !win.isDestroyed() && win.isFocused())
+    if (!canShowDesktopNotification({
+      supported: Notification.isSupported(),
+      windowFocused,
+      showWhenFocused: input.showWhenFocused
+    })) return
     if (!shouldNotify(input.kind, input.key, Date.now())) return
 
     const notification = new Notification({
       title: input.title,
       body: input.body,
-      silent: false,
+      silent: input.silent ?? false,
     })
     notification.on('click', () => {
       const target = getWindow()
