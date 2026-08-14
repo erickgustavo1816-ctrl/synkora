@@ -61,6 +61,14 @@ import type {
   FileTreeEntry as FileActionTreeEntry,
   FileTreeSnapshot
 } from '../main/fileActions'
+import type {
+  HistoryLoadResult,
+  HistorySearchInput,
+  HistorySearchHit,
+  HistorySearchResult,
+  HistoryTranscriptMessage,
+  PaletteNavigationTarget
+} from '../shared/commandPalette'
 
 /** entrada do diário da caixa-preta + linha legível pronta para exibição */
 export type BlackboxTailEntry = BlackboxEntry & { line: string }
@@ -115,6 +123,14 @@ export type { GuiWorkspaceFilesResult }
 /** Ações P26 usam a mesma raiz lógica do preview, mas conservam seu contrato
  * próprio para entradas bloqueadas e mutações auditadas. */
 export type { FileActionResult, FileActionScope, FileActionTreeEntry, FileTreeSnapshot }
+export type {
+  HistoryLoadResult,
+  HistorySearchInput,
+  HistorySearchHit,
+  HistorySearchResult,
+  HistoryTranscriptMessage,
+  PaletteNavigationTarget
+}
 
 export type {
   MissionProgressState,
@@ -1239,6 +1255,16 @@ const api = {
       ipcRenderer.on('panes-view:navigate', listener)
       return () => ipcRenderer.removeListener('panes-view:navigate', listener)
     },
+    /** VIEW -> HOST: alvo fechado da paleta; o main valida a união antes de
+     *  repassar e o host refaz a navegação no próprio store. */
+    navigateCommandTarget: (target: PaletteNavigationTarget): void =>
+      ipcRenderer.send('panes-view:command-target', target),
+    /** HOST: recebe o alvo escolhido na paleta da WebContentsView. */
+    onCommandTarget: (cb: (target: PaletteNavigationTarget) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, target: PaletteNavigationTarget): void => cb(target)
+      ipcRenderer.on('panes-view:command-target', listener)
+      return () => ipcRenderer.removeListener('panes-view:command-target', listener)
+    },
     onActivity: (cb: (paneId: string, activity: string) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, paneId: string, activity: string): void =>
         cb(paneId, activity)
@@ -1280,6 +1306,15 @@ const api = {
       ipcRenderer.on('panes-view:tip', listener)
       return () => ipcRenderer.removeListener('panes-view:tip', listener)
     }
+  },
+  /** Busca local da paleta. O main só devolve falas user/assistant já
+   *  redigidas; selectionId é opaco e expira. */
+  history: {
+    search: (input: HistorySearchInput): Promise<HistorySearchResult> =>
+      ipcRenderer.invoke('history:search', input),
+    cancel: (requestId: string): void => ipcRenderer.send('history:cancel', requestId),
+    load: (selectionId: string): Promise<HistoryLoadResult> =>
+      ipcRenderer.invoke('history:load', selectionId)
   },
   /** PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md): o chat que
    *  substitui o xterm. O motor é MaestroSession/CodexSession por pane, no

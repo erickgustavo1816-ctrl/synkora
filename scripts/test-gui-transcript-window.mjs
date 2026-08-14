@@ -55,7 +55,9 @@ test('integra a janela no bloco de render/scroll sem alterar o cap do store', ()
   const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
 
   assert.match(pane, /useGuiTranscriptWindow/u)
-  assert.match(pane, /groupConsecutiveGuiTools\(visibleItems\)/u)
+  // P11 acrescenta a etapa de aninhamento, mas a fonte continua sendo a janela
+  // paginada — nunca `gui.items` inteiro.
+  assert.match(pane, /guiThreadRenderItems\(visibleItems\)/u)
   assert.match(pane, /onScroll=\{onTranscriptScroll\}/u)
   assert.match(pane, /onClick=\{loadAll\}/u)
   assert.match(pane, /carregar todas as \{totalItems\}/u)

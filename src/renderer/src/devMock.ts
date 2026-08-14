@@ -1123,6 +1123,8 @@ export function installDevMock(): void {
       reportActivity: () => undefined,
       reportAttentionCleared: () => undefined,
       onNavigateHost: () => () => undefined,
+      navigateCommandTarget: () => undefined,
+      onCommandTarget: () => () => undefined,
       onActivity: () => () => undefined,
       onAttentionCleared: () => () => undefined,
       reportVoiceFocus: () => undefined,
@@ -1319,6 +1321,23 @@ export function installDevMock(): void {
     harness: {
       setBypass: async () => undefined,
       setSensitiveBypass: async () => undefined
+    },
+    history: {
+      search: async (input) => ({
+        ok: true,
+        requestId: input.requestId,
+        hits: [],
+        cancelled: false,
+        truncated: false,
+        scannedFiles: 0,
+        scannedBytes: 0
+      }),
+      cancel: () => undefined,
+      load: async (selectionId) => ({
+        ok: false,
+        selectionId,
+        error: 'o preview do navegador não tem históricos locais'
+      })
     },
     // Pane GUI (docs/GUI_PANE_CONTRACT.md): no preview de browser não há CLI —
     // as chamadas respondem ok e nenhum evento vivo chega.

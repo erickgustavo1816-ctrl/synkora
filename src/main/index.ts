@@ -99,6 +99,7 @@ import { registerSettingsIpc } from './ipc/settings'
 import { registerServicesIpc } from './ipc/services'
 import { registerHarnessIpc } from './ipc/harness'
 import { registerGuiIpc } from './ipc/gui'
+import { registerHistoryIpc } from './ipc/history'
 import { waitForGuiCliStable } from './guiCliLaunch'
 import type { GuiSessionRegistry } from './guiSessions'
 import { isGuiMissionPaneId, isGuiPlanningPaneId } from './guiMissionContracts'
@@ -6901,6 +6902,12 @@ app.whenReady().then(async () => {
   })
   const guiSessionRegistry = guiSessions
   app.once('will-quit', () => guiSessionRegistry.killAll())
+  // Cmd/Ctrl+K: só depois do registro GUI existir, porque o índice de
+  // históricos liga sessionId aos panes/mission tabs que podem remontá-los.
+  registerHistoryIpc(ctx, {
+    assertAppRendererSender,
+    guiSessions: guiSessionRegistry
+  })
   registerProjectPlanIpc(ctx, {
     humanProjectPlanApprovals,
     humanProjectMissionStarts,

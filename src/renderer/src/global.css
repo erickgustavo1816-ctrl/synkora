@@ -19321,3 +19321,454 @@ details.gui-error-line {
       "attach mode spacer context effort send";
   }
 }
+
+/* ---------- PALETA GLOBAL (P16) ----------
+   Impeccable: operação única `harden`. A superfície cobre estados vazios,
+   carregamento/falha/limite, texto longo, foco, viewport curto e alto
+   contraste sem mudar a linguagem papel & painel do produto. */
+
+.command-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: max(44px, 8dvh) 18px 18px;
+  background: rgba(38, 32, 25, 0.32);
+  -webkit-app-region: no-drag;
+}
+
+.command-palette {
+  width: min(720px, 100%);
+  max-height: min(720px, calc(100dvh - max(62px, 10dvh)));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 22px 70px rgba(38, 32, 25, 0.3);
+  animation: command-palette-in 120ms ease-out both;
+}
+
+@keyframes command-palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+}
+
+.command-palette-search {
+  flex: none;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-3);
+}
+
+.command-palette-search > span {
+  color: var(--accent-deep);
+  font-size: 18px;
+}
+
+.command-palette-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 600 14px/1.4 var(--mono);
+}
+
+.command-palette-search input::placeholder {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
+.command-palette-search:focus-within {
+  box-shadow: inset 3px 0 var(--accent);
+}
+
+.command-palette-search kbd,
+.command-palette-footer > span:last-child {
+  flex: none;
+  border: 1px solid var(--line);
+  border-bottom-color: var(--line-strong);
+  border-radius: 5px;
+  padding: 2px 6px;
+  background: var(--paper-2);
+  color: var(--ink-3);
+  font: 600 9px/1.3 var(--mono);
+  text-transform: uppercase;
+}
+
+.command-palette-filters {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: thin;
+}
+
+.command-palette-filters button {
+  flex: none;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.command-palette-filters button:hover,
+.command-palette-filters button:focus-visible {
+  border-color: var(--line-strong);
+  color: var(--ink);
+  outline: none;
+}
+
+.command-palette-filters button.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--card));
+  color: var(--accent-deep);
+  font-weight: 700;
+}
+
+.command-palette-results,
+.command-palette-preview {
+  flex: 1 1 auto;
+  min-height: 84px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 6px;
+}
+
+.command-palette-result {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.command-palette-result:hover,
+.command-palette-result.selected {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+  background: color-mix(in srgb, var(--accent) 7%, var(--paper));
+}
+
+.command-palette-result:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 48%, transparent);
+  outline-offset: -2px;
+}
+
+.command-palette-glyph {
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--accent-deep);
+  background: var(--paper);
+}
+
+.command-palette-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.command-palette-copy b,
+.command-palette-copy small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.command-palette-copy b {
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.command-palette-copy small {
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.command-palette-source {
+  align-self: center;
+  color: var(--ink-3);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.command-palette-empty,
+.command-palette-preview-error {
+  min-height: 116px;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.command-palette-preview-error {
+  color: var(--err);
+}
+
+.command-palette-footer {
+  flex: none;
+  min-width: 0;
+  min-height: 33px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-3);
+  font-size: 9.5px;
+}
+
+.command-palette-footer > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.command-palette-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.command-palette-preview-note {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 7%, transparent);
+  color: var(--ink-2);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.command-palette-preview-thread,
+.gui-history-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.command-palette-preview-message,
+.gui-history-message {
+  width: min(88%, 660px);
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+}
+
+.command-palette-preview-message.user,
+.gui-history-message.user {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--accent) 6%, var(--paper));
+}
+
+.command-palette-preview-message > span,
+.gui-history-message > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ink-3);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.command-palette-preview-message p,
+.gui-history-message p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+.command-palette-preview-message.selected,
+.gui-history-message.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* Histórico montado no pane: uma camada somente-leitura cobre o fio vivo e o
+   composer some enquanto ela está aberta. O alvo exato permanece no DOM por
+   id + cursor, sem converter uma mensagem antiga em estado atual do agente. */
+.gui-history-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+.gui-history-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 18px;
+  border-bottom: 1px solid var(--gui-line);
+  background: color-mix(in srgb, var(--warn) 5%, var(--paper));
+}
+
+.gui-history-head > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gui-history-head b,
+.gui-history-head small {
+  overflow-wrap: anywhere;
+}
+
+.gui-history-head b {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.gui-history-head small {
+  color: var(--ink-3);
+  font-size: 9.5px;
+}
+
+.gui-history-head button {
+  flex: none;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink-2);
+  font-size: 9.5px;
+  cursor: pointer;
+}
+
+.gui-history-head button:hover,
+.gui-history-head button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent-deep);
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 1px;
+}
+
+.gui-history-limited {
+  flex: none;
+  margin: 8px 18px 0;
+  padding: 6px 9px;
+  border-left: 2px solid var(--warn);
+  color: var(--ink-2);
+  background: color-mix(in srgb, var(--warn) 7%, transparent);
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
+.gui-history-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  width: 100%;
+  max-width: var(--gui-column);
+  margin: 0 auto;
+  padding: 12px 18px 20px;
+}
+
+@media (max-width: 520px), (max-height: 560px) {
+  .command-palette-backdrop {
+    padding: 8px;
+  }
+
+  .command-palette {
+    max-height: calc(100dvh - 16px);
+  }
+
+  .command-palette-source,
+  .command-palette-search kbd {
+    display: none;
+  }
+
+  .command-palette-result {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+
+  .gui-history-head {
+    align-items: flex-start;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .gui-history-head button {
+    white-space: normal;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .command-palette {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .command-palette,
+  .command-palette-result.selected,
+  .command-palette-preview-message.selected,
+  .gui-history-message.selected {
+    border-color: Highlight;
+  }
+
+  .command-palette-search:focus-within,
+  .command-palette-preview-message.selected,
+  .gui-history-message.selected {
+    box-shadow: inset 3px 0 Highlight;
+  }
+}

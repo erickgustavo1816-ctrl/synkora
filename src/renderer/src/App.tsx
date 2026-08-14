@@ -21,6 +21,11 @@ import { TERMINAL_DEFAULT_FONT_SIZE } from './terminalGeometry'
 import { installGlobalGuiEscape } from './guiEscape'
 import { guiApi } from './guiApi'
 import GuiQueueDispatcher from './components/GuiQueueDispatcher'
+import CommandPalette from './components/CommandPalette'
+import {
+  navigateFromCommandPalette,
+  reportPaletteNavigationFailure
+} from './commandPaletteNavigation'
 
 export default function App(): React.JSX.Element {
   const openProjectId = useStore((s) => s.openProjectId)
@@ -165,6 +170,17 @@ export default function App(): React.JSX.Element {
           useStore.getState().setPaneActivity(paneId, activity as PaneActivity)
         )
       : () => undefined
+    const offCommandTarget = window.synkora.panesView.onCommandTarget
+      ? window.synkora.panesView.onCommandTarget((target) => {
+          void navigateFromCommandPalette(target, 'host')
+            .then((outcome) => {
+              if (outcome.error) reportPaletteNavigationFailure(outcome.error)
+            })
+            .catch(() => {
+              reportPaletteNavigationFailure('não consegui abrir esse destino agora')
+            })
+        })
+      : () => undefined
     const offViewAttn = window.synkora.panesView.onAttentionCleared
       ? window.synkora.panesView.onAttentionCleared((projectId, paneId) =>
           useStore.getState().clearPaneAttention(projectId, paneId)
@@ -178,6 +194,7 @@ export default function App(): React.JSX.Element {
       offFilesNav()
       offViewNav()
       offViewActivity()
+      offCommandTarget()
       offViewAttn()
       offSettings()
       offOpenFree()
@@ -327,6 +344,9 @@ export default function App(): React.JSX.Element {
     <div className="app-shell">
       <GuiPanelErrorBoundary paneId="app:queue-dispatcher" label="a fila de conversas">
         <GuiQueueDispatcher />
+      </GuiPanelErrorBoundary>
+      <GuiPanelErrorBoundary paneId="app:command-palette" label="a paleta de comandos">
+        <CommandPalette root="host" />
       </GuiPanelErrorBoundary>
       <GuiPanelErrorBoundary paneId="app:tooltip-layer" label="as dicas">
         <TooltipLayer />

@@ -10,6 +10,7 @@ import {
 } from './guiApi'
 import type {
   GuiAttachmentDescriptor,
+  HistoryTranscriptMessage,
   SettingsSecretName,
   SkillState,
   SynkoraSettings,
@@ -698,6 +699,18 @@ export interface GuiPaneState {
   /** `gui:create` já foi pedido para este pane nesta janela */
   spawned: boolean
   queued: GuiQueuedMessage | null
+}
+
+/** Transcript local, já sanitizado no main, aberto pela paleta sobre o pane
+ * GUI correspondente. É uma leitura efêmera: nunca substitui o fio vivo. */
+export interface GuiHistoryTarget {
+  paneId: string
+  sessionId: string
+  provider: 'claude' | 'codex'
+  messages: HistoryTranscriptMessage[]
+  targetMessageId: string
+  targetCursor: number
+  truncated: boolean
 }
 
 export const EMPTY_GUI_PANE: GuiPaneState = {
@@ -1757,6 +1770,10 @@ interface SynkoraState {
   /** conversa de cada pane GUI (Synkora 2.0), por paneId. Alimentada pelo
    *  canal `gui:live` e pelo replay de `gui:state` na montagem. */
   guiPanes: Record<string, GuiPaneState>
+  /** Uma seleção global por renderer; o GuiPane exato é o único consumidor. */
+  guiHistoryTarget: GuiHistoryTarget | null
+  showGuiHistoryTarget: (target: GuiHistoryTarget) => void
+  clearGuiHistoryTarget: (paneId?: string) => void
   /** evento vivo do canal `gui:live` (payload cru — o redutor valida) */
   handleGuiLive: (paneId: string, evt: unknown) => void
   /** remontagem: refaz o estado do zero a partir do ring buffer do main */
@@ -2708,6 +2725,14 @@ export const useStore = create<SynkoraState>((set, get) => ({
   // pane GUI acendem a MESMA chave, então mapa, abas e Ctrl+Alt+P funcionam
   // sem saber que existe uma superfície nova.
   guiPanes: {},
+  guiHistoryTarget: null,
+  showGuiHistoryTarget: (target) => set({ guiHistoryTarget: target }),
+  clearGuiHistoryTarget: (paneId) =>
+    set((state) =>
+      !state.guiHistoryTarget || (paneId && state.guiHistoryTarget.paneId !== paneId)
+        ? {}
+        : { guiHistoryTarget: null }
+    ),
 
   handleGuiLive: (paneId, raw) =>
     set((s) => {

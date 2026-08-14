@@ -24,6 +24,10 @@
 import { app, ipcMain, WebContentsView } from 'electron'
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron'
 import { join } from 'path'
+import {
+  isPaletteNavigationTarget,
+  type PaletteNavigationTarget
+} from '../shared/commandPalette'
 
 export interface PanesViewLayout {
   visible: boolean
@@ -91,6 +95,20 @@ export class PanesViewManager {
     ipcMain.on('panes-view:navigate', (e, projectId: string, tab: string) => {
       if (!this.guardView(e, 'panes-view:navigate')) return
       this.deps.pushBoard('panes-view:navigate', projectId, tab)
+    })
+    // Cmd/Ctrl+K nasce no renderer que tem foco. Se for a WebContentsView,
+    // ela só pode pedir ao host um alvo fechado/validado; texto de transcript
+    // e caminhos internos nunca atravessam este relay.
+    ipcMain.on('panes-view:command-target', (e, target: PaletteNavigationTarget) => {
+      if (!this.guardView(e, 'panes-view:command-target')) return
+      if (!isPaletteNavigationTarget(target)) {
+        this.deps.record(
+          'panes-view-command-refused',
+          `webContents ${e.sender.id} enviou alvo inválido da paleta`
+        )
+        return
+      }
+      this.deps.pushBoard('panes-view:command-target', target)
     })
     ipcMain.on('panes-view:activity', (e, paneId: string, activity: string) => {
       if (!this.guardView(e, 'panes-view:activity')) return

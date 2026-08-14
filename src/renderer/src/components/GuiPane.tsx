@@ -499,6 +499,10 @@ export default function GuiPane({
   const answerGuiQuestion = useStore((s) => s.answerGuiQuestion)
   const answerGuiPlan = useStore((s) => s.answerGuiPlan)
   const interruptGuiPane = useStore((s) => s.interruptGuiPane)
+  const historyTarget = useStore((s) =>
+    s.guiHistoryTarget?.paneId === paneId ? s.guiHistoryTarget : null
+  )
+  const clearGuiHistoryTarget = useStore((s) => s.clearGuiHistoryTarget)
 
   useEffect(() => {
     guiApi.visibility(paneId, active)
@@ -610,6 +614,12 @@ export default function GuiPane({
     pinnedRef,
     onPinnedChange: setPinned
   })
+  const historySelectedRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    if (!historyTarget) return
+    historySelectedRef.current?.scrollIntoView({ block: 'center' })
+  }, [historyTarget?.targetCursor, historyTarget?.targetMessageId])
 
   useEffect(() => {
     const update = (): void => setDocumentVisible(document.visibilityState === 'visible')
@@ -1482,9 +1492,58 @@ export default function GuiPane({
             ▼ ir para o fim
           </button>
         )}
+
+        {historyTarget && (
+          <section
+            className="gui-history-overlay"
+            aria-label="Conversa arquivada"
+            data-history-session-id={historyTarget.sessionId}
+          >
+            <header className="gui-history-head">
+              <span>
+                <b>conversa arquivada</b>
+                <small>
+                  {historyTarget.provider === 'claude' ? 'Claude' : 'Codex'} · somente falas
+                  suas e do assistente
+                </small>
+              </span>
+              <button
+                type="button"
+                onClick={() => clearGuiHistoryTarget(paneId)}
+                aria-label="Voltar à conversa atual"
+              >
+                voltar à conversa atual
+              </button>
+            </header>
+            {historyTarget.truncated && (
+              <p className="gui-history-limited" role="status">
+                Trecho parcial: o histórico ultrapassou o limite seguro de leitura.
+              </p>
+            )}
+            <div className="gui-history-thread">
+              {historyTarget.messages.map((message) => {
+                const selected =
+                  message.id === historyTarget.targetMessageId &&
+                  message.cursor === historyTarget.targetCursor
+                return (
+                  <div
+                    key={`${message.id}:${message.cursor}`}
+                    ref={selected ? historySelectedRef : undefined}
+                    className={`gui-history-message ${message.role}${selected ? ' selected' : ''}`}
+                    data-history-message-id={message.id}
+                    data-history-cursor={message.cursor}
+                  >
+                    <span>{message.role === 'user' ? 'você' : 'assistente'}</span>
+                    <p>{message.text}</p>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
       </div>
 
-      {gui.perm && (
+      {!historyTarget && gui.perm && (
         <GuiPermCard
           perm={gui.perm}
           disabled={Boolean(gui.interactionSubmitting)}
@@ -1492,7 +1551,7 @@ export default function GuiPane({
         />
       )}
 
-      {queuedMessage && (
+      {!historyTarget && queuedMessage && (
         <GuiQueuedMessageCard
           message={queuedMessage}
           optionsLabel={queuedOptionsLabel}
@@ -1507,7 +1566,7 @@ export default function GuiPane({
         />
       )}
 
-      {!awaitingCard && (
+      {!historyTarget && !awaitingCard && (
         <div className="gui-composer">
           {slashOpen && (
             <GuiSlashMenu
