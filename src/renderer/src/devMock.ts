@@ -779,6 +779,9 @@ export function installDevMock(): void {
       // Sem repositório no browser não há commit para listar — recusa honesta,
       // nunca um histórico inventado que o dono leria como trabalho real.
       commits: async () => ({ ok: false, error: 'sem worktree no preview' }),
+      // E o patch por commit segue a mesma regra: o preview não possui uma
+      // autoridade Git para provar SHA, então nunca fabrica um diff.
+      commitDiff: async () => ({ ok: false, error: 'sem worktree no preview' }),
       onChanged: () => () => undefined
     },
     files: {

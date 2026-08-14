@@ -1670,20 +1670,114 @@ export function missionWorkspaceFileDiff(
 }
 
 export interface MissionCommit {
-  /** SHA abreviado (%h) — o que o dono lê e cola; nunca usado como argumento. */
+  /** SHA COMPLETO do commit. Nunca devolvemos um prefixo que o renderer possa
+   *  reaproveitar como argumento Git ambíguo. */
   sha: string
+  /** Pais completos, na ordem canônica do Git (primeiro pai primeiro). */
+  parents: string[]
   /** Primeira linha da mensagem: `%s` NÃO contém quebra de linha, por
    *  definição, e é isso que mantém uma linha do log = um commit. */
   subject: string
-  /** Data do AUTOR em ISO 8601 estrito (%aI) — a mesma que o `git log` mostra
-   *  por padrão, então o dono reconhece o horário do próprio trabalho. */
+  /** Data do AUTOR em ISO 8601 estrito (%aI). */
   at: string
+  /** Nome de autoria do commit, sem e-mail/identificador pessoal. */
+  author?: string
 }
 
 /** Teto do payload: o trilho lista o trabalho da missão, não o histórico do
  *  repositório. Missão que passar disso já é grande demais para caber num
  *  cabeçalho — a lista completa se lê no terminal do worktree. */
 const MISSION_COMMITS_CAP = 50
+
+/** Um patch é uma leitura humana, não um exportador de objetos Git. O teto é
+ * aplicado depois de capturar stdout com folga, sempre em uma linha completa. */
+const MISSION_COMMIT_PATCH_CAP = 200_000
+const MISSION_COMMIT_PATCH_MAX_BUFFER = 16 * 1024 * 1024
+const FULL_SHA = /^[0-9a-f]{40,64}$/i
+
+export interface MissionCommitPatch {
+  ok: boolean
+  /** O SHA validado pelo main/worker, repetido para o renderer reconciliar a
+   *  resposta com a linha que abriu o patch. */
+  sha?: string
+  diff?: string
+  truncated?: boolean
+  error?: string
+}
+
+function fullCommitSha(cwd: string, ref: string): string | undefined {
+  if (!ref.trim()) return undefined
+  try {
+    const sha = gitRaw(cwd, [
+      'rev-parse',
+      '--verify',
+      '--end-of-options',
+      `${ref}^{commit}`
+    ]).trim()
+    return FULL_SHA.test(sha) ? sha : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function missionBaseSha(cwd: string, baseBranch?: string): string | undefined {
+  const base = baseBranch?.trim()
+  // O endpoint é somente leitura, mas ainda assim nunca transforma ausência
+  // de autoridade em "todo o histórico". Sem base, não há recorte de missão.
+  return base ? fullCommitSha(cwd, base) : undefined
+}
+
+function commitPatchCap(raw: string, sha: string): MissionCommitPatch {
+  if (raw.length <= MISSION_COMMIT_PATCH_CAP) return { ok: true, sha, diff: raw }
+  const cut = raw.slice(0, MISSION_COMMIT_PATCH_CAP)
+  const lastBreak = cut.lastIndexOf('\n')
+  return {
+    ok: true,
+    sha,
+    diff: lastBreak > 0 ? cut.slice(0, lastBreak + 1) : cut,
+    truncated: true
+  }
+}
+
+function missionCommitPatchFailure(error: unknown): string {
+  const failure = error as { code?: string; stderr?: string | Buffer }
+  if (failure.code === 'ENOBUFS') return 'o patch deste commit é grande demais para exibir aqui'
+  const stderr = String(failure.stderr ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+  return stderr ? `não consegui ler o patch: ${stderr}` : 'não consegui ler o patch deste commit'
+}
+
+function gitDiffRead(cwd: string, args: string[]): string {
+  try {
+    return gitRaw(cwd, args, MISSION_COMMIT_PATCH_MAX_BUFFER)
+  } catch (error) {
+    const failure = error as { status?: number; stdout?: string | Buffer }
+    // `git diff` exits 1 for a non-empty patch. This is success for our
+    // read-only endpoint, not an operational failure.
+    if (failure.status === 1 && failure.stdout != null) return String(failure.stdout)
+    throw error
+  }
+}
+
+function isMissionCommit(cwd: string, baseSha: string, headSha: string, commitSha: string): boolean {
+  try {
+    // `commitSha` is full and has already been resolved as a commit object.
+    // A commit belongs to `base..HEAD` iff it is reachable from HEAD and is
+    // not reachable from the authoritative base. Keeping these checks in the
+    // worker prevents a renderer-supplied SHA from widening the range.
+    gitRaw(cwd, ['merge-base', '--is-ancestor', commitSha, headSha])
+    try {
+      gitRaw(cwd, ['merge-base', '--is-ancestor', commitSha, baseSha])
+      return false
+    } catch (error) {
+      return (error as { status?: number }).status === 1
+    }
+  } catch {
+    return false
+  }
+}
 
 /**
  * Os commits que a missão ADICIONOU sobre a base, mais novos primeiro — a
@@ -1708,10 +1802,11 @@ export function missionCommits(
   baseBranch?: string
 ): MissionCommit[] | undefined {
   if (!existsSync(worktreeDir)) return undefined
-  const base = baseBranch?.trim()
+  const base = missionBaseSha(worktreeDir, baseBranch)
   // Sem base declarada não existe "à frente de quê": zero commits provados é a
   // resposta honesta, e é a mesma que o summary dá em `ahead`.
-  if (!base) return []
+  if (!base && !baseBranch?.trim()) return []
+  if (!base) return undefined
   // Separador 0x1f (unit separator) — `%x1f` no formato do git, o escape aqui:
   // nenhum byte de controle solto no fonte, que editor e diff comeriam calados.
   // A data vem ANTES do assunto de propósito: o resto da linha É o assunto
@@ -1722,7 +1817,8 @@ export function missionCommits(
     out = gitRaw(worktreeDir, [
       'log',
       `--max-count=${MISSION_COMMITS_CAP}`,
-      '--format=%h%x1f%aI%x1f%s',
+      '--topo-order',
+      '--format=%H%x1f%P%x1f%aI%x1f%an%x1f%s',
       `${base}..HEAD`
     ])
   } catch {
@@ -1734,15 +1830,85 @@ export function missionCommits(
     const first = line.indexOf(SEP)
     if (first < 0) continue
     const second = line.indexOf(SEP, first + 1)
-    if (second < 0) continue
+    const third = second < 0 ? -1 : line.indexOf(SEP, second + 1)
+    const fourth = third < 0 ? -1 : line.indexOf(SEP, third + 1)
+    if (second < 0 || third < 0 || fourth < 0) continue
+    const sha = line.slice(0, first)
+    const parents = line
+      .slice(first + 1, second)
+      .split(/\s+/)
+      .filter(Boolean)
+    if (!FULL_SHA.test(sha) || parents.some((parent) => !FULL_SHA.test(parent))) continue
     commits.push({
-      sha: line.slice(0, first),
-      at: line.slice(first + 1, second),
-      subject: line.slice(second + 1)
+      sha,
+      parents,
+      at: line.slice(second + 1, third),
+      author: line.slice(third + 1, fourth),
+      subject: line.slice(fourth + 1)
     })
   }
   return commits
 }
+
+/**
+ * Patch do commit individual, sempre comparado ao PRIMEIRO pai (ou à árvore
+ * vazia para um root commit). A autoridade vem do worktree/base da missão:
+ * SHA curto, objeto fora de `base..HEAD`, ref arbitrária e caminho implícito
+ * são recusados antes de qualquer `git diff`.
+ */
+export function missionCommitPatch(
+  worktreeDir: string,
+  baseBranch: string | undefined,
+  commitShaInput: string
+): MissionCommitPatch {
+  if (!existsSync(worktreeDir)) return { ok: false, error: 'o worktree desta missão não existe mais' }
+  const commitSha = typeof commitShaInput === 'string' ? commitShaInput.trim() : ''
+  if (!FULL_SHA.test(commitSha)) {
+    return { ok: false, error: 'o commit precisa ser identificado pelo SHA completo' }
+  }
+  const baseSha = missionBaseSha(worktreeDir, baseBranch)
+  if (!baseSha) return { ok: false, error: 'não consegui provar a base desta missão' }
+  const headSha = fullCommitSha(worktreeDir, 'HEAD')
+  if (!headSha) return { ok: false, error: 'não consegui provar o HEAD desta missão' }
+  const resolvedCommitSha = fullCommitSha(worktreeDir, commitSha)
+  if (!resolvedCommitSha) {
+    return { ok: false, error: 'esse SHA não identifica um commit neste worktree' }
+  }
+  if (!isMissionCommit(worktreeDir, baseSha, headSha, resolvedCommitSha)) {
+    return { ok: false, error: 'esse commit não pertence ao histórico desta missão' }
+  }
+  let parents: string[]
+  try {
+    parents = gitRaw(worktreeDir, ['show', '-s', '--format=%P', resolvedCommitSha])
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+  } catch (error) {
+    return { ok: false, error: missionCommitPatchFailure(error) }
+  }
+  if (parents.some((parent) => !FULL_SHA.test(parent))) {
+    return { ok: false, error: 'não consegui provar os pais completos deste commit' }
+  }
+  const parent = parents[0] ?? '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+  try {
+    const diff = gitDiffRead(worktreeDir, [
+      'diff',
+      '--no-color',
+      '--no-ext-diff',
+      '--binary',
+      parent,
+      resolvedCommitSha,
+      '--'
+    ])
+    return commitPatchCap(diff, resolvedCommitSha)
+  } catch (error) {
+    return { ok: false, sha: resolvedCommitSha, error: missionCommitPatchFailure(error) }
+  }
+}
+
+/** Nome explícito para consumidores que chamam o payload de diff, mantendo
+ *  `missionCommitPatch` como a API de domínio do worker. */
+export const missionCommitDiff = missionCommitPatch
 
 /** Worktree de MISSÃO: branch mission/<id8> onde as tarefas da missão nascem
  *  e mergeiam — a main só vê a missão na integração final. */

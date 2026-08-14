@@ -70,6 +70,7 @@
     "test:project-adapters": "node --experimental-strip-types --test scripts/test-project-adapters.mjs",
     "test:review-diff": "node --experimental-strip-types --test scripts/test-review-diff.mjs",
     "test:mission-worktree": "tsc --outDir .tmp/mission-worktree-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/worktree.ts src/main/winPath.ts && node --test scripts/test-mission-worktree.mjs",
+    "test:commit-graph": "node --experimental-strip-types --test scripts/test-commit-graph.mjs",
     "test:blackbox": "tsc --outDir .tmp/blackbox-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/blackbox.ts src/main/securityRedaction.ts && node scripts/test-blackbox.mjs",
     "test:security-redaction": "tsc --outDir .tmp/security-redaction-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/securityRedaction.ts && node scripts/test-security-redaction.mjs",
     "test:manual-security-validation": "tsc --outDir .tmp/manual-security-validation-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/manualSecurityValidation.ts src/main/securityRedaction.ts && node --test scripts/test-manual-security-validation.mjs",

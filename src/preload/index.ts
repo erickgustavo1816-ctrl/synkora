@@ -20,6 +20,7 @@ import type {
 import type { GuiMissionRole } from '../main/guiMissionContracts'
 import type { GuiAlertPayload } from '../main/guiNotices'
 import type {
+  MissionCommitDiffResult,
   MissionCommitsResult,
   MissionFileDiffResult,
   MissionGuiSpecResult,
@@ -69,7 +70,7 @@ export type {
 }
 
 /** Commits da missão — a lista por trás do `ahead` que o trilho já mostra. */
-export type { MissionCommit, MissionCommitsResult }
+export type { MissionCommit, MissionCommitDiffResult, MissionCommitsResult }
 
 export type {
   MissionProgressState,
@@ -1472,6 +1473,10 @@ const api = {
      *  lista por trás do "N commits à frente" que o trilho já mostra. */
     commits: (missionId: string): Promise<MissionCommitsResult> =>
       ipcRenderer.invoke('missions:commits', missionId),
+    /** SYNKORA 2.0/P24: patch read-only de um commit da lista. O main exige
+     * SHA completo e recusa qualquer commit fora do histórico da missão. */
+    commitDiff: (missionId: string, commitSha: string): Promise<MissionCommitDiffResult> =>
+      ipcRenderer.invoke('missions:commitDiff', missionId, commitSha),
     onChanged: (cb: (projectId: string) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
       ipcRenderer.on('missions:changed', listener)

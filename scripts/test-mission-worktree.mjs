@@ -30,6 +30,7 @@ import {
   isExpectedVersionWorktree,
   isExecutableProjectPath,
   mergeTaskWorktree,
+  missionCommitPatch,
   missionCommits,
   missionWorkspaceFileDiff,
   missionWorkspaceReadout,
@@ -1026,7 +1027,9 @@ test('commits da missão vêm mais novos primeiro e sem o trabalho alheio da bas
     ['segundo passo da missão', 'primeiro passo da missão']
   )
   for (const commit of commits) {
-    assert.match(commit.sha, /^[0-9a-f]{7,40}$/)
+    assert.match(commit.sha, /^[0-9a-f]{40}$/)
+    assert.ok(Array.isArray(commit.parents))
+    for (const parent of commit.parents) assert.match(parent, /^[0-9a-f]{40}$/)
     // ISO 8601 estrito (%aI), o formato que o preload promete ao renderer.
     assert.match(commit.at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$/)
     assert.equal(Number.isNaN(Date.parse(commit.at)), false)
@@ -1061,4 +1064,71 @@ test('lista de commits sobrevive a assunto exótico e para no teto de 50', (t) =
   const capped = missionCommits(mission.dir, baseBranch)
   assert.equal(capped.length, 50)
   assert.equal(capped[0].subject, 'passo 54')
+})
+
+test('histórico linear+merge desenha pais completos e patch só aceita commits da missão', (t) => {
+  const root = initializeRepository(t, 'synkora-mission-history-')
+  const baseBranch = git(root, ['branch', '--show-current'])
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-mission-history-wt-')
+  const mission = createMissionWorktree(root, worktrees, 'history-merge-mission')
+  assert.ok(mission)
+
+  writeFileSync(join(mission.dir, 'main.txt'), 'linha principal\n', 'utf8')
+  git(mission.dir, ['add', 'main.txt'])
+  git(mission.dir, ['commit', '-m', 'passo principal'])
+  git(mission.dir, ['checkout', '-b', 'mission-side-history'])
+  writeFileSync(join(mission.dir, 'side.txt'), 'linha lateral\n', 'utf8')
+  git(mission.dir, ['add', 'side.txt'])
+  git(mission.dir, ['commit', '-m', 'passo lateral'])
+  git(mission.dir, ['checkout', mission.branch])
+  writeFileSync(join(mission.dir, 'after-side.txt'), 'depois da lateral\n', 'utf8')
+  git(mission.dir, ['add', 'after-side.txt'])
+  git(mission.dir, ['commit', '-m', 'prepara merge'])
+  git(mission.dir, ['merge', '--no-ff', 'mission-side-history', '-m', 'merge lateral'])
+
+  const commits = missionCommits(mission.dir, baseBranch)
+  assert.ok(commits)
+  assert.equal(commits[0].subject, 'merge lateral')
+  assert.equal(commits[0].parents.length, 2)
+  assert.match(commits[0].sha, /^[0-9a-f]{40}$/)
+  assert.deepEqual(commits[0].parents, git(mission.dir, ['show', '-s', '--format=%P', commits[0].sha]).split(/\s+/))
+  assert.deepEqual(
+    commits.map((commit) => commit.subject),
+    ['merge lateral', 'passo lateral', 'prepara merge', 'passo principal']
+  )
+
+  const mergePatch = missionCommitPatch(mission.dir, baseBranch, commits[0].sha)
+  assert.equal(mergePatch.ok, true)
+  assert.equal(mergePatch.sha, commits[0].sha)
+  assert.match(mergePatch.diff ?? '', /side\.txt/)
+  assert.equal(missionCommitPatch(mission.dir, baseBranch, commits[0].sha.slice(0, 12)).ok, false)
+
+  // O HEAD da base é um commit real, mas não pertence ao recorte base..HEAD
+  // da missão; a autoridade do worker precisa recusá-lo antes do diff.
+  const baseHead = git(root, ['rev-parse', 'HEAD'])
+  const outside = missionCommitPatch(mission.dir, baseBranch, baseHead)
+  assert.equal(outside.ok, false)
+  assert.match(outside.error ?? '', /não pertence|histórico/i)
+})
+
+test('patch de commit respeita o teto e não escreve no worktree', (t) => {
+  const root = initializeRepository(t, 'synkora-mission-patch-cap-')
+  const baseBranch = git(root, ['branch', '--show-current'])
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-mission-patch-cap-wt-')
+  const mission = createMissionWorktree(root, worktrees, 'patch-cap-mission')
+  assert.ok(mission)
+  writeFileSync(
+    join(mission.dir, 'large.txt'),
+    Array.from({ length: 40_000 }, (_, index) => `linha de patch ${index.toString().padStart(5, '0')}`).join('\n') + '\n',
+    'utf8'
+  )
+  git(mission.dir, ['add', 'large.txt'])
+  git(mission.dir, ['commit', '-m', 'commit grande'])
+  const commit = missionCommits(mission.dir, baseBranch)[0]
+  const before = git(mission.dir, ['status', '--porcelain'])
+  const patch = missionCommitPatch(mission.dir, baseBranch, commit.sha)
+  assert.equal(patch.ok, true)
+  assert.equal(patch.truncated, true)
+  assert.ok((patch.diff ?? '').length <= 200_000)
+  assert.equal(git(mission.dir, ['status', '--porcelain']), before)
 })

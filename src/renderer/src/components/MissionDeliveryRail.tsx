@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { missionTypeOf, type Mission } from '../store'
 import { missionWorkspace, type MissionWorkspaceSummary } from '../missionWorkspace'
+import MissionCommitHistory from './MissionCommitHistory'
 
 // TRILHO DE ENTREGA (Synkora 2.0, onda B; enriquecido na onda D) — a coluna da
 // DIREITA do mockup.
@@ -192,6 +193,11 @@ export default function MissionDeliveryRail({
           })}
         </div>
       )}
+
+      {/* P24: fotografia visual do histórico próprio da missão. O main já
+          recortou `base..HEAD` e a expansão pede o patch de um SHA completo;
+          o rail só exibe, nunca stageia, commita ou altera o worktree. */}
+      {!planning && <MissionCommitHistory missionId={mission.id} reloadToken={reloadToken} />}
 
       {!planning && (
         <div className="dr-facts">

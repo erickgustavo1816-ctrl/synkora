@@ -24,6 +24,7 @@ import {
   ensureSynkoraGitExcludes,
   removeWorktreeAndBranch,
   type MissionCommit,
+  type MissionCommitPatch,
   type MissionWorkspaceFileDiff,
   type MissionWorkspaceSummary
 } from '../worktree'
@@ -154,6 +155,10 @@ export interface MissionCommitsResult {
   commits?: MissionCommit[]
   error?: string
 }
+
+/** Resposta do patch de UM commit já pertencente ao histórico da missão.
+ * O worktree é a autoridade; o renderer não pode escolher uma ref arbitrária. */
+export type MissionCommitDiffResult = MissionCommitPatch
 
 /** Teto de ajudantes GUI simultâneos por missão — o sufixo do paneId sobe até
  *  achar vaga livre; acima disto o dono fecha um antes de abrir outro. */
@@ -369,6 +374,33 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       // significa que a leitura falhou — o `!commits` cobriria os dois.
       if (!commits) return { ok: false, error: 'não consegui ler os commits desta missão' }
       return { ok: true, commits }
+    }
+  )
+
+  /**
+   * PATCH DE UM COMMIT DA MISSÃO — somente leitura. O SHA chega do renderer
+   * apenas como pedido; o worker exige formato completo, prova que o objeto
+   * está em `base..HEAD` desta missão e só então produz o patch contra o
+   * primeiro pai. Um SHA de outra branch/repo ou abreviado é recusado.
+   */
+  ipcMain.handle(
+    'missions:commitDiff',
+    async (
+      _e,
+      missionId: string,
+      commitSha: string
+    ): Promise<MissionCommitDiffResult> => {
+      const mission = missions.get(missionId)
+      if (!mission) return { ok: false, error: 'missão não encontrada' }
+      const project = projects.get(mission.projectId)
+      if (!project) return { ok: false, error: 'projeto não encontrado' }
+      if (!mission.worktree || !existsSync(mission.worktree))
+        return { ok: false, error: 'esta missão não tem worktree aberto' }
+      try {
+        return await gitOff('missionCommitPatch', mission.worktree, mission.baseBranch, commitSha)
+      } catch {
+        return { ok: false, error: 'não consegui ler o patch deste commit' }
+      }
     }
   )
 

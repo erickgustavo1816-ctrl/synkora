@@ -7598,6 +7598,226 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink-3);
 }
 
+/* ---------- P24: HISTÓRICO VISUAL DE COMMITS ----------
+   O grafo ocupa só o trilho. A coluna estreita é a geometria (lanes/arestas);
+   a coluna maior é a leitura humana. Tudo é papel e tinta: não há affordance
+   de stage/commit escondida nesta superfície. */
+.mh-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 3px;
+  border-top: 1px solid var(--line);
+}
+
+.mh-history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mh-history-title {
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.mh-history-caption,
+.mh-history-note {
+  color: var(--ink-3);
+  font-size: 9px;
+}
+
+.mh-history-error {
+  color: var(--ink-3);
+  font-size: 10px;
+  font-style: italic;
+  line-height: 1.35;
+}
+
+.mh-graph-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.mh-edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.mh-edge {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-width: 1.5;
+  opacity: 0.68;
+}
+
+.mh-rows {
+  position: relative;
+  z-index: 1;
+}
+
+.mh-row {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+  min-height: 74px;
+}
+
+.mh-lanes {
+  position: relative;
+  flex: none;
+  min-height: 74px;
+}
+
+.mh-lane-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line-strong);
+  opacity: 0.72;
+}
+
+.mh-node {
+  position: absolute;
+  top: 12px;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--card);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  transform: translateX(-50%);
+}
+
+.mh-commit-cell {
+  flex: 1;
+  min-width: 0;
+}
+
+.mh-commit-summary {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--card) 86%, var(--paper));
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mh-commit-summary:hover,
+.mh-commit-summary:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.mh-commit-topline,
+.mh-commit-meta {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+}
+
+.mh-commit-topline {
+  font-size: 10.5px;
+  line-height: 1.3;
+}
+
+.mh-commit-topline strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mh-role {
+  flex: none;
+  padding: 1px 4px;
+  border: 1px solid rgba(217, 108, 63, 0.42);
+  border-radius: 4px;
+  color: var(--accent-deep);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.mh-chevron {
+  flex: none;
+  margin-left: auto;
+  color: var(--ink-3);
+}
+
+.mh-commit-meta {
+  margin-top: 3px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 8px;
+  line-height: 1.3;
+}
+
+.mh-commit-meta code {
+  color: var(--ink-2);
+}
+
+.mh-commit-meta span,
+.mh-commit-meta time {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mh-merge-label {
+  color: var(--accent-deep);
+}
+
+.mh-patch-panel {
+  margin: 3px 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.mh-patch-panel pre {
+  max-height: 260px;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  color: var(--panel-ink);
+  font-family: var(--mono);
+  font-size: 8px;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.mh-patch-note,
+.mh-patch-error {
+  display: block;
+  padding: 7px 8px;
+  color: var(--ink-3);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.mh-patch-error {
+  color: var(--err);
+}
+
 .dr-facts {
   display: flex;
   flex-direction: column;
