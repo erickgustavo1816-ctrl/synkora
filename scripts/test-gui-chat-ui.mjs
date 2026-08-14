@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import {
   formatGuiElapsed,
@@ -28,6 +37,17 @@ import {
   slashDismissalAt,
   slashQueryAt
 } from '../src/renderer/src/guiSlashAutocomplete.ts'
+import {
+  completeFileMention,
+  escapeMentionOverlayText,
+  fileMentionQueryAt,
+  filterFileMentions,
+  isFileMentionQueryDismissed,
+  mentionDismissalAt,
+  mentionParts,
+  renderMentionOverlayMarkup,
+  syncInputOverlayScroll
+} from '../src/renderer/src/guiFileMentions.ts'
 import {
   appendGuiAttachmentReferences,
   base64FromDataUrl,
@@ -117,6 +137,11 @@ import {
   shouldArmGuiTurnWatchdog
 } from '../src/main/guiTurnQueue.ts'
 
+import {
+  GuiWorkspaceFileIndex,
+  scanGuiWorkspaceFiles
+} from '../src/main/guiWorkspaceFiles.ts'
+
 const tool = (id, name = 'Read', summary = `${id}.ts`) => ({
   id,
   kind: 'tool',
@@ -172,6 +197,107 @@ test('autocomplete slash fecha a conclusao e so reabre para outra consulta valid
   assert.match(pane, /onPick=\{pickCommand\}/u)
   assert.match(pane, /onSelect=\{\(e\) => \{/u)
   assert.doesNotMatch(pane, /setDraft\(\(text\) => `\$\{text\} `\)/u)
+})
+
+test('menções @arquivo filtram, escapam, selecionam sem enviar e cacheiam a árvore', () => {
+  const draft = 'veja @src/ui'
+  const query = fileMentionQueryAt(draft, draft.length)
+  assert.deepEqual(query, { at: 5, cursor: draft.length, query: 'src/ui' })
+  assert.deepEqual(filterFileMentions(['README.md', 'src/ui/App.tsx', 'src/api.ts'], 'ui'), [
+    'src/ui/App.tsx'
+  ])
+  assert.deepEqual(completeFileMention(draft, draft.length, 'src/ui/App.tsx'), {
+    text: 'veja @src/ui/App.tsx ',
+    cursor: 'veja @src/ui/App.tsx '.length
+  })
+  assert.equal(completeFileMention('@src/ui', '@src/ui'.length, '../outside.txt'), null)
+  assert.deepEqual(filterFileMentions(['../outside.txt', 'src/ui/App.tsx'], ''), ['src/ui/App.tsx'])
+  const dismissedQuery = fileMentionQueryAt('@src/u', '@src/u'.length)
+  const dismissal = mentionDismissalAt('@src/u', dismissedQuery?.at ?? 0)
+  assert.equal(isFileMentionQueryDismissed(dismissal, '@src/u', dismissedQuery), true)
+  assert.deepEqual(mentionParts('x <raw> @src/ui/App.tsx', ['src/ui/App.tsx']), [
+    { text: 'x <raw> ', mentioned: false },
+    { text: '@src/ui/App.tsx', mentioned: true }
+  ])
+  assert.equal(escapeMentionOverlayText('<script>&"\''), '&lt;script&gt;&amp;&quot;&#39;')
+  assert.match(
+    renderMentionOverlayMarkup('<raw> @src/ui/App.tsx', ['src/ui/App.tsx']),
+    /&lt;raw&gt;.*gui-mention-token/u
+  )
+  const overlay = { scrollTop: 0, scrollLeft: 0, style: { transform: '' } }
+  syncInputOverlayScroll({ scrollTop: 18, scrollLeft: 4 }, overlay)
+  assert.deepEqual(overlay, {
+    scrollTop: 18,
+    scrollLeft: 4,
+    style: { transform: 'translate(-4px, -18px)' }
+  })
+
+  const root = join(tmpdir(), `synkora-p5-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+  try {
+    mkdirSync(join(root, 'src', 'ui'), { recursive: true })
+    mkdirSync(join(root, 'node_modules', 'dep'), { recursive: true })
+    mkdirSync(join(root, '.git'), { recursive: true })
+    writeFileSync(join(root, 'README.md'), 'readme')
+    writeFileSync(join(root, 'src', 'ui', 'App.tsx'), 'app')
+    writeFileSync(join(root, 'src', 'ui', 'Button.tsx'), 'button')
+    writeFileSync(join(root, '.env'), 'synthetic=not-a-secret')
+    writeFileSync(join(root, 'private.pem'), 'synthetic')
+    writeFileSync(join(root, 'node_modules', 'dep', 'index.js'), 'ignored')
+    let linked = false
+    try {
+      symlinkSync(join(root, 'src'), join(root, 'linked-src'), 'junction')
+      linked = true
+    } catch {
+      // Symlinks podem estar bloqueados pela política do Windows do runner;
+      // os asserts de caminho relativo abaixo continuam cobrindo traversal.
+    }
+
+    const index = new GuiWorkspaceFileIndex()
+    const first = index.list(root)
+    assert.equal(first.ok, true)
+    assert.equal(first.cached, false)
+    assert.deepEqual(first.files, ['README.md', 'src/ui/App.tsx', 'src/ui/Button.tsx'])
+    assert.equal(first.files?.some((file) => file.includes('..') || file.startsWith('/')), false)
+    assert.equal(first.files?.some((file) => file.startsWith('node_modules/')), false)
+    assert.equal(first.files?.includes('.env'), false)
+    assert.equal(first.files?.includes('private.pem'), false)
+    if (linked) assert.equal(first.files?.some((file) => file.startsWith('linked-src/')), false)
+
+    writeFileSync(join(root, 'new.ts'), 'new')
+    const cached = index.list(root)
+    assert.equal(cached.cached, true)
+    assert.equal(cached.files?.includes('new.ts'), false)
+    index.invalidate(root)
+    const refreshed = index.list(root)
+    assert.equal(refreshed.cached, false)
+    assert.equal(refreshed.files?.includes('new.ts'), true)
+
+    const limited = scanGuiWorkspaceFiles(root, { maxFiles: 2 })
+    assert.equal(limited.truncated, true)
+    assert.equal(limited.files.length, 2)
+    assert.equal(scanGuiWorkspaceFiles(join(root, 'missing')).files.length, 0)
+    assert.equal(existsSync(join(root, 'new.ts')), true)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+  const preload = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8')
+  const ipc = readFileSync(new URL('../src/main/ipc/gui.ts', import.meta.url), 'utf8')
+  assert.match(pane, /useGuiFileMentions\(paneId, draft, slashCursor, slashOpen\)/u)
+  assert.match(pane, /if \(slashOpen\) \{/u)
+  assert.match(pane, /if \(e\.key === 'Tab' \|\| e\.key === 'Enter'\)/u)
+  assert.match(pane, /fileMentions\.complete\(path, cursor\)/u)
+  assert.match(pane, /syncInputOverlayScroll\(input, mentionOverlayRef\.current\)/u)
+  assert.match(css, /\.gui-mention-overlay\s*\{/u)
+  assert.match(css, /\.gui-mention-token\s*\{[^}]*hsl\(var\(--hue-back\)/su)
+  assert.match(preload, /ipcRenderer\.invoke\('gui:workspaceFiles', paneId\)/u)
+  assert.match(ipc, /registry\.cwdOf\(paneId\)/u)
+  assert.match(ipc, /workspaceFileIndex\.list\(cwd\)/u)
 })
 
 test('composer reduz modelo à identidade e só mostra contexto medido', () => {

@@ -16846,6 +16846,79 @@ details.gui-error-line {
   color: var(--ink-2);
 }
 
+/* ---- autocomplete de arquivos (@) ---- */
+.gui-file-mention-menu {
+  width: 100%;
+  max-width: var(--gui-column);
+  margin: 0 auto 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--card);
+  animation: rise 120ms ease both;
+}
+
+.gui-file-mention-menu::-webkit-scrollbar {
+  display: none;
+}
+
+.gui-file-mention-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink);
+  font-family: var(--mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.gui-file-mention-item.active,
+.gui-file-mention-item:hover {
+  border-color: hsl(var(--hue-back) 68% 42%);
+  background: color-mix(in srgb, hsl(var(--hue-back) 68% 42%) 9%, var(--card));
+}
+
+.gui-file-mention-name {
+  min-width: 0;
+  max-width: 34%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: hsl(var(--hue-back) 68% 42%);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.gui-file-mention-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+  font-size: 10.5px;
+}
+
+.gui-file-mention-empty {
+  padding: 8px 9px;
+  color: var(--ink-2);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
 /* ---- escolha da conta da conversa (card no lugar do chat) ---- */
 
 .gui-seatpick {
@@ -17646,6 +17719,45 @@ details.gui-error-line {
   user-select: text;
 }
 
+/* O textarea continua dono da edição; esta camada só replica a tipografia e
+   pinta paths escolhidos sem transformar o composer em rich-text. */
+.gui-mention-overlay {
+  grid-area: input;
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  max-height: 300px;
+  overflow: hidden;
+  padding: 6px 7px 3px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  user-select: none;
+  z-index: 0;
+}
+
+.gui-input[data-mentions='active'] {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  caret-color: var(--ink);
+  -webkit-text-fill-color: transparent;
+}
+
+.gui-input[data-mentions='active']::selection {
+  color: transparent;
+  background: color-mix(in srgb, hsl(var(--hue-back) 68% 42%) 25%, transparent);
+}
+
+.gui-mention-token {
+  color: hsl(var(--hue-back) 68% 42%);
+  font-weight: 700;
+}
+
 .gui-input::-webkit-scrollbar {
   display: none;
 }
@@ -17780,7 +17892,8 @@ details.gui-error-line {
   .gui-thread,
   .gui-composer-surface,
   .gui-question,
-  .gui-slash-menu {
+  .gui-slash-menu,
+  .gui-file-mention-menu {
     max-width: none;
   }
 

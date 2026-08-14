@@ -21,6 +21,8 @@ import GuiAttachmentChips from './GuiAttachmentChips'
 import GuiJsonCard from './GuiJsonCard'
 import GuiSlashMenu from './GuiSlashMenu'
 import GuiContextPanel from './GuiContextPanel'
+import GuiFileMentionMenu from './GuiFileMentionMenu'
+import GuiMentionOverlay from './GuiMentionOverlay'
 import {
   completeSlashCommand,
   filterSlashCommands,
@@ -29,6 +31,8 @@ import {
   slashQueryAt,
   type SlashDismissal
 } from '../guiSlashAutocomplete'
+import { syncInputOverlayScroll } from '../guiFileMentions'
+import { useGuiFileMentions } from '../useGuiFileMentions'
 import { isGuiFinalAssistantMessage } from '../guiMessageCopyPresentation'
 import { guiThinkingPresentation } from '../guiThinkingPresentation'
 import { groupConsecutiveGuiTools } from '../guiToolPresentation'
@@ -443,6 +447,7 @@ export default function GuiPane({
   active = false
 }: Props): React.JSX.Element {
   const slashMenuId = useId()
+  const mentionMenuId = useId()
   const gui = useStore((s) => s.guiPanes[paneId]) ?? EMPTY_GUI_PANE
   const handleGuiLive = useStore((s) => s.handleGuiLive)
   const replayGuiPane = useStore((s) => s.replayGuiPane)
@@ -544,9 +549,11 @@ export default function GuiPane({
   const [slashIndex, setSlashIndex] = useState(0)
   const [slashCursor, setSlashCursor] = useState(() => draft.length)
   const [slashDismissal, setSlashDismissal] = useState<SlashDismissal | null>(null)
+  const [inputScroll, setInputScroll] = useState({ top: 0, left: 0 })
   const logRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const mentionOverlayRef = useRef<HTMLDivElement>(null)
   const pendingSlashCursorRef = useRef<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const composerSurfaceRef = useRef<HTMLDivElement>(null)
@@ -699,6 +706,8 @@ export default function GuiPane({
     if (!ta) return
     ta.style.height = 'auto'
     ta.style.height = `${Math.min(300, ta.scrollHeight)}px`
+    if (mentionOverlayRef.current) syncInputOverlayScroll(ta, mentionOverlayRef.current)
+    setInputScroll({ top: ta.scrollTop, left: ta.scrollLeft })
   }, [draft])
 
   // Apos a mudanca controlada do texto, posiciona o cursor antes da pintura.
@@ -773,6 +782,8 @@ export default function GuiPane({
   }, [activeSlashQuery, gui.caps])
 
   const slashOpen = slashMatches.length > 0
+  const fileMentions = useGuiFileMentions(paneId, draft, slashCursor, slashOpen)
+  const mentionOpen = fileMentions.open
   const dismissSlashMenu = useCallback((): void => {
     if (!slashQuery) return
     setSlashDismissal(slashDismissalAt(draft, slashQuery.at))
@@ -785,7 +796,7 @@ export default function GuiPane({
     // Esc da pergunta já significa PULAR; o listener global nunca sequestra.
     questionOpen: Boolean(gui.question),
     // Menu slash/dropdown tem sua própria semântica de Esc.
-    menuOpen: slashOpen || Boolean(openMenu)
+    menuOpen: slashOpen || mentionOpen || Boolean(openMenu)
   }
   dismissEscapeMenuRef.current = () => {
     if (openMenu) {
@@ -793,6 +804,7 @@ export default function GuiPane({
       return
     }
     if (slashOpen) dismissSlashMenu()
+    else if (mentionOpen) fileMentions.dismiss()
   }
   useEffect(() => {
     const element = paneRef.current
@@ -826,6 +838,19 @@ export default function GuiPane({
       setDraft(completion.text)
     },
     [draft, slashCursor, slashQuery]
+  )
+
+  /** A seleção de arquivo só edita o token @; Enter/Tab nunca chegam ao envio. */
+  const pickMention = useCallback(
+    (path: string): void => {
+      const cursor = inputRef.current?.selectionStart ?? slashCursor
+      const completion = fileMentions.complete(path, cursor)
+      if (!completion) return
+      pendingSlashCursorRef.current = completion.cursor
+      setSlashCursor(completion.cursor)
+      setDraft(completion.text)
+    },
+    [fileMentions, setDraft, slashCursor]
   )
 
   const submit = useCallback((): void => {
@@ -1449,6 +1474,17 @@ export default function GuiPane({
               onHover={setSlashIndex}
             />
           )}
+          {mentionOpen && !slashOpen && (
+            <GuiFileMentionMenu
+              id={mentionMenuId}
+              files={fileMentions.matches}
+              index={fileMentions.index}
+              loading={fileMentions.loading}
+              error={fileMentions.error}
+              onPick={pickMention}
+              onHover={fileMentions.setIndex}
+            />
+          )}
           <div
             className="gui-composer-surface"
             ref={composerSurfaceRef}
@@ -1463,9 +1499,19 @@ export default function GuiPane({
             }}
           >
             <div className="gui-composer-inner">
+              {draft && (
+                <GuiMentionOverlay
+                  ref={mentionOverlayRef}
+                  text={draft}
+                  files={fileMentions.files}
+                  scrollTop={inputScroll.top}
+                  scrollLeft={inputScroll.left}
+                />
+              )}
               <textarea
                 ref={inputRef}
                 className="gui-input"
+                data-mentions={draft ? 'active' : undefined}
                 rows={1}
                 maxLength={GUI_PROMPT_MAX_CHARS}
                 value={draft}
@@ -1473,10 +1519,15 @@ export default function GuiPane({
                 aria-label="Mensagem para esta conversa"
                 role="combobox"
                 aria-autocomplete="list"
-                aria-expanded={slashOpen}
+                aria-expanded={slashOpen || mentionOpen}
                 aria-controls={slashOpen ? slashMenuId : undefined}
+                aria-owns={mentionOpen ? mentionMenuId : undefined}
                 aria-activedescendant={
-                  slashOpen ? `${slashMenuId}-option-${slashIndex}` : undefined
+                  slashOpen
+                    ? `${slashMenuId}-option-${slashIndex}`
+                    : mentionOpen && fileMentions.matches.length > 0
+                      ? `${mentionMenuId}-option-${fileMentions.index}`
+                      : undefined
                 }
                 placeholder={
                   dead
@@ -1491,6 +1542,11 @@ export default function GuiPane({
                 }}
                 onSelect={(e) => {
                   setSlashCursor(e.currentTarget.selectionStart ?? e.currentTarget.value.length)
+                }}
+                onScroll={(e) => {
+                  const input = e.currentTarget
+                  setInputScroll({ top: input.scrollTop, left: input.scrollLeft })
+                  if (mentionOverlayRef.current) syncInputOverlayScroll(input, mentionOverlayRef.current)
                 }}
                 onPaste={(event) => {
                   const images = Array.from(event.clipboardData.files).filter((file) =>
@@ -1522,6 +1578,36 @@ export default function GuiPane({
                     if (e.key === 'Escape') {
                       e.preventDefault()
                       dismissSlashMenu()
+                      return
+                    }
+                  }
+                  if (mentionOpen) {
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault()
+                      if (fileMentions.matches.length > 0) {
+                        fileMentions.setIndex((fileMentions.index + 1) % fileMentions.matches.length)
+                      }
+                      return
+                    }
+                    if (e.key === 'ArrowUp') {
+                      e.preventDefault()
+                      if (fileMentions.matches.length > 0) {
+                        fileMentions.setIndex(
+                          (fileMentions.index - 1 + fileMentions.matches.length) %
+                            fileMentions.matches.length
+                        )
+                      }
+                      return
+                    }
+                    if (e.key === 'Tab' || e.key === 'Enter') {
+                      e.preventDefault()
+                      const path = fileMentions.matches[fileMentions.index]
+                      if (path) pickMention(path)
+                      return
+                    }
+                    if (e.key === 'Escape') {
+                      e.preventDefault()
+                      fileMentions.dismiss()
                       return
                     }
                   }

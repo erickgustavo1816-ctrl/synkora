@@ -1271,6 +1271,7 @@ export function installDevMock(): void {
       interrupt: async () => ({ ok: true }),
       kill: async () => ({ ok: true }),
       state: async () => ({ events: [], cursor: 0, exists: false, alive: false }),
+      workspaceFiles: async () => ({ ok: false, error: 'arquivos só funcionam no app' }),
       onLive: () => () => undefined,
       visibility: () => undefined,
       presented: () => undefined,

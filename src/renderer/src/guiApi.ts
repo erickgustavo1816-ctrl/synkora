@@ -3,7 +3,8 @@ import type {
   GuiAttachPayload,
   GuiAttachResult,
   GuiAttachmentDescriptor,
-  GuiQueuedDeliveryInput
+  GuiQueuedDeliveryInput,
+  GuiWorkspaceFilesResult
 } from '../../preload'
 
 // Ponte tipada do PANE GUI (Synkora 2.0, onda A).
@@ -271,6 +272,7 @@ interface GuiBridge {
     exists?: boolean
     alive?: boolean
   }>
+  workspaceFiles: (paneId: string) => Promise<GuiWorkspaceFilesResult>
   attach: (paneId: string, payload: GuiAttachPayload) => Promise<GuiAttachResult>
   attachFolder: (paneId: string) => Promise<GuiAttachResult>
   visibility: (paneId: string, active: boolean) => void
@@ -356,6 +358,18 @@ export const guiApi = {
     if (!api?.configureExecutor) return { ok: false, error: NO_BRIDGE }
     try {
       return await api.configureExecutor(paneId, patch)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+
+  /** Retorna a árvore já filtrada pelo main; a chamada é feita uma vez por
+   *  pane e o índice de processo evita uma varredura a cada tecla. */
+  async workspaceFiles(paneId: string): Promise<GuiWorkspaceFilesResult> {
+    const api = bridge()
+    if (!api?.workspaceFiles) return { ok: false, error: NO_BRIDGE }
+    try {
+      return await api.workspaceFiles(paneId)
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }

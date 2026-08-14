@@ -54,6 +54,7 @@ import { GuiPaneVisibilityRegistry, GuiWindowReadyController } from '../guiWindo
 import type { GuiAlertPayload, GuiNoticeKind } from '../guiNotices'
 import { ensureSynkoraGitExcludes } from '../worktree'
 import type { MainContext } from '../mainContext'
+import { GuiWorkspaceFileIndex, type GuiWorkspaceFilesResult } from '../guiWorkspaceFiles'
 
 export interface GuiIpcExtras {
   /** F3-c4: host OU view de panes — o canvas é quem monta o pane GUI. */
@@ -193,6 +194,7 @@ function writeFolderAttachment(selectedPath: unknown): GuiAttachResult {
 
 export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessionRegistry {
   const { blackbox } = ctx
+  const workspaceFileIndex = new GuiWorkspaceFileIndex()
   const visibility = new GuiPaneVisibilityRegistry()
   const readyTitle = new GuiWindowReadyController({
     setTitle: (title) => {
@@ -386,6 +388,24 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     extras.assertAppRendererSender(e)
     return registry.state(paneId)
   })
+
+  /**
+   * Índice de menções: o `cwd` é resolvido pelo registro do pane, nunca pelo
+   * renderer. A lista é completa dentro dos limites do índice e fica cacheada
+   * pela raiz canonical do worktree; digitar mais um caractere não varre disco.
+   */
+  ipcMain.handle(
+    'gui:workspaceFiles',
+    (e, paneId: unknown): GuiWorkspaceFilesResult => {
+      extras.assertAppRendererSender(e)
+      if (typeof paneId !== 'string' || paneId.length === 0 || paneId.length > 256) {
+        return { ok: false, error: 'pane sem identificador válido' }
+      }
+      const cwd = registry.cwdOf(paneId)
+      if (!cwd) return { ok: false, error: 'este pane não tem sessão aberta' }
+      return workspaceFileIndex.list(cwd)
+    }
+  )
 
   // ANEXO DO COMPOSER: print colado ou arquivo solto vira arquivo em
   // `<cwd do pane>/.synkora/attachments` e o renderer recebe o caminho

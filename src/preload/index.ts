@@ -32,6 +32,7 @@ import type {
   MissionWorkspaceFile,
   MissionWorkspaceSummary
 } from '../main/worktree'
+import type { GuiWorkspaceFilesResult } from '../main/guiWorkspaceFiles'
 import type { PlanningGuiSpecResult } from '../main/ipc/projects'
 import type {
   FilePreviewKind,
@@ -78,6 +79,7 @@ export type {
 
 /** Commits da missão — a lista por trás do `ahead` que o trilho já mostra. */
 export type { MissionCommit, MissionCommitDiffResult, MissionCommitsResult }
+export type { GuiWorkspaceFilesResult }
 
 export type {
   MissionProgressState,
@@ -1299,6 +1301,10 @@ const api = {
       alive: boolean
     }> =>
       ipcRenderer.invoke('gui:state', paneId),
+    /** Lista read-only de caminhos relativos para o autocomplete @arquivo.
+     *  O main resolve o worktree a partir do paneId e mantém cache por raiz. */
+    workspaceFiles: (paneId: string): Promise<GuiWorkspaceFilesResult> =>
+      ipcRenderer.invoke('gui:workspaceFiles', paneId),
     /** Anexa print da área de transferência ou arquivo ao chat: o main grava
      *  em `<cwd do pane>/.synkora/attachments` e devolve o caminho ABSOLUTO
      *  para o composer citar no prompt (teto de 10 MB por arquivo). */
