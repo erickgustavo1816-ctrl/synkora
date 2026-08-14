@@ -1,4 +1,4 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { Component, Fragment, type ErrorInfo, type ReactNode } from 'react'
 import './GuiPanelErrorBoundary.css'
 
 interface GuiPanelErrorBoundaryProps {
@@ -11,6 +11,14 @@ interface GuiPanelErrorBoundaryProps {
 interface GuiPanelErrorBoundaryState {
   failed: boolean
   retry: number
+}
+
+function safePanelLabel(label: string | undefined): string {
+  const normalized = (typeof label === 'string' ? label : '')
+    .replace(/[\u0000-\u001f\u007f]/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
+  return normalized ? normalized.slice(0, 120) : 'este painel'
 }
 
 /**
@@ -34,7 +42,7 @@ export default class GuiPanelErrorBoundary extends Component<
 
   componentDidUpdate(previous: GuiPanelErrorBoundaryProps): void {
     if (previous.paneId !== this.props.paneId && this.state.failed) {
-      this.setState({ failed: false, retry: this.state.retry + 1 })
+      this.setState((state) => ({ failed: false, retry: state.retry + 1 }))
     }
   }
 
@@ -43,14 +51,20 @@ export default class GuiPanelErrorBoundary extends Component<
   }
 
   render(): ReactNode {
-    if (!this.state.failed) return this.props.children
+    // A retry is a real remount, not only a second render of a child that may
+    // have kept poisoned local state. The pane identity is part of the key so
+    // swapping a pane recovers even when the boundary instance is reused.
+    if (!this.state.failed) {
+      return <Fragment key={`${this.props.paneId}:${this.state.retry}`}>{this.props.children}</Fragment>
+    }
+    const label = safePanelLabel(this.props.label)
     return (
       <section className="gui-panel-failure" role="alert" aria-live="assertive">
         <div className="gui-panel-failure-mark" aria-hidden="true">
           !
         </div>
         <div className="gui-panel-failure-copy">
-          <strong>{this.props.label ?? 'este painel'} encontrou um erro</strong>
+          <strong>{label} encontrou um erro</strong>
           <span>o restante do Synkora continua funcionando</span>
         </div>
         <div className="gui-panel-failure-actions">

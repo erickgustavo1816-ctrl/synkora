@@ -4,6 +4,7 @@ import PanesApp from './PanesApp'
 import SynVoiceOverlay from './components/SynVoiceOverlay'
 import ProgressOverlay from './components/ProgressOverlay'
 import TooltipLayer from './components/Tooltip'
+import GuiPanelErrorBoundary from './components/GuiPanelErrorBoundary'
 import { installDevMock } from './devMock'
 import './global.css'
 
@@ -53,11 +54,17 @@ if (import.meta.env.DEV) installDevMock()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   isProgressOverlay ? (
-    <ProgressOverlay />
+    <GuiPanelErrorBoundary paneId="overlay:progress" label="o painel de progresso">
+      <ProgressOverlay />
+    </GuiPanelErrorBoundary>
   ) : isSynVoiceOverlay ? (
     <>
-      <SynVoiceOverlay />
-      <TooltipLayer />
+      <GuiPanelErrorBoundary paneId="overlay:synvoice" label="o SynVoice">
+        <SynVoiceOverlay />
+      </GuiPanelErrorBoundary>
+      <GuiPanelErrorBoundary paneId="overlay:tooltip" label="as dicas">
+        <TooltipLayer />
+      </GuiPanelErrorBoundary>
     </>
   ) : isPanesView ? (
     <PanesApp />

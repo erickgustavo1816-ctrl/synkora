@@ -3,6 +3,7 @@ import { useStore } from '../store'
 import { hueOf, initialsOf } from '../util'
 import SynkoraMark from './SynkoraMark'
 import NewUniverseModal from './NewUniverseModal'
+import GuiPanelErrorBoundary from './GuiPanelErrorBoundary'
 
 // Referência estável para seletores (regra do projeto: nunca `?? []` inline).
 const NO_PANES: never[] = []
@@ -91,7 +92,15 @@ export default function ProjectRail(): React.JSX.Element {
           +
         </button>
       </div>
-      {adding && <NewUniverseModal onClose={() => setAdding(false)} />}
+      {adding && (
+        <GuiPanelErrorBoundary
+          paneId="overlay:rail:new-universe"
+          label="o novo universo"
+          onClose={() => setAdding(false)}
+        >
+          <NewUniverseModal onClose={() => setAdding(false)} />
+        </GuiPanelErrorBoundary>
+      )}
     </nav>
   )
 }

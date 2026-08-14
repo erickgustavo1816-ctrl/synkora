@@ -7,6 +7,7 @@ import ServicesSettings from '../components/ServicesSettings'
 import SkillsLibrary from '../components/SkillsLibrary'
 import SynVoiceMicrophoneSettings from '../components/SynVoiceMicrophoneSettings'
 import SynkoraMark from '../components/SynkoraMark'
+import GuiPanelErrorBoundary from '../components/GuiPanelErrorBoundary'
 
 interface NavItem {
   id: SettingsSection
@@ -128,16 +129,50 @@ export default function Settings(): React.JSX.Element {
               <div className={`settings-section-body section-${section}`}>
                 {section === 'appearance' && (
                   <>
-                    <AppearanceSettings />
-                    <ChatNoticeSettings />
+                    <GuiPanelErrorBoundary
+                      paneId="settings:appearance"
+                      label="as configurações de aparência"
+                    >
+                      <AppearanceSettings />
+                    </GuiPanelErrorBoundary>
+                    <GuiPanelErrorBoundary
+                      paneId="settings:chat-notices"
+                      label="os avisos do chat"
+                    >
+                      <ChatNoticeSettings />
+                    </GuiPanelErrorBoundary>
                   </>
                 )}
-                {section === 'accounts' && <SeatDeck />}
-                {section === 'skills' && <SkillsLibrary kind="skill" openByDefault />}
-                {section === 'agents' && <SkillsLibrary kind="agent" openByDefault />}
-                {section === 'services' && <ServicesSettings />}
-                {section === 'images' && <SettingsPanel />}
-                {section === 'voice' && <SynVoiceMicrophoneSettings />}
+                {section === 'accounts' && (
+                  <GuiPanelErrorBoundary paneId="settings:accounts" label="as contas">
+                    <SeatDeck />
+                  </GuiPanelErrorBoundary>
+                )}
+                {section === 'skills' && (
+                  <GuiPanelErrorBoundary paneId="settings:skills" label="a biblioteca de skills">
+                    <SkillsLibrary kind="skill" openByDefault />
+                  </GuiPanelErrorBoundary>
+                )}
+                {section === 'agents' && (
+                  <GuiPanelErrorBoundary paneId="settings:agents" label="os subagentes">
+                    <SkillsLibrary kind="agent" openByDefault />
+                  </GuiPanelErrorBoundary>
+                )}
+                {section === 'services' && (
+                  <GuiPanelErrorBoundary paneId="settings:services" label="os serviços">
+                    <ServicesSettings />
+                  </GuiPanelErrorBoundary>
+                )}
+                {section === 'images' && (
+                  <GuiPanelErrorBoundary paneId="settings:images" label="as configurações de imagens">
+                    <SettingsPanel />
+                  </GuiPanelErrorBoundary>
+                )}
+                {section === 'voice' && (
+                  <GuiPanelErrorBoundary paneId="settings:voice" label="as configurações do SynVoice">
+                    <SynVoiceMicrophoneSettings />
+                  </GuiPanelErrorBoundary>
+                )}
               </div>
             </section>
           </div>

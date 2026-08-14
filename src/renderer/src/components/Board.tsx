@@ -3382,46 +3382,60 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           const task = tasks.find((t) => t.id === openTaskId)
           if (task?.kind === 'plan')
             return (
-              <PlanModal
-                key={task.updatedAt}
-                task={task}
-                // SÓ os cards DESTE plano: 2 planos na mesma missão não se
-                // misturam (bug real: plano concluído listava os cards em
-                // execução do plano seguinte — e cards legados do plano velho
-                // vazavam no novo; belongsToPlan corta pelos dois lados).
-                workTasks={tasks.filter(
-                  (t) =>
-                    t.missionId === task.missionId && t.kind !== 'plan' && belongsToPlan(t, task)
-                )}
+              <GuiPanelErrorBoundary
+                key={`overlay:task:${task.id}:${task.updatedAt}`}
+                paneId={`overlay:task:${task.id}`}
+                label="o painel da tarefa"
                 onClose={() => setOpenTaskId(null)}
-              />
+              >
+                <PlanModal
+                  key={task.updatedAt}
+                  task={task}
+                  // SÓ os cards DESTE plano: 2 planos na mesma missão não se
+                  // misturam (bug real: plano concluído listava os cards em
+                  // execução do plano seguinte — e cards legados do plano velho
+                  // vazavam no novo; belongsToPlan corta pelos dois lados).
+                  workTasks={tasks.filter(
+                    (t) =>
+                      t.missionId === task.missionId && t.kind !== 'plan' && belongsToPlan(t, task)
+                  )}
+                  onClose={() => setOpenTaskId(null)}
+                />
+              </GuiPanelErrorBoundary>
             )
           return task ? (
-            <TaskModal
-              key={task.updatedAt}
-              task={task}
-              projectId={projectId}
-              livePane={livePaneOf(task.id) ?? null}
-              missionClosed={
-                !!task.missionId &&
-                (() => {
-                  const m = missions.find((x) => x.id === task.missionId)
-                  return !m || m.status === 'concluida' || m.status === 'arquivada'
-                })()
-              }
-              onNewMissionFrom={() => {
-                const m = missions.find((x) => x.id === task.missionId)
-                setMissionPrefill({
-                  title: `Ajustar: ${task.title}`.slice(0, 60),
-                  goal:
-                    `REFERÊNCIA: card "${task.title}"${m ? ` da missão "${m.title}"` : ''} (já integrada na main).\n` +
-                    `O que foi feito lá: ${task.description || task.title}\n\n` +
-                    `O que ajustar/evoluir agora: (descreva)`
-                })
-                setNewMissionOpen(true)
-              }}
+            <GuiPanelErrorBoundary
+              key={`overlay:task:${task.id}:${task.updatedAt}`}
+              paneId={`overlay:task:${task.id}`}
+              label="o painel da tarefa"
               onClose={() => setOpenTaskId(null)}
-            />
+            >
+              <TaskModal
+                key={task.updatedAt}
+                task={task}
+                projectId={projectId}
+                livePane={livePaneOf(task.id) ?? null}
+                missionClosed={
+                  !!task.missionId &&
+                  (() => {
+                    const m = missions.find((x) => x.id === task.missionId)
+                    return !m || m.status === 'concluida' || m.status === 'arquivada'
+                  })()
+                }
+                onNewMissionFrom={() => {
+                  const m = missions.find((x) => x.id === task.missionId)
+                  setMissionPrefill({
+                    title: `Ajustar: ${task.title}`.slice(0, 60),
+                    goal:
+                      `REFERÊNCIA: card "${task.title}"${m ? ` da missão "${m.title}"` : ''} (já integrada na main).\n` +
+                      `O que foi feito lá: ${task.description || task.title}\n\n` +
+                      `O que ajustar/evoluir agora: (descreva)`
+                  })
+                  setNewMissionOpen(true)
+                }}
+                onClose={() => setOpenTaskId(null)}
+              />
+            </GuiPanelErrorBoundary>
           ) : null
         })()}
 
@@ -3429,39 +3443,45 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         selMission &&
         createPortal(
           <div className="overlay" onClick={() => setConfirmDeleteMission(false)}>
-            <div className="task-modal confirm-modal" onClick={(e) => e.stopPropagation()}>
-              <div className="task-modal-head">
-                <span className="task-dept">🗑 excluir missão</span>
-                <button
-                  className="pane-close dark-close"
-                  onClick={() => setConfirmDeleteMission(false)}
-                >
-                  ×
-                </button>
+            <GuiPanelErrorBoundary
+              paneId={`overlay:delete-mission:${selMission.id}`}
+              label="a confirmação de exclusão"
+              onClose={() => setConfirmDeleteMission(false)}
+            >
+              <div className="task-modal confirm-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="task-modal-head">
+                  <span className="task-dept">🗑 excluir missão</span>
+                  <button
+                    className="pane-close dark-close"
+                    onClick={() => setConfirmDeleteMission(false)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <p className="confirm-text">
+                  Excluir <b>“{selMission.title}”</b> de vez?
+                </p>
+                <p className="confirm-sub">
+                  As tarefas da missão{selMission.branch ? ` e a branch ${selMission.branch}` : ''}{' '}
+                  serão removidas. Não dá para desfazer.
+                </p>
+                <div className="task-modal-actions">
+                  <button className="btn ghost" onClick={() => setConfirmDeleteMission(false)}>
+                    cancelar
+                  </button>
+                  <span className="task-modal-meta" />
+                  <button
+                    className="btn danger-solid"
+                    onClick={() => {
+                      setConfirmDeleteMission(false)
+                      void deleteMission(selMission.id)
+                    }}
+                  >
+                    🗑 excluir de vez
+                  </button>
+                </div>
               </div>
-              <p className="confirm-text">
-                Excluir <b>“{selMission.title}”</b> de vez?
-              </p>
-              <p className="confirm-sub">
-                As tarefas da missão{selMission.branch ? ` e a branch ${selMission.branch}` : ''}{' '}
-                serão removidas. Não dá para desfazer.
-              </p>
-              <div className="task-modal-actions">
-                <button className="btn ghost" onClick={() => setConfirmDeleteMission(false)}>
-                  cancelar
-                </button>
-                <span className="task-modal-meta" />
-                <button
-                  className="btn danger-solid"
-                  onClick={() => {
-                    setConfirmDeleteMission(false)
-                    void deleteMission(selMission.id)
-                  }}
-                >
-                  🗑 excluir de vez
-                </button>
-              </div>
-            </div>
+            </GuiPanelErrorBoundary>
           </div>,
           document.body
         )}
@@ -3469,35 +3489,58 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       {/* troca de conta do orquestrador: mesmo modal, campos travados, só
           conta/modelo/effort — mesmo CLI transplanta a conversa junto */}
       {reseatOpen && selMission && selMission.status === 'ativa' && (
-        <NewMissionModal
-          key={`reseat-${selMission.id}`}
-          projectId={projectId}
-          reseatMission={selMission}
+        <GuiPanelErrorBoundary
+          key={`overlay:reseat:${selMission.id}`}
+          paneId={`overlay:reseat:${selMission.id}`}
+          label="a troca de conta do orquestrador"
           onClose={() => setReseatOpen(false)}
-        />
+        >
+          <NewMissionModal
+            key={`reseat-${selMission.id}`}
+            projectId={projectId}
+            reseatMission={selMission}
+            onClose={() => setReseatOpen(false)}
+          />
+        </GuiPanelErrorBoundary>
       )}
 
       {/* servidor de teste do dono: sobe a branch da missão num pane shell */}
       {testServerOpen && selMission && (
-        <TestServerModal
-          projectId={projectId}
-          target={{ missionId: selMission.id }}
-          label={`missão "${selMission.title.slice(0, 32)}"`}
+        <GuiPanelErrorBoundary
+          key={`overlay:test-server:${selMission.id}`}
+          paneId={`overlay:test-server:${selMission.id}`}
+          label="o servidor de teste"
           onClose={() => setTestServerOpen(false)}
-        />
+        >
+          <TestServerModal
+            projectId={projectId}
+            target={{ missionId: selMission.id }}
+            label={`missão "${selMission.title.slice(0, 32)}"`}
+            onClose={() => setTestServerOpen(false)}
+          />
+        </GuiPanelErrorBoundary>
       )}
 
       {newMissionOpen && (
-        <NewMissionModal
-          projectId={projectId}
-          initialTitle={missionPrefill?.title}
-          initialGoal={missionPrefill?.goal}
+        <GuiPanelErrorBoundary
+          paneId="overlay:new-mission"
+          label="a nova missão"
           onClose={() => {
             setNewMissionOpen(false)
             setMissionPrefill(null)
           }}
-          onCreated={(m) => setMissionTab(projectId, m.id)}
-        />
+        >
+          <NewMissionModal
+            projectId={projectId}
+            initialTitle={missionPrefill?.title}
+            initialGoal={missionPrefill?.goal}
+            onClose={() => {
+              setNewMissionOpen(false)
+              setMissionPrefill(null)
+            }}
+            onCreated={(m) => setMissionTab(projectId, m.id)}
+          />
+        </GuiPanelErrorBoundary>
       )}
 
       {/* Missão criada pelo PM aguardando a escolha do orquestrador: o mesmo
@@ -3505,14 +3548,23 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           (decisão do usuário, 02/08). "depois" fecha; o placeholder da aba
           da missão reabre. */}
       {isActive && pendingOrchMission && !pendingOrchDismissed[pendingOrchMission.id] && (
-        <NewMissionModal
-          key={pendingOrchMission.id}
-          projectId={projectId}
-          confirmMission={pendingOrchMission}
+        <GuiPanelErrorBoundary
+          key={`overlay:pending-mission:${pendingOrchMission.id}`}
+          paneId={`overlay:pending-mission:${pendingOrchMission.id}`}
+          label="a confirmação da missão"
           onClose={() =>
             setPendingOrchDismissed((prev) => ({ ...prev, [pendingOrchMission.id]: true }))
           }
-        />
+        >
+          <NewMissionModal
+            key={pendingOrchMission.id}
+            projectId={projectId}
+            confirmMission={pendingOrchMission}
+            onClose={() =>
+              setPendingOrchDismissed((prev) => ({ ...prev, [pendingOrchMission.id]: true }))
+            }
+          />
+        </GuiPanelErrorBoundary>
       )}
     </div>
   )

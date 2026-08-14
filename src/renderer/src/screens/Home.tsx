@@ -4,6 +4,7 @@ import SynkoraMark from '../components/SynkoraMark'
 import HomeField, { type FieldAnchor, type HomeFieldHandle } from '../components/HomeField'
 import UniverseCard from '../components/UniverseCard'
 import NewUniverseModal from '../components/NewUniverseModal'
+import GuiPanelErrorBoundary from '../components/GuiPanelErrorBoundary'
 
 // ————————————————————————————————————————————————————————————————————————
 // A HOME — o SAGUÃO do universo Synkora.
@@ -382,7 +383,13 @@ export default function Home(): React.JSX.Element {
 
           <div className="universe-grid">
             {projects.map((p, i) => (
-              <UniverseCard key={p.id} projectId={p.id} index={i} anchor={anchor} />
+              <GuiPanelErrorBoundary
+                key={p.id}
+                paneId={`home:universe:${p.id}`}
+                label="o card do universo"
+              >
+                <UniverseCard projectId={p.id} index={i} anchor={anchor} />
+              </GuiPanelErrorBoundary>
             ))}
             <button className="universe-card add" onClick={() => setNovoOpen(true)}>
               <span className="add-plus">+</span>
@@ -394,7 +401,15 @@ export default function Home(): React.JSX.Element {
         </div>
       </div>
 
-      {novoOpen && <NewUniverseModal onClose={() => setNovoOpen(false)} />}
+      {novoOpen && (
+        <GuiPanelErrorBoundary
+          paneId="overlay:home:new-universe"
+          label="o novo universo"
+          onClose={() => setNovoOpen(false)}
+        >
+          <NewUniverseModal onClose={() => setNovoOpen(false)} />
+        </GuiPanelErrorBoundary>
+      )}
     </div>
   )
 }

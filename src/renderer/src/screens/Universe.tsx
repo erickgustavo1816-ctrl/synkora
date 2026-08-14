@@ -229,7 +229,9 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
       {/* Gate de entrada: o seat do Maestro é escolhido ANTES de tudo —
           sem default silencioso (fluxo lógico, decisão do usuário). */}
       {isActive && ((maestroStateLoaded && !maestroSeatId) || seatGateOpen) && (
-        <SeatGate projectId={projectId} canCancel={Boolean(maestroSeatId)} />
+        <GuiPanelErrorBoundary paneId={`overlay:${projectId}:seat-gate`} label="a seleção de conta">
+          <SeatGate projectId={projectId} canCancel={Boolean(maestroSeatId)} />
+        </GuiPanelErrorBoundary>
       )}
     </div>
   )

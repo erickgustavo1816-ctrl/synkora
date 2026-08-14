@@ -16,6 +16,7 @@ import Settings from './screens/Settings'
 import ProjectRail from './components/ProjectRail'
 import TitleBar from './components/TitleBar'
 import TooltipLayer from './components/Tooltip'
+import GuiPanelErrorBoundary from './components/GuiPanelErrorBoundary'
 import { TERMINAL_DEFAULT_FONT_SIZE } from './terminalGeometry'
 import { installGlobalGuiEscape } from './guiEscape'
 import { guiApi } from './guiApi'
@@ -324,22 +325,34 @@ export default function App(): React.JSX.Element {
   // projeto não derruba panes/maestro nem deixa PTY numa geometria antiga.
   return (
     <div className="app-shell">
-      <GuiQueueDispatcher />
-      <TooltipLayer />
-      <TitleBar />
+      <GuiPanelErrorBoundary paneId="app:queue-dispatcher" label="a fila de conversas">
+        <GuiQueueDispatcher />
+      </GuiPanelErrorBoundary>
+      <GuiPanelErrorBoundary paneId="app:tooltip-layer" label="as dicas">
+        <TooltipLayer />
+      </GuiPanelErrorBoundary>
+      <GuiPanelErrorBoundary paneId="app:titlebar" label="a barra de título">
+        <TitleBar />
+      </GuiPanelErrorBoundary>
       <div className="app-body">
-        <ProjectRail />
+        <GuiPanelErrorBoundary paneId="app:project-rail" label="a navegação dos universos">
+          <ProjectRail />
+        </GuiPanelErrorBoundary>
         <main className="app-main">
           {appPage === 'settings' && (
             <div className="app-view">
-              <Settings />
+              <GuiPanelErrorBoundary paneId="app:settings" label="as configurações">
+                <Settings />
+              </GuiPanelErrorBoundary>
             </div>
           )}
           <div
             className="app-view"
             style={{ display: appPage === 'workspace' && openProjectId === null ? 'flex' : 'none' }}
           >
-            <Home />
+            <GuiPanelErrorBoundary paneId="app:home" label="a Home">
+              <Home />
+            </GuiPanelErrorBoundary>
           </div>
           {mountedProjects.map((id) => (
             <div

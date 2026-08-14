@@ -7,6 +7,7 @@ import { getSynVoiceTarget } from './synVoiceTarget'
 import { TERMINAL_DEFAULT_FONT_SIZE } from './terminalGeometry'
 import { installGlobalGuiEscape, requestActiveGuiEscape } from './guiEscape'
 import GuiQueueDispatcher from './components/GuiQueueDispatcher'
+import GuiPanelErrorBoundary from './components/GuiPanelErrorBoundary'
 
 /**
  * PANESAPP — raiz do renderer da WebContentsView de panes (Fase 3,
@@ -211,8 +212,12 @@ export default function PanesApp(): React.JSX.Element {
   // panes de fundo continuam medidos e vivos ao trocar de projeto.
   return (
     <div className="app-shell panes-view-shell">
-      <GuiQueueDispatcher />
-      <TooltipLayer />
+      <GuiPanelErrorBoundary paneId="panes-app:queue-dispatcher" label="a fila de conversas">
+        <GuiQueueDispatcher />
+      </GuiPanelErrorBoundary>
+      <GuiPanelErrorBoundary paneId="panes-app:tooltip-layer" label="as dicas">
+        <TooltipLayer />
+      </GuiPanelErrorBoundary>
       {mountedProjects.map((id) => {
         const project = projects.find((p) => p.id === id)
         if (!project) return null
@@ -223,7 +228,9 @@ export default function PanesApp(): React.JSX.Element {
             aria-hidden={openProjectId === id ? undefined : true}
             inert={openProjectId === id ? undefined : true}
           >
-            <PanesView projectId={id} projectPath={project.path} />
+            <GuiPanelErrorBoundary paneId={`panes-app:canvas:${id}`} label="o canvas de panes">
+              <PanesView projectId={id} projectPath={project.path} />
+            </GuiPanelErrorBoundary>
           </div>
         )
       })}

@@ -1041,67 +1041,69 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
   return (
     <div className="panes-shell" data-mode={mode}>
       <div className="panes-map">
-        {mode === 'imerso' ? (
-          <div className="map-spine">
-            <div className="spine-controls" role="toolbar" aria-label="Controles do modo imerso">
-              <button
-                className="spine-btn"
-                aria-label="Voltar ao mapa"
-                data-tip="Voltar ao mapa (Ctrl+Alt+M)"
-                onClick={() => {
-                  freezeTerminalLayoutFor(520)
-                  setPanesUi(projectId, { anchored: null, expanded: null })
-                }}
-              >
-                ◀
-              </button>
-              <button
-                className="spine-btn on"
-                aria-label="Sair do modo imerso"
-                data-tip="Sair do modo imerso (Ctrl+Alt+F)"
-                onClick={() => {
-                  freezeTerminalLayoutFor(520)
-                  setPanesUi(projectId, { immersive: false })
-                }}
-              >
-                ⛶
-              </button>
+        <GuiPanelErrorBoundary paneId={`canvas-map:${projectId}`} label="o mapa de panes">
+          {mode === 'imerso' ? (
+            <div className="map-spine">
+              <div className="spine-controls" role="toolbar" aria-label="Controles do modo imerso">
+                <button
+                  className="spine-btn"
+                  aria-label="Voltar ao mapa"
+                  data-tip="Voltar ao mapa (Ctrl+Alt+M)"
+                  onClick={() => {
+                    freezeTerminalLayoutFor(520)
+                    setPanesUi(projectId, { anchored: null, expanded: null })
+                  }}
+                >
+                  ◀
+                </button>
+                <button
+                  className="spine-btn on"
+                  aria-label="Sair do modo imerso"
+                  data-tip="Sair do modo imerso (Ctrl+Alt+F)"
+                  onClick={() => {
+                    freezeTerminalLayoutFor(520)
+                    setPanesUi(projectId, { immersive: false })
+                  }}
+                >
+                  ⛶
+                </button>
+              </div>
+              {nodes.map((node) => (
+                <button
+                  key={node.id}
+                  className={`spine-node${anchored === node.id ? ' on' : ''}${
+                    node.attention > 0 ? ' needs-perm' : ''
+                  }`}
+                  style={{ ['--node-hue' as string]: hueOfNode(node) }}
+                  data-tip={`${node.label}\n${node.paneIds.length} painéis`}
+                  onClick={() => anchor(node.id)}
+                >
+                  <i className="spine-dot" />
+                  <b>{node.paneIds.length}</b>
+                </button>
+              ))}
             </div>
-            {nodes.map((node) => (
-              <button
-                key={node.id}
-                className={`spine-node${anchored === node.id ? ' on' : ''}${
-                  node.attention > 0 ? ' needs-perm' : ''
-                }`}
-                style={{ ['--node-hue' as string]: hueOfNode(node) }}
-                data-tip={`${node.label}\n${node.paneIds.length} painéis`}
-                onClick={() => anchor(node.id)}
-              >
-                <i className="spine-dot" />
-                <b>{node.paneIds.length}</b>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <ConstellationMap
-            projectId={projectId}
-            projectName={project?.name ?? 'projeto'}
-            projectPhoto={project?.photo}
-            nodes={nodes}
-            anchored={anchored}
-            openedPaneId={expanded}
-            itemActivity={paneActivity}
-            itemAttention={paneAttention}
-            onAnchor={anchor}
-            onOpenMission={openMissionOnBoard}
-            onOpenPane={openPaneFromMap}
-            // F3-c4: o board mora no HOST — navegar é relay via main (o tab
-            // local desta view fica cravado em 'panes' de propósito).
-            onOpenBoard={() => window.synkora.panesView.navigateHost(projectId, 'board')}
-            missionsAtivas={missionsAtivas}
-            panesAtivos={panes.length}
-          />
-        )}
+          ) : (
+            <ConstellationMap
+              projectId={projectId}
+              projectName={project?.name ?? 'projeto'}
+              projectPhoto={project?.photo}
+              nodes={nodes}
+              anchored={anchored}
+              openedPaneId={expanded}
+              itemActivity={paneActivity}
+              itemAttention={paneAttention}
+              onAnchor={anchor}
+              onOpenMission={openMissionOnBoard}
+              onOpenPane={openPaneFromMap}
+              // F3-c4: o board mora no HOST — navegar é relay via main (o tab
+              // local desta view fica cravado em 'panes' de propósito).
+              onOpenBoard={() => window.synkora.panesView.navigateHost(projectId, 'board')}
+              missionsAtivas={missionsAtivas}
+              panesAtivos={panes.length}
+            />
+          )}
+        </GuiPanelErrorBoundary>
       </div>
 
       <div className="panes-stage">
@@ -1439,14 +1441,20 @@ export default function PanesView({ projectId, projectPath }: Props): React.JSX.
       {/* modal via portal (PhaseSeatModal usa createPortal no body) — irmão do
           deck, nunca pai: abrir/fechar não toca na posição dos TerminalPane. */}
       {phaseReseat && (
-        <PhaseSeatModal
-          projectId={projectId}
-          taskId={phaseReseat.taskId}
-          phase={phaseReseat.phase}
-          taskTitle={phaseReseat.title}
-          currentSeatId={phaseReseat.seatId}
+        <GuiPanelErrorBoundary
+          paneId={`overlay:phase-seat:${phaseReseat.taskId}`}
+          label="a troca de conta da fase"
           onClose={() => setPhaseReseat(null)}
-        />
+        >
+          <PhaseSeatModal
+            projectId={projectId}
+            taskId={phaseReseat.taskId}
+            phase={phaseReseat.phase}
+            taskTitle={phaseReseat.title}
+            currentSeatId={phaseReseat.seatId}
+            onClose={() => setPhaseReseat(null)}
+          />
+        </GuiPanelErrorBoundary>
       )}
     </div>
   )
