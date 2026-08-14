@@ -5,13 +5,14 @@ import type { BlackboxEntry } from '../main/blackbox'
 import type {
   GuiExecutorPatch,
   GuiExecutorResult,
-  GuiLivePayload,
+  GuiLivePayload as MainGuiLivePayload,
   GuiPaneSpawn,
   GuiPermBehavior,
   GuiPermissionMode,
   GuiQueuedDeliveryInput,
   GuiResult
 } from '../main/guiSessions'
+import type { SessionEvent } from '../main/maestroSession'
 import type {
   GuiAttachPayload,
   GuiAttachResult,
@@ -45,12 +46,15 @@ import type {
 /** entrada do diário da caixa-preta + linha legível pronta para exibição */
 export type BlackboxTailEntry = BlackboxEntry & { line: string }
 
-/** Contrato do pane GUI (docs/GUI_PANE_CONTRACT.md) — fonte única dos tipos;
- *  o renderer copia/reexporta pelo accessor tipado de guiApi.ts. */
+/** Contrato do pane GUI (docs/GUI_PANE_CONTRACT.md) — fonte única dos tipos.
+ * O canal vivo do main carrega a união real. O renderer ainda recebe
+ * `unknown` e valida antes do redutor, mas o preload não apaga campos aditivos
+ * como `parentToolUseId` ao tipar o callback. */
+export type GuiLivePayload = Omit<MainGuiLivePayload, 'evt'> & { evt: SessionEvent }
+
 export type {
   GuiExecutorPatch,
   GuiExecutorResult,
-  GuiLivePayload,
   GuiPaneSpawn,
   GuiPermBehavior,
   GuiPermissionMode,

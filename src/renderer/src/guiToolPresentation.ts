@@ -64,12 +64,26 @@ export function guiToolResultTargetIndex(
   items: readonly GuiItem[],
   toolUseId?: string
 ): number {
+  if (!toolUseId) {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index]
+      if (item.kind === 'tool' && !item.result) return index
+    }
+    return -1
+  }
+
+  let exact = -1
+  let seen = false
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index]
-    if (item.kind !== 'tool' || item.result) continue
-    if (!toolUseId || item.toolUseId === toolUseId) return index
+    if (item.kind !== 'tool' || item.toolUseId !== toolUseId) continue
+    // Um id opaco deveria ser único. Replay corrompido/hostil não escolhe um
+    // alvo arbitrário: sem unicidade, nenhum card recebe o resultado.
+    if (seen) return -1
+    seen = true
+    if (!item.result) exact = index
   }
-  return -1
+  return exact
 }
 
 /** A permissão não carrega toolUseId em todos os CLIs. Como só o pedido mais
@@ -91,9 +105,7 @@ export function denyLatestPendingGuiTool(
   toolUseId?: string
 ): GuiItem[] {
   if (toolUseId) {
-    const exact = items.findIndex(
-      (item) => item.kind === 'tool' && !item.result && item.toolUseId === toolUseId
-    )
+    const exact = guiToolResultTargetIndex(items, toolUseId)
     if (exact < 0) return items
     const item = items[exact]
     if (item.kind !== 'tool' || item.result) return items

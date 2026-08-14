@@ -464,7 +464,8 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
       return (
         typeof event['name'] === 'string' &&
         Boolean(guiPlainRecord(event['input'])) &&
-        guiOptionalString(event['toolUseId'])
+        guiOptionalString(event['toolUseId']) &&
+        (event['parentToolUseId'] === undefined || guiRequestId(event['parentToolUseId']))
       )
     case 'tool-result':
       return (

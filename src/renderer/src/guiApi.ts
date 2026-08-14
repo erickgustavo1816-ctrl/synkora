@@ -164,7 +164,13 @@ export type GuiSessionEvent =
       at: number
     }
   | { type: 'text'; text: string }
-  | { type: 'tool'; name: string; input: Record<string, unknown>; toolUseId?: string }
+  | {
+      type: 'tool'
+      name: string
+      input: Record<string, unknown>
+      toolUseId?: string
+      parentToolUseId?: string
+    }
   | {
       type: 'tool-result'
       text: string
@@ -227,7 +233,16 @@ export type GuiSessionEvent =
  *  vira exceção dentro de um `set` do zustand. */
 export function asGuiEvent(evt: unknown): GuiSessionEvent | null {
   if (!evt || typeof evt !== 'object') return null
-  const type = (evt as { type?: unknown }).type
+  const record = evt as Record<string, unknown>
+  const type = record['type']
+  if (
+    type === 'tool' &&
+    record['parentToolUseId'] !== undefined &&
+    (typeof record['parentToolUseId'] !== 'string' ||
+      record['parentToolUseId'].length === 0 ||
+      record['parentToolUseId'].length > 256)
+  )
+    return null
   return typeof type === 'string' ? (evt as GuiSessionEvent) : null
 }
 

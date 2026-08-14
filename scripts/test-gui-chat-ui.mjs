@@ -69,6 +69,9 @@ import {
   isGuiShellTool,
   lastPendingGuiToolActivity
 } from '../src/renderer/src/guiToolPresentation.ts'
+import { nestGuiSubagentTools } from '../src/renderer/src/guiSubagentPresentation.ts'
+import { guiSubagentStatusView } from '../src/renderer/src/guiSubagentStatus.ts'
+import { asGuiEvent } from '../src/renderer/src/guiApi.ts'
 import {
   GUI_DIFF_MAX_CHARS,
   guiToolDiffInputSummary,
@@ -1773,4 +1776,206 @@ test('avisos do chat têm som apenas no host, visibilidade real e ajustes acess�
   for (const label of ['Precisa de você', 'Turno concluído', 'Turno falhou', 'Sons de atenção']) {
     assert.match(settings, new RegExp(label, 'u'))
   }
+})
+
+test('subagentes usam somente linhagem explícita e preservam o transcript cru', () => {
+  const parentA = {
+    ...tool('parent-a', 'Agent', 'investigue o fluxo A'),
+    toolUseId: 'parent-a'
+  }
+  const parentB = {
+    ...tool('parent-b', 'Agent', 'investigue o fluxo B'),
+    toolUseId: 'parent-b'
+  }
+  const childA1 = {
+    ...tool('child-a-1', 'Grep', 'padrão A1'),
+    toolUseId: 'child-a-1',
+    parentToolUseId: 'parent-a'
+  }
+  const childB = {
+    ...tool('child-b', 'Read', 'arquivo B'),
+    toolUseId: 'child-b',
+    parentToolUseId: 'parent-b'
+  }
+  const childA2 = {
+    ...tool('child-a-2', 'Grep', 'padrão A2'),
+    toolUseId: 'child-a-2',
+    parentToolUseId: 'parent-a'
+  }
+  const codexNamedAgent = {
+    ...tool('codex-generic', 'Agent', 'nome não é metadado'),
+    toolUseId: 'codex-generic'
+  }
+  const orphan = {
+    ...tool('orphan', 'Read', 'pai fora da janela'),
+    toolUseId: 'orphan',
+    parentToolUseId: 'evicted-parent'
+  }
+  const raw = [parentA, parentB, childA1, childB, childA2, codexNamedAgent, orphan]
+  const identities = [...raw]
+  const presented = nestGuiSubagentTools(raw)
+
+  assert.deepEqual(raw, identities, 'a projeção não reordena nem remove a verdade crua')
+  assert.equal(raw.length, 7)
+  assert.deepEqual(presented.map((item) => item.id), [
+    'subagent:parent-a',
+    'subagent:parent-b',
+    'codex-generic',
+    'orphan'
+  ])
+  const boxA = presented[0]
+  const boxB = presented[1]
+  assert.equal(boxA.kind, 'subagent')
+  assert.equal(boxB.kind, 'subagent')
+  assert.deepEqual(boxA.children.map((item) => item.id), ['child-a-1', 'child-a-2'])
+  assert.deepEqual(boxB.children.map((item) => item.id), ['child-b'])
+  assert.equal(groupConsecutiveGuiTools(boxA.children)[0].kind, 'tool-group', 'P8 continua dentro da caixa')
+  assert.equal(presented[2].kind, 'tool', 'nome Agent sem parentToolUseId continua genérico')
+  assert.equal(presented[3].kind, 'tool', 'filho cujo pai saiu do replay degrada sem sumir')
+
+  const orphanBranch = nestGuiSubagentTools([
+    orphan,
+    {
+      ...tool('orphan-grandchild', 'Grep', 'também não aninhar'),
+      toolUseId: 'orphan-grandchild',
+      parentToolUseId: 'orphan'
+    }
+  ])
+  assert.deepEqual(
+    orphanBranch.map((item) => item.kind),
+    ['tool', 'tool'],
+    'uma raiz órfã não captura descendentes numa caixa aparentemente válida'
+  )
+  assert.equal(
+    asGuiEvent({
+      type: 'tool',
+      name: 'Read',
+      input: {},
+      toolUseId: 'child',
+      parentToolUseId: 42
+    }),
+    null,
+    'payload vivo com linhagem torta não chega ao store'
+  )
+})
+
+test('resultados intercalados fecham o filho exato e a caixa conta desfechos terminais', () => {
+  const items = [
+    { ...tool('parent-a', 'Agent', 'prompt A'), toolUseId: 'parent-a' },
+    { ...tool('parent-b', 'Agent', 'prompt B'), toolUseId: 'parent-b' },
+    {
+      ...tool('child-a', 'Grep', 'alpha'),
+      toolUseId: 'child-a',
+      parentToolUseId: 'parent-a'
+    },
+    {
+      ...tool('child-b', 'Read', 'beta'),
+      toolUseId: 'child-b',
+      parentToolUseId: 'parent-b'
+    }
+  ]
+  const settle = (toolUseId, text, isError = false) => {
+    const index = guiToolResultTargetIndex(items, toolUseId)
+    assert.notEqual(index, -1)
+    items[index] = {
+      ...items[index],
+      result: {
+        text,
+        isError,
+        status: isError ? 'failed' : 'completed',
+        lineCount: 1,
+        truncated: false
+      }
+    }
+  }
+
+  // B termina antes de A; o resultado não pode fechar o último card por posição.
+  settle('child-b', 'resultado B')
+  settle('child-a', 'resultado A')
+  settle('parent-b', 'falhou B', true)
+  settle('parent-a', 'feito A')
+
+  const [boxA, boxB] = nestGuiSubagentTools(items)
+  assert.equal(boxA.kind, 'subagent')
+  assert.equal(boxB.kind, 'subagent')
+  assert.equal(boxA.children[0].result.text, 'resultado A')
+  assert.equal(boxB.children[0].result.text, 'resultado B')
+  assert.equal(
+    guiSubagentStatusView(boxA.parent, boxA.children, {
+      tone: 'ok',
+      statusLabel: 'concluído'
+    }).label,
+    'concluído (1 ferramenta)'
+  )
+  const failed = guiSubagentStatusView(boxB.parent, boxB.children, {
+    tone: 'err',
+    statusLabel: 'falhou'
+  })
+  assert.equal(failed.label, 'falhou (1 ferramenta)')
+  assert.equal(failed.tone, 'err')
+
+  const duplicate = [
+    { ...tool('dup-1'), toolUseId: 'duplicado' },
+    {
+      ...tool('dup-2'),
+      toolUseId: 'duplicado',
+      result: {
+        text: 'já fechado',
+        isError: false,
+        status: 'completed',
+        lineCount: 1,
+        truncated: false
+      }
+    }
+  ]
+  assert.equal(guiToolResultTargetIndex(duplicate, 'duplicado'), -1, 'id ambíguo falha fechado')
+})
+
+test('atividade de subagente mostra só a ferramenta ainda realmente pendente', () => {
+  const parent = { ...tool('parent', 'Agent', 'verifique o contrato'), toolUseId: 'parent' }
+  const pending = {
+    ...tool('pending', 'Grep', 'parent_tool_use_id'),
+    toolUseId: 'pending',
+    parentToolUseId: 'parent'
+  }
+  const completed = {
+    ...tool('completed', 'Read', 'arquivo já lido'),
+    toolUseId: 'completed',
+    parentToolUseId: 'parent',
+    result: {
+      text: 'ok',
+      isError: false,
+      status: 'completed',
+      lineCount: 1,
+      truncated: false
+    }
+  }
+  const view = guiSubagentStatusView(parent, [pending, completed], null)
+  assert.equal(view.currentActivity, 'Grep / parent_tool_use_id')
+  assert.equal(view.label, 'agora: Grep / parent_tool_use_id')
+})
+
+test('terminal de erro encerra pai e filhos sem deixar a caixa pulsando', () => {
+  const parent = { ...tool('parent', 'Agent', 'prompt terminal'), toolUseId: 'parent' }
+  const child = {
+    ...tool('child', 'Read', 'arquivo'),
+    toolUseId: 'child',
+    parentToolUseId: 'parent'
+  }
+  const closed = closePendingGuiTools([parent, child], {
+    type: 'fatal',
+    text: 'transporte encerrado'
+  })
+  const [box] = nestGuiSubagentTools(closed)
+  assert.equal(box.kind, 'subagent')
+  assert.equal(box.parent.result.status, 'failed')
+  assert.equal(box.children[0].result.status, 'failed')
+  const view = guiSubagentStatusView(
+    box.parent,
+    box.children,
+    guiToolOutcomeView(box.parent.result)
+  )
+  assert.equal(view.label, 'falhou (1 ferramenta)')
+  assert.equal(view.currentActivity, null)
+  assert.equal(view.tone, 'err')
 })

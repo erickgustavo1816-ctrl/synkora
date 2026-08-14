@@ -1017,6 +1017,98 @@ test('initialize recusado pelo Claude falha fechado e libera os waiters', () => 
   assert.match(events[0].text, /handshake do Claude falhou/u)
 })
 
+test('Claude propaga parent_tool_use_id e replay preserva dois pais intercalados', () => {
+  const session = Object.create(MaestroSession.prototype)
+  const events = []
+  session.emit = (event) => events.push(event)
+  const assistant = (toolUseId, name, input, parentToolUseId = null) =>
+    session.handleLine(
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: parentToolUseId,
+        message: { content: [{ type: 'tool_use', id: toolUseId, name, input }] }
+      })
+    )
+  const result = (toolUseId, text, isError = false) =>
+    session.handleLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: toolUseId, content: text, is_error: isError }]
+        }
+      })
+    )
+
+  assistant('parent-a', 'Agent', { prompt: 'A' })
+  assistant('parent-b', 'Agent', { prompt: 'B' })
+  assistant('child-a', 'Grep', { pattern: 'alpha' }, 'parent-a')
+  assistant('child-b', 'Read', { file_path: 'beta.ts' }, 'parent-b')
+  result('child-b', 'B pronto')
+  result('child-a', 'A pronto')
+  result('parent-b', 'B falhou', true)
+  result('parent-a', 'A pronto')
+
+  assert.deepEqual(
+    events.filter((event) => event.type === 'tool'),
+    [
+      { type: 'tool', name: 'Agent', input: { prompt: 'A' }, toolUseId: 'parent-a' },
+      { type: 'tool', name: 'Agent', input: { prompt: 'B' }, toolUseId: 'parent-b' },
+      {
+        type: 'tool',
+        name: 'Grep',
+        input: { pattern: 'alpha' },
+        toolUseId: 'child-a',
+        parentToolUseId: 'parent-a'
+      },
+      {
+        type: 'tool',
+        name: 'Read',
+        input: { file_path: 'beta.ts' },
+        toolUseId: 'child-b',
+        parentToolUseId: 'parent-b'
+      }
+    ]
+  )
+  assert.deepEqual(
+    events.filter((event) => event.type === 'tool-result').map((event) => event.toolUseId),
+    ['child-b', 'child-a', 'parent-b', 'parent-a']
+  )
+
+  const ring = new GuiEventRing()
+  for (const event of events) ring.push(event)
+  const replay = ring.sequencedSnapshot()
+  assert.equal(replay.length, events.length)
+  assert.equal(replay[2].evt.parentToolUseId, 'parent-a')
+  assert.equal(replay[3].evt.parentToolUseId, 'parent-b')
+  assert.equal(isGuiPersistedEvent(replay[2].evt), true)
+  assert.equal(
+    isGuiPersistedEvent({ ...replay[2].evt, parentToolUseId: 42 }),
+    false,
+    'linhagem forjada não entra na hidratação'
+  )
+  assert.equal(
+    isGuiPersistedEvent({ ...replay[2].evt, parentToolUseId: 'x'.repeat(257) }),
+    false,
+    'id de pai não contorna o teto do protocolo'
+  )
+
+  session.handleLine(
+    JSON.stringify({
+      type: 'assistant',
+      parent_tool_use_id: { forged: true },
+      message: {
+        content: [{ type: 'tool_use', id: 'generic', name: 'Read', input: {} }]
+      }
+    })
+  )
+  assert.deepEqual(events.at(-1), {
+    type: 'tool',
+    name: 'Read',
+    input: {},
+    toolUseId: 'generic'
+  })
+})
+
 test('firstPrompt nunca sai quando o handshake não produziu capacidades', async () => {
   const gui = registry()
   const ring = new GuiEventRing()

@@ -14,6 +14,7 @@ import GuiStreamText from './GuiStreamText'
 import GuiQuestionCard from './GuiQuestionCard'
 import GuiPlanCard from './GuiPlanCard'
 import { GuiToolCard, GuiToolGroupCard } from './GuiToolCard'
+import GuiSubagentContainer from './GuiSubagentContainer'
 import GuiMessageCopy from './GuiMessageCopy'
 import GuiErrorLine from './GuiErrorLine'
 import GuiQueuedMessageCard from './GuiQueuedMessageCard'
@@ -35,7 +36,15 @@ import { syncInputOverlayScroll } from '../guiFileMentions'
 import { useGuiFileMentions } from '../useGuiFileMentions'
 import { isGuiFinalAssistantMessage } from '../guiMessageCopyPresentation'
 import { guiThinkingPresentation } from '../guiThinkingPresentation'
-import { groupConsecutiveGuiTools } from '../guiToolPresentation'
+import {
+  groupConsecutiveGuiTools,
+  type GuiPresentationItem,
+  type GuiRenderItem
+} from '../guiToolPresentation'
+import {
+  nestGuiSubagentTools,
+  type GuiSubagentGroup
+} from '../guiSubagentPresentation'
 import {
   noteGuiPaneInteraction,
   registerGuiEscapeTarget
@@ -313,6 +322,27 @@ function GuiMessage({
       )}
     </div>
   )
+}
+
+type GuiThreadRenderItem = GuiRenderItem | GuiSubagentGroup
+
+/** P11 é uma fronteira visual; dentro e fora dela o agrupamento P8 continua
+ *  exatamente o mesmo. Filhos retirados da superfície nunca saem do store. */
+function guiThreadRenderItems(items: readonly GuiItem[]): GuiThreadRenderItem[] {
+  const rendered: GuiThreadRenderItem[] = []
+  let regular: GuiPresentationItem[] = []
+  const flush = (): void => {
+    rendered.push(...groupConsecutiveGuiTools(regular))
+    regular = []
+  }
+  for (const item of nestGuiSubagentTools(items)) {
+    if (item.kind === 'subagent') {
+      flush()
+      rendered.push(item)
+    } else regular.push(item)
+  }
+  flush()
+  return rendered
 }
 
 function GuiPermCard({
@@ -1110,7 +1140,7 @@ export default function GuiPane({
     return () => document.removeEventListener('mousedown', onDocDown)
   }, [openMenu])
 
-  const renderItems = useMemo(() => groupConsecutiveGuiTools(visibleItems), [visibleItems])
+  const renderItems = useMemo(() => guiThreadRenderItems(visibleItems), [visibleItems])
   const copyableAssistantId = useMemo(() => {
     const lastItem = gui.items.at(-1)
     if (lastItem?.kind !== 'assistant') return null
@@ -1367,7 +1397,9 @@ export default function GuiPane({
             )}
 
             {renderItems.map((item) =>
-              item.kind === 'tool-group' ? (
+              item.kind === 'subagent' ? (
+                <GuiSubagentContainer key={item.id} group={item} />
+              ) : item.kind === 'tool-group' ? (
                 <GuiToolGroupCard key={item.id} group={item} />
               ) : (
                 <GuiMessage

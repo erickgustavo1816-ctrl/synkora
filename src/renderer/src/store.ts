@@ -585,6 +585,9 @@ export type GuiItem =
       name: string
       summary: string
       toolUseId?: string
+      /** Relação explícita recebida do Claude. Ausente continua sendo uma tool
+       *  comum (inclusive no Codex); o renderer não infere subagente. */
+      parentToolUseId?: string
       /** Payload de edição já normalizado e limitado; o input cru não fica no store. */
       fileDiffs?: GuiFileDiffSource[]
       result?: {
@@ -1134,6 +1137,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           name: evt.name,
           summary,
           toolUseId: evt.toolUseId,
+          parentToolUseId: evt.parentToolUseId,
           ...(fileDiffs ? { fileDiffs } : {}),
           at: Date.now()
         }),

@@ -171,7 +171,15 @@ export type SessionEvent =
       at: number
     }
   | { type: 'text'; text: string }
-  | { type: 'tool'; name: string; input: Record<string, unknown>; toolUseId?: string }
+  | {
+      type: 'tool'
+      name: string
+      input: Record<string, unknown>
+      toolUseId?: string
+      /** Relação explícita do stream-json do Claude. É metadado opaco de
+       *  protocolo: a apresentação nunca tenta deduzi-la pelo nome da tool. */
+      parentToolUseId?: string
+    }
   | {
       type: 'tool-result'
       text: string
@@ -253,6 +261,9 @@ interface PendingPermission {
 interface StreamLine {
   type?: string
   subtype?: string
+  /** `null` é o valor normal das mensagens da raiz; filhos carregam o id da
+   *  tool de delegação. O valor só atravessa a fronteira depois do narrow. */
+  parent_tool_use_id?: string | null
   request_id?: string
   fast_mode_state?: string
   total_cost_usd?: number
@@ -824,6 +835,12 @@ export class MaestroSession {
       case 'assistant': {
         const content = evt.message?.content
         if (!Array.isArray(content)) break
+        const parentToolUseId =
+          typeof evt.parent_tool_use_id === 'string' &&
+          evt.parent_tool_use_id.length > 0 &&
+          evt.parent_tool_use_id.length <= 256
+            ? evt.parent_tool_use_id
+            : undefined
         for (const block of content) {
           if (block.type === 'text' && block.text) {
             this.emit({ type: 'text', text: block.text })
@@ -832,7 +849,8 @@ export class MaestroSession {
               type: 'tool',
               name: block.name,
               input: block.input ?? {},
-              toolUseId: block.id
+              toolUseId: block.id,
+              ...(parentToolUseId ? { parentToolUseId } : {})
             })
           }
         }

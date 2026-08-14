@@ -15931,6 +15931,152 @@ details.gui-tool {
   margin-top: 7px;
 }
 
+/* ---- delegação explícita do Claude: linhagem por protocolo, nunca inferida ---- */
+
+.gui-subagent {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--gui-line));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--gui-fill));
+  box-shadow: inset 2px 0 color-mix(in srgb, var(--accent) 48%, transparent);
+}
+
+.gui-subagent.err {
+  border-color: color-mix(in srgb, var(--err) 42%, var(--gui-line));
+  box-shadow: inset 2px 0 color-mix(in srgb, var(--err) 62%, transparent);
+}
+
+.gui-subagent.denied {
+  border-color: color-mix(in srgb, var(--warn) 52%, var(--gui-line));
+  box-shadow: inset 2px 0 color-mix(in srgb, var(--warn) 68%, transparent);
+}
+
+.gui-subagent-head,
+.gui-subagent-status {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+}
+
+.gui-subagent-mark {
+  color: var(--accent);
+}
+
+.gui-subagent-tool {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
+.gui-subagent-prompt {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.gui-subagent-prompt > span {
+  color: var(--ink-3);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.055em;
+}
+
+.gui-subagent-prompt > p {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.gui-subagent-status {
+  color: var(--accent);
+}
+
+.gui-subagent-status.ok {
+  color: var(--ok);
+}
+
+.gui-subagent-status.err {
+  color: var(--err);
+}
+
+.gui-subagent-status.denied {
+  color: var(--warn);
+}
+
+.gui-subagent-status.cancel {
+  color: var(--ink-3);
+}
+
+.gui-subagent-pulse {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: gui-subagent-pulse 1.05s ease-in-out infinite;
+}
+
+@keyframes gui-subagent-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.82);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.gui-subagent-tools {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding-left: 16px;
+}
+
+.gui-subagent-result {
+  min-width: 0;
+  border-top: 1px solid var(--gui-line);
+  padding-top: 7px;
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.gui-subagent-result > summary {
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gui-subagent-pulse {
+    animation: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .gui-subagent-prompt {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .gui-subagent-tools {
+    padding-left: 7px;
+  }
+}
+
 /* ---- comando de terminal: compacto, saída dentro da própria linha ---- */
 
 .gui-command {
