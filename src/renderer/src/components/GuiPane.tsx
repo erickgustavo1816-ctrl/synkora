@@ -90,7 +90,6 @@ import { shouldBlurGuiComposerOnOutsidePointerDown } from '../guiComposerFocus'
 import { guiComposerClearPlan } from '../guiComposerDelivery'
 import { parseGuiJsonCard } from '../guiJsonCard'
 import { useGuiTranscriptWindow } from '../useGuiTranscriptWindow'
-import BrowserObserverPanel from './BrowserObserverPanel'
 
 // PANE GUI — o CHAT que substitui a TUI (Synkora 2.0).
 //
@@ -1382,8 +1381,6 @@ export default function GuiPane({
           não deu para trocar a conta: {seatError}
         </div>
       )}
-
-      <BrowserObserverPanel paneId={paneId} active={active} />
 
       {/* O palco é a âncora do "ir para o fim": preso ao .gui-pane, o botão
           cairia POR CIMA do card de permissão (que nasce entre o fio e o

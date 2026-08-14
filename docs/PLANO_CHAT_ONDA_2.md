@@ -29,9 +29,9 @@ feature nova = módulo novo (nada de inchar `GuiPane.tsx`, que já está grande)
 - **P27 — adaptado ao produto atual:** a gaveta reúne os avisos e sons globais
   já suportados. Tema e exibição de raciocínio não foram inventados como novas
   preferências — o chat permanece papel e P13 foi recusado pelo dono.
-- **P28 — caminho seguro escolhido:** observador passivo e limitado das capturas
-  produzidas no workspace, com começar/parar/expandir. Ele não controla o PC,
-  não abre navegador e não inventa URL, clique ou cursor.
+- **P28 — retirado por decisão do dono:** o observador/painel de screenshots foi
+  removido integralmente. A ideia fica reservada para uma futura integração com
+  o navegador próprio do Synkora; não é uma entrega desta onda.
 
 Os textos abaixo preservam o contrato histórico e as ideias originais; quando
 houver divergência, este registro de entrega e os overrides explícitos do dono
@@ -317,6 +317,9 @@ Gaveta que sai da borda com os interruptores do dia a dia (tema, o que mostrar
 no chat, sons) sem abrir a tela cheia de ajustes. Fork: `quick-settings-panel/`.
 
 ### P28 — Agente verifica no navegador · valor ALTO · custo ALTO
+**Estado atual: retirado por decisão do dono.** O painel/observador de screenshots
+foi removido; retomar somente junto do navegador próprio do Synkora.
+
 **O que muda na tela:** o agente dirige um navegador real e você acompanha por
 print ao vivo (URL, título, o que ele clicou, posição do cursor), com
 começar/parar e expandir.
@@ -355,5 +358,5 @@ em vez de derrubar o app. Fork: `main-content/view/ErrorBoundary.tsx`.
    P19, P20, P21, P29.
 2. **Leva B (o composer fica completo):** P1, P4, P5, P6, P7.
 3. **Leva C (leitura e busca):** P3, P13, P14, P15, P16, P17, P18, P23.
-4. **Leva D (painéis):** P24, P25, P26, P27, P11 (mexe no motor), P28 (avaliar
-   o caminho barato antes).
+4. **Leva D (painéis):** P24, P25, P26, P27, P11 (mexe no motor). P28 foi
+   retirado por decisão do dono e fica reservado para o navegador próprio.

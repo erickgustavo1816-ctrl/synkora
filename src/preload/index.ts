@@ -38,14 +38,6 @@ import type {
   MissionWorkspaceFilesResult
 } from '../main/ipc/missions'
 import type {
-  BrowserObserverFrameResult,
-  BrowserObserverResult,
-  BrowserObserverSnapshot,
-  BrowserScreenshotMeta,
-  BrowserScreenshotMime,
-  BrowserScreenshotSource
-} from '../main/browserObserver'
-import type {
   MissionCommit,
   MissionWorkspaceFile,
   MissionWorkspaceSummary
@@ -94,14 +86,6 @@ export type {
 }
 export type { GuiAlertPayload }
 export type { GuiFileChoice, GuiFileOpenResult, GuiFilePreview }
-export type {
-  BrowserObserverFrameResult,
-  BrowserObserverResult,
-  BrowserObserverSnapshot,
-  BrowserScreenshotMeta,
-  BrowserScreenshotMime,
-  BrowserScreenshotSource
-}
 
 /** Anexos do composer: o renderer recebe somente capacidade opaca; caminho,
  * prévia e ações de disco permanecem no main. */
@@ -1395,27 +1379,6 @@ const api = {
       selectedPath?: string
     ): Promise<GuiFileOpenResult> =>
       ipcRenderer.invoke('gui:fileOpen', paneId, reference, selectedPath),
-    /** P28: acompanha somente prints físicos no cwd canônico deste pane. */
-    browserObserverStart: (paneId: string): Promise<BrowserObserverResult> =>
-      ipcRenderer.invoke('gui:browser-observer-start', paneId),
-    browserObserverStop: (paneId: string): Promise<BrowserObserverResult> =>
-      ipcRenderer.invoke('gui:browser-observer-stop', paneId),
-    browserObserverState: (paneId: string): Promise<BrowserObserverSnapshot> =>
-      ipcRenderer.invoke('gui:browser-observer-state', paneId),
-    /** Bytes efêmeros, limitados no main e vinculados ao token da fotografia. */
-    browserObserverFrame: (
-      paneId: string,
-      frameId: string
-    ): Promise<BrowserObserverFrameResult> =>
-      ipcRenderer.invoke('gui:browser-observer-frame', paneId, frameId),
-    onBrowserObserver: (
-      cb: (snapshot: BrowserObserverSnapshot) => void
-    ): (() => void) => {
-      const listener = (_e: IpcRendererEvent, snapshot: BrowserObserverSnapshot): void =>
-        cb(snapshot)
-      ipcRenderer.on('gui:browser-observer', listener)
-      return () => ipcRenderer.removeListener('gui:browser-observer', listener)
-    },
     /** Anexa print da área de transferência ou arquivo ao chat: o main grava
      *  em `<cwd do pane>/.synkora/attachments` e devolve capacidade opaca. */
     attach: (paneId: string, payload: GuiAttachPayload): Promise<GuiAttachResult> =>

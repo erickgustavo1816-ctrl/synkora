@@ -1,7 +1,4 @@
 import type {
-  BrowserObserverFrameResult,
-  BrowserObserverResult,
-  BrowserObserverSnapshot,
   GuiAlertPayload,
   GuiAttachPayload,
   GuiAttachResult,
@@ -305,14 +302,6 @@ interface GuiBridge {
   ) => Promise<GuiFileOpenResult>
   attach: (paneId: string, payload: GuiAttachPayload) => Promise<GuiAttachResult>
   attachFolder: (paneId: string) => Promise<GuiAttachResult>
-  browserObserverStart: (paneId: string) => Promise<BrowserObserverResult>
-  browserObserverStop: (paneId: string) => Promise<BrowserObserverResult>
-  browserObserverState: (paneId: string) => Promise<BrowserObserverSnapshot>
-  browserObserverFrame: (
-    paneId: string,
-    frameId: string
-  ) => Promise<BrowserObserverFrameResult>
-  onBrowserObserver: (cb: (snapshot: BrowserObserverSnapshot) => void) => () => void
   attachmentPreview: (
     paneId: string,
     attachment: GuiAttachmentDescriptor,
@@ -334,10 +323,6 @@ function bridge(): Partial<GuiBridge> | undefined {
 }
 
 const NO_BRIDGE = 'a ponte do pane GUI ainda não está disponível nesta janela'
-
-function stoppedBrowserObserver(paneId: string): BrowserObserverSnapshot {
-  return { paneId, status: 'stopped' }
-}
 
 export const guiApi = {
   /** false = preload sem o namespace `gui` (devMock/browser puro, ou motor
@@ -588,70 +573,6 @@ export const guiApi = {
       return await api.attachmentAction(paneId, action, attachment)
     } catch {
       return { ok: false, error: 'não consegui concluir a ação do anexo' }
-    }
-  },
-
-  /** O caminho barato do P28 é somente observação de arquivos locais. */
-  browserObserverAvailable(): boolean {
-    const api = bridge()
-    return (
-      typeof api?.browserObserverStart === 'function' &&
-      typeof api?.browserObserverStop === 'function' &&
-      typeof api?.browserObserverState === 'function' &&
-      typeof api?.browserObserverFrame === 'function'
-    )
-  },
-
-  async browserObserverStart(paneId: string): Promise<BrowserObserverResult> {
-    const api = bridge()
-    if (!api?.browserObserverStart) return { ok: false, error: NO_BRIDGE }
-    try {
-      return await api.browserObserverStart(paneId)
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) }
-    }
-  },
-
-  async browserObserverStop(paneId: string): Promise<BrowserObserverResult> {
-    const api = bridge()
-    if (!api?.browserObserverStop) return { ok: false, error: NO_BRIDGE }
-    try {
-      return await api.browserObserverStop(paneId)
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) }
-    }
-  },
-
-  async browserObserverState(paneId: string): Promise<BrowserObserverSnapshot> {
-    const api = bridge()
-    if (!api?.browserObserverState) return stoppedBrowserObserver(paneId)
-    try {
-      return (await api.browserObserverState(paneId)) ?? stoppedBrowserObserver(paneId)
-    } catch {
-      return stoppedBrowserObserver(paneId)
-    }
-  },
-
-  async browserObserverFrame(
-    paneId: string,
-    frameId: string
-  ): Promise<BrowserObserverFrameResult> {
-    const api = bridge()
-    if (!api?.browserObserverFrame) return { ok: false, error: NO_BRIDGE }
-    try {
-      return await api.browserObserverFrame(paneId, frameId)
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) }
-    }
-  },
-
-  onBrowserObserver(cb: (snapshot: BrowserObserverSnapshot) => void): () => void {
-    const api = bridge()
-    if (!api?.onBrowserObserver) return () => undefined
-    try {
-      return api.onBrowserObserver(cb) ?? (() => undefined)
-    } catch {
-      return () => undefined
     }
   },
 
