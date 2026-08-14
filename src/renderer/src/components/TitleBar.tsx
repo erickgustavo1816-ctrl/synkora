@@ -9,6 +9,7 @@ import type { SeatUsage } from '../../../preload/index'
 import SynVoice from './SynVoice'
 import ProgressRadarButton from './ProgressRadarButton'
 import TitleBarIcon from './TitleBarIcon'
+import QuickSettingsPanel from './QuickSettingsPanel'
 
 const CLI_NAME: Record<SeatCli, string> = { claude: 'claude', codex: 'codex' }
 
@@ -50,10 +51,12 @@ export default function TitleBar(): React.JSX.Element {
   const [diagBusy, setDiagBusy] = useState(false)
   const [diagMsg, setDiagMsg] = useState('')
   const [cliOpen, setCliOpen] = useState(false)
+  const [quickOpen, setQuickOpen] = useState(false)
   const anchorRef = useRef<HTMLDivElement>(null)
   const cliRef = useRef<HTMLDivElement>(null)
   const usageTriggerRef = useRef<HTMLButtonElement>(null)
   const cliTriggerRef = useRef<HTMLButtonElement>(null)
+  const quickTriggerRef = useRef<HTMLButtonElement>(null)
   const usageDialogRef = useRef<HTMLDivElement>(null)
   const cliDialogRef = useRef<HTMLDivElement>(null)
 
@@ -65,10 +68,10 @@ export default function TitleBar(): React.JSX.Element {
   // esconde a view.
   const bumpHostOverlay = useStore((s) => s.bumpHostOverlay)
   useEffect(() => {
-    if (!open && !cliOpen) return
+    if (!open && !cliOpen && !quickOpen) return
     bumpHostOverlay(1)
     return () => bumpHostOverlay(-1)
-  }, [open, cliOpen, bumpHostOverlay])
+  }, [open, cliOpen, quickOpen, bumpHostOverlay])
 
   useEffect(() => {
     if (!open) return
@@ -173,7 +176,11 @@ export default function TitleBar(): React.JSX.Element {
             data-tip={inSettings ? 'Voltar para onde você estava' : 'Voltar para a Home'}
             aria-label={inSettings ? 'Voltar para onde você estava' : 'Voltar para a Home'}
             disabled={!inSettings && openProjectId === null}
-            onClick={() => (inSettings ? closeSettings() : openProject(null))}
+            onClick={() => {
+              setQuickOpen(false)
+              if (inSettings) closeSettings()
+              else openProject(null)
+            }}
           >
             <TitleBarIcon name="back" />
           </button>
@@ -183,9 +190,29 @@ export default function TitleBar(): React.JSX.Element {
             data-tip="Configurações globais do Synkora"
             aria-label="Abrir configurações globais do Synkora"
             aria-current={inSettings ? 'page' : undefined}
-            onClick={() => openSettings()}
+            onClick={() => {
+              setQuickOpen(false)
+              openSettings()
+            }}
           >
             <TitleBarIcon name="settings" />
+          </button>
+          <button
+            ref={quickTriggerRef}
+            type="button"
+            className={`tb-btn tb-icon-btn tb-quick-settings-trigger${quickOpen ? ' active' : ''}`}
+            data-tip="Ajustes rápidos dos avisos do chat"
+            aria-label="Abrir ajustes rápidos dos avisos do chat"
+            aria-expanded={quickOpen}
+            aria-controls="quick-settings-panel"
+            aria-haspopup="dialog"
+            onClick={() => {
+              setQuickOpen((value) => !value)
+              setOpen(false)
+              setCliOpen(false)
+            }}
+          >
+            <TitleBarIcon name="tune" />
           </button>
         </div>
 
@@ -381,6 +408,11 @@ export default function TitleBar(): React.JSX.Element {
           </>
         )}
       </span>
+      <QuickSettingsPanel
+        open={quickOpen}
+        onClose={() => setQuickOpen(false)}
+        returnFocusRef={quickTriggerRef}
+      />
       </div>
     </div>
   )

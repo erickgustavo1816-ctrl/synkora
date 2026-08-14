@@ -663,6 +663,234 @@ select {
   opacity: 0.7;
 }
 
+/* ---------- gaveta global de ajustes rápidos ----------
+   É portalizada para não ser recortada pela área de trabalho ou pela view de
+   Panes. O host conta a camada como overlay e congela a view antes de escondê-la. */
+.quick-settings-layer {
+  position: fixed;
+  inset: 36px 0 0;
+  z-index: 1000;
+  display: flex;
+  align-items: stretch;
+  background: rgba(20, 18, 15, 0.28);
+}
+
+.quick-settings-panel {
+  width: min(360px, calc(100vw - 16px));
+  max-width: 100%;
+  min-height: 0;
+  max-height: 100%;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: 0 12px 12px 0;
+  box-shadow: 14px 0 30px rgba(20, 18, 15, 0.28);
+  animation: quick-settings-in 180ms var(--ease-out) both;
+}
+
+@keyframes quick-settings-in {
+  from {
+    opacity: 0.6;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.quick-settings-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 16px 15px;
+  border-bottom: 1px solid var(--panel-line);
+}
+
+.quick-settings-head > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.quick-settings-kicker {
+  display: block;
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.quick-settings-head h2 {
+  margin: 4px 0 5px;
+  color: var(--panel-ink);
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.quick-settings-head p {
+  margin: 0;
+  color: var(--panel-ink-3);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.quick-settings-close {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--panel-ink-2);
+  font-family: var(--mono);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.quick-settings-close:hover,
+.quick-settings-close:focus-visible {
+  border-color: var(--accent);
+  color: var(--panel-ink);
+  background: rgba(239, 232, 216, 0.08);
+}
+
+.quick-settings-close:focus-visible,
+.quick-settings-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.quick-settings-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 12px 22px;
+}
+
+.quick-settings-body fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.quick-settings-body fieldset + fieldset {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--panel-line);
+}
+
+.quick-settings-body legend {
+  margin-bottom: 7px;
+  padding: 0 4px;
+  color: var(--panel-ink-3);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* O mesmo switch da tela de Configurações, com os papéis de cor do painel
+   escuro. Assim a gaveta não inventa uma segunda semântica nem persistência. */
+.quick-settings-panel .quick-settings-switch {
+  min-height: 58px;
+  gap: 10px;
+  padding: 9px 8px;
+  border-color: transparent;
+  color: var(--panel-ink);
+}
+
+.quick-settings-panel .quick-settings-switch + .quick-settings-switch {
+  border-top-color: var(--panel-line);
+}
+
+.quick-settings-panel .quick-settings-switch:hover {
+  border-color: var(--panel-line);
+  background: rgba(239, 232, 216, 0.06);
+}
+
+.quick-settings-panel .quick-settings-switch:focus-visible {
+  background: rgba(239, 232, 216, 0.08);
+}
+
+.quick-settings-switch .chat-notice-copy {
+  min-width: 0;
+}
+
+.quick-settings-switch .chat-notice-copy strong {
+  color: var(--panel-ink);
+  font-size: 10.5px;
+}
+
+.quick-settings-switch .chat-notice-copy small,
+.quick-settings-note {
+  color: var(--panel-ink-3);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.quick-settings-switch .chat-notice-switch-state {
+  gap: 6px;
+}
+
+.quick-settings-switch .chat-notice-switch-state em {
+  color: var(--panel-ink-3);
+  font-size: 8px;
+}
+
+.quick-settings-switch .chat-notice-switch-state > i {
+  border-color: rgba(239, 232, 216, 0.24);
+  background: rgba(239, 232, 216, 0.08);
+}
+
+.quick-settings-switch .chat-notice-switch-state b {
+  background: var(--panel-ink-3);
+}
+
+.quick-settings-switch.is-on .chat-notice-switch-state > i {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--panel-line));
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel));
+}
+
+.quick-settings-switch.is-on .chat-notice-switch-state b {
+  background: var(--accent);
+}
+
+.quick-settings-note {
+  margin: 9px 8px 0;
+}
+
+@media (max-width: 390px) {
+  .quick-settings-panel {
+    width: min(334px, calc(100vw - 8px));
+  }
+
+  .quick-settings-head {
+    padding-inline: 12px;
+  }
+
+  .quick-settings-body {
+    padding-inline: 8px;
+  }
+
+  .quick-settings-panel .quick-settings-switch {
+    gap: 7px;
+    padding-inline: 6px;
+  }
+
+  .quick-settings-switch .chat-notice-switch-state em {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-settings-panel {
+    animation: none;
+  }
+}
+
 .app-main {
   position: relative;
   flex: 1;

@@ -1,19 +1,19 @@
 import { useStore } from '../store'
 import type { SynkoraPreferences } from '../../../preload'
 
-type NoticePreference =
+export type NoticePreference =
   | 'chatNotifyNeedsYou'
   | 'chatNotifyFinished'
   | 'chatNotifyFailed'
   | 'chatSoundsEnabled'
 
-interface NoticeChoice {
+export interface NoticeChoice {
   key: NoticePreference
   label: string
   description: string
 }
 
-const WINDOWS_CHOICES: NoticeChoice[] = [
+export const WINDOWS_CHOICES: NoticeChoice[] = [
   {
     key: 'chatNotifyNeedsYou',
     label: 'Precisa de você',
@@ -31,19 +31,27 @@ const WINDOWS_CHOICES: NoticeChoice[] = [
   }
 ]
 
-function NoticeSwitch({
+export const CHAT_SOUND_CHOICE: NoticeChoice = {
+  key: 'chatSoundsEnabled',
+  label: 'Sons de atenção',
+  description: 'Plins diferentes para “precisa de você” e “turno concluído”.'
+}
+
+export function NoticeSwitch({
   choice,
   checked,
-  onChange
+  onChange,
+  className
 }: {
   choice: NoticeChoice
   checked: boolean
   onChange: (key: NoticePreference, value: boolean) => void
+  className?: string
 }): React.JSX.Element {
   return (
     <button
       type="button"
-      className={`chat-notice-switch${checked ? ' is-on' : ''}`}
+      className={`chat-notice-switch${className ? ` ${className}` : ''}${checked ? ' is-on' : ''}`}
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(choice.key, !checked)}
@@ -98,11 +106,7 @@ export default function ChatNoticeSettings(): React.JSX.Element {
         <fieldset>
           <legend>Som do chat</legend>
           <NoticeSwitch
-            choice={{
-              key: 'chatSoundsEnabled',
-              label: 'Sons de atenção',
-              description: 'Plins diferentes para “precisa de você” e “turno concluído”.'
-            }}
+            choice={CHAT_SOUND_CHOICE}
             checked={checked('chatSoundsEnabled')}
             onChange={update}
           />
@@ -114,4 +118,3 @@ export default function ChatNoticeSettings(): React.JSX.Element {
     </section>
   )
 }
-
