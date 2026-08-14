@@ -1343,6 +1343,20 @@ export function installDevMock(): void {
         reason: 'unavailable',
         error: 'arquivos do chat só abrem no app'
       }),
+      browserObserverStart: async () => ({
+        ok: false,
+        error: 'observação local só funciona no app'
+      }),
+      browserObserverStop: async (paneId) => ({
+        ok: true,
+        snapshot: { paneId, status: 'stopped' as const }
+      }),
+      browserObserverState: async (paneId) => ({ paneId, status: 'stopped' as const }),
+      browserObserverFrame: async () => ({
+        ok: false,
+        error: 'imagem local indisponível no preview'
+      }),
+      onBrowserObserver: () => () => undefined,
       onLive: () => () => undefined,
       visibility: () => undefined,
       presented: () => undefined,

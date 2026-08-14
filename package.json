@@ -56,6 +56,7 @@
     "test:gui-panel-boundary": "node --test scripts/test-gui-panel-boundary.mjs",
     "test:gui-cli-launch": "node --experimental-strip-types --test scripts/test-gui-cli-launch.mjs",
     "test:gui-notices": "node --experimental-strip-types --test scripts/test-gui-notices.mjs",
+    "test:browser-observer": "node --experimental-strip-types --test scripts/test-browser-observer.mjs",
     "test:backlog": "tsc --outDir .tmp/backlog-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/backlog.ts src/main/jsonStore.ts && node --test scripts/test-backlog.mjs",
     "test:store-atomicity": "tsc --outDir .tmp/store-atomicity-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/backlog.ts src/main/missions.ts src/main/jsonStore.ts src/main/securityRedaction.ts && node --test scripts/test-store-atomicity.mjs",
     "test:integration-queue": "node --experimental-strip-types --test scripts/test-integration-queue.mjs",

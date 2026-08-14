@@ -34,6 +34,14 @@ import type {
   MissionWorkspaceFilesResult
 } from '../main/ipc/missions'
 import type {
+  BrowserObserverFrameResult,
+  BrowserObserverResult,
+  BrowserObserverSnapshot,
+  BrowserScreenshotMeta,
+  BrowserScreenshotMime,
+  BrowserScreenshotSource
+} from '../main/browserObserver'
+import type {
   MissionCommit,
   MissionWorkspaceFile,
   MissionWorkspaceSummary
@@ -74,6 +82,14 @@ export type {
 }
 export type { GuiAlertPayload }
 export type { GuiFileChoice, GuiFileOpenResult, GuiFilePreview }
+export type {
+  BrowserObserverFrameResult,
+  BrowserObserverResult,
+  BrowserObserverSnapshot,
+  BrowserScreenshotMeta,
+  BrowserScreenshotMime,
+  BrowserScreenshotSource
+}
 
 /** Anexos do composer do chat: print colado ou arquivo, gravados na pasta de
  *  trabalho do PANE (`.synkora/attachments`) — a resposta traz o path absoluto
@@ -1333,6 +1349,27 @@ const api = {
       selectedPath?: string
     ): Promise<GuiFileOpenResult> =>
       ipcRenderer.invoke('gui:fileOpen', paneId, reference, selectedPath),
+    /** P28: acompanha somente prints físicos no cwd canônico deste pane. */
+    browserObserverStart: (paneId: string): Promise<BrowserObserverResult> =>
+      ipcRenderer.invoke('gui:browser-observer-start', paneId),
+    browserObserverStop: (paneId: string): Promise<BrowserObserverResult> =>
+      ipcRenderer.invoke('gui:browser-observer-stop', paneId),
+    browserObserverState: (paneId: string): Promise<BrowserObserverSnapshot> =>
+      ipcRenderer.invoke('gui:browser-observer-state', paneId),
+    /** Bytes efêmeros, limitados no main e vinculados ao token da fotografia. */
+    browserObserverFrame: (
+      paneId: string,
+      frameId: string
+    ): Promise<BrowserObserverFrameResult> =>
+      ipcRenderer.invoke('gui:browser-observer-frame', paneId, frameId),
+    onBrowserObserver: (
+      cb: (snapshot: BrowserObserverSnapshot) => void
+    ): (() => void) => {
+      const listener = (_e: IpcRendererEvent, snapshot: BrowserObserverSnapshot): void =>
+        cb(snapshot)
+      ipcRenderer.on('gui:browser-observer', listener)
+      return () => ipcRenderer.removeListener('gui:browser-observer', listener)
+    },
     /** Anexa print da área de transferência ou arquivo ao chat: o main grava
      *  em `<cwd do pane>/.synkora/attachments` e devolve o caminho ABSOLUTO
      *  para o composer citar no prompt (teto de 10 MB por arquivo). */

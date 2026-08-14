@@ -12,6 +12,7 @@
  * legítimo do chat.
  */
 import {
+  app,
   clipboard,
   dialog,
   ipcMain,
@@ -61,6 +62,7 @@ import {
 import { ensureSynkoraGitExcludes } from '../worktree'
 import type { MainContext } from '../mainContext'
 import { GuiWorkspaceFileIndex, type GuiWorkspaceFilesResult } from '../guiWorkspaceFiles'
+import { BrowserObserverRegistry } from '../browserObserver'
 
 export interface GuiIpcExtras {
   /** F3-c4: host OU view de panes — o canvas é quem monta o pane GUI. */
@@ -229,6 +231,11 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
   }
   const trackedVisibilitySenders = new Set<number>()
 
+  // P28 nasce junto do registro do chat porque a autoridade de cwd e o
+  // lifecycle pertencem ao mesmo pane. A variável é preenchida logo depois
+  // do registry; o callback de dispose pode então fechar o watcher sem abrir
+  // um segundo canal de poder ou aceitar path do renderer.
+  let browserObserver: BrowserObserverRegistry | undefined
   const registry = new GuiSessionRegistry({
     // pushAll: a view monta o pane e o host espelha o status (§Push do contrato).
     push: (payload) => ctx.pushAll('gui:live', payload),
@@ -258,11 +265,20 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     },
     // Um único teardown cobre kill do renderer, arquivamento em lote, troca de
     // projeto e respawn. Assim nenhum marcador [pronto] sobrevive ao pane.
-    onPaneDisposed: ({ paneId }) => readyTitle.dropPane(paneId)
+    onPaneDisposed: ({ paneId }) => {
+      readyTitle.dropPane(paneId)
+      browserObserver?.closePane(paneId)
+    }
   })
   // Índice curto por cwd para basename/sufixo. A raiz nunca vem do renderer;
   // cada chamada abaixo a reencontra no registro vivo da conversa.
   const fileResolver = new GuiFileResolver()
+  browserObserver = new BrowserObserverRegistry({
+    cwdOf: (paneId) => registry.cwdOf(paneId),
+    push: (snapshot) => ctx.pushAll('gui:browser-observer', snapshot)
+  })
+  const closeBrowserObservers = (): void => browserObserver?.closeAll()
+  app.once('will-quit', closeBrowserObservers)
 
   ipcMain.on('gui:visibility', (event, paneId: unknown, active: unknown) => {
     extras.assertAppRendererSender(event)
@@ -493,6 +509,46 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
       return { ok: true, action: 'reveal', message: prepared.message }
     }
   )
+
+  // OBSERVADOR LOCAL DO NAVEGADOR (P28, caminho barato): os únicos inputs do
+  // renderer são paneId e o token opaco da fotografia corrente. Raiz, arquivo,
+  // MIME e tamanho são resolvidos/revalidados no main; nenhum destes canais
+  // abre navegador, recebe URL ou controla o computador.
+  ipcMain.handle('gui:browser-observer-start', (e, paneId: unknown) => {
+    extras.assertAppRendererSender(e)
+    const result = browserObserver.start(paneId)
+    blackbox.record({
+      cat: 'pane',
+      event: result.ok ? 'browser-observer-started' : 'browser-observer-start-failed',
+      actor: 'user',
+      ids: typeof paneId === 'string' ? { paneId } : {},
+      detail: { ok: result.ok }
+    })
+    return result
+  })
+
+  ipcMain.handle('gui:browser-observer-stop', (e, paneId: unknown) => {
+    extras.assertAppRendererSender(e)
+    const result = browserObserver.stop(paneId)
+    blackbox.record({
+      cat: 'pane',
+      event: result.ok ? 'browser-observer-stopped' : 'browser-observer-stop-failed',
+      actor: 'user',
+      ids: typeof paneId === 'string' ? { paneId } : {},
+      detail: { ok: result.ok }
+    })
+    return result
+  })
+
+  ipcMain.handle('gui:browser-observer-state', (e, paneId: unknown) => {
+    extras.assertAppRendererSender(e)
+    return browserObserver.state(paneId)
+  })
+
+  ipcMain.handle('gui:browser-observer-frame', (e, paneId: unknown, frameId: unknown) => {
+    extras.assertAppRendererSender(e)
+    return browserObserver.frame(paneId, frameId)
+  })
 
   // ANEXO DO COMPOSER: print colado ou arquivo solto vira arquivo em
   // `<cwd do pane>/.synkora/attachments` e o renderer recebe o caminho
