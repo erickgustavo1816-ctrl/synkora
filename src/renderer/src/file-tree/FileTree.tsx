@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
   FileActionResult,
   FileActionScope,
@@ -16,6 +16,8 @@ import {
 interface Props {
   scope: FileActionScope
   activePath?: string | null
+  sourceControl: ReactNode
+  sourceNotice?: ReactNode
   onOpenFile?(entry: FileActionTreeEntry): void
   onChanged?(change: FileTreeChange): void
 }
@@ -55,9 +57,69 @@ function rootNode(scope: FileActionScope): FileTreeNode {
   }
 }
 
+function TreeGlyph({ kind }: { kind: FileTreeNode['kind'] }): React.JSX.Element {
+  if (kind === 'directory') {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M2.75 5.75h5l1.5 1.75h8v7.75h-14.5z" />
+      </svg>
+    )
+  }
+  if (kind === 'blocked') {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M5.25 2.75h6l3.5 3.5v11h-9.5z" />
+        <path d="m7.25 12.75 5.5-5.5m-5.5 0 5.5 5.5" />
+      </svg>
+    )
+  }
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M5.25 2.75h6l3.5 3.5v11h-9.5z" />
+      <path d="M11.25 2.75v3.5h3.5" />
+    </svg>
+  )
+}
+
+function Chevron({ expanded }: { expanded: boolean }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d={expanded ? 'm4.5 6 3.5 3.5L11.5 6' : 'm6 4.5 3.5 3.5L6 11.5'} />
+    </svg>
+  )
+}
+
+function PlusIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 18 18" aria-hidden="true">
+      <path d="M9 3.5v11M3.5 9h11" />
+    </svg>
+  )
+}
+
+function ReloadIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 18 18" aria-hidden="true">
+      <path d="M14.25 6.25V2.9m0 0H10.9m3.35 0-2.1 2.1a5.6 5.6 0 1 0 1.15 6.05" />
+    </svg>
+  )
+}
+
+function MoreIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 18 18" aria-hidden="true">
+      <circle cx="4" cy="9" r="1" />
+      <circle cx="9" cy="9" r="1" />
+      <circle cx="14" cy="9" r="1" />
+    </svg>
+  )
+}
+
 export default function FileTree({
   scope,
   activePath,
+  sourceControl,
+  sourceNotice,
   onOpenFile,
   onChanged
 }: Props): React.JSX.Element {
@@ -138,7 +200,7 @@ export default function FileTree({
   }, [entries])
 
   const visibleNodes = useMemo(() => {
-    const result: FileTreeNode[] = [root]
+    const result: FileTreeNode[] = []
     const append = (directoryPath: string): void => {
       if (!expanded.has(directoryPath)) return
       for (const child of childrenByParent.get(directoryPath) ?? []) {
@@ -151,7 +213,8 @@ export default function FileTree({
   }, [childrenByParent, expanded, root])
 
   useEffect(() => {
-    if (!visibleNodes.some((node) => node.path === focusPath)) setFocusPath('')
+    if (visibleNodes.some((node) => node.path === focusPath)) return
+    setFocusPath(visibleNodes[0]?.path ?? '')
   }, [focusPath, visibleNodes])
 
   const focusNode = (path: string): void => {
@@ -255,23 +318,45 @@ export default function FileTree({
   }
 
   return (
-    <section className="file-tree-shell" aria-label="Árvore de arquivos">
-      <div className="file-tree-head">
-        <span>arquivos</span>
-        <button
-          type="button"
-          className="term-btn ghost-dim"
-          aria-label="Recarregar árvore de arquivos"
-          data-tip="Recarregar árvore"
-          disabled={loading}
-          onClick={() => void load()}
-        >
-          ↻
-        </button>
-      </div>
+    <section className="files-nav" aria-label="Árvore de arquivos">
+      <header className="files-nav-header">
+        <div className="files-nav-heading">
+          <span className="files-nav-heading-icon" aria-hidden="true">
+            <TreeGlyph kind="directory" />
+          </span>
+          <span className="files-nav-heading-copy">
+            <strong>Arquivos</strong>
+            <span>{loading ? 'Carregando…' : `${entries.length} ${entries.length === 1 ? 'item' : 'itens'}${truncated ? ' visíveis' : ''}`}</span>
+          </span>
+        </div>
+        <div className="files-nav-tools">
+          <button
+            type="button"
+            className="files-nav-tool"
+            aria-label="Criar arquivo ou pasta"
+            data-tip="Criar arquivo ou pasta"
+            onClick={(event) => openMenu(root, event.currentTarget)}
+          >
+            <PlusIcon />
+          </button>
+          <button
+            type="button"
+            className="files-nav-tool"
+            aria-label="Recarregar arquivos"
+            data-tip="Recarregar arquivos"
+            disabled={loading}
+            onClick={() => void load()}
+          >
+            <ReloadIcon />
+          </button>
+        </div>
+      </header>
+
+      <div className="files-nav-source">{sourceControl}</div>
+      {sourceNotice}
 
       {error && (
-        <div className="file-tree-message error" role="alert">
+        <div className="files-nav-message error" role="alert">
           <span>{error}</span>
           <button type="button" className="btn ghost tiny" onClick={() => void load()}>
             tentar de novo
@@ -280,7 +365,7 @@ export default function FileTree({
       )}
 
       <div
-        className={`file-tree${loading ? ' loading' : ''}`}
+        className={`files-nav-tree${loading ? ' loading' : ''}`}
         role="tree"
         aria-label={scope.missionId ? 'Arquivos do worktree da missão' : 'Arquivos do projeto'}
         aria-busy={loading}
@@ -292,8 +377,9 @@ export default function FileTree({
           const isActive = activePath === node.path
           return (
             <div
-              key={node.root ? '__root__' : node.path}
-              className={`file-tree-row${isActive ? ' active' : ''}${blocked ? ' blocked' : ''}`}
+              key={node.path}
+              className={`files-nav-row${isActive ? ' active' : ''}${blocked ? ' blocked' : ''}`}
+              data-kind={node.kind}
               style={{ '--file-depth': node.depth } as React.CSSProperties}
             >
               <button
@@ -303,7 +389,7 @@ export default function FileTree({
                 }}
                 type="button"
                 role="treeitem"
-                className="file-tree-item"
+                className="files-nav-item"
                 tabIndex={focusPath === node.path ? 0 : -1}
                 aria-level={node.depth + 1}
                 aria-expanded={isDirectory ? isExpanded : undefined}
@@ -345,7 +431,9 @@ export default function FileTree({
                   } else if (event.key === 'ArrowLeft') {
                     event.preventDefault()
                     if (isDirectory && isExpanded) toggle(node)
-                    else focusNode(node.root ? '' : node.parentPath)
+                    else if (visibleNodes.some((candidate) => candidate.path === node.parentPath)) {
+                      focusNode(node.parentPath)
+                    }
                   } else if ((event.key === 'Enter' || event.key === ' ') && !blocked) {
                     event.preventDefault()
                     if (isDirectory) toggle(node)
@@ -359,18 +447,18 @@ export default function FileTree({
                   }
                 }}
               >
-                <span className="file-tree-chevron" aria-hidden="true">
-                  {isDirectory ? (isExpanded ? '⌄' : '›') : blocked ? '×' : '·'}
+                <span className="files-nav-chevron" aria-hidden="true">
+                  {isDirectory ? <Chevron expanded={isExpanded} /> : null}
                 </span>
-                <span className="file-tree-kind" aria-hidden="true">
-                  {isDirectory ? '▱' : blocked ? '↗' : '□'}
+                <span className="files-nav-kind" aria-hidden="true">
+                  <TreeGlyph kind={node.kind} />
                 </span>
-                <span className="file-tree-name">{node.name}</span>
+                <span className="files-nav-name">{node.name}</span>
               </button>
               {!blocked && (
                 <button
                   type="button"
-                  className="file-tree-actions"
+                  className="files-nav-actions"
                   aria-label={`Ações de ${node.name}`}
                   title={`Ações de ${node.name}`}
                   tabIndex={-1}
@@ -379,7 +467,7 @@ export default function FileTree({
                     openMenu(node, event.currentTarget)
                   }}
                 >
-                  ···
+                  <MoreIcon />
                 </button>
               )}
             </div>
@@ -387,17 +475,22 @@ export default function FileTree({
         })}
 
         {!error && !loading && entries.length === 0 && (
-          <p className="file-tree-empty">Esta pasta está vazia. Use o menu da raiz para criar algo.</p>
+          <div className="files-nav-empty">
+            <TreeGlyph kind="directory" />
+            <span>Esta pasta está vazia.</span>
+            <button type="button" onClick={(event) => openMenu(root, event.currentTarget)}>
+              Criar o primeiro item
+            </button>
+          </div>
         )}
       </div>
 
-      {loading && <div className="file-tree-loading" role="status">carregando árvore…</div>}
+      {loading && <div className="files-nav-loading" role="status">carregando…</div>}
       {truncated && (
-        <div className="file-tree-message" role="status">
+        <div className="files-nav-message" role="status">
           A árvore atingiu o limite de exibição. As ações continuam restritas aos itens visíveis.
         </div>
       )}
-      <div className="file-tree-hint">botão direito · Shift+F10 · F2 renomeia · Del envia à Lixeira</div>
 
       {menu && (
         <FileContextMenu

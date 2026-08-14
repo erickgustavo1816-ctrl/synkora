@@ -86,7 +86,12 @@ function CodeContent({ content, path }: { content: string; path: string }): Reac
 function EmptyPreview(): React.JSX.Element {
   return (
     <div className="files-placeholder file-preview-empty">
-      <span className="files-placeholder-icon" aria-hidden="true">▤</span>
+      <span className="files-placeholder-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path d="M6.5 3.5h7l4 4v13h-11z" />
+          <path d="M13.5 3.5v4h4M9 12h6M9 15.5h4.5" />
+        </svg>
+      </span>
       <p>selecione um arquivo para ler aqui</p>
       <span className="file-preview-readonly">somente leitura · nada é salvo</span>
     </div>
@@ -110,6 +115,9 @@ export default function FilePreviewPanel({ path, preview, loading, onReload }: P
     preview.kind === 'image' &&
     SAFE_IMAGE_MIMES.has(preview.image.mime) &&
     /^[A-Za-z0-9+/]+={0,2}$/u.test(preview.image.base64)
+  const pathParts = path?.split('/') ?? []
+  const fileName = pathParts.at(-1) ?? ''
+  const parentPath = pathParts.slice(0, -1).join('/')
 
   return (
     <section className="files-reader file-preview-panel" aria-label="Prévia do arquivo">
@@ -118,21 +126,26 @@ export default function FilePreviewPanel({ path, preview, loading, onReload }: P
       ) : (
         <>
           <header className="files-reader-head file-preview-head">
-            <span className="files-reader-path" data-tip={path}>{path}</span>
-            <span className="file-preview-badge">somente leitura</span>
+            <span className="files-reader-path" data-tip={path}>
+              <strong>{fileName}</strong>
+              {parentPath && <span>{parentPath}</span>}
+            </span>
             {preview?.ok === true && (
               <span className="files-reader-when">
                 {formatSize(preview.size)} · {formatWhen(preview.mtime)}
               </span>
             )}
+            <span className="file-preview-badge">Leitura</span>
             <button
               type="button"
-              className="term-btn ghost-dim"
+              className="file-preview-reload"
               data-tip="Recarregar esta prévia"
               aria-label="Recarregar esta prévia"
               onClick={onReload}
             >
-              ↻
+              <svg viewBox="0 0 18 18" aria-hidden="true">
+                <path d="M14.25 6.25V2.9m0 0H10.9m3.35 0-2.1 2.1a5.6 5.6 0 1 0 1.15 6.05" />
+              </svg>
             </button>
           </header>
           {loading ? (

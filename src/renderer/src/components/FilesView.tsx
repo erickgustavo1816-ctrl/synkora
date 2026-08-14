@@ -166,56 +166,45 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
     )
   }
 
-  const activeMission = selectedRoot.kind === 'mission'
-    ? missionOptions.find((mission) => mission.id === selectedRoot.missionId)
-    : undefined
-  const rootLabel = selectedRoot.kind === 'mission'
-    ? activeMission ? `missão · ${activeMission.title}` : 'worktree da missão'
-    : 'raiz do projeto'
-
   return (
     <div className="files-view files-view-tree">
-      <aside className="files-list files-tree-pane file-tree-host">
-        <div className="files-list-head">
-          <div>
-            <span className="files-title">arquivos</span>
-            <span className="files-root-label">{rootLabel}</span>
-          </div>
-        </div>
-        <label className="files-root-picker">
-          <span>origem</span>
-          <select
-            value={selectedRoot.kind === 'project' ? 'project' : selectedRoot.missionId}
-            onChange={(event) => {
-              const value = event.currentTarget.value
-              setSelectedRoot(
-                value === 'project'
-                  ? { kind: 'project' }
-                  : { kind: 'mission', missionId: value }
-              )
-              setSelectedPath(null)
-              setTerminalDoc(null)
-              setPreview(null)
-            }}
-          >
-            <option value="project">raiz do projeto</option>
-            {missionOptions.map((mission) => (
-              <option key={mission.id} value={mission.id}>
-                missão · {mission.title}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="files-readonly-note">prévia somente leitura · ações no menu ⋯</div>
-        {terminalDoc && (
-          <div className="files-terminal-source" data-tip={terminalDoc.path}>
-            <span aria-hidden="true">↳</span>
-            <span>aberto do terminal</span>
-          </div>
-        )}
+      <aside className="files-tree-pane">
         <ActionFileTree
           scope={scope}
           activePath={selectedPath}
+          sourceControl={(
+            <label className="files-root-picker">
+              <span className="gui-sr-only">Origem dos arquivos</span>
+              <select
+                aria-label="Origem dos arquivos"
+                value={selectedRoot.kind === 'project' ? 'project' : selectedRoot.missionId}
+                onChange={(event) => {
+                  const value = event.currentTarget.value
+                  setSelectedRoot(
+                    value === 'project'
+                      ? { kind: 'project' }
+                      : { kind: 'mission', missionId: value }
+                  )
+                  setSelectedPath(null)
+                  setTerminalDoc(null)
+                  setPreview(null)
+                }}
+              >
+                <option value="project">Raiz do projeto</option>
+                {missionOptions.map((mission) => (
+                  <option key={mission.id} value={mission.id}>
+                    Missão · {mission.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          sourceNotice={terminalDoc ? (
+            <div className="files-terminal-source" data-tip={terminalDoc.path}>
+              <span aria-hidden="true">↳</span>
+              <span>Aberto pelo terminal</span>
+            </div>
+          ) : null}
           onOpenFile={(entry: FileActionTreeEntry) => {
             setTerminalDoc(null)
             setSelectedPath(entry.path)
@@ -223,11 +212,6 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
           }}
           onChanged={handleTreeChange}
         />
-        {selectedPath && terminalDoc?.root === 'pane' && (
-          <div className="files-tree-terminal-path" data-tip={terminalDoc.path}>
-            {terminalDoc.name}
-          </div>
-        )}
       </aside>
       <FilePreviewPanel
         path={selectedPath}

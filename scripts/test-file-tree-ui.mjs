@@ -62,3 +62,28 @@ test('árvore, menu e modal preservam contratos explícitos de teclado/foco', as
     'todo canal P26 deve autenticar o frame remetente'
   )
 })
+
+test('navegador novo tem uma única hierarquia e estados visuais de linha inteira', async () => {
+  const [tree, view, css] = await Promise.all([
+    readFile(new URL('../src/renderer/src/file-tree/FileTree.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/src/components/FilesView.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+  ])
+
+  assert.ok(tree.includes('className="files-nav"'))
+  assert.ok(tree.includes('className={`files-nav-row'))
+  assert.ok(view.includes('sourceControl={('))
+  assert.equal(view.includes('files-list-head'), false, 'não pode haver cabeçalho duplicado')
+  assert.equal(view.includes('files-readonly-note'), false, 'instrução permanente não deve competir com a árvore')
+
+  const hover = css.match(/\.files-nav-row:hover\s*\{(?<body>[\s\S]*?)\}/u)?.groups?.body ?? ''
+  assert.match(hover, /border-color:/u)
+  assert.match(hover, /background:/u)
+
+  const selection = css.match(/\.files-nav-row\.active\s*\{(?<body>[\s\S]*?)\}/u)?.groups?.body ?? ''
+  assert.match(selection, /background:\s*var\(--ink\)/u)
+  assert.match(selection, /color:\s*var\(--paper\)/u)
+
+  assert.match(css, /\.files-nav-row:has\(\.files-nav-item:focus-visible\)/u)
+  assert.match(css, /\.file-context-item:hover,[\s\S]*?background:\s*var\(--ink\)/u)
+})
