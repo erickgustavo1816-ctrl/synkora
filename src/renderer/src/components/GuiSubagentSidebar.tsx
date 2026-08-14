@@ -4,51 +4,38 @@ import {
 } from '../guiSubagentSidebar'
 import type { GuiItem } from '../store'
 
-function shortId(value: string): string {
-  return value.length > 12 ? `${value.slice(0, 8)}…` : value
-}
-
 function SubagentCard({ entry }: { entry: GuiSubagentSidebarEntry }): React.JSX.Element {
   return (
     <article
-      className={`gui-subagent-sidebar-card ${entry.status}`}
+      className={`gui-subagent-row ${entry.status}`}
       data-subagent-id={entry.toolUseId}
       data-subagent-status={entry.status}
     >
-      <header className="gui-subagent-sidebar-card-head">
-        <span className="gui-subagent-sidebar-dot" aria-hidden="true" />
+      <header className="gui-subagent-row-head">
+        <span className="gui-subagent-row-dot" aria-hidden="true" />
         <strong>{entry.name}</strong>
-        <code title={`id do subagente: ${entry.toolUseId}`}>#{shortId(entry.toolUseId)}</code>
+        <span className="gui-subagent-row-status" role="status" aria-live="polite">
+          {entry.statusLabel}
+        </span>
       </header>
-      {entry.type && <div className="gui-subagent-sidebar-type">{entry.type}</div>}
-      <dl className="gui-subagent-sidebar-facts">
-        <div>
-          <dt>modelo</dt>
-          <dd>{entry.model}</dd>
-        </div>
-        <div>
-          <dt>tarefa</dt>
-          <dd title={entry.task}>{entry.task}</dd>
-        </div>
-        {entry.activity && (
-          <div>
-            <dt>agora</dt>
-            <dd>{entry.activity}</dd>
-          </div>
-        )}
-        <div>
-          <dt>estado</dt>
-          <dd role="status" aria-live="polite">
-            {entry.statusLabel}
-          </dd>
-        </div>
-        {entry.outcome && (
-          <div>
-            <dt>desfecho</dt>
-            <dd title={entry.outcome}>{entry.outcome}</dd>
-          </div>
-        )}
-      </dl>
+      <div className="gui-subagent-row-meta" aria-label={`Modelo: ${entry.model}`}>
+        <span>{entry.model}</span>
+        {entry.type && <span>{entry.type}</span>}
+      </div>
+      <p className="gui-subagent-row-task" aria-label={`Tarefa: ${entry.task}`} title={entry.task}>
+        {entry.task}
+      </p>
+      {entry.activity && (
+        <p className="gui-subagent-row-activity">
+          <span>agora</span>
+          <span>{entry.activity}</span>
+        </p>
+      )}
+      {entry.outcome && (
+        <p className="gui-subagent-row-outcome" aria-label={`Desfecho: ${entry.outcome}`} title={entry.outcome}>
+          {entry.outcome}
+        </p>
+      )}
     </article>
   )
 }
@@ -67,7 +54,14 @@ export default function GuiSubagentSidebar({
   return (
     <aside className="gui-subagent-sidebar" aria-label="Subagentes desta conversa">
       <header className="gui-subagent-sidebar-head">
-        <span>subagentes</span>
+        <span className="gui-subagent-sidebar-title">
+          <svg viewBox="0 0 18 18" aria-hidden="true">
+            <circle cx="6" cy="6" r="2.25" />
+            <circle cx="12.5" cy="11.5" r="2.25" />
+            <path d="M7.8 7.35 10.7 10" />
+          </svg>
+          <span>Subagentes</span>
+        </span>
         <span className="gui-subagent-sidebar-count" aria-label={`${entries.length} subagentes`}>
           {entries.length}
         </span>

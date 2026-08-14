@@ -141,8 +141,15 @@ test('superfície da seção tem nome acessível e campos pedidos', () => {
     'utf8'
   )
   assert.match(source, /aria-label="Subagentes desta conversa"/u)
-  for (const label of ['modelo', 'tarefa', 'agora', 'estado', 'desfecho']) {
-    assert.match(source, new RegExp(`>${label}<`, 'u'))
+  for (const contract of [
+    'gui-subagent-row-meta',
+    'gui-subagent-row-task',
+    'gui-subagent-row-activity',
+    'gui-subagent-row-status',
+    'gui-subagent-row-outcome'
+  ]) {
+    assert.match(source, new RegExp(contract, 'u'))
   }
+  assert.doesNotMatch(source, /id do subagente/u)
   assert.match(source, /role="status"/u)
 })
