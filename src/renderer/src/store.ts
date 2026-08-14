@@ -66,6 +66,10 @@ import {
 } from './guiMessageQueue'
 import { isGuiComposerAttachment } from './guiComposerAttachmentStorage'
 import { GUI_COMPOSER_ATTACHMENT_MAX_FILES } from './guiComposerAttachments'
+import {
+  guiSubagentMetadataForTool,
+  type GuiSubagentMetadata
+} from './guiSubagentSidebar'
 
 export interface Project {
   id: string
@@ -597,6 +601,8 @@ export type GuiItem =
       /** Relação explícita recebida do Claude. Ausente continua sendo uma tool
        *  comum (inclusive no Codex); o renderer não infere subagente. */
       parentToolUseId?: string
+      /** Metadados factuais do input de Task/Agent, normalizados no reducer. */
+      subagent?: GuiSubagentMetadata
       /** Payload de edição já normalizado e limitado; o input cru não fica no store. */
       fileDiffs?: GuiFileDiffSource[]
       result?: {
@@ -1153,6 +1159,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
       const base = finalizeGuiStream(state)
       const summary = guiToolSummary(evt.input)
       const fileDiffs = normalizeGuiToolDiff(evt.name, evt.input)
+      const subagent = guiSubagentMetadataForTool(evt.name, evt.input)
       return {
         ...base,
         items: pushGuiItem(base.items, {
@@ -1162,6 +1169,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           summary,
           toolUseId: evt.toolUseId,
           parentToolUseId: evt.parentToolUseId,
+          ...(subagent ? { subagent } : {}),
           ...(fileDiffs ? { fileDiffs } : {}),
           at: Date.now()
         }),

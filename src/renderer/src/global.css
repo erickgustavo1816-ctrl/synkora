@@ -7675,6 +7675,172 @@ body.pane-docking .pane-bar.draggable {
   padding: 10px;
 }
 
+/* A lateral factual do chat fica DENTRO do trilho de entrega existente. Ela
+   não cria uma segunda coluna nem replica o transcript: só resume a linhagem
+   explícita dos subagentes presentes na conversa ativa. */
+.gui-subagent-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.gui-subagent-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.gui-subagent-sidebar-count {
+  display: inline-grid;
+  min-width: 16px;
+  height: 16px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--ink-3);
+  font-size: 9px;
+  letter-spacing: 0;
+}
+
+.gui-subagent-sidebar-list {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  max-height: 42vh;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.gui-subagent-sidebar-card {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--line-strong);
+  border-left: 2px solid var(--line-strong);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--card) 76%, var(--paper-2));
+  color: var(--ink-2);
+}
+
+.gui-subagent-sidebar-card.running {
+  border-left-color: var(--accent);
+}
+
+.gui-subagent-sidebar-card.completed {
+  border-left-color: var(--ok);
+}
+
+.gui-subagent-sidebar-card.failed,
+.gui-subagent-sidebar-card.denied,
+.gui-subagent-sidebar-card.cancelled {
+  border-left-color: var(--err);
+}
+
+.gui-subagent-sidebar-card-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 10.5px;
+}
+
+.gui-subagent-sidebar-card-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-subagent-sidebar-card-head code {
+  flex: none;
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 8px;
+  font-weight: 400;
+}
+
+.gui-subagent-sidebar-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.gui-subagent-sidebar-card.completed .gui-subagent-sidebar-dot {
+  background: var(--ok);
+}
+
+.gui-subagent-sidebar-card.failed .gui-subagent-sidebar-dot,
+.gui-subagent-sidebar-card.denied .gui-subagent-sidebar-dot,
+.gui-subagent-sidebar-card.cancelled .gui-subagent-sidebar-dot {
+  background: var(--err);
+}
+
+.gui-subagent-sidebar-type {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-subagent-sidebar-facts {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  min-width: 0;
+}
+
+.gui-subagent-sidebar-facts > div {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 5px;
+  min-width: 0;
+  align-items: baseline;
+}
+
+.gui-subagent-sidebar-facts dt {
+  color: var(--ink-3);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.gui-subagent-sidebar-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 9.5px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-subagent-sidebar-card.running .gui-subagent-sidebar-facts dd:last-child {
+  color: var(--accent-deep);
+}
+
+.gui-subagent-sidebar-card.failed .gui-subagent-sidebar-facts dd:last-child,
+.gui-subagent-sidebar-card.denied .gui-subagent-sidebar-facts dd:last-child,
+.gui-subagent-sidebar-card.cancelled .gui-subagent-sidebar-facts dd:last-child {
+  color: var(--err);
+}
+
 /* o mockup separa o ⇪ do resto: acima, o trabalho; abaixo, a entrega */
 .dr-divider {
   height: 1px;

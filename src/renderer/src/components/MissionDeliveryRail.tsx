@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { missionTypeOf, type Mission } from '../store'
+import { missionTypeOf, type GuiItem, type Mission } from '../store'
 import { missionWorkspace, type MissionWorkspaceSummary } from '../missionWorkspace'
 import MissionCommitHistory from './MissionCommitHistory'
+import GuiSubagentSidebar from './GuiSubagentSidebar'
 
 // TRILHO DE ENTREGA (Synkora 2.0, onda B; enriquecido na onda D) — a coluna da
 // DIREITA do mockup.
@@ -45,6 +46,7 @@ export default function MissionDeliveryRail({
   guiAvailable,
   shellAvailable,
   testServerOpen,
+  subagentItems = [],
   reloadToken,
   onIntegrate,
   onReview,
@@ -63,6 +65,8 @@ export default function MissionDeliveryRail({
   shellAvailable: boolean
   /** já existe um pane de servidor de teste desta missão */
   testServerOpen: boolean
+  /** transcript factual da conversa ativa; a seção some quando não há subagentes */
+  subagentItems?: readonly GuiItem[]
   /** o Board incrementa depois do ⇪ (e de qualquer ação que mexa na branch):
    *  o diffstat re-mede sem o dono precisar clicar em nada */
   reloadToken?: number
@@ -198,6 +202,8 @@ export default function MissionDeliveryRail({
           recortou `base..HEAD` e a expansão pede o patch de um SHA completo;
           o rail só exibe, nunca stageia, commita ou altera o worktree. */}
       {!planning && <MissionCommitHistory missionId={mission.id} reloadToken={reloadToken} />}
+
+      {!planning && <GuiSubagentSidebar items={subagentItems} />}
 
       {!planning && (
         <div className="dr-facts">

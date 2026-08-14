@@ -47,6 +47,7 @@
     "test:gui-sessions": "tsc --outDir .tmp/gui-sessions-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/guiSessions.ts src/main/guiAttachments.ts src/main/guiAttachmentStorage.ts && node --test scripts/test-gui-sessions.mjs",
     "test:gui-mission-contracts": "node --experimental-strip-types --test scripts/test-gui-mission-contracts.mjs",
     "test:gui-chat-ui": "node --experimental-strip-types --test scripts/test-gui-chat-ui.mjs",
+    "test:gui-subagent-sidebar": "node --experimental-strip-types --test scripts/test-gui-subagent-sidebar.mjs",
     "test:gui-transcript-window": "node --experimental-strip-types --test scripts/test-gui-transcript-window.mjs",
     "test:gui-context-panel": "node --experimental-strip-types --test scripts/test-gui-context-panel.mjs",
     "test:gui-file-open": "node --experimental-strip-types --test scripts/test-gui-file-open.mjs",

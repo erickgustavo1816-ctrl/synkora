@@ -2946,6 +2946,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
             queueLabel={integrationQueueLabel(selMission)}
             guiAvailable={missionGui.available()}
             shellAvailable={missionShell.available()}
+            subagentItems={directGui?.items ?? []}
             testServerOpen={panes.some((p) => p.testServer && p.missionId === selMission.id)}
             reloadToken={railReload}
             onIntegrate={() => void onIntegrate()}
