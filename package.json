@@ -48,6 +48,7 @@
     "test:gui-chat-ui": "node --experimental-strip-types --test scripts/test-gui-chat-ui.mjs",
     "test:gui-transcript-window": "node --experimental-strip-types --test scripts/test-gui-transcript-window.mjs",
     "test:gui-context-panel": "node --experimental-strip-types --test scripts/test-gui-context-panel.mjs",
+    "test:gui-file-open": "node --experimental-strip-types --test scripts/test-gui-file-open.mjs",
     "test:gui-json-card": "node --experimental-strip-types --test scripts/test-gui-json-card.mjs",
     "test:gui-queue-draft": "node --experimental-strip-types --test scripts/test-gui-queue-draft.mjs",
     "test:gui-panel-boundary": "node --test scripts/test-gui-panel-boundary.mjs",

@@ -8,10 +8,12 @@ import GuiMarkdown from './GuiMarkdown'
 // (ele volta a planejar em vez de tratar como recusa final).
 
 export default function GuiPlanCard({
+  paneId,
   plan,
   onDecide,
   disabled = false
 }: {
+  paneId: string
   plan: string
   onDecide: (approve: boolean) => void
   disabled?: boolean
@@ -26,7 +28,7 @@ export default function GuiPlanCard({
         <span className="gui-plan-tag">esperando você</span>
       </div>
       <div className="gui-plan-body">
-        <GuiMarkdown text={plan} />
+        <GuiMarkdown paneId={paneId} text={plan} />
       </div>
       <div className="gui-plan-actions">
         <button className="gui-btn primary" disabled={disabled} onClick={() => onDecide(true)}>

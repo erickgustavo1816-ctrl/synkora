@@ -25,12 +25,14 @@ function prefersReducedMotion(): boolean {
 }
 
 export default function GuiStreamText({
+  paneId,
   text,
   initialShown = 0,
   complete,
   onComplete,
   onProgress
 }: {
+  paneId: string
   text: string
   initialShown?: number
   complete: boolean
@@ -79,7 +81,7 @@ export default function GuiStreamText({
   return (
     <div className="gui-msg dev stream">
       <div className="gui-msg-text">
-        <GuiMarkdown text={visible} />
+        <GuiMarkdown paneId={paneId} text={visible} />
         {(!complete || shown < text.length) && (
           <span className="stream-cursor" aria-hidden="true">
             ▍

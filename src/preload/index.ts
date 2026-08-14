@@ -21,6 +21,11 @@ import type {
 import type { GuiMissionRole } from '../main/guiMissionContracts'
 import type { GuiAlertPayload } from '../main/guiNotices'
 import type {
+  GuiFileChoice,
+  GuiFileOpenResult,
+  GuiFilePreview
+} from '../main/guiFileResolver'
+import type {
   MissionCommitDiffResult,
   MissionCommitsResult,
   MissionFileDiffResult,
@@ -62,6 +67,7 @@ export type {
   GuiResult
 }
 export type { GuiAlertPayload }
+export type { GuiFileChoice, GuiFileOpenResult, GuiFilePreview }
 
 /** Anexos do composer do chat: print colado ou arquivo, gravados na pasta de
  *  trabalho do PANE (`.synkora/attachments`) — a resposta traz o path absoluto
@@ -1309,6 +1315,15 @@ const api = {
      *  O main resolve o worktree a partir do paneId e mantém cache por raiz. */
     workspaceFiles: (paneId: string): Promise<GuiWorkspaceFilesResult> =>
       ipcRenderer.invoke('gui:workspaceFiles', paneId),
+    /** Abre uma citação de arquivo usando somente o cwd autoritativo do pane.
+     *  `selectedPath` só existe após o main devolver uma lista ambígua e é
+     *  revalidado na segunda chamada. Nunca há ação de executar arquivo. */
+    fileOpen: (
+      paneId: string,
+      reference: string,
+      selectedPath?: string
+    ): Promise<GuiFileOpenResult> =>
+      ipcRenderer.invoke('gui:fileOpen', paneId, reference, selectedPath),
     /** Anexa print da área de transferência ou arquivo ao chat: o main grava
      *  em `<cwd do pane>/.synkora/attachments` e devolve o caminho ABSOLUTO
      *  para o composer citar no prompt (teto de 10 MB por arquivo). */

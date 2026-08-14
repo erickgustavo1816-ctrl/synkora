@@ -4,8 +4,11 @@ import type {
   GuiAttachResult,
   GuiAttachmentDescriptor,
   GuiQueuedDeliveryInput,
+  GuiFileOpenResult,
   GuiWorkspaceFilesResult
 } from '../../preload'
+
+export type { GuiFileChoice, GuiFileOpenResult, GuiFilePreview } from '../../preload'
 
 // Ponte tipada do PANE GUI (Synkora 2.0, onda A).
 //
@@ -288,6 +291,11 @@ interface GuiBridge {
     alive?: boolean
   }>
   workspaceFiles: (paneId: string) => Promise<GuiWorkspaceFilesResult>
+  fileOpen: (
+    paneId: string,
+    reference: string,
+    selectedPath?: string
+  ) => Promise<GuiFileOpenResult>
   attach: (paneId: string, payload: GuiAttachPayload) => Promise<GuiAttachResult>
   attachFolder: (paneId: string) => Promise<GuiAttachResult>
   visibility: (paneId: string, active: boolean) => void
@@ -481,6 +489,26 @@ export const guiApi = {
       }
     } catch {
       return { events: [], cursor: 0, exists: false, alive: false }
+    }
+  },
+
+  async fileOpen(
+    paneId: string,
+    reference: string,
+    selectedPath?: string
+  ): Promise<GuiFileOpenResult> {
+    const api = bridge()
+    if (!api?.fileOpen) {
+      return { ok: false, reason: 'unavailable', error: NO_BRIDGE }
+    }
+    try {
+      return await api.fileOpen(paneId, reference, selectedPath)
+    } catch (error) {
+      return {
+        ok: false,
+        reason: 'unavailable',
+        error: error instanceof Error ? error.message : String(error)
+      }
     }
   },
 

@@ -242,11 +242,13 @@ const PERM_LABEL: Record<GuiPermBehavior | 'cancelada', string> = {
 }
 
 function GuiMessage({
+  paneId,
   item,
   showCopy,
   onRevealComplete,
   onRevealProgress
 }: {
+  paneId: string
   item: GuiItem
   showCopy: boolean
   onRevealComplete: (itemId: string, length: number) => void
@@ -303,6 +305,7 @@ function GuiMessage({
   if (revealing) {
     return (
       <GuiStreamText
+        paneId={paneId}
         text={item.text}
         initialShown={item.animateFrom}
         complete={!item.live}
@@ -315,7 +318,11 @@ function GuiMessage({
   return (
     <div className="gui-msg dev">
       <div className="gui-msg-text">
-        {jsonCard ? <GuiJsonCard formatted={jsonCard.formatted} /> : <GuiMarkdown text={item.text} />}
+        {jsonCard ? (
+          <GuiJsonCard formatted={jsonCard.formatted} />
+        ) : (
+          <GuiMarkdown paneId={paneId} text={item.text} />
+        )}
       </div>
       {showCopy && item.text.trim() && (
         <GuiMessageCopy markdown={item.text} />
@@ -1404,6 +1411,7 @@ export default function GuiPane({
               ) : (
                 <GuiMessage
                   key={item.id}
+                  paneId={paneId}
                   item={item}
                   showCopy={item.kind === 'assistant' && item.id === copyableAssistantId}
                   onRevealComplete={(itemId, length) =>
@@ -1427,6 +1435,7 @@ export default function GuiPane({
 
             {gui.planReview && (
               <GuiPlanCard
+                paneId={paneId}
                 plan={gui.planReview.plan}
                 disabled={Boolean(gui.interactionSubmitting)}
                 onDecide={(approve) => void answerGuiPlan(projectId, paneId, approve)}

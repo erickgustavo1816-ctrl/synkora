@@ -15,6 +15,7 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  shell,
   type BrowserWindow,
   type IpcMainEvent,
   type IpcMainInvokeEvent
@@ -52,6 +53,11 @@ import { guiMissionRoleOf, missionShortId } from '../guiMissionContracts'
 import { notifyDesktop } from '../desktopNotifications'
 import { GuiPaneVisibilityRegistry, GuiWindowReadyController } from '../guiWindowReady'
 import type { GuiAlertPayload, GuiNoticeKind } from '../guiNotices'
+import {
+  GuiFileResolver,
+  prepareGuiFileOpen,
+  type GuiFileOpenResult
+} from '../guiFileResolver'
 import { ensureSynkoraGitExcludes } from '../worktree'
 import type { MainContext } from '../mainContext'
 import { GuiWorkspaceFileIndex, type GuiWorkspaceFilesResult } from '../guiWorkspaceFiles'
@@ -254,6 +260,9 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     // projeto e respawn. Assim nenhum marcador [pronto] sobrevive ao pane.
     onPaneDisposed: ({ paneId }) => readyTitle.dropPane(paneId)
   })
+  // Índice curto por cwd para basename/sufixo. A raiz nunca vem do renderer;
+  // cada chamada abaixo a reencontra no registro vivo da conversa.
+  const fileResolver = new GuiFileResolver()
 
   ipcMain.on('gui:visibility', (event, paneId: unknown, active: unknown) => {
     extras.assertAppRendererSender(event)
@@ -404,6 +413,84 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
       const cwd = registry.cwdOf(paneId)
       if (!cwd) return { ok: false, error: 'este pane não tem sessão aberta' }
       return workspaceFileIndex.list(cwd)
+    }
+  )
+
+  ipcMain.handle(
+    'gui:fileOpen',
+    (
+      e,
+      paneId: unknown,
+      reference: unknown,
+      selectedPath?: unknown
+    ): GuiFileOpenResult => {
+      extras.assertAppRendererSender(e)
+      if (typeof paneId !== 'string' || !paneId || paneId.length > 256) {
+        return { ok: false, reason: 'invalid', error: 'pane sem identificador válido' }
+      }
+      if (typeof reference !== 'string') {
+        return { ok: false, reason: 'invalid', error: 'caminho inválido' }
+      }
+      if (selectedPath !== undefined && typeof selectedPath !== 'string') {
+        return { ok: false, reason: 'invalid', error: 'escolha de arquivo inválida' }
+      }
+
+      const cwd = registry.cwdOf(paneId)
+      if (!cwd) {
+        return {
+          ok: false,
+          reason: 'unavailable',
+          error: 'este pane não tem sessão aberta'
+        }
+      }
+
+      const resolved = fileResolver.resolve(cwd, reference, selectedPath)
+      if (!resolved.ok) {
+        blackbox.record({
+          cat: 'pane',
+          event: 'gui-file-open-refused',
+          actor: 'user',
+          ids: { paneId },
+          // Token, escolha e path podem carregar árvore/username. Só a classe
+          // segura da recusa entra no journal.
+          detail: { reason: resolved.reason }
+        })
+        return resolved
+      }
+
+      const prepared = prepareGuiFileOpen(resolved.file)
+      if (!prepared.ok) {
+        blackbox.record({
+          cat: 'pane',
+          event: 'gui-file-open-refused',
+          actor: 'user',
+          ids: { paneId },
+          detail: { reason: prepared.reason }
+        })
+        return prepared
+      }
+      if (prepared.action === 'preview') {
+        blackbox.record({
+          cat: 'pane',
+          event: 'gui-file-previewed',
+          actor: 'user',
+          ids: { paneId },
+          detail: { kind: prepared.preview.kind }
+        })
+        return prepared
+      }
+
+      // Fallback deliberadamente não executável: Explorer seleciona o arquivo,
+      // mas nenhuma associação do SO é acionada nesta superfície.
+      shell.showItemInFolder(prepared.absolutePath)
+      blackbox.record({
+        cat: 'pane',
+        event: 'gui-file-revealed',
+        actor: 'user',
+        ids: { paneId },
+        detail: { action: 'reveal' }
+      })
+      return { ok: true, action: 'reveal', message: prepared.message }
     }
   )
 

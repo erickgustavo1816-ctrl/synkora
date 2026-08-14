@@ -15493,6 +15493,50 @@ body.progress-overlay-page #root {
   text-decoration-thickness: 2px;
 }
 
+/* Citação de arquivo: parece um link, mas é button de propósito — HTTPS segue
+   no <a> e arquivo sempre volta ao IPC contido do pane. */
+.gui-file-link {
+  appearance: none;
+  display: inline;
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent-deep);
+  cursor: pointer;
+  font: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.gui-file-link:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.gui-file-link:focus-visible {
+  color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.gui-file-link.gui-file-opening {
+  cursor: progress;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
 .gui-link-opening-status {
   position: absolute;
   width: 1px;
@@ -15507,6 +15551,10 @@ body.progress-overlay-page #root {
 
 @media (prefers-reduced-motion: reduce) {
   .gui-md a {
+    transition: none;
+  }
+
+  .gui-file-link {
     transition: none;
   }
 }
@@ -15571,6 +15619,216 @@ body.progress-overlay-page #root {
 .gui-md img {
   max-width: 100%;
   border-radius: 6px;
+}
+
+/* Preview mínimo do P17: inerte, contido na própria mensagem e substituível
+   pelo painel lateral do P25 sem alterar resolver/IPC. */
+.gui-file-panel {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  margin-top: 10px;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 9px;
+  background: var(--gui-fill);
+  color: var(--ink);
+  overflow: hidden;
+}
+
+.gui-file-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--gui-line);
+  background: var(--gui-fill-2);
+}
+
+.gui-file-panel-head > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gui-file-panel-head strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 11.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-file-panel-head span {
+  color: var(--ink-3);
+  font-size: 10.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.gui-file-close {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: 17px;
+  line-height: 20px;
+}
+
+.gui-file-close:hover {
+  border-color: var(--gui-line);
+  background: var(--gui-fill);
+  color: var(--ink);
+}
+
+.gui-file-close:focus-visible,
+.gui-file-choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.gui-file-choice-list {
+  display: grid;
+  gap: 1px;
+  max-height: 210px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.gui-file-choice {
+  appearance: none;
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--gui-line);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.gui-file-choice:last-child {
+  border-bottom: 0;
+}
+
+.gui-file-choice:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.gui-file-choice:disabled {
+  cursor: progress;
+  opacity: 0.58;
+}
+
+.gui-file-choice strong {
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.gui-file-choice span {
+  color: var(--ink-3);
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+.gui-file-panel-note {
+  margin: 0;
+  padding: 7px 10px;
+  border-top: 1px solid var(--gui-line);
+  color: var(--ink-3);
+  font-size: 10.5px;
+}
+
+.gui-file-preview-body {
+  max-height: min(360px, 52vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--paper);
+}
+
+.gui-file-preview-body pre {
+  box-sizing: border-box;
+  min-width: 100%;
+  width: max-content;
+  max-width: none;
+  margin: 0;
+  padding: 10px 11px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 10.5px;
+  line-height: 1.5;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.gui-file-preview-body pre:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.gui-file-preview-body pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.gui-file-preview-body img {
+  display: block;
+  max-width: 100%;
+  max-height: min(360px, 52vh);
+  margin: 0 auto;
+  border-radius: 0;
+  object-fit: contain;
+}
+
+.gui-file-preview-foot {
+  padding: 6px 9px;
+  border-top: 1px solid var(--gui-line);
+  color: var(--ink-3);
+  font-size: 10px;
+  text-align: right;
+}
+
+.gui-file-feedback {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px 7px 10px;
+  color: var(--ink-2);
+  font-size: 11px;
+}
+
+.gui-file-feedback.error {
+  border-color: color-mix(in srgb, var(--err) 38%, var(--gui-line));
+  color: var(--err);
+}
+
+@media (max-width: 520px) {
+  .gui-file-preview-body {
+    max-height: 42vh;
+  }
+
+  .gui-file-choice-list {
+    max-height: 180px;
+  }
 }
 
 /* JSON puro recebe a mesma superfície discreta dos blocos de código, mas sem

@@ -139,6 +139,10 @@ import {
   ownsFailedGuiSteer,
   shouldArmGuiTurnWatchdog
 } from '../src/main/guiTurnQueue.ts'
+import {
+  findGuiFileTokens,
+  guiInlineCodeFileToken
+} from '../src/renderer/src/guiFileTokens.ts'
 
 import {
   GuiWorkspaceFileIndex,
@@ -154,6 +158,28 @@ const tool = (id, name = 'Read', summary = `${id}.ts`) => ({
 })
 
 const note = (id, text = 'marco') => ({ id, kind: 'note', text, at: 1 })
+
+test('chat reconhece arquivos sem capturar HTTPS, versao ou email', () => {
+  const text =
+    'Veja src/main/app.ts, foo.ts e README. Versão 2.0; me@example.com; https://example.com/docs/site.ts.'
+  assert.deepEqual(
+    findGuiFileTokens(text).map((token) => token.value),
+    ['src/main/app.ts', 'foo.ts', 'README']
+  )
+  assert.equal(
+    guiInlineCodeFileToken('C:\\Work tree\\src\\app.ts'),
+    'C:\\Work tree\\src\\app.ts'
+  )
+  assert.equal(guiInlineCodeFileToken('const file = "app.ts"'), null)
+
+  const markdown = readFileSync(
+    new URL('../src/renderer/src/components/GuiMarkdown.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(markdown, /linkifyGuiFileReferences\(routeChatLinksExternally\(sanitized\)\)/u)
+  assert.match(markdown, /parent\.closest\('a, button, pre'\)/u)
+  assert.match(markdown, /guiApi\.fileOpen\(paneId, reference, selectedPath\)/u)
+})
 
 test('autocomplete slash fecha a conclusao e so reabre para outra consulta valida', () => {
   const draft = 'ajuste /mo depois'
