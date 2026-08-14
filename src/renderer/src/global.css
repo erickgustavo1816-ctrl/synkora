@@ -14679,6 +14679,32 @@ body.progress-overlay-page #root {
   padding: 0 18px;
 }
 
+/* A janela começa no fim do transcript. Este controle fica no topo lógico do
+   fio e some quando a memória inteira já foi aberta. */
+.gui-transcript-load-all {
+  align-self: center;
+  flex: none;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 999px;
+  background: var(--gui-fill);
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.25;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+
+.gui-transcript-load-all:hover {
+  border-color: var(--ink-2);
+  color: var(--ink);
+}
+
+.gui-transcript-load-all:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .gui-empty {
   margin-top: 22px;
   text-align: center;

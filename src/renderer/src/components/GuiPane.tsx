@@ -74,6 +74,7 @@ import {
 import { shouldBlurGuiComposerOnOutsidePointerDown } from '../guiComposerFocus'
 import { guiComposerClearPlan } from '../guiComposerDelivery'
 import { parseGuiJsonCard } from '../guiJsonCard'
+import { useGuiTranscriptWindow } from '../useGuiTranscriptWindow'
 
 // PANE GUI — o CHAT que substitui a TUI (Synkora 2.0).
 //
@@ -548,6 +549,20 @@ export default function GuiPane({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const composerSurfaceRef = useRef<HTMLDivElement>(null)
   const paneRef = useRef<HTMLDivElement>(null)
+  const {
+    visibleItems,
+    totalItems,
+    hasMoreBefore,
+    onScroll: onTranscriptScroll,
+    loadAll,
+    goToEnd,
+    keepPinnedToEnd
+  } = useGuiTranscriptWindow({
+    items: gui.items,
+    logRef,
+    pinnedRef,
+    onPinnedChange: setPinned
+  })
 
   useEffect(() => {
     const update = (): void => setDocumentVisible(document.visibilityState === 'visible')
@@ -660,20 +675,19 @@ export default function GuiPane({
     for (const seq of acknowledged) guiApi.presented(paneId, seq)
   }, [active, documentVisible, paneId, pendingPresentationSeqs, transcriptPresented])
 
-  // ————— rolagem: gruda no fim, salvo quando o usuário subiu para ler —————
-  const onScroll = useCallback((): void => {
-    const el = logRef.current
-    if (!el) return
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
-    pinnedRef.current = atBottom
-    setPinned((current) => (current === atBottom ? current : atBottom))
-  }, [])
-
+  // O hook mantém a âncora quando a janela muda; conteúdo vivo e reflow de
+  // stream continuam usando a mesma regra de ficar no fim quando pinados.
   useLayoutEffect(() => {
-    const el = logRef.current
-    if (!el || !pinnedRef.current) return
-    el.scrollTop = el.scrollHeight
-  }, [gui.items, gui.stream, gui.thinking, gui.perm, gui.question, gui.planReview])
+    keepPinnedToEnd()
+  }, [
+    gui.items,
+    gui.perm,
+    gui.planReview,
+    gui.question,
+    gui.stream,
+    gui.thinking,
+    keepPinnedToEnd
+  ])
 
   // textarea que cresce com o texto (Enter envia, Shift+Enter quebra linha).
   // Teto alto e SEM barra de rolagem (ordem do dono): a caixa cresce até um
@@ -1069,23 +1083,7 @@ export default function GuiPane({
     return () => document.removeEventListener('mousedown', onDocDown)
   }, [openMenu])
 
-  const goToEnd = useCallback((): void => {
-    const el = logRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-    pinnedRef.current = true
-    setPinned(true)
-  }, [])
-
-  const keepRevealInView = useCallback((): void => {
-    if (!pinnedRef.current) return
-    window.requestAnimationFrame(() => {
-      const el = logRef.current
-      if (el && pinnedRef.current) el.scrollTop = el.scrollHeight
-    })
-  }, [])
-
-  const renderItems = useMemo(() => groupConsecutiveGuiTools(gui.items), [gui.items])
+  const renderItems = useMemo(() => groupConsecutiveGuiTools(visibleItems), [visibleItems])
   const copyableAssistantId = useMemo(() => {
     const lastItem = gui.items.at(-1)
     if (lastItem?.kind !== 'assistant') return null
@@ -1304,8 +1302,19 @@ export default function GuiPane({
           cairia POR CIMA do card de permissão (que nasce entre o fio e o
           composer). Aqui ele acompanha o fim do fio, sempre. */}
       <div className="gui-stage">
-        <div className="gui-log" ref={logRef} onScroll={onScroll}>
+        <div className="gui-log" ref={logRef} onScroll={onTranscriptScroll}>
           <div className="gui-thread">
+            {hasMoreBefore && (
+              <button
+                type="button"
+                className="gui-transcript-load-all"
+                onClick={loadAll}
+                aria-label={`Carregar todas as ${totalItems} mensagens`}
+              >
+                carregar todas as {totalItems}
+              </button>
+            )}
+
             {empty && (
               <div className="gui-empty">
                 {gui.status === 'starting'
@@ -1336,7 +1345,7 @@ export default function GuiPane({
                   onRevealComplete={(itemId, length) =>
                     finishGuiReveal(paneId, itemId, length)
                   }
-                  onRevealProgress={keepRevealInView}
+                  onRevealProgress={keepPinnedToEnd}
                 />
               )
             )}
