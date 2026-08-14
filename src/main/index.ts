@@ -6851,7 +6851,7 @@ app.whenReady().then(async () => {
       }
     }
   })
-  registerFilesIpc(ctx)
+  registerFilesIpc(ctx, { assertAppRendererSender })
   registerSettingsIpc(ctx, {
     assertMainRendererSender,
     assertAppRendererSender,

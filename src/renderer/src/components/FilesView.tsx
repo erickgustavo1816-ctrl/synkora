@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
+  FileActionScope,
+  FileActionTreeEntry,
   FilePreviewResult,
-  FileTreeEntry,
   FileTreeRoot,
   Mission,
   TerminalMarkdownTarget
 } from '../../../preload/index'
 import FilePreviewPanel from './FilePreviewPanel'
-import FileTree from './FileTree'
+import ActionFileTree from '../file-tree/FileTree'
+import type { FileTreeChange } from '../file-tree/fileTreeTypes'
 import { onMarkdownOpen, takeMarkdownOpen } from '../projectFileNavigation'
 
 interface Props {
@@ -43,30 +45,33 @@ function terminalMarkdownPreview(
 }
 
 /**
- * Aba Arquivos: árvore + preview somente leitura.
- *
- * A lista e a leitura passam pela main; o renderer envia apenas o ID da raiz
- * lógica e o caminho relativo devolvido pela própria árvore. Não há textarea,
- * editor, save, download ou URL local direta nesta superfície.
+ * Aba Arquivos: árvore com ações explícitas e preview sempre somente leitura.
+ * A main resolve a raiz por IDs; caminhos físicos nunca atravessam esta tela.
  */
 export default function FilesView({ projectId, missionId }: Props): React.JSX.Element {
   const [missionOptions, setMissionOptions] = useState<Mission[]>([])
   const [selectedRoot, setSelectedRoot] = useState<FileTreeRoot>(
     () => (missionId ? { kind: 'mission', missionId } : { kind: 'project' })
   )
-  const root = selectedRoot
-  const [entries, setEntries] = useState<FileTreeEntry[]>([])
-  const [treeError, setTreeError] = useState<string | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [terminalDoc, setTerminalDoc] = useState<TerminalMarkdownTarget | null>(null)
   const [preview, setPreview] = useState<FilePreviewResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [revision, setRevision] = useState(0)
 
-  const bridgeOk = typeof window.synkora.files !== 'undefined'
+  const root = selectedRoot
+  const scope = useMemo<FileActionScope>(() => ({
+    projectId,
+    ...(selectedRoot.kind === 'mission' ? { missionId: selectedRoot.missionId } : {})
+  }), [projectId, selectedRoot])
+  const runtimeFiles = window.synkora.files as { tree?: unknown; preview?: unknown }
+  const bridgeOk = typeof runtimeFiles.tree === 'function' && typeof runtimeFiles.preview === 'function'
 
   useEffect(() => {
     setSelectedRoot(missionId ? { kind: 'mission', missionId } : { kind: 'project' })
+    setSelectedPath(null)
+    setTerminalDoc(null)
+    setPreview(null)
   }, [missionId, projectId])
 
   useEffect(() => {
@@ -81,28 +86,8 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
     }
   }, [projectId])
 
-  const refresh = useCallback(async () => {
-    if (!window.synkora.files?.listTree) return
-    try {
-      const result = await window.synkora.files.listTree(projectId, root)
-      setEntries(result.entries)
-      setTreeError(
-        result.error ?? (result.truncated ? 'árvore limitada ao teto de segurança' : null)
-      )
-      if (!terminalDoc && selectedPath && !result.entries.some((entry) => entry.path === selectedPath)) {
-        setSelectedPath(null)
-      }
-    } catch {
-      setEntries([])
-      setTreeError('não foi possível carregar a árvore de arquivos')
-    }
-  }, [projectId, root, selectedPath, terminalDoc])
-
-  useEffect(() => {
-    void refresh()
-  }, [refresh])
-
   const openFromTerminal = useCallback((target: TerminalMarkdownTarget): void => {
+    if (target.root === 'project') setSelectedRoot({ kind: 'project' })
     setSelectedPath(target.path.replace(/\\/g, '/'))
     setTerminalDoc(target)
     setPreview(null)
@@ -114,18 +99,6 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
     if (queued) openFromTerminal(queued)
     return onMarkdownOpen(projectId, openFromTerminal)
   }, [openFromTerminal, projectId])
-
-  // Se o terminal abriu um arquivo da raiz exibida, deixa a árvore ser a única
-  // indicação visual da seleção. Alvos do pane continuam no marcador acima da
-  // árvore, sem inventar uma entrada fora da raiz autoritativa.
-  useEffect(() => {
-    if (
-      terminalDoc?.root === 'project' &&
-      entries.some((entry) => entry.kind === 'file' && entry.path === terminalDoc.path)
-    ) {
-      setTerminalDoc(null)
-    }
-  }, [entries, terminalDoc])
 
   useEffect(() => {
     if (!selectedPath || !window.synkora.files) return
@@ -151,7 +124,11 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
       })
       .catch(() => {
         if (stale) return
-        setPreview({ ok: false, error: 'não foi possível abrir este arquivo agora', path: selectedPath })
+        setPreview({
+          ok: false,
+          error: 'não foi possível abrir este arquivo agora',
+          path: selectedPath
+        })
         setLoading(false)
       })
     return () => {
@@ -159,12 +136,31 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
     }
   }, [projectId, revision, root, selectedPath, terminalDoc])
 
+  const handleTreeChange = useCallback((change: FileTreeChange): void => {
+    if (!change.previousPath) return
+    const previousPath = change.previousPath
+    setSelectedPath((current) => {
+      if (!current) return current
+      const affected = current === previousPath || current.startsWith(`${previousPath}/`)
+      if (!affected) return current
+      if (change.action === 'rename' && change.path) {
+        return `${change.path}${current.slice(previousPath.length)}`
+      }
+      if (change.action === 'trash') return null
+      return current
+    })
+    if (change.action === 'rename' || change.action === 'trash') {
+      setTerminalDoc(null)
+      setPreview(null)
+    }
+  }, [])
+
   if (!bridgeOk) {
     return (
       <div className="ws-empty">
         <p className="empty-title">Arquivos indisponíveis</p>
         <p className="hint">
-          Reinicie o app (<code>npm run dev</code>) para carregar a API de leitura.
+          Reinicie o app (<code>npm run dev</code>) para carregar a API de arquivos.
         </p>
       </div>
     )
@@ -176,35 +172,27 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
   const rootLabel = selectedRoot.kind === 'mission'
     ? activeMission ? `missão · ${activeMission.title}` : 'worktree da missão'
     : 'raiz do projeto'
-  // displayPath is retained only for the legacy terminal-navigation contract;
-  // P25 displays the normalized relative path, never an absolute candidate.
-  const activePath = selectedPath
 
   return (
     <div className="files-view files-view-tree">
-      <aside className="files-list files-tree-pane">
+      <aside className="files-list files-tree-pane file-tree-host">
         <div className="files-list-head">
           <div>
             <span className="files-title">arquivos</span>
             <span className="files-root-label">{rootLabel}</span>
           </div>
-          <button
-            type="button"
-            className="term-btn ghost-dim"
-            data-tip="Recarregar a árvore"
-            aria-label="Recarregar a árvore"
-            onClick={() => void refresh()}
-          >
-            ↻
-          </button>
         </div>
         <label className="files-root-picker">
-          <span>origem da leitura</span>
+          <span>origem</span>
           <select
             value={selectedRoot.kind === 'project' ? 'project' : selectedRoot.missionId}
             onChange={(event) => {
               const value = event.currentTarget.value
-              setSelectedRoot(value === 'project' ? { kind: 'project' } : { kind: 'mission', missionId: value })
+              setSelectedRoot(
+                value === 'project'
+                  ? { kind: 'project' }
+                  : { kind: 'mission', missionId: value }
+              )
               setSelectedPath(null)
               setTerminalDoc(null)
               setPreview(null)
@@ -218,31 +206,31 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
             ))}
           </select>
         </label>
-        <div className="files-readonly-note">somente leitura · sem salvar</div>
+        <div className="files-readonly-note">prévia somente leitura · ações no menu ⋯</div>
         {terminalDoc && (
           <div className="files-terminal-source" data-tip={terminalDoc.path}>
             <span aria-hidden="true">↳</span>
             <span>aberto do terminal</span>
           </div>
         )}
-        {treeError && <div className="files-tree-notice">{treeError}</div>}
-        <FileTree
-          entries={entries}
-          selectedPath={selectedPath}
-          onSelect={(path) => {
+        <ActionFileTree
+          scope={scope}
+          activePath={selectedPath}
+          onOpenFile={(entry: FileActionTreeEntry) => {
             setTerminalDoc(null)
-            setSelectedPath(path)
+            setSelectedPath(entry.path)
             setRevision((value) => value + 1)
           }}
+          onChanged={handleTreeChange}
         />
-        {activePath && terminalDoc?.root === 'pane' && (
+        {selectedPath && terminalDoc?.root === 'pane' && (
           <div className="files-tree-terminal-path" data-tip={terminalDoc.path}>
             {terminalDoc.name}
           </div>
         )}
       </aside>
       <FilePreviewPanel
-        path={activePath}
+        path={selectedPath}
         preview={preview}
         loading={loading}
         onReload={() => setRevision((value) => value + 1)}

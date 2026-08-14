@@ -47,6 +47,12 @@ import type {
   FileTreeResult,
   FileTreeRoot
 } from '../main/filePreview'
+import type {
+  FileActionResult,
+  FileActionScope,
+  FileTreeEntry as FileActionTreeEntry,
+  FileTreeSnapshot
+} from '../main/fileActions'
 
 /** entrada do diário da caixa-preta + linha legível pronta para exibição */
 export type BlackboxTailEntry = BlackboxEntry & { line: string }
@@ -90,6 +96,9 @@ export type {
 /** Commits da missão — a lista por trás do `ahead` que o trilho já mostra. */
 export type { MissionCommit, MissionCommitDiffResult, MissionCommitsResult }
 export type { GuiWorkspaceFilesResult }
+/** Ações P26 usam a mesma raiz lógica do preview, mas conservam seu contrato
+ * próprio para entradas bloqueadas e mutações auditadas. */
+export type { FileActionResult, FileActionScope, FileActionTreeEntry, FileTreeSnapshot }
 
 export type {
   MissionProgressState,
@@ -1573,6 +1582,46 @@ const api = {
       relativePath: string
     ): Promise<FilePreviewResult | null> =>
       ipcRenderer.invoke('files:preview', projectId, root, relativePath),
+    tree: (scope: FileActionScope): Promise<FileTreeSnapshot> =>
+      ipcRenderer.invoke('files:tree', scope),
+    createFile: (
+      scope: FileActionScope,
+      parentPath: string,
+      name: string
+    ): Promise<FileActionResult> =>
+      ipcRenderer.invoke('files:createFile', scope, parentPath, name),
+    createFolder: (
+      scope: FileActionScope,
+      parentPath: string,
+      name: string
+    ): Promise<FileActionResult> =>
+      ipcRenderer.invoke('files:createFolder', scope, parentPath, name),
+    rename: (
+      scope: FileActionScope,
+      relativePath: string,
+      name: string
+    ): Promise<FileActionResult> =>
+      ipcRenderer.invoke('files:rename', scope, relativePath, name),
+    trash: (
+      scope: FileActionScope,
+      relativePath: string
+    ): Promise<FileActionResult> =>
+      ipcRenderer.invoke('files:trash', scope, relativePath),
+    copyPath: (
+      scope: FileActionScope,
+      relativePath: string
+    ): Promise<FileActionResult> =>
+      ipcRenderer.invoke('files:copyPath', scope, relativePath),
+    downloadZip: (
+      scope: FileActionScope,
+      relativePath: string
+    ): Promise<FileActionResult> =>
+      ipcRenderer.invoke('files:downloadZip', scope, relativePath),
+    onChanged: (cb: (scope: FileActionScope) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, scope: FileActionScope): void => cb(scope)
+      ipcRenderer.on('files:changed', listener)
+      return () => ipcRenderer.removeListener('files:changed', listener)
+    },
     listDocs: (projectId: string): Promise<DocFile[]> =>
       ipcRenderer.invoke('files:listDocs', projectId),
     readDoc: (

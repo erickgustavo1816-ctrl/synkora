@@ -809,6 +809,72 @@ export function installDevMock(): void {
           ? `# ${relativePath}\n\nConteúdo **mockado** do preview somente leitura.`
           : `const preview = true\nexport default preview\n`
       }),
+      tree: async () => ({
+        ok: true,
+        truncated: false,
+        entries: [
+          {
+            path: 'src',
+            parentPath: '',
+            name: 'src',
+            kind: 'directory' as const,
+            depth: 1,
+            size: 0,
+            mtime: Date.now()
+          },
+          {
+            path: 'src/App.tsx',
+            parentPath: 'src',
+            name: 'App.tsx',
+            kind: 'file' as const,
+            depth: 2,
+            size: 2_400,
+            mtime: Date.now()
+          },
+          {
+            path: 'docs/PLANO.md',
+            parentPath: 'docs',
+            name: 'PLANO.md',
+            kind: 'file' as const,
+            depth: 2,
+            size: 9_000,
+            mtime: Date.now() - 86_400_000
+          },
+          {
+            path: 'docs',
+            parentPath: '',
+            name: 'docs',
+            kind: 'directory' as const,
+            depth: 1,
+            size: 0,
+            mtime: Date.now()
+          }
+        ]
+      }),
+      createFile: async (_scope, parentPath, name) => ({
+        ok: true,
+        path: parentPath ? `${parentPath}/${name}` : name
+      }),
+      createFolder: async (_scope, parentPath, name) => ({
+        ok: true,
+        path: parentPath ? `${parentPath}/${name}` : name
+      }),
+      rename: async (_scope, relativePath, name) => ({
+        ok: true,
+        previousPath: relativePath,
+        path: relativePath.includes('/')
+          ? `${relativePath.slice(0, relativePath.lastIndexOf('/'))}/${name}`
+          : name
+      }),
+      trash: async (_scope, relativePath) => ({ ok: true, previousPath: relativePath }),
+      copyPath: async (_scope, relativePath) => ({ ok: true, path: relativePath }),
+      downloadZip: async (_scope, relativePath) => ({
+        ok: true,
+        path: relativePath,
+        savedName: `${relativePath.split('/').at(-1) ?? 'pasta'}.zip`,
+        archive: { files: 2, bytes: 10_200 }
+      }),
+      onChanged: () => () => undefined,
       listDocs: async () => [
         { path: '.synkora/CONTEXT.md', name: 'CONTEXT.md', group: 'synkora', mtime: Date.now(), size: 4200 },
         { path: 'docs/PLANO.md', name: 'PLANO.md', group: 'docs', mtime: Date.now() - 86_400_000, size: 9000 },

@@ -29,6 +29,7 @@
     "test:helper-completion": "tsc --outDir .tmp/helper-completion-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/helperCompletion.ts src/main/hub.ts src/main/securityRedaction.ts && node --test scripts/test-helper-completion.mjs",
     "test:helper-recovery": "node --experimental-strip-types --test scripts/test-helper-recovery.mjs",
     "test:terminal-file-links": "node --experimental-strip-types --test scripts/test-terminal-file-links.mjs",
+    "test:file-actions": "tsc --outDir .tmp/file-actions-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/fileActions.ts src/main/fileArchiveWorker.ts src/main/fileArchiveAsync.ts && node --test scripts/test-file-actions.mjs && node --experimental-strip-types --test scripts/test-file-tree-ui.mjs",
     "test:settings-secrets": "node --experimental-strip-types --test scripts/test-settings-secrets.mjs",
     "test:project-documents": "node --experimental-strip-types --test scripts/test-project-documents.mjs",
     "test:file-preview": "node --experimental-strip-types --test scripts/test-file-preview.mjs",

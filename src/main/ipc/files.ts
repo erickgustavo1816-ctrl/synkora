@@ -8,7 +8,15 @@
  * NUNCA no import — instrumentIpcMain só cobre handlers registrados depois
  * dele. uiSender/mainWindow/mcpPort e afins são lidos via ctx a cada uso.
  */
-import { ipcMain, shell } from 'electron'
+import {
+  clipboard,
+  dialog,
+  ipcMain,
+  shell,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+  type SaveDialogOptions
+} from 'electron'
 import { basename, join, resolve } from 'path'
 import { readFileSync, readdirSync, statSync } from 'fs'
 import {
@@ -18,6 +26,14 @@ import {
   terminalFileOpenKind,
   type TerminalFileRoot
 } from '../terminalFileLinks'
+import {
+  FileActionError,
+  FileActionService,
+  parseFileActionRelativePath,
+  type FileActionResult,
+  type FileActionScope
+} from '../fileActions'
+import { archiveDirectoryToNewFileOffMain } from '../fileArchiveAsync'
 import type { MainContext } from '../mainContext'
 import {
   listReadOnlyFileTree,
@@ -25,13 +41,181 @@ import {
   type FileTreeRoot
 } from '../filePreview'
 
-export function registerFilesIpc(ctx: MainContext): void {
+export interface FilesIpcExtras {
+  /** Host ou canvas: ambos são renderers empacotados e autenticados. */
+  assertAppRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
+}
+
+export function registerFilesIpc(ctx: MainContext, extras: FilesIpcExtras): void {
   const {
     projects,
     missions,
     maestro,
     hub
   } = ctx
+  const fileActions = new FileActionService(
+    {
+      project: (id) => projects.get(id),
+      mission: (id) => missions.get(id)
+    },
+    {
+      trashItem: async (absolutePath) => {
+        if (typeof shell.trashItem !== 'function') {
+          throw new FileActionError('trash-unavailable')
+        }
+        await shell.trashItem(absolutePath)
+      },
+      writeClipboard: (text) => clipboard.writeText(text),
+      archiveDirectory: archiveDirectoryToNewFileOffMain
+    }
+  )
+
+  const auditFileAction = (
+    action: string,
+    scope: FileActionScope,
+    result: FileActionResult
+  ): void => {
+    // Nunca registrar nome, caminho ou erro de filesystem.
+    const knownProject = typeof scope?.projectId === 'string'
+      ? projects.get(scope.projectId)
+      : undefined
+    const knownMission = typeof scope?.missionId === 'string'
+      ? missions.get(scope.missionId)
+      : undefined
+    ctx.blackbox.record({
+      cat: 'user',
+      event: `file-action-${action}`,
+      actor: 'user',
+      detail: {
+        projectId: knownProject?.id.slice(0, 8) ?? 'invalid',
+        mission: Boolean(knownMission && knownMission.projectId === knownProject?.id),
+        ok: result.ok
+      }
+    })
+  }
+
+  const finishFileAction = (
+    action: string,
+    scope: FileActionScope,
+    result: FileActionResult,
+    changed = false
+  ): FileActionResult => {
+    auditFileAction(action, scope, result)
+    if (result.ok && changed) ctx.pushAll('files:changed', scope)
+    return result
+  }
+
+  // ————— Árvore + ações P26 —————
+  ipcMain.handle('files:tree', (event, scope: FileActionScope) => {
+    extras.assertAppRendererSender(event)
+    return fileActions.listTree(scope)
+  })
+
+  ipcMain.handle(
+    'files:createFile',
+    async (event, scope: FileActionScope, parentPath: unknown, name: unknown) => {
+      extras.assertAppRendererSender(event)
+      return finishFileAction(
+        'create-file',
+        scope,
+        await fileActions.createFile(scope, parentPath, name),
+        true
+      )
+    }
+  )
+
+  ipcMain.handle(
+    'files:createFolder',
+    async (event, scope: FileActionScope, parentPath: unknown, name: unknown) => {
+      extras.assertAppRendererSender(event)
+      return finishFileAction(
+        'create-folder',
+        scope,
+        await fileActions.createFolder(scope, parentPath, name),
+        true
+      )
+    }
+  )
+
+  ipcMain.handle(
+    'files:rename',
+    async (event, scope: FileActionScope, relativePath: unknown, name: unknown) => {
+      extras.assertAppRendererSender(event)
+      return finishFileAction(
+        'rename',
+        scope,
+        await fileActions.rename(scope, relativePath, name),
+        true
+      )
+    }
+  )
+
+  ipcMain.handle(
+    'files:trash',
+    async (event, scope: FileActionScope, relativePath: unknown) => {
+      extras.assertAppRendererSender(event)
+      return finishFileAction(
+        'trash',
+        scope,
+        await fileActions.moveToTrash(scope, relativePath),
+        true
+      )
+    }
+  )
+
+  ipcMain.handle(
+    'files:copyPath',
+    async (event, scope: FileActionScope, relativePath: unknown) => {
+      extras.assertAppRendererSender(event)
+      return finishFileAction(
+        'copy-path',
+        scope,
+        await fileActions.copyPath(scope, relativePath)
+      )
+    }
+  )
+
+  ipcMain.handle(
+    'files:downloadZip',
+    async (event, scope: FileActionScope, relativePath: unknown): Promise<FileActionResult> => {
+      extras.assertAppRendererSender(event)
+      let parsed
+      try {
+        parsed = parseFileActionRelativePath(relativePath)
+      } catch (error) {
+        const result = {
+          ok: false,
+          error: error instanceof FileActionError
+            ? error.message
+            : 'O caminho informado é inválido.'
+        }
+        return finishFileAction('download-zip', scope, result)
+      }
+      const leaf = parsed.segments.at(-1) ?? 'pasta'
+      const options: SaveDialogOptions = {
+        title: 'Baixar pasta como ZIP',
+        defaultPath: `${leaf}.zip`,
+        filters: [{ name: 'Arquivo ZIP', extensions: ['zip'] }],
+        properties: ['createDirectory', 'showOverwriteConfirmation']
+      }
+      const selected = ctx.mainWindow && !ctx.mainWindow.isDestroyed()
+        ? await dialog.showSaveDialog(ctx.mainWindow, options)
+        : await dialog.showSaveDialog(options)
+      if (selected.canceled || !selected.filePath) {
+        return { ok: false, cancelled: true }
+      }
+      return finishFileAction(
+        'download-zip',
+        scope,
+        await fileActions.archiveFolder(
+          scope,
+          parsed.normalized,
+          selected.filePath,
+          basename(selected.filePath)
+        )
+      )
+    }
+  )
   // ————— Arquivos do projeto (aba Arquivos + viewer de markdown) —————
   // Lista os .md que interessam (planos do maestro, dossiê, docs, transcripts)
   // e serve o conteúdo para o viewer renderizar bonito dentro do Synkora.
