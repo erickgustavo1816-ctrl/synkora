@@ -1031,6 +1031,9 @@ interface GuiPaneEntry {
    *  do roteamento de slash saem — nunca por fora, senão a remontagem perderia
    *  o replay do que o comando respondeu. */
   sink: (evt: SessionEvent) => void
+  /** Terminal do backend pode preceder tool-result no mesmo chunk de stdout;
+   * o teardown precisa drenar esse terminal antes de salvar o replay. */
+  flushPendingTerminal?: () => void
   /** Idempotência do boundary IPC: dois renderers nunca enviam o mesmo bilhete duas vezes. */
   messageIds?: Set<string>
 }
@@ -1240,7 +1243,13 @@ export class GuiSessionRegistry {
     const token = { alive: true }
     let replaySawReady = false
     const alertSequencer = new GuiAlertSequencer()
-    const sink = (evt: SessionEvent): void => {
+    let terminalFlushQueued = false
+    let pendingTerminal: SessionEvent[] = []
+    const pendingToolIds = new Set<string>()
+    let pendingAnonymousTools = 0
+    let turnHasTool = false
+
+    const publish = (evt: SessionEvent): void => {
       // Sessão substituída/encerrada: o sink da anterior morre calado — nunca
       // fala pelo pane novo nem re-suja o anel dele.
       if (!token.alive) return
@@ -1305,6 +1314,53 @@ export class GuiSessionRegistry {
         })
     }
 
+    const flushPendingTerminal = (): void => {
+      terminalFlushQueued = false
+      const pending = pendingTerminal
+      pendingTerminal = []
+      if (!token.alive) return
+      for (const evt of pending) {
+        publish(evt)
+        turnHasTool = false
+      }
+    }
+
+    const sink = (evt: SessionEvent): void => {
+      // Claude pode escrever `result` antes dos tool-result de uma ferramenta
+      // filha no mesmo chunk de stdout. Publicar o terminal só no microtask
+      // seguinte deixa o chunk inteiro atravessar o parser antes do ring e do
+      // reducer, sem mascarar um órfão quando nenhum resultado aparecer.
+      if (!token.alive) return
+      if (evt.type === 'tool') {
+        turnHasTool = true
+        if (evt.toolUseId) pendingToolIds.add(evt.toolUseId)
+        else pendingAnonymousTools += 1
+        publish(evt)
+        return
+      }
+      if (evt.type === 'tool-result') {
+        if (evt.toolUseId) pendingToolIds.delete(evt.toolUseId)
+        else if (pendingAnonymousTools > 0) pendingAnonymousTools -= 1
+        publish(evt)
+        return
+      }
+      if (evt.type !== 'result') {
+        publish(evt)
+        return
+      }
+      // Sem nenhuma ferramenta na rodada, não há nada para reconciliar e o
+      // terminal mantém a latência anterior (importante para /status e para
+      // os snapshots de contexto).
+      if (!turnHasTool && pendingToolIds.size === 0 && pendingAnonymousTools === 0) {
+        publish(evt)
+        return
+      }
+      pendingTerminal.push(evt)
+      if (terminalFlushQueued) return
+      terminalFlushQueued = true
+      queueMicrotask(flushPendingTerminal)
+    }
+
     let session: GuiBackend
     try {
       session = this.spawnSession(spawn, sink)
@@ -1358,6 +1414,7 @@ export class GuiSessionRegistry {
       alerts: alertSequencer,
       token,
       sink,
+      flushPendingTerminal,
       messageIds:
         current?.messageIds ?? rememberedGuiMessageIds(ring, this.doc.panes[spawn.paneId])
     })
@@ -1957,6 +2014,7 @@ export class GuiSessionRegistry {
         updatedAt: new Date().toISOString()
       }
     }
+    entry.flushPendingTerminal?.()
     entry.ring.clear(true)
     // O checkpoint grava numa única fotografia o fio vazio E a identidade sem
     // sessionId. Ao vivo, o mesmo marco remove o /clear otimista do composer.
@@ -1970,6 +2028,7 @@ export class GuiSessionRegistry {
     if (!entry) return
     // Última barreira antes de apagar a geração: inclui deltas parciais que
     // ainda não tinham alcançado um checkpoint semântico.
+    entry.flushPendingTerminal?.()
     this.saveTranscript(paneId, entry.ring)
     this.panes.delete(paneId)
     entry.token.alive = false

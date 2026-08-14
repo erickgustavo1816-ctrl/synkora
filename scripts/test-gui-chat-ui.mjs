@@ -816,6 +816,46 @@ test('result, fatal e closed encerram tools pendentes sem tocar nas concluídas'
   assert.equal(orphan[0].result.isError, true)
 })
 
+test('resultado terminal antes do tool-result reconcilia por ID sem esconder órfão', () => {
+  const lateTool = { ...tool('late', 'WebSearch', 'consulta'), toolUseId: 'late-call' }
+  const terminal = closePendingGuiTools([lateTool], {
+    type: 'result',
+    isError: false,
+    outcome: 'completed'
+  })
+  assert.equal(terminal[0].result.provisional, true)
+  assert.equal(
+    guiToolResultTargetIndex(terminal, 'late-call'),
+    0,
+    'o resultado tardio ainda encontra o card pelo toolUseId'
+  )
+
+  const completed = {
+    ...terminal[0],
+    result: {
+      text: 'resultado WebSearch',
+      isError: false,
+      status: 'completed',
+      lineCount: 1,
+      truncated: false
+    }
+  }
+  assert.equal(completed.result.provisional, undefined)
+  assert.equal(
+    guiToolResultTargetIndex([completed], 'late-call'),
+    -1,
+    'card já autoritativo não aceita uma segunda conclusão'
+  )
+
+  const genuineOrphan = closePendingGuiTools(
+    [{ ...tool('orphan', 'WebSearch', 'sem retorno'), toolUseId: 'orphan-call' }],
+    { type: 'result', isError: false, outcome: 'completed' }
+  )
+  assert.equal(genuineOrphan[0].result.status, 'failed')
+  assert.equal(genuineOrphan[0].result.isError, true)
+  assert.equal(genuineOrphan[0].result.provisional, true)
+})
+
 test('lote de envios só fecha o turno depois que todos falham', () => {
   let batch = beginGuiSendBatch(null, 'lote-1', 'envio-a', 7, true)
   batch = beginGuiSendBatch(batch, 'lote-1', 'envio-b', 7, false)

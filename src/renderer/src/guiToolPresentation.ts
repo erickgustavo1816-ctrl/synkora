@@ -67,7 +67,11 @@ export function guiToolResultTargetIndex(
   if (!toolUseId) {
     for (let index = items.length - 1; index >= 0; index -= 1) {
       const item = items[index]
-      if (item.kind === 'tool' && !item.result) return index
+      if (
+        item.kind === 'tool' &&
+        (!item.result || item.result.provisional === true)
+      )
+        return index
     }
     return -1
   }
@@ -81,7 +85,10 @@ export function guiToolResultTargetIndex(
     // alvo arbitrário: sem unicidade, nenhum card recebe o resultado.
     if (seen) return -1
     seen = true
-    if (!item.result) exact = index
+    // Um `result` terminal pode ter fechado o card antes do `tool-result`
+    // correspondente (principalmente em ferramentas filhas). Esse desfecho
+    // provisório ainda não é autoritativo e pode ser substituído pelo ID.
+    if (!item.result || item.result.provisional === true) exact = index
   }
   return exact
 }

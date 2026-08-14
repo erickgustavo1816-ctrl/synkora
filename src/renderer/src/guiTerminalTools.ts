@@ -31,6 +31,7 @@ function terminalToolResult(evt: GuiTerminalEvent): {
   status: 'failed' | 'cancelled'
   lineCount: number
   truncated: false
+  provisional?: boolean
 } {
   if (evt.type === 'fatal') {
     return {
@@ -68,7 +69,11 @@ function terminalToolResult(evt: GuiTerminalEvent): {
       isError: true,
       status: 'failed',
       lineCount: 1,
-      truncated: false
+      truncated: false,
+      // O Claude pode publicar o terminal da rodada antes do tool-result de
+      // uma ferramenta filha. O card fica fechável, mas continua elegível ao
+      // pareamento autoritativo por toolUseId até o resultado tardio chegar.
+      provisional: true
     }
   }
   return {

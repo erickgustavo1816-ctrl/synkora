@@ -569,7 +569,15 @@ export type GuiItem =
       attachments?: GuiAttachmentDescriptor[]
       at: number
     }
-  | { id: string; kind: 'note' | 'error'; text: string; at: number }
+  | {
+      id: string
+      kind: 'note' | 'error'
+      text: string
+      at: number
+      /** Aviso provisório enquanto um resultado de ferramenta correlacionado
+       * ainda pode chegar depois do terminal do turno. */
+      transient?: boolean
+    }
   | {
       id: string
       kind: 'assistant'
@@ -597,6 +605,9 @@ export type GuiItem =
         /** `cancelled` é terminal sem conclusão (Esc/encerramento); não pode
          *  parecer sucesso nem continuar pulsando como se ainda rodasse. */
         status?: GuiToolOutcome
+        /** `result` fechou o turno antes do `tool-result`; um resultado
+         * correlacionado posterior ainda pode substituir este desfecho. */
+        provisional?: boolean
         /** Calculado no backend ANTES do corte de memória. */
         lineCount: number
         truncated: boolean
@@ -1168,6 +1179,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
       if (target < 0) return state
       const item = items[target]
       if (item.kind !== 'tool') return state
+      const hadProvisional = item.result?.provisional === true
       const text = evt.text.slice(0, GUI_TOOL_RESULT_CAP)
       items[target] = {
         ...item,
@@ -1177,6 +1189,22 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           status: evt.outcome ?? (evt.isError ? 'failed' : 'completed'),
           lineCount: evt.lineCount ?? countGuiOutputLines(evt.text),
           truncated: Boolean(evt.truncated) || evt.text.length > GUI_TOOL_RESULT_CAP
+        }
+      }
+      // O erro criado por um `result` sem tool-result é apenas um aviso de
+      // reconciliação. Só removê-lo quando o último card provisório recebeu
+      // seu resultado autoritativo; um órfão real continua visível.
+      if (
+        hadProvisional &&
+        !items.some(
+          (candidate) =>
+            candidate.kind === 'tool' && candidate.result?.provisional === true
+        )
+      ) {
+        for (let index = items.length - 1; index >= 0; index -= 1) {
+          const candidate = items[index]
+          if (candidate.kind === 'error' && candidate.transient === true)
+            items.splice(index, 1)
         }
       }
       return { ...state, items, activityText: lastPendingGuiToolActivity(items) }
@@ -1379,7 +1407,10 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
               (orphanedTool
                 ? 'o turno terminou sem receber o resultado de uma ferramenta'
                 : 'o turno falhou sem detalhes'),
-            at: Date.now()
+            at: Date.now(),
+            ...(orphanedTool && !evt.isError && evt.outcome !== 'failed'
+              ? { transient: true }
+              : {})
           })
         }
       } else if (!next.turnHadText && evt.resultText?.trim()) {

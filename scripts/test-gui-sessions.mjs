@@ -73,6 +73,7 @@ import {
   writeGuiAttachmentExclusive
 } from '../.tmp/gui-sessions-test/guiAttachmentStorage.js'
 import { GuiAttachmentCapabilityStore } from '../.tmp/gui-sessions-test/guiAttachmentCapabilities.js'
+import { closePendingGuiTools } from '../src/renderer/src/guiTerminalTools.ts'
 
 test('permissão permanente mostra e grava apenas a regra Bash estreita', () => {
   assert.equal(
@@ -1114,6 +1115,75 @@ test('Claude propaga parent_tool_use_id e replay preserva dois pais intercalados
     input: {},
     toolUseId: 'generic'
   })
+})
+
+test('registro publica terminal depois dos tool-results do mesmo chunk e mantém órfão honesto', async () => {
+  const gui = registry()
+  let emit
+  const spawn = {
+    paneId: 'p-tool-terminal-order',
+    projectId: 'proj',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp'
+  }
+  gui.spawnSession = (_input, sink) => {
+    emit = sink
+    return {
+      alive: true,
+      turnActive: false,
+      waitCaps: async () => ({ commands: [], models: [] }),
+      send: () => undefined,
+      kill: () => undefined
+    }
+  }
+  assert.equal(gui.create(spawn).ok, true)
+
+  // Simula exatamente o lote que gerava o falso erro: o `result` chega antes
+  // dos dois tool-results, incluindo a ferramenta filha de um subagente.
+  emit({ type: 'tool', name: 'Agent', input: {}, toolUseId: 'parent' })
+  emit({
+    type: 'tool',
+    name: 'WebSearch',
+    input: { query: 'teste' },
+    toolUseId: 'child',
+    parentToolUseId: 'parent'
+  })
+  emit({ type: 'result', isError: false, outcome: 'completed' })
+  emit({
+    type: 'tool-result',
+    text: 'resultado filho',
+    isError: false,
+    outcome: 'completed',
+    toolUseId: 'child'
+  })
+  emit({
+    type: 'tool-result',
+    text: 'resultado pai',
+    isError: false,
+    outcome: 'completed',
+    toolUseId: 'parent'
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const events = gui.state(spawn.paneId).events.map(({ evt }) => evt)
+  const tail = events.slice(-5)
+  assert.deepEqual(
+    tail.map((event) => event.type),
+    ['tool', 'tool', 'tool-result', 'tool-result', 'result'],
+    'o ring conserva os resultados correlacionados antes do terminal'
+  )
+  assert.equal(tail[3].toolUseId, 'parent')
+  assert.equal(tail[4].type, 'result')
+
+  // Sem tool-result, o terminal continua sendo um órfão real: o fechamento
+  // visual mantém falha, em vez de suprimir o diagnóstico.
+  const orphan = closePendingGuiTools(
+    [{ id: 'orphan', kind: 'tool', name: 'WebSearch', summary: 'sem retorno', toolUseId: 'orphan' }],
+    { type: 'result', isError: false, outcome: 'completed' }
+  )
+  assert.equal(orphan[0].result.isError, true)
+  assert.equal(orphan[0].result.status, 'failed')
 })
 
 test('firstPrompt nunca sai quando o handshake não produziu capacidades', async () => {
