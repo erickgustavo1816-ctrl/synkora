@@ -10,6 +10,7 @@ import ProjectGeneral from './ProjectGeneral'
 import NewMissionModal from './NewMissionModal'
 import MissionColumn, { type MissionColumnEntry } from './MissionColumn'
 import MissionDeliveryRail from './MissionDeliveryRail'
+import ResizableRightRail from './ResizableRightRail'
 import MissionStageHead, { type StagePill } from './MissionStageHead'
 import { TestServerModal } from './TestServerModal'
 import { ModelSelect } from './ModelSelect'
@@ -2892,7 +2893,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         <div className="maestro-resizer" onPointerDown={onResizeStart} />
       </div>
 
-      <div className="board-content">
+      <ResizableRightRail
+        className="board-content"
+        enabled={stageMode}
+        projectKey={projectId}
+        label="painel lateral"
+      >
       {/* ✦ GERAL VAZIO (2.0): sem palco não há cabeça de palco, e as alavancas
           do UNIVERSO (estudar/conta/limpar) precisam de casa — elas moram
           nesta linha, colada no retrato. Com palco no ar quem as mostra
@@ -3361,7 +3367,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       </div>
       )}
 
-      </div>
+      </ResizableRightRail>
 
       {/* COLUNA DE MISSÕES — ÚLTIMO filho de propósito: `.board-main` é
           row-reverse, então o último do DOM é o PRIMEIRO da tela, e

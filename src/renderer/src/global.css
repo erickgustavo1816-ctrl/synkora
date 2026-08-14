@@ -9666,6 +9666,151 @@ body.pane-docking .pane-bar.draggable {
   }
 }
 
+/* ---------- trilho direito redimensionável (contrato do palco) ----------
+   O wrapper é o próprio .board-content: a coluna central flexível recebe toda
+   a largura que o trilho libera. A preferência é um valor em pixels, mas o
+   limite proporcional continua no CSS para sobreviver a resize sem gravar a
+   largura temporariamente capada. */
+.board-main.stage-mode .board-content.right-rail {
+  --right-rail-min-width: 176px;
+  --right-rail-max-width: 42%;
+  order: 0;
+  flex: 0 1 var(--right-rail-rendered-width, 204px);
+  width: clamp(
+    var(--right-rail-min-width),
+    var(--right-rail-rendered-width, 204px),
+    var(--right-rail-max-width)
+  );
+  min-width: 0;
+  max-width: var(--right-rail-max-width);
+  position: relative;
+  isolation: isolate;
+  overflow-x: hidden;
+}
+
+.right-rail-enabled.is-collapsed {
+  flex-basis: 30px !important;
+  width: 30px !important;
+  max-width: 30px !important;
+  min-width: 30px !important;
+  overflow: hidden;
+}
+
+.right-rail-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  width: 100%;
+  min-height: 100%;
+  transition: opacity 120ms ease;
+}
+
+.right-rail.is-collapsed .right-rail-content {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.right-rail-toolbar {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+.right-rail-toggle {
+  pointer-events: auto;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-3);
+  font: 15px/1 var(--mono);
+  cursor: pointer;
+  opacity: 0.72;
+  transition:
+    color var(--motion-fast) ease,
+    background var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    opacity var(--motion-fast) ease;
+}
+
+.right-rail-toggle:hover {
+  opacity: 1;
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+}
+
+.right-rail-toggle:focus-visible,
+.right-rail-resizer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.right-rail-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 5;
+  width: 7px;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.right-rail-resizer:hover,
+.right-rail-resizer:focus-visible,
+.right-rail.is-dragging .right-rail-resizer {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.right-rail.is-dragging,
+.right-rail.is-dragging * {
+  user-select: none !important;
+}
+
+/* Quando o board empilha, a alça horizontal deixa de representar a geometria
+   real. O trilho ocupa uma faixa própria e continua recolhível sem overflow. */
+@container board (max-width: 1103px) {
+  .board .board-main.stage-mode .board-content.right-rail {
+    order: 1;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    flex: 0 0 auto;
+  }
+
+  .board .board-main.stage-mode .board-content.right-rail.is-collapsed {
+    width: 30px;
+    flex-basis: 30px !important;
+    align-self: flex-end;
+  }
+
+  .board .right-rail-resizer {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .right-rail-content,
+  .right-rail-toggle {
+    transition: none;
+  }
+}
+
 /* markdown renderizado no tema papel — títulos mono, código em painel escuro */
 .md-view {
   flex: 1;

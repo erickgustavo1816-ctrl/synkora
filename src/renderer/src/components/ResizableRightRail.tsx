@@ -1,0 +1,258 @@
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import {
+  clampRightRailWidth,
+  readRightRailPreference,
+  rightRailBounds,
+  rightRailStorageKey,
+  stepRightRailWidth,
+  writeRightRailPreference,
+  RIGHT_RAIL_DEFAULT_WIDTH,
+  RIGHT_RAIL_KEYBOARD_STEP
+} from '../rightRailSizing'
+
+interface Props {
+  children: ReactNode
+  /** Mantém o contrato para o futuro painel de subagentes: qualquer conteúdo
+   *  pode ocupar este rail sem conhecer a mecânica de largura/persistência. */
+  projectKey?: string
+  /** O Board mantém o wrapper no DOM em modos legados para não remontar panes;
+   *  o contrato só habilita controles quando o palco realmente usa o rail. */
+  enabled?: boolean
+  className?: string
+  label?: string
+}
+
+function availableWidthOf(element: HTMLElement | null): number {
+  return element?.parentElement?.clientWidth ?? window.innerWidth
+}
+
+export default function ResizableRightRail({
+  children,
+  projectKey,
+  enabled = true,
+  className,
+  label = 'Painel lateral direito'
+}: Props): React.JSX.Element {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const resizeCleanupRef = useRef<(() => void) | null>(null)
+  const key = useMemo(() => rightRailStorageKey(projectKey), [projectKey])
+  const [preference, setPreference] = useState(() => {
+    if (!enabled || typeof window === 'undefined') {
+      return { width: RIGHT_RAIL_DEFAULT_WIDTH, collapsed: false }
+    }
+    return readRightRailPreference(window.localStorage, key)
+  })
+  const [availableWidth, setAvailableWidth] = useState(() =>
+    typeof window === 'undefined' ? 1280 : window.innerWidth
+  )
+  const [dragging, setDragging] = useState(false)
+
+  // `projectKey` é parte do contrato de persistência. Ao trocar de projeto,
+  // carregamos a preferência correspondente sem bloquear o primeiro paint.
+  useLayoutEffect(() => {
+    if (!enabled || typeof window === 'undefined') return
+    setPreference(readRightRailPreference(window.localStorage, key))
+  }, [enabled, key])
+
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    if (!root || !enabled) return
+    const measure = (): void => {
+      setAvailableWidth(availableWidthOf(root))
+    }
+    const parent = root.parentElement
+    const observer = typeof ResizeObserver !== 'undefined' && parent
+      ? new ResizeObserver(measure)
+      : null
+    if (observer && parent) observer.observe(parent)
+    window.addEventListener('resize', measure)
+    measure()
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+      resizeCleanupRef.current?.()
+      resizeCleanupRef.current = null
+    }
+  }, [enabled])
+
+  const bounds = rightRailBounds(availableWidth)
+  const visibleWidth = clampRightRailWidth(preference.width, availableWidth)
+
+  function persist(next: Partial<typeof preference>): void {
+    setPreference((current) => {
+      const merged = { ...current, ...next }
+      if (typeof window !== 'undefined') writeRightRailPreference(window.localStorage, key, merged)
+      return merged
+    })
+  }
+
+  function setWidth(next: number, persistWidth = true): void {
+    const clamped = clampRightRailWidth(next, availableWidth)
+    setPreference((current) => {
+      const merged = { ...current, width: clamped }
+      if (persistWidth && typeof window !== 'undefined') {
+        writeRightRailPreference(window.localStorage, key, merged)
+      }
+      return merged
+    })
+  }
+
+  function onResizePointerDown(event: React.PointerEvent<HTMLDivElement>): void {
+    if (!enabled || !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return
+    const root = rootRef.current
+    const handle = event.currentTarget
+    if (!root) return
+    resizeCleanupRef.current?.()
+    event.preventDefault()
+    event.stopPropagation()
+    const pointerId = event.pointerId
+    const startX = event.clientX
+    const startWidth = visibleWidth
+    let nextWidth = startWidth
+    let raf = 0
+    let finished = false
+    try {
+      handle.setPointerCapture(pointerId)
+    } catch {
+      return
+    }
+    setDragging(true)
+
+    const applyDraft = (): void => {
+      raf = 0
+      root.style.setProperty('--right-rail-rendered-width', `${nextWidth}px`)
+    }
+    const onMove = (move: PointerEvent): void => {
+      if (move.pointerId !== pointerId) return
+      move.preventDefault()
+      nextWidth = clampRightRailWidth(
+        startWidth + (startX - move.clientX),
+        availableWidthOf(root)
+      )
+      if (!raf) raf = window.requestAnimationFrame(applyDraft)
+    }
+    const finish = (): void => {
+      if (finished) return
+      finished = true
+      if (raf) window.cancelAnimationFrame(raf)
+      raf = 0
+      root.style.setProperty('--right-rail-rendered-width', `${nextWidth}px`)
+      setDragging(false)
+      setWidth(nextWidth)
+      handle.removeEventListener('pointermove', onMove)
+      handle.removeEventListener('pointerup', onUp)
+      handle.removeEventListener('pointercancel', onCancel)
+      handle.removeEventListener('lostpointercapture', onLostCapture)
+      window.removeEventListener('blur', onCancel)
+      if (handle.hasPointerCapture(pointerId)) {
+        try {
+          handle.releasePointerCapture(pointerId)
+        } catch {
+          // A captura pode ter sido liberada pelo browser antes do cleanup.
+        }
+      }
+      if (resizeCleanupRef.current === finish) resizeCleanupRef.current = null
+    }
+    const onUp = (up: PointerEvent): void => {
+      if (up.pointerId === pointerId) finish()
+    }
+    const onCancel = (cancel?: Event): void => {
+      if (cancel && 'pointerId' in cancel && (cancel as PointerEvent).pointerId !== pointerId) return
+      finish()
+    }
+    const onLostCapture = (lost: PointerEvent): void => {
+      if (lost.pointerId === pointerId) finish()
+    }
+    resizeCleanupRef.current = finish
+    handle.addEventListener('pointermove', onMove)
+    handle.addEventListener('pointerup', onUp)
+    handle.addEventListener('pointercancel', onCancel)
+    handle.addEventListener('lostpointercapture', onLostCapture)
+    window.addEventListener('blur', onCancel)
+  }
+
+  function onResizeKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
+    if (!enabled) return
+    const largeStep = RIGHT_RAIL_KEYBOARD_STEP * 2
+    let next: number | null = null
+    switch (event.key) {
+      case 'ArrowLeft':
+        next = stepRightRailWidth(visibleWidth, 'increase', availableWidth, event.shiftKey ? largeStep : undefined)
+        break
+      case 'ArrowRight':
+        next = stepRightRailWidth(visibleWidth, 'decrease', availableWidth, event.shiftKey ? largeStep : undefined)
+        break
+      case 'Home':
+        next = bounds.min
+        break
+      case 'End':
+        next = bounds.max
+        break
+      default:
+        return
+    }
+    event.preventDefault()
+    event.stopPropagation()
+    if (next !== null) setWidth(next)
+  }
+
+  const classes = [className, 'right-rail', enabled ? 'right-rail-enabled' : '', dragging ? 'is-dragging' : '', preference.collapsed ? 'is-collapsed' : '']
+    .filter(Boolean)
+    .join(' ')
+  const style = {
+    '--right-rail-rendered-width': `${visibleWidth}px`
+  } as CSSProperties
+
+  return (
+    <div
+      ref={rootRef}
+      className={classes}
+      style={style}
+      data-right-rail={enabled ? 'true' : undefined}
+      data-right-rail-collapsed={enabled && preference.collapsed ? 'true' : undefined}
+    >
+      {enabled && (
+        <>
+          <div
+            className="right-rail-resizer"
+            role="separator"
+            tabIndex={0}
+            aria-label="Redimensionar painel lateral"
+            aria-orientation="vertical"
+            aria-valuemin={bounds.min}
+            aria-valuemax={bounds.max}
+            aria-valuenow={visibleWidth}
+            aria-valuetext={`${visibleWidth} pixels`}
+            onPointerDown={onResizePointerDown}
+            onKeyDown={onResizeKeyDown}
+          />
+          <div className="right-rail-toolbar">
+            <button
+              className="right-rail-toggle"
+              type="button"
+              aria-expanded={!preference.collapsed}
+              aria-controls={`${key}-content`}
+              aria-label={preference.collapsed ? `Mostrar ${label}` : `Ocultar ${label}`}
+              data-tip={preference.collapsed ? `Mostrar ${label}` : `Ocultar ${label}`}
+              onClick={() => persist({ collapsed: !preference.collapsed })}
+            >
+              {preference.collapsed ? '›' : '‹'}
+            </button>
+          </div>
+        </>
+      )}
+      {enabled ? (
+        <div
+          id={`${key}-content`}
+          className="right-rail-content"
+          aria-hidden={preference.collapsed || undefined}
+          inert={preference.collapsed ? true : undefined}
+        >
+          {children}
+        </div>
+      ) : (
+        children
+      )}
+    </div>
+  )
+}
