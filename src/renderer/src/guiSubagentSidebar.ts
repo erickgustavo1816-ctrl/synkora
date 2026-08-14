@@ -33,7 +33,12 @@ export interface GuiSubagentSidebarEntry {
 }
 
 const MAX_FIELD = 240
-const MAX_OUTCOME = 320
+
+/** Ferramenta de uma thread filha. O reducer usa esta fronteira para guardar
+ *  o evento sem assentar/dividir o stream da resposta principal. */
+export function isGuiSubagentToolEvent(value: { parentToolUseId?: unknown }): boolean {
+  return typeof value.parentToolUseId === 'string' && value.parentToolUseId.length > 0
+}
 
 function clean(value: unknown, max = MAX_FIELD): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -133,11 +138,6 @@ function taskFor(parent: GuiToolItem): string {
   )
 }
 
-function outcomeFor(parent: GuiToolItem, status: GuiSubagentSidebarTone): string | null {
-  if (!parent.result || status === 'running') return null
-  return clean(parent.result.text, MAX_OUTCOME) ?? null
-}
-
 function childrenFor(
   parent: GuiToolItem,
   tools: readonly GuiToolItem[]
@@ -184,13 +184,12 @@ export function normalizeGuiSubagentSidebar(
 
   return parents.filter((parent) => {
     const toolUseId = parent.toolUseId as string
-    if (seenParentIds.has(toolUseId)) return false
+    if (seenParentIds.has(toolUseId) || terminalTone(parent) !== null) return false
     seenParentIds.add(toolUseId)
     return true
   }).map((parent) => {
     const children = childrenFor(parent, tools)
-    const terminal = terminalTone(parent)
-    const status: GuiSubagentSidebarTone = terminal ?? 'running'
+    const status: GuiSubagentSidebarTone = 'running'
     const metadata = parent.subagent
     const type = metadata?.type ?? null
     const name = metadata?.name ?? type ?? 'subagente'
@@ -204,7 +203,7 @@ export function normalizeGuiSubagentSidebar(
       activity: activityFor(children, parent),
       status,
       statusLabel: statusLabel(status),
-      outcome: outcomeFor(parent, status),
+      outcome: null,
       parent,
       children,
       at: parent.at

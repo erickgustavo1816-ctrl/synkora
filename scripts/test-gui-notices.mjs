@@ -37,6 +37,9 @@ test('alerta canônico cobre atenção, término, fila e falha sem anunciar canc
 
   assert.equal(accept({ type: 'result', isError: false, continues: true }), null)
   assert.equal(alerts.presented(seq), null, 'resultado intermediário nunca é terminal visual')
+  assert.equal(accept({ type: 'tool-result', toolUseId: 'subagent-a', isError: false }), null)
+  assert.equal(accept({ type: 'tool-result', toolUseId: 'subagent-b', isError: false }), null)
+  assert.equal(alerts.presented(seq), null, 'atividade terminal de filhos nunca toca o aviso')
   assert.equal(accept({ type: 'turn-continuation', continues: false }), null)
   assert.equal(alerts.presented(seq), 'finished')
 

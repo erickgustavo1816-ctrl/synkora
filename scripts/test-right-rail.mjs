@@ -66,13 +66,27 @@ test('contrato da UI expõe recolher, separator focável e cleanup do gesto', as
   assert.match(component, /window\.removeEventListener\('blur', onCancel\)/u)
   assert.match(component, /aria-expanded=\{!preference\.collapsed\}/u)
   assert.match(component, /inert=\{preference\.collapsed \? true : undefined\}/u)
-  assert.match(component, /className="right-rail-chrome"/u)
+  assert.doesNotMatch(component, /right-rail-chrome/u)
   assert.doesNotMatch(component, /right-rail-toolbar/u)
   assert.match(css, /\.board-main\.stage-mode \.board-content\.right-rail/u)
   assert.match(css, /\.right-rail\.is-collapsed/u)
   assert.match(css, /\.right-rail-resizer:focus-visible/u)
-  assert.match(css, /grid-template-columns:\s*18px minmax\(0, 1fr\)/u)
-  assert.match(css, /\.right-rail-chrome\s*\{[\s\S]*?border-right:/u)
+  assert.match(css, /\.board-main\.stage-mode \.board-content\.right-rail\s*\{[\s\S]*?border-left:\s*1px solid var\(--line\)/u)
+  assert.match(css, /\.right-rail-resizer\s*\{[\s\S]*?position:\s*absolute/u)
+  assert.match(css, /\.right-rail-toggle\s*\{[\s\S]*?right:\s*12px/u)
+  assert.match(css, /\.right-rail-content\s*\{[\s\S]*?padding-left:\s*12px/u)
+  assert.match(css, /\.right-rail-content > \.delivery-rail > \.dr-head\s*\{[\s\S]*?padding-right:\s*22px/u)
+  assert.match(
+    css,
+    /\.board-main\.stage-mode \.board-content\.right-rail\.is-collapsed\s*\{[\s\S]*?position:\s*absolute[\s\S]*?width:\s*0\s*!important[\s\S]*?border:\s*0/u
+  )
+  assert.match(
+    css,
+    /\.right-rail\.is-collapsed \.right-rail-toggle\s*\{[\s\S]*?top:\s*9px[\s\S]*?right:\s*9px[\s\S]*?transform:\s*none/u
+  )
+  assert.doesNotMatch(css, /\.right-rail-enabled\.is-collapsed\s*\{[\s\S]*?(?:width|flex-basis):\s*22px/u)
+  assert.doesNotMatch(css, /grid-template-columns:\s*18px minmax\(0, 1fr\)/u)
+  assert.doesNotMatch(css, /\.right-rail-chrome\s*\{/u)
   assert.doesNotMatch(css, /\.right-rail-toolbar\s*\{/u)
   assert.match(board, /<ResizableRightRail/u)
   assert.match(board, /projectKey=\{projectId\}/u)

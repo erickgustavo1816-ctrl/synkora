@@ -212,20 +212,7 @@ export default function ResizableRightRail({
       data-right-rail-collapsed={enabled && preference.collapsed ? 'true' : undefined}
     >
       {enabled && (
-        <div className="right-rail-chrome">
-          <button
-            className="right-rail-toggle"
-            type="button"
-            aria-expanded={!preference.collapsed}
-            aria-controls={`${key}-content`}
-            aria-label={preference.collapsed ? `Mostrar ${label}` : `Ocultar ${label}`}
-            data-tip={preference.collapsed ? `Mostrar ${label}` : `Ocultar ${label}`}
-            onClick={() => persist({ collapsed: !preference.collapsed })}
-          >
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d={preference.collapsed ? 'm10 3.75-4 4.25 4 4.25' : 'm6 3.75 4 4.25-4 4.25'} />
-            </svg>
-          </button>
+        <>
           <div
             className="right-rail-resizer"
             role="separator"
@@ -239,7 +226,20 @@ export default function ResizableRightRail({
             onPointerDown={onResizePointerDown}
             onKeyDown={onResizeKeyDown}
           />
-        </div>
+          <button
+            className="right-rail-toggle"
+            type="button"
+            aria-expanded={!preference.collapsed}
+            aria-controls={`${key}-content`}
+            aria-label={preference.collapsed ? `Mostrar ${label}` : `Ocultar ${label}`}
+            data-tip={preference.collapsed ? `Mostrar ${label}` : `Ocultar ${label}`}
+            onClick={() => persist({ collapsed: !preference.collapsed })}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d={preference.collapsed ? 'm10 3.75-4 4.25 4 4.25' : 'm6 3.75 4 4.25-4 4.25'} />
+            </svg>
+          </button>
+        </>
       )}
       {enabled ? (
         <div

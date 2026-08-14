@@ -70,6 +70,79 @@ interface CodexItem extends GuiCodexCompletedItem {
   tool?: string
   server?: string
   changes?: unknown
+  senderThreadId?: string
+  receiverThreadId?: string
+  newThreadId?: string
+  receiverThreadIds?: unknown
+  receiverAgents?: unknown
+  agentsStates?: unknown
+  prompt?: string
+  agentStatus?: unknown
+  model?: string
+  agentNickname?: string
+  agentRole?: string
+}
+
+type GuiCodexCollabOutcome = 'completed' | 'failed' | 'cancelled'
+
+function guiCodexString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function guiCodexRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function isGuiCodexCollabType(type: string | undefined): boolean {
+  return type === 'collabToolCall' || type === 'collabAgentToolCall'
+}
+
+function guiCodexCollabTool(value: unknown): string | undefined {
+  const raw = guiCodexString(value)
+  if (!raw) return undefined
+  return raw.replace(/[A-Z]/gu, (letter) => `_${letter.toLowerCase()}`).toLowerCase()
+}
+
+function guiCodexCollabThreadIds(item: CodexItem): string[] {
+  const ids = new Set<string>()
+  for (const value of [item.receiverThreadId, item.newThreadId]) {
+    const id = guiCodexString(value)
+    if (id) ids.add(id)
+  }
+  if (Array.isArray(item.receiverThreadIds)) {
+    for (const value of item.receiverThreadIds) {
+      const id = guiCodexString(value)
+      if (id) ids.add(id)
+    }
+  }
+  if (Array.isArray(item.receiverAgents)) {
+    for (const value of item.receiverAgents) {
+      const agent = guiCodexRecord(value)
+      const id = guiCodexString(agent?.['threadId'] ?? agent?.['thread_id'] ?? agent?.['id'])
+      if (id) ids.add(id)
+    }
+  }
+  return [...ids]
+}
+
+function guiCodexCollabOutcome(value: unknown): GuiCodexCollabOutcome | null {
+  const record = guiCodexRecord(value)
+  const status = guiCodexString(record?.['status'] ?? value)?.toLowerCase()
+  if (!status || ['pending', 'running', 'working', 'inprogress', 'in_progress', 'waiting'].includes(status))
+    return null
+  if (['failed', 'error', 'errored'].includes(status)) return 'failed'
+  if (['cancelled', 'canceled', 'interrupted', 'closed', 'shutdown'].includes(status))
+    return 'cancelled'
+  if (['completed', 'complete', 'done', 'success', 'succeeded'].includes(status))
+    return 'completed'
+  return null
+}
+
+function guiCodexCollabMessage(value: unknown): string | undefined {
+  const record = guiCodexRecord(value)
+  return guiCodexString(record?.['message'] ?? record?.['text'] ?? record?.['output'])
 }
 
 const IDLE_TIMEOUT = 600_000
@@ -243,6 +316,13 @@ export class CodexSession {
   private nextSendOperation = 0
   private pendingSendOperations = new Set<number>()
   private terminalReconcilePending = false
+  /** O app-server entrega collabToolCall separado da mensagem principal. A
+   *  raiz fica ativa até o estado factual do filho encerrar; o terminal do
+   *  turno é retido para som/toast nunca anunciarem antes dos agentes. */
+  private activeCollabParentIds = new Set<string>()
+  private collabParentByThreadId = new Map<string, string>()
+  private startedCollabToolIds = new Set<string>()
+  private deferredCollabResult: Extract<SessionEvent, { type: 'result' }> | null = null
 
   constructor(opts: MaestroSessionOpts, persona: string, emit: (evt: SessionEvent) => void) {
     this.opts = opts
@@ -402,7 +482,13 @@ export class CodexSession {
   }
 
   get turnActive(): boolean {
-    return Boolean(this.turnId || this.pendingTurnStart || this.pendingSendOperations.size > 0)
+    return Boolean(
+      this.turnId ||
+      this.pendingTurnStart ||
+      this.pendingSendOperations.size > 0 ||
+      this.activeCollabParentIds.size > 0 ||
+      this.deferredCollabResult
+    )
   }
 
   waitCaps(timeoutMs = 10_000): Promise<CliCaps | null> {
@@ -713,6 +799,10 @@ export class CodexSession {
     this.cancelPendingInteractions()
     this.pendingSendOperations.clear()
     this.terminalReconcilePending = false
+    this.activeCollabParentIds.clear()
+    this.collabParentByThreadId.clear()
+    this.startedCollabToolIds.clear()
+    this.deferredCollabResult = null
     this.clearIdle()
     this.clearTurnSilence()
     this.clearInterruptGuard()
@@ -852,6 +942,159 @@ export class CodexSession {
       type: 'turn-continuation',
       continues: this.pendingSendOperations.size > 0 || hasTurnDestination
     })
+  }
+
+  private collabParentForItem(item: CodexItem): string | undefined {
+    for (const threadId of guiCodexCollabThreadIds(item)) {
+      const parentId = this.collabParentByThreadId.get(threadId)
+      if (parentId) return parentId
+    }
+    return undefined
+  }
+
+  private rememberCollabThreads(parentId: string, item: CodexItem): string[] {
+    const threadIds = guiCodexCollabThreadIds(item)
+    for (const threadId of threadIds) this.collabParentByThreadId.set(threadId, parentId)
+    return threadIds
+  }
+
+  private collabParentInput(item: CodexItem): Record<string, unknown> {
+    const receiver = Array.isArray(item.receiverAgents)
+      ? guiCodexRecord(item.receiverAgents[0])
+      : null
+    const name = guiCodexString(
+      item.agentNickname ?? receiver?.['agentNickname'] ?? receiver?.['nickname']
+    )
+    const type = guiCodexString(item.agentRole ?? receiver?.['agentRole'] ?? receiver?.['role'])
+    const model = guiCodexString(item.model ?? receiver?.['model'])
+    return {
+      ...(name ? { name } : { name: 'subagente Codex' }),
+      agent_type: type ?? 'codex',
+      ...(model ? { model } : {}),
+      ...(guiCodexString(item.prompt) ? { prompt: firstLines(item.prompt as string, 2_000) } : {})
+    }
+  }
+
+  private startCollabItem(item: CodexItem): void {
+    const itemId = guiCodexString(item.id)
+    const tool = guiCodexCollabTool(item.tool)
+    if (!itemId || !tool) return
+    if (tool === 'spawn_agent') {
+      this.activeCollabParentIds.add(itemId)
+      this.rememberCollabThreads(itemId, item)
+      this.startedCollabToolIds.add(itemId)
+      this.emit({
+        type: 'tool',
+        name: 'spawn_agent',
+        input: this.collabParentInput(item),
+        toolUseId: itemId
+      })
+      return
+    }
+    const parentId = this.collabParentForItem(item)
+    if (!parentId) return
+    this.startedCollabToolIds.add(itemId)
+    const threadId = guiCodexCollabThreadIds(item)[0]
+    this.emit({
+      type: 'tool',
+      name: tool,
+      input: {
+        ...(threadId ? { thread_id: threadId } : {}),
+        ...(guiCodexString(item.prompt) ? { prompt: firstLines(item.prompt as string, 2_000) } : {})
+      },
+      toolUseId: itemId,
+      parentToolUseId: parentId
+    })
+  }
+
+  private finishCollabParent(
+    parentId: string,
+    outcome: GuiCodexCollabOutcome,
+    detail?: string
+  ): void {
+    if (!this.activeCollabParentIds.delete(parentId)) return
+    for (const [threadId, mappedParent] of this.collabParentByThreadId) {
+      if (mappedParent === parentId) this.collabParentByThreadId.delete(threadId)
+    }
+    this.emit(commandResultEvent(
+      detail ??
+        (outcome === 'completed'
+          ? 'subagente concluído'
+          : outcome === 'failed'
+            ? 'subagente falhou'
+            : 'subagente cancelado'),
+      outcome === 'failed',
+      parentId,
+      outcome
+    ))
+    this.flushDeferredCollabResult()
+  }
+
+  private finishCollabItem(item: CodexItem): void {
+    const itemId = guiCodexString(item.id)
+    const tool = guiCodexCollabTool(item.tool)
+    if (!itemId || !tool) return
+    const threadIds = tool === 'spawn_agent'
+      ? this.rememberCollabThreads(itemId, item)
+      : guiCodexCollabThreadIds(item)
+
+    if (tool !== 'spawn_agent' && this.startedCollabToolIds.delete(itemId)) {
+      const completed = guiCodexToolCompletion(item)
+      this.emit(commandResultEvent(completed.text, completed.isError, itemId, completed.outcome))
+    }
+
+    const stateEntries: { threadId?: string; value: unknown }[] = []
+    const agentsStates = guiCodexRecord(item.agentsStates)
+    if (agentsStates) {
+      for (const [threadId, value] of Object.entries(agentsStates)) {
+        stateEntries.push({ threadId, value })
+      }
+    }
+    if (Array.isArray(item.receiverAgents)) {
+      for (const value of item.receiverAgents) {
+        const agent = guiCodexRecord(value)
+        if (!agent) continue
+        stateEntries.push({
+          threadId: guiCodexString(agent['threadId'] ?? agent['thread_id'] ?? agent['id']),
+          value: agent['status'] ?? agent['agentStatus']
+        })
+      }
+    }
+    if (item.agentStatus !== undefined) {
+      stateEntries.push({ threadId: threadIds[0], value: item.agentStatus })
+    }
+
+    for (const state of stateEntries) {
+      const outcome = guiCodexCollabOutcome(state.value)
+      if (!outcome) continue
+      const parentId = tool === 'spawn_agent'
+        ? itemId
+        : state.threadId
+          ? this.collabParentByThreadId.get(state.threadId)
+          : this.collabParentForItem(item)
+      if (parentId) this.finishCollabParent(parentId, outcome, guiCodexCollabMessage(state.value))
+    }
+
+    if (tool === 'spawn_agent') {
+      if (item.status?.toLowerCase() === 'failed' || item.error) {
+        this.finishCollabParent(itemId, 'failed', guiCodexCollabMessage(item.error))
+      } else if (threadIds.length === 0 && stateEntries.length === 0) {
+        this.finishCollabParent(itemId, 'failed', 'o Codex não informou a identidade do subagente')
+      }
+      return
+    }
+
+    if (tool === 'close_agent' && stateEntries.length === 0) {
+      const parentId = this.collabParentForItem(item)
+      if (parentId) this.finishCollabParent(parentId, 'cancelled')
+    }
+  }
+
+  private flushDeferredCollabResult(): void {
+    if (this.activeCollabParentIds.size > 0 || !this.deferredCollabResult) return
+    const result = this.deferredCollabResult
+    this.deferredCollabResult = null
+    this.emitTurnResult(result)
   }
 
   private isPendingTurnStart(generation: number): boolean {
@@ -1168,6 +1411,11 @@ export class CodexSession {
   }
 
   private handleNotification(method: string, p: Record<string, unknown>): void {
+    const notificationThreadId = guiCodexString(p['threadId'])
+    // O app-server pode transmitir atividade de threads filhas na mesma
+    // conexão. Ela alimenta o collabToolCall da raiz, nunca o texto animado,
+    // o turnId ou o terminal da conversa que o usuário está vendo.
+    if (notificationThreadId && this.threadId && notificationThreadId !== this.threadId) return
     switch (method) {
       case 'item/agentMessage/delta': {
         const delta = p['delta']
@@ -1204,7 +1452,9 @@ export class CodexSession {
       case 'item/started': {
         const item = p['item'] as CodexItem | undefined
         if (!item) break
-        if (item.type === 'commandExecution') {
+        if (isGuiCodexCollabType(item.type)) {
+          this.startCollabItem(item)
+        } else if (item.type === 'commandExecution') {
           this.emit({
             type: 'tool',
             name: 'Bash',
@@ -1238,7 +1488,9 @@ export class CodexSession {
       case 'item/completed': {
         const item = p['item'] as CodexItem | undefined
         if (!item) break
-        if (item.type === 'agentMessage' && item.text) {
+        if (isGuiCodexCollabType(item.type)) {
+          this.finishCollabItem(item)
+        } else if (item.type === 'agentMessage' && item.text) {
           this.emit({ type: 'text', text: item.text })
         } else if (isGuiCodexToolType(item.type)) {
           const completed = guiCodexToolCompletion(item)
@@ -1298,7 +1550,13 @@ export class CodexSession {
         }
         // Respostas RPC resolvidas no mesmo chunk retomam em microtask. Só
         // depois delas sabemos se uma mensagem aceita precisa abrir outro turno.
-        queueMicrotask(() => this.emitTurnResult(result))
+        queueMicrotask(() => {
+          if (this.activeCollabParentIds.size > 0) {
+            this.deferredCollabResult = result
+            return
+          }
+          this.emitTurnResult(result)
+        })
         break
       }
       case 'error': {

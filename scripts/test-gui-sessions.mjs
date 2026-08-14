@@ -1117,6 +1117,42 @@ test('Claude propaga parent_tool_use_id e replay preserva dois pais intercalados
   })
 })
 
+test('Claude mantém texto e terminal de subagente fora da resposta principal', () => {
+  const session = Object.create(MaestroSession.prototype)
+  const events = []
+  session.emit = (event) => events.push(event)
+
+  session.handleLine(JSON.stringify({
+    type: 'stream_event',
+    parent_tool_use_id: 'agent-parent',
+    event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'parcial do filho' } }
+  }))
+  session.handleLine(JSON.stringify({
+    type: 'assistant',
+    parent_tool_use_id: 'agent-parent',
+    message: {
+      content: [
+        { type: 'text', text: 'resposta do filho' },
+        { type: 'tool_use', id: 'child-tool', name: 'WebSearch', input: { query: 'teste' } }
+      ]
+    }
+  }))
+  session.handleLine(JSON.stringify({
+    type: 'result',
+    parent_tool_use_id: 'agent-parent',
+    is_error: false,
+    result: 'fim do filho'
+  }))
+
+  assert.deepEqual(events, [{
+    type: 'tool',
+    name: 'WebSearch',
+    input: { query: 'teste' },
+    toolUseId: 'child-tool',
+    parentToolUseId: 'agent-parent'
+  }])
+})
+
 test('registro publica terminal depois dos tool-results do mesmo chunk e mantém órfão honesto', async () => {
   const gui = registry()
   let emit
@@ -1267,6 +1303,88 @@ test('Codex repassa somente o contexto vivo, nunca o acumulado da sessão', () =
     { type: 'context-usage', contextTokens: null, contextWindow: null },
     { type: 'command-output', text: 'contexto da thread compactado' }
   ])
+})
+
+test('Codex projeta collabToolCall na lateral e só encerra após o último subagente', async () => {
+  const session = Object.create(CodexSession.prototype)
+  const events = []
+  session.emit = (event) => events.push(event)
+  session.killed = false
+  session.closed = false
+  session.child = { exitCode: null, signalCode: null }
+  session.threadId = 'thread-root'
+  session.turnId = 'turn-root'
+  session.pendingTurnStart = null
+  session.pendingSendOperations = new Set()
+  session.terminalReconcilePending = false
+  session.activeCollabParentIds = new Set()
+  session.collabParentByThreadId = new Map()
+  session.startedCollabToolIds = new Set()
+  session.deferredCollabResult = null
+  session.approvals = new Map()
+  session.interruptTimer = null
+  session.interruptedTurnId = null
+  session.turnErrorTimer = null
+
+  const spawn = {
+    type: 'collabToolCall',
+    id: 'spawn-1',
+    tool: 'spawn_agent',
+    status: 'completed',
+    newThreadId: 'thread-child',
+    prompt: 'pesquise a causa',
+    model: 'gpt-5.6-luna',
+    agentStatus: { status: 'running' }
+  }
+  session.handleNotification('item/started', { threadId: 'thread-root', item: spawn })
+  session.handleNotification('item/completed', { threadId: 'thread-root', item: spawn })
+
+  session.handleNotification('item/agentMessage/delta', {
+    threadId: 'thread-child',
+    delta: 'texto interno que não pertence ao chat principal'
+  })
+  session.handleNotification('turn/completed', {
+    threadId: 'thread-root',
+    turn: { status: 'completed' }
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.deepEqual(events, [{
+    type: 'tool',
+    name: 'spawn_agent',
+    input: {
+      name: 'subagente Codex',
+      agent_type: 'codex',
+      model: 'gpt-5.6-luna',
+      prompt: 'pesquise a causa'
+    },
+    toolUseId: 'spawn-1'
+  }])
+  assert.equal(session.turnActive, true)
+  assert.equal(session.deferredCollabResult?.type, 'result')
+
+  const wait = {
+    type: 'collabToolCall',
+    id: 'wait-1',
+    tool: 'wait',
+    status: 'completed',
+    receiverThreadId: 'thread-child',
+    agentStatus: { status: 'completed', message: 'pesquisa concluída' }
+  }
+  session.handleNotification('item/started', { threadId: 'thread-root', item: wait })
+  session.handleNotification('item/completed', { threadId: 'thread-root', item: wait })
+
+  assert.deepEqual(events.map((event) => event.type), [
+    'tool',
+    'tool',
+    'tool-result',
+    'tool-result',
+    'result'
+  ])
+  assert.equal(events.at(-2).toolUseId, 'spawn-1')
+  assert.equal(events.at(-2).outcome, 'completed')
+  assert.equal(events.at(-1).continues, false)
+  assert.equal(session.turnActive, false)
 })
 
 test('resultado Codex tardio reconcilia somente depois que todos os envios assentam', () => {

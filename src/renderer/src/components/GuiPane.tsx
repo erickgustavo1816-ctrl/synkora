@@ -14,7 +14,6 @@ import GuiStreamText from './GuiStreamText'
 import GuiQuestionCard from './GuiQuestionCard'
 import GuiPlanCard from './GuiPlanCard'
 import { GuiToolCard, GuiToolGroupCard } from './GuiToolCard'
-import GuiSubagentContainer from './GuiSubagentContainer'
 import GuiMessageCopy from './GuiMessageCopy'
 import GuiErrorLine from './GuiErrorLine'
 import GuiQueuedMessageCard from './GuiQueuedMessageCard'
@@ -41,10 +40,7 @@ import {
   type GuiPresentationItem,
   type GuiRenderItem
 } from '../guiToolPresentation'
-import {
-  nestGuiSubagentTools,
-  type GuiSubagentGroup
-} from '../guiSubagentPresentation'
+import { nestGuiSubagentTools } from '../guiSubagentPresentation'
 import {
   noteGuiPaneInteraction,
   registerGuiEscapeTarget
@@ -336,10 +332,11 @@ function GuiMessage({
   )
 }
 
-type GuiThreadRenderItem = GuiRenderItem | GuiSubagentGroup
+type GuiThreadRenderItem = GuiRenderItem
 
-/** P11 é uma fronteira visual; dentro e fora dela o agrupamento P8 continua
- *  exatamente o mesmo. Filhos retirados da superfície nunca saem do store. */
+/** Subagente pertence exclusivamente à lateral enquanto trabalha. A árvore
+ *  factual continua no store para status/pareamento, mas raiz e descendentes
+ *  não interrompem nem duplicam a conversa principal. */
 function guiThreadRenderItems(items: readonly GuiItem[]): GuiThreadRenderItem[] {
   const rendered: GuiThreadRenderItem[] = []
   let regular: GuiPresentationItem[] = []
@@ -350,8 +347,13 @@ function guiThreadRenderItems(items: readonly GuiItem[]): GuiThreadRenderItem[] 
   for (const item of nestGuiSubagentTools(items)) {
     if (item.kind === 'subagent') {
       flush()
-      rendered.push(item)
-    } else regular.push(item)
+      continue
+    }
+    if (item.kind === 'tool' && item.subagent) {
+      flush()
+      continue
+    }
+    regular.push(item)
   }
   flush()
   return rendered
@@ -1419,9 +1421,7 @@ export default function GuiPane({
             )}
 
             {renderItems.map((item) =>
-              item.kind === 'subagent' ? (
-                <GuiSubagentContainer key={item.id} group={item} />
-              ) : item.kind === 'tool-group' ? (
+              item.kind === 'tool-group' ? (
                 <GuiToolGroupCard key={item.id} group={item} />
               ) : (
                 <GuiMessage

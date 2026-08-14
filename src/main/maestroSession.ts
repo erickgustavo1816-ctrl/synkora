@@ -322,6 +322,15 @@ interface StreamLine {
   tool_use_result?: { stdout?: string; stderr?: string }
 }
 
+/** O stream-json mistura mensagens da conversa raiz e dos agentes filhos.
+ *  Somente a raiz pode alimentar texto/animação/terminal do chat; o id do pai
+ *  continua sendo propagado nas ferramentas para a lateral acompanhar o filho. */
+export function guiClaudeParentToolUseId(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256
+    ? value
+    : undefined
+}
+
 const IDLE_TIMEOUT = 600_000 // 10 min sem NENHUM evento (permissão pendente pausa)
 const INTERRUPT_CONFIRM_TIMEOUT = 10_000
 const INIT_CONFIRM_TIMEOUT = 20_000
@@ -804,6 +813,7 @@ export class MaestroSession {
 
     switch (evt.type) {
       case 'system':
+        if (guiClaudeParentToolUseId(evt.parent_tool_use_id)) break
         if (evt.subtype === 'init' && evt.session_id) {
           // init repete a cada turno — anuncia uma vez por processo, mas o
           // session_id sobe sempre (resume pode trocar o id).
@@ -821,6 +831,7 @@ export class MaestroSession {
         break
 
       case 'stream_event': {
+        if (guiClaudeParentToolUseId(evt.parent_tool_use_id)) break
         const inner = evt.event
         if (inner?.type === 'content_block_delta') {
           if (inner.delta?.type === 'text_delta' && inner.delta.text) {
@@ -835,14 +846,9 @@ export class MaestroSession {
       case 'assistant': {
         const content = evt.message?.content
         if (!Array.isArray(content)) break
-        const parentToolUseId =
-          typeof evt.parent_tool_use_id === 'string' &&
-          evt.parent_tool_use_id.length > 0 &&
-          evt.parent_tool_use_id.length <= 256
-            ? evt.parent_tool_use_id
-            : undefined
+        const parentToolUseId = guiClaudeParentToolUseId(evt.parent_tool_use_id)
         for (const block of content) {
-          if (block.type === 'text' && block.text) {
+          if (block.type === 'text' && block.text && !parentToolUseId) {
             this.emit({ type: 'text', text: block.text })
           } else if (block.type === 'tool_use' && block.name) {
             this.emit({
@@ -1010,6 +1016,7 @@ export class MaestroSession {
       }
 
       case 'result': {
+        if (guiClaudeParentToolUseId(evt.parent_tool_use_id)) break
         this.cancelPendingInteractions()
         const advanced = advanceGuiTurn(this.pendingTurnGenerations)
         const generation = advanced.completed ?? this.activeTurnGeneration

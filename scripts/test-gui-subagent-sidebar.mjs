@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   guiSubagentMetadataForTool,
+  isGuiSubagentToolEvent,
   normalizeGuiSubagentSidebar
 } from '../src/renderer/src/guiSubagentSidebar.ts'
 
@@ -13,6 +14,12 @@ function tool(id, name, summary, extra = {}) {
 function result(text, status = 'completed', isError = false) {
   return { text, isError, status, lineCount: 1, truncated: false }
 }
+
+test('ferramenta de filho fica em background sem dividir a resposta principal', () => {
+  assert.equal(isGuiSubagentToolEvent({ parentToolUseId: 'parent-a' }), true)
+  assert.equal(isGuiSubagentToolEvent({}), false)
+  assert.equal(isGuiSubagentToolEvent({ parentToolUseId: '' }), false)
+})
 
 test('normaliza subagentes concorrentes intercalados e preserva atividade atual', () => {
   const parentA = {
@@ -60,16 +67,13 @@ test('normaliza subagentes concorrentes intercalados e preserva atividade atual'
     childAPending
   ])
 
-  assert.deepEqual(entries.map((entry) => entry.toolUseId), ['parent-a', 'parent-b'])
+  assert.deepEqual(entries.map((entry) => entry.toolUseId), ['parent-a'])
   assert.equal(entries[0].name, 'Luna Front')
   assert.equal(entries[0].model, 'gpt-5.6-luna')
   assert.equal(entries[0].task, 'investigue o fluxo A')
   assert.equal(entries[0].activity, 'Edit · arquivo que está sendo corrigido')
   assert.equal(entries[0].status, 'running')
-  assert.equal(entries[1].name, 'backend')
-  assert.equal(entries[1].model, 'modelo não informado')
-  assert.equal(entries[1].status, 'completed')
-  assert.equal(entries[1].outcome, 'B terminou')
+  assert.equal(entries[0].outcome, null)
 })
 
 test('mostra subagente aberto antes do primeiro filho e não inventa modelo', () => {
@@ -108,7 +112,7 @@ test('não promove uma ferramenta comum só porque o input tem descrição ou mo
   assert.deepEqual(entries, [])
 })
 
-test('status terminal diferencia falha, negação e cancelamento', () => {
+test('qualquer subagente terminal sai da lateral', () => {
   const entries = normalizeGuiSubagentSidebar([
     {
       ...tool('1', 'Task', 'falha'),
@@ -129,15 +133,16 @@ test('status terminal diferencia falha, negação e cancelamento', () => {
       result: result('', 'cancelled')
     }
   ])
-  assert.deepEqual(entries.map((entry) => entry.status), ['failed', 'denied', 'cancelled'])
-  assert.equal(entries[0].outcome, 'erro real')
-  assert.equal(entries[1].outcome, null)
-  assert.equal(entries[2].outcome, null)
+  assert.deepEqual(entries, [])
 })
 
 test('superfície da seção tem nome acessível e campos pedidos', () => {
   const source = readFileSync(
     new URL('../src/renderer/src/components/GuiSubagentSidebar.tsx', import.meta.url),
+    'utf8'
+  )
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
     'utf8'
   )
   assert.match(source, /aria-label="Subagentes desta conversa"/u)
@@ -152,4 +157,7 @@ test('superfície da seção tem nome acessível e campos pedidos', () => {
   }
   assert.doesNotMatch(source, /id do subagente/u)
   assert.match(source, /role="status"/u)
+  assert.doesNotMatch(pane, /GuiSubagentContainer/u)
+  assert.match(pane, /if \(item\.kind === 'subagent'\)[\s\S]*?continue/u)
+  assert.match(pane, /item\.kind === 'tool' && item\.subagent/u)
 })

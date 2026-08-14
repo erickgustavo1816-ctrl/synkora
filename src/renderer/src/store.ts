@@ -68,6 +68,7 @@ import { isGuiComposerAttachment } from './guiComposerAttachmentStorage'
 import { GUI_COMPOSER_ATTACHMENT_MAX_FILES } from './guiComposerAttachments'
 import {
   guiSubagentMetadataForTool,
+  isGuiSubagentToolEvent,
   type GuiSubagentMetadata
 } from './guiSubagentSidebar'
 
@@ -1156,10 +1157,11 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
     }
 
     case 'tool': {
-      const base = finalizeGuiStream(state)
       const summary = guiToolSummary(evt.input)
       const fileDiffs = normalizeGuiToolDiff(evt.name, evt.input)
       const subagent = guiSubagentMetadataForTool(evt.name, evt.input)
+      const background = isGuiSubagentToolEvent(evt)
+      const base = background ? state : finalizeGuiStream(state)
       return {
         ...base,
         items: pushGuiItem(base.items, {
@@ -1173,8 +1175,8 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           ...(fileDiffs ? { fileDiffs } : {}),
           at: Date.now()
         }),
-        thinking: false,
-        activityText: guiToolActivityText(evt.name, summary),
+        thinking: background ? base.thinking : false,
+        activityText: background ? base.activityText : guiToolActivityText(evt.name, summary),
         ...guiStatusPatch(base, busy(base))
       }
     }

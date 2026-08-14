@@ -9711,20 +9711,29 @@ body.pane-docking .pane-bar.draggable {
   );
   min-width: 0;
   max-width: var(--right-rail-max-width);
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  position: relative;
+  display: flex;
+  flex-direction: column;
   gap: 0;
   padding-right: 0;
-  overflow: hidden;
+  overflow: visible;
+  border-left: 1px solid var(--line);
 }
 
-.right-rail-enabled.is-collapsed {
-  flex-basis: 26px !important;
-  width: 26px !important;
-  max-width: 26px !important;
-  min-width: 26px !important;
-  grid-template-columns: 26px 0;
-  overflow: hidden;
+/* Recolhido não é um "trilho vazio": sai por completo do fluxo e deixa o
+   palco ocupar a largura. O controle continua ancorado no board, sobre o
+   canto direito do próprio chat. */
+.board-main.stage-mode .board-content.right-rail.is-collapsed {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  right: 0;
+  width: 0 !important;
+  height: 0;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  flex: none !important;
+  border: 0;
 }
 
 .right-rail-content {
@@ -9736,8 +9745,15 @@ body.pane-docking .pane-bar.draggable {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  padding-left: 12px;
   padding-right: 2px;
   transition: opacity 120ms ease;
+}
+
+/* O botão mora no cabeçalho do card; este respiro impede que o status fique
+   sob ele sem criar uma barra ou uma terceira linha. */
+.right-rail-content > .delivery-rail > .dr-head {
+  padding-right: 22px;
 }
 
 .right-rail.is-collapsed .right-rail-content {
@@ -9746,25 +9762,19 @@ body.pane-docking .pane-bar.draggable {
   pointer-events: none;
 }
 
-.right-rail-chrome {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  align-items: center;
-  border-right: 1px solid var(--line);
-}
-
 .right-rail-toggle {
-  flex: none;
+  position: absolute;
+  z-index: 5;
+  top: 10px;
+  right: 12px;
   display: grid;
   width: 18px;
-  height: 30px;
+  height: 18px;
   place-items: center;
   padding: 0;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--card);
   color: var(--ink-3);
   cursor: pointer;
   transition:
@@ -9773,8 +9783,8 @@ body.pane-docking .pane-bar.draggable {
 }
 
 .right-rail-toggle svg {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
@@ -9783,7 +9793,8 @@ body.pane-docking .pane-bar.draggable {
 }
 
 .right-rail-toggle:hover {
-  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  border-color: var(--ink-2);
+  background: var(--paper);
   color: var(--ink);
 }
 
@@ -9794,10 +9805,12 @@ body.pane-docking .pane-bar.draggable {
 }
 
 .right-rail-resizer {
-  position: relative;
-  width: 100%;
-  min-height: 28px;
-  flex: 1;
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  width: 10px;
   border: 0;
   background: transparent;
   cursor: col-resize;
@@ -9808,11 +9821,11 @@ body.pane-docking .pane-bar.draggable {
 .right-rail-resizer::before {
   content: '';
   position: absolute;
-  top: 7px;
-  bottom: 7px;
+  top: 0;
+  bottom: 0;
   left: 50%;
   width: 1px;
-  background: var(--line-strong);
+  background: transparent;
   transform: translateX(-50%);
   transition: width var(--motion-fast) ease, background var(--motion-fast) ease;
 }
@@ -9820,7 +9833,7 @@ body.pane-docking .pane-bar.draggable {
 .right-rail-resizer:hover,
 .right-rail-resizer:focus-visible,
 .right-rail.is-dragging .right-rail-resizer {
-  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  background: transparent;
 }
 
 .right-rail-resizer:hover::before,
@@ -9831,8 +9844,14 @@ body.pane-docking .pane-bar.draggable {
 }
 
 .right-rail.is-collapsed .right-rail-resizer {
-  visibility: hidden;
-  pointer-events: none;
+  display: none;
+}
+
+.right-rail.is-collapsed .right-rail-toggle {
+  top: 9px;
+  right: 9px;
+  left: auto;
+  transform: none;
 }
 
 .right-rail.is-dragging,
@@ -9849,16 +9868,25 @@ body.pane-docking .pane-bar.draggable {
     max-width: none;
     min-width: 0;
     flex: 0 0 auto;
-  }
-
-  .board .board-main.stage-mode .board-content.right-rail.is-collapsed {
-    width: 26px;
-    flex-basis: 26px !important;
-    align-self: flex-end;
+    border-left: 0;
+    border-top: 1px solid var(--line-strong);
   }
 
   .board .right-rail-resizer {
     display: none;
+  }
+
+  .board .right-rail-toggle {
+    top: 10px;
+    right: 12px;
+    left: auto;
+    transform: rotate(90deg);
+  }
+
+  .board .right-rail.is-collapsed .right-rail-toggle {
+    top: 9px;
+    right: 9px;
+    transform: none;
   }
 }
 
