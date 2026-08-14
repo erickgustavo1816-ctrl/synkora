@@ -20,6 +20,7 @@ import GuiQueuedMessageCard from './GuiQueuedMessageCard'
 import GuiAttachmentChips from './GuiAttachmentChips'
 import GuiJsonCard from './GuiJsonCard'
 import GuiSlashMenu from './GuiSlashMenu'
+import GuiContextPanel from './GuiContextPanel'
 import {
   completeSlashCommand,
   filterSlashCommands,
@@ -65,6 +66,7 @@ import {
   guiModelLabel,
   guiModelShortName
 } from '../guiComposerPresentation'
+import { guiContextPanelPresentation } from '../guiContextPanel'
 import {
   GUI_COMPOSER_ATTACHMENT_MAX_FILES,
   GUI_COMPOSER_ATTACHMENT_MAX_TOTAL_BYTES,
@@ -465,7 +467,7 @@ export default function GuiPane({
   // spec dele — por isso os efeitos só re-semeiam quando a PROP muda.
   const [mode, setMode] = useState<GuiPermissionMode>(permissionMode ?? 'default')
   const [openMenu, setOpenMenu] = useState<
-    'attach' | 'mode' | 'model' | 'effort' | 'seat' | null
+    'attach' | 'mode' | 'model' | 'effort' | 'seat' | 'context' | null
   >(null)
   const [busyMenu, setBusyMenu] = useState<'mode' | 'model' | 'effort' | null>(null)
   const [liveModel, setLiveModel] = useState<string | undefined>(model)
@@ -1178,6 +1180,11 @@ export default function GuiPane({
   const effortOptions =
     guiModelForSelection(modelOptions, selectedModel)?.supportedEffortLevels ?? []
   const contextUsage = guiContextUsagePresentation(gui.contextTokens, gui.contextWindow)
+  const contextPanel = guiContextPanelPresentation(
+    gui.contextTokens,
+    gui.contextWindow,
+    gui.costUsd
+  )
   const queuedMessage = gui.queued
   const queuedOptionsLabel = queuedMessage
     ? [
@@ -1636,14 +1643,14 @@ export default function GuiPane({
                 )}
               </div>
 
-              {contextUsage && (
-                <span
+              {contextPanel && contextUsage && (
+                <GuiContextPanel
                   className="gui-composer-context"
-                  title={contextUsage.title}
-                  aria-label={`${contextUsage.label}. ${contextUsage.title}`}
-                >
-                  {contextUsage.label}
-                </span>
+                  usage={contextPanel}
+                  label={contextUsage.label}
+                  open={openMenu === 'context'}
+                  onOpenChange={(nextOpen) => setOpenMenu(nextOpen ? 'context' : null)}
+                />
               )}
 
               <div className="gui-menu-host gui-composer-model">

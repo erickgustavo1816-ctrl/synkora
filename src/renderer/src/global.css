@@ -16558,6 +16558,145 @@ details.gui-error-line {
   white-space: nowrap;
 }
 
+/* O contexto é um indicador acionável, não uma etiqueta solta. A barra curta
+   conserva a leitura de relance; os números completos vivem no tooltip e no
+   popover, sem estimativa ou comando CLI implícito. */
+.gui-context-panel {
+  position: relative;
+  flex: none;
+}
+
+.gui-context-trigger {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.gui-context-trigger:hover {
+  border-color: var(--gui-line);
+  background: var(--gui-fill-2);
+  color: var(--ink);
+}
+
+.gui-context-trigger:focus-visible,
+.gui-context-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.gui-context-trigger-bar {
+  width: 24px;
+  height: 4px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--gui-line-strong) 82%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--gui-line) 72%, transparent);
+}
+
+.gui-context-trigger-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.gui-context-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 9px);
+  z-index: 45;
+  width: min(272px, calc(100cqw - 32px));
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--mono);
+}
+
+.gui-context-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--ink);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
+
+.gui-context-close {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.gui-context-close:hover {
+  border-color: var(--gui-line);
+  background: var(--gui-fill-2);
+  color: var(--ink);
+}
+
+.gui-context-metrics {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.gui-context-metrics > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gui-context-metrics dt {
+  color: var(--ink-3);
+  font-size: 10px;
+  text-transform: lowercase;
+}
+
+.gui-context-metrics dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gui-context-trigger {
+    transition: none;
+  }
+}
+
 /* Anexos são estado do composer, não texto escondido no textarea. O trilho
    inteiro pode encolher e cada chip preserva o próprio foco/remover sem criar
    uma barra lateral ou uma prévia `file://` de caminho persistido. */
