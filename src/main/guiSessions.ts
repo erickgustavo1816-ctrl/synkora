@@ -32,6 +32,7 @@ import {
   type GuiAttachmentDescriptor
 } from './guiAttachments'
 import { validateGuiAttachmentReferences } from './guiAttachmentStorage'
+import { GuiAttachmentCapabilityStore } from './guiAttachmentCapabilities'
 
 export const GUI_PROMPT_MAX_CHARS = 256 * 1024
 export const GUI_PROMPT_MAX_BYTES = 1024 * 1024
@@ -1068,6 +1069,8 @@ export interface GuiSessionDeps {
   systemPromptFile(name: string, content: string): string | undefined
   /** userData/gui-sessions.json — ausente desliga a persistência (testes). */
   storeFile?: string
+  /** Autoridade opaca compartilhada com os handlers de attach/preview. */
+  attachmentCapabilities?: GuiAttachmentCapabilityStore
   /** Caixa-preta opcional. */
   record?(
     event: string,
@@ -1117,9 +1120,11 @@ export class GuiSessionRegistry {
   private readonly executorChanges = new Set<GuiPaneEntry>()
   /** A entrega enfileirada reaplica opcoes e envia sob uma unica trava. */
   private readonly queuedDeliveries = new Map<string, GuiQueuedDeliveryLock>()
+  private readonly attachmentCapabilities: GuiAttachmentCapabilityStore
 
   constructor(deps: GuiSessionDeps) {
     this.deps = deps
+    this.attachmentCapabilities = deps.attachmentCapabilities ?? new GuiAttachmentCapabilityStore()
     const loaded = deps.storeFile
       ? loadJsonStore<GuiSessionsDoc>(deps.storeFile, emptyDoc, isDoc)
       : emptyDoc()
@@ -1399,12 +1404,17 @@ export class GuiSessionRegistry {
     const messageId = clientMessageId ?? `main-${++this.nextMessageId}`
     const messageIds = entry.messageIds ?? (entry.messageIds = new Set<string>())
     if (messageIds.has(messageId)) return { ok: true }
-    const validatedAttachments = validateGuiAttachmentReferences(entry.spawn.cwd, attachmentInput)
+    const validatedAttachments = validateGuiAttachmentReferences(
+      entry.spawn.cwd,
+      paneId,
+      attachmentInput,
+      this.attachmentCapabilities
+    )
     if (!validatedAttachments.ok) return { ok: false, error: validatedAttachments.error }
     if (!text.trim() && validatedAttachments.attachments.length === 0) {
       return { ok: false, error: 'mensagem vazia' }
     }
-    const prompt = withGuiAttachmentReferences(text, validatedAttachments.attachments)
+    const prompt = withGuiAttachmentReferences(text, validatedAttachments.resolved)
     const promptProblem = guiPromptProblem(prompt)
     if (promptProblem) return { ok: false, error: 'mensagem e anexos grandes demais' }
     const trimmed = text.trim()

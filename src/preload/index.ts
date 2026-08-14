@@ -16,6 +16,10 @@ import type { SessionEvent } from '../main/maestroSession'
 import type {
   GuiAttachPayload,
   GuiAttachResult,
+  GuiAttachmentAction,
+  GuiAttachmentActionResult,
+  GuiAttachmentPreviewPurpose,
+  GuiAttachmentPreviewResult,
   GuiAttachmentDescriptor
 } from '../main/guiAttachments'
 import type { GuiMissionRole } from '../main/guiMissionContracts'
@@ -99,10 +103,17 @@ export type {
   BrowserScreenshotSource
 }
 
-/** Anexos do composer do chat: print colado ou arquivo, gravados na pasta de
- *  trabalho do PANE (`.synkora/attachments`) — a resposta traz o path absoluto
- *  que o renderer cita no prompt. */
-export type { GuiAttachPayload, GuiAttachResult, GuiAttachmentDescriptor }
+/** Anexos do composer: o renderer recebe somente capacidade opaca; caminho,
+ * prévia e ações de disco permanecem no main. */
+export type {
+  GuiAttachPayload,
+  GuiAttachResult,
+  GuiAttachmentAction,
+  GuiAttachmentActionResult,
+  GuiAttachmentDescriptor,
+  GuiAttachmentPreviewPurpose,
+  GuiAttachmentPreviewResult
+}
 
 /** Papéis do chat de missão 2.0 e as respostas das specs que o 2.0 abriu:
  *  chat da missão, terminal avulso do worktree e sessão de planejamento. */
@@ -1406,8 +1417,7 @@ const api = {
       return () => ipcRenderer.removeListener('gui:browser-observer', listener)
     },
     /** Anexa print da área de transferência ou arquivo ao chat: o main grava
-     *  em `<cwd do pane>/.synkora/attachments` e devolve o caminho ABSOLUTO
-     *  para o composer citar no prompt (teto de 10 MB por arquivo). */
+     *  em `<cwd do pane>/.synkora/attachments` e devolve capacidade opaca. */
     attach: (paneId: string, payload: GuiAttachPayload): Promise<GuiAttachResult> =>
       ipcRenderer.invoke('gui:attach', paneId, payload),
     /** Abre o seletor nativo do sistema e anexa uma referência a qualquer
@@ -1415,6 +1425,20 @@ const api = {
      */
     attachFolder: (paneId: string): Promise<GuiAttachResult> =>
       ipcRenderer.invoke('gui:attachFolder', paneId),
+    /** A prévia é PNG limitado produzido pelo main; nunca uma URL de arquivo. */
+    attachmentPreview: (
+      paneId: string,
+      attachment: GuiAttachmentDescriptor,
+      purpose: GuiAttachmentPreviewPurpose
+    ): Promise<GuiAttachmentPreviewResult> =>
+      ipcRenderer.invoke('gui:attachmentPreview', paneId, attachment, purpose),
+    /** Abrir/baixar sempre volta ao main para revalidar a capacidade física. */
+    attachmentAction: (
+      paneId: string,
+      action: GuiAttachmentAction,
+      attachment: GuiAttachmentDescriptor
+    ): Promise<GuiAttachmentActionResult> =>
+      ipcRenderer.invoke('gui:attachmentAction', paneId, action, attachment),
     /** Pane realmente visível; alimenta o título [pronto] da janela. */
     visibility: (paneId: string, active: boolean): void =>
       ipcRenderer.send('gui:visibility', paneId, active),

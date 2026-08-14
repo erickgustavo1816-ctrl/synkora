@@ -18640,6 +18640,12 @@ details.gui-error-line {
   color: var(--ink-2);
 }
 
+.gui-attachment-chip[data-kind='image']:has(.gui-attachment-preview-trigger) {
+  grid-template-columns: 64px minmax(0, 1fr);
+  max-width: min(310px, 100%);
+  padding-left: 5px;
+}
+
 .gui-attachment-kind {
   width: 20px;
   height: 20px;
@@ -18650,6 +18656,37 @@ details.gui-error-line {
   border-radius: 4px;
   color: var(--ink-2);
   font-size: 11px;
+}
+
+.gui-attachment-preview-trigger {
+  width: 64px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--gui-line-strong) 82%, transparent);
+  border-radius: 4px;
+  padding: 0;
+  background: color-mix(in srgb, var(--ink) 4%, var(--card));
+  cursor: zoom-in;
+}
+
+.gui-attachment-preview-trigger:disabled {
+  cursor: wait;
+}
+
+.gui-attachment-preview-trigger img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.gui-attachment-preview-trigger:focus-visible,
+.gui-attachment-actions button:focus-visible,
+.gui-attachment-lightbox button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .gui-attachment-copy {
@@ -18663,6 +18700,50 @@ details.gui-error-line {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.gui-attachment-feedback {
+  overflow: hidden;
+  color: var(--ok);
+  font-size: 9px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-attachment-feedback.error {
+  color: var(--err);
+}
+
+.gui-attachment-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.gui-attachment-actions button,
+.gui-attachment-lightbox-actions button {
+  min-height: 24px;
+  border: 1px solid var(--gui-line);
+  border-radius: 4px;
+  padding: 0 6px;
+  background: var(--card);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 9.5px;
+  cursor: pointer;
+}
+
+.gui-attachment-actions button:hover,
+.gui-attachment-lightbox-actions button:hover {
+  border-color: var(--gui-line-strong);
+  color: var(--ink);
+}
+
+.gui-attachment-actions button:disabled,
+.gui-attachment-lightbox-actions button:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .gui-attachment-name {
@@ -18719,6 +18800,91 @@ details.gui-error-line {
 
 .gui-queued-attachments .gui-attachment-chip {
   max-width: 210px;
+}
+
+.gui-attachment-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: grid;
+  place-items: center;
+  padding: clamp(12px, 3vw, 36px);
+  background: color-mix(in srgb, #080b10 88%, transparent);
+}
+
+.gui-attachment-lightbox-panel {
+  width: min(1180px, 100%);
+  max-height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--gui-line-strong) 82%, transparent);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+}
+
+.gui-attachment-lightbox-head {
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 7px 8px 7px 12px;
+  border-bottom: 1px solid var(--gui-line);
+}
+
+.gui-attachment-lightbox-head h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-attachment-lightbox-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+}
+
+.gui-attachment-lightbox-actions button:last-child {
+  width: 28px;
+  padding: 0;
+  font-size: 17px;
+}
+
+.gui-attachment-lightbox-body {
+  min-width: 0;
+  min-height: min(68vh, 620px);
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: 12px;
+  background: color-mix(in srgb, var(--ink) 5%, var(--paper));
+}
+
+.gui-attachment-lightbox-body img {
+  max-width: 100%;
+  max-height: calc(100vh - 132px);
+  display: block;
+  object-fit: contain;
+}
+
+.gui-attachment-lightbox-status {
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.gui-attachment-lightbox-status.error {
+  color: var(--err);
 }
 
 /* OS CONTROLES DA CONVERSA (2.0): permissão · modelo · effort. O interruptor

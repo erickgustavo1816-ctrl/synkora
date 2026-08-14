@@ -5,10 +5,14 @@ import type {
   GuiAlertPayload,
   GuiAttachPayload,
   GuiAttachResult,
+  GuiAttachmentAction,
+  GuiAttachmentActionResult,
   GuiAttachmentDescriptor,
-  GuiQueuedDeliveryInput,
   GuiFileOpenResult,
-  GuiWorkspaceFilesResult
+  GuiWorkspaceFilesResult,
+  GuiAttachmentPreviewPurpose,
+  GuiAttachmentPreviewResult,
+  GuiQueuedDeliveryInput
 } from '../../preload'
 
 export type { GuiFileChoice, GuiFileOpenResult, GuiFilePreview } from '../../preload'
@@ -309,6 +313,16 @@ interface GuiBridge {
     frameId: string
   ) => Promise<BrowserObserverFrameResult>
   onBrowserObserver: (cb: (snapshot: BrowserObserverSnapshot) => void) => () => void
+  attachmentPreview: (
+    paneId: string,
+    attachment: GuiAttachmentDescriptor,
+    purpose: GuiAttachmentPreviewPurpose
+  ) => Promise<GuiAttachmentPreviewResult>
+  attachmentAction: (
+    paneId: string,
+    action: GuiAttachmentAction,
+    attachment: GuiAttachmentDescriptor
+  ) => Promise<GuiAttachmentActionResult>
   visibility: (paneId: string, active: boolean) => void
   presented: (paneId: string, terminalSeq: number) => void
   onLive: (cb: (payload: GuiLivePayload) => void) => () => void
@@ -532,8 +546,8 @@ export const guiApi = {
     if (!api?.attach) return { ok: false, error: NO_BRIDGE }
     try {
       return await api.attach(paneId, payload)
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    } catch {
+      return { ok: false, error: 'não consegui anexar o arquivo' }
     }
   },
 
@@ -542,8 +556,38 @@ export const guiApi = {
     if (!api?.attachFolder) return { ok: false, error: NO_BRIDGE }
     try {
       return await api.attachFolder(paneId)
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    } catch {
+      return { ok: false, error: 'não consegui abrir o seletor de pasta' }
+    }
+  },
+
+  async attachmentPreview(
+    paneId: string,
+    attachment: GuiAttachmentDescriptor,
+    purpose: GuiAttachmentPreviewPurpose
+  ): Promise<GuiAttachmentPreviewResult> {
+    const api = bridge()
+    if (!api?.attachmentPreview) return { ok: false, error: NO_BRIDGE }
+    try {
+      return await api.attachmentPreview(paneId, attachment, purpose)
+    } catch {
+      // Exceções IPC podem carregar detalhes nativos (inclusive caminhos).
+      // Prévia nunca reflete esse texto no DOM.
+      return { ok: false, error: 'não consegui preparar a prévia' }
+    }
+  },
+
+  async attachmentAction(
+    paneId: string,
+    action: GuiAttachmentAction,
+    attachment: GuiAttachmentDescriptor
+  ): Promise<GuiAttachmentActionResult> {
+    const api = bridge()
+    if (!api?.attachmentAction) return { ok: false, error: NO_BRIDGE }
+    try {
+      return await api.attachmentAction(paneId, action, attachment)
+    } catch {
+      return { ok: false, error: 'não consegui concluir a ação do anexo' }
     }
   },
 

@@ -1,7 +1,7 @@
 import type { GuiAttachmentDescriptor } from '../../preload'
 
 const GUI_COMPOSER_ATTACHMENTS_PREFIX = 'synkora.guiAttachments.'
-const GUI_COMPOSER_ATTACHMENTS_VERSION = 1
+const GUI_COMPOSER_ATTACHMENTS_VERSION = 2
 // Espelhos do contrato do composer: este módulo precisa continuar puro para a
 // persistência sobreviver mesmo quando o resto do renderer ainda não montou.
 const GUI_COMPOSER_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
@@ -20,34 +20,40 @@ function attachmentKey(paneId: string): string {
   return `${GUI_COMPOSER_ATTACHMENTS_PREFIX}${paneId}`
 }
 
-function looksAbsolute(path: string): boolean {
-  return /^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+|\/)/u.test(path)
-}
-
 /** O main volta a validar existência, containment e links. Aqui só evitamos
  * restaurar lixo do localStorage para a UI/fila. */
 export function isGuiComposerAttachment(value: unknown): value is GuiAttachmentDescriptor {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const attachment = value as Partial<GuiAttachmentDescriptor>
   if (
+    Object.keys(attachment).some(
+      (key) => !['id', 'capability', 'kind', 'name', 'mime', 'size'].includes(key)
+    )
+  )
+    return false
+  if (
     typeof attachment.id !== 'string' ||
     !/^[A-Za-z0-9._:-]{1,128}$/u.test(attachment.id) ||
+    typeof attachment.capability !== 'string' ||
+    !/^gui-cap-v1-[A-Za-z0-9_-]{43}$/u.test(attachment.capability) ||
     (attachment.kind !== 'file' && attachment.kind !== 'image' && attachment.kind !== 'folder') ||
     typeof attachment.name !== 'string' ||
     !attachment.name.trim() ||
     attachment.name.length > 120 ||
-    /[\u0000-\u001f\r\n]/u.test(attachment.name) ||
-    typeof attachment.path !== 'string' ||
-    attachment.path.length > 32_767 ||
-    !looksAbsolute(attachment.path)
+    /[<>:"/\\|?*\u0000-\u001f]/u.test(attachment.name) ||
+    /^[.\s]|[.\s]$/u.test(attachment.name)
   )
     return false
-  if (attachment.kind === 'folder') return attachment.size === null
+  if (attachment.kind === 'folder') return attachment.size === null && attachment.mime === null
   return (
     typeof attachment.size === 'number' &&
     Number.isSafeInteger(attachment.size) &&
     attachment.size >= 0 &&
-    attachment.size <= GUI_COMPOSER_ATTACHMENT_MAX_BYTES
+    attachment.size <= GUI_COMPOSER_ATTACHMENT_MAX_BYTES &&
+    typeof attachment.mime === 'string' &&
+    /^[a-z0-9][a-z0-9!#$&^_.+-]{0,127}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,127}$/u.test(
+      attachment.mime
+    )
   )
 }
 
@@ -67,12 +73,12 @@ function parseAttachments(raw: string | null): GuiComposerAttachmentsEnvelope | 
     )
       return null
     const ids = new Set<string>()
-    const paths = new Set<string>()
+    const capabilities = new Set<string>()
     let totalBytes = 0
     for (const attachment of envelope.attachments) {
-      if (ids.has(attachment.id) || paths.has(attachment.path)) return null
+      if (ids.has(attachment.id) || capabilities.has(attachment.capability)) return null
       ids.add(attachment.id)
-      paths.add(attachment.path)
+      capabilities.add(attachment.capability)
       totalBytes += attachment.size ?? 0
     }
     if (totalBytes > GUI_COMPOSER_ATTACHMENT_MAX_TOTAL_BYTES)

@@ -294,7 +294,12 @@ function GuiMessage({
     return (
       <div className="gui-msg user">
         <span className="gui-msg-tag">você</span>
-        <GuiAttachmentChips attachments={item.attachments ?? []} className="gui-msg-attachments" />
+        <GuiAttachmentChips
+          attachments={item.attachments ?? []}
+          className="gui-msg-attachments"
+          paneId={paneId}
+          presented
+        />
         <div className="gui-msg-text">{item.text}</div>
       </div>
     )
@@ -932,13 +937,13 @@ export default function GuiPane({
   const finishAttachments = useCallback((next: readonly GuiAttachmentDescriptor[]): string | null => {
     if (next.length === 0) return null
     const ids = new Set(attachments.map((attachment) => attachment.id))
-    const paths = new Set(attachments.map((attachment) => attachment.path))
+    const capabilities = new Set(attachments.map((attachment) => attachment.capability))
     const merged = [...attachments]
     let totalBytes = attachments.reduce((total, attachment) => total + (attachment.size ?? 0), 0)
     let hitCountLimit = false
     let hitSizeLimit = false
     for (const attachment of next) {
-      if (ids.has(attachment.id) || paths.has(attachment.path)) continue
+      if (ids.has(attachment.id) || capabilities.has(attachment.capability)) continue
       if (merged.length >= GUI_COMPOSER_ATTACHMENT_MAX_FILES) {
         hitCountLimit = true
         continue
@@ -948,7 +953,7 @@ export default function GuiPane({
         continue
       }
       ids.add(attachment.id)
-      paths.add(attachment.path)
+      capabilities.add(attachment.capability)
       totalBytes += attachment.size ?? 0
       merged.push(attachment)
     }
@@ -1785,7 +1790,7 @@ export default function GuiPane({
                       <span className="gmi-glyph" aria-hidden="true">
                         ▱
                       </span>
-                      <b>Pasta do projeto</b>
+                      <b>Pasta</b>
                       <span>referenciar sem copiar a árvore</span>
                     </button>
                   </div>

@@ -751,11 +751,11 @@ function safeGuiItemAttachments(value: unknown): GuiAttachmentDescriptor[] | und
   const attachments = value.filter(isGuiComposerAttachment).map((attachment) => ({ ...attachment }))
   if (attachments.length !== value.length) return undefined
   const ids = new Set<string>()
-  const paths = new Set<string>()
+  const capabilities = new Set<string>()
   for (const attachment of attachments) {
-    if (ids.has(attachment.id) || paths.has(attachment.path)) return undefined
+    if (ids.has(attachment.id) || capabilities.has(attachment.capability)) return undefined
     ids.add(attachment.id)
-    paths.add(attachment.path)
+    capabilities.add(attachment.capability)
   }
   return attachments
 }

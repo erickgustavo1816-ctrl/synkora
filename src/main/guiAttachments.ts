@@ -5,14 +5,14 @@
  * de referência. A casa é a MESMA do mundo dos panes TUI:
  * `<cwd>/.synkora/attachments` — só que o cwd aqui é o do PANE (worktree da
  * missão / raiz do projeto no planejamento), resolvido pelo registro de
- * sessões, nunca escolhido pelo renderer. O que volta é o caminho ABSOLUTO,
- * porque quem lê a imagem é o agente, pelo caminho, dentro do prompt.
+ * sessões, nunca escolhido pelo renderer. O caminho absoluto existe somente
+ * no main e entra no prompt depois de resolver uma capacidade opaca.
  *
  * Este módulo é PURO de propósito (nada de electron, nada de disco): são as
  * três decisões que precisam de teste — nome seguro, caminho único e o teto de
  * tamanho. A escrita em si mora no ipc/gui.ts, onde já existem clipboard e fs.
  */
-import { basename, extname, isAbsolute, join } from 'node:path'
+import { basename, extname, join } from 'node:path'
 
 /** Teto por anexo. Acima disso o composer recusa ANTES de alocar o buffer —
  *  base64 de 10MB já são ~13MB de string vindos pelo IPC. */
@@ -24,6 +24,14 @@ export const GUI_ATTACHMENT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
  * data URL; caracteres inválidos não podem “sumir” da medição. */
 export const GUI_ATTACHMENT_MAX_BASE64_CHARS = Math.ceil(GUI_ATTACHMENT_MAX_BYTES / 3) * 4
 const GUI_ATTACHMENT_DATA_URL_PREFIX_MAX_CHARS = 256
+/** Uma imagem comprimida pequena ainda pode explodir em centenas de MB ao
+ * decodificar. A prévia só nasce para formatos com dimensões inspecionáveis e
+ * dentro deste orçamento. */
+export const GUI_ATTACHMENT_IMAGE_MAX_DIMENSION = 12_000
+export const GUI_ATTACHMENT_IMAGE_MAX_PIXELS = 16_000_000
+export const GUI_ATTACHMENT_PREVIEW_MAX_BYTES = 4 * 1024 * 1024
+export const GUI_ATTACHMENT_PREVIEW_MAX_DATA_URL_CHARS =
+  Math.ceil(GUI_ATTACHMENT_PREVIEW_MAX_BYTES / 3) * 4 + 64
 
 /** O que o renderer manda: print da área de transferência (o main lê o
  *  clipboard nativo) ou arquivo escolhido/solto, já em base64. Pasta é
@@ -36,29 +44,60 @@ export type GuiAttachPayload =
 
 export type GuiAttachmentKind = 'file' | 'image' | 'folder'
 
-/** Metadados duráveis do anexo. O `path` só vem do main e é revalidado no
- * momento do envio; renderer/localStorage jamais recebem autoridade de disco. */
+/** Metadados duráveis do anexo. `capability` é um identificador opaco emitido
+ * pelo main; renderer/localStorage nunca recebem o caminho físico nem
+ * autoridade de disco. */
 export interface GuiAttachmentDescriptor {
   id: string
+  capability: string
   kind: GuiAttachmentKind
   name: string
-  path: string
+  /** MIME calculado pelo main a partir de assinatura/extensão controlada. */
+  mime: string | null
   /** Arquivos carregam o tamanho real; pasta é apenas referência. */
   size: number | null
 }
 
-/** Resposta do `gui:attach`. `path` é ABSOLUTO; `error` é texto de UI PT-BR. */
+/** Forma exclusivamente interna, produzida depois de resolver a capacidade e
+ * revalidar o alvo físico. Nunca atravessa preload, transcript ou renderer. */
+export interface GuiResolvedAttachment extends GuiAttachmentDescriptor {
+  path: string
+  /** Fotografia já limitada e tipada pela revalidação. Nunca serializada. */
+  bytes?: Uint8Array
+}
+
+/** Resposta do `gui:attach`; `error` é texto de UI PT-BR. */
 export interface GuiAttachResult {
   ok: boolean
   attachment?: GuiAttachmentDescriptor
-  /** Compatibilidade para renderers antigos enquanto o descritor é adotado. */
-  path?: string
   /** O dono fechou o diálogo nativo sem escolher um alvo. */
   cancelled?: boolean
   error?: string
 }
 
+export type GuiAttachmentPreviewPurpose = 'thumbnail' | 'lightbox'
+
+export type GuiAttachmentPreviewResult =
+  | {
+      ok: true
+      /** Sempre PNG reserializado pelo main; nunca `file://`. */
+      dataUrl: string
+      mime: 'image/png'
+      width: number
+      height: number
+    }
+  | { ok: false; error: string }
+
+export type GuiAttachmentAction = 'open' | 'download'
+
+export type GuiAttachmentActionResult =
+  | { ok: true }
+  | { ok: false; cancelled?: boolean; error?: string }
+
 const ATTACHMENT_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/u
+export const GUI_ATTACHMENT_CAPABILITY_RE = /^gui-cap-v1-[A-Za-z0-9_-]{43}$/u
+const MIME_RE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,127}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,127}$/u
+const SAFE_PREVIEW_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 const IMAGE_EXTENSIONS = new Set([
   '.apng',
   '.avif',
@@ -68,7 +107,6 @@ const IMAGE_EXTENSIONS = new Set([
   '.jpeg',
   '.jpg',
   '.png',
-  '.svg',
   '.webp'
 ])
 
@@ -82,27 +120,36 @@ export function guiAttachmentKindForName(name: string): 'file' | 'image' {
 export function guiAttachmentDescriptorProblem(value: unknown): string | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 'anexo em formato inválido'
   const candidate = value as Partial<GuiAttachmentDescriptor>
+  const allowedKeys = new Set(['id', 'capability', 'kind', 'name', 'mime', 'size'])
+  if (Object.keys(candidate).some((key) => !allowedKeys.has(key))) {
+    return 'anexo com campos desconhecidos'
+  }
   if (typeof candidate.id !== 'string' || !ATTACHMENT_ID_RE.test(candidate.id))
     return 'anexo sem identificador válido'
+  if (
+    typeof candidate.capability !== 'string' ||
+    !GUI_ATTACHMENT_CAPABILITY_RE.test(candidate.capability)
+  )
+    return 'anexo sem autorização válida'
   if (candidate.kind !== 'file' && candidate.kind !== 'image' && candidate.kind !== 'folder')
     return 'tipo de anexo desconhecido'
   if (
     typeof candidate.name !== 'string' ||
     !candidate.name.trim() ||
     candidate.name.length > 120 ||
-    /[\u0000-\u001f\r\n]/u.test(candidate.name)
+    candidate.name !== safeAttachmentName(candidate.name)
   )
     return 'anexo sem nome válido'
-  if (
-    typeof candidate.path !== 'string' ||
-    !candidate.path ||
-    candidate.path.length > 32_767 ||
-    !isAbsolute(candidate.path)
-  )
-    return 'anexo sem caminho válido'
   if (candidate.kind === 'folder') {
     if (candidate.size !== null) return 'pasta com tamanho inválido'
+    if (candidate.mime !== null) return 'pasta com MIME inválido'
     return undefined
+  }
+  if (typeof candidate.mime !== 'string' || !MIME_RE.test(candidate.mime)) {
+    return 'anexo com MIME inválido'
+  }
+  if (candidate.kind === 'image' && !SAFE_PREVIEW_MIMES.has(candidate.mime)) {
+    return 'imagem sem MIME seguro para prévia'
   }
   if (
     typeof candidate.size !== 'number' ||
@@ -122,15 +169,18 @@ export function isGuiAttachmentDescriptor(value: unknown): value is GuiAttachmen
  * físico já validado pelo main. */
 export function makeGuiAttachmentDescriptor(
   id: string,
+  capability: string,
   kind: GuiAttachmentKind,
   path: string,
-  size: number | null
+  size: number | null,
+  mime: string | null
 ): GuiAttachmentDescriptor {
   return {
     id,
+    capability,
     kind,
-    name: safeAttachmentName(basename(path)),
-    path,
+    name: kind === 'folder' && !basename(path) ? 'pasta' : safeAttachmentName(basename(path)),
+    mime,
     size
   }
 }
@@ -139,7 +189,7 @@ export function makeGuiAttachmentDescriptor(
  * texto humano e mostra seus chips a partir do evento estruturado. */
 export function withGuiAttachmentReferences(
   text: string,
-  attachments: readonly GuiAttachmentDescriptor[]
+  attachments: readonly GuiResolvedAttachment[]
 ): string {
   if (attachments.length === 0) return text
   const references = attachments
@@ -150,6 +200,251 @@ export function withGuiAttachmentReferences(
     .join('\n')
   const separator = text.length > 0 && !text.endsWith('\n') ? '\n\n' : '\n'
   return `${text}${separator}[Anexos desta mensagem — use os caminhos físicos abaixo]\n${references}\n[/Anexos]`
+}
+
+export interface GuiSafeImageInfo {
+  mime: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
+  width: number
+  height: number
+}
+
+function byteAt(bytes: Uint8Array, index: number): number {
+  return bytes[index] ?? -1
+}
+
+function asciiAt(bytes: Uint8Array, offset: number, value: string): boolean {
+  if (offset < 0 || offset + value.length > bytes.length) return false
+  for (let index = 0; index < value.length; index += 1) {
+    if (byteAt(bytes, offset + index) !== value.charCodeAt(index)) return false
+  }
+  return true
+}
+
+function u16le(bytes: Uint8Array, offset: number): number {
+  return byteAt(bytes, offset) | (byteAt(bytes, offset + 1) << 8)
+}
+
+function u16be(bytes: Uint8Array, offset: number): number {
+  return (byteAt(bytes, offset) << 8) | byteAt(bytes, offset + 1)
+}
+
+function u24le(bytes: Uint8Array, offset: number): number {
+  return byteAt(bytes, offset) | (byteAt(bytes, offset + 1) << 8) | (byteAt(bytes, offset + 2) << 16)
+}
+
+function u32be(bytes: Uint8Array, offset: number): number {
+  return (
+    byteAt(bytes, offset) * 0x1000000 +
+    byteAt(bytes, offset + 1) * 0x10000 +
+    byteAt(bytes, offset + 2) * 0x100 +
+    byteAt(bytes, offset + 3)
+  )
+}
+
+function boundedImageInfo(
+  mime: GuiSafeImageInfo['mime'],
+  width: number,
+  height: number
+): GuiSafeImageInfo | undefined {
+  if (
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    width > GUI_ATTACHMENT_IMAGE_MAX_DIMENSION ||
+    height > GUI_ATTACHMENT_IMAGE_MAX_DIMENSION ||
+    width * height > GUI_ATTACHMENT_IMAGE_MAX_PIXELS
+  ) {
+    return undefined
+  }
+  return { mime, width, height }
+}
+
+function jpegInfo(bytes: Uint8Array): GuiSafeImageInfo | undefined {
+  if (bytes.length < 4 || byteAt(bytes, 0) !== 0xff || byteAt(bytes, 1) !== 0xd8) return undefined
+  const startOfFrame = new Set([
+    0xc0,
+    0xc1,
+    0xc2,
+    0xc3,
+    0xc5,
+    0xc6,
+    0xc7,
+    0xc9,
+    0xca,
+    0xcb,
+    0xcd,
+    0xce,
+    0xcf
+  ])
+  let offset = 2
+  while (offset + 3 < bytes.length) {
+    while (offset < bytes.length && byteAt(bytes, offset) !== 0xff) offset += 1
+    while (offset < bytes.length && byteAt(bytes, offset) === 0xff) offset += 1
+    if (offset >= bytes.length) return undefined
+    const marker = byteAt(bytes, offset)
+    offset += 1
+    if (marker === 0xd8 || marker === 0xd9 || marker === 0x01) continue
+    if (offset + 1 >= bytes.length) return undefined
+    const segmentLength = u16be(bytes, offset)
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) return undefined
+    if (startOfFrame.has(marker)) {
+      if (segmentLength < 7) return undefined
+      return boundedImageInfo('image/jpeg', u16be(bytes, offset + 5), u16be(bytes, offset + 3))
+    }
+    offset += segmentLength
+  }
+  return undefined
+}
+
+/** Reconhece somente bitmaps cujo tamanho pode ser provado antes do decoder.
+ * SVG/HTML nunca entram aqui: a prévia é sempre um PNG reserializado. */
+export function guiSafeImageInfo(bytes: Uint8Array): GuiSafeImageInfo | undefined {
+  if (
+    bytes.length >= 24 &&
+    byteAt(bytes, 0) === 0x89 &&
+    asciiAt(bytes, 1, 'PNG\r\n\u001a\n') &&
+    asciiAt(bytes, 12, 'IHDR')
+  ) {
+    return boundedImageInfo('image/png', u32be(bytes, 16), u32be(bytes, 20))
+  }
+  if (bytes.length >= 10 && (asciiAt(bytes, 0, 'GIF87a') || asciiAt(bytes, 0, 'GIF89a'))) {
+    return boundedImageInfo('image/gif', u16le(bytes, 6), u16le(bytes, 8))
+  }
+  const jpeg = jpegInfo(bytes)
+  if (jpeg) return jpeg
+  if (bytes.length >= 30 && asciiAt(bytes, 0, 'RIFF') && asciiAt(bytes, 8, 'WEBP')) {
+    if (asciiAt(bytes, 12, 'VP8X')) {
+      return boundedImageInfo('image/webp', u24le(bytes, 24) + 1, u24le(bytes, 27) + 1)
+    }
+    if (asciiAt(bytes, 12, 'VP8 ') && asciiAt(bytes, 23, '\u009d\u0001*')) {
+      return boundedImageInfo(
+        'image/webp',
+        u16le(bytes, 26) & 0x3fff,
+        u16le(bytes, 28) & 0x3fff
+      )
+    }
+    if (asciiAt(bytes, 12, 'VP8L') && byteAt(bytes, 20) === 0x2f) {
+      const b1 = byteAt(bytes, 21)
+      const b2 = byteAt(bytes, 22)
+      const b3 = byteAt(bytes, 23)
+      const b4 = byteAt(bytes, 24)
+      return boundedImageInfo(
+        'image/webp',
+        1 + ((b1 | (b2 << 8)) & 0x3fff),
+        1 + (((b2 >> 6) | (b3 << 2) | (b4 << 10)) & 0x3fff)
+      )
+    }
+  }
+  return undefined
+}
+
+const TEXT_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  '.css': 'text/plain',
+  '.csv': 'text/csv',
+  '.go': 'text/plain',
+  '.json': 'application/json',
+  '.md': 'text/markdown',
+  '.py': 'text/plain',
+  '.rs': 'text/plain',
+  '.rtf': 'application/rtf',
+  '.toml': 'text/plain',
+  '.ts': 'text/plain',
+  '.tsx': 'text/plain',
+  '.txt': 'text/plain',
+  '.xml': 'text/plain',
+  '.yaml': 'text/plain',
+  '.yml': 'text/plain'
+}
+
+const ZIP_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.zip': 'application/zip'
+}
+
+const OLE_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  '.doc': 'application/msword',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.xls': 'application/vnd.ms-excel',
+}
+
+function bytesStartWith(bytes: Uint8Array, signature: readonly number[]): boolean {
+  return signature.every((value, index) => byteAt(bytes, index) === value)
+}
+
+function safeText(bytes: Uint8Array): boolean {
+  if (bytes.some((value) => value === 0)) return false
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function guiAttachmentMediaType(
+  name: string,
+  bytes: Uint8Array
+): { kind: 'file' | 'image'; mime: string } {
+  const image = guiSafeImageInfo(bytes)
+  if (image) return { kind: 'image', mime: image.mime }
+  const extension = extname(name).toLowerCase()
+  const textMime = TEXT_MIME_BY_EXTENSION[extension]
+  if (textMime && safeText(bytes)) return { kind: 'file', mime: textMime }
+  if (extension === '.pdf' && asciiAt(bytes, 0, '%PDF-')) {
+    return { kind: 'file', mime: 'application/pdf' }
+  }
+  const zipMime = ZIP_MIME_BY_EXTENSION[extension]
+  if (
+    zipMime &&
+    (bytesStartWith(bytes, [0x50, 0x4b, 0x03, 0x04]) ||
+      bytesStartWith(bytes, [0x50, 0x4b, 0x05, 0x06]) ||
+      bytesStartWith(bytes, [0x50, 0x4b, 0x07, 0x08]))
+  ) {
+    return { kind: 'file', mime: zipMime }
+  }
+  const oleMime = OLE_MIME_BY_EXTENSION[extension]
+  if (oleMime && bytesStartWith(bytes, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) {
+    return { kind: 'file', mime: oleMime }
+  }
+  return {
+    kind: 'file',
+    mime: 'application/octet-stream'
+  }
+}
+
+const UNSAFE_OPEN_EXTENSIONS = new Set([
+  '.app',
+  '.bat',
+  '.cmd',
+  '.com',
+  '.cpl',
+  '.exe',
+  '.hta',
+  '.htm',
+  '.html',
+  '.jar',
+  '.js',
+  '.lnk',
+  '.mjs',
+  '.msi',
+  '.ps1',
+  '.reg',
+  '.scr',
+  '.svg',
+  '.url',
+  '.vbs'
+])
+
+/** Abrir usa o aplicativo associado do SO; binário, atalho e conteúdo ativo
+ * ficam apenas com a ação explícita de baixar uma cópia. */
+export function guiAttachmentOpenProblem(name: string, mime: string): string | undefined {
+  if (UNSAFE_OPEN_EXTENSIONS.has(extname(name).toLowerCase()) || mime === 'application/octet-stream') {
+    return 'este tipo de arquivo só pode ser baixado como cópia'
+  }
+  return undefined
 }
 
 /** Nomes que o Windows trata como DISPOSITIVO em qualquer pasta e com
@@ -295,7 +590,7 @@ export function attachPayloadProblem(payload: GuiAttachPayload | undefined): str
   // A pasta é tratada por `gui:attachFolder`, que abre o diálogo nativo no
   // main. Um path recebido aqui seria autoridade indevida do renderer.
   if (kind === 'folder') return 'pasta deve ser escolhida pelo diálogo do sistema'
-  if (kind !== 'file') return `tipo de anexo desconhecido: ${String(kind)}`
+  if (kind !== 'file') return 'tipo de anexo desconhecido'
   if (typeof name !== 'string' || !name.trim()) return 'anexo sem nome'
   if (typeof bytesBase64 !== 'string' || !bytesBase64.trim()) return 'anexo sem conteúdo'
   return attachmentBase64Problem(bytesBase64)

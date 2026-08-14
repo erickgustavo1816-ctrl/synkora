@@ -1,7 +1,7 @@
 import type { GuiAttachmentDescriptor } from '../../preload'
 
 const GUI_QUEUE_PREFIX = 'synkora.guiQueue.'
-const GUI_QUEUE_VERSION = 1
+const GUI_QUEUE_VERSION = 2
 export const GUI_QUEUE_MAX_CHARS = 1_000_000
 export const GUI_QUEUE_CLAIM_LEASE_MS = 60_000
 const GUI_QUEUE_ATTACHMENT_MAX_FILES = 20
@@ -72,31 +72,41 @@ function cleanNullableString(value: unknown): string | null | undefined {
   return value.slice(0, 256)
 }
 
-/** O main ainda é autoridade de path/arquivo; isto só impede estado adulterado
- * do localStorage de entrar na fila visível. Mantido local para a fila poder
+/** O main ainda é autoridade da capacidade/arquivo; isto só impede estado
+ * adulterado do localStorage de entrar na fila visível. Mantido local para a fila poder
  * ser lida no boot sem depender do composer já montado. */
 function isQueuedAttachment(value: unknown): value is GuiAttachmentDescriptor {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const attachment = value as Partial<GuiAttachmentDescriptor>
   if (
+    Object.keys(attachment).some(
+      (key) => !['id', 'capability', 'kind', 'name', 'mime', 'size'].includes(key)
+    )
+  )
+    return false
+  if (
     typeof attachment.id !== 'string' ||
     !/^[A-Za-z0-9._:-]{1,128}$/u.test(attachment.id) ||
+    typeof attachment.capability !== 'string' ||
+    !/^gui-cap-v1-[A-Za-z0-9_-]{43}$/u.test(attachment.capability) ||
     (attachment.kind !== 'file' && attachment.kind !== 'image' && attachment.kind !== 'folder') ||
     typeof attachment.name !== 'string' ||
     !attachment.name.trim() ||
     attachment.name.length > 120 ||
-    /[\u0000-\u001f\r\n]/u.test(attachment.name) ||
-    typeof attachment.path !== 'string' ||
-    attachment.path.length > 32_767 ||
-    !/^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+|\/)/u.test(attachment.path)
+    /[<>:"/\\|?*\u0000-\u001f]/u.test(attachment.name) ||
+    /^[.\s]|[.\s]$/u.test(attachment.name)
   )
     return false
-  if (attachment.kind === 'folder') return attachment.size === null
+  if (attachment.kind === 'folder') return attachment.size === null && attachment.mime === null
   return (
     typeof attachment.size === 'number' &&
     Number.isSafeInteger(attachment.size) &&
     attachment.size >= 0 &&
-    attachment.size <= 10 * 1024 * 1024
+    attachment.size <= 10 * 1024 * 1024 &&
+    typeof attachment.mime === 'string' &&
+    /^[a-z0-9][a-z0-9!#$&^_.+-]{0,127}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,127}$/u.test(
+      attachment.mime
+    )
   )
 }
 
@@ -134,12 +144,16 @@ function parseQueue(raw: string | null): GuiQueueEnvelope | null {
       return null
     if (!candidate.text.trim() && attachments.length === 0) return null
     const attachmentIds = new Set<string>()
-    const attachmentPaths = new Set<string>()
+    const attachmentCapabilities = new Set<string>()
     let attachmentBytes = 0
     for (const attachment of attachments) {
-      if (attachmentIds.has(attachment.id) || attachmentPaths.has(attachment.path)) return null
+      if (
+        attachmentIds.has(attachment.id) ||
+        attachmentCapabilities.has(attachment.capability)
+      )
+        return null
       attachmentIds.add(attachment.id)
-      attachmentPaths.add(attachment.path)
+      attachmentCapabilities.add(attachment.capability)
       attachmentBytes += attachment.size ?? 0
     }
     if (attachmentBytes > GUI_QUEUE_ATTACHMENT_MAX_TOTAL_BYTES) return null

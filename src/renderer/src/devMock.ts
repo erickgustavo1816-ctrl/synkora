@@ -1383,7 +1383,9 @@ export function installDevMock(): void {
       // Anexo no browser puro não tem disco nem pane vivo: recusa honesta com
       // o mesmo texto de UI do main (nunca um path falso que o prompt citaria).
       attach: async () => ({ ok: false, error: 'anexos só funcionam no app' }),
-      attachFolder: async () => ({ ok: false, error: 'anexos só funcionam no app' })
+      attachFolder: async () => ({ ok: false, error: 'anexos só funcionam no app' }),
+      attachmentPreview: async () => ({ ok: false, error: 'prévias só funcionam no app' }),
+      attachmentAction: async () => ({ ok: false, error: 'anexos só funcionam no app' })
     },
     projectPlan: {
       get: async () => null,

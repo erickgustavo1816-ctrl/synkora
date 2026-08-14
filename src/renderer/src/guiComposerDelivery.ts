@@ -11,9 +11,10 @@ function sameAttachments(
       return (
         other !== undefined &&
         attachment.id === other.id &&
+        attachment.capability === other.capability &&
         attachment.kind === other.kind &&
         attachment.name === other.name &&
-        attachment.path === other.path &&
+        attachment.mime === other.mime &&
         attachment.size === other.size
       )
     })

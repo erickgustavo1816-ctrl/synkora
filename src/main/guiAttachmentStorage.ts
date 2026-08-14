@@ -11,6 +11,7 @@ import {
   mkdirSync,
   openSync,
   realpathSync,
+  readFileSync,
   statSync,
   writeFileSync
 } from 'node:fs'
@@ -19,12 +20,13 @@ import {
   GUI_ATTACHMENT_MAX_BYTES,
   GUI_ATTACHMENT_MAX_FILES,
   GUI_ATTACHMENT_MAX_TOTAL_BYTES,
+  guiAttachmentMediaType,
   guiAttachmentDescriptorProblem,
-  guiAttachmentKindForName,
-  makeGuiAttachmentDescriptor,
   uniqueAttachmentPath,
-  type GuiAttachmentDescriptor
+  type GuiAttachmentDescriptor,
+  type GuiResolvedAttachment
 } from './guiAttachments'
+import type { GuiAttachmentCapabilityStore } from './guiAttachmentCapabilities'
 
 function pathKey(path: string): string {
   return process.platform === 'win32' ? path.toLocaleLowerCase('en-US') : path
@@ -103,7 +105,13 @@ export function writeGuiAttachmentExclusive(
 }
 
 export type GuiAttachmentReferencesResult =
-  | { ok: true; attachments: GuiAttachmentDescriptor[] }
+  | {
+      ok: true
+      /** Forma pública, segura para transcript/renderer. */
+      attachments: GuiAttachmentDescriptor[]
+      /** Forma privada, usada somente para compor o prompt no main. */
+      resolved: GuiResolvedAttachment[]
+    }
   | { ok: false; error: string }
 
 export type GuiFolderReferenceResult =
@@ -216,9 +224,11 @@ export function resolveGuiExternalFolderReference(rawPath: unknown): GuiFolderRe
  */
 export function validateGuiAttachmentReferences(
   cwd: string,
-  raw: unknown
+  paneId: string,
+  raw: unknown,
+  capabilities: GuiAttachmentCapabilityStore
 ): GuiAttachmentReferencesResult {
-  if (raw === undefined) return { ok: true, attachments: [] }
+  if (raw === undefined) return { ok: true, attachments: [], resolved: [] }
   if (!Array.isArray(raw)) return { ok: false, error: 'anexos em formato inválido' }
   if (raw.length > GUI_ATTACHMENT_MAX_FILES) {
     return { ok: false, error: `envie no máximo ${GUI_ATTACHMENT_MAX_FILES} anexos por vez` }
@@ -229,6 +239,7 @@ export function validateGuiAttachmentReferences(
   const ids = new Set<string>()
   const physicalPaths = new Set<string>()
   const attachments: GuiAttachmentDescriptor[] = []
+  const resolved: GuiResolvedAttachment[] = []
 
   for (const value of raw) {
     const formatProblem = guiAttachmentDescriptorProblem(value)
@@ -236,13 +247,20 @@ export function validateGuiAttachmentReferences(
     const descriptor = value as GuiAttachmentDescriptor
     if (ids.has(descriptor.id)) return { ok: false, error: 'anexos repetidos' }
     ids.add(descriptor.id)
+    const authorization = capabilities.resolve(paneId, descriptor)
+    if (!authorization) return { ok: false, error: 'anexo sem autorização válida' }
 
     if (descriptor.kind === 'folder') {
-      const folder = resolveGuiExternalFolderReference(descriptor.path)
+      const folder = resolveGuiExternalFolderReference(authorization.realpath)
       if (!folder.ok) return folder
+      if (!sameGuiAttachmentPath(folder.path, authorization.realpath)) {
+        return { ok: false, error: 'a pasta autorizada mudou de lugar' }
+      }
       if (physicalPaths.has(folder.path)) return { ok: false, error: 'anexos repetidos' }
       physicalPaths.add(folder.path)
-      attachments.push(makeGuiAttachmentDescriptor(descriptor.id, 'folder', folder.path, null))
+      const publicDescriptor = { ...descriptor }
+      attachments.push(publicDescriptor)
+      resolved.push({ ...publicDescriptor, path: folder.path })
       continue
     }
 
@@ -250,18 +268,19 @@ export function validateGuiAttachmentReferences(
       attachmentDir ??= prepareGuiAttachmentDirectory(cwd)
       // A escrita exclusiva cria somente filhos diretos desta pasta. Não aceite
       // um caminho aninhado/restaurado que poderia atravessar um link interno.
-      if (!sameGuiAttachmentPath(dirname(resolve(descriptor.path)), attachmentDir)) {
+      if (!sameGuiAttachmentPath(dirname(resolve(authorization.realpath)), attachmentDir)) {
         return { ok: false, error: 'anexo saiu da pasta autorizada' }
       }
-      const info = lstatSync(descriptor.path)
+      const info = lstatSync(authorization.realpath)
       if (info.isSymbolicLink()) {
         return { ok: false, error: 'anexo não pode ser link simbólico ou junction' }
       }
       if (!info.isFile()) return { ok: false, error: 'anexo não está mais disponível' }
-      const physical = realpathSync.native(descriptor.path)
+      const physical = realpathSync.native(authorization.realpath)
       if (
         !guiAttachmentPathInside(attachmentDir, physical) ||
-        !sameGuiAttachmentPath(dirname(physical), attachmentDir)
+        !sameGuiAttachmentPath(dirname(physical), attachmentDir) ||
+        !sameGuiAttachmentPath(physical, authorization.realpath)
       ) {
         return { ok: false, error: 'anexo saiu da pasta autorizada' }
       }
@@ -269,24 +288,27 @@ export function validateGuiAttachmentReferences(
       if (!Number.isSafeInteger(size) || size < 0 || size > GUI_ATTACHMENT_MAX_BYTES) {
         return { ok: false, error: 'anexo excede o limite de 10 MB' }
       }
-      totalBytes += size
-      if (totalBytes > GUI_ATTACHMENT_MAX_TOTAL_BYTES) {
+      if (size !== authorization.size || size !== descriptor.size) {
+        return { ok: false, error: 'o anexo mudou desde que foi autorizado' }
+      }
+      if (totalBytes + size > GUI_ATTACHMENT_MAX_TOTAL_BYTES) {
         return { ok: false, error: 'anexos ultrapassam o limite de 50 MB por mensagem' }
       }
+      const bytes = readFileSync(physical)
+      const media = guiAttachmentMediaType(descriptor.name, bytes)
+      if (media.kind !== descriptor.kind || media.mime !== descriptor.mime) {
+        return { ok: false, error: 'o tipo do anexo mudou desde que foi autorizado' }
+      }
+      totalBytes += size
       if (physicalPaths.has(physical)) return { ok: false, error: 'anexos repetidos' }
       physicalPaths.add(physical)
-      attachments.push(
-        makeGuiAttachmentDescriptor(
-          descriptor.id,
-          guiAttachmentKindForName(basename(physical)),
-          physical,
-          size
-        )
-      )
+      const publicDescriptor = { ...descriptor }
+      attachments.push(publicDescriptor)
+      resolved.push({ ...publicDescriptor, path: physical, bytes })
     } catch {
       // Jamais reflita erro/raw path do fs de volta para a UI ou a caixa-preta.
       return { ok: false, error: 'anexo não está mais disponível' }
     }
   }
-  return { ok: true, attachments }
+  return { ok: true, attachments, resolved }
 }

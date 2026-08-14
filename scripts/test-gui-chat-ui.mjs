@@ -1538,6 +1538,14 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
     new URL('../src/renderer/src/components/GuiAttachmentChips.tsx', import.meta.url),
     'utf8'
   )
+  const attachmentLightbox = readFileSync(
+    new URL('../src/renderer/src/components/GuiAttachmentLightbox.tsx', import.meta.url),
+    'utf8'
+  )
+  const attachmentMedia = readFileSync(
+    new URL('../src/main/guiAttachmentMedia.ts', import.meta.url),
+    'utf8'
+  )
   const surfaceRule = css.match(/\.gui-composer-surface\s*\{[^}]*\}/su)?.[0] ?? ''
   const focusRule = css.match(/\.gui-composer-surface:focus-within\s*\{[^}]*\}/su)?.[0] ?? ''
   const slashRule = css.match(/\.gui-slash-menu\s*\{[^}]*\}/su)?.[0] ?? ''
@@ -1609,12 +1617,27 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
     'o menu de anexos não oferece mais uma ação redundante para imagem copiada'
   )
   assert.match(pane, /guiApi\.attachFolder\(paneId\)/u)
+  assert.match(pane, /<b>Pasta<\/b>/u)
+  assert.doesNotMatch(pane, /Pasta do projeto/u)
   assert.match(pane, /onPaste=\{/u)
   assert.match(pane, /onDrop=\{/u)
   assert.match(pane, /<GuiAttachmentChips[\s\S]*onRemove=/u)
   assert.match(attachmentChips, /aria-label="Anexos"/u)
   assert.match(attachmentChips, /aria-label=\{`Remover anexo \$\{attachment\.name\}`\}/u)
-  assert.doesNotMatch(attachmentChips, /<img|\bsrc=/u)
+  assert.match(attachmentChips, /guiApi\.attachmentPreview\(paneId, attachment, 'thumbnail'\)/u)
+  assert.match(attachmentChips, /new IntersectionObserver/u)
+  assert.match(attachmentChips, /rootMargin: '160px'/u)
+  assert.match(attachmentChips, /data:image\/png;base64,/u)
+  assert.match(attachmentChips, /<img src=\{thumbnail\}/u)
+  assert.doesNotMatch(attachmentChips, /file:\/\/|attachment\.path/u)
+  assert.match(attachmentChips, /guiApi\.attachmentAction\(paneId, action, attachment\)/u)
+  assert.match(attachmentChips, /\bAbrir\b/u)
+  assert.match(attachmentChips, /\bBaixar\b/u)
+  assert.match(attachmentLightbox, /role="dialog"/u)
+  assert.match(attachmentLightbox, /aria-modal="true"/u)
+  assert.match(attachmentLightbox, /event\.key === 'Escape'/u)
+  assert.match(attachmentLightbox, /previousFocus\.focus\(\{ preventScroll: true \}\)/u)
+  assert.match(attachmentLightbox, /event\.key !== 'Tab'/u)
   assert.match(css, /\.gui-attachment-chip\s*\{[^}]*min-width: 0[^}]*max-width:/su)
   assert.match(css, /\.gui-attachment-remove:focus-visible\s*\{/u)
   const finishAttachmentBlock = pane.slice(
@@ -1626,7 +1649,19 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
   assert.match(guiApi, /attach: \(paneId: string, payload: GuiAttachPayload\)/u)
   assert.match(guiApi, /api\.attach\(paneId, payload\)/u)
   assert.match(guiApi, /async attachFolder\(paneId: string\)/u)
+  assert.match(guiApi, /error: 'não consegui abrir o seletor de pasta'/u)
+  assert.match(guiApi, /error: 'não consegui preparar a prévia'/u)
+  assert.match(guiApi, /error: 'não consegui concluir a ação do anexo'/u)
   assert.match(guiIpc, /ipcMain\.handle\('gui:attachFolder'/u)
+  assert.match(guiIpc, /'gui:attachmentPreview'/u)
+  assert.match(guiIpc, /'gui:attachmentAction'/u)
+  assert.match(guiIpc, /validateGuiAttachmentReferences/u)
+  assert.match(guiIpc, /renderGuiAttachmentPreview\(attachment\.bytes, attachment\.mime, purpose\)/u)
+  assert.match(attachmentMedia, /nativeImage\.createFromBuffer\(Buffer\.from\(source\)\)/u)
+  assert.match(attachmentMedia, /\.toPNG\(\)/u)
+  assert.match(attachmentMedia, /thumbnail: 512 \* 1024/u)
+  assert.doesNotMatch(attachmentMedia, /readFileSync|pathToFileURL/u)
+  assert.doesNotMatch(guiIpc, /detail: \{[^}]*path/u)
   assert.match(guiIpc, /dialog\.showOpenDialog/u)
   assert.match(guiIpc, /resolveGuiExternalFolderReference/u)
   assert.match(guiIpc, /detail: \{ kind: payload\.kind, ok: result\.ok \}/u)

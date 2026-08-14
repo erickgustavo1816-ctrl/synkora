@@ -38,18 +38,27 @@ import {
   attachPayloadProblem,
   attachmentTooLargeError,
   base64ByteLength,
-  guiAttachmentKindForName,
-  makeGuiAttachmentDescriptor,
+  guiAttachmentMediaType,
+  guiAttachmentOpenProblem,
   stripDataUrlPrefix,
+  type GuiAttachmentAction,
+  type GuiAttachmentActionResult,
+  type GuiAttachmentDescriptor,
   type GuiAttachPayload,
-  type GuiAttachResult
+  type GuiAttachResult,
+  type GuiAttachmentPreviewPurpose,
+  type GuiAttachmentPreviewResult
 } from '../guiAttachments'
 import {
   prepareGuiAttachmentDirectory,
   resolveGuiExternalFolderReference,
+  validateGuiAttachmentReferences,
   writeGuiAttachmentExclusive
 } from '../guiAttachmentStorage'
-import { randomUUID } from 'node:crypto'
+import { GuiAttachmentCapabilityStore } from '../guiAttachmentCapabilities'
+import { renderGuiAttachmentPreview } from '../guiAttachmentMedia'
+import { unlinkSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { guiMissionRoleOf, missionShortId } from '../guiMissionContracts'
 import { notifyDesktop } from '../desktopNotifications'
 import { GuiPaneVisibilityRegistry, GuiWindowReadyController } from '../guiWindowReady'
@@ -120,7 +129,12 @@ function chatNoticeBody(kind: GuiNoticeKind, label: string): string {
  * único trecho aqui com disco de verdade — as decisões (nome, unicidade,
  * teto) moram no módulo puro `guiAttachments`.
  */
-function writeAttachment(cwd: string, payload: GuiAttachPayload): GuiAttachResult {
+function writeAttachment(
+  cwd: string,
+  paneId: string,
+  payload: GuiAttachPayload,
+  capabilities: GuiAttachmentCapabilityStore
+): GuiAttachResult {
   // Pastas chegam somente pelo handler `gui:attachFolder`, depois do diálogo
   // nativo. Nunca trate um path enviado pelo renderer como seleção válida.
   if (payload.kind === 'folder') {
@@ -165,15 +179,25 @@ function writeAttachment(cwd: string, payload: GuiAttachPayload): GuiAttachResul
   try {
     const dir = prepareGuiAttachmentDirectory(cwd)
     const dest = writeGuiAttachmentExclusive(dir, name, bytes)
-    return {
-      ok: true,
-      path: dest,
-      attachment: makeGuiAttachmentDescriptor(
-        `attachment-${randomUUID()}`,
-        payload.kind === 'clipboard-image' ? 'image' : guiAttachmentKindForName(dest),
-        dest,
-        bytes.length
-      )
+    try {
+      const media = guiAttachmentMediaType(dest, bytes)
+      return {
+        ok: true,
+        attachment: capabilities.issue(paneId, {
+          kind: media.kind,
+          path: dest,
+          size: bytes.length,
+          mime: media.mime
+        })
+      }
+    } catch {
+      // Sem registro durável, o renderer nunca recebe uma capacidade zumbi.
+      try {
+        unlinkSync(dest)
+      } catch {
+        // O arquivo órfão continua privado no worktree e será ignorado.
+      }
+      return { ok: false, error: 'não consegui autorizar o anexo' }
     }
   } catch {
     return { ok: false, error: 'não consegui gravar o anexo' }
@@ -185,24 +209,34 @@ function writeAttachment(cwd: string, payload: GuiAttachPayload): GuiAttachResul
  * diálogo nativo do main; ainda assim o alvo é revalidado antes de virar um
  * descritor persistível, sem copiar nem enumerar a árvore escolhida.
  */
-function writeFolderAttachment(selectedPath: unknown): GuiAttachResult {
+function writeFolderAttachment(
+  paneId: string,
+  selectedPath: unknown,
+  capabilities: GuiAttachmentCapabilityStore
+): GuiAttachResult {
   const folder = resolveGuiExternalFolderReference(selectedPath)
   if (!folder.ok) return { ok: false, error: folder.error }
-  return {
-    ok: true,
-    path: folder.path,
-    attachment: makeGuiAttachmentDescriptor(
-      `attachment-${randomUUID()}`,
-      'folder',
-      folder.path,
-      null
-    )
+  try {
+    return {
+      ok: true,
+      attachment: capabilities.issue(paneId, {
+        kind: 'folder',
+        path: folder.path,
+        size: null,
+        mime: null
+      })
+    }
+  } catch {
+    return { ok: false, error: 'não consegui autorizar a pasta' }
   }
 }
 
 export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessionRegistry {
   const { blackbox } = ctx
   const workspaceFileIndex = new GuiWorkspaceFileIndex()
+  const attachmentCapabilities = new GuiAttachmentCapabilityStore(
+    join(dirname(extras.storeFile), 'gui-attachment-capabilities.json')
+  )
   const visibility = new GuiPaneVisibilityRegistry()
   const readyTitle = new GuiWindowReadyController({
     setTitle: (title) => {
@@ -241,6 +275,7 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     push: (payload) => ctx.pushAll('gui:live', payload),
     systemPromptFile: extras.systemPromptFile,
     storeFile: extras.storeFile,
+    attachmentCapabilities,
     record: (event, ids, detail) =>
       blackbox.record({ cat: 'pane', event, actor: 'harness', ids, detail }),
     // O sink vivo publica UM alerta canônico. Replay nunca entra aqui, e só o
@@ -551,8 +586,8 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
   })
 
   // ANEXO DO COMPOSER: print colado ou arquivo solto vira arquivo em
-  // `<cwd do pane>/.synkora/attachments` e o renderer recebe o caminho
-  // ABSOLUTO para citar no prompt. O DESTINO NUNCA VEM DO RENDERER — sai do
+  // `<cwd do pane>/.synkora/attachments` e o renderer recebe uma capacidade
+  // opaca. O DESTINO NUNCA VEM DO RENDERER — sai do
   // registro de sessões pelo paneId, então um pane sem sessão é recusado em
   // vez de gravar num lugar adivinhado.
   ipcMain.handle('gui:attach', (e, paneId: string, payload: GuiAttachPayload): GuiAttachResult => {
@@ -562,7 +597,7 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     const cwd = registry.cwdOf(paneId)
     if (!cwd) return { ok: false, error: 'este pane não tem sessão aberta' }
 
-    const result = writeAttachment(cwd, payload)
+    const result = writeAttachment(cwd, paneId, payload, attachmentCapabilities)
     blackbox.record({
       cat: 'pane',
       event: result.ok ? 'gui-attachment-saved' : 'gui-attachment-failed',
@@ -584,18 +619,23 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     if (!registry.cwdOf(paneId)) return { ok: false, error: 'este pane não tem sessão aberta' }
 
     const owner = ctx.mainWindow && !ctx.mainWindow.isDestroyed() ? ctx.mainWindow : undefined
-    const result = owner
-      ? await dialog.showOpenDialog(owner, {
-          title: 'Escolher pasta para anexar',
-          properties: ['openDirectory', 'createDirectory']
-        })
-      : await dialog.showOpenDialog({
-          title: 'Escolher pasta para anexar',
-          properties: ['openDirectory', 'createDirectory']
-        })
+    let result: Awaited<ReturnType<typeof dialog.showOpenDialog>>
+    try {
+      result = owner
+        ? await dialog.showOpenDialog(owner, {
+            title: 'Escolher pasta para anexar',
+            properties: ['openDirectory', 'createDirectory']
+          })
+        : await dialog.showOpenDialog({
+            title: 'Escolher pasta para anexar',
+            properties: ['openDirectory', 'createDirectory']
+          })
+    } catch {
+      return { ok: false, error: 'não consegui abrir o seletor de pasta' }
+    }
     if (result.canceled || !result.filePaths[0]) return { ok: false, cancelled: true }
 
-    const attachment = writeFolderAttachment(result.filePaths[0])
+    const attachment = writeFolderAttachment(paneId, result.filePaths[0], attachmentCapabilities)
     blackbox.record({
       cat: 'pane',
       event: attachment.ok ? 'gui-attachment-saved' : 'gui-attachment-failed',
@@ -605,6 +645,117 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     })
     return attachment
   })
+
+  /** Miniatura/lightbox: descriptor opaco entra, PNG limitado sai. O caminho
+   * físico nunca cruza o preload e a capacidade é revalidada a cada pedido. */
+  ipcMain.handle(
+    'gui:attachmentPreview',
+    (
+      e,
+      paneId: string,
+      descriptor: GuiAttachmentDescriptor,
+      purpose: GuiAttachmentPreviewPurpose
+    ): GuiAttachmentPreviewResult => {
+      extras.assertAppRendererSender(e)
+      if (purpose !== 'thumbnail' && purpose !== 'lightbox') {
+        return { ok: false, error: 'tamanho de prévia inválido' }
+      }
+      const cwd = registry.cwdOf(paneId)
+      if (!cwd) return { ok: false, error: 'este pane não tem sessão aberta' }
+      const checked = validateGuiAttachmentReferences(
+        cwd,
+        paneId,
+        [descriptor],
+        attachmentCapabilities
+      )
+      if (!checked.ok) return { ok: false, error: checked.error }
+      const attachment = checked.resolved[0]
+      if (!attachment || attachment.kind !== 'image' || !attachment.mime) {
+        return { ok: false, error: 'este anexo não é uma imagem com prévia' }
+      }
+      if (!attachment.bytes) return { ok: false, error: 'a imagem não está mais disponível' }
+      return renderGuiAttachmentPreview(attachment.bytes, attachment.mime, purpose)
+    }
+  )
+
+  /** Abrir/baixar são efeitos do main. Ambos revalidam a capacidade; baixar
+   * revalida de novo depois do diálogo, porque o alvo pode mudar enquanto o
+   * usuário escolhe o destino. */
+  ipcMain.handle(
+    'gui:attachmentAction',
+    async (
+      e,
+      paneId: string,
+      action: GuiAttachmentAction,
+      descriptor: GuiAttachmentDescriptor
+    ): Promise<GuiAttachmentActionResult> => {
+      extras.assertAppRendererSender(e)
+      if (action !== 'open' && action !== 'download') {
+        return { ok: false, error: 'ação de anexo inválida' }
+      }
+      const cwd = registry.cwdOf(paneId)
+      if (!cwd) return { ok: false, error: 'este pane não tem sessão aberta' }
+      const authorize = (): ReturnType<typeof validateGuiAttachmentReferences> =>
+        validateGuiAttachmentReferences(cwd, paneId, [descriptor], attachmentCapabilities)
+      let checked = authorize()
+      if (!checked.ok) return { ok: false, error: checked.error }
+      let attachment = checked.resolved[0]
+      if (!attachment || attachment.kind === 'folder' || !attachment.mime) {
+        return { ok: false, error: 'esta ação só funciona com arquivos' }
+      }
+
+      let outcome: GuiAttachmentActionResult
+      if (action === 'open') {
+        const problem = guiAttachmentOpenProblem(attachment.name, attachment.mime)
+        if (problem) return { ok: false, error: problem }
+        try {
+          const error = await shell.openPath(attachment.path)
+          outcome = error
+            ? { ok: false, error: 'não consegui abrir o arquivo no aplicativo do sistema' }
+            : { ok: true }
+        } catch {
+          outcome = { ok: false, error: 'não consegui abrir o arquivo no aplicativo do sistema' }
+        }
+      } else {
+        const owner = ctx.mainWindow && !ctx.mainWindow.isDestroyed() ? ctx.mainWindow : undefined
+        let selected: Awaited<ReturnType<typeof dialog.showSaveDialog>>
+        try {
+          selected = owner
+            ? await dialog.showSaveDialog(owner, {
+                title: 'Baixar uma cópia do anexo',
+                defaultPath: attachment.name
+              })
+            : await dialog.showSaveDialog({
+                title: 'Baixar uma cópia do anexo',
+                defaultPath: attachment.name
+              })
+        } catch {
+          return { ok: false, error: 'não consegui abrir o seletor para salvar a cópia' }
+        }
+        if (selected.canceled || !selected.filePath) return { ok: false, cancelled: true }
+        checked = authorize()
+        if (!checked.ok) return { ok: false, error: checked.error }
+        attachment = checked.resolved[0]
+        if (!attachment || attachment.kind === 'folder' || !attachment.bytes) {
+          return { ok: false, error: 'o arquivo não está mais disponível' }
+        }
+        try {
+          writeFileSync(selected.filePath, attachment.bytes)
+          outcome = { ok: true }
+        } catch {
+          outcome = { ok: false, error: 'não consegui salvar a cópia do arquivo' }
+        }
+      }
+      blackbox.record({
+        cat: 'pane',
+        event: 'gui-attachment-action',
+        actor: 'user',
+        ids: { paneId },
+        detail: { action, kind: descriptor.kind, ok: outcome.ok }
+      })
+      return outcome
+    }
+  )
 
   return registry
 }

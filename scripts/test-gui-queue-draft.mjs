@@ -70,9 +70,10 @@ test('fila persiste até o ACK e uma lease impede outro renderer de tomar o bilh
   const attachments = [
     {
       id: 'attachment-1',
+      capability: `gui-cap-v1-${'A'.repeat(43)}`,
       kind: 'image',
       name: 'print.png',
-      path: 'C:\\work\\.synkora\\attachments\\print.png',
+      mime: 'image/png',
       size: 42
     }
   ]
@@ -223,16 +224,18 @@ test('anexos persistem por pane, removem e atravessam a fila sem virar texto', (
   const attachments = [
     {
       id: 'attachment-image',
+      capability: `gui-cap-v1-${'B'.repeat(43)}`,
       kind: 'image',
       name: 'tela.png',
-      path: 'C:\\work\\.synkora\\attachments\\tela.png',
+      mime: 'image/png',
       size: 120
     },
     {
       id: 'attachment-folder',
+      capability: `gui-cap-v1-${'C'.repeat(43)}`,
       kind: 'folder',
       name: 'src',
-      path: 'C:\\work\\src',
+      mime: null,
       size: null
     }
   ]
@@ -249,6 +252,34 @@ test('anexos persistem por pane, removem e atravessam a fila sem virar texto', (
   assert.deepEqual(readGuiQueuedMessage('pane-a', storage)?.attachments, attachments)
   removeGuiComposerAttachments('pane-a', storage)
   assert.deepEqual(readGuiComposerAttachments('pane-a', storage), [])
+
+  const forgedWithPath = { ...attachments[1], path: 'C:\\pasta-existente' }
+  storage.setItem(
+    'synkora.guiAttachments.pane-forged',
+    JSON.stringify({ v: 2, attachments: [forgedWithPath], updatedAt: 3 })
+  )
+  assert.deepEqual(
+    readGuiComposerAttachments('pane-forged', storage),
+    [],
+    'path forjado não sobrevive nem como metadado visível do composer'
+  )
+  storage.setItem(
+    'synkora.guiQueue.pane-forged',
+    JSON.stringify({ ...queued, v: 2, attachments: [forgedWithPath] })
+  )
+  assert.equal(readGuiQueuedMessage('pane-forged', storage), null)
+
+  const forgedName = { ...attachments[1], name: 'C:\\Users\\Pessoa\\segredo' }
+  storage.setItem(
+    'synkora.guiAttachments.pane-name-forged',
+    JSON.stringify({ v: 2, attachments: [forgedName], updatedAt: 4 })
+  )
+  assert.deepEqual(readGuiComposerAttachments('pane-name-forged', storage), [])
+  storage.setItem(
+    'synkora.guiQueue.pane-name-forged',
+    JSON.stringify({ ...queued, v: 2, attachments: [forgedName] })
+  )
+  assert.equal(readGuiQueuedMessage('pane-name-forged', storage), null)
 })
 
 test('storage indisponível degrada para memória sem derrubar draft, anexos ou fila', () => {
@@ -376,9 +407,10 @@ test('composer só limpa a fotografia aceita e preserva texto ou anexos em falha
   const sentAttachments = [
     {
       id: 'attachment-sent',
+      capability: `gui-cap-v1-${'D'.repeat(43)}`,
       kind: 'file',
       name: 'notas.txt',
-      path: 'C:\\work\\.synkora\\attachments\\notas.txt',
+      mime: 'text/plain',
       size: 12
     }
   ]

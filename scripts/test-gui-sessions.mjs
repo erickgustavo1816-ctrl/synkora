@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync
@@ -43,11 +44,16 @@ import {
   GUI_ATTACHMENT_MAX_BASE64_CHARS,
   GUI_ATTACHMENT_MAX_FILES,
   GUI_ATTACHMENT_MAX_TOTAL_BYTES,
+  GUI_ATTACHMENT_IMAGE_MAX_DIMENSION,
+  GUI_ATTACHMENT_IMAGE_MAX_PIXELS,
   attachPayloadProblem,
   attachmentBase64Problem,
   attachmentTooLargeError,
   base64ByteLength,
   guiAttachmentKindForName,
+  guiAttachmentMediaType,
+  guiAttachmentOpenProblem,
+  guiSafeImageInfo,
   isGuiAttachmentDescriptor,
   safeAttachmentName,
   stripDataUrlPrefix,
@@ -66,6 +72,7 @@ import {
   validateGuiAttachmentReferences,
   writeGuiAttachmentExclusive
 } from '../.tmp/gui-sessions-test/guiAttachmentStorage.js'
+import { GuiAttachmentCapabilityStore } from '../.tmp/gui-sessions-test/guiAttachmentCapabilities.js'
 
 test('permissão permanente mostra e grava apenas a regra Bash estreita', () => {
   assert.equal(
@@ -1965,6 +1972,29 @@ test('o teto de 10 MB recusa em PT-BR e nomeia o limite', () => {
   assert.match(msg, /grande demais/, 'texto de UI em PT-BR, não jargão em inglês')
 })
 
+test('MIME de imagem vem da assinatura e dimensões absurdas não chegam ao decoder', () => {
+  const valid = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x03, 0x00
+  ])
+  assert.deepEqual(guiAttachmentMediaType('enganosa.txt', valid), {
+    kind: 'image',
+    mime: 'image/png'
+  })
+
+  const bomb = Buffer.from(valid)
+  bomb.writeUInt32BE(GUI_ATTACHMENT_IMAGE_MAX_DIMENSION, 16)
+  bomb.writeUInt32BE(Math.ceil(GUI_ATTACHMENT_IMAGE_MAX_PIXELS / GUI_ATTACHMENT_IMAGE_MAX_DIMENSION) + 1, 20)
+  assert.equal(guiSafeImageInfo(bomb), undefined)
+  assert.deepEqual(guiAttachmentMediaType('bomba.png', bomb), {
+    kind: 'file',
+    mime: 'application/octet-stream'
+  })
+  assert.match(guiAttachmentOpenProblem('script.svg', 'application/octet-stream'), /só pode ser baixado/u)
+  assert.equal(guiAttachmentOpenProblem('relatorio.pdf', 'application/pdf'), undefined)
+})
+
 test('data URL não vira bytes corrompidos', () => {
   assert.equal(stripDataUrlPrefix('data:image/png;base64,QUJD'), 'QUJD')
   assert.equal(stripDataUrlPrefix('data:;base64,QUJD'), 'QUJD')
@@ -1985,6 +2015,11 @@ test('payload torto é recusado antes de tocar o disco', () => {
     'anexo sem conteúdo'
   )
   assert.match(attachPayloadProblem({ kind: 'pasta' }), /desconhecido/)
+  assert.doesNotMatch(
+    attachPayloadProblem({ kind: 'C:\\Users\\Pessoa\\segredo' }),
+    /Users|Pessoa|segredo/u,
+    'valor IPC adulterado nunca é refletido como caminho na UI'
+  )
   assert.match(
     attachmentBase64Problem('!'.repeat(GUI_ATTACHMENT_MAX_BASE64_CHARS + 257)),
     /codificado grande demais/u,
@@ -2020,21 +2055,56 @@ test('pasta de anexos recusa junction e criação exclusiva não sobrescreve', (
   }
 })
 
-test('descritores de arquivo, imagem e pasta são revalidados antes do CLI', () => {
+test('capacidade de arquivo, imagem e pasta externa sobrevive reload e falha fechada', () => {
   const root = mkdtempSync(join(tmpdir(), 'synkora-attach-reference-root-'))
   const outside = mkdtempSync(join(tmpdir(), 'synkora-attach-reference-outside-'))
   try {
     const folder = join(root, 'referencias')
     mkdirSync(folder)
     const dir = prepareGuiAttachmentDirectory(root)
-    const image = writeGuiAttachmentExclusive(dir, 'print.png', Buffer.from('png'))
+    const png = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03
+    ])
+    assert.deepEqual(guiSafeImageInfo(png), { mime: 'image/png', width: 2, height: 3 })
+    const image = writeGuiAttachmentExclusive(dir, 'print.png', png)
     const text = writeGuiAttachmentExclusive(dir, 'nota.txt', Buffer.from('nota'))
+    const capabilityFile = join(outside, 'capabilities.json')
+    const capabilities = new GuiAttachmentCapabilityStore(capabilityFile)
+    const imageMedia = guiAttachmentMediaType('print.png', png)
+    const textMedia = guiAttachmentMediaType('nota.txt', Buffer.from('nota'))
+    assert.throws(
+      () =>
+        capabilities.issue('pane-capability', {
+          kind: 'image',
+          path: image,
+          size: png.length,
+          mime: 'application/pdf'
+        }),
+      /metadados públicos/u
+    )
     const input = [
-      { id: 'att-image', kind: 'image', name: 'qualquer.png', path: image, size: 3 },
-      { id: 'att-file', kind: 'file', name: 'qualquer.txt', path: text, size: 4 },
-      { id: 'att-folder', kind: 'folder', name: 'referencias', path: folder, size: null }
+      capabilities.issue('pane-capability', {
+        kind: imageMedia.kind,
+        path: image,
+        size: png.length,
+        mime: imageMedia.mime
+      }),
+      capabilities.issue('pane-capability', {
+        kind: textMedia.kind,
+        path: text,
+        size: 4,
+        mime: textMedia.mime
+      }),
+      capabilities.issue('pane-capability', {
+        kind: 'folder',
+        path: outside,
+        size: null,
+        mime: null
+      })
     ]
-    const checked = validateGuiAttachmentReferences(root, input)
+    const checked = validateGuiAttachmentReferences(root, 'pane-capability', input, capabilities)
     assert.equal(checked.ok, true)
     assert.equal(GUI_ATTACHMENT_MAX_FILES, 20)
     assert.equal(GUI_ATTACHMENT_MAX_TOTAL_BYTES, 50 * 1024 * 1024)
@@ -2044,12 +2114,29 @@ test('descritores de arquivo, imagem e pasta são revalidados antes do CLI', () 
       ['image', 'file', 'folder']
     )
     assert.ok(checked.attachments.every(isGuiAttachmentDescriptor))
+    assert.ok(checked.attachments.every((attachment) => !('path' in attachment)))
+    assert.equal(
+      isGuiAttachmentDescriptor({ ...input[2], name: 'C:\\Users\\Pessoa\\segredo' }),
+      false,
+      'nome adulterado nunca vira caminho visível'
+    )
     assert.equal(guiAttachmentKindForName('foto.WEBP'), 'image')
     assert.equal(guiAttachmentKindForName('relatorio.pdf'), 'file')
-    const prompt = withGuiAttachmentReferences('veja isto', checked.attachments)
+    const prompt = withGuiAttachmentReferences('veja isto', checked.resolved)
     assert.match(prompt, /\[Anexos desta mensagem/u)
     assert.match(prompt, /\[\/Anexos\]/u)
     assert.match(prompt, new RegExp(image.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&'), 'u'))
+
+    // O registro é durável: a mesma capacidade continua válida depois de uma
+    // nova instância (reload/app restart) e pode atravessar a fila do renderer.
+    const reloadedCapabilities = new GuiAttachmentCapabilityStore(capabilityFile)
+    const afterReload = validateGuiAttachmentReferences(
+      root,
+      'pane-capability',
+      input,
+      reloadedCapabilities
+    )
+    assert.equal(afterReload.ok, true)
 
     assert.equal(resolveGuiFolderReference(root, folder).ok, true)
     const escape = resolveGuiFolderReference(root, outside)
@@ -2077,12 +2164,60 @@ test('descritores de arquivo, imagem e pasta são revalidados antes do CLI', () 
     symlinkSync(folder, internalLink, process.platform === 'win32' ? 'junction' : 'dir')
     const throughInternalLink = resolveGuiFolderReference(root, join(internalLink, 'aninhada'))
     assert.equal(throughInternalLink.ok, false, 'link interno também falha fechado')
+    const throughExternalLink = resolveGuiExternalFolderReference(join(internalLink, 'aninhada'))
+    assert.equal(
+      throughExternalLink.ok,
+      false,
+      'pasta externa aninhada também não pode atravessar junction/symlink'
+    )
 
-    const forged = validateGuiAttachmentReferences(root, [
-      { id: 'fora', kind: 'file', name: 'segredo.txt', path: join(outside, 'segredo.txt'), size: 0 }
-    ])
+    const forged = validateGuiAttachmentReferences(
+      root,
+      'pane-capability',
+      [
+        {
+          id: 'fora',
+          capability: `gui-cap-v1-${'A'.repeat(43)}`,
+          kind: 'folder',
+          name: 'pasta-existente',
+          mime: null,
+          size: null,
+          path: outside
+        }
+      ],
+      reloadedCapabilities
+    )
     assert.equal(forged.ok, false)
     if (!forged.ok) assert.doesNotMatch(forged.error, /segredo|outside|root/u)
+
+    const wrongPane = validateGuiAttachmentReferences(
+      root,
+      'outro-pane',
+      [input[2]],
+      reloadedCapabilities
+    )
+    assert.equal(wrongPane.ok, false, 'a capacidade é vinculada ao pane emissor')
+
+    // Mesmo uma pasta legitimamente escolhida deixa de valer se for trocada
+    // por junction/symlink depois da emissão.
+    const swappable = join(root, 'pasta-trocavel')
+    const original = join(root, 'pasta-trocavel-original')
+    mkdirSync(swappable)
+    const swappableDescriptor = capabilities.issue('pane-capability', {
+      kind: 'folder',
+      path: swappable,
+      size: null,
+      mime: null
+    })
+    renameSync(swappable, original)
+    symlinkSync(outside, swappable, process.platform === 'win32' ? 'junction' : 'dir')
+    const swapped = validateGuiAttachmentReferences(
+      root,
+      'pane-capability',
+      [swappableDescriptor],
+      capabilities
+    )
+    assert.equal(swapped.ok, false, 'alvo trocado por link falha fechado')
   } finally {
     rmSync(root, { recursive: true, force: true })
     rmSync(outside, { recursive: true, force: true })
