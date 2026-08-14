@@ -11,6 +11,32 @@ Régua de sempre: UI em PT-BR, código/identificadores em inglês; o chat é
 PAPEL (`--panel` escuro é exclusivo do TerminalPane); TS strict, sem `any`;
 feature nova = módulo novo (nada de inchar `GuiPane.tsx`, que já está grande).
 
+## Estado da entrega (2026-08-14)
+
+- **Entregues:** P1, P3–P12, P14–P17, P19–P21, P23–P26 e P29.
+- **P2 — override do dono:** o feedback de “pensando” fica no fio e, durante o
+  turno, o botão **Parar** ocupa o lugar de Enviar. A faixa de atividade no
+  composer não é mais desejada; o Esc global continua ativo.
+- **P13 — override do dono:** não revelar nem persistir raciocínio interno;
+  mostrar apenas o estado transitório “o agente está pensando”.
+- **P18 — subsumido:** o resultado já abre dentro do próprio card da ferramenta,
+  portanto não há um segundo bloco distante para onde saltar.
+- **P22 — override do dono:** uma única ação discreta copia sempre texto limpo;
+  a opção de markdown foi removida.
+- **P23 — entregue na forma canônica:** o composer abre um painel com tokens
+  exatos, percentual e custo quando disponível; `/status` e o seletor de modelo
+  continuam usando as fontes reais de cada CLI, sem comandos sintéticos.
+- **P27 — adaptado ao produto atual:** a gaveta reúne os avisos e sons globais
+  já suportados. Tema e exibição de raciocínio não foram inventados como novas
+  preferências — o chat permanece papel e P13 foi recusado pelo dono.
+- **P28 — caminho seguro escolhido:** observador passivo e limitado das capturas
+  produzidas no workspace, com começar/parar/expandir. Ele não controla o PC,
+  não abre navegador e não inventa URL, clique ou cursor.
+
+Os textos abaixo preservam o contrato histórico e as ideias originais; quando
+houver divergência, este registro de entrega e os overrides explícitos do dono
+prevalecem.
+
 Referência da onda 1 (já entregue, não repetir): comandos slash, perguntas com
 opções, card de plano, markdown, digitação palavra a palavra, seletores de
 permissão/modelo/effort, card e troca de conta.
