@@ -1,15 +1,40 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { buildCommitGraph, type CommitGraphNode } from '../utils/commitGraph'
 import { missionHistory, type MissionCommit } from '../missionHistory'
+import MissionCommitDiffViewer from './MissionCommitDiffViewer'
+import {
+  commitFileKindView,
+  commitFilePathLabel,
+  ellipsizeMiddle,
+  parseCommitDiff,
+  type CommitDiffSummary
+} from '../guiDiffPresentation'
 
 const ROW_HEIGHT = 74
 const LANE_WIDTH = 24
 
+/** Teto de arquivos listados DENTRO do trilho. Passou disto, a leitura é na
+ *  janela larga — empilhar 60 linhas de 9px aqui não informa ninguém. */
+const RAIL_FILE_CAP = 8
+
+/** Corte do caminho na lista estreita. O trilho vai de 176px a 420px, então o
+ *  teto é calibrado pelo LADO ESTREITO: perder o meio do caminho é barato,
+ *  perder o nome do arquivo (o que a elipse do CSS faria) não é. */
+const RAIL_PATH_CHARS = 34
+
 interface PatchState {
   status: 'loading' | 'ready' | 'error'
-  diff?: string
-  truncated?: boolean
+  /** Já PARSEADO na chegada: o patch cru nunca vira estado nem chega à tela. */
+  summary?: CommitDiffSummary
   error?: string
+}
+
+/** O que o commit abriu na janela larga: uma fotografia própria do patch, para
+ *  a janela não mudar debaixo do leitor se o histórico recarregar. */
+interface ViewerState {
+  commit: MissionCommit
+  summary: CommitDiffSummary
+  focusPath?: string
 }
 
 function formatCommitDate(value: string): string {
@@ -42,20 +67,108 @@ function edgePath(
   return `M ${fromX} ${fromY} C ${fromX} ${fromY + bend}, ${toX} ${toY - bend}, ${toX} ${toY}`
 }
 
+/**
+ * O RESUMO do commit dentro do trilho: um arquivo por linha com o placar de
+ * cada um. Aqui NÃO se desenha diff — cada linha é o botão que abre a janela
+ * larga já olhando para aquele arquivo.
+ */
+function CommitPatchSummary({
+  summary,
+  onOpen
+}: {
+  summary: CommitDiffSummary
+  onOpen: (focusPath?: string) => void
+}): React.JSX.Element {
+  const files = summary.files
+  const shown = files.slice(0, RAIL_FILE_CAP)
+  const rest = files.length - shown.length
+  return (
+    <div className="mh-diff">
+      <div className="mh-diff-totals">
+        <b className="mh-diff-plus">+{summary.insertions}</b>
+        <b className="mh-diff-minus">−{summary.deletions}</b>
+        <span>
+          {files.length} {files.length === 1 ? 'arquivo' : 'arquivos'}
+        </span>
+      </div>
+      {summary.truncated && (
+        <span className="mh-patch-note">
+          patch cortado no teto de leitura; o commit continua intacto no worktree
+        </span>
+      )}
+      {/* Sem arquivo nenhum não há janela para abrir: o botão sumir é mais
+          honesto do que abrir uma superfície vazia. */}
+      {files.length === 0 ? (
+        <span className="mh-patch-note">este commit não tem linhas textuais para exibir</span>
+      ) : (
+        <ul className="mh-diff-files">
+          {shown.map((file, index) => {
+            const kind = commitFileKindView(file.kind)
+            const label = commitFilePathLabel(file)
+            return (
+              <li key={`${index}:${file.path}`}>
+                <button
+                  type="button"
+                  className="mh-diff-file"
+                  data-tip={`${kind.label}: ${label}\n(clique para abrir o diff deste arquivo)`}
+                  onClick={() => onOpen(file.path)}
+                >
+                  <i className={`mh-diff-kind ${kind.cls}`} aria-hidden="true">
+                    {kind.glyph}
+                  </i>
+                  <span className="mh-diff-path">
+                    {ellipsizeMiddle(file.path, RAIL_PATH_CHARS)}
+                  </span>
+                  <span className="mh-diff-score">
+                    <b className="mh-diff-plus">+{file.insertions}</b>
+                    <b className="mh-diff-minus">−{file.deletions}</b>
+                  </span>
+                </button>
+              </li>
+            )
+          })}
+          {rest > 0 && (
+            <li>
+              <span className="mh-diff-rest">
+                … e mais {rest} {rest === 1 ? 'arquivo' : 'arquivos'}
+              </span>
+            </li>
+          )}
+        </ul>
+      )}
+      {files.length > 0 && (
+        <button
+          type="button"
+          className="mh-diff-open"
+          data-tip="Abre o diff completo numa janela larga (Esc fecha)"
+          onClick={() => onOpen(undefined)}
+        >
+          ⤢ abrir diff
+        </button>
+      )}
+    </div>
+  )
+}
+
 function CommitRow({
   node,
   laneWidth,
   expanded,
   patch,
-  onToggle
+  onToggle,
+  onOpenViewer
 }: {
   node: CommitGraphNode
   laneWidth: number
   expanded: boolean
   patch?: PatchState
   onToggle: (commit: MissionCommit) => void
+  onOpenViewer: (commit: MissionCommit, summary: CommitDiffSummary, focusPath?: string) => void
 }): React.JSX.Element {
   const { commit } = node
+  // Fotografia local do resumo: dentro do callback do clique o TS já não
+  // enxergaria o estreitamento de `patch.summary`, e o `!` mentiria.
+  const ready = patch?.status === 'ready' ? patch.summary : undefined
   return (
     <article className={`mh-row${expanded ? ' expanded' : ''}`}>
       <div className="mh-lanes" style={{ width: laneWidth }} aria-hidden="true">
@@ -104,15 +217,11 @@ function CommitRow({
             {patch?.status === 'error' && (
               <span className="mh-patch-error">// {patch.error ?? 'não deu para ler este patch'}</span>
             )}
-            {patch?.status === 'ready' && (
-              <>
-                {patch.truncated && (
-                  <span className="mh-patch-note">
-                    patch cortado no teto de leitura; o commit continua intacto no worktree
-                  </span>
-                )}
-                <pre>{patch.diff || '(este commit não tem linhas textuais para exibir)'}</pre>
-              </>
+            {ready && (
+              <CommitPatchSummary
+                summary={ready}
+                onOpen={(focusPath) => onOpenViewer(commit, ready, focusPath)}
+              />
             )}
             {!patch && <span className="mh-patch-note">preparando patch…</span>}
           </div>
@@ -134,6 +243,7 @@ export default function MissionCommitHistory({
   const [error, setError] = useState<string | null>(null)
   const [expandedSha, setExpandedSha] = useState<string | null>(null)
   const [patches, setPatches] = useState<Record<string, PatchState>>({})
+  const [viewer, setViewer] = useState<ViewerState | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!missionHistory.available()) {
@@ -153,6 +263,8 @@ export default function MissionCommitHistory({
     setCommits(result.commits ?? [])
     setExpandedSha(null)
     setPatches({})
+    // A branch andou: a janela aberta mostraria um patch de antes do sinal.
+    setViewer(null)
   }, [missionId])
 
   useEffect(() => {
@@ -176,13 +288,26 @@ export default function MissionCommitHistory({
         setPatches((current) => ({
           ...current,
           [commit.sha]: result.ok
-            ? { status: 'ready', diff: result.diff ?? '', truncated: result.truncated }
+            ? {
+                status: 'ready',
+                // O patch vira ESTRUTURA na chegada: uma leitura por commit,
+                // e as duas superfícies passam a falar do mesmo modelo.
+                summary: parseCommitDiff(result.diff ?? '', { truncated: result.truncated })
+              }
             : { status: 'error', error: result.error }
         }))
       })
     },
     [expandedSha, missionId, patches]
   )
+
+  const openViewer = useCallback(
+    (commit: MissionCommit, summary: CommitDiffSummary, focusPath?: string): void => {
+      setViewer({ commit, summary, ...(focusPath ? { focusPath } : {}) })
+    },
+    []
+  )
+  const closeViewer = useCallback((): void => setViewer(null), [])
 
   return (
     <section className="mh-history" aria-label="Histórico visual da missão">
@@ -221,10 +346,20 @@ export default function MissionCommitHistory({
                 expanded={expandedSha === node.commit.sha}
                 patch={patches[node.commit.sha]}
                 onToggle={toggle}
+                onOpenViewer={openViewer}
               />
             ))}
           </div>
         </div>
+      )}
+      {viewer && (
+        <MissionCommitDiffViewer
+          key={`${viewer.commit.sha}:${viewer.focusPath ?? ''}`}
+          commit={viewer.commit}
+          summary={viewer.summary}
+          {...(viewer.focusPath ? { focusPath: viewer.focusPath } : {})}
+          onClose={closeViewer}
+        />
       )}
     </section>
   )

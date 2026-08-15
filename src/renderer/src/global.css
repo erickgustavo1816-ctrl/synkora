@@ -8207,24 +8207,17 @@ body.pane-docking .pane-bar.draggable {
   color: var(--accent-deep);
 }
 
+/* O patch CRU saiu daqui (2026-08-15, ordem do dono: "expandi e não dá pra
+   entender nada"). Num trilho de ~200px o diff unificado quebra no meio da
+   linha e nada fica legível — o que cabe aqui é o RESUMO por arquivo; as
+   linhas de verdade vivem na janela larga (.cdv-*). Por isso o painel voltou a
+   ser papel: ele não roda nada, ele lista. */
 .mh-patch-panel {
   margin: 3px 0 4px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: var(--panel);
+  background: var(--paper-2);
   overflow: hidden;
-}
-
-.mh-patch-panel pre {
-  max-height: 260px;
-  margin: 0;
-  padding: 8px;
-  overflow: auto;
-  color: var(--panel-ink);
-  font-family: var(--mono);
-  font-size: 8px;
-  line-height: 1.45;
-  white-space: pre;
 }
 
 .mh-patch-note,
@@ -8238,6 +8231,548 @@ body.pane-docking .pane-bar.draggable {
 
 .mh-patch-error {
   color: var(--err);
+}
+
+.mh-diff {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+  padding: 6px 6px 5px;
+}
+
+.mh-diff-totals {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--ink-3);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mh-diff-plus {
+  color: var(--ok);
+}
+
+.mh-diff-minus {
+  color: var(--err);
+}
+
+.mh-diff-files {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  gap: 1px;
+  list-style: none;
+}
+
+.mh-diff-file {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 5px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mh-diff-file:hover,
+.mh-diff-file:focus-visible {
+  border-color: var(--line-strong);
+  background: var(--card);
+  outline: none;
+}
+
+.mh-diff-kind {
+  flex: none;
+  width: 9px;
+  font-style: normal;
+  font-weight: 800;
+  text-align: center;
+}
+
+.mh-diff-kind.add {
+  color: var(--ok);
+}
+
+.mh-diff-kind.del {
+  color: var(--err);
+}
+
+.mh-diff-kind.mod {
+  color: var(--ink-3);
+}
+
+.mh-diff-kind.mov {
+  color: var(--accent-deep);
+}
+
+.mh-diff-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mh-diff-score {
+  flex: none;
+  display: inline-flex;
+  gap: 4px;
+  font-size: 8.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mh-diff-rest {
+  display: block;
+  padding: 1px 4px;
+  color: var(--ink-3);
+  font-size: 9px;
+}
+
+.mh-diff-open {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 2px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--card);
+  color: var(--accent-deep);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.mh-diff-open:hover,
+.mh-diff-open:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+/* ---------- VISUALIZADOR DE COMMIT: a janela larga (.cdv-*) ----------
+   O diff de verdade mora aqui, no painel escuro: um arquivo por seção, com o
+   cabeçalho grudado no topo enquanto se rola, `+` verde, `−` vermelho e o `@@`
+   como marco discreto. A rolagem horizontal é POR ARQUIVO — nenhuma linha
+   comprida empurra a janela inteira. Somente leitura: não existe aqui nenhuma
+   alavanca que escreva no worktree. */
+/* A folga vertical não é estética: a titlebar do app tem 36px e o `.overlay`
+   base fica ABAIXO dela no empilhamento (z-index 40 × 90). Centrada com 44px de
+   respiro, a janela nunca passa por trás dela. */
+.cdv-overlay {
+  padding: 44px 24px;
+}
+
+.cdv-window {
+  width: min(1280px, 94vw);
+  /* Altura EXPLÍCITA em vez de `100%`: o item de grid centralizado teria a
+     altura resolvida contra a linha implícita, e essa conta é frágil. */
+  height: min(880px, calc(100vh - 88px));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.cdv-head {
+  flex: none;
+  min-width: 0;
+  gap: 12px;
+}
+
+.cdv-heading {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.cdv-heading strong {
+  overflow: hidden;
+  color: var(--panel-ink);
+  font-size: 12.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cdv-meta {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 8px;
+  color: var(--panel-ink-3);
+  font-size: 10px;
+}
+
+.cdv-meta code {
+  color: var(--accent);
+}
+
+.cdv-meta > span,
+.cdv-meta > time {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cdv-readonly {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--panel-line);
+  border-radius: 3px;
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cdv-score {
+  flex: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--panel-ink-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cdv-plus {
+  color: var(--ok);
+}
+
+.cdv-minus {
+  color: var(--err);
+}
+
+.cdv-close {
+  flex: none;
+  text-transform: uppercase;
+}
+
+.cdv-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Índice dos arquivos: a lista de saltos de uma janela larga. Some quando a
+   janela é estreita — ali o espaço é do diff. */
+.cdv-index {
+  flex: none;
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 6px;
+  overflow: auto;
+  border-right: 1px solid var(--panel-line);
+}
+
+.cdv-index-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 6px;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--panel-ink-2);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cdv-index-item:hover,
+.cdv-index-item:focus-visible {
+  border-color: var(--panel-line);
+  background: var(--panel-2);
+  color: var(--panel-ink);
+  outline: none;
+}
+
+.cdv-index-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cdv-index-score {
+  flex: none;
+  display: inline-flex;
+  gap: 5px;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cdv-scroll {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px 24px;
+  overflow: auto;
+}
+
+.cdv-warning {
+  margin: 0 0 10px;
+  padding: 6px 9px;
+  border: 1px solid var(--panel-line);
+  border-radius: 5px;
+  color: var(--warn);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.cdv-file {
+  min-width: 0;
+  margin-bottom: 12px;
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel-2) 60%, var(--panel));
+}
+
+/* Grudado no topo do scroller: rolando 400 linhas, o nome do arquivo continua
+   à vista — era a informação que mais se perdia no paredão anterior. */
+.cdv-file-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  padding: 5px 9px;
+  border-bottom: 1px solid var(--panel-line);
+  border-radius: 6px 6px 0 0;
+  background: var(--panel-2);
+}
+
+.cdv-file-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--panel-ink);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cdv-file-toggle:hover .cdv-file-path,
+.cdv-file-toggle:focus-visible .cdv-file-path {
+  color: var(--accent);
+  outline: none;
+}
+
+.cdv-chevron {
+  flex: none;
+  color: var(--panel-ink-3);
+}
+
+.cdv-kind {
+  flex: none;
+  width: 10px;
+  font-style: normal;
+  font-weight: 800;
+  text-align: center;
+}
+
+.cdv-kind.add {
+  color: var(--ok);
+}
+
+.cdv-kind.del {
+  color: var(--err);
+}
+
+.cdv-kind.mod {
+  color: var(--panel-ink-3);
+}
+
+.cdv-kind.mov {
+  color: var(--accent);
+}
+
+.cdv-file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cdv-file-kind {
+  flex: none;
+  color: var(--panel-ink-3);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.cdv-file-score {
+  flex: none;
+  display: inline-flex;
+  gap: 7px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cdv-note {
+  margin: 0;
+  padding: 7px 10px;
+  color: var(--panel-ink-3);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+/* A rolagem horizontal termina AQUI: linha comprida rola dentro do arquivo, a
+   janela nunca ganha barra própria. */
+.cdv-code {
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+  user-select: text;
+}
+
+.cdv-hunk-head {
+  display: flex;
+  min-width: max-content;
+  gap: 10px;
+  padding: 3px 10px;
+  border-top: 1px solid var(--panel-line);
+  background: color-mix(in srgb, var(--panel-ink) 5%, transparent);
+  color: var(--panel-ink-3);
+  font-size: 10px;
+}
+
+.cdv-hunk:first-child .cdv-hunk-head {
+  border-top: none;
+}
+
+.cdv-hunk-range {
+  color: var(--panel-ink-2);
+}
+
+.cdv-hunk-section {
+  overflow: hidden;
+  color: var(--panel-ink-3);
+  font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cdv-line {
+  display: grid;
+  grid-template-columns: 46px 46px 18px minmax(0, 1fr);
+  align-items: baseline;
+  min-width: max-content;
+}
+
+.cdv-line.add {
+  background: color-mix(in srgb, var(--ok) 17%, transparent);
+}
+
+.cdv-line.remove {
+  background: color-mix(in srgb, var(--err) 17%, transparent);
+}
+
+.cdv-line.note {
+  color: var(--panel-ink-3);
+  font-style: italic;
+}
+
+.cdv-num {
+  padding-right: 8px;
+  color: var(--panel-ink-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.cdv-sign {
+  color: var(--panel-ink-3);
+  text-align: center;
+  font-weight: 800;
+  user-select: none;
+}
+
+.cdv-line.add .cdv-sign {
+  color: var(--ok);
+}
+
+.cdv-line.remove .cdv-sign {
+  color: var(--err);
+}
+
+.cdv-line code {
+  padding-right: 16px;
+  color: var(--panel-ink);
+  font: inherit;
+  white-space: pre;
+}
+
+.cdv-more {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  border-top: 1px solid var(--panel-line);
+  border-radius: 0 0 6px 6px;
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.cdv-more:hover,
+.cdv-more:focus-visible {
+  background: var(--panel-2);
+  outline: none;
+}
+
+@media (max-width: 980px) {
+  .cdv-overlay {
+    padding: 44px 12px;
+  }
+
+  .cdv-window {
+    height: min(880px, calc(100vh - 88px));
+  }
+
+  /* Janela estreita: o espaço é do diff, não do índice de saltos. */
+  .cdv-index {
+    display: none;
+  }
 }
 
 .dr-facts {
