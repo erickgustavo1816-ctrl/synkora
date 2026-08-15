@@ -434,27 +434,46 @@ function asksForGo(text: string): boolean {
   return ASK_RE.test(trimmed.slice(-320))
 }
 
+/** Os dois glifos do botão de envio moram na MESMA grade de 16, desenhados à
+ *  mão em SVG inline — sem emoji, sem biblioteca de ícones. Mesma caixa nos dois
+ *  estados: trocar enviar por interromper no meio do turno não move um pixel do
+ *  rodapé. O traço de 2 unidades cai em pixel inteiro no tamanho de render, que
+ *  é o que mantém a seta nítida ao lado da tipografia mono. */
 function SendGlyph(): React.JSX.Element {
   return (
     <svg
-      viewBox="0 0 24 24"
-      width="15"
-      height="15"
+      className="gui-send-glyph"
+      viewBox="0 0 16 16"
+      width="16"
+      height="16"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2.1"
+      strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
+      focusable="false"
     >
-      <path d="M4.5 12h13.5" />
-      <path d="m12.5 5.5 6.5 6.5-6.5 6.5" />
+      <path d="M3 8h9" />
+      <path d="m8.5 4.5 3.5 3.5-3.5 3.5" />
     </svg>
   )
 }
 
 function StopGlyph(): React.JSX.Element {
-  return <span className="gui-send-stop-icon" aria-hidden="true" />
+  return (
+    <svg
+      className="gui-send-glyph"
+      viewBox="0 0 16 16"
+      width="16"
+      height="16"
+      fill="currentColor"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <rect x="4" y="4" width="8" height="8" rx="1.5" />
+    </svg>
+  )
 }
 
 function readGuiFileBase64(file: File): Promise<string> {
@@ -1975,8 +1994,14 @@ export default function GuiPane({
                 </div>
               )}
 
+              {/* UMA peça em dois estados: mesma caixa, mesmo lugar, mesma
+                  grade dos controles ao lado. Enviar é a decisão do dono (por
+                  isso o acento); interromper fala pela cor do erro, em voz
+                  baixa — contorno tingido, nunca um botão vermelho cheio
+                  piscando para quem só está lendo a resposta. */}
               <button
                 className={`gui-sq gui-send${activityRunning ? ' stop' : ''}`}
+                type="button"
                 disabled={
                   activityRunning
                     ? false
@@ -1984,7 +2009,7 @@ export default function GuiPane({
                 }
                 data-tip={
                   activityRunning
-                    ? 'Parar resposta · Esc'
+                    ? 'Interromper resposta · Esc'
                     : opening
                       ? 'Aguarde a conversa abrir'
                       : turnOpen
@@ -1995,7 +2020,7 @@ export default function GuiPane({
                 }
                 aria-label={
                   activityRunning
-                    ? 'Parar resposta'
+                    ? 'Interromper resposta'
                     : turnOpen
                       ? 'Colocar mensagem na fila'
                       : 'Enviar mensagem'

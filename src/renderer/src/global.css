@@ -19709,20 +19709,58 @@ details.gui-error-line {
   line-height: 1.35;
 }
 
+/* ENVIAR e INTERROMPER são a MESMA peça em dois estados: mesma caixa de 30px,
+   mesmo raio de 6px, mesma linha dos controles ao lado (anexo, permissão,
+   modelo, effort) — a fileira inteira do rodapé bate na mesma altura. O disco
+   laranja de 38px que morava aqui era a única forma redonda do produto: em
+   papel & painel a ação é retângulo de canto suave com borda de tinta, e o
+   acento marca a DECISÃO do dono, não o formato. Trocar enviar por interromper
+   no meio do turno não muda um pixel do rodapé. */
 .gui-send {
   grid-area: send;
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
   background: var(--accent);
-  border-color: var(--accent);
+  border-color: var(--accent-deep);
   color: #fff;
+  transition:
+    border-color 120ms ease,
+    color 120ms ease,
+    background 120ms ease,
+    transform 120ms ease;
+}
+
+.gui-send-glyph {
+  display: block;
+  transition: transform 120ms ease;
 }
 
 .gui-send:hover:not(:disabled) {
   background: var(--accent-deep);
   border-color: var(--accent-deep);
   color: #fff;
+}
+
+/* Micro-interação contida: a seta ANDA um fio para a direita — a mensagem
+   saindo. Nada pisca, nada cresce, e o quadrado do interromper nunca anda. */
+.gui-send:not(.stop):hover:not(:disabled) .gui-send-glyph {
+  transform: translateX(1px);
+}
+
+.gui-send:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-deep) 86%, var(--ink));
+  border-color: color-mix(in srgb, var(--accent-deep) 86%, var(--ink));
+  transform: translateY(1px);
+}
+
+.gui-send:not(.stop):active:not(:disabled) .gui-send-glyph {
+  transform: translateX(2px);
+}
+
+.gui-send:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, var(--card));
+  outline-offset: 2px;
 }
 
 .gui-send:disabled {
@@ -19733,27 +19771,57 @@ details.gui-error-line {
 }
 
 .gui-send.stop {
-  background: color-mix(in srgb, var(--accent) 7%, var(--card));
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--gui-line-strong));
-  color: var(--accent-deep);
+  background: color-mix(in srgb, var(--err) 8%, var(--card));
+  border-color: color-mix(in srgb, var(--err) 38%, var(--gui-line-strong));
+  color: var(--err);
 }
 
 .gui-send.stop:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 14%, var(--card));
-  border-color: var(--accent);
-  color: var(--accent-deep);
+  background: color-mix(in srgb, var(--err) 15%, var(--card));
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.gui-send.stop:active:not(:disabled) {
+  background: color-mix(in srgb, var(--err) 22%, var(--card));
+  border-color: var(--err);
+  color: var(--err);
+  transform: translateY(1px);
 }
 
 .gui-send.stop:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 72%, var(--card));
+  outline: 2px solid color-mix(in srgb, var(--err) 72%, var(--card));
   outline-offset: 2px;
 }
 
-.gui-send-stop-icon {
-  width: 8px;
-  height: 8px;
-  border-radius: 1.5px;
-  background: currentColor;
+@media (prefers-reduced-motion: reduce) {
+  .gui-send,
+  .gui-send-glyph {
+    transition: none;
+  }
+
+  .gui-send:active:not(:disabled),
+  .gui-send.stop:active:not(:disabled),
+  .gui-send:not(.stop):hover:not(:disabled) .gui-send-glyph,
+  .gui-send:not(.stop):active:not(:disabled) .gui-send-glyph {
+    transform: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .gui-send {
+    border-color: ButtonText;
+  }
+
+  .gui-send:disabled {
+    color: GrayText;
+    border-color: GrayText;
+  }
+
+  .gui-send:focus-visible,
+  .gui-send.stop:focus-visible {
+    outline-color: Highlight;
+  }
 }
 
 /* ---- o chat cabe em pane estreito sem virar sopa ---- */

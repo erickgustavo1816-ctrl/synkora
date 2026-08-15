@@ -474,5 +474,8 @@ test('acoes da fila têm hover/foco contrastantes e disabled honesto durante o e
   assert.match(card, /className="term-btn ghost-dim" disabled=\{sending\}[\s\S]*aria-label="Apagar mensagem da fila"/u)
   assert.match(css, /\.gui-queued-message-actions \.term-btn\.ghost-dim:hover:not\(:disabled\)[\s\S]*color: var\(--ink\)[\s\S]*border-color:[^;]*var\(--accent\)/u)
   assert.match(css, /\.gui-queued-message-actions \.term-btn\.ghost-dim:focus-visible[\s\S]*outline: 2px solid/u)
-  assert.match(css, /\.gui-queued-message-actions \.term-btn\.ghost-dim:disabled,\n\.gui-queued-message-actions \.term-btn\.ghost-dim:disabled:hover,\n\.gui-queued-message-actions \.term-btn\.ghost-dim:disabled:focus-visible[\s\S]*cursor: not-allowed/u)
+  // `\r?\n`: a árvore é conferida com core.autocrlf, então a folha chega em
+  // CRLF e o `\n` cravado entre os seletores nunca casava. A asserção é a
+  // mesma — os três seletores adjacentes e o cursor honesto.
+  assert.match(css, /\.gui-queued-message-actions \.term-btn\.ghost-dim:disabled,\r?\n\.gui-queued-message-actions \.term-btn\.ghost-dim:disabled:hover,\r?\n\.gui-queued-message-actions \.term-btn\.ghost-dim:disabled:focus-visible[\s\S]*cursor: not-allowed/u)
 })

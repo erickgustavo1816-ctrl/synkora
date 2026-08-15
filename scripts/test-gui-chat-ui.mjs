@@ -1654,7 +1654,14 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
   assert.doesNotMatch(pane, /GuiActivityBar/u, 'o cronômetro não ocupa mais o rodapé do composer')
   assert.doesNotMatch(css, /grid-area:\s*activity/u)
   assert.match(css, /\.gui-input\s*\{[^}]*background: transparent[^}]*border: 0/su)
-  assert.match(css, /\.gui-send\s*\{[^}]*border-radius: 50%/su)
+  // O envio entra na fileira do rodapé como os vizinhos: mesma caixa de 30px e
+  // o raio de 6px da família. O disco redondo de 38px era a única forma
+  // circular do produto e não volta.
+  const sendRule = css.slice(css.indexOf('.gui-send {'), css.indexOf('.gui-send-glyph {'))
+  assert.match(sendRule, /width: 30px/u)
+  assert.match(sendRule, /height: 30px/u)
+  assert.match(sendRule, /border-radius: 6px/u)
+  assert.doesNotMatch(css, /\.gui-send\s*\{[^}]*border-radius: 50%/su)
   assert.match(pane, /aria-label="Adicionar anexo"/u)
   assert.match(pane, /type="file"[\s\S]*multiple/u)
   assert.match(pane, /guiApi\.attach\(paneId, \{[\s\S]*kind: 'file'/u)
@@ -1751,14 +1758,52 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
     /@container pane \(max-width: 430px\)[\s\S]*?\.gui-mode-menu\s*\{[^}]*width: min\(240px, calc\(100cqw - 40px\)\);[^}]*min-width: 0;/u
   )
   assert.match(pane, /activityRunning \? ' stop' : ''/u)
-  assert.match(pane, /aria-label=\{\s*activityRunning\s*\? 'Parar resposta'/u)
+  assert.match(pane, /aria-label=\{\s*activityRunning\s*\? 'Interromper resposta'/u)
   assert.match(pane, /aria-keyshortcuts=\{activityRunning \? 'Escape' : undefined\}/u)
   assert.match(pane, /onClick=\{activityRunning \? \(\) => void interruptGuiPane\(paneId\) : submit\}/u)
   assert.match(pane, /activityRunning \? <StopGlyph \/> : <SendGlyph \/>/u)
-  assert.match(css, /\.gui-send-stop-icon\s*\{[^}]*width: 8px[^}]*height: 8px/su)
-  assert.match(css, /\.gui-send\.stop\s*\{[^}]*background: color-mix\(in srgb, var\(--accent\) 7%, var\(--card\)\)/su)
-  assert.match(css, /\.gui-send\.stop:hover:not\(:disabled\)\s*\{[^}]*border-color: var\(--accent\)/su)
+  // Glifos desenhados à mão na mesma grade de 16: nada de emoji, nada de
+  // biblioteca de ícones, e a MESMA caixa nos dois estados — trocar enviar por
+  // interromper no meio do turno não pode empurrar o rodapé.
+  const sendGlyph = pane.slice(
+    pane.indexOf('function SendGlyph'),
+    pane.indexOf('function StopGlyph')
+  )
+  const stopGlyph = pane.slice(
+    pane.indexOf('function StopGlyph'),
+    pane.indexOf('function readGuiFileBase64')
+  )
+  for (const glyph of [sendGlyph, stopGlyph]) {
+    assert.match(glyph, /<svg[\s\S]*className="gui-send-glyph"/u)
+    assert.match(glyph, /viewBox="0 0 16 16"[\s\S]*width="16"[\s\S]*height="16"/u)
+    assert.match(glyph, /aria-hidden="true"/u)
+  }
+  assert.match(sendGlyph, /<path d="M3 8h9" \/>/u)
+  assert.match(stopGlyph, /<rect x="4" y="4" width="8" height="8" rx="1\.5" \/>/u)
+  assert.doesNotMatch(css, /\.gui-send-stop-icon/u)
+  assert.doesNotMatch(css, /\.gui-send\.stop\s*\{[^}]*(?:width|height):/su)
+  // Jogo completo de estados no enviar: repouso, hover, pressionado, foco de
+  // teclado e desabilitado com o composer vazio.
+  assert.match(css, /\.gui-send:hover:not\(:disabled\)\s*\{[^}]*background: var\(--accent-deep\)/su)
+  assert.match(css, /\.gui-send:active:not\(:disabled\)\s*\{[^}]*transform: translateY\(1px\)/su)
+  assert.match(css, /\.gui-send:focus-visible\s*\{[^}]*outline: 2px solid/su)
+  assert.match(css, /\.gui-send:disabled\s*\{[^}]*color: var\(--ink-3\)/su)
+  assert.match(
+    css,
+    /\.gui-send:not\(\.stop\):hover:not\(:disabled\) \.gui-send-glyph\s*\{[^}]*transform: translateX\(1px\)/su,
+    'a seta anda um fio ao enviar; o quadrado do interromper nunca anda'
+  )
+  // Interromper fala pela família do ERRO, em voz baixa: contorno tingido.
+  assert.match(css, /\.gui-send\.stop\s*\{[^}]*background: color-mix\(in srgb, var\(--err\) 8%, var\(--card\)\)/su)
+  assert.match(css, /\.gui-send\.stop\s*\{[^}]*color: var\(--err\)/su)
+  assert.match(css, /\.gui-send\.stop:hover:not\(:disabled\)\s*\{[^}]*border-color: var\(--err\)/su)
+  assert.match(css, /\.gui-send\.stop:active:not\(:disabled\)\s*\{[^}]*transform: translateY\(1px\)/su)
   assert.match(css, /\.gui-send\.stop:focus-visible\s*\{[^}]*outline: 2px solid/su)
+  assert.match(
+    css,
+    /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]{0,120}?\.gui-send-glyph\s*\{[^}]*transition: none/su,
+    'quem pede menos movimento não recebe nudge nem press'
+  )
   assert.match(pane, /role="combobox"/u)
   assert.match(pane, /aria-controls=\{slashOpen \? slashMenuId : undefined\}/u)
   assert.match(pane, /`\$\{slashMenuId\}-option-\$\{slashIndex\}`/u)
