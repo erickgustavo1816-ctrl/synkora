@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
   useStore,
   type BacklogItem,
@@ -293,14 +293,17 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   const setUniverseTab = useStore((s) => s.setUniverseTab)
   const projPanes = useStore((s) => s.panesByProject[projectId])
   const closePane = useStore((s) => s.closePane)
+  // Mesmo retrato do card da Home (recorte por versão): a Home fica montada
+  // com o projeto aberto e os canais *:changed dela mantêm isto fresco; aqui
+  // só garantimos a primeira leitura quando o dono entra direto na aba.
+  const stats = useStore((s) => s.homeStats[projectId])
+  const loadHomeStats = useStore((s) => s.loadHomeStats)
 
   const [versions, setVersions] = useState<Version[]>([])
   const [items, setItems] = useState<BacklogItem[]>([])
   // sempre uma versão selecionada — a caixa "sem versão" morreu (confundia)
   const [selVersion, setSelVersion] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [niTitle, setNiTitle] = useState('')
-  const [niType, setNiType] = useState<BacklogItemType>('feature')
   const [confirmRemove, setConfirmRemove] = useState<Version | null>(null)
   // confirmação NOSSA para excluir itens selecionados (clique sem querer)
   const [confirmRemoveItems, setConfirmRemoveItems] = useState<BacklogItem[] | null>(null)
@@ -344,6 +347,10 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
     })
   }, [projectId, refresh])
 
+  useEffect(() => {
+    if (!stats) void loadHomeStats(projectId)
+  }, [stats, loadHomeStats, projectId])
+
   if (!bridgeOk) {
     return (
       <div className="ws-empty">
@@ -363,6 +370,11 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   }
   const selectable = shown.filter((i) => i.status === 'pendente')
   const picked = shown.filter((i) => selected.has(i.id) && i.status === 'pendente')
+  // Trabalho vivo FORA de qualquer versão (tarefa solta em execução/QA) — só
+  // aparece quando existe, para não sumir com trabalho de verdade.
+  const avulsas = stats
+    ? Math.max(0, stats.emCurso - stats.versoes.reduce((a, v) => a + v.emExec, 0))
+    : 0
 
   // Criação AUTOMÁTICA de versão (decisão do usuário): nada de digitar
   // número — as opções são calculadas da versão mais alta (patch/minor/major)
@@ -404,17 +416,6 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
     if (!window.synkora.backlog) return
     const created = await window.synkora.backlog.createVersion(projectId, { name })
     if (created) setSelVersion(created.id)
-    await refresh()
-  }
-
-  async function addItem(): Promise<void> {
-    if (!niTitle.trim() || !window.synkora.backlog) return
-    await window.synkora.backlog.createItem(projectId, {
-      title: niTitle.trim(),
-      type: niType,
-      versionId: selVersion ?? undefined
-    })
-    setNiTitle('')
     await refresh()
   }
 
@@ -509,6 +510,57 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
           <span className="vs-indev">em desenvolvimento: {inDev.map((v) => v.name).join(' · ')}</span>
         )}
       </div>
+
+      {/* RETRATO POR VERSÃO — mudou de casa (ordem do dono, 2026-08-15): ele
+          ocupava a página ✦ geral inteira ("uma página inteira para aquilo não
+          faz sentido") e agora mora aqui, colado nas versões que descreve. Os
+          números são os MESMOS do card da Home (homeStats é global e os canais
+          *:changed o mantêm fresco) — nada é recalculado nesta tela. */}
+      {stats && stats.versoes.length > 0 && (
+        <div className="vs-stats">
+          <div className="vs-stats-grid">
+            {stats.versoes.map((v) => (
+              <Fragment key={v.name}>
+                <span
+                  className={`vs-stat-name${v.lancada ? ' released' : ''}`}
+                  data-tip={
+                    v.lancada
+                      ? 'Já lançada — o que ela entregou (está na main)'
+                      : 'Versão aberta em construção'
+                  }
+                >
+                  ◈ {v.name}
+                </span>
+                <div
+                  className="stat-tile"
+                  data-tip={`missões entregues na ${v.name} / total (entregues + vivas)`}
+                >
+                  <span className="stat-num">
+                    {v.missoesTotal > 0 ? `${v.missoesFeitas}/${v.missoesTotal}` : '0'}
+                  </span>
+                  <span className="stat-label">missões</span>
+                </div>
+                <div className="stat-tile hot" data-tip={`tarefas da ${v.name} em execução/QA agora`}>
+                  <span className="stat-num">{v.emExec}</span>
+                  <span className="stat-label">em execução</span>
+                </div>
+                <div
+                  className="stat-tile ok"
+                  data-tip={`tarefas das missões da ${v.name} — concluídas/total`}
+                >
+                  <span className="stat-num">{v.total > 0 ? `${v.feitas}/${v.total}` : '0'}</span>
+                  <span className="stat-label">concluídas</span>
+                </div>
+              </Fragment>
+            ))}
+          </div>
+          {avulsas > 0 && (
+            <span className="vs-stats-loose">
+              ✧ {avulsas} em execução fora de versão (tarefas soltas)
+            </span>
+          )}
+        </div>
+      )}
 
       {releaseMsg && (
         <div className="mission-msg">
@@ -724,34 +776,20 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
           </div>
         )}
 
-        {launched ? (
+        {launched && (
           <div className="bl-launched-note">
             ✓ esta versão já está na main — histórico read-only; trabalho novo vai na próxima
             versão
           </div>
-        ) : (
-          <div className="bl-quickadd">
-            <Select
-              value={niType}
-              onChange={(v) => setNiType(v as BacklogItemType)}
-              options={[
-                { value: 'feature', label: '✨ feature' },
-                { value: 'bug', label: '🐛 bug' },
-                { value: 'melhoria', label: '🔧 melhoria' }
-              ]}
-            />
-            <input
-              placeholder={`+ item na ${version?.name ?? 'versão corrente'} — o que precisa ser feito?`}
-              value={niTitle}
-              onChange={(e) => setNiTitle(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void addItem()}
-            />
-          </div>
         )}
 
-        {shown.length === 0 && (
-          <div className="files-empty">nenhum item aqui ainda — despeje as ideias acima</div>
-        )}
+        {/* QUICK-ADD REMOVIDO (ordem do dono, 2026-08-15): "não faz sentido eu
+            criar uma 'feature' aqui dentro do versionamento — se eu quero algo
+            eu crio direto, ou pelo mapa (um planejador cria), ou pelo botão de
+            nova missão". Item de backlog continua existindo e sendo gerenciado
+            aqui (mover de versão, virar missão, excluir) — o que morreu foi a
+            digitação avulsa nesta tela. Quem cria item agora é o planejador,
+            pelo main (missionEngine). */}
 
         <div className="bl-list">
           {shown.map((item) => {

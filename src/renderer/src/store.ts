@@ -2646,6 +2646,9 @@ export const useStore = create<SynkoraState>((set, get) => ({
       maestroStateLoaded: false,
       // Entrar num projeto SEMPRE pousa no board ✦ geral (pedido do usuário,
       // 2026-07-28) — a última aba/missão visitada não gruda entre visitas.
+      // E o ✦ geral É a landing do universo desde 2026-08-15: o centro dele
+      // convida a criar missão (ProjectGeneral), que é o que o dono quer ver
+      // ao abrir um projeto.
       ...(id
         ? {
             universeTabByProject: { ...s.universeTabByProject, [id]: 'board' as const },

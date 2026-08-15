@@ -7005,14 +7005,6 @@ body.pane-docking .pane-bar.draggable {
   cursor: default;
 }
 
-.pg-avatar-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
 .pg-photo-remove {
   background: none;
   border: none;
@@ -7021,6 +7013,9 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink-3);
   cursor: pointer;
   padding: 0;
+  /* coluna estreita quebrava o rótulo em "×" / "remover" */
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .pg-photo-remove:hover {
@@ -8809,23 +8804,9 @@ body.pane-docking .pane-bar.draggable {
   flex: 1 1 380px;
 }
 
-/* ✦ geral em modo palco: o retrato do projeto é conteúdo SECUNDÁRIO ao lado
-   do convite de planejamento — os números que importam subiram para os chips
-   da barra do universo (mockup: "nunca um cartão ocupando o centro"). */
-.board-main.stage-mode .project-general {
-  font-size: 11px;
-}
-
-.board-main.stage-mode .pg-identity {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-}
-
-.board-main.stage-mode .pg-avatar {
-  width: 54px;
-  height: 54px;
-}
+/* 2026-08-15: as regras de `.project-general` em modo palco morreram — o ✦
+   geral nunca liga o `stage-mode` (ele depende de missão selecionada) e o
+   convite de missão que vive ali não precisa encolher. */
 
 /* ---------- O PALCO EM PAPEL (mockup 2026-08-14) ----------
    "O erro a nunca repetir: o chat NÃO é um painel escuro de terminal — o chat
@@ -11124,6 +11105,83 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink-2);
 }
 
+/* RETRATO POR VERSÃO (2026-08-15): veio da página ✦ geral, que o dono aposentou
+   ("uma página inteira para aquilo não faz sentido"). Faixa compacta no topo da
+   aba: uma LINHA por versão, colunas alinhadas num grid único — Fragment por
+   versão, porque um wrapper por linha desalinharia as colunas entre versões. */
+.vs-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 10px 14px;
+}
+
+.vs-stats-grid {
+  display: grid;
+  grid-template-columns: auto repeat(3, minmax(92px, auto));
+  gap: 6px 8px;
+  align-items: stretch;
+  justify-content: start;
+}
+
+.vs-stat-name {
+  min-width: 0;
+  max-width: 100%;
+  align-self: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 2px;
+}
+
+.vs-stat-name.released {
+  color: var(--ok);
+}
+
+.vs-stats-grid .stat-tile {
+  padding: 6px 8px;
+}
+
+.vs-stats-grid .stat-num {
+  font-size: 16px;
+}
+
+.vs-stats-loose {
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+/* A aba Versões ocupa a largura inteira do workspace, então quem manda aqui é
+   a JANELA — nada de `container-type` no `.backlog-view`: ele hospeda os modais
+   `.overlay` (position: fixed) e a contenção o transformaria em bloco contentor
+   deles, prendendo a modal dentro da aba. */
+@media (max-width: 760px) {
+  .vs-stats-grid {
+    grid-template-columns: auto repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .vs-stats-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .vs-stat-name {
+    grid-column: 1 / -1;
+  }
+
+  .vs-stats-grid .stat-tile {
+    min-width: 0;
+    padding-inline: 4px;
+  }
+}
+
 .vs-body {
   flex: 1;
   min-height: 0;
@@ -11361,37 +11419,10 @@ body.pane-docking .pane-bar.draggable {
   overflow: hidden;
 }
 
-.bl-quickadd {
-  display: flex;
-  gap: 8px;
-}
-
-.bl-quickadd select {
-  font-family: var(--mono);
-  font-size: 12px;
-  border: 1.5px solid var(--line-strong);
-  border-radius: 7px;
-  background: #fffdf6;
-  color: var(--ink);
-  padding: 7px 8px;
-}
-
-.bl-quickadd input {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--mono);
-  font-size: 12px;
-  padding: 8px 11px;
-  border: 1.5px dashed var(--line-strong);
-  border-radius: 7px;
-  background: transparent;
-  color: var(--ink);
-  outline: none;
-}
-
-.bl-quickadd input:focus {
-  border-color: var(--ink);
-}
+/* 2026-08-15: o QUICK-ADD de item saiu da aba Versões por ordem do dono ("não
+   faz sentido criar uma feature aqui dentro do versionamento") — com ele
+   morreram .bl-quickadd e seus filhos. Item de backlog segue nascendo pelo
+   planejador (main) e sendo gerenciado na lista abaixo. */
 
 .bl-list {
   flex: 1;
@@ -11477,8 +11508,10 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink-3);
 }
 
-/* aba geral sem kanban: dica do PO */
-/* ---------- página GERAL do projeto (F3.9) ---------- */
+/* ---------- ✦ GERAL: o convite da missão (2026-08-15) ----------
+   A landing do universo é a pessoa criando missão (ordem do dono). O retrato
+   por versão que morava aqui foi para a aba Versões; o que resta é o convite
+   e, discreta no rodapé, a foto do universo. */
 
 .project-general {
   display: flex;
@@ -11486,26 +11519,78 @@ body.pane-docking .pane-bar.draggable {
   gap: 12px;
 }
 
+.pg-start {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  /* o cartão acompanha a linha de leitura do texto — esticado na coluna
+     inteira ele ficava com metade vazia à direita */
+  max-width: 660px;
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  border-radius: 10px;
+  padding: 18px 20px;
+}
+
+.pg-start-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.pg-start-text {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.pg-start-text b {
+  color: var(--ink);
+}
+
+/* mesma roupa do código inline do resto do app (.md-view code) */
+.pg-start-text code {
+  font-family: inherit;
+  font-size: 11px;
+  background: rgba(38, 36, 31, 0.08);
+  border: 1px solid rgba(38, 36, 31, 0.14);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.pg-start-cta {
+  margin-top: 2px;
+}
+
+/* Rodapé de identidade: linha fina, sem cartão — o cartão é do convite. */
 .pg-identity {
   display: flex;
   align-items: center;
-  gap: 14px;
-  background: var(--card);
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  padding: 14px 16px;
+  gap: 10px;
+  padding: 0 2px;
+}
+
+.pg-identity-hint {
+  font-size: 10.5px;
+  color: var(--ink-3);
 }
 
 .pg-avatar {
-  width: 64px;
-  height: 64px;
+  width: 40px;
+  height: 40px;
   padding: 0; /* padding UA de <button> encolhia a foto dentro do quadro */
-  border-radius: 14px;
+  border-radius: 10px;
   border: 1px solid var(--line-strong);
   background: hsl(var(--card-hue, 21) 45% 88%);
   color: hsl(var(--card-hue, 21) 55% 30%);
   font-family: var(--mono);
-  font-size: 20px;
+  font-size: 13px;
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -11543,62 +11628,10 @@ body.pane-docking .pane-bar.draggable {
   flex-shrink: 0;
 }
 
-/* Stats POR VERSÃO em dev (2026-07-29): uma linha por versão aberta, colunas
-   alinhadas num grid único (Fragment por versão — wrapper por linha
-   desalinharia as colunas entre versões). Substitui o .pg-stats global.
-   ONDA D: com o nome/pasta fora da página, o retrato herdou a largura que
-   sobrou — ele é o conteúdo da tela agora, não um apêndice do cabeçalho. */
-.pg-versions {
-  flex: 1;
-  min-width: 0;
-}
-
-.pgv-grid {
-  display: grid;
-  grid-template-columns: auto repeat(3, minmax(92px, auto));
-  gap: 6px 8px;
-  align-items: stretch;
-}
-
-.pgv-name {
-  min-width: 0;
-  max-width: 100%;
-  align-self: center;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--accent);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding-right: 2px;
-}
-
-.pgv-name.released {
-  color: var(--ok);
-}
-
-.pgv-grid .stat-tile {
-  padding: 6px 8px;
-}
-
-.pgv-grid .stat-num {
-  font-size: 16px;
-}
-
-.pgv-loose {
-  grid-column: 1 / -1;
-  font-size: 10.5px;
-  color: var(--ink-3);
-  text-align: right;
-}
-
-.pgv-empty {
-  font-size: 11px;
-  color: var(--ink-3);
-  border: 1px dashed var(--line-strong);
-  border-radius: 7px;
-  padding: 10px 12px;
-}
+/* 2026-08-15: o retrato POR VERSÃO (.pg-versions/.pgv-grid/.pgv-name/
+   .pgv-loose/.pgv-empty) saiu daqui com a ordem do dono — ele agora é a faixa
+   `.vs-stats` no topo da aba Versões, colada nas versões que descreve. O
+   .pg-avatar-wrap morreu junto: a foto virou linha de rodapé, sem coluna. */
 
 /* ONDA D: as FUNÇÕES (política de modelos, cor da função, skills e
    subagentes) e o reviewer de código saíram da página ✦ geral. Foram embora
@@ -11623,45 +11656,17 @@ body.pane-docking .pane-bar.draggable {
   border-style: dashed;
 }
 
-/* A página Geral divide espaço com o Maestro, portanto responde à largura da
-   própria coluna — não à janela inteira. Onda D: sobrou identidade + retrato
-   por versão, então o único ajuste é a grade das versões. */
-@container boardcontent (max-width: 820px) {
-  .pg-identity {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .pg-versions {
-    flex: 1 1 100%;
-    width: 100%;
-    max-width: none;
-  }
-
-  .pgv-grid {
-    grid-template-columns: auto repeat(3, minmax(0, 1fr));
-  }
-}
-
+/* O ✦ geral divide espaço com o palco, portanto responde à largura da própria
+   coluna — não à janela inteira. Sobrou o convite + a linha da foto: o único
+   ajuste é o convite deixar de ser cartão largo quando a coluna aperta. */
 @container boardcontent (max-width: 480px) {
-  .pgv-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .pg-start {
+    padding: 14px;
   }
 
-  .pgv-name {
-    grid-column: 1 / -1;
-  }
-
-  .pgv-grid .stat-tile {
-    min-width: 0;
-    padding-inline: 4px;
-  }
-}
-
-@container boardcontent (max-width: 360px) {
-  .pg-avatar-wrap {
-    align-items: flex-start;
-    flex-basis: 100%;
+  .pg-start-cta {
+    width: 100%;
+    justify-content: center;
   }
 }
 
@@ -12612,16 +12617,14 @@ body.pane-docking .pane-bar.draggable {
 .quick-add-row .sel,
 .image-settings .sel,
 .mission-exec-row .sel,
-.ms-filters .sel,
-.bl-quickadd .sel {
+.ms-filters .sel {
   width: 100%;
   min-width: 0;
   max-width: none;
 }
 
-/* filtros/inline (barra de missões, quick-add do backlog) não esticam */
-.ms-filters .sel,
-.bl-quickadd .sel {
+/* filtros/inline (barra de missões) não esticam */
+.ms-filters .sel {
   width: auto;
   flex: 0 1 auto;
 }

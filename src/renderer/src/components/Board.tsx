@@ -2882,12 +2882,17 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           descrevem nada que o dono possa querer daqui. O ✦ geral vazio é só o
           retrato do projeto; a conta se escolhe DENTRO da missão. */}
 
-      {/* Aba GERAL = retrato do universo (foto + trabalho por versão). Onda D:
-          funções, políticas e reviewer saíram; nome/pasta subiram para a barra
-          de abas do universo. */}
+      {/* Aba GERAL = O CONVITE DA MISSÃO (ordem do dono, 2026-08-15): a landing
+          do universo é a pessoa criando missão, não um retrato do projeto. O
+          trabalho por versão que morava aqui foi para a aba VERSÕES; os
+          números vivos seguem nos chips da barra do universo. */}
       {!selMission && (
         <GuiPanelErrorBoundary paneId={`board-general:${projectId}`} label="o resumo do projeto">
-          <ProjectGeneral projectId={projectId} />
+          <ProjectGeneral
+            projectId={projectId}
+            missionCount={liveMissions.length}
+            onNewMission={() => setNewMissionOpen(true)}
+          />
         </GuiPanelErrorBoundary>
       )}
 
