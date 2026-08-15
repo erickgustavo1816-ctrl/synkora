@@ -76,7 +76,12 @@ export default function ArchivedMissionChat({ mission, onClose }: Props): React.
       >
         <header className="arch-chat-head">
           <span className="arch-chat-title">
-            <span aria-hidden="true">⊟</span> {mission.title}
+            {/* o glifo é moldura, não palavra: classe própria para recuar de
+                tinta enquanto o nome da missão lidera */}
+            <span className="arch-chat-glyph" aria-hidden="true">
+              ⊟
+            </span>
+            {mission.title}
           </span>
           <span className="arch-chat-sub">
             conversa congelada · somente leitura

@@ -324,10 +324,17 @@ select {
   cursor: pointer;
   pointer-events: auto;
   -webkit-app-region: no-drag;
+  transition: border-color var(--motion-fast, 0.16s) ease;
 }
 
+/* HOVER NO ACENTO, como todo alvo clicável da casa (.sel-trigger, .universe-card,
+   a linha do painel do projeto): a versão antiga clareava a borda no PRÓPRIO hue
+   do universo — mudança sem significado, e invisível justamente no caso que mais
+   importa, o avatar COM FOTO, cuja borda é transparente. O acento é a única cor
+   que diz "isto responde ao clique". Aqui ele vem clareado porque o fundo é o
+   painel escuro do titlebar (mesma mistura do .tb-btn). */
 .tb-title-avatar:hover {
-  border-color: hsl(var(--card-hue, 21) 45% 58%);
+  border-color: color-mix(in srgb, var(--accent) 82%, white);
 }
 
 .tb-title-avatar:focus-visible {
@@ -4334,14 +4341,19 @@ select {
   padding: 0; /* padding UA de <button> encolhia a foto dentro do quadro */
   font-family: inherit;
   cursor: pointer;
+  transition: border-color var(--motion-fast, 0.16s) ease;
 }
 
+/* o PAR do avatar do titlebar: mesma alavanca, mesma fala de hover (acento) —
+   aqui na versão de papel, sem clarear */
 .ws-avatar:hover {
-  border-color: hsl(var(--card-hue) 45% 52%);
+  border-color: var(--accent);
 }
 
+/* 2px é o anel de foco de papel da casa (.right-rail-toggle, .seat-card,
+   .universe-card.add); o de 1px daqui era o único fora do padrão */
 .ws-avatar:focus-visible {
-  outline: 1px solid var(--accent);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -11576,11 +11588,15 @@ body.pane-docking .pane-bar.draggable {
   place-items: center;
 }
 
+/* CADÊNCIA 8 · 16: título e texto são a MESMA fala (8px os separa); o botão é
+   outra coisa — uma ação depois de uma afirmação — e ganha o dobro. Com os
+   três a 10px de distância nada liderava: o cartão lia como uma lista de três
+   itens de igual peso. */
 .pg-start {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 10px;
+  gap: 8px;
   /* o cartão acompanha a linha de leitura do texto — esticado na coluna
      inteira ele ficava com metade vazia à direita */
   max-width: 660px;
@@ -11631,7 +11647,7 @@ body.pane-docking .pane-bar.draggable {
 }
 
 .pg-start-cta {
-  margin-top: 2px;
+  margin-top: 8px;
 }
 
 /* 2026-08-15: o RODAPÉ DE IDENTIDADE morreu (.pg-identity/.pg-identity-hint/
@@ -11710,18 +11726,51 @@ body.pane-docking .pane-bar.draggable {
    erro que aquele documento nomeia. Os primitivos são os que já existem:
    `.stat-tile`/`.stat-num`/`.stat-label` da faixa da aba Versões. */
 
+/* CADÊNCIA DO PAINEL — 4 · 6 · 10 · 18, e cada degrau significa uma coisa:
+   4 dentro de uma linha de missão · 6 entre linhas irmãs · 10 do título de
+   seção para a lista dele · 18 entre blocos. A versão anterior usava 4·6·7·8·
+   10·12·14 — praticamente todo inteiro —, e com 7 (seção) contra 6 (lista) o
+   título ficava tão perto da própria lista quanto as linhas ficavam umas das
+   outras: tudo com o mesmo peso, nenhum agrupamento legível. */
 .project-dashboard {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 18px;
   align-items: stretch;
   max-width: 860px;
 }
 
+/* os quatro KPIs são UM instrumento: 6px os costura em faixa em vez de deixar
+   quatro cartões soltos */
 .pd-kpis {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
+}
+
+/* O TILE É COMPARTILHADO com a faixa da aba Versões, onde `hot` é pintado pelo
+   hue da FUNÇÃO. Aqui não existe função nenhuma: o `--dept-hue` caía no default
+   21 e desenhava um laranja (hsl 21 55% 45%) que NÃO é o acento da casa —
+   duas laranjas diferentes na mesma tela. No painel, `hot` fala com o acento.
+   E os números ganham a versão funda: `--ok` puro dava 2,68:1 no tile. */
+.pd-kpis .stat-tile.hot {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.pd-kpis .stat-tile.hot .stat-num {
+  color: color-mix(in srgb, var(--accent-deep) 80%, var(--ink));
+}
+
+.pd-kpis .stat-tile.ok .stat-num {
+  color: color-mix(in srgb, var(--ok) 65%, var(--ink));
+}
+
+/* `--ink-3` é tinta de FIO, não de texto: a 9,5px sobre o tile ela dava
+   2,55:1. O rótulo do KPI é conteúdo e vai para a tinta secundária de verdade
+   (5,4:1). Escopado ao painel — o mesmo defeito na aba Versões é dela. */
+.pd-kpis .stat-label {
+  color: var(--ink-2);
 }
 
 /* Retrato por versão COMPACTO: o placar inteiro é da aba Versões. */
@@ -11732,13 +11781,17 @@ body.pane-docking .pane-bar.draggable {
   gap: 6px;
 }
 
+/* A COR CONTINUA SENDO A MESMA FALA (laranja = em construção, verde = na main);
+   o que muda é a PROFUNDIDADE do texto. `--accent` puro a 11px sobre o cartão
+   dá 2,85:1 e `--ok` puro 2,90:1 — abaixo do piso de leitura. Uma volta na
+   direção da tinta devolve 5,5:1 e 4,9:1 sem tirar o matiz de ninguém. */
 .pd-version {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 11px;
   font-weight: 700;
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent-deep) 70%, var(--ink));
   border: 1px solid var(--line-strong);
   border-radius: 999px;
   padding: 3px 10px;
@@ -11747,19 +11800,19 @@ body.pane-docking .pane-bar.draggable {
 }
 
 .pd-version.released {
-  color: var(--ok);
+  color: color-mix(in srgb, var(--ok) 65%, var(--ink));
 }
 
 .pd-version-count {
   font-weight: 400;
-  color: var(--ink-3);
+  color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
 
 .pd-section {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 10px;
 }
 
 .pd-section-title {
@@ -11771,7 +11824,7 @@ body.pane-docking .pane-bar.draggable {
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--ink-3);
+  color: var(--ink-2);
 }
 
 .pd-section-more {
@@ -11779,13 +11832,13 @@ body.pane-docking .pane-bar.draggable {
   font-weight: 400;
   letter-spacing: 0.04em;
   text-transform: none;
-  color: var(--ink-3);
+  color: var(--ink-2);
 }
 
 .pd-empty {
   margin: 0;
   font-size: 11.5px;
-  color: var(--ink-3);
+  color: var(--ink-2);
 }
 
 .pd-list {
@@ -11820,8 +11873,9 @@ button.pd-mission:hover {
   border-left-color: var(--accent);
 }
 
+/* 2px é o anel de foco de papel da casa; 1px destoava dos vizinhos */
 button.pd-mission:focus-visible {
-  outline: 1px solid var(--accent);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -11832,16 +11886,30 @@ button.pd-mission:focus-visible {
   background: color-mix(in srgb, var(--warn) 9%, var(--card));
 }
 
+/* O HOVER NÃO PODE APAGAR O SINAL (o `:hover` genérico é mais específico que
+   `.waiting` e repintava a moldura de tinta+acento: passar o mouse sobre a
+   única linha que espera VOCÊ era o que fazia ela deixar de parecer isso).
+   Aqui o hover se expressa pelo fundo e o âmbar fica. */
+button.pd-mission.waiting:hover {
+  border-color: var(--warn);
+  border-left-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 17%, var(--card));
+}
+
 .pd-mission.done {
   background: transparent;
   border-style: dashed;
   border-left-color: var(--ok);
 }
 
+/* PROXIMIDADE: o ponto é parte do TÍTULO (ele diz o estado daquela missão),
+   não um irmão do selo. Com 7px iguais para todos, dot · título · palavra ·
+   selo liam como quatro coisas soltas; agora o dot cola no título (5px) e os
+   blocos seguintes respiram 8px. */
 .pd-head {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -11852,6 +11920,7 @@ button.pd-mission:focus-visible {
   flex: none;
   width: 7px;
   height: 7px;
+  margin-right: -3px;
   border-radius: 50%;
   background: var(--ink-3);
 }
@@ -11887,15 +11956,15 @@ button.pd-mission:focus-visible {
   font-size: 9.5px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--ink-3);
+  color: var(--ink-2);
 }
 
 .pd-status.integrando {
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent-deep) 70%, var(--ink));
 }
 
 .pd-status.concluida {
-  color: var(--ok);
+  color: color-mix(in srgb, var(--ok) 65%, var(--ink));
 }
 
 .pd-badge {
@@ -11907,18 +11976,24 @@ button.pd-mission:focus-visible {
   color: var(--ink-2);
 }
 
+/* O SELO DE "É COM VOCÊ" ERA O MAIS FRACO DA LINHA: âmbar sobre a própria
+   fileira âmbar dava 1,91:1 — o ⇪/❓ praticamente sumia justo na linha que
+   existe para chamar o dono. Preenchido, ele passa a 7:1 e vira o chip mais
+   forte do painel, que é exatamente o papel dele. */
 .pd-badge.ask {
-  color: var(--warn);
+  color: var(--ink);
+  background: var(--warn);
   border-color: var(--warn);
+  font-weight: 700;
 }
 
 .pd-badge.err {
-  color: var(--err);
+  color: color-mix(in srgb, var(--err) 80%, var(--ink));
   border-color: var(--err);
 }
 
 .pd-badge.busy {
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent-deep) 70%, var(--ink));
   border-color: var(--accent);
 }
 
@@ -11928,12 +12003,12 @@ button.pd-mission:focus-visible {
   align-items: center;
   gap: 4px 10px;
   font-size: 10px;
-  color: var(--ink-3);
+  color: var(--ink-2);
   min-width: 0;
 }
 
 .pd-version-tag {
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent-deep) 70%, var(--ink));
   font-weight: 700;
 }
 
@@ -11948,8 +12023,11 @@ button.pd-mission:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+/* a fila é NOTÍCIA no meio de uma linha de metadados; com a linha inteira já em
+   `--ink-2` a cor deixou de destacá-la — quem destaca agora é o peso */
 .pd-queue {
   color: var(--ink-2);
+  font-weight: 700;
 }
 
 .pd-day {
@@ -11957,12 +12035,18 @@ button.pd-mission:focus-visible {
   white-space: nowrap;
 }
 
+/* A FRASE QUE O DONO PRECISA LER — e que era a única cortada com reticências:
+   "❓ posso apagar a tabela anti…" perdia exatamente a pergunta. Ela passa a
+   QUEBRAR (teto de 2 linhas, para uma pergunta longa não esticar a linha sem
+   fim) e escurece o âmbar de 3,23:1 para 5,3:1 sobre a própria fileira. */
 .pd-waiting {
   font-size: 10.5px;
-  color: color-mix(in srgb, var(--warn) 70%, var(--ink));
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--warn) 45%, var(--ink));
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .pd-cta {
@@ -11974,6 +12058,16 @@ button.pd-mission:focus-visible {
 @container boardcontent (max-width: 480px) {
   .pd-kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* QUEM CEDE É A PALAVRA, NUNCA O NOME. `.pd-status` é `flex: none` e segurava
+     74px fixos enquanto o título — a identidade da linha — era espremido a
+     119px e cortado em TODAS as linhas a 330px. "em andamento" é o estado
+     PADRÃO e já está dito duas vezes: pelo ponto verde e pelo título da seção
+     ("missões abertas"). Some só ele; "integrando agora" e "integrada" são
+     notícia e ficam. */
+  .pd-status.ativa {
+    display: none;
   }
 
   .pd-day {
@@ -21245,18 +21339,30 @@ details.gui-error-line {
   animation: rise 160ms ease both;
 }
 
+/* O CABEÇALHO EM TRÊS FAIXAS, não numa corrida só. Título, subtítulo e fechar
+   dividiam a MESMA linha: o subtítulo tinha quase o comprimento do título
+   (389px contra 313px) e só 1,5px a menos de corpo, então nada liderava — e a
+   360px o conjunto empilhava em 132px de cabeçalho para um visor que só lê.
+   Agora: linha 1 = título + ×, linha 2 = a legenda do que isto é, linha 3 = os
+   papéis. Mais claro E mais baixo nas duas larguras. */
 .arch-chat-head {
   flex: none;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 12px;
+  gap: 6px 12px;
   padding: 12px 14px 10px;
   border-bottom: 1px solid var(--line);
 }
 
+/* base ZERO, não `auto`: num flex que quebra, a linha é calculada pelo tamanho
+   HIPOTÉTICO do item — com base `auto` o título reivindicava a largura inteira
+   do próprio texto e empurrava o × para uma linha só dele (uma faixa inteira de
+   cabeçalho desperdiçada a 360px). Com base 0 ele encolhe e os dois dividem a
+   primeira linha em qualquer largura. */
 .arch-chat-title {
-  font-size: 12.5px;
+  flex: 1 1 0;
+  font-size: 13.5px;
   font-weight: 700;
   color: var(--ink);
   min-width: 0;
@@ -21265,24 +21371,49 @@ details.gui-error-line {
   white-space: nowrap;
 }
 
+/* o glifo é moldura, não palavra: recua para a tinta secundária e deixa o nome
+   da missão liderar sozinho */
+/* O JSX perdeu o espaço literal ao quebrar o glifo em linha própria (JSX come
+   espaço-com-quebra-de-linha), então a distância virou responsabilidade do CSS.
+   6px = meia-em a 13,5px: a régua de ícone-para-rótulo, um fio mais apertada
+   que o espaço natural do mono (7,9px), que é o que se quer entre uma moldura e
+   a palavra que ela emoldura. */
+.arch-chat-glyph {
+  color: var(--ink-2);
+  font-weight: 400;
+  margin-right: 6px;
+}
+
 .arch-chat-sub {
+  order: 1;
+  flex-basis: 100%;
   font-size: 11px;
-  color: var(--ink-3);
+  color: var(--ink-2);
   letter-spacing: 0.03em;
 }
 
 .arch-chat-head .pane-close {
   margin-left: auto;
-  color: var(--ink-3);
+  color: var(--ink-2);
   font-size: 18px;
+  line-height: 1;
+  border-radius: 6px;
+  padding: 2px 6px;
 }
 
 .arch-chat-head .pane-close:hover {
   color: var(--ink);
 }
 
+/* o × é o único jeito de sair pelo teclado — sem anel ele era foco invisível */
+.arch-chat-head .pane-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* a tira de papéis quebra para a linha de baixo antes de espremer o título */
 .arch-chat-head .stage-pills {
+  order: 2;
   flex-basis: 100%;
 }
 
@@ -21301,5 +21432,5 @@ details.gui-error-line {
   text-align: center;
   font-size: 11.5px;
   line-height: 1.6;
-  color: var(--ink-3);
+  color: var(--ink-2);
 }
