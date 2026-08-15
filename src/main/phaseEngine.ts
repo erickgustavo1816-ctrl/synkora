@@ -4787,7 +4787,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     closeLiveGateWait,
     notePendingRespawn,
     drainPendingRespawns,
-    respawnInterruptedPhase,
     recoverFinalizingTask,
     taskIntegrationMarker,
     reviewArtifactProblem,

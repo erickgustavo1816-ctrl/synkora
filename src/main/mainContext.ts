@@ -113,20 +113,7 @@ export interface PhaseApi {
    *  watch NOVO do card (R2: o novo vence e o artefato do velho é limpo) — e
    *  SÓ ENTÃO solta o lock. Idempotente; token errado/velho é no-op. */
   rollbackVerdictTransaction(watch: PhaseWatch, token?: PhaseTransitionToken): void
-  /** `rejectingGate` viaja por PARÂMETRO (F2-c5, §6.1 do mapa): o gate
-   *  reprovador é calculado DENTRO do lock — re-consultar liveGateWaits após
-   *  awaits deixava um onExit apagar a espera e a evidência do gate reprovador
-   *  não era zerada (a memoização poderia "aprovar" o que reprovou). */
-  retryOrBacklog(
-    watch: PhaseWatch,
-    who: string,
-    motivo: string,
-    rejectingGate?: 'review' | 'qa'
-  ): Promise<void>
-  openGatePane(watch: PhaseWatch, phase: 'review' | 'qa'): Promise<boolean>
-  finalizeTask(watch: PhaseWatch, task: Task, approvedBy: string): Promise<void>
   openPhasePane(watchSpec: DevPaneSpec, projectId: string, taskId: string): void
-  closePhasePane(projectId: string, taskId: string, role: RunPhase): void
   terminateTaskPhasePane(projectId: string, taskId: string, role: RunPhase): void
   // ——— superfície extra do engine consumida pelo mcpApi (commit 4a) ———
   /** Valida o artefato imutável do review (hash/tamanho/containment).
@@ -235,10 +222,7 @@ export interface MainContext {
   readonly phaseTransitions: PhaseTransitionLock
   readonly pendingUserQuestions: Map<string, PendingUserQuestion>
   readonly liveGateWaits: Map<string, LiveGateWait>
-  readonly gateDeathLog: Map<string, number[]>
   readonly gateCooldownUntil: Map<string, number>
-  readonly bootRespawnsPending: Map<string, Set<string>>
-  readonly phaseMarkersProcessing: Set<string>
   readonly pendingPtyPreparations: Map<string, symbol>
   readonly mcpCatalogServedByPane: Map<string, string>
   readonly mcpPaneFirstContact: Map<string, number>

@@ -22,7 +22,6 @@ import {
   TaskStore,
   type NewTask,
   type Task,
-  type TaskGateEvidence,
   type TaskPlan,
   type TaskUpdatePatch,
   type PlanLane,
@@ -32,35 +31,24 @@ import { PERSONA_DEV, SURVEY_SECURITY_PROMPT } from './maestro'
 import { MaestroStore } from './maestroStore'
 import {
   alignWorktreeFromSnapshot,
-  changedWorktreeFiles,
-  changedWorktreeCodeFiles,
   createTaskWorktree,
   currentBranch,
   ensureSynkoraGitExcludes,
   gitCommitReached,
   gitHead,
-  gitHistoryContainsMessage,
-  gitMergeBase,
-  gitTree,
-  gitVisibleWorktreeFingerprint,
   hasGitCommit,
   isExactCleanPreCasSnapshot,
   isWorktreeClean,
   isExpectedVersionWorktree,
-  isExecutableProjectPath,
   mergeTaskWorktree,
   pruneWorktrees,
-  removeWorktreeAndBranch,
-  repairWorktrees,
-  snapshotTaskWorktree,
-  taskWorktreeDescriptor
+  removeWorktreeAndBranch
 } from './worktree'
 import { MissionStore, type Mission } from './missions'
 import { PlanStore } from './plans'
 import { IntegrationQueueStore } from './integrationQueue'
 import {
   EXECUTION_MODE_LABEL,
-  gatesForTask,
   normalizeExecutionMode,
   normalizeRiskLevel,
   retryLimitForExecutionMode,
@@ -69,11 +57,10 @@ import {
 import { HelperSpawnReservationRegistry } from './helperSpawnReservations'
 import { HelperOpenWatchdog } from './helperOpenWatchdog'
 import { removeCodexSkillIsolationProfile } from './codexSkillIsolation'
-import { type GateVerificationEvidence } from './gateVerificationEvidence'
 import { buildSkillsBlock } from './phasePrompts'
 import type { RunPhase } from './phaseTypes'
 import type { MainContext } from './mainContext'
-import { createPhaseEngine, GATE_DEATH_LIMIT, MAX_PARALLEL_RUNS } from './phaseEngine'
+import { createPhaseEngine } from './phaseEngine'
 import { migrateCliSessionBetweenSeats } from './cliSessionTransplant'
 import { createMaestroEngine, type MaestroBackend } from './maestroEngine'
 import { createMissionEngine } from './missionEngine'
@@ -170,17 +157,9 @@ import {
 } from './mcpServer'
 import { selectStaleBundledIds } from './bundledSkillRevision'
 import { SkillsLibrary, setGithubToken, type SkillDef } from './skillsLibrary'
-import {
-  classifyTaskUiWork,
-  IMPECCABLE_SKILL_ID,
-  SYNKORA_FRONTEND_STANDARD_ID,
-  SYNKORA_PLANNING_STANDARD_ID,
-  SYNKORA_UI_QA_ID,
-  type SkillCapability
-} from './skillsRouting'
+import { SYNKORA_PLANNING_STANDARD_ID } from './skillsRouting'
 import {
   SkillRuntime,
-  type PaneSkillPlanSnapshot,
   type PlannedSkillInput,
   type PlanningMethodEvidence
 } from './skillRuntime'
@@ -264,11 +243,6 @@ import {
 import { setQaRuntimeGuard, stopAllQaRuntimes } from './qaRuntime'
 import { releaseQaCdpPort } from './qaCdp'
 import { PaneMailbox, mailboxKeyOf } from './mailbox'
-import {
-  PhaseLaunchCapacityGuard,
-  PhaseLaunchGuard,
-  type PhaseLaunchToken
-} from './phaseLaunchGuard'
 import { prepareTaskAdjustment, unapprovedAdjustmentRiskSurfaces } from './taskAdjustment'
 import { Blackbox, describeEntry } from './blackbox'
 import { diagnosticsConsentDetail, exportDiagnostics } from './diagnostics'
@@ -3648,17 +3622,8 @@ app.whenReady().then(async () => {
     get liveGateWaits() {
       return liveGateWaits
     },
-    get gateDeathLog() {
-      return gateDeathLog
-    },
     get gateCooldownUntil() {
       return gateCooldownUntil
-    },
-    get bootRespawnsPending() {
-      return bootRespawnsPending
-    },
-    get phaseMarkersProcessing() {
-      return phaseMarkersProcessing
     },
     get pendingPtyPreparations() {
       return pendingPtyPreparations
@@ -3694,11 +3659,7 @@ app.whenReady().then(async () => {
     phase: {
       preparePhasePane: (...args) => preparePhasePane(...args),
       advancePhase: (...args) => advancePhase(...args),
-      retryOrBacklog: (...args) => retryOrBacklog(...args),
-      openGatePane: (...args) => openGatePane(...args),
-      finalizeTask: (...args) => finalizeTask(...args),
       openPhasePane: (...args) => openPhasePane(...args),
-      closePhasePane: (...args) => closePhasePane(...args),
       terminateTaskPhasePane: (...args) => terminateTaskPhasePane(...args),
       reviewArtifactProblem: (...args) => reviewArtifactProblem(...args),
       cleanupReviewArtifact: (...args) => cleanupReviewArtifact(...args),
@@ -5933,17 +5894,10 @@ app.whenReady().then(async () => {
     phaseLaunchCapacity,
     phaseTransitions,
     liveGateWaits,
-    gateDeathLog,
     gateCooldownUntil,
-    bootRespawnsPending,
-    phaseMarkersProcessing,
     preparePhasePane,
     advancePhase,
-    retryOrBacklog,
-    finalizeTask,
-    openGatePane,
     openPhasePane,
-    closePhasePane,
     terminateTaskPhasePane,
     closeLiveGateWait,
     notePendingRespawn,
