@@ -392,7 +392,12 @@ export interface Mission {
   /** Lugar desta missão na fila serial de integração do projeto. */
   integration?: MissionIntegrationQueueView
   createdAt: string
+  /** ATENÇÃO: `updatedAt` é MUTAÇÃO DE STORE (status, seat, branch) — nunca
+   *  atividade. Turno de chat, tool call e commit não passam por aqui, então
+   *  rotular este campo como "última atividade" seria mentira. */
   updatedAt: string
+  /** carimbo da transição para 'concluida' — a data honesta de "integrada em" */
+  completedAt?: string
 }
 
 /** O que o modal de missão manda para o main ao criar uma missão. */

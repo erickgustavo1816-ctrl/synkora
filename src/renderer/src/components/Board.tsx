@@ -7,6 +7,7 @@ import TerminalPane from './TerminalPane'
 import GuiPane from './GuiPane'
 import GuiPanelErrorBoundary from './GuiPanelErrorBoundary'
 import ProjectGeneral from './ProjectGeneral'
+import ProjectDashboard from './ProjectDashboard'
 import NewMissionModal from './NewMissionModal'
 import MissionColumn, { type MissionColumnEntry } from './MissionColumn'
 import MissionDeliveryRail from './MissionDeliveryRail'
@@ -43,6 +44,7 @@ import { missionGui, type MissionGuiRole } from '../missionGui'
 import { GuiRequestEpoch, withoutMissionGuiSlots } from '../guiRequestEpoch'
 import GuiSeatPick from './GuiSeatPick'
 import { missionShell } from '../missionShell'
+import { projectLanding } from '../projectLanding'
 // `planningGui` (projects:planningGuiSpec) NÃO é importado de propósito: o
 // convite de planejamento que nascia sozinho no ✦ geral MORREU (ordem do dono,
 // 2026-08-13 — "o universo começa vazio"). Planejar virou um TIPO de missão que
@@ -1228,6 +1230,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const seats = useStore((s) => s.seats)
   const settings = useStore((s) => s.settings)
   const missions = useStore((s) => s.missions)
+  // Retrato por versão do painel do projeto (✦ geral com missões). NÃO se
+  // busca aqui: o Universe, que hospeda este Board, já faz o load preguiçoso
+  // do `homeStats` deste projeto, e os canais *:changed o mantêm fresco.
+  const homeStats = useStore((s) => s.homeStats[projectId])
   const loadMissions = useStore((s) => s.loadMissions)
   const archiveMission = useStore((s) => s.archiveMission)
   const deleteMission = useStore((s) => s.deleteMission)
@@ -1584,8 +1590,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // uma missão concluída/arquivada a aba 🚀 dela desaparecia da fila mas nenhuma
   // aba ficava ativa — a página ✦ geral não renderizava e o terminal do PM
   // continuava montado e ESCONDIDO, deixando o usuário sem terminal nenhum.
-  const liveMissions = missions.filter(
-    (m) => m.projectId === projectId && (m.status === 'ativa' || m.status === 'integrando')
+  // TODAS as missões deste universo (o store guarda só o projeto aberto, mas o
+  // filtro por projectId é o contrato do resto do arquivo). É a base do painel
+  // do ✦ geral: ele conta integradas e arquivadas, que `liveMissions` descarta.
+  const projectMissions = missions.filter((m) => m.projectId === projectId)
+  const liveMissions = projectMissions.filter(
+    (m) => m.status === 'ativa' || m.status === 'integrando'
   )
   const selMission = missionTab ? liveMissions.find((m) => m.id === missionTab) : undefined
 
@@ -2882,17 +2892,29 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           descrevem nada que o dono possa querer daqui. O ✦ geral vazio é só o
           retrato do projeto; a conta se escolhe DENTRO da missão. */}
 
-      {/* Aba GERAL = O CONVITE DA MISSÃO (ordem do dono, 2026-08-15): a landing
-          do universo é a pessoa criando missão, não um retrato do projeto. O
-          trabalho por versão que morava aqui foi para a aba VERSÕES; os
-          números vivos seguem nos chips da barra do universo. */}
+      {/* Aba GERAL = O CONVITE ou O PAINEL (ordem do dono, 2026-08-15).
+          Universo SEM NENHUMA missão: a landing é a pessoa criando missão
+          (`ProjectGeneral`, cartão centralizado). Com a primeira missão de
+          qualquer status a tela vira o `ProjectDashboard` — quem já tem
+          história merece o retrato, não o convite. O limite de erro fica POR
+          FORA do ramo: as duas telas dividem o mesmo `board-general:<id>`. */}
       {!selMission && (
         <GuiPanelErrorBoundary paneId={`board-general:${projectId}`} label="o resumo do projeto">
-          <ProjectGeneral
-            projectId={projectId}
-            missionCount={liveMissions.length}
-            onNewMission={() => setNewMissionOpen(true)}
-          />
+          {projectLanding(projectMissions) === 'invite' ? (
+            <ProjectGeneral
+              missionCount={projectMissions.length}
+              onNewMission={() => setNewMissionOpen(true)}
+            />
+          ) : (
+            <ProjectDashboard
+              missions={projectMissions}
+              entries={missionColumnEntries}
+              versoes={homeStats?.versoes}
+              versionLabelOf={(m) => versionName(m.versionId)}
+              onOpenMission={(id) => setMissionTab(projectId, id)}
+              onNewMission={() => setNewMissionOpen(true)}
+            />
+          )}
         </GuiPanelErrorBoundary>
       )}
 

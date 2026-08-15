@@ -1,43 +1,35 @@
-import { useStore } from '../store'
-import { initialsOf, hueOf } from '../util'
-
 // ✦ GERAL = A PORTA DE ENTRADA DO UNIVERSO (ordem do dono, 2026-08-15).
 //
 // "Não quero mais aquela página geral — a landing do projeto tem que ser a
 // pessoa criando uma missão." O RETRATO POR VERSÃO (◈ V1.0 · N missões · em
 // execução · concluídas) que ocupava esta tela mudou de casa: foi para a aba
 // VERSÕES, onde ele convive com as versões que descreve ("uma página inteira
-// para aquilo não faz sentido"). O mockup já mandava o mesmo recado —
-// docs/MOCKUP_WORKSPACE.md: "os números do projeto são CHIPS NA TOPBAR, nunca
-// um cartão ocupando o centro" — e a barra do universo já os carrega.
+// para aquilo não faz sentido").
 //
-// O que sobra aqui é o CONVITE: uma frase, a explicação do que é uma missão e
-// o botão que abre o MESMO modal da coluna da esquerda (quem guarda o estado
-// do modal é o Board — esta tela só pede a abertura). A foto do universo fica
-// como rodapé discreto: é a única alavanca de identidade que vive dentro do
-// workspace (o rail e a Home também trocam a foto, mas nenhum dos dois está
-// aqui dentro).
+// ESTE ARQUIVO É SÓ O CONVITE — o universo com ZERO missões. Assim que existe
+// uma missão (de qualquer status) o Board troca esta tela pelo
+// `ProjectDashboard`: quem já tem história merece o painel, não o convite.
+//
+// A FOTO DO UNIVERSO SAIU DAQUI (2026-08-15, mesma ordem): o rodapé de
+// identidade morreu e a troca passou a viver nos DOIS avatares que já mostram
+// o universo no alto da janela — o do titlebar (`.tb-title-avatar`) e o do
+// cabeçalho do workspace (`.ws-avatar`). Um convite não tem rodapé.
 
 export default function ProjectGeneral({
-  projectId,
   missionCount,
   onNewMission
 }: {
-  projectId: string
-  /** missões VIVAS do universo — decide o convite (a primeira × mais uma) */
+  /** missões do universo em QUALQUER status — zero é o que traz esta tela */
   missionCount: number
   onNewMission: () => void
 }): React.JSX.Element {
-  const project = useStore((s) => s.projects.find((p) => p.id === projectId))
-  const setProjectPhoto = useStore((s) => s.setProjectPhoto)
-  const removeProjectPhoto = useStore((s) => s.removeProjectPhoto)
-
-  if (!project) return <></>
-
+  // Cinto: com o branch do Board esta tela só nasce em `missionCount === 0`.
+  // A cópia de "mais uma" fica como rota de saída honesta se alguém montar o
+  // convite noutro contexto — nunca como número inventado.
   const first = missionCount === 0
 
   return (
-    <div className="project-general">
+    <div className={`project-general${first ? ' is-invite' : ''}`}>
       <section className="pg-start">
         <p className="pg-start-title">{first ? 'crie a primeira missão' : 'abra uma missão'}</p>
         <p className="pg-start-text">
@@ -66,29 +58,6 @@ export default function ProjectGeneral({
           + nova missão
         </button>
       </section>
-
-      {/* Rodapé de identidade: a foto do universo. Discreta de propósito — o
-          centro desta tela é o convite acima, não o retrato do projeto. */}
-      <div className="pg-identity">
-        <button
-          className="pg-avatar"
-          style={{ ['--card-hue' as string]: hueOf(project.name) }}
-          data-tip="Trocar a foto do universo"
-          onClick={() => void setProjectPhoto(projectId)}
-        >
-          {project.photo ? <img src={project.photo} alt="" draggable={false} /> : initialsOf(project.name)}
-        </button>
-        <span className="pg-identity-hint">foto do universo — clique para trocar</span>
-        {project.photo && (
-          <button
-            className="pg-photo-remove"
-            data-tip="Remover a foto (volta às iniciais)"
-            onClick={() => void removeProjectPhoto(projectId)}
-          >
-            × remover
-          </button>
-        )}
-      </div>
     </div>
   )
 }

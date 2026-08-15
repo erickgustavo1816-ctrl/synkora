@@ -56,6 +56,30 @@ test('icon-only controls preserve names, menu state and exclusive popovers', () 
   assert.equal(titleBar.match(/tabIndex=\{-1\}/g)?.length, 2)
 })
 
+test('o avatar central troca a foto e sobrevive à barra arrastável', () => {
+  // 2026-08-15: o rodapé de identidade do ✦ geral morreu e a alavanca da foto
+  // subiu para cá. O avatar era um `<i>` inerte.
+  assert.match(titleBar, /<button\s+type="button"\s+className="tb-title-avatar"/u)
+  assert.match(titleBar, /aria-label=\{`Trocar a foto do universo \$\{project\.name\}`\}/u)
+  assert.match(titleBar, /data-tip="Trocar a foto do universo"/u)
+  assert.match(titleBar, /onClick=\{\(\) => openProjectId && void setProjectPhoto\(openProjectId\)\}/u)
+  assert.doesNotMatch(titleBar, /<i\s+className="tb-title-avatar"/u)
+
+  // AS DUAS CERCAS QUE FALHAM EM SILÊNCIO: `.tb-title` é `pointer-events: none`
+  // e `-webkit-app-region: drag`, então sem os dois opt-outs no próprio avatar
+  // o botão nasce mudo (ou o Windows come o mousedown) — e nada na tela avisa.
+  const avatar = css.match(/\n\.tb-title-avatar \{([\s\S]*?)\n\}/u)?.[1]
+  assert.ok(avatar, 'a regra do avatar precisa existir')
+  assert.match(avatar, /pointer-events:\s*auto;/u)
+  assert.match(avatar, /-webkit-app-region:\s*no-drag;/u)
+  assert.match(avatar, /padding:\s*0;/u)
+  assert.match(avatar, /cursor:\s*pointer;/u)
+  assert.match(css, /\.tb-title-avatar:focus-visible\s*\{[\s\S]*?outline:/u)
+  // O PAI continua sendo a alça de arrasto — mover a barra não pode virar
+  // refém de um botão de 18px.
+  assert.match(css, /\.tb-title\s*\{[\s\S]*?pointer-events:\s*none;[\s\S]*?-webkit-app-region:\s*drag;/u)
+})
+
 test('SynVoice expands only while recording and keeps contextual tooltips', () => {
   assert.match(voice, /data-tip=\{triggerTip\}/)
   assert.match(voice, /data-tip="Abrir o mini SynVoice em uma janela separada"/)

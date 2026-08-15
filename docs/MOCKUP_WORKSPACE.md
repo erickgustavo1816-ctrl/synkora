@@ -26,6 +26,28 @@ terminal — o chat é PAPEL.
 - Os números do projeto (◈ versão, contadores de missão, fila) são CHIPS NA TOPBAR —
   nunca um cartão ocupando o centro.
 
+> **EMENDA DE 2026-08-15 (ordem do dono) — a cláusula acima vale no workspace de
+> MISSÃO, não no ✦ geral.** O diagrama descreve a tela com uma missão selecionada:
+> ali o centro é da conversa, e por isso os números moram nos chips. No ✦ geral não
+> há conversa nenhuma disputando o espaço, e a tela passou a ter duas caras:
+>
+> - **universo sem NENHUMA missão** → o CONVITE (`ProjectGeneral`): um cartão único
+>   centralizado na coluna, na mesma família visual do modal de nova missão;
+> - **a partir da primeira missão, em qualquer status** → o PAINEL DO PROJETO
+>   (`ProjectDashboard`): KPIs (em andamento · integradas · na fila ⇪ · arquivadas),
+>   retrato compacto por versão e UMA LINHA POR MISSÃO — estado, ◈ versão, ⎇ branch
+>   (ou ✎ planejamento), posição na fila e o âmbar de "esperando você".
+>
+> O que justifica a emenda: os chips da barra dizem QUANTAS; o painel diz QUAIS — e é
+> a pergunta "qual missão está me esperando?" que o dono faz ao abrir o universo. Os
+> `.ws-chips` do cabeçalho FICAM (eles são visíveis de qualquer aba). A regra de
+> superfície não muda: o painel é PAPEL — `--panel`/`.term-window` continuam
+> exclusivos de terminal.
+>
+> Na mesma ordem, a FOTO do universo deixou de ter rodapé no ✦ geral: ela se troca
+> clicando no avatar do titlebar (`.tb-title-avatar`) ou no do cabeçalho do workspace
+> (`.ws-avatar`) — os dois no alto da janela, alcançáveis de qualquer aba.
+
 ## Anatomia do chat (fundo PAPEL `--paper`, nunca `--panel`)
 
 1. **Cabeçalho fino da conversa**: `dev · opus 4.8 · mission/1f3a` em texto apagado

@@ -29,6 +29,7 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
   // ✦ geral para cá — é a linha que já existe em toda tela do universo.
   const renameProject = useStore((s) => s.renameProject)
   const relocateProject = useStore((s) => s.relocateProject)
+  const setProjectPhoto = useStore((s) => s.setProjectPhoto)
   const [relocError, setRelocError] = useState<string | null>(null)
 
   // OS NÚMEROS SOBEM (mockup 2026-08-14): "Os números do projeto (◈ versão,
@@ -64,17 +65,23 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
           versão. Nome edita no lugar; a pasta abre o seletor do main. */}
       <header className="ws-header">
         <div className="ws-identity">
-          <span
+          {/* A FOTO TROCA AQUI (2026-08-15): o rodapé de identidade do ✦ geral
+              morreu. Este avatar e o do titlebar são a MESMA alavanca — este
+              cobre o vão, porque o `.tb-title` some abaixo de 700px. */}
+          <button
+            type="button"
             className="ws-avatar"
             style={{ ['--card-hue' as string]: hueOf(project.name) }}
-            aria-hidden="true"
+            aria-label={`Trocar a foto do universo ${project.name}`}
+            data-tip="Trocar a foto do universo"
+            onClick={() => void setProjectPhoto(projectId)}
           >
             {project.photo ? (
               <img src={project.photo} alt="" draggable={false} />
             ) : (
               initialsOf(project.name)
             )}
-          </span>
+          </button>
           <input
             key={project.name}
             className="ws-name"

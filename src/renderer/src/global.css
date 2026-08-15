@@ -298,7 +298,13 @@ select {
   color: var(--accent);
 }
 
-/* mesma identidade do rail: foto ou iniciais na cor do universo */
+/* mesma identidade do rail: foto ou iniciais na cor do universo.
+   ILHA CLICÁVEL numa barra arrastável (2026-08-15): o avatar virou o botão que
+   troca a foto do universo, então precisa dos DOIS opt-outs do pai — sem
+   `pointer-events: auto` o `.tb-title` (que é `none`) o deixaria mudo, e sem
+   `-webkit-app-region: no-drag` o Windows comeria o mousedown. Os dois falham
+   em SILÊNCIO, por isso moram juntos aqui. `padding: 0` porque o padding UA de
+   <button> encolheria a foto dentro do quadro de 18px. */
 .tb-title-avatar {
   flex: none;
   width: 18px;
@@ -313,6 +319,20 @@ select {
   color: hsl(var(--card-hue, 21) 55% 82%);
   background: hsl(var(--card-hue, 21) 34% 26%);
   border: 1px solid hsl(var(--card-hue, 21) 30% 40%);
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.tb-title-avatar:hover {
+  border-color: hsl(var(--card-hue, 21) 45% 58%);
+}
+
+.tb-title-avatar:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 82%, white);
+  outline-offset: 2px;
 }
 
 .tb-title-avatar img {
@@ -4294,6 +4314,9 @@ select {
   flex: 0 1 auto;
 }
 
+/* 2026-08-15: virou BOTÃO — é aqui e no avatar do titlebar que a foto do
+   universo se troca (o rodapé de identidade do ✦ geral morreu). Este é o par
+   sempre alcançável: o `.tb-title` some abaixo de 700px, este não. */
 .ws-avatar {
   flex: none;
   width: 26px;
@@ -4308,6 +4331,18 @@ select {
   color: hsl(var(--card-hue) 45% 28%);
   background: hsl(var(--card-hue) 45% 88%);
   border: 1px solid hsl(var(--card-hue) 40% 70%);
+  padding: 0; /* padding UA de <button> encolhia a foto dentro do quadro */
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.ws-avatar:hover {
+  border-color: hsl(var(--card-hue) 45% 52%);
+}
+
+.ws-avatar:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* foto ocupa o quadro inteiro — a "roupa" por hue é EXCLUSIVA das iniciais
@@ -7005,22 +7040,9 @@ body.pane-docking .pane-bar.draggable {
   cursor: default;
 }
 
-.pg-photo-remove {
-  background: none;
-  border: none;
-  font-family: var(--mono);
-  font-size: 9px;
-  color: var(--ink-3);
-  cursor: pointer;
-  padding: 0;
-  /* coluna estreita quebrava o rótulo em "×" / "remover" */
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.pg-photo-remove:hover {
-  color: var(--err);
-}
+/* 2026-08-15: `.pg-photo-remove` morreu com o rodapé de identidade do ✦ geral.
+   Remover a foto continua no menu `···` do card da Home — a TROCA é que subiu
+   para os avatares do titlebar e do cabeçalho do workspace. */
 
 .code-chip.copied {
   color: var(--ok);
@@ -11531,13 +11553,27 @@ body.pane-docking .pane-bar.draggable {
 
 /* ---------- ✦ GERAL: o convite da missão (2026-08-15) ----------
    A landing do universo é a pessoa criando missão (ordem do dono). O retrato
-   por versão que morava aqui foi para a aba Versões; o que resta é o convite
-   e, discreta no rodapé, a foto do universo. */
+   por versão que morava aqui foi para a aba Versões; o que resta é o convite.
+   Com UMA missão de qualquer status a tela troca para o `.project-dashboard`
+   (mais abaixo neste arquivo) — o convite é a tela do universo VAZIO. */
 
 .project-general {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* CONVITE CENTRALIZADO (2026-08-15): universo sem nenhuma missão não tem
+   conteúdo para empurrar o cartão para o alto — ele fica no MEIO da coluna,
+   na mesma família visual do `.task-modal` do modal de nova missão (mesma
+   largura, sombra e entrada). Centralização NA COLUNA, nunca overlay: o
+   `.board-content` já é `flex: 1; flex-direction: column`, então um filho
+   `flex: 1` toma a altura e o `place-items` centra nos dois eixos. */
+.project-general.is-invite {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
 }
 
 .pg-start {
@@ -11552,6 +11588,15 @@ body.pane-docking .pane-bar.draggable {
   border: 1.5px solid var(--ink);
   border-radius: 10px;
   padding: 18px 20px;
+}
+
+.project-general.is-invite .pg-start {
+  width: min(620px, 92%);
+  max-width: none;
+  align-items: center;
+  text-align: center;
+  box-shadow: var(--shadow);
+  animation: rise 160ms ease both;
 }
 
 .pg-start-title {
@@ -11589,52 +11634,18 @@ body.pane-docking .pane-bar.draggable {
   margin-top: 2px;
 }
 
-/* Rodapé de identidade: linha fina, sem cartão — o cartão é do convite. */
-.pg-identity {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 2px;
-}
-
-.pg-identity-hint {
-  font-size: 10.5px;
-  color: var(--ink-3);
-}
-
-.pg-avatar {
-  width: 40px;
-  height: 40px;
-  padding: 0; /* padding UA de <button> encolhia a foto dentro do quadro */
-  border-radius: 10px;
-  border: 1px solid var(--line-strong);
-  background: hsl(var(--card-hue, 21) 45% 88%);
-  color: hsl(var(--card-hue, 21) 55% 30%);
-  font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.pg-avatar img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: inherit;
-}
+/* 2026-08-15: o RODAPÉ DE IDENTIDADE morreu (.pg-identity/.pg-identity-hint/
+   .pg-avatar/.pg-avatar img/.pg-photo-remove). Trocar a foto do universo é
+   clicar no avatar do titlebar ou no do cabeçalho do workspace — as duas
+   alavancas ficam no alto da janela, visíveis de QUALQUER aba; o convite
+   ficou só com o convite. */
 
 /* FOTO presente = fundo/borda por hue somem (eles são a roupa do FALLBACK de
    iniciais): foto com área transparente flui direto sobre o papel/painel em
    vez de ganhar uma moldura colorida por trás (pedido do usuário — a margem
    transparente do PNG dele mostrava um quadro verde na página geral e um
-   anel verde no titlebar; no rail, de fundo escuro neutro, ficava bonito). */
-.pg-avatar:has(img),
+   anel verde no titlebar; no rail, de fundo escuro neutro, ficava bonito).
+   A metade `.pg-avatar` saiu com o rodapé; esta FICA — é o fix do titlebar. */
 .tb-title-avatar:has(img) {
   background: transparent;
   border-color: transparent;
@@ -11652,7 +11663,7 @@ body.pane-docking .pane-bar.draggable {
 /* 2026-08-15: o retrato POR VERSÃO (.pg-versions/.pgv-grid/.pgv-name/
    .pgv-loose/.pgv-empty) saiu daqui com a ordem do dono — ele agora é a faixa
    `.vs-stats` no topo da aba Versões, colada nas versões que descreve. O
-   .pg-avatar-wrap morreu junto: a foto virou linha de rodapé, sem coluna. */
+   .pg-avatar-wrap morreu junto: a foto subiu para os avatares do alto. */
 
 /* ONDA D: as FUNÇÕES (política de modelos, cor da função, skills e
    subagentes) e o reviewer de código saíram da página ✦ geral. Foram embora
@@ -11678,8 +11689,9 @@ body.pane-docking .pane-bar.draggable {
 }
 
 /* O ✦ geral divide espaço com o palco, portanto responde à largura da própria
-   coluna — não à janela inteira. Sobrou o convite + a linha da foto: o único
-   ajuste é o convite deixar de ser cartão largo quando a coluna aperta. */
+   coluna — não à janela inteira. Sobrou o convite: o ajuste é ele deixar de
+   ser cartão largo quando a coluna aperta (centralizado, o `min(620px, 92%)`
+   já encolhe sozinho — o que falta é o respiro interno). */
 @container boardcontent (max-width: 480px) {
   .pg-start {
     padding: 14px;
@@ -11687,6 +11699,289 @@ body.pane-docking .pane-bar.draggable {
 
   .pg-start-cta {
     width: 100%;
+    justify-content: center;
+  }
+}
+
+/* ---------- ✦ GERAL: o PAINEL DO PROJETO (2026-08-15) ----------
+   A outra metade da landing: com a primeira missão o convite dá lugar ao
+   retrato. PAPEL de ponta a ponta — `--panel`/`.term-window` são exclusivos de
+   terminal (docs/MOCKUP_WORKSPACE.md), e um painel escuro aqui repetiria o
+   erro que aquele documento nomeia. Os primitivos são os que já existem:
+   `.stat-tile`/`.stat-num`/`.stat-label` da faixa da aba Versões. */
+
+.project-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: stretch;
+  max-width: 860px;
+}
+
+.pd-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+/* Retrato por versão COMPACTO: o placar inteiro é da aba Versões. */
+.pd-versions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.pd-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: var(--card);
+  white-space: nowrap;
+}
+
+.pd-version.released {
+  color: var(--ok);
+}
+
+.pd-version-count {
+  font-weight: 400;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.pd-section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.pd-section-title {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.pd-section-more {
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--ink-3);
+}
+
+.pd-empty {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.pd-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* A LINHA DA MISSÃO. Botão quando dá para abrir; <div> quando a missão já
+   fechou — o clique morto seria uma promessa falsa. */
+.pd-mission {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  font-family: var(--mono);
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: var(--ink);
+}
+
+button.pd-mission {
+  cursor: pointer;
+}
+
+button.pd-mission:hover {
+  border-color: var(--ink);
+  border-left-color: var(--accent);
+}
+
+button.pd-mission:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ESPERANDO VOCÊ: âmbar `--warn` é a cor de "a decisão é sua" no tema. */
+.pd-mission.waiting {
+  border-color: var(--warn);
+  border-left-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 9%, var(--card));
+}
+
+.pd-mission.done {
+  background: transparent;
+  border-style: dashed;
+  border-left-color: var(--ok);
+}
+
+.pd-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* Mesma família do `.mc-dot` da coluna — a diferença consciente é o `ask`, que
+   aqui é ÂMBAR: no painel ele é o estado "a decisão é sua", e o âmbar é a cor
+   dessa fala no tema. */
+.pd-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+.pd-dot.ok {
+  background: var(--ok);
+}
+
+.pd-dot.busy {
+  background: var(--accent);
+}
+
+.pd-dot.err {
+  background: var(--err);
+}
+
+.pd-dot.ask {
+  background: var(--warn);
+}
+
+.pd-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 12.5px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-status {
+  flex: none;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.pd-status.integrando {
+  color: var(--accent);
+}
+
+.pd-status.concluida {
+  color: var(--ok);
+}
+
+.pd-badge {
+  flex: none;
+  font-size: 9.5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--ink-2);
+}
+
+.pd-badge.ask {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.pd-badge.err {
+  color: var(--err);
+  border-color: var(--err);
+}
+
+.pd-badge.busy {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.pd-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 10px;
+  color: var(--ink-3);
+  min-width: 0;
+}
+
+.pd-version-tag {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.pd-branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.pd-queue {
+  color: var(--ink-2);
+}
+
+.pd-day {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.pd-waiting {
+  font-size: 10.5px;
+  color: color-mix(in srgb, var(--warn) 70%, var(--ink));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-cta {
+  align-self: flex-start;
+}
+
+/* Coluna apertada (o ✦ geral divide a largura com o palco): os KPIs viram duas
+   fileiras e a data desce em vez de espremer a branch. */
+@container boardcontent (max-width: 480px) {
+  .pd-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pd-day {
+    margin-left: 0;
+  }
+
+  .pd-cta {
+    align-self: stretch;
     justify-content: center;
   }
 }

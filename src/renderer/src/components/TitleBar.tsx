@@ -42,6 +42,8 @@ export default function TitleBar(): React.JSX.Element {
   const openProject = useStore((s) => s.openProject)
   const openSettings = useStore((s) => s.openSettings)
   const closeSettings = useStore((s) => s.closeSettings)
+  // Alavanca da FOTO do universo: o avatar central abre o seletor do main.
+  const setProjectPhoto = useStore((s) => s.setProjectPhoto)
 
   const clearCatalogs = useStore((s) => s.clearCatalogs)
 
@@ -387,16 +389,27 @@ export default function TitleBar(): React.JSX.Element {
           </>
         ) : project ? (
           <>
-            <i
+            {/* A FOTO DO UNIVERSO TROCA AQUI (2026-08-15): o rodapé de
+                identidade do ✦ geral morreu e a alavanca subiu para o avatar
+                que já mostra o universo. Ilha `no-drag` dentro de uma barra
+                arrastável — o `.tb-title` pai segue `pointer-events: none` e
+                `drag`, senão o botão nascia mudo (o SO comeria o mousedown).
+                NADA de popover aqui: o contrato do titlebar conta os diálogos
+                focáveis deste arquivo e exige exatamente DOIS. */}
+            <button
+              type="button"
               className="tb-title-avatar"
               style={{ ['--card-hue' as string]: hueOf(project.name) }}
+              aria-label={`Trocar a foto do universo ${project.name}`}
+              data-tip="Trocar a foto do universo"
+              onClick={() => openProjectId && void setProjectPhoto(openProjectId)}
             >
               {project.photo ? (
                 <img src={project.photo} alt="" draggable={false} />
               ) : (
                 initialsOf(project.name)
               )}
-            </i>
+            </button>
             <span className="tb-title-label">{project.name}</span>
           </>
         ) : (
