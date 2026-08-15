@@ -2482,3 +2482,93 @@ test('C5b — o fio deriva da lateral, troca o verbo genérico e para no reduced
     /@media \(prefers-reduced-motion: reduce\) \{\s*\.gui-background-work[\s\S]{0,160}?animation: none/u
   )
 })
+
+// ————— PROPOSTA DE PLANO (menu de planejamento, 2026-08-15) —————
+// O quarto card interativo do chat. Ele NÃO nasce do CLI: quando a ferramenta
+// `propose_plan` chega, o harness injeta o evento no anel da sessão — e a
+// criação continua sendo do dono, no clique.
+
+test('proposta de plano entra normalizada pelo validador do vivo', () => {
+  const bom = asGuiEvent({
+    type: 'plan-proposal',
+    requestId: 'req-plan-1',
+    draft: {
+      title: '  V1.1  ',
+      items: [
+        { title: 'Fila', objective: 'fechar', doneCriteria: ['a'], tier: 'medio' },
+        { title: '', objective: 'sem título' }
+      ],
+      lixo: 'campo que ninguém declarou'
+    }
+  })
+  assert.equal(bom.type, 'plan-proposal')
+  assert.equal(bom.requestId, 'req-plan-1')
+  // O redutor e o card recebem o rascunho JÁ aparado: `items` torto ou título
+  // gigante nunca viram exceção dentro de um `set` do zustand.
+  assert.equal(bom.draft.title, 'V1.1')
+  assert.equal(bom.draft.items.length, 1)
+  assert.equal(bom.draft.items[0].tier, 'medio')
+  assert.ok(!('lixo' in bom.draft))
+
+  assert.equal(asGuiEvent({ type: 'plan-proposal', requestId: '', draft: { title: 'x' } }), null)
+  assert.equal(asGuiEvent({ type: 'plan-proposal', draft: { title: 'x' } }), null)
+  assert.equal(asGuiEvent({ type: 'plan-proposal', requestId: 'r', draft: 'nada' }), null)
+  assert.equal(asGuiEvent({ type: 'plan-proposal', requestId: 'r', draft: {} }), null)
+  // `items` inválido com título presente ainda é uma proposta legítima (plano
+  // que nasce vazio) — o card diz isso em vez de sumir.
+  const semItens = asGuiEvent({ type: 'plan-proposal', requestId: 'r', draft: { title: 'V2' } })
+  assert.deepEqual(semItens.draft.items, [])
+})
+
+test('a proposta atravessa os cinco espelhos e entra na MESMA fila das decisões', () => {
+  const api = readFileSync(new URL('../src/renderer/src/guiApi.ts', import.meta.url), 'utf8')
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+
+  // espelhos 2 e 3 (união do renderer + validador do vivo)
+  assert.match(api, /\| \{ type: 'plan-proposal'; requestId: string; draft: PlanDraft \}/u)
+  assert.match(api, /if \(type === 'plan-proposal'\)/u)
+  assert.match(api, /kind: 'plan-proposal'; approve: boolean/u)
+
+  // espelho 5 (redutor da fatia guiPanes): fila por requestId, pulso de espera
+  // e o eco factual no fio quando a decisão sai.
+  assert.match(store, /case 'plan-proposal': \{/u)
+  assert.match(store, /kind: 'plan-proposal',\s*\n\s*requestId: evt\.requestId,\s*\n\s*planProposal/u)
+  assert.match(store, /planProposal: active\?\.kind === 'plan-proposal' \? active\.planProposal : null/u)
+  assert.match(store, /evt\.resolution\.kind === 'plan-proposal'/u)
+  // retirada pelo agente também tem recibo (permission-cancel).
+  assert.match(store, /a proposta de plano foi retirada pelo agente/u)
+
+  // a decisão viaja pela mesma cerca de falha das outras três
+  assert.match(store, /const result = await guiApi\.answerPlanProposal\(/u)
+  assert.match(store, /não deu para responder à proposta de plano/u)
+})
+
+test('o card rico substitui o card cru da tool e some na conversa congelada', () => {
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  const card = readFileSync(
+    new URL('../src/renderer/src/components/GuiPlanProposalCard.tsx', import.meta.url),
+    'utf8'
+  )
+
+  // O tool card genérico é ocultado: dois desenhos da mesma decisão na tela.
+  assert.match(pane, /'propose_plan'/u)
+  assert.match(pane, /'mcp__synkora__propose_plan'/u)
+  // Mesma cerca das outras decisões: histórico local aberto ou pane read-only
+  // NÃO renderiza card vivo (`inert`), e o composer cede a vez ao card.
+  assert.match(pane, /\{!inert && gui\.planProposal && \(/u)
+  assert.match(pane, /const awaitingCard = Boolean\(gui\.question \|\| gui\.planReview \|\| gui\.planProposal\)/u)
+  assert.match(pane, /answerGuiPlanProposal\(projectId, paneId, approve, note\)/u)
+
+  // As duas portas do card: criar (a ÚNICA criação de plano) e ajustar, que
+  // devolve o texto do dono ao agente.
+  assert.match(card, /✓ criar plano/u)
+  assert.match(card, /✎ ajustar/u)
+  assert.match(card, /onDecide\(true\)/u)
+  assert.match(card, /onDecide\(false, note\.trim\(\)\)/u)
+  assert.match(card, /aria-expanded=\{open\}/u)
+  // Nada de diálogo nativo nem de title= no card novo.
+  assert.ok(!/window\.(confirm|alert)\(|\stitle="/u.test(card))
+})
