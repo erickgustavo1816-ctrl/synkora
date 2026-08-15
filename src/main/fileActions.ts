@@ -23,9 +23,20 @@ export interface FileActionProjectRecord {
   path: string
 }
 
+/**
+ * Espelho ESTRUTURAL de `MissionStatus` (src/main/missions.ts), declarado aqui
+ * de propósito: este módulo compila ISOLADO na suíte `test:file-actions` e
+ * importar de './missions' arrastaria `electron` para dentro do compile.
+ */
+export type FileActionMissionStatus = 'ativa' | 'integrando' | 'concluida' | 'arquivada'
+
 export interface FileActionMissionRecord {
   projectId: string
   worktree?: string
+  /** Só missão VIVA é raiz navegável. Arquivar não apaga o worktree do disco e
+   *  a integração limpa o registro — sem o status, a pasta encerrada seguiria
+   *  navegável e mutável. */
+  status?: FileActionMissionStatus
 }
 
 export interface FileActionRootLookup {
@@ -108,6 +119,8 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u
 
 export type FileActionErrorCode =
   | 'invalid-scope'
+  | 'mission-closed'
+  | 'mission-no-workspace'
   | 'invalid-path'
   | 'protected-path'
   | 'missing'
@@ -123,6 +136,11 @@ export type FileActionErrorCode =
 
 const PUBLIC_ERROR: Readonly<Record<FileActionErrorCode, string>> = {
   'invalid-scope': 'Projeto ou missão inválidos.',
+  'mission-closed':
+    'Esta missão foi encerrada — a pasta dela não abre mais aqui. '
+    + 'Reative a missão para voltar a navegar.',
+  'mission-no-workspace':
+    'Esta missão não tem pasta própria. Escolha “raiz do projeto” na origem.',
   'invalid-path': 'O caminho informado é inválido.',
   'protected-path': 'Esta área contém metadados internos e não pode ser alterada.',
   missing: 'O item não existe mais. Recarregue a árvore.',
@@ -164,8 +182,11 @@ function assertScopeId(value: unknown): asserts value is string {
 }
 
 /** Resolve por identidade de domínio. Caminho físico vindo do renderer não
- * participa deste contrato. Uma missão de planejamento/sem worktree herda a
- * raiz do projeto, enquanto uma missão dev usa o worktree registrado. */
+ * participa deste contrato. Escopo de missão exige espaço de trabalho VIVO e
+ * PRÓPRIO — o worktree registrado de uma missão 'ativa'. Missão encerrada
+ * (arquivada/concluída/integrando) e missão sem worktree (planejamento) não
+ * têm raiz aqui: a raiz do projeto se pede pelo escopo de projeto, nunca por
+ * herança silenciosa que rotularia a pasta do projeto de "worktree da missão". */
 export function resolveFileActionRoot(
   scope: FileActionScope,
   lookup: FileActionRootLookup
@@ -183,13 +204,17 @@ export function resolveFileActionRoot(
   if (!mission || mission.projectId !== scope.projectId) {
     throw new FileActionError('invalid-scope')
   }
-  if (mission.worktree !== undefined) {
-    if (typeof mission.worktree !== 'string' || !isAbsolute(mission.worktree)) {
-      throw new FileActionError('invalid-scope')
-    }
-    return mission.worktree
+  if (mission.status !== undefined && mission.status !== 'ativa') {
+    throw new FileActionError('mission-closed')
   }
-  return project.path
+  const worktree = mission.worktree
+  if (worktree === undefined || worktree === '') {
+    throw new FileActionError('mission-no-workspace')
+  }
+  if (typeof worktree !== 'string' || !isAbsolute(worktree)) {
+    throw new FileActionError('invalid-scope')
+  }
+  return worktree
 }
 
 interface ParsedRelativePath {

@@ -104,6 +104,41 @@ test('a origem é o Select do app — nenhum <select> nativo na aba', async () =
   assert.match(view, /tip="Origem dos arquivos"/u, 'o gatilho precisa de nome acessível')
 })
 
+test('a origem só oferece missão viva — encerrada não é raiz navegável', async () => {
+  const [view, ipc] = await Promise.all([
+    readFile(new URL('../src/renderer/src/components/FilesView.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/main/ipc/files.ts', import.meta.url), 'utf8')
+  ])
+
+  // A vitrine filtra pela mesma régua da cerca do main: viva + worktree próprio.
+  const predicate = view.match(/function isBrowsableMissionRoot\([\s\S]*?\n\}/u)?.[0] ?? ''
+  assert.ok(predicate.includes('mission.projectId === projectId'), 'a régua precisa parear o projeto')
+  assert.ok(predicate.includes("mission.status === 'ativa'"), 'missão encerrada não é raiz navegável')
+  assert.ok(predicate.includes('mission.worktree'), 'missão sem worktree resolveria para a raiz do projeto')
+  assert.match(view, /for \(const mission of browsableMissions\)/u, 'o picker lista a lista filtrada')
+
+  // Arquivar/integrar acontece por fora da aba: a lista tem que reagir e a
+  // origem aberta que deixou de valer cai para a raiz do projeto.
+  assert.match(view, /window\.synkora\.missions\?\.onChanged/u)
+  assert.match(view, /resetToProjectRoot\(\)/u)
+  assert.match(view, /label: closed \? 'missão encerrada'/u, 'a opção presa não pode dizer "carregando…"')
+
+  // A cerca read-only (files:preview/files:listTree) recusa a mesma coisa e
+  // deixou de herdar a raiz do projeto no ramo de missão.
+  const readOnly = ipc.match(/const readOnlyRootPath = \([\s\S]*?\n  \}/u)?.[0] ?? ''
+  assert.ok(readOnly.includes("root.kind === 'project'"), 'região do readOnlyRootPath não foi isolada')
+  assert.equal(readOnly.includes('files:listDocs'), false, 'a região vazou para fora da função')
+  assert.match(readOnly, /mission\.status !== 'ativa'\) return null/u)
+  assert.match(readOnly, /!mission\.worktree\) return null/u)
+  const missionAt = readOnly.indexOf('missions.get(')
+  assert.notEqual(missionAt, -1, 'o ramo de missão precisa ser localizável na região')
+  assert.equal(
+    readOnly.slice(missionAt).includes('project.path'),
+    false,
+    'missão sem worktree não pode herdar a raiz do projeto'
+  )
+})
+
 test('a bancada de leitura é PAPEL e continua declarando somente leitura', async () => {
   const [preview, css] = await Promise.all([
     readFile(new URL('../src/renderer/src/components/FilePreviewPanel.tsx', import.meta.url), 'utf8'),

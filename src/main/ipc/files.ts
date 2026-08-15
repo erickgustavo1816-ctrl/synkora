@@ -260,10 +260,13 @@ export function registerFilesIpc(ctx: MainContext, extras: FilesIpcExtras): void
     }
     const mission = missions.get(root.missionId)
     if (!mission || mission.projectId !== projectId) return null
-    return {
-      kind: 'mission',
-      path: typeof mission.worktree === 'string' && mission.worktree ? mission.worktree : project.path
-    }
+    // Mesma régua da cerca autoritativa (resolveFileActionRoot): só missão VIVA
+    // com worktree próprio é raiz. Arquivar preserva a pasta no disco e a
+    // integração limpa o registro — sem isto, missão encerrada seguia legível e
+    // missão sem worktree caía na RAIZ DO PROJETO rotulada "worktree da missão".
+    if (mission.status !== 'ativa') return null
+    if (typeof mission.worktree !== 'string' || !mission.worktree) return null
+    return { kind: 'mission', path: mission.worktree }
   }
 
   ipcMain.handle('files:listTree', (_e, projectId: unknown, rawRoot: unknown) => {

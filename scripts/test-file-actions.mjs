@@ -45,13 +45,19 @@ async function fixture(t) {
   const worktreeRoot = join(base, 'worktree')
   await mkdir(projectRoot)
   await mkdir(worktreeRoot)
+  const missions = new Map([
+    ['mission-1', { projectId: 'project-1', status: 'ativa', worktree: worktreeRoot }],
+    ['mission-other', { projectId: 'project-2', status: 'ativa', worktree: worktreeRoot }],
+    // Arquivar NÃO apaga o worktree do disco (só missions:remove apaga).
+    ['mission-archived', { projectId: 'project-1', status: 'arquivada', worktree: worktreeRoot }],
+    // A integração conclui a missão limpando branch/worktree do registro.
+    ['mission-done', { projectId: 'project-1', status: 'concluida' }],
+    // Missão de planejamento nasce viva e sem worktree por desenho.
+    ['mission-planning', { projectId: 'project-1', status: 'ativa' }]
+  ])
   const lookup = {
     project: (id) => id === 'project-1' ? { path: projectRoot } : undefined,
-    mission: (id) => id === 'mission-1'
-      ? { projectId: 'project-1', worktree: worktreeRoot }
-      : id === 'mission-other'
-        ? { projectId: 'project-2', worktree: worktreeRoot }
-        : undefined
+    mission: (id) => missions.get(id)
   }
   return { base, projectRoot, worktreeRoot, lookup }
 }
@@ -74,6 +80,51 @@ test('a raiz física é resolvida apenas por projectId/missionId pareados', asyn
     () => resolveFileActionRoot({ projectId: '../project' }, lookup),
     /Projeto ou missão inválidos/u
   )
+})
+
+test('escopo de missão exige espaço de trabalho vivo e próprio', async (t) => {
+  const { worktreeRoot, lookup } = await fixture(t)
+  const scopeOf = (missionId) => ({ projectId: 'project-1', missionId })
+
+  // Missão viva com worktree continua sendo a única raiz de missão.
+  assert.equal(resolveFileActionRoot(scopeOf('mission-1'), lookup), worktreeRoot)
+
+  // Arquivada: a pasta existe no disco e mesmo assim deixa de abrir aqui.
+  assert.throws(
+    () => resolveFileActionRoot(scopeOf('mission-archived'), lookup),
+    (error) => error.code === 'mission-closed' && /Reative a missão/u.test(error.message)
+  )
+  // Concluída: além de encerrada, perdeu o worktree no merge.
+  assert.throws(
+    () => resolveFileActionRoot(scopeOf('mission-done'), lookup),
+    (error) => error.code === 'mission-closed'
+  )
+  // Sem worktree, a raiz do projeto NÃO é herdada disfarçada de missão: o
+  // resolvedor recusa em vez de devolver `project.path`.
+  assert.throws(
+    () => resolveFileActionRoot(scopeOf('mission-planning'), lookup),
+    (error) => error.code === 'mission-no-workspace' && /raiz do projeto/u.test(error.message)
+  )
+
+  // Efeito consciente: a cerca é do resolvedor, então as mutações caem junto.
+  const service = new FileActionService(lookup, {
+    trashItem: async () => assert.fail('lixeira não deveria ser chamada'),
+    writeClipboard: () => assert.fail('clipboard não deveria ser chamado'),
+    archiveDirectory: async () => assert.fail('zip não deveria ser chamado')
+  })
+  const closedScope = scopeOf('mission-archived')
+  const tree = await service.listTree(closedScope)
+  assert.equal(tree.ok, false)
+  assert.match(tree.error, /Esta missão foi encerrada/u)
+  for (const result of [
+    await service.createFolder(closedScope, '', 'nova'),
+    await service.createFile(closedScope, '', 'nova.md'),
+    await service.copyPath(closedScope, 'qualquer.md'),
+    await service.moveToTrash(closedScope, 'qualquer.md')
+  ]) {
+    assert.equal(result.ok, false)
+    assert.match(result.error, /Esta missão foi encerrada/u)
+  }
 })
 
 test('o dialeto relativo recusa traversal, absoluto, drive-relative, UNC e metadados', () => {

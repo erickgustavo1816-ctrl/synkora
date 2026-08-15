@@ -46,11 +46,28 @@ function terminalMarkdownPreview(
 }
 
 /**
+ * Régua única da origem, espelho do main (`resolveFileActionRoot`): só missão
+ * VIVA com worktree PRÓPRIO é raiz navegável. Encerrada (arquivada/concluída/
+ * integrando) e missão sem worktree não abrem aqui — a raiz do projeto já é a
+ * primeira opção da lista. O main recusa de qualquer jeito; o filtro existe
+ * para não oferecer um clique que vai virar erro.
+ */
+function isBrowsableMissionRoot(mission: Mission, projectId: string): boolean {
+  return (
+    mission.projectId === projectId
+    && mission.status === 'ativa'
+    && typeof mission.worktree === 'string'
+    && mission.worktree.length > 0
+  )
+}
+
+/**
  * Aba Arquivos: árvore com ações explícitas e preview sempre somente leitura.
  * A main resolve a raiz por IDs; caminhos físicos nunca atravessam esta tela.
  */
 export default function FilesView({ projectId, missionId }: Props): React.JSX.Element {
-  const [missionOptions, setMissionOptions] = useState<Mission[]>([])
+  /** `null` = a lista ainda não chegou (não confundir com projeto sem missão). */
+  const [missionOptions, setMissionOptions] = useState<Mission[] | null>(null)
   const [selectedRoot, setSelectedRoot] = useState<FileTreeRoot>(
     () => (missionId ? { kind: 'mission', missionId } : { kind: 'project' })
   )
@@ -75,15 +92,25 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
     setPreview(null)
   }, [missionId, projectId])
 
+  // A lista de origens muda por FORA desta aba (arquivar por agente, integrar,
+  // reativar). Sem assinar missions:changed, a pasta encerrada ficaria na tela
+  // até a aba remontar — e a missão reativada não voltaria a aparecer.
   useEffect(() => {
     let stale = false
-    void window.synkora.missions.list(projectId).then((missions) => {
-      if (!stale) setMissionOptions(missions)
-    }).catch(() => {
-      if (!stale) setMissionOptions([])
+    const refresh = (): void => {
+      void window.synkora.missions.list(projectId).then((missions) => {
+        if (!stale) setMissionOptions(missions)
+      }).catch(() => {
+        if (!stale) setMissionOptions([])
+      })
+    }
+    refresh()
+    const off = window.synkora.missions?.onChanged?.((changedProjectId: string) => {
+      if (changedProjectId === projectId) refresh()
     })
     return () => {
       stale = true
+      off?.()
     }
   }, [projectId])
 
@@ -159,6 +186,11 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
   const selectedRootValue =
     selectedRoot.kind === 'project' ? 'project' : selectedRoot.missionId
 
+  const browsableMissions = useMemo<Mission[]>(
+    () => (missionOptions ?? []).filter((mission) => isBrowsableMissionRoot(mission, projectId)),
+    [missionOptions, projectId]
+  )
+
   // Mesmo padrão do ModelSelect: a lista chega por IPC, então o valor já
   // escolhido (missão vinda da prop) ganha uma opção provisória em vez de o
   // gatilho cair no placeholder e parecer que a origem se perdeu.
@@ -166,7 +198,7 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
     const options: SelectOption[] = [
       { value: 'project', label: 'raiz do projeto', hint: 'repositório' }
     ]
-    for (const mission of missionOptions) {
+    for (const mission of browsableMissions) {
       options.push({
         value: mission.id,
         label: mission.title,
@@ -174,23 +206,47 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
       })
     }
     if (selectedRootValue !== 'project' && !options.some((o) => o.value === selectedRootValue)) {
+      // Missão conhecida e fora da lista = encerrada/sem pasta: dizer
+      // "carregando…" ali seria mentira, a origem não vai chegar.
+      const closed = (missionOptions ?? []).some((mission) => mission.id === selectedRootValue)
       options.push({
         value: selectedRootValue,
-        label: 'worktree da missão',
-        hint: 'carregando…'
+        label: closed ? 'missão encerrada' : 'worktree da missão',
+        hint: closed ? 'sem pasta para abrir' : 'carregando…'
       })
     }
     return options
-  }, [missionOptions, selectedRootValue])
+  }, [browsableMissions, missionOptions, selectedRootValue])
 
-  const changeRoot = useCallback((value: string): void => {
-    setSelectedRoot(
-      value === 'project' ? { kind: 'project' } : { kind: 'mission', missionId: value }
-    )
+  /** Volta para a raiz do projeto limpando leitura e seleção. Serve ao picker e
+   *  à saída automática quando a origem aberta deixa de ser navegável. */
+  const resetToProjectRoot = useCallback((): void => {
+    setSelectedRoot({ kind: 'project' })
     setSelectedPath(null)
     setTerminalDoc(null)
     setPreview(null)
   }, [])
+
+  const changeRoot = useCallback((value: string): void => {
+    if (value === 'project') {
+      resetToProjectRoot()
+      return
+    }
+    setSelectedRoot({ kind: 'mission', missionId: value })
+    setSelectedPath(null)
+    setTerminalDoc(null)
+    setPreview(null)
+  }, [resetToProjectRoot])
+
+  // A missão aberta pode ser arquivada/integrada com a aba na tela. Quando a
+  // lista já chegou e a origem selecionada deixou de ser navegável, a aba cai
+  // para a raiz do projeto em vez de insistir numa árvore que o main recusa.
+  useEffect(() => {
+    if (missionOptions === null || selectedRoot.kind !== 'mission') return
+    const current = missionOptions.find((mission) => mission.id === selectedRoot.missionId)
+    if (current && isBrowsableMissionRoot(current, projectId)) return
+    resetToProjectRoot()
+  }, [missionOptions, projectId, resetToProjectRoot, selectedRoot])
 
   if (!bridgeOk) {
     return (
