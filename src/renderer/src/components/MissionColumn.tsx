@@ -1,4 +1,5 @@
 import { missionTypeOf, type Mission } from '../store'
+import { badgeFor, dotClass } from '../missionPresentation'
 
 // COLUNA DE MISSÕES (Synkora 2.0, onda B) — o mockup aprovado pelo dono: as
 // missões saem da fila de abas no topo e viram CARDS na coluna da ESQUERDA,
@@ -27,30 +28,9 @@ export interface MissionColumnEntry {
   queueLabel?: string
 }
 
-/** Estado visual do ponto: o que exige o dono vence o que está só andando. */
-function dotClass(entry: MissionColumnEntry): string {
-  const { mission, pulse } = entry
-  if (pulse || mission.pendingIntegrationApproval) return 'ask'
-  if (mission.integration?.state === 'blocked') return 'err'
-  if (mission.status === 'integrando' || mission.integration) return 'busy'
-  return 'ok'
-}
-
-/** Selo curto à direita do título — o mesmo vocabulário das abas antigas. */
-function badgeFor(entry: MissionColumnEntry): { glyph: string; kind: string } | null {
-  const { mission, pulse } = entry
-  if (pulse) return { glyph: '❓', kind: 'ask' }
-  if (mission.pendingIntegrationApproval) return { glyph: '⇪', kind: 'ask' }
-  const integration = mission.integration
-  if (!integration || integration.state === 'merging') return null
-  if (integration.state === 'blocked')
-    return {
-      glyph: integration.owner === 'orchestrator' ? '! reparo' : '! Maestro',
-      kind: 'err'
-    }
-  if (integration.state === 'sync_required') return { glyph: '↻ sync', kind: 'busy' }
-  return { glyph: `fila #${integration.position}`, kind: 'busy' }
-}
+// `dotClass`/`badgeFor` moraram aqui até 2026-08-15 e mudaram para
+// `../missionPresentation`: o painel do projeto (✦ geral com missões) desenha
+// as MESMAS missões, e duas cópias divergiriam na primeira mudança.
 
 export default function MissionColumn({
   entries,

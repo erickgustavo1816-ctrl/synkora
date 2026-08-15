@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { missionTypeOf, type GuiItem, type Mission } from '../store'
 import { missionWorkspace, type MissionWorkspaceSummary } from '../missionWorkspace'
+import { MISSION_STATUS_LABEL as STATUS_LABEL } from '../missionPresentation'
 import MissionCommitHistory from './MissionCommitHistory'
 import GuiSubagentSidebar from './GuiSubagentSidebar'
 
@@ -16,12 +17,9 @@ import GuiSubagentSidebar from './GuiSubagentSidebar'
 // de todo ⇪ ("o que mudou aí?") tinha uma única resposta possível: abrir um
 // terminal e rodar git. Agora ela está na tela onde a decisão é tomada.
 
-const STATUS_LABEL: Record<Mission['status'], string> = {
-  ativa: 'em andamento',
-  integrando: 'integrando agora',
-  concluida: 'integrada',
-  arquivada: 'arquivada'
-}
+// A palavra de estado mudou para `../missionPresentation` (2026-08-15): o
+// painel do projeto usa a mesma, e "integrada" aqui com "concluída" lá seriam
+// dois nomes para o mesmo fato.
 
 /** Glifo + rótulo por status do git. Status desconhecido cai no neutro: o
  *  vocabulário do motor pode crescer sem quebrar esta lista. */
