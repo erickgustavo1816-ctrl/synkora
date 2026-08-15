@@ -25,6 +25,11 @@
   --panel-ink-3: #7d7663;
   --mono: 'Cascadia Code', Consolas, 'Courier New', monospace;
   --shadow: 0 10px 30px rgba(38, 32, 25, 0.18);
+  /* LARGURA DA BARRA DE ROLAGEM DA CASA. Ela deixou de ser um número solto
+     porque quem reserva a calha (`scrollbar-gutter: stable`) precisa alinhar
+     com quem está FORA do scroller — trocar a barra sem trocar a régua
+     desalinha as bordas de novo. */
+  --scrollbar-w: 10px;
   --floating-overlay-title-size: 13px;
   --floating-overlay-subtitle-size: 11.5px;
   /* cores das FUNÇÕES (defaults de departments.ts — o boot do renderer
@@ -1155,8 +1160,8 @@ select {
 /* ---------- scrollbars retrô ---------- */
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: var(--scrollbar-w);
+  height: var(--scrollbar-w);
 }
 
 ::-webkit-scrollbar-track {
@@ -3060,8 +3065,17 @@ select {
      O prefixo `.board` NÃO é decoração: as regras do MODO PALCO moram bem
      depois deste bloco no arquivo e têm a mesma especificidade, então sem ele
      a cascata deixava o layout lateral vencer o empilhado (a caixa nunca
-     empilhava de verdade). `.board` é o próprio container da query. */
-  .mission-col,
+     empilhava de verdade). `.board` é o próprio container da query.
+
+     2026-08-15b: o CASO BASE tinha exatamente a mesma doença e ninguém viu —
+     `.mission-col` (0,1,0) perdia para o `.mission-col` de baixo no arquivo
+     (mesma especificidade, posição maior). No ✦ geral e em missão legada a
+     coluna continuava vertical em janela estreita e, pior, com o `.board-main`
+     já empilhado o `flex: 0 0 240px` passava a valer como 240px de ALTURA.
+     `.board .mission-col` (0,2,0) fecha o buraco; o 2º seletor CONTINUA
+     necessário porque `.board-main.stage-mode .mission-col` (0,3,0) ainda
+     declara `order: 2` e precisa perder para o `order: -1` da faixa. */
+  .board .mission-col,
   .board .board-main.stage-mode .mission-col {
     order: -1;
     flex: none;
@@ -3089,7 +3103,11 @@ select {
     flex: 0 0 auto;
   }
 
-  .mission-col-list {
+  /* O MESMO prefixo, pela MESMA razão: as quatro propriedades daqui têm gêmeas
+     em `.mission-col-list` mais abaixo no arquivo (column / overflow-y auto /
+     scrollbar-gutter stable). Sem `.board`, a coluna virava faixa horizontal
+     com uma lista VERTICAL dentro. */
+  .board .mission-col-list {
     flex-direction: row;
     overflow-x: auto;
     overflow-y: hidden;
@@ -3100,11 +3118,16 @@ select {
     flex: 0 0 200px;
   }
 
-  .mission-col-general,
-  .mission-col-new {
+  /* Na FAIXA horizontal não existe calha para alinhar (a lista rola no eixo X
+     e `scrollbar-gutter` volta a ser `auto`): a reserva de 10px dos dois botões
+     viraria um vão solto no meio da fila. O `.board` aqui é o que faz este
+     zero vencer o `margin-inline-end` declarado mais abaixo no arquivo. */
+  .board .mission-col-general,
+  .board .mission-col-new {
     flex: none;
     align-self: center;
     white-space: nowrap;
+    margin-inline-end: 0;
   }
 
   .mission-col-empty {
@@ -7291,7 +7314,14 @@ body.pane-docking .pane-bar.draggable {
    CARD por missão, com o worktree embaixo do título. Linguagem papel: borda de
    tinta, sem sombra, sem card flutuante (isso é do mapa). */
 .mission-col {
-  flex: 0 0 240px;
+  /* LARGURA ÚNICA DA COLUNA (ordem do dono, 2026-08-15b): ela media 240px no
+     ✦ geral e 216px com missão 2.0 aberta — 24px de salto a cada clique, e o
+     conteúdo útil caindo de 229px para 205px. A medida agora mora AQUI e em
+     lugar nenhum mais; o modo palco só ORDENA (global.css `.board-main
+     .stage-mode .mission-col`). 240 é o número que o resto do layout já
+     assume: o teto do palco (`calc(100% - 684px)`) foi calculado com ele. */
+  --mission-col-width: 240px;
+  flex: 0 0 var(--mission-col-width);
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -7299,6 +7329,17 @@ body.pane-docking .pane-bar.draggable {
   padding-right: 10px;
   border-right: 1px solid var(--line);
   overflow: hidden;
+}
+
+/* A CALHA DO SCROLLER É DA COLUNA INTEIRA, não só da lista: `.mission-col-list`
+   reserva `scrollbar-gutter: stable` e os cards terminam 10px antes destes dois
+   botões, que são filhos DIRETOS da coluna — a borda direita deles nunca
+   alcançava a dos cards, com ou sem barra na tela. Mesma reserva aqui põe as
+   três bordas na mesma régua. (Recusado: trocar `stable` por `auto` — devolve o
+   pulo de largura do card quando a barra aparece no meio de uma leitura.) */
+.mission-col-general,
+.mission-col-new {
+  margin-inline-end: var(--scrollbar-w);
 }
 
 .mission-col-general {
@@ -8777,8 +8818,10 @@ body.pane-docking .pane-bar.draggable {
    A ordem visual muda só por CSS: reordenar os filhos no DOM remontaria os
    TerminalPane e mataria os PTYs do Maestro e dos orquestradores. */
 .board-main.stage-mode .mission-col {
+  /* SÓ ORDEM. A largura é do token `--mission-col-width` em `.mission-col` —
+     redeclará-la aqui é o que fazia a coluna pular 24px sempre que o dono
+     clicava numa missão 2.0. Nunca voltar a declarar `flex`/`width` aqui. */
   order: 2;
-  flex: 0 0 216px;
 }
 
 .board-main.stage-mode .maestro-window {
@@ -12926,8 +12969,8 @@ button.pd-mission.waiting:hover {
 /* ---------- scrollbars customizadas ---------- */
 /* app (fundo papel): trilho invisível, polegar tinta */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: var(--scrollbar-w);
+  height: var(--scrollbar-w);
 }
 
 ::-webkit-scrollbar-track {

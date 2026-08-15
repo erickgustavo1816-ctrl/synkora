@@ -321,6 +321,85 @@ test('o Board escolhe a tela pelo módulo puro e mantém as duas no mesmo limite
   assert.match(board, /const showKanban =/u)
 })
 
+/* ---------- a coluna de missões: UMA largura, sempre ---------- */
+
+/** o corpo de uma regra CSS pelo seletor EXATO, ancorado em início de linha */
+function ruleBody(css, selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+  const found = css.match(new RegExp(`\\n${escaped}\\s*\\{([^}]*)\\}`, 'u'))
+  assert.ok(found, `regra ausente: ${selector}`)
+  return found[1]
+}
+
+test('a coluna de missões mede o MESMO no ✦ geral e com missão aberta', async () => {
+  const css = await source('src/renderer/src/global.css')
+
+  // O DEFEITO (ordem do dono, 2026-08-15b): DOIS donos do mesmo eixo. A coluna
+  // media 240px no ✦ geral e 216px com missão 2.0 selecionada — medido: 24px
+  // de salto a cada clique, e o conteúdo útil caindo de 229px para 205px.
+  const base = ruleBody(css, '.mission-col')
+  assert.match(base, /--mission-col-width:\s*240px/u, 'a medida mora no token, em lugar nenhum mais')
+  assert.match(base, /flex:\s*0 0 var\(--mission-col-width\)/u)
+
+  // o modo palco só ORDENA: redeclarar largura aqui é o bug voltando
+  const stage = ruleBody(css, '.board-main.stage-mode .mission-col')
+  assert.match(stage, /order:\s*2/u, 'o palco continua mandando a coluna para a esquerda')
+  assert.doesNotMatch(
+    stage,
+    /(?:^|;)\s*(?:flex|flex-basis|width|min-width|max-width)\s*:/u,
+    'o modo palco não pode declarar largura — a fonte única é o token'
+  )
+})
+
+test('em janela estreita a coluna vira faixa TAMBÉM no ✦ geral', async () => {
+  const css = await source('src/renderer/src/global.css')
+
+  // CASCATA POR POSIÇÃO: o seletor cru `.mission-col` (0,1,0) dentro do
+  // `@container board (max-width: 1103px)` perdia para o `.mission-col` que
+  // mora MAIS ABAIXO no arquivo (mesma especificidade). Com o `.board-main` já
+  // empilhado, o `flex: 0 0 240px` passava a valer como 240px de ALTURA — a
+  // coluna nunca virava faixa horizontal fora do modo palco. Medido a 1000px
+  // de janela, antes: altura 240px e `flex-direction: column`.
+  assert.match(
+    css,
+    /\.board \.mission-col,\s*\.board \.board-main\.stage-mode \.mission-col\s*\{/u,
+    'a faixa estreita precisa do prefixo `.board` para vencer por especificidade'
+  )
+  assert.doesNotMatch(
+    css,
+    /(?:^|\n)\s*\.mission-col,\s*\.board \.board-main\.stage-mode \.mission-col/u,
+    'o seletor cru voltou: ele perde por posição e a coluna deixa de empilhar'
+  )
+  // as MESMAS gêmeas mais abaixo no arquivo derrubavam estas duas também
+  assert.match(css, /\.board \.mission-col-list\s*\{/u)
+  assert.match(css, /\.board \.mission-col-general,\s*\.board \.mission-col-new\s*\{/u)
+})
+
+test('a régua de 10px: os botões da coluna reservam a MESMA calha dos cards', async () => {
+  const css = await source('src/renderer/src/global.css')
+
+  // O DEFEITO: `.mission-col-list` reserva a calha da barra
+  // (`scrollbar-gutter: stable`) e os dois botões são filhos DIRETOS da coluna
+  // — a borda direita deles ficava 10px à frente da dos cards, com ou sem
+  // barra na tela. Medido antes: botão em 313px, card em 303px.
+  assert.match(ruleBody(css, ':root'), /--scrollbar-w:\s*10px/u, 'a medida da barra ganhou nome')
+  assert.match(
+    css,
+    /\.mission-col-general,\s*\.mission-col-new\s*\{[^}]*margin-inline-end:\s*var\(--scrollbar-w\)/u,
+    'os botões reservam a mesma calha — e pelo TOKEN, não por um 10 solto'
+  )
+
+  // as declarações globais da barra CONSOMEM o token: trocar a barra sem
+  // trocar a régua desalinharia tudo de novo
+  const bars = [...css.matchAll(/(?:^|\n)::-webkit-scrollbar\s*\{([^}]*)\}/gu)].map((m) => m[1])
+  assert.ok(bars.length >= 1, 'a regra global da barra sumiu do arquivo')
+  for (const bar of bars) assert.match(bar, /width:\s*var\(--scrollbar-w\)/u)
+
+  // e a lista continua RESERVANDO a calha: trocar `stable` por `auto` devolve
+  // o card mudando de largura no meio de uma leitura.
+  assert.match(ruleBody(css, '.mission-col-list'), /scrollbar-gutter:\s*stable/u)
+})
+
 test('a foto do universo troca nos dois avatares do alto da janela', async () => {
   const [titleBar, universe] = await Promise.all([
     source('src/renderer/src/components/TitleBar.tsx'),
