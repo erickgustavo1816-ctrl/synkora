@@ -1705,7 +1705,10 @@ interface SynkoraState {
   /** superfície sensível liberada (bypass vale mesmo em missão sensível) */
   sensitiveBypassOk: boolean
   toggleSensitiveBypass: (projectId: string, on: boolean) => Promise<void>
-  /** seat do Maestro persistido no projeto (null = gate de escolha na entrada) */
+  /** seat do Maestro persistido no projeto. Null é ESTADO NORMAL na era 2.0:
+   *  entrar num projeto não pergunta conta nenhuma (o gate morreu em
+   *  2026-08-15) e só o mundo legado — pane do PM, fallback do orquestrador de
+   *  missão antiga — ainda lê este valor. */
   maestroSeatId: string | null
   setMaestroSeat: (projectId: string, seatId: string, model?: string, effort?: string) => Promise<void>
   /** incrementa a cada definição de seat/modelo/effort — o Board respawna o
@@ -1713,18 +1716,18 @@ interface SynkoraState {
    *  PENDENTE no Board de A (que sai no guard `!isActive` sem consumir o ref) e,
    *  ao voltar para A, o Maestro de A era morto e reaberto do nada. */
   maestroSpecBumpByProject: Record<string, number>
-  /** /estudar em andamento, POR PROJETO (um boolean global mostrava o spinner e
-   *  travava o botão no PM de OUTRO universo) */
+  /** /estudar em andamento, POR PROJETO. DORMENTE desde 2026-08-15: o botão
+   *  📚 estudar saiu do board com o resto das alavancas do PM; o IPC
+   *  `maestro:survey` e esta ponte ficam de pé para o mundo legado. */
   surveyBusyByProject: Record<string, boolean>
   /** força REMONTAGEM de um universo já montado (relocação de pasta) */
   remountNonce: Record<string, number>
   /** zera a telemetria de um paneId (respawn de mesmo id) */
   resetPaneTelemetry: (paneId: string) => void
-  /** estado do maestro já carregado do main? (evita o gate piscar na entrada) */
+  /** estado do maestro já carregado do main? (o Board só busca a spec do PM
+   *  legado depois disso — sem o guard, o seat do projeto ANTERIOR ainda está
+   *  no store por um instante e o pane respawnava à toa) */
   maestroStateLoaded: boolean
-  /** gate de escolha de seat aberto por ação explícita (⇄ seat) */
-  seatGateOpen: boolean
-  setSeatGateOpen: (open: boolean) => void
   maestroCaps: MaestroCaps | null
   maestroCapsLoading: boolean
   maestroCapsKey: string | null
@@ -1837,8 +1840,8 @@ interface SynkoraState {
     rect: { x: number; y: number; width: number; height: number } | null
   ) => void
   /** HOST: overlays globais abertos (popovers da titlebar, menu ✦ Agente,
-   *  SeatGate, FreeAgentModal) — a view é escondida enquanto > 0, senão o
-   *  overlay do host ficaria POR BAIXO dela (child view compõe por cima). */
+   *  FreeAgentModal) — a view é escondida enquanto > 0, senão o overlay do
+   *  host ficaria POR BAIXO dela (child view compõe por cima). */
   hostOverlayCount: number
   bumpHostOverlay: (delta: 1 | -1) => void
   /** HOST (2026-08-11): última captura da view de panes, pintada no rect dela
@@ -2090,13 +2093,16 @@ export const useStore = create<SynkoraState>((set, get) => ({
   },
   maestroSeatId: null,
   maestroSpecBumpByProject: {},
+  // DORMENTE (2026-08-15): a única tela que chamava isto era o gate de entrada,
+  // removido por ordem do dono. Fica como a ponte para o `maestro:setSeat` do
+  // main, que segue vivo para o mundo legado — a conta da missão 2.0 é outra
+  // coisa (`missions:setChatSeat`, escolhida no card do chat).
   setMaestroSeat: async (projectId, seatId, model, effort) => {
     await window.synkora.maestro.setSeat(projectId, seatId, model, effort)
     set((s) => ({
       maestroSeatId: seatId,
       maestroModel: model ?? null,
       maestroEffort: effort ?? null,
-      seatGateOpen: false,
       // o main matou o pane DESTE projeto — o bump força só o Board dele a
       // buscar spec nova
       maestroSpecBumpByProject: {
@@ -2106,8 +2112,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
     }))
   },
   maestroStateLoaded: false,
-  seatGateOpen: false,
-  setSeatGateOpen: (open) => set({ seatGateOpen: open }),
   maestroCaps: null,
   maestroCapsLoading: false,
   maestroCapsKey: null,
@@ -2639,7 +2643,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
     set((s) => ({
       openProjectId: id,
       appPage: 'workspace',
-      seatGateOpen: false,
       maestroStateLoaded: false,
       // Entrar num projeto SEMPRE pousa no board ✦ geral (pedido do usuário,
       // 2026-07-28) — a última aba/missão visitada não gruda entre visitas.

@@ -5,7 +5,6 @@ import Board from '../components/Board'
 import FilesView from '../components/FilesView'
 import BacklogView from '../components/BacklogView'
 import UniverseMapView from '../components/UniverseMapView'
-import SeatGate from '../components/SeatGate'
 import GuiPanelErrorBoundary from '../components/GuiPanelErrorBoundary'
 
 interface Props {
@@ -25,13 +24,6 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
   // outra aba.
   const asking = useStore((s) =>
     Object.keys(s.askQuestions[projectId] ?? {}).length > 0
-  )
-  const maestroSeatId = useStore((s) => s.maestroSeatId)
-  const maestroStateLoaded = useStore((s) => s.maestroStateLoaded)
-  const seatGateOpen = useStore((s) => s.seatGateOpen)
-  // universos ficam montados em segundo plano — portais (gate) só no ativo
-  const isActive = useStore(
-    (s) => s.appPage === 'workspace' && s.openProjectId === projectId
   )
   // IDENTIDADE NA BARRA DE CIMA (onda D): nome e pasta subiram da página
   // ✦ geral para cá — é a linha que já existe em toda tela do universo.
@@ -226,13 +218,12 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
         )}
       </div>
 
-      {/* Gate de entrada: o seat do Maestro é escolhido ANTES de tudo —
-          sem default silencioso (fluxo lógico, decisão do usuário). */}
-      {isActive && ((maestroStateLoaded && !maestroSeatId) || seatGateOpen) && (
-        <GuiPanelErrorBoundary paneId={`overlay:${projectId}:seat-gate`} label="a seleção de conta">
-          <SeatGate projectId={projectId} canCancel={Boolean(maestroSeatId)} />
-        </GuiPanelErrorBoundary>
-      )}
+      {/* SEM GATE DE ENTRADA (ordem do dono, 2026-08-15): o overlay "quem é o
+          Maestro deste projeto?" barrava a porta de um universo novo para
+          escolher um papel que a era 2.0 não tem mais. Entrar num projeto não
+          pergunta NADA. A conta virou decisão DENTRO da missão — o card
+          GuiSeatPick aparece no lugar da conversa quando o `missions:guiSpec`
+          responde `needsSeat`, e é lá que ela é escolhida e trocada. */}
     </div>
   )
 }

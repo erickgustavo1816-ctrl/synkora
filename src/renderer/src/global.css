@@ -2477,8 +2477,8 @@ select {
   font-size: 10px;
 }
 
-/* swatch quadrado do seat — usado pelo titlebar, pelo SeatGate e pelo header
-   do universo. NÃO remover junto com o rail antigo. */
+/* swatch quadrado do seat — hoje só o titlebar o desenha (o SeatGate, o outro
+   consumidor, saiu em 2026-08-15). NÃO remover junto com o rail antigo. */
 .seat-swatch {
   width: 10px;
   height: 10px;
@@ -6934,7 +6934,7 @@ body.pane-docking .pane-bar.draggable {
   letter-spacing: -0.05em;
 }
 
-/* dots clássicos vermelho/amarelo/verde (SeatGate e afins) */
+/* dots clássicos vermelho/amarelo/verde (janelas .term-window em geral) */
 .dots.mac i {
   opacity: 0.9;
 }
@@ -7058,46 +7058,6 @@ body.pane-docking .pane-bar.draggable {
   color: var(--accent);
   border-color: hsl(21 55% 45% / 0.6);
   font-weight: 700;
-}
-
-/* modelo/effort do Maestro no gate de seat */
-.seat-gate-config {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-  gap: 10px;
-  padding-top: 4px;
-}
-
-.seat-gate-config label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  font-size: 9.5px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--panel-ink-2);
-}
-
-.seat-gate-config select,
-.seat-gate-config .model-select,
-.seat-gate-config .model-input {
-  width: 100%;
-  min-width: 0;
-  max-width: none;
-  background: #1c1a16;
-  border: 1px solid var(--panel-line);
-  border-radius: 7px;
-  color: var(--panel-ink);
-  font-size: 12px;
-  padding: 7px 8px;
-  outline: none;
-}
-
-.seat-gate-actions {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
 }
 
 /* chip clicável (código da missão — copia no clique) */
@@ -7243,7 +7203,7 @@ body.pane-docking .pane-bar.draggable {
   padding: 2px 4px;
 }
 
-/* ---------- Maestro como pane TUI + SeatGate ---------- */
+/* ---------- Maestro como pane TUI (mundo legado) ---------- */
 
 .maestro-terminal {
   position: relative;
@@ -7273,71 +7233,10 @@ body.pane-docking .pane-bar.draggable {
   display: none;
 }
 
-/* As alavancas do universo quando não há palco para hospedá-las. */
-.board-general-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.seat-gate {
-  width: min(520px, 92vw);
-}
-
-.seat-gate-body {
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.seat-gate-hint {
-  color: var(--panel-ink-2);
-  font-size: 12px;
-  margin: 0 0 6px;
-  line-height: 1.5;
-}
-
-.seat-gate-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--panel-2);
-  border: 1px solid var(--panel-line);
-  border-radius: 8px;
-  padding: 10px 12px;
-  color: var(--panel-ink);
-  font-size: 13px;
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 120ms ease, transform 120ms ease;
-}
-
-.seat-gate-item:hover {
-  border-color: var(--accent);
-  transform: translateY(-1px);
-}
-
-.seat-gate-item.current {
-  border-color: var(--accent);
-}
-
-.seat-gate-name {
-  flex: 1;
-  font-weight: 700;
-}
-
-.seat-gate-current {
-  color: var(--ok);
-  font-size: 11px;
-}
-
-.seat-gate-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 6px;
-}
+/* As regras .board-general-actions e .seat-gate-* MORRERAM em 2026-08-15
+   (ordem do dono): a linha de alavancas do PM (estudar/conta/limpar) e o
+   overlay "quem é o Maestro deste projeto?" saíram do app. A escolha de conta
+   mora no card do chat (.gui-seatpick), dentro da missão. */
 
 /* ---------- settings de imagem (Home) ---------- */
 
@@ -12711,7 +12610,6 @@ body.pane-docking .pane-bar.draggable {
 .task-modal-exec .sel,
 .policy-row .sel,
 .quick-add-row .sel,
-.seat-gate-config .sel,
 .image-settings .sel,
 .mission-exec-row .sel,
 .ms-filters .sel,
@@ -12747,8 +12645,7 @@ body.pane-docking .pane-bar.draggable {
 
 /* trigger no tamanho dos campos antigos do modal (7px 8px, raio 7) */
 .task-modal-row .sel .sel-trigger,
-.task-modal-exec .sel .sel-trigger,
-.seat-gate-config .sel .sel-trigger {
+.task-modal-exec .sel .sel-trigger {
   padding: 6px 8px;
   border-radius: 7px;
 }

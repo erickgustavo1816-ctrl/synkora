@@ -1234,9 +1234,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const integrateMission = useStore((s) => s.integrateMission)
   const missionTab = useStore((s) => s.missionTabByProject[projectId] ?? null)
   const setMissionTab = useStore((s) => s.setMissionTab)
-  // /estudar em andamento NESTE projeto (o boolean global punha spinner e
-  // botão travado no PM de OUTRO universo)
-  const maestroBusy = useStore((s) => s.surveyBusyByProject[projectId] ?? false)
   const maestroModel = useStore((s) => s.maestroModel)
   const maestroEffort = useStore((s) => s.maestroEffort)
   const panes = useStore((s) => s.panesByProject[projectId] ?? NO_PANES)
@@ -1246,10 +1243,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const createTask = useStore((s) => s.createTask)
   const updateTask = useStore((s) => s.updateTask)
   const removeTask = useStore((s) => s.removeTask)
-  const surveyMaestro = useStore((s) => s.surveyMaestro)
   const loadMaestroLog = useStore((s) => s.loadMaestroLog)
+  // Seat do PM: hoje só alimenta o chrome do mundo LEGADO (marca do CLI do
+  // pane do Maestro e o fallback de seat do orquestrador de missão antiga).
+  // Missão 2.0 nunca passa por aqui — a conta dela é `mission.seatId`.
   const maestroSeatId = useStore((s) => s.maestroSeatId)
-  const setSeatGateOpen = useStore((s) => s.setSeatGateOpen)
   const paneStats = useStore((s) => s.paneStats)
   const paneEffort = useStore((s) => s.paneEffort)
   const paneModel = useStore((s) => s.paneModel)
@@ -2375,9 +2373,8 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       >
         {stageMode ? (
           /* Sem `actions`: as alavancas do universo (estudar/conta/limpar)
-             moravam na cabeça do palco de PLANEJAMENTO, que morreu. Numa
-             missão elas não fazem sentido, e no ✦ geral vazio elas vivem na
-             linha do retrato (`.board-general-actions`, abaixo). */
+             moravam na cabeça do palco de PLANEJAMENTO, que morreu — e em
+             2026-08-15 saíram do app inteiro junto com o papel de Maestro. */
           <MissionStageHead pills={stagePills} meta={stageMetaParts} />
         ) : (
         <PaneChrome
@@ -2576,35 +2573,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               ← conversa
             </button>
           )}
-          {!selMission && maestroBusy && <span className="spinner" />}
-          {!selMission && (
-            <>
-              <button
-                className="term-btn ghost-dim"
-                disabled={maestroBusy || !maestroSeatId}
-                data-tip="Mapeia o projeto com um agente dedicado e salva o dossiê em .synkora/CONTEXT.md (o Maestro renasce lendo ele)"
-                onClick={() => void surveyMaestro(projectId, maestroSeatId ?? undefined)}
-              >
-                📚<span className="btn-label">estudar</span>
-              </button>
-              <button
-                className="term-btn ghost-dim"
-                data-tip="Trocar o seat do Maestro (reinicia a sessão dele)"
-                onClick={() => setSeatGateOpen(true)}
-              >
-                ⇄<span className="btn-label">seat</span>
-              </button>
-              <button
-                className="term-btn ghost-dim"
-                data-tip="Limpar o lixo de .md do .synkora: transcripts de tarefas que não existem mais, arquivos de missões concluídas/excluídas, marcadores e helpers órfãos"
-                onClick={() =>
-                  void window.synkora.maestro.cleanup(projectId).then(setMissionMsg)
-                }
-              >
-                🧹<span className="btn-label">limpar</span>
-              </button>
-            </>
-          )}
+          {/* ALAVANCAS DO PM MORTAS (ordem do dono, 2026-08-15): 📚 estudar,
+              ⇄ seat e 🧹 limpar eram os controles do Maestro — o papel que a
+              era 2.0 não tem. Saíram daqui e da linha do retrato; o que resta
+              nesta barra são as abas dos terminais, que continuam de pé. As
+              IPCs (`maestro:survey`, `maestro:setSeat`, `maestro:cleanup`)
+              seguem vivas e dormentes para o mundo legado. */}
         </PaneChrome>
         )}
         <div className="maestro-body maestro-terminal" ref={maestroTerminalRef}>
@@ -2646,8 +2620,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               />
               </GuiPanelErrorBoundary>
             ) : (
+              /* Sem spec não há PM: o Maestro só nasce para o ecossistema
+                 LEGADO (missão com orquestrador TUI). O texto não manda mais
+                 "escolher o seat" — esse botão morreu com o gate. */
               <div className="maestro-empty">
-                // escolha o seat do Maestro para abrir o terminal do orquestrador
+                // sem Maestro aqui — o trabalho 2.0 mora dentro da missão
               </div>
             )}
           </div>
@@ -2899,36 +2876,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         projectKey={projectId}
         label="painel lateral"
       >
-      {/* ✦ GERAL VAZIO (2.0): sem palco não há cabeça de palco, e as alavancas
-          do UNIVERSO (estudar/conta/limpar) precisam de casa — elas moram
-          nesta linha, colada no retrato. Com palco no ar quem as mostra
-          continua sendo o chrome dele, e duplicá-las aqui seria ruído. */}
-      {stageEmpty && (
-        <div className="board-general-actions">
-          <button
-            className="btn tiny"
-            disabled={maestroBusy || !maestroSeatId}
-            data-tip="Mapeia o projeto com um agente dedicado e salva o dossiê em .synkora/CONTEXT.md"
-            onClick={() => void surveyMaestro(projectId, maestroSeatId ?? undefined)}
-          >
-            {maestroBusy ? '… estudando' : '📚 estudar'}
-          </button>
-          <button
-            className="btn tiny"
-            data-tip="Trocar a conta deste projeto (as conversas novas nascem nela)"
-            onClick={() => setSeatGateOpen(true)}
-          >
-            ⇄ conta
-          </button>
-          <button
-            className="btn tiny"
-            data-tip="Limpar o lixo de .md do .synkora: transcripts órfãos, arquivos de missões concluídas e marcadores"
-            onClick={() => void window.synkora.maestro.cleanup(projectId).then(setMissionMsg)}
-          >
-            🧹 limpar
-          </button>
-        </div>
-      )}
+      {/* ✦ GERAL VAZIO (2.0): a linha de alavancas do UNIVERSO que morava aqui
+          — 📚 estudar · ⇄ conta · 🧹 limpar — foi REMOVIDA por ordem do dono
+          (2026-08-15): eram os controles do Maestro, e sem Maestro elas não
+          descrevem nada que o dono possa querer daqui. O ✦ geral vazio é só o
+          retrato do projeto; a conta se escolhe DENTRO da missão. */}
 
       {/* Aba GERAL = retrato do universo (foto + trabalho por versão). Onda D:
           funções, políticas e reviewer saíram; nome/pasta subiram para a barra

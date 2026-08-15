@@ -50,7 +50,14 @@ test('painéis do board e do canvas ficam dentro do limite isolado', () => {
   assert.match(panes, /paneId=\{`canvas-map:\$\{projectId\}`\}/)
   assert.match(panesApp, /paneId=\{`panes-app:canvas:\$\{id\}`\}[\s\S]*<PanesView/)
   assert.match(seats, /<GuiPanelErrorBoundary[\s\S]*<TerminalPane/)
-  assert.ok((universe.match(/<GuiPanelErrorBoundary/g) ?? []).length >= 5)
+  // As QUATRO abas do universo (board, backlog, arquivos, mapa). Era 5 até
+  // 2026-08-15, quando o gate "quem é o Maestro deste projeto?" foi removido:
+  // o overlay era o quinto limite. Cada aba é conferida pelo paneId para o
+  // número não poder cair sem alguém notar QUAL painel saiu do limite.
+  assert.ok((universe.match(/<GuiPanelErrorBoundary/g) ?? []).length >= 4)
+  for (const view of ['board', 'backlog', 'arquivos', 'mapa'])
+    assert.match(universe, new RegExp(`paneId=\\{\`view:\\$\\{projectId\\}:${view}\`\\}`))
+  assert.doesNotMatch(universe, /SeatGate/)
   assert.match(home, /paneId="overlay:home:new-universe"/)
   assert.match(settings, /paneId="settings:accounts"/)
   assert.match(main, /paneId="overlay:progress"/)
