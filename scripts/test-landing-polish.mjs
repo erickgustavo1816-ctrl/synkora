@@ -340,6 +340,58 @@ test('o convite separa a ação da fala em vez de espaçar tudo igual', async ()
   )
 })
 
+/* ---------- a largura: o painel enche a coluna, o instrumento não ---------- */
+
+test('o painel perdeu o teto de largura — quem tem teto é o instrumento e a prosa', async () => {
+  const css = await source('src/renderer/src/global.css')
+
+  // O DEFEITO (ordem do dono, 2026-08-15b): `max-width: 860px` era o ÚNICO cap
+  // do bloco inteiro. A janela crescia, a coluna crescia — medido: 1248px de
+  // `.board-content` a 1600px de janela — e o painel parava em 860px.
+  assert.equal(
+    prop(rule(css, '.project-dashboard'), 'max-width'),
+    null,
+    '.project-dashboard não pode voltar a ter teto: ele é a única coisa na coluna do ✦ geral'
+  )
+  // o `gap` continua NESTA regra (a cadência acima mede exatamente ela)
+  assert.equal(prop(rule(css, '.project-dashboard'), 'gap'), '18px')
+
+  // ... mas o que PIORA esticado continua com teto próprio. Quatro tiles de
+  // 400px com um número de 20px no meio não é retrato, é cartaz.
+  const kpis = Number.parseFloat(prop(rule(css, '.pd-kpis'), 'max-width'))
+  assert.ok(
+    kpis >= 400 && kpis <= 720,
+    `a faixa de KPIs é instrumento e precisa de largura própria — leu ${kpis}`
+  )
+  // e a prosa fica na linha de leitura, não numa faixa de 1500px
+  for (const selector of ['.pd-empty', '.pd-waiting'])
+    assert.match(
+      prop(rule(css, selector), 'max-width'),
+      /\d+ch$/u,
+      `${selector}: a medida de prosa se escreve em ch`
+    )
+})
+
+test('coluna larga vira mais de uma linha lado a lado, nunca uma faixa de 1600px', async () => {
+  const css = await source('src/renderer/src/global.css')
+  const query = atRuleContaining(css, '@container boardcontent (min-width: 1000px)', '.pd-list')
+
+  // Uma linha de missão a 1600px teria o título à esquerda, a data à direita e
+  // um deserto no meio. O container é o mesmo `.board-content` que o painel já
+  // usa no aperto — a régua é a COLUNA, nunca a janela.
+  assert.match(query, /\.pd-list\s*\{[^}]*display:\s*grid/u)
+  assert.match(
+    query,
+    /grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(\d+px,\s*1fr\)\)/u,
+    'auto-fill: quem decide quantas colunas cabem é a largura, não um número de colunas'
+  )
+
+  // A lista BASE continua uma coluna vertical: o grid é o ganho da largura, e
+  // trocar a base quebraria o painel na coluna estreita do modo palco.
+  assert.equal(prop(rule(css, '.pd-list'), 'display'), 'flex')
+  assert.equal(prop(rule(css, '.pd-list'), 'flex-direction'), 'column')
+})
+
 test('os KPIs do painel falam com o acento da casa, não com o hue de uma função', async () => {
   const css = await source('src/renderer/src/global.css')
 

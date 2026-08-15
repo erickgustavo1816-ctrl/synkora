@@ -11749,15 +11749,22 @@ body.pane-docking .pane-bar.draggable {
   flex-direction: column;
   gap: 18px;
   align-items: stretch;
-  max-width: 860px;
+  /* 2026-08-15b: o `max-width: 860px` MORREU (ordem do dono) — o painel é a
+     única coisa na coluna do ✦ geral e tem de acompanhar a janela; o cap fazia
+     a tela parar de crescer enquanto a coluna crescia. Quem tem teto agora é só
+     o que PIORA esticado: a faixa de KPIs (instrumento) e a prosa (linha de
+     leitura). */
 }
 
 /* os quatro KPIs são UM instrumento: 6px os costura em faixa em vez de deixar
-   quatro cartões soltos */
+   quatro cartões soltos.
+   E instrumento tem TAMANHO PRÓPRIO: quatro tiles de 400px com um número de
+   20px no meio não é retrato, é cartaz — o resto da linha é da lista. */
 .pd-kpis {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
+  max-width: 560px;
 }
 
 /* O TILE É COMPARTILHADO com a faixa da aba Versões, onde `hot` é pintado pelo
@@ -11847,16 +11854,33 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink-2);
 }
 
+/* prosa não estica: sem o cap do painel a frase vazia varreria 1500px numa
+   linha só, e uma linha de leitura assim não se lê, se rastreia */
 .pd-empty {
   margin: 0;
   font-size: 11.5px;
   color: var(--ink-2);
+  max-width: 68ch;
 }
 
 .pd-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* COLUNA LARGA = MAIS LINHAS LADO A LADO, nunca uma linha de 1600px com o
+   título à esquerda, a data à direita e um deserto no meio. O container é o
+   `.board-content` (container-name: boardcontent), o mesmo que o painel já usa
+   no aperto. 460px é a largura em que a linha ainda cabe título + estado +
+   selo + meta sem cortar; o `gap: 6px` do `.pd-list` vale igual em grid e o
+   `.pd-mission` já é `width: 100%`. */
+@container boardcontent (min-width: 1000px) {
+  .pd-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
+    align-items: start;
+  }
 }
 
 /* A LINHA DA MISSÃO. Botão quando dá para abrir; <div> quando a missão já
@@ -12050,7 +12074,9 @@ button.pd-mission.waiting:hover {
 /* A FRASE QUE O DONO PRECISA LER — e que era a única cortada com reticências:
    "❓ posso apagar a tabela anti…" perdia exatamente a pergunta. Ela passa a
    QUEBRAR (teto de 2 linhas, para uma pergunta longa não esticar a linha sem
-   fim) e escurece o âmbar de 3,23:1 para 5,3:1 sobre a própria fileira. */
+   fim) e escurece o âmbar de 3,23:1 para 5,3:1 sobre a própria fileira.
+   O `max-width` é a mesma razão do `.pd-empty`: sem o cap do painel a pergunta
+   do agente viraria uma faixa única atravessando a janela. */
 .pd-waiting {
   font-size: 10.5px;
   line-height: 1.45;
@@ -12059,6 +12085,7 @@ button.pd-mission.waiting:hover {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  max-width: 92ch;
 }
 
 .pd-cta {
