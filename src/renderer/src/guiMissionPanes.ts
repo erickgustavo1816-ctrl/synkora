@@ -30,6 +30,41 @@ export function guiMissionPaneId(
   return `${base}-${n}`
 }
 
+/** Teto de ajudantes por missão — espelho de `MAX_MISSION_HELPERS`
+ *  (src/main/ipc/missions.ts): acima disso o main recusa abrir, então não
+ *  existe endereço `-9` para procurar. */
+export const MAX_MISSION_HELPER_PANES = 8
+
+export interface MissionChatAddress {
+  paneId: string
+  role: GuiMissionPaneRole
+  /** rótulo na voz do palco: "agente" · "revisor" · "ajudante 2" */
+  label: string
+}
+
+/**
+ * TODO endereço possível das conversas desta missão, na ordem do palco.
+ *
+ * É determinístico por definição (a convenção é a mesma dos dois lados), e é
+ * isso que deixa uma missão ENCERRADA ser lida sem passar pela spec — que
+ * recusa missão arquivada/concluída de propósito, para nenhum CLI renascer
+ * num worktree que já não existe.
+ */
+export function missionChatAddresses(missionId: string): MissionChatAddress[] {
+  const addresses: MissionChatAddress[] = [
+    { paneId: guiMissionPaneId('dev', missionId), role: 'dev', label: 'agente' },
+    { paneId: guiMissionPaneId('reviewer', missionId), role: 'reviewer', label: 'revisor' }
+  ]
+  for (let n = 1; n <= MAX_MISSION_HELPER_PANES; n += 1) {
+    addresses.push({
+      paneId: guiMissionPaneId('helper', missionId, n),
+      role: 'helper',
+      label: n > 1 ? `ajudante ${n}` : 'ajudante'
+    })
+  }
+  return addresses
+}
+
 /** Todo pane GUI desta missão (dev, revisor e ajudantes). */
 export function isGuiMissionPaneId(paneId: string, missionId: string): boolean {
   const short = missionShortId(missionId)

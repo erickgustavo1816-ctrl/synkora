@@ -7,9 +7,11 @@ import {
   type MissionStatus,
   type Version
 } from '../store'
+import ArchivedMissionChat from './ArchivedMissionChat'
 import NewMissionModal from './NewMissionModal'
 import Select from './Select'
 import { TestServerModal } from './TestServerModal'
+import { MISSION_CARD_TIP, missionCardAccess } from '../missionCardAccess'
 
 const MISSION_ICON: Record<MissionStatus, string> = {
   ativa: '🚀',
@@ -33,6 +35,9 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
   const [sort, setSort] = useState<'recentes' | 'antigas'>('recentes')
   const [page, setPage] = useState(0)
   const [confirmDelete, setConfirmDelete] = useState<Mission | null>(null)
+  /** missão encerrada cuja conversa 2.0 o dono abriu para LER (fotografia) */
+  const [chatViewer, setChatViewer] = useState<Mission | null>(null)
+  const closeChatViewer = useCallback(() => setChatViewer(null), [])
   // Página ADAPTATIVA (decisão do usuário): cabem 10 na altura? mostra 10;
   // cabem 6? mostra 6 — a paginação só cobre o excedente.
   const listRef = useRef<HTMLDivElement>(null)
@@ -137,14 +142,23 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
                   .map((t) => `${t.status === 'done' ? '▣' : '▢'} ${t.title}`)
                   .join('\n') + (mTasks.length > 8 ? `\n… +${mTasks.length - 8}` : '')
               : 'sem tarefas'
-          // missão concluída não tem mais pane — clicar abria "o nada"
-          const clickable = m.status !== 'concluida'
+          // TRÊS destinos, nunca um booleano só: missão viva abre no board;
+          // missão encerrada de 2.0 abre a conversa gravada (somente leitura);
+          // o resto não é clicável e diz por quê. Era aqui que a arquivada
+          // escapava — ela abria o board, que desfazia a navegação sozinho.
+          const access = missionCardAccess(m)
           return (
             <div key={m.id} className={`ms-row ${m.status}`}>
               <button
-                className={`ms-main${clickable ? '' : ' static'}`}
-                data-tip={clickable ? 'Abrir a aba da missão no board' : 'Missão integrada — só histórico (orquestrador aposentado)'}
-                onClick={clickable ? () => open(m) : undefined}
+                className={`ms-main${access === 'inert' ? ' static' : ''}`}
+                data-tip={MISSION_CARD_TIP[access]}
+                onClick={
+                  access === 'live'
+                    ? () => open(m)
+                    : access === 'frozen-chat'
+                      ? () => setChatViewer(m)
+                      : undefined
+                }
               >
                 <span className="ms-icon">{MISSION_ICON[m.status]}</span>
                 <span className="ms-head-line">
@@ -236,6 +250,14 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
               As tarefas da missão{confirmDelete.branch ? ` e a branch ${confirmDelete.branch}` : ''}{' '}
               serão removidas. Não dá para desfazer.
             </p>
+            {/* Arquivar guarda a conversa; EXCLUIR é o único apagador dela. O
+                aviso só aparece para quem TEM conversa gravada — missão legada
+                nunca teve, e prometer perda que não existe é ruído. */}
+            {missionCardAccess(confirmDelete) === 'frozen-chat' && (
+              <p className="confirm-sub">
+                A conversa desta missão será apagada junto — arquivar guarda, excluir apaga.
+              </p>
+            )}
             <div className="task-modal-actions">
               <button className="btn ghost" onClick={() => setConfirmDelete(null)}>
                 cancelar
@@ -255,6 +277,8 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
           </div>
         </div>
       )}
+
+      {chatViewer && <ArchivedMissionChat mission={chatViewer} onClose={closeChatViewer} />}
     </div>
   )
 }

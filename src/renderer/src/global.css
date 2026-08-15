@@ -21225,3 +21225,81 @@ details.gui-error-line {
     box-shadow: inset 3px 0 Highlight;
   }
 }
+
+/* ---------- conversa congelada de missão encerrada (aba Versões) ----------
+   Fotografia somente-leitura: NÃO roda nada, então nada de painel escuro —
+   é papel, como o resto da aba. O corpo hospeda o `.gui-pane` inteiro, que
+   já sabe se pintar; aqui só existe a moldura e a linha que diz o que é. */
+
+.arch-chat {
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, 92vw);
+  height: min(760px, 84vh);
+  min-height: 0;
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--ink);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  animation: rise 160ms ease both;
+}
+
+.arch-chat-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.arch-chat-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arch-chat-sub {
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.03em;
+}
+
+.arch-chat-head .pane-close {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 18px;
+}
+
+.arch-chat-head .pane-close:hover {
+  color: var(--ink);
+}
+
+/* a tira de papéis quebra para a linha de baixo antes de espremer o título */
+.arch-chat-head .stage-pills {
+  flex-basis: 100%;
+}
+
+.arch-chat-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+}
+
+.arch-chat-empty {
+  margin: auto;
+  max-width: 46ch;
+  padding: 0 18px;
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
