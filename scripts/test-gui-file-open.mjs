@@ -133,6 +133,29 @@ test('recusa junction antes de seguir o alvo', { skip: !junctionAvailable }, () 
   if (!linked.ok) assert.equal(linked.reason, 'denied')
 })
 
+/**
+ * O guarda "revelar, nunca executar" vale para ESTA superfície: o handler
+ * `gui:fileOpen`. O arquivo inteiro não serve de recorte — `gui:attachmentAction`
+ * abre anexo autorizado pelo dono com `shell.openPath` DE PROPÓSITO, e medir o
+ * arquivo todo transformava esse recurso legítimo em reprovação falsa.
+ *
+ * Os marcadores não têm quebra de linha, então o checkout CRLF do Windows não
+ * os alcança; a normalização mantém isso verdadeiro se algum deles crescer.
+ * Marcador que não resolve FALHA ALTO: recorte que degrada em silêncio (virar o
+ * arquivo inteiro, ou vazio) é guarda morto fingindo estar vivo.
+ */
+const FILE_OPEN_START = "'gui:fileOpen'"
+const FILE_OPEN_END = "ipcMain.handle('gui:attach'"
+
+function fileOpenHandlerRegion(source) {
+  const normalized = source.replace(/\r\n/gu, '\n')
+  const start = normalized.indexOf(FILE_OPEN_START)
+  assert.notEqual(start, -1, `marcador inicial sumiu de ipc/gui.ts: ${FILE_OPEN_START}`)
+  const end = normalized.indexOf(FILE_OPEN_END, start)
+  assert.notEqual(end, -1, `marcador final sumiu de ipc/gui.ts: ${FILE_OPEN_END}`)
+  return normalized.slice(start, end)
+}
+
 test('fallback apenas revela: nenhuma associação externa executa o arquivo', () => {
   const resolver = new GuiFileResolver()
   const result = resolver.resolve(cwd, 'manual.pdf')
@@ -146,6 +169,18 @@ test('fallback apenas revela: nenhuma associação externa executa o arquivo', (
     new URL('../src/main/ipc/gui.ts', import.meta.url),
     'utf8'
   )
-  assert.match(ipcSource, /shell\.showItemInFolder\(prepared\.absolutePath\)/u)
-  assert.doesNotMatch(ipcSource, /shell\.openPath/u)
+  const handler = fileOpenHandlerRegion(ipcSource)
+  assert.match(handler, /shell\.showItemInFolder\(prepared\.absolutePath\)/u)
+  assert.doesNotMatch(handler, /shell\.openPath/u)
+
+  // CONTROLE NEGATIVO: com a execução plantada DENTRO do recorte, o guarda tem
+  // de acusar. Sem isto, recorte errado passaria como aprovação silenciosa — e
+  // o `replace` que não achar seu alvo derruba este assert junto.
+  const regression = fileOpenHandlerRegion(
+    ipcSource.replace(
+      'shell.showItemInFolder(prepared.absolutePath)',
+      'shell.openPath(prepared.absolutePath)\n      shell.showItemInFolder(prepared.absolutePath)'
+    )
+  )
+  assert.match(regression, /shell\.openPath/u)
 })

@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import {
   normalizeGuiSubagentSidebar,
   type GuiSubagentSidebarEntry
@@ -49,7 +50,9 @@ export default function GuiSubagentSidebar({
 }: {
   items: readonly GuiItem[]
 }): React.JSX.Element | null {
-  const entries = normalizeGuiSubagentSidebar(items)
+  // A normalização varre a lista inteira do pane; o trilho renderiza a cada
+  // delta da conversa, então ela só roda quando os itens realmente mudam.
+  const entries = useMemo(() => normalizeGuiSubagentSidebar(items), [items])
   if (entries.length === 0) return null
   return (
     <aside className="gui-subagent-sidebar" aria-label="Subagentes desta conversa">

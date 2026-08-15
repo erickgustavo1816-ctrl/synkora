@@ -1,4 +1,5 @@
 import type { GuiItem } from './store'
+import type { GuiToolItem } from './guiToolPresentation'
 
 type GuiTerminalEvent =
   | {
@@ -9,6 +10,26 @@ type GuiTerminalEvent =
     }
   | { type: 'fatal'; text: string }
   | { type: 'closed'; code: number | null }
+
+type GuiTerminalToolResult = {
+  text: string
+  isError: boolean
+  status: 'failed' | 'cancelled' | 'completed'
+  lineCount: number
+  truncated: false
+  provisional?: boolean
+  agentStatus?: 'settled'
+}
+
+/** Recibo de despacho do Agent assíncrono (contrato do tool-result: `launched`
+ *  = agente vivo; `settled` = terminal factual).
+ *
+ *  Cópia deliberada da mesma checagem de `guiToolPresentation`: as suítes
+ *  carregam estes módulos com type-stripping do node, que não resolve import de
+ *  irmão sem extensão — um import de VALOR aqui derrubaria os testes. */
+function isLaunchedSubagent(item: GuiToolItem): boolean {
+  return item.result?.agentStatus === 'launched'
+}
 
 export function guiClosedLine(code: number | null, hadPendingTool = false): {
   kind: 'note' | 'error'
@@ -25,14 +46,7 @@ export function guiClosedLine(code: number | null, hadPendingTool = false): {
     : { kind: 'note', text: 'sessão encerrada' }
 }
 
-function terminalToolResult(evt: GuiTerminalEvent): {
-  text: string
-  isError: boolean
-  status: 'failed' | 'cancelled'
-  lineCount: number
-  truncated: false
-  provisional?: boolean
-} {
+function terminalToolResult(evt: GuiTerminalEvent): GuiTerminalToolResult {
   if (evt.type === 'fatal') {
     return {
       text: evt.text.trim() || 'a sessão falhou antes de a ferramenta concluir',
@@ -85,25 +99,152 @@ function terminalToolResult(evt: GuiTerminalEvent): {
   }
 }
 
+/** Agente que foi só DESPACHADO e morre com a sessão: cancelado, nunca falho —
+ *  ninguém errou, o processo é que acabou antes do terminal factual. */
+function cancelledSubagentResult(): GuiTerminalToolResult {
+  return {
+    text: 'a sessão encerrou antes de o subagente reportar',
+    isError: false,
+    status: 'cancelled',
+    lineCount: 1,
+    truncated: false,
+    agentStatus: 'settled'
+  }
+}
+
+/** Ferramenta do agente cancelado: mesmo desfecho, sem carimbar ciclo de vida
+ *  de agente num card que nunca foi um. */
+function cancelledSubagentChildResult(): GuiTerminalToolResult {
+  return {
+    text: 'a sessão encerrou antes de o subagente reportar',
+    isError: false,
+    status: 'cancelled',
+    lineCount: 1,
+    truncated: false
+  }
+}
+
+/** Desfecho neutro do card filho que segue o próprio pai. O protocolo do Claude
+ *  nunca entrega tool-result de filho: sem isto o card ficaria pendente para
+ *  sempre e a conversa nunca voltaria a `idle`. */
+export function guiSubagentChildClosure(): GuiTerminalToolResult {
+  return {
+    text: 'encerrado com o subagente',
+    isError: false,
+    status: 'completed',
+    lineCount: 1,
+    truncated: false,
+    provisional: true
+  }
+}
+
 export function hasPendingGuiTools(items: GuiItem[]): boolean {
   return items.some((item) => item.kind === 'tool' && !item.result)
+}
+
+/** Pai factual de cada card por identidade de item. Id de pai ambíguo é tratado
+ *  como inexistente — replay corrompido não sequestra a árvore de outra tool. */
+function guiToolParentByItemId(items: readonly GuiItem[]): Map<string, GuiToolItem> {
+  const byToolUseId = new Map<string, GuiToolItem | null>()
+  for (const item of items) {
+    if (item.kind !== 'tool' || !item.toolUseId) continue
+    byToolUseId.set(item.toolUseId, byToolUseId.has(item.toolUseId) ? null : item)
+  }
+  const parents = new Map<string, GuiToolItem>()
+  for (const item of items) {
+    if (item.kind !== 'tool' || !item.parentToolUseId) continue
+    const parent = byToolUseId.get(item.parentToolUseId)
+    if (!parent || parent.id === item.id) continue
+    parents.set(item.id, parent)
+  }
+  return parents
 }
 
 /**
  * Eventos terminais são a última palavra sobre o turno. Se o CLI não enviou
  * `tool-result` (comum ao interromper), todo card ainda pendente ganha um
  * desfecho explícito; resultados já pareados permanecem intactos.
+ *
+ * Um card FILHO segue a árvore do próprio pai: fechado junto, com o mesmo
+ * desfecho (agente despachado cancela a árvore inteira). Filho sem herança —
+ * raiz fora da janela, pai já resolvido, linhagem cíclica — fecha com o
+ * terminal do turno, senão ficaria pendente para sempre.
  */
 export function closePendingGuiTools(
   items: GuiItem[],
   evt: GuiTerminalEvent
 ): GuiItem[] {
+  const terminal = terminalToolResult(evt)
+  const cancelledParent = cancelledSubagentResult()
+  const cancelledChild = cancelledSubagentChildResult()
+  const parents = guiToolParentByItemId(items)
+  const closures = new Map<string, GuiTerminalToolResult | null>()
+
+  const closureFor = (
+    item: GuiToolItem,
+    chain: Set<string>
+  ): GuiTerminalToolResult | null => {
+    const memo = closures.get(item.id)
+    if (memo !== undefined) return memo
+    // Linhagem cíclica não fecha nada: um ciclo não tem raiz para herdar.
+    if (chain.has(item.id)) return null
+    chain.add(item.id)
+    let closure: GuiTerminalToolResult | null = null
+    if (isLaunchedSubagent(item)) closure = cancelledParent
+    else if (item.result) closure = null
+    else if (!item.parentToolUseId) closure = terminal
+    else {
+      const parent = parents.get(item.id)
+      const inherited = parent ? closureFor(parent, chain) : terminal
+      // Pai já resolvido (ou linhagem cíclica) não deixa o filho pendente para
+      // sempre: quem não herda desfecho fecha com o terminal do próprio turno —
+      // o comportamento de sempre, senão `hasPendingGuiTools` nunca zera e todo
+      // turno seguinte re-inventa o erro de órfão.
+      closure = inherited === cancelledParent ? cancelledChild : (inherited ?? terminal)
+    }
+    closures.set(item.id, closure)
+    return closure
+  }
+
   let changed = false
-  const result = terminalToolResult(evt)
   const next = items.map((item) => {
-    if (item.kind !== 'tool' || item.result) return item
+    if (item.kind !== 'tool') return item
+    const closure = closureFor(item, new Set())
+    if (!closure) return item
     changed = true
-    return { ...item, result }
+    return { ...item, result: closure }
   })
   return changed ? next : items
+}
+
+/**
+ * Respawn: o processo morreu, então nenhum agente despachado sobreviveu. Só os
+ * pais `launched` (e seus filhos) são assentados — o resto do transcript é
+ * fotografia e continua intocado.
+ */
+export function settleLaunchedGuiSubagents(items: GuiItem[]): GuiItem[] {
+  const launched = items.some(
+    (item) => item.kind === 'tool' && isLaunchedSubagent(item)
+  )
+  if (!launched) return items
+  const parents = guiToolParentByItemId(items)
+  const cancelledParent = cancelledSubagentResult()
+  const cancelledChild = cancelledSubagentChildResult()
+
+  const descendsFromLaunched = (item: GuiToolItem, chain: Set<string>): boolean => {
+    if (chain.has(item.id)) return false
+    chain.add(item.id)
+    const parent = parents.get(item.id)
+    if (!parent) return false
+    return isLaunchedSubagent(parent) || descendsFromLaunched(parent, chain)
+  }
+
+  return items.map((item) => {
+    if (item.kind !== 'tool') return item
+    if (isLaunchedSubagent(item)) return { ...item, result: cancelledParent }
+    if (item.result) return item
+    return descendsFromLaunched(item, new Set())
+      ? { ...item, result: cancelledChild }
+      : item
+  })
 }

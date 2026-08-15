@@ -35,6 +35,13 @@ import {
 } from '../.tmp/gui-sessions-test/guiSessions.js'
 import { MaestroSession } from '../.tmp/gui-sessions-test/maestroSession.js'
 import { CodexSession } from '../.tmp/gui-sessions-test/codexSession.js'
+import { GuiClaudeTaskRegistry } from '../.tmp/gui-sessions-test/guiClaudeTasks.js'
+import {
+  GUI_CODEX_AGENT_TOOL_PREFIX,
+  GuiCodexAgentRegistry,
+  guiCodexAgentName,
+  guiCodexAgentToolUseId
+} from '../.tmp/gui-sessions-test/guiCodexAgents.js'
 import {
   guiChildNeedsTermination,
   guiTreeKillCommand
@@ -1153,6 +1160,538 @@ test('Claude mantém texto e terminal de subagente fora da resposta principal', 
   }])
 })
 
+// ————— ciclo de vida de subagente em background (Claude) —————
+// Formas capturadas ao vivo no CLI 2.1.233: a tool Agent roda em SEGUNDO PLANO
+// por padrão, então o tool_result do despacho é só um recibo
+// (`status: "async_launched"`) e o terminal factual chega muito depois, no
+// `system/task_notification` — inclusive DEPOIS de um `result` raiz.
+
+function claudeAgentSession() {
+  const session = Object.create(MaestroSession.prototype)
+  const events = []
+  session.emit = (event) => events.push(event)
+  session.claudeTasks = new GuiClaudeTaskRegistry()
+  session.pending = new Map()
+  session.pendingTurnGenerations = []
+  session.activeTurnGeneration = null
+  session.interruptGeneration = null
+  session.interruptRequestId = null
+  session.interruptTimer = null
+  return {
+    session,
+    events,
+    line: (envelope) => session.handleLine(JSON.stringify(envelope))
+  }
+}
+
+/** ACK do Agent como o CLI entrega: o `AgentOutput` mora no `tool_use_result`
+ *  (união discriminada por `status`, tratada como enum ABERTO). */
+function agentOutput(toolUseId, result, { isError = false, text = 'Agent launched' } = {}) {
+  return {
+    type: 'user',
+    parent_tool_use_id: null,
+    message: {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: toolUseId,
+          content: [{ type: 'text', text }],
+          ...(isError ? { is_error: true } : {})
+        }
+      ]
+    },
+    ...(result ? { tool_use_result: result } : {})
+  }
+}
+
+const asyncLaunch = (agentId) => ({
+  isAsync: true,
+  status: 'async_launched',
+  agentId,
+  description: 'investigar',
+  outputFile: '/tmp/agent.md'
+})
+
+test('despacho de subagente é recibo, não conclusão: o card nasce sem desfecho', () => {
+  const { session, events, line } = claudeAgentSession()
+
+  line({
+    type: 'system',
+    subtype: 'task_started',
+    task_id: 'task-1',
+    tool_use_id: 'tool-1',
+    subagent_type: 'general-purpose',
+    task_type: 'background',
+    description: 'investigar'
+  })
+  assert.deepEqual(events, [], 'task_started é só registro: nada aparece na conversa')
+
+  line(agentOutput('tool-1', asyncLaunch('task-1')))
+
+  assert.deepEqual(events, [
+    {
+      type: 'tool-result',
+      text: 'Agent launched',
+      isError: false,
+      toolUseId: 'tool-1',
+      lineCount: 1,
+      truncated: false,
+      agentStatus: 'launched',
+      agentTaskId: 'task-1'
+    }
+  ])
+  assert.equal(
+    Object.hasOwn(events[0], 'outcome'),
+    false,
+    'desfecho é o que a apresentação lê como terminal — o agente acabou de começar'
+  )
+  assert.equal(session.claudeTasks.size, 1)
+  assert.deepEqual(session.claudeTasks.liveToolUseIds(), ['tool-1'])
+})
+
+test('task_notification é o terminal factual e traz o resumo para o card', () => {
+  const { session, events, line } = claudeAgentSession()
+  line({ type: 'system', subtype: 'task_started', task_id: 'task-1', tool_use_id: 'tool-1' })
+  line(agentOutput('tool-1', asyncLaunch('task-1')))
+  events.length = 0
+
+  line({
+    type: 'system',
+    subtype: 'task_updated',
+    task_id: 'task-1',
+    patch: { status: 'completed', end_time: 1 }
+  })
+  assert.deepEqual(events, [], 'andamento nunca fecha o card')
+
+  line({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: 'task-1',
+    tool_use_id: 'tool-1',
+    status: 'completed',
+    summary: 'achei a causa raiz',
+    output_file: '/tmp/agent.md',
+    usage: { total_tokens: 1 }
+  })
+
+  assert.deepEqual(events, [
+    {
+      type: 'tool-result',
+      text: 'achei a causa raiz',
+      isError: false,
+      outcome: 'completed',
+      toolUseId: 'tool-1',
+      lineCount: 1,
+      truncated: false,
+      agentStatus: 'settled',
+      agentTaskId: 'task-1'
+    }
+  ])
+  assert.equal(session.claudeTasks.size, 0)
+
+  events.length = 0
+  line({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: 'task-1',
+    tool_use_id: 'tool-1',
+    status: 'completed',
+    summary: 'achei a causa raiz'
+  })
+  assert.equal(session.claudeTasks.size, 0, 'segundo terminal do mesmo agente não ressuscita nada')
+})
+
+test('status de tarefa é enum ABERTO: valor desconhecido encerra em vez de pendurar', () => {
+  const { session, events, line } = claudeAgentSession()
+  line({ type: 'system', subtype: 'task_started', task_id: 'task-1', tool_use_id: 'tool-1' })
+  line({ type: 'system', subtype: 'task_started', task_id: 'task-2', tool_use_id: 'tool-2' })
+  line(agentOutput('tool-1', asyncLaunch('task-1')))
+  line(agentOutput('tool-2', asyncLaunch('task-2')))
+  events.length = 0
+
+  line({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: 'task-1',
+    tool_use_id: 'tool-1',
+    status: 'status_que_ainda_nao_existe'
+  })
+  assert.deepEqual(events.at(-1), {
+    type: 'tool-result',
+    text: 'subagente falhou',
+    isError: true,
+    outcome: 'failed',
+    toolUseId: 'tool-1',
+    lineCount: 1,
+    truncated: false,
+    agentStatus: 'settled',
+    agentTaskId: 'task-1'
+  })
+  assert.equal(session.claudeTasks.size, 1)
+
+  // Terminal de um agente que o registro nunca viu (task_started perdido)
+  // continua fechando o card: pendente eterno é pior que classificação torta.
+  events.length = 0
+  line({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: 'task-3',
+    tool_use_id: 'tool-3',
+    status: 'completed'
+  })
+  assert.equal(events.at(-1).toolUseId, 'tool-3')
+  assert.equal(events.at(-1).agentStatus, 'settled')
+
+  // Recibo que já nasce em erro nunca deixa um agente imortal.
+  events.length = 0
+  line(agentOutput('tool-2', asyncLaunch('task-2'), { isError: true, text: 'não consegui abrir' }))
+  assert.deepEqual(events.at(-1), {
+    type: 'tool-result',
+    text: 'não consegui abrir',
+    isError: true,
+    outcome: 'failed',
+    toolUseId: 'tool-2',
+    lineCount: 1,
+    truncated: false,
+    agentStatus: 'settled',
+    agentTaskId: 'task-2'
+  })
+  assert.equal(session.claudeTasks.size, 0)
+})
+
+test('fotografia de tarefas reconcilia sem atropelar a notificação e trata `tasks` omitido', async () => {
+  const { session, events, line } = claudeAgentSession()
+  for (const n of [1, 2]) {
+    line({ type: 'system', subtype: 'task_started', task_id: `task-${n}`, tool_use_id: `tool-${n}` })
+    line(agentOutput(`tool-${n}`, asyncLaunch(`task-${n}`)))
+  }
+  events.length = 0
+
+  // Triplo atômico real: a fotografia perde a tarefa ~1ms ANTES do terminal
+  // dela. O resumo verdadeiro tem de vencer a reconciliação.
+  line({
+    type: 'system',
+    subtype: 'background_tasks_changed',
+    tasks: [{ task_id: 'task-2', task_type: 'background', description: 'investigar' }]
+  })
+  line({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: 'task-1',
+    tool_use_id: 'tool-1',
+    status: 'completed',
+    summary: 'relatório pronto'
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.deepEqual(events, [
+    {
+      type: 'tool-result',
+      text: 'relatório pronto',
+      isError: false,
+      outcome: 'completed',
+      toolUseId: 'tool-1',
+      lineCount: 1,
+      truncated: false,
+      agentStatus: 'settled',
+      agentTaskId: 'task-1'
+    }
+  ])
+  assert.equal(session.claudeTasks.size, 1)
+
+  // TRAP do protocolo: com o conjunto vazio a chave `tasks` some do envelope.
+  // Ausência é conjunto VAZIO — senão o último agente ficaria imortal.
+  events.length = 0
+  line({ type: 'system', subtype: 'background_tasks_changed', session_id: 's1' })
+  assert.deepEqual(events, [], 'a reconciliação espera o chunk inteiro atravessar o parser')
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.deepEqual(events, [
+    {
+      type: 'tool-result',
+      text: 'encerrado (reconciliado sem notificação)',
+      isError: false,
+      outcome: 'completed',
+      toolUseId: 'tool-2',
+      lineCount: 1,
+      truncated: false,
+      agentStatus: 'settled',
+      agentTaskId: 'task-2'
+    }
+  ])
+  assert.equal(session.claudeTasks.size, 0)
+})
+
+test('result raiz continua enquanto houver subagente vivo', () => {
+  const { session, events, line } = claudeAgentSession()
+  line({ type: 'system', subtype: 'task_started', task_id: 'task-1', tool_use_id: 'tool-1' })
+  line(agentOutput('tool-1', asyncLaunch('task-1')))
+  events.length = 0
+
+  // O `result` raiz não diz UMA palavra sobre background: sem o registro, este
+  // terminal viraria o desfecho visual (e o plim) com o agente trabalhando.
+  line({ type: 'result', is_error: false, result: 'disparei os agentes' })
+  assert.equal(events.at(-1).type, 'result')
+  assert.equal(events.at(-1).continues, true)
+  assert.equal(events.at(-1).outcome, 'completed')
+
+  line({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: 'task-1',
+    tool_use_id: 'tool-1',
+    status: 'completed',
+    summary: 'ok'
+  })
+  line({ type: 'result', is_error: false, result: 'síntese final' })
+  assert.equal(events.at(-1).continues, false, 'sem agente vivo o último ciclo fecha o turno')
+
+  // A fila de mensagens do usuário continua mandando sozinha no `continues`.
+  session.pendingTurnGenerations = [7, 8]
+  session.activeTurnGeneration = 7
+  line({ type: 'result', is_error: false })
+  assert.equal(events.at(-1).continues, true)
+})
+
+test('envelope de tarefa fora do contrato é no-op silencioso e texto raiz segue raiz', () => {
+  const { session, events, line } = claudeAgentSession()
+  let killed = 0
+  session.kill = () => {
+    killed += 1
+  }
+
+  // `task_notification` CRU (fora de `system`) não existe no contrato: passa
+  // pelo guard de envelope e não pode virar fatal nem texto.
+  line({ type: 'task_notification', task_id: 'task-1', status: 'completed' })
+  line({ type: 'system', subtype: 'task_progress', task_id: 'task-1' })
+  line({ type: 'system', subtype: 'assunto_que_ainda_nao_existe', task_id: 'task-1' })
+  assert.deepEqual(events, [])
+  assert.equal(killed, 0)
+  assert.equal(session.claudeTasks.size, 0, 'andamento nunca inventa tarefa que não foi despachada')
+
+  // Ciclo autônomo: a cada conclusão o CLI abre um turno raiz novo (init com o
+  // MESMO session_id) e responde de verdade. Esse texto é RAIZ legítima e
+  // continua no fio — o que se corrigiu foi ciclo de vida, não a fala.
+  line({ type: 'system', subtype: 'init', session_id: 's1', model: 'claude' })
+  line({
+    type: 'assistant',
+    message: { content: [{ type: 'text', text: 'a busca terminou' }] }
+  })
+  assert.deepEqual(events.at(-1), { type: 'text', text: 'a busca terminou' })
+  assert.equal(events.at(-2).type, 'init')
+})
+
+test('interrupção e encerramento cancelam os agentes antes do terminal', () => {
+  const { session, events, line } = claudeAgentSession()
+  session.activeTurnGeneration = 3
+  session.pendingTurnGenerations = [3]
+  session.interruptGeneration = 3
+  session.interruptRequestId = 'req-int'
+  for (const n of [1, 2]) {
+    line({ type: 'system', subtype: 'task_started', task_id: `task-${n}`, tool_use_id: `tool-${n}` })
+    line(agentOutput(`tool-${n}`, asyncLaunch(`task-${n}`)))
+  }
+  events.length = 0
+
+  line({ type: 'control_response', response: { subtype: 'success', request_id: 'req-int' } })
+  assert.deepEqual(
+    events.map((event) => [event.type, event.toolUseId, event.outcome, event.agentStatus]),
+    [
+      ['tool-result', 'tool-1', 'cancelled', 'settled'],
+      ['tool-result', 'tool-2', 'cancelled', 'settled']
+    ]
+  )
+  assert.equal(events[0].isError, false, 'parada pedida pelo dono não é falha')
+  assert.equal(session.claudeTasks.size, 0)
+
+  events.length = 0
+  line({ type: 'result', is_error: false })
+  assert.equal(events.at(-1).type, 'result')
+  assert.equal(events.at(-1).outcome, 'cancelled')
+  assert.equal(events.at(-1).continues, false)
+
+  // Encerrar a sessão leva junto o que estava rodando: o card nunca fica
+  // preso em "trabalhando" depois da conversa fechar.
+  line({ type: 'system', subtype: 'task_started', task_id: 'task-9', tool_use_id: 'tool-9' })
+  line(agentOutput('tool-9', asyncLaunch('task-9')))
+  events.length = 0
+  session.killed = false
+  session.initTimer = null
+  session.idleTimer = null
+  session.turnSilenceTimer = null
+  session.capsWaiters = []
+  session.controlWaiters = new Map()
+  session.child = { exitCode: 0, signalCode: null }
+  session.kill()
+  assert.deepEqual(events, [
+    {
+      type: 'tool-result',
+      text: 'subagente cancelado',
+      isError: false,
+      outcome: 'cancelled',
+      toolUseId: 'tool-9',
+      lineCount: 1,
+      truncated: false,
+      agentStatus: 'settled',
+      agentTaskId: 'task-9'
+    }
+  ])
+  assert.equal(session.claudeTasks.size, 0)
+})
+
+test('ciclo de vida de subagente atravessa a hidratação sem afrouxar o contrato', () => {
+  const launched = {
+    type: 'tool-result',
+    text: 'Agent launched',
+    isError: false,
+    toolUseId: 'tool-1',
+    lineCount: 1,
+    truncated: false,
+    agentStatus: 'launched',
+    agentTaskId: 'task-1'
+  }
+  const settled = { ...launched, outcome: 'completed', agentStatus: 'settled' }
+
+  assert.equal(isGuiPersistedEvent(launched), true)
+  assert.equal(isGuiPersistedEvent(settled), true)
+  assert.equal(
+    isGuiPersistedEvent({ type: 'tool-result', text: 'saída', isError: false }),
+    true,
+    'tool-result sem os campos novos hidrata exatamente como antes'
+  )
+  assert.equal(
+    isGuiPersistedEvent({ ...launched, agentStatus: 'running' }),
+    false,
+    'estado fora do contrato nunca entra pela porta do disco'
+  )
+  assert.equal(isGuiPersistedEvent({ ...launched, agentTaskId: 42 }), false)
+  assert.equal(isGuiPersistedEvent({ ...launched, agentTaskId: '' }), false)
+  assert.equal(isGuiPersistedEvent({ ...launched, agentTaskId: 'x'.repeat(257) }), false)
+})
+
+/** Sessão Codex montada sobre o prototype: os testes exercitam o INGEST puro
+ *  (`handleNotification`), sem processo, sem RPC e sem timers. `child.exitCode`
+ *  já encerrado deixa `kill()` seguro (nenhum taskkill de verdade). */
+function codexAgentSession({ threadId = 'thread-root', turnId = 'turn-root' } = {}) {
+  const session = Object.create(CodexSession.prototype)
+  const events = []
+  session.emit = (event) => events.push(event)
+  session.killed = false
+  session.closed = false
+  session.child = { exitCode: 0, signalCode: null }
+  session.threadId = threadId
+  session.turnId = turnId
+  session.pendingTurnStart = null
+  session.pendingSendOperations = new Set()
+  session.terminalReconcilePending = false
+  session.activeCollabParentIds = new Set()
+  session.collabParentByThreadId = new Map()
+  session.startedCollabToolIds = new Set()
+  session.deferredCollabResult = null
+  session.codexAgents = new GuiCodexAgentRegistry()
+  session.approvals = new Map()
+  session.pending = new Map()
+  session.idleTimer = null
+  session.turnSilenceTimer = null
+  session.turnStartTimer = null
+  session.interruptTimer = null
+  session.interruptedTurnId = null
+  session.turnErrorTimer = null
+  return {
+    session,
+    events,
+    note: (method, params) => session.handleNotification(method, params)
+  }
+}
+
+test('Claude e Codex nunca compartilham inferência de ciclo de vida', async () => {
+  const { session, events, line } = claudeAgentSession()
+  line({ type: 'system', subtype: 'task_started', task_id: 'task-1', tool_use_id: 'tool-1' })
+  line(agentOutput('tool-1', asyncLaunch('task-1')))
+  events.length = 0
+
+  // Ferramenta comum (e Agent SÍNCRONO, sem o recibo assíncrono) segue com o
+  // tool-result de sempre: nenhum campo novo, terminal na hora.
+  line(
+    agentOutput('tool-comum', { stdout: 'ok' }, { text: 'ignorado quando há stdout' })
+  )
+  line(agentOutput('tool-sync', { status: 'completed', agentId: 'task-sync' }, { text: 'pronto' }))
+  assert.deepEqual(events, [
+    {
+      type: 'tool-result',
+      text: 'ok',
+      isError: false,
+      outcome: 'completed',
+      toolUseId: 'tool-comum',
+      lineCount: 1,
+      truncated: false
+    },
+    {
+      type: 'tool-result',
+      text: 'pronto',
+      isError: false,
+      outcome: 'completed',
+      toolUseId: 'tool-sync',
+      lineCount: 1,
+      truncated: false
+    }
+  ])
+  assert.equal(session.claudeTasks.size, 1, 'nada disso mexeu no agente vivo')
+
+  // O Codex tem ciclo de vida PRÓPRIO (o pai só ganha result no fim factual):
+  // os eventos dele nunca carregam os campos do registro Claude. A cerca vale
+  // para os DOIS caminhos: o legado `collabAgentToolCall` e o wire real
+  // (`subAgentActivity` + `turn/completed` do thread filho).
+  const { session: codex, events: codexEvents, note } = codexAgentSession()
+
+  const spawnItem = {
+    type: 'collabAgentToolCall',
+    id: 'spawn-1',
+    tool: 'spawn_agent',
+    status: 'completed',
+    newThreadId: 'thread-legacy',
+    prompt: 'pesquise',
+    agentStatus: { status: 'running' }
+  }
+  note('item/started', { threadId: 'thread-root', item: spawnItem })
+  note('item/completed', { threadId: 'thread-root', item: spawnItem })
+  const waitItem = {
+    type: 'collabAgentToolCall',
+    id: 'wait-1',
+    tool: 'wait',
+    status: 'completed',
+    receiverThreadId: 'thread-legacy',
+    agentStatus: { status: 'completed', message: 'pesquisa concluída' }
+  }
+  note('item/started', { threadId: 'thread-root', item: waitItem })
+  note('item/completed', { threadId: 'thread-root', item: waitItem })
+
+  const activity = {
+    type: 'subAgentActivity',
+    id: 'activity-1',
+    kind: 'started',
+    agentThreadId: 'thread-child',
+    agentPath: '/root/pesquisa'
+  }
+  note('item/started', { threadId: 'thread-root', item: activity })
+  note('turn/completed', {
+    threadId: 'thread-child',
+    turn: { id: 'turn-child', status: 'completed', items: [] }
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const codexResults = codexEvents.filter((event) => event.type === 'tool-result')
+  assert.ok(codexResults.length >= 2)
+  for (const event of codexResults) {
+    assert.equal(Object.hasOwn(event, 'agentStatus'), false)
+    assert.equal(Object.hasOwn(event, 'agentTaskId'), false)
+    assert.equal(event.outcome, 'completed', 'o pai Codex fecha pelo fim factual dele')
+  }
+  assert.equal(codex.claudeTasks, undefined, 'o registro do Claude não existe no Codex')
+  assert.equal(session.codexAgents, undefined, 'e o registro do Codex não existe no Claude')
+})
+
 test('registro publica terminal depois dos tool-results do mesmo chunk e mantém órfão honesto', async () => {
   const gui = registry()
   let emit
@@ -1305,29 +1844,11 @@ test('Codex repassa somente o contexto vivo, nunca o acumulado da sessão', () =
   ])
 })
 
-test('Codex projeta collabToolCall na lateral e só encerra após o último subagente', async () => {
-  const session = Object.create(CodexSession.prototype)
-  const events = []
-  session.emit = (event) => events.push(event)
-  session.killed = false
-  session.closed = false
-  session.child = { exitCode: null, signalCode: null }
-  session.threadId = 'thread-root'
-  session.turnId = 'turn-root'
-  session.pendingTurnStart = null
-  session.pendingSendOperations = new Set()
-  session.terminalReconcilePending = false
-  session.activeCollabParentIds = new Set()
-  session.collabParentByThreadId = new Map()
-  session.startedCollabToolIds = new Set()
-  session.deferredCollabResult = null
-  session.approvals = new Map()
-  session.interruptTimer = null
-  session.interruptedTurnId = null
-  session.turnErrorTimer = null
+test('Codex projeta collabAgentToolCall na lateral e só encerra após o último subagente', async () => {
+  const { session, events } = codexAgentSession()
 
   const spawn = {
-    type: 'collabToolCall',
+    type: 'collabAgentToolCall',
     id: 'spawn-1',
     tool: 'spawn_agent',
     status: 'completed',
@@ -1364,7 +1885,7 @@ test('Codex projeta collabToolCall na lateral e só encerra após o último suba
   assert.equal(session.deferredCollabResult?.type, 'result')
 
   const wait = {
-    type: 'collabToolCall',
+    type: 'collabAgentToolCall',
     id: 'wait-1',
     tool: 'wait',
     status: 'completed',
@@ -1385,6 +1906,401 @@ test('Codex projeta collabToolCall na lateral e só encerra após o último suba
   assert.equal(events.at(-2).outcome, 'completed')
   assert.equal(events.at(-1).continues, false)
   assert.equal(session.turnActive, false)
+})
+
+// ————— sub-agentes do Codex: o wire REAL —————
+// Formas capturadas ao vivo no `codex app-server` 0.147 (sonda ×3 +
+// schema gerado pelo próprio binário): NÃO existe notificação collab dedicada.
+// O spawn é um `subAgentActivity {kind:"started", agentThreadId, agentPath}` no
+// thread RAIZ; o trabalho do filho chega em frames com o threadId DELE; e o
+// terminal factual é o `turn/completed` do filho — `subAgentActivity` não tem
+// kind terminal e `closeAgent` nunca apareceu.
+
+/** Par started/completed do spawn, como o app-server entrega (payload IDÊNTICO
+ *  com ~1ms de diferença). */
+function noteCodexSpawn(note, agentThreadId, agentPath, { itemId = `activity-${agentThreadId}` } = {}) {
+  const item = { type: 'subAgentActivity', id: itemId, kind: 'started', agentThreadId, agentPath }
+  note('item/started', { threadId: 'thread-root', turnId: 'turn-root', item })
+  note('item/completed', { threadId: 'thread-root', turnId: 'turn-root', item })
+}
+
+test('Codex: subAgentActivity é o único sinal de spawn e o par started/completed vira UM card', () => {
+  const { session, events, note } = codexAgentSession()
+
+  // O frame de status do filho chega ANTES do spawn, com a thread ainda
+  // desconhecida: não pode virar nada nem envenenar a conversa da raiz.
+  note('thread/status/changed', { threadId: 'thread-child', status: { type: 'active' } })
+  assert.deepEqual(events, [])
+
+  noteCodexSpawn(note, 'thread-child', '/root/calculo')
+
+  assert.deepEqual(events, [
+    {
+      type: 'tool',
+      name: 'spawn_agent',
+      input: { name: 'calculo', agent_type: 'codex', path: '/root/calculo' },
+      toolUseId: 'codex-agent:thread-child'
+    }
+  ])
+  assert.equal(session.codexAgents.size, 1, 'o par started/completed é UM agente só')
+
+  // `interacted` é andamento, não spawn nem terminal.
+  note('item/started', {
+    threadId: 'thread-root',
+    item: {
+      type: 'subAgentActivity',
+      id: 'activity-2',
+      kind: 'interacted',
+      agentThreadId: 'thread-child',
+      agentPath: '/root/calculo'
+    }
+  })
+  // Kind que o enum ainda não tem nunca registra nem encerra.
+  note('item/started', {
+    threadId: 'thread-root',
+    item: {
+      type: 'subAgentActivity',
+      id: 'activity-3',
+      kind: 'kind_que_ainda_nao_existe',
+      agentThreadId: 'thread-outro',
+      agentPath: '/root/outro'
+    }
+  })
+  assert.equal(events.length, 1)
+  assert.equal(session.codexAgents.size, 1)
+})
+
+test('Codex: trabalho do filho vira atividade do card e o turn/completed dele encerra', () => {
+  const { session, events, note } = codexAgentSession()
+  noteCodexSpawn(note, 'thread-child', '/root/calculo')
+  events.length = 0
+
+  note('item/started', {
+    threadId: 'thread-child',
+    turnId: 'turn-child',
+    item: { type: 'commandExecution', id: 'cmd-1', command: 'npm test', cwd: '/w' }
+  })
+  assert.deepEqual(events.at(-1), {
+    type: 'tool',
+    name: 'Bash',
+    input: { command: 'npm test', cwd: '/w' },
+    toolUseId: 'cmd-1',
+    parentToolUseId: 'codex-agent:thread-child'
+  })
+
+  note('item/completed', {
+    threadId: 'thread-child',
+    item: {
+      type: 'commandExecution',
+      id: 'cmd-1',
+      status: 'completed',
+      exitCode: 0,
+      aggregatedOutput: 'tudo verde'
+    }
+  })
+  assert.deepEqual(events.at(-1), {
+    type: 'tool-result',
+    text: 'tudo verde',
+    isError: false,
+    outcome: 'completed',
+    toolUseId: 'cmd-1',
+    lineCount: 1,
+    truncated: false
+  })
+
+  // Terminal FACTUAL: o `turn/completed` do thread do filho, com a resposta
+  // final dele virando o texto do card do pai.
+  note('turn/completed', {
+    threadId: 'thread-child',
+    turn: {
+      id: 'turn-child',
+      status: 'completed',
+      items: [
+        { type: 'reasoning', id: 'r1' },
+        { type: 'agentMessage', id: 'm1', phase: 'final_answer', text: 'achei a causa raiz' }
+      ]
+    }
+  })
+  assert.deepEqual(events.at(-1), {
+    type: 'tool-result',
+    text: 'achei a causa raiz',
+    isError: false,
+    outcome: 'completed',
+    toolUseId: 'codex-agent:thread-child',
+    lineCount: 1,
+    truncated: false
+  })
+  assert.equal(Object.hasOwn(events.at(-1), 'agentStatus'), false, 'cerca A10: campo do Claude nunca no Codex')
+  assert.equal(Object.hasOwn(events.at(-1), 'agentTaskId'), false)
+  assert.equal(session.codexAgents.size, 0)
+
+  // Terminal repetido do mesmo filho não ressuscita nem reabre o card.
+  events.length = 0
+  note('turn/completed', { threadId: 'thread-child', turn: { status: 'completed', items: [] } })
+  assert.deepEqual(events, [])
+})
+
+test('Codex: result raiz espera o filho vivo e drena no último settle, fora de ordem', async () => {
+  const { session, events, note } = codexAgentSession()
+  noteCodexSpawn(note, 'thread-a', '/root/um')
+  noteCodexSpawn(note, 'thread-b', '/root/dois')
+  events.length = 0
+
+  note('turn/completed', { threadId: 'thread-root', turn: { id: 'turn-root', status: 'completed' } })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(events, [], 'terminal do turno não anuncia nada com filho trabalhando')
+  assert.equal(session.deferredCollabResult?.type, 'result')
+  assert.equal(session.turnActive, true)
+
+  // O segundo spawn conclui PRIMEIRO — a ordem do wire não é a da lateral.
+  note('turn/completed', {
+    threadId: 'thread-b',
+    turn: { status: 'failed', error: { message: 'o subagente estourou' }, items: [] }
+  })
+  assert.deepEqual(events.at(-1), {
+    type: 'tool-result',
+    text: 'o subagente estourou',
+    isError: true,
+    outcome: 'failed',
+    toolUseId: 'codex-agent:thread-b',
+    lineCount: 1,
+    truncated: false
+  })
+  assert.equal(events.filter((event) => event.type === 'result').length, 0, 'ainda há um filho vivo')
+  assert.equal(session.turnActive, true)
+
+  note('turn/completed', {
+    threadId: 'thread-a',
+    turn: { status: 'statusQueAindaNaoExiste', items: [] }
+  })
+  const results = events.filter((event) => event.type === 'result')
+  assert.equal(results.length, 1, 'o último settle drena o terminal retido')
+  assert.equal(events.at(-1).type, 'result')
+  assert.equal(events.at(-1).continues, false)
+  assert.equal(session.turnActive, false)
+  assert.equal(session.deferredCollabResult, null)
+})
+
+test('Codex: fala do filho nunca entra no fio principal nem move o turno da raiz', () => {
+  const { session, events, note } = codexAgentSession()
+  noteCodexSpawn(note, 'thread-child', '/root/calculo')
+  events.length = 0
+
+  note('turn/started', { threadId: 'thread-child', turn: { id: 'turn-child' } })
+  note('item/started', {
+    threadId: 'thread-child',
+    item: { type: 'reasoning', id: 'r1', content: [], summary: [] }
+  })
+  note('item/agentMessage/delta', { threadId: 'thread-child', itemId: 'm1', delta: 'rascunho do filho' })
+  note('item/reasoning/textDelta', { threadId: 'thread-child', delta: 'pensando' })
+  note('item/completed', {
+    threadId: 'thread-child',
+    item: { type: 'agentMessage', id: 'm1', phase: 'final_answer', text: 'resposta do filho' }
+  })
+  note('thread/tokenUsage/updated', {
+    threadId: 'thread-child',
+    tokenUsage: { last: { totalTokens: 99_000 }, modelContextWindow: 100_000 }
+  })
+  note('thread/status/changed', { threadId: 'thread-child', status: { type: 'idle' } })
+
+  assert.deepEqual(events, [], 'nada de texto, delta, raciocínio ou contexto de filho')
+  assert.equal(session.turnId, 'turn-root', 'o turno da conversa do dono continua o dele')
+  assert.equal(session.lastTokens, undefined, 'a régua de contexto é da raiz, nunca do filho')
+  assert.equal(session.codexAgents.size, 1, 'e o agente segue vivo até o turn/completed dele')
+})
+
+test('Codex: ferramenta do filho sem retorno fecha junto com o subagente', () => {
+  const { session, events, note } = codexAgentSession()
+  noteCodexSpawn(note, 'thread-child', '/root/calculo')
+  note('item/started', {
+    threadId: 'thread-child',
+    item: { type: 'webSearch', id: 'search-1', query: 'causa raiz' }
+  })
+  events.length = 0
+
+  note('turn/completed', {
+    threadId: 'thread-child',
+    turn: { status: 'completed', items: [] }
+  })
+  // Card filho pendente faria o terminal do turno inventar o erro de órfão:
+  // ele fecha ANTES do card do pai, na mesma passada.
+  assert.deepEqual(
+    events.map((event) => [event.type, event.toolUseId, event.outcome]),
+    [
+      ['tool-result', 'search-1', 'cancelled'],
+      ['tool-result', 'codex-agent:thread-child', 'completed']
+    ]
+  )
+  assert.equal(events[0].isError, false, 'ferramenta sem retorno não é falha de ninguém')
+  assert.equal(events[1].text, 'subagente concluído', 'sem resposta final, rótulo neutro')
+  assert.equal(session.codexAgents.size, 0)
+})
+
+test('Codex: interrupção e encerramento cancelam os sub-agentes antes do terminal', async () => {
+  const { session, events, note } = codexAgentSession()
+  noteCodexSpawn(note, 'thread-child', '/root/calculo')
+  events.length = 0
+
+  const interrupted = {
+    type: 'subAgentActivity',
+    id: 'activity-int',
+    kind: 'interrupted',
+    agentThreadId: 'thread-child',
+    agentPath: '/root/calculo'
+  }
+  note('item/started', { threadId: 'thread-root', item: interrupted })
+  assert.deepEqual(events, [
+    {
+      type: 'tool-result',
+      text: 'subagente cancelado',
+      isError: false,
+      outcome: 'cancelled',
+      toolUseId: 'codex-agent:thread-child',
+      lineCount: 1,
+      truncated: false
+    }
+  ])
+  assert.equal(session.codexAgents.size, 0)
+
+  // O par started/completed do MESMO envelope não pode cancelar duas vezes, e
+  // um spawn tardio do mesmo thread nunca ressuscita o agente morto.
+  note('item/completed', { threadId: 'thread-root', item: interrupted })
+  noteCodexSpawn(note, 'thread-child', '/root/calculo', { itemId: 'activity-tardio' })
+  assert.equal(events.length, 1)
+  assert.equal(session.codexAgents.size, 0)
+
+  // Turno raiz interrompido leva os filhos junto: o terminal nunca fica refém
+  // de um agente que ninguém mais vai encerrar.
+  events.length = 0
+  session.turnId = 'turn-root'
+  noteCodexSpawn(note, 'thread-outro', '/root/dois')
+  note('turn/completed', { threadId: 'thread-root', turn: { status: 'interrupted' } })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(
+    events.map((event) => [event.type, event.toolUseId ?? null, event.outcome]),
+    [
+      ['tool', 'codex-agent:thread-outro', undefined],
+      ['tool-result', 'codex-agent:thread-outro', 'cancelled'],
+      ['result', null, 'cancelled']
+    ]
+  )
+  assert.equal(session.codexAgents.size, 0)
+
+  // Encerrar a sessão fecha o que sobrou, ANTES do terminal da conversa.
+  events.length = 0
+  session.turnId = 'turn-root'
+  noteCodexSpawn(note, 'thread-final', '/root/tres')
+  events.length = 0
+  session.kill()
+  assert.deepEqual(events, [
+    {
+      type: 'tool-result',
+      text: 'subagente cancelado',
+      isError: false,
+      outcome: 'cancelled',
+      toolUseId: 'codex-agent:thread-final',
+      lineCount: 1,
+      truncated: false
+    }
+  ])
+  assert.equal(session.codexAgents.size, 0)
+})
+
+test('Codex: thread desconhecida continua descartada e a raiz não se registra como filha', () => {
+  const { session, events, note } = codexAgentSession()
+
+  note('item/agentMessage/delta', { threadId: 'thread-fantasma', delta: 'não pode aparecer' })
+  note('item/started', {
+    threadId: 'thread-fantasma',
+    item: { type: 'commandExecution', id: 'cmd-x', command: 'ls' }
+  })
+  note('turn/completed', { threadId: 'thread-fantasma', turn: { status: 'completed' } })
+  assert.deepEqual(events, [])
+  assert.equal(session.turnId, 'turn-root', 'terminal de thread estranha não fecha o turno do dono')
+
+  // Auto-referência (raiz anunciada como sub-agente de si mesma) esconderia a
+  // conversa inteira atrás do roteador de filhos.
+  noteCodexSpawn(note, 'thread-root', '/root')
+  assert.deepEqual(events, [])
+  assert.equal(session.codexAgents.size, 0)
+})
+
+test('Codex: CollabAgentStatus é enum ABERTO — notFound encerra, pendingInit não', () => {
+  const { session, events } = codexAgentSession()
+  const spawn = (status) => ({
+    type: 'collabAgentToolCall',
+    id: 'spawn-legacy',
+    tool: 'spawn_agent',
+    status: 'completed',
+    newThreadId: 'thread-legacy',
+    agentStatus: { status }
+  })
+  session.handleNotification('item/started', {
+    threadId: 'thread-root',
+    item: spawn('pendingInit')
+  })
+  session.handleNotification('item/completed', {
+    threadId: 'thread-root',
+    item: spawn('pendingInit')
+  })
+  assert.deepEqual(events.map((event) => event.type), ['tool'], 'nascendo ainda não é desfecho')
+  assert.equal(session.activeCollabParentIds.size, 1)
+
+  session.handleNotification('item/completed', { threadId: 'thread-root', item: spawn('notFound') })
+  assert.deepEqual(events.at(-1), {
+    type: 'tool-result',
+    text: 'subagente falhou',
+    isError: true,
+    outcome: 'failed',
+    toolUseId: 'spawn-legacy',
+    lineCount: 1,
+    truncated: false
+  })
+  assert.equal(session.activeCollabParentIds.size, 0, 'agente que sumiu nunca pendura o card')
+})
+
+test('registro de sub-agente do Codex: id sintético, nome do agentPath e memória de encerrados', () => {
+  // O id do card pai é SINTÉTICO: não existe tool_use de spawn no wire do Codex.
+  assert.equal(GUI_CODEX_AGENT_TOOL_PREFIX, 'codex-agent:')
+  assert.equal(guiCodexAgentToolUseId('abc'), 'codex-agent:abc')
+  assert.equal(guiCodexAgentName('/root/calculo'), 'calculo')
+  assert.equal(guiCodexAgentName('/root/calculo/'), 'calculo', 'barra final não é nome')
+  assert.equal(guiCodexAgentName('/root'), 'root')
+  assert.equal(guiCodexAgentName(''), undefined)
+  assert.equal(guiCodexAgentName(42), undefined)
+
+  const registry = new GuiCodexAgentRegistry()
+  assert.equal(registry.noteStarted('', '/root/x'), null, 'id torto nunca vira chave')
+  assert.equal(registry.noteStarted('x'.repeat(201), '/root/x'), null, 'id acima do teto de hidratação')
+
+  const agent = registry.noteStarted('t1', '/root/um')
+  assert.deepEqual(agent, {
+    agentThreadId: 't1',
+    toolUseId: 'codex-agent:t1',
+    name: 'um',
+    agentPath: '/root/um',
+    openToolUseIds: []
+  })
+  assert.equal(registry.noteStarted('t1', '/root/um'), null, 'segundo frame do par não duplica')
+  assert.equal(registry.has('t1'), true)
+  assert.equal(registry.toolUseIdFor('t1'), 'codex-agent:t1')
+
+  assert.equal(registry.noteChildTool('t1', 'cmd-1'), 'codex-agent:t1')
+  assert.equal(registry.noteChildTool('desconhecida', 'cmd-2'), undefined, 'filho de agente que não existe não tem linhagem')
+  assert.deepEqual(registry.agentFor('t1').openToolUseIds, ['cmd-1'])
+  assert.equal(registry.noteChildToolDone('t1', 'cmd-1'), 'codex-agent:t1')
+  assert.deepEqual(registry.agentFor('t1').openToolUseIds, [])
+
+  assert.equal(registry.noteSettled('t1')?.toolUseId, 'codex-agent:t1')
+  assert.equal(registry.noteSettled('t1'), null, 'segundo terminal é no-op')
+  assert.equal(registry.noteStarted('t1', '/root/um'), null, 'encerrado nunca ressuscita')
+  assert.equal(registry.size, 0)
+
+  registry.noteStarted('t2', '/root/dois')
+  registry.noteStarted('t3', '/root/tres')
+  assert.deepEqual(registry.settleAll().map((entry) => entry.agentThreadId), ['t2', 't3'])
+  assert.equal(registry.size, 0)
+  assert.deepEqual(registry.settleAll(), [])
 })
 
 test('resultado Codex tardio reconcilia somente depois que todos os envios assentam', () => {

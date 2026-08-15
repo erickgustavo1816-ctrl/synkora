@@ -353,6 +353,12 @@ function guiThreadRenderItems(items: readonly GuiItem[]): GuiThreadRenderItem[] 
       flush()
       continue
     }
+    // Filho cujo pai saiu da janela (poda do cap, replay parcial) não vira raiz
+    // do chat: a linhagem declarada basta para ele continuar sendo do agente.
+    if (item.kind === 'tool' && item.parentToolUseId) {
+      flush()
+      continue
+    }
     regular.push(item)
   }
   flush()

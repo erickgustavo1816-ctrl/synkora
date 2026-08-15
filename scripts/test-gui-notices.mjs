@@ -52,6 +52,157 @@ test('alerta canônico cobre atenção, término, fila e falha sem anunciar canc
   assert.equal(alerts.presented(seq), null)
 })
 
+// ————— um plim por turno lógico, com subagente em background —————
+// O `result` raiz do Claude não diz UMA palavra sobre tarefas de fundo: quem
+// sabe é o registro do motor (guiClaudeTasks), que carimba `continues` no
+// terminal. Estes casos fixam o contrato que o motor precisa honrar — e o preço
+// de quebrá-lo (o plim precoce, que era a regressão de 2026-08-14).
+
+/** Roda uma conversa inteira pelo sequenciador e devolve os avisos publicados,
+ *  já com o ACK de apresentação que o renderer manda a cada terminal. */
+function noticesFor(events) {
+  const alerts = new GuiAlertSequencer()
+  const notices = []
+  let seq = 0
+  for (const event of events) {
+    seq += 1
+    const immediate = alerts.accept(event, seq)
+    if (immediate) notices.push(immediate)
+    if (event.type === 'result' || event.type === 'turn-continuation') {
+      const presented = alerts.presented(seq)
+      if (presented) notices.push(presented)
+    }
+  }
+  return notices
+}
+
+test('result raiz com subagente vivo não toca o aviso; o último ciclo toca uma vez', () => {
+  const dispatched = {
+    type: 'tool-result',
+    toolUseId: 'tool-1',
+    isError: false,
+    agentStatus: 'launched',
+    agentTaskId: 'task-1'
+  }
+  const settled = {
+    type: 'tool-result',
+    toolUseId: 'tool-1',
+    isError: false,
+    outcome: 'completed',
+    agentStatus: 'settled',
+    agentTaskId: 'task-1'
+  }
+
+  assert.deepEqual(
+    noticesFor([
+      { type: 'turn-started' },
+      { type: 'tool', name: 'Agent' },
+      dispatched,
+      // Turno raiz que só DESPACHOU: o agente segue trabalhando.
+      { type: 'result', isError: false, continues: true },
+      settled,
+      // Ciclo autônomo que o CLI abre a cada conclusão, agora sem ninguém vivo.
+      { type: 'result', isError: false, continues: false }
+    ]),
+    ['finished'],
+    'exatamente um aviso, e só depois do último subagente'
+  )
+
+  // O preço de errar o `continues`: com o terminal se declarando final logo no
+  // despacho, o aviso sai com o agente ainda trabalhando — e sai de novo no
+  // ciclo seguinte. Era isso que tocava dois plins.
+  assert.deepEqual(
+    noticesFor([
+      { type: 'turn-started' },
+      dispatched,
+      { type: 'result', isError: false, continues: false },
+      settled,
+      { type: 'result', isError: false, continues: false }
+    ]),
+    ['finished', 'finished']
+  )
+})
+
+test('vários subagentes fora de ordem ainda produzem um único aviso', () => {
+  const launch = (n) => ({
+    type: 'tool-result',
+    toolUseId: `tool-${n}`,
+    isError: false,
+    agentStatus: 'launched',
+    agentTaskId: `task-${n}`
+  })
+  const settle = (n, outcome = 'completed') => ({
+    type: 'tool-result',
+    toolUseId: `tool-${n}`,
+    isError: outcome === 'failed',
+    outcome,
+    agentStatus: 'settled',
+    agentTaskId: `task-${n}`
+  })
+
+  assert.deepEqual(
+    noticesFor([
+      { type: 'turn-started' },
+      launch(1),
+      launch(2),
+      launch(3),
+      { type: 'result', isError: false, continues: true },
+      settle(3),
+      { type: 'result', isError: false, continues: true },
+      // Subagente que falha é achado do trabalho, não falha do turno: o desfecho
+      // do turno continua vindo do `result` raiz (decisão de produto).
+      settle(2, 'failed'),
+      { type: 'result', isError: false, continues: true },
+      settle(1),
+      { type: 'result', isError: false, continues: false }
+    ]),
+    ['finished']
+  )
+})
+
+test('interrupção e queda com subagente vivo não deixam aviso pendurado nem duplicado', () => {
+  const launched = {
+    type: 'tool-result',
+    toolUseId: 'tool-1',
+    isError: false,
+    agentStatus: 'launched',
+    agentTaskId: 'task-1'
+  }
+  const cancelled = {
+    type: 'tool-result',
+    toolUseId: 'tool-1',
+    isError: false,
+    outcome: 'cancelled',
+    agentStatus: 'settled',
+    agentTaskId: 'task-1'
+  }
+
+  // Parada pedida pelo dono: os agentes são cancelados ANTES do terminal e
+  // cancelamento nunca vira anúncio.
+  assert.deepEqual(
+    noticesFor([
+      { type: 'turn-started' },
+      launched,
+      { type: 'result', isError: false, continues: true },
+      cancelled,
+      { type: 'result', isError: false, outcome: 'cancelled', continues: false }
+    ]),
+    []
+  )
+
+  // Queda do processo com agente vivo: uma falha só, mesmo com fatal + closed.
+  const alerts = new GuiAlertSequencer()
+  assert.equal(alerts.accept({ type: 'turn-started' }, 1), null)
+  assert.equal(alerts.accept(launched, 2), null)
+  assert.equal(alerts.accept({ type: 'result', isError: false, continues: true }, 3), null)
+  assert.equal(alerts.presented(3), null, 'terminal intermediário não libera aviso')
+  assert.equal(alerts.accept(cancelled, 4), null)
+  assert.equal(alerts.accept({ type: 'fatal', text: 'caiu' }, 5), null)
+  assert.equal(alerts.accept({ type: 'closed', code: 1 }, 6), null)
+  assert.equal(alerts.presented(5), 'failed')
+  assert.equal(alerts.presented(5), null)
+})
+
 test('fatal seguido de closed produz uma falha; uma nova geração rearma o alerta', () => {
   const alerts = new GuiAlertSequencer()
   assert.equal(alerts.accept({ type: 'fatal', text: 'caiu' }, 1), null)

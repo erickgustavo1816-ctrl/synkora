@@ -21,6 +21,11 @@ import {
   isGuiCodexToolType,
   type GuiCodexCompletedItem
 } from './guiCodexTools'
+import {
+  GuiCodexAgentRegistry,
+  guiCodexAgentThreadId,
+  type GuiCodexAgent
+} from './guiCodexAgents'
 import type {
   CliCaps,
   MaestroSessionOpts,
@@ -81,6 +86,10 @@ interface CodexItem extends GuiCodexCompletedItem {
   model?: string
   agentNickname?: string
   agentRole?: string
+  /** `subAgentActivity`: started | interacted | interrupted (enum ABERTO). */
+  kind?: string
+  agentThreadId?: string
+  agentPath?: string
 }
 
 type GuiCodexCollabOutcome = 'completed' | 'failed' | 'cancelled'
@@ -127,17 +136,45 @@ function guiCodexCollabThreadIds(item: CodexItem): string[] {
   return [...ids]
 }
 
+// `CollabAgentStatus` do schema do binário: pendingInit | running | interrupted
+// | completed | errored | shutdown | notFound. Tratado como enum ABERTO — valor
+// desconhecido não encerra nada (null), mas `notFound` SIM: agente que sumiu do
+// servidor nunca pode pendurar o card do pai.
 function guiCodexCollabOutcome(value: unknown): GuiCodexCollabOutcome | null {
   const record = guiCodexRecord(value)
   const status = guiCodexString(record?.['status'] ?? value)?.toLowerCase()
-  if (!status || ['pending', 'running', 'working', 'inprogress', 'in_progress', 'waiting'].includes(status))
+  if (
+    !status ||
+    ['pending', 'pendinginit', 'running', 'working', 'inprogress', 'in_progress', 'waiting'].includes(
+      status
+    )
+  )
     return null
-  if (['failed', 'error', 'errored'].includes(status)) return 'failed'
+  if (['failed', 'error', 'errored', 'notfound'].includes(status)) return 'failed'
   if (['cancelled', 'canceled', 'interrupted', 'closed', 'shutdown'].includes(status))
     return 'cancelled'
   if (['completed', 'complete', 'done', 'success', 'succeeded'].includes(status))
     return 'completed'
   return null
+}
+
+/** Fala final do sub-agente: o último `agentMessage` do turno dele (o protocolo
+ *  marca a resposta com `phase: "final_answer"`; sem a marca, vale a última
+ *  mensagem mesmo assim). Vira o TEXTO do card do pai — nunca uma mensagem do
+ *  fio principal. */
+function guiCodexAgentFinalText(turn: unknown): string | undefined {
+  const items = guiCodexRecord(turn)?.['items']
+  if (!Array.isArray(items)) return undefined
+  let fallback: string | undefined
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = guiCodexRecord(items[index])
+    if (!item || item['type'] !== 'agentMessage') continue
+    const text = guiCodexString(item['text'])
+    if (!text) continue
+    if (item['phase'] === 'final_answer') return firstLines(text, 4_000)
+    fallback ??= firstLines(text, 4_000)
+  }
+  return fallback
 }
 
 function guiCodexCollabMessage(value: unknown): string | undefined {
@@ -323,6 +360,10 @@ export class CodexSession {
   private collabParentByThreadId = new Map<string, string>()
   private startedCollabToolIds = new Set<string>()
   private deferredCollabResult: Extract<SessionEvent, { type: 'result' }> | null = null
+  /** Sub-agentes do wire REAL (`subAgentActivity` + frames do thread filho).
+   *  Caminho independente do `collabAgentToolCall` acima, que em produção só
+   *  chega com `tool: "wait"` e sem identidade utilizável. */
+  private codexAgents = new GuiCodexAgentRegistry()
 
   constructor(opts: MaestroSessionOpts, persona: string, emit: (evt: SessionEvent) => void) {
     this.opts = opts
@@ -360,6 +401,7 @@ export class CodexSession {
     })
     this.child.on('error', (e) => {
       this.closed = true
+      this.cancelLiveCodexAgents()
       this.clearIdle()
       this.clearTurnSilence()
       this.clearInterruptGuard()
@@ -374,6 +416,9 @@ export class CodexSession {
       this.closed = true
       const final = this.protocol.end()
       for (const line of final.lines) this.handleLine(line)
+      // Cada card do sub-agente fecha ANTES do terminal da conversa: o processo
+      // morreu e ninguém mais vai reportar por eles.
+      this.cancelLiveCodexAgents()
       this.clearIdle()
       this.clearTurnSilence()
       this.clearInterruptGuard()
@@ -487,6 +532,7 @@ export class CodexSession {
       this.pendingTurnStart ||
       this.pendingSendOperations.size > 0 ||
       this.activeCollabParentIds.size > 0 ||
+      this.codexAgents.size > 0 ||
       this.deferredCollabResult
     )
   }
@@ -796,6 +842,7 @@ export class CodexSession {
   kill(): void {
     if (this.killed) return
     this.killed = true
+    this.cancelLiveCodexAgents()
     this.cancelPendingInteractions()
     this.pendingSendOperations.clear()
     this.terminalReconcilePending = false
@@ -1091,10 +1138,162 @@ export class CodexSession {
   }
 
   private flushDeferredCollabResult(): void {
-    if (this.activeCollabParentIds.size > 0 || !this.deferredCollabResult) return
+    if (
+      this.activeCollabParentIds.size > 0 ||
+      this.codexAgents.size > 0 ||
+      !this.deferredCollabResult
+    )
+      return
     const result = this.deferredCollabResult
     this.deferredCollabResult = null
     this.emitTurnResult(result)
+  }
+
+  // ————— sub-agentes do wire REAL (subAgentActivity + thread do filho) —————
+
+  /** Card de ferramenta do Codex. A MESMA projeção serve para a raiz e para o
+   *  thread de um sub-agente — só a linhagem (`parentToolUseId`) muda. */
+  private codexToolEvent(item: CodexItem): Extract<SessionEvent, { type: 'tool' }> | null {
+    switch (item.type) {
+      case 'commandExecution':
+        return {
+          type: 'tool',
+          name: 'Bash',
+          input: { command: commandText(item.command), cwd: item.cwd },
+          toolUseId: item.id
+        }
+      case 'fileChange':
+        return { type: 'tool', name: 'Patch', input: { changes: item.changes }, toolUseId: item.id }
+      case 'webSearch':
+        return { type: 'tool', name: 'WebSearch', input: { query: item.query }, toolUseId: item.id }
+      case 'mcpToolCall':
+        return {
+          type: 'tool',
+          name: item.tool ?? 'mcp',
+          input: { server: item.server },
+          toolUseId: item.id
+        }
+      default:
+        return null
+    }
+  }
+
+  /** `subAgentActivity` no thread RAIZ: o ÚNICO sinal de spawn do Codex.
+   *  `item/started` e `item/completed` chegam com payload IDÊNTICO ~1ms depois
+   *  um do outro — o registro faz o dedupe e o card nasce uma vez só. */
+  private noteSubAgentActivity(item: CodexItem): void {
+    const agentThreadId = guiCodexAgentThreadId(item.agentThreadId)
+    // Id torto e auto-referência (raiz registrada como filha de si mesma) nunca
+    // entram: é o registro que o roteador consulta para decidir o que é fala de
+    // filho, e a raiz não pode se esconder de si mesma.
+    if (!agentThreadId || agentThreadId === this.threadId) return
+    const kind = guiCodexString(item.kind)?.toLowerCase()
+    if (kind === 'interrupted') {
+      const interrupted = this.codexAgents.noteInterrupted(agentThreadId)
+      if (interrupted) this.emitCodexAgentSettled(interrupted, 'cancelled')
+      return
+    }
+    // `interacted` — e qualquer kind que o enum ganhe depois — é no-op: só
+    // 'started' registra, então kind desconhecido no máximo deixa de mostrar um
+    // card, nunca prende o turno num agente que ninguém encerraria.
+    if (kind !== 'started') return
+    const agent = this.codexAgents.noteStarted(agentThreadId, item.agentPath)
+    if (!agent) return
+    this.emit({
+      type: 'tool',
+      name: 'spawn_agent',
+      input: {
+        name: agent.name ?? 'subagente Codex',
+        agent_type: 'codex',
+        ...(agent.agentPath ? { path: agent.agentPath } : {})
+      },
+      toolUseId: agent.toolUseId
+    })
+  }
+
+  /** Frames do thread do FILHO. Só ferramenta atravessa — carimbada com a
+   *  linhagem do card pai — e o `turn/completed` dele encerra o card. Fala de
+   *  filho (agentMessage, deltas, raciocínio, contexto) NUNCA entra no fio
+   *  principal, e o contexto/turnId da conversa do dono continua intocado. */
+  private handleSubAgentNotification(
+    agentThreadId: string,
+    method: string,
+    p: Record<string, unknown>
+  ): void {
+    switch (method) {
+      case 'turn/completed': {
+        const turn = guiCodexRecord(p['turn'])
+        const agent = this.codexAgents.noteSettled(agentThreadId)
+        if (!agent) return
+        // `TurnStatus` é enum ABERTO: qualquer valor encerra o card. Pendurar o
+        // agente seria pior que classificá-lo errado.
+        const outcome = guiCodexTurnOutcome(guiCodexString(turn?.['status']))
+        this.emitCodexAgentSettled(
+          agent,
+          outcome,
+          guiCodexAgentFinalText(turn) ?? guiCodexCollabMessage(turn?.['error'])
+        )
+        break
+      }
+      case 'item/started': {
+        const item = p['item'] as CodexItem | undefined
+        const event = item ? this.codexToolEvent(item) : null
+        if (!event) break
+        const parentToolUseId = this.codexAgents.noteChildTool(agentThreadId, item?.id)
+        if (!parentToolUseId) break
+        this.emit({ ...event, parentToolUseId })
+        break
+      }
+      case 'item/completed': {
+        const item = p['item'] as CodexItem | undefined
+        if (!item || !isGuiCodexToolType(item.type)) break
+        if (!this.codexAgents.noteChildToolDone(agentThreadId, item.id)) break
+        const completed = guiCodexToolCompletion(item)
+        this.emit(
+          commandResultEvent(completed.text, completed.isError, item.id, completed.outcome)
+        )
+        break
+      }
+      default:
+        break
+    }
+  }
+
+  /** Terminal do card do pai. Os cards de ferramenta do filho que ficaram sem
+   *  resultado fecham JUNTO: o tool-result do Codex não carrega `agentStatus`
+   *  (cerca entre os backends), então o renderer não cascateia sozinho — e card
+   *  filho pendente faz o terminal do turno inventar o erro de órfão. */
+  private emitCodexAgentSettled(
+    agent: GuiCodexAgent,
+    outcome: GuiCodexCollabOutcome,
+    detail?: string
+  ): void {
+    for (const toolUseId of agent.openToolUseIds) {
+      this.emit(commandResultEvent('encerrado com o subagente', false, toolUseId, 'cancelled'))
+    }
+    this.emit(
+      commandResultEvent(
+        detail ??
+          (outcome === 'completed'
+            ? 'subagente concluído'
+            : outcome === 'failed'
+              ? 'subagente falhou'
+              : 'subagente cancelado'),
+        outcome === 'failed',
+        agent.toolUseId,
+        outcome
+      )
+    )
+    this.flushDeferredCollabResult()
+  }
+
+  /** Interrupção confirmada do turno raiz, `closed`, `fatal` e dispose levam os
+   *  sub-agentes junto: drena o registro e fecha cada card como cancelado —
+   *  ninguém errou, o turno é que acabou antes do terminal factual. */
+  private cancelLiveCodexAgents(): void {
+    for (const agent of this.codexAgents.settleAll()) {
+      this.emitCodexAgentSettled(agent, 'cancelled')
+    }
   }
 
   private isPendingTurnStart(generation: number): boolean {
@@ -1412,6 +1611,13 @@ export class CodexSession {
 
   private handleNotification(method: string, p: Record<string, unknown>): void {
     const notificationThreadId = guiCodexString(p['threadId'])
+    // Thread de sub-agente REGISTRADO tem rota própria: vira atividade do card
+    // dele. Precisa vir ANTES da guarda abaixo, que é justamente o que hoje
+    // descarta 100% do trabalho dos filhos.
+    if (notificationThreadId && this.codexAgents.has(notificationThreadId)) {
+      this.handleSubAgentNotification(notificationThreadId, method, p)
+      return
+    }
     // O app-server pode transmitir atividade de threads filhas na mesma
     // conexão. Ela alimenta o collabToolCall da raiz, nunca o texto animado,
     // o turnId ou o terminal da conversa que o usuário está vendo.
@@ -1452,43 +1658,24 @@ export class CodexSession {
       case 'item/started': {
         const item = p['item'] as CodexItem | undefined
         if (!item) break
+        if (item.type === 'subAgentActivity') {
+          this.noteSubAgentActivity(item)
+          break
+        }
         if (isGuiCodexCollabType(item.type)) {
           this.startCollabItem(item)
-        } else if (item.type === 'commandExecution') {
-          this.emit({
-            type: 'tool',
-            name: 'Bash',
-            input: { command: commandText(item.command), cwd: item.cwd },
-            toolUseId: item.id
-          })
-        } else if (item.type === 'fileChange') {
-          this.emit({
-            type: 'tool',
-            name: 'Patch',
-            input: { changes: item.changes },
-            toolUseId: item.id
-          })
-        } else if (item.type === 'webSearch') {
-          this.emit({
-            type: 'tool',
-            name: 'WebSearch',
-            input: { query: item.query },
-            toolUseId: item.id
-          })
-        } else if (item.type === 'mcpToolCall') {
-          this.emit({
-            type: 'tool',
-            name: item.tool ?? 'mcp',
-            input: { server: item.server },
-            toolUseId: item.id
-          })
+          break
         }
+        const tool = this.codexToolEvent(item)
+        if (tool) this.emit(tool)
         break
       }
       case 'item/completed': {
         const item = p['item'] as CodexItem | undefined
         if (!item) break
-        if (isGuiCodexCollabType(item.type)) {
+        if (item.type === 'subAgentActivity') {
+          this.noteSubAgentActivity(item)
+        } else if (isGuiCodexCollabType(item.type)) {
           this.finishCollabItem(item)
         } else if (item.type === 'agentMessage' && item.text) {
           this.emit({ type: 'text', text: item.text })
@@ -1542,6 +1729,11 @@ export class CodexSession {
         this.clearInterruptGuard()
         this.clearTurnErrorGuard()
         this.turnId = null
+        // Turno raiz que NÃO concluiu (interrupção confirmada pelo servidor,
+        // falha) leva os sub-agentes junto: eles pertencem a este turno e
+        // ninguém mais vai reportar por eles. Reter o terminal aqui prenderia a
+        // conversa em "trabalhando" para sempre.
+        if (outcome !== 'completed') this.cancelLiveCodexAgents()
         const result: Extract<SessionEvent, { type: 'result' }> = {
           type: 'result',
           isError: outcome === 'failed',
@@ -1551,7 +1743,7 @@ export class CodexSession {
         // Respostas RPC resolvidas no mesmo chunk retomam em microtask. Só
         // depois delas sabemos se uma mensagem aceita precisa abrir outro turno.
         queueMicrotask(() => {
-          if (this.activeCollabParentIds.size > 0) {
+          if (this.activeCollabParentIds.size > 0 || this.codexAgents.size > 0) {
             this.deferredCollabResult = result
             return
           }

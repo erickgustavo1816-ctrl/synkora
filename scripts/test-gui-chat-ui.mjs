@@ -55,7 +55,13 @@ import {
   planGuiAttachmentBatch
 } from '../src/renderer/src/guiComposerAttachments.ts'
 import { shouldBlurGuiComposerOnOutsidePointerDown } from '../src/renderer/src/guiComposerFocus.ts'
-import { closePendingGuiTools, guiClosedLine } from '../src/renderer/src/guiTerminalTools.ts'
+import {
+  closePendingGuiTools,
+  guiClosedLine,
+  guiSubagentChildClosure,
+  hasPendingGuiTools,
+  settleLaunchedGuiSubagents
+} from '../src/renderer/src/guiTerminalTools.ts'
 import {
   GuiRequestEpoch,
   withoutMissionGuiSlots
@@ -70,7 +76,7 @@ import {
   lastPendingGuiToolActivity
 } from '../src/renderer/src/guiToolPresentation.ts'
 import { nestGuiSubagentTools } from '../src/renderer/src/guiSubagentPresentation.ts'
-import { guiSubagentStatusView } from '../src/renderer/src/guiSubagentStatus.ts'
+import { normalizeGuiSubagentSidebar } from '../src/renderer/src/guiSubagentSidebar.ts'
 import { asGuiEvent } from '../src/renderer/src/guiApi.ts'
 import {
   GUI_DIFF_MAX_CHARS,
@@ -1960,7 +1966,7 @@ test('subagentes usam somente linhagem explícita e preservam o transcript cru',
   )
 })
 
-test('resultados intercalados fecham o filho exato e a caixa conta desfechos terminais', () => {
+test('resultados intercalados fecham o filho exato e um id ambíguo falha fechado', () => {
   const items = [
     { ...tool('parent-a', 'Agent', 'prompt A'), toolUseId: 'parent-a' },
     { ...tool('parent-b', 'Agent', 'prompt B'), toolUseId: 'parent-b' },
@@ -2001,19 +2007,8 @@ test('resultados intercalados fecham o filho exato e a caixa conta desfechos ter
   assert.equal(boxB.kind, 'subagent')
   assert.equal(boxA.children[0].result.text, 'resultado A')
   assert.equal(boxB.children[0].result.text, 'resultado B')
-  assert.equal(
-    guiSubagentStatusView(boxA.parent, boxA.children, {
-      tone: 'ok',
-      statusLabel: 'concluído'
-    }).label,
-    'concluído (1 ferramenta)'
-  )
-  const failed = guiSubagentStatusView(boxB.parent, boxB.children, {
-    tone: 'err',
-    statusLabel: 'falhou'
-  })
-  assert.equal(failed.label, 'falhou (1 ferramenta)')
-  assert.equal(failed.tone, 'err')
+  assert.equal(boxA.parent.result.text, 'feito A')
+  assert.equal(boxB.parent.result.isError, true)
 
   const duplicate = [
     { ...tool('dup-1'), toolUseId: 'duplicado' },
@@ -2032,30 +2027,6 @@ test('resultados intercalados fecham o filho exato e a caixa conta desfechos ter
   assert.equal(guiToolResultTargetIndex(duplicate, 'duplicado'), -1, 'id ambíguo falha fechado')
 })
 
-test('atividade de subagente mostra só a ferramenta ainda realmente pendente', () => {
-  const parent = { ...tool('parent', 'Agent', 'verifique o contrato'), toolUseId: 'parent' }
-  const pending = {
-    ...tool('pending', 'Grep', 'parent_tool_use_id'),
-    toolUseId: 'pending',
-    parentToolUseId: 'parent'
-  }
-  const completed = {
-    ...tool('completed', 'Read', 'arquivo já lido'),
-    toolUseId: 'completed',
-    parentToolUseId: 'parent',
-    result: {
-      text: 'ok',
-      isError: false,
-      status: 'completed',
-      lineCount: 1,
-      truncated: false
-    }
-  }
-  const view = guiSubagentStatusView(parent, [pending, completed], null)
-  assert.equal(view.currentActivity, 'Grep / parent_tool_use_id')
-  assert.equal(view.label, 'agora: Grep / parent_tool_use_id')
-})
-
 test('terminal de erro encerra pai e filhos sem deixar a caixa pulsando', () => {
   const parent = { ...tool('parent', 'Agent', 'prompt terminal'), toolUseId: 'parent' }
   const child = {
@@ -2070,13 +2041,210 @@ test('terminal de erro encerra pai e filhos sem deixar a caixa pulsando', () => 
   const [box] = nestGuiSubagentTools(closed)
   assert.equal(box.kind, 'subagent')
   assert.equal(box.parent.result.status, 'failed')
-  assert.equal(box.children[0].result.status, 'failed')
-  const view = guiSubagentStatusView(
-    box.parent,
-    box.children,
-    guiToolOutcomeView(box.parent.result)
+  assert.equal(box.children[0].result.status, 'failed', 'o filho segue a árvore do pai')
+  assert.equal(guiToolOutcomeView(box.parent.result).tone, 'err')
+  assert.equal(hasPendingGuiTools(closed), false)
+})
+
+// C1 — o result raiz só reconcilia ferramenta quando o turno LÓGICO acaba: com
+// `continues` (fila de mensagens ou subagente vivo) o CLI ainda vai voltar.
+test('C1 — result com continues não fecha ferramenta pendente nem inventa órfão', () => {
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  assert.match(store, /const settlesTurn = !evt\.continues/u)
+  assert.match(
+    store,
+    /const orphanedTool =\s*settlesTurn && hasPendingGuiTools\(next\.items\) && evt\.outcome !== 'cancelled'/u
   )
-  assert.equal(view.label, 'falhou (1 ferramenta)')
-  assert.equal(view.currentActivity, null)
-  assert.equal(view.tone, 'err')
+  assert.match(store, /if \(settlesTurn\) next = \{ \.\.\.next, items: closePendingGuiTools\(next\.items, evt\) \}/u)
+  // O terminal do turno lógico continua reconciliando exatamente como antes.
+  const pending = [{ ...tool('pendente', 'Bash', 'npm test'), toolUseId: 'bash-1' }]
+  const settled = closePendingGuiTools(pending, {
+    type: 'result',
+    isError: false,
+    outcome: 'completed'
+  })
+  assert.equal(settled[0].result.status, 'failed')
+  assert.equal(settled[0].result.provisional, true)
+})
+
+// C2 — filho nunca é fechado por conta própria e agente vivo não vira falha.
+test('C2 — terminal fecha a raiz e cascateia pela árvore, sem trocar o desfecho de hoje', () => {
+  const launchedParent = {
+    ...tool('agent', 'Agent', 'trabalho longo'),
+    toolUseId: 'agent-1',
+    result: {
+      text: 'agente despachado',
+      isError: false,
+      status: 'completed',
+      lineCount: 1,
+      truncated: false,
+      agentStatus: 'launched',
+      agentTaskId: 'task-1'
+    }
+  }
+  const launchedChild = {
+    ...tool('agent-child', 'Read', 'arquivo do agente'),
+    toolUseId: 'agent-child',
+    parentToolUseId: 'agent-1'
+  }
+  const rootTool = { ...tool('root', 'Bash', 'npm test'), toolUseId: 'root-1' }
+  const closed = closePendingGuiTools([launchedParent, launchedChild, rootTool], {
+    type: 'closed',
+    code: 0
+  })
+  assert.equal(closed[0].result.status, 'cancelled', 'despacho vivo é cancelado, nunca falho')
+  assert.equal(closed[0].result.agentStatus, 'settled')
+  assert.equal(closed[1].result.status, 'cancelled')
+  assert.equal(closed[2].result.status, 'failed', 'ferramenta raiz mantém o desfecho de sempre')
+  assert.equal(launchedChild.result, undefined, 'o estado de entrada continua cru')
+
+  // Sem os campos novos (Codex, replay antigo) nada muda: pai e filho fecham
+  // com o MESMO desfecho terminal que já fechavam.
+  const legacyParent = { ...tool('legacy', 'Agent', 'prompt'), toolUseId: 'legacy-1' }
+  const legacyChild = {
+    ...tool('legacy-child', 'Grep', 'padrão'),
+    toolUseId: 'legacy-child',
+    parentToolUseId: 'legacy-1'
+  }
+  const legacy = closePendingGuiTools([legacyParent, legacyChild], {
+    type: 'fatal',
+    text: 'ponte caiu'
+  })
+  assert.equal(legacy[0].result, legacy[1].result)
+  assert.equal(legacy[0].result.status, 'failed')
+
+  // Respawn assenta só o agente despachado; a fotografia do resto fica.
+  const respawn = settleLaunchedGuiSubagents([launchedParent, launchedChild, rootTool])
+  assert.equal(respawn[0].result.status, 'cancelled')
+  assert.equal(respawn[1].result.status, 'cancelled')
+  assert.equal(respawn[2], rootTool)
+})
+
+// Regressão do review: filho pendente cujo pai JÁ resolveu não herda nada — e
+// mesmo assim fecha no terminal do turno. Sem isso `hasPendingGuiTools` nunca
+// zera e todo turno seguinte re-inventa o erro de órfão.
+test('filho pendente de pai já resolvido fecha no terminal do turno', () => {
+  const resolvedParent = {
+    ...tool('sync-agent', 'Agent', 'trabalho síncrono'),
+    toolUseId: 'sync-1',
+    result: {
+      text: 'agente concluiu',
+      isError: false,
+      status: 'completed',
+      lineCount: 1,
+      truncated: false
+    }
+  }
+  const strayChild = {
+    ...tool('sync-child', 'Read', 'arquivo do agente'),
+    toolUseId: 'sync-child',
+    parentToolUseId: 'sync-1'
+  }
+  const closed = closePendingGuiTools([resolvedParent, strayChild], {
+    type: 'result',
+    isError: false,
+    outcome: 'completed'
+  })
+  assert.equal(closed[0], resolvedParent, 'desfecho real do pai fica intocado')
+  assert.equal(closed[1].result.status, 'failed', 'o filho fecha com o terminal do turno')
+  assert.equal(closed[1].result.provisional, true)
+  assert.equal(hasPendingGuiTools(closed), false, 'nenhum card fica pendente para sempre')
+})
+
+// C3 (cerca) — o chat esconde a thread inteira do subagente enquanto a lateral
+// a mantém: os DOIS lados leem os mesmos itens crus e não podem divergir.
+test('C3 — chat esconde o subagente e a lateral continua mostrando quem trabalha', () => {
+  const parent = {
+    ...tool('parent', 'Agent', 'investigue o fluxo'),
+    toolUseId: 'agent-1',
+    subagent: { type: 'geral', prompt: 'investigue o fluxo' },
+    result: {
+      text: 'agente despachado',
+      isError: false,
+      status: 'completed',
+      lineCount: 1,
+      truncated: false,
+      agentStatus: 'launched',
+      agentTaskId: 'task-1'
+    }
+  }
+  const child = {
+    ...tool('child', 'Grep', 'padrão do filho'),
+    toolUseId: 'child-1',
+    parentToolUseId: 'agent-1'
+  }
+  // Pai evictado pelo cap/replay parcial: o nesting não resolve a caixa.
+  const orphan = {
+    ...tool('orphan', 'Read', 'arquivo do filho órfão'),
+    toolUseId: 'orphan-1',
+    parentToolUseId: 'evicted-parent'
+  }
+  const rootTool = { ...tool('root', 'Bash', 'npm test'), toolUseId: 'root-1' }
+  const items = [parent, child, orphan, rootTool]
+
+  const entries = normalizeGuiSubagentSidebar(items)
+  assert.deepEqual(entries.map((entry) => entry.toolUseId), ['agent-1'])
+  assert.equal(entries[0].activity, 'Grep · padrão do filho')
+
+  const presented = nestGuiSubagentTools(items)
+  assert.deepEqual(presented.map((item) => item.kind), ['subagent', 'tool', 'tool'])
+  assert.equal(presented[1].parentToolUseId, 'evicted-parent', 'o órfão chega ao chat com linhagem')
+  assert.equal(presented[2].id, 'root')
+
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(pane, /if \(item\.kind === 'subagent'\)[\s\S]*?continue/u)
+  assert.match(pane, /if \(item\.kind === 'tool' && item\.subagent\)[\s\S]*?continue/u)
+  assert.match(pane, /if \(item\.kind === 'tool' && item\.parentToolUseId\)[\s\S]*?continue/u)
+})
+
+// C4 — o ciclo de vida entra pelo canal com validação própria; payload sem os
+// campos novos continua atravessando exatamente como antes.
+test('C4 — canal aceita o ciclo de vida do subagente e recusa valor torto', () => {
+  const launched = asGuiEvent({
+    type: 'tool-result',
+    text: 'agente despachado',
+    isError: false,
+    toolUseId: 'agent-1',
+    agentStatus: 'launched',
+    agentTaskId: 'task-1'
+  })
+  assert.equal(launched.agentStatus, 'launched')
+  assert.equal(launched.agentTaskId, 'task-1')
+  assert.equal(
+    asGuiEvent({
+      type: 'tool-result',
+      text: 'resumo',
+      isError: false,
+      agentStatus: 'settled',
+      agentTaskId: 'task-1'
+    }).agentStatus,
+    'settled'
+  )
+  for (const torto of [
+    { agentStatus: 'running' },
+    { agentStatus: true },
+    { agentStatus: 'settled', agentTaskId: '' },
+    { agentStatus: 'settled', agentTaskId: 42 },
+    { agentStatus: 'settled', agentTaskId: 'x'.repeat(257) }
+  ]) {
+    assert.equal(
+      asGuiEvent({ type: 'tool-result', text: '', isError: false, ...torto }),
+      null,
+      `ciclo de vida torto não vira estado: ${JSON.stringify(torto)}`
+    )
+  }
+  const comum = asGuiEvent({ type: 'tool-result', text: 'ok', isError: false })
+  assert.equal(comum.type, 'tool-result')
+  assert.equal(comum.agentStatus, undefined)
+
+  const closure = guiSubagentChildClosure()
+  assert.equal(closure.isError, false)
+  assert.equal(closure.status, 'completed')
+  assert.equal(closure.text, 'encerrado com o subagente')
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  assert.match(store, /if \(evt\.agentStatus === 'settled' && item\.toolUseId\)/u)
+  assert.match(store, /items: settleLaunchedGuiSubagents\(next\.items\)/u)
 })

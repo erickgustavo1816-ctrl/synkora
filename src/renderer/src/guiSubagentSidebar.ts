@@ -34,6 +34,16 @@ export interface GuiSubagentSidebarEntry {
 
 const MAX_FIELD = 240
 
+/** Recibo de despacho do Agent assíncrono (contrato do tool-result: `launched`
+ *  = agente vivo; `settled` = terminal factual).
+ *
+ *  Cópia deliberada da mesma checagem de `guiToolPresentation`: as suítes
+ *  carregam estes módulos com type-stripping do node, que não resolve import de
+ *  irmão sem extensão — um import de VALOR aqui derrubaria os testes. */
+function isLaunchedSubagent(item: GuiToolItem): boolean {
+  return item.result?.agentStatus === 'launched'
+}
+
 /** Ferramenta de uma thread filha. O reducer usa esta fronteira para guardar
  *  o evento sem assentar/dividir o stream da resposta principal. */
 export function isGuiSubagentToolEvent(value: { parentToolUseId?: unknown }): boolean {
@@ -93,9 +103,16 @@ function isPotentialParent(item: GuiToolItem): boolean {
   )
 }
 
+/**
+ * Desfecho FACTUAL do pai. No Claude o primeiro resultado do Agent pode ser só
+ * o recibo de despacho ('launched'): o agente segue trabalhando em background e
+ * o terminal de verdade chega depois ('settled'). Sem `agentStatus` — Codex e
+ * ferramenta comum — resultado É o terminal, como sempre foi.
+ */
 function terminalTone(item: GuiToolItem): Exclude<GuiSubagentSidebarTone, 'running'> | null {
   const result = item.result
   if (!result) return null
+  if (isLaunchedSubagent(item)) return null
   if (result.status === 'denied') return 'denied'
   if (result.status === 'cancelled') return 'cancelled'
   if (result.status === 'failed' || result.isError) return 'failed'
@@ -124,7 +141,10 @@ function activityFor(children: readonly GuiToolItem[], parent: GuiToolItem): str
     const summary = clean(child.summary)
     return summary ? `${child.name} · ${summary}` : child.name
   }
-  if (!parent.result) return children.length > 0 ? 'finalizando' : 'aguardando a primeira atividade'
+  // Recibo de despacho não é desfecho: entre o lançamento e a primeira
+  // ferramenta do filho o agente já está trabalhando.
+  if (!parent.result || isLaunchedSubagent(parent))
+    return children.length > 0 ? 'finalizando' : 'aguardando a primeira atividade'
   return null
 }
 

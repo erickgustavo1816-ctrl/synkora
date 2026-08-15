@@ -186,6 +186,12 @@ export type GuiSessionEvent =
       toolUseId?: string
       lineCount?: number
       truncated?: boolean
+      /** Ciclo de vida de subagente em background (Claude). 'launched' = recibo de
+       *  despacho (async_launched) — o agente segue vivo; 'settled' = terminal factual
+       *  (task_notification ou reconciliação). Ausente em tool-result comum e no Codex. */
+      agentStatus?: 'launched' | 'settled'
+      /** task_id do CLI (== agentId do ACK). Presente sempre que agentStatus existir. */
+      agentTaskId?: string
     }
   | {
       type: 'permission'
@@ -250,6 +256,23 @@ export function asGuiEvent(evt: unknown): GuiSessionEvent | null {
       record['parentToolUseId'].length > 256)
   )
     return null
+  if (type === 'tool-result') {
+    // Ciclo de vida de subagente: valor torto nunca vira estado. Ausência
+    // continua sendo o caminho comum (tool-result normal e Codex inteiro).
+    if (
+      record['agentStatus'] !== undefined &&
+      record['agentStatus'] !== 'launched' &&
+      record['agentStatus'] !== 'settled'
+    )
+      return null
+    if (
+      record['agentTaskId'] !== undefined &&
+      (typeof record['agentTaskId'] !== 'string' ||
+        record['agentTaskId'].length === 0 ||
+        record['agentTaskId'].length > 256)
+    )
+      return null
+  }
   return typeof type === 'string' ? (evt as GuiSessionEvent) : null
 }
 

@@ -23,6 +23,7 @@ import {
   denyLatestPendingGuiTool,
   guiToolResultTargetIndex,
   guiToolActivityText,
+  isLaunchedGuiSubagentTool,
   lastPendingGuiToolActivity
 } from './guiToolPresentation'
 import {
@@ -45,7 +46,9 @@ import {
 import {
   closePendingGuiTools,
   guiClosedLine,
-  hasPendingGuiTools
+  guiSubagentChildClosure,
+  hasPendingGuiTools,
+  settleLaunchedGuiSubagents
 } from './guiTerminalTools'
 import {
   guiToolDiffInputSummary,
@@ -615,6 +618,12 @@ export type GuiItem =
         /** `result` fechou o turno antes do `tool-result`; um resultado
          * correlacionado posterior ainda pode substituir este desfecho. */
         provisional?: boolean
+        /** Ciclo de vida do subagente em background (Claude): 'launched' é só o
+         *  recibo de despacho — o agente segue vivo e o card ainda espera o
+         *  'settled' factual. Ausente = desfecho comum (inclusive Codex). */
+        agentStatus?: 'launched' | 'settled'
+        /** task_id do CLI, para correlacionar o recibo com o terminal. */
+        agentTaskId?: string
         /** Calculado no backend ANTES do corte de memória. */
         lineCount: number
         truncated: boolean
@@ -829,9 +838,31 @@ function guiItemId(): string {
   return `g${guiItemSeq}`
 }
 
+/** A poda nunca pode evictar o card de um subagente ainda VIVO: sem o pai, a
+ *  lateral perde a ficha e os filhos vazam para a conversa. Ele é limitado por
+ *  natureza (o agente assenta), então o excedente cai no próximo mais antigo.
+ *
+ *  TODO: o ring do main (500 eventos / 4MB) não tem a mesma retenção — um
+ *  transcript longo pode aparar o `tool` do pai antes do settled e a remontagem
+ *  nasce sem a ficha. Degradação aceita por ora (o chat segue limpo: card com
+ *  `parentToolUseId` nunca é promovido a raiz da conversa). */
+function capGuiItems(items: GuiItem[]): GuiItem[] {
+  let excess = items.length - GUI_ITEM_CAP
+  if (excess <= 0) return items
+  const kept: GuiItem[] = []
+  for (const item of items) {
+    if (excess > 0 && !(item.kind === 'tool' && isLaunchedGuiSubagentTool(item))) {
+      excess -= 1
+      continue
+    }
+    kept.push(item)
+  }
+  return kept
+}
+
 function pushGuiItem(items: GuiItem[], item: GuiItem): GuiItem[] {
   const next = [...items, item]
-  const capped = next.length > GUI_ITEM_CAP ? next.slice(next.length - GUI_ITEM_CAP) : next
+  const capped = capGuiItems(next)
   return item.kind === 'tool' && item.fileDiffs?.length
     ? pruneGuiDiffHistory(capped)
     : capped
@@ -1198,7 +1229,21 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           isError: evt.isError,
           status: evt.outcome ?? (evt.isError ? 'failed' : 'completed'),
           lineCount: evt.lineCount ?? countGuiOutputLines(evt.text),
-          truncated: Boolean(evt.truncated) || evt.text.length > GUI_TOOL_RESULT_CAP
+          truncated: Boolean(evt.truncated) || evt.text.length > GUI_TOOL_RESULT_CAP,
+          ...(evt.agentStatus ? { agentStatus: evt.agentStatus } : {}),
+          ...(evt.agentTaskId ? { agentTaskId: evt.agentTaskId } : {})
+        }
+      }
+      // Terminal factual do subagente: o protocolo do Claude nunca entrega
+      // tool-result de filho, então quem fecha os cards da thread é o pai.
+      if (evt.agentStatus === 'settled' && item.toolUseId) {
+        const parentToolUseId = item.toolUseId
+        const closure = guiSubagentChildClosure()
+        for (let index = 0; index < items.length; index += 1) {
+          const child = items[index]
+          if (child.kind !== 'tool' || child.result) continue
+          if (child.parentToolUseId !== parentToolUseId) continue
+          items[index] = { ...child, result: closure }
         }
       }
       // O erro criado por um `result` sem tool-result é apenas um aviso de
@@ -1404,8 +1449,13 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
 
     case 'result': {
       let next = finalizeGuiStream(state)
-      const orphanedTool = hasPendingGuiTools(next.items) && evt.outcome !== 'cancelled'
-      next = { ...next, items: closePendingGuiTools(next.items, evt) }
+      // `continues` = o turno lógico NÃO acabou (fila de mensagens ou subagente
+      // vivo). Reconciliar ferramenta pendente aqui carimbaria falha em trabalho
+      // que ainda está acontecendo — e ainda inventaria um erro de órfão.
+      const settlesTurn = !evt.continues
+      const orphanedTool =
+        settlesTurn && hasPendingGuiTools(next.items) && evt.outcome !== 'cancelled'
+      if (settlesTurn) next = { ...next, items: closePendingGuiTools(next.items, evt) }
       if (evt.isError || evt.outcome === 'failed' || orphanedTool) {
         next = {
           ...next,
@@ -2812,6 +2862,12 @@ export const useStore = create<SynkoraState>((set, get) => ({
       // replay nunca pode apagar uma mensagem enfileirada agora.
       next = { ...next, queued }
       if (prepareForRespawn) {
+        // Tarefa de fundo morre com o processo: agente apenas despachado não
+        // pode ressuscitar na lateral só porque a fotografia foi remontada.
+        next = {
+          ...next,
+          items: settleLaunchedGuiSubagents(next.items)
+        }
         next = {
           ...next,
           ...settleGuiRespawnStream(next.items, next.activeAssistantId, next.turnHadText)

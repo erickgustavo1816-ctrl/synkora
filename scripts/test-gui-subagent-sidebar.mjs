@@ -6,13 +6,35 @@ import {
   isGuiSubagentToolEvent,
   normalizeGuiSubagentSidebar
 } from '../src/renderer/src/guiSubagentSidebar.ts'
+import {
+  closePendingGuiTools,
+  settleLaunchedGuiSubagents
+} from '../src/renderer/src/guiTerminalTools.ts'
+import { guiToolResultTargetIndex } from '../src/renderer/src/guiToolPresentation.ts'
 
 function tool(id, name, summary, extra = {}) {
   return { id: `item-${id}`, kind: 'tool', name, summary, at: Number(id), ...extra }
 }
 
-function result(text, status = 'completed', isError = false) {
-  return { text, isError, status, lineCount: 1, truncated: false }
+function result(text, status = 'completed', isError = false, extra = {}) {
+  return { text, isError, status, lineCount: 1, truncated: false, ...extra }
+}
+
+/** ACK de despacho do Agent assíncrono: o card tem resultado e o agente vive. */
+function launched(taskId) {
+  return result('agente despachado', 'completed', false, {
+    agentStatus: 'launched',
+    agentTaskId: taskId
+  })
+}
+
+function agentCard(id, toolUseId, prompt, extra = {}) {
+  return {
+    ...tool(id, 'Agent', prompt),
+    toolUseId,
+    subagent: guiSubagentMetadataForTool('Agent', { prompt, subagent_type: 'geral' }),
+    ...extra
+  }
 }
 
 test('ferramenta de filho fica em background sem dividir a resposta principal', () => {
@@ -112,28 +134,167 @@ test('não promove uma ferramenta comum só porque o input tem descrição ou mo
   assert.deepEqual(entries, [])
 })
 
-test('qualquer subagente terminal sai da lateral', () => {
-  const entries = normalizeGuiSubagentSidebar([
+// B1 — o recibo de despacho do Agent assíncrono não é conclusão: era ele que
+// esvaziava a lateral com os três agentes ainda trabalhando.
+test('B1 — subagente apenas DESPACHADO continua na lateral trabalhando', () => {
+  const parents = [
+    agentCard('1', 'agent-1', 'investigue o fluxo A', { result: launched('task-1') }),
+    agentCard('2', 'agent-2', 'investigue o fluxo B', { result: launched('task-2') }),
+    agentCard('3', 'agent-3', 'investigue o fluxo C', { result: launched('task-3') })
+  ]
+  const child = {
+    ...tool('4', 'Grep', 'padrão do agente B'),
+    toolUseId: 'child-b',
+    parentToolUseId: 'agent-2'
+  }
+
+  const entries = normalizeGuiSubagentSidebar([...parents, child])
+  assert.deepEqual(entries.map((entry) => entry.toolUseId), ['agent-1', 'agent-2', 'agent-3'])
+  for (const entry of entries) {
+    assert.equal(entry.status, 'running')
+    assert.equal(entry.statusLabel, 'trabalhando')
+    assert.equal(entry.outcome, null)
+  }
+  assert.equal(entries[0].activity, 'aguardando a primeira atividade')
+  assert.equal(entries[1].activity, 'Grep · padrão do agente B')
+})
+
+// B2 — reescrita do teste que cristalizou a inferência errada: o que tira o
+// subagente da lateral é o terminal FACTUAL, nunca o despacho.
+test('B2 — terminal factual sai da lateral; despacho fica', () => {
+  const settled = normalizeGuiSubagentSidebar([
     {
       ...tool('1', 'Task', 'falha'),
       toolUseId: 'failed',
       subagent: guiSubagentMetadataForTool('Task', { prompt: 'falha' }),
-      result: result('erro real', 'failed', true)
+      result: result('erro real', 'failed', true, { agentStatus: 'settled', agentTaskId: 't1' })
     },
     {
       ...tool('2', 'Task', 'negado'),
       toolUseId: 'denied',
       subagent: guiSubagentMetadataForTool('Task', { prompt: 'negado' }),
-      result: result('', 'denied')
+      result: result('', 'denied', false, { agentStatus: 'settled', agentTaskId: 't2' })
     },
     {
       ...tool('3', 'Task', 'cancelado'),
       toolUseId: 'cancelled',
       subagent: guiSubagentMetadataForTool('Task', { prompt: 'cancelado' }),
-      result: result('', 'cancelled')
+      result: result('', 'cancelled', false, { agentStatus: 'settled', agentTaskId: 't3' })
+    },
+    {
+      ...tool('4', 'Task', 'concluído'),
+      toolUseId: 'completed',
+      subagent: guiSubagentMetadataForTool('Task', { prompt: 'concluído' }),
+      result: result('resumo do trabalho', 'completed', false, {
+        agentStatus: 'settled',
+        agentTaskId: 't4'
+      })
     }
   ])
-  assert.deepEqual(entries, [])
+  assert.deepEqual(settled, [], 'settled em qualquer desfecho encerra a ficha')
+
+  // Codex (e ferramenta comum) não carrega ciclo de vida: resultado É terminal.
+  const codex = normalizeGuiSubagentSidebar([
+    {
+      ...tool('5', 'spawn_agent', 'colaboração codex'),
+      toolUseId: 'codex-parent',
+      subagent: guiSubagentMetadataForTool('spawn_agent', { prompt: 'colaboração codex' }),
+      result: result('subagente concluído')
+    }
+  ])
+  assert.deepEqual(codex, [], 'a regra do Codex continua intacta')
+
+  const dispatched = normalizeGuiSubagentSidebar([
+    agentCard('6', 'agent-vivo', 'segue trabalhando', { result: launched('task-vivo') })
+  ])
+  assert.deepEqual(dispatched.map((entry) => entry.toolUseId), ['agent-vivo'])
+})
+
+// B3 — o settled real substitui o recibo no MESMO card (o pareamento por id
+// precisa aceitar um card que já tem o resultado de despacho).
+test('B3 — settled sobrescreve o despacho no mesmo card e encerra a ficha', () => {
+  const items = [agentCard('1', 'agent-1', 'auditoria', { result: launched('task-1') })]
+  const target = guiToolResultTargetIndex(items, 'agent-1')
+  assert.equal(target, 0, 'o card despachado continua elegível ao terminal factual')
+
+  items[target] = {
+    ...items[target],
+    result: result('encontrei 3 problemas', 'completed', false, {
+      agentStatus: 'settled',
+      agentTaskId: 'task-1'
+    })
+  }
+  assert.deepEqual(normalizeGuiSubagentSidebar(items), [])
+  assert.equal(
+    guiToolResultTargetIndex(items, 'agent-1'),
+    -1,
+    'card já assentado não aceita uma segunda conclusão'
+  )
+})
+
+// B4 — filho nunca é fechado por conta própria; ele segue a árvore do pai.
+test('B4 — terminal da sessão cancela o agente despachado e leva os filhos junto', () => {
+  const parent = agentCard('1', 'agent-1', 'trabalho longo', { result: launched('task-1') })
+  const child = {
+    ...tool('2', 'Read', 'arquivo do agente'),
+    toolUseId: 'child-1',
+    parentToolUseId: 'agent-1'
+  }
+  const closed = closePendingGuiTools([parent, child], { type: 'closed', code: 0 })
+
+  assert.equal(closed[0].result.status, 'cancelled', 'agente vivo não vira falha do turno')
+  assert.equal(closed[0].result.isError, false)
+  assert.equal(closed[0].result.agentStatus, 'settled')
+  assert.equal(closed[1].result.status, 'cancelled')
+  assert.equal(closed[1].result.agentStatus, undefined, 'filho não é um agente')
+  assert.deepEqual(normalizeGuiSubagentSidebar(closed), [])
+})
+
+// B5 — respawn: tarefa de fundo morre com o processo.
+test('B5 — respawn não ressuscita agente despachado na lateral', () => {
+  const parent = agentCard('1', 'agent-1', 'trabalho perdido', { result: launched('task-1') })
+  const child = {
+    ...tool('2', 'Grep', 'em andamento'),
+    toolUseId: 'child-1',
+    parentToolUseId: 'agent-1'
+  }
+  const settledTool = {
+    ...tool('3', 'Read', 'histórico'),
+    toolUseId: 'read-1',
+    result: result('conteúdo')
+  }
+  const pendingRoot = { ...tool('4', 'Bash', 'npm test'), toolUseId: 'bash-1' }
+
+  const respawned = settleLaunchedGuiSubagents([parent, child, settledTool, pendingRoot])
+  assert.equal(respawned[0].result.status, 'cancelled')
+  assert.equal(respawned[1].result.status, 'cancelled')
+  assert.equal(respawned[2], settledTool, 'resultado autoritativo é preservado')
+  assert.equal(respawned[3], pendingRoot, 'a fotografia do resto do transcript não é tocada')
+  assert.deepEqual(normalizeGuiSubagentSidebar(respawned), [])
+  assert.equal(parent.result.agentStatus, 'launched', 'o estado de entrada continua cru')
+})
+
+// B6 — fim de rodada raiz com agente vivo não pode encerrar a ficha (o CLI roda
+// um turno raiz novo a cada conclusão de agente).
+test('B6 — result raiz de ciclo autônomo não encerra o agente ainda vivo', () => {
+  const parent = agentCard('1', 'agent-1', 'trabalho em curso', { result: launched('task-1') })
+  const child = {
+    ...tool('2', 'Grep', 'varredura'),
+    toolUseId: 'child-1',
+    parentToolUseId: 'agent-1'
+  }
+  const items = [parent, child]
+
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  assert.match(store, /const settlesTurn = !evt\.continues/u)
+  assert.match(store, /if \(settlesTurn\) next = \{ \.\.\.next, items: closePendingGuiTools/u)
+
+  // Com `continues`, o redutor nem chama o fechamento — a lateral segue cheia.
+  assert.deepEqual(
+    normalizeGuiSubagentSidebar(items).map((entry) => entry.toolUseId),
+    ['agent-1']
+  )
+  assert.equal(items[1].result, undefined)
 })
 
 test('superfície da seção tem nome acessível e campos pedidos', () => {
@@ -157,6 +318,7 @@ test('superfície da seção tem nome acessível e campos pedidos', () => {
   }
   assert.doesNotMatch(source, /id do subagente/u)
   assert.match(source, /role="status"/u)
+  assert.match(source, /useMemo\(\(\) => normalizeGuiSubagentSidebar\(items\), \[items\]\)/u)
   assert.doesNotMatch(pane, /GuiSubagentContainer/u)
   assert.match(pane, /if \(item\.kind === 'subagent'\)[\s\S]*?continue/u)
   assert.match(pane, /item\.kind === 'tool' && item\.subagent/u)

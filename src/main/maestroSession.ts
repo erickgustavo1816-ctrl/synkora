@@ -11,6 +11,11 @@ import {
 import { limitGuiToolInput } from './guiToolInput'
 import { terminateGuiProcessTree } from './guiProcessTree'
 import {
+  guiClaudeTaskId,
+  GuiClaudeTaskRegistry,
+  type GuiClaudeTask
+} from './guiClaudeTasks'
+import {
   advanceGuiTurn,
   enqueueGuiTurn,
   GUI_ACTIVE_TURN_SILENCE_TIMEOUT,
@@ -189,6 +194,12 @@ export type SessionEvent =
       /** Metadados do output INTEIRO, calculados antes do preview capado. */
       lineCount?: number
       truncated?: boolean
+      /** Ciclo de vida de subagente em background (Claude). 'launched' = recibo de
+       *  despacho (async_launched) — o agente segue vivo; 'settled' = terminal factual
+       *  (task_notification ou reconciliação). Ausente em tool-result comum e no Codex. */
+      agentStatus?: 'launched' | 'settled'
+      /** task_id do CLI (== agentId do ACK). Presente sempre que agentStatus existir. */
+      agentTaskId?: string
     }
   | {
       type: 'permission'
@@ -283,6 +294,22 @@ interface StreamLine {
   tools?: string[]
   result?: string
   is_error?: boolean
+  // ————— tarefas de fundo (subagentes do Claude), todas sob type 'system' —————
+  /** task_started / task_updated / task_progress / task_notification. */
+  task_id?: string
+  /** task_started e task_notification são os ÚNICOS que unem os dois espaços de id. */
+  tool_use_id?: string
+  /** Enum ABERTO do CLI no task_notification. */
+  status?: string
+  summary?: string
+  output_file?: string
+  subagent_type?: string
+  task_type?: string
+  description?: string
+  patch?: { status?: string; end_time?: number }
+  /** background_tasks_changed: fotografia COMPLETA das tarefas vivas. Com o
+   *  conjunto vazio a chave é OMITIDA — ausência é conjunto vazio. */
+  tasks?: { task_id?: string; task_type?: string; description?: string }[]
   usage?: {
     input_tokens?: number
     output_tokens?: number
@@ -319,7 +346,16 @@ interface StreamLine {
           is_error?: boolean
         }[]
   }
-  tool_use_result?: { stdout?: string; stderr?: string }
+  /** O ACK do Agent traz o recibo estruturado: `AgentOutput` do sdk-tools é
+   *  união discriminada por `status` ('completed' | 'async_launched' |
+   *  'remote_launched') — tratar como enum ABERTO. */
+  tool_use_result?: {
+    stdout?: string
+    stderr?: string
+    isAsync?: boolean
+    status?: string
+    agentId?: string
+  }
 }
 
 /** O stream-json mistura mensagens da conversa raiz e dos agentes filhos.
@@ -366,6 +402,49 @@ function toolResultEvent(
   }
 }
 
+/** Recibo de DESPACHO de subagente: o card continua ABERTO. `outcome` fica
+ *  OMITIDO de propósito — presença de desfecho é o que a apresentação lê como
+ *  terminal, e o agente acabou de começar. */
+function agentLaunchedEvent(
+  raw: string,
+  toolUseId: string,
+  agentTaskId: string
+): Extract<SessionEvent, { type: 'tool-result' }> {
+  const details = guiToolResultDetails(raw)
+  return {
+    type: 'tool-result',
+    text: details.text,
+    isError: false,
+    toolUseId,
+    lineCount: details.lineCount,
+    truncated: details.truncated,
+    agentStatus: 'launched',
+    agentTaskId
+  }
+}
+
+/** Terminal FACTUAL do subagente (task_notification, reconciliação, cancelamento). */
+function agentSettledEvent(
+  raw: string,
+  toolUseId: string,
+  agentTaskId: string,
+  outcome: 'completed' | 'failed' | 'cancelled',
+  isError: boolean
+): Extract<SessionEvent, { type: 'tool-result' }> {
+  const details = guiToolResultDetails(raw)
+  return {
+    type: 'tool-result',
+    text: details.text,
+    isError,
+    outcome,
+    toolUseId,
+    lineCount: details.lineCount,
+    truncated: details.truncated,
+    agentStatus: 'settled',
+    agentTaskId
+  }
+}
+
 export class MaestroSession {
   readonly opts: MaestroSessionOpts
   personaSent = false
@@ -386,6 +465,8 @@ export class MaestroSession {
   private initReqId = randomUUID()
   private capsWaiters: ((caps: CliCaps | null) => void)[] = []
   private controlWaiters = new Map<string, (ok: boolean) => void>
+  /** Tarefas de fundo desta sessão; morre com o processo (nunca é retomada). */
+  private claudeTasks = new GuiClaudeTaskRegistry()
   private turnGeneration = 0
   private pendingTurnGenerations: number[] = []
   private activeTurnGeneration: number | null = null
@@ -468,6 +549,7 @@ export class MaestroSession {
       this.clearTurnSilence()
       this.clearInterruptGuard()
       this.cancelPendingInteractions()
+      this.cancelLiveAgents()
       this.pendingTurnGenerations = []
       this.activeTurnGeneration = null
       this.emit({ type: 'fatal', text: e.message })
@@ -494,6 +576,9 @@ export class MaestroSession {
       this.clearTurnSilence()
       this.clearInterruptGuard()
       this.cancelPendingInteractions()
+      // Agente de fundo morre com o processo: cancela ANTES do terminal, para
+      // o card nunca ficar preso em "trabalhando" depois da conversa fechar.
+      this.cancelLiveAgents()
       this.pendingTurnGenerations = []
       this.activeTurnGeneration = null
       for (const w of this.capsWaiters.splice(0)) w(this.caps)
@@ -675,6 +760,7 @@ export class MaestroSession {
     this.killed = true
     this.clearInitGuard()
     this.cancelPendingInteractions()
+    this.cancelLiveAgents()
     this.pendingTurnGenerations = []
     this.activeTurnGeneration = null
     this.clearIdle()
@@ -781,6 +867,101 @@ export class MaestroSession {
     }
   }
 
+  /** Encerra o card do subagente. Sem `tool_use_id` não há card para fechar —
+   *  o registro sai do jeito que entrou, só sem prender mais o turno. */
+  private emitAgentSettled(
+    task: GuiClaudeTask,
+    text: string,
+    outcome: 'completed' | 'failed' | 'cancelled',
+    isError: boolean
+  ): void {
+    if (!task.toolUseId) return
+    this.emit(agentSettledEvent(text, task.toolUseId, task.taskId, outcome, isError))
+  }
+
+  /** Interrupção confirmada, `closed`, `fatal` e dispose levam os agentes de
+   *  fundo junto: drena o registro e fecha cada card ANTES do terminal
+   *  correspondente (com o pane já disposto, o sink descarta — mas o registro
+   *  precisa zerar de qualquer forma para o `continues` não mentir). */
+  private cancelLiveAgents(): void {
+    for (const task of this.claudeTasks.settleAll()) {
+      this.emitAgentSettled(task, 'subagente cancelado', 'cancelled', false)
+    }
+  }
+
+  /** `task_notification` é o ÚNICO terminal que carrega os dois ids. `status` é
+   *  enum ABERTO: encerra em QUALQUER valor — pendurar o agente seria pior que
+   *  classificá-lo errado. */
+  private settleAgentFromNotification(evt: StreamLine): void {
+    const taskId = guiClaudeTaskId(evt.task_id)
+    const settled = this.claudeTasks.noteSettled(taskId ?? evt.tool_use_id, evt.status)
+    const toolUseId = guiClaudeTaskId(evt.tool_use_id) ?? settled?.toolUseId
+    const agentTaskId = taskId ?? settled?.taskId
+    // Sem os dois ids não há card endereçável; sem registro, a notificação
+    // ainda vale (o task_started pode ter se perdido e o card não pode ficar
+    // girando para sempre).
+    if (!toolUseId || !agentTaskId) return
+    const completed = evt.status === 'completed'
+    const summary = typeof evt.summary === 'string' && evt.summary.trim() ? evt.summary : ''
+    this.emit(
+      agentSettledEvent(
+        summary || (completed ? 'subagente concluído' : 'subagente falhou'),
+        toolUseId,
+        agentTaskId,
+        completed ? 'completed' : 'failed',
+        !completed
+      )
+    )
+  }
+
+  /** Fotografia autoritativa das tarefas vivas. Ela chega ~1ms ANTES do
+   *  `task_notification` do mesmo agente, então a decisão espera o chunk
+   *  inteiro atravessar o parser: o que ainda estiver vivo no microtask sumiu
+   *  SEM terminal e é encerrado por reconciliação. */
+  private reconcileAgents(tasks: StreamLine['tasks']): void {
+    const missing = this.claudeTasks.reconcile(tasks)
+    if (missing.length === 0) return
+    queueMicrotask(() => {
+      for (const task of missing) {
+        const settled = this.claudeTasks.noteSettled(task.taskId)
+        if (!settled) continue
+        this.emitAgentSettled(
+          settled,
+          'encerrado (reconciliado sem notificação)',
+          'completed',
+          false
+        )
+      }
+    })
+  }
+
+  /** Recibo de despacho do Agent. Só entra no ciclo de vida quando o PRÓPRIO
+   *  recibo se declara assíncrono (`isAsync`/`async_launched`): tool-result
+   *  comum nunca toca no registro. Sem os dois ids o card fecha como sempre —
+   *  fail-closed, e a fotografia autoritativa ainda reconcilia o que sobrar. */
+  private claudeAgentAck(
+    block: { tool_use_id?: string; is_error?: boolean },
+    result: StreamLine['tool_use_result'],
+    raw: string
+  ): Extract<SessionEvent, { type: 'tool-result' }> | null {
+    if (result?.isAsync !== true && result?.status !== 'async_launched') return null
+    const toolUseId = guiClaudeTaskId(block.tool_use_id)
+    if (!toolUseId) return null
+    const agentId = guiClaudeTaskId(result.agentId)
+    if (block.is_error) {
+      // Despacho que já nasce em erro encerra o agente na hora — nunca um
+      // agente imortal segurando o turno.
+      const settled = this.claudeTasks.noteSettled(agentId ?? toolUseId)
+      const agentTaskId = agentId ?? settled?.taskId
+      if (!agentTaskId) return null
+      return agentSettledEvent(raw, toolUseId, agentTaskId, 'failed', true)
+    }
+    const agentTaskId = agentId ?? this.claudeTasks.taskFor(toolUseId)?.taskId
+    if (!agentTaskId) return null
+    this.claudeTasks.noteStarted(agentTaskId, toolUseId)
+    return agentLaunchedEvent(raw, toolUseId, agentTaskId)
+  }
+
   private clearInterruptGuard(): void {
     if (this.interruptTimer) clearTimeout(this.interruptTimer)
     this.interruptTimer = null
@@ -812,11 +993,14 @@ export class MaestroSession {
     const evt = parsed.value as StreamLine
 
     switch (evt.type) {
-      case 'system':
+      case 'system': {
         if (guiClaudeParentToolUseId(evt.parent_tool_use_id)) break
         if (evt.subtype === 'init' && evt.session_id) {
-          // init repete a cada turno — anuncia uma vez por processo, mas o
-          // session_id sobe sempre (resume pode trocar o id).
+          // init repete a cada turno — inclusive nos CICLOS AUTÔNOMOS que o CLI
+          // roda a cada conclusão de agente, com o MESMO session_id. Anuncia uma
+          // vez por processo, mas o session_id sobe sempre (resume pode trocar o
+          // id). NUNCA é ponto de reset: zerar tarefas de fundo aqui perderia
+          // justamente os agentes que provocaram o ciclo.
           const model = evt.model ?? 'claude'
           this.emit({
             type: 'init',
@@ -827,8 +1011,32 @@ export class MaestroSession {
             // O sufixo [1m] no id resolvido indica a janela de 1M; o resto é 200k.
             contextWindow: model.includes('[1m]') ? 1_000_000 : 200_000
           })
+          break
+        }
+        if (evt.subtype === 'task_started') {
+          // Único envelope que une os dois espaços de id antes do ACK.
+          this.claudeTasks.noteStarted(evt.task_id, evt.tool_use_id, {
+            description: evt.description,
+            subagentType: evt.subagent_type,
+            taskType: evt.task_type
+          })
+          break
+        }
+        if (evt.subtype === 'task_updated' || evt.subtype === 'task_progress') {
+          // Andamento não é terminal: atualiza o registro e não emite nada.
+          this.claudeTasks.noteProgress(evt.task_id, evt.patch?.status ?? evt.status)
+          break
+        }
+        if (evt.subtype === 'task_notification') {
+          this.settleAgentFromNotification(evt)
+          break
+        }
+        if (evt.subtype === 'background_tasks_changed') {
+          this.reconcileAgents(evt.tasks)
+          break
         }
         break
+      }
 
       case 'stream_event': {
         if (guiClaudeParentToolUseId(evt.parent_tool_use_id)) break
@@ -867,7 +1075,11 @@ export class MaestroSession {
         const resp = evt.response
         if (!resp?.request_id) break
         if (resp.request_id === this.interruptRequestId) {
-          if (resp.subtype !== 'success' && this.interruptGeneration !== null) {
+          if (resp.subtype === 'success') {
+            // Interrupção CONFIRMADA: quem o dono mandou parar inclui os
+            // subagentes daquele turno.
+            this.cancelLiveAgents()
+          } else if (this.interruptGeneration !== null) {
             this.failInterrupt(
               this.interruptGeneration,
               resp.error
@@ -930,7 +1142,10 @@ export class MaestroSession {
                   : ''
           // Resultado vazio também FECHA o card: comando silencioso não pode
           // ficar com spinner eterno. A contagem nasce antes do preview capado.
-          this.emit(toolResultEvent(raw, Boolean(block.is_error), block.tool_use_id))
+          this.emit(
+            this.claudeAgentAck(block, r, raw) ??
+              toolResultEvent(raw, Boolean(block.is_error), block.tool_use_id)
+          )
         }
         break
       }
@@ -1025,6 +1240,9 @@ export class MaestroSession {
         this.pendingTurnGenerations = advanced.pending
         this.activeTurnGeneration = advanced.active
         this.clearInterruptGuard()
+        // Parar o turno para os agentes de fundo dele também — antes do
+        // terminal, e antes de medir o `continues`.
+        if (interrupted) this.cancelLiveAgents()
         const u = evt.usage
         const contextTokens = u
           ? (u.input_tokens ?? 0) +
@@ -1045,7 +1263,10 @@ export class MaestroSession {
           type: 'result',
           isError: Boolean(evt.is_error),
           outcome,
-          continues: this.activeTurnGeneration !== null,
+          // O `result` raiz não diz UMA palavra sobre background (dump completo
+          // verificado): agente vivo é o que impede este terminal de virar o
+          // desfecho visual — e é isso que dá UM plim por turno lógico.
+          continues: this.activeTurnGeneration !== null || this.claudeTasks.size > 0,
           errorText: evt.is_error ? (evt.result ?? 'erro sem detalhe') : undefined,
           resultText: typeof evt.result === 'string' && evt.result.trim() ? evt.result : undefined,
           contextTokens,

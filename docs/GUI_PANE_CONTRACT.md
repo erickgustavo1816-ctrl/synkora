@@ -146,6 +146,157 @@ interface GuiAttachResult {
 - Env do filho: mesmas higienes do pty (deletar `CLAUDE_CODE_*`/`CLAUDECODE`; nunca
   herdar marcador de child session).
 
+## Subagentes em background (ciclo de vida)
+
+A tool `Agent` do Claude roda em SEGUNDO PLANO por padrão (CLI 2.1.233). O
+`tool_result` do despacho é só um RECIBO — confundi-lo com conclusão foi a
+regressão de 2026-08-14 (lateral vazia com os agentes trabalhando, plim precoce,
+falso erro no chat). Todo o ciclo de vida vem de SINAL ESTRUTURAL do protocolo,
+nunca de heurística sobre nome de tool ou texto.
+
+### Envelopes reais (capturados ao vivo, 132 envelopes)
+
+| Envelope | Campos que importam | Papel |
+|---|---|---|
+| `system/task_started` | `task_id`, `tool_use_id`, `subagent_type`, `task_type`, `description`, `prompt` | ÚNICO envelope que une os dois espaços de id |
+| ACK `user`/`tool_result` | `tool_use_result.isAsync`, `.status` (`async_launched`), `.agentId` (**== task_id**) | recibo de despacho |
+| `system/task_updated` · `task_progress` | `task_id`, `patch.status` | andamento; NUNCA terminal |
+| `system/task_notification` | `task_id`, `tool_use_id`, `status`, `summary`, `output_file`, `usage` | TERMINAL factual (o outro que tem os dois ids) |
+| `system/background_tasks_changed` | `tasks[].task_id` | fotografia COMPLETA e autoritativa das tarefas vivas |
+
+Traps do protocolo, todas fixadas em `npm run test:gui-sessions`:
+
+- **`tasks` OMITIDO com o conjunto vazio** — `if (env.tasks)` nunca enxerga o
+  zero. Ausência (ou payload torto) é conjunto VAZIO, senão o último agente
+  fica imortal.
+- **`status` é enum ABERTO** (`AgentOutput` em `sdk-tools.d.ts` é união por
+  `status`): encerrar em QUALQUER valor terminal, nunca comparar com
+  `"completed"` para decidir SE encerra — só para decidir COMO.
+- **A fotografia chega ~1ms ANTES do `task_notification` do mesmo agente**
+  (triplo atômico medido). A reconciliação decide só depois que o chunk inteiro
+  atravessa o parser; a idempotência do encerramento resolve a corrida e o
+  resumo verdadeiro vence.
+- **`system/init` REPETE por ciclo, com o MESMO `session_id`** — a cada
+  conclusão o CLI abre um turno raiz novo. Init NUNCA é ponto de reset.
+- **O texto desses ciclos autônomos é RAIZ legítima** (inclusive a síntese
+  final) e FICA no fio. Filho não emite delta: `parent_tool_use_id` é `null` em
+  100% dos `stream_event`, e o filho entrega só a mensagem final, pós-hoc, com
+  linhagem no topo do envelope.
+- **O `result` raiz tem ZERO campo sobre background** (dump completo conferido).
+- `--forward-subagent-text` existe e fica DESLIGADO (só aumentaria a superfície).
+
+### `tool-result` ganha o ciclo de vida (contrato dos dois lados)
+
+```ts
+agentStatus?: 'launched' | 'settled'   // ausente = tool-result comum e Codex
+agentTaskId?: string                   // task_id do CLI; presente sempre que agentStatus existir
+```
+
+- `launched` — recibo de despacho: `isError: false` e **`outcome` OMITIDO**. É a
+  ausência de desfecho que diz "ainda trabalhando"; o card fica aberto e a
+  lateral mostra o agente.
+- `settled` — terminal factual (notificação, reconciliação ou cancelamento) com
+  `outcome` + `isError` coerentes. Só aqui a entrada sai da lateral.
+- Payload sem os campos novos se comporta EXATAMENTE como antes — é essa regra
+  que mantém o Codex e todo tool-result comum intactos.
+- **Nunca unificar os dois backends numa inferência compartilhada**: no Codex o
+  pai só recebe `tool-result` no fim factual (`finishCollabParent`), então lá
+  "pai tem result" JÁ é o terminal. O shape é espelhado, a lógica não.
+
+### `continues` e o plim
+
+`result.continues = fila de turnos do usuário não vazia **OU** registro de
+tarefas de fundo não vazio`. O sequenciador de avisos (`guiNotices.ts`) já
+parqueia em `continues: true` e drena no terminal final — com o `continues`
+honesto ele passa a dar **um plim por turno lógico**, sem conhecer subagente.
+
+O registro vive em `src/main/guiClaudeTasks.ts` (módulo puro, uma instância por
+sessão, zerado em todo spawn — tarefa de fundo morre com o processo e nunca é
+retomada). Só os DOIS joins registram (`task_started` e o ACK); a fotografia
+reconcilia mas nunca adota tarefa desconhecida (sem `tool_use_id` não haveria
+card para fechar). Interrupção confirmada, `closed`, `fatal` e dispose drenam
+tudo e fecham cada card como `cancelled` ANTES do terminal correspondente.
+
+### Codex: o wire REAL dos sub-agentes
+
+O Codex NÃO tem notificação de colaboração dedicada — tudo viaja nos frames
+genéricos `item/started|completed`. O `collabAgentToolCall` existe, mas em
+produção só chega com `tool: "wait"` ("o pai está bloqueado"), sempre com
+`agentsStates: {}` e `receiverThreadIds: []`: inútil para identidade e para
+encerramento. O caminho legado continua no código (config futura pode voltar a
+emiti-lo), e ao lado dele mora o ingest do wire observado ao vivo (sonda ×3 no
+`codex app-server` 0.147 + schema gerado pelo próprio binário).
+
+| Frame | Campos que importam | Papel |
+|---|---|---|
+| `item/started` · `item/completed` com `item.type === "subAgentActivity"` (thread RAIZ) | `agentThreadId`, `agentPath`, `kind` (`started`\|`interacted`\|`interrupted`) | ÚNICO sinal de SPAWN. O par chega com payload IDÊNTICO ~1ms depois — dedupe por `agentThreadId` |
+| qualquer frame com `threadId` do FILHO | `turn/started`, `item/*`, `item/agentMessage/delta`, `thread/tokenUsage/updated`, `thread/status/changed` | TRABALHO do sub-agente; hoje era 100% descartado pela guarda de thread |
+| `turn/completed` com `threadId` do FILHO | `turn.status`, `turn.items[]` (último `agentMessage` com `phase: "final_answer"`) | TERMINAL FACTUAL — o único |
+
+Traps do protocolo, todas fixadas em `npm run test:gui-sessions`:
+
+- **`subAgentActivity` NÃO tem kind terminal** e `closeAgent` nunca foi
+  observado ao vivo: quem esperar por um "close" vaza card para sempre. Quem
+  encerra é o `turn/completed` do filho.
+- **Não existe tool_use de spawn no wire**: o card do pai usa o id SINTÉTICO
+  `codex-agent:<agentThreadId>` — estável entre frames e sem colisão com id de
+  item do protocolo.
+- **`agentsStates` chega SEMPRE vazio** e `model`/`prompt`/`reasoningEffort`
+  vêm `null` em todo frame collab. O único nome humano é o ÚLTIMO SEGMENTO do
+  `agentPath` (`/root/calculo` → `calculo`); `thread/started` de filho nunca é
+  emitido, então nickname/role não existem para a UI.
+- **`TurnStatus` e `CollabAgentStatus` são enums ABERTOS**: valor terminal
+  desconhecido encerra como falha, nunca pendura. `notFound` (agente que sumiu
+  do servidor) encerra; `pendingInit` não é desfecho.
+- **O primeiro `turn/completed` da conexão costuma ser de um FILHO** — toda
+  sonda futura precisa filtrar por `threadId === raiz` ou perde a cauda.
+- Ferramenta feita rerunnável: `codex app-server generate-json-schema --out
+  <dir>` (e `generate-ts`) emite o contrato autoritativo do binário INSTALADO.
+  É o passo 1 de qualquer investigação de protocolo do Codex — nunca mais
+  fixture escrita de memória. Sonda em `scripts/probe-codex-collab-agents.mjs`.
+
+O registro vive em `src/main/guiCodexAgents.ts` (módulo puro, uma instância por
+sessão, morto com o processo). O ingest emite:
+
+- **spawn** → `tool` `{ name: 'spawn_agent', toolUseId: 'codex-agent:<id>',
+  input: { name, agent_type: 'codex', path } }`. A lateral já mostra qualquer
+  card com esse nome e metadados; nenhuma mudança de renderer foi necessária.
+- **ferramenta do filho** → `tool`/`tool-result` com
+  `parentToolUseId: 'codex-agent:<id>'` — vira a linha de atividade da lateral,
+  e o chat já esconde todo card com `parentToolUseId`.
+- **terminal** → `tool-result` no id sintético, com a resposta final do filho
+  como texto. **Fala de filho NUNCA vira `text`/`delta`/`thinking`**, e o
+  `tokenUsage` dele nunca toca a régua de contexto da raiz.
+
+`turn/completed` da RAIZ fica RETIDO enquanto houver sub-agente vivo (mesma
+mecânica do `deferredCollabResult`); o último settle drena. Todo caminho de
+registro tem dreno garantido: `turn/completed` do filho, `subAgentActivity`
+`interrupted`, turno raiz que não concluiu (interrupção/falha leva os filhos
+junto), `closed`, `fatal` e dispose — e cada card de ferramenta do filho que
+ficou sem retorno fecha JUNTO com o pai, senão o terminal do turno inventaria o
+erro de órfão.
+
+**Cerca A10**: evento emitido pelo Codex NUNCA carrega `agentStatus`/
+`agentTaskId` — esses campos são do contrato Claude, onde "pai tem result"
+ainda não é terminal. No Codex o `tool-result` do pai JÁ é o terminal factual.
+Os dois backends espelham o SHAPE e nunca compartilham módulo de inferência.
+
+### A regra dos cinco espelhos
+
+A união de eventos é copiada em CINCO lugares. Esquecer um faz o evento morrer
+em silêncio na hidratação ou no reducer:
+
+1. `SessionEvent` — `src/main/maestroSession.ts`
+2. `GuiSessionEvent` — `src/renderer/src/guiApi.ts`
+3. `asGuiEvent` (validador do vivo) — `src/renderer/src/guiApi.ts`
+4. `isGuiPersistedEvent` (validador do disco) — `src/main/guiSessions.ts`
+5. reducer da fatia `guiPanes` — `src/renderer/src/store.ts`
+
+Campo novo entra nos cinco na mesma mudança, com o validador aceitando somente o
+vocabulário fechado (`agentStatus` ∈ {`launched`,`settled`}; `agentTaskId`
+string de 1 a 256). Envelope de subtype DESCONHECIDO continua passando o guard e
+virando no-op silencioso — isso é desejado, não descuido.
+
 ## Regras do pane (renderer)
 
 - `Pane.kind?: 'tui' | 'gui'` (ausente = tui). `PanesView` renderiza `GuiPane` no

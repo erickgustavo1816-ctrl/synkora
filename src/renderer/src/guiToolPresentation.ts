@@ -46,12 +46,33 @@ export function guiToolActivityText(name: string, rawSummary: string): string {
   return summary ? `${name} · ${summary}` : name
 }
 
+/** Card de nível raiz da conversa. Ferramenta de thread filha só existe por
+ *  causa do pai: ela nunca dirige status nem recebe desfecho por conta própria. */
+function isRootGuiToolCard(item: GuiToolItem): boolean {
+  return !item.parentToolUseId
+}
+
+/** Recibo de despacho de subagente em background: o card TEM resultado, mas o
+ *  agente segue vivo — o terminal factual ('settled') ainda vem. */
+export function isLaunchedGuiSubagentTool(item: GuiToolItem): boolean {
+  return item.result?.agentStatus === 'launched'
+}
+
+/** Card que ainda pode receber um desfecho autoritativo: pendente, fechado
+ *  provisoriamente pelo terminal do turno, ou apenas despachado. */
+function acceptsGuiToolResult(item: GuiToolItem): boolean {
+  return (
+    !item.result || item.result.provisional === true || isLaunchedGuiSubagentTool(item)
+  )
+}
+
 /** Último trabalho ainda sem desfecho; resultados fora de ordem não apagam
  *  o status factual de outra ferramenta concorrente. */
 export function lastPendingGuiToolActivity(items: readonly GuiItem[]): string | null {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index]
-    if (item.kind === 'tool' && !item.result) return guiToolActivityText(item.name, item.summary)
+    if (item.kind === 'tool' && !item.result && isRootGuiToolCard(item))
+      return guiToolActivityText(item.name, item.summary)
   }
   return null
 }
@@ -67,10 +88,9 @@ export function guiToolResultTargetIndex(
   if (!toolUseId) {
     for (let index = items.length - 1; index >= 0; index -= 1) {
       const item = items[index]
-      if (
-        item.kind === 'tool' &&
-        (!item.result || item.result.provisional === true)
-      )
+      // Tool-result de filho não trafega no protocolo do Claude; um payload
+      // anônimo nunca pode fechar o card de outra thread por posição.
+      if (item.kind === 'tool' && isRootGuiToolCard(item) && acceptsGuiToolResult(item))
         return index
     }
     return -1
@@ -87,8 +107,10 @@ export function guiToolResultTargetIndex(
     seen = true
     // Um `result` terminal pode ter fechado o card antes do `tool-result`
     // correspondente (principalmente em ferramentas filhas). Esse desfecho
-    // provisório ainda não é autoritativo e pode ser substituído pelo ID.
-    if (!item.result || item.result.provisional === true) exact = index
+    // provisório ainda não é autoritativo e pode ser substituído pelo ID —
+    // assim como o recibo de despacho de um subagente, que o settled real
+    // sobrescreve com o summary do trabalho.
+    if (acceptsGuiToolResult(item)) exact = index
   }
   return exact
 }

@@ -239,6 +239,12 @@ export function guiMessageIdProblem(value: unknown): string | null {
 
 export const GUI_RING_CAP = 500
 export const GUI_RING_BYTE_CAP = 4 * 1024 * 1024
+// TODO (degradação aceita, decisão de 2026-08-15): o anel poda por idade, sem
+// saber o que ainda está VIVO. Conversa longa pode empurrar para fora o
+// tool-result `agentStatus: 'launched'` de um subagente ainda trabalhando — o
+// replay pós-remontagem perde aquela entrada da lateral (a sessão viva segue
+// correta: o registro de tarefas mora no motor, não no anel). Se doer, reter de
+// forma sticky o evento de lifecycle vivo em vez de aumentar o teto.
 /** O documento guarda muitos panes; o teto global impede 4 MiB × N sem fim. */
 export const GUI_TRANSCRIPT_STORE_BYTE_CAP = 32 * 1024 * 1024
 export const GUI_TRANSCRIPT_STORE_PANE_CAP = 64
@@ -479,7 +485,13 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
           event['outcome'] === 'completed' ||
           event['outcome'] === 'failed' ||
           event['outcome'] === 'denied' ||
-          event['outcome'] === 'cancelled')
+          event['outcome'] === 'cancelled') &&
+        // Ciclo de vida de subagente em background (Claude). Ausente = evento
+        // comum, hidratado exatamente como antes.
+        (event['agentStatus'] === undefined ||
+          event['agentStatus'] === 'launched' ||
+          event['agentStatus'] === 'settled') &&
+        (event['agentTaskId'] === undefined || guiRequestId(event['agentTaskId']))
       )
     case 'permission':
       return (
