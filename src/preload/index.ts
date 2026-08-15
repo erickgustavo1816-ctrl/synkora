@@ -1528,24 +1528,11 @@ const api = {
       ipcRenderer.on('maestro:userQuestion', listener)
       return () => ipcRenderer.removeListener('maestro:userQuestion', listener)
     },
-    send: (projectId: string, message: string, seatId?: string): Promise<void> =>
-      ipcRenderer.invoke('maestro:send', projectId, message, seatId),
-    permission: (
-      projectId: string,
-      requestId: string,
-      choice: PermissionChoice
-    ): Promise<void> => ipcRenderer.invoke('maestro:permission', projectId, requestId, choice),
-    interrupt: (projectId: string): Promise<void> =>
-      ipcRenderer.invoke('maestro:interrupt', projectId),
-    capabilities: (projectId: string, seatId?: string): Promise<MaestroCaps | null> =>
-      ipcRenderer.invoke('maestro:capabilities', projectId, seatId),
     onLive: (cb: (evt: MaestroLiveEvent) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, evt: MaestroLiveEvent): void => cb(evt)
       ipcRenderer.on('maestro:live', listener)
       return () => ipcRenderer.removeListener('maestro:live', listener)
     },
-    survey: (projectId: string, seatId?: string): Promise<void> =>
-      ipcRenderer.invoke('maestro:survey', projectId, seatId),
     getState: (projectId: string): Promise<MaestroState> =>
       ipcRenderer.invoke('maestro:getState', projectId),
     onCtx: (cb: (tokens: number) => void): (() => void) => {
@@ -1553,32 +1540,8 @@ const api = {
       ipcRenderer.on('maestro:ctx', listener)
       return () => ipcRenderer.removeListener('maestro:ctx', listener)
     },
-    reset: (projectId: string): Promise<void> => ipcRenderer.invoke('maestro:reset', projectId),
-    cleanup: (projectId: string): Promise<string> =>
-      ipcRenderer.invoke('maestro:cleanup', projectId),
-    setSeat: (projectId: string, seatId: string, model?: string, effort?: string): Promise<void> =>
-      ipcRenderer.invoke('maestro:setSeat', projectId, seatId, model, effort),
-    /** reviewer independente dos gates de revisão/QA: seat+modelo+effort */
-    getReviewer: (
-      projectId: string
-    ): Promise<{ seatId: string | null; model: string | null; effort: string | null }> =>
-      ipcRenderer.invoke('maestro:getReviewer', projectId),
-    setReviewer: (
-      projectId: string,
-      seatId?: string,
-      model?: string,
-      effort?: string
-    ): Promise<void> => ipcRenderer.invoke('maestro:setReviewer', projectId, seatId, model, effort),
     paneSpec: (projectId: string): Promise<MaestroPaneSpec | null> =>
       ipcRenderer.invoke('maestro:paneSpec', projectId),
-    setVersion: (projectId: string, version: string): Promise<void> =>
-      ipcRenderer.invoke('maestro:setVersion', projectId, version),
-    setModel: (projectId: string, model: string): Promise<void> =>
-      ipcRenderer.invoke('maestro:setModel', projectId, model),
-    setContextLimit: (projectId: string, limit: number): Promise<void> =>
-      ipcRenderer.invoke('maestro:setContextLimit', projectId, limit),
-    setEffort: (projectId: string, effort: string): Promise<void> =>
-      ipcRenderer.invoke('maestro:setEffort', projectId, effort),
     onEvent: (cb: (evt: MaestroEvent) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, evt: MaestroEvent): void => cb(evt)
       ipcRenderer.on('maestro:event', listener)

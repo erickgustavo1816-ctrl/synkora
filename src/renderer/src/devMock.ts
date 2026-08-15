@@ -547,7 +547,6 @@ export function installDevMock(): void {
     | null = null
   let liveCb: ((evt: MaestroLiveEvent) => void) | null = null
   let ctxCb: ((tokens: number) => void) | null = null
-  let mockCtx = 87_000
 
   const tasks: Task[] = [
     {
@@ -1131,136 +1130,12 @@ export function installDevMock(): void {
           maestroCb = null
         }
       },
-      // Simula o painel de fundo: cmd, ferramenta real, stream de texto, turno.
-      send: async (projectId: string, message: string) => {
-        maestroCb?.({ kind: 'cmd', text: message })
-        if (/permiss/i.test(message)) {
-          setTimeout(() => {
-            liveCb?.({
-              type: 'permission',
-              requestId: 'mock-perm',
-              toolName: 'Write',
-              description: '~\\Desktop\\exemplo.txt',
-              inputPretty: '{\n  "file_path": "C:\\\\Users\\\\Erick\\\\Desktop\\\\exemplo.txt",\n  "content": "oi"\n}',
-              reason: 'Path is outside allowed working directories',
-              canAlways: true
-            })
-          }, 700)
-          return
-        }
-        setTimeout(() => liveCb?.({ type: 'thinking' }), 200)
-        setTimeout(
-          () =>
-            maestroCb?.({
-              kind: 'tool',
-              tag: 'maestro',
-              text: 'lendo CONTEXT.md',
-              detail: '{\n  "file_path": ".synkora/CONTEXT.md"\n}'
-            }),
-          600
-        )
-        setTimeout(() => maestroCb?.({ kind: 'out', text: '# Contexto do Projeto…' }), 900)
-        const reply =
-          'Oi! Sou o Maestro (mock do preview de browser). No app real, tudo isto é o espelho ao vivo de um processo claude rodando de fundo.'
-        const words = reply.split(' ')
-        words.forEach((w, i) =>
-          setTimeout(() => liveCb?.({ type: 'delta', text: w + ' ' }), 1100 + i * 60)
-        )
-        setTimeout(() => {
-          liveCb?.({ type: 'flush' })
-          maestroCb?.({ kind: 'say', text: reply })
-          const wantsWork = /quero|cria|faz|implementa|adiciona|constr/i.test(message)
-          if (wantsWork) {
-            const created = makeTasks(projectId, [
-              {
-                department: 'front',
-                type: 'feature',
-                effort: 'pesada',
-                title: `UI: ${message.slice(0, 40)}`,
-                description: 'Tarefa simulada pelo mock do Maestro (preview de browser).',
-                origin: 'maestro'
-              },
-              {
-                department: 'back',
-                type: 'feature',
-                effort: 'leve',
-                title: `API: ${message.slice(0, 40)}`,
-                description: 'Tarefa simulada pelo mock do Maestro (preview de browser).',
-                origin: 'maestro'
-              }
-            ])
-            for (const t of created) maestroCb?.({ kind: 'log', tag: t.department, text: t.title })
-            maestroCb?.({ kind: 'ok', text: `${created.length} tarefas criadas no backlog` })
-          }
-          mockCtx += 12_000
-          ctxCb?.(mockCtx)
-          liveCb?.({ type: 'turn-end' })
-        }, 1100 + words.length * 60 + 200)
-      },
-      permission: async (_projectId: string, _requestId: string, choice) => {
-        maestroCb?.({
-          kind: 'ask',
-          text: `${choice === 'deny' ? '✗ negado' : '✓ permitido'} — Write ~\\Desktop\\exemplo.txt`
-        })
-        liveCb?.({ type: 'turn-end' })
-      },
-      interrupt: async () => {
-        maestroCb?.({ kind: 'log', tag: 'maestro', text: '⏹ interrompendo o turno…' })
-        liveCb?.({ type: 'turn-end' })
-      },
       onLive: (cb) => {
         liveCb = cb
         return () => {
           liveCb = null
         }
       },
-      capabilities: async () => ({
-        commands: [
-          { name: 'usage', description: 'mostra o uso do plano (mock)', argumentHint: '' },
-          { name: 'compact', description: 'compacta a conversa (mock)', argumentHint: '' },
-          { name: 'recap', description: 'resumo da sessão (mock)', argumentHint: '' }
-        ],
-        models: [
-          {
-            value: 'default',
-            resolvedModel: 'claude-opus-4-8[1m]',
-            displayName: 'Default (recommended)',
-            description: 'Opus 4.8 with 1M context · Best for everyday, complex tasks',
-            supportsEffort: true,
-            supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max']
-          },
-          {
-            value: 'claude-fable-5[1m]',
-            resolvedModel: 'claude-fable-5',
-            displayName: 'Fable',
-            description: 'Fable 5 · Most capable for your hardest and longest-running tasks',
-            supportsEffort: true,
-            supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max']
-          },
-          {
-            value: 'haiku',
-            resolvedModel: 'claude-haiku-4-5',
-            displayName: 'Haiku',
-            description: 'Haiku 4.5 · Fastest for quick answers',
-            supportsEffort: false
-          }
-        ],
-        account: { email: 'mock@synkora.dev', subscriptionType: 'Claude Max' }
-      }),
-      survey: async () =>
-        new Promise((resolve) => {
-          const seq: MaestroEvent[] = [
-            { kind: 'cmd', text: 'maestro estudar' },
-            { kind: 'log', tag: 'maestro', text: 'mapeando o projeto…' },
-            { kind: 'log', tag: 'maestro', text: 'lendo package.json' },
-            { kind: 'log', tag: 'maestro', text: 'lendo CLAUDE.md' },
-            { kind: 'log', tag: 'maestro', text: 'explorando src/' },
-            { kind: 'log', tag: 'maestro', text: 'buscando "TODO"' },
-            { kind: 'ok', text: 'dossiê salvo em .synkora/CONTEXT.md · sessão reiniciada com o novo contexto' }
-          ]
-          seq.forEach((evt, i) => setTimeout(() => maestroCb?.(evt), 350 * (i + 1)))
-          setTimeout(() => resolve(undefined), 350 * (seq.length + 1))
-        }),
       getState: async () => ({
         log: [],
         contextTokens: 87_000,
@@ -1274,27 +1149,12 @@ export function installDevMock(): void {
         seatId: 's1',
         version: 'v0.1'
       }),
-      setSeat: async () => undefined,
-      getReviewer: async () => ({ seatId: null, model: null, effort: null }),
-      setReviewer: async () => undefined,
       paneSpec: async () => null,
-      setVersion: async () => undefined,
-      setEffort: async (_projectId: string, effort: string) => {
-        maestroCb?.({ kind: 'ok', text: `effort do maestro: ${effort || 'padrão do modelo'}` })
-      },
-      setContextLimit: async (_projectId: string, limit: number) => {
-        maestroCb?.({ kind: 'ok', text: `limite de contexto do maestro: ${Math.round(limit / 1000)}k (janela do modelo: 200k)` })
-      },
       onCtx: (cb) => {
         ctxCb = cb
         return () => {
           ctxCb = null
         }
-      },
-      reset: async () => undefined,
-      cleanup: async () => '🧹 0 arquivo(s) sem uso removido(s) do .synkora (mock)',
-      setModel: async (_projectId: string, model: string) => {
-        maestroCb?.({ kind: 'ok', text: `modelo do maestro: ${model}` })
       }
     },
     perf: {

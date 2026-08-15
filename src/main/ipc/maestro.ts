@@ -1,8 +1,7 @@
 /**
  * IPC — domínio maestro (fase 1, commit 6c).
- * O painel do PM pelo renderer: estado/efforts/modelo/seat, envio de
- * mensagem ao painel de fundo, permissões, /estudar, reviewer do gate 1,
- * spec do pane TUI e as perguntas do ask_user. A mecânica de sessão mora no
+ * O que o renderer da era 2.0 ainda pede ao PM: o estado persistido, a spec do
+ * pane TUI e as perguntas do ask_user. A mecânica de sessão mora no
  * maestroEngine (extras.engine); pane lifecycle (armPane/stagger) e overlay
  * de ANDAMENTO seguem no index por extras até as obras próprias.
  *
@@ -12,18 +11,13 @@
  * dele. uiSender/máquina de fases são lidos via ctx a cada uso.
  */
 import { ipcMain } from 'electron'
-import { join } from 'path'
-import { existsSync, mkdirSync, writeFileSync } from 'fs'
-import { ensureSynkoraGitExcludes } from '../worktree'
+import { existsSync } from 'fs'
 import { gitOff } from '../gitAsync'
 import { buildIdleWaiterHint } from '../phasePrompts'
 import { ensureProjectSecurityBaseline } from '../projectSecurityBaseline'
 import { ensureGreenfieldProjectPlan } from '../projectPlan'
 import { redactSensitiveText } from '../securityRedaction'
-import { maestroProjectPersona, survey } from '../maestro'
-import { MaestroSession, type PermissionChoice } from '../maestroSession'
-import { CodexSession } from '../codexSession'
-import { migrateCliSessionBetweenSeats } from '../cliSessionTransplant'
+import { maestroProjectPersona } from '../maestro'
 import type { PaneIdentity } from '../hub'
 import type { SeatCli } from '../seats'
 import type { MainContext } from '../mainContext'
@@ -57,7 +51,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
     seats,
     missions,
     maestro,
-    maestroSessions,
     ptys,
     blackbox,
     hub,
@@ -68,46 +61,14 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
     releasePaneSkillLease,
     scheduleProgressSnapshot
   } = ctx
+  const { engine, staggerPaneSpawn, armPane, releasePaneSkillPlan, projectLifecycleOf } = extras
   const {
-    engine,
-    sweepProjectFiles,
-    killMaestroSession,
-    beginProgressMaestroTurn,
-    finishProgressMaestroTurn,
-    beginProgressHeadlessActivity,
-    endProgressHeadlessActivity,
-    surveySystemPromptFile,
-    staggerPaneSpawn,
-    armPane,
-    releasePaneSkillPlan,
-    projectLifecycleOf
-  } = extras
-  const {
-    emitLog,
-    emitLive,
-    makeEmitter,
-    ensureSession,
-    surveyViaCodex,
-    surveyAborts,
     maestroResumeOverBudget,
     skipMaestroResume,
     preparePlanningRun,
     pendingUserQuestions,
     persistUserQuestions
   } = engine
-
-  ipcMain.handle('maestro:cleanup', (e, projectId: string) => {
-    if (!projects.get(projectId)) return 'projeto não encontrado'
-    const removed = sweepProjectFiles(projectId)
-    hub.publish({
-      projectId,
-      kind: 'info',
-      text: `limpeza do .synkora: ${removed} arquivo(s) sem uso removido(s)`,
-      actor: 'user',
-      quiet: true
-    })
-    return `🧹 ${removed} arquivo(s) sem uso removido(s) do .synkora`
-  })
 
   ipcMain.handle('maestro:getState', (e, projectId: string) => {
     const state = maestro.get(projectId)
@@ -124,285 +85,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
       seatId: state.seatId ?? null,
       version: state.version ?? null
     }
-  })
-
-  ipcMain.handle('maestro:setEffort', (e, projectId: string, effort: string) => {
-    maestro.update(projectId, { effort: effort || undefined })
-    // Painel de fundo renasce com o novo --effort no próximo envio (mesma sessão via --resume).
-    killMaestroSession(projectId)
-    makeEmitter(e.sender, projectId)({
-      kind: 'ok',
-      text: `effort do maestro: ${effort || 'padrão do modelo'}`
-    })
-  })
-
-  ipcMain.handle('maestro:setContextLimit', (e, projectId: string, limit: number) => {
-    // limit <= 0 = automático: o medidor volta a usar a janela real do modelo.
-    maestro.update(projectId, { contextLimit: limit > 0 ? limit : undefined })
-    makeEmitter(e.sender, projectId)({
-      kind: 'ok',
-      text:
-        limit > 0
-          ? `limite de contexto do maestro: ${Math.round(limit / 1000)}k`
-          : 'medidor de contexto no automático (janela real do modelo)'
-    })
-  })
-
-  ipcMain.handle(
-    'maestro:send',
-    (e, projectId: string, message: string, seatId?: string) => {
-      const project = projects.get(projectId)
-      if (!project) {
-        emitLog(projectId, { kind: 'err', text: 'projeto não encontrado' })
-        emitLive({ type: 'turn-end' })
-        return
-      }
-      emitLog(projectId, { kind: 'cmd', text: message })
-
-      // Garante o painel de fundo vivo (claude ou codex, mesma interface).
-      const session = ensureSession(projectId, seatId)
-      if (!session) {
-        emitLog(projectId, { kind: 'err', text: 'não consegui abrir o painel de fundo' })
-        emitLive({ type: 'turn-end' })
-        return
-      }
-      // Comandos / vão CRUS para o painel (como no TUI) — sem persona na frente.
-      const isSlash = message.trimStart().startsWith('/')
-      // Claude /fast: o comando é bloqueado em modo SDK, mas a CHAVE de
-      // settings liga o fast mode real — toggle + respawn com --resume.
-      if (isSlash && message.trim() === '/fast' && session instanceof MaestroSession) {
-        const fast = !maestro.get(projectId).fastMode
-        maestro.update(projectId, { fastMode: fast || undefined })
-        killMaestroSession(projectId)
-        emitLog(projectId, {
-          kind: 'ok',
-          text: fast
-            ? 'fast mode ATIVADO — vale a partir da próxima mensagem (requer modelo Opus; sessão continua via --resume)'
-            : 'fast mode desativado'
-        })
-        emitLive({ type: 'turn-end' })
-        return
-      }
-      // Codex: comandos slash viram o RPC real correspondente (runSlash).
-      if (isSlash && session instanceof CodexSession) {
-        beginProgressMaestroTurn(projectId, session)
-        let accepted = false
-        try {
-          accepted = session.runSlash(message)
-        } catch (error) {
-          finishProgressMaestroTurn(projectId, session)
-          throw error
-        }
-        if (!accepted) {
-          finishProgressMaestroTurn(projectId, session)
-          emitLog(projectId, {
-            kind: 'err',
-            text: `o painel codex não tem ${message.trim().split(/\s+/)[0]} — digite / para ver a lista`
-          })
-          emitLive({ type: 'turn-end' })
-        }
-        return
-      }
-      beginProgressMaestroTurn(projectId, session)
-      try {
-        session.send(message)
-      } catch (error) {
-        finishProgressMaestroTurn(projectId, session)
-        throw error
-      }
-    }
-  )
-
-  // Capacidades reais do painel (comandos, modelos, conta) — spawna o painel
-  // se preciso; o handshake não gasta tokens.
-  ipcMain.handle('maestro:capabilities', async (e, projectId: string, seatId?: string) => {
-    const session = ensureSession(projectId, seatId)
-    if (!session) return null
-    return session.waitCaps()
-  })
-
-  ipcMain.handle(
-    'maestro:permission',
-    (e, projectId: string, requestId: string, choice: PermissionChoice) => {
-      const info = maestroSessions.get(projectId)?.answerPermission(requestId, choice)
-      if (info) {
-        const verdict =
-          choice === 'deny'
-            ? '✗ negado'
-            : choice === 'allow-always'
-              ? '✓ permitido (sempre nesta sessão)'
-              : '✓ permitido'
-        emitLog(projectId, {
-          kind: 'ask',
-          text: `${verdict} — ${info.toolName} ${info.description}`.trim()
-        })
-      }
-    }
-  )
-
-  ipcMain.handle('maestro:interrupt', (e, projectId: string) => {
-    const abortSurvey = surveyAborts.get(projectId)
-    if (abortSurvey) {
-      emitLog(projectId, { kind: 'log', tag: 'maestro', text: '⏹ interrompendo o /estudar…' })
-      abortSurvey()
-      return
-    }
-    const session = maestroSessions.get(projectId)
-    if (session?.alive) {
-      emitLog(projectId, { kind: 'log', tag: 'maestro', text: '⏹ interrompendo o turno…' })
-      session.interrupt()
-    } else {
-      emitLog(projectId, { kind: 'log', tag: 'maestro', text: 'nada rodando para interromper' })
-      emitLive({ type: 'turn-end' })
-    }
-  })
-
-  ipcMain.handle(
-    'maestro:survey',
-    async (e, projectId: string, seatId?: string) => {
-      const emit = makeEmitter(e.sender, projectId)
-      const project = projects.get(projectId)
-      if (!project) {
-        emit({ kind: 'err', text: 'projeto não encontrado' })
-        return
-      }
-      try {
-        ensureSynkoraGitExcludes(project.path)
-      } catch (error) {
-        emit({ kind: 'err', text: error instanceof Error ? error.message : String(error) })
-        return
-      }
-      const seat = seatId ? seats.get(seatId) : undefined
-      const configDir = seat ? seats.configDirOf(seat) : undefined
-      if (seat) seats.preseed(seat)
-      const state = maestro.get(projectId)
-
-      emit({ kind: 'cmd', text: 'maestro estudar' })
-      emit({ kind: 'log', tag: 'maestro', text: `mapeando o projeto… (${seat?.cli ?? 'claude'})` })
-      const progressSurveyToken = beginProgressHeadlessActivity(projectId, 'survey')
-      try {
-        if (seat?.cli !== 'codex' && !surveySystemPromptFile) {
-          throw new Error(
-            'não foi possível materializar a política de sistema do survey; o /estudar foi bloqueado para não executar com prioridade reduzida'
-          )
-        }
-        const brief =
-          seat?.cli === 'codex'
-            ? await surveyViaCodex(projectId, project.path, configDir, emit)
-            : await survey(
-                {
-                  cwd: project.path,
-                  systemPromptFile: surveySystemPromptFile,
-                  configDir,
-                  model: state.model,
-                  registerKill: (kill) => surveyAborts.set(projectId, kill)
-                },
-                emit
-              )
-        if (!brief.trim()) throw new Error('o brief voltou vazio')
-        ensureSynkoraGitExcludes(project.path)
-        const dir = join(project.path, '.synkora')
-        mkdirSync(dir, { recursive: true })
-        writeFileSync(join(dir, 'CONTEXT.md'), brief, 'utf-8')
-        // Sessão nova (painel incluso) para a próxima conversa nascer lendo o
-        // dossiê fresco — sem matar o painel, o contexto antigo continuaria.
-        killMaestroSession(projectId)
-        maestro.update(projectId, { sessionId: undefined, personaSent: false })
-        emit({ kind: 'ok', text: 'dossiê salvo em .synkora/CONTEXT.md · sessão reiniciada com o novo contexto' })
-      } catch (err) {
-        emit({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
-      } finally {
-        surveyAborts.delete(projectId)
-        endProgressHeadlessActivity(projectId, 'survey', progressSurveyToken)
-      }
-    }
-  )
-
-  ipcMain.handle('maestro:reset', (_e, projectId: string) => {
-    killMaestroSession(projectId)
-    maestro.clear(projectId)
-  })
-
-  // Seat do Maestro é escolhido NA ENTRADA do projeto (gate) e persistido.
-  // REVIEWER do gate de integração (página geral): seat+modelo+effort próprios.
-  ipcMain.handle('maestro:getReviewer', (_e, projectId: string) => {
-    const s = maestro.get(projectId)
-    return {
-      seatId: s.reviewerSeatId ?? null,
-      model: s.reviewerModel ?? null,
-      effort: s.reviewerEffort ?? null
-    }
-  })
-
-  ipcMain.handle(
-    'maestro:setReviewer',
-    (_e, projectId: string, seatId?: string, model?: string, effort?: string) => {
-      maestro.update(projectId, {
-        reviewerSeatId: seatId || undefined,
-        reviewerModel: model || undefined,
-        reviewerEffort: effort || undefined
-      })
-    }
-  )
-
-  // Trocar de seat é ação explícita: mata painel de fundo + pane TUI e zera
-  // sessão/modelo/effort (são por CLI — sem isso um modelo gpt vaza p/ claude).
-  ipcMain.handle('maestro:setSeat', (e, projectId: string, seatId: string, model?: string, effort?: string) => {
-    const state = maestro.get(projectId)
-    const prev = state.seatId
-    if (prev === seatId) {
-      // mesmo seat, modelo/effort podem ter mudado no gate: aplica e mata o
-      // pane — ele renasce com --model/--effort novos NA MESMA sessão (resume)
-      maestro.update(projectId, { seatId, model: model || undefined, effort: effort || undefined })
-      killMaestroSession(projectId)
-      ptys.kill(maestroPaneId(projectId))
-      return
-    }
-    killMaestroSession(projectId)
-    ptys.kill(maestroPaneId(projectId))
-    // Troca de conta MESMO-CLI migra a conversa por padrão (decisão do
-    // usuário 2026-08-04: limite estourado nunca pode custar o contexto).
-    // Cross-CLI reseta como sempre; quem quiser recomeçar usa /clear depois.
-    const prevSeat = prev ? seats.get(prev) : undefined
-    const nextSeat = seats.get(seatId)
-    const project = projects.get(projectId)
-    const migrated = Boolean(
-      prevSeat &&
-        nextSeat &&
-        prevSeat.cli === nextSeat.cli &&
-        state.tuiSessionId &&
-        project &&
-        migrateCliSessionBetweenSeats(
-          nextSeat.cli,
-          prevSeat.id,
-          nextSeat.id,
-          project.path,
-          state.tuiSessionId
-        )
-    )
-    maestro.update(projectId, {
-      seatId,
-      sessionId: undefined,
-      tuiSessionId: migrated ? state.tuiSessionId : undefined,
-      personaSent: false,
-      model: model || undefined,
-      effort: effort || undefined,
-      contextWindow: undefined
-    })
-    const seat = seats.get(seatId)
-    emitLog(projectId, {
-      kind: 'ok',
-      text: `seat do Maestro: ${seat?.name ?? seatId} (${seat?.cli ?? '?'})${model ? ` · ${model}` : ''}${effort ? ` · effort ${effort}` : ''}${migrated ? ' · conversa transplantada para a conta nova' : ''}`
-    })
-    blackbox.record({
-      cat: 'pane',
-      event: 'seat-swap',
-      actor: 'user',
-      ids: { projectId, seatId },
-      reason: migrated
-        ? `conversa migrada de ${prevSeat?.name ?? prev} para ${seat?.name ?? seatId} (transplante de sessão)`
-        : `seat trocado de ${prevSeat?.name ?? prev} para ${seat?.name ?? seatId} sem migração (CLI diferente ou sem sessão)`
-    })
   })
 
   ipcMain.handle('maestro:paneSpec', async (e, projectId: string) => {
@@ -597,24 +279,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
     }
   })
 
-  ipcMain.handle('maestro:setModel', async (e, projectId: string, model: string) => {
-    const emit = makeEmitter(e.sender, projectId)
-    const session = maestroSessions.get(projectId)
-    if (session?.alive) {
-      // Troca AO VIVO via protocolo de controle — mesma sessão, sem restart.
-      // A confirmação real do CLI chega como <local-command-stdout> no log.
-      const ok = await session.setModel(model || 'default')
-      if (!ok) {
-        emit({ kind: 'err', text: 'o CLI recusou a troca de modelo — veja /model para os nomes válidos' })
-        return
-      }
-    } else {
-      killMaestroSession(projectId)
-    }
-    maestro.update(projectId, { model: model || undefined })
-    emit({ kind: 'ok', text: `modelo do maestro: ${model || 'padrão do seat'}` })
-  })
-
   ipcMain.handle('maestro:pendingQuestions', (e, projectId: string) => {
     // PODA PREGUIÇOSA: pergunta de projeto removido ou de missão que deixou de
     // estar viva não tem aba para pulsar — resíduo sai do arquivo aqui mesmo.
@@ -642,15 +306,4 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
     return true
   })
 
-  // Versão atual do projeto: tarefas novas são carimbadas com ela (filtro do
-  // board por versão).
-  ipcMain.handle('maestro:setVersion', (e, projectId: string, version: string) => {
-    maestro.update(projectId, { version: version.trim() || undefined })
-    hub.publish({
-      projectId,
-      kind: 'info',
-      text: version.trim() ? `versão atual do projeto: ${version.trim()}` : 'versão do projeto limpa',
-      actor: 'user'
-    })
-  })
 }

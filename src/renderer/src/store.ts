@@ -1757,9 +1757,6 @@ interface SynkoraState {
   maestroStream: string
   maestroThinking: boolean
   maestroPerm: MaestroPermRequest | null
-  /** versão atual do projeto (carimbo das tarefas novas) */
-  maestroVersion: string | null
-  setMaestroVersion: (projectId: string, version: string) => Promise<void>
   /** bypass de permissões (padrão ON — fluxo reto sem prompts) */
   maestroBypass: boolean
   toggleBypass: (projectId: string, on: boolean) => Promise<void>
@@ -1771,15 +1768,14 @@ interface SynkoraState {
    *  2026-08-15) e só o mundo legado — pane do PM, fallback do orquestrador de
    *  missão antiga — ainda lê este valor. */
   maestroSeatId: string | null
-  setMaestroSeat: (projectId: string, seatId: string, model?: string, effort?: string) => Promise<void>
   /** incrementa a cada definição de seat/modelo/effort — o Board respawna o
    *  pane. POR PROJETO: com um contador único, o bump feito no universo B ficava
    *  PENDENTE no Board de A (que sai no guard `!isActive` sem consumir o ref) e,
    *  ao voltar para A, o Maestro de A era morto e reaberto do nada. */
   maestroSpecBumpByProject: Record<string, number>
-  /** /estudar em andamento, POR PROJETO. DORMENTE desde 2026-08-15: o botão
-   *  📚 estudar saiu do board com o resto das alavancas do PM; o IPC
-   *  `maestro:survey` e esta ponte ficam de pé para o mundo legado. */
+  /** /estudar em andamento, POR PROJETO. Sem escritor desde 2026-08-15: o botão
+   *  📚 estudar saiu do board com o resto das alavancas do PM. O leitor legado
+   *  (Board) ainda consulta o mapa. */
   surveyBusyByProject: Record<string, boolean>
   /** força REMONTAGEM de um universo já montado (relocação de pasta) */
   remountNonce: Record<string, number>
@@ -1792,7 +1788,6 @@ interface SynkoraState {
   maestroCaps: MaestroCaps | null
   maestroCapsLoading: boolean
   maestroCapsKey: string | null
-  loadMaestroCaps: (projectId: string, seatId?: string) => Promise<MaestroCaps | null>
   runTask: (
     projectId: string,
     taskId: string,
@@ -1819,15 +1814,11 @@ interface SynkoraState {
   noteUserQuestion: (projectId: string, missionKey: string, question: string) => void
   clearAskQuestion: (projectId: string, missionKey: string) => void
   handleMaestroLive: (evt: MaestroLiveEvent) => void
-  sendMaestro: (projectId: string, message: string, seatId?: string) => Promise<void>
-  answerMaestroPerm: (projectId: string, choice: PermissionChoice) => Promise<void>
-  interruptMaestro: (projectId: string) => Promise<void>
   setMaestroCtxLimit: (limit: number | null) => void
   appendMaestroEvent: (evt: MaestroEvent) => void
   setMaestroCtx: (tokens: number | null) => void
   clearMaestroLog: () => void
   loadMaestroLog: (projectId: string) => Promise<void>
-  surveyMaestro: (projectId: string, seatId?: string) => Promise<void>
   policies: ProjectPolicies
   loadPolicies: (projectId: string) => Promise<void>
   /** biblioteca de skills (F4) — GLOBAL à máquina (não é por projeto) */
@@ -2147,11 +2138,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
   maestroThinking: false,
   maestroPerm: null,
 
-  maestroVersion: null,
-  setMaestroVersion: async (projectId, version) => {
-    set({ maestroVersion: version.trim() || null })
-    await window.synkora.maestro.setVersion(projectId, version)
-  },
   maestroBypass: true,
   toggleBypass: async (projectId, on) => {
     set({ maestroBypass: on })
@@ -2167,46 +2153,10 @@ export const useStore = create<SynkoraState>((set, get) => ({
   },
   maestroSeatId: null,
   maestroSpecBumpByProject: {},
-  // DORMENTE (2026-08-15): a única tela que chamava isto era o gate de entrada,
-  // removido por ordem do dono. Fica como a ponte para o `maestro:setSeat` do
-  // main, que segue vivo para o mundo legado — a conta da missão 2.0 é outra
-  // coisa (`missions:setChatSeat`, escolhida no card do chat).
-  setMaestroSeat: async (projectId, seatId, model, effort) => {
-    await window.synkora.maestro.setSeat(projectId, seatId, model, effort)
-    set((s) => ({
-      maestroSeatId: seatId,
-      maestroModel: model ?? null,
-      maestroEffort: effort ?? null,
-      // o main matou o pane DESTE projeto — o bump força só o Board dele a
-      // buscar spec nova
-      maestroSpecBumpByProject: {
-        ...s.maestroSpecBumpByProject,
-        [projectId]: (s.maestroSpecBumpByProject[projectId] ?? 0) + 1
-      }
-    }))
-  },
   maestroStateLoaded: false,
   maestroCaps: null,
   maestroCapsLoading: false,
   maestroCapsKey: null,
-
-  // Comandos/modelos REAIS do painel de fundo (spawna se preciso, sem tokens).
-  // Cache por projeto+seat: trocar de seat recarrega do config certo.
-  loadMaestroCaps: async (projectId, seatId) => {
-    const key = `${projectId}:${seatId ?? ''}`
-    const s = get()
-    if (s.maestroCaps && s.maestroCapsKey === key) return s.maestroCaps
-    if (s.maestroCapsLoading) return null
-    set({ maestroCapsLoading: true })
-    try {
-      const caps = await window.synkora.maestro.capabilities(projectId, seatId)
-      set({ maestroCaps: caps, maestroCapsKey: key, maestroCapsLoading: false })
-      return caps
-    } catch {
-      set({ maestroCapsLoading: false })
-      return null
-    }
-  },
 
   appendMaestroEvent: (evt) => set((s) => ({ maestroLog: [...s.maestroLog, evt] })),
   setMaestroCtx: (tokens) => set({ maestroCtx: tokens }),
@@ -2370,36 +2320,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
       return { paneAttention, taskAttention }
     }),
 
-  sendMaestro: async (projectId, message, seatId) => {
-    // Steering: mandar DURANTE um turno não pode apagar o stream em andamento.
-    const wasBusy = get().maestroBusy
-    set(
-      wasBusy
-        ? { maestroBusy: true }
-        : { maestroBusy: true, maestroStream: '', maestroThinking: true }
-    )
-    try {
-      await window.synkora.maestro.send(projectId, message, seatId)
-    } catch (e) {
-      get().appendMaestroEvent({
-        kind: 'err',
-        text: e instanceof Error ? e.message : String(e)
-      })
-      set({ maestroBusy: false, maestroThinking: false })
-    }
-  },
-
-  answerMaestroPerm: async (projectId, choice) => {
-    const perm = get().maestroPerm
-    if (!perm) return
-    set({ maestroPerm: null })
-    await window.synkora.maestro.permission(projectId, perm.requestId, choice)
-  },
-
-  interruptMaestro: async (projectId) => {
-    await window.synkora.maestro.interrupt(projectId)
-  },
-
   loadMaestroLog: async (projectId) => {
     const state = await window.synkora.maestro.getState(projectId)
     // Resposta ATRASADA de um projeto que já não é o ativo sobrescrevia o
@@ -2417,7 +2337,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
       maestroBypass: state.bypass,
       sensitiveBypassOk: state.sensitiveBypassOk === true,
       maestroSeatId: state.seatId,
-      maestroVersion: state.version,
       maestroStateLoaded: true
     })
   },
@@ -2502,21 +2421,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
   },
 
   surveyBusyByProject: {},
-  surveyMaestro: async (projectId, seatId) => {
-    const mark = (on: boolean): void =>
-      set((s) => ({ surveyBusyByProject: { ...s.surveyBusyByProject, [projectId]: on } }))
-    mark(true)
-    try {
-      await window.synkora.maestro.survey(projectId, seatId)
-    } catch (e) {
-      get().appendMaestroEvent({
-        kind: 'err',
-        text: e instanceof Error ? e.message : String(e)
-      })
-    } finally {
-      mark(false)
-    }
-  },
 
   loadProjects: async () => {
     const projects = await window.synkora.projects.list()
