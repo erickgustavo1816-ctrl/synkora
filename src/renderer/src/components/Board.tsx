@@ -2588,8 +2588,9 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               ⇄ seat e 🧹 limpar eram os controles do Maestro — o papel que a
               era 2.0 não tem. Saíram daqui e da linha do retrato; o que resta
               nesta barra são as abas dos terminais, que continuam de pé. As
-              IPCs (`maestro:survey`, `maestro:setSeat`, `maestro:cleanup`)
-              seguem vivas e dormentes para o mundo legado. */}
+              IPCs que elas chamavam também já foram (auditoria de código morto,
+              2026-08-15): do domínio maestro sobraram `getState`, `paneSpec` e
+              o par de perguntas do ask_user, que este arquivo usa. */}
         </PaneChrome>
         )}
         <div className="maestro-body maestro-terminal" ref={maestroTerminalRef}>

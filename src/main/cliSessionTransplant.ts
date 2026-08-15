@@ -4,8 +4,8 @@
  * Corpo movido VERBATIM do closure do whenReady em index.ts (cirurgia do
  * índice, docs/FASE1_MAPA_MAESTROENGINE.md §1 W12): zero dependências de
  * closure — só fs/path/app e o tipo SeatCli. Consumidores: o ⇄ de seat do
- * PM/orquestrador (ipc maestro:setSeat / missions:setOrchestratorSeat) e o
- * setPhaseExecutorImpl da troca de executor de fase.
+ * orquestrador e do chat de missão (ipc missions:*) e o setPhaseExecutorImpl
+ * da troca de executor de fase.
  */
 import { app } from 'electron'
 import { dirname, join, relative } from 'path'
