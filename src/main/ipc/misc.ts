@@ -20,13 +20,10 @@ import {
 import { basename, extname, join } from 'path'
 import { type SeatCli } from '../seats'
 import { ensureSynkoraGitExcludes } from '../worktree'
-import { type DeptPolicy } from '../policies'
 import { getCatalog } from '../catalog'
 import { getCliStatus, updateAllClis, type CliStatus } from '../cliUpdate'
-import { type Department } from '../tasks'
 import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'fs'
 import { getSeatUsage } from '../seatUsage'
-import { describeEntry } from '../blackbox'
 import { diagnosticsConsentDetail, exportDiagnostics } from '../diagnostics'
 import type { MainContext } from '../mainContext'
 
@@ -70,12 +67,6 @@ export function registerMiscIpc(ctx: MainContext, extras: MiscIpcExtras): void {
   })
 
   ipcMain.handle('policies:get', (_e, projectId: string) => policies.get(projectId))
-
-  ipcMain.handle(
-    'policies:set',
-    (_e, projectId: string, dept: Department, policy: DeptPolicy) =>
-      policies.set(projectId, dept, policy)
-  )
 
   ipcMain.handle('seats:list', () => {
     return seats.list().map((s) => {
@@ -168,14 +159,6 @@ export function registerMiscIpc(ctx: MainContext, extras: MiscIpcExtras): void {
       projects: projects.list().map((p) => ({ id: p.id, name: p.name, path: p.path }))
     })
   })
-
-  // Monitor embutido: últimas entradas do diário para inspeção rápida.
-  ipcMain.handle('blackbox:tail', (_e, limit?: number) =>
-    blackbox.tail(Math.min(Math.max(limit ?? 200, 1), 1000)).map((entry) => ({
-      ...entry,
-      line: describeEntry(entry)
-    }))
-  )
 
   // Clipboard de imagem: prints colados viram PNG em .synkora/attachments do
   // projeto (o path entra no prompt e o agente lê a imagem pelo caminho).

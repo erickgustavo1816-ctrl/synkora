@@ -1,8 +1,8 @@
 /**
  * IPC — domínio panes (fase 1, commit 7c).
  * Specs e consultas de pane pelo renderer: servidor de teste do dono
- * (▶ testar), mapa de portas do modal, o pane do agente livre (freeSpec) e
- * a lista de panes vivos. A mecânica mora no paneLifecycle (extras.engine).
+ * (▶ testar), mapa de portas do modal e a lista de panes vivos.
+ * A mecânica mora no paneLifecycle (extras.engine).
  *
  * Corpo movido VERBATIM do whenReady do index.ts. CERCA VIVA da Fase 0:
  * register*Ipc é CHAMADO do whenReady (bloco único antes do createWindow),
@@ -14,8 +14,6 @@ import { app, ipcMain } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { randomUUID } from 'crypto'
-import { FREE_AGENT_PERSONA } from '../maestro'
-import { buildIdleWaiterHint } from '../phasePrompts'
 import { createVersionWorktree } from '../worktree'
 import {
   activeQaRuntimes,
@@ -38,15 +36,9 @@ export interface PanesIpcExtras {
 }
 
 export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void {
-  const { projects, seats, tasks, backlog, blackbox, hub, projectModeOf, projectPlanOf } = ctx
+  const { projects, tasks, backlog, blackbox, hub } = ctx
   const { engine, ensureMissionWorktree } = extras
-  const {
-    livePaneSpecs,
-    closingPaneIds,
-    testServerPanes,
-    armPane,
-    harnessPortsInUse
-  } = engine
+  const { livePaneSpecs, closingPaneIds, testServerPanes, harnessPortsInUse } = engine
 
   ipcMain.handle(
     'panes:testServerSpec',
@@ -198,73 +190,6 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
   // mesma string que o QA recebe no prompt — o dono escolhe vendo o mapa.
   ipcMain.handle('panes:portsInUse', (e, projectId: string) => {
     return formatPortMap(harnessPortsInUse(projectId))
-  })
-
-  // Spec do PANE TUI do Maestro: um terminal REAL do CLI do seat escolhido,
-  // com a persona de orquestrador e as tools MCP do Synkora. Sessão retomada
-  // via --resume (claude) / resume (codex) quando o pane renasce.
-  // AGENTE LIVRE (pane manual "✦ Agente"): nasce ARMADO — MCP do Synkora
-  // (register_direct_mission, board_status, notify_maestro…) + persona de
-  // consciência da base (claude). Sem isso ele podia quebrar o app editando a
-  // main por fora do sistema de missões/versões.
-  ipcMain.handle('panes:freeSpec', (e, projectId: string, seatId: string, effort?: string, model?: string) => {
-    const project = projects.get(projectId)
-    const seat = seats.get(seatId)
-    if (!project || !seat || !existsSync(project.path)) return null
-    if (
-      projectModeOf(projectId) === 'greenfield' &&
-      projectPlanOf(projectId)?.status !== 'done'
-    ) {
-      hub.publish({
-        projectId,
-        kind: 'error',
-        text:
-          'agente livre bloqueado: este projeto novo ainda segue o plano mestre — trabalhe somente pela missão indicada pelo Maestro',
-        actor: 'harness'
-      })
-      return null
-    }
-    seats.preseed(seat)
-    const armed = armPane(
-      { projectId, role: 'livre', cwd: project.path, seatId: seat.id },
-      seat.cli,
-      {
-        strictMcp: true,
-        configDir: seats.configDirOf(seat),
-        // Antes do primeiro prompt nao existe uma missao que possa ser
-        // classificada. Contexto desconhecido usa o perfil sensivel para nao
-        // herdar bypass, hooks, plugins ou MCPs persistentes.
-        sensitive: true
-      }
-    )
-    const cliArgs = [...armed.cliArgs]
-    if (effort) {
-      if (seat.cli === 'claude') cliArgs.push('--effort', effort)
-      else cliArgs.push('-c', `model_reasoning_effort="${effort}"`)
-    }
-    // F5-F3b: o agente livre também aprende a esperar SEM digitação (waiter
-    // claude / long-poll codex) — era o único papel sem o hint (teste real
-    // 2026-08-08: o livre pollou list_helpers/helper_output em loop).
-    const freePersona = `${FREE_AGENT_PERSONA}${buildIdleWaiterHint(seat.cli)}`
-    // Persona invisível nos dois CLIs por UM canal: appendSystemPrompt.
-    // Claude → --append-system-prompt-file; codex livre NÃO é
-    // method-governed (sem profile), então o ipc/pty aplica o fallback
-    // -c developer_instructions inline (mesma serialização validada da
-    // sonda BANANA123) — comportamento idêntico ao antigo, caminho único.
-    // F3-c3: o registro do pane nasce por evento (o modal do host não chama
-    // mais addPane) — o model escolhido no modal viaja pelo invoke.
-    ctx.pushAll('panes:open-free', projectId, seat.cli, {
-      id: armed.paneId,
-      seatId: seat.id,
-      model: model || undefined,
-      cliArgs: cliArgs.length ? cliArgs : undefined,
-      appendSystemPrompt: freePersona
-    })
-    return {
-      paneId: armed.paneId,
-      cliArgs,
-      appendSystemPrompt: freePersona
-    }
   })
 
   ipcMain.handle('panes:live', () =>

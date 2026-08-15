@@ -58,46 +58,6 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
     }
   )
 
-  ipcMain.handle(
-    'backlog:updateVersion',
-    (e, id: string, patch: { name?: string; theme?: string; goal?: string }) => {
-      const current = backlog.getVersion(id)
-      if (!current) return null
-      const nextName = patch.name?.trim()
-      if (patch.name !== undefined && !nextName) return current
-      if (
-        nextName &&
-        nextName.toLocaleLowerCase('pt-BR') !== current.name.toLocaleLowerCase('pt-BR')
-      ) {
-        if (backlog.validateVersionName(current.projectId, nextName, current.id)) return current
-        const project = projects.get(current.projectId)
-        if (projectModeOf(current.projectId) === 'greenfield' && project) {
-          try {
-            ensureSynkoraGitExcludes(project.path)
-            const plan = loadProjectPlan(project.path)
-            const referenced = plan?.roadmap.some(
-              (item) =>
-                item.version?.id === id ||
-                item.release?.versionId === id ||
-                item.version?.name.toLocaleLowerCase('pt-BR') ===
-                  current.name.toLocaleLowerCase('pt-BR')
-            )
-            if (referenced) return current
-          } catch {
-            return current
-          }
-        }
-      }
-      const updated = backlog.updateVersion(id, {
-        ...(nextName ? { name: nextName } : {}),
-        ...(patch.theme !== undefined ? { theme: patch.theme } : {}),
-        ...(patch.goal !== undefined ? { goal: patch.goal } : {})
-      })
-      if (updated) emitBacklogChanged(updated.projectId)
-      return updated ?? null
-    }
-  )
-
   ipcMain.handle('backlog:removeVersion', (e, projectId: string, id: string) => {
     // versão com branch viva: limpa worktree+branch (commits não subidos morrem
     // junto — exclusão é explícita e confirmada na UI)
@@ -159,25 +119,6 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
   })
 
   ipcMain.handle('backlog:listItems', (_e, projectId: string) => backlog.listItems(projectId))
-
-  ipcMain.handle(
-    'backlog:createItem',
-    (
-      e,
-      projectId: string,
-      input: { title: string; type?: BacklogItemType; notes?: string; versionId?: string }
-    ) => {
-      if (!input.title.trim()) return null
-      if (!projects.get(projectId)) return null
-      if (input.versionId) {
-        const version = backlog.getVersion(input.versionId)
-        if (!version || version.projectId !== projectId) return null
-      }
-      const item = backlog.createItem(projectId, { ...input, title: input.title.trim() })
-      emitBacklogChanged(projectId)
-      return item
-    }
-  )
 
   ipcMain.handle(
     'backlog:updateItem',

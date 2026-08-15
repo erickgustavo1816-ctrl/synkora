@@ -690,17 +690,14 @@ export function installDevMock(): void {
       onChanged: () => () => undefined
     },
     blackbox: {
-      exportDiagnostics: async () => ({ ok: false, msg: 'preview: sem diagnóstico no browser' }),
-      tail: async () => []
+      exportDiagnostics: async () => ({ ok: false, msg: 'preview: sem diagnóstico no browser' })
     },
     backlog: {
       listVersions: async () => [],
       createVersion: async () => null,
-      updateVersion: async () => null,
       removeVersion: async () => 'mock: versão removida',
       releaseVersion: async () => 'mock: sem git no preview',
       listItems: async () => [],
-      createItem: async () => null,
       updateItem: async () => null,
       removeItem: async () => undefined,
       onChanged: () => () => undefined
@@ -775,9 +772,6 @@ export function installDevMock(): void {
       // não tem processo nenhum para abrir, então recusa em vez de fingir.
       shellSpec: async () => ({ ok: false, error: 'sem terminal no preview' }),
       workspaceFiles: async () => ({ ok: false, error: 'sem worktree no preview' }),
-      // 2.0: sem worktree não há diff para ler — recusa honesta em vez de um
-      // patch inventado, que ensinaria a UI a confiar em texto que não existe.
-      fileDiff: async () => ({ ok: false, error: 'sem worktree no preview' }),
       // Sem repositório no browser não há commit para listar — recusa honesta,
       // nunca um histórico inventado que o dono leria como trabalho real.
       commits: async () => ({ ok: false, error: 'sem worktree no preview' }),
@@ -1063,18 +1057,6 @@ export function installDevMock(): void {
     panes: {
       // Browser preview não mantém PTYs fora do renderer.
       live: async () => [],
-      // Spec plausível (o app RECUSA abrir agente livre com spec nula — sem
-      // armamento ele viraria um CLI cru na branch base); no preview o pane só
-      // imprime o aviso do mock.
-      freeSpec: async (projectId: string, seatId: string, _effort?: string, model?: string) => {
-        const paneId = `free-${seatId}-${Math.random().toString(16).slice(2, 8)}`
-        openFreeCb?.(projectId, 'claude', { id: paneId, seatId, model })
-        return {
-          paneId,
-          cliArgs: [],
-          appendSystemPrompt: '(persona do agente livre — mock)'
-        }
-      },
       testServerSpec: async (
         projectId: string,
         target: { missionId?: string; versionId?: string },
@@ -1400,7 +1382,6 @@ export function installDevMock(): void {
     },
     policies: {
       get: async () => ({}),
-      set: async () => undefined,
       onChanged: () => () => undefined
     },
     catalog: {
@@ -1543,7 +1524,6 @@ export function installDevMock(): void {
       saveImage: async () => null,
       readText: async () => ''
     },
-    host: { platform: 'win32', windowsBuild: 26200 },
     pickFolder: async () => 'C:\\dev\\novo-projeto',
     pty: {
       create: async (opts: { id: string }) => {

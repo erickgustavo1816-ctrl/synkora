@@ -1,7 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
-import { release } from 'node:os'
 import type { ProgressOverlaySnapshot } from '../main/progressSnapshot'
-import type { BlackboxEntry } from '../main/blackbox'
 import type {
   GuiExecutorPatch,
   GuiExecutorResult,
@@ -32,7 +30,6 @@ import type {
 import type {
   MissionCommitDiffResult,
   MissionCommitsResult,
-  MissionFileDiffResult,
   MissionGuiSpecResult,
   MissionShellSpecResult,
   MissionWorkspaceFilesResult
@@ -65,9 +62,6 @@ import type {
   HistoryTranscriptMessage,
   PaletteNavigationTarget
 } from '../shared/commandPalette'
-
-/** entrada do diário da caixa-preta + linha legível pronta para exibição */
-export type BlackboxTailEntry = BlackboxEntry & { line: string }
 
 /** Contrato do pane GUI (docs/GUI_PANE_CONTRACT.md) — fonte única dos tipos.
  * O canal vivo do main carrega a união real. O renderer ainda recebe
@@ -103,14 +97,8 @@ export type {
  *  chat da missão, terminal avulso do worktree e sessão de planejamento. */
 export type { GuiMissionRole, MissionGuiSpecResult, MissionShellSpecResult, PlanningGuiSpecResult }
 
-/** Diff vivo do worktree da missão (2.0, onda D) — o cabeçalho do trilho e o
- *  diff de UM arquivo, quando o dono abre a linha da lista. */
-export type {
-  MissionFileDiffResult,
-  MissionWorkspaceFile,
-  MissionWorkspaceFilesResult,
-  MissionWorkspaceSummary
-}
+/** Diff vivo do worktree da missão (2.0, onda D) — o cabeçalho do trilho. */
+export type { MissionWorkspaceFile, MissionWorkspaceFilesResult, MissionWorkspaceSummary }
 
 /** Commits da missão — a lista por trás do `ahead` que o trilho já mostra. */
 export type { MissionCommit, MissionCommitDiffResult, MissionCommitsResult }
@@ -1108,22 +1096,7 @@ export interface HubCommunicationEvent {
   kind: 'message' | 'delegate' | 'report' | 'feedback' | 'handoff'
 }
 
-/** Build do Windows ("10.0.26200" → 26200); 0 fora do Windows. */
-function windowsBuild(): number {
-  if (process.platform !== 'win32') return 0
-  return Number(release().split('.')[2] ?? 0) || 0
-}
-
 const api = {
-  /** Dados do HOST que o renderer precisa para configurar o xterm sem
-   *  importar Node: o xterm só liga o reflow e o tratamento de crescimento de
-   *  linhas do ConPTY quando recebe `windowsPty` com backend+build reais (ver
-   *  TerminalPane). @lydell/node-pty ignora `useConpty` (deprecado) e usa
-   *  SEMPRE ConPTY no Windows — daí o backend fixo. */
-  host: {
-    platform: process.platform,
-    windowsBuild: windowsBuild()
-  },
   projects: {
     list: (): Promise<Project[]> => ipcRenderer.invoke('projects:list'),
     /** `gitUrl` (2.0, onda D): pasta vazia CLONA o repositório; pasta com
@@ -1265,16 +1238,7 @@ const api = {
     /** Snapshot dos panes gerenciados ainda vivos no processo principal.
      *  Usado para reidratar a UI depois de um reload do renderer. */
     live: (): Promise<LivePaneSnapshot[]> => ipcRenderer.invoke('panes:live'),
-    /** Spec de AGENTE LIVRE (pane manual): MCP armado + persona de base limpa
-     *  (claude). O agente sabe registrar o que fez via register_direct_mission. */
-    freeSpec: (
-      projectId: string,
-      seatId: string,
-      effort?: string,
-      model?: string
-    ): Promise<{ paneId: string; cliArgs: string[]; appendSystemPrompt?: string } | null> =>
-      ipcRenderer.invoke('panes:freeSpec', projectId, seatId, effort, model),
-    /** F3-c3: nascimento de pane sem fase (agente livre/test server) chega por
+    /** F3-c3: nascimento de pane sem fase (test server) chega por
      *  evento do main às DUAS views — quem monta é a view de panes; o host
      *  espelha a lista. */
     onOpenFree: (
@@ -1687,13 +1651,6 @@ const api = {
      *  repara worktree, então pode ser chamada com frequência pelo trilho. */
     workspaceFiles: (missionId: string): Promise<MissionWorkspaceFilesResult> =>
       ipcRenderer.invoke('missions:workspaceFiles', missionId),
-    /** SYNKORA 2.0 (onda D): diff unificado de UM arquivo do trilho — da
-     *  merge-base com a base até a árvore de trabalho, igual ao cabeçalho.
-     *  Arquivo ainda fora do git volta INTEIRO como adição; passando do teto
-     *  vem `truncated`. `filePath` é relativo ao worktree (o main recusa
-     *  qualquer coisa que aponte para fora dele). */
-    fileDiff: (missionId: string, filePath: string): Promise<MissionFileDiffResult> =>
-      ipcRenderer.invoke('missions:fileDiff', missionId, filePath),
     /** SYNKORA 2.0: os COMMITS que esta missão adicionou sobre a base, mais
      *  novos primeiro (teto 50). Mesma leitura pura do workspaceFiles — é a
      *  lista por trás do "N commits à frente" que o trilho já mostra. */
@@ -1716,20 +1673,12 @@ const api = {
       projectId: string,
       input: { name: string; theme?: string; goal?: string }
     ): Promise<Version | null> => ipcRenderer.invoke('backlog:createVersion', projectId, input),
-    updateVersion: (
-      id: string,
-      patch: { name?: string; theme?: string; goal?: string; status?: VersionStatus }
-    ): Promise<Version | null> => ipcRenderer.invoke('backlog:updateVersion', id, patch),
     removeVersion: (projectId: string, id: string): Promise<string> =>
       ipcRenderer.invoke('backlog:removeVersion', projectId, id),
     releaseVersion: (id: string): Promise<string> =>
       ipcRenderer.invoke('backlog:releaseVersion', id),
     listItems: (projectId: string): Promise<BacklogItem[]> =>
       ipcRenderer.invoke('backlog:listItems', projectId),
-    createItem: (
-      projectId: string,
-      input: { title: string; type?: BacklogItemType; notes?: string; versionId?: string }
-    ): Promise<BacklogItem | null> => ipcRenderer.invoke('backlog:createItem', projectId, input),
     updateItem: (
       projectId: string,
       id: string,
@@ -1936,8 +1885,6 @@ const api = {
   policies: {
     get: (projectId: string): Promise<ProjectPolicies> =>
       ipcRenderer.invoke('policies:get', projectId),
-    set: (projectId: string, dept: Department, policy: DeptPolicy): Promise<void> =>
-      ipcRenderer.invoke('policies:set', projectId, dept, policy),
     /** o MAIN mudou a política (ex.: PM definiu o kit ★ via set_default_skills) */
     onChanged: (cb: (projectId: string) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
@@ -2068,10 +2015,7 @@ const api = {
   blackbox: {
     /** exporta o pacote de diagnóstico completo (diário + estado + Git) */
     exportDiagnostics: (): Promise<{ ok: boolean; msg: string }> =>
-      ipcRenderer.invoke('blackbox:export'),
-    /** últimas entradas do diário da caixa-preta, já com linha legível */
-    tail: (limit?: number): Promise<BlackboxTailEntry[]> =>
-      ipcRenderer.invoke('blackbox:tail', limit)
+      ipcRenderer.invoke('blackbox:export')
   },
   clipboard: {
     hasImage: (): boolean => ipcRenderer.sendSync('clipboard:hasImage') as boolean,

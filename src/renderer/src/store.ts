@@ -1830,7 +1830,6 @@ interface SynkoraState {
   surveyMaestro: (projectId: string, seatId?: string) => Promise<void>
   policies: ProjectPolicies
   loadPolicies: (projectId: string) => Promise<void>
-  setPolicy: (projectId: string, dept: Department, policy: DeptPolicy) => Promise<void>
   /** biblioteca de skills (F4) — GLOBAL à máquina (não é por projeto) */
   skillsLib: SkillState[]
   loadSkills: () => Promise<void>
@@ -2494,11 +2493,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
     // com os dados do outro, de forma permanente).
     if (get().openProjectId !== projectId) return
     set({ policies })
-  },
-
-  setPolicy: async (projectId, dept, policy) => {
-    await window.synkora.policies.set(projectId, dept, policy)
-    set((s) => ({ policies: { ...s.policies, [dept]: policy } }))
   },
 
   skillsLib: [],
