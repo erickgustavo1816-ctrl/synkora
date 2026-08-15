@@ -12,6 +12,8 @@ import type {
   GuiQueuedDeliveryInput
 } from '../../preload'
 
+import type { PlanDraft, PlanItemDraft, PlanItemTier, PlanKind } from './planContract'
+
 export type { GuiFileChoice, GuiFileOpenResult, GuiFilePreview } from '../../preload'
 
 // Ponte tipada do PANE GUI (Synkora 2.0, onda A).
@@ -217,10 +219,17 @@ export type GuiSessionEvent =
           }
         | { kind: 'question'; entries: { question: string; answer: string }[] }
         | { kind: 'plan'; approve: boolean }
+        /** `approve` true = o dono criou o plano; o título volta para o fio
+         *  poder dizer QUAL plano nasceu sem consultar o mapa. */
+        | { kind: 'plan-proposal'; approve: boolean; planTitle?: string }
         | { kind: 'stale' }
     }
   | { type: 'question'; requestId: string; questions: GuiQuestion[] }
   | { type: 'plan-review'; requestId: string; plan: string }
+  /** PROPOSTA DE PLANO (D4.4): nasce no HARNESS, não no CLI — quando a tool
+   *  `propose_plan` chega, o main injeta este evento no anel da sessão. A
+   *  criação continua sendo do dono: a tool só apresenta. */
+  | { type: 'plan-proposal'; requestId: string; draft: PlanDraft }
   | { type: 'session-id'; sessionId: string }
   | { type: 'ready'; caps: GuiCliCaps }
   | { type: 'command-output'; text: string }
@@ -242,6 +251,76 @@ export type GuiSessionEvent =
   | { type: 'fatal'; text: string }
   | { type: 'closed'; code: number | null }
 
+// ————— leitura defensiva do rascunho de plano —————
+//
+// A proposta é a ÚNICA interação com payload ESTRUTURADO (as outras são texto),
+// e ela vem de fora: ou o rascunho entra normalizado — títulos aparados, listas
+// com teto, campo fora do vocabulário descartado —, ou não entra. Sem isto, um
+// `items` não-array quebraria o card no exato momento da decisão do dono.
+
+const PLAN_TIERS: readonly PlanItemTier[] = ['pequeno', 'medio', 'grande']
+
+/** Teto de itens que a UI aceita desenhar: acima disso o rascunho deixou de ser
+ *  um plano e virou despejo. */
+export const PLAN_DRAFT_MAX_ITEMS = 60
+
+function planText(value: unknown, max: number): string {
+  return typeof value === 'string' && value.length <= max ? value : ''
+}
+
+function planList(value: unknown, max: number): string[] {
+  if (!Array.isArray(value)) return []
+  const out: string[] = []
+  for (const entry of value.slice(0, max)) {
+    const text = planText(entry, 2_000).trim()
+    if (text) out.push(text)
+  }
+  return out
+}
+
+/** `null` quando não há título NEM item: card vazio seria pior que card nenhum
+ *  (o dono decidiria sobre o nada). */
+export function readPlanDraft(value: unknown): PlanDraft | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  const title = planText(record['title'], 300).trim()
+  const rawItems = Array.isArray(record['items'])
+    ? record['items'].slice(0, PLAN_DRAFT_MAX_ITEMS)
+    : []
+  const items: PlanItemDraft[] = []
+  for (const raw of rawItems) {
+    if (!raw || typeof raw !== 'object') continue
+    const entry = raw as Record<string, unknown>
+    const itemTitle = planText(entry['title'], 300).trim()
+    if (!itemTitle) continue
+    const id = planText(entry['id'], 200).trim()
+    const outOfScope = planText(entry['outOfScope'], 4_000).trim()
+    const context = planText(entry['context'], 4_000).trim()
+    const docPath = planText(entry['docPath'], 500).trim()
+    const tier = entry['tier']
+    items.push({
+      ...(id ? { id } : {}),
+      title: itemTitle,
+      objective: planText(entry['objective'], 4_000).trim(),
+      ...(outOfScope ? { outOfScope } : {}),
+      doneCriteria: planList(entry['doneCriteria'], 30),
+      ...(PLAN_TIERS.includes(tier as PlanItemTier) ? { tier: tier as PlanItemTier } : {}),
+      ...(context ? { context } : {}),
+      dependsOn: planList(entry['dependsOn'], 30),
+      ...(docPath ? { docPath } : {})
+    })
+  }
+  if (!title && items.length === 0) return null
+  const description = planText(record['description'], 8_000).trim()
+  const kind = record['kind']
+  return {
+    title,
+    ...(description ? { description } : {}),
+    ...(kind === 'mestre' || kind === 'livre' ? { kind: kind as PlanKind } : {}),
+    items
+  }
+}
+
 /** Só o que tem `type` string entra no redutor — payload torto do canal nunca
  *  vira exceção dentro de um `set` do zustand. */
 export function asGuiEvent(evt: unknown): GuiSessionEvent | null {
@@ -256,6 +335,19 @@ export function asGuiEvent(evt: unknown): GuiSessionEvent | null {
       record['parentToolUseId'].length > 256)
   )
     return null
+  if (type === 'plan-proposal') {
+    // Proposta é a ÚNICA interação cujo payload é estruturado (as outras são
+    // texto). Rascunho torto nunca chega ao redutor nem ao card: ou o evento
+    // sai NORMALIZADO — títulos aparados, listas com teto, campos vazios fora
+    // —, ou ele não existe. Sem isso, um `items` não-array quebraria o card
+    // exatamente no momento em que o dono precisa decidir.
+    const requestId = record['requestId']
+    if (typeof requestId !== 'string' || requestId.length === 0 || requestId.length > 256)
+      return null
+    const draft = readPlanDraft(record['draft'])
+    if (!draft) return null
+    return { type: 'plan-proposal', requestId, draft }
+  }
   if (type === 'tool-result') {
     // Ciclo de vida de subagente: valor torto nunca vira estado. Ausência
     // continua sendo o caminho comum (tool-result normal e Codex inteiro).
@@ -308,6 +400,12 @@ interface GuiBridge {
     paneId: string,
     requestId: string,
     approve: boolean
+  ) => Promise<{ ok: boolean; error?: string }>
+  answerPlanProposal: (
+    paneId: string,
+    requestId: string,
+    approve: boolean,
+    note?: string
   ) => Promise<{ ok: boolean; error?: string }>
   interrupt: (paneId: string) => Promise<{ ok: boolean; error?: string }>
   kill: (paneId: string) => Promise<{ ok: boolean }>
@@ -465,6 +563,29 @@ export const guiApi = {
     if (!api?.answerPlan) return { ok: false, error: NO_BRIDGE, retryable: true }
     try {
       return (await api.answerPlan(paneId, requestId, approve)) ?? { ok: true }
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+        retryable: true
+      }
+    }
+  },
+
+  /** Veredito da PROPOSTA de plano (D4.4). `approve` true = o dono mandou
+   *  criar (o main grava o Plan e responde ao agente); false = devolveu para
+   *  ajuste, e `note` é o que ele escreveu — o texto vira a mensagem que volta
+   *  ao agente, então proposta devolvida sem palavra nenhuma é só "ajuste". */
+  async answerPlanProposal(
+    paneId: string,
+    requestId: string,
+    approve: boolean,
+    note?: string
+  ): Promise<{ ok: boolean; error?: string; retryable?: boolean }> {
+    const api = bridge()
+    if (!api?.answerPlanProposal) return { ok: false, error: NO_BRIDGE, retryable: true }
+    try {
+      return (await api.answerPlanProposal(paneId, requestId, approve, note)) ?? { ok: true }
     } catch (e) {
       return {
         ok: false,

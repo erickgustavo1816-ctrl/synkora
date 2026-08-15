@@ -13,6 +13,7 @@ import GuiMarkdown from './GuiMarkdown'
 import GuiStreamText from './GuiStreamText'
 import GuiQuestionCard from './GuiQuestionCard'
 import GuiPlanCard from './GuiPlanCard'
+import GuiPlanProposalCard from './GuiPlanProposalCard'
 import { GuiToolCard, GuiToolGroupCard } from './GuiToolCard'
 import GuiMessageCopy from './GuiMessageCopy'
 import GuiErrorLine from './GuiErrorLine'
@@ -199,7 +200,15 @@ function injectionLabel(prompt: string): string {
 /** Ferramentas cujo card genérico NÃO se mostra: elas têm superfície própria
  *  (o card de pergunta e o card de plano). O ITEM continua na lista — o
  *  pareamento do tool-result depende da ordem —, só não se desenha. */
-const INTERACTIVE_TOOLS = new Set(['askuserquestion', 'exitplanmode', 'exit_plan_mode'])
+const INTERACTIVE_TOOLS = new Set([
+  'askuserquestion',
+  'exitplanmode',
+  'exit_plan_mode',
+  // a proposta de plano tem card próprio (rico, com as missões abrindo): o
+  // card cru da tool mostraria o mesmo JSON ao lado dele
+  'propose_plan',
+  'mcp__synkora__propose_plan'
+])
 
 /** Vocabulário do seletor do composer (onda D): rótulo curto para o botão e
  *  frase de uma linha para o menu — o dono escolhe SEM abrir documentação.
@@ -536,6 +545,7 @@ export default function GuiPane({
   const answerGuiPerm = useStore((s) => s.answerGuiPerm)
   const answerGuiQuestion = useStore((s) => s.answerGuiQuestion)
   const answerGuiPlan = useStore((s) => s.answerGuiPlan)
+  const answerGuiPlanProposal = useStore((s) => s.answerGuiPlanProposal)
   const interruptGuiPane = useStore((s) => s.interruptGuiPane)
   const historyTarget = useStore((s) =>
     s.guiHistoryTarget?.paneId === paneId ? s.guiHistoryTarget : null
@@ -833,7 +843,7 @@ export default function GuiPane({
   // Pergunta e plano SUSPENDEM o composer: é a linguagem do Claude GUI que o
   // dono pediu — o que está na tela é a coisa a responder, não uma caixa de
   // texto que compete com ela.
-  const awaitingCard = Boolean(gui.question || gui.planReview)
+  const awaitingCard = Boolean(gui.question || gui.planReview || gui.planProposal)
 
   const send = useCallback(
     async (text: string): Promise<boolean> => {
@@ -1547,6 +1557,16 @@ export default function GuiPane({
                 plan={gui.planReview.plan}
                 disabled={Boolean(gui.interactionSubmitting)}
                 onDecide={(approve) => void answerGuiPlan(projectId, paneId, approve)}
+              />
+            )}
+
+            {!inert && gui.planProposal && (
+              <GuiPlanProposalCard
+                draft={gui.planProposal.draft}
+                disabled={Boolean(gui.interactionSubmitting)}
+                onDecide={(approve, note) =>
+                  void answerGuiPlanProposal(projectId, paneId, approve, note)
+                }
               />
             )}
 

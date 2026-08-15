@@ -8,6 +8,7 @@ import {
   type GuiQuestion,
   type GuiSessionEvent
 } from './guiApi'
+import type { PlanDraft } from './planContract'
 import type {
   GuiAttachmentDescriptor,
   HistoryTranscriptMessage,
@@ -678,6 +679,14 @@ export type GuiPendingInteraction =
       requestId: string
       planReview: { requestId: string; plan: string }
     }
+  /** PROPOSTA de plano (D4.4): entra na MESMA fila das outras decisões e por
+   *  isso ganha de graça o pulso "esperando você", a ordem por requestId e a
+   *  sobrevivência à remontagem. */
+  | {
+      kind: 'plan-proposal'
+      requestId: string
+      planProposal: { requestId: string; draft: PlanDraft }
+    }
 
 export interface GuiPaneState {
   items: GuiItem[]
@@ -697,6 +706,8 @@ export interface GuiPaneState {
   question: { requestId: string; questions: GuiQuestion[] } | null
   /** plano esperando veredito (ExitPlanMode): construir × revisar */
   planReview: { requestId: string; plan: string } | null
+  /** proposta de plano esperando o dono (propose_plan): criar × ajustar */
+  planProposal: { requestId: string; draft: PlanDraft } | null
   /** caps REAIS do CLI (evento `ready`): comandos do autocomplete e catálogo
    *  de modelos/efforts dos seletores do composer */
   caps: GuiCliCaps | null
@@ -757,6 +768,7 @@ export const EMPTY_GUI_PANE: GuiPaneState = {
   perm: null,
   question: null,
   planReview: null,
+  planProposal: null,
   caps: null,
   status: 'starting',
   startedAt: null,
@@ -798,7 +810,12 @@ function guiInteractionPatch(
   submitting: string | null = null
 ): Pick<
   GuiPaneState,
-  'interactionQueue' | 'interactionSubmitting' | 'perm' | 'question' | 'planReview'
+  | 'interactionQueue'
+  | 'interactionSubmitting'
+  | 'perm'
+  | 'question'
+  | 'planReview'
+  | 'planProposal'
 > {
   const active = queue[0]
   return {
@@ -807,7 +824,8 @@ function guiInteractionPatch(
       submitting && queue.some((item) => item.requestId === submitting) ? submitting : null,
     perm: active?.kind === 'permission' ? active.perm : null,
     question: active?.kind === 'question' ? active.question : null,
-    planReview: active?.kind === 'plan' ? active.planReview : null
+    planReview: active?.kind === 'plan' ? active.planReview : null,
+    planProposal: active?.kind === 'plan-proposal' ? active.planProposal : null
   }
 }
 
@@ -1327,6 +1345,22 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
       }
     }
 
+    case 'plan-proposal': {
+      const base = finalizeGuiStream(state)
+      const planProposal = { requestId: evt.requestId, draft: evt.draft }
+      return {
+        ...base,
+        ...enqueueGuiInteraction(base, {
+          kind: 'plan-proposal',
+          requestId: evt.requestId,
+          planProposal
+        }),
+        thinking: false,
+        activityText: null,
+        ...guiStatusPatch(base, 'waiting-you')
+      }
+    }
+
     case 'interaction-resolved': {
       const hadPending = state.interactionQueue.some(
         (item) => item.requestId === evt.requestId
@@ -1362,6 +1396,21 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           text: evt.resolution.approve
             ? 'plano aprovado — o agente começou a construir'
             : 'plano devolvido para revisão',
+          at: Date.now()
+        })
+      } else if (evt.resolution.kind === 'plan-proposal') {
+        // Recibo da DECISÃO, e só. O que o agente precisa saber (id do plano,
+        // aba nova no mapa) o main injeta como mensagem — repetir aqui seria
+        // dizer a mesma coisa duas vezes no mesmo fio.
+        const title = evt.resolution.planTitle?.trim()
+        items = pushGuiItem(items, {
+          id: guiItemId(),
+          kind: 'note',
+          text: evt.resolution.approve
+            ? title
+              ? `plano criado: ${title}`
+              : 'plano criado'
+            : 'proposta devolvida para ajuste',
           at: Date.now()
         })
       }
@@ -1400,13 +1449,20 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
                 text: 'o plano foi retirado pelo agente',
                 at: Date.now()
               }
-            : {
-                id: guiItemId(),
-                kind: 'permission',
-                toolName: pending.perm.toolName,
-                behavior: 'cancelada',
-                at: Date.now()
-              }
+            : pending.kind === 'plan-proposal'
+              ? {
+                  id: guiItemId(),
+                  kind: 'note',
+                  text: 'a proposta de plano foi retirada pelo agente',
+                  at: Date.now()
+                }
+              : {
+                  id: guiItemId(),
+                  kind: 'permission',
+                  toolName: pending.perm.toolName,
+                  behavior: 'cancelada',
+                  at: Date.now()
+                }
       const base = {
         ...state,
         ...interaction,
@@ -1835,6 +1891,12 @@ interface SynkoraState {
    *  olhando, além de montar Backlog/Arquivos dos universos escondidos. */
   universeTabByProject: Record<string, UniverseTab>
   setUniverseTab: (projectId: string, tab: UniverseTab) => void
+  /** aba escolhida DENTRO do mapa (rotas · plano mestre F6 · um plano), por
+   *  projeto. Mesmo motivo do de cima: o mapa de dois universos abertos ao
+   *  mesmo tempo não pode compartilhar a escolha. Id de plano que deixou de
+   *  existir cai em `rotas` na leitura (resolveMapTab). */
+  mapTabByProject: Record<string, string>
+  setMapTab: (projectId: string, tabId: string) => void
   // ——— FASE 3 (docs/FASE3_PLANO.md): o canvas de Panes mora numa
   // WebContentsView própria; host e view sincronizam por push do main ———
   /** HOST: rect da área da aba Panes por projeto (placeholder medido — vira o
@@ -1926,6 +1988,14 @@ interface SynkoraState {
   ) => Promise<void>
   /** veredito do card de plano: true = construir, false = revisar */
   answerGuiPlan: (projectId: string, paneId: string, approve: boolean) => Promise<void>
+  /** veredito da proposta de plano: true = criar o plano, false = devolver
+   *  para ajuste levando o que o dono escreveu (`note`). */
+  answerGuiPlanProposal: (
+    projectId: string,
+    paneId: string,
+    approve: boolean,
+    note?: string
+  ) => Promise<void>
   interruptGuiPane: (paneId: string) => Promise<void>
   /** pane fechado: encerra a sessão no main e descarta a conversa */
   dropGuiPane: (paneId: string) => void
@@ -2677,6 +2747,10 @@ export const useStore = create<SynkoraState>((set, get) => ({
   setUniverseTab: (projectId, tab) =>
     set((s) => ({ universeTabByProject: { ...s.universeTabByProject, [projectId]: tab } })),
 
+  mapTabByProject: {},
+  setMapTab: (projectId, tabId) =>
+    set((s) => ({ mapTabByProject: { ...s.mapTabByProject, [projectId]: tabId } })),
+
   // ——— Fase 3: sincronização host ↔ view de panes ———
   panesAnchorByProject: {},
   setPanesAnchor: (projectId, rect) =>
@@ -3294,6 +3368,46 @@ export const useStore = create<SynkoraState>((set, get) => ({
               prev,
               pending.requestId,
               'não deu para responder ao plano',
+              result.error,
+              Boolean(result.retryable)
+            )
+          }
+        }
+      })
+    }
+  },
+
+  answerGuiPlanProposal: async (_projectId, paneId, approve, note) => {
+    const before = get().guiPanes[paneId]
+    const pending = before?.planProposal
+    if (!before || !pending || before.interactionSubmitting) return
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      if (
+        !prev?.planProposal ||
+        prev.planProposal.requestId !== pending.requestId ||
+        prev.interactionSubmitting
+      )
+        return {}
+      return {
+        guiPanes: {
+          ...s.guiPanes,
+          [paneId]: { ...prev, interactionSubmitting: pending.requestId }
+        }
+      }
+    })
+    const result = await guiApi.answerPlanProposal(paneId, pending.requestId, approve, note)
+    if (!result.ok) {
+      set((s) => {
+        const prev = s.guiPanes[paneId]
+        if (!prev) return {}
+        return {
+          guiPanes: {
+            ...s.guiPanes,
+            [paneId]: guiInteractiveFailure(
+              prev,
+              pending.requestId,
+              'não deu para responder à proposta de plano',
               result.error,
               Boolean(result.retryable)
             )
