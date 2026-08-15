@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import Select from './Select'
 
-// Extraído do Board (F3.9): usado pelo modal de tarefa, pela política de
-// modelos das funções (página geral) e pelo modal de missão.
+// Extraído do Board (F3.9): usado pelo modal de tarefa, pelo modal de missão e
+// pela troca de conta da fase.
 export function ModelSelect({
   cli,
   seatId,
@@ -92,55 +92,5 @@ export function ModelSelect({
         }
       }}
     />
-  )
-}
-
-export function PolicyRow({
-  label,
-  slot,
-  onChange
-}: {
-  label: string
-  slot: { seatId: string; model: string } | undefined
-  onChange: (slot: { seatId: string; model: string }) => void
-}): React.JSX.Element {
-  const seats = useStore((s) => s.seats)
-  // Estado local evita corrida: alterar seat e modelo em sequência não pode
-  // sobrescrever um com o valor antigo do outro vindo do store.
-  const [seatId, setSeatId] = useState(slot?.seatId ?? '')
-  const [model, setModel] = useState(slot?.model ?? '')
-
-  useEffect(() => {
-    setSeatId(slot?.seatId ?? '')
-    setModel(slot?.model ?? '')
-  }, [slot?.seatId, slot?.model])
-
-  return (
-    <div className="policy-row">
-      <span className="policy-label">{label}</span>
-      <Select
-        value={seatId}
-        options={[
-          { value: '', label: '— seat —' },
-          ...seats.map((s) => ({ value: s.id, label: s.name, cli: s.cli }))
-        ]}
-        onChange={(v) => {
-          // Trocar de seat zera o modelo — a lista é do CLI do seat novo.
-          setSeatId(v)
-          setModel('')
-          onChange({ seatId: v, model: '' })
-        }}
-      />
-      <ModelSelect
-        cli={seats.find((s) => s.id === seatId)?.cli ?? 'claude'}
-        seatId={seatId || undefined}
-        value={model}
-        disabled={!seatId}
-        onChange={(m) => {
-          setModel(m)
-          onChange({ seatId, model: m })
-        }}
-      />
-    </div>
   )
 }

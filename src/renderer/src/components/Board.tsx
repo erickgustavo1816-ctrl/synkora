@@ -45,11 +45,12 @@ import { GuiRequestEpoch, withoutMissionGuiSlots } from '../guiRequestEpoch'
 import GuiSeatPick from './GuiSeatPick'
 import { missionShell } from '../missionShell'
 import { projectLanding } from '../projectLanding'
-// `planningGui` (projects:planningGuiSpec) NÃO é importado de propósito: o
-// convite de planejamento que nascia sozinho no ✦ geral MORREU (ordem do dono,
-// 2026-08-13 — "o universo começa vazio"). Planejar virou um TIPO de missão que
-// o dono cria, e o chat dela abre pelo `missions:guiSpec` como qualquer outra.
-// O canal antigo fica INTACTO no main e no preload, dormente.
+// O convite de planejamento que nascia sozinho no ✦ geral MORREU (ordem do
+// dono, 2026-08-13 — "o universo começa vazio"). Planejar virou um TIPO de
+// missão que o dono cria, e o chat dela abre pelo `missions:guiSpec` como
+// qualquer outra. O canal `projects:planningGuiSpec` fica INTACTO no main e no
+// preload, dormente e alcançável direto por `window.synkora.projects`; a ponte
+// de renderer que o embrulhava saiu por não ter mais nenhum importador.
 
 /** Uma conversa aberta de uma missão DIRETA (onda B). O papel não viaja na
  *  spec — é o Board que sabe por que pediu cada uma. */

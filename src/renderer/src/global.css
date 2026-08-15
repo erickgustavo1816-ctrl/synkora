@@ -4093,31 +4093,8 @@ select {
   color: hsl(var(--dept-hue, 21) 55% 38%);
 }
 
-/* ---------- política de modelos do departamento ---------- */
+/* ---------- escolha de modelo (ModelSelect) ---------- */
 
-.dept-policy {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  border-top: 1px dashed var(--line-strong);
-  padding-top: 10px;
-}
-
-.policy-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.policy-label {
-  font-size: 10.5px;
-  font-weight: 700;
-  color: var(--ink-2);
-}
-
-.policy-row select,
-.policy-row input,
 .model-select,
 .model-input {
   background: #fffdf6;
@@ -4134,18 +4111,10 @@ select {
 }
 
 /* labels de modelo vêm com descrição — limita a largura para a linha não quebrar */
-.policy-row .model-select {
-  max-width: 300px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .task-modal-exec .model-select {
   max-width: 320px;
 }
 
-.policy-row select:focus,
-.policy-row input:focus,
 .model-select:focus,
 .model-input:focus {
   border-color: var(--ink);
@@ -13023,7 +12992,6 @@ button.pd-mission.waiting:hover {
 .seat-form .sel,
 .task-modal-row .sel,
 .task-modal-exec .sel,
-.policy-row .sel,
 .quick-add-row .sel,
 .image-settings .sel,
 .mission-exec-row .sel,
@@ -13049,8 +13017,7 @@ button.pd-mission.waiting:hover {
    pintura antiga (fundo/borda/padding) não pode vazar para ele; largura/flex
    dos containers seguem valendo. O visual é todo do .sel-trigger. */
 .sel.model-select,
-.task-modal-exec .sel,
-.policy-row .sel {
+.task-modal-exec .sel {
   background: none;
   border: none;
   padding: 0;

@@ -1800,7 +1800,6 @@ interface SynkoraState {
   /** pane de tarefa pediu aprovação → card pulsa até o usuário interagir */
   taskAttention: Record<string, boolean>
   setTaskAttention: (taskId: string, paneId?: string) => void
-  clearTaskAttention: (taskId: string) => void
   /** aprovação pendente POR PANE — dev, ajudantes e gate dividem o mesmo taskId,
    *  então o aviso do card não serve para saber QUAL terminal está travado */
   paneAttention: Record<string, boolean>
@@ -2294,13 +2293,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
       taskAttention: { ...s.taskAttention, [taskId]: true },
       paneAttention: paneId ? { ...s.paneAttention, [paneId]: true } : s.paneAttention
     })),
-  clearTaskAttention: (taskId) =>
-    set((s) => {
-      if (!s.taskAttention[taskId]) return {}
-      const next = { ...s.taskAttention }
-      delete next[taskId]
-      return { taskAttention: next }
-    }),
   // Digitar responde à aprovação DAQUELE pane; o card só para de pulsar quando
   // nenhum outro pane da tarefa ainda está esperando (antes, digitar em qualquer
   // irmão apagava o aviso do pane realmente travado).
