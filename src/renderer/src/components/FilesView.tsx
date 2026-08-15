@@ -8,6 +8,7 @@ import type {
   TerminalMarkdownTarget
 } from '../../../preload/index'
 import FilePreviewPanel from './FilePreviewPanel'
+import Select, { type SelectOption } from './Select'
 import ActionFileTree from '../file-tree/FileTree'
 import type { FileTreeChange } from '../file-tree/fileTreeTypes'
 import { onMarkdownOpen, takeMarkdownOpen } from '../projectFileNavigation'
@@ -155,6 +156,42 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
     }
   }, [])
 
+  const selectedRootValue =
+    selectedRoot.kind === 'project' ? 'project' : selectedRoot.missionId
+
+  // Mesmo padrão do ModelSelect: a lista chega por IPC, então o valor já
+  // escolhido (missão vinda da prop) ganha uma opção provisória em vez de o
+  // gatilho cair no placeholder e parecer que a origem se perdeu.
+  const rootOptions = useMemo<SelectOption[]>(() => {
+    const options: SelectOption[] = [
+      { value: 'project', label: 'raiz do projeto', hint: 'repositório' }
+    ]
+    for (const mission of missionOptions) {
+      options.push({
+        value: mission.id,
+        label: mission.title,
+        hint: mission.branch ?? 'missão'
+      })
+    }
+    if (selectedRootValue !== 'project' && !options.some((o) => o.value === selectedRootValue)) {
+      options.push({
+        value: selectedRootValue,
+        label: 'worktree da missão',
+        hint: 'carregando…'
+      })
+    }
+    return options
+  }, [missionOptions, selectedRootValue])
+
+  const changeRoot = useCallback((value: string): void => {
+    setSelectedRoot(
+      value === 'project' ? { kind: 'project' } : { kind: 'mission', missionId: value }
+    )
+    setSelectedPath(null)
+    setTerminalDoc(null)
+    setPreview(null)
+  }, [])
+
   if (!bridgeOk) {
     return (
       <div className="ws-empty">
@@ -173,36 +210,21 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
           scope={scope}
           activePath={selectedPath}
           sourceControl={(
-            <label className="files-root-picker">
-              <span className="gui-sr-only">Origem dos arquivos</span>
-              <select
-                aria-label="Origem dos arquivos"
-                value={selectedRoot.kind === 'project' ? 'project' : selectedRoot.missionId}
-                onChange={(event) => {
-                  const value = event.currentTarget.value
-                  setSelectedRoot(
-                    value === 'project'
-                      ? { kind: 'project' }
-                      : { kind: 'mission', missionId: value }
-                  )
-                  setSelectedPath(null)
-                  setTerminalDoc(null)
-                  setPreview(null)
-                }}
-              >
-                <option value="project">Raiz do projeto</option>
-                {missionOptions.map((mission) => (
-                  <option key={mission.id} value={mission.id}>
-                    Missão · {mission.title}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <span className="files-root-picker">
+              <span className="files-root-picker-label">origem</span>
+              <Select
+                className="files-root-select"
+                tip="Origem dos arquivos"
+                value={selectedRootValue}
+                options={rootOptions}
+                onChange={changeRoot}
+              />
+            </span>
           )}
           sourceNotice={terminalDoc ? (
             <div className="files-terminal-source" data-tip={terminalDoc.path}>
               <span aria-hidden="true">↳</span>
-              <span>Aberto pelo terminal</span>
+              <span>aberto pelo terminal</span>
             </div>
           ) : null}
           onOpenFile={(entry: FileActionTreeEntry) => {

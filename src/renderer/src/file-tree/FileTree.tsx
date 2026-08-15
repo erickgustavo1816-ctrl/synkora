@@ -57,11 +57,39 @@ function rootNode(scope: FileActionScope): FileTreeNode {
   }
 }
 
-function TreeGlyph({ kind }: { kind: FileTreeNode['kind'] }): React.JSX.Element {
+/** Só o que muda o DESENHO do glifo. Nunca altera permissão nem ação. */
+type GlyphKind = 'directory' | 'directory-open' | 'blocked' | 'markdown' | 'code' | 'image' | 'file'
+
+const CODE_EXTENSIONS = new Set([
+  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'json', 'css', 'scss', 'html', 'py',
+  'rs', 'go', 'java', 'rb', 'php', 'sh', 'ps1', 'yml', 'yaml', 'toml', 'sql', 'c', 'h', 'cpp'
+])
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp', 'avif'])
+
+function glyphKindFor(node: FileTreeNode, expanded: boolean): GlyphKind {
+  if (node.kind === 'blocked') return 'blocked'
+  if (node.kind === 'directory') return expanded ? 'directory-open' : 'directory'
+  const extension = node.name.split('.').at(-1)?.toLowerCase() ?? ''
+  if (extension === 'md' || extension === 'mdx') return 'markdown'
+  if (IMAGE_EXTENSIONS.has(extension)) return 'image'
+  if (CODE_EXTENSIONS.has(extension)) return 'code'
+  return 'file'
+}
+
+/** Traço mono do app: sem emoji, sem preenchimento, sempre currentColor. */
+function TreeGlyph({ kind }: { kind: GlyphKind }): React.JSX.Element {
   if (kind === 'directory') {
     return (
       <svg viewBox="0 0 20 20" aria-hidden="true">
         <path d="M2.75 5.75h5l1.5 1.75h8v7.75h-14.5z" />
+      </svg>
+    )
+  }
+  if (kind === 'directory-open') {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M2.75 15.25v-9.5h5l1.5 1.75h6.25v2" />
+        <path d="M4.5 15.25 6.5 9.5h11l-2 5.75z" />
       </svg>
     )
   }
@@ -70,6 +98,33 @@ function TreeGlyph({ kind }: { kind: FileTreeNode['kind'] }): React.JSX.Element 
       <svg viewBox="0 0 20 20" aria-hidden="true">
         <path d="M5.25 2.75h6l3.5 3.5v11h-9.5z" />
         <path d="m7.25 12.75 5.5-5.5m-5.5 0 5.5 5.5" />
+      </svg>
+    )
+  }
+  if (kind === 'markdown') {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M5.25 2.75h6l3.5 3.5v11h-9.5z" />
+        <path d="M11.25 2.75v3.5h3.5" />
+        <path d="M7.5 10.5h5M7.5 13h3.25" />
+      </svg>
+    )
+  }
+  if (kind === 'code') {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M5.25 2.75h6l3.5 3.5v11h-9.5z" />
+        <path d="M11.25 2.75v3.5h3.5" />
+        <path d="m9.25 9.75-1.5 1.75 1.5 1.75m2-3.5 1.5 1.75-1.5 1.75" />
+      </svg>
+    )
+  }
+  if (kind === 'image') {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M5.25 2.75h6l3.5 3.5v11h-9.5z" />
+        <path d="M11.25 2.75v3.5h3.5" />
+        <path d="m7 14 2.5-3 1.75 2 1-1.25 1.5 2.25z" />
       </svg>
     )
   }
@@ -321,12 +376,11 @@ export default function FileTree({
     <section className="files-nav" aria-label="Árvore de arquivos">
       <header className="files-nav-header">
         <div className="files-nav-heading">
-          <span className="files-nav-heading-icon" aria-hidden="true">
-            <TreeGlyph kind="directory" />
-          </span>
-          <span className="files-nav-heading-copy">
-            <strong>Arquivos</strong>
-            <span>{loading ? 'Carregando…' : `${entries.length} ${entries.length === 1 ? 'item' : 'itens'}${truncated ? ' visíveis' : ''}`}</span>
+          <span className="files-nav-title">Arquivos</span>
+          <span className="files-nav-count">
+            {loading
+              ? 'lendo…'
+              : `${entries.length} ${entries.length === 1 ? 'item' : 'itens'}${truncated ? ' visíveis' : ''}`}
           </span>
         </div>
         <div className="files-nav-tools">
@@ -375,10 +429,13 @@ export default function FileTree({
           const isExpanded = isDirectory && expanded.has(node.path)
           const blocked = node.kind === 'blocked'
           const isActive = activePath === node.path
+          // Dotfolder/dotfile é infraestrutura: fica legível, mas nunca disputa
+          // a leitura com o código do produto.
+          const dotted = node.name.startsWith('.')
           return (
             <div
               key={node.path}
-              className={`files-nav-row${isActive ? ' active' : ''}${blocked ? ' blocked' : ''}`}
+              className={`files-nav-row${isActive ? ' active' : ''}${blocked ? ' blocked' : ''}${dotted ? ' dotted' : ''}`}
               data-kind={node.kind}
               style={{ '--file-depth': node.depth } as React.CSSProperties}
             >
@@ -451,7 +508,7 @@ export default function FileTree({
                   {isDirectory ? <Chevron expanded={isExpanded} /> : null}
                 </span>
                 <span className="files-nav-kind" aria-hidden="true">
-                  <TreeGlyph kind={node.kind} />
+                  <TreeGlyph kind={glyphKindFor(node, isExpanded)} />
                 </span>
                 <span className="files-nav-name">{node.name}</span>
               </button>
@@ -476,10 +533,10 @@ export default function FileTree({
 
         {!error && !loading && entries.length === 0 && (
           <div className="files-nav-empty">
-            <TreeGlyph kind="directory" />
-            <span>Esta pasta está vazia.</span>
+            <TreeGlyph kind="directory-open" />
+            <span>esta raiz está vazia — nada foi escrito aqui ainda</span>
             <button type="button" onClick={(event) => openMenu(root, event.currentTarget)}>
-              Criar o primeiro item
+              criar o primeiro item
             </button>
           </div>
         )}

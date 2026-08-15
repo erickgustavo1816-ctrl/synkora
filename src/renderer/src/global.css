@@ -9361,7 +9361,7 @@ body.pane-docking .pane-bar.draggable {
   outline: none;
 }
 
-/* ---------- aba Arquivos: lista + viewer de markdown ---------- */
+/* ---------- aba Arquivos: árvore + bancada de leitura ---------- */
 
 .files-view {
   flex: 1;
@@ -9371,27 +9371,8 @@ body.pane-docking .pane-bar.draggable {
   padding: 14px;
 }
 
-.files-list {
-  width: 280px;
-  flex-shrink: 0;
-  overflow-y: auto;
-  border: 1.5px solid var(--ink-3);
-  border-radius: 8px;
-  background: var(--paper-2);
-  padding: 10px;
-}
-
-.files-list-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.files-list-head .term-btn {
-  color: var(--ink-2);
-}
-
+/* `.files-title` e `.files-empty` são vocabulário COMPARTILHADO do tema papel
+   (a aba Versões também os usa) — ficam aqui como título/vazio genéricos. */
 .files-title {
   font-size: 11px;
   font-weight: 700;
@@ -9404,60 +9385,6 @@ body.pane-docking .pane-bar.draggable {
   font-size: 12px;
   color: var(--ink-3);
   padding: 8px 2px;
-}
-
-.files-group {
-  margin-bottom: 10px;
-}
-
-.files-group-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ink-3);
-  margin: 6px 2px 4px;
-}
-
-.files-item {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  font-family: inherit;
-  font-size: 12px;
-  text-align: left;
-  padding: 5px 8px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--ink);
-  cursor: pointer;
-}
-
-.files-item:hover {
-  border-color: var(--ink-3);
-}
-
-.files-item.active {
-  background: var(--ink);
-  color: var(--paper);
-}
-
-.files-item-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.files-item-when {
-  font-size: 10px;
-  color: var(--ink-3);
-  flex-shrink: 0;
-}
-
-.files-item.active .files-item-when {
-  color: var(--paper-2);
 }
 
 .files-reader {
@@ -9524,19 +9451,20 @@ body.pane-docking .pane-bar.draggable {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--paper-2);
+  background: var(--card);
 }
 
 .files-nav-header {
   flex: none;
-  min-height: 54px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 9px 10px 7px 12px;
+  padding: 11px 9px 9px 13px;
 }
 
+/* Título em caixa alta + contagem em chip: o mesmo par que titula o resto do
+   app. O ícone genérico de pasta saiu — tipografia basta e é mais do tema. */
 .files-nav-heading {
   min-width: 0;
   display: flex;
@@ -9544,46 +9472,27 @@ body.pane-docking .pane-bar.draggable {
   gap: 8px;
 }
 
-.files-nav-heading-icon {
-  width: 28px;
-  height: 28px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--line-strong);
-  border-radius: 5px;
-  background: var(--card);
-  color: var(--ink-2);
-}
-
-.files-nav-heading-icon svg {
-  width: 17px;
-  height: 17px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.35;
-}
-
-.files-nav-heading-copy {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.files-nav-heading-copy strong {
+.files-nav-title {
   color: var(--ink);
   font-size: 11px;
-  letter-spacing: 0.07em;
+  font-weight: 700;
+  letter-spacing: 0.11em;
   text-transform: uppercase;
 }
 
-.files-nav-heading-copy span {
+.files-nav-count {
+  min-width: 0;
   overflow: hidden;
-  color: var(--ink-3);
-  font-size: 9.5px;
+  flex: none;
+  padding: 2px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--paper-2);
+  color: var(--ink-2);
+  font-size: 9px;
+  letter-spacing: 0.06em;
   text-overflow: ellipsis;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -9638,15 +9547,18 @@ body.pane-docking .pane-bar.draggable {
 
 .files-nav-source {
   flex: none;
-  padding: 0 10px 9px;
-  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 11px 10px;
+  border-bottom: 1px solid var(--line-strong);
 }
 
 .files-nav-tree {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 7px;
+  padding: 7px 6px 10px;
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
@@ -9656,26 +9568,46 @@ body.pane-docking .pane-bar.draggable {
 }
 
 .files-nav-row {
+  --files-guide: color-mix(in srgb, var(--ink) 13%, transparent);
   width: 100%;
   min-width: 0;
-  min-height: 32px;
+  min-height: 27px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   align-items: center;
   border: 1px solid transparent;
   border-radius: 5px;
   color: var(--ink-2);
   transition: background-color 90ms ease, border-color 90ms ease, color 90ms ease;
-}
-
-.files-nav-row + .files-nav-row {
-  margin-top: 1px;
+  animation: files-row-in 140ms ease both;
 }
 
 .files-nav-row:hover {
   border-color: color-mix(in srgb, var(--ink-3) 48%, transparent);
-  background: color-mix(in srgb, var(--ink) 10%, var(--paper-2));
+  background: color-mix(in srgb, var(--ink) 8%, var(--card));
   color: var(--ink);
+}
+
+/* Infraestrutura (.claude, .synkora, .git…) recua um degrau de contraste: some
+   do caminho da leitura sem sumir da árvore. */
+.files-nav-row.dotted {
+  color: var(--ink-3);
+}
+
+.files-nav-row.dotted:hover {
+  color: var(--ink-2);
+}
+
+@keyframes files-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .files-nav-row:has(.files-nav-item:focus-visible),
@@ -9687,30 +9619,60 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink);
 }
 
+/* Seleção = linha invertida em tinta (o mesmo gesto do resto do app). O acento
+   entra só como marca lateral: forte o bastante para achar a linha de longe,
+   discreto o bastante para não virar decoração. */
 .files-nav-row.active {
+  --files-guide: color-mix(in srgb, var(--paper) 22%, transparent);
+  position: relative;
   border-color: var(--ink);
   background: var(--ink);
   color: var(--paper);
+}
+
+.files-nav-row.active::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: -1px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
 }
 
 .files-nav-row.active:hover {
   background: color-mix(in srgb, var(--ink) 90%, var(--paper));
 }
 
+.files-nav-row.active.dotted {
+  color: color-mix(in srgb, var(--paper) 78%, var(--ink));
+}
+
 .files-nav-row.blocked {
   color: var(--ink-3);
 }
 
+/* Guias de indentação: uma hairline por nível de ancestral, desenhada como
+   fundo do próprio botão (zero DOM extra) exatamente sob cada degrau. */
 .files-nav-item {
   min-width: 0;
-  height: 30px;
+  height: 25px;
   display: grid;
-  grid-template-columns: 14px 17px minmax(0, 1fr);
+  grid-template-columns: 13px 16px minmax(0, 1fr);
   align-items: center;
   gap: 5px;
   padding: 0 3px 0 calc(5px + (var(--file-depth, 1) - 1) * 14px);
   border: 0;
-  background: transparent;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--files-guide) 0 1px,
+    transparent 1px 14px
+  );
+  background-position: 6px 0;
+  background-repeat: no-repeat;
+  background-size: calc((var(--file-depth, 1) - 1) * 14px) 100%;
+  background-color: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
@@ -9757,18 +9719,33 @@ body.pane-docking .pane-bar.draggable {
   color: var(--paper-2);
 }
 
+/* Pasta pesa mais que arquivo: a hierarquia se lê antes do nome. */
+.files-nav-row[data-kind='directory'] .files-nav-kind {
+  color: var(--ink-2);
+}
+
+.files-nav-row.dotted .files-nav-kind,
+.files-nav-row.dotted .files-nav-chevron {
+  opacity: 0.72;
+}
+
 .files-nav-name {
   min-width: 0;
   overflow: hidden;
   font-size: 11.5px;
-  font-weight: 600;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.files-nav-row[data-kind='directory'] .files-nav-name {
+  font-weight: 700;
+}
+
 .files-nav-actions {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -9813,18 +9790,21 @@ body.pane-docking .pane-bar.draggable {
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 8px;
-  padding: 20px;
+  gap: 9px;
+  padding: 22px 18px;
   color: var(--ink-3);
   font-size: 11px;
+  line-height: 1.5;
   text-align: center;
 }
 
 .files-nav-empty > svg {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   fill: none;
   stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   stroke-width: 1.25;
 }
 
@@ -10081,20 +10061,6 @@ body.pane-docking .pane-bar.draggable {
   .files-view {
     gap: 9px;
     padding: 9px;
-  }
-
-  .files-list {
-    width: 238px;
-  }
-
-  .file-tree-hint {
-    display: none;
-  }
-}
-
-@media (hover: none), (pointer: coarse) {
-  .file-tree-actions {
-    opacity: 1;
   }
 }
 
@@ -10557,10 +10523,13 @@ body.pane-docking .pane-bar.draggable {
 
 /* ---------- P25: árvore e prévia de arquivos, somente leitura ---------- */
 
+/* A aba é uma BANCADA: mesa em papel-2 e duas peças de papel com borda de
+   tinta — a árvore (fichário) e o leitor (folha). O edge-to-edge anterior era
+   a cara de um clone de IDE, não do app. */
 .files-view-tree {
-  gap: 0;
-  padding: 0;
-  background: var(--paper);
+  gap: 12px;
+  padding: 12px;
+  background: var(--paper-2);
 }
 
 .files-tree-pane {
@@ -10570,34 +10539,36 @@ body.pane-docking .pane-bar.draggable {
   flex: none;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--line-strong);
-  background: var(--paper-2);
+  border: 1.5px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--card);
 }
 
 .files-root-picker {
-  display: block;
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin: 0;
 }
 
-.files-root-picker select {
-  width: 100%;
-  min-width: 0;
-  height: 32px;
-  border: 1px solid var(--line-strong);
-  border-radius: 5px;
-  background: var(--card);
-  color: var(--ink);
-  font-family: inherit;
-  font-size: 10.5px;
-  font-weight: 600;
-  padding: 0 30px 0 9px;
-  cursor: pointer;
+.files-root-picker-label {
+  flex: none;
+  color: var(--ink-3);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
 }
 
-.files-root-picker select:focus-visible {
-  border-color: var(--accent);
-  outline: 1px solid var(--accent);
-  outline-offset: 1px;
+.files-root-picker .files-root-select {
+  min-width: 0;
+  flex: 1;
+}
+
+.files-root-picker .sel-trigger {
+  width: 100%;
+  height: 29px;
 }
 
 .files-terminal-source {
@@ -10607,113 +10578,38 @@ body.pane-docking .pane-bar.draggable {
   flex: none;
   min-width: 0;
   margin: 0;
-  padding: 6px 10px;
+  padding: 6px 11px;
   border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--ink-2);
   font-size: 10px;
 }
 
-.files-tree-notice {
-  flex: none;
-  margin: 0 0 7px;
-  padding: 6px 7px;
-  border-left: 2px solid var(--accent);
-  color: var(--ink-2);
-  font-size: 10px;
-  line-height: 1.35;
+.files-terminal-source > span:first-child {
+  color: var(--accent-deep);
 }
 
-.file-tree {
-  min-height: 0;
-  flex: 1;
-  overflow: auto;
-  overscroll-behavior: contain;
-}
-
-.file-tree-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  min-height: 28px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--ink);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 11px;
-  text-align: left;
-}
-
-.file-tree-row:hover {
-  border-color: var(--line-strong);
-  background: rgba(232, 225, 208, 0.55);
-}
-
-.file-tree-row:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
-  outline-offset: -1px;
-}
-
-.file-tree-row.is-selected {
-  border-color: var(--ink);
-  background: var(--ink);
-  color: var(--paper);
-}
-
-.file-tree-row.is-directory {
-  color: var(--ink-2);
-  font-weight: 700;
-}
-
-.file-tree-glyph {
-  width: 22px;
-  flex: none;
-  color: var(--ink-3);
-  font-family: var(--mono);
-  font-size: 10px;
-  text-align: center;
-}
-
-.file-tree-row.is-selected .file-tree-glyph,
-.file-tree-row.is-selected .file-tree-size {
-  color: var(--paper-2);
-}
-
-.file-tree-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-tree-size {
-  margin-left: auto;
-  flex: none;
-  color: var(--ink-3);
-  font-size: 9px;
-}
-
-.file-tree-empty {
-  padding: 12px 3px;
-  color: var(--ink-3);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
+/* A FOLHA: mesma peça de papel da árvore, com o cabeçalho fazendo o papel de
+   "capa do documento" (nome + trilha + quando + selo de leitura). */
 .file-preview-panel {
   min-width: 0;
-  border: 0;
-  border-radius: 0;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 9px;
   background: var(--paper);
 }
 
 .file-preview-head {
-  min-height: 54px;
-  padding: 7px 14px 7px 16px;
-  border-bottom: 1px solid var(--line-strong);
-  background: var(--paper);
+  min-height: 48px;
+  padding: 8px 11px 8px 15px;
+  border-bottom: 1.5px solid var(--line-strong);
+  background: var(--card);
+}
+
+.files-reader-meta {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
 }
 
 .file-preview-badge {
@@ -10721,15 +10617,17 @@ body.pane-docking .pane-bar.draggable {
   padding: 3px 6px;
   border: 1px solid var(--line-strong);
   border-radius: 4px;
+  background: var(--paper-2);
   color: var(--ink-2);
   font-size: 9px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .files-reader-path {
   display: grid;
-  gap: 2px;
+  gap: 1px;
 }
 
 .files-reader-path strong {
@@ -10756,20 +10654,17 @@ body.pane-docking .pane-bar.draggable {
   font-size: 10px;
 }
 
-.file-preview-readonly,
 .file-preview-status-detail {
   color: var(--ink-3);
   font-size: 10px;
 }
 
-.file-preview-empty,
 .file-preview-status {
   gap: 9px;
   padding: 20px;
   text-align: center;
 }
 
-.file-preview-empty .files-placeholder-icon,
 .file-preview-status .files-placeholder-icon {
   width: 38px;
   height: 38px;
@@ -10782,32 +10677,108 @@ body.pane-docking .pane-bar.draggable {
   font-size: 18px;
 }
 
-.file-preview-empty .files-placeholder-icon svg {
-  width: 21px;
-  height: 21px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.35;
-}
-
-.file-preview-empty p,
 .file-preview-status p {
   max-width: 360px;
   margin: 0;
   line-height: 1.45;
 }
 
+/* ---------- bancada vazia ----------
+   Em vez de um ícone genérico num vazio: uma FOLHA pautada esperando, a voz
+   do app e o atalho que já existe na árvore. */
+.files-reader-blank {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 26px;
+  text-align: center;
+}
+
+/* Uma PÁGINA esperando: título curto e três linhas de texto, a última mais
+   curta. Réguas de ponta a ponta faziam o desenho ler como planilha. */
+.files-reader-blank-sheet {
+  width: 52px;
+  height: 66px;
+  margin-bottom: 4px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: 3px;
+  background-image:
+    linear-gradient(var(--line-strong) 0 0),
+    linear-gradient(var(--line) 0 0),
+    linear-gradient(var(--line) 0 0),
+    linear-gradient(var(--line) 0 0);
+  background-position: 9px 13px, 9px 27px, 9px 37px, 9px 47px;
+  background-repeat: no-repeat;
+  background-size: 21px 3px, 32px 1px, 32px 1px, 22px 1px;
+}
+
+.files-reader-blank-title {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.files-reader-blank-hint {
+  max-width: 46ch;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* A regra da casa fica um degrau abaixo da instrução: informa sem competir. */
+.files-reader-blank-rule {
+  max-width: 54ch;
+  margin: -3px 0 0;
+  color: var(--ink-3);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.files-reader-blank-keys {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  color: var(--ink-3);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.files-reader-blank-keys kbd {
+  min-width: 17px;
+  padding: 1px 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--paper-2);
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: 9.5px;
+}
+
+.files-reader-blank-keys i {
+  font-style: normal;
+  opacity: 0.6;
+}
+
+/* ---------- listagem em PAPEL ----------
+   O painel escuro é EXCLUSIVO do TerminalPane (regra do palco 2.0): o leitor é
+   folha. A calha de números fica grudada na esquerda no scroll horizontal. */
 .file-code,
 .file-text {
   min-width: 0;
   flex: 1;
   margin: 0;
   overflow: auto;
-  padding: 20px 24px 38px;
-  background: var(--panel);
-  color: var(--panel-ink);
+  background: var(--paper);
+  color: var(--ink);
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.65;
@@ -10815,26 +10786,71 @@ body.pane-docking .pane-bar.draggable {
   white-space: pre;
 }
 
+.file-text {
+  padding: 18px 22px 34px;
+}
+
+.file-code-scroll {
+  min-width: 100%;
+  width: max-content;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.file-code-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 18px 9px 34px;
+  border-right: 1px solid var(--line);
+  background: var(--paper-2);
+  color: var(--ink-3);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+.file-code-body {
+  min-width: 0;
+  margin: 0;
+  padding: 18px 22px 34px;
+  font: inherit;
+}
+
 .file-code code {
   font: inherit;
 }
 
 .file-code-token.comment {
-  color: #9ca795;
+  color: var(--ink-3);
 }
 
+/* Matizes reancorados no papel quente (os antigos eram do painel escuro e
+   apagavam sobre `--paper`): âmbar do carimbo, azul da função back, ameixa. */
 .file-code-token.string {
-  color: #e1b37b;
+  color: #8a5320;
 }
 
 .file-code-token.keyword {
-  color: #9bc4e7;
+  color: #2f5486;
   font-weight: 700;
 }
 
 .file-code-token.number,
 .file-code-token.literal {
-  color: #d7a8d9;
+  color: #7c3f6e;
+}
+
+/* O RENDERER do markdown é o `.md-view` compartilhado e não se mexe aqui — o
+   que muda é a MOLDURA: medida de leitura confortável, centrada na folha. */
+.file-markdown {
+  width: 100%;
+  max-width: 78ch;
+  margin: 0 auto;
+  padding: 24px 30px 44px;
 }
 
 .file-image-preview {
@@ -10859,14 +10875,14 @@ body.pane-docking .pane-bar.draggable {
 @media (max-width: 760px) {
   .files-view-tree {
     flex-direction: column;
+    gap: 9px;
+    padding: 9px;
   }
 
   .files-tree-pane {
     width: auto;
     min-height: 190px;
     max-height: 42%;
-    border-right: 0;
-    border-bottom: 1px solid var(--line-strong);
   }
 
   .file-preview-panel {
@@ -10875,6 +10891,10 @@ body.pane-docking .pane-bar.draggable {
 
   .file-preview-badge {
     display: none;
+  }
+
+  .file-markdown {
+    padding: 18px 18px 34px;
   }
 }
 
@@ -10887,6 +10907,7 @@ body.pane-docking .pane-bar.draggable {
 @media (prefers-reduced-motion: reduce) {
   .files-nav-row {
     transition: none;
+    animation: none;
   }
 }
 

@@ -87,3 +87,76 @@ test('navegador novo tem uma única hierarquia e estados visuais de linha inteir
   assert.match(css, /\.files-nav-row:has\(\.files-nav-item:focus-visible\)/u)
   assert.match(css, /\.file-context-item:hover,[\s\S]*?background:\s*var\(--ink\)/u)
 })
+
+test('a origem é o Select do app — nenhum <select> nativo na aba', async () => {
+  const view = await readFile(
+    new URL('../src/renderer/src/components/FilesView.tsx', import.meta.url),
+    'utf8'
+  )
+
+  assert.equal(
+    /<select[\s>]/u.test(view),
+    false,
+    'o tema não admite <select> nativo: components/Select.tsx é o único picker'
+  )
+  assert.match(view, /import Select(?:,\s*\{[^}]*\})?\s*from '\.\/Select'/u)
+  assert.match(view, /<Select[\s\S]{0,240}className="files-root-select"/u)
+  assert.match(view, /tip="Origem dos arquivos"/u, 'o gatilho precisa de nome acessível')
+})
+
+test('a bancada de leitura é PAPEL e continua declarando somente leitura', async () => {
+  const [preview, css] = await Promise.all([
+    readFile(new URL('../src/renderer/src/components/FilePreviewPanel.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+  ])
+
+  // O painel escuro (--panel) é EXCLUSIVO do TerminalPane: leitor é folha.
+  const listing = css.match(/\.file-code,\s*\.file-text\s*\{(?<body>[\s\S]*?)\}/u)?.groups?.body ?? ''
+  assert.match(listing, /background:\s*var\(--paper\)/u)
+  assert.equal(
+    /var\(--panel/u.test(listing),
+    false,
+    'o painel escuro é exclusivo do TerminalPane'
+  )
+
+  // A promessa somente-leitura é visível no cabeçalho e o vazio tem voz própria.
+  assert.match(preview, /file-preview-badge">somente leitura</u)
+  assert.match(preview, /files-reader-blank-title/u)
+  assert.match(preview, /files-reader-blank-hint/u)
+  assert.match(css, /\.files-reader-blank-sheet\s*\{/u)
+})
+
+test('árvore densa: guias de indentação, dotfile discreto e movimento opcional', async () => {
+  const [tree, css] = await Promise.all([
+    readFile(new URL('../src/renderer/src/file-tree/FileTree.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+  ])
+
+  assert.match(tree, /dotted\s*=\s*node\.name\.startsWith\('\.'\)/u)
+  assert.match(css, /\.files-nav-row\.dotted\s*\{/u)
+
+  const item = css.match(/\.files-nav-item\s*\{(?<body>[\s\S]*?)\}/u)?.groups?.body ?? ''
+  assert.match(item, /repeating-linear-gradient/u, 'guias de indentação por nível')
+  assert.match(item, /var\(--file-depth/u)
+
+  const reduced = css
+    .match(/@media \(prefers-reduced-motion: reduce\) \{\s*\.files-nav-row \{(?<body>[\s\S]*?)\}/u)
+    ?.groups?.body ?? ''
+  assert.match(reduced, /animation:\s*none/u, 'a entrada das linhas respeita reduced-motion')
+})
+
+test('o visual anterior não sobrevive como CSS morto', async () => {
+  const css = await readFile(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  for (const dead of [
+    '.files-list',
+    '.files-group',
+    '.files-item',
+    '.file-tree-row',
+    '.file-tree-glyph',
+    '.files-root-picker select',
+    '.files-nav-heading-icon'
+  ]) {
+    assert.equal(css.includes(dead), false, `CSS morto ainda presente: ${dead}`)
+  }
+})

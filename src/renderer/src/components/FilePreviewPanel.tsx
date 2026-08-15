@@ -68,32 +68,52 @@ function highlightCode(source: string): CodeToken[] {
   return tokens
 }
 
+/**
+ * Listagem impressa em papel, não terminal: o painel escuro é EXCLUSIVO do
+ * TerminalPane (regra do palco 2.0). A calha de números fica grudada à
+ * esquerda no scroll horizontal para o código nunca perder a referência.
+ */
 function CodeContent({ content, path }: { content: string; path: string }): React.JSX.Element {
   const tokens = useMemo(() => highlightCode(content), [content])
+  const lineNumbers = useMemo(
+    () => Array.from({ length: content.split('\n').length }, (_, index) => index + 1).join('\n'),
+    [content]
+  )
   return (
-    <pre className="file-code" data-language={languageFor(path)}>
-      <code>
-        {tokens.map((token, index) => (
-          <span key={`${index}-${token.kind}`} className={`file-code-token ${token.kind}`}>
-            {token.value}
-          </span>
-        ))}
-      </code>
-    </pre>
+    <div className="file-code" data-language={languageFor(path)}>
+      <div className="file-code-scroll">
+        <pre className="file-code-gutter" aria-hidden="true">{lineNumbers}</pre>
+        <pre className="file-code-body">
+          <code>
+            {tokens.map((token, index) => (
+              <span key={`${index}-${token.kind}`} className={`file-code-token ${token.kind}`}>
+                {token.value}
+              </span>
+            ))}
+          </code>
+        </pre>
+      </div>
+    </div>
   )
 }
 
 function EmptyPreview(): React.JSX.Element {
   return (
-    <div className="files-placeholder file-preview-empty">
-      <span className="files-placeholder-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24">
-          <path d="M6.5 3.5h7l4 4v13h-11z" />
-          <path d="M13.5 3.5v4h4M9 12h6M9 15.5h4.5" />
-        </svg>
+    <div className="files-reader-blank">
+      <span className="files-reader-blank-sheet" aria-hidden="true" />
+      <p className="files-reader-blank-title">nada aberto ainda</p>
+      <p className="files-reader-blank-hint">escolha um arquivo na árvore ao lado.</p>
+      <p className="files-reader-blank-rule">
+        aqui só se lê — quem escreve o repo é a missão.
+      </p>
+      <span className="files-reader-blank-keys">
+        <kbd>↑</kbd>
+        <kbd>↓</kbd>
+        <span>navega</span>
+        <i aria-hidden="true">·</i>
+        <kbd>enter</kbd>
+        <span>abre</span>
       </span>
-      <p>selecione um arquivo para ler aqui</p>
-      <span className="file-preview-readonly">somente leitura · nada é salvo</span>
     </div>
   )
 }
@@ -128,25 +148,27 @@ export default function FilePreviewPanel({ path, preview, loading, onReload }: P
           <header className="files-reader-head file-preview-head">
             <span className="files-reader-path" data-tip={path}>
               <strong>{fileName}</strong>
-              {parentPath && <span>{parentPath}</span>}
+              {parentPath && <span>{parentPath}/</span>}
             </span>
-            {preview?.ok === true && (
-              <span className="files-reader-when">
-                {formatSize(preview.size)} · {formatWhen(preview.mtime)}
-              </span>
-            )}
-            <span className="file-preview-badge">Leitura</span>
-            <button
-              type="button"
-              className="file-preview-reload"
-              data-tip="Recarregar esta prévia"
-              aria-label="Recarregar esta prévia"
-              onClick={onReload}
-            >
-              <svg viewBox="0 0 18 18" aria-hidden="true">
-                <path d="M14.25 6.25V2.9m0 0H10.9m3.35 0-2.1 2.1a5.6 5.6 0 1 0 1.15 6.05" />
-              </svg>
-            </button>
+            <span className="files-reader-meta">
+              {preview?.ok === true && (
+                <span className="files-reader-when">
+                  {formatSize(preview.size)} · {formatWhen(preview.mtime)}
+                </span>
+              )}
+              <span className="file-preview-badge">somente leitura</span>
+              <button
+                type="button"
+                className="file-preview-reload"
+                data-tip="Recarregar esta prévia"
+                aria-label="Recarregar esta prévia"
+                onClick={onReload}
+              >
+                <svg viewBox="0 0 18 18" aria-hidden="true">
+                  <path d="M14.25 6.25V2.9m0 0H10.9m3.35 0-2.1 2.1a5.6 5.6 0 1 0 1.15 6.05" />
+                </svg>
+              </button>
+            </span>
           </header>
           {loading ? (
             <div className="files-placeholder"><p>carregando prévia…</p></div>
