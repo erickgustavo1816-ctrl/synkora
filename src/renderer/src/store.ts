@@ -18,6 +18,7 @@ import type {
 } from '../../preload/index'
 import { applyDeptHueVars, DEPT_HUES_LS_KEY, loadDeptHues } from './departments'
 import { transitionGuiStartedAt } from './guiActivity'
+import { claimGuiItemId, guiItemId } from './guiItemIdentity'
 import {
   countGuiOutputLines,
   denyLatestPendingGuiTool,
@@ -832,11 +833,10 @@ const GUI_ITEM_CAP = 400
  *  o começo e o resto não fica na memória do renderer. */
 const GUI_TOOL_RESULT_CAP = 4000
 
-let guiItemSeq = 0
-function guiItemId(): string {
-  guiItemSeq += 1
-  return `g${guiItemSeq}`
-}
+// A identidade dos itens do fio mora em `guiItemIdentity.ts`: ela precisa
+// sobreviver ao boot do renderer, porque o transcript persistido devolve ids da
+// geração anterior na hidratação. Contador puro de processo re-cunhava esses
+// mesmos ids e duplicava a bolha do dono depois de reabrir o app.
 
 /** A poda nunca pode evictar o card de um subagente ainda VIVO: sem o pai, a
  *  lateral perde a ficha e os filhos vazam para a conversa. Ele é limitado por
@@ -3087,7 +3087,11 @@ export const useStore = create<SynkoraState>((set, get) => ({
     // O composer pode receber texto enquanto abre, mas o transporte só existe
     // depois do `ready`. Enviar antes dele criava um falso "pane morto".
     if (!before || !canSendGuiMessage(before.status, before.ready)) return false
-    const userItemId = messageId ?? guiItemId()
+    // O id do bilhete da fila sobrevive ao restart no localStorage (e pode ter
+    // sido gravado por uma versão antiga do app). Ele só vale quando ainda está
+    // livre no fio hidratado: repetido, viraria chave duplicada aqui e id já
+    // entregue no main — que responderia ok e engoliria a mensagem.
+    const userItemId = claimGuiItemId(messageId, before.items)
     const batchId =
       before.sendBatch?.eventRevision === before.eventRevision
         ? before.sendBatch.id

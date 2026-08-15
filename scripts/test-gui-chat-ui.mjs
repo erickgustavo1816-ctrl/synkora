@@ -166,6 +166,81 @@ const tool = (id, name = 'Read', summary = `${id}.ts`) => ({
 
 const note = (id, text = 'marco') => ({ id, kind: 'note', text, at: 1 })
 
+// REGRESSÃO 2026-08-15 — "saí do app e voltei, e minha mensagem duplicou".
+// O id do item é a chave do React na lista do fio e o messageId do gui:send.
+// Cunhado por contador de PROCESSO, ele voltava a zero em todo boot do renderer
+// enquanto o transcript persistido continuava guardando os ids da geração
+// anterior: a hidratação re-cunhava as MESMAS chaves para itens de assistente/
+// ferramenta e a bolha do dono era desenhada duas vezes. Cada import com query
+// distinta é uma instância nova do módulo — dois boots do renderer.
+test('id de item do chat não se repete entre boots do renderer', async () => {
+  const boot1 = await import('../src/renderer/src/guiItemIdentity.ts?boot=1')
+  const boot2 = await import('../src/renderer/src/guiItemIdentity.ts?boot=2')
+
+  const fromBoot1 = [boot1.guiItemId(), boot1.guiItemId(), boot1.guiItemId()]
+  const fromBoot2 = [boot2.guiItemId(), boot2.guiItemId(), boot2.guiItemId()]
+
+  assert.equal(new Set(fromBoot1).size, 3, 'dentro do mesmo boot os ids são únicos')
+  assert.equal(
+    new Set([...fromBoot1, ...fromBoot2]).size,
+    6,
+    'boot novo NUNCA pode re-cunhar um id que a fotografia persistida ainda guarda'
+  )
+  assert.notEqual(
+    boot1.createGuiBootToken(),
+    boot2.createGuiBootToken(),
+    'cada geração do renderer tem marca própria (vale também para as duas views)'
+  )
+
+  // O mesmo id atravessa o IPC como messageId: fora da régua do main, o envio
+  // seria recusado e o `user-message` sumiria do disco na hidratação.
+  for (const id of [...fromBoot1, ...fromBoot2]) {
+    assert.ok(boot1.isGuiItemId(id), `id fora da régua de messageId: ${id}`)
+    assert.ok(id.length <= 128)
+  }
+
+  // Ids do formato legado (contador puro) continuam no disco do dono: nenhuma
+  // geração nova pode colidir com eles.
+  const legado = ['g1', 'g17', 'g132', 'g276']
+  for (const id of [...fromBoot1, ...fromBoot2]) {
+    assert.equal(legado.includes(id), false, `id novo colidiu com o legado: ${id}`)
+  }
+})
+
+test('id vindo de fora da geração só é aceito quando está livre no fio', async () => {
+  const { claimGuiItemId, guiItemId, isGuiItemId } = await import(
+    '../src/renderer/src/guiItemIdentity.ts?claim=1'
+  )
+  const hidratado = [
+    { id: 'g132', kind: 'user', text: 'De novo.', at: 1 },
+    { id: 'g133', kind: 'assistant', text: 'Pronto', at: 1 }
+  ]
+
+  assert.equal(
+    claimGuiItemId('g900', hidratado),
+    'g900',
+    'bilhete da fila com id livre mantém a identidade durável da entrega'
+  )
+
+  // O bilhete da fila sobrevive ao restart no localStorage e pode ter sido
+  // gravado pelo formato antigo: repetido, viraria chave duplicada aqui e id já
+  // entregue no main, que responderia ok e engoliria a mensagem.
+  const substituto = claimGuiItemId('g132', hidratado)
+  assert.notEqual(substituto, 'g132')
+  assert.ok(isGuiItemId(substituto))
+  assert.equal(
+    hidratado.some((item) => item.id === substituto),
+    false,
+    'o id de substituição precisa estar livre no fio'
+  )
+
+  for (const torto of [undefined, '', 'id com espaço', 'a'.repeat(129), 42]) {
+    const minted = claimGuiItemId(torto, hidratado)
+    assert.ok(isGuiItemId(minted), `id inválido precisa cair num id novo: ${String(torto)}`)
+  }
+  assert.ok(isGuiItemId(guiItemId()))
+})
+
 test('chat reconhece arquivos sem capturar HTTPS, versao ou email', () => {
   const text =
     'Veja src/main/app.ts, foo.ts e README. Versão 2.0; me@example.com; https://example.com/docs/site.ts.'

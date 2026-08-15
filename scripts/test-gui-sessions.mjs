@@ -2510,6 +2510,149 @@ test('histórico visual persiste no fechamento e reabre sem duplicar eventos', (
   )
 })
 
+// REGRESSÃO 2026-08-15 (relato do dono: "saí do app e voltei, e minha mensagem
+// duplicou"). O id do item do chat é a chave do React na lista E o messageId do
+// gui:send. Ele era cunhado por um contador de PROCESSO no renderer, que voltava
+// a zero em todo boot: a hidratação re-cunhava ids que o transcript persistido
+// ainda guardava. Este round-trip usa o cunhador REAL do renderer nos dois lados
+// do restart — ele é a fronteira que a fotografia atravessa.
+test('round-trip de persistência: a mensagem do dono aparece exatamente uma vez após reabrir o app', async (t) => {
+  for (const cli of ['claude', 'codex']) {
+    // Cada import com query própria é uma INSTÂNCIA nova do cunhador — é assim
+    // que se reproduz o boot do renderer, que era exatamente o que zerava a
+    // sequência e fazia a geração nova repetir os ids da fotografia.
+    const bootA = await import(`../src/renderer/src/guiItemIdentity.ts?pane=${cli}-a`)
+    const bootB = await import(`../src/renderer/src/guiItemIdentity.ts?pane=${cli}-b`)
+    const root = mkdtempSync(join(tmpdir(), `synkora-gui-dupe-${cli}-`))
+    t.after(() => rmSync(root, { recursive: true, force: true }))
+    const storeFile = join(root, 'gui-sessions.json')
+    const spawn = {
+      paneId: `gui-dev-dupe-${cli}`,
+      projectId: 'proj-dupe',
+      cli,
+      configDir: 'c',
+      cwd: '/tmp'
+    }
+
+    // ————— boot 1: o dono manda a mensagem —————
+    let emit
+    const first = new GuiSessionRegistry({
+      push: () => undefined,
+      systemPromptFile: () => undefined,
+      storeFile
+    })
+    first.spawnSession = (_input, sink) => {
+      emit = sink
+      return {
+        alive: true,
+        turnActive: false,
+        waitCaps: async () => ({ commands: [], models: [] }),
+        send: () => undefined,
+        kill: () => undefined
+      }
+    }
+    assert.equal(first.create(spawn).ok, true)
+    emit({
+      type: 'init',
+      model: cli,
+      sessionId: 'sess-dupe',
+      permissionMode: 'default',
+      toolCount: 0,
+      contextWindow: 200_000
+    })
+    emit({ type: 'ready', caps: { commands: [], models: [] } })
+
+    const firstBootId = bootA.guiItemId()
+    assert.equal(
+      guiMessageIdProblem(firstBootId),
+      null,
+      'o id cunhado no renderer precisa passar na régua de messageId do main'
+    )
+    assert.equal(first.send(spawn.paneId, 'De novo.', firstBootId).ok, true)
+    emit({ type: 'delta', text: 'Pronto' })
+    emit({ type: 'text', text: 'Pronto' })
+    emit({ type: 'result', isError: false, outcome: 'completed' })
+    assert.equal(first.kill(spawn.paneId).ok, true)
+
+    // ————— boot 2: processo novo lê a fotografia do disco —————
+    const second = new GuiSessionRegistry({
+      push: () => undefined,
+      systemPromptFile: () => undefined,
+      storeFile
+    })
+    const delivered = []
+    second.spawnSession = (_input, sink) => {
+      sink({
+        type: 'init',
+        model: cli,
+        sessionId: 'sess-dupe',
+        permissionMode: 'default',
+        toolCount: 0,
+        contextWindow: 200_000
+      })
+      sink({ type: 'ready', caps: { commands: [], models: [] } })
+      return {
+        alive: true,
+        turnActive: false,
+        waitCaps: async () => ({ commands: [], models: [] }),
+        send: (prompt) => delivered.push(prompt),
+        kill: () => undefined
+      }
+    }
+    assert.equal(
+      second.create({ ...spawn, resumeSessionId: second.remembered(spawn.paneId).sessionId }).ok,
+      true
+    )
+
+    const hydrated = second.state(spawn.paneId)
+    const owner = hydrated.events.filter(({ evt }) => evt.type === 'user-message')
+    assert.equal(
+      owner.length,
+      1,
+      `[${cli}] a fala do dono não pode voltar duplicada da fotografia`
+    )
+    assert.equal(owner[0].evt.text, 'De novo.')
+
+    // O id da geração NOVA nunca pode coincidir com o da geração persistida:
+    // repetido, ele viraria chave duplicada no React e cairia no messageIds
+    // restaurado — o main responderia ok e engoliria a mensagem em silêncio.
+    const secondBootId = bootB.guiItemId()
+    assert.notEqual(
+      secondBootId,
+      firstBootId,
+      `[${cli}] boot novo não pode re-cunhar o id que a fotografia ainda guarda`
+    )
+    const persistedIds = new Set(owner.map(({ evt }) => evt.id))
+    assert.equal(
+      persistedIds.has(secondBootId),
+      false,
+      `[${cli}] id novo colidindo com o transcript hidratado engole a mensagem seguinte`
+    )
+
+    assert.equal(second.send(spawn.paneId, 'Segunda pergunta', secondBootId).ok, true)
+    assert.deepEqual(
+      delivered,
+      ['Segunda pergunta'],
+      `[${cli}] a mensagem enviada depois do restart precisa CHEGAR no CLI`
+    )
+    const afterSecond = second.state(spawn.paneId)
+    assert.equal(
+      afterSecond.events.filter(({ evt }) => evt.type === 'user-message').length,
+      2,
+      `[${cli}] duas falas distintas do dono, nenhuma repetida`
+    )
+
+    // A idempotência do main continua de pé: o MESMO id não entra duas vezes.
+    assert.equal(second.send(spawn.paneId, 'De novo.', firstBootId).ok, true)
+    assert.equal(
+      second.state(spawn.paneId).events.filter(({ evt }) => evt.type === 'user-message').length,
+      2,
+      `[${cli}] reenvio do id já entregue continua sendo no-op`
+    )
+    assert.deepEqual(delivered, ['Segunda pergunta'])
+  }
+})
+
 test('contexto não atravessa troca de identidade mesmo com transcript antigo', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'synkora-gui-context-identity-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
