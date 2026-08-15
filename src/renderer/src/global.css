@@ -9702,6 +9702,10 @@ body.pane-docking .pane-bar.draggable {
 .board-main.stage-mode .board-content.right-rail {
   --right-rail-min-width: 176px;
   --right-rail-max-width: 42%;
+  /* ESPELHA o `gap` do `.board-main`: recolhendo, a margem negativa come esse
+     vão na mesma rampa da largura. Sem isso a pegada do trilho saltaria 12px
+     no último frame, quando ele sai do fluxo. */
+  --right-rail-gutter: 12px;
   order: 0;
   flex: 0 1 var(--right-rail-rendered-width, 204px);
   width: clamp(
@@ -9733,10 +9737,64 @@ body.pane-docking .pane-bar.draggable {
   min-width: 0 !important;
   max-width: 0 !important;
   flex: none !important;
+  /* Fora do fluxo isto não pinta nada — existe para dar às DUAS pontas da
+     rampa o mesmo valor de margem: expandir interpola de −12px para 0, e o vão
+     de 12px abre junto com a caixa em vez de aparecer no primeiro frame. */
+  margin-left: calc(-1 * var(--right-rail-gutter));
   border: 0;
 }
 
+/* ---------- o gesto de recolher/expandir (a rampa) ----------
+   `.is-animating` só existe na janela do clique no botão: durante o ARRASTO a
+   classe não está no DOM, então nenhuma transição entra no caminho e a largura
+   continua colada no ponteiro, 1:1. A duração vem do componente
+   (`--right-rail-motion`), a mesma constante do timer que tira a classe. */
+.board-main.stage-mode .board-content.right-rail.is-animating {
+  /* px puro nas duas pontas da rampa: interpolar um `clamp()` com % no meio do
+     caminho é convite a salto. O teto proporcional segue no `max-width`. */
+  width: var(--right-rail-rendered-width, 204px);
+  /* A LARGURA manda sozinha durante o gesto: `flex-basis` entre `auto` e px
+     interpola em degrau e daria um pulo na metade. */
+  flex: 0 0 auto !important;
+  transition:
+    width var(--right-rail-motion, var(--motion-base)) var(--ease-stage),
+    margin-left var(--right-rail-motion, var(--motion-base)) var(--ease-stage),
+    border-left-width var(--right-rail-motion, var(--motion-base)) var(--ease-stage);
+}
+
+/* Enquanto fecha, o trilho continua NO FLUXO: é a largura dele encolhendo que
+   devolve o espaço ao chat, quadro a quadro — o flex recalcula os irmãos de
+   graça, então o centro cresce contínuo em vez de saltar. Ao fim da rampa a
+   pegada é gap(12) − margem(12) + largura(0) + borda(0) = 0, exatamente o que
+   a regra `absolute` acima entrega: a troca de `position` não aparece. */
+.board-main.stage-mode .board-content.right-rail.is-collapsed.is-animating {
+  position: relative;
+  height: auto;
+  width: 0 !important;
+  max-width: var(--right-rail-max-width) !important;
+  /* `border: 0` viraria `border-style: none` e a borda sumiria de um frame para
+     o outro; com a largura em 0 e o estilo preservado, ela ENCOLHE junto. */
+  border-left: 0 solid var(--line);
+}
+
+/* ESCAPE legado (kanban dentro do trilho): ali a largura vem de `flex: 1 1
+   380px`, não da preferência — animar a caixa daria um salto no primeiro
+   frame. Este caso segue seco, como sempre foi. */
+.board-main.stage-mode .board-content.right-rail.is-animating:has(.dept-filter),
+.board-main.stage-mode
+  .board-content.right-rail.is-collapsed.is-animating:has(.dept-filter) {
+  transition: none;
+}
+
 .right-rail-content {
+  /* O que o trilho gasta ANTES do conteúdo: os dois paddings daqui + a borda
+     de 1px do próprio trilho. O gesto de recolher usa esta conta para congelar
+     o conteúdo na largura ABERTA — errar aqui re-quebraria uma linha de texto
+     no primeiro frame. Mudou padding ou borda, mude este número (o
+     test:right-rail cobra a soma).
+     MEDIDO no harness: a sobra é sub-pixel e vem do arredondamento de tela
+     (a 125% a borda de 1px vale 0,8px), nunca de erro de conta. */
+  --right-rail-content-inset: 15px;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -9760,6 +9818,22 @@ body.pane-docking .pane-bar.draggable {
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
+}
+
+/* O conteúdo NÃO se espreme durante o gesto: fica na largura aberta e escorrega
+   para fora pela direita, recortado pelo `overflow-x: hidden` que o scroller já
+   tem. O botão de reabrir é IRMÃO do scroller — nunca entra no recorte. */
+.right-rail.is-animating .right-rail-content > * {
+  width: calc(var(--right-rail-rendered-width, 204px) - var(--right-rail-content-inset));
+}
+
+.right-rail.is-animating .right-rail-content {
+  transition:
+    /* some um pouco antes da caixa fechar: some junto seria um corte seco */
+    opacity calc(var(--right-rail-motion, var(--motion-base)) * 0.7) var(--ease-stage),
+    /* `visibility` interpola em degrau no FIM da rampa: sem ela o recolher
+       apagaria o painel no primeiro frame e sobraria a caixa vazia deslizando */
+    visibility var(--right-rail-motion, var(--motion-base)) linear;
 }
 
 .right-rail-toggle {
@@ -9888,12 +9962,51 @@ body.pane-docking .pane-bar.draggable {
     right: 9px;
     transform: none;
   }
+
+  /* EMPILHADO a caixa que fecha é a ALTURA, não a largura: uma rampa de largura
+     aqui descreveria o movimento errado (faixa encolhendo de lado enquanto o
+     conteúdo continua ocupando a linha). Neste modo o gesto segue seco — o
+     estado final é o mesmo, só sem rampa. O prefixo `.board` é o de sempre:
+     `@container` não soma especificidade e as regras da rampa moram acima. */
+  .board .board-main.stage-mode .board-content.right-rail.is-animating {
+    width: 100%;
+    transition: none;
+  }
+
+  .board .board-main.stage-mode .board-content.right-rail.is-collapsed.is-animating {
+    position: absolute;
+    height: 0;
+    max-width: 0 !important;
+    margin-left: 0;
+    border: 0;
+    transition: none;
+  }
+
+  .board .right-rail.is-animating .right-rail-content {
+    transition: none;
+  }
+
+  .board .right-rail.is-animating .right-rail-content > * {
+    width: auto;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .right-rail-content,
-  .right-rail-toggle {
+  .right-rail-toggle,
+  .board-main.stage-mode .board-content.right-rail.is-animating,
+  .right-rail.is-animating .right-rail-content {
     transition: none;
+  }
+
+  /* Cinto e suspensório: o componente já não liga a classe com movimento
+     reduzido, mas se ela escapar o estado recolhido continua sendo o seco. */
+  .board-main.stage-mode .board-content.right-rail.is-collapsed.is-animating {
+    position: absolute;
+    height: 0;
+    max-width: 0 !important;
+    margin-left: 0;
+    border: 0;
   }
 }
 

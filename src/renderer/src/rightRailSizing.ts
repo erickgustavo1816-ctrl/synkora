@@ -4,6 +4,21 @@ export const RIGHT_RAIL_MAX_RATIO = 0.42
 export const RIGHT_RAIL_MIN_CENTER_WIDTH = 360
 export const RIGHT_RAIL_KEYBOARD_STEP = 24
 
+/**
+ * Duração da rampa de recolher/expandir, em ms. Espelha o `--motion-base` do
+ * tema — mas quem manda é ESTE número: o componente o publica como
+ * `--right-rail-motion` no próprio nó, então a transição do CSS e o timer que
+ * tira a classe do gesto leem a MESMA fonte e não têm como divergir.
+ */
+export const RIGHT_RAIL_MOTION_MS = 220
+
+/**
+ * Folga depois da rampa. A classe do gesto precisa sobreviver ao último frame
+ * da transição: tirá-la em cima da hora devolveria o trilho ao fluxo com a
+ * animação ainda pintando.
+ */
+export const RIGHT_RAIL_MOTION_TAIL_MS = 60
+
 export interface RightRailBounds {
   min: number
   max: number

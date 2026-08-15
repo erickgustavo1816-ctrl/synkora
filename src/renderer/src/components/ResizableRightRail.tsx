@@ -1,4 +1,12 @@
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode
+} from 'react'
 import {
   clampRightRailWidth,
   readRightRailPreference,
@@ -7,7 +15,9 @@ import {
   stepRightRailWidth,
   writeRightRailPreference,
   RIGHT_RAIL_DEFAULT_WIDTH,
-  RIGHT_RAIL_KEYBOARD_STEP
+  RIGHT_RAIL_KEYBOARD_STEP,
+  RIGHT_RAIL_MOTION_MS,
+  RIGHT_RAIL_MOTION_TAIL_MS
 } from '../rightRailSizing'
 
 interface Props {
@@ -24,6 +34,18 @@ interface Props {
 
 function availableWidthOf(element: HTMLElement | null): number {
   return element?.parentElement?.clientWidth ?? window.innerWidth
+}
+
+/** Quem pediu menos movimento recebe o toggle SECO, como antes da rampa. */
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch {
+    // matchMedia indisponível (ambiente de teste, webview antiga) nunca pode
+    // derrubar o clique: sem resposta, anima.
+    return false
+  }
 }
 
 export default function ResizableRightRail({
@@ -46,13 +68,42 @@ export default function ResizableRightRail({
     typeof window === 'undefined' ? 1280 : window.innerWidth
   )
   const [dragging, setDragging] = useState(false)
+  // A rampa de recolher/expandir vive NESTA janela e em nenhuma outra: o
+  // arrasto jamais liga a classe, senão a largura ficaria elástica atrás do
+  // ponteiro em vez de colada nele.
+  const [animating, setAnimating] = useState(false)
+  const motionTimerRef = useRef<number | null>(null)
+
+  function cancelCollapseAnimation(): void {
+    if (motionTimerRef.current !== null) {
+      window.clearTimeout(motionTimerRef.current)
+      motionTimerRef.current = null
+    }
+    setAnimating(false)
+  }
 
   // `projectKey` é parte do contrato de persistência. Ao trocar de projeto,
   // carregamos a preferência correspondente sem bloquear o primeiro paint.
   useLayoutEffect(() => {
     if (!enabled || typeof window === 'undefined') return
+    // Um gesto em voo é do projeto ANTERIOR: a caixa do novo nasce no estado
+    // dele, nunca no meio de uma rampa herdada.
+    if (motionTimerRef.current !== null) {
+      window.clearTimeout(motionTimerRef.current)
+      motionTimerRef.current = null
+    }
+    setAnimating(false)
     setPreference(readRightRailPreference(window.localStorage, key))
   }, [enabled, key])
+
+  // Timer nunca sobrevive ao componente (setState em nó desmontado).
+  useEffect(
+    () => () => {
+      if (motionTimerRef.current !== null) window.clearTimeout(motionTimerRef.current)
+      motionTimerRef.current = null
+    },
+    []
+  )
 
   useLayoutEffect(() => {
     const root = rootRef.current
@@ -97,11 +148,32 @@ export default function ResizableRightRail({
     })
   }
 
+  /**
+   * O ÚNICO caminho que anima. A classe entra junto com o estado novo (mesmo
+   * commit do React: a transição arranca do valor de antes) e sai por um timer
+   * de duração fixa — quando ela cai, o trilho recolhido já está em 0px e a
+   * troca para fora do fluxo não aparece na tela.
+   */
+  function toggleCollapsed(): void {
+    if (typeof window !== 'undefined' && !prefersReducedMotion()) {
+      if (motionTimerRef.current !== null) window.clearTimeout(motionTimerRef.current)
+      setAnimating(true)
+      motionTimerRef.current = window.setTimeout(() => {
+        motionTimerRef.current = null
+        setAnimating(false)
+      }, RIGHT_RAIL_MOTION_MS + RIGHT_RAIL_MOTION_TAIL_MS)
+    }
+    persist({ collapsed: !preference.collapsed })
+  }
+
   function onResizePointerDown(event: React.PointerEvent<HTMLDivElement>): void {
     if (!enabled || !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return
     const root = rootRef.current
     const handle = event.currentTarget
     if (!root) return
+    // Arrasto começado no meio do gesto do botão desarma a rampa NA HORA: a
+    // partir daqui a largura é 1:1 com o ponteiro.
+    cancelCollapseAnimation()
     resizeCleanupRef.current?.()
     event.preventDefault()
     event.stopPropagation()
@@ -196,11 +268,21 @@ export default function ResizableRightRail({
     if (next !== null) setWidth(next)
   }
 
-  const classes = [className, 'right-rail', enabled ? 'right-rail-enabled' : '', dragging ? 'is-dragging' : '', preference.collapsed ? 'is-collapsed' : '']
+  const classes = [
+    className,
+    'right-rail',
+    enabled ? 'right-rail-enabled' : '',
+    dragging ? 'is-dragging' : '',
+    preference.collapsed ? 'is-collapsed' : '',
+    animating ? 'is-animating' : ''
+  ]
     .filter(Boolean)
     .join(' ')
   const style = {
-    '--right-rail-rendered-width': `${visibleWidth}px`
+    '--right-rail-rendered-width': `${visibleWidth}px`,
+    // Fonte única da duração: a mesma constante governa a rampa do CSS e o
+    // timer que tira `.is-animating`.
+    '--right-rail-motion': `${RIGHT_RAIL_MOTION_MS}ms`
   } as CSSProperties
 
   return (
@@ -233,7 +315,7 @@ export default function ResizableRightRail({
             aria-controls={`${key}-content`}
             aria-label={preference.collapsed ? `Mostrar ${label}` : `Ocultar ${label}`}
             data-tip={preference.collapsed ? `Mostrar ${label}` : `Ocultar ${label}`}
-            onClick={() => persist({ collapsed: !preference.collapsed })}
+            onClick={toggleCollapsed}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <path d={preference.collapsed ? 'm10 3.75-4 4.25 4 4.25' : 'm6 3.75 4 4.25-4 4.25'} />
