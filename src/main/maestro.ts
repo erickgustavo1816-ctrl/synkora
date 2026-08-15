@@ -53,8 +53,6 @@ Regras de comportamento:
 - 1 a 8 tarefas, fatias verticais, título ≤60 caracteres, descrição de 2 a 4 frases terminando com critérios de aceite. Tudo em PT-BR.` +
   securityPromptForRole('planner')
 
-export const PERSONA = PERSONA_CORE + '\n\nMensagem do usuário:\n'
-
 /** Persona para developerInstructions (Codex app-server) — sem o sufixo de prefixo. */
 export const PERSONA_DEV = PERSONA_CORE
 

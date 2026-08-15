@@ -764,17 +764,6 @@ export function selectPhaseSkillPlan<Department extends string>(
 
 export type FrontendStandardPhase = 'dev' | 'review' | 'qa'
 
-/** DEV de front/design e o QA desses cards nunca podem degradar sem a régua. */
-export function missingMandatoryFrontendStandard(
-  injectedIds: Iterable<string>,
-  department: string,
-  phase: FrontendStandardPhase,
-  uiWork = ['front', 'design'].includes(department)
-): boolean {
-  if (!uiWork || !['dev', 'qa'].includes(phase)) return false
-  return !new Set(injectedIds).has(SYNKORA_FRONTEND_STANDARD_ID)
-}
-
 /** Retorna as ausencias materiais do contrato da fase, para o spawn falhar
  * fechado em vez de executar uma UI sem a regua ou um QA sem independência. */
 export function missingMandatoryUiPhaseSkills(
@@ -825,21 +814,6 @@ export function withMandatoryFrontendStandard<Department extends string>(
       ...(['front', 'design'].includes(department) ? [SYNKORA_FRONTEND_STANDARD_ID] : [])
     ])
   ]
-}
-
-/** FAST QA mantém os dois contratos obrigatórios, sem técnica adicional. */
-export function selectFastQaUiSkillIds(
-  installedQaIds: Iterable<string>,
-  uiCard: boolean,
-  designSystemWork = false
-): string[] {
-  if (!uiCard) return []
-  return [...installedQaIds].filter(
-    (id) =>
-      id === SYNKORA_FRONTEND_STANDARD_ID ||
-      id === SYNKORA_UI_QA_ID ||
-      (designSystemWork && id === SYNKORA_DESIGN_SYSTEM_QA_ID)
-  )
 }
 
 export function selectInstalledIdsForDepartment<Department extends string>(

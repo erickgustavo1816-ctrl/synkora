@@ -204,18 +204,6 @@ export function managedWorkspaceSkillContentsMatch(source: string, destination: 
 }
 
 /**
- * Remove somente pastas que carregam um marcador Synkora válido, cujo id
- * coincide com o nome da pasta e que já não estão instaladas na biblioteca.
- * Pastas locais, symlinks e marcadores inválidos ficam intocados.
- */
-export function pruneUninstalledManagedWorkspaceSkills(
-  skillRoots: string[],
-  installedIds: ReadonlySet<string>
-): string[] {
-  return pruneUnrequestedManagedWorkspaceSkills(skillRoots, installedIds)
-}
-
-/**
  * Materializa o conjunto EXATO pedido pelos panes vivos. O nome antigo falava
  * apenas em desinstalacao, mas a fronteira correta e a lease ativa: uma skill
  * instalada e nao selecionada tambem nao deve permanecer visivel ao modelo.

@@ -1906,10 +1906,6 @@ export function missionCommitPatch(
   }
 }
 
-/** Nome explícito para consumidores que chamam o payload de diff, mantendo
- *  `missionCommitPatch` como a API de domínio do worker. */
-export const missionCommitDiff = missionCommitPatch
-
 /** Worktree de MISSÃO: branch mission/<id8> onde as tarefas da missão nascem
  *  e mergeiam — a main só vê a missão na integração final. */
 export function missionWorktreeDescriptor(baseDir: string, missionId: string): TaskWorktree {
@@ -2326,15 +2322,4 @@ export function missionMergePrecheck(
     }
     return { ok: true, detail: 'pré-checagem indisponível — o merge real decide' }
   }
-}
-
-/** Integração final da MISSÃO: commita pendências no worktree dela e faz
- *  merge --no-ff na branch base (repo principal). ok → worktree/branch limpos;
- *  conflito → tudo preservado para resolução. */
-export function mergeMissionWorktree(
-  projectPath: string,
-  wt: TaskWorktree,
-  message: string
-): MergeResult {
-  return mergeTaskWorktree(projectPath, wt, message)
 }

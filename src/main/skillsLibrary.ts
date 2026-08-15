@@ -18,10 +18,7 @@ import { freshWindowsPath } from './winPath'
 import type { Department } from './tasks'
 import { bundledPackageSha } from './bundledSkillRevision'
 import { buildSynkoraImpeccableActivation } from './impeccableAdapter'
-import {
-  selectInstalledIdsForDepartment,
-  selectInstalledPlanningIds
-} from './skillsRouting'
+import { selectInstalledPlanningIds } from './skillsRouting'
 import {
   managedWorkspaceSkillContentsMatch,
   MANAGED_WORKSPACE_SKILL_MARKER,
@@ -144,9 +141,6 @@ export interface SkillState {
   requires?: string[]
   defaultFor?: Department[]
   manualOnly?: boolean
-  allowedPhases?: SkillDef['allowedPhases']
-  requiresCapabilities?: SkillDef['requiresCapabilities']
-  adapter?: SkillDef['adapter']
   /** skill adicionada pelo usuário (fora da curadoria) */
   custom?: boolean
   installed: boolean
@@ -643,9 +637,6 @@ export class SkillsLibrary {
         requires: d.requires,
         defaultFor: d.defaultFor,
         manualOnly: d.manualOnly,
-        allowedPhases: d.allowedPhases,
-        requiresCapabilities: d.requiresCapabilities,
-        adapter: d.adapter,
         custom: this.isCustom(d.id) || undefined,
         installed: Boolean(inst),
         sha: inst?.sha,
@@ -742,30 +733,6 @@ export class SkillsLibrary {
     const def = this.byId(id)
     if (!def || !this.isEligibleInstalled(id)) return false
     return !def.bundledBody || this.bundledPackageMatches(id)
-  }
-
-  /** Total bruto de instaladas, SEM filtro de elegibilidade — para detectar
-   *  divergência "biblioteca cheia × menu vazio" (auditoria 2026-08-04). */
-  installedRawCount(): number {
-    return Object.keys(this.data.installed).length
-  }
-
-  /** Padrão da função: itens marcados defaultFor E instalados. */
-  defaultIdsFor(dept: Department, kind: 'skill' | 'agent' = 'skill'): string[] {
-    return this.defs
-      .filter((d) => d.kind === kind && d.defaultFor?.includes(dept) && this.isSelectable(d.id))
-      .map((d) => d.id)
-  }
-
-  /** TODAS as elegíveis de uma função para UI/busca. O executor nunca recebe
-   * este conjunto inteiro; skillsRouting escolhe um plano mínimo por fase. */
-  installedIdsForDept(dept: Department, kind: 'skill' | 'agent' = 'skill'): string[] {
-    return selectInstalledIdsForDepartment(
-      this.defs,
-      (id) => this.isSelectable(id),
-      dept,
-      kind
-    )
   }
 
   /** Carrega a instrucao exata selecionada pelo roteador. O chamador fornece

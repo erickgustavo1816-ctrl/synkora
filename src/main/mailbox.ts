@@ -142,13 +142,6 @@ export class PaneMailbox {
     return this.data[key]?.length ?? 0
   }
 
-  /** Caixa de pane efêmero morto nunca vira lixo eterno. */
-  dropBox(key: string): void {
-    if (!this.data[key]) return
-    delete this.data[key]
-    this.persist()
-  }
-
   private pruneOld(): void {
     const cutoff = Date.now() - PRUNE_AFTER_MS
     let dirty = false

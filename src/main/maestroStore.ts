@@ -17,8 +17,6 @@ export interface MaestroProjectState {
   personaSent?: boolean
   /** claude: fast mode ligado (/fast) */
   fastMode?: boolean
-  /** harness automático: despacha tarefas do backlog sozinho pela política */
-  autopilot?: boolean
   /** aprovações religadas (bypass é o PADRÃO — ausência de flag = bypass on) */
   bypassOff?: boolean
   /** o DONO liberou bypass mesmo em superfície sensível (domínio do projeto
