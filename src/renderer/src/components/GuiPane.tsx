@@ -143,6 +143,10 @@ interface Props {
   showHeader?: boolean
   /** Visibilidade real no deck; o main usa para o título `[pronto]`. */
   active?: boolean
+  /** FOTOGRAFIA CONGELADA (missão encerrada, aba Versões): o pane replaya o
+   *  transcript gravado e NÃO abre sessão nenhuma — nada de composer, de
+   *  cards de decisão nem de troca de conta. Ler não pode ressuscitar. */
+  readOnly?: boolean
 }
 
 // ————— cabeçalho da conversa —————
@@ -515,7 +519,8 @@ export default function GuiPane({
   branchLabel,
   firstPromptLabel,
   showHeader = true,
-  active = false
+  active = false,
+  readOnly = false
 }: Props): React.JSX.Element {
   const slashMenuId = useId()
   const mentionMenuId = useId()
@@ -538,9 +543,12 @@ export default function GuiPane({
   const clearGuiHistoryTarget = useStore((s) => s.clearGuiHistoryTarget)
 
   useEffect(() => {
+    // Fotografia congelada não tem sessão do outro lado: anunciar visibilidade
+    // alimentaria o título `[pronto]` de um pane que não vai ficar pronto.
+    if (readOnly) return
     guiApi.visibility(paneId, active)
     return () => guiApi.visibility(paneId, false)
-  }, [active, paneId])
+  }, [active, paneId, readOnly])
 
   // MODO DE PERMISSÃO (onda D) + MODELO/EFFORT (2.0): estado local para os
   // botões responderem na hora, semeados pela spec. O pai guarda a escolha na
@@ -728,6 +736,12 @@ export default function GuiPane({
       }
       buffered.length = 0
 
+      // LINHA DE CARGA do modo somente-leitura: a fotografia PARA AQUI.
+      // `shouldCreateGuiSession` de um pane morto-mas-gravado (exists && !alive)
+      // é TRUE — sem este retorno, abrir a conversa de uma missão encerrada
+      // RESSUSCITARIA o CLI, possivelmente num worktree que já não existe.
+      if (readOnly) return
+
       // Sessão já viva (remontagem, reload do renderer) tem histórico: nunca
       // se abre outra por cima. O `spawned` cobre o caso do pane novo.
       if (!shouldCreateGuiSession(replay.exists, replay.alive)) return
@@ -752,10 +766,13 @@ export default function GuiPane({
       alive = false
       off()
     }
-  }, [paneId, handleGuiLive, replayGuiPane, markGuiSpawned])
+  }, [paneId, handleGuiLive, replayGuiPane, markGuiSpawned, readOnly])
 
   const transcriptPresented = isGuiTranscriptPresented(gui.items)
   useEffect(() => {
+    // Ler o que já aconteceu não confirma apresentação de nada: o main não tem
+    // sessão para receber o recibo, e a missão pode voltar a viver depois.
+    if (readOnly) return
     const canAcknowledge = !active || !documentVisible || transcriptPresented
     if (!canAcknowledge || pendingPresentationSeqs.length === 0) return
     const acknowledged = pendingPresentationSeqs
@@ -763,7 +780,7 @@ export default function GuiPane({
       current.filter((seq) => !acknowledged.includes(seq))
     )
     for (const seq of acknowledged) guiApi.presented(paneId, seq)
-  }, [active, documentVisible, paneId, pendingPresentationSeqs, transcriptPresented])
+  }, [active, documentVisible, paneId, pendingPresentationSeqs, readOnly, transcriptPresented])
 
   // O hook mantém a âncora quando a janela muda; conteúdo vivo e reflow de
   // stream continuam usando a mesma regra de ficar no fim quando pinados.
@@ -1278,7 +1295,11 @@ export default function GuiPane({
       : 'padrão da conta'
   const headModel = selectedModel
   const headWhere = branchLabel?.trim() || tailOf(cwd)
-  const headStatus = STATUS_TEXT[gui.status]
+  // Na fotografia o estado vivo não existe: o replay de um pane gravado deixa
+  // `starting` (a preparação de respawn que nunca vai acontecer), e escrever
+  // "abrindo" ali seria mentira de tela. Quem diz que é leitura é o cabeçalho
+  // de quem hospeda a fotografia.
+  const headStatus = readOnly ? null : STATUS_TEXT[gui.status]
   const account = gui.caps?.account
   const seat = seats?.find((s) => s.id === seatId)
   const liveModelLabel = modelUsesDefault
@@ -1335,6 +1356,14 @@ export default function GuiPane({
 
   const empty = gui.items.length === 0 && !gui.stream && !gui.perm && !injection && !awaitingCard
 
+  /** NADA de decidir aqui: ou o dono está lendo o histórico local por cima da
+   *  conversa (`historyTarget`), ou o pane inteiro é fotografia congelada.
+   *  Vale para TODA superfície que responde ao agente — inclusive as três que o
+   *  overlay de histórico nunca precisou cobrir (plano, pergunta e "pode
+   *  seguir"): `settleGuiReplay` não limpa `perm`/`question`/`planReview`, então
+   *  um transcript que morreu no meio de uma decisão renderiza o card vivo. */
+  const inert = Boolean(historyTarget) || readOnly
+
   return (
     <div
       className="gui-pane"
@@ -1350,8 +1379,10 @@ export default function GuiPane({
           </span>
           {headRole && <span className="gui-head-role">{headRole}</span>}
 
-          {/* A CONTA da conversa: clicar troca de seat sem sair do chat. */}
-          {seats?.length && onChangeSeat ? (
+          {/* A CONTA da conversa: clicar troca de seat sem sair do chat — o que
+              não existe na fotografia congelada, onde não há sessão para
+              transplantar; ali sobra o NOME da conta, que é fato gravado. */}
+          {!readOnly && seats?.length && onChangeSeat ? (
             <span className="gui-menu-host gui-head-seat">
               <button
                 className={`gui-head-seat-btn${openMenu === 'seat' ? ' open' : ''}`}
@@ -1438,9 +1469,15 @@ export default function GuiPane({
 
             {empty && (
               <div className="gui-empty">
-                {gui.status === 'starting'
-                  ? 'abrindo a conversa…'
-                  : 'conversa vazia — escreva abaixo para começar'}
+                {readOnly
+                  ? // A poda do histórico (LRU por espaço) é real e chega
+                    // primeiro justamente nas conversas mais antigas: dizer
+                    // isso é melhor do que um chat em branco, que se lê como
+                    // defeito novo.
+                    'esta conversa não está mais guardada (o histórico tem limite de espaço)'
+                  : gui.status === 'starting'
+                    ? 'abrindo a conversa…'
+                    : 'conversa vazia — escreva abaixo para começar'}
               </div>
             )}
 
@@ -1504,7 +1541,7 @@ export default function GuiPane({
               </div>
             )}
 
-            {gui.planReview && (
+            {!inert && gui.planReview && (
               <GuiPlanCard
                 paneId={paneId}
                 plan={gui.planReview.plan}
@@ -1513,7 +1550,7 @@ export default function GuiPane({
               />
             )}
 
-            {gui.question && (
+            {!inert && gui.question && (
               <GuiQuestionCard
                 questions={gui.question.questions}
                 disabled={Boolean(gui.interactionSubmitting)}
@@ -1522,7 +1559,7 @@ export default function GuiPane({
               />
             )}
 
-            {askingGo && (
+            {!inert && askingGo && (
               <div className="gui-ask">
                 <span className="gui-ask-label">esta conversa está esperando você</span>
                 <div className="gui-ask-actions">
@@ -1601,7 +1638,7 @@ export default function GuiPane({
         )}
       </div>
 
-      {!historyTarget && gui.perm && (
+      {!inert && gui.perm && (
         <GuiPermCard
           perm={gui.perm}
           disabled={Boolean(gui.interactionSubmitting)}
@@ -1609,7 +1646,7 @@ export default function GuiPane({
         />
       )}
 
-      {!historyTarget && queuedMessage && (
+      {!inert && queuedMessage && (
         <GuiQueuedMessageCard
           message={queuedMessage}
           optionsLabel={queuedOptionsLabel}
@@ -1624,7 +1661,7 @@ export default function GuiPane({
         />
       )}
 
-      {!historyTarget && !awaitingCard && (
+      {!inert && !awaitingCard && (
         <div className="gui-composer">
           {slashOpen && (
             <GuiSlashMenu

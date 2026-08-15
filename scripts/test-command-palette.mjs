@@ -461,7 +461,12 @@ test('contrato UI instala atalho nas duas roots, relay autenticado e alvo exato'
   assert.doesNotMatch(navigation, /paneId: target\.paneId/u)
   assert.match(guiPane, /data-history-message-id=\{message\.id\}/u)
   assert.match(guiPane, /message\.cursor === historyTarget\.targetCursor/u)
-  assert.match(guiPane, /!historyTarget && !awaitingCard/u)
+  // O composer some enquanto o histórico está aberto — a regra não mudou, o
+  // predicado é que ganhou um segundo caso (2026-08-15): `inert` cobre tanto
+  // este overlay quanto a fotografia congelada de missão encerrada. A cadeia
+  // inteira é conferida para o histórico não deixar de gatear em silêncio.
+  assert.match(guiPane, /const inert = Boolean\(historyTarget\) \|\| readOnly/u)
+  assert.match(guiPane, /!inert && !awaitingCard/u)
   assert.match(css, /operação única `harden`/u)
   assert.match(css, /prefers-reduced-motion: reduce/u)
   assert.match(css, /forced-colors: active/u)
