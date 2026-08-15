@@ -96,7 +96,14 @@ test('contrato da UI expõe recolher, separator focável e cleanup do gesto', as
     /\.right-rail\.is-collapsed \.right-rail-toggle\s*\{[\s\S]*?top:\s*9px[\s\S]*?right:\s*9px[\s\S]*?transform:\s*none/u
   )
   assert.doesNotMatch(css, /\.right-rail-enabled\.is-collapsed\s*\{[\s\S]*?(?:width|flex-basis):\s*22px/u)
-  assert.doesNotMatch(css, /grid-template-columns:\s*18px minmax\(0, 1fr\)/u)
+  // A cerca do grid aposentado vale para o RAIL, não para o arquivo inteiro:
+  // o regex global reprovou o `.gpi-head` do card de proposta (2026-08-15),
+  // uma regra alheia que por coincidência começa com as mesmas duas colunas.
+  // A régua continua idêntica — nenhuma regra `.right-rail*` pode voltar ao
+  // grid `18px minmax(0, 1fr)` do chrome antigo.
+  for (const block of css.matchAll(/^\.right-rail[^{]*\{[\s\S]*?\n\}/gmu)) {
+    assert.doesNotMatch(block[0], /grid-template-columns:\s*18px minmax\(0, 1fr\)/u)
+  }
   assert.doesNotMatch(css, /\.right-rail-chrome\s*\{/u)
   assert.doesNotMatch(css, /\.right-rail-toolbar\s*\{/u)
   assert.match(board, /<ResizableRightRail/u)

@@ -58,6 +58,16 @@ export default function ArchivedMissionChat({ mission, onClose }: Props): React.
     onClose()
   }, [liveStatus, onClose])
 
+  // Esc fecha a fotografia — leitura não prende o teclado. Listener na janela
+  // porque o foco pode estar no fio replayado, que não é focável por si.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   const current = found.find((address) => address.paneId === activeId) ?? found[0]
   // A conta gravada na missão é a fonte do CLI e do nome no cabeçalho. Conta
   // apagada depois: sobra a marca padrão e NADA mais — nome e plano só

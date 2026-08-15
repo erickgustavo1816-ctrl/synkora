@@ -293,7 +293,11 @@ export function readPlanDraft(value: unknown): PlanDraft | null {
     const entry = raw as Record<string, unknown>
     const itemTitle = planText(entry['title'], 300).trim()
     if (!itemTitle) continue
-    const id = planText(entry['id'], 200).trim()
+    // O main emite a identidade do item como `key` (slug derivado do título;
+    // planDraft.ts) e o dependsOn referencia ESSAS keys — `id` fica como
+    // fallback de tolerância. Sem esta leitura, o card mostraria slugs crus
+    // no "depende de" em vez dos títulos.
+    const id = planText(entry['key'] ?? entry['id'], 200).trim()
     const outOfScope = planText(entry['outOfScope'], 4_000).trim()
     const context = planText(entry['context'], 4_000).trim()
     const docPath = planText(entry['docPath'], 500).trim()

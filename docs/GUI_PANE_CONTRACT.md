@@ -61,6 +61,22 @@ export interface GuiLivePayload { paneId: string; evt: unknown /* SessionEvent *
 | `gui:state` | `(paneId) => {events: GuiLivePayload['evt'][]}` | replay p/ remontagem (main guarda ring buffer ~500 eventos por pane) |
 | `gui:attach` | `(paneId, payload: GuiAttachPayload) => {ok, attachment?, error?}` | anexo do composer: grava/referencia e devolve descritor durável |
 | `gui:attachFolder` | `(paneId) => {ok, attachment?, cancelled?, error?}` | abre o diálogo nativo e referencia qualquer pasta local, sem copiar a árvore |
+| `gui:answerPlanProposal` | `(paneId, requestId, approve, text?) => {ok, error?}` | desfecho do card de PROPOSTA DE PLANO (2026-08-15): `approve=true` cria o Plan (o draft autoritativo sai do RING do pane, nunca do renderer) e injeta o recibo na conversa; `approve=false` exige `text` e devolve a prosa do dono ao agente |
+
+### Proposta de plano (2026-08-15, missão de planejamento)
+
+O pane de PLANEJAMENTO nasce com o MCP `gui-planner` (catálogo mínimo:
+`list_plans`/`get_plan`/`propose_plan`/`update_plan`/`delete_plan`; cerca de
+early-return no buildServer — nenhum outro papel vê essas tools). `propose_plan`
+NUNCA cria: o main injeta no ring o evento `plan-proposal {requestId, draft}`
+(draft = `{title, description?, kind, items[{key, title, objective, outOfScope?,
+doneCriteria[], tier?, context?, dependsOn[] /* keys de itens ANTERIORES */,
+docPath?}]}`), que atravessa os CINCO ESPELHOS como os irmãos
+permission/question/plan-review e vira o `GuiPlanProposalCard` no fio. Diferença
+deliberada do trio: `plan-proposal` NÃO bloqueia o CLI, então sobrevive ao
+`result` no ring; um `propose_plan` novo SUPERSEDE a proposta pendente do mesmo
+pane (eco factual `stale`). O desfecho volta como `interaction-resolved`
+`{kind:'plan-proposal', approve, planId?, planTitle?}`.
 
 ### Anexos (`gui:attach`)
 

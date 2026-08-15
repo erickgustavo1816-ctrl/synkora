@@ -238,8 +238,16 @@ export const PLAN_MASTER_TAKEN_ERROR =
 export type PlanMutation = { ok: true; plan: Plan } | { ok: false; error: string }
 export type PlanRemoval = { ok: true } | { ok: false; error: string }
 
+/** Relógio ESTRITAMENTE monotônico do store. O CAS compara `updatedAt` por
+ *  igualdade: duas mutações dentro do MESMO milissegundo deixariam a segunda
+ *  invisível para a fotografia do chamador (o teste de CAS pegou isso ao
+ *  vivo numa máquina quente). Empurrar 1ms além do último carimbo fecha o
+ *  buraco sem mudar o formato. */
+let lastStampMs = 0
 function nowIso(): string {
-  return new Date().toISOString()
+  const ms = Math.max(Date.now(), lastStampMs + 1)
+  lastStampMs = ms
+  return new Date(ms).toISOString()
 }
 
 function boundedText(value: unknown, cap: number): string | undefined {
