@@ -56,6 +56,7 @@ import {
   taskWorktreeDescriptor
 } from './worktree'
 import { MissionStore, type Mission } from './missions'
+import { PlanStore } from './plans'
 import { IntegrationQueueStore } from './integrationQueue'
 import {
   EXECUTION_MODE_LABEL,
@@ -109,6 +110,7 @@ import {
   windowsNotificationShortcutSpec
 } from './desktopNotificationPolicy'
 import { registerProjectPlanIpc } from './ipc/projectPlan'
+import { registerPlansIpc } from './ipc/plans'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerProgressIpc } from './ipc/progress'
 import { registerSkillsIpc } from './ipc/skills'
@@ -2550,6 +2552,10 @@ app.whenReady().then(async () => {
   seats = new SeatStore()
   tasks = new TaskStore()
   const missions = new MissionStore()
+  // Planos do universo (2.0, onda D): a fonte das abas do MAPA. Fica em
+  // userData, fora do repo do produto — worktree limpo e veredito de gate
+  // legado intactos.
+  const plans = new PlanStore()
   // Caixa-preta: toda mudança de estado de card entra no diário com estado
   // anterior/seguinte — é a espinha da reconstrução de qualquer fluxo.
   tasks.onMutation = (prev, next) => {
@@ -3543,6 +3549,7 @@ app.whenReady().then(async () => {
     seats,
     tasks,
     missions,
+    plans,
     integrationQueue,
     backlog,
     maestro,
@@ -6913,6 +6920,9 @@ app.whenReady().then(async () => {
     humanProjectMissionStarts,
     getMcpApi: () => mcpApi
   })
+  // PLANOS DO UNIVERSO (2.0, onda D): as abas do MAPA e os gestos do dono
+  // sobre elas. A leitura já traz o progresso derivado das missões.
+  registerPlansIpc(ctx, { assertAppRendererSender })
   registerProjectsIpc(ctx, {
     killMaestroSession,
     hasProjectPlanArtifacts,

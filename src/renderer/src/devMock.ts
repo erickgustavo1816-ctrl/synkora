@@ -1353,6 +1353,9 @@ export function installDevMock(): void {
       permission: async () => ({ ok: true }),
       answerQuestion: async () => ({ ok: true }),
       answerPlan: async () => ({ ok: true }),
+      // BLOCO NOVO (2.0, onda D): sem main não existe rascunho guardado, então
+      // a decisão do card recusa em vez de fingir que criou um plano.
+      answerPlanProposal: async () => ({ ok: false, error: 'planos só funcionam no app' }),
       interrupt: async () => ({ ok: true }),
       kill: async () => ({ ok: true }),
       state: async () => ({ events: [], cursor: 0, exists: false, alive: false }),
@@ -1378,6 +1381,19 @@ export function installDevMock(): void {
       approve: async () => 'mock: roadmap aprovado pelo usuário',
       startMission: async (_projectId, itemId) => `mock: missão ${itemId} aberta pelo usuário`
     },
+    // ————— BLOCO NOVO (2.0, onda D): planos do universo —————
+    // Sem main não há store: a leitura é vazia e toda mutação RECUSA com a
+    // mesma honestidade dos outros mocks — nunca finge que gravou.
+    plans: {
+      list: async () => [],
+      create: async () => ({ ok: false, error: 'planos só funcionam no app' }),
+      update: async () => ({ ok: false, error: 'planos só funcionam no app' }),
+      archive: async () => ({ ok: false, error: 'planos só funcionam no app' }),
+      remove: async () => ({ ok: false, error: 'planos só funcionam no app' }),
+      linkMission: async () => ({ ok: false, error: 'planos só funcionam no app' }),
+      onChanged: () => () => undefined
+    },
+    // ————— fim do BLOCO NOVO —————
     hub: {
       onEvent: () => () => undefined,
       onCommunication: () => () => undefined

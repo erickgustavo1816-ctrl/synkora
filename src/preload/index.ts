@@ -565,6 +565,117 @@ export interface ProjectPlanView {
   updatedAt: string
 }
 
+// ————— PLANOS DO UNIVERSO (2.0, onda D) — BLOCO NOVO, contrato do MAPA —————
+//
+// Espelho ESTRUTURAL de src/main/plans.ts (o renderer nunca importa main). Os
+// campos derivados — `status` efetivo, `authoredStatus`, `mission` e
+// `progress` — já chegam calculados: o mapa não recalcula progresso, ele
+// desenha o que o main provou.
+
+export type PlanKindView = 'mestre' | 'livre'
+export type PlanStatusView = 'ativo' | 'concluido' | 'arquivado'
+export type PlanItemStatusView = 'planejada' | 'em_andamento' | 'concluida' | 'descartada'
+export type PlanItemTierView = 'pequeno' | 'medio' | 'grande'
+
+export interface PlanItemMissionView {
+  id: string
+  title: string
+  status: 'ativa' | 'integrando' | 'concluida' | 'arquivada'
+}
+
+export interface PlanItemView {
+  id: string
+  title: string
+  objective: string
+  outOfScope?: string
+  doneCriteria: string[]
+  tier?: PlanItemTierView
+  context?: string
+  /** ids de outros itens DESTE plano */
+  dependsOn: string[]
+  order: number
+  /** estado EFETIVO: com missão viva, quem manda é a missão */
+  status: PlanItemStatusView
+  /** o que está gravado (a intenção) — a edição manual futura usa este */
+  authoredStatus: PlanItemStatusView
+  missionId?: string
+  /** ausente = sem missão ou missão que sumiu (já reconciliado no main) */
+  mission?: PlanItemMissionView
+  docPath?: string
+  /** anotação da autocura (ex.: a missão vinculada não existe mais) */
+  note?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PlanView {
+  id: string
+  projectId: string
+  title: string
+  description?: string
+  kind: PlanKindView
+  status: PlanStatusView
+  origin: { paneId: string; missionId?: string; proposedAt: string } | { manual: true }
+  items: PlanItemView[]
+  order: number
+  progress: { done: number; total: number }
+  createdAt: string
+  /** mande de volta em expectedUpdatedAt: é o CAS de todo mutador */
+  updatedAt: string
+  approvedAt?: string
+  archivedAt?: string
+}
+
+/** Rascunho aceito pelo `plans.create` manual (mesma forma da proposta). */
+export interface PlanDraftItemInput {
+  key?: string
+  title: string
+  objective: string
+  outOfScope?: string
+  doneCriteria?: string[]
+  tier?: PlanItemTierView
+  context?: string
+  /** `key`s de itens ANTERIORES da mesma lista */
+  dependsOn?: string[]
+  docPath?: string
+}
+
+export interface PlanDraftInput {
+  title: string
+  description?: string
+  kind?: PlanKindView
+  items: PlanDraftItemInput[]
+}
+
+export interface PlanItemPatchInput {
+  id: string
+  title?: string
+  objective?: string
+  outOfScope?: string | null
+  doneCriteria?: string[]
+  tier?: PlanItemTierView | null
+  context?: string | null
+  dependsOn?: string[]
+  docPath?: string | null
+  /** 'concluida' não entra: é derivada da missão vinculada */
+  status?: 'planejada' | 'em_andamento' | 'descartada'
+}
+
+export interface PlanPatchInput {
+  title?: string
+  description?: string | null
+  status?: PlanStatusView
+  order?: number
+  items?: PlanItemPatchInput[]
+  addItems?: (PlanDraftItemInput & { key: string; doneCriteria: string[]; dependsOn: string[] })[]
+  removeItemIds?: string[]
+}
+
+export type PlanMutationResult = { ok: true; plan: PlanView } | { ok: false; error: string }
+export type PlanRemovalResult = { ok: true } | { ok: false; error: string }
+
+// ————— fim do BLOCO NOVO de planos —————
+
 export interface CatalogModel {
   id: string
   label: string
@@ -1355,6 +1466,18 @@ const api = {
      *  devolver para revisão. */
     answerPlan: (paneId: string, requestId: string, approve: boolean): Promise<GuiResult> =>
       ipcRenderer.invoke('gui:answerPlan', paneId, requestId, approve),
+    // ————— BLOCO NOVO (2.0, onda D): proposta de plano —————
+    /** Card de PROPOSTA DE PLANO: `true` cria o plano a partir do rascunho que
+     *  o main guardou (o renderer nunca devolve o conteúdo); `false` + texto
+     *  manda o ajuste do dono de volta ao agente como mensagem. */
+    answerPlanProposal: (
+      paneId: string,
+      requestId: string,
+      approve: boolean,
+      text?: string
+    ): Promise<GuiResult> =>
+      ipcRenderer.invoke('gui:answerPlanProposal', paneId, requestId, approve, text),
+    // ————— fim do BLOCO NOVO —————
     interrupt: (paneId: string): Promise<GuiResult> =>
       ipcRenderer.invoke('gui:interrupt', paneId),
     kill: (paneId: string): Promise<GuiResult> => ipcRenderer.invoke('gui:kill', paneId),
@@ -1761,6 +1884,43 @@ const api = {
     ): Promise<string> =>
       ipcRenderer.invoke('projectPlan:startMission', projectId, itemId, expectedUpdatedAt)
   },
+  // ————— PLANOS DO UNIVERSO (2.0, onda D) — BLOCO NOVO —————
+  plans: {
+    /** As abas do MAPA, já com o progresso derivado das missões. */
+    list: (projectId: string): Promise<PlanView[]> => ipcRenderer.invoke('plans:list', projectId),
+    /** Criação MANUAL. A aprovação do card de proposta usa gui.answerPlanProposal:
+     *  lá o rascunho vem do anel do pane, não do renderer. */
+    create: (projectId: string, draft: PlanDraftInput): Promise<PlanMutationResult> =>
+      ipcRenderer.invoke('plans:create', projectId, draft),
+    /** Todo mutador leva o `updatedAt` que a tela mostrou (CAS otimista). */
+    update: (
+      planId: string,
+      patch: PlanPatchInput,
+      expectedUpdatedAt: string
+    ): Promise<PlanMutationResult> =>
+      ipcRenderer.invoke('plans:update', planId, patch, expectedUpdatedAt),
+    /** Reversível: a aba some do mapa, o conteúdo fica. */
+    archive: (planId: string, expectedUpdatedAt: string): Promise<PlanMutationResult> =>
+      ipcRenderer.invoke('plans:archive', planId, expectedUpdatedAt),
+    /** Exclusão DEFINITIVA — só com confirmação in-app. */
+    remove: (planId: string, expectedUpdatedAt: string): Promise<PlanRemovalResult> =>
+      ipcRenderer.invoke('plans:remove', planId, expectedUpdatedAt),
+    /** O item virou missão: único caminho que grava o vínculo. */
+    linkMission: (
+      planId: string,
+      itemId: string,
+      missionId: string,
+      expectedUpdatedAt: string
+    ): Promise<PlanMutationResult> =>
+      ipcRenderer.invoke('plans:linkMission', planId, itemId, missionId, expectedUpdatedAt),
+    /** O main mexeu em algum plano deste universo (agente, clique ou autocura). */
+    onChanged: (cb: (projectId: string) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
+      ipcRenderer.on('plans:changed', listener)
+      return () => ipcRenderer.removeListener('plans:changed', listener)
+    }
+  },
+  // ————— fim do BLOCO NOVO de planos —————
   hub: {
     onEvent: (cb: (evt: HubEvent) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, evt: HubEvent): void => cb(evt)

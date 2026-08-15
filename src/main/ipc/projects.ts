@@ -187,6 +187,10 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     // continuar gravando de volta um histórico cujo projeto já saiu do app.
     guiSessions.killWhere((paneId) => guiSessions.remembered(paneId)?.projectId === id)
     projects.remove(id)
+    // Os planos (2.0, onda D) são chaveados por projeto e vivem em userData:
+    // sem esta linha eles sobreviveriam a um universo que não existe mais. A
+    // RELOCAÇÃO, que preserva o id, de propósito não passa por aqui.
+    ctx.plans.removeProject(id)
     guiSessions.forgetWhere(
       (paneId, record) => record?.projectId === id || isGuiPlanningPaneId(paneId, id)
     )

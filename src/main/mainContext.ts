@@ -21,6 +21,7 @@ import type { ProjectStore } from './projects'
 import type { SeatStore } from './seats'
 import type { TaskStore, Task, PlanVerificationCheckpoint } from './tasks'
 import type { MissionStore } from './missions'
+import type { PlanStore } from './plans'
 import type { IntegrationQueueStore } from './integrationQueue'
 import type { BacklogStore } from './backlog'
 import type { MaestroStore } from './maestroStore'
@@ -159,6 +160,8 @@ export interface MainContext {
   /** onMutation/onCreate/onRemove pertencem ao index — nunca reatribuir. */
   readonly tasks: TaskStore
   readonly missions: MissionStore
+  /** Planos do universo (2.0, onda D — userData/plans.json). */
+  readonly plans: PlanStore
   readonly integrationQueue: IntegrationQueueStore
   readonly backlog: BacklogStore
   readonly maestro: MaestroStore
