@@ -77,6 +77,7 @@ import {
 } from '../src/renderer/src/guiToolPresentation.ts'
 import { nestGuiSubagentTools } from '../src/renderer/src/guiSubagentPresentation.ts'
 import { normalizeGuiSubagentSidebar } from '../src/renderer/src/guiSubagentSidebar.ts'
+import { guiBackgroundWorkPresentation } from '../src/renderer/src/guiBackgroundWorkPresentation.ts'
 import { asGuiEvent } from '../src/renderer/src/guiApi.ts'
 import {
   GUI_DIFF_MAX_CHARS,
@@ -2247,4 +2248,117 @@ test('C4 — canal aceita o ciclo de vida do subagente e recusa valor torto', ()
   const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
   assert.match(store, /if \(evt\.agentStatus === 'settled' && item\.toolUseId\)/u)
   assert.match(store, /items: settleLaunchedGuiSubagents\(next\.items\)/u)
+})
+
+// C5 — o PRÓPRIO fio mostra que há trabalho correndo. Reclamação do dono: com
+// subagentes em segundo plano a conversa parecia terminada (turno raiz fecha com
+// `continues`, nada se move na tela). A contagem sai da MESMA normalização da
+// lateral — nunca de uma heurística paralela.
+test('C5 — indicador de fundo aparece com subagente vivo e some no settled', () => {
+  const launchedParent = (id, taskId) => ({
+    ...tool(`p-${id}`, 'Agent', `investigação ${id}`),
+    toolUseId: id,
+    subagent: { type: 'geral', prompt: `investigação ${id}` },
+    result: {
+      text: 'agente despachado',
+      isError: false,
+      status: 'completed',
+      lineCount: 1,
+      truncated: false,
+      agentStatus: 'launched',
+      agentTaskId: taskId
+    }
+  })
+  const live = (items) => normalizeGuiSubagentSidebar(items)
+  const show = (items, status = 'working') =>
+    guiBackgroundWorkPresentation({ status, liveSubagents: live(items) })
+
+  // 1 agente vivo: singular correto.
+  const um = [launchedParent('agent-1', 'task-1')]
+  assert.equal(live(um).length, 1)
+  assert.deepEqual(show(um), {
+    count: 1,
+    label: '1 subagente trabalhando em segundo plano'
+  })
+
+  // 2 agentes concorrentes: plural e contagem factual (fichas independentes).
+  const dois = [launchedParent('agent-1', 'task-1'), launchedParent('agent-2', 'task-2')]
+  assert.equal(show(dois).count, 2)
+  assert.equal(show(dois).label, '2 subagentes trabalhando em segundo plano')
+
+  // O último settle apaga o indicador NO ATO — sem timer, sem sobra.
+  const meio = [
+    { ...dois[0], result: { ...dois[0].result, agentStatus: 'settled', status: 'completed' } },
+    dois[1]
+  ]
+  assert.equal(show(meio).count, 1, 'um assentou, o outro ainda trabalha')
+  const assentados = meio.map((item) => ({
+    ...item,
+    result: { ...item.result, agentStatus: 'settled', status: 'completed' }
+  }))
+  assert.equal(live(assentados).length, 0)
+  assert.equal(show(assentados), null, 'sem agente vivo o fio não pode fingir trabalho')
+
+  // Sem subagente nenhum o indicador simplesmente não existe.
+  assert.equal(
+    show([tool('t1', 'Read', 'arquivo.ts'), note('n1'), { id: 'u1', kind: 'user', text: 'oi', at: 1 }]),
+    null
+  )
+  assert.equal(show([]), null)
+
+  // Codex chega pela mesma projeção (card sintético `spawn_agent`, sem
+  // agentStatus): a derivação é agnóstica de backend por desenho.
+  const codex = [
+    {
+      ...tool('c1', 'spawn_agent', 'cálculo'),
+      toolUseId: 'codex-agent:thread-9',
+      subagent: { name: 'calculo', type: 'codex' }
+    }
+  ]
+  assert.equal(show(codex).label, '1 subagente trabalhando em segundo plano')
+  assert.equal(
+    show([{ ...codex[0], result: { text: 'pronto', isError: false, status: 'completed', lineCount: 1, truncated: false } }]),
+    null,
+    'no Codex o result do pai JÁ é o terminal'
+  )
+
+  // Sessão morta nunca pisca vida (sobra de replay depois de closed/fatal).
+  assert.equal(show(dois, 'dead'), null)
+  // Esperando o dono o trabalho de fundo continua — e continua visível.
+  assert.equal(show(dois, 'waiting-you').count, 2)
+})
+
+// C5b (cerca) — a superfície: uma fonte de verdade, um indicador vivo por vez,
+// e movimento que respeita quem pediu menos movimento.
+test('C5b — o fio deriva da lateral, troca o verbo genérico e para no reduced-motion', () => {
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  // Fonte única: o fio inteiro (nunca a janela visível, que poda o card do pai).
+  assert.match(
+    pane,
+    /useMemo\(\(\) => normalizeGuiSubagentSidebar\(gui\.items\), \[gui\.items\]\)/u
+  )
+  assert.match(pane, /guiBackgroundWorkPresentation\(\{ status: gui\.status, liveSubagents \}\)/u)
+  assert.doesNotMatch(pane, /liveSubagents = .*visibleItems/u)
+
+  // Um indicador por vez: a linha de pensar cede para a de fundo.
+  assert.match(pane, /\{thinkingPresentation && !backgroundWork && \(/u)
+  assert.match(pane, /\{backgroundWork && \([\s\S]{0,400}?className="gui-background-work"/u)
+  assert.match(pane, /data-subagent-count=\{backgroundWork\.count\}/u)
+  assert.match(pane, /gui-background-work-label/u)
+  assert.match(pane, /\{backgroundWork\.label\}/u)
+
+  // Visual do tema (papel & painel) e movimento no vocabulário que já existe.
+  assert.match(css, /\.gui-background-work\s*\{/u)
+  assert.match(css, /\.gui-background-work\s*\{[^}]*border-radius: 999px/su)
+  assert.match(css, /\.gui-background-work\s*\{[^}]*var\(--accent\)/su)
+  assert.doesNotMatch(css, /\.gui-background-work[^}]*(spin|rotate)/su)
+  assert.match(
+    css,
+    /@media \(prefers-reduced-motion: reduce\) \{\s*\.gui-background-work[\s\S]{0,160}?animation: none/u
+  )
 })

@@ -17223,6 +17223,47 @@ body.progress-overlay-page #root {
   }
 }
 
+/* ---- trabalho de fundo: a conversa nunca parece morta com subagente vivo ----
+   Mesma família da pílula "carregar todas" (borda de tinta, papel, mono) com a
+   energia do cursor de terminal: as MESMAS bolinhas do indicador de pensar —
+   um vocabulário de movimento só, nunca dois. */
+
+.gui-background-work {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 5px 12px 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--gui-line-strong));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  line-height: 1.25;
+}
+
+.gui-background-work-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sem movimento o FATO continua na tela: as bolinhas viram glifo estático e a
+   etiqueta segue dizendo o que corre. A regra global de reduced-motion já mata
+   a animação; o que só esta regra garante é o estado de REPOUSO legível — o
+   keyframe começa em opacity .25 e um dia alguém pode carimbar isso na base. */
+@media (prefers-reduced-motion: reduce) {
+  .gui-background-work .gui-dots i,
+  .gui-thinking .gui-dots i {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* ---- tool cards: linha clara com o desfecho à direita ---- */
 
 .gui-tool {

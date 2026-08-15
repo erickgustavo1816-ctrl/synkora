@@ -35,12 +35,14 @@ import { syncInputOverlayScroll } from '../guiFileMentions'
 import { useGuiFileMentions } from '../useGuiFileMentions'
 import { isGuiFinalAssistantMessage } from '../guiMessageCopyPresentation'
 import { guiThinkingPresentation } from '../guiThinkingPresentation'
+import { guiBackgroundWorkPresentation } from '../guiBackgroundWorkPresentation'
 import {
   groupConsecutiveGuiTools,
   type GuiPresentationItem,
   type GuiRenderItem
 } from '../guiToolPresentation'
 import { nestGuiSubagentTools } from '../guiSubagentPresentation'
+import { normalizeGuiSubagentSidebar } from '../guiSubagentSidebar'
 import {
   noteGuiPaneInteraction,
   registerGuiEscapeTarget
@@ -1221,6 +1223,14 @@ export default function GuiPane({
       gui.thinking
     ]
   )
+  // MESMA fonte de verdade da lateral de entrega: ficha presente = agente ainda
+  // trabalhando. A normalização varre o fio inteiro (nunca a janela visível, que
+  // pode ter podado o card do pai), então memoiza por `items`.
+  const liveSubagents = useMemo(() => normalizeGuiSubagentSidebar(gui.items), [gui.items])
+  const backgroundWork = useMemo(
+    () => guiBackgroundWorkPresentation({ status: gui.status, liveSubagents }),
+    [gui.status, liveSubagents]
+  )
 
   const headRole = role?.trim() || roleFromPaneId(paneId)
   const selectedModelOverride = gui.executorKnown
@@ -1443,7 +1453,10 @@ export default function GuiPane({
               )
             )}
 
-            {thinkingPresentation && (
+            {/* Um indicador vivo por vez. Com subagente de fundo o verbo genérico
+                ("preparando a resposta") seria falso — quem trabalha é o agente
+                lá atrás —, então a linha de fundo VENCE e a de pensar cede. */}
+            {thinkingPresentation && !backgroundWork && (
               <div className="gui-thinking" role="status">
                 <span className="gui-dots" aria-hidden="true">
                   <i />
@@ -1451,6 +1464,24 @@ export default function GuiPane({
                   <i />
                 </span>
                 <span className="gui-thinking-label">{thinkingPresentation.label}</span>
+              </div>
+            )}
+
+            {/* Enquanto houver subagente vivo o fio nunca parece terminado —
+                inclusive com o turno raiz já fechado (`continues`) ou com um
+                card esperando o dono. Some no instante do último settle. */}
+            {backgroundWork && (
+              <div
+                className="gui-background-work"
+                role="status"
+                data-subagent-count={backgroundWork.count}
+              >
+                <span className="gui-dots" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                <span className="gui-background-work-label">{backgroundWork.label}</span>
               </div>
             )}
 
