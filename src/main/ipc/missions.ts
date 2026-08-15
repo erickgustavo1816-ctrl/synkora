@@ -16,7 +16,7 @@
  * dois lados vivem em módulos diferentes de propósito; o comentário no
  * handler conta a história da corrida da M02d.
  */
-import { ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { existsSync, mkdirSync, unlinkSync } from 'fs'
@@ -52,6 +52,7 @@ import {
   type GuiPermissionMode,
   type GuiSessionRegistry
 } from '../guiSessions'
+import { armGuiPlannerMcp, type GuiPlannerMcpDeps } from '../guiPlannerMcp'
 import { assessMissionRisk } from '../orchestratorFlow'
 import { missionPersona } from '../maestro'
 import { buildIdleWaiterHint } from '../phasePrompts'
@@ -204,6 +205,19 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     stopMissionExecution,
     transitionLinkedProjectPlanMission
   } = engine
+
+  /** Costura do MCP do planejador: token por pane, porta viva do ctx, e o
+   *  mesmo `paneTokens` que o teardown do chat usa para revogar. */
+  const guiPlannerMcpDeps: GuiPlannerMcpDeps = {
+    hub,
+    port: () => ctx.mcpPort,
+    configRoot: () => join(app.getPath('userData'), 'mcp'),
+    tokenOf: (paneId) => ctx.paneTokens.get(paneId),
+    remember: (paneId, { token, mcpFile }) => {
+      ctx.paneTokens.set(paneId, token)
+      if (mcpFile) ctx.paneMcpFiles.set(paneId, mcpFile)
+    }
+  }
 
   ipcMain.handle('missions:list', (_e, projectId: string) => missionsWithIntegration(projectId))
 
@@ -534,6 +548,24 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       const resumeSessionId = resumeSessionIdFor(rememberedExecutor, seat.cli)
       const effectiveMode = permissionMode ?? remembered?.permissionMode
 
+      // FERRAMENTAS SÓ PARA O PLANEJADOR (2.0, onda D): é o único chat da era
+      // 2.0 com servidor MCP, e o catálogo dele é apenas o kit de planos. Todo
+      // chat de dev/reviewer/ajudante continua fechado por construção.
+      const mcp =
+        route.missionType === 'planejamento'
+          ? armGuiPlannerMcp(
+              {
+                paneId,
+                projectId: mission.projectId,
+                cwd,
+                cli: seat.cli,
+                missionId,
+                seatId: seat.id
+              },
+              guiPlannerMcpDeps
+            )
+          : undefined
+
       const spawn: GuiPaneSpawn = {
         paneId,
         projectId: mission.projectId,
@@ -549,6 +581,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         systemPrompt: route.systemPrompt,
         resumeSessionId,
         permissionMode: effectiveMode,
+        ...(mcp ? { mcp } : {}),
         // Conversa retomada JÁ tem o briefing: repetir o primeiro turno seria
         // re-briefing perseguindo o pane (lição da F6.8i). O briefing é do TIPO
         // da missão: dev/reviewer/ajudante recebem goal + branch do worktree;
@@ -577,7 +610,8 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
           direct: Boolean(mission.direct),
           missionType: route.missionType,
           workspace: route.workspace,
-          permissionMode: effectiveMode ?? 'default'
+          permissionMode: effectiveMode ?? 'default',
+          plannerTools: Boolean(mcp)
         }
       })
       return { ok: true, spawn }

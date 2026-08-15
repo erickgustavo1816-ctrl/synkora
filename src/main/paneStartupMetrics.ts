@@ -5,9 +5,25 @@ import { randomUUID } from 'crypto'
 
 export type PaneStartupMode = 'livre' | 'maestro' | 'estrito' | 'shell'
 
+/** Papéis que de fato NASCEM num PTY. `gui-planner` é identidade de CHAT (2.0,
+ *  onda D): ela existe só para autenticar o MCP do planejador e nunca chega
+ *  aqui — quem mede partida de pane é o paneLifecycle, que é dos TUIs. */
+export type PaneStartupRole = 'maestro' | 'dev' | 'review' | 'qa' | 'ajudante' | 'livre'
+
+export function isPaneStartupRole(role: string | undefined): role is PaneStartupRole {
+  return (
+    role === 'maestro' ||
+    role === 'dev' ||
+    role === 'review' ||
+    role === 'qa' ||
+    role === 'ajudante' ||
+    role === 'livre'
+  )
+}
+
 export interface PaneStartupDescriptor {
   kind: 'shell' | 'claude' | 'codex'
-  role?: 'maestro' | 'dev' | 'review' | 'qa' | 'ajudante' | 'livre'
+  role?: PaneStartupRole
   mode: PaneStartupMode
   externalMcpCount: number
   hasInitialPrompt: boolean

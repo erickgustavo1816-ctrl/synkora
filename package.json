@@ -44,7 +44,7 @@
     "test:skills-system": "npm run test:skills-routing && npm run test:agent-routing && npm run test:department-skill-flows && npm run test:skill-runtime && npm run test:harness-lifecycle && npm run test:phase-skill-prompts && npm run test:review-diff && npm run test:bundled-skills && npm run test:skill-package-security && npm run test:skill-archive-integrity && npm run test:orchestrator-flow && npm run test:pane-permissions && npm run test:codex-skill-isolation && npm run test:mcp-dual-era",
     "test:agent-routing": "node --experimental-strip-types --test scripts/test-agent-routing.mjs",
     "test:project-plan": "node --experimental-strip-types --test scripts/test-project-plan.mjs",
-    "test:gui-sessions": "tsc --outDir .tmp/gui-sessions-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/guiSessions.ts src/main/guiAttachments.ts src/main/guiAttachmentStorage.ts src/main/guiClaudeTasks.ts src/main/guiCodexAgents.ts && node --test scripts/test-gui-sessions.mjs",
+    "test:gui-sessions": "tsc --outDir .tmp/gui-sessions-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/guiSessions.ts src/main/guiAttachments.ts src/main/guiAttachmentStorage.ts src/main/guiClaudeTasks.ts src/main/guiCodexAgents.ts src/main/guiPlannerMcp.ts && node --test scripts/test-gui-sessions.mjs",
     "test:gui-mission-contracts": "node --experimental-strip-types --test scripts/test-gui-mission-contracts.mjs",
     "test:gui-chat-ui": "node --experimental-strip-types --test scripts/test-gui-chat-ui.mjs",
     "test:gui-subagent-sidebar": "node --experimental-strip-types --test scripts/test-gui-subagent-sidebar.mjs",

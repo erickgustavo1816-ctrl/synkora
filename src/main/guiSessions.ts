@@ -20,6 +20,7 @@
  * - Higiene de env (deletar os marcadores CLAUDE_CODE_ e CLAUDECODE herdados)
  *   já é feita dentro das classes de sessão — nada a repetir aqui.
  */
+import { randomUUID } from 'node:crypto'
 import { CodexSession } from './codexSession'
 import { MaestroSession, type SessionEvent } from './maestroSession'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
@@ -33,6 +34,7 @@ import {
 } from './guiAttachments'
 import { validateGuiAttachmentReferences } from './guiAttachmentStorage'
 import { GuiAttachmentCapabilityStore } from './guiAttachmentCapabilities'
+import { isPlanDraft, type PlanDraft } from './planDraft'
 
 export const GUI_PROMPT_MAX_CHARS = 256 * 1024
 export const GUI_PROMPT_MAX_BYTES = 1024 * 1024
@@ -60,6 +62,11 @@ export interface GuiPaneSpawn {
   /** Modo de permissão DESTA conversa (onda D — o seletor do composer).
    *  Ausente = 'default' (o padrão do binário). */
   permissionMode?: GuiPermissionMode
+  /** MCP do Synkora para ESTE pane (onda D): só a missão de PLANEJAMENTO o
+   *  recebe — ver guiPlannerMcp.ts. Ausente = chat sem ferramenta nossa, que
+   *  é o que todo pane GUI foi até aqui. Entra no fingerprint: armar/desarmar
+   *  o servidor muda a linha de comando e exige processo novo. */
+  mcp?: { args: string[]; env?: Record<string, string> }
 }
 
 export type GuiPermBehavior = 'allow' | 'allow-always' | 'deny'
@@ -267,7 +274,17 @@ type GuiStickyEvent =
   | 'executor-changed'
   | 'context-usage'
 
-type GuiPendingInteractionEvent = 'permission' | 'question' | 'plan-review'
+type GuiPendingInteractionEvent = 'permission' | 'question' | 'plan-review' | 'plan-proposal'
+
+/**
+ * A proposta de plano é a ÚNICA pendência que não bloqueia o CLI: o agente
+ * chama `propose_plan`, a tool responde na hora e o turno termina. Se ela
+ * caísse na limpeza do `result` como as outras, o card sumiria antes de o dono
+ * chegar a vê-lo.
+ */
+function guiSurvivesTurnEnd(type: GuiPendingInteractionEvent): boolean {
+  return type === 'plan-proposal'
+}
 
 function guiStickyEvent(evt: unknown): GuiStickyEvent | null {
   if (!evt || typeof evt !== 'object') return null
@@ -290,7 +307,13 @@ function guiPendingInteraction(evt: unknown): { requestId: string; type: GuiPend
   const record = guiEventRecord(evt)
   if (!record || typeof record['requestId'] !== 'string' || !record['requestId']) return null
   const type = record['type']
-  if (type !== 'permission' && type !== 'question' && type !== 'plan-review') return null
+  if (
+    type !== 'permission' &&
+    type !== 'question' &&
+    type !== 'plan-review' &&
+    type !== 'plan-proposal'
+  )
+    return null
   return { requestId: record['requestId'], type }
 }
 
@@ -400,6 +423,12 @@ function guiPersistedResolution(value: unknown): boolean {
   if (!resolution) return false
   if (resolution['kind'] === 'stale') return true
   if (resolution['kind'] === 'plan') return typeof resolution['approve'] === 'boolean'
+  if (resolution['kind'] === 'plan-proposal')
+    return (
+      typeof resolution['approve'] === 'boolean' &&
+      (resolution['planId'] === undefined || guiRequestId(resolution['planId'])) &&
+      guiOptionalString(resolution['planTitle'])
+    )
   if (resolution['kind'] === 'permission')
     return (
       typeof resolution['toolName'] === 'string' &&
@@ -516,6 +545,10 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
         typeof event['plan'] === 'string' &&
         event['plan'].length <= 64 * 1024
       )
+    case 'plan-proposal':
+      // O rascunho persistido volta do disco: só a forma TOTAL que a porteira
+      // produz é aceita — card meio pronto não renasce.
+      return guiRequestId(event['requestId']) && isPlanDraft(event['draft'])
     case 'session-id':
       return typeof event['sessionId'] === 'string' && event['sessionId'].length > 0
     case 'ready':
@@ -566,6 +599,7 @@ function guiTranscriptCheckpoint(evt: SessionEvent): boolean {
     case 'interaction-resolved':
     case 'question':
     case 'plan-review':
+    case 'plan-proposal':
     case 'turn-continuation':
     case 'session-restarted':
     case 'conversation-cleared':
@@ -671,8 +705,16 @@ export class GuiEventRing {
         this.interactionBytes -= previous.size
       }
     } else if (guiTerminalEvent(evt)) {
-      this.interactions.clear()
-      this.interactionBytes = 0
+      // Pedido que BLOQUEIA o CLI morre com o turno (o backend já desistiu
+      // dele). A proposta de plano não bloqueia nada e continua esperando o
+      // clique do dono — limpá-la aqui apagaria o card assim que o agente
+      // terminasse de falar.
+      for (const [requestId, item] of this.interactions) {
+        const pendingType = guiPendingInteraction(item.evt)?.type
+        if (pendingType && guiSurvivesTurnEnd(pendingType)) continue
+        this.interactions.delete(requestId)
+        this.interactionBytes -= item.size
+      }
     }
 
     this.items.push({ seq, evt, size })
@@ -716,6 +758,25 @@ export class GuiEventRing {
       ...history.map((item) => ({ seq: item.seq, evt: item.evt })),
       ...Array.from(this.interactions.values(), (item) => ({ seq: item.seq, evt: item.evt }))
     ]
+  }
+
+  /**
+   * Pendência AINDA aberta por requestId. É o que torna a aprovação
+   * autoritativa: o rascunho que vira `Plan` sai daqui, do anel do pane que o
+   * agente escreveu — nunca de um payload que o renderer devolveu.
+   */
+  pending(requestId: string): unknown {
+    return this.interactions.get(requestId)?.evt
+  }
+
+  /** requestIds ainda abertos de um tipo — usado para superar uma pendência
+   *  que sobrevive ao turno antes de abrir outra do mesmo tipo. */
+  pendingIdsOfType(type: GuiPendingInteractionEvent): string[] {
+    const ids: string[] = []
+    for (const [requestId, item] of this.interactions) {
+      if (guiPendingInteraction(item.evt)?.type === type) ids.push(requestId)
+    }
+    return ids
   }
 
   get cursor(): number {
@@ -1209,6 +1270,11 @@ export class GuiSessionRegistry {
    */
   cwdOf(paneId: string): string | undefined {
     return this.panes.get(paneId)?.spawn.cwd
+  }
+
+  /** Universo dono do pane VIVO — a autoridade de escopo das tools do chat. */
+  projectOf(paneId: string): string | undefined {
+    return this.panes.get(paneId)?.spawn.projectId
   }
 
   create(input: GuiPaneSpawn, queuedToken?: symbol): GuiResult {
@@ -1841,6 +1907,81 @@ export class GuiSessionRegistry {
     return { ok: true }
   }
 
+  /**
+   * PROPOSTA DE PLANO (2.0, onda D). Diferente de todo o resto desta classe, o
+   * evento não vem do CLI: a tool `propose_plan` do pane de planejamento chega
+   * pelo servidor MCP e o harness sintetiza o card AQUI, no anel daquele pane.
+   *
+   * A tool NUNCA cria o plano — ela apresenta. Por isso este método devolve na
+   * hora (o agente encerra o turno) e o card fica pendurado no anel, imune ao
+   * `result`, até o dono clicar.
+   */
+  proposePlan(
+    paneId: string,
+    draft: PlanDraft
+  ): { ok: true; requestId: string } | { ok: false; error: string } {
+    const entry = this.panes.get(paneId)
+    if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
+    if (!isPlanDraft(draft)) return { ok: false, error: 'plano em formato inválido' }
+    // UMA proposta pendente por conversa. Como ela sobrevive ao fim do turno,
+    // sem esta regra um agente que re-propõe sem resposta empilharia cards no
+    // anel para sempre — e o dono teria de julgar versões concorrentes do mesmo
+    // plano. A anterior sai do fio com eco factual de superada.
+    for (const stale of entry.ring.pendingIdsOfType('plan-proposal')) {
+      entry.sink({ type: 'interaction-resolved', requestId: stale, resolution: { kind: 'stale' } })
+    }
+    const requestId = `plan-proposal-${randomUUID()}`
+    entry.sink({ type: 'plan-proposal', requestId, draft })
+    // Mesmo gancho da pergunta estruturada: a conversa parou esperando o dono,
+    // então a notificação de desktop precisa acordá-lo.
+    this.deps.onPermissionPending?.({
+      paneId,
+      projectId: entry.spawn.projectId,
+      toolName: 'propose_plan',
+      kind: 'question'
+    })
+    return { ok: true, requestId }
+  }
+
+  /** O rascunho AUTORITATIVO de uma proposta ainda pendente neste pane. */
+  pendingPlanProposal(paneId: string, requestId: string): PlanDraft | undefined {
+    const entry = this.panes.get(paneId)
+    if (!entry) return undefined
+    const pending = entry.ring.pending(requestId)
+    const record = guiEventRecord(pending)
+    if (record?.['type'] !== 'plan-proposal') return undefined
+    const draft = record['draft']
+    return isPlanDraft(draft) ? draft : undefined
+  }
+
+  /**
+   * Fecha a proposta no fio. O plano em si nasce fora daqui (o motor não
+   * conhece store nenhum); este método só registra o desfecho e libera o card.
+   */
+  resolvePlanProposal(
+    paneId: string,
+    requestId: string,
+    resolution: { approve: boolean; planId?: string; planTitle?: string }
+  ): GuiResult {
+    const entry = this.panes.get(paneId)
+    if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
+    if (!this.pendingPlanProposal(paneId, requestId)) {
+      entry.sink({ type: 'interaction-resolved', requestId, resolution: { kind: 'stale' } })
+      return { ok: false, error: 'esta proposta não está mais pendente' }
+    }
+    entry.sink({
+      type: 'interaction-resolved',
+      requestId,
+      resolution: {
+        kind: 'plan-proposal',
+        approve: resolution.approve,
+        ...(resolution.planId ? { planId: resolution.planId } : {}),
+        ...(resolution.planTitle ? { planTitle: resolution.planTitle } : {})
+      }
+    })
+    return { ok: true }
+  }
+
   interrupt(paneId: string): GuiResult {
     const entry = this.panes.get(paneId)
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
@@ -1968,6 +2109,8 @@ export class GuiSessionRegistry {
       effort: spawn.effort,
       // Modo de permissão DESTA conversa, na chave que cada CLI entende.
       ...permissions,
+      // Ferramentas Synkora deste pane (só o planejamento tem — guiPlannerMcp).
+      ...(spawn.mcp ? { extraArgs: spawn.mcp.args, extraEnv: spawn.mcp.env } : {}),
       // Chat aberto não morre por tédio (contrato do pane GUI).
       idleTimeoutMs: 0
     }
@@ -2318,6 +2461,9 @@ export function spawnFingerprint(spawn: GuiPaneSpawn): string {
     // (--permission-mode do claude, sandbox do thread/start do codex) e
     // nenhum dos dois binários troca isso na conversa em andamento.
     spawn.permissionMode ?? 'default',
+    // As flags de MCP moram na linha de comando do processo: armar o servidor
+    // numa conversa viva exige respawn (o resume preserva o contexto).
+    (spawn.mcp?.args ?? []).join(' '),
     spawn.systemPrompt ?? ''
   ].join('\0')
 }

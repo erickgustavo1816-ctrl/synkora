@@ -39,6 +39,11 @@ import {
   claudeReportedContextWindow
 } from '../.tmp/gui-sessions-test/maestroSession.js'
 import { CodexSession } from '../.tmp/gui-sessions-test/codexSession.js'
+import {
+  GUI_PLANNER_TOKEN_ENV,
+  armGuiPlannerMcp,
+  guiPlannerCodexArgs
+} from '../.tmp/gui-sessions-test/guiPlannerMcp.js'
 import { GuiClaudeTaskRegistry } from '../.tmp/gui-sessions-test/guiClaudeTasks.js'
 import {
   GUI_CODEX_AGENT_TOOL_PREFIX,
@@ -3608,4 +3613,336 @@ test('o result com janela medida sobrevive à persistência e à fotografia do a
     isGuiPersistedEvent({ type: 'init', model: 'claude-fable-5', sessionId: 's1', permissionMode: 'default', toolCount: 0, contextWindow: 1_000_000 }),
     true
   )
+})
+
+// ————— PROPOSTA DE PLANO (2.0, onda D) — os espelhos 1 e 4 + o motor —————
+
+/** Rascunho já normalizado, como o `propose_plan` entrega ao motor. */
+const planDraftFixture = {
+  title: 'Versão 2',
+  description: 'a fila de integração fica visível',
+  kind: 'livre',
+  items: [
+    {
+      key: 'fundacao',
+      title: 'Fundação da fila',
+      objective: 'subir a fila',
+      doneCriteria: ['a fila responde'],
+      dependsOn: []
+    },
+    {
+      key: 'tela',
+      title: 'Tela da fila',
+      objective: 'mostrar a fila',
+      doneCriteria: [],
+      tier: 'medio',
+      dependsOn: ['fundacao'],
+      docPath: 'plano/002-tela.md'
+    }
+  ]
+}
+
+function planProposalPane(gui, paneId) {
+  const ring = new GuiEventRing()
+  // A proposta é do HARNESS, não do CLI: ela não pergunta nada ao backend, e é
+  // por isso que qualquer sessão viva serve — claude e codex reagem igual.
+  const session = { alive: true, send: () => undefined }
+  gui.panes.set(paneId, {
+    spawn: { paneId, projectId: 'proj', cli: 'claude', configDir: 'c', cwd: '/tmp' },
+    fingerprint: 'teste',
+    session,
+    ring,
+    token: { alive: true },
+    sink: (evt) => ring.push(evt)
+  })
+  return ring
+}
+
+test('a proposta vira card no fio e o rascunho autoritativo sai do anel', () => {
+  const woken = []
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    onPermissionPending: (input) => woken.push(input)
+  })
+  const ring = planProposalPane(gui, 'gui-dev-plan0001')
+
+  const presented = gui.proposePlan('gui-dev-plan0001', planDraftFixture)
+  assert.equal(presented.ok, true)
+  assert.match(presented.requestId, /^plan-proposal-/)
+
+  const [event] = ring.snapshot()
+  assert.equal(event.type, 'plan-proposal')
+  assert.equal(event.requestId, presented.requestId)
+  assert.deepEqual(event.draft, planDraftFixture)
+  // o dono é ACORDADO: a conversa parou esperando por ele
+  assert.deepEqual(woken, [
+    { paneId: 'gui-dev-plan0001', projectId: 'proj', toolName: 'propose_plan', kind: 'question' }
+  ])
+
+  // o rascunho que a aprovação materializa vem do ANEL, nunca do renderer
+  assert.deepEqual(
+    gui.pendingPlanProposal('gui-dev-plan0001', presented.requestId),
+    planDraftFixture
+  )
+  assert.equal(gui.pendingPlanProposal('gui-dev-plan0001', 'outro-id'), undefined)
+  assert.equal(gui.pendingPlanProposal('pane-inexistente', presented.requestId), undefined)
+})
+
+test('rascunho torto nunca vira card e pane sem sessão recusa em PT-BR', () => {
+  const gui = registry()
+  planProposalPane(gui, 'gui-dev-plan0002')
+  const torto = gui.proposePlan('gui-dev-plan0002', { title: 'sem itens' })
+  assert.equal(torto.ok, false)
+  assert.equal(torto.error, 'plano em formato inválido')
+  const semPane = gui.proposePlan('pane-inexistente', planDraftFixture)
+  assert.equal(semPane.ok, false)
+  assert.equal(semPane.error, 'este pane não tem sessão aberta')
+})
+
+test('a proposta SOBREVIVE ao fim do turno — ela não bloqueia o CLI', () => {
+  const gui = registry()
+  const ring = planProposalPane(gui, 'gui-dev-plan0003')
+  const presented = gui.proposePlan('gui-dev-plan0003', planDraftFixture)
+
+  // pedidos que BLOQUEIAM o backend morrem com o turno; a proposta fica
+  ring.push({ type: 'permission', requestId: 'req-perm', toolName: 'Bash' })
+  ring.push({ type: 'question', requestId: 'req-question', questions: [] })
+  ring.push({ type: 'result', isError: false })
+
+  const types = ring.snapshot().map((evt) => evt.type)
+  assert.equal(types.includes('permission'), false, 'permissão morre com o turno')
+  assert.equal(types.includes('question'), false, 'pergunta morre com o turno')
+  assert.equal(types.filter((type) => type === 'plan-proposal').length, 1)
+  assert.deepEqual(
+    gui.pendingPlanProposal('gui-dev-plan0003', presented.requestId),
+    planDraftFixture,
+    'o card continua clicável depois de o agente terminar de falar'
+  )
+})
+
+test('o desfecho do card fecha a pendência e o eco nomeia o plano criado', () => {
+  const gui = registry()
+  const ring = planProposalPane(gui, 'gui-dev-plan0004')
+  const presented = gui.proposePlan('gui-dev-plan0004', planDraftFixture)
+
+  const resolved = gui.resolvePlanProposal('gui-dev-plan0004', presented.requestId, {
+    approve: true,
+    planId: 'plan-1',
+    planTitle: 'Versão 2'
+  })
+  assert.equal(resolved.ok, true)
+  assert.deepEqual(ring.snapshot().at(-1), {
+    type: 'interaction-resolved',
+    requestId: presented.requestId,
+    resolution: { kind: 'plan-proposal', approve: true, planId: 'plan-1', planTitle: 'Versão 2' }
+  })
+  // resolvida uma vez, some do anel: um segundo clique não cria plano nenhum
+  assert.equal(gui.pendingPlanProposal('gui-dev-plan0004', presented.requestId), undefined)
+  const again = gui.resolvePlanProposal('gui-dev-plan0004', presented.requestId, { approve: true })
+  assert.equal(again.ok, false)
+  assert.equal(again.error, 'esta proposta não está mais pendente')
+  assert.deepEqual(ring.snapshot().at(-1).resolution, { kind: 'stale' })
+})
+
+test('o rascunho persistido atravessa a hidratação, e forma incompleta é recusada', () => {
+  assert.equal(
+    isGuiPersistedEvent({ type: 'plan-proposal', requestId: 'r1', draft: planDraftFixture }),
+    true
+  )
+  assert.equal(
+    isGuiPersistedEvent({ type: 'plan-proposal', requestId: 'r1', draft: { title: 'x' } }),
+    false,
+    'rascunho sem itens não renasce meio pronto'
+  )
+  assert.equal(
+    isGuiPersistedEvent({ type: 'plan-proposal', draft: planDraftFixture }),
+    false,
+    'sem requestId o card não teria como ser respondido'
+  )
+  // e o desfecho dele também é contrato de disco
+  assert.equal(
+    isGuiPersistedEvent({
+      type: 'interaction-resolved',
+      requestId: 'r1',
+      resolution: { kind: 'plan-proposal', approve: true, planId: 'plan-1' }
+    }),
+    true
+  )
+  assert.equal(
+    isGuiPersistedEvent({
+      type: 'interaction-resolved',
+      requestId: 'r1',
+      resolution: { kind: 'plan-proposal' }
+    }),
+    false
+  )
+})
+
+test('armar o MCP do planejador muda a identidade do spawn (respawn com resume)', () => {
+  const semTools = spawnFingerprint(baseSpawn)
+  const comTools = spawnFingerprint({
+    ...baseSpawn,
+    mcp: { args: ['--mcp-config', 'C:/x/gui-dev-abcd1234.json', '--strict-mcp-config'] }
+  })
+  assert.notEqual(comTools, semTools, 'ligar as ferramentas exige processo novo')
+  assert.equal(
+    spawnFingerprint({ ...baseSpawn, mcp: { args: [] } }),
+    semTools,
+    'lista vazia é o mesmo que não ter MCP'
+  )
+  const portaA = spawnFingerprint({
+    ...baseSpawn,
+    mcp: { args: ['-c', 'mcp_servers.synkora.url=http://127.0.0.1:5555/mcp'] }
+  })
+  const portaB = spawnFingerprint({
+    ...baseSpawn,
+    mcp: { args: ['-c', 'mcp_servers.synkora.url=http://127.0.0.1:6666/mcp'] }
+  })
+  assert.notEqual(portaA, portaB, 'porta nova é linha de comando nova')
+})
+
+test('o codex recebe o override do servidor SEM aspas (o shell não escapa nada)', () => {
+  const args = guiPlannerCodexArgs(4321)
+  assert.deepEqual(args, [
+    '-c',
+    'mcp_servers.synkora.url=http://127.0.0.1:4321/mcp',
+    '-c',
+    'mcp_servers.synkora.bearer_token_env_var=SYNKORA_TOKEN',
+    '-c',
+    'mcp_servers.synkora.startup_timeout_sec=30'
+  ])
+  assert.equal(
+    args.some((arg) => arg.includes('"')),
+    false,
+    'aspas embutidas seriam comidas pelo cmd.exe e o valor chegaria torto'
+  )
+})
+
+test('o planejador arma token e config; sem servidor de pé, o chat nasce sem tools', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-planner-mcp-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const registered = []
+  const remembered = []
+  // Cada chamada aqui é um pane DIFERENTE, então o cache de token nasce vazio:
+  // o reuso por remontagem tem teste próprio logo abaixo.
+  const deps = (port) => ({
+    hub: {
+      registerPane: (token, identity) => registered.push({ token, identity }),
+      identityByToken: () => undefined
+    },
+    port: () => port,
+    configRoot: () => root,
+    tokenOf: () => undefined,
+    remember: (paneId, artifacts) => remembered.push({ paneId, ...artifacts })
+  })
+
+  const claude = armGuiPlannerMcp(
+    {
+      paneId: 'gui-dev-plan0005',
+      projectId: 'proj',
+      cwd: '/tmp/proj',
+      cli: 'claude',
+      missionId: 'mission-1',
+      seatId: 'seat-1'
+    },
+    deps(4321)
+  )
+  assert.equal(claude.args[0], '--mcp-config')
+  assert.equal(claude.args.at(-1), '--strict-mcp-config')
+  assert.equal(claude.env, undefined, 'no claude o bearer viaja no arquivo, não no env')
+  assert.equal(registered[0].identity.role, 'gui-planner')
+  assert.equal(registered[0].identity.projectId, 'proj')
+  assert.equal(registered[0].identity.missionId, 'mission-1')
+  assert.equal(remembered[0].token, registered[0].token)
+  assert.equal(remembered[0].mcpFile, claude.args[1])
+  const config = JSON.parse(readFileSync(claude.args[1], 'utf8'))
+  assert.equal(config.mcpServers.synkora.url, 'http://127.0.0.1:4321/mcp')
+  assert.equal(config.mcpServers.synkora.headers.Authorization, `Bearer ${registered[0].token}`)
+  assert.equal(config.mcpServers.playwright, undefined, 'o planejador não abre browser')
+
+  const codex = armGuiPlannerMcp(
+    { paneId: 'gui-dev-plan0006', projectId: 'proj', cwd: '/tmp/proj', cli: 'codex' },
+    deps(4321)
+  )
+  assert.equal(codex.env[GUI_PLANNER_TOKEN_ENV], registered[1].token)
+  assert.equal(codex.args[1], 'mcp_servers.synkora.url=http://127.0.0.1:4321/mcp')
+  assert.equal(remembered[1].mcpFile, undefined, 'codex não grava arquivo de config')
+
+  // dois panes NUNCA compartilham token
+  assert.notEqual(registered[0].token, registered[1].token)
+
+  // porta 0 = servidor ainda subindo: nada é registrado e o pane nasce mudo
+  const antes = registered.length
+  assert.equal(
+    armGuiPlannerMcp(
+      { paneId: 'gui-dev-plan0007', projectId: 'proj', cwd: '/tmp/proj', cli: 'claude' },
+      deps(0)
+    ),
+    undefined
+  )
+  assert.equal(registered.length, antes, 'sem servidor, nenhum token é emitido')
+})
+
+test('remontar o chat REUSA o token: o processo vivo leu o arquivo no nascimento', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-planner-idem-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const byToken = new Map()
+  const byPane = new Map()
+  const tokens = new Map()
+  const hub = {
+    registerPane: (token, identity) => {
+      byToken.set(token, identity)
+      byPane.set(identity.paneId, identity)
+    },
+    identityByToken: (token) => byToken.get(token)
+  }
+  const deps = {
+    hub,
+    port: () => 4321,
+    configRoot: () => root,
+    tokenOf: (paneId) => tokens.get(paneId),
+    remember: (paneId, { token }) => tokens.set(paneId, token)
+  }
+  const input = { paneId: 'gui-dev-plan0008', projectId: 'proj', cwd: '/tmp/proj', cli: 'claude' }
+
+  const first = armGuiPlannerMcp(input, deps)
+  const second = armGuiPlannerMcp(input, deps)
+  assert.deepEqual(second.args, first.args, 'args iguais = fingerprint igual = sem respawn')
+  assert.equal(byToken.size, 1, 'a remontagem não pode acumular token vivo por pane')
+  const config = JSON.parse(readFileSync(first.args[1], 'utf8'))
+  assert.equal(
+    config.mcpServers.synkora.headers.Authorization,
+    `Bearer ${tokens.get(input.paneId)}`,
+    'o arquivo continua batendo com o token que o processo vivo carrega'
+  )
+
+  // token revogado (pane morreu e voltou): identidade nova, token novo
+  byToken.clear()
+  const third = armGuiPlannerMcp(input, deps)
+  assert.equal(byToken.size, 1)
+  assert.notEqual(tokens.get(input.paneId), config.mcpServers.synkora.headers.Authorization)
+  assert.deepEqual(third.args, first.args, 'o caminho do arquivo é estável por pane')
+})
+
+test('propor de novo SUPERA a proposta anterior — nunca dois cards do mesmo plano', () => {
+  const gui = registry()
+  const ring = planProposalPane(gui, 'gui-dev-plan0009')
+  const first = gui.proposePlan('gui-dev-plan0009', planDraftFixture)
+  const second = gui.proposePlan('gui-dev-plan0009', {
+    ...planDraftFixture,
+    title: 'Versão 2 (revisada)'
+  })
+  assert.equal(second.ok, true)
+  assert.notEqual(second.requestId, first.requestId)
+
+  const pending = ring.snapshot().filter((evt) => evt.type === 'plan-proposal')
+  assert.equal(pending.length, 1, 'só a proposta mais nova continua clicável')
+  assert.equal(pending[0].requestId, second.requestId)
+  assert.equal(gui.pendingPlanProposal('gui-dev-plan0009', first.requestId), undefined)
+  // e a superação vira eco factual no fio, nunca um card que some sem explicação
+  const echo = ring
+    .snapshot()
+    .find((evt) => evt.type === 'interaction-resolved' && evt.requestId === first.requestId)
+  assert.deepEqual(echo.resolution, { kind: 'stale' })
 })

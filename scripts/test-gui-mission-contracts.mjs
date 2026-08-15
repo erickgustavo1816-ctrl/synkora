@@ -192,17 +192,32 @@ test('o ceifar por projeto pega o planejamento e NUNCA um chat de missão', () =
   assert.equal(guiMissionRoleOf(guiPlanningPaneId(PROJECT)), undefined)
 })
 
-test('o planejador escreve o roadmap, não executa produto nem cria missão', () => {
+test('o planejador PROPÕE o plano, não executa produto nem cria missão', () => {
   const contract = guiPlanningSystemPrompt()
   assert.ok(contract.length > 200, 'contrato vazio demais')
-  assert.ok(contract.length < 2400, 'contrato virou constituição')
+  assert.ok(contract.length < 3200, 'contrato virou constituição')
   assert.match(contract, /PT-BR/)
   assert.match(contract, /ONE-OFF/)
   assert.match(contract, /do NOT execute product work/i)
   assert.match(contract, /CREATED BY THE OWNER/)
-  // o formato dos arquivos é contrato: o dono cria a missão LENDO estes campos
-  assert.match(contract, /plano\/roadmap\.md/)
+  // 2.0 onda D: o entregável estruturado é a PROPOSTA, e ela nunca cria nada —
+  // quem cria é o clique do dono no card (porteira mecânica, não persona).
+  assert.match(contract, /propose_plan/)
+  assert.match(contract, /never creates anything/i)
+  assert.match(contract, /END YOUR TURN and wait/i)
+  for (const tool of ['list_plans', 'get_plan', 'update_plan', 'delete_plan']) {
+    assert.ok(contract.includes(tool), `sem a ferramenta ${tool}`)
+  }
+  // O brief em prosa CONTINUA no repo: o JSON é a estrutura, o markdown é a
+  // profundidade — um não substitui o outro (D4.6). E o roadmap.md deixou de
+  // ser exigido, porque o mapa passou a ser o roadmap.
   assert.match(contract, /plano\/NNN-slug\.md/)
+  assert.match(contract, /docPath/)
+  assert.equal(
+    /WRITE the plan into the repository/.test(contract),
+    false,
+    'o plano estruturado não se escreve mais como roadmap.md'
+  )
   for (const section of [
     'Objetivo',
     'Fora de escopo',
@@ -228,8 +243,10 @@ test('o planejador é diferente de todos os contratos de missão', () => {
 test('o 1º turno do planejamento nomeia o caderno em vez de dizer "não existe"', () => {
   const fresh = guiPlanningFirstPrompt({ projectName: 'PAINEL DE GESTÃO' })
   assert.match(fresh, /PROJECT: PAINEL DE GESTÃO/)
-  assert.match(fresh, /no plano\/roadmap\.md yet/)
+  assert.match(fresh, /no plano\/ files yet/)
   assert.match(fresh, /VERY FIRST output/)
+  // e o estudo começa pelo que já está planejado, nunca por uma proposta cega
+  assert.match(fresh, /list_plans/)
   // sem versão aberta o cabeçalho não inventa uma
   assert.equal(/VERSION IN PROGRESS/.test(fresh), false)
 
@@ -239,8 +256,9 @@ test('o 1º turno do planejamento nomeia o caderno em vez de dizer "não existe"
     roadmapExists: true
   })
   assert.match(resumed, /VERSION IN PROGRESS: v1\.2/)
-  assert.match(resumed, /ALREADY has plano\/roadmap\.md/)
-  assert.equal(/no plano\/roadmap\.md yet/.test(resumed), false)
+  // compat: o roadmap.md legado continua sendo LIDO e absorvido (D4.6)
+  assert.match(resumed, /legacy plano\/roadmap\.md/)
+  assert.equal(/no plano\/ files yet/.test(resumed), false)
 })
 
 // TIPO DA MISSÃO: o planejamento deixou de ser um convite que aparece sozinho

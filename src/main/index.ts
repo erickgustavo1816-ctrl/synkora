@@ -87,6 +87,7 @@ import { buildPanesApi } from './mcpApi/panes'
 import { buildMissionsApi } from './mcpApi/missions'
 import { buildHelpersApi } from './mcpApi/helpers'
 import { buildBoardApi } from './mcpApi/board'
+import { buildPlansApi } from './mcpApi/plans'
 import { buildReportApi } from './mcpApi/report'
 import { registerTasksIpc } from './ipc/tasks'
 import { registerMaestroIpc } from './ipc/maestro'
@@ -6146,6 +6147,16 @@ app.whenReady().then(async () => {
       securityWaiverOptions,
       planTaskForWorkTask,
       setPhaseExecutorImpl
+    }),
+    // KIT DO CHAT DE PLANEJAMENTO (2.0, onda D): o único catálogo que a role
+    // 'gui-planner' enxerga. `propose_plan` apresenta e devolve — quem cria o
+    // plano é o clique do dono no card (porteira mecânica, nunca persona).
+    ...buildPlansApi(ctx, {
+      proposePlanToPane: (paneId, draft) =>
+        guiSessions?.proposePlan(paneId, draft) ?? {
+          ok: false,
+          error: 'o chat deste pane não está aberto'
+        }
     }),
     // Domínios extraídos (fase 1, commit 4b) — spreads compõem o literal;
     // o tipo McpApi confere a superfície completa na atribuição.

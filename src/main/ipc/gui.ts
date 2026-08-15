@@ -109,6 +109,18 @@ function paneLabel(ctx: MainContext, paneId: string, projectId: string): string 
   return mission ? `${who} · ${mission.title}` : who
 }
 
+/**
+ * Missão dona de um pane GUI, pela convenção `gui-<papel>-<id8>`. undefined =
+ * pane de projeto (planejamento avulso) — o plano nasce sem missão de origem.
+ */
+function guiMissionIdOf(ctx: MainContext, projectId: string, paneId: string): string | undefined {
+  if (!guiMissionRoleOf(paneId)) return undefined
+  const short = paneId.split('-')[2] ?? ''
+  return ctx.missions
+    .list(projectId)
+    .find((candidate) => missionShortId(candidate.id) === short)?.id
+}
+
 function chatNoticeEnabled(ctx: MainContext, kind: GuiNoticeKind): boolean {
   const settings = ctx.settings.view()
   if (kind === 'needs-you') return settings.chatNotifyNeedsYou
@@ -293,7 +305,16 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     },
     // Um único teardown cobre kill do renderer, arquivamento em lote, troca de
     // projeto e respawn. Assim nenhum marcador [pronto] sobrevive ao pane.
-    onPaneDisposed: ({ paneId }) => readyTitle.dropPane(paneId)
+    onPaneDisposed: ({ paneId }) => {
+      readyTitle.dropPane(paneId)
+      // FERRAMENTAS MORREM COM O PANE (2.0, onda D): o chat de planejamento é o
+      // único com identidade MCP, e o token dele não pode sobreviver ao
+      // processo — um pane novo no mesmo id ganha token novo. Para todo outro
+      // pane GUI isto é no-op: eles nunca tiveram identidade.
+      ctx.paneTokens.delete(paneId)
+      ctx.unregisterPane(paneId)
+      ctx.cleanPaneMcpFile(paneId)
+    }
   })
   // Índice curto por cwd para basename/sufixo. A raiz nunca vem do renderer;
   // cada chamada abaixo a reencontra no registro vivo da conversa.
@@ -415,6 +436,74 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
       if (typeof approve !== 'boolean')
         return { ok: false, error: 'decisão de plano inválida' }
       return registry.answerPlan(paneId, requestId, approve)
+    }
+  )
+
+  /**
+   * PROPOSTA DE PLANO (2.0, onda D) — a PORTEIRA MECÂNICA do pedido central do
+   * dono: a tool `propose_plan` apresenta, o CLIQUE cria. Nada aqui aceita o
+   * rascunho vindo do renderer: ele é lido do anel do próprio pane, que é onde
+   * o agente o escreveu. O renderer manda apenas a decisão.
+   *
+   * Aprovar → o Plan nasce 'ativo', o mapa é avisado (plans:changed) e a
+   * conversa recebe uma mensagem de USUÁRIO curta contando o que aconteceu —
+   * o agente segue o fio sem ninguém digitar nada.
+   * Ajustar → o texto do dono volta como mensagem e o agente re-propõe.
+   */
+  ipcMain.handle(
+    'gui:answerPlanProposal',
+    (e, paneId: string, requestId: string, approve: unknown, text: unknown): GuiResult => {
+      extras.assertAppRendererSender(e)
+      if (!requestId) return { ok: false, error: 'proposta sem identificador' }
+      if (typeof approve !== 'boolean') return { ok: false, error: 'decisão de plano inválida' }
+      if (text !== undefined && typeof text !== 'string') {
+        return { ok: false, error: 'ajuste em formato inválido' }
+      }
+      const draft = registry.pendingPlanProposal(paneId, requestId)
+      if (!draft) {
+        registry.resolvePlanProposal(paneId, requestId, { approve })
+        return { ok: false, error: 'esta proposta não está mais pendente' }
+      }
+      const projectId = registry.projectOf(paneId)
+      if (!projectId) return { ok: false, error: 'este pane não tem sessão aberta' }
+
+      if (!approve) {
+        const adjustment = (typeof text === 'string' ? text : '').trim()
+        if (!adjustment) return { ok: false, error: 'diga o que ajustar antes de devolver o plano' }
+        // A mensagem PRIMEIRO: se o envio falhar (sessão encerrou no meio), o
+        // card continua de pé e o texto do dono não se perde no caminho.
+        const sent = registry.send(paneId, adjustment)
+        if (!sent.ok) return sent
+        registry.resolvePlanProposal(paneId, requestId, { approve: false })
+        return { ok: true }
+      }
+
+      const missionId = guiMissionIdOf(ctx, projectId, paneId)
+      const created = ctx.plans.create(projectId, draft, {
+        paneId,
+        ...(missionId ? { missionId } : {}),
+        proposedAt: new Date().toISOString()
+      })
+      if (!created.ok) return { ok: false, error: created.error }
+      blackbox.record({
+        cat: 'user',
+        event: 'plan-proposal-approved',
+        actor: 'user',
+        ids: { projectId, paneId, planId: created.plan.id },
+        detail: { kind: created.plan.kind, items: created.plan.items.length }
+      })
+      registry.resolvePlanProposal(paneId, requestId, {
+        approve: true,
+        planId: created.plan.id,
+        planTitle: created.plan.title
+      })
+      ctx.pushAll('plans:changed', projectId)
+      // Zero digitação entre agentes: o recibo do clique vira o próximo turno.
+      registry.send(
+        paneId,
+        `[synkora] o dono APROVOU o plano "${created.plan.title}" — ele virou uma aba no MAPA com ${created.plan.items.length} missão(ões). As missões são criadas pelo dono a partir dali; siga daqui em diante usando update_plan para ajustar este plano (id ${created.plan.id}).`
+      )
+      return { ok: true }
     }
   )
 

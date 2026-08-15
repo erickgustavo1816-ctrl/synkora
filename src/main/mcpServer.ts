@@ -16,6 +16,7 @@ import { createRequire } from 'module'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'fs'
 import { dirname, isAbsolute, join, relative, sep } from 'path'
 import type { Hub, PaneIdentity } from './hub'
+import type { PlanPatch } from './plans'
 import type { CodeQuery } from './codeIntelligence/types'
 import type { SecurityReviewInput } from './securityReview'
 import type { GateVerificationEvidence } from './gateVerificationEvidence'
@@ -317,6 +318,22 @@ export interface McpApi {
   /** Maestro/orquestrador enxerga os panes do próprio escopo (paneId, papel,
    *  card, estado) — é a lista de com quem o notify_pane pode falar. */
   listPanes: (id: PaneIdentity) => string
+  // ——— kit do CHAT de planejamento (2.0, onda D — role 'gui-planner') ———
+  /** Todos os planos do universo com o progresso derivado das missões. */
+  listPlans: (id: PaneIdentity) => string
+  /** Um plano inteiro, com o `updatedAt` que o CAS do update exige. */
+  getPlan: (id: PaneIdentity, planId: string) => string
+  /** APRESENTA um plano novo ao dono no chat. NUNCA cria — o clique cria. */
+  proposePlan: (id: PaneIdentity, draft: unknown) => string
+  /** Edita um plano existente (execução direta; CAS por updatedAt). */
+  updatePlan: (
+    id: PaneIdentity,
+    planId: string,
+    patch: PlanPatch,
+    expectedUpdatedAt?: string
+  ) => string
+  /** Arquiva (soft) um plano. Exclusão definitiva é gesto do dono no mapa. */
+  deletePlan: (id: PaneIdentity, planId: string, expectedUpdatedAt?: string) => string
   generateImage: (id: PaneIdentity, prompt: string, fileName?: string) => Promise<string>
   createMission: (id: PaneIdentity, input: NewMissionInput) => string
   /** PM persiste/revisa o mapa macro do projeto sem criar missões reais. */
@@ -509,6 +526,169 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   const finishCatalog = (): McpServer => {
     api.noteCatalogServed?.(identity, servedTools)
     return server
+  }
+
+  // ————— CHAT DE PLANEJAMENTO (2.0, onda D) — catálogo PRÓPRIO e FECHADO —————
+  //
+  // O pane GUI de planejamento é o primeiro chat da era 2.0 com ferramentas
+  // Synkora, e ele recebe SÓ o kit de planos. O retorno antecipado é a cerca:
+  // as tools abaixo são registradas dentro deste bloco, então nenhum outro
+  // papel — inclusive os gates read-only — pode enxergá-las, e este papel não
+  // enxerga uma linha do catálogo legado.
+  if (identity.role === 'gui-planner') {
+    server.registerTool(
+      'list_plans',
+      {
+        description:
+          'Os planos deste universo, com o progresso real de cada missão vinculada. Chame antes de propor qualquer coisa: propor de novo o que já está planejado é retrabalho.'
+      },
+      async () => text(api.listPlans(identity))
+    )
+
+    server.registerTool(
+      'get_plan',
+      {
+        description:
+          'Um plano inteiro: descrição, missões, objetivo/critérios/tier/contexto de cada uma e o updatedAt que o update_plan exige.',
+        inputSchema: {
+          planId: z.string().min(1).max(120).describe('id do plano (vem do list_plans)')
+        }
+      },
+      async ({ planId }) => text(api.getPlan(identity, planId))
+    )
+
+    server.registerTool(
+      'propose_plan',
+      {
+        description:
+          'APRESENTA um plano novo ao dono, como card dentro desta conversa. NUNCA cria nada: quem cria é o clique dele. Chame só depois que ele concordar com o recorte em palavras — e então ENCERRE o turno e espere. Silêncio não é consentimento. Cada item é UMA missão entregável; os campos espelham as seções que você já escreve em plano/NNN-slug.md.',
+        inputSchema: {
+          title: z.string().min(1).max(120).describe('nome do plano, em PT-BR'),
+          description: z
+            .string()
+            .max(4_000)
+            .optional()
+            .describe('o recorte em prosa que o dono julga sem ler código'),
+          kind: z
+            .enum(['mestre', 'livre'])
+            .optional()
+            .describe(
+              "'mestre' = o plano de fundo do universo (só UM ativo); 'livre' (padrão) = um recorte que atravessa versões"
+            ),
+          items: z
+            .array(
+              z.object({
+                key: z
+                  .string()
+                  .max(60)
+                  .optional()
+                  .describe('apelido curto desta missão, usado por outras em dependsOn'),
+                title: z.string().min(1).max(120).describe('UMA entrega — título com "e" são duas missões'),
+                objective: z.string().min(1).max(2_000).describe('seção Objetivo'),
+                outOfScope: z.string().max(2_000).optional().describe('seção Fora de escopo'),
+                doneCriteria: z
+                  .array(z.string().max(400))
+                  .max(10)
+                  .optional()
+                  .describe('seção Critério de pronto: binário e observável, nunca "ficou bom"'),
+                tier: z.enum(['pequeno', 'medio', 'grande']).optional().describe('seção Tier'),
+                context: z.string().max(2_000).optional().describe('seção Contexto'),
+                dependsOn: z
+                  .array(z.string().max(60))
+                  .max(12)
+                  .optional()
+                  .describe('keys de missões ANTERIORES desta mesma lista'),
+                docPath: z
+                  .string()
+                  .max(240)
+                  .optional()
+                  .describe("brief em prosa no repo, ex.: 'plano/003-fila.md'")
+              })
+            )
+            .min(1)
+            .max(24)
+        }
+      },
+      async (draft) => text(api.proposePlan(identity, draft))
+    )
+
+    server.registerTool(
+      'update_plan',
+      {
+        description:
+          'Edita um plano que JÁ existe — isto executa na hora (editar é reversível). Mande o updatedAt que veio do get_plan: se o plano mudou nesse meio-tempo, a alteração é recusada em vez de sobrescrever o que o dono viu. O estado "concluida" e o vínculo com a missão são derivados da missão real e não se escrevem aqui.',
+        inputSchema: {
+          planId: z.string().min(1).max(120),
+          expectedUpdatedAt: z
+            .string()
+            .max(64)
+            .optional()
+            .describe('o updatedAt lido no get_plan'),
+          title: z.string().min(1).max(120).optional(),
+          description: z.string().max(4_000).nullable().optional(),
+          status: z.enum(['ativo', 'concluido', 'arquivado']).optional(),
+          items: z
+            .array(
+              z.object({
+                id: z.string().min(1).max(120).describe('id do item (vem do get_plan)'),
+                title: z.string().min(1).max(120).optional(),
+                objective: z.string().min(1).max(2_000).optional(),
+                outOfScope: z.string().max(2_000).nullable().optional(),
+                doneCriteria: z.array(z.string().max(400)).max(10).optional(),
+                tier: z.enum(['pequeno', 'medio', 'grande']).nullable().optional(),
+                context: z.string().max(2_000).nullable().optional(),
+                dependsOn: z.array(z.string().max(120)).max(12).optional(),
+                docPath: z.string().max(240).nullable().optional(),
+                status: z
+                  .enum(['planejada', 'em_andamento', 'descartada'])
+                  .optional()
+                  .describe('"concluida" não entra: ela vem da missão vinculada')
+              })
+            )
+            .max(24)
+            .optional(),
+          addItems: z
+            .array(
+              z.object({
+                key: z.string().max(60),
+                title: z.string().min(1).max(120),
+                objective: z.string().min(1).max(2_000),
+                outOfScope: z.string().max(2_000).optional(),
+                doneCriteria: z.array(z.string().max(400)).max(10),
+                tier: z.enum(['pequeno', 'medio', 'grande']).optional(),
+                context: z.string().max(2_000).optional(),
+                dependsOn: z.array(z.string().max(120)).max(12),
+                docPath: z.string().max(240).optional()
+              })
+            )
+            .max(24)
+            .optional(),
+          removeItemIds: z
+            .array(z.string().max(120))
+            .max(24)
+            .optional()
+            .describe('item que já virou missão não sai: marque status descartada')
+        }
+      },
+      async ({ planId, expectedUpdatedAt, ...patch }) =>
+        text(api.updatePlan(identity, planId, patch as PlanPatch, expectedUpdatedAt))
+    )
+
+    server.registerTool(
+      'delete_plan',
+      {
+        description:
+          'ARQUIVA um plano (reversível): a aba some do mapa e o conteúdo fica. Exclusão definitiva não existe por ferramenta — é gesto do dono no mapa.',
+        inputSchema: {
+          planId: z.string().min(1).max(120),
+          expectedUpdatedAt: z.string().max(64).optional()
+        }
+      },
+      async ({ planId, expectedUpdatedAt }) =>
+        text(api.deletePlan(identity, planId, expectedUpdatedAt))
+    )
+
+    return finishCatalog()
   }
 
   server.registerTool(

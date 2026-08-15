@@ -375,9 +375,13 @@ export class CodexSession {
       PATH: freshWindowsPath()
     }
     if (opts.configDir) env['CODEX_HOME'] = opts.configDir
+    for (const [key, value] of Object.entries(opts.extraEnv ?? {})) env[key] = value
 
-    // shell:true para o PATH do env resolver o binário (mesmo padrão do chat antigo).
-    this.child = spawn('codex', ['app-server'], {
+    // shell:true para o PATH do env resolver o binário (mesmo padrão do chat
+    // antigo). `-c` é opção do PRÓPRIO subcomando `app-server` (sondado no
+    // 0.147: `codex app-server -c mcp_servers.…` sobe e responde o initialize),
+    // e os valores chegam sem aspas de propósito — o shell não escapa nada.
+    this.child = spawn('codex', ['app-server', ...(opts.extraArgs ?? [])], {
       cwd: opts.cwd,
       env,
       shell: process.platform === 'win32'

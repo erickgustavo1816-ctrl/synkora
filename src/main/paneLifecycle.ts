@@ -53,7 +53,7 @@ import { isMethodGovernedPaneRole } from './codexSkillIsolation'
 import { activeQaRuntimes, stopQaRuntime } from './qaRuntime'
 import { decorateBrowserLaunchArgs, qaCdpReservations } from './qaCdp'
 import { parsePortFromUrl, type PortUseEntry } from './portMap'
-import type { PaneStartupDescriptor } from './paneStartupMetrics'
+import { isPaneStartupRole, type PaneStartupDescriptor } from './paneStartupMetrics'
 import type { PaneKind } from './pty'
 import type { SeatCli } from './seats'
 import type { PaneIdentity } from './hub'
@@ -152,7 +152,9 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
             : 'livre'
     return {
       kind: req.kind,
-      ...(identity ? { role: identity.role } : {}),
+      // Papel de PTY apenas: identidade de chat (gui-planner) não mede partida
+      // de pane — e o descritor prefere OMITIR a inventar um papel de terminal.
+      ...(isPaneStartupRole(identity?.role) ? { role: identity.role } : {}),
       mode,
       externalMcpCount,
       hasInitialPrompt: Boolean(req.initialPrompt)

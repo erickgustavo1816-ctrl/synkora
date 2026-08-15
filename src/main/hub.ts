@@ -8,7 +8,21 @@ import { redactSensitiveText } from './securityRedaction'
 // (b) evento hub:event para a UI, (c) mensagem digitada no pane do MAESTRO
 // quando ele está ocioso — é assim que o orquestrador "sabe de tudo, sempre".
 
-export type HubPaneRole = 'maestro' | 'dev' | 'review' | 'qa' | 'ajudante' | 'livre'
+/**
+ * `gui-planner` (2.0, onda D) é o forasteiro desta lista: ele identifica um
+ * CHAT (pane GUI de missão de planejamento), não um pane de terminal. A
+ * identidade existe só para AUTENTICAR e ESCOPAR as tools de plano — ele nunca
+ * entra na fila de injeção do hub, não recebe evento e não é destino de
+ * notify_pane. Ver `guiPlannerMcp.ts`.
+ */
+export type HubPaneRole =
+  | 'maestro'
+  | 'dev'
+  | 'review'
+  | 'qa'
+  | 'ajudante'
+  | 'livre'
+  | 'gui-planner'
 export type HubCommunicationKind = 'message' | 'delegate' | 'report' | 'feedback' | 'handoff'
 
 /** Entrega causal entre dois panes. Diferente de HubEvent, este evento só

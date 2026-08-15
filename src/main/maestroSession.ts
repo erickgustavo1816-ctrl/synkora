@@ -25,6 +25,7 @@ import {
   chatPermissionRuleLabel,
   resolveChatPermissionSuggestions
 } from './chatPermissions'
+import type { PlanDraft } from './planDraft'
 
 // Sessão PERSISTENTE do Maestro: um processo `claude` vivo em stream-json
 // bidirecional — o mesmo motor do TUI, rodando como "painel de fundo".
@@ -52,6 +53,11 @@ export interface MaestroSessionOpts {
    *  de sempre (todo chamador existente); 0 DESLIGA o relógio — é o que o pane
    *  GUI usa: chat aberto não morre por tédio (docs/GUI_PANE_CONTRACT.md). */
   idleTimeoutMs?: number
+  /** Flags extras da linha de comando (2.0 onda D: as do servidor MCP do chat
+   *  de planejamento). Já vêm prontas de `guiPlannerMcp` — nada é montado aqui. */
+  extraArgs?: string[]
+  /** Env extra do processo filho (codex lê o bearer token daqui). */
+  extraEnv?: Record<string, string>
 }
 
 // Capacidades REAIS do CLI, vindas do handshake `initialize`: a mesma lista
@@ -279,6 +285,8 @@ export type SessionEvent =
           }
         | { kind: 'question'; entries: { question: string; answer: string }[] }
         | { kind: 'plan'; approve: boolean }
+        /** Proposta de plano: aprovada = o Plan nasceu (id no eco). */
+        | { kind: 'plan-proposal'; approve: boolean; planId?: string; planTitle?: string }
         | { kind: 'stale' }
     }
   /** AskUserQuestion virou card de opções (2.0): a resposta volta por
@@ -287,6 +295,14 @@ export type SessionEvent =
   /** ExitPlanMode (modo plano): o plano em markdown para o dono aprovar
    *  (answerPlanReview) — construir = allow, revisar = deny. */
   | { type: 'plan-review'; requestId: string; plan: string }
+  /**
+   * PROPOSTA DE PLANO (2.0, onda D). Único evento desta união que NÃO nasce do
+   * CLI: o pane de planejamento chama a tool `propose_plan` e o HARNESS
+   * sintetiza o evento no anel daquele pane (guiSessions.proposePlan). Por
+   * isso ele também não bloqueia o turno — a tool responde na hora, o agente
+   * encerra, e o card sobrevive ao `result` esperando o clique do dono.
+   */
+  | { type: 'plan-proposal'; requestId: string; draft: PlanDraft }
   | { type: 'session-id'; sessionId: string }
   | { type: 'ready'; caps: CliCaps }
   | { type: 'command-output'; text: string }
@@ -552,6 +568,9 @@ export class MaestroSession {
     }
     delete env['CLAUDECODE']
     if (opts.configDir) env['CLAUDE_CONFIG_DIR'] = opts.configDir
+    // Depois da higiene: o env do chamador é intencional e não pode ser comido
+    // pela varredura de marcadores herdados acima.
+    for (const [key, value] of Object.entries(opts.extraEnv ?? {})) env[key] = value
 
     const args = [
       '-p',
@@ -579,6 +598,7 @@ export class MaestroSession {
       const settings = JSON.stringify({ fastMode: true })
       args.push('--settings', process.platform === 'win32' ? JSON.stringify(settings) : settings)
     }
+    if (opts.extraArgs?.length) args.push(...opts.extraArgs)
 
     // claude é shim .cmd no Windows — precisa de shell.
     this.child = spawn('claude', args, {
