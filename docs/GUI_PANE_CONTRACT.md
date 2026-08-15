@@ -140,6 +140,20 @@ interface GuiAttachResult {
   reaplica essa fotografia antes do primeiro novo envio; `/clear`, compactação,
   troca de CLI/identidade ou perda do resume a removem. Transcript antigo de
   outra identidade nunca alimenta a régua.
+- JANELA DE CONTEXTO É MEDIÇÃO, NÃO HEURÍSTICA DE STRING (Claude). A janela
+  autoritativa vem do próprio CLI em `result.modelUsage[<modelo>].contextWindow`,
+  indexada pelo `model` que o `system/init` anunciou — o mapa também traz modelos
+  de tarefas auxiliares (haiku de título), então ler "o primeiro" mede o modelo
+  errado. O `init` acontece antes de existir medição e carrega só um PISO curado
+  por família (`claudeCuratedContextWindow`): marcador `[1m]` → 1M; haiku → 200K;
+  fable/mythos/opus/sonnet → 1M; desconhecido → 200K conservador. Trocar de modelo
+  reemite `init` e o `result` seguinte remede — a janela acompanha nos dois
+  sentidos. SONDADO em `scripts/probe-claude-caps-context.mjs` (2.1.233,
+  2026-08-15): o handshake `initialize` NÃO informa janela por modelo, e o `model`
+  do init vem RESOLVIDO sem garantia do sufixo (`claude-fable-5[1m]` chega como
+  `claude-fable-5`) — era essa a origem do "Fable 5 com 200k". Re-sondar a cada
+  update de CLI antes de editar a tabela. O Codex segue com o
+  `modelContextWindow` real do `tokenUsage` — nada a fazer lá.
 - `/clear` (e `/new` no Codex) cria conversa nova e apaga juntos o resume e o
   fio daquele pane. Arquivar só encerra o processo e preserva ambos; excluir
   definitivamente a missão ou o projeto também purga seus registros.

@@ -77,6 +77,60 @@ export interface CliCaps {
   account?: { email?: string; subscriptionType?: string }
 }
 
+// ————— janela de contexto por modelo —————
+// A janela REAL é medição do CLI, não chute nosso: ela vem em
+// `result.modelUsage[<modelo>].contextWindow` (ver claudeReportedContextWindow).
+// A tabela abaixo é só o PISO até o primeiro `result` do processo, porque o
+// `init` acontece antes de existir qualquer medição.
+//
+// SONDADO em scripts/probe-claude-caps-context.mjs (claude 2.1.233, 2026-08-15):
+// o handshake `initialize` NÃO informa janela nenhuma por modelo — as entradas
+// têm só value/resolvedModel/displayName/description/supports*. Por isso a
+// tabela existe, e por isso ela é curada à mão.
+//
+// A HEURÍSTICA ANTIGA (`model.includes('[1m]') ? 1M : 200k`) estava ERRADA: o
+// `model` do system/init traz o modelo RESOLVIDO e ele nem sempre carrega o
+// sufixo — `--model claude-fable-5[1m]` chega como `claude-fable-5`, e Fable 5
+// é 1M. Era esse o "Fable 5 com 200k" que o dono via.
+//
+// Catálogo de referência (Anthropic, cache 2026-06): fable/mythos/opus (5, 4.8,
+// 4.7, 4.6, 4.5) e sonnet (5, 4.6) = 1M; haiku 4.5 = 200K.
+//
+// REGRA DE RE-SONDA: toda vez que um CLI atualizar ou uma família nova de
+// modelo aparecer, rodar a probe de novo — nunca editar esta tabela de memória.
+export const CLAUDE_CONTEXT_WINDOW_1M = 1_000_000
+export const CLAUDE_CONTEXT_WINDOW_DEFAULT = 200_000
+
+/** Piso curado por família. Função PURA — o teste cobre cada ramo. */
+export function claudeCuratedContextWindow(model: string): number {
+  const id = model.toLowerCase()
+  // Marcador explícito do CLI ganha de tudo: quando ele aparece, é 1M por
+  // definição (e continua valendo para família que a tabela não conheça).
+  if (id.includes('[1m]')) return CLAUDE_CONTEXT_WINDOW_1M
+  // Haiku é a exceção de 200K DENTRO das famílias atuais — testar antes do
+  // resto para nunca cair no ramo de 1M por engano.
+  if (/haiku/.test(id)) return CLAUDE_CONTEXT_WINDOW_DEFAULT
+  if (/fable|mythos|opus|sonnet/.test(id)) return CLAUDE_CONTEXT_WINDOW_1M
+  // Desconhecido: 200K é o piso conservador — nunca prometer janela que o
+  // modelo pode não ter. O primeiro `result` corrige com a medição real.
+  return CLAUDE_CONTEXT_WINDOW_DEFAULT
+}
+
+/** Janela AUTORITATIVA informada pelo próprio CLI no `result`. A chave do
+ *  `modelUsage` bate literalmente com o `model` do system/init (com ou sem
+ *  `[1m]` — sondado nas duas formas); o mapa também traz modelos de tarefas
+ *  auxiliares, então a leitura é SEMPRE indexada pelo modelo da conversa. */
+export function claudeReportedContextWindow(
+  modelUsage: Record<string, { contextWindow?: number }> | undefined,
+  model: string | null
+): number | undefined {
+  if (!modelUsage || !model) return undefined
+  const window = modelUsage[model]?.contextWindow
+  return typeof window === 'number' && Number.isSafeInteger(window) && window > 0
+    ? window
+    : undefined
+}
+
 // ————— pergunta estruturada (AskUserQuestion → card de opções no chat GUI) —————
 // Formas FIXADAS no contrato 2.0 (Anexo A do CONTRATO_CHAT_2_0) — o renderer
 // copia VERBATIM. O input chega no can_use_tool e a resposta viaja no
@@ -316,6 +370,10 @@ interface StreamLine {
     cache_creation_input_tokens?: number
     cache_read_input_tokens?: number
   }
+  /** Mapa POR MODELO do `result` com a janela REAL medida pelo CLI. A chave é o
+   *  mesmo id que o system/init anuncia. Enum ABERTO: modelos de tarefas
+   *  auxiliares (ex.: haiku de título) aparecem aqui sem serem o da conversa. */
+  modelUsage?: Record<string, { contextWindow?: number }>
   rate_limit_info?: { status?: string; resetsAt?: number }
   request?: {
     subtype?: string
@@ -473,6 +531,9 @@ export class MaestroSession {
   private interruptGeneration: number | null = null
   private interruptRequestId: string | null = null
   private interruptTimer: NodeJS.Timeout | null = null
+  /** Modelo anunciado pelo último `system/init`: é a chave do `modelUsage` no
+   *  `result`. Trocar de modelo reemite init, então este campo acompanha. */
+  private initModel: string | null = null
 
   constructor(opts: MaestroSessionOpts, emit: (evt: SessionEvent) => void) {
     this.opts = opts
@@ -1002,14 +1063,19 @@ export class MaestroSession {
           // id). NUNCA é ponto de reset: zerar tarefas de fundo aqui perderia
           // justamente os agentes que provocaram o ciclo.
           const model = evt.model ?? 'claude'
+          // O modelo do init é a CHAVE do modelUsage no `result` — guardar aqui
+          // é o que permite ler a janela real do modelo DESTA conversa, e não a
+          // de uma tarefa auxiliar que apareça no mesmo mapa.
+          this.initModel = model
           this.emit({
             type: 'init',
             model,
             sessionId: evt.session_id,
             permissionMode: evt.permissionMode ?? 'default',
             toolCount: evt.tools?.length ?? 0,
-            // O sufixo [1m] no id resolvido indica a janela de 1M; o resto é 200k.
-            contextWindow: model.includes('[1m]') ? 1_000_000 : 200_000
+            // Piso curado: o init acontece antes de existir medição. O primeiro
+            // `result` do turno substitui isto pela janela REAL do CLI.
+            contextWindow: claudeCuratedContextWindow(model)
           })
           break
         }
@@ -1270,6 +1336,10 @@ export class MaestroSession {
           errorText: evt.is_error ? (evt.result ?? 'erro sem detalhe') : undefined,
           resultText: typeof evt.result === 'string' && evt.result.trim() ? evt.result : undefined,
           contextTokens,
+          // Janela REAL medida pelo CLI para o modelo desta conversa. Ausente
+          // quando o mapa não traz o modelo: aí a janela do init continua
+          // valendo (o campo é omitido, nunca zerado).
+          contextWindow: claudeReportedContextWindow(evt.modelUsage, this.initModel),
           fastModeState: evt.fast_mode_state,
           costUsd: evt.total_cost_usd
         })

@@ -33,7 +33,11 @@ import {
   pruneGuiTranscripts,
   spawnFingerprint
 } from '../.tmp/gui-sessions-test/guiSessions.js'
-import { MaestroSession } from '../.tmp/gui-sessions-test/maestroSession.js'
+import {
+  MaestroSession,
+  claudeCuratedContextWindow,
+  claudeReportedContextWindow
+} from '../.tmp/gui-sessions-test/maestroSession.js'
 import { CodexSession } from '../.tmp/gui-sessions-test/codexSession.js'
 import { GuiClaudeTaskRegistry } from '../.tmp/gui-sessions-test/guiClaudeTasks.js'
 import {
@@ -3326,4 +3330,139 @@ test('capacidade de arquivo, imagem e pasta externa sobrevive reload e falha fec
     rmSync(root, { recursive: true, force: true })
     rmSync(outside, { recursive: true, force: true })
   }
+})
+
+// ————— janela de contexto REAL por modelo (Claude) —————
+// Sondado em scripts/probe-claude-caps-context.mjs (claude 2.1.233, 2026-08-15):
+// o handshake NÃO informa janela por modelo, o `model` do system/init vem
+// RESOLVIDO (e `claude-fable-5[1m]` chega como `claude-fable-5`, sem o sufixo),
+// e a janela REAL mora em `result.modelUsage[<modelo>].contextWindow`.
+
+test('a tabela curada de janela cobre as famílias atuais, o marcador [1m] e o desconhecido', () => {
+  // Famílias de 1M (catálogo Anthropic, cache 2026-06).
+  for (const model of [
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-5',
+    'claude-opus-4-8',
+    'claude-sonnet-5',
+    'claude-sonnet-4-6'
+  ])
+    assert.equal(claudeCuratedContextWindow(model), 1_000_000, `${model} é 1M`)
+
+  // Haiku é a exceção de 200K DENTRO das famílias atuais.
+  assert.equal(claudeCuratedContextWindow('claude-haiku-4-5-20251001'), 200_000)
+
+  // O marcador explícito do CLI vale mesmo em família que a tabela não conhece.
+  assert.equal(claudeCuratedContextWindow('claude-opus-5[1m]'), 1_000_000)
+  assert.equal(claudeCuratedContextWindow('modelo-do-futuro[1m]'), 1_000_000)
+
+  // Desconhecido cai no piso conservador — nunca prometer janela inexistente.
+  assert.equal(claudeCuratedContextWindow('claude'), 200_000)
+  assert.equal(claudeCuratedContextWindow('modelo-do-futuro'), 200_000)
+
+  // Caixa não decide nada.
+  assert.equal(claudeCuratedContextWindow('CLAUDE-FABLE-5'), 1_000_000)
+  assert.equal(claudeCuratedContextWindow('Claude-Haiku-4-5'), 200_000)
+})
+
+test('a janela do result só vale indexada pelo modelo da conversa', () => {
+  // O mapa traz modelos de tarefas auxiliares — ler "o primeiro" pegaria haiku.
+  const modelUsage = {
+    'claude-haiku-4-5-20251001': { contextWindow: 200_000 },
+    'claude-fable-5': { contextWindow: 1_000_000 }
+  }
+  assert.equal(claudeReportedContextWindow(modelUsage, 'claude-fable-5'), 1_000_000)
+  assert.equal(claudeReportedContextWindow(modelUsage, 'claude-haiku-4-5-20251001'), 200_000)
+
+  // Sem modelo, sem mapa, modelo ausente ou número inválido: ausente (nunca 0,
+  // nunca chute) — a janela do init continua valendo.
+  assert.equal(claudeReportedContextWindow(modelUsage, null), undefined)
+  assert.equal(claudeReportedContextWindow(undefined, 'claude-fable-5'), undefined)
+  assert.equal(claudeReportedContextWindow(modelUsage, 'claude-opus-5'), undefined)
+  assert.equal(claudeReportedContextWindow({ m: {} }, 'm'), undefined)
+  assert.equal(claudeReportedContextWindow({ m: { contextWindow: 0 } }, 'm'), undefined)
+  assert.equal(claudeReportedContextWindow({ m: { contextWindow: -1 } }, 'm'), undefined)
+  assert.equal(claudeReportedContextWindow({ m: { contextWindow: 1.5 } }, 'm'), undefined)
+  assert.equal(claudeReportedContextWindow({ m: { contextWindow: '1000000' } }, 'm'), undefined)
+})
+
+test('o init anuncia a janela do modelo e a troca de modelo atualiza a janela', () => {
+  const { events, line } = claudeAgentSession()
+  const windowOf = (model) => {
+    events.length = 0
+    line({ type: 'system', subtype: 'init', session_id: 's1', model })
+    const init = events.find((e) => e.type === 'init')
+    assert.ok(init, `init emitido para ${model}`)
+    assert.equal(init.model, model)
+    return init.contextWindow
+  }
+
+  // O caso do dono: Fable 5 chega SEM o sufixo [1m] e é 1M — a heurística
+  // antiga (`includes('[1m]')`) dizia 200k aqui.
+  assert.equal(windowOf('claude-fable-5'), 1_000_000)
+  // Trocar de modelo reemite init: a janela acompanha, nos dois sentidos.
+  assert.equal(windowOf('claude-haiku-4-5-20251001'), 200_000)
+  assert.equal(windowOf('claude-opus-5[1m]'), 1_000_000)
+  assert.equal(windowOf('claude-sonnet-5'), 1_000_000)
+})
+
+test('o result substitui a janela do init pela medição real do CLI', () => {
+  const { session, events, line } = claudeAgentSession()
+  const resultLine = (modelUsage) => {
+    session.pendingTurnGenerations = [1]
+    session.activeTurnGeneration = 1
+    line({
+      type: 'result',
+      subtype: 'success',
+      usage: { input_tokens: 2, output_tokens: 4 },
+      ...(modelUsage ? { modelUsage } : {})
+    })
+    return events.find((e) => e.type === 'result')
+  }
+
+  line({ type: 'system', subtype: 'init', session_id: 's1', model: 'claude-fable-5' })
+  events.length = 0
+
+  // Medição real do modelo DESTA conversa, mesmo com haiku no mesmo mapa.
+  const measured = resultLine({
+    'claude-haiku-4-5-20251001': { contextWindow: 200_000 },
+    'claude-fable-5': { contextWindow: 1_000_000 }
+  })
+  assert.equal(measured.contextWindow, 1_000_000)
+  assert.equal(measured.contextTokens, 6)
+
+  // Sem o modelo da conversa no mapa o campo é OMITIDO (a janela do init
+  // sobrevive no redutor via `evt.contextWindow ?? next.contextWindow`).
+  events.length = 0
+  assert.equal(resultLine({ 'claude-haiku-4-5-20251001': { contextWindow: 200_000 } }).contextWindow, undefined)
+  events.length = 0
+  assert.equal(resultLine(undefined).contextWindow, undefined)
+
+  // Depois de trocar de modelo, o result passa a medir o modelo NOVO.
+  line({ type: 'system', subtype: 'init', session_id: 's1', model: 'claude-haiku-4-5-20251001' })
+  events.length = 0
+  const swapped = resultLine({
+    'claude-fable-5': { contextWindow: 1_000_000 },
+    'claude-haiku-4-5-20251001': { contextWindow: 200_000 }
+  })
+  assert.equal(swapped.contextWindow, 200_000)
+})
+
+test('o result com janela medida sobrevive à persistência e à fotografia do anel', () => {
+  // O evento novo precisa atravessar o contrato de persistência, senão a
+  // medição some no replay da remontagem.
+  assert.equal(
+    isGuiPersistedEvent({ type: 'result', isError: false, contextTokens: 6, contextWindow: 1_000_000 }),
+    true
+  )
+  assert.equal(
+    isGuiPersistedEvent({ type: 'result', isError: false, contextWindow: -1 }),
+    false,
+    'janela inválida não entra no fio salvo'
+  )
+  assert.equal(
+    isGuiPersistedEvent({ type: 'init', model: 'claude-fable-5', sessionId: 's1', permissionMode: 'default', toolCount: 0, contextWindow: 1_000_000 }),
+    true
+  )
 })
