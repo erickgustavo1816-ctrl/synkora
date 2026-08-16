@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   useStore,
   type BacklogItem,
@@ -544,7 +544,13 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
         <div className="vs-stats">
           <div className="vs-stats-grid">
             {stats.versoes.map((v) => (
-              <Fragment key={v.name}>
+              // UM CARD POR VERSÃO (ordem do dono, 2026-08-15b). Era um grid
+              // único de 4 trilhas com um Fragment de 4 células por versão —
+              // por construção, UMA versão por linha, faixa vazia à direita. O
+              // Fragment existia para alinhar as colunas ENTRE versões; com
+              // cards irmãos de `1fr` esse alinhamento passa a ser estrutural
+              // (mesma largura de card ⇒ mesmas trilhas internas).
+              <div className="vs-stat-card" key={v.name}>
                 <span
                   className={`vs-stat-name${v.lancada ? ' released' : ''}`}
                   data-tip={
@@ -555,27 +561,32 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
                 >
                   ◈ {v.name}
                 </span>
-                <div
-                  className="stat-tile"
-                  data-tip={`missões entregues na ${v.name} / total (entregues + vivas)`}
-                >
-                  <span className="stat-num">
-                    {v.missoesTotal > 0 ? `${v.missoesFeitas}/${v.missoesTotal}` : '0'}
-                  </span>
-                  <span className="stat-label">missões</span>
+                <div className="vs-stat-tiles">
+                  <div
+                    className="stat-tile"
+                    data-tip={`missões entregues na ${v.name} / total (entregues + vivas)`}
+                  >
+                    <span className="stat-num">
+                      {v.missoesTotal > 0 ? `${v.missoesFeitas}/${v.missoesTotal}` : '0'}
+                    </span>
+                    <span className="stat-label">missões</span>
+                  </div>
+                  <div
+                    className="stat-tile hot"
+                    data-tip={`tarefas da ${v.name} em execução/QA agora`}
+                  >
+                    <span className="stat-num">{v.emExec}</span>
+                    <span className="stat-label">em execução</span>
+                  </div>
+                  <div
+                    className="stat-tile ok"
+                    data-tip={`tarefas das missões da ${v.name} — concluídas/total`}
+                  >
+                    <span className="stat-num">{v.total > 0 ? `${v.feitas}/${v.total}` : '0'}</span>
+                    <span className="stat-label">concluídas</span>
+                  </div>
                 </div>
-                <div className="stat-tile hot" data-tip={`tarefas da ${v.name} em execução/QA agora`}>
-                  <span className="stat-num">{v.emExec}</span>
-                  <span className="stat-label">em execução</span>
-                </div>
-                <div
-                  className="stat-tile ok"
-                  data-tip={`tarefas das missões da ${v.name} — concluídas/total`}
-                >
-                  <span className="stat-num">{v.total > 0 ? `${v.feitas}/${v.total}` : '0'}</span>
-                  <span className="stat-label">concluídas</span>
-                </div>
-              </Fragment>
+              </div>
             ))}
           </div>
           {avulsas > 0 && (

@@ -11174,8 +11174,7 @@ body.pane-docking .pane-bar.draggable {
 
 /* RETRATO POR VERSÃO (2026-08-15): veio da página ✦ geral, que o dono aposentou
    ("uma página inteira para aquilo não faz sentido"). Faixa compacta no topo da
-   aba: uma LINHA por versão, colunas alinhadas num grid único — Fragment por
-   versão, porque um wrapper por linha desalinharia as colunas entre versões. */
+   aba, uma versão por CARD. */
 .vs-stats {
   display: flex;
   flex-direction: column;
@@ -11186,18 +11185,41 @@ body.pane-docking .pane-bar.draggable {
   padding: 10px 14px;
 }
 
+/* GRADE DE VERSÕES (ordem do dono, 2026-08-15b): a faixa empilhava UMA versão
+   por linha porque o grid tinha 4 trilhas e cada versão emitia exatamente 4
+   células — não era falta de responsividade, era a forma. Agora cada versão é
+   um CARD e a grade preenche a linha: ~3 por fileira na largura nativa do app
+   (≈1280px ⇒ 3 × ~380px), 4-5 numa janela larga, 2 e depois 1 quando aperta.
+   O alinhamento das colunas — que era o motivo do Fragment — passa a vir dos
+   cards: irmãos de `1fr` têm a mesma largura, logo as mesmas trilhas internas. */
 .vs-stats-grid {
+  --vs-card-min: 300px; /* 3 tiles de 92px + 2 gaps + respiro */
   display: grid;
-  grid-template-columns: auto repeat(3, minmax(92px, auto));
-  gap: 6px 8px;
-  align-items: stretch;
-  justify-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--vs-card-min), 100%), 1fr));
+  gap: 8px;
+  align-items: start;
 }
 
+.vs-stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* os três tiles dividem o card em partes iguais — é o que faz duas versões
+   lado a lado terem as MESMAS colunas sem grid compartilhado */
+.vs-stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+/* o nome ocupa a linha inteira do card: antes ele disputava a 1ª trilha com os
+   tiles, e nome longo virava reticências */
 .vs-stat-name {
   min-width: 0;
   max-width: 100%;
-  align-self: center;
   font-size: 12px;
   font-weight: 700;
   color: var(--accent);
@@ -11227,20 +11249,19 @@ body.pane-docking .pane-bar.draggable {
 /* A aba Versões ocupa a largura inteira do workspace, então quem manda aqui é
    a JANELA — nada de `container-type` no `.backlog-view`: ele hospeda os modais
    `.overlay` (position: fixed) e a contenção o transformaria em bloco contentor
-   deles, prendendo a modal dentro da aba. */
-@media (max-width: 760px) {
-  .vs-stats-grid {
-    grid-template-columns: auto repeat(3, minmax(0, 1fr));
-  }
-}
+   deles, prendendo a modal dentro da aba.
 
+   E é UM @media só: os dois anteriores (760px e 520px) redeclaravam as trilhas
+   da faixa, que não existem mais — a grade já cai sozinha para 1 coluna. Abaixo
+   deste ponto um card de 3 tiles não cabe inteiro, então quem cede é o CARD:
+   os tiles empilham em duas fileiras DENTRO dele. */
 @media (max-width: 520px) {
   .vs-stats-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    --vs-card-min: 100%;
   }
 
-  .vs-stat-name {
-    grid-column: 1 / -1;
+  .vs-stat-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .vs-stats-grid .stat-tile {
