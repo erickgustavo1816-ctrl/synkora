@@ -1369,6 +1369,12 @@ export default function GuiPane({
     return { label: firstPromptLabel?.trim() || injectionLabel(text), text }
   }, [firstPrompt, firstPromptLabel, resumeSessionId])
 
+  /** O briefing ainda NÃO saiu: o motor o segura até a primeira mensagem do
+   *  dono, e é a chegada dessa mensagem que o consome. A bolha do dono no fio
+   *  é a mesma condição que o main usa, então tela e motor contam a mesma
+   *  história sem um canal novo. */
+  const briefingPending = Boolean(injection) && !gui.items.some((item) => item.kind === 'user')
+
   /** Última fala do dev pedindo um "pode seguir" — só com o turno FECHADO e
    *  nada pendente; é isso que torna os botões inline uma resposta, não um
    *  atalho no meio do trabalho. */
@@ -1385,7 +1391,9 @@ export default function GuiPane({
     return false
   }, [gui.items, gui.status, gui.perm, gui.stream, awaitingCard])
 
-  const empty = gui.items.length === 0 && !gui.stream && !gui.perm && !injection && !awaitingCard
+  // A injeção deixou de suprimir o vazio: o pane que nasce mudo PRECISA dizer
+  // o que fazer, senão lê como chat quebrado com um `<details>` solto em cima.
+  const empty = gui.items.length === 0 && !gui.stream && !gui.perm && !awaitingCard
 
   /** NADA de decidir aqui: ou o dono está lendo o histórico local por cima da
    *  conversa (`historyTarget`), ou o pane inteiro é fotografia congelada.
@@ -1500,15 +1508,27 @@ export default function GuiPane({
 
             {empty && (
               <div className="gui-empty">
-                {readOnly
-                  ? // A poda do histórico (LRU por espaço) é real e chega
-                    // primeiro justamente nas conversas mais antigas: dizer
-                    // isso é melhor do que um chat em branco, que se lê como
-                    // defeito novo.
-                    'esta conversa não está mais guardada (o histórico tem limite de espaço)'
-                  : gui.status === 'starting'
-                    ? 'abrindo a conversa…'
-                    : 'conversa vazia — escreva abaixo para começar'}
+                {readOnly ? (
+                  // A poda do histórico (LRU por espaço) é real e chega
+                  // primeiro justamente nas conversas mais antigas: dizer
+                  // isso é melhor do que um chat em branco, que se lê como
+                  // defeito novo.
+                  'esta conversa não está mais guardada (o histórico tem limite de espaço)'
+                ) : gui.status === 'starting' || !gui.ready ? (
+                  'abrindo a conversa…'
+                ) : briefingPending ? (
+                  // O chat abriu e não falou: o dono precisa saber que isso é
+                  // o desenho (ele escolhe conta/modelo antes de gastar turno)
+                  // e que o briefing não se perdeu no caminho.
+                  <>
+                    ambiente pronto — escreva para começar
+                    <span className="gui-empty-sub">
+                      o briefing desta missão vai junto com a sua primeira mensagem
+                    </span>
+                  </>
+                ) : (
+                  'conversa vazia — escreva abaixo para começar'
+                )}
               </div>
             )}
 
@@ -1517,7 +1537,9 @@ export default function GuiPane({
                 <summary>
                   <span aria-hidden="true">📄</span>
                   <span className="gui-inject-name">{injection.label}</span>
-                  <span className="gui-inject-tag">injetada como 1º prompt</span>
+                  <span className="gui-inject-tag">
+                    {briefingPending ? 'vai com a sua primeira mensagem' : 'enviado com a sua 1ª mensagem'}
+                  </span>
                 </summary>
                 <pre className="gui-inject-body">{injection.text}</pre>
               </details>

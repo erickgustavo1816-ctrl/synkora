@@ -791,10 +791,199 @@ test('respawn fecha resposta parcial antes de aceitar deltas da geração nova',
   })
 })
 
-test('firstPrompt espera a cadeia completa de initialize e capacidades', () => {
+test('o briefing não abre turno sozinho: nenhuma auto-partida sobrou no motor', () => {
   const sessions = readFileSync(new URL('../src/main/guiSessions.ts', import.meta.url), 'utf8')
+  // O PANE NASCE MUDO (ordem do dono): a única partida de turno é a mensagem
+  // do dono. Qualquer volta de um `sendFirstPrompt` — ou de um `session.send`
+  // pendurado no waitCaps do create — devolveria o chat que fala primeiro.
+  assert.ok(!/sendFirstPrompt/u.test(sessions), 'a auto-partida do 1º prompt não existe mais')
+  assert.ok(
+    !/waitCaps\([\s\S]{0,400}?entry\.session\.send\(/u.test(sessions),
+    'nenhum envio pendurado no handshake'
+  )
+  // READY_TIMEOUT_MS continua vivo — a entrega da fila ainda espera o handshake.
   assert.match(sessions, /const READY_TIMEOUT_MS = 45_000/u)
-  assert.match(sessions, /\.then\(\(caps\) => \{[\s\S]*if \(!caps/u)
+  assert.match(sessions, /waitCaps\(READY_TIMEOUT_MS\)/u)
+
+  // A costura do briefing pendente: semeado no create (com herança explícita
+  // para o respawn), consumido UMA vez colado à mensagem do dono.
+  assert.match(sessions, /pendingBriefing\?: string/u)
+  assert.match(
+    sessions,
+    /pendingBriefing: current\?\.pendingBriefing \?\? \(spawn\.firstPrompt\?\.trim\(\) \|\| undefined\)/u
+  )
+  assert.match(sessions, /entry\.pendingBriefing = undefined/u)
+  assert.match(sessions, /guiBriefedPrompt\(/u)
+})
+
+test('o chat pronto convida a escrever e diz que o briefing vai junto', () => {
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  // O vazio deixou de ser suprimido pela injeção: o pane que nasce mudo tem de
+  // dizer o que fazer, senão lê como chat quebrado com um `<details>` em cima.
+  assert.match(pane, /const empty =\s*gui\.items\.length === 0 && !gui\.stream && !gui\.perm && !awaitingCard/u)
+  assert.match(pane, /const briefingPending =/u)
+  assert.match(pane, /ambiente pronto — escreva para começar/u)
+  assert.match(pane, /o briefing desta missão vai junto com a sua primeira mensagem/u)
+  assert.match(pane, /gui-empty-sub/u)
+  // O rótulo do `<details>` conta a verdade nos dois tempos.
+  assert.match(pane, /vai com a sua primeira mensagem/u)
+  assert.match(pane, /enviado com a sua 1ª mensagem/u)
+  assert.ok(!/injetada como 1º prompt/u.test(pane), 'a legenda antiga mentia sobre o envio')
+  assert.match(css, /\.gui-empty-sub\s*\{/u)
+})
+
+// ————— A CERCA DO SPAWN (o campo `mcp` sumiu entre Board e GuiPane) —————
+//
+// O renderer mantém um ESPELHO À MÃO do `GuiPaneSpawn` do main e o Board
+// enumera as props do `<GuiPane>` uma a uma. Campo novo no main atravessa o
+// IPC intacto e MORRE nessas duas listas — sem erro de tipo, porque omitir um
+// campo opcional num literal novo é legal em TypeScript. Foi assim que o chat
+// de planejamento rodou uma noite inteira sem as ferramentas de plano.
+//
+// Esta cerca lê as três listas do FONTE e exige paridade. Ela não sabe nada
+// sobre `mcp`: qualquer campo que o main acrescentar ao spawn amanhã cai aqui.
+
+/** Campos de PRIMEIRO nível de uma `interface X { … }`, sem comentários e sem
+ *  as chaves de tipos aninhados (`mcp?: { args: string[] }` é UM campo). */
+function interfaceFields(source, name) {
+  const body = balancedBody(source, `interface ${name} {`, `interface ${name}`)
+    .replace(/\/\*[\s\S]*?\*\//gu, '')
+    .replace(/\/\/[^\n]*/gu, '')
+  const fields = []
+  let depth = 0
+  for (const raw of body.split('\n')) {
+    const line = raw.trim()
+    if (depth === 0) {
+      const match = /^([A-Za-z_$][\w$]*)\??\s*:/u.exec(line)
+      if (match) fields.push(match[1])
+    }
+    for (const ch of line) {
+      if (ch === '{') depth += 1
+      else if (ch === '}') depth -= 1
+    }
+  }
+  return fields
+}
+
+/** Corpo entre a primeira `{` depois da âncora e a `}` que a fecha. */
+function balancedBody(source, anchor, label) {
+  const at = source.indexOf(anchor)
+  assert.notEqual(at, -1, `${label} encontrada no fonte`)
+  const open = source.indexOf('{', at)
+  assert.notEqual(open, -1, `${label} abre um bloco`)
+  let depth = 0
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1
+    else if (source[i] === '}') {
+      depth -= 1
+      if (depth === 0) return source.slice(open + 1, i)
+    }
+  }
+  assert.fail(`${label} tem bloco sem fechamento`)
+  return ''
+}
+
+/** O campo aparece como CHAVE do literal (`x:` ou o atalho `x,`). */
+function literalHasKey(literal, field) {
+  return new RegExp(`(^|[\\s,{])${field}\\s*[:,]`, 'u').test(`${literal},`)
+}
+
+test('todo campo do spawn atravessa main → espelho → Board → GuiPane', () => {
+  const main = readFileSync(new URL('../src/main/guiSessions.ts', import.meta.url), 'utf8')
+  const mirror = readFileSync(new URL('../src/renderer/src/guiApi.ts', import.meta.url), 'utf8')
+  const board = readFileSync(
+    new URL('../src/renderer/src/components/Board.tsx', import.meta.url),
+    'utf8'
+  )
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+
+  const fields = interfaceFields(main, 'GuiPaneSpawn')
+  // Piso de sanidade: se o parser deixar de achar os campos, a cerca não pode
+  // passar em silêncio dizendo que zero campos estão todos presentes.
+  assert.ok(fields.length >= 12, `o parser leu ${fields.length} campos do spawn`)
+  assert.ok(fields.includes('paneId') && fields.includes('cwd'))
+
+  // 1. o espelho do renderer declara TUDO o que o main declara
+  assert.deepEqual(
+    fields.filter((field) => !interfaceFields(mirror, 'GuiPaneSpawn').includes(field)),
+    [],
+    'campo do spawn ausente no espelho do renderer (src/renderer/src/guiApi.ts)'
+  )
+
+  // 2. o GuiPane ACEITA cada campo como prop
+  const props = interfaceFields(pane, 'Props')
+  assert.deepEqual(
+    fields.filter((field) => !props.includes(field)),
+    [],
+    'campo do spawn que o GuiPane não recebe como prop'
+  )
+
+  // 3. os DOIS literais do spawn no GuiPane carregam cada campo — semente do
+  //    useRef e reatribuição por render: um só deles bastaria para a remontagem
+  //    reconstruir um spawn pobre.
+  for (const [anchor, label] of [
+    ['const spawnRef = useRef<GuiPaneSpawn>(', 'a semente do spawnRef'],
+    ['spawnRef.current = ', 'a reatribuição do spawnRef']
+  ]) {
+    const literal = balancedBody(pane, anchor, label)
+    assert.deepEqual(
+      fields.filter((field) => !literalHasKey(literal, field)),
+      [],
+      `campo do spawn que ${label} deixa cair`
+    )
+  }
+
+  // 4. o Board entrega cada campo ao pane da missão. As outras duas montagens
+  //    do GuiPane ficam de fora DE PROPÓSITO: o pane livre (PanesView) nunca é
+  //    missão de planejamento e já omite seatId/permissionMode, e a fotografia
+  //    congelada (ArchivedMissionChat) não pode abrir sessão nenhuma.
+  //    `<GuiPane\n` e não `<GuiPane`: o prefixo casaria com o irmão
+  //    `<GuiPanelErrorBoundary` que envolve cada montagem.
+  const opens = /<GuiPane[\s\n]/u.exec(board)
+  assert.ok(opens, 'o Board monta o <GuiPane>')
+  const jsx = board.slice(opens.index, board.indexOf('/>', opens.index))
+  assert.ok(jsx.includes('paneId='), 'o bloco JSX do GuiPane foi recortado')
+  assert.ok(!jsx.includes('<GuiPanelErrorBoundary'), 'o recorte é do <GuiPane>, não do irmão')
+  const passed = new Set([...jsx.matchAll(/(?:^|\s)([a-zA-Z][\w]*)=\{/gu)].map((m) => m[1]))
+  assert.deepEqual(
+    fields.filter((field) => !passed.has(field)),
+    [],
+    'campo do spawn que o Board não passa ao <GuiPane>'
+  )
+})
+
+test('planejador armado que chega sem ferramenta deixa recibo no diário', () => {
+  const ipc = readFileSync(new URL('../src/main/ipc/gui.ts', import.meta.url), 'utf8')
+  // A cerca de paridade é estática; esta é a rede em runtime. O main sabe que
+  // armou o planejador (guardou o token); spawn sem `mcp` para um pane armado
+  // é falha de costura, e falha de costura nunca é silenciosa nesta casa.
+  assert.match(ipc, /if \(!spawn\.mcp && ctx\.paneTokens\.has\(spawn\.paneId\)\)/u)
+  assert.match(ipc, /event: 'gui-planner-mcp-dropped'/u)
+})
+
+test('a remontagem para respawn não pinta o medidor com contexto de conversa morta', () => {
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+
+  // O replay reconstrói o fio a partir dos eventos PERSISTIDOS — inclusive
+  // `result`/`context-usage` de uma conversa que talvez nem seja retomada. Só
+  // o main decide isso (`sameConversation` → `session-restarted`), e ele só
+  // fala depois de esperar o CLI ficar estável. Até lá o medidor mostrava a
+  // porcentagem de outra conversa.
+  // Recorte do REDUTOR (a interface declara os mesmos nomes bem antes).
+  const from = store.indexOf('replayGuiPane: (paneId, events, prepareForRespawn = false) =>')
+  const to = store.indexOf('markGuiSpawned: (paneId) =>')
+  assert.ok(from !== -1 && to > from, 'o redutor do replay foi recortado')
+  const respawn = store.slice(from, to)
+  assert.match(respawn, /status: 'starting',\s*ready: false,/u)
+  assert.match(respawn, /contextTokens: null,\s*contextWindow: null/u)
 })
 
 test('duas mensagens Claude mantêm gerações FIFO após o primeiro resultado', () => {

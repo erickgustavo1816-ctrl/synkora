@@ -20,6 +20,7 @@ import {
   GuiEventRing,
   GuiSessionRegistry,
   GUI_PROMPT_MAX_CHARS,
+  guiBriefedPrompt,
   guiMessageIdProblem,
   guiQueuedDeliveryProblem,
   guiPromptProblem,
@@ -1770,29 +1771,143 @@ test('registro publica terminal depois dos tool-results do mesmo chunk e mantém
   assert.equal(orphan[0].result.status, 'failed')
 })
 
-test('firstPrompt nunca sai quando o handshake não produziu capacidades', async () => {
+// ————— O PANE NASCE MUDO (ordem do dono) —————
+//
+// O briefing da missão deixou de abrir turno no spawn: ele fica PENDENTE na
+// entrada e sai colado na PRIMEIRA mensagem do dono. Assim o dono ajusta
+// conta/modelo/effort/permissão num chat parado, e o agente recebe o briefing
+// e a pergunta dele no mesmo turno.
+
+/** Registro com sessão de mentira que anota o que foi ENVIADO ao CLI. */
+function briefingRegistry() {
+  const sent = []
+  const spawns = []
   const gui = registry()
-  const ring = new GuiEventRing()
-  let sent = 0
-  const session = {
-    alive: true,
-    waitCaps: async () => null,
-    send: () => {
-      sent += 1
+  gui.spawnSession = (input, sink) => {
+    spawns.push({ ...input })
+    sink({
+      type: 'init',
+      model: 'claude',
+      sessionId: `sess-${spawns.length}`,
+      permissionMode: input.permissionMode ?? 'default',
+      toolCount: 0,
+      contextWindow: 200_000
+    })
+    return {
+      alive: true,
+      turnActive: false,
+      waitCaps: async () => ({ commands: [], models: [] }),
+      send: (text) => sent.push(text),
+      kill: () => undefined
     }
   }
-  gui.panes.set('p-first', {
-    spawn: { paneId: 'p-first', projectId: 'proj', cli: 'claude', configDir: 'c', cwd: '/tmp' },
-    fingerprint: 'teste',
-    session,
-    ring,
-    token: { alive: true },
-    sink: (event) => ring.push(event)
-  })
-  gui.sendFirstPrompt('p-first', { alive: true }, 'não enviar')
+  return { gui, sent, spawns }
+}
+
+const BRIEFED_SPAWN = {
+  paneId: 'gui-dev-mudo01',
+  projectId: 'proj-mudo',
+  cli: 'claude',
+  configDir: 'c',
+  cwd: '/tmp',
+  firstPrompt: 'MISSION: entrar no app'
+}
+
+test('o briefing fica pendente e o create não abre turno nenhum', async () => {
+  const { gui, sent } = briefingRegistry()
+  assert.equal(gui.create(BRIEFED_SPAWN).ok, true)
+  // O handshake resolve num microtask: é exatamente ali que a auto-partida
+  // antiga soltava o briefing sozinha.
   await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(sent, 0)
-  assert.equal(ring.size, 0)
+
+  assert.deepEqual(sent, [], 'nada foi enviado ao CLI no nascimento do pane')
+  const kinds = gui.state(BRIEFED_SPAWN.paneId).events.map(({ evt }) => evt.type)
+  assert.equal(kinds.includes('turn-started'), false, 'nenhum turno abriu sozinho')
+  assert.equal(kinds.includes('user-message'), false)
+  assert.equal(gui.panes.get(BRIEFED_SPAWN.paneId).pendingBriefing, 'MISSION: entrar no app')
+})
+
+test('o briefing sai colado na 1ª mensagem do dono, uma única vez', () => {
+  const { gui, sent } = briefingRegistry()
+  assert.equal(gui.create(BRIEFED_SPAWN).ok, true)
+
+  assert.equal(gui.send(BRIEFED_SPAWN.paneId, 'começa pelo login', 'msg-1').ok, true)
+  assert.equal(sent.length, 1)
+  assert.match(sent[0], /^MISSION: entrar no app\n/u)
+  assert.match(sent[0], /A MENSAGEM DO DONO:\ncomeça pelo login$/u)
+  // O fio conta a verdade: a bolha do dono tem as PALAVRAS DELE, não o briefing.
+  const userMessage = gui
+    .state(BRIEFED_SPAWN.paneId)
+    .events.map(({ evt }) => evt)
+    .find((evt) => evt.type === 'user-message')
+  assert.equal(userMessage.text, 'começa pelo login')
+
+  assert.equal(gui.send(BRIEFED_SPAWN.paneId, 'e depois o cadastro', 'msg-2').ok, true)
+  assert.equal(sent.length, 2)
+  assert.equal(sent[1], 'e depois o cadastro', 'o briefing não persegue as mensagens seguintes')
+  assert.equal(gui.panes.get(BRIEFED_SPAWN.paneId).pendingBriefing, undefined)
+})
+
+test('respawn antes da 1ª mensagem preserva o briefing pendente', async () => {
+  const { gui, sent, spawns } = briefingRegistry()
+  assert.equal(gui.create(BRIEFED_SPAWN).ok, true)
+
+  // O dono mexe na PERMISSÃO antes de escrever: fingerprint novo, processo
+  // novo — e o spawn herdado zera `firstPrompt` de propósito (conversa
+  // retomada já teria o briefing dentro). Sem herdar o PENDENTE, o briefing
+  // morreria exatamente aqui.
+  assert.equal(gui.create({ ...BRIEFED_SPAWN, permissionMode: 'bypass' }).ok, true)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(spawns.length, 2)
+  assert.equal(spawns[1].firstPrompt, undefined, 'o spawn herdado não repete o briefing')
+  assert.deepEqual(sent, [], 'o respawn também nasce mudo')
+
+  assert.equal(gui.send(BRIEFED_SPAWN.paneId, 'pode começar', 'msg-1').ok, true)
+  assert.equal(sent.length, 1)
+  assert.match(sent[0], /MISSION: entrar no app/u)
+  assert.match(sent[0], /pode começar$/u)
+})
+
+test('a 1ª mensagem que é comando não queima o briefing', () => {
+  const { gui, sent } = briefingRegistry()
+  assert.equal(gui.create(BRIEFED_SPAWN).ok, true)
+
+  // /model é roteado no motor e nunca chega ao modelo: soltar o briefing aqui
+  // seria perdê-lo num comando que o agente nem vê.
+  assert.equal(gui.send(BRIEFED_SPAWN.paneId, '/model', 'msg-slash').ok, true)
+  assert.deepEqual(sent, [])
+  assert.equal(gui.panes.get(BRIEFED_SPAWN.paneId).pendingBriefing, 'MISSION: entrar no app')
+
+  assert.equal(gui.send(BRIEFED_SPAWN.paneId, 'agora sim', 'msg-1').ok, true)
+  assert.equal(sent.length, 1)
+  assert.match(sent[0], /MISSION: entrar no app/u)
+})
+
+test('mensagem recusada pelo teto conserva o briefing para a próxima', () => {
+  const { gui, sent } = briefingRegistry()
+  assert.equal(gui.create(BRIEFED_SPAWN).ok, true)
+
+  const huge = 'x'.repeat(GUI_PROMPT_MAX_CHARS - 10)
+  const refused = gui.send(BRIEFED_SPAWN.paneId, huge, 'msg-huge')
+  assert.equal(refused.ok, false)
+  assert.match(refused.error, /briefing/u, 'o erro nomeia o problema real')
+  assert.deepEqual(sent, [])
+  // Nem marco fantasma no fio, nem briefing perdido: recusar é não acontecer.
+  const kinds = gui.state(BRIEFED_SPAWN.paneId).events.map(({ evt }) => evt.type)
+  assert.equal(kinds.includes('user-message'), false)
+  assert.equal(kinds.includes('turn-started'), false)
+  assert.equal(gui.panes.get(BRIEFED_SPAWN.paneId).pendingBriefing, 'MISSION: entrar no app')
+
+  assert.equal(gui.send(BRIEFED_SPAWN.paneId, 'curta', 'msg-1').ok, true)
+  assert.match(sent[0], /MISSION: entrar no app/u)
+})
+
+test('o briefing colado é prefixo do texto do dono, nunca uma moldura', () => {
+  const owner = 'começa pela tela de login'
+  const outbound = guiBriefedPrompt('MISSION: entrar no app', owner)
+  assert.match(outbound, /^MISSION: entrar no app\n/u)
+  assert.ok(outbound.endsWith(owner), 'a última linha é a do dono, íntegra')
+  assert.match(outbound, /A MENSAGEM DO DONO:/u)
 })
 
 test('interrupt repetido do Codex é idempotente no mesmo turno', () => {

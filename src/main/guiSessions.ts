@@ -236,6 +236,19 @@ export function guiPromptProblem(
   return null
 }
 
+/**
+ * A PRIMEIRA MENSAGEM DO DONO, com o briefing da missão colado na frente.
+ *
+ * O pane nasce mudo, então o agente conhece a missão e a pergunta do dono no
+ * MESMO turno. O texto do dono fica por último e íntegro — o briefing é
+ * prefixo, nunca moldura —, e o rótulo separa as duas vozes para o agente não
+ * confundir contrato com pedido. Função pura: o teto de tamanho é medido sobre
+ * exatamente o que vai sair.
+ */
+export function guiBriefedPrompt(briefing: string, prompt: string): string {
+  return `${briefing}\n\n---\n\nA MENSAGEM DO DONO:\n${prompt}`
+}
+
 // ————— anel de eventos (replay da remontagem) —————
 
 export function guiMessageIdProblem(value: unknown): string | null {
@@ -1107,6 +1120,13 @@ interface GuiPaneEntry {
   /** Terminal do backend pode preceder tool-result no mesmo chunk de stdout;
    * o teardown precisa drenar esse terminal antes de salvar o replay. */
   flushPendingTerminal?: () => void
+  /** BRIEFING DA MISSÃO AINDA NÃO ENTREGUE. O pane nasce mudo (ordem do dono):
+   *  o dono ajusta conta/modelo/effort/permissão e só a PRIMEIRA mensagem dele
+   *  abre turno — o briefing sai colado nela, nunca sozinho. Mora na ENTRADA,
+   *  não no spawn: `inheritConversation` e a entrega da fila zeram
+   *  `firstPrompt` de propósito, e um briefing guardado ali morreria no
+   *  primeiro respawn (trocar a permissão antes de escrever é o caminho comum). */
+  pendingBriefing?: string
   /** Idempotência do boundary IPC: dois renderers nunca enviam o mesmo bilhete duas vezes. */
   messageIds?: Set<string>
 }
@@ -1493,6 +1513,13 @@ export class GuiSessionRegistry {
       token,
       sink,
       flushPendingTerminal,
+      // O BRIEFING ATRAVESSA O RESPAWN. `current?.pendingBriefing` primeiro
+      // porque as três rotas que reabrem o pane antes da 1ª mensagem — trocar
+      // a permissão, entregar a mensagem da fila com modo novo, remontar —
+      // chegam aqui com `firstPrompt` já zerado. `/clear` NÃO herda: ele
+      // descarta a entrada antes de recriar, e trocar de conversa é
+      // deliberado.
+      pendingBriefing: current?.pendingBriefing ?? (spawn.firstPrompt?.trim() || undefined),
       messageIds:
         current?.messageIds ?? rememberedGuiMessageIds(ring, this.doc.panes[spawn.paneId])
     })
@@ -1509,7 +1536,7 @@ export class GuiSessionRegistry {
       }
     )
 
-    if (spawn.firstPrompt?.trim()) this.sendFirstPrompt(spawn.paneId, token, spawn.firstPrompt)
+    // NENHUM TURNO NASCE AQUI. O chat abre calado e espera o dono.
     return { ok: true }
   }
 
@@ -1552,6 +1579,19 @@ export class GuiSessionRegistry {
     const prompt = withGuiAttachmentReferences(text, validatedAttachments.resolved)
     const promptProblem = guiPromptProblem(prompt)
     if (promptProblem) return { ok: false, error: 'mensagem e anexos grandes demais' }
+    // O BRIEFING VIAJA COLADO NESTA MENSAGEM (ver `pendingBriefing`): o teto é
+    // conferido ANTES de qualquer marco no fio, senão uma recusa deixaria um
+    // turno fantasma no transcript com o id da mensagem já consumido. O
+    // briefing só é DESCARTADO no envio de verdade, lá embaixo.
+    if (
+      entry.pendingBriefing &&
+      guiPromptProblem(guiBriefedPrompt(entry.pendingBriefing, prompt))
+    ) {
+      return {
+        ok: false,
+        error: 'sua primeira mensagem mais o briefing da missão passam do limite'
+      }
+    }
     const trimmed = text.trim()
     if (
       validatedAttachments.attachments.length === 0 &&
@@ -1579,9 +1619,14 @@ export class GuiSessionRegistry {
       this.routeSlash(entry, trimmed)
     )
       return { ok: true }
+    // AQUI, e não antes: o `/clear` e os slash roteados voltam acima sem
+    // alcançar o modelo — soltar o briefing neles seria queimá-lo num comando
+    // que o agente nunca vê.
+    const briefing = entry.pendingBriefing
+    if (briefing) entry.pendingBriefing = undefined
     // Turno durante turno é problema RESOLVIDO dos backends (claude enfileira,
     // codex faz steer) — o motor não tem fila própria.
-    entry.session.send(prompt)
+    entry.session.send(briefing ? guiBriefedPrompt(briefing, prompt) : prompt)
     return { ok: true }
   }
 
@@ -2130,26 +2175,6 @@ export class GuiSessionRegistry {
       { ...opts, resumeSessionId: spawn.resumeSessionId, systemPromptFile: file },
       sink
     )
-  }
-
-  /**
-   * O primeiro turno só sai com o CLI PRONTO. `waitCaps` é o sinal real do
-   * handshake nos dois backends (e resolve na morte do processo também), com
-   * teto próprio — o firstPrompt nunca fica preso esperando um CLI mudo.
-   */
-  private sendFirstPrompt(paneId: string, token: { alive: boolean }, prompt: string): void {
-    const entry = this.panes.get(paneId)
-    if (!entry) return
-    void entry.session
-      .waitCaps(READY_TIMEOUT_MS)
-      .then((caps) => {
-        if (!caps || !token.alive || !entry.session.alive) return
-        entry.sink({ type: 'turn-started' })
-        entry.session.send(prompt)
-      })
-      .catch(() => {
-        // waitCaps não rejeita; o catch existe só para nunca virar rejeição solta.
-      })
   }
 
   /** /clear (e /new do Codex) é uma troca deliberada de conversa. O cursor

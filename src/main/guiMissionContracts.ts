@@ -112,9 +112,16 @@ export interface GuiMissionBriefing {
   baseBranch?: string
 }
 
+/** Costura do briefing (o pane nasce MUDO): o agente recebe este texto colado
+ *  à primeira mensagem do dono, no mesmo turno. Sem esta linha ele tende a
+ *  cumprir a cerimônia de abertura e ignorar o que o dono acabou de pedir. */
+const OWNER_MESSAGE_SEAM =
+  "The owner's own message follows below. Do the short note first, then answer what he actually asked."
+
 /**
  * Primeiro turno de cada papel. É o único briefing que o pane recebe: o dono
- * conversa a partir daqui, não existe re-briefing perseguindo o pane.
+ * conversa a partir daqui, não existe re-briefing perseguindo o pane. Ele NÃO
+ * abre turno sozinho — viaja colado à primeira mensagem do dono.
  */
 export function guiMissionFirstPrompt(
   role: GuiMissionRole,
@@ -135,16 +142,22 @@ You are reviewing what was DELIVERED for this mission. Start by reading the diff
 
     git diff ${base}...HEAD
 
-Judge that diff against the GOAL above and nothing else. Report concrete findings (file:line) ordered by severity and close with APROVADO or REPROVADO. Never demand capability the mission did not promise. Answer in PT-BR.`
+Judge that diff against the GOAL above and nothing else. Report concrete findings (file:line) ordered by severity and close with APROVADO or REPROVADO. Never demand capability the mission did not promise. Answer in PT-BR.
+
+${OWNER_MESSAGE_SEAM}`
   }
   if (role === 'helper') {
     return `${head}
 
-You are a helper on this mission and you share the worktree with the developer. Introduce yourself in ONE line (PT-BR) and wait for the specific slice you are supposed to do — do not start touching files before that instruction arrives.`
+You are a helper on this mission and you share the worktree with the developer. Introduce yourself in ONE line (PT-BR) and wait for the specific slice you are supposed to do — do not start touching files before that instruction arrives.
+
+${OWNER_MESSAGE_SEAM}`
   }
   return `${head}
 
-This worktree${mission.branch ? ` (branch ${mission.branch})` : ''} is yours for this mission. Your VERY FIRST output — before any tool call — is a 2-3 line note in PT-BR restating the goal as you understood it. Then study what already exists here; if the work is large, post a mini-plan of at most 5 lines and wait for the owner's go before implementing.`
+This worktree${mission.branch ? ` (branch ${mission.branch})` : ''} is yours for this mission. Your VERY FIRST output — before any tool call — is a 2-3 line note in PT-BR restating the goal as you understood it. Then study what already exists here; if the work is large, post a mini-plan of at most 5 lines and wait for the owner's go before implementing.
+
+${OWNER_MESSAGE_SEAM}`
 }
 
 // ————— PLANEJAMENTO do universo (2.0, onda C) —————
@@ -222,7 +235,9 @@ export function guiPlanningFirstPrompt(input: GuiPlanningBriefing): string {
 
 ${roadmap}
 
-Your VERY FIRST output — before any tool call — is a 2-3 line note in PT-BR: that you are the planning session for this universe, that you plan and write the roadmap but never execute the work, and the ONE question that unblocks the plan. Only then study what already exists here — starting with list_plans, so you never re-propose what is already planned.`
+Your VERY FIRST output — before any tool call — is a 2-3 line note in PT-BR: that you are the planning session for this universe, and that you plan and write the roadmap but never execute the work. Only then study what already exists here — starting with list_plans, so you never re-propose what is already planned.
+
+${OWNER_MESSAGE_SEAM} He has already told you where to start, so do not open with a question he just answered; ask only what his message leaves genuinely undecided.`
 }
 
 // ————— TIPO DA MISSÃO: o planejamento vira algo que o dono CRIA —————

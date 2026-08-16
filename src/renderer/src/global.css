@@ -17405,12 +17405,31 @@ body.progress-overlay-page #root {
   outline-offset: 2px;
 }
 
+/* É a ÚNICA coisa na tela quando aparece, e agora é uma instrução ("escreva
+   para começar"), não um rodapé: em --ink-3 media 3,0:1 sobre o papel do
+   chat. --ink-2 (6,3:1 medido) é o registro de texto legível deste mundo. */
 .gui-empty {
   margin-top: 22px;
   text-align: center;
-  color: var(--ink-3);
+  color: var(--ink-2);
   font-size: 11.5px;
   line-height: 1.6;
+  /* Texto centrado e curto em pane estreito quebrava com a última linha
+     sozinha; `balance` divide as duas em partes iguais. */
+  text-wrap: balance;
+}
+
+/* O convite tem duas alturas: a primeira diz o que fazer, a segunda explica o
+   que já está combinado. Bloco próprio (e não um <br>) para respirar sem
+   alargar a entrelinha da primeira; `balance` porque em pane estreito a linha
+   quebrava deixando uma palavra órfã centralizada. O tom é o de apoio do
+   mundo do chat (o mesmo do rótulo da injeção ao lado). */
+.gui-empty-sub {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink-3);
+  font-size: 10.5px;
+  text-wrap: balance;
 }
 
 /* ---- injeção / 1º prompt ---- */

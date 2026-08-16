@@ -34,7 +34,8 @@ export interface GuiPaneSpawn {
   systemPrompt?: string;
   /** Retomar conversa existente (claude sessionId / codex thread id). */
   resumeSessionId?: string;
-  /** Primeiro turno injetado logo após o spawn (ex.: conteúdo do plano da missão). */
+  /** BRIEFING da missão. NÃO abre turno: o motor o segura como pendente e o
+   *  entrega colado à PRIMEIRA mensagem do dono (ver "O pane nasce mudo"). */
   firstPrompt?: string;
 }
 
@@ -138,6 +139,19 @@ interface GuiAttachResult {
 
 ## Regras do motor
 
+- **O PANE NASCE MUDO** (ordem do dono). `gui:create` abre o processo e NÃO
+  manda nada: nenhum `turn-started`, nenhum `send`. O `firstPrompt` fica
+  PENDENTE na entrada do pane (`pendingBriefing`) e sai colado à primeira
+  mensagem do dono, num turno só — assim ele escolhe conta/modelo/effort/
+  permissão num chat parado, e o agente recebe contrato e pedido juntos. O
+  pendente ATRAVESSA respawn (trocar a permissão antes de escrever, entrega da
+  fila com modo novo, remontagem): a herança é do ENTRY, porque
+  `inheritConversation` e a entrega da fila zeram `firstPrompt` de propósito.
+  `/clear` descarta o pendente — trocar de conversa é deliberado. O splice fica
+  DEPOIS do `/clear` e do roteamento de slash: comando que não chega ao modelo
+  não queima o briefing; e o teto de tamanho é conferido ANTES de qualquer
+  marco no fio, para que uma recusa não deixe turno fantasma nem perca o
+  briefing.
 - Sessão POR PANE num `Map<paneId, …>`; `matches()` nunca reaproveita entre panes.
 - As classes de sessão ganham `opts.idleTimeoutMs?: number` (0 = desliga) — ADITIVO,
   default preserva o comportamento atual dos chamadores existentes. Panes GUI usam 0
