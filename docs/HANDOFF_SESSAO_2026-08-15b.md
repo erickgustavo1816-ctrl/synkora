@@ -122,6 +122,36 @@ listar propose_plan/list_plans de primeira (prova no journal: catalog-served
 role=gui-planner); caminho CODEX do planejador consertado mas não provado ao
 vivo; briefing colado — conferir que o agente responde o que o dono perguntou.
 
+## 🔴 BUG PARA AMANHÃ (dono validou ao vivo 2026-08-15 noite)
+O MCP do planejador FUNCIONOU (tools permitidas, propose_plan rodou, card de
+proposta NASCEU no chat) — mas o agente continuou falando depois de propor e o
+card "bugou e sumiu" quando a resposta seguiu. Hipótese nº 1 (forte): o MAIN
+isentou `plan-proposal` da limpeza de fim de turno no RING (ele não bloqueia o
+CLI — decisão registrada no contrato), mas o REDUCER do renderer (mirror 5,
+plans-ui) foi moldado nos irmãos permission/question, que SÃO limpos no
+`result`/turn-end — o card cai na chegada do result. Verificar store.ts: onde a
+interactionQueue é esvaziada em result/fatal/closed, o kind 'plan-proposal'
+precisa da MESMA isenção do ring (+ teste chat-ui espelhando o teste do ring).
+Hipótese nº 2 (verificar ANTES): evidência capturada em
+`.synkora/reports/evidence-plan-card-vanish-20260815.json` (snapshot do
+gui-sessions.json na hora do bug) mostra ZERO `plan-proposal` nos transcripts
+persistidos — se o checkpoint dropou o evento no caminho de persistência, o
+replay/remontagem também não recupera o card e o buraco é duplo (conferir
+guiTranscriptCheckpoint × isGuiPersistedEvent com o draft real do dono).
+Workaround possível para o dono ver o plano hoje: se a hipótese 1 for a única,
+sair da missão e voltar re-replaya o ring e o card deve voltar; se o card não
+voltar, a hipótese 2 é real.
+**DECISÃO DE UX DO DONO (mesma noite, vinculante para o fix):** o card NÃO
+aparece no meio da fala — o agente termina de falar ("o plano está aí abaixo"),
+e SÓ ENTÃO o card aparece, embaixo da resposta, e FICA até o dono decidir.
+Implementação: (a) plan-proposal nunca é limpo por result/turn-end (nos DOIS
+espelhos — ring já isenta, reducer precisa isentar); (b) o RENDER do card é
+gateado por turno-não-ativo (status != working/stream vazio) — pendente durante
+a fala, visível no fim; (c) PLANNING_CONTRACT orienta o agente a fechar a fala
+anunciando o plano abaixo. Teste: proposta no meio do turno → card ausente
+durante o streaming, presente após o result, sobrevivendo a turnos seguintes
+até o desfecho.
+
 ## Pendências / decisões
 1. **VALIDAÇÃO VISUAL NO APP REAL** (ninguém rodou o app): dashboard do ✦ geral
    nos 3 estados; convite centralizado; clique nos DOIS avatares (falha
