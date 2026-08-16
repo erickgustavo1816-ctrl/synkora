@@ -87,6 +87,41 @@ em 4 execuções após o fix do relógio, skills-system 203, mission-worktree 35
 project-plan 58, mais file-actions/file-preview/backlog/titlebar/right-rail/
 command-palette/mailbox/blackbox/mission-creation/mcp-protocol/quick-settings).
 
+## RODADA DE FIXES DO TESTE VIVO (mesma noite — o dono rodou o app e achou 7)
+Investigação read-only (3 Opus max) com o app do dono ABERTO + fixes em 2
+worktrees, integrados após o dono fechar. Os 7, todos com causa PROVADA:
+1. **MCP do planejador nunca chegou ao CLI** (o crítico): o main armava tudo
+   (journal `plannerTools:true`, config+bearer escritos, servidor de pé —
+   suspeito "servidor não sobe na era 2.0" REFUTADO por netstat), mas o
+   RENDERER descartava o campo `mcp`: GuiPane reconstrói o spawn de props
+   enumeradas e o espelho de tipo nunca ganhou o campo (typecheck cego a
+   opcional omitido). Fix: carry nos 4 pontos + **CERCA DE PARIDADE** no
+   test:gui-chat-ui (compara campo a campo GuiPaneSpawn do main × espelho ×
+   Props × literais × atributos do Board — pegou o bug de hoje em 1 linha) +
+   evento blackbox `gui-planner-mcp-dropped`. Codex perdia args E o bearer.
+2. **Chat nasce MUDO** (ordem do dono): `sendFirstPrompt` morreu; o briefing
+   vira `pendingBriefing` no motor e sai COLADO na 1ª mensagem do dono
+   (`guiBriefedPrompt`); sobrevive a troca de permissão/remount, não queima em
+   slash, não some em recusa por teto (checado ANTES de qualquer sink). Regra
+   nova no GUI_PANE_CONTRACT ("O PANE NASCE MUDO").
+3. Popover de contexto isento da guarda de turno (é leitura) + fecha pelo
+   caminho normal quando a medição some (compaction codex).
+4. Medidor de contexto: `measuredWindow` no maestroSession (o init repetido
+   deixa de reanunciar o PISO por cima da MEDIÇÃO; troca de modelo descarta) +
+   replay de conversa morta zera o par (só session-restarted é autoridade).
+5. Dashboard ENCHE a coluna (max-width 860 morreu; lista vira grade auto-fill
+   ≥1000px; KPIs = instrumento 560px) — medido 1566px numa janela de 1920.
+6. Coluna de missões: largura ÚNICA `--mission-col-width: 240px` (era 240×216)
+   + fix da cascata da faixa estreita (altura 1239px→77px) + régua de 10px dos
+   botões via `--scrollbar-w`.
+7. Versões em GRADE de cards (~3 por linha nativa, 4 em 1600px) + a lista
+   "missões desta versão" ganhou os 3 destinos do missionCardAccess (era a 2ª
+   superfície com clique morto em arquivada).
+Validar ao vivo: chat de planejamento re-spawna 1× (resume) e o agente deve
+listar propose_plan/list_plans de primeira (prova no journal: catalog-served
+role=gui-planner); caminho CODEX do planejador consertado mas não provado ao
+vivo; briefing colado — conferir que o agente responde o que o dono perguntou.
+
 ## Pendências / decisões
 1. **VALIDAÇÃO VISUAL NO APP REAL** (ninguém rodou o app): dashboard do ✦ geral
    nos 3 estados; convite centralizado; clique nos DOIS avatares (falha
