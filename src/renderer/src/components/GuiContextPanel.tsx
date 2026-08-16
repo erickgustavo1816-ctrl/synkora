@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef } from 'react'
 import type { GuiContextPanelPresentation } from '../guiContextPanel'
 
 interface Props {
@@ -54,6 +54,16 @@ export default function GuiContextPanel({
       triggerRef.current?.focus({ preventScroll: true })
     }
   }, [open])
+
+  // MEDIÇÃO QUE SOME FECHA PELO CAMINHO NORMAL. Sem `usage` o componente
+  // inteiro desmonta (return null abaixo) — se isso acontecer com o popover
+  // ABERTO, o diálogo é arrancado com o foco dentro dele e o efeito de
+  // restauração nunca roda: o foco cai no <body>. Acontece de verdade: a
+  // compactação do Codex zera os dois números de uma vez. Avisar o dono do
+  // estado faz o fechamento passar pela mesma porta do Esc.
+  useEffect(() => {
+    if (!usage && open) onOpenChange(false)
+  }, [usage, open, onOpenChange])
 
   if (!usage) return null
 

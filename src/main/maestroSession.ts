@@ -550,6 +550,11 @@ export class MaestroSession {
   /** Modelo anunciado pelo último `system/init`: é a chave do `modelUsage` no
    *  `result`. Trocar de modelo reemite init, então este campo acompanha. */
   private initModel: string | null = null
+  /** Janela REAL já medida pelo CLI para `initModel` neste processo. Existe
+   *  porque o `init` REPETE a cada turno carregando o piso curado: sem esta
+   *  memória, cada volta rebaixaria a medição de volta ao piso — e o piso
+   *  acabava PERSISTIDO como se fosse medição. */
+  private measuredWindow: number | undefined = undefined
 
   constructor(opts: MaestroSessionOpts, emit: (evt: SessionEvent) => void) {
     this.opts = opts
@@ -1086,6 +1091,9 @@ export class MaestroSession {
           // O modelo do init é a CHAVE do modelUsage no `result` — guardar aqui
           // é o que permite ler a janela real do modelo DESTA conversa, e não a
           // de uma tarefa auxiliar que apareça no mesmo mapa.
+          // Modelo NOVO invalida a medição do anterior: 1M medido no Fable não
+          // vale para o Haiku que acabou de entrar.
+          if (model !== this.initModel) this.measuredWindow = undefined
           this.initModel = model
           this.emit({
             type: 'init',
@@ -1093,9 +1101,10 @@ export class MaestroSession {
             sessionId: evt.session_id,
             permissionMode: evt.permissionMode ?? 'default',
             toolCount: evt.tools?.length ?? 0,
-            // Piso curado: o init acontece antes de existir medição. O primeiro
-            // `result` do turno substitui isto pela janela REAL do CLI.
-            contextWindow: claudeCuratedContextWindow(model)
+            // PISO só enquanto não há medição. Depois do primeiro `result`
+            // deste modelo a janela REAL manda — o init repete a cada turno, e
+            // reanunciar o piso apagaria a medição a cada volta.
+            contextWindow: this.measuredWindow ?? claudeCuratedContextWindow(model)
           })
           break
         }
@@ -1345,6 +1354,10 @@ export class MaestroSession {
           : interrupted
             ? 'cancelled'
             : 'completed'
+        // A medição vira a verdade do processo para este modelo: a partir daqui
+        // o `init` que repete a cada turno anuncia ELA, não o piso curado.
+        const measuredWindow = claudeReportedContextWindow(evt.modelUsage, this.initModel)
+        if (measuredWindow !== undefined) this.measuredWindow = measuredWindow
         this.emit({
           type: 'result',
           isError: Boolean(evt.is_error),
@@ -1359,7 +1372,7 @@ export class MaestroSession {
           // Janela REAL medida pelo CLI para o modelo desta conversa. Ausente
           // quando o mapa não traz o modelo: aí a janela do init continua
           // valendo (o campo é omitido, nunca zerado).
-          contextWindow: claudeReportedContextWindow(evt.modelUsage, this.initModel),
+          contextWindow: measuredWindow,
           fastModeState: evt.fast_mode_state,
           costUsd: evt.total_cost_usd
         })

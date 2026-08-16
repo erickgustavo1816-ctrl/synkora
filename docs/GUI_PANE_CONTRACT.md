@@ -170,6 +170,15 @@ interface GuiAttachResult {
   `claude-fable-5`) — era essa a origem do "Fable 5 com 200k". Re-sondar a cada
   update de CLI antes de editar a tabela. O Codex segue com o
   `modelContextWindow` real do `tokenUsage` — nada a fazer lá.
+  O PISO VALE SÓ ATÉ A PRIMEIRA MEDIÇÃO DO PROCESSO: o `init` REPETE a cada
+  turno (inclusive nos ciclos autônomos), então reanunciá-lo apagaria a janela
+  medida a cada volta — e o piso acabava PERSISTIDO na fotografia como se fosse
+  medição. A sessão lembra a medição do modelo corrente e o init posterior
+  anuncia ELA; trocar de modelo descarta a lembrança (medição do modelo antigo
+  não vale para o novo) e o piso do modelo novo volta a valer até o `result`
+  dele. Fotografia de conversa MORTA também não pinta a régua: a remontagem
+  para respawn zera o par tokens/janela e espera o `session-restarted`, que é
+  quem sabe se a conversa será retomada.
 - `/clear` (e `/new` no Codex) cria conversa nova e apaga juntos o resume e o
   fio daquele pane. Arquivar só encerra o processo e preserva ambos; excluir
   definitivamente a missão ou o projeto também purga seus registros.

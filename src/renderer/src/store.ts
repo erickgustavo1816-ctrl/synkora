@@ -2858,7 +2858,17 @@ export const useStore = create<SynkoraState>((set, get) => ({
           startedAt: null,
           activityText: null,
           sendBatch: null,
-          error: null
+          error: null,
+          // A MEDIÇÃO REPLAYADA PODE SER DE OUTRA CONVERSA. O fio persistido
+          // guarda `result`/`context-usage` da sessão anterior, e nada aqui
+          // sabe se ela será retomada — quem decide é o main
+          // (`sameConversation` → `session-restarted`), e ele só fala depois
+          // de esperar o CLI estabilizar. Até lá o medidor mostrava a
+          // porcentagem de uma conversa morta. Custo: uma superfície que
+          // replaya SEM criar sessão fica sem medidor — hoje só a fotografia
+          // congelada, que nem desenha o composer.
+          contextTokens: null,
+          contextWindow: null
         }
       }
       const patch: Partial<SynkoraState> = {

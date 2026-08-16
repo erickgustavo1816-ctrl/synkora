@@ -3597,6 +3597,56 @@ test('o result substitui a janela do init pela medição real do CLI', () => {
   assert.equal(swapped.contextWindow, 200_000)
 })
 
+test('o init para de reanunciar o piso depois da primeira medição', () => {
+  const { session, events, line } = claudeAgentSession()
+  const initWindow = () => events.find((e) => e.type === 'init').contextWindow
+  const result = (modelUsage) => {
+    session.pendingTurnGenerations = [1]
+    session.activeTurnGeneration = 1
+    line({
+      type: 'result',
+      subtype: 'success',
+      usage: { input_tokens: 1, output_tokens: 1 },
+      modelUsage
+    })
+  }
+
+  // Modelo que a tabela não conhece: o piso conservador entra primeiro.
+  line({ type: 'system', subtype: 'init', session_id: 's1', model: 'modelo-novo' })
+  assert.equal(initWindow(), 200_000)
+
+  // O CLI mede: 1M de verdade.
+  result({ 'modelo-novo': { contextWindow: 1_000_000 } })
+
+  // O init REPETE a cada turno. Sem a memória da medição ele reanunciaria o
+  // piso e o medidor cairia de 1M para 200k a cada volta — o mesmo piso ainda
+  // acabava PERSISTIDO como se fosse medição.
+  events.length = 0
+  line({ type: 'system', subtype: 'init', session_id: 's1', model: 'modelo-novo' })
+  assert.equal(initWindow(), 1_000_000, 'a medição do processo manda sobre o piso')
+})
+
+test('trocar de modelo descarta a medição do modelo anterior', () => {
+  const { session, events, line } = claudeAgentSession()
+  const initWindow = () => events.find((e) => e.type === 'init').contextWindow
+
+  line({ type: 'system', subtype: 'init', session_id: 's1', model: 'claude-fable-5' })
+  session.pendingTurnGenerations = [1]
+  session.activeTurnGeneration = 1
+  line({
+    type: 'result',
+    subtype: 'success',
+    usage: { input_tokens: 1, output_tokens: 1 },
+    modelUsage: { 'claude-fable-5': { contextWindow: 1_000_000 } }
+  })
+
+  // Modelo NOVO reemite init: a medição do anterior não vale para ele — voltar
+  // ao piso do modelo certo é honesto, herdar 1M seria promessa falsa.
+  events.length = 0
+  line({ type: 'system', subtype: 'init', session_id: 's1', model: 'claude-haiku-4-5-20251001' })
+  assert.equal(initWindow(), 200_000)
+})
+
 test('o result com janela medida sobrevive à persistência e à fotografia do anel', () => {
   // O evento novo precisa atravessar o contrato de persistência, senão a
   // medição some no replay da remontagem.

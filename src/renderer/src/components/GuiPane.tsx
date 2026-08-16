@@ -1214,7 +1214,13 @@ export default function GuiPane({
   )
 
   useEffect(() => {
-    if (working && openMenu && openMenu !== 'attach') setOpenMenu(null)
+    // A guarda é dos SELETORES DE EXECUTOR (conta/modelo/effort/modo): a
+    // escolha deles não pode mudar no meio de um turno, então o menu fecha
+    // quando o turno começa. O painel de CONTEXTO é leitura pura — não muda
+    // nada do próximo turno — e fechá-lo junto era efeito colateral: o popover
+    // piscava aberto e morria, levando o foco com ele, justamente enquanto o
+    // número que ele mostra está mudando.
+    if (working && openMenu && openMenu !== 'attach' && openMenu !== 'context') setOpenMenu(null)
   }, [openMenu, working])
 
   // fechar menus clicando fora (mesmo padrão dos dropdowns do app)

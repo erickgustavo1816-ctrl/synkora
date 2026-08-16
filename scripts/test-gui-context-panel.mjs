@@ -46,3 +46,29 @@ test('integração usa botão discreto, popover nomeado e restauração de foco'
   assert.match(css, /\.gui-context-popover\s*\{[\s\S]*bottom: calc\(100% \+ 9px\)/u)
   assert.match(css, /\.gui-context-trigger:focus-visible/u)
 })
+
+test('o painel de contexto é leitura: o turno em andamento não o fecha', () => {
+  const pane = readWorkspaceFile('src/renderer/src/components/GuiPane.tsx')
+
+  // A guarda existe para os SELETORES DE EXECUTOR (conta/modelo/effort/modo),
+  // cuja escolha não pode mudar no meio de um turno. O contexto não muda nada
+  // do próximo turno — fechá-lo junto era efeito colateral, e o botão nem
+  // sequer aparece desabilitado: parecia vivo e morria no clique.
+  assert.match(
+    pane,
+    /if \(working && openMenu && openMenu !== 'attach' && openMenu !== 'context'\) setOpenMenu\(null\)/u
+  )
+})
+
+test('medição que some fecha o painel pelo caminho normal, sem largar o foco', () => {
+  const component = readWorkspaceFile('src/renderer/src/components/GuiContextPanel.tsx')
+
+  // O painel é montado condicionalmente (`if (!usage) return null`). Quando os
+  // números somem com o popover ABERTO — o `thread/compacted` do Codex zera os
+  // dois —, arrancar o diálogo com o foco dentro deixaria o foco no <body>.
+  assert.match(component, /useEffect\(\(\) => \{\s*if \(!usage && open\) onOpenChange\(false\)/u)
+  const guard = component.indexOf('if (!usage) return null')
+  const closer = component.indexOf('if (!usage && open) onOpenChange(false)')
+  assert.notEqual(closer, -1)
+  assert.ok(closer < guard, 'o efeito de fechamento vem ANTES do return null')
+})
