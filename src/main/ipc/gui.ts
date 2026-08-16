@@ -352,6 +352,22 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
 
   ipcMain.handle('gui:create', async (e, spawn: GuiPaneSpawn): Promise<GuiResult> => {
     extras.assertAppRendererSender(e)
+    // FALHA DE COSTURA NUNCA É MUDA. O main SABE que armou o planejador (ele
+    // guardou o token e escreveu o arquivo de config); se o spawn volta do
+    // renderer sem as flags, o chat abriria sem as ferramentas de plano e o
+    // agente diria ao dono que elas "não existem" — exatamente o que aconteceu
+    // por uma noite inteira, com typecheck e 17 suítes verdes. A cerca de
+    // paridade (test:gui-chat-ui) impede a regressão; esta linha é a rede: no
+    // dia em que ela falhar, o diário nomeia o pane em vez de calar.
+    if (!spawn.mcp && ctx.paneTokens.has(spawn.paneId)) {
+      blackbox.record({
+        cat: 'pane',
+        event: 'gui-planner-mcp-dropped',
+        actor: 'harness',
+        ids: { paneId: spawn.paneId, projectId: spawn.projectId },
+        detail: { cli: spawn.cli }
+      })
+    }
     await extras.waitForCliStable(spawn.cli)
     return registry.create(spawn)
   })

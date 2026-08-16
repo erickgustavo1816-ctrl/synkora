@@ -115,9 +115,14 @@ interface Props {
   effort?: string
   systemPrompt?: string
   resumeSessionId?: string
+  /** briefing da missão: NÃO abre turno — o motor o segura e envia colado à
+   *  primeira mensagem do dono. Aqui ele só é anunciado no fio. */
   firstPrompt?: string
   /** modo de permissão DESTA conversa (onda D) — ausente = 'default' */
   permissionMode?: GuiPermissionMode
+  /** ferramentas Synkora deste pane (só a missão de planejamento recebe). O
+   *  pane não as interpreta: leva o campo intacto de volta ao `gui:create`. */
+  mcp?: GuiPaneSpawn['mcp']
   /** o dono da spec guarda a escolha: sem isto, remontar o slot voltaria ao
    *  modo antigo enquanto a sessão no main já está no novo. */
   onPermissionMode?: (mode: GuiPermissionMode) => void
@@ -517,6 +522,7 @@ export default function GuiPane({
   resumeSessionId,
   firstPrompt,
   permissionMode,
+  mcp,
   onPermissionMode,
   onExecutorChange,
   seats,
@@ -594,6 +600,13 @@ export default function GuiPane({
 
   // A spec do spawn muda no MÁXIMO junto com o pane; guardá-la em ref evita
   // que uma prop nova re-dispare o efeito de montagem (que reabriria sessão).
+  //
+  // OS DOIS LITERAIS CARREGAM O SPAWN INTEIRO. Campo que o main acrescenta e
+  // este componente não repete morre aqui em silêncio — TypeScript não acusa
+  // campo opcional omitido num literal novo, e foi assim que o `mcp` do
+  // planejamento se perdeu. A cerca de paridade do test:gui-chat-ui lê estes
+  // dois blocos; a semente também, porque uma remontagem reconstruiria o
+  // spawn por ela.
   const spawnRef = useRef<GuiPaneSpawn>({
     paneId,
     projectId,
@@ -606,7 +619,8 @@ export default function GuiPane({
     systemPrompt,
     resumeSessionId,
     firstPrompt,
-    permissionMode: mode
+    permissionMode: mode,
+    mcp
   })
 
   spawnRef.current = {
@@ -621,7 +635,8 @@ export default function GuiPane({
     systemPrompt,
     resumeSessionId,
     firstPrompt,
-    permissionMode: mode
+    permissionMode: mode,
+    mcp
   }
 
   const { draft, setDraft, clearDraft } = useGuiDraft(paneId)

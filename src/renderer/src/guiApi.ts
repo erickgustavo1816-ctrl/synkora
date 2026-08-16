@@ -57,7 +57,8 @@ export interface GuiPaneSpawn {
   systemPrompt?: string
   /** Retomar conversa existente (claude sessionId / codex thread id). */
   resumeSessionId?: string
-  /** Primeiro turno injetado logo após o spawn (ex.: conteúdo do plano da missão). */
+  /** BRIEFING da missão. Não abre turno: fica pendente no motor e sai colado
+   *  na PRIMEIRA mensagem do dono (o pane nasce mudo — ordem do dono). */
   firstPrompt?: string
   /** Modo de permissão desta conversa (onda D). Trocar em voo = novo
    *  `gui:create` com o mesmo paneId: o motor respawna com resume, então a
@@ -65,6 +66,14 @@ export interface GuiPaneSpawn {
    *  TODO(onda D, motor): o main é o dono canônico deste campo — quando ele
    *  publicar o tipo, esta cópia some junto com o resto do bloco. */
   permissionMode?: GuiPermissionMode
+  /** MCP do Synkora deste pane (onda D): só a missão de PLANEJAMENTO recebe —
+   *  ver guiPlannerMcp.ts. O main é o dono canônico; aqui é espelho. Entra no
+   *  fingerprint: armar/desarmar o servidor exige processo novo.
+   *  CAMPO NOVO NO SPAWN ENTRA AQUI: a cerca de paridade do
+   *  test:gui-chat-ui lê esta interface, as props do GuiPane, os dois
+   *  literais do spawnRef e o `<GuiPane>` do Board — foi o silêncio dessas
+   *  quatro listas que deixou o chat de planejamento sem ferramenta. */
+  mcp?: { args: string[]; env?: Record<string, string> }
 }
 
 export type GuiPermBehavior = 'allow' | 'allow-always' | 'deny'

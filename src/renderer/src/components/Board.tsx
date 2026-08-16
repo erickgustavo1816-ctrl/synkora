@@ -2700,6 +2700,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                   inert={active ? undefined : true}
                 >
                   <GuiPanelErrorBoundary paneId={slot.spawn.paneId} label="esta conversa">
+                  {/* A LISTA É ENUMERADA À MÃO: todo campo do spawn tem de
+                      aparecer aqui, senão ele morre nesta fronteira sem erro
+                      de tipo — foi assim que o chat de planejamento passou uma
+                      noite sem as ferramentas de plano. A cerca de paridade
+                      está em scripts/test-gui-chat-ui.mjs. */}
                   <GuiPane
                     paneId={slot.spawn.paneId}
                     active={active}
@@ -2713,6 +2718,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                     resumeSessionId={slot.spawn.resumeSessionId}
                     firstPrompt={slot.spawn.firstPrompt}
                     permissionMode={slot.spawn.permissionMode}
+                    mcp={slot.spawn.mcp}
                     onPermissionMode={(pm) => setMissionSlotPermission(mid, slot.spawn.paneId, pm)}
                     onExecutorChange={(patch) =>
                       setMissionSlotExecutor(mid, slot.spawn.paneId, patch)
