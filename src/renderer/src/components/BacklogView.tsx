@@ -335,6 +335,11 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   const [releaseMsg, setReleaseMsg] = useState<string | null>(null)
   // servidor de teste do dono: sobe a branch da versão num pane shell
   const [testVersion, setTestVersion] = useState<Version | null>(null)
+  /** missão encerrada cuja conversa 2.0 o dono abriu para LER (fotografia) —
+   *  os MESMOS nomes do MissionsPane: o pino de teste descreve as duas
+   *  superfícies com uma linha só, e regra duplicada é regra que diverge. */
+  const [chatViewer, setChatViewer] = useState<Mission | null>(null)
+  const closeChatViewer = useCallback(() => setChatViewer(null), [])
   // sub-abas da tela: versões (release) | missões (ecossistema completo)
   const [view, setView] = useState<'versoes' | 'missoes'>('versoes')
 
@@ -772,27 +777,43 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
             {versionMissions.length > 0 && (
               <div className="vs-block">
                 <span className="vs-block-title">missões desta versão</span>
-                {versionMissions.map((m) => (
-                  <button
-                    key={m.id}
-                    className="vs-mission"
-                    data-tip="Abrir a aba da missão no board"
-                    onClick={() => {
-                      setMissionTab(projectId, m.id)
-                      setUniverseTab(projectId, 'board')
-                    }}
-                  >
-                    {m.status === 'concluida'
-                      ? '✓'
-                      : m.status === 'integrando'
-                        ? '⇪'
-                        : m.status === 'arquivada'
-                          ? '⊟'
-                          : '🚀'}{' '}
-                    {m.title}
-                    <span className={`vs-mission-status ${m.status}`}>{m.status}</span>
-                  </button>
-                ))}
+                {versionMissions.map((m) => {
+                  // TRÊS destinos, a MESMA regra da sub-aba missões
+                  // (missionCardAccess.ts): viva abre no board; encerrada de
+                  // 2.0 abre a conversa gravada; o resto não é clicável e diz
+                  // por quê. Esta superfície tinha ficado de fora — o botão
+                  // prometia "abrir a aba" para TODA missão da lista, e a
+                  // ARQUIVADA levava ao board, que desfazia a navegação no
+                  // mesmo ciclo (Board.tsx, efeito de missionTab).
+                  const access = missionCardAccess(m)
+                  return (
+                    <button
+                      key={m.id}
+                      className={`vs-mission${access === 'inert' ? ' static' : ''}`}
+                      data-tip={MISSION_CARD_TIP[access]}
+                      onClick={
+                        access === 'live'
+                          ? () => {
+                              setMissionTab(projectId, m.id)
+                              setUniverseTab(projectId, 'board')
+                            }
+                          : access === 'frozen-chat'
+                            ? () => setChatViewer(m)
+                            : undefined
+                      }
+                    >
+                      {m.status === 'concluida'
+                        ? '✓'
+                        : m.status === 'integrando'
+                          ? '⇪'
+                          : m.status === 'arquivada'
+                            ? '⊟'
+                            : '🚀'}{' '}
+                      {m.title}
+                      <span className={`vs-mission-status ${m.status}`}>{m.status}</span>
+                    </button>
+                  )
+                })}
               </div>
             )}
             {version.deliveries.length > 0 && (
@@ -982,6 +1003,8 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
           onClose={() => setTestVersion(null)}
         />
       )}
+
+      {chatViewer && <ArchivedMissionChat mission={chatViewer} onClose={closeChatViewer} />}
 
       {confirmRelease && (
         <div className="overlay" onClick={() => setConfirmRelease(null)}>

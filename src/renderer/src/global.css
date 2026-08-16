@@ -11320,6 +11320,17 @@ body.pane-docking .pane-bar.draggable {
   background: var(--paper-2);
 }
 
+/* MISSÃO ENCERRADA SEM CONVERSA GUARDADA: não há o que abrir, então a linha
+   para de fingir que responde ao clique (mesmo precedente do `.ms-main.static`
+   na sub-aba missões). O tooltip diz por quê. */
+.vs-mission.static {
+  cursor: default;
+}
+
+.vs-mission.static:hover {
+  background: none;
+}
+
 .vs-mission-status {
   font-size: 10px;
   color: var(--ink-3);
