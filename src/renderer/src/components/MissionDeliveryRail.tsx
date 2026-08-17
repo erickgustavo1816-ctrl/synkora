@@ -326,13 +326,22 @@ export default function MissionDeliveryRail({
         <span className="dr-conflict">⚠ {integration.lastError}</span>
       )}
 
+      {/* ARQUIVAR — a única alavanca que a missão de PLANEJAMENTO também tem
+          (por isso este bloco é o único do trilho sem `!planning`: diff,
+          revisor, ajudante, terminal e ⇪ não têm objeto sem worktree).
+          Ela se chamava "⊟ concluir planejamento" e o dono, procurando
+          arquivar, leu o trilho inteiro sem achar o que procurava (2026-08-17):
+          duas palavras para o MESMO ato — o clique sempre foi o mesmo
+          `archiveMission` — deixavam a alavanca invisível para quem não sabia
+          que concluir era arquivar. Sem confirmação, como na missão de dev: o
+          gesto se desfaz no próprio trilho. */}
       {(mission.status === 'ativa' || mission.status === 'arquivada') && (
         <button
           className={`btn tiny dr-btn ${live ? 'dr-quiet' : ''}`}
           data-tip={
             live
               ? planning
-                ? 'Encerra esta sessão de planejamento — o que ela escreveu em plano/ fica no repo'
+                ? 'Arquiva esta sessão de planejamento: o que ela escreveu em plano/ fica no repo e o plano continua no mapa'
                 : 'Arquivar a missão (branch preservada)'
               : planning
                 ? 'Reabrir esta sessão de planejamento'
@@ -340,7 +349,13 @@ export default function MissionDeliveryRail({
           }
           onClick={onArchive}
         >
-          {live ? (planning ? '⊟ concluir planejamento' : '⊟ arquivar') : '↩ reativar'}
+          {live
+            ? planning
+              ? '⊟ arquivar planejamento'
+              : '⊟ arquivar'
+            : planning
+              ? '↩ reabrir planejamento'
+              : '↩ reativar'}
         </button>
       )}
     </div>

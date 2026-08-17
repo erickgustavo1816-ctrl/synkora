@@ -218,6 +218,67 @@ test('a coluna e o trilho consomem o módulo — nenhuma cópia da regra sobrou'
   assert.doesNotMatch(rail, /const STATUS_LABEL: Record/u)
 })
 
+// ————————————————————————————————————————————————————————————————————————
+// ARQUIVAR A MISSÃO DE PLANEJAMENTO (ordem do dono, 2026-08-17: "preciso de um
+// lugar de fácil acesso para arquivar a missão").
+//
+// A alavanca SEMPRE esteve no trilho — mas com outro nome. Numa missão de dev
+// ela se chama "⊟ arquivar"; numa de planejamento se chamava "⊟ concluir
+// planejamento", e o dono, procurando arquivar, leu a tela inteira sem achar o
+// que procurava. Duas palavras para o MESMO ato (o clique chama o mesmo
+// `archiveMission`) é a definição de vocabulário inconsistente: quem não sabe
+// que concluir É arquivar não tem como descobrir.
+//
+// O que se prende aqui é o vocabulário e a unicidade do gesto — não o texto
+// bonito: se alguém devolver a palavra "concluir" ao rótulo, ou acrescentar uma
+// SEGUNDA alavanca de arquivo só para o planejamento, isto reprova.
+// ————————————————————————————————————————————————————————————————————————
+
+test('o trilho do planejamento chama arquivar de ARQUIVAR', async () => {
+  const rail = await source('src/renderer/src/components/MissionDeliveryRail.tsx')
+  const code = withoutComments(rail)
+
+  // Os quatro rótulos do botão, na ordem em que o código os escolhe:
+  // planejamento vivo, dev vivo, planejamento arquivado, dev arquivado.
+  const button = code.match(/onClick=\{onArchive\}\s*>([\s\S]*?)<\/button>/u)
+  assert.ok(button, 'o botão de arquivar/reativar mudou de forma')
+  const labels = [...button[1].matchAll(/'([^']+)'/gu)].map((m) => m[1])
+  assert.equal(labels.length, 4, 'as duas naturezas × os dois sentidos do gesto')
+  assert.match(labels[0], /arquivar/u, 'planejamento vivo: o rótulo tem de dizer arquivar')
+  assert.doesNotMatch(labels[0], /concluir/u, '"concluir" é o nome que escondia a alavanca')
+  assert.match(labels[1], /arquivar/u, 'dev vivo: o rótulo continua dizendo arquivar')
+  assert.match(labels[2], /reabrir|reativar/u)
+  assert.match(labels[3], /reabrir|reativar/u)
+
+  // A dica responde a dúvida que o gesto levanta — o plano some junto? — em vez
+  // de repetir o rótulo: o plano/ é do PROJETO, a conversa é que encerra.
+  const tip = code.match(/data-tip=\{\s*live([\s\S]*?)\}\s*onClick=\{onArchive\}/u)
+  assert.ok(tip, 'a dica da alavanca de arquivo mudou de forma')
+  assert.match(tip[1], /[Aa]rquiva/u)
+  assert.match(tip[1], /plano\//u)
+  assert.match(tip[1], /mapa/u)
+
+  // UMA alavanca, sem confirmação, como na missão de dev: o gesto se desfaz no
+  // próprio trilho ("↩ reabrir/reativar"), então confirmar seria atrito.
+  assert.equal((code.match(/onClick=\{onArchive\}/gu) ?? []).length, 1)
+  assert.doesNotMatch(code, /confirm/iu)
+})
+
+test('a alavanca de arquivo do planejamento não depende de branch nem de fila', async () => {
+  const rail = await source('src/renderer/src/components/MissionDeliveryRail.tsx')
+  const code = withoutComments(rail)
+
+  // O bloco do arquivo é o ÚNICO do trilho sem `!planning`: diff, revisor,
+  // ajudante, terminal, ⇪ e histórico não têm objeto numa missão sem worktree —
+  // arquivar tem. Prender isto evita que uma limpeza futura o arraste para
+  // dentro do `!planning` junto com os vizinhos e a alavanca suma da tela.
+  const block = code.match(
+    /\{\(mission\.status === 'ativa' \|\| mission\.status === 'arquivada'\)[\s\S]*?onClick=\{onArchive\}/u
+  )
+  assert.ok(block, 'o bloco de arquivar/reativar mudou de guarda')
+  assert.doesNotMatch(block[0], /!planning/u)
+})
+
 test('o convite perdeu o rodapé da foto e ganhou o centro', async () => {
   const [general, css] = await Promise.all([
     source('src/renderer/src/components/ProjectGeneral.tsx'),

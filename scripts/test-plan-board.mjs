@@ -128,6 +128,34 @@ test('abas do mapa: rotas primeiro, mestre na frente dos livres, arquivado fora'
   assert.equal(resolveMapTab(tabs, undefined).id, 'rotas')
 })
 
+test('arquivar a missão de planejamento não apaga o plano do mapa', async () => {
+  const { mapTabs } = await presentation()
+  const map = await source('src/renderer/src/components/UniverseMapView.tsx')
+
+  // O dono ganhou a alavanca de ARQUIVAR no trilho da missão de planejamento
+  // (2026-08-17). A pergunta que isso levanta é justa: o plano some junto?
+  //
+  // Não — e a razão é estrutural, não uma lembrança: o PLANO é do PROJETO. A
+  // fila de abas se monta só com planos; a missão aparece do outro lado da
+  // seta (um ITEM pode apontar para ela). Por isso a garantia se escreve aqui:
+  // a conta que decide as abas não tem entrada de missão para consultar, então
+  // nenhum estado de missão pode alcançá-la.
+  const tabs = mapTabs({ plans: [planTab({ id: 'p1', title: 'V1.1' })] })
+  assert.deepEqual(
+    tabs.map((tab) => tab.id),
+    ['rotas', 'plano:p1']
+  )
+  // Só o STATUS DO PLANO tira uma aba da fila — nunca o estado de uma missão.
+  assert.equal(mapTabs({ plans: [planTab({ status: 'arquivado' })] }).length, 1)
+  assert.equal(mapTabs({ plans: [planTab({ status: 'concluido' })] }).length, 2)
+
+  // E a tela lê os planos POR PROJETO, com a lista inteira: nenhum filtro de
+  // missão entra no caminho entre `plans:list` e a fila de abas.
+  assert.match(map, /plansApi\.list\(projectId\)/u)
+  assert.match(map, /mapTabs\(\{ plans \}\)/u)
+  assert.doesNotMatch(map, /plans\.filter/u)
+})
+
 test('título de plano longo encolhe na aba sem virar id ilegível', async () => {
   const { planTabLabel } = await presentation()
 
