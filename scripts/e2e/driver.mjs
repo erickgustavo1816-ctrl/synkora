@@ -21,8 +21,8 @@ export async function connect({ port = PORT, timeoutMs = 30_000 } = {}) {
   for (;;) {
     try {
       targets = await fetchJson(`http://127.0.0.1:${port}/json`)
-      // Fase 3: o alvo é o HOST (URL sem ?view=) — a WebContentsView de panes
-      // e os overlays também são page targets e roubariam a sessão.
+      // O alvo é a JANELA PRINCIPAL (URL sem ?view=): os overlays (SynVoice,
+      // andamento) também são page targets e roubariam a sessão.
       const page = targets.find(
         (t) =>
           t.type === 'page' &&

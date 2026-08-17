@@ -30,15 +30,8 @@ export default function UniverseMapView({
 }): React.JSX.Element {
   const [plans, setPlans] = useState<PlanView[]>([])
   const [plansLoaded, setPlansLoaded] = useState(false)
-  // As posições arrastadas da constelação continuam no store (nada foi
-  // apagado) — mas ninguém as reidrata aqui: a aba não tem mais mapa cósmico.
-  const loadPanesUi = useStore((s) => s.loadPanesUi)
   const activeTabId = useStore((s) => s.mapTabByProject[projectId])
   const setMapTab = useStore((s) => s.setMapTab)
-
-  useEffect(() => {
-    loadPanesUi(projectId)
-  }, [projectId, loadPanesUi])
 
   const refreshPlans = useCallback(async (): Promise<void> => {
     const list = await plansApi.list(projectId)

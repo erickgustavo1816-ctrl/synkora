@@ -85,54 +85,33 @@ function hasVisibleEscapeOwner(): boolean {
   )
 }
 
-type DispatchResult = 'handled' | 'deferred' | 'unavailable'
-
-function dispatchGuiEscape(event?: KeyboardEvent): DispatchResult {
-  if (hasVisibleEscapeOwner()) return 'deferred'
+/** `false` = ninguém aqui quis a tecla; ela segue para o resto da página. */
+function dispatchGuiEscape(event?: KeyboardEvent): boolean {
+  if (hasVisibleEscapeOwner()) return false
   const entry = activeEntry(event)
-  if (!entry) return 'unavailable'
+  if (!entry) return false
   const action = guiEscapeAction('Escape', entry.state())
-  if (action === 'none') return 'deferred'
+  if (action === 'none') return false
   if (action === 'dismiss-menu') {
     entry.dismissMenu()
-    return 'handled'
+    return true
   }
   const now = Date.now()
-  if (now - entry.lastInterruptAt < 500) return 'handled'
+  if (now - entry.lastInterruptAt < 500) return true
   entry.lastInterruptAt = now
   void entry.interrupt()
-  return 'handled'
+  return true
 }
 
-/** Relay do host para a WebContentsView: usa o mesmo resolvedor local. */
-export function requestActiveGuiEscape(): boolean {
-  return dispatchGuiEscape() === 'handled'
-}
-
-interface GuiEscapeInstallOptions {
-  relay?: () => void
-  /** WebContentsView compõe por cima do host: quando visível, ela é a dona. */
-  preferRelay?: () => boolean
-}
-
-/** Um instalador por renderer (host e canvas de panes são processos distintos). */
-export function installGlobalGuiEscape(options: GuiEscapeInstallOptions = {}): () => void {
+/** Um instalador por renderer. Até a purga F6 (2026-08-17) havia um segundo
+ *  renderer (o canvas de panes) e este instalador aceitava um relay para ele;
+ *  hoje o registry local é a única autoridade sobre a tecla. */
+export function installGlobalGuiEscape(): () => void {
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return
     if (event.key !== 'Escape') return
     if (hasVisibleEscapeOwner()) return
-    if (options.relay && options.preferRelay?.()) {
-      options.relay()
-      event.preventDefault()
-      event.stopPropagation()
-      return
-    }
-    const result = dispatchGuiEscape(event)
-    if (result === 'unavailable') {
-      options.relay?.()
-      return
-    }
-    if (result === 'handled') {
+    if (dispatchGuiEscape(event)) {
       event.preventDefault()
       event.stopPropagation()
     }

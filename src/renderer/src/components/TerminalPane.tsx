@@ -573,20 +573,12 @@ export default function TerminalPane({
     // pane montado nem o pane ampliado. `term.paste` preserva bracketed paste e
     // não acrescenta Enter; quebras de linha são achatadas para uma fala nunca
     // executar dois comandos sem revisão explícita.
-    // F3-c4/c5: este componente monta nos DOIS processos (host: maestros;
-    // view: execução) — a classe da página diz onde estamos, e é ela que liga
-    // os relays de activity e de foco de ditado para o outro lado.
-    const inPanesView = document.body.classList.contains('panes-view-page')
+    // Até a purga F6 (2026-08-17) este componente montava em DOIS processos
+    // (host e a view de panes), e daí saíam relays de atividade e de foco de
+    // ditado para o outro lado. Sobrou um renderer: o registry local basta.
     const voiceTargetId = `terminal:${paneId}`
     const onVoiceFocus = (): void => {
       if (!voiceEnabledRef.current) return
-      // F3-c5: na VIEW de panes o SynVoice (host) não enxerga este registry —
-      // o foco de ditado é reportado ao main, que responde ao host na entrega.
-      if (inPanesView) {
-        window.synkora.panesView.reportVoiceFocus(
-          voiceLabelRef.current?.trim() || 'painel ativo'
-        )
-      }
       setSynVoiceTarget({
         id: voiceTargetId,
         label: voiceLabelRef.current?.trim() || 'painel ativo',
@@ -674,7 +666,6 @@ export default function TerminalPane({
       if (actState === state) return
       actState = state
       setActivity(paneId, state)
-      if (inPanesView) window.synkora.panesView.reportActivity(paneId, state)
     }
 
     // Estado do ciclo create: um fit anterior à resolução do IPC nunca pode

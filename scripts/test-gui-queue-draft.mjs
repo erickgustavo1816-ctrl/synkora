@@ -432,12 +432,8 @@ test('composer só limpa a fotografia aceita e preserva texto ou anexos em falha
   )
 })
 
-test('dispatcher global existe nos dois renderers e o composer enfileira durante o turno', () => {
+test('dispatcher global existe no renderer e o composer enfileira durante o turno', () => {
   const app = readFileSync(new URL('../src/renderer/src/App.tsx', import.meta.url), 'utf8')
-  const panesApp = readFileSync(
-    new URL('../src/renderer/src/PanesApp.tsx', import.meta.url),
-    'utf8'
-  )
   const pane = readFileSync(
     new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
     'utf8'
@@ -446,8 +442,9 @@ test('dispatcher global existe nos dois renderers e o composer enfileira durante
     new URL('../src/renderer/src/components/GuiQueueDispatcher.tsx', import.meta.url),
     'utf8'
   )
+  // Era "nos dois renderers" até a purga F6 (2026-08-17) matar a ilha
+  // panes-view: sobrou um renderer, e o dispatcher continua sendo global nele.
   assert.match(app, /<GuiQueueDispatcher \/>/)
-  assert.match(panesApp, /<GuiQueueDispatcher \/>/)
   assert.match(pane, /if \(turnOpen\)[\s\S]*queueGuiMessage/)
   assert.match(pane, /useGuiDraft\(paneId\)/)
   assert.match(dispatcher, /shouldAttemptGuiQueuedDelivery\(pane\.status, pane\.ready, queued\)/)

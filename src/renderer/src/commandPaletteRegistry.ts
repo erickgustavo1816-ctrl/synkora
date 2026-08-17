@@ -1,8 +1,6 @@
 import type { PaletteNavigationTarget } from '../../shared/commandPalette'
-import type { CommandPaletteRoot } from './commandPaletteNavigation'
 
 export interface CommandPaletteContext {
-  root: CommandPaletteRoot
   projectId: string | null
 }
 

@@ -24,8 +24,7 @@ import {
 } from '../commandPaletteRegistry'
 import {
   navigateFromCommandPalette,
-  onPaletteNavigationFailure,
-  type CommandPaletteRoot
+  onPaletteNavigationFailure
 } from '../commandPaletteNavigation'
 
 type PaletteSource = 'acoes' | 'arquivos' | 'sessoes' | 'commits' | 'branches'
@@ -152,7 +151,7 @@ function PreviewTranscript({ result }: { result: HistoryLoadResult }): React.JSX
   )
 }
 
-export default function CommandPalette({ root }: { root: CommandPaletteRoot }): React.JSX.Element | null {
+export default function CommandPalette(): React.JSX.Element | null {
   const projects = useStore((state) => state.projects)
   const projectId = useStore((state) => state.openProjectId)
   const missions = useStore((state) => state.missions)
@@ -180,7 +179,7 @@ export default function CommandPalette({ root }: { root: CommandPaletteRoot }): 
 
   const currentProject = projects.find((project) => project.id === projectId)
   const currentMissions = missions.filter((mission) => mission.projectId === projectId)
-  const context: CommandPaletteContext = { root, projectId }
+  const context: CommandPaletteContext = { projectId }
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -206,10 +205,10 @@ export default function CommandPalette({ root }: { root: CommandPaletteRoot }): 
   )
 
   useEffect(() => {
-    if (!open || root !== 'host') return
+    if (!open) return
     bumpHostOverlay(1)
     return () => bumpHostOverlay(-1)
-  }, [bumpHostOverlay, open, root])
+  }, [bumpHostOverlay, open])
 
   useEffect(() => {
     if (!open) return
@@ -422,7 +421,7 @@ export default function CommandPalette({ root }: { root: CommandPaletteRoot }): 
       .sort((a, b) => b.score - a.score || a.entry.title.localeCompare(b.entry.title, 'pt-BR'))
       .slice(0, 90)
       .map(({ entry }) => entry)
-  }, [commits, currentMissions, currentProject, docs, filter, history, projectId, projects, query, registeredActions, root])
+  }, [commits, currentMissions, currentProject, docs, filter, history, projectId, projects, query, registeredActions])
 
   useEffect(() => {
     setSelectedIndex((index) => Math.max(0, Math.min(index, Math.max(0, entries.length - 1))))
@@ -449,7 +448,7 @@ export default function CommandPalette({ root }: { root: CommandPaletteRoot }): 
         else setStatus('esta ação não tem um destino disponível agora')
         return
       }
-      const outcome = await navigateFromCommandPalette(target, root)
+      const outcome = await navigateFromCommandPalette(target)
       if (outcome.preview) setPreview(outcome.preview)
       if (outcome.error) setStatus(outcome.error)
       if (outcome.close) close()

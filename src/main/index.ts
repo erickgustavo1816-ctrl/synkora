@@ -34,7 +34,6 @@ import {} from './cliSessionTransplant'
 import { createMaestroEngine, type MaestroBackend } from './maestroEngine'
 import { createMissionEngine } from './missionEngine'
 import { createPaneLifecycle } from './paneLifecycle'
-import { PanesViewManager } from './panesView'
 import { buildPlansApi } from './mcpApi/plans'
 import { registerMaestroIpc } from './ipc/maestro'
 import { registerMissionsIpc } from './ipc/missions'
@@ -198,35 +197,20 @@ let abortVoiceRequests: () => void = () => {}
 let uiSender: Electron.WebContents | null = null
 let mainWindow: BrowserWindow | null = null
 // COSTURA DE PUSH DA FASE 3 (docs/FASE3_PLANO.md §3-D3): o destino de um push
-// é a VIEW, não "a janela". `panesSender` é o webContents da WebContentsView
-// do canvas de panes — amarrado pelo did-finish-load dela (F3-c1); enquanto
-// null (view não nasceu), pushPanes/pushAll degradam para o host: com uma
-// view só, pushAll ≡ pushBoard e NADA muda de comportamento. A classificação
-// canal→destino é a tabela do FASE3_PLANO §3 — canal consumido pelos dois
-// lados empurrado para um só meio-funciona em silêncio; na dúvida, pushAll.
-let panesSender: Electron.WebContents | null = null
-let panesViewManager: PanesViewManager | null = null
-function bindPanesSender(sender: Electron.WebContents | null): void {
-  panesSender = sender
-  blackbox.record({
-    cat: 'app',
-    event: sender ? 'panes-view-sender-bound' : 'panes-view-sender-cleared',
-    actor: 'harness',
-    reason: sender
-      ? `push da view de panes amarrado ao webContents ${sender.id}`
-      : 'push da view de panes solto (teardown/crash)'
-  })
-}
+// é a VIEW, não "a janela". A Fase 3 tinha uma SEGUNDA superfície (a
+// WebContentsView do canvas de panes) e a família push classificava canal →
+// destino por isso. A ilha morreu na purga F6 (2026-08-17): sobrou uma
+// janela, e `pushPanes`/`pushAll` são hoje o MESMO push do board. Os nomes
+// ficam porque os módulos de ipc/* falam por eles; unificá-los num só é
+// varredura de quem for dono do `ctx`.
 function pushBoard(channel: string, ...args: unknown[]): void {
   if (uiSender && !uiSender.isDestroyed()) uiSender.send(channel, ...args)
 }
 function pushPanes(channel: string, ...args: unknown[]): void {
-  const target = panesSender && !panesSender.isDestroyed() ? panesSender : uiSender
-  if (target && !target.isDestroyed()) target.send(channel, ...args)
+  pushBoard(channel, ...args)
 }
 function pushAll(channel: string, ...args: unknown[]): void {
   pushBoard(channel, ...args)
-  if (panesSender && !panesSender.isDestroyed()) panesSender.send(channel, ...args)
 }
 let synVoiceOverlayWindow: BrowserWindow | null = null
 let progressOverlayWindow: BrowserWindow | null = null
@@ -471,7 +455,7 @@ function trustedRendererUrl(rawUrl: string): boolean {
   try {
     const actual = new URL(rawUrl)
     const queryEntries = [...actual.searchParams.entries()]
-    const allowedViews = new Set(['synvoice-overlay', 'progress-overlay', 'panes'])
+    const allowedViews = new Set(['synvoice-overlay', 'progress-overlay'])
     const allowedQuery = queryEntries.length === 0 || (
       queryEntries.length === 1 &&
       queryEntries[0][0] === 'view' &&
@@ -508,7 +492,7 @@ function trustedRendererOrigin(rawOrigin: string): boolean {
 
 function trustedRendererView(
   rawUrl: string,
-  view: 'main' | 'panes' | 'synvoice-overlay' | 'progress-overlay'
+  view: 'main' | 'synvoice-overlay' | 'progress-overlay'
 ): boolean {
   if (!trustedRendererUrl(rawUrl)) return false
   try {
@@ -568,10 +552,7 @@ function assertAppRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
     mainWindow !== null &&
     !mainWindow.isDestroyed() &&
     event.sender === mainWindow.webContents
-  const isPanesView =
-    trustedRendererView(frame.url, 'panes') &&
-    panesViewManager?.isPanesWebContentsId(event.sender.id) === true
-  if (!isHost && !isPanesView) {
+  if (!isHost) {
     throw new Error('Janela não autorizada para controlar serviços locais.')
   }
 }
@@ -736,14 +717,9 @@ function createWindow(): BrowserWindow {
   const permissionScopeOf = (
     webContents: Electron.WebContents | null,
     requestingUrl: string | undefined
-  ): 'main' | 'panes' | null => {
+  ): 'main' | null => {
     const url = requestingUrl ?? webContents?.getURL() ?? ''
     if (webContents?.id === win.webContents.id && trustedRendererView(url, 'main')) return 'main'
-    if (
-      webContents &&
-      panesViewManager?.isPanesWebContentsId(webContents.id) &&
-      trustedRendererView(url, 'panes')
-    ) return 'panes'
     return null
   }
   win.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
@@ -832,8 +808,6 @@ function createWindow(): BrowserWindow {
     synVoiceNoticeReady = null
     synVoiceDetached = false
     mainProgressRendererReady = false
-    // child views não morrem com a janela sozinhas — teardown explícito
-    panesViewManager?.destroy()
     if (mainWindow === win) mainWindow = null
     if (uiSender?.id === mainWebContentsId) uiSender = null
   })
@@ -3657,27 +3631,6 @@ app.whenReady().then(async () => {
   // na hora de notificar (é ela que decide se o app está em foco; em foco,
   // nada é notificado). Mesmo padrão do `window: () => mainWindow` da view.
   initDesktopNotifications(() => mainWindow)
-  // A view de panes (F3-c1) fica DORMENTE até o host emitir o primeiro
-  // panes-view:layout (F3-c2) — instanciar/registrar aqui não cria nada.
-  panesViewManager = new PanesViewManager({
-    window: () => mainWindow,
-    preloadPath: join(__dirname, '../preload/index.js'),
-    trustedPanesUrl: (url) => trustedRendererView(url, 'panes'),
-    onSenderBound: (wc) => bindPanesSender(wc),
-    onSenderGone: () => bindPanesSender(null),
-    isHostSender: (e) =>
-      Boolean(
-        mainWindow &&
-          !mainWindow.isDestroyed() &&
-          e.sender === mainWindow.webContents &&
-          e.senderFrame &&
-          trustedRendererView(e.senderFrame.url, 'main')
-      ),
-    pushBoard: (channel, ...args) => pushBoard(channel, ...args),
-    record: (event, reason) => blackbox.record({ cat: 'app', event, actor: 'harness', reason }),
-    openExternal: (url) => void shell.openExternal(url)
-  })
-  panesViewManager.registerIpc()
   registerMiscIpc(ctx, { assertMainRendererSender, ensureBypassAccepted })
   registerVoiceIpc(ctx, {
     assertMainVoiceSender,

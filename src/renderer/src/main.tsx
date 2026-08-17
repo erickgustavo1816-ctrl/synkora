@@ -1,6 +1,5 @@
 import ReactDOM from 'react-dom/client'
 import App from './App'
-import PanesApp from './PanesApp'
 import SynVoiceOverlay from './components/SynVoiceOverlay'
 import ProgressOverlay from './components/ProgressOverlay'
 import TooltipLayer from './components/Tooltip'
@@ -12,9 +11,9 @@ const isSynVoiceOverlay =
   new URLSearchParams(window.location.search).get('view') === 'synvoice-overlay'
 const isProgressOverlay =
   new URLSearchParams(window.location.search).get('view') === 'progress-overlay'
-// Fase 3: o canvas de Panes roda numa WebContentsView própria — mesmo bundle,
-// raiz diferente (o padrão dos overlays).
-const isPanesView = new URLSearchParams(window.location.search).get('view') === 'panes'
+// A Fase 3 mantinha aqui uma terceira raiz `?view=panes` (o canvas de Panes,
+// numa WebContentsView própria). Ela morreu na purga F6 (2026-08-17): sobrou
+// a janela principal e os dois overlays.
 
 if (isSynVoiceOverlay) {
   document.documentElement.classList.add('synvoice-overlay-page')
@@ -24,11 +23,6 @@ if (isProgressOverlay) {
   document.documentElement.classList.add('progress-overlay-page')
   document.body.classList.add('progress-overlay-page')
 }
-if (isPanesView) {
-  document.documentElement.classList.add('panes-view-page')
-  document.body.classList.add('panes-view-page')
-}
-
 // Drop de arquivo fora de um pane: sem isto o Chromium NAVEGA para file:// e
 // derruba o renderer inteiro. Os panes tratam o próprio drop (listener no
 // container do terminal); aqui só se bloqueia a navegação padrão.
@@ -66,8 +60,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <TooltipLayer />
       </GuiPanelErrorBoundary>
     </>
-  ) : isPanesView ? (
-    <PanesApp />
   ) : (
     <App />
   )

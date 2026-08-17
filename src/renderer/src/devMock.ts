@@ -926,35 +926,6 @@ export function installDevMock(): void {
       },
       requestClose: () => undefined
     },
-    // Fase 3: no browser não há WebContentsView — layout/estado são no-op e a
-    // view (?view=panes no preview) nunca recebe push do host.
-    panesView: {
-      layout: () => undefined,
-      state: () => undefined,
-      onState: () => () => undefined,
-      onShown: () => () => undefined,
-      guiEscape: () => undefined,
-      onGuiEscape: () => () => undefined,
-      navigateHost: () => undefined,
-      reportActivity: () => undefined,
-      reportAttentionCleared: () => undefined,
-      onNavigateHost: () => () => undefined,
-      navigateCommandTarget: () => undefined,
-      onCommandTarget: () => () => undefined,
-      onActivity: () => () => undefined,
-      onAttentionCleared: () => () => undefined,
-      reportVoiceFocus: () => undefined,
-      voiceTarget: async () => null,
-      voicePaste: () => undefined,
-      onVoicePaste: () => () => undefined,
-      // 2026-08-11: sem WebContentsView no browser — captura sempre falha
-      // (o App cai no fallback de esconder sem congelado) e tooltip nunca é
-      // roteado (panesViewVisibleRect devolve null sem anchor de view).
-      capture: async () => null,
-      tipShow: () => undefined,
-      tipHide: () => undefined,
-      onTip: () => () => undefined
-    },
     maestro: {
       pendingQuestions: async () => [],
       questionSeen: async () => true,

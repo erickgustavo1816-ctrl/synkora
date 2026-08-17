@@ -10,11 +10,6 @@ const boundary = readFileSync(
   'utf8'
 )
 const board = readFileSync(new URL('../src/renderer/src/components/Board.tsx', import.meta.url), 'utf8')
-const panes = readFileSync(
-  new URL('../src/renderer/src/components/PanesView.tsx', import.meta.url),
-  'utf8'
-)
-const panesApp = readFileSync(new URL('../src/renderer/src/PanesApp.tsx', import.meta.url), 'utf8')
 const seats = readFileSync(
   new URL('../src/renderer/src/components/SeatDeck.tsx', import.meta.url),
   'utf8'
@@ -38,17 +33,15 @@ test('falha de painel é contida, recuperável e não revela a exceção', () =>
 })
 
 test('painéis do board e do canvas ficam dentro do limite isolado', () => {
+  // A ilha panes-view morreu na purga F6 (2026-08-17): o board é o único
+  // renderer com painéis. Os limites que ela trazia saíram com ela; o piso
+  // abaixo cobre só o que o host monta.
   assert.ok((board.match(/<GuiPanelErrorBoundary/g) ?? []).length >= 12)
-  assert.ok((panes.match(/<GuiPanelErrorBoundary/g) ?? []).length >= 3)
   assert.match(board, /<GuiPanelErrorBoundary[\s\S]*<GuiPane/)
   assert.match(board, /<GuiPanelErrorBoundary[\s\S]*<TerminalPane/)
   assert.match(board, /paneId=\{`board-general:\$\{projectId\}`\}[\s\S]*<ProjectGeneral/)
   assert.match(board, /paneId=\{`mission-delivery:\$\{selMission\.id\}`\}[\s\S]*<MissionDeliveryRail/)
   assert.match(board, /paneId=\{`mission-column:\$\{projectId\}`\}[\s\S]*<MissionColumn/)
-  assert.match(panes, /<GuiPanelErrorBoundary[\s\S]*<GuiPane/)
-  assert.match(panes, /<GuiPanelErrorBoundary[\s\S]*<TerminalPane/)
-  assert.match(panes, /paneId=\{`canvas-map:\$\{projectId\}`\}/)
-  assert.match(panesApp, /paneId=\{`panes-app:canvas:\$\{id\}`\}[\s\S]*<PanesView/)
   assert.match(seats, /<GuiPanelErrorBoundary[\s\S]*<TerminalPane/)
   // As QUATRO abas do universo (board, backlog, arquivos, mapa). Era 5 até
   // 2026-08-15, quando o gate "quem é o Maestro deste projeto?" foi removido:

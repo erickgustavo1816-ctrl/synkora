@@ -428,34 +428,32 @@ test('locator fica sob config conhecida e fingerprint não contém caminho', asy
   assert.equal(fingerprint.includes(data.root), false)
 })
 
-test('contrato UI instala atalho nas duas roots, relay autenticado e alvo exato', async () => {
+test('contrato UI instala o atalho numa root só e valida o alvo antes de navegar', async () => {
   const root = new URL('..', import.meta.url)
-  const [app, panesApp, palette, navigation, registry, guiPane, panesView, preload, css] =
-    await Promise.all(
-      [
-        'src/renderer/src/App.tsx',
-        'src/renderer/src/PanesApp.tsx',
-        'src/renderer/src/components/CommandPalette.tsx',
-        'src/renderer/src/commandPaletteNavigation.ts',
-        'src/renderer/src/commandPaletteRegistry.ts',
-        'src/renderer/src/components/GuiPane.tsx',
-        'src/main/panesView.ts',
-        'src/preload/index.ts',
-        'src/renderer/src/global.css'
-      ].map((path) => readFile(new URL(path, root), 'utf8'))
-    )
+  const [app, palette, navigation, registry, guiPane, css] = await Promise.all(
+    [
+      'src/renderer/src/App.tsx',
+      'src/renderer/src/components/CommandPalette.tsx',
+      'src/renderer/src/commandPaletteNavigation.ts',
+      'src/renderer/src/commandPaletteRegistry.ts',
+      'src/renderer/src/components/GuiPane.tsx',
+      'src/renderer/src/global.css'
+    ].map((path) => readFile(new URL(path, root), 'utf8'))
+  )
 
-  assert.match(app, /<CommandPalette root="host"/u)
-  assert.match(panesApp, /<CommandPalette root="panes"/u)
+  // A ilha panes-view morreu na purga F6 (2026-08-17): existia uma segunda
+  // root ('panes') que encaminhava o alvo ao host por IPC. Agora a paleta é
+  // do host e navega ela mesma — mas a VALIDAÇÃO do alvo continua sendo
+  // obrigatória, e é isto que as duas asserções abaixo prendem.
+  assert.match(app, /<CommandPalette \/>/u)
+  assert.doesNotMatch(app, /CommandPalette root=/u)
+  assert.doesNotMatch(navigation, /panesView/u)
+  assert.match(palette, /isPaletteNavigationTarget\(target\)/u)
   assert.match(palette, /event\.ctrlKey && !event\.metaKey|!event\.ctrlKey && !event\.metaKey/u)
   assert.match(palette, /event\.stopImmediatePropagation\(\)/u)
   assert.match(palette, /bumpHostOverlay\(1\)/u)
   assert.match(palette, /window\.synkora\.history\.cancel\(requestId\)/u)
   assert.match(registry, /export function registerCommandPaletteAction/u)
-  assert.match(panesView, /guardView\(e, 'panes-view:command-target'\)/u)
-  assert.match(panesView, /isPaletteNavigationTarget\(target\)/u)
-  assert.match(preload, /navigateCommandTarget/u)
-  assert.match(preload, /onCommandTarget/u)
   assert.match(navigation, /result\.canMount/u)
   assert.match(navigation, /paneId: result\.paneId/u)
   assert.doesNotMatch(navigation, /paneId: target\.paneId/u)

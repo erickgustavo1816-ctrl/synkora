@@ -39,19 +39,20 @@ test('quick settings exposes only canonical chat notice preferences', () => {
   assert.doesNotMatch(panel, /AppearanceSettings/u)
 })
 
-test('the host owns the drawer overlay and Panes keeps the existing settings relay', () => {
+test('the host owns the drawer overlay and reloads settings when they change', () => {
   const titlebar = read('src/renderer/src/components/TitleBar.tsx')
   const app = read('src/renderer/src/App.tsx')
-  const panesApp = read('src/renderer/src/PanesApp.tsx')
 
   assert.match(titlebar, /QuickSettingsPanel/u)
   assert.match(titlebar, /aria-controls="quick-settings-panel"/u)
   assert.match(titlebar, /if \(!open && !cliOpen && !quickOpen\) return/u)
   assert.match(titlebar, /bumpHostOverlay\(1\)/u)
-  assert.match(app, /panesViewVisibleRect\(st\)/u)
-  assert.match(app, /window\.synkora\.panesView\.layout\(\{ visible: false/u)
-  assert.match(panesApp, /window\.synkora\.settings\.onChanged/u)
-  assert.match(panesApp, /useStore\.getState\(\)\.loadSettings\(\)/u)
+  // Era um par host/WebContentsView até a purga F6 (2026-08-17) matar a ilha
+  // panes-view. Sobrou o host — e a reidratação por `settings:changed`, que é
+  // o que garante que a gaveta e a janela nunca divirjam.
+  assert.match(app, /window\.synkora\.settings\.onChanged/u)
+  assert.match(app, /useStore\.getState\(\)\.loadSettings\(\)/u)
+  assert.doesNotMatch(app, /panesView/u)
 })
 
 test('drawer remains bounded and usable in a narrow window', () => {

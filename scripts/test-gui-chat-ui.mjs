@@ -1801,17 +1801,18 @@ test('texto final conserva o item vivo até o revelador terminar', () => {
   assert.doesNotMatch(stream, /speed\s*=\s*Math\.max/u)
 })
 
-test('Esc global atravessa host e WebContentsView por relay autenticado', () => {
+test('Esc global pertence ao chat ativo, resolvido dentro do único renderer', () => {
   const app = readFileSync(new URL('../src/renderer/src/App.tsx', import.meta.url), 'utf8')
-  const panesApp = readFileSync(new URL('../src/renderer/src/PanesApp.tsx', import.meta.url), 'utf8')
-  const preload = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8')
-  const main = readFileSync(new URL('../src/main/panesView.ts', import.meta.url), 'utf8')
-  assert.match(app, /panesView\.guiEscape\(\)/u)
-  assert.match(app, /preferRelay/u, 'a view visível vence o pane escondido do host')
-  assert.match(panesApp, /onGuiEscape/u)
-  assert.match(preload, /ipcRenderer\.send\('panes-view:gui-escape'\)/u)
-  assert.match(main, /guardHost\(e, 'panes-view:gui-escape'\)/u)
-  assert.match(main, /lastLayout\?\.visible/u)
+  const escape = readFileSync(new URL('../src/renderer/src/guiEscape.ts', import.meta.url), 'utf8')
+  // A ilha panes-view morreu na purga F6 (2026-08-17). Não existe mais um
+  // segundo renderer para quem repassar a tecla: o registry local é a única
+  // autoridade, e nenhum relay pode voltar por engano.
+  assert.match(app, /installGlobalGuiEscape\(\)/u)
+  assert.doesNotMatch(app, /panesView/u)
+  assert.doesNotMatch(escape, /options\.relay|preferRelay|requestActiveGuiEscape/u)
+  assert.match(escape, /function hasVisibleEscapeOwner/u, 'modal visível é dono do Esc')
+  assert.match(escape, /entry\.lastInterruptAt/u, 'Esc repetido não interrompe duas vezes')
+  assert.match(escape, /guiEscapeAction\('Escape', entry\.state\(\)\)/u)
 })
 
 test('atividade e comando anunciam estado sem narrar o cronômetro', () => {
@@ -2162,7 +2163,6 @@ test('modelo e effort usam troca viva, confirmada e sem status no transcript', (
 
 test('avisos do chat têm som apenas no host, visibilidade real e ajustes acessíveis', () => {
   const app = readFileSync(new URL('../src/renderer/src/App.tsx', import.meta.url), 'utf8')
-  const panesApp = readFileSync(new URL('../src/renderer/src/PanesApp.tsx', import.meta.url), 'utf8')
   const pane = readFileSync(
     new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
     'utf8'
@@ -2176,18 +2176,12 @@ test('avisos do chat têm som apenas no host, visibilidade real e ajustes acess�
     new URL('../src/renderer/src/components/Board.tsx', import.meta.url),
     'utf8'
   )
-  const panes = readFileSync(
-    new URL('../src/renderer/src/components/PanesView.tsx', import.meta.url),
-    'utf8'
-  )
 
   assert.match(app, /guiApi\.onAlert/u)
   assert.match(app, /chatSoundsEnabled === false/u)
-  assert.doesNotMatch(panesApp, /from ['"]\.\/notify['"]/u)
   assert.match(pane, /guiApi\.visibility\(paneId, active\)/u)
   assert.match(pane, /guiApi\.visibility\(paneId, false\)/u)
   assert.match(board, /appPage === 'workspace'[\s\S]*uniTab === 'board'[\s\S]*mid === missionTab/u)
-  assert.match(panes, /active=\{visible && isActive && panesViewShown\}/u)
   assert.match(main, /ctx\.pushBoard\('gui:alert'/u)
   assert.match(main, /readyTitle\.noteFinished\(paneId\)/u)
   assert.match(pane, /guiApi\.presented\(paneId, seq\)/u)

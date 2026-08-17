@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import type { CanvasNodeLayout } from './paneCanvas'
 import {
   asGuiEvent,
   guiApi,
@@ -103,48 +102,12 @@ export interface Seat {
 }
 
 export type PaneKind = 'shell' | 'claude' | 'codex'
-export type UniverseTab = 'board' | 'panes' | 'backlog' | 'arquivos' | 'mapa'
+export type UniverseTab = 'board' | 'backlog' | 'arquivos' | 'mapa'
 export type AppPage = 'workspace' | 'settings'
 export type SettingsSection =
   | 'appearance'
   | 'accounts'
   | 'voice'
-
-/** Caixa de um pane no canvas: posição no MUNDO (px) + tamanho + z-order. */
-/** Deslocamento de um card no MAPA, relativo à vaga dele no anel. É offset (e
- *  não posição absoluta) de propósito: redimensionar a janela recalcula o anel
- *  e o card arrastado continua onde o usuário deixou, em relação ao conjunto. */
-export interface NodeOffset {
-  dx: number
-  dy: number
-}
-
-/** Estado da aba PANES — POR PROJETO. Universos ficam todos montados, então
- *  qualquer coisa daqui na raiz do store faz o 2º projeto sobrescrever o 1º
- *  (era o caso de focusedPane/monitorMode/paneLayout). */
-export interface PanesUi {
-  /** nó ancorado: `mission:<id>`, 'geral', 'orfaos' — null = só o mapa */
-  anchored: string | null
-  /** panes que o usuário PROMOVEU a terminal no mosaico (mais recente
-   *  primeiro). Acima do teto de ladrilhos legíveis o resto vira cartão-vivo —
-   *  clicar num cartão empurra o id para cá e troca por transform, sem resize. */
-  promoted: string[]
-  /** pane ocupando o palco inteiro (▢) */
-  expanded: string | null
-  /** modo imerso: o mapa colapsa numa espinha de glifos */
-  immersive: boolean
-  /** Layout encaixavel por no do mapa. As caixas continuam numa lista plana no
-   *  DOM; aqui ficam apenas preset, ordem e proporcoes dos divisores. */
-  canvasByNode: Record<string, CanvasNodeLayout>
-}
-
-export const PANES_UI_DEFAULT: PanesUi = {
-  anchored: null,
-  promoted: [],
-  expanded: null,
-  immersive: false,
-  canvasByNode: {}
-}
 
 /** Versão do CLI que os panes executam (espelha `main/cliUpdate.ts`) — CLI
  *  velho não conhece modelo novo, então o app checa/atualiza sozinho. */
@@ -1918,35 +1881,10 @@ interface SynkoraState {
    *  existir cai em `rotas` na leitura (resolveMapTab). */
   mapTabByProject: Record<string, string>
   setMapTab: (projectId: string, tabId: string) => void
-  // ——— FASE 3 (docs/FASE3_PLANO.md): o canvas de Panes mora numa
-  // WebContentsView própria; host e view sincronizam por push do main ———
-  /** HOST: rect da área da aba Panes por projeto (placeholder medido — vira o
-   *  bounds da view). */
-  panesAnchorByProject: Record<string, { x: number; y: number; width: number; height: number } | null>
-  setPanesAnchor: (
-    projectId: string,
-    rect: { x: number; y: number; width: number; height: number } | null
-  ) => void
-  /** HOST: overlays globais abertos (popovers da titlebar, menu ✦ Agente,
-   *  FreeAgentModal) — a view é escondida enquanto > 0, senão o overlay do
-   *  host ficaria POR BAIXO dela (child view compõe por cima). */
+  /** Overlays globais abertos (popovers da titlebar, paleta, SynVoice) — o
+   *  contador existe para quem precisa saber que a janela está coberta. */
   hostOverlayCount: number
   bumpHostOverlay: (delta: 1 | -1) => void
-  /** HOST (2026-08-11): última captura da view de panes, pintada no rect dela
-   *  ENQUANTO um overlay do host a esconde — sem isto a área virava um buraco
-   *  vazio atrás do popover. Setado pelo efeito de layout do App; consumido
-   *  pelo Universe (o stage é exatamente o rect da view). */
-  panesFreeze: { projectId: string; dataUrl: string } | null
-  setPanesFreeze: (freeze: { projectId: string; dataUrl: string } | null) => void
-  /** VIEW: visibilidade real vinda do main (gate do rAF decorativo). */
-  panesViewShown: boolean
-  setPanesViewShown: (shown: boolean) => void
-  /** VIEW: aplica o recorte de estado de shell empurrado pelo host. */
-  applyHostViewState: (state: {
-    openProjectId: string | null
-    mountedProjects: string[]
-    remountNonce: Record<string, number>
-  }) => void
   addPane: (projectId: string, kind: PaneKind, opts?: PaneOptions) => void
   closePane: (projectId: string, paneId: string) => void
   /** conversa de cada pane GUI (Synkora 2.0), por paneId. Alimentada pelo
@@ -2020,14 +1958,6 @@ interface SynkoraState {
   interruptGuiPane: (paneId: string) => Promise<void>
   /** pane fechado: encerra a sessão no main e descarta a conversa */
   dropGuiPane: (paneId: string) => void
-  /** estado da aba PANES por projeto (nó ancorado, destaque, imerso, cartões) */
-  panesUiByProject: Record<string, PanesUi>
-  setPanesUi: (projectId: string, patch: Partial<PanesUi>) => void
-  /** cards do mapa arrastados pelo usuário, por projeto */
-  mapLayoutByProject: Record<string, Record<string, NodeOffset>>
-  setNodeOffset: (projectId: string, nodeId: string, off: NodeOffset) => void
-  resetNodeOffsets: (projectId: string) => void
-  loadPanesUi: (projectId: string) => void
   paneStats: Record<string, PaneStats>
   /** últimas linhas que cada pane escreveu (cartões-vivos) */
   paneLastLines: Record<string, string[]>
@@ -2080,22 +2010,6 @@ const KIND_LABEL: Record<PaneKind, string> = {
   codex: 'Codex'
 }
 
-/** layout do canvas é preferência de UI: localStorage por projeto (não vai para
- *  o main — nada aqui precisa sobreviver a uma reinstalação). */
-// Persistência da aba PANES: preferência de UI pura (nada aqui precisa
-// sobreviver a uma reinstalação), com `v` para invalidar formato antigo sem
-// quebrar. Debounce curto porque arrastar card commita no pointerup.
-const PANES_UI_KEY = (projectId: string): string => `synkora.panesUi.${projectId}`
-const MAP_LAYOUT_KEY = (projectId: string): string => `synkora.mapLayout.${projectId}`
-
-function persistJson(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify({ v: 1, d: value }))
-  } catch {
-    // cota estourada não pode derrubar a UI
-  }
-}
-
 /** Aviso PT-BR devolvido pelo `projects:create` quando o universo nasceu mas o
  *  GitHub não fechou (onda D). Lê defensivamente: o motor é o dono do nome do
  *  campo e um payload sem aviso nenhum vale como sucesso. */
@@ -2107,39 +2021,6 @@ function projectCreateWarning(res: unknown): string | null {
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
   return null
-}
-
-function readJson<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key)
-    if (!raw) return fallback
-    const parsed = JSON.parse(raw) as { v?: number; d?: T }
-    return parsed?.v === 1 && parsed.d !== undefined ? parsed.d : fallback
-  } catch {
-    return fallback
-  }
-}
-
-/** Fase 3 (2026-08-11): rect (coords da página do host) onde a WebContentsView
- *  de panes está VISÍVEL agora — null quando escondida. FONTE ÚNICA da
- *  composição de visibilidade (a mesma do efeito de layout do App): o Tooltip
- *  usa isto para rotear tooltip do host que cruzaria o rect (a view compõe POR
- *  CIMA do DOM do host e o clipava), e o App para decidir o congelado sob
- *  overlay. `ignoreHostOverlay` responde "estaria visível SEM o overlay?" —
- *  é o que distingue "escondeu por popover" (congela) de "saiu da aba" (não).
- *  Na VIEW de panes este helper devolve sempre null (anchor nunca é setado lá),
- *  o que também corta qualquer re-roteamento em loop. */
-export function panesViewVisibleRect(
-  s: Pick<
-    SynkoraState,
-    'appPage' | 'openProjectId' | 'universeTabByProject' | 'hostOverlayCount' | 'panesAnchorByProject'
-  >,
-  ignoreHostOverlay = false
-): { x: number; y: number; width: number; height: number } | null {
-  if (s.appPage !== 'workspace' || s.openProjectId === null) return null
-  if ((s.universeTabByProject[s.openProjectId] ?? 'board') !== 'panes') return null
-  if (!ignoreHostOverlay && s.hostOverlayCount > 0) return null
-  return s.panesAnchorByProject[s.openProjectId] ?? null
 }
 
 export const useStore = create<SynkoraState>((set, get) => ({
@@ -2660,75 +2541,9 @@ export const useStore = create<SynkoraState>((set, get) => ({
   setMapTab: (projectId, tabId) =>
     set((s) => ({ mapTabByProject: { ...s.mapTabByProject, [projectId]: tabId } })),
 
-  // ——— Fase 3: sincronização host ↔ view de panes ———
-  panesAnchorByProject: {},
-  setPanesAnchor: (projectId, rect) =>
-    set((s) => ({
-      panesAnchorByProject: { ...s.panesAnchorByProject, [projectId]: rect }
-    })),
   hostOverlayCount: 0,
   bumpHostOverlay: (delta) =>
     set((s) => ({ hostOverlayCount: Math.max(0, s.hostOverlayCount + delta) })),
-  panesFreeze: null,
-  setPanesFreeze: (freeze) => {
-    // guard ANTES do set: o efeito de layout do App chama com null em toda
-    // rodada fora da aba Panes — sem isto cada troca de aba notificava a
-    // árvore inteira de subscribers à toa
-    if (get().panesFreeze === freeze) return
-    set({ panesFreeze: freeze })
-  },
-  panesViewShown: true,
-  setPanesViewShown: (shown) => set({ panesViewShown: shown }),
-  applyHostViewState: (state) =>
-    set((s) => ({
-      openProjectId: state.openProjectId,
-      appPage: 'workspace',
-      mountedProjects: state.mountedProjects,
-      remountNonce: state.remountNonce,
-      // na view, a "aba" do projeto ativo é SEMPRE panes — é o que liga os
-      // atalhos Ctrl+Alt e o keepalive do PanesView (o host guarda a real).
-      universeTabByProject: state.openProjectId
-        ? { ...s.universeTabByProject, [state.openProjectId]: 'panes' }
-        : s.universeTabByProject
-    })),
-
-  panesUiByProject: {},
-  mapLayoutByProject: {},
-
-  setPanesUi: (projectId, patch) =>
-    set((s) => {
-      const next = { ...(s.panesUiByProject[projectId] ?? PANES_UI_DEFAULT), ...patch }
-      persistJson(PANES_UI_KEY(projectId), next)
-      return { panesUiByProject: { ...s.panesUiByProject, [projectId]: next } }
-    }),
-
-  setNodeOffset: (projectId, nodeId, off) =>
-    set((s) => {
-      const cur = s.mapLayoutByProject[projectId] ?? {}
-      const next = { ...cur, [nodeId]: off }
-      persistJson(MAP_LAYOUT_KEY(projectId), next)
-      return { mapLayoutByProject: { ...s.mapLayoutByProject, [projectId]: next } }
-    }),
-
-  resetNodeOffsets: (projectId) =>
-    set((s) => {
-      persistJson(MAP_LAYOUT_KEY(projectId), {})
-      return { mapLayoutByProject: { ...s.mapLayoutByProject, [projectId]: {} } }
-    }),
-
-  // MESCLA por projeto (nunca substitui o mapa inteiro): universos ficam
-  // montados e um `set({...})` cru apagaria o estado dos vizinhos.
-  loadPanesUi: (projectId) =>
-    set((s) => ({
-      panesUiByProject: {
-        ...s.panesUiByProject,
-        [projectId]: { ...PANES_UI_DEFAULT, ...readJson(PANES_UI_KEY(projectId), PANES_UI_DEFAULT) }
-      },
-      mapLayoutByProject: {
-        ...s.mapLayoutByProject,
-        [projectId]: readJson<Record<string, NodeOffset>>(MAP_LAYOUT_KEY(projectId), {})
-      }
-    })),
 
   paneStats: {},
   paneLastLines: {},
@@ -3500,7 +3315,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
       delete model[paneId]
       const lastLines = { ...s.paneLastLines }
       delete lastLines[paneId]
-      const ui = s.panesUiByProject[projectId]
       return {
         taskAttention: attention,
         paneAttention,
@@ -3509,22 +3323,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
         paneEffort: effort,
         paneModel: model,
         paneLastLines: lastLines,
-        panesUiByProject: ui
-          ? {
-              ...s.panesUiByProject,
-              [projectId]: {
-                ...ui,
-                promoted: ui.promoted.filter((id) => id !== paneId),
-                expanded: ui.expanded === paneId ? null : ui.expanded,
-                canvasByNode: Object.fromEntries(
-                  Object.entries(ui.canvasByNode ?? {}).map(([nodeId, layout]) => [
-                    nodeId,
-                    { ...layout, order: layout.order.filter((id) => id !== paneId) }
-                  ])
-                )
-              }
-            }
-          : s.panesUiByProject,
         panesByProject: {
           ...s.panesByProject,
           [projectId]: (s.panesByProject[projectId] ?? []).filter((p) => p.id !== paneId)

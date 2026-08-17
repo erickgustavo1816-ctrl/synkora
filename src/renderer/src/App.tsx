@@ -1,13 +1,5 @@
-import { useEffect, useRef } from 'react'
-import {
-  panesViewVisibleRect,
-  useStore,
-  type PaneActivity,
-  type PaneKind,
-  type PaneOptions,
-  type UniverseTab
-} from './store'
-import { decodeHostNavTarget } from './hostNavTarget'
+import { useEffect } from 'react'
+import { useStore, type PaneKind, type PaneOptions } from './store'
 import { queueMarkdownOpen } from './projectFileNavigation'
 import { playAttentionChime, playSoftBlip } from './notify'
 import Home from './screens/Home'
@@ -22,10 +14,6 @@ import { installGlobalGuiEscape } from './guiEscape'
 import { guiApi } from './guiApi'
 import GuiQueueDispatcher from './components/GuiQueueDispatcher'
 import CommandPalette from './components/CommandPalette'
-import {
-  navigateFromCommandPalette,
-  reportPaletteNavigationFailure
-} from './commandPaletteNavigation'
 
 export default function App(): React.JSX.Element {
   const openProjectId = useStore((s) => s.openProjectId)
@@ -151,47 +139,12 @@ export default function App(): React.JSX.Element {
           useStore.getState().setUniverseTab(projectId, 'arquivos')
         })
       : () => undefined
-    // O alvo vem CODIFICADO (hostNavTarget): o mapa passou a abrir MISSÃO —
-    // clicar o card de uma missão direta leva à conversa dela, que mora no
-    // board. Emissor antigo manda só "board" e cai no caminho de sempre.
-    const offViewNav = window.synkora.panesView.onNavigateHost
-      ? window.synkora.panesView.onNavigateHost((projectId, raw) => {
-          const target = decodeHostNavTarget(raw)
-          useStore.getState().setUniverseTab(projectId, target.tab as UniverseTab)
-          if (target.missionId) useStore.getState().setMissionTab(projectId, target.missionId)
-        })
-      : () => undefined
-    const offViewActivity = window.synkora.panesView.onActivity
-      ? window.synkora.panesView.onActivity((paneId, activity) =>
-          useStore.getState().setPaneActivity(paneId, activity as PaneActivity)
-        )
-      : () => undefined
-    const offCommandTarget = window.synkora.panesView.onCommandTarget
-      ? window.synkora.panesView.onCommandTarget((target) => {
-          void navigateFromCommandPalette(target, 'host')
-            .then((outcome) => {
-              if (outcome.error) reportPaletteNavigationFailure(outcome.error)
-            })
-            .catch(() => {
-              reportPaletteNavigationFailure('não consegui abrir esse destino agora')
-            })
-        })
-      : () => undefined
-    const offViewAttn = window.synkora.panesView.onAttentionCleared
-      ? window.synkora.panesView.onAttentionCleared((projectId, paneId) =>
-          useStore.getState().clearPaneAttention(projectId, paneId)
-        )
-      : () => undefined
     const offSettings = window.synkora.settings.onChanged
       ? window.synkora.settings.onChanged(() => void useStore.getState().loadSettings())
       : () => undefined
     return () => {
       disposed = true
       offFilesNav()
-      offViewNav()
-      offViewActivity()
-      offCommandTarget()
-      offViewAttn()
       offSettings()
       offOpenFree()
       offPolicies()
@@ -215,93 +168,11 @@ export default function App(): React.JSX.Element {
     }
   }, [bridgeOk, loadProjects, loadSeats, loadSettings, openProject, setUniverseTab, setMissionTab, appendMaestroEvent, setMaestroCtx, handleMaestroLive, openDevPane, closeTaskPane, setTaskAttention, setPaneStats, closePane])
 
-  // ——— FASE 3: o host comanda a WebContentsView do canvas ———
-  // Efeito CENTRAL de layout: compõe visibilidade (workspace + aba panes do
-  // projeto ativo + nenhum overlay global aberto) com o rect do placeholder.
-  // Quem manda o {visible:false} quando se vai à Home/Settings é ESTE efeito —
-  // um efeito por-Universe não cobre "nenhum universo ativo".
-  const panesTab = useStore((s) =>
-    s.openProjectId ? (s.universeTabByProject[s.openProjectId] ?? 'board') : null
-  )
-  const panesAnchor = useStore((s) =>
-    s.openProjectId ? (s.panesAnchorByProject[s.openProjectId] ?? null) : null
-  )
-  const hostOverlayCount = useStore((s) => s.hostOverlayCount)
-  // Geração do congelado: incrementa a CADA rodada do efeito — captura que
-  // resolve depois de uma troca de estado (popover fechou rápido, saiu da aba)
-  // é descartada em vez de esconder/pintar sobre o estado novo.
-  const panesFreezeSeqRef = useRef(0)
-  useEffect(() => {
-    if (!bridgeOk) return
-    const st = useStore.getState()
-    // panesViewVisibleRect é a fonte única da composição (mesmos campos que as
-    // deps abaixo — o efeito re-roda quando qualquer um muda).
-    const visibleRect = panesViewVisibleRect(st)
-    const wouldBeVisible = panesViewVisibleRect(st, true)
-    const seq = ++panesFreezeSeqRef.current
-    const bounds = panesAnchor ?? { x: 0, y: 0, width: 0, height: 0 }
-    if (visibleRect) {
-      window.synkora.panesView.layout({ visible: true, bounds: visibleRect })
-      // O congelado sai DEPOIS de a view voltar a compor (ela cobre o img —
-      // remover junto deixava 1-2 frames de placeholder vazio na volta).
-      if (st.panesFreeze) {
-        const timer = window.setTimeout(() => {
-          if (panesFreezeSeqRef.current === seq) useStore.getState().setPanesFreeze(null)
-        }, 200)
-        return () => window.clearTimeout(timer)
-      }
-      return
-    }
-    // Escondendo SÓ por overlay do host (2026-08-11): a view compõe por cima
-    // do DOM, então o popover exige escondê-la — mas sumir seco deixava a área
-    // dos panes como um buraco vazio atrás do popover. Congela a última imagem
-    // ANTES do hide; captura falha (null/reject) = esconde sem congelado, o
-    // comportamento antigo.
-    if (wouldBeVisible && window.synkora.panesView.capture) {
-      let cancelled = false
-      void window.synkora.panesView
-        .capture()
-        .catch(() => null)
-        .then((snap) => {
-          if (cancelled || panesFreezeSeqRef.current !== seq) return
-          if (snap && openProjectId) {
-            useStore.getState().setPanesFreeze({ projectId: openProjectId, dataUrl: snap.dataUrl })
-          }
-          window.synkora.panesView.layout({ visible: false, bounds })
-        })
-      return () => {
-        cancelled = true
-      }
-    }
-    useStore.getState().setPanesFreeze(null)
-    window.synkora.panesView.layout({ visible: false, bounds })
-  }, [bridgeOk, appPage, openProjectId, panesTab, hostOverlayCount, panesAnchor])
-
-  // Recorte de estado de shell que a view precisa (cacheado no main — o
-  // reload/crash da view re-hidrata sem o host perceber).
-  const mountedForView = useStore((s) => s.mountedProjects)
-  const remountNonceForView = useStore((s) => s.remountNonce)
-  useEffect(() => {
-    if (!bridgeOk) return
-    window.synkora.panesView.state({
-      openProjectId,
-      mountedProjects: mountedForView,
-      remountNonce: remountNonceForView
-    })
-  }, [bridgeOk, openProjectId, mountedForView, remountNonceForView])
-
   // Esc pertence ao CHAT ativo mesmo quando o foco está na lateral/header.
   // O registro dá prioridade ao card de pergunta e aos menus do composer.
-  useEffect(
-    () =>
-      installGlobalGuiEscape({
-        relay: () => window.synkora.panesView.guiEscape(),
-        // A view compõe por cima do Board, que continua montado atrás dela.
-        // Sem esta preferência, o host interromperia o chat invisível de baixo.
-        preferRelay: () => Boolean(panesViewVisibleRect(useStore.getState()))
-      }),
-    []
-  )
+  // Até a purga F6 (2026-08-17) havia um relay para a WebContentsView do
+  // canvas de panes; com a ilha morta, o registry local resolve sozinho.
+  useEffect(() => installGlobalGuiEscape(), [])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -341,7 +212,7 @@ export default function App(): React.JSX.Element {
         <GuiQueueDispatcher />
       </GuiPanelErrorBoundary>
       <GuiPanelErrorBoundary paneId="app:command-palette" label="a paleta de comandos">
-        <CommandPalette root="host" />
+        <CommandPalette />
       </GuiPanelErrorBoundary>
       <GuiPanelErrorBoundary paneId="app:tooltip-layer" label="as dicas">
         <TooltipLayer />

@@ -14,10 +14,11 @@ interface Props {
 export default function Universe({ projectId }: Props): React.JSX.Element {
   const project = useStore((s) => s.projects.find((p) => p.id === projectId))
 
-  // ONDA D: a aba PANES morreu (o deck de terminais saiu do caminho). Valor
-  // antigo/legado cai no board em vez de deixar a área central em branco.
-  const rawTab = useStore((s) => s.universeTabByProject[projectId] ?? 'board')
-  const tab = rawTab === 'panes' ? 'board' : rawTab
+  // A aba PANES morreu na onda D (o deck de terminais saiu do caminho) e o
+  // valor 'panes' deixou de existir na purga F6 (2026-08-17): a aba do
+  // universo vive só em memória, então não há estado antigo em disco para
+  // migrar — quem nunca escolheu cai no board.
+  const tab = useStore((s) => s.universeTabByProject[projectId] ?? 'board')
   const setTab = useStore((s) => s.setUniverseTab)
   // Atenção alcançável de QUALQUER aba (pedido do usuário, 2026-08-06): a aba
   // Board pulsa quando há pergunta do ask_user esperando e o dono está em

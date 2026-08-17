@@ -726,29 +726,6 @@ export interface LivePaneSnapshot {
   spec: DevPaneSpec
 }
 
-/** Fase 3: geometria+visibilidade da WebContentsView do canvas (DIPs da
- *  página do host — titleBarStyle hidden faz o rect coincidir). */
-export interface PanesViewLayout {
-  visible: boolean
-  bounds: { x: number; y: number; width: number; height: number }
-}
-
-/** Fase 3: recorte do estado de shell que a view de panes precisa. */
-export interface PanesHostState {
-  openProjectId: string | null
-  mountedProjects: string[]
-  remountNonce: Record<string, number>
-}
-
-/** Tooltip do HOST roteado para DENTRO da view de panes (2026-08-11): a view
- *  compõe POR CIMA do DOM do host, então tooltip do host que cruza o rect dela
- *  seria clipado — a view (mesmo bundle, mesma .app-tip) desenha por ele.
- *  anchor em coords da página do HOST; o main translada para a view. */
-export interface PanesViewTip {
-  text: string
-  anchor: { left: number; top: number; width: number; height: number }
-}
-
 /** Preferências globais editáveis; não inclui credenciais. */
 export interface SynkoraPreferences {
   externalServicePreparation: 'automatic' | 'on-demand'
@@ -1137,105 +1114,6 @@ const api = {
      *  linha humana para o modal do ▶ testar (decisão do dono, 2026-08-07). */
     portsInUse: (projectId: string): Promise<string> =>
       ipcRenderer.invoke('panes:portsInUse', projectId)
-  },
-  // FASE 3 (docs/FASE3_PLANO.md): o canvas de Panes roda numa WebContentsView
-  // própria (`?view=panes`). O HOST comanda geometria/visibilidade e empurra o
-  // recorte de estado de shell; a VIEW consome os ecos do main.
-  panesView: {
-    /** HOST → main: onde a view fica e se aparece (o host é o dono do layout —
-     *  ele sabe onde a área da aba Panes está e o que a cobre). */
-    layout: (layout: PanesViewLayout): void => ipcRenderer.send('panes-view:layout', layout),
-    /** HOST → main (cacheado; reload da view re-hidrata sozinho). */
-    state: (state: PanesHostState): void => ipcRenderer.send('panes-view:state', state),
-    /** VIEW: estado de shell do host (openProject/montados/nonce). */
-    onState: (cb: (state: PanesHostState) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, state: PanesHostState): void => cb(state)
-      ipcRenderer.on('panes-view:state', listener)
-      return () => ipcRenderer.removeListener('panes-view:state', listener)
-    },
-    /** VIEW: visibilidade real (gate do rAF decorativo — mapa/paperField). */
-    onShown: (cb: (shown: boolean) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, shown: boolean): void => cb(shown)
-      ipcRenderer.on('panes-view:shown', listener)
-      return () => ipcRenderer.removeListener('panes-view:shown', listener)
-    },
-    /** HOST → VIEW: Esc nasceu fora do canvas; a view resolve seu chat ativo. */
-    guiEscape: (): void => ipcRenderer.send('panes-view:gui-escape'),
-    /** VIEW: recebe o Esc global encaminhado pelo host. */
-    onGuiEscape: (cb: () => void): (() => void) => {
-      const listener = (): void => cb()
-      ipcRenderer.on('panes-view:gui-escape', listener)
-      return () => ipcRenderer.removeListener('panes-view:gui-escape', listener)
-    },
-    // ——— relays VIEW→host (F3-c4): a view não alcança o shell do host ———
-    /** VIEW: pedir navegação no host (mapa → "abrir board"). */
-    navigateHost: (projectId: string, tab: string): void =>
-      ipcRenderer.send('panes-view:navigate', projectId, tab),
-    /** VIEW: transição de atividade de um pane de execução (o host precisa
-     *  para livePaneOf/dots do rail/Home). */
-    reportActivity: (paneId: string, activity: string): void =>
-      ipcRenderer.send('panes-view:activity', paneId, activity),
-    /** VIEW: pane promovido/visto — o pulso de atenção do host apaga junto. */
-    reportAttentionCleared: (projectId: string, paneId: string): void =>
-      ipcRenderer.send('panes-view:attention-cleared', projectId, paneId),
-    /** HOST: consumo dos relays acima. */
-    onNavigateHost: (cb: (projectId: string, tab: string) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, projectId: string, tab: string): void =>
-        cb(projectId, tab)
-      ipcRenderer.on('panes-view:navigate', listener)
-      return () => ipcRenderer.removeListener('panes-view:navigate', listener)
-    },
-    /** VIEW -> HOST: alvo fechado da paleta; o main valida a união antes de
-     *  repassar e o host refaz a navegação no próprio store. */
-    navigateCommandTarget: (target: PaletteNavigationTarget): void =>
-      ipcRenderer.send('panes-view:command-target', target),
-    /** HOST: recebe o alvo escolhido na paleta da WebContentsView. */
-    onCommandTarget: (cb: (target: PaletteNavigationTarget) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, target: PaletteNavigationTarget): void => cb(target)
-      ipcRenderer.on('panes-view:command-target', listener)
-      return () => ipcRenderer.removeListener('panes-view:command-target', listener)
-    },
-    onActivity: (cb: (paneId: string, activity: string) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, paneId: string, activity: string): void =>
-        cb(paneId, activity)
-      ipcRenderer.on('panes:activity', listener)
-      return () => ipcRenderer.removeListener('panes:activity', listener)
-    },
-    onAttentionCleared: (cb: (projectId: string, paneId: string) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, projectId: string, paneId: string): void =>
-        cb(projectId, paneId)
-      ipcRenderer.on('panes:attention-cleared', listener)
-      return () => ipcRenderer.removeListener('panes:attention-cleared', listener)
-    },
-    // ——— F3-c5: ditado SynVoice em terminal do canvas (processo irmão) ———
-    /** VIEW: terminal ganhou foco de ditado (label humano para o status). */
-    reportVoiceFocus: (label: string): void =>
-      ipcRenderer.send('panes-view:voice-focus', label),
-    /** HOST: há alvo de ditado na view VISÍVEL? (null = não). */
-    voiceTarget: (): Promise<{ label: string } | null> =>
-      ipcRenderer.invoke('panes-view:voice-target'),
-    /** HOST: entrega o texto transcrito ao alvo corrente da view. */
-    voicePaste: (text: string): void => ipcRenderer.send('panes-view:voice-paste', text),
-    /** VIEW: cola no alvo local (o registry daqui resolve o terminal). */
-    onVoicePaste: (cb: (text: string) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, text: string): void => cb(text)
-      ipcRenderer.on('panes-view:voice-paste', listener)
-      return () => ipcRenderer.removeListener('panes-view:voice-paste', listener)
-    },
-    // ——— 2026-08-11: overlay do host × view que compõe por cima ———
-    /** HOST: fotografa a view VISÍVEL (PNG dataURL) antes de escondê-la sob um
-     *  overlay do host — o congelado tapa o buraco. null = sem view/falha. */
-    capture: (): Promise<{ dataUrl: string } | null> =>
-      ipcRenderer.invoke('panes-view:capture'),
-    /** HOST: tooltip que cruzaria o rect da view — a view desenha por ele. */
-    tipShow: (tip: PanesViewTip): void => ipcRenderer.send('panes-view:tip-show', tip),
-    tipHide: (): void => ipcRenderer.send('panes-view:tip-hide'),
-    /** VIEW: tooltip roteado do host (null = esconder). */
-    onTip: (cb: (tip: PanesViewTip | null) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, tip: PanesViewTip | null): void => cb(tip)
-      ipcRenderer.on('panes-view:tip', listener)
-      return () => ipcRenderer.removeListener('panes-view:tip', listener)
-    }
   },
   /** Busca local da paleta. O main só devolve falas user/assistant já
    *  redigidas; selectionId é opaco e expira. */

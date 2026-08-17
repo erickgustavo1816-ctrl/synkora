@@ -6,8 +6,6 @@ import type {
 import { queueMarkdownOpen } from './projectFileNavigation'
 import { useStore } from './store'
 
-export type CommandPaletteRoot = 'host' | 'panes'
-
 export interface PaletteNavigationOutcome {
   close: boolean
   mounted?: boolean
@@ -85,21 +83,13 @@ async function loadHistoryTarget(
 }
 
 /**
- * Executa no host ou encaminha da WebContentsView. A view nunca muta um store
- * irmão; o host é a única autoridade de Home/projeto/aba/missão.
+ * O host é a única autoridade de Home/projeto/aba/missão. Havia uma segunda
+ * root ('panes') que encaminhava o alvo por IPC; ela morreu com a ilha
+ * panes-view na purga F6 (2026-08-17).
  */
 export async function navigateFromCommandPalette(
-  target: PaletteNavigationTarget,
-  root: CommandPaletteRoot
+  target: PaletteNavigationTarget
 ): Promise<PaletteNavigationOutcome> {
-  if (root === 'panes') {
-    // Sem um GuiPane naturalmente montável, o próprio overlay da view mostra
-    // o transcript sanitizado e explica por que não há salto automático.
-    if (target.kind === 'history' && !target.canMount) return loadHistoryTarget(target)
-    window.synkora.panesView.navigateCommandTarget(target)
-    return { close: true, mounted: target.kind === 'history' ? true : undefined }
-  }
-
   const state = useStore.getState()
   if (target.kind === 'app') {
     if (target.page === 'settings') state.openSettings()
