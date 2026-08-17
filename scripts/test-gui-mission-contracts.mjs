@@ -18,6 +18,7 @@ import {
   isMissionType,
   missionConflictRecipe,
   missionShortId,
+  planApprovedReceipt,
   missionTypeOf,
   resumeSessionIdFor,
   routeGuiMissionPane
@@ -162,6 +163,35 @@ test('sem branch conhecida a receita ainda é legível', () => {
   const text = missionConflictRecipe({ missionTitle: 'M', detail: 'destino sujo' })
   assert.match(text, /a branch de destino/)
   assert.match(text, /a branch desta missão/)
+})
+
+// RECIBO DA APROVAÇÃO DO PLANO. Ele é lido por DOIS públicos no mesmo texto: o
+// agente, que precisa saber o que mudou e o que fazer daqui em diante, e o dono,
+// que o vê de relance no transcript. Por isso nada de prefixo de máquina nem de
+// uuid cru — era assim que o clique dele virava uma bolha "VOCÊ" ilegível.
+
+test('o recibo do plano fala com o agente sem soar como fala do dono', () => {
+  const text = planApprovedReceipt({ title: 'V1.0 completa', items: 13 })
+  assert.match(text, /O dono APROVOU o plano "V1\.0 completa"/u)
+  assert.match(text, /13 missões/u)
+  assert.match(text, /aba no MAPA/u)
+  assert.match(text, /update_plan/u)
+  assert.match(text, /list_plans/u)
+
+  // As três marcas do bug: prefixo de máquina, uuid cru e "missão(ões)".
+  assert.doesNotMatch(text, /\[synkora\]/u)
+  assert.doesNotMatch(
+    text,
+    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/iu,
+    'o id vem do list_plans; na conversa ele é só ruído'
+  )
+  assert.doesNotMatch(text, /\(ões\)/u)
+})
+
+test('o recibo conta as missões no plural certo, inclusive uma só', () => {
+  assert.match(planApprovedReceipt({ title: 'P', items: 1 }), /com 1 missão,/u)
+  assert.match(planApprovedReceipt({ title: 'P', items: 2 }), /com 2 missões,/u)
+  assert.match(planApprovedReceipt({ title: 'P', items: 0 }), /com 0 missões,/u)
 })
 
 // PLANEJAMENTO (onda C): o PM permanente saiu da frente e esta sessão ocupou a

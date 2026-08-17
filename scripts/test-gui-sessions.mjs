@@ -2999,6 +2999,66 @@ test('/clear troca o backend, apaga fio e resume; kill sozinho preserva até exc
   assert.equal(gui.remembered(spawn.paneId), undefined)
 })
 
+// RECIBO DO CLIQUE DO DONO CHEGA AO MODELO SEM VIRAR FALA DELE.
+//
+// O caso real (2026-08-17): aprovar o plano injetava o recibo pelo `send`, e o
+// fio ganhava uma bolha "VOCÊ" com "[synkora] o dono APROVOU o plano … (id
+// 7941e8da-…)". O dono aparecia dizendo o que nunca disse — e a decisão dele já
+// estava no fio como nota.
+
+test('o recibo vai ao modelo e não deixa bolha do dono no fio', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-gui-announce-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const sent = []
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile: join(root, 'gui-sessions.json')
+  })
+  gui.spawnSession = (_input, sink) => {
+    sink({ type: 'ready', caps: { commands: [], models: [] } })
+    return { alive: true, send: (text) => sent.push(text), kill: () => undefined }
+  }
+  const paneId = 'gui-dev-receipt1'
+  assert.equal(
+    gui.create({ paneId, projectId: 'p', cli: 'claude', configDir: 'c', cwd: root }).ok,
+    true
+  )
+
+  assert.equal(gui.announce(paneId, 'O dono APROVOU o plano "V1.0".').ok, true)
+  assert.deepEqual(sent, ['O dono APROVOU o plano "V1.0".'], 'o modelo VÊ o recibo')
+
+  const kinds = gui.state(paneId).events.map(({ evt }) => evt.type)
+  assert.equal(
+    kinds.includes('user-message'),
+    false,
+    'recibo do app nunca vira mensagem do dono no transcript'
+  )
+  assert.equal(kinds.includes('turn-started'), true, 'um turno REAL começa — o composer sabe')
+})
+
+test('recibo em pane sem sessão viva é recusado em PT-BR, não some', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-gui-announce-dead-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile: join(root, 'gui-sessions.json')
+  })
+  assert.deepEqual(gui.announce('gui-dev-ausente', 'oi'), {
+    ok: false,
+    error: 'este pane não tem sessão aberta'
+  })
+
+  gui.spawnSession = (_input, sink) => {
+    sink({ type: 'ready', caps: { commands: [], models: [] } })
+    return { alive: false, send: () => undefined, kill: () => undefined }
+  }
+  const paneId = 'gui-dev-receipt2'
+  gui.create({ paneId, projectId: 'p', cli: 'claude', configDir: 'c', cwd: root })
+  assert.equal(gui.announce(paneId, 'oi').error, 'a sessão deste pane encerrou')
+})
+
 // FERRAMENTAS DO PLANEJADOR ATRAVESSAM O RESPAWN (bug ao vivo de 2026-08-17).
 //
 // O caso real: o dono trocou o chat de planejamento para "acesso completo" e a

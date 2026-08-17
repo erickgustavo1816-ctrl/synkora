@@ -356,6 +356,28 @@ export function guiSeatNeedsExecutorReset(
 }
 
 /**
+ * RECIBO DA APROVAÇÃO DO PLANO, endereçado ao AGENTE.
+ *
+ * Ele chega ao modelo sem virar bolha do dono na tela: o fio já mostra a
+ * decisão como nota ("plano criado: <título>"), e uma segunda cópia com cara de
+ * mensagem digitada era o dono aparecendo dizendo coisas que nunca disse — com
+ * prefixo de máquina e um uuid cru no meio.
+ *
+ * O ID NÃO ENTRA aqui de propósito: `list_plans` devolve o id de cada plano
+ * deste universo e `get_plan` o repete, então carregá-lo na conversa só gasta
+ * contexto e polui um texto que o dono também lê de relance no transcript.
+ */
+export function planApprovedReceipt(input: { title: string; items: number }): string {
+  const count = Math.max(0, Math.trunc(input.items))
+  const missions = count === 1 ? '1 missão' : `${count} missões`
+  return [
+    `O dono APROVOU o plano "${input.title}".`,
+    `Ele virou uma aba no MAPA com ${missions}, e é de lá que o dono cria cada missão quando quiser começar — você não as cria.`,
+    'Para ajustar este plano daqui em diante use update_plan; o id vem do list_plans.'
+  ].join(' ')
+}
+
+/**
  * Receita do conflito de integração ENTREGUE NA CONVERSA do dev (2.0: não há
  * orquestrador para triar — quem resolve é quem escreveu). `detail` já vem da
  * fila com os arquivos/causa; a receita diz o movimento.

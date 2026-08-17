@@ -973,6 +973,19 @@ test('planejador armado que chega sem ferramenta deixa recibo no diário', () =>
   assert.match(ipc, /event: 'gui-planner-mcp-dropped'/u)
 })
 
+test('a aprovação do plano fala com o agente por announce, nunca por send', () => {
+  const ipc = readFileSync(new URL('../src/main/ipc/gui.ts', import.meta.url), 'utf8')
+  // `send` escreve uma bolha "VOCÊ" no fio. O recibo do clique é do APP, e a
+  // decisão do dono já aparece como nota — duas cópias, uma delas fingindo ser
+  // fala dele, era o que o dono via em 2026-08-17.
+  assert.match(ipc, /registry\.announce\(\s*paneId,\s*planApprovedReceipt\(/u)
+  assert.doesNotMatch(
+    ipc,
+    /registry\.send\(\s*paneId,\s*`\[synkora\]/u,
+    'recibo de plano voltou a nascer como mensagem do dono'
+  )
+})
+
 test('quem revoga as ferramentas no teardown tem par que as re-materializa no spawn', () => {
   const ipc = readFileSync(new URL('../src/main/ipc/gui.ts', import.meta.url), 'utf8')
   // O teardown do pane apaga o arquivo de config e revoga o token — inclusive

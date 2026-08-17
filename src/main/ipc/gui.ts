@@ -58,7 +58,7 @@ import { GuiAttachmentCapabilityStore } from '../guiAttachmentCapabilities'
 import { renderGuiAttachmentPreview } from '../guiAttachmentMedia'
 import { unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { guiMissionRoleOf, missionShortId } from '../guiMissionContracts'
+import { guiMissionRoleOf, missionShortId, planApprovedReceipt } from '../guiMissionContracts'
 import { notifyDesktop } from '../desktopNotifications'
 import { GuiPaneVisibilityRegistry, GuiWindowReadyController } from '../guiWindowReady'
 import type { GuiAlertPayload, GuiNoticeKind } from '../guiNotices'
@@ -524,9 +524,15 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
       })
       ctx.pushAll('plans:changed', projectId)
       // Zero digitação entre agentes: o recibo do clique vira o próximo turno.
-      registry.send(
+      // Pelo `announce`, NUNCA pelo `send` — o que o app conta ao agente não é
+      // fala do dono e não pode nascer como bolha dele no fio. A tela já mostra
+      // a decisão pela nota do redutor ("plano criado: <título>").
+      registry.announce(
         paneId,
-        `[synkora] o dono APROVOU o plano "${created.plan.title}" — ele virou uma aba no MAPA com ${created.plan.items.length} missão(ões). As missões são criadas pelo dono a partir dali; siga daqui em diante usando update_plan para ajustar este plano (id ${created.plan.id}).`
+        planApprovedReceipt({
+          title: created.plan.title,
+          items: created.plan.items.length
+        })
       )
       return { ok: true }
     }

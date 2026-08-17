@@ -1691,6 +1691,34 @@ export class GuiSessionRegistry {
   }
 
   /**
+   * RECIBO DE UMA DECISÃO DO DONO: texto para o MODELO, sem bolha de dono.
+   *
+   * O clique do dono precisa continuar a conversa sem ninguém digitar (era 2.0),
+   * mas o que o app conta ao agente NÃO é uma fala do dono. Mandar isso pelo
+   * `send` fazia nascer uma bolha "VOCÊ" com prefixo de máquina e um uuid cru —
+   * o dono aparecia dizendo coisas que nunca disse. O fio já mostra a decisão
+   * pela nota que o redutor escreve (`plano criado: <título>`), então aqui o
+   * texto vai direto ao modelo: nada de `user-message`, nada de `messageId`.
+   *
+   * `turn-started` continua sendo emitido porque um turno REAL começa — sem
+   * ele o composer ficaria ocioso enquanto o agente já está trabalhando.
+   *
+   * O `pendingBriefing` não é consumido de propósito: recibo não é a primeira
+   * mensagem do dono. Na prática ele nem alcança um pane que ainda não falou —
+   * uma proposta de plano exige o agente ter conversado antes.
+   */
+  announce(paneId: string, text: string): GuiResult {
+    const entry = this.panes.get(paneId)
+    if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
+    if (!entry.session.alive) return { ok: false, error: 'a sessão deste pane encerrou' }
+    const problem = guiPromptProblem(text, 'recibo', true)
+    if (problem) return { ok: false, error: problem }
+    entry.sink({ type: 'turn-started' })
+    entry.session.send(text)
+    return { ok: true }
+  }
+
+  /**
    * Entrega transacional da unica mensagem em fila. A fotografia de permissao,
    * modelo e effort e aplicada no main antes do envio; o mesmo id atravessa
    * retries e o transcript persistido, portanto uma resposta IPC perdida nao
