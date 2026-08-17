@@ -79,6 +79,28 @@ deliberada do trio: `plan-proposal` NÃO bloqueia o CLI, então sobrevive ao
 pane (eco factual `stale`). O desfecho volta como `interaction-resolved`
 `{kind:'plan-proposal', approve, planId?, planTitle?}`.
 
+COREOGRAFIA DO CARD (2026-08-16, ordem do dono depois de ver o card nascer no
+meio da fala e sumir): a proposta chega COM O AGENTE AINDA FALANDO — a tool
+responde na hora e o turno segue. Três regras, e as três são obrigatórias:
+
+1. A isenção terminal vale nos DOIS ESPELHOS, não só no anel. O redutor do
+   renderer conserva `plan-proposal` em `result`, `fatal` e `closed`
+   (`retainGuiInteractionsAfterTurnEnd`); só as pendências que BLOQUEIAM o CLI
+   morrem com o turno. Espelhos discordando = card que some sozinho.
+2. Pendência que não bloqueia não deixa o fio "parado". O meio do turno decide
+   status por `guiInteractionBlocksTurn`, nunca por "a fila tem alguém": com a
+   proposta contando como parada, todo delta seguinte virava `waiting-you`.
+3. A APRESENTAÇÃO espera o turno fechar (`isGuiTurnActive` = `working` ou
+   stream aberto). O card fica na fila o tempo todo, aparece embaixo da resposta
+   pronta e FICA — atravessando os turnos seguintes — até o dono decidir; e,
+   enquanto está invisível, não suspende o composer. O PLANNING_CONTRACT manda
+   o agente fechar a fala anunciando o plano logo abaixo.
+
+O caminho de persistência já atendia a isso e continua sendo cerca: o evento
+entra em `guiTranscriptCheckpoint`, passa por `isGuiPersistedEvent` (draft
+TOTAL) e o `snapshot()` reproduz as pendências POR ÚLTIMO — um `result`
+histórico nunca apaga o card durante a remontagem.
+
 ### Anexos (`gui:attach`)
 
 ```ts

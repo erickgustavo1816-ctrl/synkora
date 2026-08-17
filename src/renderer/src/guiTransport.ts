@@ -15,6 +15,17 @@ export function canSendGuiMessage(status: GuiTransportStatus, ready: boolean): b
   return ready && status !== 'starting' && status !== 'dead'
 }
 
+/**
+ * TURNO VIVO: o agente ainda está escrevendo. `working` cobre o turno e o
+ * stream aberto cobre a janela em que os deltas já chegam antes de o status
+ * assentar. É a cerca que segura o card da PROPOSTA DE PLANO até a fala
+ * terminar — decisão do dono (2026-08-15): nada de card no meio da resposta;
+ * ele aparece embaixo dela, pronto, e fica até a decisão.
+ */
+export function isGuiTurnActive(status: GuiTransportStatus, stream: string): boolean {
+  return status === 'working' || stream.length > 0
+}
+
 /** Um comando local termina apenas o busy que ele proprio abriu. Ele nunca
  * terminaliza um turno real nem esconde uma interacao humana pendente. */
 export function guiCommandCompletionStatus(

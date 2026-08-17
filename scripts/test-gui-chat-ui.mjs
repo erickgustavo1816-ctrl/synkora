@@ -113,6 +113,7 @@ import {
   guiCommandCompletionStatus,
   guiSessionRestartState,
   guiTransportFailureStatus,
+  isGuiTurnActive,
   isSameGuiTurn,
   shouldApplyGuiBufferedEvent,
   shouldCreateGuiSession,
@@ -122,7 +123,10 @@ import {
 } from '../src/renderer/src/guiTransport.ts'
 import {
   enqueueGuiInteraction,
+  guiInteractionBlocksTurn,
+  guiInteractionSurvivesTurnEnd,
   removeGuiInteraction,
+  retainGuiInteractionsAfterTurnEnd,
   settleGuiInteractionFailure
 } from '../src/renderer/src/guiInteractionQueue.ts'
 import { guiToolResultDetails } from '../src/main/guiToolResults.ts'
@@ -2747,8 +2751,8 @@ test('o card rico substitui o card cru da tool e some na conversa congelada', ()
   assert.match(pane, /'mcp__synkora__propose_plan'/u)
   // Mesma cerca das outras decisões: histórico local aberto ou pane read-only
   // NÃO renderiza card vivo (`inert`), e o composer cede a vez ao card.
-  assert.match(pane, /\{!inert && gui\.planProposal && \(/u)
-  assert.match(pane, /const awaitingCard = Boolean\(gui\.question \|\| gui\.planReview \|\| gui\.planProposal\)/u)
+  assert.match(pane, /\{!inert && planProposalCard && \(/u)
+  assert.match(pane, /const awaitingCard = Boolean\(gui\.question \|\| gui\.planReview \|\| planProposalCard\)/u)
   assert.match(pane, /answerGuiPlanProposal\(projectId, paneId, approve, note\)/u)
 
   // As duas portas do card: criar (a ÚNICA criação de plano) e ajustar, que
@@ -2760,4 +2764,96 @@ test('o card rico substitui o card cru da tool e some na conversa congelada', ()
   assert.match(card, /aria-expanded=\{open\}/u)
   // Nada de diálogo nativo nem de title= no card novo.
   assert.ok(!/window\.(confirm|alert)\(|\stitle="/u.test(card))
+})
+
+// ————— a proposta sobrevive ao fim do turno (bug do card que sumiu) —————
+// Caso real 2026-08-15: propose_plan rodou, o card nasceu no MEIO da fala e
+// sumiu quando o `result` chegou. O anel do main já isentava a proposta da
+// limpeza terminal (`guiSurvivesTurnEnd`); o redutor do renderer, moldado nos
+// irmãos permission/question, limpava a fila INTEIRA. Estes testes prendem a
+// PARIDADE DOS DOIS ESPELHOS e a coreografia que o dono decidiu.
+
+const permissionPending = {
+  kind: 'permission',
+  requestId: 'req-perm',
+  perm: { requestId: 'req-perm', toolName: 'Write' }
+}
+const questionPending = { kind: 'question', requestId: 'req-ask', question: {} }
+const planReviewPending = { kind: 'plan', requestId: 'req-plan', planReview: {} }
+const proposalPending = {
+  kind: 'plan-proposal',
+  requestId: 'plan-proposal-1',
+  planProposal: { requestId: 'plan-proposal-1', draft: { title: 'V1.0' } }
+}
+
+test('só a proposta de plano sobrevive ao fim do turno — as bloqueantes morrem', () => {
+  // A regra é a mesma do anel: quem BLOQUEIA o CLI morre com o turno (o backend
+  // já desistiu); a proposta não bloqueia nada e continua esperando o dono.
+  assert.equal(guiInteractionSurvivesTurnEnd('plan-proposal'), true)
+  assert.equal(guiInteractionSurvivesTurnEnd('permission'), false)
+  assert.equal(guiInteractionSurvivesTurnEnd('question'), false)
+  assert.equal(guiInteractionSurvivesTurnEnd('plan'), false)
+
+  const queue = [permissionPending, proposalPending, questionPending, planReviewPending]
+  assert.deepEqual(
+    retainGuiInteractionsAfterTurnEnd(queue),
+    [proposalPending],
+    'o result/fatal/closed varre as bloqueantes e conserva a proposta'
+  )
+  assert.deepEqual(retainGuiInteractionsAfterTurnEnd([]), [])
+  assert.deepEqual(
+    retainGuiInteractionsAfterTurnEnd([permissionPending]),
+    [],
+    'sem proposta pendente a limpeza terminal continua idêntica à de antes'
+  )
+})
+
+test('proposta pendente NÃO conta como fio parado no meio do turno', () => {
+  // `blocksTurn` é o que decide o status enquanto o agente fala. Com a proposta
+  // contando como "parado", todo delta seguinte virava `waiting-you` e o card
+  // aparecia no meio da resposta — o "bugou e sumiu" que o dono viu.
+  assert.equal(guiInteractionBlocksTurn([proposalPending]), false)
+  assert.equal(guiInteractionBlocksTurn([]), false)
+  assert.equal(guiInteractionBlocksTurn([permissionPending]), true)
+  assert.equal(guiInteractionBlocksTurn([questionPending]), true)
+  assert.equal(guiInteractionBlocksTurn([planReviewPending]), true)
+  assert.equal(
+    guiInteractionBlocksTurn([proposalPending, permissionPending]),
+    true,
+    'uma bloqueante ao lado da proposta ainda para o fio'
+  )
+})
+
+test('o card da proposta espera a fala terminar e FICA até o dono decidir', () => {
+  // Coreografia decidida pelo dono: nada de card no meio da fala. O turno vivo
+  // é status `working` OU stream aberto — as duas portas por onde a resposta
+  // ainda está sendo escrita.
+  assert.equal(isGuiTurnActive('working', ''), true)
+  assert.equal(isGuiTurnActive('working', 'escrevendo'), true)
+  assert.equal(isGuiTurnActive('waiting-you', 'ainda escrevendo'), true)
+  // Turno fechado: é aqui que o card entra, embaixo da resposta pronta.
+  assert.equal(isGuiTurnActive('idle', ''), false)
+  assert.equal(isGuiTurnActive('waiting-you', ''), false)
+  assert.equal(isGuiTurnActive('dead', ''), false)
+  assert.equal(isGuiTurnActive('starting', ''), false)
+})
+
+test('o redutor espelha a isenção do anel em result, fatal e closed', () => {
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+
+  // Nenhum dos três terminais pode voltar a zerar a fila na marra: era esse
+  // `guiInteractionPatch([])` que apagava o card do dono.
+  assert.ok(
+    !/\.\.\.guiInteractionPatch\(\[\]\)/u.test(store),
+    'terminal nunca zera a fila às cegas — ele conserva o que sobrevive ao turno'
+  )
+  assert.equal(
+    store.match(/retainGuiInteractionsAfterTurnEnd\(/gu)?.length,
+    3,
+    'os três terminais (result, fatal, closed) usam a MESMA política'
+  )
+  // O meio do turno pergunta "bloqueia?", não "a fila está vazia?".
+  assert.match(store, /guiInteractionBlocksTurn\(/u)
+  // E a chegada da proposta no meio da fala não pode mais fingir fim de turno.
+  assert.match(store, /const turnInFlight = state\.status === 'working'/u)
 })

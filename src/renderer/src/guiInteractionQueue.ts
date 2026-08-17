@@ -30,3 +30,41 @@ export function settleGuiInteractionFailure<T extends GuiInteractionIdentity>(
   const pending = queue.some((item) => item.requestId === requestId)
   return retryable && pending ? [...queue] : removeGuiInteraction(queue, requestId)
 }
+
+/** A fila mistura duas naturezas, e o tipo é a única coisa que as separa. */
+export interface GuiInteractionNature {
+  kind: string
+}
+
+/**
+ * ESPELHO RENDERER da isenção do anel (`guiSurvivesTurnEnd`, src/main/
+ * guiSessions.ts): a proposta de plano é a ÚNICA pendência que não bloqueia o
+ * CLI — o agente chama `propose_plan`, a tool responde na hora e o turno segue.
+ * Permissão, pergunta e veredito de plano PARAM o backend, então morrem com o
+ * turno (quem esperava já desistiu); a proposta continua esperando o dono.
+ */
+export function guiInteractionSurvivesTurnEnd(kind: string): boolean {
+  return kind === 'plan-proposal'
+}
+
+/**
+ * O que sobra da fila quando o turno fecha (`result`/`fatal`/`closed`). Zerar a
+ * fila às cegas aqui era o que apagava o card da proposta no instante em que o
+ * dono finalmente ia lê-lo.
+ */
+export function retainGuiInteractionsAfterTurnEnd<T extends GuiInteractionNature>(
+  queue: readonly T[]
+): T[] {
+  return queue.filter((item) => guiInteractionSurvivesTurnEnd(item.kind))
+}
+
+/**
+ * "O fio está PARADO esperando o dono?" — a pergunta do MEIO do turno. Contar a
+ * proposta aqui fazia cada delta seguinte virar `waiting-you`, e o card
+ * aparecia por cima da fala em andamento.
+ */
+export function guiInteractionBlocksTurn<T extends GuiInteractionNature>(
+  queue: readonly T[]
+): boolean {
+  return queue.some((item) => !guiInteractionSurvivesTurnEnd(item.kind))
+}

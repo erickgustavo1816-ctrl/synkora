@@ -4111,3 +4111,163 @@ test('propor de novo SUPERA a proposta anterior — nunca dois cards do mesmo pl
     .find((evt) => evt.type === 'interaction-resolved' && evt.requestId === first.requestId)
   assert.deepEqual(echo.resolution, { kind: 'stale' })
 })
+
+/**
+ * Rascunho no formato do que o dono viu sumir em 2026-08-15 (evidência em
+ * .synkora/reports/evidence-plan-card-vanish-20260815.json): 5 missões com
+ * cadeia de dependência, docPath e descrição longa. O que se prova aqui é a
+ * TRAVESSIA — proposta no meio da fala, turno fechando por cima dela e um
+ * processo NOVO remontando o card do disco.
+ */
+const ownerPlanDraftFixture = {
+  title: 'V1.0 — Lista de tarefas que funciona de ponta a ponta',
+  description: `Uma lista de tarefas que funciona do começo ao fim na sua máquina: você adiciona, marca como feita, remove, e o que você digitou continua lá quando reabre o navegador.\n\nHTML, CSS e JavaScript puros — sem npm, sem build, sem servidor.`,
+  kind: 'mestre',
+  items: [
+    {
+      key: 'pagina',
+      title: 'A página existe e abre',
+      objective: 'index.html abre no navegador com o esqueleto da lista',
+      doneCriteria: ['abrir o arquivo mostra o título e o campo de digitar'],
+      tier: 'pequeno',
+      dependsOn: [],
+      docPath: 'plano/001-pagina.md'
+    },
+    {
+      key: 'adicionar',
+      title: 'Adicionar tarefa',
+      objective: 'digitar e dar Enter coloca a tarefa na lista',
+      outOfScope: 'edição do texto depois de criado',
+      doneCriteria: ['a tarefa aparece na hora', 'campo vazio não cria nada'],
+      tier: 'pequeno',
+      context: 'decide a estrutura de dados que as outras missões consomem',
+      dependsOn: ['pagina'],
+      docPath: 'plano/002-adicionar.md'
+    },
+    {
+      key: 'concluir',
+      title: 'Marcar como feita',
+      objective: 'clicar na tarefa alterna entre feita e pendente',
+      doneCriteria: ['a tarefa feita fica riscada'],
+      tier: 'pequeno',
+      dependsOn: ['adicionar'],
+      docPath: 'plano/003-concluir.md'
+    },
+    {
+      key: 'remover',
+      title: 'Remover tarefa',
+      objective: 'cada tarefa tem um × que a tira da lista',
+      doneCriteria: ['remover uma não mexe nas outras'],
+      tier: 'pequeno',
+      dependsOn: ['adicionar'],
+      docPath: 'plano/004-remover.md'
+    },
+    {
+      key: 'persistir',
+      title: 'A lista sobrevive ao fechar o navegador',
+      objective: 'o estado da lista fica no localStorage e volta no reload',
+      doneCriteria: ['recarregar a página mantém tudo como estava'],
+      tier: 'medio',
+      dependsOn: ['adicionar', 'concluir', 'remover'],
+      docPath: 'plano/005-persistir.md'
+    }
+  ]
+}
+
+test('a proposta feita no MEIO da fala sobrevive ao result e volta do disco', (t) => {
+  // Reprodução fiel do caso do dono: propose_plan roda, o agente CONTINUA
+  // falando, o turno fecha — e só então o card é do dono. Ele não pode se
+  // perder em nenhum desses três degraus, nem no boot seguinte.
+  const root = mkdtempSync(join(tmpdir(), 'synkora-gui-proposal-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const storeFile = join(root, 'gui-sessions.json')
+  const spawn = {
+    paneId: 'gui-dev-planlive',
+    projectId: 'proj-plan',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp'
+  }
+
+  let emit
+  const first = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile
+  })
+  first.spawnSession = (_input, sink) => {
+    emit = sink
+    return {
+      alive: true,
+      turnActive: false,
+      waitCaps: async () => ({ commands: [], models: [] }),
+      send: () => undefined,
+      kill: () => undefined
+    }
+  }
+  assert.equal(first.create(spawn).ok, true)
+  emit({
+    type: 'init',
+    model: 'claude',
+    sessionId: 'session-plan',
+    permissionMode: 'default',
+    toolCount: 0,
+    contextWindow: 200_000
+  })
+  emit({ type: 'ready', caps: { commands: [], models: [] } })
+  assert.equal(first.send(spawn.paneId, 'monta o plano da V1.0', 'msg-plan-1').ok, true)
+
+  const presented = first.proposePlan(spawn.paneId, ownerPlanDraftFixture)
+  assert.equal(presented.ok, true)
+
+  // o agente segue falando DEPOIS de propor — foi aqui que o card piscou
+  emit({ type: 'delta', text: 'Funcionou. O card está aí ' })
+  emit({ type: 'text', text: 'Funcionou. O card está aí embaixo.' })
+  emit({ type: 'result', isError: false, outcome: 'completed' })
+
+  const live = first.state(spawn.paneId)
+  const livePending = live.events.filter(({ evt }) => evt.type === 'plan-proposal')
+  assert.equal(livePending.length, 1, 'o result não pode levar o card embora')
+  assert.equal(
+    live.events.some(({ evt }) => evt.type === 'interaction-resolved'),
+    false,
+    'ninguém resolveu nada: a proposta continua esperando o dono'
+  )
+  assert.deepEqual(
+    first.pendingPlanProposal(spawn.paneId, presented.requestId),
+    ownerPlanDraftFixture,
+    'o rascunho autoritativo continua clicável depois do fim do turno'
+  )
+  assert.equal(first.kill(spawn.paneId).ok, true)
+
+  // BOOT NOVO: o card precisa renascer do transcript persistido, inteiro.
+  const second = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile
+  })
+  const rehydrated = second.state(spawn.paneId)
+  assert.equal(rehydrated.exists, true)
+  const restored = rehydrated.events.filter(({ evt }) => evt.type === 'plan-proposal')
+  assert.equal(restored.length, 1, 'a proposta pendente volta do disco')
+  assert.equal(restored[0].evt.requestId, presented.requestId)
+  assert.deepEqual(restored[0].evt.draft, ownerPlanDraftFixture)
+  // e ela volta DEPOIS do result no replay: um terminal histórico nunca pode
+  // apagar o card durante a remontagem.
+  const order = rehydrated.events.map(({ evt }) => evt.type)
+  assert.ok(
+    order.lastIndexOf('plan-proposal') > order.lastIndexOf('result'),
+    'a pendência é reproduzida por último'
+  )
+
+  second.spawnSession = (_input, sink) => {
+    sink({ type: 'ready', caps: { commands: [], models: [] } })
+    return { alive: true, turnActive: false, kill: () => undefined }
+  }
+  assert.equal(second.create({ ...spawn, resumeSessionId: 'session-plan' }).ok, true)
+  assert.deepEqual(
+    second.pendingPlanProposal(spawn.paneId, presented.requestId),
+    ownerPlanDraftFixture,
+    'depois do respawn o clique do dono ainda encontra o rascunho autoritativo'
+  )
+})

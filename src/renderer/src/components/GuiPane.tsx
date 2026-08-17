@@ -50,6 +50,7 @@ import {
 } from '../guiEscape'
 import {
   canSendGuiMessage,
+  isGuiTurnActive,
   shouldApplyGuiBufferedEvent,
   shouldCreateGuiSession
 } from '../guiTransport'
@@ -855,10 +856,17 @@ export default function GuiPane({
   const canSend = canSendGuiMessage(gui.status, gui.ready)
   const canSubmit =
     canSend && busyMenu === null && !attaching && !submitPending && gui.queued === null
+  // A PROPOSTA DE PLANO não bloqueia o CLI, então ela chega no MEIO da fala —
+  // e mostrá-la ali atropelava a resposta em curso (o dono viu o card "bugar e
+  // sumir"). Decisão dele: o agente termina de falar, e SÓ ENTÃO o card
+  // aparece embaixo da resposta — e FICA, atravessando os turnos seguintes,
+  // até ele decidir. O card pendente segue na fila o tempo todo; só a
+  // APRESENTAÇÃO espera o turno fechar.
+  const planProposalCard = isGuiTurnActive(gui.status, gui.stream) ? null : gui.planProposal
   // Pergunta e plano SUSPENDEM o composer: é a linguagem do Claude GUI que o
   // dono pediu — o que está na tela é a coisa a responder, não uma caixa de
-  // texto que compete com ela.
-  const awaitingCard = Boolean(gui.question || gui.planReview || gui.planProposal)
+  // texto que compete com ela. Card ainda invisível não suspende nada.
+  const awaitingCard = Boolean(gui.question || gui.planReview || planProposalCard)
 
   const send = useCallback(
     async (text: string): Promise<boolean> => {
@@ -1603,9 +1611,9 @@ export default function GuiPane({
               />
             )}
 
-            {!inert && gui.planProposal && (
+            {!inert && planProposalCard && (
               <GuiPlanProposalCard
-                draft={gui.planProposal.draft}
+                draft={planProposalCard.draft}
                 disabled={Boolean(gui.interactionSubmitting)}
                 onDecide={(approve, note) =>
                   void answerGuiPlanProposal(projectId, paneId, approve, note)

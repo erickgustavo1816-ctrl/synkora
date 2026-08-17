@@ -42,7 +42,9 @@ import {
 } from './guiTransport'
 import {
   enqueueGuiInteraction as enqueueGuiInteractionQueue,
+  guiInteractionBlocksTurn,
   removeGuiInteraction as removeGuiInteractionFromQueue,
+  retainGuiInteractionsAfterTurnEnd,
   settleGuiInteractionFailure
 } from './guiInteractionQueue'
 import {
@@ -1014,11 +1016,17 @@ function guiInteractiveFailure(
  * reconstruir a conversa exatamente como ela estava.
  */
 function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState {
-  // Tudo que PARA a conversa esperando o dono conta igual: permissão,
-  // pergunta com opções e veredito de plano.
+  // Duas perguntas diferentes, e confundi-las apagou o card da proposta:
+  // `halted` = "há algo esperando o dono?" (vale na BARREIRA do turno, para
+  // rotular a espera); `blocks` = "o fio está PARADO?" (vale no MEIO do turno).
+  // A proposta de plano espera o dono sem parar o CLI, então ela conta na
+  // primeira e nunca na segunda — espelho de `guiSurvivesTurnEnd` no anel do
+  // main. Com ela contando como parada, cada delta seguinte virava
+  // `waiting-you` e o card subia por cima da fala em andamento.
   const halted = (s: GuiPaneState): boolean => s.interactionQueue.length > 0
+  const blocks = (s: GuiPaneState): boolean => guiInteractionBlocksTurn(s.interactionQueue)
   const busy = (s: GuiPaneState): GuiPaneStatus =>
-    halted(s) ? 'waiting-you' : s.status === 'dead' ? 'dead' : 'working'
+    blocks(s) ? 'waiting-you' : s.status === 'dead' ? 'dead' : 'working'
 
   switch (evt.type) {
     case 'init':
@@ -1346,15 +1354,24 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
     }
 
     case 'plan-proposal': {
-      const base = finalizeGuiStream(state)
+      // A proposta é a única decisão que chega COM O AGENTE AINDA FALANDO: a
+      // tool responde na hora e o turno segue. Tratá-la como as irmãs
+      // bloqueantes (fechar o stream, matar o indicador, carimbar
+      // `waiting-you`) fingia um fim de turno que não aconteceu — a fala
+      // continuava por baixo de um card que já tinha subido. Com um turno em
+      // voo ela só ENTRA NA FILA e espera; quem a anuncia é o `result`.
+      const turnInFlight = state.status === 'working'
+      const base = turnInFlight ? state : finalizeGuiStream(state)
       const planProposal = { requestId: evt.requestId, draft: evt.draft }
+      const queued = enqueueGuiInteraction(base, {
+        kind: 'plan-proposal',
+        requestId: evt.requestId,
+        planProposal
+      })
+      if (turnInFlight) return { ...base, ...queued }
       return {
         ...base,
-        ...enqueueGuiInteraction(base, {
-          kind: 'plan-proposal',
-          requestId: evt.requestId,
-          planProposal
-        }),
+        ...queued,
         thinking: false,
         activityText: null,
         ...guiStatusPatch(base, 'waiting-you')
@@ -1415,17 +1432,20 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
         })
       }
       const base = { ...state, ...interaction, items }
+      // Só uma pendência BLOQUEANTE remanescente mantém o fio parado: uma
+      // proposta ainda pendente não pode fazer o CLI recém-liberado parecer
+      // travado.
       const status =
         base.status === 'dead'
           ? 'dead'
-          : base.interactionQueue.length > 0
+          : blocks(base)
             ? 'waiting-you'
             : hadPending
               ? 'working'
               : base.status
       return {
         ...base,
-        activityText: base.interactionQueue.length > 0 ? null : lastPendingGuiToolActivity(items),
+        activityText: blocks(base) ? null : lastPendingGuiToolActivity(items),
         ...guiStatusPatch(base, status)
       }
     }
@@ -1468,16 +1488,10 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
         ...interaction,
         items: pushGuiItem(state.items, audit)
       }
-      const status =
-        base.status === 'dead'
-          ? 'dead'
-          : base.interactionQueue.length > 0
-            ? 'waiting-you'
-            : 'working'
+      const status = base.status === 'dead' ? 'dead' : blocks(base) ? 'waiting-you' : 'working'
       return {
         ...base,
-        activityText:
-          base.interactionQueue.length > 0 ? null : lastPendingGuiToolActivity(base.items),
+        activityText: blocks(base) ? null : lastPendingGuiToolActivity(base.items),
         ...guiStatusPatch(base, status)
       }
     }
@@ -1546,7 +1560,17 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           })
         }
       }
-      next = { ...next, ...guiInteractionPatch([]) }
+      // Pedido que BLOQUEIA o CLI morre com o turno (o backend já desistiu
+      // dele); a proposta de plano sobrevive e continua clicável — a MESMA
+      // isenção do anel no main. Zerar a fila aqui era o que fazia o card
+      // sumir no instante em que o agente terminava de falar.
+      next = {
+        ...next,
+        ...guiInteractionPatch(
+          retainGuiInteractionsAfterTurnEnd(next.interactionQueue),
+          next.interactionSubmitting
+        )
+      }
       const status = halted(next) ? 'waiting-you' : next.status === 'dead' ? 'dead' : 'idle'
       const terminalStatus =
         status === 'idle' && evt.continues ? 'working' : status
@@ -1572,7 +1596,13 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
             at: Date.now()
           })
         : state.items
-      const status = guiCommandCompletionStatus(state.status, evt.continues, halted(state))
+      // Turno que CONTINUA só para por pendência bloqueante; na barreira,
+      // qualquer card esperando o dono rotula a espera.
+      const status = guiCommandCompletionStatus(
+        state.status,
+        evt.continues,
+        evt.continues ? blocks(state) : halted(state)
+      )
       return {
         ...state,
         items,
@@ -1584,7 +1614,11 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
     }
 
     case 'turn-continuation': {
-      const status = guiCommandCompletionStatus(state.status, evt.continues, halted(state))
+      const status = guiCommandCompletionStatus(
+        state.status,
+        evt.continues,
+        evt.continues ? blocks(state) : halted(state)
+      )
       return {
         ...state,
         activityText: evt.continues ? state.activityText : null,
@@ -1603,7 +1637,12 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           text: evt.text,
           at: Date.now()
         }),
-        ...guiInteractionPatch([]),
+        // Mesma régua do anel: a sessão caiu, mas a proposta já entregue não é
+        // do CLI — é do dono. Ela continua no fio para o respawn honrar.
+        ...guiInteractionPatch(
+          retainGuiInteractionsAfterTurnEnd(base.interactionQueue),
+          base.interactionSubmitting
+        ),
         thinking: false,
         error: evt.text,
         activityText: null,
@@ -1624,7 +1663,10 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           text: closed.text,
           at: Date.now()
         }),
-        ...guiInteractionPatch([]),
+        ...guiInteractionPatch(
+          retainGuiInteractionsAfterTurnEnd(base.interactionQueue),
+          base.interactionSubmitting
+        ),
         thinking: false,
         activityText: null,
         ...guiStatusPatch(base, 'dead')
