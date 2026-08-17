@@ -775,8 +775,6 @@ export interface PanesViewTip {
 
 /** Preferências globais editáveis; não inclui credenciais. */
 export interface SynkoraPreferences {
-  codeIntelligenceMode: 'automatic' | 'off'
-  mcpProtocolMode: 'auto' | 'legacy' | 'modern-experimental'
   externalServicePreparation: 'automatic' | 'on-demand'
   imageProvider: 'codex' | 'openrouter'
   imageSeatId?: string
@@ -808,79 +806,6 @@ export interface SynkoraSettings extends SynkoraPreferences {
 
 export type SynkoraSettingsPatch = Partial<SynkoraPreferences>
 export type SettingsSecretName = 'openrouterKey' | 'githubToken'
-
-export type RestartableService =
-  | 'code-intelligence'
-  | 'internal-mcp'
-  | 'codex-probe'
-  | 'external-services'
-
-export interface ServicesSnapshot {
-  generatedAt: number
-  codeIntelligence: {
-    mode: 'automatic' | 'off'
-    state: 'off' | 'idle' | 'active' | 'degraded' | 'closed'
-    processCount: number
-    languages: Array<'TypeScript' | 'JavaScript'>
-    servers: Array<{
-      kind: 'typescript-native' | 'typescript-language-server'
-      name: string
-      version: string
-      running: boolean
-      activeQueries: number
-      openDocuments: number
-      command?: string
-    }>
-    telemetry: {
-      starts: number
-      restarts: number
-      evictions: number
-      failures: number
-      requests: number
-      reuses: number
-    }
-  }
-  internalMcp: {
-    state: 'starting' | 'ready' | 'unavailable'
-    protocol: 'dual-era'
-    port: number | null
-  }
-  codexProbe: {
-    state: 'idle' | 'probing' | 'ready' | 'degraded'
-    seats: Array<{
-      seatId: string
-      seatName: string
-      state: 'idle' | 'probing' | 'ready' | 'expired'
-      checkedAt: number | null
-      version: string | null
-      featurePresent: boolean
-      featureEnabled: boolean | null
-      capability: boolean
-      reason?: string
-    }>
-  }
-  externalServices: {
-    preparation: 'automatic' | 'on-demand'
-    state: 'unchecked' | 'available' | 'unavailable'
-    checkedAt: number | null
-    playwright: {
-      available: boolean | null
-      availability: 'on-demand'
-      version: string | null
-    }
-  }
-  paneStartup: {
-    primaryMilestone: 'agent_first_output'
-    windowSize: number
-    samples: number
-    p50Ms: number | null
-    p95Ms: number | null
-    milestones: Record<
-      'terminal_first_frame' | 'external_mcp_available' | 'agent_first_output',
-      { samples: number; p50Ms: number | null; p95Ms: number | null }
-    >
-  }
-}
 
 export type SynVoiceProvider = 'openai' | 'openrouter'
 
@@ -1831,12 +1756,6 @@ const api = {
       ipcRenderer.on('settings:changed', listener)
       return () => ipcRenderer.removeListener('settings:changed', listener)
     }
-  },
-  services: {
-    get: (includeLocalDetails = false): Promise<ServicesSnapshot> =>
-      ipcRenderer.invoke('services:get', includeLocalDetails),
-    restart: (service: RestartableService): Promise<ServicesSnapshot> =>
-      ipcRenderer.invoke('services:restart', service)
   },
   progress: {
     ready: (): void => ipcRenderer.send('progress:renderer-ready'),

@@ -85,7 +85,6 @@ import { registerProjectsIpc } from './ipc/projects'
 import { registerBacklogIpc } from './ipc/backlog'
 import { registerFilesIpc } from './ipc/files'
 import { registerSettingsIpc } from './ipc/settings'
-import { registerServicesIpc } from './ipc/services'
 import { registerHarnessIpc } from './ipc/harness'
 import { registerGuiIpc } from './ipc/gui'
 import { registerHistoryIpc } from './ipc/history'
@@ -170,16 +169,6 @@ import { SynVoiceService, type SynVoiceProvider } from './synVoice'
 import { WindowsTextInput } from './windowsTextInput'
 import { WindowsGlobalActivation, type GlobalActivationBinding } from './windowsGlobalActivation'
 import { PaneStartupMetrics } from './paneStartupMetrics'
-import {
-  getCodexMcpProtocolStatus,
-  invalidateCodexMcpProtocol,
-  prewarmCodexMcpProtocol
-} from './mcpProtocol'
-import {
-  CodeIntelligenceManager,
-  CodeIntelligenceSession,
-  CodeIntelligenceError
-} from './codeIntelligence'
 import { HelperCompletionTracker } from './helperCompletion'
 import {
   parseHelperRecoveryTranscript,
@@ -317,72 +306,15 @@ let hub: Hub
 let mcpPort = 0
 let mcpServerHandle: McpServerHandle | undefined
 let paneStartupMetrics: PaneStartupMetrics | undefined
-let codeIntelligence: CodeIntelligenceManager | undefined
 let releasePaneSkillLease: (paneId: string) => void = () => undefined
 let releasePaneSkillPlan: (paneId: string) => void = () => undefined
-const codeIntelligenceSessions = new Map<
-  string,
-  { cwd: string; session: CodeIntelligenceSession }
->()
-let codeIntelligenceTransition: Promise<void> = Promise.resolve()
-
-function createCodeIntelligenceManager(): CodeIntelligenceManager {
-  return new CodeIntelligenceManager({
-    ...(app.isPackaged ? {} : { appRoot: process.cwd() }),
-    appPath: app.getAppPath(),
-    maxServers: 8
-  })
-}
-
-function transitionCodeIntelligence(
-  mode: SynkoraSettings['codeIntelligenceMode'],
-  restart = false
-): Promise<void> {
-  const transition = async (): Promise<void> => {
-    if (!restart && mode === 'automatic' && codeIntelligence) return
-    const previous = codeIntelligence
-    codeIntelligence = undefined
-    for (const active of codeIntelligenceSessions.values()) active.session.close()
-    codeIntelligenceSessions.clear()
-    await previous?.close()
-    if (mode === 'automatic') codeIntelligence = createCodeIntelligenceManager()
-  }
-  const result = codeIntelligenceTransition.then(transition, transition)
-  codeIntelligenceTransition = result.catch(() => undefined)
-  return result
-}
-
-function releaseCodeIntelligenceSession(paneId: string): void {
-  const active = codeIntelligenceSessions.get(paneId)
-  if (!active) return
-  codeIntelligenceSessions.delete(paneId)
-  active.session.close()
-}
-
 function unregisterPane(paneId: string): PaneIdentity | undefined {
-  releaseCodeIntelligenceSession(paneId)
   releasePaneSkillLease(paneId)
   releasePaneSkillPlan(paneId)
   plannedHelperAssignments.delete(paneId)
   // nota viva morre com o pane — nota velha em pane novo mentiria no radar
   paneStatusNotes.delete(paneId)
   return hub.unregisterPane(paneId)
-}
-
-function codeIntelligenceSession(id: PaneIdentity): CodeIntelligenceSession {
-  if (!codeIntelligence) {
-    throw new CodeIntelligenceError(
-      'SERVER_UNAVAILABLE',
-      'code intelligence has not started',
-      true
-    )
-  }
-  const current = codeIntelligenceSessions.get(id.paneId)
-  if (current?.cwd === id.cwd) return current.session
-  current?.session.close()
-  const session = codeIntelligence.openWorkspace(id.cwd, id.paneId)
-  codeIntelligenceSessions.set(id.paneId, { cwd: id.cwd, session })
-  return session
 }
 
 let projects: ProjectStore
@@ -2421,10 +2353,6 @@ app.on('will-quit', () => {
   void mcpServerHandle?.close().catch(() => undefined)
   mcpServerHandle = undefined
   mcpPort = 0
-  for (const active of codeIntelligenceSessions.values()) active.session.close()
-  codeIntelligenceSessions.clear()
-  void codeIntelligence?.close()
-  codeIntelligence = undefined
   synVoiceOverlayBoundsFlush?.()
   progressOverlayBoundsFlush?.()
   hideSynVoiceOverlayTooltip()
@@ -2769,9 +2697,6 @@ app.whenReady().then(async () => {
       return externalServicesCheckedAt == null ? validateExternalServices() : preparedPlaywright
     }
     return validateExternalServices()
-  }
-  if (settings.get().codeIntelligenceMode === 'automatic') {
-    codeIntelligence = createCodeIntelligenceManager()
   }
   if (settings.get().externalServicePreparation === 'automatic') validateExternalServices()
   const synVoice = new SynVoiceService()
@@ -3561,9 +3486,6 @@ app.whenReady().then(async () => {
     get mcpServerHandle() {
       return mcpServerHandle
     },
-    get codeIntelligence() {
-      return codeIntelligence
-    },
     get internalMcpState() {
       return internalMcpState
     },
@@ -3648,7 +3570,6 @@ app.whenReady().then(async () => {
     orchPaneId: (...args) => orchPaneId(...args),
     unregisterPane: (...args) => unregisterPane(...args),
     cleanPaneMcpFile: (...args) => cleanPaneMcpFile(...args),
-    codeIntelligenceSession: (...args) => codeIntelligenceSession(...args),
     persistUserQuestions: () => persistUserQuestions(),
     abortVoiceRequests: () => abortVoiceRequests(),
     releasePaneSkillLease: (...args) => releasePaneSkillLease(...args),
@@ -3853,12 +3774,6 @@ app.whenReady().then(async () => {
   // Aceite do bypass gravado JÁ NO BOOT para todos os seats claude: processos
   // antigos do CLI (catálogo/painel) reescrevem o .claude.json ao sair e podem
   // derrubar a chave — regravar cedo e a cada spawn fecha a janela da corrida.
-  for (const seat of seats.list()) {
-    if (seat.cli === 'claude') ensureBypassAccepted(seats.configDirOf(seat))
-    else if (settings.get().externalServicePreparation === 'automatic') {
-      void prewarmCodexMcpProtocol(seats.configDirOf(seat))
-    }
-  }
 
   // Seats com login VENCIDO (detectado na saída dos panes): seatId → quando.
   // O flag limpa sozinho quando o arquivo de credencial muda (re-login feito).
@@ -3869,22 +3784,11 @@ app.whenReady().then(async () => {
   // O catálogo de modelos é INVALIDADO a cada mudança de versão: a lista vem
   // do handshake do binário, então modelo novo só aparece perguntando de novo.
   let lastCliVersions = ''
-  let lastCodexVersion = ''
   onCliStatus((all) => {
     const versions = all.map((s) => `${s.cli}@${s.version ?? '-'}`).join(' ')
     if (versions !== lastCliVersions) {
       lastCliVersions = versions
       clearCatalogCache()
-    }
-    const codexVersion = all.find((item) => item.cli === 'codex')?.version ?? '-'
-    if (codexVersion !== lastCodexVersion) {
-      lastCodexVersion = codexVersion
-      invalidateCodexMcpProtocol()
-      if (settings.get().externalServicePreparation === 'automatic') {
-        for (const seat of seats.list()) {
-          if (seat.cli === 'codex') void prewarmCodexMcpProtocol(seats.configDirOf(seat))
-        }
-      }
     }
     pushBoard('cli:status', all)
   })
@@ -3967,7 +3871,6 @@ app.whenReady().then(async () => {
           task.projectId,
           task.id.slice(0, 8)
         )
-        codeIntelligence?.invalidateWorktreeNow(taskWorktree)
         removeWorktreeAndBranch(
           project.path,
           taskWorktree,
@@ -5043,7 +4946,6 @@ app.whenReady().then(async () => {
           })
           continue
         }
-        codeIntelligence?.invalidateWorktreeNow(version.worktree)
         if (
           !removeWorktreeAndBranch(
             project.path,
@@ -5203,7 +5105,6 @@ app.whenReady().then(async () => {
     } catch (error) {
       return `não subi a versão: não consegui gravar o ponto seguro de recuperação (${error instanceof Error ? error.message : String(error)})`
     }
-    codeIntelligence?.invalidateWorktreeNow(version.worktree)
     // git PESADO no worker (task #2): o release mergeia a versão inteira.
     const res = await gitOff(
       'mergeTaskWorktree',
@@ -6372,89 +6273,6 @@ app.whenReady().then(async () => {
       await installInternalMcp(preferredPort)
     })
 
-  const servicesSnapshot = (includeLocalDetails = false) => {
-    // Resolver o runtime local é apenas uma checagem de filesystem; nenhum
-    // processo Playwright é iniciado por esta tela.
-    const currentSettings = settings.get()
-    if (
-      currentSettings.externalServicePreparation === 'automatic' &&
-      externalServicesCheckedAt == null
-    ) {
-      validateExternalServices()
-    }
-    const managerSnapshot = codeIntelligence?.serviceSnapshot(includeLocalDetails)
-    const emptyTelemetry = {
-      starts: 0, restarts: 0, evictions: 0, failures: 0, requests: 0, reuses: 0
-    }
-    const codexSeats = seats.list().filter((seat) => seat.cli === 'codex').map((seat) => {
-      const status = getCodexMcpProtocolStatus(seats.configDirOf(seat))
-      return {
-        seatId: seat.id,
-        seatName: seat.name.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 120),
-        state: status.state,
-        checkedAt: status.checkedAt,
-        version: status.version,
-        featurePresent: status.featurePresent,
-        featureEnabled: status.featureEnabled,
-        capability: status.capability,
-        ...(status.reason ? { reason: status.reason } : {})
-      }
-    })
-    const codexState = codexSeats.some((seat) => seat.state === 'probing')
-      ? 'probing'
-      : codexSeats.length === 0 || codexSeats.every((seat) => seat.state === 'idle')
-        ? 'idle'
-        : codexSeats.every((seat) => seat.state === 'ready')
-          ? 'ready'
-          : 'degraded'
-    const paneStartup = paneStartupMetrics?.recentSummary() ?? {
-      primaryMilestone: 'agent_first_output' as const,
-      windowSize: 200,
-      samples: 0,
-      p50Ms: null,
-      p95Ms: null,
-      milestones: {
-        terminal_first_frame: { samples: 0, p50Ms: null, p95Ms: null },
-        external_mcp_available: { samples: 0, p50Ms: null, p95Ms: null },
-        agent_first_output: { samples: 0, p50Ms: null, p95Ms: null }
-      }
-    }
-    return {
-      generatedAt: Date.now(),
-      codeIntelligence: managerSnapshot
-        ? { mode: currentSettings.codeIntelligenceMode, ...managerSnapshot }
-        : {
-            mode: currentSettings.codeIntelligenceMode,
-            state: currentSettings.codeIntelligenceMode === 'off' ? 'off' as const : 'closed' as const,
-            processCount: 0,
-            languages: [] as Array<'TypeScript' | 'JavaScript'>,
-            servers: [],
-            telemetry: emptyTelemetry
-          },
-      internalMcp: {
-        state: internalMcpState,
-        protocol: 'dual-era' as const,
-        port: mcpPort > 0 ? mcpPort : null
-      },
-      codexProbe: { state: codexState, seats: codexSeats },
-      externalServices: {
-        preparation: currentSettings.externalServicePreparation,
-        state: externalServicesAvailable == null
-          ? 'unchecked' as const
-          : externalServicesAvailable
-            ? 'available' as const
-            : 'unavailable' as const,
-        checkedAt: externalServicesCheckedAt,
-        playwright: {
-          available: externalServicesAvailable,
-          availability: 'on-demand' as const,
-          version: preparedPlaywright?.version ?? null
-        }
-      },
-      paneStartup
-    }
-  }
-
 
   const HELPER_TTL = 7 * 86_400_000
   const CLIP_TTL = 14 * 86_400_000
@@ -6833,7 +6651,6 @@ app.whenReady().then(async () => {
   registerSettingsIpc(ctx, {
     assertMainRendererSender,
     assertAppRendererSender,
-    transitionCodeIntelligence,
     validateExternalServices,
     state: {
       get preparedPlaywright() {
@@ -6855,13 +6672,6 @@ app.whenReady().then(async () => {
         externalServicesCheckedAt = v
       }
     }
-  })
-  registerServicesIpc(ctx, {
-    assertMainRendererSender,
-    transitionCodeIntelligence,
-    restartInternalMcp,
-    servicesSnapshot,
-    validateExternalServices
   })
   registerHarnessIpc(ctx)
   // PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md): sessão de chat

@@ -5,7 +5,6 @@ import type {
   NewTask,
   ProgressOverlaySnapshot,
   Seat,
-  ServicesSnapshot,
   SynVoiceConfig,
   SynVoiceModel,
   SynVoiceOverlayState,
@@ -384,8 +383,6 @@ export function installDevMock(): void {
   if (typeof window.synkora !== 'undefined') return
 
   let appSettings: SynkoraSettings = {
-    codeIntelligenceMode: 'automatic',
-    mcpProtocolMode: 'auto',
     externalServicePreparation: 'automatic',
     imageProvider: 'codex',
     openrouterKeyConfigured: false,
@@ -398,60 +395,6 @@ export function installDevMock(): void {
     chatNotifyFailed: true,
     chatSoundsEnabled: true
   }
-
-  const servicesSnapshot = (): ServicesSnapshot => ({
-    generatedAt: Date.now(),
-    codeIntelligence: {
-      mode: appSettings.codeIntelligenceMode,
-      state: appSettings.codeIntelligenceMode === 'off' ? 'off' : 'active',
-      processCount: appSettings.codeIntelligenceMode === 'off' ? 0 : 1,
-      languages: ['TypeScript', 'JavaScript'],
-      servers: appSettings.codeIntelligenceMode === 'off'
-        ? []
-        : [{
-            kind: 'typescript-native',
-            name: 'TypeScript Language Server',
-            version: '7.0.2',
-            running: true,
-            activeQueries: 0,
-            openDocuments: 3
-          }],
-      telemetry: { starts: 1, restarts: 0, evictions: 0, failures: 0, requests: 142, reuses: 141 }
-    },
-    internalMcp: { state: 'ready', protocol: 'dual-era', port: 43117 },
-    codexProbe: {
-      state: 'ready',
-      seats: [{
-        seatId: 'codex-seat',
-        seatName: 'Codex',
-        state: 'ready',
-        checkedAt: Date.now(),
-        version: '0.146.0',
-        featurePresent: true,
-        featureEnabled: false,
-        capability: false,
-        reason: 'fallback legado seguro'
-      }]
-    },
-    externalServices: {
-      preparation: appSettings.externalServicePreparation,
-      state: 'available',
-      checkedAt: Date.now(),
-      playwright: { available: true, availability: 'on-demand', version: '0.0.78' }
-    },
-    paneStartup: {
-      primaryMilestone: 'agent_first_output',
-      windowSize: 128,
-      samples: 18,
-      p50Ms: 784,
-      p95Ms: 1310,
-      milestones: {
-        terminal_first_frame: { samples: 18, p50Ms: 110, p95Ms: 184 },
-        external_mcp_available: { samples: 12, p50Ms: 232, p95Ms: 401 },
-        agent_first_output: { samples: 18, p50Ms: 784, p95Ms: 1310 }
-      }
-    }
-  })
 
   let voiceProvider: SynVoiceProvider = 'openai'
   const voiceConfigured: Record<SynVoiceProvider, boolean> = { openai: true, openrouter: false }
@@ -1301,10 +1244,6 @@ export function installDevMock(): void {
           return { ...appSettings }
         }
       },
-    services: {
-      get: async () => servicesSnapshot(),
-      restart: async () => servicesSnapshot()
-    },
     progress: {
       ready: () => undefined,
       openOverlay: async () => undefined,

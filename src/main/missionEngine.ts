@@ -482,7 +482,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     const project = projects.get(projectId)
     const mission = missions.get(missionId)
     if (project && mission?.branch && mission.worktree) {
-      ctx.codeIntelligence?.invalidateWorktreeNow(mission.worktree)
       removeWorktreeAndBranch(project.path, mission.worktree, mission.branch)
     }
     missions.remove(missionId)
@@ -2024,7 +2023,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           join(app.getPath('userData'), 'worktrees', projectId),
           missionId
         )
-        ctx.codeIntelligence?.invalidateWorktreeNow(cleanupSource.dir)
         if (
           !removeWorktreeAndBranch(
             project.path,
@@ -2221,7 +2219,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // panes GUI (dev, reviewer e ajudantes) — mesmo motivo, mesma hora.
     ptys.kill(orchPaneId(projectId, missionId))
     killMissionGuiPanes(missionId)
-    ctx.codeIntelligence?.invalidateWorktreeNow(missionSource)
     const res = await gitOff(
       'mergeTaskWorktree',
       project.path,

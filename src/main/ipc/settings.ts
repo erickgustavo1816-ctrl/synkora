@@ -17,7 +17,6 @@ import {
 } from '../settings'
 import { type McpStdioLaunch } from '../mcpServer'
 import { setGithubToken } from '../skillsLibrary'
-import { prewarmCodexMcpProtocol } from '../mcpProtocol'
 import type { MainContext } from '../mainContext'
 
 /** Lets do closure do index que estes handlers leem/escrevem — o call
@@ -35,10 +34,6 @@ export interface SettingsIpcExtras {
   /** F3-c4: host OU view de panes — settings GERAIS são das duas superfícies
    *  (a view lê a fonte do terminal e o zoom Ctrl+/- grava dela). */
   assertAppRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
-  transitionCodeIntelligence(
-    mode: SynkoraSettings['codeIntelligenceMode'],
-    restart?: boolean
-  ): Promise<void>
   validateExternalServices(): McpStdioLaunch | undefined
   state: SettingsIpcState
 }
@@ -52,7 +47,6 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
   const {
     assertMainRendererSender,
     assertAppRendererSender,
-    transitionCodeIntelligence,
     validateExternalServices,
     state
   } = extras
@@ -72,15 +66,9 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
     const next = settings.update(safePatch)
     ptys.setConptyDll(next.conptyDll !== false)
     setGithubToken(next.githubToken)
-    if (previous.codeIntelligenceMode !== next.codeIntelligenceMode) {
-      await transitionCodeIntelligence(next.codeIntelligenceMode)
-    }
     if (previous.externalServicePreparation !== next.externalServicePreparation) {
       if (next.externalServicePreparation === 'automatic') {
         validateExternalServices()
-        for (const seat of seats.list()) {
-          if (seat.cli === 'codex') void prewarmCodexMcpProtocol(seats.configDirOf(seat))
-        }
       }
       else {
         state.preparedPlaywright = undefined

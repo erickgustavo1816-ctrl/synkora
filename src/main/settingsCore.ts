@@ -4,8 +4,6 @@ import { dirname, join } from 'path'
 export type SettingsSecretName = 'openrouterKey' | 'githubToken'
 
 export interface SynkoraPreferences {
-  codeIntelligenceMode: 'automatic' | 'off'
-  mcpProtocolMode: 'auto' | 'legacy' | 'modern-experimental'
   externalServicePreparation: 'automatic' | 'on-demand'
   imageProvider: 'codex' | 'openrouter'
   imageSeatId?: string
@@ -57,8 +55,6 @@ const SECRET_NAMES: SettingsSecretName[] = ['openrouterKey', 'githubToken']
 const MASKED_SECRET = '••••••••'
 
 const DEFAULTS: SynkoraPreferences = {
-  codeIntelligenceMode: 'automatic',
-  mcpProtocolMode: 'auto',
   externalServicePreparation: 'automatic',
   imageProvider: 'codex',
   terminalFontSize: 13,
@@ -87,11 +83,6 @@ function sanitizePreferences(value: unknown): SynkoraPreferences {
   const synVoiceInputDeviceId = cleanOptionalString(source.synVoiceInputDeviceId)
   const fontFamily = cleanOptionalString(source.terminalFontFamily)
   return {
-    codeIntelligenceMode: source.codeIntelligenceMode === 'off' ? 'off' : 'automatic',
-    mcpProtocolMode:
-      source.mcpProtocolMode === 'legacy' || source.mcpProtocolMode === 'modern-experimental'
-        ? source.mcpProtocolMode
-        : 'auto',
     externalServicePreparation:
       source.externalServicePreparation === 'on-demand' ? 'on-demand' : 'automatic',
     imageProvider: source.imageProvider === 'openrouter' ? 'openrouter' : 'codex',

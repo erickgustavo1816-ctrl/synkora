@@ -101,7 +101,6 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
       if (!expectedHead) {
         return `não excluí ${version.name}: não consegui provar o commit atual do worktree da versão`
       }
-      ctx.codeIntelligence?.invalidateWorktreeNow(version.worktree)
       if (
         !removeWorktreeAndBranch(
           project.path,

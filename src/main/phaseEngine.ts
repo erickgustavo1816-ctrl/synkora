@@ -2563,7 +2563,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
                 gitVisibleWorktreeFingerprint(taskWorktree.dir) ===
                   approvedSnapshot.fingerprint)))
       )
-      ctx.codeIntelligence?.invalidateWorktreeNow(taskWorktree.dir)
       if (
         !sourceStillExact ||
         !removeWorktreeAndBranch(
@@ -2904,7 +2903,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       })
     }
     if (watch.worktree && project) {
-      ctx.codeIntelligence?.invalidateWorktreeNow(watch.worktree.dir)
       const targetDir = mission ? target! : project.path
       const existingReceipt = (tasks.get(watch.taskId) ?? latestTask).integrationReceipt
       const expectedTargetHead =

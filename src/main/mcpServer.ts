@@ -17,7 +17,6 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { dirname, isAbsolute, join, relative, sep } from 'path'
 import type { Hub, PaneIdentity } from './hub'
 import type { PlanPatch } from './plans'
-import type { CodeQuery } from './codeIntelligence/types'
 import type { SecurityReviewInput } from './securityReview'
 import type { GateVerificationEvidence } from './gateVerificationEvidence'
 import type { PhaseWatch } from './phaseTypes'
@@ -262,9 +261,6 @@ export interface McpApi {
     offset: number,
     maxBytes?: number
   ) => string | Promise<string>
-  /** Inteligência de código compartilhada; erros viram fallback compacto em
-   *  vez de falha de protocolo, para o pane continuar utilizável sem LSP. */
-  codeQuery: (id: PaneIdentity, query: CodeQuery) => Promise<string>
   /** Guard do report(done): `blocked` traz a mensagem curta que o bloqueia;
    *  sem `blocked`, o report pode seguir e `devSnapshot` carrega a fotografia
    *  POR VALOR até o advancePhase (F2-c5b, §7.10 — dois guards concorrentes
@@ -404,21 +400,6 @@ export interface McpApi {
 function text(s: string): { content: { type: 'text'; text: string }[] } {
   return { content: [{ type: 'text', text: s }] }
 }
-
-const codePath = z
-  .string()
-  .min(1)
-  .max(2048)
-  .describe('Caminho relativo à worktree do pane; absoluto, URI e saída por .. são recusados.')
-const codeLine = z.number().int().min(1).max(10_000_000).describe('Linha em base 1.')
-const codeColumn = z
-  .number()
-  .int()
-  .min(1)
-  .max(1_000_000)
-  .describe('Coluna UTF-16 em base 1.')
-const codeLimit = z.number().int().min(1).max(200).optional()
-const codeOffset = z.number().int().min(0).max(100_000).optional()
 
 const securityTriageSchema = z.object({
   gate: z.enum([
@@ -851,148 +832,6 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       }
     },
     async ({ id, ...patch }) => text(api.updateTask(identity, id, patch))
-  )
-
-  server.registerTool(
-    'code_diagnostics',
-    {
-      description:
-        'Diagnósticos estruturais TypeScript/JavaScript de um arquivo da sua worktree. Use depois de editar código e antes de report(done); se não houver LSP, a resposta orienta o fallback textual.',
-      inputSchema: { path: codePath, limit: codeLimit, offset: codeOffset }
-    },
-    async ({ path, limit, offset }) =>
-      text(await api.codeQuery(identity, { operation: 'diagnostics', path, limit, offset }))
-  )
-
-  server.registerTool(
-    'code_definition',
-    {
-      description:
-        'Localiza a definição do símbolo em uma posição TypeScript/JavaScript. Prefira antes de buscas textuais amplas.',
-      inputSchema: {
-        path: codePath,
-        line: codeLine,
-        column: codeColumn,
-        limit: codeLimit,
-        offset: codeOffset
-      }
-    },
-    async ({ path, line, column, limit, offset }) =>
-      text(
-        await api.codeQuery(identity, {
-          operation: 'definition',
-          path,
-          position: { line, column },
-          limit,
-          offset
-        })
-      )
-  )
-
-  server.registerTool(
-    'code_references',
-    {
-      description:
-        'Lista referências do símbolo na posição, ordenadas e paginadas, sempre restritas à worktree.',
-      inputSchema: {
-        path: codePath,
-        line: codeLine,
-        column: codeColumn,
-        includeDeclaration: z.boolean().optional().describe('Padrão: true.'),
-        limit: codeLimit,
-        offset: codeOffset
-      }
-    },
-    async ({ path, line, column, includeDeclaration, limit, offset }) =>
-      text(
-        await api.codeQuery(identity, {
-          operation: 'references',
-          path,
-          position: { line, column },
-          includeDeclaration,
-          limit,
-          offset
-        })
-      )
-  )
-
-  server.registerTool(
-    'code_symbols',
-    {
-      description:
-        'Lista os símbolos estruturais de um documento TypeScript/JavaScript, ordenados e paginados.',
-      inputSchema: { path: codePath, limit: codeLimit, offset: codeOffset }
-    },
-    async ({ path, limit, offset }) =>
-      text(await api.codeQuery(identity, { operation: 'symbols', path, limit, offset }))
-  )
-
-  server.registerTool(
-    'code_hover',
-    {
-      description: 'Mostra tipo e documentação compacta do símbolo na posição indicada.',
-      inputSchema: { path: codePath, line: codeLine, column: codeColumn }
-    },
-    async ({ path, line, column }) =>
-      text(
-        await api.codeQuery(identity, {
-          operation: 'hover',
-          path,
-          position: { line, column }
-        })
-      )
-  )
-
-  server.registerTool(
-    'code_implementations',
-    {
-      description:
-        'Localiza implementações do símbolo na posição, ordenadas e paginadas dentro da worktree.',
-      inputSchema: {
-        path: codePath,
-        line: codeLine,
-        column: codeColumn,
-        limit: codeLimit,
-        offset: codeOffset
-      }
-    },
-    async ({ path, line, column, limit, offset }) =>
-      text(
-        await api.codeQuery(identity, {
-          operation: 'implementations',
-          path,
-          position: { line, column },
-          limit,
-          offset
-        })
-      )
-  )
-
-  server.registerTool(
-    'code_call_hierarchy',
-    {
-      description:
-        'Mostra chamadas de entrada, saída ou ambas para o símbolo na posição, com resultado limitado e paginado.',
-      inputSchema: {
-        path: codePath,
-        line: codeLine,
-        column: codeColumn,
-        direction: z.enum(['incoming', 'outgoing', 'both']).optional().describe('Padrão: both.'),
-        limit: codeLimit,
-        offset: codeOffset
-      }
-    },
-    async ({ path, line, column, direction, limit, offset }) =>
-      text(
-        await api.codeQuery(identity, {
-          operation: 'call_hierarchy',
-          path,
-          position: { line, column },
-          direction,
-          limit,
-          offset
-        })
-      )
   )
 
   server.registerTool(

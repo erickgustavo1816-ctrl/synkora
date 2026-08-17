@@ -973,7 +973,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     // 2.0: nenhum chat pode ficar com cwd dentro do worktree que vai sumir.
     killMissionGuiPanes(missionId)
     if (mission.branch && mission.worktree) {
-      ctx.codeIntelligence?.invalidateWorktreeNow(mission.worktree)
       removeWorktreeAndBranch(project.path, mission.worktree, mission.branch)
     }
     for (const t of tasks.list(mission.projectId).filter((x) => x.missionId === missionId)) {

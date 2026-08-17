@@ -44,11 +44,6 @@ import {
   panePermissionArgs,
   type PaneAccessProfile
 } from './panePermissions'
-import {
-  codexMcpProtocolArgs,
-  getCodexMcpProtocolStatus,
-  prewarmCodexMcpProtocol
-} from './mcpProtocol'
 import { isMethodGovernedPaneRole } from './codexSkillIsolation'
 import { activeQaRuntimes, stopQaRuntime } from './qaRuntime'
 import { decorateBrowserLaunchArgs, qaCdpReservations } from './qaCdp'
@@ -218,18 +213,9 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
     }
     // panes codex de EXECUÇÃO (mesmo critério do claude) ganham o Playwright
     // MCP via wrapper .cmd — QA/dev/ajudante codex abrem browser de verdade
-    const protocolStatus = getCodexMcpProtocolStatus(configDir)
-    if (protocolStatus.state !== 'ready') void prewarmCodexMcpProtocol(configDir)
-    const protocolArgs = protocolStatus.state === 'ready'
-      ? codexMcpProtocolArgs(settings.get().mcpProtocolMode, {
-          checkedAt: protocolStatus.checkedAt ?? 0,
-          version: protocolStatus.version,
-          featurePresent: protocolStatus.featurePresent,
-          featureEnabled: protocolStatus.featureEnabled,
-          capability: protocolStatus.capability,
-          reason: protocolStatus.reason ?? 'feature-output-invalid'
-        })
-      : []
+    // A sonda do protocolo MCP moderno do codex saiu na limpa F6 (R-7):
+    // nenhum pane da era 2.0 a usava e o gui-planner tem os próprios args.
+    const protocolArgs: string[] = []
     const args = codexMcpArgs(
       ctx.mcpPort,
       browser ? ensurePlaywrightCmd(join(app.getPath('userData'), 'mcp'), browser) : undefined,

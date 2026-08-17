@@ -26,8 +26,6 @@ import {
 import { type Mission } from '../missions'
 import { type PhaseWatch } from '../phaseTypes'
 import { existsSync } from 'fs'
-import { CodeIntelligenceError, CodeIntelligenceSession, type CodeQuery } from '../codeIntelligence'
-import { formatCodeQueryError, formatCodeQueryResult } from '../codeIntelligence/format'
 import type { MainContext } from '../mainContext'
 import type { McpApi } from '../mcpServer'
 import { plannedHelperCompletionProblem } from '../agentRouting'
@@ -54,15 +52,14 @@ export interface CodeApiExtras {
 
 export function buildCodeApi(
   ctx: MainContext, extras: CodeApiExtras
-): Pick<McpApi, 'codeQuery' | 'codeReportGuard'> {
+): Pick<McpApi, 'codeReportGuard'> {
   const {
     tasks,
     projects,
     missions,
     blackbox,
     backlog,
-    phaseWatches,
-    codeIntelligenceSession
+    phaseWatches
   } = ctx
   // hub é atribuído 1× antes do mcpApi nascer — capturar é seguro.
   const hub = ctx.hub
@@ -74,14 +71,6 @@ export function buildCodeApi(
     completedHelperPhaseRuns
   } = extras
   return {
-    codeQuery: async (id, query: CodeQuery) => {
-      try {
-        const result = await codeIntelligenceSession(id).query(query)
-        return formatCodeQueryResult(result)
-      } catch (error) {
-        return formatCodeQueryError(query.operation, error)
-      }
-    },
     // F2-c5b (§7.10 do mapa da Fase 2): a fotografia viaja por VALOR — o
     // guard a devolve e ela segue guard → report → advancePhase como
     // argumento. Dois guards concorrentes (poller × MCP) escrevendo
@@ -291,81 +280,10 @@ export function buildCodeApi(
         return settleGuard()
       }
 
-      let session: CodeIntelligenceSession
-      try {
-        session = codeIntelligenceSession(id)
-      } catch (error) {
-        if (
-          error instanceof CodeIntelligenceError &&
-          (error.code === 'SERVER_UNAVAILABLE' || error.code === 'MANAGER_CLOSED')
-        ) return settleGuard()
-        return block('Não foi possível iniciar a validação dos diagnósticos. Execute code_diagnostics e tente reportar done novamente.')
-      }
-
-      if (changedFiles !== undefined) {
-        const missing: string[] = []
-        const stale: string[] = []
-        const failed: string[] = []
-        const red: string[] = []
-
-        for (const path of changedFiles) {
-          try {
-            const status = await session.diagnosticsGuard(path)
-            if (status.state === 'missing') missing.push(path)
-            else if (status.state === 'stale') stale.push(path)
-            else if (status.state === 'current' && (status.errorCount ?? 0) > 0)
-              red.push(`${path} (${status.errorCount} erro(s))`)
-            // Servidor realmente indisponível mantém o fallback textual do
-            // pane; ele não deve transformar uma indisponibilidade externa em
-            // um bloqueio impossível de resolver.
-          } catch (error) {
-            if (
-              error instanceof CodeIntelligenceError &&
-              error.code === 'SERVER_UNAVAILABLE'
-            ) continue
-            failed.push(path)
-          }
-        }
-
-        const compactPaths = (paths: string[]): string => {
-          const visible = paths.slice(0, 6).map((path) =>
-            path.replace(/[\u0000-\u001f\u007f]/g, '�').slice(0, 180)
-          )
-          return `${visible.join(', ')}${paths.length > visible.length ? ` (+${paths.length - visible.length})` : ''}`
-        }
-        if (failed.length > 0) {
-          return block(`Não foi possível validar os diagnósticos de: ${compactPaths(failed)}. Execute code_diagnostics nesses arquivos e tente reportar done novamente.`)
-        }
-        if (red.length > 0) {
-          return block(`Os diagnósticos estão atualizados, mas ainda vermelhos: ${compactPaths(red)}. Corrija os erros e execute code_diagnostics novamente; consultar o diagnóstico não transforma erro em aprovação.`)
-        }
-        if (missing.length > 0 || stale.length > 0) {
-          const details = [
-            missing.length > 0 ? `sem diagnóstico: ${compactPaths(missing)}` : '',
-            stale.length > 0 ? `diagnóstico desatualizado: ${compactPaths(stale)}` : ''
-          ].filter(Boolean).join('; ')
-          return block(`Antes de reportar done, execute code_diagnostics em todos os arquivos TypeScript/JavaScript alterados (${details}).`)
-        }
-        return settleGuard()
-      }
-
-      // Sem Git/base legível não dá para reconstruir o diff com segurança.
-      // Mantém o gate owner-wide anterior como degradação conservadora.
-      try {
-        const status = await session.diagnosticsStatus()
-        if (status.state === 'unavailable') return settleGuard()
-        if (status.state === 'missing') {
-          return block('Antes de reportar done, execute code_diagnostics nos arquivos TypeScript/JavaScript alterados e leia o resultado. Se o servidor não estiver disponível, a própria ferramenta liberará o fallback textual.')
-        }
-        if (status.state === 'stale') {
-          return block('Os diagnósticos ficaram desatualizados após novas alterações. Execute code_diagnostics novamente nos arquivos TypeScript/JavaScript alterados antes de reportar done.')
-        }
-        if (status.state === 'current' && (status.errorCount ?? 0) > 0) {
-          return block(`Os diagnósticos atuais ainda contêm ${status.errorCount} erro(s). Corrija-os e execute code_diagnostics novamente antes de reportar done.`)
-        }
-      } catch {
-        // Falha da inteligência de código nunca impede o fallback normal do pane.
-      }
+      // A validação por LSP saiu com a inteligência de código (limpa F6,
+      // 2026-08-17). O guard segue existindo pela fotografia, pelos helpers
+      // abertos e pelos gates do card; o degrau de diagnósticos passa a ter o
+      // MESMO desfecho que já valia com o servidor indisponível — liberar.
       return settleGuard()
     }
   }

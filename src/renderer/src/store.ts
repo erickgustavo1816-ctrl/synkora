@@ -112,7 +112,6 @@ export type SettingsSection =
   | 'accounts'
   | 'skills'
   | 'agents'
-  | 'services'
   | 'images'
   | 'voice'
 

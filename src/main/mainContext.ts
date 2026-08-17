@@ -38,7 +38,6 @@ import type { HelperCompletionTracker } from './helperCompletion'
 import type { MaestroSession } from './maestroSession'
 import type { CodexSession } from './codexSession'
 import type { Hub, PaneIdentity } from './hub'
-import type { CodeIntelligenceManager, CodeIntelligenceSession } from './codeIntelligence'
 import type { McpServerHandle, McpStdioLaunch } from './mcpServer'
 import type { PaneStartupMetrics } from './paneStartupMetrics'
 import type { WorkspaceSkillLeaseRegistry } from './workspaceSkills'
@@ -173,7 +172,6 @@ export interface MainContext {
   readonly mainWindow: BrowserWindow | null
   readonly mcpPort: number
   readonly mcpServerHandle: McpServerHandle | undefined
-  readonly codeIntelligence: CodeIntelligenceManager | undefined
   readonly internalMcpState: 'starting' | 'ready' | 'unavailable'
   readonly paneStartupMetrics: PaneStartupMetrics | undefined
 
@@ -241,7 +239,6 @@ export interface MainContext {
   orchPaneId(projectId: string, missionId: string): string
   unregisterPane(paneId: string): PaneIdentity | undefined
   cleanPaneMcpFile(paneId: string): void
-  codeIntelligenceSession(id: PaneIdentity): CodeIntelligenceSession
   persistUserQuestions(): void
   abortVoiceRequests(): void
   releasePaneSkillLease(paneId: string): void

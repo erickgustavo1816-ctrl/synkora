@@ -253,7 +253,6 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
       }
     }
     // 2. caminho novo no store (única fonte de verdade do path)
-    ctx.codeIntelligence?.invalidateWorktreeNow(oldPath)
     projects.setPath(id, newPath)
     // 3. git: o .git dos worktrees (userData/worktrees) aponta p/ o repo no
     // caminho antigo — repair rodado do caminho novo reescreve os ponteiros
