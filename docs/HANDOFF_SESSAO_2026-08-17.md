@@ -32,6 +32,21 @@ node_modules).
 4. 👁 VALIDAÇÃO VISUAL pendente do dono: rodada 3 (barra APROVAR/AJUSTAR só
    em pergunta real; dashboard novo; ◈ = versão na main; versão digitável) +
    concluir planejamento (`5af421c`) + popover de contexto pós-fix.
+5. 🔧 REGRA DE VERSÃO REFINADA (ordem do dono, 17/08, spec exata): a versão
+   LIVRE (digitável) só existe enquanto o projeto tem ZERO versões — a
+   primeira oferta é `1.0` · `0.1.0` · `0.0.1` + campo livre (caso do projeto
+   que chega na 1.20). CRIADA a primeira, o campo livre SOME e daí em diante
+   só as sugestões do motor (ex.: a partir de 1.20 → `2.0` · `1.21` ·
+   `1.20.1`); duplicata continua proibida. AJUSTE sobre a rodada 3 (que
+   deixou o campo livre SEMPRE visível — BacklogView sidebar). VERIFICAR a
+   interação com ensureDefaultVersion (backlog.ts): se criar missão sem
+   versão auto-semeia "V1.0", ela ROUBA a janela do campo livre do projeto
+   1.20 — decidir se a auto-semeadura espera a primeira versão manual ou
+   oferece o picker.
+6. ❓ TRAVA DE RELEASE DO PLANO (explicada ao dono 2×, decisão em aberto):
+   "⇪ subir versão" recusar enquanto o plano do MAPA tiver missão pendente
+   da versão? Opcional — as travas atuais (fila/árvore/missões/backlog)
+   seguram sozinhas.
 
 ### 2. Depois dos bugs (aguardando ordem do dono)
 - Push + instalador (`npm run dist` não roda desde a limpa;
