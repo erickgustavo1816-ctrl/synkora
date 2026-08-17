@@ -62,14 +62,38 @@ node_modules).
       que sobe; (ii) versionId opcional no Plan carimbado na proposta.
       Decidir com evidência e registrar no design do fix.
 
-### 2. Depois dos bugs (aguardando ordem do dono)
-- Push + instalador (`npm run dist` não roda desde a limpa;
-  electron-builder.yml mudou — validar o build).
-- BROWSER EMBUTIDO (design fechado: DESIGN_SYNKORA_BROWSER_2026-08-15.md —
-  RightDock estilo Claude Code primeiro, sonda CDP, browser por missão).
-- Opcionais que o dono ainda não pediu: planos no radar ANDAMENTO; trava de
-  release amarrada ao plano novo ("não sobe versão com missão do plano
-  pendente" — explicado ao dono em 17/08, ele decide se quer).
+### 2. ROADMAP ORDENADO PELO DONO (17/08, nesta sequência)
+1º os bugs acima (inclui a trava de release do plano, item 6 — ordenada).
+2º **SUBAGENTES SEM ABA — delegação cross-CLI pelo MCP interno** (etapa NOVA
+   ordenada pelo dono, ANTES do browser). Spec nas palavras dele:
+   - Hoje revisor/ajudante abrem OUTRA ABA de chat que ele nunca lê ("eu
+     nunca vou conversar com esse agente que ele criou"). Isso acaba:
+     subagente NUNCA vira aba.
+   - O chat da missão delega POR DENTRO, "igual o Claude Code faz hoje com
+     os Opus": o agente chama tools de delegação do MCP INTERNO NOVO (mesmo
+     padrão do gui-planner — token por pane, catálogo próprio, "sempre com
+     esse MCP novo, porque a conversa entre as LLMs fica melhor"), o
+     harness roda o ajudante em sessão HEADLESS e o resultado volta como
+     resposta de tool ao delegador.
+   - A atividade aparece na LATERAL de subagentes que já existe (terceira
+     fonte, ao lado dos nativos claude/codex) — mesmo lugar, mesmo idioma.
+   - CROSS-CLI SEM DISTINÇÃO: chat Claude delega para ajudante GPT/Codex e
+     vice-versa; para o dono é tudo "subagente na lateral".
+   - Peças existentes a costurar: guiPlannerMcp (padrão de arm por pane),
+     MaestroSession/CodexSession (motor headless), GuiSubagentSidebar +
+     normalizeGuiSubagentSidebar (lateral), guiClaudeTasks/guiCodexAgents
+     (precedentes de ciclo de vida). Botões REVISAR/AJUDANTE do rail passam
+     a produzir subagente de lateral, nunca aba. Decisões de design para a
+     investigação: catálogo das tools (delegate/status/result — padrão
+     assíncrono, tool nunca bloqueia por minutos), escolha de seat/CLI do
+     ajudante (quem decide: agente com defaults? dono?), teto de paralelo,
+     e a cerca de que ajudante NUNCA herda o MCP de delegação (sem cadeia
+     infinita nível 2 — espelho da regra dos nativos).
+3º Push + instalador (`npm run dist` não roda desde a limpa;
+   electron-builder.yml mudou — validar o build).
+4º BROWSER EMBUTIDO (design fechado: DESIGN_SYNKORA_BROWSER_2026-08-15.md —
+   RightDock estilo Claude Code primeiro, sonda CDP, browser por missão).
+Opcional não pedido: planos no radar ANDAMENTO.
 
 ### 3. Regras de processo (memória — NÃO repetir os erros)
 - Relatório de agente SEMPRE em arquivo; schema mínimo.
