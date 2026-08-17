@@ -2161,6 +2161,47 @@ test('modelo e effort usam troca viva, confirmada e sem status no transcript', (
   )
 })
 
+test('todo terminal aberto é pílula do seletor do palco, com missão ou sem', () => {
+  const board = readFileSync(
+    new URL('../src/renderer/src/components/Board.tsx', import.meta.url),
+    'utf8'
+  )
+  const head = readFileSync(
+    new URL('../src/renderer/src/components/MissionStageHead.tsx', import.meta.url),
+    'utf8'
+  )
+  // ONDA D — CHAT ↔ TERMINAL. As abas de terminal nasceram dentro da barra
+  // ESCURA do PaneChrome, que é chrome da era legada e vai sair. Esta é a
+  // rede que impede a feature de cair de carona com ele: os dois conjuntos
+  // (terminal de missão e terminal avulso do ✦ geral) precisam existir como
+  // pílula do MESMO seletor, cada uma com seleção e fechamento.
+  assert.match(board, /for \(const pane of missionTermPanes\.filter/u)
+  assert.match(board, /for \(const pane of generalTermPanes\) \{/u)
+  assert.match(
+    board,
+    /generalTermPanes\)[\s\S]{0,600}?kind: 'terminal'[\s\S]{0,400}?onSelect: \(\) => setGeneralTerm\(pane\.id\)/u,
+    'o terminal avulso precisa de pílula própria com seleção'
+  )
+  assert.match(
+    board,
+    /generalTermPanes\)[\s\S]{0,900}?onClose: \(\) => window\.synkora\.panes\.requestClose\(projectId, pane\.id\)/u,
+    'fechar a pílula derruba o processo do terminal'
+  )
+  // A cabeça do palco aparece por causa das PÍLULAS, não só por missão direta
+  // — sem isto o ✦ geral com um terminal vivo ficaria sem seletor nenhum.
+  assert.match(board, /const stageHead = stageMode \|\| stagePills\.length > 0/u)
+  assert.match(board, /\{stageHead \? \(/u)
+  assert.match(board, /maestro-window\$\{stageHead \? ' stage-window' : ' term-window'\}/u)
+  // As abas do ✦ geral já saíram da barra escura; as de MISSÃO ainda vivem lá
+  // porque a missão LEGADA (sem palco 2.0) é a única que ainda as usa — elas
+  // caem junto com o chrome dela, e a asserção de ausência entra ali.
+  assert.doesNotMatch(board, /generalTermPanes\.map\(\(pane\) => \(/u)
+  // O componente da cabeça precisa saber desenhar terminal e fechar pílula.
+  assert.match(head, /kind: 'chat' \| 'terminal'/u)
+  assert.match(head, /pill\.kind === 'terminal' && <span className="stage-pill-glyph">/u)
+  assert.match(head, /stage-pill-close/u)
+})
+
 test('avisos do chat têm som apenas no host, visibilidade real e ajustes acessíveis', () => {
   const app = readFileSync(new URL('../src/renderer/src/App.tsx', import.meta.url), 'utf8')
   const pane = readFileSync(

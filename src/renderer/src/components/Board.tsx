@@ -2171,13 +2171,34 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         closeTip: 'Fechar o terminal (derruba o que estiver rodando nele)'
       })
     }
+  } else if (!selMission) {
+    // ✦ GERAL: terminal de VERSÃO (o ▶ testar da aba Versões) e qualquer pane
+    // sem missão. Estas abas moravam na barra escura do PaneChrome, que é
+    // chrome da era LEGADA e vai sair — a onda D não pode cair de carona com
+    // ela, então elas viram pílulas do mesmo seletor de sempre.
+    for (const pane of generalTermPanes) {
+      stagePills.push({
+        id: pane.id,
+        label: pane.title || 'terminal',
+        kind: 'terminal',
+        active: generalTermId === pane.id,
+        tip: `Ver o terminal "${pane.title}"`,
+        onSelect: () => setGeneralTerm(pane.id),
+        onClose: () => window.synkora.panes.requestClose(projectId, pane.id),
+        closeTip: 'Fechar o terminal (derruba o que estiver rodando nele)'
+      })
+    }
   }
+
+  /** A cabeça do palco existe quando há CONVERSA (missão direta) ou quando há
+   *  pílula para oferecer — é o caso do ✦ geral com um terminal avulso vivo. */
+  const stageHead = stageMode || stagePills.length > 0
 
   // A LINHA FINA do mockup: `dev · opus 4.8 · mission/1f3a`, texto apagado,
   // UMA linha. Os separadores são CSS (`.stage-meta-line > * + *::before`) —
   // aqui só entram os fatos que existem de verdade.
   const stageMetaParts: React.ReactNode[] = []
-  if (stageMode) {
+  if (stageHead) {
     if (stageTermPane) {
       stageMetaParts.push(
         <span key="role" className="sm-role term">
@@ -2185,7 +2206,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         </span>
       )
       stageMetaParts.push(<span key="title">{stageTermPane.title}</span>)
-    } else {
+    } else if (stageMode) {
       stageMetaParts.push(
         <span key="role" className="sm-role">
           {stageRoleLabel}
@@ -2377,12 +2398,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           dentro roda um TUI de verdade. Só a CLASSE muda — trocar a caixa
           remontaria os slots e mataria as sessões. */}
       <div
-        className={`maestro-window${stageMode ? ' stage-window' : ' term-window'}${
+        className={`maestro-window${stageHead ? ' stage-window' : ' term-window'}${
           stageEmpty ? ' stage-empty' : ''
         }`}
         ref={winRef}
       >
-        {stageMode ? (
+        {stageHead ? (
           /* Sem `actions`: as alavancas do universo (estudar/conta/limpar)
              moravam na cabeça do palco de PLANEJAMENTO, que morreu — e em
              2026-08-15 saíram do app inteiro junto com o papel de Maestro. */
@@ -2548,42 +2569,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                   </button>
                 </span>
               ))}
-          {/* Terminal de VERSÃO (▶ testar da aba Versões) e panes sem missão:
-              não pertencem a missão nenhuma, então moram no ✦ geral. */}
-          {!selMission &&
-            generalTermPanes.map((pane) => (
-              <span key={pane.id} className="mission-gui-tab-wrap">
-                <button
-                  className={`term-btn ghost-dim mission-gui-tab${
-                    generalTermId === pane.id ? ' active' : ''
-                  }`}
-                  data-tip={`Ver o terminal "${pane.title}"`}
-                  onClick={() => setGeneralTerm(pane.id)}
-                >
-                  ▷ {pane.title}
-                </button>
-                <button
-                  className="term-btn ghost-dim mission-gui-tab-close"
-                  data-tip="Fechar o terminal (derruba o que estiver rodando nele)"
-                  aria-label={`Fechar ${pane.title}`}
-                  onClick={() => window.synkora.panes.requestClose(projectId, pane.id)}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          {/* Volta do terminal para a conversa do PM legado. Sem PM não há
-              conversa nenhuma no ✦ geral (2.0): o botão sumiria numa tela em
-              branco, e o terminal perderia a única porta de volta. */}
-          {!selMission && generalTermId && maestroSpec && (
-            <button
-              className="term-btn ghost-dim mission-gui-tab"
-              data-tip="Voltar para a conversa desta coluna"
-              onClick={() => setGeneralTerm(null)}
-            >
-              ← conversa
-            </button>
-          )}
+          {/* Os terminais SEM MISSÃO (▶ testar de versão, panes avulsos) saíram
+              desta barra: são onda D e agora entram como PÍLULA do
+              MissionStageHead, junto com os terminais de missão. O que sobra
+              aqui é chrome da era legada. */}
           {/* ALAVANCAS DO PM MORTAS (ordem do dono, 2026-08-15): 📚 estudar,
               ⇄ seat e 🧹 limpar eram os controles do Maestro — o papel que a
               era 2.0 não tem. Saíram daqui e da linha do retrato; o que resta
