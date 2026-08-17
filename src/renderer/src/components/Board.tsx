@@ -1,7 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
 import { prettyModel } from './PaneChrome'
 import TerminalPane from './TerminalPane'
 import GuiPane from './GuiPane'
