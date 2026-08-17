@@ -43,10 +43,24 @@ node_modules).
    versão auto-semeia "V1.0", ela ROUBA a janela do campo livre do projeto
    1.20 — decidir se a auto-semeadura espera a primeira versão manual ou
    oferece o picker.
-6. ❓ TRAVA DE RELEASE DO PLANO (explicada ao dono 2×, decisão em aberto):
-   "⇪ subir versão" recusar enquanto o plano do MAPA tiver missão pendente
-   da versão? Opcional — as travas atuais (fila/árvore/missões/backlog)
-   seguram sozinhas.
+6. ✅ TRAVA DE RELEASE DO PLANO — ORDENADA pelo dono (17/08, spec exata):
+   a) "⇪ subir versão" RECUSA enquanto o plano do MAPA tiver missão
+      pendente da versão. A recusa NOMEIA as pendentes e receita as DUAS
+      saídas: fazer a missão ou excluir o item ("ou eu excluo ou eu faço").
+   b) PlanBoardView: cada item ganha DOIS verbos do dono — "começar" (já
+      existe: criar missão) e "EXCLUIR" (novo: descarta o item — sai do
+      progresso e da trava; recomendação: status 'descartada', que o motor
+      já exclui das contas; confirm inline, nunca diálogo nativo).
+   c) SEM botão de editar — decisão explícita do dono: edição é CONVERSA
+      (abre missão de planejamento e pede; update_plan já cobre). Não criar
+      superfície de edição manual.
+   d) AMARRAÇÃO item→versão a resolver na investigação: Plan não tem
+      versionId hoje. Modelo mental do dono: o plano mestre da release
+      bloqueia a versão dele. Candidatos: (i) herdar da missão vinculada
+      (item com missão carimbada na versão que sobe = pendente dela) +
+      item SEM missão do plano MESTRE ativo conta como pendente da versão
+      que sobe; (ii) versionId opcional no Plan carimbado na proposta.
+      Decidir com evidência e registrar no design do fix.
 
 ### 2. Depois dos bugs (aguardando ordem do dono)
 - Push + instalador (`npm run dist` não roda desde a limpa;
