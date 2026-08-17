@@ -168,7 +168,7 @@ export default function NewMissionModal({
     })
     if (!created) {
       setSubmitError(
-        'Esta missão não pode ser aberta por aqui agora. Se este projeto começou vazio, volte ao Maestro: ele mostra onde o plano parou e abre a próxima missão autorizada.'
+        'Esta missão não pode ser aberta por aqui agora. Se este projeto começou vazio, confira o planejamento: é ele que diz qual é a próxima missão autorizada.'
       )
       return
     }

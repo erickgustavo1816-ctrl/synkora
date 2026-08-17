@@ -629,20 +629,9 @@ export interface ProgressOpenTarget {
   missionId?: string
 }
 
-/** Spec do pane TUI do Maestro/orquestrador (terminal real do CLI do seat). */
-export interface MaestroPaneSpec {
-  paneId: string
-  kind: 'claude' | 'codex'
-  seatId: string
-  cwd: string
-  cliArgs?: string[]
-  initialPrompt?: string
-  appendSystemPrompt?: string
-  /** modelo do orquestrador (--model no spawn) */
-  model?: string
-  /** presente quando é o pane do orquestrador de uma missão */
-  missionId?: string
-}
+// `MaestroPaneSpec` descrevia o pane TUI do PM/orquestrador. Morreu na purga
+// F6 (2026-08-17) com o palco legado.
+
 
 /** Um limite de uso da conta, já normalizado pelo main (ver seatUsage.ts). */
 export interface UsageMeter {
@@ -944,23 +933,8 @@ const api = {
       ipcRenderer.invoke('missions:remove', missionId),
     // missão criada pelo PM: grava conta/modelo/effort do orquestrador
     // escolhidos no modal e libera o pane nascer
-    confirmOrchestrator: (
-      projectId: string,
-      missionId: string,
-      choice: { seatId?: string; model?: string; effort?: string }
-    ): Promise<boolean> =>
-      ipcRenderer.invoke('missions:confirmOrchestrator', projectId, missionId, choice),
-    // troca de CONTA do orquestrador no meio da missão; mesmo CLI = a
-    // conversa é transplantada para o seat novo (limite estourado nunca
-    // prende a missão)
-    setOrchestratorSeat: (
-      projectId: string,
-      missionId: string,
-      choice: { seatId: string; model?: string; effort?: string }
-    ): Promise<{ ok: boolean; msg: string }> =>
-      ipcRenderer.invoke('missions:setOrchestratorSeat', projectId, missionId, choice),
-    paneSpec: (projectId: string, missionId: string): Promise<MaestroPaneSpec | null> =>
-      ipcRenderer.invoke('missions:paneSpec', projectId, missionId),
+    // `confirmOrchestrator` e `setOrchestratorSeat` (escolha e troca de conta
+    // do ORQUESTRADOR de missão legada) morreram na purga F6 (2026-08-17).
     /** SYNKORA 2.0: a CONTA da conversa da missão direta — escolhida no card
      *  do chat vazio ou trocada pelo cabeçalho. Mesmo CLI = a conversa é
      *  transplantada; as sessões vivas morrem e o chat reabre no seat novo. */

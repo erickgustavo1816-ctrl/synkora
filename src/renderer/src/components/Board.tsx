@@ -72,7 +72,7 @@ function integrationQueueLabel(mission: Mission): string | undefined {
   if (integration.state === 'blocked')
     return integration.owner === 'orchestrator'
       ? 'fila pausada — reparo seguro do destino pendente'
-      : 'fila pausada — Maestro decidindo'
+      : 'fila pausada — decisão pendente'
   if (integration.state === 'sync_required') return 'sincronizando antes de integrar'
   return `fila de integração #${integration.position} de ${integration.total}`
 }

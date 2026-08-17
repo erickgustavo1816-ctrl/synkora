@@ -314,7 +314,7 @@ export default function MissionDeliveryRail({
           {integration.state === 'blocked'
             ? integration.owner === 'orchestrator'
               ? '⚠ reparo pendente'
-              : '⚠ Maestro decidindo'
+              : '⚠ decisão pendente'
             : integration.state === 'sync_required'
               ? '↻ retomar fila'
               : `⇪ fila #${integration.position}`}

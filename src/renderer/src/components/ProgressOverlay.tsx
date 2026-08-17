@@ -288,7 +288,7 @@ function ProjectGroup({
           type="button"
           className="progress-project-question"
           onClick={() => window.synkoraProgressOverlay.command('open-target', { projectId: project.id })}
-          aria-label={`Responder ao Maestro de ${project.name}`}
+          aria-label={`Responder à pergunta de ${project.name}`}
         >
           <QuestionLine question={project.question} />
         </button>

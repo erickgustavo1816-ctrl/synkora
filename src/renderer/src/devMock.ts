@@ -56,7 +56,7 @@ export function installDevMock(): void {
               id: 'maestro:mock-2',
               projectId: 'mock-2',
               role: 'maestro',
-              roleLabel: 'Maestro',
+              roleLabel: 'agente',
               label: 'decidindo como resolver uma integração bloqueada',
               detail: 'Melhorar integração paralela',
               tone: 'running',
@@ -81,7 +81,7 @@ export function installDevMock(): void {
               state: 'blocked',
               tone: 'attention',
               label: 'integração bloqueada',
-              detail: 'o Maestro está decidindo como resolver o conflito',
+              detail: 'a decisão de como resolver o conflito está pendente',
               updatedAt: new Date(Date.now() - 90_000).toISOString(),
               queue: { state: 'blocked', position: 1, total: 2, owner: 'maestro' }
             }
@@ -101,7 +101,7 @@ export function installDevMock(): void {
               id: 'maestro:mock-1',
               projectId: 'mock-1',
               role: 'maestro',
-              roleLabel: 'Maestro',
+              roleLabel: 'agente',
               label: 'acompanhando o projeto e suas missões',
               tone: 'running',
               updatedAt: new Date().toISOString()
@@ -505,30 +505,6 @@ export function installDevMock(): void {
         if (i >= 0) missions.splice(i, 1)
         return true
       },
-      confirmOrchestrator: async (_projectId: string, missionId: string, choice) => {
-        const m = missions.find((x) => x.id === missionId)
-        if (!m) return false
-        Object.assign(m, {
-          seatId: choice.seatId,
-          model: choice.model,
-          effort: choice.effort,
-          pendingOrchestrator: undefined,
-          updatedAt: new Date().toISOString()
-        })
-        return true
-      },
-      setOrchestratorSeat: async (_projectId: string, missionId: string, choice) => {
-        const m = missions.find((x) => x.id === missionId)
-        if (!m) return { ok: false, msg: 'missão não encontrada' }
-        Object.assign(m, {
-          seatId: choice.seatId,
-          model: choice.model,
-          effort: choice.effort,
-          updatedAt: new Date().toISOString()
-        })
-        return { ok: true, msg: 'conta trocada (mock)' }
-      },
-      paneSpec: async () => null,
       // 2.0: a conta da conversa é escolhida DENTRO da missão (card do chat
       // vazio / menu do cabeçalho). No preview o mock só carimba o seat.
       setChatSeat: async (_projectId: string, missionId: string, seatId: string) => {
@@ -953,7 +929,7 @@ export function installDevMock(): void {
         await new Promise((resolve) => setTimeout(resolve, 900))
         if (voiceCancelled.delete(request.requestId)) throw new Error('Transcrição cancelada.')
         return {
-          text: 'Crie uma nova tarefa no Synkora e envie para o painel do Maestro.',
+          text: 'Crie uma nova missão no Synkora e converse com o agente dela.',
           languages: ['pt'],
           model: voiceConfig().model
         }

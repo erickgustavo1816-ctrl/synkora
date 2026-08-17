@@ -52,7 +52,7 @@ export function badgeFor(signal: MissionSignal): MissionBadge | null {
   if (!integration || integration.state === 'merging') return null
   if (integration.state === 'blocked')
     return {
-      glyph: integration.owner === 'orchestrator' ? '! reparo' : '! Maestro',
+      glyph: integration.owner === 'orchestrator' ? '! reparo' : '! decisão',
       kind: 'err'
     }
   if (integration.state === 'sync_required') return { glyph: '↻ sync', kind: 'busy' }

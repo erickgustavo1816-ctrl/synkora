@@ -1,6 +1,6 @@
 /**
  * Plim de atenção (pedido do usuário, 2026-08-06): som MINIMALISTA quando um
- * agente precisa do dono — pergunta do Maestro/orquestrador (ask_user) ou pane
+ * agente precisa do dono — pergunta na conversa ou pane
  * pedindo permissão. Sintetizado na hora via Web Audio (zero assets): duas
  * senoides curtas em quinta (E6→B6), ganho baixo, ~0,25s. Throttle de 2s —
  * rajada de eventos nunca vira metralhadora sonora. Electron não exige gesto

@@ -2,7 +2,6 @@ import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import type { PaneActivity, PaneKind, PaneStats } from '../store'
 
 export type PaneRole =
-  | 'maestro'
   | 'orquestrador'
   // 2.0: sessão PONTUAL de planejamento do projeto (escreve `plano/` e fecha)
   | 'plano'
@@ -13,7 +12,6 @@ export type PaneRole =
   | 'livre'
 
 const ROLE_LABEL: Record<PaneRole, string> = {
-  maestro: 'MAESTRO',
   orquestrador: 'ORQUESTRADOR',
   plano: 'PLANO',
   dev: 'DEV',
@@ -26,7 +24,6 @@ const ROLE_LABEL: Record<PaneRole, string> = {
 // Em panes muito estreitos o nome do papel cede lugar ao simbolo para os
 // controles de janela continuarem acessiveis. O texto completo fica no tooltip.
 const ROLE_SYMBOL: Record<PaneRole, string> = {
-  maestro: '♛',
   orquestrador: '◇',
   plano: '✎',
   dev: '⌘',
@@ -38,7 +35,6 @@ const ROLE_SYMBOL: Record<PaneRole, string> = {
 
 // Hue padrão por papel (dev herda o hue do departamento quando conhecido).
 const ROLE_HUE: Record<PaneRole, number> = {
-  maestro: 21,
   orquestrador: 21,
   plano: 21,
   dev: 21,

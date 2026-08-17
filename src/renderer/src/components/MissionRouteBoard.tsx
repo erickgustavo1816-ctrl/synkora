@@ -60,7 +60,7 @@ function noteOf(mission: Mission, chat: MissionChatSummary): string {
   const q = mission.integration
   if (q) {
     if (q.state === 'blocked')
-      return q.owner === 'orchestrator' ? 'reparo pendente' : 'Maestro decidindo'
+      return q.owner === 'orchestrator' ? 'reparo pendente' : 'decisão pendente'
     if (q.state === 'sync_required') return 'precisa sincronizar'
     return `fila #${q.position}/${q.total}`
   }

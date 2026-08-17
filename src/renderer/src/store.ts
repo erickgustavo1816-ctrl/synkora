@@ -1993,12 +1993,11 @@ export const useStore = create<SynkoraState>((set, get) => ({
 
   // Trocar de projeto NÃO derruba nada (decisão do usuário, estilo Discord):
   // os universos visitados ficam montados; aqui só troca o ativo e recarrega
-  // o estado global por-projeto (tasks/políticas/maestro) para o novo ativo.
+  // o estado global por-projeto (missões) para o novo ativo.
   openProject: (id) => {
     set((s) => ({
       openProjectId: id,
       appPage: 'workspace',
-      maestroStateLoaded: false,
       // Entrar num projeto SEMPRE pousa no board ✦ geral (pedido do usuário,
       // 2026-07-28) — a última aba/missão visitada não gruda entre visitas.
       // E o ✦ geral É a landing do universo desde 2026-08-15: o centro dele

@@ -53,8 +53,8 @@ export default function MissionColumn({
         }`}
         data-tip={
           generalPulse
-            ? `❓ O MAESTRO PERGUNTOU A VOCÊ:\n${generalPulse}`
-            : 'PM do universo: conversa geral, cria missões e ajusta o projeto'
+            ? `❓ PERGUNTA PARA VOCÊ:\n${generalPulse}`
+            : 'A casa do universo: o retrato do projeto e o convite para criar missão'
         }
         onClick={() => onSelect(null)}
       >
@@ -120,7 +120,7 @@ export default function MissionColumn({
       </div>
 
       {/* SEM TRAVA: no 2.0 o dono cria missão em QUALQUER modo de projeto —
-          a cerca greenfield ("as missões nascem pelo Maestro, na ordem do
+          a cerca greenfield ("as missões nascem na ordem do
           plano mestre") saiu daqui junto com a recusa do `missions:create`. */}
       <button
         className="mission-col-new"
