@@ -15,8 +15,22 @@ export interface GuiContextPanelPresentation {
   contextTokensLabel: string
   contextWindowLabel: string
   costLabel?: string
+  /** O ESCOPO dos números, em uma linha. Ver SCOPE_NOTE. */
+  scopeNote: string
   tooltip: string
 }
+
+/**
+ * O QUE ESTES NÚMEROS MEDEM, dito na tela.
+ *
+ * Os dois se leem errado sem esta linha, e o dono leu (2026-08-17): abriu um
+ * chat de planejamento retomado, pediu um plano, e viu meio milhão de tokens e
+ * quase dez dólares. Os dois números estavam certos e nenhum era sobre o que
+ * ele acabara de pedir — contexto é a conversa INTEIRA que o modelo relê a cada
+ * resposta, e custo é o acumulado desde que a sessão abriu.
+ */
+export const SCOPE_NOTE =
+  'contexto é a conversa inteira relida a cada resposta; custo é o acumulado desde que a sessão abriu.'
 
 const exactNumber = new Intl.NumberFormat('pt-BR', {
   maximumFractionDigits: 0
@@ -28,13 +42,15 @@ function exactTokenLabel(value: number): string {
 
 function costLabel(value: number | null | undefined): string | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined
-  // O custo chega em USD. Conservamos centavos e até seis casas úteis para não
-  // esconder um custo pequeno do CLI por arredondamento visual prematuro.
-  const rounded = Number(value.toFixed(6))
+  // O custo chega em USD. Acima de um centavo, centavos bastam — seis casas ali
+  // são ruído com cara de precisão. Abaixo, as casas são a única informação que
+  // existe, e escondê-las mostraria "$0.00" para um gasto real.
+  const digits = value >= 0.01 ? 2 : 6
+  const rounded = Number(value.toFixed(digits))
   return `$${rounded.toLocaleString('en-US', {
     useGrouping: false,
     minimumFractionDigits: 2,
-    maximumFractionDigits: 6
+    maximumFractionDigits: digits
   })}`
 }
 
@@ -66,9 +82,11 @@ export function guiContextPanelPresentation(
   const percentLabel = `${percent}%`
   const cost = costLabel(costUsd)
   const tooltip = [
-    `contexto: ${contextTokensLabel} de ${contextWindowLabel} tokens usados`,
+    `contexto: ${contextTokensLabel} de ${contextWindowLabel} tokens`,
     `${percentLabel} da janela`,
-    cost ? `custo ${cost}` : null
+    // "da sessão" viaja com o número no tooltip também: quem só passa o mouse
+    // tem de receber o escopo junto, não só quem abre o painel.
+    cost ? `custo da sessão ${cost}` : null
   ]
     .filter((part): part is string => part !== null)
     .join(' · ')
@@ -81,6 +99,7 @@ export function guiContextPanelPresentation(
     contextTokensLabel,
     contextWindowLabel,
     ...(cost ? { costLabel: cost } : {}),
+    scopeNote: SCOPE_NOTE,
     tooltip
   }
 }

@@ -116,7 +116,9 @@ export default function GuiContextPanel({
           </div>
           <dl className="gui-context-metrics">
             <div>
-              <dt>usados</dt>
+              {/* "usados" prometia o gasto da última pergunta; o número sempre
+                  foi a ocupação da janela pela conversa toda. */}
+              <dt>contexto</dt>
               <dd>{usage.contextTokensLabel} tokens</dd>
             </div>
             <div>
@@ -129,11 +131,12 @@ export default function GuiContextPanel({
             </div>
             {usage.costLabel && (
               <div>
-                <dt>custo</dt>
+                <dt>custo da sessão</dt>
                 <dd>{usage.costLabel}</dd>
               </div>
             )}
           </dl>
+          <p className="gui-context-scope">{usage.scopeNote}</p>
         </div>
       )}
     </div>

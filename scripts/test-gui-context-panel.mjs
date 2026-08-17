@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { guiContextPanelPresentation } from '../src/renderer/src/guiContextPanel.ts'
+import { SCOPE_NOTE, guiContextPanelPresentation } from '../src/renderer/src/guiContextPanel.ts'
 
 const readWorkspaceFile = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
@@ -15,15 +15,45 @@ test('painel de contexto só mostra a fotografia canônica e preserva números e
     contextTokensLabel: '51.234',
     contextWindowLabel: '200.000',
     costLabel: '$0.0035',
-    tooltip: 'contexto: 51.234 de 200.000 tokens usados · 26% da janela · custo $0.0035'
+    scopeNote: SCOPE_NOTE,
+    tooltip: 'contexto: 51.234 de 200.000 tokens · 26% da janela · custo da sessão $0.0035'
   })
 
   const withoutCost = guiContextPanelPresentation(0, 200_000, null)
-  assert.equal(withoutCost?.tooltip, 'contexto: 0 de 200.000 tokens usados · 0% da janela')
+  assert.equal(withoutCost?.tooltip, 'contexto: 0 de 200.000 tokens · 0% da janela')
   assert.equal(guiContextPanelPresentation(10.5, 200_000), null)
   assert.equal(guiContextPanelPresentation(10, 0), null)
   assert.equal(guiContextPanelPresentation(10, 200_000, Number.NaN)?.costLabel, undefined)
   assert.equal(guiContextPanelPresentation(10, 200_000, -0.1)?.costLabel, undefined)
+})
+
+test('o custo mostra centavos quando há centavos e casas finas quando não há', () => {
+  // O caso do dono: $9.650348 em seis casas lê como despejo de máquina.
+  assert.equal(guiContextPanelPresentation(1, 200_000, 9.650348)?.costLabel, '$9.65')
+  assert.equal(guiContextPanelPresentation(1, 200_000, 0.01)?.costLabel, '$0.01')
+  // Abaixo de um centavo as casas são a única informação que existe: arredondar
+  // mostraria "$0.00" para um gasto real.
+  assert.equal(guiContextPanelPresentation(1, 200_000, 0.000_42)?.costLabel, '$0.00042')
+  assert.equal(guiContextPanelPresentation(1, 200_000, 0.0035)?.costLabel, '$0.0035')
+})
+
+test('o painel diz o ESCOPO dos números — os dois se leem errado sem isso', () => {
+  const component = readWorkspaceFile('src/renderer/src/components/GuiContextPanel.tsx')
+  const css = readWorkspaceFile('src/renderer/src/global.css')
+
+  // Caso real de 2026-08-17: chat de planejamento RETOMADO, o dono pediu um
+  // plano e leu meio milhão de tokens e ~$9,65. Os dois números estavam certos
+  // e nenhum era sobre o que ele acabara de pedir.
+  assert.match(SCOPE_NOTE, /conversa inteira/u)
+  assert.match(SCOPE_NOTE, /acumulado desde que a sessão abriu/u)
+  assert.match(component, /<p className="gui-context-scope">\{usage\.scopeNote\}<\/p>/u)
+  // O rótulo "usados" prometia o gasto da última pergunta.
+  assert.doesNotMatch(component, /<dt>usados<\/dt>/u)
+  assert.match(component, /<dt>contexto<\/dt>/u)
+  assert.match(component, /<dt>custo da sessão<\/dt>/u)
+  // A nota é texto CORRIDO: --ink-3 dá 3,00:1 sobre --card (medido) e o piso de
+  // leitura é 4,5:1. --ink-2 dá 6,32:1 e mantém a hierarquia pelo tamanho.
+  assert.match(css, /\.gui-context-scope\s*\{[^}]*color: var\(--ink-2\)/su)
 })
 
 test('integração usa botão discreto, popover nomeado e restauração de foco', () => {

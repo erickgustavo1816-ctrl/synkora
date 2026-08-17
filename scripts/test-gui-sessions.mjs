@@ -38,7 +38,9 @@ import {
 import {
   MaestroSession,
   claudeCuratedContextWindow,
-  claudeReportedContextWindow
+  claudeMessageContextTokens,
+  claudeReportedContextWindow,
+  claudeSessionCostUsd
 } from '../.tmp/gui-sessions-test/maestroSession.js'
 import { CodexSession } from '../.tmp/gui-sessions-test/codexSession.js'
 import {
@@ -3792,6 +3794,143 @@ test('capacidade de arquivo, imagem e pasta externa sobrevive reload e falha fec
 // RESOLVIDO (e `claude-fable-5[1m]` chega como `claude-fable-5`, sem o sufixo),
 // e a janela REAL mora em `result.modelUsage[<modelo>].contextWindow`.
 
+// O MEDIDOR DE CONTEXTO MEDE CONTEXTO (bug ao vivo de 2026-08-17).
+//
+// O dono abriu um chat de planejamento RETOMADO, pediu um plano e leu
+// "usados 528.703 · janela 1.000.000 · 53%". No mesmo minuto ele digitou
+// /context e o próprio CLI respondeu "176.3k / 1m (18%)".
+//
+// Os números abaixo são os REAIS do JSONL daquela conversa (seat 9f3b8482,
+// sessão f6640086). O último turno teve TRÊS chamadas de API, e a soma delas é
+// exatamente 528.703 — era o agregado do `result` que estava sendo dividido
+// pela janela. Contexto é o que a ÚLTIMA chamada carregou: 176.669.
+
+/** Uma chamada de API do turno, na forma que o stream entrega. */
+function claudeApiCall(line, { cacheRead, cacheCreate, out, parentToolUseId = null }) {
+  line({
+    type: 'assistant',
+    parent_tool_use_id: parentToolUseId,
+    message: {
+      role: 'assistant',
+      usage: {
+        input_tokens: 2,
+        cache_creation_input_tokens: cacheCreate,
+        cache_read_input_tokens: cacheRead,
+        output_tokens: out
+      },
+      content: [{ type: 'text', text: 'ok' }]
+    }
+  })
+}
+
+function claudeTurnResult(session, line, extra = {}) {
+  session.pendingTurnGenerations = [1]
+  session.activeTurnGeneration = 1
+  line({ type: 'result', subtype: 'success', session_id: 's-ctx', ...extra })
+}
+
+test('o medidor lê a ÚLTIMA chamada do turno, nunca a soma do turno inteiro', () => {
+  const { session, events, line } = claudeAgentSession()
+  claudeApiCall(line, { cacheRead: 174_276, cacheCreate: 335, out: 1_217 })
+  claudeApiCall(line, { cacheRead: 174_611, cacheCreate: 1_335, out: 256 })
+  claudeApiCall(line, { cacheRead: 175_946, cacheCreate: 387, out: 334 })
+  // O `usage` do result é a soma das três — 175.830 + 176.204 + 176.669.
+  claudeTurnResult(session, line, {
+    usage: {
+      input_tokens: 6,
+      cache_creation_input_tokens: 2_057,
+      cache_read_input_tokens: 524_833,
+      output_tokens: 1_807
+    },
+    total_cost_usd: 9.650348
+  })
+
+  const result = events.find((event) => event.type === 'result')
+  assert.equal(result.contextTokens, 176_669, 'o contexto é o da última chamada')
+  assert.notEqual(result.contextTokens, 528_703, 'o agregado do turno não é ocupação de janela')
+  assert.equal(result.costUsd, 9.650348)
+})
+
+test('mensagem de subagente não mexe no medidor da conversa do dono', () => {
+  const { session, events, line } = claudeAgentSession()
+  claudeApiCall(line, { cacheRead: 120_000, cacheCreate: 500, out: 300 })
+  // O subagente tem contexto PRÓPRIO: somá-lo aqui inflaria a janela do dono.
+  claudeApiCall(line, { cacheRead: 900_000, cacheCreate: 0, out: 10, parentToolUseId: 'toolu_x' })
+  claudeTurnResult(session, line, { usage: { input_tokens: 1 } })
+  assert.equal(events.find((event) => event.type === 'result').contextTokens, 120_802)
+})
+
+test('turno de comando local não zera medidor nem custo acumulado', () => {
+  const { session, events, line } = claudeAgentSession()
+  claudeApiCall(line, { cacheRead: 175_946, cacheCreate: 387, out: 334 })
+  claudeTurnResult(session, line, { usage: { input_tokens: 2 }, total_cost_usd: 9.650348 })
+  assert.equal(events.find((event) => event.type === 'result').contextTokens, 176_669)
+
+  // /usage e /context respondem por mensagem SINTÉTICA: usage todo zerado e
+  // total_cost_usd: 0. Publicar esses zeros apagava medidor e custo da tela
+  // (visto no fio persistido do dono, logo depois da medição boa).
+  events.length = 0
+  line({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: {
+      role: 'assistant',
+      usage: {
+        input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        output_tokens: 0
+      },
+      content: [{ type: 'text', text: 'Current session: 48% used' }]
+    }
+  })
+  claudeTurnResult(session, line, { usage: { input_tokens: 0 }, total_cost_usd: 0 })
+  const local = events.find((event) => event.type === 'result')
+  assert.equal(local.contextTokens, undefined, 'sem medição o campo é ausente, nunca zero')
+  assert.equal(local.costUsd, undefined, 'zero de comando local não apaga o acumulado')
+})
+
+test('a medição não vaza de um turno para o outro', () => {
+  const { session, events, line } = claudeAgentSession()
+  claudeApiCall(line, { cacheRead: 100_000, cacheCreate: 0, out: 50 })
+  claudeTurnResult(session, line, { usage: { input_tokens: 1 } })
+  assert.equal(events.find((event) => event.type === 'result').contextTokens, 100_052)
+  // Turno seguinte sem chamada nenhuma: ausente, não a medição do anterior.
+  events.length = 0
+  claudeTurnResult(session, line, { usage: { input_tokens: 1 } })
+  assert.equal(events.find((event) => event.type === 'result').contextTokens, undefined)
+})
+
+test('custo é o acumulado do processo e só entra quando é positivo', () => {
+  assert.equal(claudeSessionCostUsd(9.650348), 9.650348)
+  assert.equal(claudeSessionCostUsd(0.000_42), 0.000_42)
+  assert.equal(claudeSessionCostUsd(0), undefined)
+  assert.equal(claudeSessionCostUsd(-1), undefined)
+  assert.equal(claudeSessionCostUsd(Number.NaN), undefined)
+  assert.equal(claudeSessionCostUsd('9.65'), undefined)
+  assert.equal(claudeSessionCostUsd(undefined), undefined)
+})
+
+test('contexto de uma chamada: prompt inteiro mais a resposta; zerado é ausência', () => {
+  assert.equal(
+    claudeMessageContextTokens({
+      input_tokens: 2,
+      cache_creation_input_tokens: 387,
+      cache_read_input_tokens: 175_946,
+      output_tokens: 334
+    }),
+    176_669
+  )
+  // Sem prompt não houve chamada: é a assinatura da mensagem sintética.
+  assert.equal(claudeMessageContextTokens({ input_tokens: 0, output_tokens: 0 }), undefined)
+  assert.equal(claudeMessageContextTokens({ output_tokens: 500 }), undefined)
+  assert.equal(claudeMessageContextTokens(undefined), undefined)
+  // Campo torto nunca vira medição torta.
+  assert.equal(claudeMessageContextTokens({ input_tokens: '10', cache_read_input_tokens: 90 }), 90)
+  assert.equal(claudeMessageContextTokens({ input_tokens: Number.NaN }), undefined)
+  assert.equal(claudeMessageContextTokens({ cache_read_input_tokens: -5 }), undefined)
+})
+
 test('a tabela curada de janela cobre as famílias atuais, o marcador [1m] e o desconhecido', () => {
   // Famílias de 1M (catálogo Anthropic, cache 2026-06).
   for (const model of [
@@ -3884,7 +4023,12 @@ test('o result substitui a janela do init pela medição real do CLI', () => {
     'claude-fable-5': { contextWindow: 1_000_000 }
   })
   assert.equal(measured.contextWindow, 1_000_000)
-  assert.equal(measured.contextTokens, 6)
+  // A JANELA vem do result; os TOKENS não. Este turno não teve chamada de API
+  // nenhuma no fixture, então não há contexto a publicar — o `usage` do result
+  // é o agregado do turno e nunca mais alimenta o medidor (ver o bloco do
+  // medidor acima). Antes esta linha esperava `6`, que era 2 de entrada + 4 de
+  // saída somados como se fossem ocupação de janela.
+  assert.equal(measured.contextTokens, undefined)
 
   // Sem o modelo da conversa no mapa o campo é OMITIDO (a janela do init
   // sobrevive no redutor via `evt.contextWindow ?? next.contextWindow`).

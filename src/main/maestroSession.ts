@@ -107,6 +107,67 @@ export interface CliCaps {
 export const CLAUDE_CONTEXT_WINDOW_1M = 1_000_000
 export const CLAUDE_CONTEXT_WINDOW_DEFAULT = 200_000
 
+/**
+ * CONTEXTO VIVO A PARTIR DO USO DE UMA MENSAGEM.
+ *
+ * A régua certa é a de UMA chamada de API: `input + cache_creation + cache_read`
+ * é literalmente o prompt que o modelo acabou de ler, e `output` é o que ele
+ * escreveu e que a próxima chamada vai reler. A soma dos quatro é a ocupação da
+ * janela neste instante.
+ *
+ * POR QUE NÃO O `usage` DO `result` (o bug que isto conserta, 2026-08-17): ele
+ * é o AGREGADO do turno — a soma de todas as chamadas. Um turno com 12 idas ao
+ * modelo conta o mesmo contexto cacheado 12 vezes. Medido no journal do dono:
+ * quatro turnos agregaram 841.305 / 799.980 / 821.296 / 528.703 tokens enquanto
+ * o contexto real crescia monotonicamente 109.626 → 145.669 → 174.485 →
+ * 176.669. O popover mostrava "53% da janela" no momento em que o próprio
+ * `/context` do CLI respondia "176.3k / 1m (18%)". Agregado dividido por janela
+ * não é porcentagem de nada — e passa de 100% com facilidade.
+ *
+ * `undefined` = não houve medição (mensagem sintética de comando local vem com
+ * tudo zerado, e zero NÃO é uma medição: publicá-lo apagava o medidor).
+ */
+export function claudeMessageContextTokens(
+  usage:
+    | {
+        input_tokens?: number
+        output_tokens?: number
+        cache_creation_input_tokens?: number
+        cache_read_input_tokens?: number
+      }
+    | undefined
+): number | undefined {
+  if (!usage) return undefined
+  const part = (value: unknown): number =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+  const prompt =
+    part(usage.input_tokens) +
+    part(usage.cache_creation_input_tokens) +
+    part(usage.cache_read_input_tokens)
+  // Sem prompt não houve chamada de verdade: um `usage` todo zerado é a
+  // assinatura da mensagem sintética (aviso de limite, saída de comando local).
+  if (prompt === 0) return undefined
+  return prompt + part(usage.output_tokens)
+}
+
+/**
+ * CUSTO ACUMULADO DESTE PROCESSO DO CLI.
+ *
+ * `total_cost_usd` é cumulativo, não do turno: no journal do dono a mesma
+ * conversa reportou 3,125724 → 6,290976 → 8,993965 → 9,650348 em quatro turnos,
+ * e caiu para valores menores exatamente quando um processo novo nasceu
+ * (respawn/retomada zeram a contagem do CLI). É por isso que a UI o chama de
+ * acumulado da sessão, e não de custo da pergunta.
+ *
+ * `undefined` para qualquer coisa que não seja um valor positivo: turno de
+ * comando local (`/usage`, `/context`) fecha com `total_cost_usd: 0` e esse
+ * zero, publicado, APAGAVA o acumulado verdadeiro do medidor.
+ */
+export function claudeSessionCostUsd(total: unknown): number | undefined {
+  if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return undefined
+  return total
+}
+
 /** Piso curado por família. Função PURA — o teste cobre cada ramo. */
 export function claudeCuratedContextWindow(model: string): number {
   const id = model.toLowerCase()
@@ -407,6 +468,14 @@ interface StreamLine {
   }
   message?: {
     role?: string
+    /** Uso da MENSAGEM (uma chamada de API). É o único lugar do stream que
+     *  mede contexto — o `usage` do `result` é a SOMA do turno inteiro. */
+    usage?: {
+      input_tokens?: number
+      output_tokens?: number
+      cache_creation_input_tokens?: number
+      cache_read_input_tokens?: number
+    }
     content?:
       | string
       | {
@@ -555,6 +624,11 @@ export class MaestroSession {
    *  memória, cada volta rebaixaria a medição de volta ao piso — e o piso
    *  acabava PERSISTIDO como se fosse medição. */
   private measuredWindow: number | undefined = undefined
+  /** Contexto medido na ÚLTIMA chamada de API deste turno — ver
+   *  `claudeMessageContextTokens`. Zerado a cada `result` para que um turno sem
+   *  chamada nenhuma (comando local) não republique a medição do turno anterior
+   *  como se fosse dele. */
+  private turnContextTokens: number | undefined = undefined
 
   constructor(opts: MaestroSessionOpts, emit: (evt: SessionEvent) => void) {
     this.opts = opts
@@ -1150,6 +1224,15 @@ export class MaestroSession {
         const content = evt.message?.content
         if (!Array.isArray(content)) break
         const parentToolUseId = guiClaudeParentToolUseId(evt.parent_tool_use_id)
+        // MEDIÇÃO DO CONTEXTO: cada mensagem é uma chamada de API, e a ÚLTIMA
+        // do turno é a que diz quanto da janela está ocupado. Sobrescrever a
+        // cada mensagem é o certo — o turno pode ter uma dúzia delas.
+        // Mensagem de SUBAGENTE fica de fora: ela tem contexto próprio e
+        // somá-la aqui inflaria a janela da conversa do dono.
+        if (!parentToolUseId) {
+          const measured = claudeMessageContextTokens(evt.message?.usage)
+          if (measured !== undefined) this.turnContextTokens = measured
+        }
         for (const block of content) {
           if (block.type === 'text' && block.text && !parentToolUseId) {
             this.emit({ type: 'text', text: block.text })
@@ -1338,13 +1421,14 @@ export class MaestroSession {
         // Parar o turno para os agentes de fundo dele também — antes do
         // terminal, e antes de medir o `continues`.
         if (interrupted) this.cancelLiveAgents()
-        const u = evt.usage
-        const contextTokens = u
-          ? (u.input_tokens ?? 0) +
-            (u.cache_read_input_tokens ?? 0) +
-            (u.cache_creation_input_tokens ?? 0) +
-            (u.output_tokens ?? 0)
-          : undefined
+        // A medição vem das MENSAGENS do turno, nunca do `evt.usage` daqui: o
+        // `usage` do result é o agregado de todas as chamadas de API do turno e
+        // não descreve ocupação de janela nenhuma (ver
+        // claudeMessageContextTokens). `undefined` = este turno não mediu
+        // nada — comando local, turno interrompido antes da 1ª chamada —, e o
+        // medidor mantém a última medição de verdade em vez de zerar.
+        const contextTokens = this.turnContextTokens
+        this.turnContextTokens = undefined
         if (evt.session_id) {
           // resume/fork pode mudar o id — o result é a palavra final do turno.
           this.emit({ type: 'session-id', sessionId: evt.session_id })
@@ -1374,7 +1458,7 @@ export class MaestroSession {
           // valendo (o campo é omitido, nunca zerado).
           contextWindow: measuredWindow,
           fastModeState: evt.fast_mode_state,
-          costUsd: evt.total_cost_usd
+          costUsd: claudeSessionCostUsd(evt.total_cost_usd)
         })
         break
       }
