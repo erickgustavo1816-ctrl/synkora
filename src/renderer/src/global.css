@@ -21602,7 +21602,9 @@ details.gui-error-line {
   font-size: 12.5px;
   line-height: 1.55;
   color: var(--ink-2);
-  max-width: 68ch;
+  /* 2026-08-17: as medidas de leitura (68/66/72ch) das superfícies de plano
+     MORRERAM — ordem do dono ("o que está escrito não está pegando a largura
+     toda"): a prosa do plano ocupa a largura do card. */
 }
 
 /* rótulo da lista: mais ar ACIMA que abaixo — é ele que abre as missões */
@@ -21707,7 +21709,6 @@ details.gui-error-line {
   font-size: 12px;
   line-height: 1.55;
   color: var(--ink-2);
-  max-width: 66ch;
 }
 
 .gpi-block {
@@ -21728,7 +21729,6 @@ details.gui-error-line {
   font-size: 12px;
   line-height: 1.5;
   color: var(--ink-2);
-  max-width: 66ch;
 }
 
 .gpi-list {
@@ -21737,7 +21737,6 @@ details.gui-error-line {
   font-size: 12px;
   line-height: 1.5;
   color: var(--ink-2);
-  max-width: 66ch;
 }
 
 /* caminho do brief é CONTEÚDO (o dono vai abrir o arquivo): tinta de texto
@@ -21800,8 +21799,9 @@ details.gui-error-line {
 /* o recuo horizontal casa com o padding das linhas abaixo: título do plano e
    glifo do primeiro item nascem na MESMA coluna */
 .planboard-head {
-  max-width: 980px;
-  margin: 0 auto 16px;
+  /* 2026-08-17: teto de 980px morreu junto com as medidas de leitura (ordem
+     do dono) — o quadro do plano enche a aba do mapa. */
+  margin: 0 0 16px;
   border-bottom: 1px dashed color-mix(in srgb, var(--ink) 25%, transparent);
   padding: 0 8px 14px;
 }
@@ -21857,7 +21857,6 @@ details.gui-error-line {
   font-size: 12.5px;
   line-height: 1.55;
   color: var(--ink-2);
-  max-width: 72ch;
 }
 
 .planboard-meta {
@@ -21921,8 +21920,7 @@ details.gui-error-line {
 
 .planboard-items {
   list-style: none;
-  max-width: 980px;
-  margin: 0 auto;
+  margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
