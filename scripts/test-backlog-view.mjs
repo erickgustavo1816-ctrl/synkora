@@ -59,13 +59,15 @@ test('cada versão é um CARD — a faixa deixou de empilhar uma por linha', asy
     'o Fragment saiu do import junto com o último uso'
   )
 
-  // os três tiles continuam sendo os MESMOS (texto e tooltip intocados): a
-  // mudança é de forma, não de conteúdo.
+  // Eram TRÊS tiles (missões · em execução · concluídas). Os dois últimos
+  // contavam CARDS, que morreram na purga F6 (2026-08-17) — sem card seriam
+  // sempre zero, e número morto na tela é pior que número nenhum. Sobra o de
+  // MISSÕES, que é a unidade da era 2.0.
   const tiles = view.match(/<div className="vs-stat-tiles">[\s\S]*?\n {16}<\/div>/u)
   assert.ok(tiles, 'o bloco de tiles do card não foi encontrado')
-  assert.equal((tiles[0].match(/className="stat-tile/gu) ?? []).length, 3)
-  for (const label of ['missões', 'em execução', 'concluídas'])
-    assert.ok(tiles[0].includes(label), `tile ausente do card: ${label}`)
+  assert.equal((tiles[0].match(/className="stat-tile/gu) ?? []).length, 1)
+  assert.ok(tiles[0].includes('missões'), 'o tile de missões é o que sobrou')
+  assert.doesNotMatch(view, /stat-label">em execução|stat-label">concluídas/u)
 })
 
 test('a grade preenche a linha e o card interno divide as trilhas', async () => {

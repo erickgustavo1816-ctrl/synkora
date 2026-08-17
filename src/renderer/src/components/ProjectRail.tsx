@@ -13,12 +13,11 @@ function RailItem({ projectId }: { projectId: string }): React.JSX.Element | nul
   const active = useStore((s) => s.appPage === 'workspace' && s.openProjectId === projectId)
   const running = useStore((s) => (s.panesByProject[projectId] ?? NO_PANES).length)
   // Atenção do projeto visível de QUALQUER lugar (pedido do usuário,
-  // 2026-08-06): pergunta do ask_user esperando OU pane pedindo permissão —
-  // o avatar pulsa até o dono ir lá resolver.
-  const attention = useStore(
-    (s) =>
-      Object.keys(s.askQuestions[projectId] ?? {}).length > 0 ||
-      (s.panesByProject[projectId] ?? NO_PANES).some((p) => s.paneAttention[p.id])
+  // 2026-08-06): um pane pedindo permissão faz o avatar pulsar até o dono ir
+  // lá resolver. O canal ask_user saiu na purga F6 — a pergunta do agente na
+  // era 2.0 mora dentro da conversa.
+  const attention = useStore((s) =>
+    (s.panesByProject[projectId] ?? NO_PANES).some((p) => s.paneAttention[p.id])
   )
   const openProject = useStore((s) => s.openProject)
   const setProjectPhoto = useStore((s) => s.setProjectPhoto)

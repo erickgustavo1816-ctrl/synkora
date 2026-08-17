@@ -1,8 +1,5 @@
 import type {
-  MaestroEvent,
-  MaestroLiveEvent,
   Mission,
-  NewTask,
   ProgressOverlaySnapshot,
   Seat,
   SynVoiceConfig,
@@ -11,7 +8,6 @@ import type {
   SynVoiceProvider,
   SynkoraApi,
   SynkoraSettings,
-  Task,
   FilePreviewResult,
   FileTreeResult
 } from '../../preload/index'
@@ -441,71 +437,13 @@ export function installDevMock(): void {
   ]
 
   let dataCb: ((id: string, data: string) => void) | null = null
-  let maestroCb: ((evt: MaestroEvent) => void) | null = null
   // F3-c3: simula o broadcast panes:open-free do main no preview de browser.
   let openFreeCb:
     | ((projectId: string, kind: string, opts: Record<string, unknown>) => void)
     | null = null
-  let liveCb: ((evt: MaestroLiveEvent) => void) | null = null
-  let ctxCb: ((tokens: number) => void) | null = null
 
-  const tasks: Task[] = [
-    {
-      id: 't1',
-      projectId: 'mock-1',
-      department: 'front',
-      type: 'feature',
-      effort: 'pesada',
-      title: 'Tela de login com Google',
-      description: 'Criar a tela de login com botão OAuth Google. Critério: usuário entra e vê a home logada.',
-      status: 'execucao',
-      origin: 'maestro',
-      createdAt: '2026-07-21T12:00:00.000Z',
-      updatedAt: '2026-07-21T12:00:00.000Z'
-    },
-    {
-      id: 't2',
-      projectId: 'mock-1',
-      department: 'back',
-      type: 'bug',
-      effort: 'leve',
-      title: 'Endpoint de sessão OAuth',
-      description: 'Callback do Google, criação de sessão e cookie httpOnly. Critério: token válido gera sessão.',
-      status: 'backlog',
-      origin: 'maestro',
-      createdAt: '2026-07-21T12:00:00.000Z',
-      updatedAt: '2026-07-21T12:00:00.000Z'
-    },
-    {
-      id: 't3',
-      projectId: 'mock-1',
-      department: 'qa',
-      type: 'feature',
-      effort: 'leve',
-      title: 'Testes do fluxo de login',
-      description: 'Cobrir sucesso, cancelamento e token inválido. Critério: 3 cenários verdes no CI.',
-      status: 'qa',
-      origin: 'manual',
-      createdAt: '2026-07-21T12:00:00.000Z',
-      updatedAt: '2026-07-21T12:00:00.000Z'
-    }
-  ]
-
-  function makeTasks(projectId: string, items: NewTask[]): Task[] {
-    const now = new Date().toISOString()
-    const created = items.map(
-      (item, i): Task => ({
-        id: `t-${Date.now()}-${i}`,
-        projectId,
-        ...item,
-        status: 'backlog',
-        createdAt: now,
-        updatedAt: now
-      })
-    )
-    tasks.push(...created)
-    return created
-  }
+  // As fixtures de CARD (tasks + makeTasks) morreram na purga F6
+  // (2026-08-17): a missão 2.0 não tem card.
 
   const missions: Mission[] = [
     {
@@ -809,88 +747,10 @@ export function installDevMock(): void {
       }),
       onChanged: () => () => undefined
     },
-    tasks: {
-      onChanged: () => () => undefined,
-      list: async (projectId: string) => tasks.filter((t) => t.projectId === projectId),
-      create: async (projectId: string, item: NewTask) => makeTasks(projectId, [item]),
-      update: async (id: string, patch: Partial<Task>) => {
-        const t = tasks.find((x) => x.id === id)
-        if (t) Object.assign(t, patch, { updatedAt: new Date().toISOString() })
-        return t
-      },
-      remove: async (id: string) => {
-        const i = tasks.findIndex((t) => t.id === id)
-        if (i >= 0) tasks.splice(i, 1)
-      },
-      run: async () => null,
-      // F5.7 — plano da missão: o mock só troca o status/lanes localmente.
-      approvePlan: async (id: string, lanes) => {
-        const t = tasks.find((x) => x.id === id)
-        if (t && t.kind === 'plan' && t.plan) {
-          t.plan = { ...t.plan, lanes, approvedAt: new Date().toISOString() }
-          t.status = 'execucao'
-          t.updatedAt = new Date().toISOString()
-        }
-        return t
-      },
-      stopPlan: async (id: string) => {
-        const t = tasks.find((x) => x.id === id)
-        if (t && t.kind === 'plan' && t.status === 'execucao') {
-          t.status = 'backlog'
-          t.updatedAt = new Date().toISOString()
-        }
-        return t
-      },
-      resolvePlanSecurityValidation: async (
-        id: string,
-        decision: 'approved' | 'waived',
-        evidence: string
-      ) => {
-        const t = tasks.find((x) => x.id === id)
-        if (t?.plan?.manualSecurityValidationRequired) {
-          const workTasks = tasks.filter(
-            (candidate) =>
-              candidate.missionId === t.missionId &&
-              candidate.kind !== 'plan' &&
-              (candidate.planId === t.id || (!candidate.planId && !t.plan?.executionMode))
-          )
-          if (
-            t.status !== 'execucao' ||
-            workTasks.length === 0 ||
-            workTasks.some((candidate) => candidate.status !== 'done') ||
-            (t.plan.expectedCards !== undefined && workTasks.length < t.plan.expectedCards)
-          ) {
-            throw new Error(
-              'A validação fica disponível depois que todos os cards previstos estiverem concluídos.'
-            )
-          }
-          t.plan = {
-            ...t.plan,
-            manualSecurityValidation: {
-              required: true,
-              status: decision,
-              actor: 'user',
-              resolvedAt: new Date().toISOString(),
-              evidence
-            }
-          }
-          t.updatedAt = new Date().toISOString()
-        }
-        return t
-      },
-      onPaneOpen: () => () => undefined,
-      onPaneClose: () => () => undefined,
-      onPaneCloseById: () => () => undefined,
-      onAttention: () => () => undefined,
-      // Troca de conta de fase exige PTY/worktree reais — não existe no preview.
-      setPhaseSeat: async () => ({
-        ok: false,
-        msg: 'preview do browser: sem panes reais para trocar de conta'
-      })
-    },
+    // O namespace `tasks` (espelho do pipeline de cards) morreu na purga F6
+    // (2026-08-17), junto com o pipeline.
     panes: {
       // Browser preview não mantém PTYs fora do renderer.
-      live: async () => [],
       testServerSpec: async (
         projectId: string,
         target: { missionId?: string; versionId?: string },
@@ -926,50 +786,12 @@ export function installDevMock(): void {
       },
       requestClose: () => undefined
     },
-    maestro: {
-      pendingQuestions: async () => [],
-      questionSeen: async () => true,
-      onUserQuestion: () => () => undefined,
-      onEvent: (cb) => {
-        maestroCb = cb
-        return () => {
-          maestroCb = null
-        }
-      },
-      onLive: (cb) => {
-        liveCb = cb
-        return () => {
-          liveCb = null
-        }
-      },
-      getState: async () => ({
-        log: [],
-        contextTokens: 87_000,
-        contextLimit: null,
-        contextWindow: 1_000_000,
-        model: null,
-        effort: null,
-        sessionId: 'mock-session',
-        bypass: true,
-        sensitiveBypassOk: false,
-        seatId: 's1',
-        version: 'v0.1'
-      }),
-      paneSpec: async () => null,
-      onCtx: (cb) => {
-        ctxCb = cb
-        return () => {
-          ctxCb = null
-        }
-      }
-    },
+    // O namespace `maestro` (chat do PM + ask_user) morreu na purga F6.
     perf: {
       reportStall: () => undefined
     },
-    harness: {
-      setBypass: async () => undefined,
-      setSensitiveBypass: async () => undefined
-    },
+    // O namespace `harness` (bypass do universo) morreu na purga F6: a
+    // permissão da era 2.0 é por CONVERSA.
     history: {
       search: async (input) => ({
         ok: true,
@@ -1042,10 +864,7 @@ export function installDevMock(): void {
       onEvent: () => () => undefined,
       onCommunication: () => () => undefined
     },
-    policies: {
-      get: async () => ({}),
-      onChanged: () => () => undefined
-    },
+    // O namespace `policies` (modelos por função) morreu na purga F6.
     catalog: {
       get: async (cli: 'claude' | 'codex') =>
         cli === 'claude'

@@ -1,4 +1,4 @@
-import type { Department, TaskStatus } from './store'
+import type { Department } from './store'
 
 export interface DeptInfo {
   key: Department
@@ -161,11 +161,7 @@ export function deptHueOf(key: Department, hues: Partial<Record<Department, numb
   return hues[key] ?? DEPT_BY_KEY[key].hue
 }
 
-export const STATUS_ORDER: TaskStatus[] = ['backlog', 'execucao', 'qa', 'done']
-
-export const STATUS_LABEL: Record<TaskStatus, string> = {
-  backlog: 'Backlog',
-  execucao: 'Em execução',
-  qa: 'QA',
-  done: 'Concluída'
-}
+// STATUS_ORDER e STATUS_LABEL descreviam as quatro colunas do KANBAN
+// (backlog → execução → QA → concluída). O kanban saiu na purga F6
+// (2026-08-17): o estado que a era 2.0 mostra é o da MISSÃO, e o vocabulário
+// dele mora em `missionPresentation.MISSION_STATUS_LABEL`.

@@ -16,9 +16,6 @@ import { badgeFor, dotClass } from '../missionPresentation'
 /** Uma linha da coluna, já resolvida pelo Board (a coluna não busca nada). */
 export interface MissionColumnEntry {
   mission: Mission
-  /** cards concluídos / total (plano fora da conta, como no resto do board) */
-  done: number
-  total: number
   seatName?: string
   model?: string
   versionLabel?: string
@@ -73,7 +70,7 @@ export default function MissionColumn({
           </div>
         )}
         {entries.map((entry) => {
-          const { mission, done, total } = entry
+          const { mission } = entry
           // MISSÃO DE PLANEJAMENTO (2.0): ela roda na RAIZ e não tem branch —
           // mostrar "⎇ sem branch (repo novo)" ali seria descrever uma falta
           // que não existe. No lugar entra o ✎, que diz a natureza dela.
@@ -100,15 +97,13 @@ export default function MissionColumn({
                 <span className="mc-title">{mission.title}</span>
                 {badge && <span className={`mc-badge ${badge.kind}`}>{badge.glyph}</span>}
               </span>
-              {(meta || entry.versionLabel || total > 0) && (
+              {/* O contador ▣ feitos/total de CARDS saiu na purga F6
+                  (2026-08-17): a missão 2.0 não tem card — o que ela tem é a
+                  conversa, e o andamento dela se lê no próprio chat. */}
+              {(meta || entry.versionLabel) && (
                 <span className="mc-meta">
                   {entry.versionLabel && <span className="mc-version">◈ {entry.versionLabel}</span>}
                   {meta && <span className="mc-seat">{meta}</span>}
-                  {total > 0 && (
-                    <span className="mc-count">
-                      ▣ {done}/{total}
-                    </span>
-                  )}
                 </span>
               )}
               {/* O WORKTREE embaixo de cada missão (pedido do dono): é ele que

@@ -12,7 +12,6 @@ import {
   missionDayLabel,
   projectKpis,
   recentConcluded,
-  showsTaskCount
 } from '../projectLanding'
 
 // PAINEL DO PROJETO — o ✦ geral de um universo QUE JÁ TEM MISSÃO (ordem do
@@ -200,7 +199,6 @@ function MissionRow({
   const waiting = waitingOnOwner(signal)
   const planning = missionTypeOf(mission) === 'planejamento'
   const day = missionDayLabel(mission)
-  const total = entry?.total ?? 0
   const label = MISSION_STATUS_LABEL[mission.status]
 
   const body = (
@@ -217,13 +215,6 @@ function MissionRow({
           <span className="pd-branch">✎ planejamento · escreve plano/</span>
         ) : (
           <span className="pd-branch">⎇ {mission.branch ?? 'sem branch (repo novo)'}</span>
-        )}
-        {/* ▣ só com card de verdade: missão 2.0 não cria nenhum, e 0/0 na tela
-            seria um número morto se passando por fato. */}
-        {showsTaskCount(total) && (
-          <span className="pd-count">
-            ▣ {entry?.done ?? 0}/{total}
-          </span>
         )}
         {entry?.queueLabel && <span className="pd-queue">{entry.queueLabel}</span>}
         {day && <span className="pd-day">{day}</span>}

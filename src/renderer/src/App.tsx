@@ -29,35 +29,14 @@ export default function App(): React.JSX.Element {
 
   const bridgeOk = typeof window.synkora !== 'undefined'
 
-  const appendMaestroEvent = useStore((s) => s.appendMaestroEvent)
-  const setMaestroCtx = useStore((s) => s.setMaestroCtx)
-  const handleMaestroLive = useStore((s) => s.handleMaestroLive)
-  const openDevPane = useStore((s) => s.openDevPane)
-  const closeTaskPane = useStore((s) => s.closeTaskPane)
-  const setTaskAttention = useStore((s) => s.setTaskAttention)
   const setPaneStats = useStore((s) => s.setPaneStats)
   const closePane = useStore((s) => s.closePane)
 
   useEffect(() => {
     if (!bridgeOk) return
-    void loadProjects().then(() => {
-      // perguntas do ask_user persistem no main — reidrata TODOS os projetos
-      // para o rail/abas pulsarem desde o boot (não só o board aberto)
-      for (const p of useStore.getState().projects) {
-        void useStore.getState().loadAskQuestions(p.id)
-      }
-    })
+    void loadProjects()
     void loadSeats()
     void loadSettings()
-    const offEvent = window.synkora.maestro.onEvent(appendMaestroEvent)
-    const offCtx = window.synkora.maestro.onCtx(setMaestroCtx)
-    const offLive = window.synkora.maestro.onLive(handleMaestroLive)
-    const offPaneOpen = window.synkora.tasks.onPaneOpen((projectId, taskId, spec) => {
-      // blip fraquinho de marco: o ouvido sabe que um gate entrou sem olhar
-      if (spec.role === 'review') playSoftBlip('review')
-      else if (spec.role === 'qa') playSoftBlip('qa')
-      openDevPane(projectId, taskId, spec)
-    })
     // missão/card integrado = nota de conclusão (bem baixa, throttle próprio)
     const offHubSound = window.synkora.hub.onEvent((evt) => {
       if (evt.kind === 'merge') playSoftBlip('done')
@@ -68,45 +47,12 @@ export default function App(): React.JSX.Element {
       if (kind === 'needs-you') playAttentionChime()
       else if (kind === 'finished') playSoftBlip('done')
     })
-    // O WebContents e os PTYs do main sobrevivem a um reload do renderer, mas
-    // o store React nasce vazio. Assinamos o evento primeiro para fechar a
-    // janela de corrida e reaplicamos o snapshot pelo MESMO openDevPane usado
-    // por `panes:open`; ele já deduplica paneId/fase.
-    let disposed = false
-    void window.synkora.panes.live().then((livePanes) => {
-      if (disposed) return
-      for (const pane of livePanes) {
-        openDevPane(pane.projectId, pane.taskId, pane.spec)
-      }
-    }).catch((error: unknown) => {
-      // Compatibilidade limpa durante atualização parcial (renderer novo com
-      // main antigo): a assinatura de eventos continua funcionando.
-      console.error('[panes] falha ao reidratar panes vivos', error)
-    })
-    // F3-c3: pane sem fase (agente livre/test server) nasce por evento do
-    // main — aqui só o ESPELHO da lista (quem monta é a view de panes).
+    // Pane sem fase (agente livre/test server) nasce por evento do main.
     const offOpenFree = window.synkora.panes.onOpenFree
       ? window.synkora.panes.onOpenFree((projectId, kind, opts) =>
           useStore.getState().addPane(projectId, kind as PaneKind, opts as PaneOptions)
         )
       : () => undefined
-    const offPaneClose = window.synkora.tasks.onPaneClose(closeTaskPane)
-    const offAttention = window.synkora.tasks.onAttention((taskId, paneId) => {
-      // plim SÓ na transição para "esperando" — repetição do evento não re-toca
-      const s = useStore.getState()
-      const isNew = paneId ? !s.paneAttention[paneId] : !s.taskAttention[taskId]
-      if (isNew) playAttentionChime()
-      setTaskAttention(taskId, paneId)
-    })
-    // ask_user é GLOBAL (rail + abas pulsam mesmo com outro projeto aberto);
-    // o plim toca na chegada de pergunta nova.
-    const offUserQuestion = window.synkora.maestro.onUserQuestion?.(
-      (pid, missionKey, question) => {
-        const current = useStore.getState().askQuestions[pid]?.[missionKey]
-        useStore.getState().noteUserQuestion(pid, missionKey, question)
-        if (current !== question) playAttentionChime()
-      }
-    ) ?? (() => undefined)
     const offStats = window.synkora.pty.onStats(setPaneStats)
     const offEffort = window.synkora.pty.onEffort
       ? window.synkora.pty.onEffort(useStore.getState().setPaneEffort)
@@ -117,7 +63,6 @@ export default function App(): React.JSX.Element {
     const offLastLines = window.synkora.pty.onLastLines
       ? window.synkora.pty.onLastLines(useStore.getState().setPaneLastLines)
       : () => undefined
-    const offCloseById = window.synkora.tasks.onPaneCloseById(closePane)
     const offSeats = window.synkora.seats.onChanged(() => void loadSeats())
     const offProjectFlow = window.synkora.projects.onFlowChanged(() => void loadProjects())
     const offProgressTarget = window.synkora.progress.onOpenTarget(({ projectId, missionId }) => {
@@ -126,12 +71,6 @@ export default function App(): React.JSX.Element {
       setMissionTab(projectId, missionId ?? null)
     })
     window.synkora.progress.ready()
-    // PM pode redefinir o kit ★ por função (set_default_skills) — as
-    // estrelas da página ✦ geral acompanham na hora.
-    const offPolicies = window.synkora.policies.onChanged(
-      (projectId) => void useStore.getState().loadPolicies(projectId)
-    )
-    // ——— F3-c4: costuras vindas da view de panes (via main) ———
     const offFilesNav = window.synkora.files.onNavigate
       ? window.synkora.files.onNavigate((projectId, result) => {
           if (!result.ok || result.action !== 'markdown') return
@@ -143,11 +82,9 @@ export default function App(): React.JSX.Element {
       ? window.synkora.settings.onChanged(() => void useStore.getState().loadSettings())
       : () => undefined
     return () => {
-      disposed = true
       offFilesNav()
       offSettings()
       offOpenFree()
-      offPolicies()
       offProgressTarget()
       offProjectFlow()
       offSeats()
@@ -155,18 +92,10 @@ export default function App(): React.JSX.Element {
       offEffort()
       offModel()
       offLastLines()
-      offCloseById()
-      offEvent()
-      offCtx()
-      offLive()
-      offPaneOpen()
       offHubSound()
       offGuiAlert()
-      offPaneClose()
-      offAttention()
-      offUserQuestion()
     }
-  }, [bridgeOk, loadProjects, loadSeats, loadSettings, openProject, setUniverseTab, setMissionTab, appendMaestroEvent, setMaestroCtx, handleMaestroLive, openDevPane, closeTaskPane, setTaskAttention, setPaneStats, closePane])
+  }, [bridgeOk, loadProjects, loadSeats, loadSettings, openProject, setUniverseTab, setMissionTab, setPaneStats])
 
   // Esc pertence ao CHAT ativo mesmo quando o foco está na lateral/header.
   // O registro dá prioridade ao card de pergunta e aos menus do composer.

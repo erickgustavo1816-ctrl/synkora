@@ -195,123 +195,8 @@ export type Department =
   | 'copy'
   | 'cyber'
   | 'data'
-export type TaskStatus = 'backlog' | 'execucao' | 'qa' | 'done'
-export type TaskType = 'feature' | 'bug'
-export type TaskEffort = 'leve' | 'pesada'
 export type MissionExecutionMode = 'fast' | 'standard' | 'deep'
 export type MissionRiskLevel = 'low' | 'medium' | 'high'
-export type TaskDelegationMode = 'none' | 'optional' | 'parallel'
-export type TaskDeliverableKind = 'code' | 'non_code'
-export type ManualSecurityValidation =
-  | { required: false; status: 'not_required' }
-  | { required: true; status: 'pending' }
-  | {
-      required: true
-      status: 'approved' | 'waived'
-      /** F6.6: gate especialista preenche sozinho com actor 'security-gate'. */
-      actor: 'user' | 'security-gate'
-      resolvedAt: string
-      evidence: string
-    }
-
-// F5.7 — card de PLANO: proposta do orquestrador que o usuário lê e aprova.
-export interface PlanLane {
-  dept: Department
-  notes?: string
-  seatId?: string
-  model?: string
-  effort?: string
-}
-
-export interface TaskPlan {
-  summary: string
-  lanes: PlanLane[]
-  executionMode?: MissionExecutionMode
-  risk?: MissionRiskLevel
-  riskSurfaces?: string[]
-  riskReasons?: string[]
-  securityPolicyVersion?: number
-  manualSecurityValidationRequired?: boolean
-  manualSecurityValidation?: ManualSecurityValidation
-  sizingReason?: string
-  expectedCards?: number
-  planningMethod?: {
-    contractVersion: 1
-    receiptId: string
-    skillId: string
-    operation: string
-    version: string
-    fingerprint: string
-    phaseRun: string
-    appliedAt: string
-  }
-  planningEvidenceState?: 'receipt_required' | 'verified' | 'legacy_unverified'
-  conclusion?: string
-  approvedAt?: string
-}
-
-export interface Task {
-  id: string
-  projectId: string
-  department: Department
-  type: TaskType
-  effort: TaskEffort
-  title: string
-  description: string
-  status: TaskStatus
-  origin: 'maestro' | 'manual'
-  createdAt: string
-  updatedAt: string
-  runSeat?: string
-  runModel?: string
-  cycles?: number
-  feedback?: string
-  /** ajuste pequeno pós-entrega, retomado no mesmo card/conversa */
-  adjustment?: { reason: string; requestedAt: string }
-  /** briefing escrito pelo Maestro — vira o prompt literal do executor */
-  briefing?: string
-  /** gates a rodar após o dev — ausente = review+qa; [] = nenhum */
-  gates?: ('review' | 'qa')[]
-  /** versão do projeto quando a tarefa foi criada */
-  version?: string
-  /** missão dona da tarefa — ausente = "Geral" (fora de missão) */
-  missionId?: string
-  /** checklist de quests: 1 card por área com vários itens */
-  quests?: string[]
-  /** skills da biblioteca carimbadas para este card (F4) */
-  skills?: string[]
-  /** subagentes da biblioteca disponíveis neste card (F4) */
-  agents?: string[]
-  delegation?: TaskDelegationMode
-  deliverable?: TaskDeliverableKind
-  dependsOn?: string[]
-  activePhase?: 'dev' | 'review' | 'qa'
-  phaseState?: 'pending' | 'running' | 'interrupted' | 'finalizing'
-  phaseStartedAt?: string
-  /** 'plan' = card de PLANO da missão (F5.7) */
-  kind?: 'plan'
-  /** conteúdo do plano (só em kind 'plan') */
-  plan?: TaskPlan
-  /** card criado/gerido pelo orquestrador — apenas visual no board */
-  auto?: boolean
-  /** card de plano sob o qual este card nasceu (progresso por plano) */
-  planId?: string
-  /** item estável do grafo aprovado que originou este card */
-  planItemId?: string
-}
-
-export interface NewTask {
-  department: Department
-  type: TaskType
-  effort: TaskEffort
-  title: string
-  description: string
-  origin: 'maestro' | 'manual'
-  gates?: ('review' | 'qa')[]
-  version?: string
-  missionId?: string
-  quests?: string[]
-}
 
 // Biblioteca de skills (F4): catálogo curado, instalado da fonte (GitHub) e
 // Missões (F3.8): fluxo de trabalho com orquestrador, tarefas e branch próprios.
@@ -463,40 +348,6 @@ export type TerminalFileOpenResult =
   | { ok: true; action: 'reveal' }
   | { ok: false; error: string }
 
-export interface PolicySlot {
-  seatId: string
-  model: string
-}
-
-export interface DeptPolicy {
-  heavy?: PolicySlot
-  light?: PolicySlot
-  /** skills instaladas na função (F4 injeta no executor) */
-  skills?: string[]
-  /** subagentes especializados da função (F4) */
-  agents?: string[]
-}
-
-export type ProjectPolicies = Partial<Record<Department, DeptPolicy>>
-
-export interface MaestroState {
-  log: MaestroEvent[]
-  contextTokens: number | null
-  contextLimit: number | null
-  contextWindow: number | null
-  model: string | null
-  effort: string | null
-  sessionId: string | null
-  /** bypass de permissões (padrão true — fluxo reto) */
-  bypass: boolean
-  /** superfície sensível liberada pelo dono (bypass vale mesmo em missão sensível) */
-  sensitiveBypassOk: boolean
-  /** seat do Maestro persistido no projeto (escolhido no gate de entrada) */
-  seatId: string | null
-  /** versão atual do projeto (carimbo das tarefas novas) */
-  version: string | null
-}
-
 // ————— PLANOS DO UNIVERSO (2.0, onda D) — BLOCO NOVO, contrato do MAPA —————
 //
 // Espelho ESTRUTURAL de src/main/plans.ts (o renderer nunca importa main). Os
@@ -630,59 +481,6 @@ export interface CliStatus {
   checkedAt: number
 }
 
-export interface MaestroEvent {
-  kind: 'cmd' | 'log' | 'ok' | 'err' | 'say' | 'tool' | 'out' | 'ask'
-  tag?: Department | 'maestro'
-  text: string
-  /** tool: input real (JSON) para expandir na UI */
-  detail?: string
-}
-
-export type PermissionChoice = 'allow' | 'allow-always' | 'deny'
-
-// Capacidades REAIS do CLI (handshake initialize do painel de fundo).
-export interface CliCommand {
-  name: string
-  description: string
-  argumentHint?: string
-}
-
-export interface CliModel {
-  value: string
-  resolvedModel?: string
-  displayName: string
-  description?: string
-  supportsEffort?: boolean
-  supportedEffortLevels?: string[]
-}
-
-export interface MaestroCaps {
-  commands: CliCommand[]
-  models: CliModel[]
-  account?: { email?: string; subscriptionType?: string }
-}
-
-// Eventos AO VIVO do painel de fundo do Maestro (não persistidos): texto
-// digitando, pedidos de permissão do CLI, fim de turno.
-export type MaestroLiveEvent =
-  | { type: 'delta'; text: string }
-  | { type: 'flush' }
-  | { type: 'thinking' }
-  | {
-      type: 'permission'
-      requestId: string
-      toolName: string
-      description: string
-      inputPretty: string
-      reason?: string
-      permissionRule?: string
-      canAlways: boolean
-    }
-  | { type: 'permission-cancel'; requestId: string }
-  | { type: 'turn-end'; status?: 'done' | 'error' }
-  | { type: 'phase'; phase: 'dev' | 'review' | 'qa' }
-  | { type: 'exit' }
-
 /** Telemetria viva de um pane, lida dos JSONL de sessão do próprio CLI. */
 export interface PaneStats {
   model?: string
@@ -694,36 +492,6 @@ export interface PaneStats {
   contextTokens: number | null
   contextWindow: number | null
   costUsd?: number
-}
-
-/** Spec de um pane TUI de execução (todas as fases rodam no terminal DE VERDADE). */
-export interface DevPaneSpec {
-  /** id do pane definido pelo main (o hub conhece cada pane pelo id) */
-  paneId: string
-  kind: 'claude' | 'codex'
-  seatId: string
-  model?: string
-  cwd: string
-  cliArgs?: string[]
-  initialPrompt: string
-  /** persona de subagente do ajudante (delegate.agent) — pane claude */
-  appendSystemPrompt?: string
-  logFile: string
-  title: string
-  role: 'dev' | 'review' | 'qa' | 'ajudante'
-  /** missão dona do pane — o mapa da aba Panes agrupa por aqui */
-  missionId?: string
-  /** pane que delegou (ajudante) — o mapa pendura o card no dev certo */
-  delegatorPaneId?: string
-}
-
-/** Pane gerenciado que continua vivo no processo principal durante um reload
- *  da interface. O renderer reaplica este snapshot pelo mesmo fluxo de
- *  `panes:open`, sem recriar a identidade do agente. */
-export interface LivePaneSnapshot {
-  projectId: string
-  taskId: string
-  spec: DevPaneSpec
 }
 
 /** Preferências globais editáveis; não inclui credenciais. */
@@ -979,102 +747,12 @@ const api = {
       return () => ipcRenderer.removeListener('seats:changed', listener)
     }
   },
-  tasks: {
-    onChanged: (cb: (projectId: string) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
-      ipcRenderer.on('tasks:changed', listener)
-      return () => ipcRenderer.removeListener('tasks:changed', listener)
-    },
-    list: (projectId: string): Promise<Task[]> => ipcRenderer.invoke('tasks:list', projectId),
-    create: (projectId: string, item: NewTask): Promise<Task[]> =>
-      ipcRenderer.invoke('tasks:create', projectId, item),
-    update: (id: string, patch: Partial<Task>): Promise<Task | undefined> =>
-      ipcRenderer.invoke('tasks:update', id, patch),
-    remove: (id: string): Promise<void> => ipcRenderer.invoke('tasks:remove', id),
-    // Execução (F3): dev em pane TUI real; gates headless com eventos ao vivo.
-    run: (
-      projectId: string,
-      taskId: string,
-      seatId: string,
-      model?: string,
-      effort?: string
-    ): Promise<DevPaneSpec | null> =>
-      ipcRenderer.invoke('tasks:run', projectId, taskId, seatId, model, effort),
-    // F5.7 — plano da missão: aprovar (com as lanes finais editadas pelo
-    // usuário) e pausar. O resto do ciclo é do orquestrador via MCP.
-    approvePlan: (
-      taskId: string,
-      lanes: PlanLane[],
-      // revisão (task.updatedAt) que o usuário VIU no modal — o main recusa se
-      // o orquestrador re-propôs no meio (CAS; caso real 2026-08-05)
-      seenRevision?: string
-    ): Promise<
-      | Task
-      | { staleRevision: true; currentRevision: string }
-      | { planningEvidenceRequired: true }
-      | undefined
-    > =>
-      ipcRenderer.invoke('tasks:planApprove', taskId, lanes, seenRevision),
-    stopPlan: (taskId: string): Promise<Task | undefined> =>
-      ipcRenderer.invoke('tasks:planStop', taskId),
-    resolvePlanSecurityValidation: (
-      taskId: string,
-      decision: 'approved' | 'waived',
-      evidence: string
-    ): Promise<Task | undefined> =>
-      ipcRenderer.invoke('tasks:planSecurityValidation', taskId, decision, evidence),
-    onPaneOpen: (
-      cb: (projectId: string, taskId: string, spec: DevPaneSpec) => void
-    ): (() => void) => {
-      const listener = (
-        _e: IpcRendererEvent,
-        projectId: string,
-        taskId: string,
-        spec: DevPaneSpec
-      ): void => cb(projectId, taskId, spec)
-      ipcRenderer.on('panes:open', listener)
-      return () => ipcRenderer.removeListener('panes:open', listener)
-    },
-    onPaneClose: (
-      cb: (projectId: string, taskId: string, role: 'dev' | 'review' | 'qa') => void
-    ): (() => void) => {
-      const listener = (
-        _e: IpcRendererEvent,
-        projectId: string,
-        taskId: string,
-        role: 'dev' | 'review' | 'qa'
-      ): void => cb(projectId, taskId, role)
-      ipcRenderer.on('panes:close', listener)
-      return () => ipcRenderer.removeListener('panes:close', listener)
-    },
-    onAttention: (cb: (taskId: string, paneId?: string) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, taskId: string, paneId?: string): void =>
-        cb(taskId, paneId)
-      ipcRenderer.on('tasks:attention', listener)
-      return () => ipcRenderer.removeListener('tasks:attention', listener)
-    },
-    onPaneCloseById: (cb: (projectId: string, paneId: string) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, projectId: string, paneId: string): void =>
-        cb(projectId, paneId)
-      ipcRenderer.on('panes:closeById', listener)
-      return () => ipcRenderer.removeListener('panes:closeById', listener)
-    },
-    // Troca de CONTA da fase ativa (dev/review/qa) sem perder contexto: o main
-    // mata o pane da fase, transplanta a conversa quando é claude→claude (o
-    // pane renasce via resume) e reabre o pane sozinho — codex/cross-CLI
-    // renasce fresco sobre o worktree preservado. O effort escolhido vira o
-    // novo carimbo do card.
-    setPhaseSeat: (
-      projectId: string,
-      taskId: string,
-      choice: { seatId: string; model?: string; effort?: string }
-    ): Promise<{ ok: boolean; msg: string }> =>
-      ipcRenderer.invoke('tasks:setPhaseSeat', projectId, taskId, choice)
-  },
+  // O NAMESPACE `tasks` (list/create/update/remove/run, aprovação e pausa de
+  // plano, e os eventos de pane de fase) morreu na purga F6 (2026-08-17) com o
+  // pipeline de cards que ele comandava.
   panes: {
     /** Snapshot dos panes gerenciados ainda vivos no processo principal.
      *  Usado para reidratar a UI depois de um reload do renderer. */
-    live: (): Promise<LivePaneSnapshot[]> => ipcRenderer.invoke('panes:live'),
     /** F3-c3: nascimento de pane sem fase (test server) chega por
      *  evento do main às DUAS views — quem monta é a view de panes; o host
      *  espelha a lista. */
@@ -1246,46 +924,8 @@ const api = {
       return () => ipcRenderer.removeListener('gui:alert', listener)
     }
   },
-  maestro: {
-    /** Perguntas dirigidas ao usuário (tool ask_user): a aba do board pulsa. */
-    pendingQuestions: (
-      projectId: string
-    ): Promise<{ projectId: string; missionKey: string; question: string; at: string }[]> =>
-      ipcRenderer.invoke('maestro:pendingQuestions', projectId),
-    questionSeen: (projectId: string, missionKey: string): Promise<boolean> =>
-      ipcRenderer.invoke('maestro:questionSeen', projectId, missionKey),
-    onUserQuestion: (
-      cb: (projectId: string, missionKey: string, question: string) => void
-    ): (() => void) => {
-      const listener = (
-        _e: IpcRendererEvent,
-        projectId: string,
-        missionKey: string,
-        question: string
-      ): void => cb(projectId, missionKey, question)
-      ipcRenderer.on('maestro:userQuestion', listener)
-      return () => ipcRenderer.removeListener('maestro:userQuestion', listener)
-    },
-    onLive: (cb: (evt: MaestroLiveEvent) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, evt: MaestroLiveEvent): void => cb(evt)
-      ipcRenderer.on('maestro:live', listener)
-      return () => ipcRenderer.removeListener('maestro:live', listener)
-    },
-    getState: (projectId: string): Promise<MaestroState> =>
-      ipcRenderer.invoke('maestro:getState', projectId),
-    onCtx: (cb: (tokens: number) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, tokens: number): void => cb(tokens)
-      ipcRenderer.on('maestro:ctx', listener)
-      return () => ipcRenderer.removeListener('maestro:ctx', listener)
-    },
-    paneSpec: (projectId: string): Promise<MaestroPaneSpec | null> =>
-      ipcRenderer.invoke('maestro:paneSpec', projectId),
-    onEvent: (cb: (evt: MaestroEvent) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, evt: MaestroEvent): void => cb(evt)
-      ipcRenderer.on('maestro:event', listener)
-      return () => ipcRenderer.removeListener('maestro:event', listener)
-    }
-  },
+  // O NAMESPACE `maestro` (estado do chat do PM, spec do pane TUI e o par de
+  // perguntas do ask_user) morreu na purga F6 (2026-08-17) com o papel.
   missions: {
     list: (projectId: string): Promise<Mission[]> =>
       ipcRenderer.invoke('missions:list', projectId),
@@ -1513,14 +1153,8 @@ const api = {
     /** travada do renderer (event-loop stall) → caixa-preta */
     reportStall: (lagMs: number): void => ipcRenderer.send('perf:renderer-stall', lagMs)
   },
-  harness: {
-    setBypass: (projectId: string, on: boolean): Promise<void> =>
-      ipcRenderer.invoke('harness:setBypass', projectId, on),
-    /** libera bypass mesmo em superfície sensível (por projeto; auditado) */
-    setSensitiveBypass: (projectId: string, on: boolean): Promise<void> =>
-      ipcRenderer.invoke('harness:setSensitiveBypass', projectId, on)
-  },
-  // ————— PLANOS DO UNIVERSO (2.0, onda D) — BLOCO NOVO —————
+  // O NAMESPACE `harness` (setBypass, setSensitiveBypass) morreu na purga F6:
+  // a permissão da era 2.0 é por CONVERSA, decidida no próprio chat.
   plans: {
     /** As abas do MAPA, já com o progresso derivado das missões. */
     list: (projectId: string): Promise<PlanView[]> => ipcRenderer.invoke('plans:list', projectId),
@@ -1576,16 +1210,8 @@ const api = {
       return () => ipcRenderer.removeListener('hub:communication', listener)
     }
   },
-  policies: {
-    get: (projectId: string): Promise<ProjectPolicies> =>
-      ipcRenderer.invoke('policies:get', projectId),
-    /** o MAIN mudou a política (ex.: PM definiu o kit ★ via set_default_skills) */
-    onChanged: (cb: (projectId: string) => void): (() => void) => {
-      const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
-      ipcRenderer.on('policies:changed', listener)
-      return () => ipcRenderer.removeListener('policies:changed', listener)
-    }
-  },
+  // O NAMESPACE `policies` (modelos por função) morreu na purga F6: quem
+  // escolhe conta e modelo é o dono, dentro da conversa.
   settings: {
     get: (): Promise<SynkoraSettings> => ipcRenderer.invoke('settings:get'),
     set: (patch: SynkoraSettingsPatch): Promise<SynkoraSettings> =>

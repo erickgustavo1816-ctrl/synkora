@@ -147,12 +147,12 @@ test('a data da linha usa o VERBO certo e cala quando não tem fonte', async () 
   assert.equal(formatDay('não é data'), null)
 })
 
-test('▣ só existe com card de verdade — missão 2.0 nunca mostra 0/0', async () => {
-  const { showsTaskCount } = await landing()
-
-  assert.equal(showsTaskCount(0), false)
-  assert.equal(showsTaskCount(3), true)
-  assert.equal(showsTaskCount(Number.NaN), false)
+test('o contador de cards não existe mais — nem o guarda dele', async () => {
+  // Os CARDS morreram na purga F6 (2026-08-17). O guarda `showsTaskCount`
+  // existia só para o ▣ nunca aparecer como 0/0; sem card, sem contador e sem
+  // guarda. Esta asserção existe para o par não voltar meio vivo.
+  const mod = await landing()
+  assert.equal('showsTaskCount' in mod, false)
 })
 
 test('dot, selo e palavra de estado são UMA fonte para a coluna e para o painel', async () => {
@@ -288,8 +288,8 @@ test('o painel do projeto é PAPEL, mostra o que os chips não dizem e nunca inv
   assert.match(dashboard, /✎ planejamento/u)
   assert.match(dashboard, /⎇ \{mission\.branch/u)
   assert.match(dashboard, /queueLabel/u)
-  // ▣ SEMPRE atrás do guarda — nunca "0/0" como se fosse fato.
-  assert.match(dashboard, /showsTaskCount\(total\) &&[\s\S]{0,200}▣/u)
+  // ▣ não existe mais: a missão 2.0 não tem card para contar.
+  assert.doesNotMatch(dashboard, /showsTaskCount|pd-count/u)
   // Arquivada é KPI, não linha: listá-la desfaria o arquivamento na prática.
   assert.doesNotMatch(code, /status === 'arquivada'/u)
   // O convite nunca some de vez: a landing continua oferecendo missão nova.

@@ -25,7 +25,6 @@ const MISSION_ICON: Record<MissionStatus, string> = {
 // versão, ordenação por criação; o "histórico…" do board morreu.
 function MissionsPane({ projectId, versions }: { projectId: string; versions: Version[] }): React.JSX.Element {
   const missions = useStore((s) => s.missions)
-  const tasks = useStore((s) => s.tasks)
   const archiveMission = useStore((s) => s.archiveMission)
   const deleteMission = useStore((s) => s.deleteMission)
   const setMissionTab = useStore((s) => s.setMissionTab)
@@ -133,15 +132,8 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
 
       <div className="ms-list" ref={listRef}>
         {shown.map((m) => {
-          const mTasks = tasks.filter((t) => t.missionId === m.id && t.kind !== 'plan')
-          const done = mTasks.filter((t) => t.status === 'done').length
-          const taskTip =
-            mTasks.length > 0
-              ? mTasks
-                  .slice(0, 8)
-                  .map((t) => `${t.status === 'done' ? '▣' : '▢'} ${t.title}`)
-                  .join('\n') + (mTasks.length > 8 ? `\n… +${mTasks.length - 8}` : '')
-              : 'sem tarefas'
+          // A linha ▣ feitos/total de CARDS saiu na purga F6 (2026-08-17): a
+          // missão 2.0 não cria card nenhum, e 0/0 não é informação.
           // TRÊS destinos, nunca um booleano só: missão viva abre no board;
           // missão encerrada de 2.0 abre a conversa gravada (somente leitura);
           // o resto não é clicável e diz por quê. Era aqui que a arquivada
@@ -184,10 +176,7 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
                   )}
                 </span>
                 <span className="ms-meta-line">
-                  <span data-tip={taskTip}>
-                    ▣ {done}/{mTasks.length} tarefa(s) concluída(s)
-                  </span>
-                  <span>· criada em {fmtAt(m.createdAt)}</span>
+                  <span>criada em {fmtAt(m.createdAt)}</span>
                   {m.status === 'concluida' && <span>· ✓ integrada em {fmtAt(m.updatedAt)}</span>}
                   {m.status === 'arquivada' && <span>· ⊟ arquivada em {fmtAt(m.updatedAt)}</span>}
                   {m.status === 'integrando' && <span>· ⇪ integrando desde {fmtAt(m.updatedAt)}</span>}
@@ -399,11 +388,6 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   }
   const selectable = shown.filter((i) => i.status === 'pendente')
   const picked = shown.filter((i) => selected.has(i.id) && i.status === 'pendente')
-  // Trabalho vivo FORA de qualquer versão (tarefa solta em execução/QA) — só
-  // aparece quando existe, para não sumir com trabalho de verdade.
-  const avulsas = stats
-    ? Math.max(0, stats.emCurso - stats.versoes.reduce((a, v) => a + v.emExec, 0))
-    : 0
 
   // Criação AUTOMÁTICA de versão (decisão do usuário): nada de digitar
   // número — as opções são calculadas da versão mais alta (patch/minor/major)
@@ -576,29 +560,12 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
                     </span>
                     <span className="stat-label">missões</span>
                   </div>
-                  <div
-                    className="stat-tile hot"
-                    data-tip={`tarefas da ${v.name} em execução/QA agora`}
-                  >
-                    <span className="stat-num">{v.emExec}</span>
-                    <span className="stat-label">em execução</span>
-                  </div>
-                  <div
-                    className="stat-tile ok"
-                    data-tip={`tarefas das missões da ${v.name} — concluídas/total`}
-                  >
-                    <span className="stat-num">{v.total > 0 ? `${v.feitas}/${v.total}` : '0'}</span>
-                    <span className="stat-label">concluídas</span>
-                  </div>
+                  {/* Os dois tiles de TAREFA (em execução · concluídas) saíram
+                      na purga F6 (2026-08-17): sem card, seriam sempre zero. */}
                 </div>
               </div>
             ))}
           </div>
-          {avulsas > 0 && (
-            <span className="vs-stats-loose">
-              ✧ {avulsas} em execução fora de versão (tarefas soltas)
-            </span>
-          )}
         </div>
       )}
 

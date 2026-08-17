@@ -129,143 +129,11 @@ export type Department =
   | 'copy'
   | 'cyber'
   | 'data'
-export type TaskStatus = 'backlog' | 'execucao' | 'qa' | 'done'
-export type TaskType = 'feature' | 'bug'
-export type TaskEffort = 'leve' | 'pesada'
-export type MissionExecutionMode = 'fast' | 'standard' | 'deep'
-export type MissionRiskLevel = 'low' | 'medium' | 'high'
-export type TaskDelegationMode = 'none' | 'optional' | 'parallel'
-export type TaskDeliverableKind = 'code' | 'non_code'
-export type ManualSecurityValidation =
-  | { required: false; status: 'not_required' }
-  | { required: true; status: 'pending' }
-  | {
-      required: true
-      status: 'approved' | 'waived'
-      /** F6.6: em modo estrito o GATE ESPECIALISTA (securityReview aprovado)
-       *  preenche a validação sozinho com actor 'security-gate'. */
-      actor: 'user' | 'security-gate'
-      resolvedAt: string
-      evidence: string
-    }
+// OS TIPOS DE CARD (TaskStatus/TaskType/TaskEffort/TaskDelegationMode/
+// TaskDeliverableKind/ManualSecurityValidation/PlanLane/TaskPlan/Task) e os de
+// PERFIL DE MISSÃO (MissionExecutionMode/MissionRiskLevel) saíram na purga F6
+// (2026-08-17): a missão 2.0 não tem card nem plano de lanes.
 
-// F5.7 — card de PLANO: proposta do orquestrador; o usuário lê, ajusta as
-// lanes (seat/modelo/effort por função) e aprova. Depois é tudo com ele.
-export interface PlanLane {
-  dept: Department
-  notes?: string
-  seatId?: string
-  model?: string
-  effort?: string
-}
-
-export interface TaskPlan {
-  summary: string
-  lanes: PlanLane[]
-  executionMode?: MissionExecutionMode
-  risk?: MissionRiskLevel
-  riskSurfaces?: string[]
-  riskReasons?: string[]
-  securityPolicyVersion?: number
-  manualSecurityValidationRequired?: boolean
-  manualSecurityValidation?: ManualSecurityValidation
-  sizingReason?: string
-  expectedCards?: number
-  conclusion?: string
-  approvedAt?: string
-}
-
-export interface Task {
-  id: string
-  projectId: string
-  department: Department
-  type: TaskType
-  effort: TaskEffort
-  title: string
-  description: string
-  status: TaskStatus
-  origin: 'maestro' | 'manual'
-  createdAt: string
-  updatedAt: string
-  runSeat?: string
-  runModel?: string
-  cycles?: number
-  feedback?: string
-  /** ajuste pequeno pós-entrega, retomado no mesmo card/conversa */
-  adjustment?: { reason: string; requestedAt: string }
-  /** briefing escrito pelo Maestro — vira o prompt literal do executor */
-  briefing?: string
-  /** gates a rodar após o dev — ausente = review+qa; [] = nenhum */
-  gates?: ('review' | 'qa')[]
-  /** versão do projeto quando a tarefa foi criada */
-  version?: string
-  /** missão dona da tarefa — ausente = "Geral" (fora de missão) */
-  missionId?: string
-  /** checklist de quests: 1 card por área com vários itens */
-  quests?: string[]
-  /** skills da biblioteca carimbadas para este card (F4) */
-  skills?: string[]
-  /** o card altera uma superficie visivel; declarado pelo plano quando aplicavel */
-  affectsUi?: boolean
-  /** plano efetivo da fase atual/mais recente, com uso comprovado por receipt */
-  skillUsage?: {
-    phase: 'dev' | 'review' | 'qa'
-    phaseRun: string
-    updatedAt: string
-    runStatus?: 'active' | 'completed' | 'interrupted'
-    skills: Array<{
-      receiptId?: string
-      id: string
-      operation: string
-      version?: string
-      fingerprint?: string
-      status: 'planned' | 'activated' | 'applied'
-    }>
-    agents?: Array<{
-      id: string
-      status: 'planned' | 'completed'
-    }>
-    history?: Array<{
-      phase: 'dev' | 'review' | 'qa'
-      phaseRun: string
-      updatedAt: string
-      runStatus?: 'active' | 'completed' | 'interrupted'
-      skills: Array<{
-        receiptId?: string
-        id: string
-        operation: string
-        version?: string
-        fingerprint?: string
-        status: 'planned' | 'activated' | 'applied'
-      }>
-      agents?: Array<{
-        id: string
-        status: 'planned' | 'completed'
-      }>
-    }>
-  }
-  /** subagentes da biblioteca disponíveis neste card (F4) */
-  agents?: string[]
-  delegation?: TaskDelegationMode
-  deliverable?: TaskDeliverableKind
-  dependsOn?: string[]
-  activePhase?: 'dev' | 'review' | 'qa'
-  phaseState?: 'pending' | 'running' | 'interrupted' | 'finalizing'
-  phaseStartedAt?: string
-  /** 'plan' = card de PLANO da missão (F5.7) */
-  kind?: 'plan'
-  plan?: TaskPlan
-  /** card do orquestrador em modo plano — apenas visual (sem mover/executar) */
-  auto?: boolean
-  /** card de plano sob o qual este card nasceu (progresso por plano) */
-  planId?: string
-  /** item estável do grafo aprovado que originou este card */
-  planItemId?: string
-}
-
-/** Retrato de um universo para o card da Home. Vive no store (e não num
- *  `useState` do card) porque os três canais que o invalidam — `tasks:changed`,
- *  `missions:changed`, `backlog:changed` — chegam no App, não no card. */
 /** Recorte de UMA versão para os stats (decisão do usuário, 2026-07-29:
  *  acumulado nunca é global — somar a história inteira vira ruído; e pode
  *  haver 2/3/6 versões em desenvolvimento ao mesmo tempo, então o retrato é
@@ -276,18 +144,11 @@ export interface VersionStats {
   /** missões da versão: entregues (deliveries) / entregues + vivas */
   missoesFeitas: number
   missoesTotal: number
-  /** tarefas das missões da versão: concluídas / total */
-  feitas: number
-  total: number
-  /** tarefas da versão em execução/qa AGORA (vivo) */
-  emExec: number
 }
 
 export interface HomeStats {
   /** VIVOS, globais (nunca acumulam): missões 'ativa' + 'integrando' */
   missoesAtivas: number
-  /** tarefas em andamento agora (execução + qa), soltas incluídas */
-  emCurso: number
   /** uma entrada por versão ABERTA (em dev), mais antiga primeiro; sem
    *  nenhuma aberta, a última LANÇADA entra sozinha como referência ("o que
    *  ela entregou"). Vazio = projeto nunca teve versão. */
@@ -429,21 +290,9 @@ export interface DocFile {
   size: number
 }
 
-export interface PolicySlot {
-  seatId: string
-  model: string
-}
-
-export interface DeptPolicy {
-  heavy?: PolicySlot
-  light?: PolicySlot
-  /** skills instaladas na função (F4 injeta no executor) */
-  skills?: string[]
-  /** subagentes especializados da função (F4) */
-  agents?: string[]
-}
-
-export type ProjectPolicies = Partial<Record<Department, DeptPolicy>>
+// A POLÍTICA DE MODELOS POR FUNÇÃO (PolicySlot/DeptPolicy/ProjectPolicies)
+// saiu na purga F6: quem escolhe conta e modelo na era 2.0 é o dono, dentro
+// da conversa.
 
 export interface CatalogModel {
   id: string
@@ -457,55 +306,9 @@ export interface Catalog {
   efforts: string[]
 }
 
-export interface MaestroEvent {
-  kind: 'cmd' | 'log' | 'ok' | 'err' | 'say' | 'tool' | 'out' | 'ask'
-  tag?: Department | 'maestro'
-  text: string
-  detail?: string
-}
-
-export type PermissionChoice = 'allow' | 'allow-always' | 'deny'
-
-export interface CliCommand {
-  name: string
-  description: string
-  argumentHint?: string
-}
-
-export interface CliModel {
-  value: string
-  resolvedModel?: string
-  displayName: string
-  description?: string
-  supportsEffort?: boolean
-  supportedEffortLevels?: string[]
-}
-
-export interface MaestroCaps {
-  commands: CliCommand[]
-  models: CliModel[]
-  account?: { email?: string; subscriptionType?: string }
-}
-
-export interface MaestroPermRequest {
-  requestId: string
-  toolName: string
-  description: string
-  inputPretty: string
-  reason?: string
-  permissionRule?: string
-  canAlways: boolean
-}
-
-export type MaestroLiveEvent =
-  | { type: 'delta'; text: string }
-  | { type: 'flush' }
-  | { type: 'thinking' }
-  | ({ type: 'permission' } & MaestroPermRequest)
-  | { type: 'permission-cancel'; requestId: string }
-  | { type: 'turn-end'; status?: 'done' | 'error' }
-  | { type: 'phase'; phase: 'dev' | 'review' | 'qa' }
-  | { type: 'exit' }
+// O ESPELHO DO CHAT DO MAESTRO (MaestroEvent, PermissionChoice, CliCommand,
+// CliModel, MaestroCaps, MaestroPermRequest, MaestroLiveEvent) morreu na purga
+// F6 (2026-08-17) com o painel que ele desenhava.
 
 /** Estado vivo de um pane: saída fluindo / ocioso aguardando / processo morto. */
 export type PaneActivity = 'run' | 'idle' | 'dead'
@@ -523,7 +326,6 @@ export interface PaneStats {
   costUsd?: number
 }
 
-// ————— PANE GUI (Synkora 2.0, onda A) —————
 // O pane GUI substitui a TUI por um CHAT: o motor é o mesmo (maestroSession /
 // codexSession, agora por pane) e o renderer só acumula os eventos de
 // `gui:live`. Contrato completo em docs/GUI_PANE_CONTRACT.md.
@@ -1744,81 +1546,17 @@ interface SynkoraState {
   openSettings: (section?: SettingsSection) => void
   closeSettings: () => void
   panesByProject: Record<string, Pane[]>
-  tasks: Task[]
-  maestroBusy: boolean
-  maestroLog: MaestroEvent[]
-  maestroCtx: number | null
-  maestroCtxLimit: number | null
-  maestroCtxWindow: number | null
-  maestroSessionId: string | null
-  maestroModel: string | null
-  maestroEffort: string | null
-  maestroStream: string
-  maestroThinking: boolean
-  maestroPerm: MaestroPermRequest | null
-  /** bypass de permissões (padrão ON — fluxo reto sem prompts) */
-  maestroBypass: boolean
-  toggleBypass: (projectId: string, on: boolean) => Promise<void>
-  /** superfície sensível liberada (bypass vale mesmo em missão sensível) */
-  sensitiveBypassOk: boolean
-  toggleSensitiveBypass: (projectId: string, on: boolean) => Promise<void>
-  /** seat do Maestro persistido no projeto. Null é ESTADO NORMAL na era 2.0:
-   *  entrar num projeto não pergunta conta nenhuma (o gate morreu em
-   *  2026-08-15) e só o mundo legado — pane do PM, fallback do orquestrador de
-   *  missão antiga — ainda lê este valor. */
-  maestroSeatId: string | null
-  /** incrementa a cada definição de seat/modelo/effort — o Board respawna o
-   *  pane. POR PROJETO: com um contador único, o bump feito no universo B ficava
-   *  PENDENTE no Board de A (que sai no guard `!isActive` sem consumir o ref) e,
-   *  ao voltar para A, o Maestro de A era morto e reaberto do nada. */
-  maestroSpecBumpByProject: Record<string, number>
-  /** /estudar em andamento, POR PROJETO. Sem escritor desde 2026-08-15: o botão
-   *  📚 estudar saiu do board com o resto das alavancas do PM. O leitor legado
-   *  (Board) ainda consulta o mapa. */
+  /** superfície sensível liberada — sem escritor na era 2.0 (o toggle saiu
+   *  da tela na onda D); o valor segue no maestroStore para o main. */
   surveyBusyByProject: Record<string, boolean>
   /** força REMONTAGEM de um universo já montado (relocação de pasta) */
   remountNonce: Record<string, number>
   /** zera a telemetria de um paneId (respawn de mesmo id) */
   resetPaneTelemetry: (paneId: string) => void
-  /** estado do maestro já carregado do main? (o Board só busca a spec do PM
-   *  legado depois disso — sem o guard, o seat do projeto ANTERIOR ainda está
-   *  no store por um instante e o pane respawnava à toa) */
-  maestroStateLoaded: boolean
-  maestroCaps: MaestroCaps | null
-  maestroCapsLoading: boolean
-  maestroCapsKey: string | null
-  runTask: (
-    projectId: string,
-    taskId: string,
-    seatId: string,
-    model?: string,
-    effort?: string
-  ) => Promise<void>
-  openDevPane: (projectId: string, taskId: string, spec: DevPaneSpec) => void
-  closeTaskPane: (projectId: string, taskId: string, role: 'dev' | 'review' | 'qa') => void
-  /** pane de tarefa pediu aprovação → card pulsa até o usuário interagir */
-  taskAttention: Record<string, boolean>
-  setTaskAttention: (taskId: string, paneId?: string) => void
   /** aprovação pendente POR PANE — dev, ajudantes e gate dividem o mesmo taskId,
    *  então o aviso do card não serve para saber QUAL terminal está travado */
   paneAttention: Record<string, boolean>
   clearPaneAttention: (projectId: string, paneId: string) => void
-  /** Perguntas do ask_user por projeto (projectId → missionKey → pergunta) —
-   *  GLOBAL para a atenção alcançar de qualquer lugar (rail, abas do
-   *  universo), não só a aba de missão do board (pedido do usuário,
-   *  2026-08-06). Quem dispensa é o Board VISÍVEL ao visitar a aba. */
-  askQuestions: Record<string, Record<string, string>>
-  loadAskQuestions: (projectId: string) => Promise<void>
-  noteUserQuestion: (projectId: string, missionKey: string, question: string) => void
-  clearAskQuestion: (projectId: string, missionKey: string) => void
-  handleMaestroLive: (evt: MaestroLiveEvent) => void
-  setMaestroCtxLimit: (limit: number | null) => void
-  appendMaestroEvent: (evt: MaestroEvent) => void
-  setMaestroCtx: (tokens: number | null) => void
-  clearMaestroLog: () => void
-  loadMaestroLog: (projectId: string) => Promise<void>
-  policies: ProjectPolicies
-  loadPolicies: (projectId: string) => Promise<void>
   /** missões do projeto ATIVO */
   missions: Mission[]
   loadMissions: (projectId: string) => Promise<void>
@@ -1972,36 +1710,6 @@ interface SynkoraState {
   /** estado vivo de cada pane: rodando (saída fluindo) / esperando / parado */
   paneActivity: Record<string, PaneActivity>
   setPaneActivity: (paneId: string, state: PaneActivity) => void
-  loadTasks: (projectId: string) => Promise<void>
-  createTask: (
-    projectId: string,
-    department: Department,
-    title: string,
-    description: string,
-    missionId?: string
-  ) => Promise<boolean>
-  updateTask: (id: string, patch: Partial<Task>) => Promise<void>
-  removeTask: (id: string) => Promise<void>
-  /** F5.7 — aprova o plano com as lanes finais (editadas pelo usuário) */
-  /** Aprova o plano; devolve {staleRevision} quando o orquestrador re-propôs
-   *  depois da revisão que o usuário estava lendo (CAS — a UI deve avisar e
-   *  recarregar em vez de aprovar contrato desatualizado). */
-  approvePlan: (
-    id: string,
-    lanes: PlanLane[],
-    seenRevision?: string
-  ) => Promise<
-    | { staleRevision: true; currentRevision: string }
-    | { planningEvidenceRequired: true }
-    | undefined
-  >
-  /** F5.7 — pausa o plano em execução (volta ao backlog) */
-  stopPlan: (id: string) => Promise<void>
-  resolvePlanSecurityValidation: (
-    id: string,
-    decision: 'approved' | 'waived',
-    evidence: string
-  ) => Promise<void>
 }
 
 const KIND_LABEL: Record<PaneKind, string> = {
@@ -2036,215 +1744,18 @@ export const useStore = create<SynkoraState>((set, get) => ({
     })),
   closeSettings: () => set({ appPage: 'workspace' }),
   panesByProject: {},
-  tasks: [],
-  maestroBusy: false,
-  maestroLog: [],
-
-  maestroCtx: null,
-  maestroCtxLimit: null,
-  maestroCtxWindow: null,
-  maestroSessionId: null,
-  maestroModel: null,
-  maestroEffort: null,
-  maestroStream: '',
-  maestroThinking: false,
-  maestroPerm: null,
-
-  maestroBypass: true,
-  toggleBypass: async (projectId, on) => {
-    set({ maestroBypass: on })
-    await window.synkora.harness.setBypass(projectId, on)
-  },
-  sensitiveBypassOk: false,
-  toggleSensitiveBypass: async (projectId, on) => {
-    set({ sensitiveBypassOk: on })
-    // preload antigo (HMR sem restart) pode não ter a API nova
-    if (window.synkora.harness.setSensitiveBypass) {
-      await window.synkora.harness.setSensitiveBypass(projectId, on)
-    }
-  },
-  maestroSeatId: null,
-  maestroSpecBumpByProject: {},
-  maestroStateLoaded: false,
-  maestroCaps: null,
-  maestroCapsLoading: false,
-  maestroCapsKey: null,
-
-  appendMaestroEvent: (evt) => set((s) => ({ maestroLog: [...s.maestroLog, evt] })),
-  setMaestroCtx: (tokens) => set({ maestroCtx: tokens }),
-  setMaestroCtxLimit: (limit) => set({ maestroCtxLimit: limit }),
-  clearMaestroLog: () =>
-    set({
-      maestroLog: [],
-      maestroCtx: null,
-      maestroSessionId: null,
-      maestroStream: '',
-      maestroThinking: false,
-      maestroPerm: null
-    }),
-
-  // Espelho dos eventos ao vivo do painel de fundo: o chat "bonito" renderiza
-  // exatamente o que o processo real está fazendo agora.
-  handleMaestroLive: (evt) => {
-    switch (evt.type) {
-      // delta/thinking/permission também LIGAM o busy: com steering e fila,
-      // um turno novo pode começar depois de um turn-end sem send() nosso.
-      case 'delta':
-        set((s) => ({
-          maestroStream: s.maestroStream + evt.text,
-          maestroThinking: false,
-          maestroBusy: true
-        }))
-        break
-      case 'flush':
-        set({ maestroStream: '' })
-        break
-      case 'thinking':
-        set({ maestroThinking: true, maestroBusy: true })
-        break
-      case 'permission': {
-        const { type: _type, ...perm } = evt
-        set({ maestroPerm: perm, maestroThinking: false, maestroBusy: true })
-        break
-      }
-      case 'permission-cancel':
-        set((s) =>
-          s.maestroPerm?.requestId === evt.requestId ? { maestroPerm: null } : {}
-        )
-        break
-      case 'turn-end':
-      case 'exit': {
-        set({ maestroStream: '', maestroThinking: false, maestroBusy: false, maestroPerm: null })
-        const pid = get().openProjectId
-        if (pid) {
-          void window.synkora.maestro.getState(pid).then((st) => {
-            set({
-              maestroSessionId: st.sessionId,
-              maestroModel: st.model,
-              maestroEffort: st.effort,
-              maestroCtxWindow: st.contextWindow,
-              maestroCtxLimit: st.contextLimit
-            })
-          })
-        }
-        break
-      }
-    }
-  },
-
-  // Dev roda num PANE TUI DE VERDADE: o main prepara worktree+transcript e
-  // devolve a spec. Como esta ação partiu do usuário, mostramos o pane aberto.
-  runTask: async (projectId, taskId, seatId, model, effort) => {
-    const spec = await window.synkora.tasks.run(projectId, taskId, seatId, model, effort)
-    if (!spec) return
-    get().openDevPane(projectId, taskId, spec)
-    // ONDA D: a aba PANES morreu; navegar para ela deixaria a área central
-    // vazia. O pane do pipeline legado segue registrado na lista.
-    await get().loadTasks(projectId)
-  },
-
-  openDevPane: (projectId, taskId, spec) => {
-    const panes = get().panesByProject[projectId] ?? []
-    if (panes.some((p) => p.id === spec.paneId)) return // já aberto
-    // ajudantes podem coexistir na mesma tarefa; fases (dev/review/qa) não.
-    if (spec.role !== 'ajudante' && taskId && panes.some((p) => p.taskId === taskId && p.role === spec.role))
-      return
-    get().addPane(projectId, spec.kind, {
-      id: spec.paneId,
-      seatId: spec.seatId,
-      taskId: taskId || undefined,
-      cwd: spec.cwd,
-      model: spec.model,
-      cliArgs: spec.cliArgs,
-      initialPrompt: spec.initialPrompt,
-      // persona de subagente do ajudante (delegate.agent) — pane claude
-      appendSystemPrompt: spec.appendSystemPrompt,
-      logFile: spec.logFile,
-      role: spec.role,
-      missionId: spec.missionId,
-      delegatorPaneId: spec.delegatorPaneId,
-      title: spec.title
-    })
-    // Não troca de aba aqui: este caminho também recebe panes automáticos
-    // (revisão, QA e ajudantes), que devem trabalhar sem tirar o usuário do Board.
-  },
-
-  // Fase terminou → o main manda fechar o pane daquela fase.
-  closeTaskPane: (projectId, taskId, role) => {
-    const panes = get().panesByProject[projectId] ?? []
-    const pane = panes.find((p) => p.taskId === taskId && p.role === role)
-    if (pane) get().closePane(projectId, pane.id)
-  },
-
-  taskAttention: {},
+  surveyBusyByProject: {},
   paneAttention: {},
-  askQuestions: {},
-  loadAskQuestions: async (projectId) => {
-    const list = await window.synkora.maestro.pendingQuestions?.(projectId)
-    if (!Array.isArray(list)) return
-    const map: Record<string, string> = {}
-    for (const q of list) map[q.missionKey] = q.question
-    set((s) => ({ askQuestions: { ...s.askQuestions, [projectId]: map } }))
-  },
-  noteUserQuestion: (projectId, missionKey, question) =>
-    set((s) => ({
-      askQuestions: {
-        ...s.askQuestions,
-        [projectId]: { ...(s.askQuestions[projectId] ?? {}), [missionKey]: question }
-      }
-    })),
-  clearAskQuestion: (projectId, missionKey) =>
-    set((s) => {
-      const project = s.askQuestions[projectId]
-      if (!project?.[missionKey]) return {}
-      const next = { ...project }
-      delete next[missionKey]
-      return { askQuestions: { ...s.askQuestions, [projectId]: next } }
-    }),
-  setTaskAttention: (taskId, paneId) =>
-    set((s) => ({
-      taskAttention: { ...s.taskAttention, [taskId]: true },
-      paneAttention: paneId ? { ...s.paneAttention, [paneId]: true } : s.paneAttention
-    })),
+
   // Digitar responde à aprovação DAQUELE pane; o card só para de pulsar quando
   // nenhum outro pane da tarefa ainda está esperando (antes, digitar em qualquer
   // irmão apagava o aviso do pane realmente travado).
   clearPaneAttention: (projectId, paneId) =>
     set((s) => {
-      const panes = s.panesByProject[projectId] ?? []
-      const pane = panes.find((p) => p.id === paneId)
       const paneAttention = { ...s.paneAttention }
       delete paneAttention[paneId]
-      if (!pane?.taskId) return { paneAttention }
-      const waiting = panes.some(
-        (p) => p.id !== paneId && p.taskId === pane.taskId && s.paneAttention[p.id]
-      )
-      if (waiting) return { paneAttention }
-      const taskAttention = { ...s.taskAttention }
-      delete taskAttention[pane.taskId]
-      return { paneAttention, taskAttention }
+      return { paneAttention }
     }),
-
-  loadMaestroLog: async (projectId) => {
-    const state = await window.synkora.maestro.getState(projectId)
-    // Resposta ATRASADA de um projeto que já não é o ativo sobrescrevia o
-    // estado global do universo VISÍVEL (troca rápida no rail deixava o board
-    // com os dados do outro, de forma permanente).
-    if (get().openProjectId !== projectId) return
-    set({
-      maestroLog: state.log,
-      maestroCtx: state.contextTokens,
-      maestroCtxLimit: state.contextLimit,
-      maestroCtxWindow: state.contextWindow,
-      maestroSessionId: state.sessionId,
-      maestroModel: state.model,
-      maestroEffort: state.effort,
-      maestroBypass: state.bypass,
-      sensitiveBypassOk: state.sensitiveBypassOk === true,
-      maestroSeatId: state.seatId,
-      maestroStateLoaded: true
-    })
-  },
 
   missions: [],
   // Preload antigo (app rodando sem restart) não tem a API de missões — os
@@ -2280,7 +1791,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
     if (pid) {
       get().setMissionTab(pid, null)
       await get().loadMissions(pid)
-      await get().loadTasks(pid)
     }
   },
   integrateMission: async (missionId) => {
@@ -2296,7 +1806,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
       missionTabByProject: { ...s.missionTabByProject, [projectId]: missionId }
     })),
 
-  policies: {},
   catalogByCli: {},
 
   // Cache POR SEAT (config dir próprio = lista própria); o main já cacheia a
@@ -2309,17 +1818,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
   },
 
   clearCatalogs: () => set({ catalogByCli: {} }),
-
-  loadPolicies: async (projectId) => {
-    const policies = await window.synkora.policies.get(projectId)
-    // Resposta ATRASADA de um projeto que já não é o ativo sobrescrevia o
-    // estado global do universo VISÍVEL (troca rápida no rail deixava o board
-    // com os dados do outro, de forma permanente).
-    if (get().openProjectId !== projectId) return
-    set({ policies })
-  },
-
-  surveyBusyByProject: {},
 
   loadProjects: async () => {
     const projects = await window.synkora.projects.list()
@@ -2411,13 +1909,13 @@ export const useStore = create<SynkoraState>((set, get) => ({
     set({ deptHues: next })
   },
 
-  // Três leituras de JSON já em memória no main (missions.json, tasks.json,
+  // Duas leituras de JSON já em memória no main (missions.json,
   // backlog.json). Nunca dispara no laço de render: quem chama é a Home no
-  // mount (escalonado) e os canais de mudança.
+  // mount (escalonado) e os canais de mudança. A terceira leitura era
+  // tasks.json, para contar CARDS — que morreram na purga F6 (2026-08-17).
   loadHomeStats: async (projectId) => {
-    const [missions, tasks, versions] = await Promise.all([
+    const [missions, versions] = await Promise.all([
       window.synkora.missions.list(projectId),
-      window.synkora.tasks.list(projectId),
       window.synkora.backlog.listVersions(projectId)
     ])
     // TODAS as versões abertas contam (pode haver 2/3/6 em dev ao mesmo
@@ -2433,16 +1931,12 @@ export const useStore = create<SynkoraState>((set, get) => ({
     // missão VIVA sem carimbo de versão conta na CORRENTE (aberta mais
     // antiga) — é nela que vai integrar (ensureDefaultVersion na integração)
     const correnteId = abertas[0]?.id
-    // card de PLANO (F5.7) não é trabalho — fora das contagens
-    const work = tasks.filter((t) => t.kind !== 'plan')
     const versoes = refs.map((v) => {
       const daVersao = (m: Mission): boolean =>
         m.versionId === v.id ||
         (!m.versionId &&
           v.id === correnteId &&
           (m.status === 'ativa' || m.status === 'integrando'))
-      const ids = new Set(missions.filter(daVersao).map((m) => m.id))
-      const scoped = work.filter((t) => t.missionId && ids.has(t.missionId))
       const vivas = missions.filter(
         (m) => daVersao(m) && (m.status === 'ativa' || m.status === 'integrando')
       ).length
@@ -2450,10 +1944,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
         name: v.name,
         lancada: v.status === 'lancada',
         missoesFeitas: v.deliveries.length,
-        missoesTotal: v.deliveries.length + vivas,
-        feitas: scoped.filter((t) => t.status === 'done').length,
-        total: scoped.length,
-        emExec: scoped.filter((t) => t.status === 'execucao' || t.status === 'qa').length
+        missoesTotal: v.deliveries.length + vivas
       }
     })
     set((s) => ({
@@ -2463,7 +1954,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
           missoesAtivas: missions.filter(
             (m) => m.status === 'ativa' || m.status === 'integrando'
           ).length,
-          emCurso: work.filter((t) => t.status === 'execucao' || t.status === 'qa').length,
           versoes,
           at: Date.now()
         }
@@ -2525,12 +2015,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
           ? [...s.mountedProjects, id]
           : s.mountedProjects
     }))
-    if (id) {
-      void get().loadTasks(id)
-      void get().loadPolicies(id)
-      void get().loadMaestroLog(id)
-      void get().loadMissions(id)
-    }
+    if (id) void get().loadMissions(id)
   },
 
   universeTabByProject: {},
@@ -2564,61 +2049,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
         ? {}
         : { paneActivity: { ...s.paneActivity, [paneId]: state } }
     ),
-
-  loadTasks: async (projectId) => {
-    const tasks = await window.synkora.tasks.list(projectId)
-    // Resposta ATRASADA de um projeto que já não é o ativo sobrescrevia o
-    // estado global do universo VISÍVEL (troca rápida no rail deixava o board
-    // com os dados do outro, de forma permanente).
-    if (get().openProjectId !== projectId) return
-    set({ tasks })
-  },
-
-  createTask: async (projectId, department, title, description, missionId) => {
-    const created = await window.synkora.tasks.create(projectId, {
-      department,
-      type: 'feature',
-      effort: 'leve',
-      title,
-      description,
-      missionId,
-      origin: 'manual'
-    })
-    await get().loadTasks(projectId)
-    return created.length > 0
-  },
-
-  updateTask: async (id, patch) => {
-    const updated = await window.synkora.tasks.update(id, patch)
-    if (updated) set((s) => ({ tasks: s.tasks.map((t) => (t.id === id ? updated : t)) }))
-  },
-
-  removeTask: async (id) => {
-    await window.synkora.tasks.remove(id)
-    set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id) }))
-  },
-
-  approvePlan: async (id, lanes, seenRevision) => {
-    const updated = await window.synkora.tasks.approvePlan(id, lanes, seenRevision)
-    if (updated && 'staleRevision' in updated) return updated
-    if (updated && 'planningEvidenceRequired' in updated) return updated
-    if (updated) set((s) => ({ tasks: s.tasks.map((t) => (t.id === id ? updated : t)) }))
-    return undefined
-  },
-
-  stopPlan: async (id) => {
-    const updated = await window.synkora.tasks.stopPlan(id)
-    if (updated) set((s) => ({ tasks: s.tasks.map((t) => (t.id === id ? updated : t)) }))
-  },
-
-  resolvePlanSecurityValidation: async (id, decision, evidence) => {
-    const updated = await window.synkora.tasks.resolvePlanSecurityValidation(
-      id,
-      decision,
-      evidence
-    )
-    if (updated) set((s) => ({ tasks: s.tasks.map((t) => (t.id === id ? updated : t)) }))
-  },
 
   // ————— PANE GUI —————
   // O pulso needs-perm continua sendo o `paneAttention` de sempre: pane TUI e
@@ -3292,19 +2722,8 @@ export const useStore = create<SynkoraState>((set, get) => ({
       get().dropGuiPane(paneId)
     }
     set((s) => {
-      const pane = (s.panesByProject[projectId] ?? []).find((p) => p.id === paneId)
-      const attention = { ...s.taskAttention }
       const paneAttention = { ...s.paneAttention }
       delete paneAttention[paneId]
-      // o card só para de pulsar se NENHUM outro pane da tarefa segue esperando
-      if (
-        pane?.taskId &&
-        !(s.panesByProject[projectId] ?? []).some(
-          (p) => p.id !== paneId && p.taskId === pane.taskId && s.paneAttention[p.id]
-        )
-      ) {
-        delete attention[pane.taskId]
-      }
       const stats = { ...s.paneStats }
       delete stats[paneId]
       const activity = { ...s.paneActivity }
@@ -3316,7 +2735,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
       const lastLines = { ...s.paneLastLines }
       delete lastLines[paneId]
       return {
-        taskAttention: attention,
         paneAttention,
         paneStats: stats,
         paneActivity: activity,

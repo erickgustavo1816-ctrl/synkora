@@ -111,11 +111,6 @@ export function missionDayLabel(mission: Mission): string | null {
   return born ? `criada em ${born}` : null
 }
 
-/**
- * `▣ feitas/total` só aparece com total > 0. Missão 2.0 não cria card: o zero
- * ali não seria "nada feito", seria "esta conta não se aplica" — e número
- * morto na tela é pior que número nenhum.
- */
-export function showsTaskCount(total: number): boolean {
-  return Number.isFinite(total) && total > 0
-}
+// `showsTaskCount` vivia aqui: guardava o `▣ feitas/total` para ele nunca
+// aparecer como 0/0. Os CARDS morreram na purga F6 (2026-08-17) — o contador
+// saiu inteiro, e um guarda de algo que não existe mais é debt, não proteção.

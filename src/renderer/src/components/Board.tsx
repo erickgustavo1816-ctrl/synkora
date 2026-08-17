@@ -28,13 +28,8 @@ import {
 import {
   useStore,
   missionTypeOf,
-  type Department,
   type Mission,
   type Pane,
-  type PlanLane,
-  type Task,
-  type TaskStatus,
-  type TaskType,
   type Version
 } from '../store'
 import type { GuiPaneSpawn, GuiPermissionMode } from '../guiApi'
@@ -94,10 +89,8 @@ interface Props {
 }
 
 const NO_PANES: never[] = []
-const NO_ASK_QUESTIONS: Record<string, string> = {}
 
 export default function Board({ projectId }: Props): React.JSX.Element {
-  const tasks = useStore((s) => s.tasks)
   const seats = useStore((s) => s.seats)
   const settings = useStore((s) => s.settings)
   const missions = useStore((s) => s.missions)
@@ -113,8 +106,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const setMissionTab = useStore((s) => s.setMissionTab)
   const panes = useStore((s) => s.panesByProject[projectId] ?? NO_PANES)
   const closePane = useStore((s) => s.closePane)
-  const loadTasks = useStore((s) => s.loadTasks)
-  const loadMaestroLog = useStore((s) => s.loadMaestroLog)
   const paneActivity = useStore((s) => s.paneActivity)
   const guiPanes = useStore((s) => s.guiPanes)
   const clearPaneAttention = useStore((s) => s.clearPaneAttention)
@@ -153,12 +144,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const [railReload, setRailReload] = useState(0)
   const [newMissionOpen, setNewMissionOpen] = useState(false)
   const [testServerOpen, setTestServerOpen] = useState(false)
-  // Perguntas dirigidas ao USUÁRIO (tool ask_user):
-  // a aba correspondente pulsa até ser aberta. O estado agora é GLOBAL no
-  // store (App assina e reidrata) — rail e abas do universo pulsam de
-  // qualquer lugar; aqui só se lê e se dispensa ao visitar.
-  const askPulse = useStore((s) => s.askQuestions[projectId] ?? NO_ASK_QUESTIONS)
-  const clearAskQuestion = useStore((s) => s.clearAskQuestion)
   const uniTab = useStore((s) => s.universeTabByProject[projectId] ?? 'board')
   // "nova missão a partir deste card" (card done de missão já integrada):
   // abre o MESMO modal com título/goal pré-preenchidos referenciando o card.
@@ -314,49 +299,21 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     window.addEventListener('blur', onCancel)
   }
 
-  const loadPolicies = useStore((s) => s.loadPolicies)
-  const taskAttention = useStore((s) => s.taskAttention)
-  // ONDA D: o bypass do UNIVERSO saiu da tela (a permissão é por conversa
-  // agora). As ações seguem no store, dormentes, para o pipeline legado.
-
   useEffect(() => {
-    void loadTasks(projectId)
-    void loadMaestroLog(projectId)
-    void loadPolicies(projectId)
     void loadMissions(projectId)
-  }, [projectId, loadTasks, loadMaestroLog, loadPolicies, loadMissions])
+  }, [projectId, loadMissions])
 
   // Missões mudaram no main (criada pelo PM, integrada, sync…) → recarrega.
   useEffect(() => {
     if (!window.synkora.missions) return
     return window.synkora.missions.onChanged((pid) => {
-      if (pid === projectId && useStore.getState().openProjectId === projectId) {
-        void loadMissions(projectId)
-        void loadTasks(projectId)
-      }
-    })
-  }, [projectId, loadMissions, loadTasks])
-
-  // O main avisa quando o Maestro cria tarefas — o board ATIVO recarrega na
-  // hora (boards escondidos não podem sobrescrever o estado global de tasks).
-  useEffect(() => {
-    return window.synkora.tasks.onChanged((pid) => {
       if (pid === projectId && useStore.getState().openProjectId === projectId)
-        void loadTasks(projectId)
+        void loadMissions(projectId)
     })
-  }, [projectId, loadTasks])
+  }, [projectId, loadMissions])
 
-  // RECONCILIADOR DO BOARD (caso real 2026-08-12: o merge concluiu o card às
-  // 18:50 e o board seguiu desenhando "em execução" — um tasks:changed se
-  // perdeu no caminho; princípio F6.10: nenhum passo depende de entrega
-  // única). Board ATIVO re-busca as tasks a cada 30s — push perdido custa
-  // segundos, nunca uma tela mentindo até o próximo evento.
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (useStore.getState().openProjectId === projectId) void loadTasks(projectId)
-    }, 30_000)
-    return () => window.clearInterval(timer)
-  }, [projectId, loadTasks])
+  // O poller de TAREFAS e o reconciliador de 30s saíram na purga F6: não há
+  // mais card para reconciliar — o estado da missão 2.0 é a conversa.
 
   // Missão selecionada (aba). SÓ missão VIVA vale: com selMission apontando para
   // uma missão concluída/arquivada a aba 🚀 dela desaparecia da fila mas nenhuma
@@ -371,30 +328,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   )
   const selMission = missionTab ? liveMissions.find((m) => m.id === missionTab) : undefined
 
-  // ask_user: reidrata as pendências deste projeto (a assinatura de perguntas
-  // novas é GLOBAL, no App). Visitar a aba marca a pergunta como vista — mas
-  // SÓ com o board realmente VISÍVEL: um Board montado-e-escondido (outro
-  // projeto aberto, ou usuário na aba Panes) dispensava a pergunta sem
-  // ninguém ver (bug achado na varredura do mapa, 2026-08-06).
-  const loadAskQuestions = useStore((s) => s.loadAskQuestions)
-  useEffect(() => {
-    void loadAskQuestions(projectId)
-  }, [projectId, loadAskQuestions])
-  useEffect(() => {
-    if (!isActive || uniTab !== 'board') return
-    const key = selMission?.id ?? 'geral'
-    if (!askPulse[key]) return
-    void window.synkora.maestro.questionSeen?.(projectId, key)
-    clearAskQuestion(projectId, key)
-  }, [projectId, selMission?.id, askPulse, isActive, uniTab, clearAskQuestion])
-  // Rede de segurança do ask_user (heurística, melhor esforço): pane de
-  // PM/orquestrador AQUIETADO com a última linha terminando em "?" e a aba
-  // escondida = provavelmente esperando o dono. Falso positivo custa um pulso
-  // discreto; visitar a aba dispensa AQUELA pergunta (linha igual não re-pulsa).
-  // A HEURÍSTICA DO "?" (última linha de um pane TUI terminando em pergunta)
-  // saiu na purga F6: ela lia `maestro-<projeto>` e `maestro-<projeto>--<missão>`,
-  // panes que não existem mais. O que sobra é o canal explícito do ask_user.
-  const tabPulse = askPulse
+  // O PULSO DAS ABAS saiu inteiro na purga F6 (2026-08-17): a heurística do
+  // "?" lia panes TUI que não existem mais, e o canal ask_user morreu com o
+  // papel que o usava (R-18). A pergunta do agente na era 2.0 é o
+  // GuiQuestionCard, dentro da própria conversa — e o card da missão já pulsa
+  // por ele (`waitingKind`, logo abaixo).
+  const tabPulse: Record<string, string> = {}
 
   // O SPAWN EM SEGUNDO PLANO dos orquestradores TUI saiu na purga F6, e com
   // ele o anti-loop de 3 mortes em 30s e a liberação de spec de missão
@@ -935,11 +874,8 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           ? 'o agente propôs um plano e espera seu aval'
           : 'o agente está esperando sua permissão nesta conversa'
       : undefined
-    const cards = tasks.filter((t) => t.missionId === m.id && t.kind !== 'plan')
     return {
       mission: m,
-      done: cards.filter((t) => t.status === 'done').length,
-      total: cards.length,
       seatName: seat?.name,
       model: (() => {
         const guiState = guiPanes[slots[0]?.spawn.paneId ?? '']

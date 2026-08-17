@@ -20,12 +20,9 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
   // migrar — quem nunca escolheu cai no board.
   const tab = useStore((s) => s.universeTabByProject[projectId] ?? 'board')
   const setTab = useStore((s) => s.setUniverseTab)
-  // Atenção alcançável de QUALQUER aba (pedido do usuário, 2026-08-06): a aba
-  // Board pulsa quando há pergunta do ask_user esperando e o dono está em
-  // outra aba.
-  const asking = useStore((s) =>
-    Object.keys(s.askQuestions[projectId] ?? {}).length > 0
-  )
+  // A aba Board pulsava com ❓ quando o ask_user tinha pergunta esperando; o
+  // canal saiu na purga F6 (2026-08-17) e a pergunta do agente na era 2.0 é o
+  // GuiQuestionCard, dentro da própria conversa.
   // IDENTIDADE NA BARRA DE CIMA (onda D): nome e pasta subiram da página
   // ✦ geral para cá — é a linha que já existe em toda tela do universo.
   const renameProject = useStore((s) => s.renameProject)
@@ -132,11 +129,10 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
         </div>
         <nav className="tabs">
           <button
-            className={`tab ${tab === 'board' ? 'active' : ''}${asking && tab !== 'board' ? ' tab-attn' : ''}`}
+            className={`tab ${tab === 'board' ? 'active' : ''}`}
             onClick={() => setTab(projectId, 'board')}
-            data-tip={asking && tab !== 'board' ? 'O Maestro/orquestrador fez uma pergunta — abra o board' : undefined}
           >
-            Board {asking && tab !== 'board' && <span className="tab-attn-glyph">❓</span>}
+            Board
           </button>
           {/* MAPA = PLANEJAMENTO (mockup): o quadro de rotas — uma linha por
               versão, uma coluna por etapa. A constelação ficou dormente. */}

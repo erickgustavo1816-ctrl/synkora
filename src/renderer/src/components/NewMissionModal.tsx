@@ -11,24 +11,21 @@ type MissionVersionChoices = {
 
 // Modal 🚀 NOVA MISSÃO — COMPARTILHADO entre o board (+ missão), a aba
 // Versões (criar missão a partir de itens: título/goal/versão chegam
-// pré-preenchidos; a versão vem travada) e a CONFIRMAÇÃO de missão criada
-// pelo PM (`confirmMission`: tudo read-only, só seat/modelo/effort editáveis —
-// o orquestrador só nasce depois da escolha; decisão do usuário, 02/08).
+// pré-preenchidos; a versão vem travada).
 // CRIAÇÃO 2.0 (ordem do dono, 2026-08-13): criar missão pergunta SÓ o TÍTULO
 // (+ a natureza missão/planejamento). Conta, modelo, effort e permissões se
 // decidem DENTRO da missão, na primeira conversa — nada de "herdar do
-// maestro". Goal/versão vindos por props (prefill do Board / aba Versões) são
-// contexto que o dono já escolheu: viajam no payload SEM renderizar campo.
-// Os modos travados (confirmMission/reseatMission — pipeline legado) mantêm
-// os selects de seat/modelo/effort exatamente como sempre.
+// conversa anterior. Goal/versão vindos por props (prefill do Board / aba
+// Versões) são contexto que o dono já escolheu: viajam no payload SEM
+// renderizar campo. Os dois MODOS TRAVADOS — confirmação do orquestrador e
+// troca de conta dele — saíram na purga F6 (2026-08-17) com o papel que
+// descreviam.
 export default function NewMissionModal({
   projectId,
   initialTitle,
   initialGoal,
   initialVersionId,
   lockVersion,
-  confirmMission,
-  reseatMission,
   onClose,
   onCreated
 }: {
@@ -38,28 +35,17 @@ export default function NewMissionModal({
   initialVersionId?: string
   /** true = a versão veio do contexto (aba Versões) e não pode ser trocada */
   lockVersion?: boolean
-  /** missão JÁ criada pelo PM aguardando a escolha do orquestrador */
-  confirmMission?: Mission
-  /** troca de CONTA do orquestrador no meio da missão (limite estourou):
-   *  mesmo CLI = a conversa é transplantada para o seat novo */
-  reseatMission?: Mission
   onClose: () => void
   onCreated?: (mission: Mission) => void | Promise<void>
 }): React.JSX.Element {
   const seats = useStore((s) => s.seats)
-  const maestroSeatId = useStore((s) => s.maestroSeatId)
   const createMission = useStore((s) => s.createMission)
   const loadCatalog = useStore((s) => s.loadCatalog)
 
-  const lockedMission = confirmMission ?? reseatMission
-  const [title, setTitle] = useState(lockedMission?.title ?? initialTitle ?? '')
-  const [goal, setGoal] = useState(lockedMission?.goal ?? initialGoal ?? '')
-  const [scope, setScope] = useState(lockedMission?.scope ?? '')
+  const [title, setTitle] = useState(initialTitle ?? '')
+  const [goal] = useState(initialGoal ?? '')
   const [submitError, setSubmitError] = useState('')
-  const [seatId, setSeatId] = useState(reseatMission?.seatId ?? '') // '' = herdar o seat do PM
-  const [model, setModel] = useState(reseatMission?.model ?? '')
-  const [effort, setEffort] = useState(reseatMission?.effort ?? '')
-  const [versionId, setVersionId] = useState(lockedMission?.versionId ?? initialVersionId ?? '')
+  const [versionId, setVersionId] = useState(initialVersionId ?? '')
   const [versions, setVersions] = useState<Version[]>([])
   const [versionChoices, setVersionChoices] = useState<MissionVersionChoices | null>(null)
   const [versionChoicesLoading, setVersionChoicesLoading] = useState(true)
@@ -71,17 +57,14 @@ export default function NewMissionModal({
   // quando a missão nasce PRESA a uma versão (aba Versões): ali o contexto já
   // disse que é entrega de produto, e planejamento não pertence a versão.
   const [missionType, setMissionType] = useState<MissionType>('dev')
-  const confirmOnly = Boolean(confirmMission)
-  const reseatOnly = Boolean(reseatMission)
-  const locked = confirmOnly || reseatOnly
-  const typeChoosable = !locked && !lockVersion
+  const typeChoosable = !lockVersion
   const planning = typeChoosable && missionType === 'planejamento'
   const eligibleVersions = versionChoices?.versions ?? []
   const defaultVersion = eligibleVersions.find(
     (version) => version.id === versionChoices?.defaultVersionId
   )
   const versionLookupBlocksCreation =
-    !locked && !lockVersion && !planning && (versionChoicesLoading || Boolean(versionChoicesError))
+    !lockVersion && !planning && (versionChoicesLoading || Boolean(versionChoicesError))
   const versionSelectorDisabled =
     planning || versionChoicesLoading || Boolean(versionChoicesError) || eligibleVersions.length === 0
   const versionSelectOptions = planning
@@ -133,7 +116,7 @@ export default function NewMissionModal({
         // O default vem do main, que aplica a mesma regra na criaÃ§Ã£o. O
         // seletor fica bloqueado enquanto esta leitura acontece, entÃ£o nunca
         // sobrescreve uma escolha manual do dono.
-        if (!locked && !lockVersion && !initialVersionId) {
+        if (!lockVersion && !initialVersionId) {
           setVersionId(choices.defaultVersionId ?? '')
         }
       })
@@ -148,58 +131,13 @@ export default function NewMissionModal({
     return () => {
       current = false
     }
-  }, [initialVersionId, lockVersion, locked, projectId])
+  }, [initialVersionId, lockVersion, projectId])
 
-  // Catálogo REAL do CLI do seat escolhido (ou herdado do PM) — alimenta o
-  // seletor de modelo e a lista de efforts. SÓ nos modos travados: a criação
-  // não tem mais selects, e o catálogo custa spawn de CLI.
-  const seatObj = seats.find((x) => x.id === (seatId || (maestroSeatId ?? '')))
-  const cli = seatObj?.cli ?? 'claude'
-  const catalog = useStore((s) => s.catalogByCli[`${cli}:${seatObj?.id ?? ''}`])
-  useEffect(() => {
-    if (locked && seatObj) void loadCatalog(cli, seatObj.id)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locked, cli, seatObj?.id, loadCatalog])
-  const effortOpts = catalog?.models.find((m) => m.id === model)?.efforts ?? catalog?.efforts ?? []
-  const maestroSeat = seats.find((x) => x.id === maestroSeatId)
+  // O catálogo de MODELOS (spawn de CLI) saiu junto com os modos travados: a
+  // criação 2.0 não tem selects de conta/modelo/effort — isso se decide
+  // DENTRO da missão, na primeira conversa.
 
   async function submit(): Promise<void> {
-    if (reseatMission) {
-      if (!seatId) {
-        setSubmitError('escolha a conta nova do orquestrador')
-        return
-      }
-      setSubmitError('')
-      const res = await window.synkora.missions.setOrchestratorSeat(projectId, reseatMission.id, {
-        seatId,
-        model: model.trim() || undefined,
-        effort: effort || undefined
-      })
-      if (!res.ok) {
-        setSubmitError(res.msg)
-        return
-      }
-      onClose()
-      return
-    }
-    if (confirmMission) {
-      setSubmitError('')
-      const ok = await window.synkora.missions.confirmOrchestrator(projectId, confirmMission.id, {
-        seatId: seatId || undefined,
-        model: model.trim() || undefined,
-        effort: effort || undefined
-      })
-      if (!ok) {
-        setSubmitError('não consegui gravar a escolha do orquestrador — tente de novo')
-        return
-      }
-      // Orquestrador decidido = a missão é o próximo lugar do usuário: pousa
-      // DIRETO na aba dela (pedido do usuário, 2026-08-06 — ficava no ✦ geral
-      // e exigia um clique a mais justo no momento de maior interesse).
-      useStore.getState().setMissionTab(projectId, confirmMission.id)
-      onClose()
-      return
-    }
     if (!title.trim()) return
     if (versionLookupBlocksCreation) {
       setSubmitError(versionChoicesError || 'aguarde o carregamento das versoes elegiveis')
@@ -245,15 +183,9 @@ export default function NewMissionModal({
       <div className="task-modal mission-modal" onClick={(e) => e.stopPropagation()}>
         <div className="task-modal-head">
           <span className="task-dept">
-            {reseatOnly
-              ? '⇄ trocar a conta do orquestrador'
-              : confirmOnly
-                ? '🚀 orquestrador da missão do Maestro'
-                : planning
-                  ? '✎ novo planejamento'
-                  : '🚀 nova missão'}
+            {planning ? '✎ novo planejamento' : '🚀 nova missão'}
           </span>
-          {(lockVersion || locked) && versionId && (
+          {lockVersion && versionId && (
             <span className="task-origin" data-tip="Versão herdada da aba Versões">
               ◈ {versions.find((v) => v.id === versionId)?.name ?? 'versão'}
             </span>
@@ -301,8 +233,7 @@ export default function NewMissionModal({
         )}
         <input
           className="task-modal-title"
-          autoFocus={!locked}
-          readOnly={locked}
+          autoFocus
           placeholder={
             planning ? 'título (ex.: Plano da V1.1)' : 'título (ex.: Tela de checkout)'
           }
@@ -310,7 +241,7 @@ export default function NewMissionModal({
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && void submit()}
         />
-        {!locked && !lockVersion && (
+        {!lockVersion && (
           <label className="mission-version-choice">
             {'vers\u00e3o de destino'}
             <Select
@@ -325,127 +256,33 @@ export default function NewMissionModal({
             </span>
           </label>
         )}
-        {/* Goal/escopo/executor SÓ nos modos travados (pipeline legado): a
-            criação 2.0 pergunta apenas o título — o resto se decide dentro
-            da missão, na primeira conversa. */}
-        {locked && (
-          <textarea
-            className="task-modal-desc"
-            rows={3}
-            readOnly
-            placeholder="objetivo em 1-3 frases (vira o contexto do agente)"
-            value={goal}
-            onChange={(e) => setGoal(e.target.value)}
-          />
-        )}
-        {locked && Boolean(scope) && (
-          <input
-            className="mission-scope-input"
-            readOnly
-            placeholder="escopo: áreas/paths que a missão vai tocar (ex.: src/renderer, tela de perfil)"
-            value={scope}
-            onChange={(e) => setScope(e.target.value)}
-          />
-        )}
-        {locked && (
-          <div className="mission-exec-row">
-            <label>
-              orquestrador (seat)
-              <Select
-                value={seatId}
-                onChange={(v) => {
-                  setSeatId(v)
-                  setModel('')
-                  setEffort('')
-                }}
-                options={[
-                  // na troca de conta a escolha é EXPLÍCITA — herdar não faz sentido
-                  ...(reseatOnly
-                    ? []
-                    : [
-                        {
-                          value: '',
-                          label: `herdar do maestro${maestroSeat ? ` (${maestroSeat.name})` : ''}`
-                        }
-                      ]),
-                  ...seats.map((s) => ({ value: s.id, label: s.name, cli: s.cli }))
-                ]}
-              />
-            </label>
-            <label>
-              modelo
-              <ModelSelect
-                cli={cli}
-                seatId={seatObj?.id}
-                value={model}
-                disabled={!seatObj}
-                onChange={(m) => {
-                  setModel(m)
-                  setEffort('')
-                }}
-              />
-            </label>
-            <label>
-              effort
-              <Select
-                value={effort}
-                onChange={setEffort}
-                options={[
-                  { value: '', label: 'padrão do modelo' },
-                  ...effortOpts.map((ef) => ({ value: ef, label: ef }))
-                ]}
-              />
-            </label>
-            <label>
-              versão do app
-              <Select
-                value={versionId}
-                disabled
-                tip="Versão escolhida pelo Maestro na criação da missão"
-                onChange={setVersionId}
-                options={[
-                  { value: '', label: '— nenhuma (direto na main) —' },
-                  ...versions
-                    .filter((v) => v.status === 'aberta' || v.id === versionId)
-                    .map((v) => ({ value: v.id, label: `◈ ${v.name}` }))
-                ]}
-              />
-            </label>
-          </div>
-        )}
+        {/* Goal, escopo e executor eram campos read-only dos modos travados
+            (pipeline legado) — saíram na purga F6 (2026-08-17). A criação 2.0
+            pergunta apenas o título: conta, modelo e permissões se decidem
+            dentro da missão, na primeira conversa. */}
         <div className="task-modal-actions">
           <span className="task-modal-meta">
-            {reseatOnly
-              ? 'mesma família de CLI = a CONVERSA vai junto para a conta nova (transplante de sessão); CLI diferente = o orquestrador se reergue pelo plano e board da missão'
-              : confirmOnly
-                ? 'o Maestro criou esta missão — escolha conta, modelo e effort do ORQUESTRADOR; ele só abre depois desta escolha'
-                : planning
-                  ? 'a conversa abre na RAIZ do projeto e entrega escrevendo plano/ — sem branch, sem worktree e fora da fila de integração'
-                  : versionChoicesLoading
-                    ? 'consultando as versoes abertas antes de criar a missao'
-                    : versionChoicesError
-                      ? versionChoicesError
-                      : eligibleVersions.length === 0
-                        ? 'n\u00e3o h\u00e1 vers\u00e3o aberta: ao criar, o Synkora abre a pr\u00f3xima vers\u00e3o e a miss\u00e3o integra nela'
-                        : versionId
-                          ? 'a missão nasce em branch/worktree próprios e integra na BRANCH DA VERSÃO — conta, modelo e permissões você escolhe dentro da missão, na primeira conversa'
-                          : 'a missão nasce em branch/worktree próprios — conta, modelo e permissões você escolhe dentro da missão, na primeira conversa'}
+            {planning
+              ? 'a conversa abre na RAIZ do projeto e entrega escrevendo plano/ — sem branch, sem worktree e fora da fila de integração'
+              : versionChoicesLoading
+                ? 'consultando as versoes abertas antes de criar a missao'
+                : versionChoicesError
+                  ? versionChoicesError
+                  : eligibleVersions.length === 0
+                    ? 'não há versão aberta: ao criar, o Synkora abre a próxima versão e a missão integra nela'
+                    : versionId
+                      ? 'a missão nasce em branch/worktree próprios e integra na BRANCH DA VERSÃO — conta, modelo e permissões você escolhe dentro da missão, na primeira conversa'
+                      : 'a missão nasce em branch/worktree próprios — conta, modelo e permissões você escolhe dentro da missão, na primeira conversa'}
           </span>
           <button className="btn ghost" onClick={onClose}>
-            {locked ? 'depois' : 'cancelar'}
+            cancelar
           </button>
           <button
             className="btn accent"
-            disabled={reseatOnly ? !seatId : !title.trim() || versionLookupBlocksCreation}
+            disabled={!title.trim() || versionLookupBlocksCreation}
             onClick={() => void submit()}
           >
-            {reseatOnly
-              ? '⇄ trocar conta'
-              : confirmOnly
-                ? '▶ abrir orquestrador'
-                : planning
-                  ? 'criar planejamento'
-                  : 'criar missão'}
+            {planning ? 'criar planejamento' : 'criar missão'}
           </button>
         </div>
       </div>

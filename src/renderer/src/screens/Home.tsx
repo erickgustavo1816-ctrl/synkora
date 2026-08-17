@@ -136,11 +136,9 @@ export default function Home(): React.JSX.Element {
   }, [projects, loadHomeStats])
 
   useEffect(() => {
-    const offTasks = window.synkora.tasks.onChanged((pid) => void loadHomeStats(pid))
     const offMissions = window.synkora.missions.onChanged((pid) => void loadHomeStats(pid))
     const offBacklog = window.synkora.backlog.onChanged((pid) => void loadHomeStats(pid))
     return () => {
-      offTasks()
       offMissions()
       offBacklog()
     }

@@ -76,11 +76,9 @@ export default function UniverseCard({ projectId, index, anchor }: Props): React
   const agg = versoes.reduce(
     (a, v) => ({
       missoesFeitas: a.missoesFeitas + v.missoesFeitas,
-      missoesTotal: a.missoesTotal + v.missoesTotal,
-      feitas: a.feitas + v.feitas,
-      total: a.total + v.total
+      missoesTotal: a.missoesTotal + v.missoesTotal
     }),
-    { missoesFeitas: 0, missoesTotal: 0, feitas: 0, total: 0 }
+    { missoesFeitas: 0, missoesTotal: 0 }
   )
   const activitySummary = !stats
     ? 'lendo atividade…'
@@ -89,8 +87,6 @@ export default function UniverseCard({ projectId, index, anchor }: Props): React
         agg.missoesTotal > 0
           ? `${agg.missoesFeitas}/${agg.missoesTotal} ${agg.missoesTotal === 1 ? 'missão' : 'missões'}`
           : null,
-        agg.total > 0 ? `${agg.feitas}/${agg.total} tarefas` : null,
-        stats.emCurso > 0 ? `${stats.emCurso} em curso` : null
       ]
         .filter(Boolean)
         .join(' · ') || 'sem trabalho em aberto'
@@ -258,13 +254,13 @@ export default function UniverseCard({ projectId, index, anchor }: Props): React
       <div className="uc-work">
         <span className="uc-work-label">atividade</span>
         <span className={`uc-work-text${stats ? '' : ' loading'}`}>{activitySummary}</span>
-        {stats && (agg.total > 0 || agg.missoesTotal > 0) && (
+        {/* A barra mede MISSÕES entregues. Media tarefas quando havia card;
+            eles morreram na purga F6 (2026-08-17) e a missão virou a unidade. */}
+        {stats && agg.missoesTotal > 0 && (
           <div
             className="uc-progress"
             data-tip={
-              (agg.total > 0
-                ? `${agg.feitas} de ${agg.total} tarefas concluídas`
-                : `${agg.missoesFeitas} de ${agg.missoesTotal} missões entregues`) +
+              `${agg.missoesFeitas} de ${agg.missoesTotal} missões entregues` +
               (versoes.length === 1
                 ? ` na ◈${versoes[0].name}`
                 : ` nas ${versoes.length} versões em dev`)
@@ -272,11 +268,7 @@ export default function UniverseCard({ projectId, index, anchor }: Props): React
           >
             <i
               style={{
-                width: `${Math.round(
-                  (agg.total > 0
-                    ? agg.feitas / agg.total
-                    : agg.missoesFeitas / agg.missoesTotal) * 100
-                )}%`
+                width: `${Math.round((agg.missoesFeitas / agg.missoesTotal) * 100)}%`
               }}
             />
           </div>
