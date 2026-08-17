@@ -7567,6 +7567,14 @@ body.pane-docking .pane-bar.draggable {
   border-radius: 10px;
 }
 
+/* PALCO VAZIO vence o palco: a caixa do palco agora é SEMPRE `.stage-window`
+   (o chrome escuro morreu na purga F6, 2026-08-17), e este par de classes
+   empata em especificidade com a regra acima — sem esta repetição o ✦ geral
+   sem missão e sem terminal ganhava uma faixa de papel vazia de ~17px. */
+.maestro-window.stage-window.stage-empty {
+  display: none;
+}
+
 /* o chat ocupa a caixa inteira: quem respira é o conteúdo dele, não a moldura */
 .stage-window .maestro-body {
   padding: 0;

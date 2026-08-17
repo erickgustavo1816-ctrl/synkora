@@ -33,13 +33,13 @@ test('falha de painel é contida, recuperável e não revela a exceção', () =>
 })
 
 test('painéis do board e do canvas ficam dentro do limite isolado', () => {
-  // A ilha panes-view morreu na purga F6 (2026-08-17) e o pipeline F6 saiu do
-  // Board (PlanModal, TaskModal, reseat do orquestrador, confirmação de
-  // exclusão): o piso caiu de 12 para 10. A CONTAGEM sozinha não protege nada
-  // — o que protege é a lista de paneId abaixo, que diz QUAL painel precisa
-  // estar dentro do limite. Baixar o número sem tirar um nome da lista é a
-  // única mexida legítima aqui.
-  assert.ok((board.match(/<GuiPanelErrorBoundary/g) ?? []).length >= 10)
+  // A ilha panes-view morreu na purga F6 (2026-08-17), e com ela saiu do
+  // Board todo o mundo LEGADO: PlanModal, TaskModal, reseat e confirmação de
+  // orquestrador, o slot do PM e os slots dos orquestradores TUI. O piso caiu
+  // de 12 para 7. A CONTAGEM sozinha não protege nada — o que protege é a
+  // lista de paneId abaixo, que diz QUAL painel precisa estar dentro do
+  // limite; baixar o número sem tirar um nome da lista não é possível.
+  assert.ok((board.match(/<GuiPanelErrorBoundary/g) ?? []).length >= 7)
   assert.match(board, /<GuiPanelErrorBoundary[\s\S]*<GuiPane/)
   assert.match(board, /<GuiPanelErrorBoundary[\s\S]*<TerminalPane/)
   for (const paneId of [

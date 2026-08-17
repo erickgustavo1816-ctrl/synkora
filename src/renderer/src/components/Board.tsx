@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import PaneChrome, { ZERO_STATS, prettyModel } from './PaneChrome'
+import { prettyModel } from './PaneChrome'
 import TerminalPane from './TerminalPane'
 import GuiPane from './GuiPane'
 import GuiPanelErrorBoundary from './GuiPanelErrorBoundary'
@@ -67,11 +67,8 @@ const MISSION_GUI_ROLE_LABEL: Record<MissionGuiRole, string> = {
 // O mapa de papel→chrome (MISSION_GUI_PANE_ROLE) e o LED da sessão
 // (GUI_ACTIVITY) morreram com o titlebar escuro sobre o chat: no palco 2.0 a
 // identidade da conversa é a PÍLULA ativa + a linha fina do MissionStageHead,
-// e o estado do turno é o próprio chat (cursor de streaming). O PaneChrome
-// segue vivo — só para o mundo legado, onde o que roda é um TUI.
-
-// Spec do pane TUI do Maestro (tipo vem da bridge do preload).
-type MaestroPaneSpec = NonNullable<Awaited<ReturnType<typeof window.synkora.maestro.paneSpec>>>
+// e o estado do turno é o próprio chat (cursor de streaming). Do PaneChrome
+// só sobrou `prettyModel`, que embeleza o id do modelo na linha fina.
 
 function integrationQueueLabel(mission: Mission): string | undefined {
   const integration = mission.integration
@@ -114,19 +111,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const integrateMission = useStore((s) => s.integrateMission)
   const missionTab = useStore((s) => s.missionTabByProject[projectId] ?? null)
   const setMissionTab = useStore((s) => s.setMissionTab)
-  const maestroModel = useStore((s) => s.maestroModel)
-  const maestroEffort = useStore((s) => s.maestroEffort)
   const panes = useStore((s) => s.panesByProject[projectId] ?? NO_PANES)
   const closePane = useStore((s) => s.closePane)
   const loadTasks = useStore((s) => s.loadTasks)
   const loadMaestroLog = useStore((s) => s.loadMaestroLog)
-  // Seat do PM: hoje só alimenta o chrome do mundo LEGADO (marca do CLI do
-  // pane do Maestro e o fallback de seat do orquestrador de missão antiga).
-  // Missão 2.0 nunca passa por aqui — a conta dela é `mission.seatId`.
-  const maestroSeatId = useStore((s) => s.maestroSeatId)
-  const paneStats = useStore((s) => s.paneStats)
-  const paneEffort = useStore((s) => s.paneEffort)
-  const paneModel = useStore((s) => s.paneModel)
   const paneActivity = useStore((s) => s.paneActivity)
   const guiPanes = useStore((s) => s.guiPanes)
   const clearPaneAttention = useStore((s) => s.clearPaneAttention)
@@ -136,11 +124,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const isActive = useStore((s) => s.openProjectId === projectId)
   const appPage = useStore((s) => s.appPage)
   const projectFlow = useStore((s) => s.projects.find((p) => p.id === projectId))
-  // Spec do pane TUI do Maestro/PM (terminal real; persona + MCP + resume).
-  const [maestroSpec, setMaestroSpec] = useState<MaestroPaneSpec | null>(null)
-  // Specs dos ORQUESTRADORES por missão — panes ficam MONTADOS (display:none
-  // fora da aba ativa), como tudo que roda CLI de verdade.
-  const [missionSpecs, setMissionSpecs] = useState<Record<string, MaestroPaneSpec>>({})
   // MISSÃO DIRETA (2.0): no lugar do orquestrador TUI, uma ou mais CONVERSAS
   // GUI no worktree — o agente (dev), o revisor de sessão limpa e ajudantes.
   // Todas ficam MONTADAS depois de abertas (a conversa É o trabalho); trocar
@@ -169,25 +152,14 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // O trilho de entrega re-mede o diff quando isto muda (⇪, arquivar…).
   const [railReload, setRailReload] = useState(0)
   const [newMissionOpen, setNewMissionOpen] = useState(false)
-  // Troca de CONTA do orquestrador no meio da missão (limite estourou):
-  // mesmo CLI = a conversa é transplantada junto (sondas 2026-08-04).
   const [testServerOpen, setTestServerOpen] = useState(false)
-  // Perguntas do Maestro/orquestrador dirigidas ao USUÁRIO (tool ask_user):
+  // Perguntas dirigidas ao USUÁRIO (tool ask_user):
   // a aba correspondente pulsa até ser aberta. O estado agora é GLOBAL no
   // store (App assina e reidrata) — rail e abas do universo pulsam de
   // qualquer lugar; aqui só se lê e se dispensa ao visitar.
   const askPulse = useStore((s) => s.askQuestions[projectId] ?? NO_ASK_QUESTIONS)
   const clearAskQuestion = useStore((s) => s.clearAskQuestion)
   const uniTab = useStore((s) => s.universeTabByProject[projectId] ?? 'board')
-  // Missão criada pelo PM aguardando a escolha do orquestrador no modal;
-  // "depois" marca dismissed e o placeholder da aba da missão reabre.
-  const [pendingOrchDismissed, setPendingOrchDismissed] = useState<Record<string, boolean>>({})
-  // Missão DIRETA nunca pede orquestrador: se um carimbo legado de
-  // `pendingOrchestrator` sobrar nela, o modal de escolha não deve abrir —
-  // não há orquestrador para nascer.
-  const pendingOrchMission = missions.find(
-    (m) => m.status === 'ativa' && m.pendingOrchestrator && !m.direct
-  )
   // "nova missão a partir deste card" (card done de missão já integrada):
   // abre o MESMO modal com título/goal pré-preenchidos referenciando o card.
   const [missionPrefill, setMissionPrefill] = useState<{ title: string; goal: string } | null>(
@@ -386,61 +358,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     return () => window.clearInterval(timer)
   }, [projectId, loadTasks])
 
-  const maestroStateLoaded = useStore((s) => s.maestroStateLoaded)
-
-  // MISSÃO LEGADA VIVA (2.0): o PM permanente existe para o ECOSSISTEMA antigo
-  // — orquestradores, cards, fila, ask_user. Missão DIRETA não tem nada disso:
-  // a conversa É o trabalho, e planejar virou uma sessão PONTUAL. Sem nenhuma
-  // missão legada viva o Maestro não nasce (o main veta o paneSpec do mesmo
-  // jeito) e a coluna ✦ geral vira a casa do planejamento.
-  const hasLegacyLiveMission = missions.some(
-    (m) =>
-      m.projectId === projectId &&
-      (m.status === 'ativa' || m.status === 'integrando') &&
-      !m.direct
-  )
-
-  // Seat escolhido (gate) → busca a spec do pane TUI do Maestro. Só busca
-  // quando FALTA spec ou o seat mudou: paneSpec RESPAWNA o processo no main,
-  // e o pane vivo deve sobreviver à troca de projeto (universos montados).
-  // GUARD maestroStateLoaded: ao VOLTAR para o projeto, o maestroSeatId
-  // global ainda é o do projeto anterior por um instante — sem o guard o
-  // Board achava que o seat mudou e respawnava o Maestro à toa.
-  const maestroSpecBump = useStore((s) => s.maestroSpecBumpByProject[projectId] ?? 0)
-  const lastBumpRef = useRef(maestroSpecBump)
-  useEffect(() => {
-    if (!isActive || !maestroStateLoaded) return
-    let stale = false
-    if (!maestroSeatId) {
-      setMaestroSpec(null)
-      return
-    }
-    // Sem missão legada viva o PM não tem ecossistema para coordenar: nem
-    // pede spec (o main recusaria). Um pane JÁ vivo daqui não é derrubado —
-    // matá-lo jogaria fora a conversa do dono por causa de um merge.
-    if (!hasLegacyLiveMission) return
-    // bump = usuário redefiniu seat/modelo/effort no gate (o main já matou o
-    // pane) — busca spec nova mesmo com o seat igual
-    const bumped = lastBumpRef.current !== maestroSpecBump
-    if (maestroSpec && maestroSpec.seatId === maestroSeatId && !bumped) return
-    lastBumpRef.current = maestroSpecBump
-    void window.synkora.maestro.paneSpec(projectId).then((spec) => {
-      if (!stale) setMaestroSpec(spec)
-    })
-    return () => {
-      stale = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    projectId,
-    maestroSeatId,
-    isActive,
-    maestroStateLoaded,
-    maestroSpec?.seatId,
-    maestroSpecBump,
-    hasLegacyLiveMission
-  ])
-
   // Missão selecionada (aba). SÓ missão VIVA vale: com selMission apontando para
   // uma missão concluída/arquivada a aba 🚀 dela desaparecia da fila mas nenhuma
   // aba ficava ativa — a página ✦ geral não renderizava e o terminal do PM
@@ -474,112 +391,14 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // PM/orquestrador AQUIETADO com a última linha terminando em "?" e a aba
   // escondida = provavelmente esperando o dono. Falso positivo custa um pulso
   // discreto; visitar a aba dispensa AQUELA pergunta (linha igual não re-pulsa).
-  const paneLastLines = useStore((s) => s.paneLastLines)
-  const [dismissedQ, setDismissedQ] = useState<Record<string, string>>({})
-  const heurPulse = useMemo(() => {
-    const out: Record<string, string> = {}
-    const check = (paneId: string, key: string): void => {
-      const lines = paneLastLines[paneId]
-      if (!lines?.length) return
-      const last = [...lines].reverse().find((l) => l.trim())?.trim()
-      if (!last || !last.endsWith('?')) return
-      if (paneActivity[paneId] === 'run') return
-      if (dismissedQ[key] === last) return
-      out[key] = last
-    }
-    check(`maestro-${projectId}`, 'geral')
-    for (const m of liveMissions) check(`maestro-${projectId}--${m.id}`, m.id)
-    return out
-  }, [paneLastLines, paneActivity, dismissedQ, projectId, liveMissions])
-  useEffect(() => {
-    const key = selMission?.id ?? 'geral'
-    if (heurPulse[key]) setDismissedQ((p) => ({ ...p, [key]: heurPulse[key] }))
-  }, [selMission?.id, heurPulse])
-  // ask_user (tool) tem prioridade sobre a heurística no rótulo do tooltip
-  const tabPulse = { ...heurPulse, ...askPulse }
+  // A HEURÍSTICA DO "?" (última linha de um pane TUI terminando em pergunta)
+  // saiu na purga F6: ela lia `maestro-<projeto>` e `maestro-<projeto>--<missão>`,
+  // panes que não existem mais. O que sobra é o canal explícito do ask_user.
+  const tabPulse = askPulse
 
-  // Orquestradores rodam EM SEGUNDO PLANO desde a criação da missão (decisão
-  // do usuário): TODA missão viva do projeto ativo ganha spec/pane na hora —
-  // trocar de aba já encontra o orquestrador pronto. paneSpec RESPAWNA o
-  // processo, então só busca quando FALTA; a trava de voo evita o fetch duplo
-  // (o efeito redispara enquanto o 1º resolve — dava banner duplicado).
-  const missionSpecInFlight = useRef<Set<string>>(new Set())
-  // Mortes recentes por missão: pane que morre NO SPAWN virava loop infinito
-  // de respawn (33 ciclos em 02/08 — persona acima do teto de argv do
-  // Windows). 3 mortes em 30s = para de ressuscitar e avisa; o merge-falhou
-  // legítimo (mortes com minutos de intervalo) nunca atinge a janela.
-  const missionDeaths = useRef<Record<string, number[]>>({})
-  const [missionHalted, setMissionHalted] = useState<Record<string, boolean>>({})
-  useEffect(() => {
-    if (!isActive || !window.synkora.missions) return
-    for (const m of missions) {
-      if (m.status !== 'ativa' && m.status !== 'integrando') continue
-      // MISSÃO 2.0: direta NÃO tem orquestrador. Sai antes do paneSpec — que
-      // spawnaria um CLI TUI com a persona de orquestrador em cima de uma
-      // missão que não tem plano nem cards para ele dirigir.
-      if (m.direct) continue
-      // aguardando o modal de escolha do orquestrador — o paneSpec recusaria
-      if (m.pendingOrchestrator) continue
-      const current = missionSpecs[m.id]
-      if (current && paneActivity[current.paneId] === 'dead') {
-        // Um merge pode falhar depois da pré-checagem e depois de o Windows
-        // exigir o fechamento do processo que segurava o worktree. Soltar a
-        // spec força um orquestrador novo a nascer para executar a decisão do
-        // Maestro; branch, transcript e fila continuam preservados.
-        const now = Date.now()
-        const deaths = (missionDeaths.current[m.id] ??= [])
-        deaths.push(now)
-        while (deaths.length > 5) deaths.shift()
-        if (deaths.filter((t) => now - t < 30_000).length >= 3) {
-          setMissionHalted((prev) => (prev[m.id] ? prev : { ...prev, [m.id]: true }))
-        }
-        resetPaneTelemetry(current.paneId)
-        setMissionSpecs((prev) => {
-          if (prev[m.id]?.paneId !== current.paneId) return prev
-          const next = { ...prev }
-          delete next[m.id]
-          return next
-        })
-        continue
-      }
-      // Integração em voo: o main fechou o pane DE PROPÓSITO antes do merge
-      // (um cwd no worktree travaria a limpeza — caso real M02d 06/08) e o
-      // paneSpec recusaria de qualquer forma. O respawn volta sozinho no
-      // desfecho: falha → 'ativa' + missions:changed; sucesso → 'concluida'.
-      if (m.status === 'integrando') continue
-      if (missionHalted[m.id]) continue
-      if (current || missionSpecInFlight.current.has(m.id)) continue
-      const mid = m.id
-      missionSpecInFlight.current.add(mid)
-      void window.synkora.missions
-        .paneSpec(projectId, mid)
-        .then((spec) => {
-          if (spec) setMissionSpecs((prev) => ({ ...prev, [mid]: spec }))
-        })
-        .finally(() => missionSpecInFlight.current.delete(mid))
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, isActive, missions, missionSpecs, paneActivity, missionHalted, resetPaneTelemetry])
-
-  // Missão concluída/arquivada → o main já matou o pane do orquestrador;
-  // solta a spec para o slot sumir. ATENÇÃO: missão AUSENTE da lista NÃO
-  // conta — `missions` é global e vira a lista de OUTRO projeto quando o
-  // usuário troca de universo (apagar aqui matava o PTY e causava o respawn
-  // ao voltar).
-  useEffect(() => {
-    setMissionSpecs((prev) => {
-      let changed = false
-      const next = { ...prev }
-      for (const id of Object.keys(next)) {
-        const m = missions.find((x) => x.id === id)
-        if (m && (m.status === 'concluida' || m.status === 'arquivada')) {
-          delete next[id]
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-  }, [missions])
+  // O SPAWN EM SEGUNDO PLANO dos orquestradores TUI saiu na purga F6, e com
+  // ele o anti-loop de 3 mortes em 30s e a liberação de spec de missão
+  // concluída. Missão 2.0 não tem orquestrador: tem conversa.
 
   // ————— MISSÃO DIRETA: as conversas do worktree —————
   // Nada nasce em segundo plano (cada slot é um CLI de verdade): o chat do
@@ -671,16 +490,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     selMission && missionTermPanes.some((p) => p.id === missionTerm[selMission.id])
       ? (missionTerm[selMission.id] as string)
       : null
-  // ✦ GERAL SEM PM LEGADO NÃO TEM CONVERSA (2.0): o convite de planejamento
-  // saiu daqui, então um terminal avulso vivo é o ÚNICO habitante possível do
-  // palco — o foco cai nele mesmo que o escolhido tenha morrido, senão o pane
-  // seguia rodando atrás de uma tela vazia, sem porta. Com o PM legado vivo o
-  // "← conversa" continua valendo e `null` é uma escolha do dono.
-  const generalTermFocused = generalTermPanes.some((p) => p.id === generalTerm)
-    ? generalTerm
-    : null
+  // ✦ GERAL NÃO TEM CONVERSA (2.0): um terminal avulso vivo é o ÚNICO
+  // habitante possível do palco — o foco cai nele mesmo que o escolhido tenha
+  // morrido, senão o pane seguia rodando atrás de uma tela vazia, sem porta.
   const generalTermId =
-    generalTermFocused ?? (maestroSpec ? null : (generalTermPanes[0]?.id ?? null))
+    (generalTermPanes.some((p) => p.id === generalTerm) ? generalTerm : null) ??
+    (generalTermPanes[0]?.id ?? null)
 
   // Terminal recém-nascido ganha o foco: o dono acabou de clicar em "▷
   // terminal"/"▶ testar" — mostrar a conversa no lugar seria engolir o que ele
@@ -894,12 +709,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     setRailReload((n) => n + 1)
   }
 
-  // Tarefa travada = há um pane executando ela agora.
-  const maestroSeat = seats.find((x) => x.id === maestroSeatId)
-  const selSpec = selMission ? missionSpecs[selMission.id] : undefined
-  const selSeat = selSpec ? seats.find((x) => x.id === selSpec.seatId) : undefined
-  // Missão DIRETA: quem ocupa o centro é uma conversa GUI, não um TUI. O slot
-  // ativo manda no chrome (modelo/estado vêm do estado do chat, não do PTY).
+  // Missão DIRETA (2.0): quem ocupa o centro é uma CONVERSA no worktree.
   const isDirect = Boolean(selMission?.direct)
   // NATUREZA da missão selecionada (2.0): planejamento roda na RAIZ, não tem
   // branch/worktree e não abre revisor nem ajudante — o palco é o MESMO de uma
@@ -919,17 +729,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const activeTermPane = missionTab
     ? missionTermPanes.find((p) => p.id === missionTermId)
     : generalTermPanes.find((p) => p.id === generalTermId)
-  // ✦ GERAL COMEÇA VAZIO (ordem do dono, 2026-08-13). O convite de
-  // planejamento que nascia sozinho aqui MORREU: planejar é uma MISSÃO que ele
-  // cria, e enquanto ele não criar nada o centro do universo é só o retrato do
-  // projeto. Com PM legado vivo nada muda — o slot dele continua como era.
-  const maestroSlotActive = !missionTab && !generalTermId
-  // O PALCO só existe quando há o que mostrar nele: a conversa/orquestrador de
-  // uma missão selecionada, um terminal avulso do universo ou o PM legado. Sem
-  // nada disso a janela inteira sai da tela (por CSS — desmontar remontaria os
-  // slots montados atrás e mataria PTYs) e o retrato ocupa a linha sozinho.
-  const stageEmpty = !missionTab && !maestroSpec && !generalTermId
-
+  // O PALCO só existe quando há o que mostrar: a conversa de uma missão 2.0
+  // (mesmo antes de nascer — ali aparece a escolha de conta) ou um terminal em
+  // foco. ✦ geral sem terminal e missão LEGADA (que perdeu o TUI na purga F6)
+  // não têm habitante: a janela inteira sai da tela por CSS — desmontar
+  // remontaria os slots de trás e mataria PTYs — e o retrato do projeto ocupa
+  // a linha sozinho.
   // ——————————————————————————————————————————————————————————————————————
   // O PALCO (mockup aprovado, docs/MOCKUP_WORKSPACE.md).
   //
@@ -944,6 +749,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // ——————————————————————————————————————————————————————————————————————
   const stageMode = isDirect
   const stageTermPane = activeTermPane
+  const stageEmpty = !selMission && !activeTermPane
   // Missão de planejamento tem UMA conversa só: chamá-la de "agente" esconderia
   // justamente a natureza que o dono escolheu ao criá-la.
   const stageRoleLabel = isPlanningMission
@@ -1033,8 +839,8 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     }
   }
 
-  /** A cabeça do palco existe quando há CONVERSA (missão direta) ou quando há
-   *  pílula para oferecer — é o caso do ✦ geral com um terminal avulso vivo. */
+  /** A LINHA FINA descreve o que está no palco: uma conversa (missão direta)
+   *  ou o terminal em foco — inclusive o avulso do ✦ geral. */
   const stageHead = stageMode || stagePills.length > 0
 
   // A LINHA FINA do mockup: `dev · opus 4.8 · mission/1f3a`, texto apagado,
@@ -1108,18 +914,16 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // Linhas da coluna da esquerda: o Board resolve tudo (conta, modelo, versão,
   // progresso, pulso) e a coluna só desenha.
   const missionColumnEntries: MissionColumnEntry[] = liveMissions.map((m) => {
-    const spec = missionSpecs[m.id]
     const slots = missionGuiSlots[m.id] ?? []
-    // Missão direta: a conta/modelo que aparecem no card são os da CONVERSA
-    // aberta (o que o dono está de fato gastando ali), não os de um
-    // orquestrador que não existe.
+    // A conta/modelo que aparecem no card são os da CONVERSA aberta (o que o
+    // dono está de fato gastando ali); sem conversa, a conta carimbada na
+    // missão.
     const guiSpawn = slots[0]?.spawn
     const seat = guiSpawn
       ? seats.find((x) => x.configDir && x.configDir === guiSpawn.configDir)
-      : seats.find((x) => x.id === (spec?.seatId ?? m.seatId ?? maestroSeatId))
-    // O chat não escreve em `paneLastLines`, então a heurística do "?" não o
-    // alcança: o que PARA a conversa esperando o dono (permissão, pergunta com
-    // opções, plano a aprovar) é o sinal real e precisa pulsar o card.
+      : seats.find((x) => x.id === m.seatId)
+    // O que PARA a conversa esperando o dono (permissão, pergunta com opções,
+    // plano a aprovar) é o sinal real e precisa pulsar o card.
     const waitingPane = slots.find((s) => {
       const pane = guiPanes[s.spawn.paneId]
       return pane?.perm || pane?.question || pane?.planReview
@@ -1141,7 +945,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         const guiState = guiPanes[slots[0]?.spawn.paneId ?? '']
         return guiState?.executorKnown
           ? guiState.executorModel ?? guiState.model ?? guiSpawn?.model
-          : guiSpawn?.model ?? guiState?.model ?? spec?.model ?? m.model
+          : guiSpawn?.model ?? guiState?.model ?? m.model
       })(),
       versionLabel: versionName(m.versionId),
       pulse: tabPulse[m.id] ?? waitingKind,
@@ -1188,280 +992,26 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           dentro roda um TUI de verdade. Só a CLASSE muda — trocar a caixa
           remontaria os slots e mataria as sessões. */}
       <div
-        className={`maestro-window${stageHead ? ' stage-window' : ' term-window'}${
-          stageEmpty ? ' stage-empty' : ''
-        }`}
+        className={`maestro-window stage-window${stageEmpty ? ' stage-empty' : ''}`}
         ref={winRef}
       >
-        {stageHead ? (
-          /* Sem `actions`: as alavancas do universo (estudar/conta/limpar)
-             moravam na cabeça do palco de PLANEJAMENTO, que morreu — e em
-             2026-08-15 saíram do app inteiro junto com o papel de Maestro. */
-          <MissionStageHead pills={stagePills} meta={stageMetaParts} />
-        ) : (
-        <PaneChrome
-          // CHROME DE TERMINAL — só o mundo LEGADO passa por aqui (missão com
-          // orquestrador TUI, ou o PM enquanto existir missão legada viva). O
-          // palco 2.0 (missão direta, de dev ou de planejamento) tem a cabeça
-          // em papel do MissionStageHead: nenhum ramo `isDirect` alcança este
-          // ponto, e por isso ele não existe mais nestas escolhas.
-          role={
-            activeTermPane ? 'livre' : selMission ? 'orquestrador' : 'maestro'
-          }
-          kind={
-            activeTermPane
-              ? 'shell'
-              : selMission
-                ? (selSpec?.kind ?? maestroSeat?.cli ?? 'claude')
-                : (maestroSeat?.cli ?? 'claude')
-          }
-          seatName={
-            activeTermPane ? undefined : selMission ? selSeat?.name : maestroSeat?.name
-          }
-          // valor VIVO do TUI (pty:model/pty:effort, muda na hora da troca via
-          // /model) > configurado.
-          model={
-            activeTermPane
-              ? undefined
-              : selMission
-                ? ((selSpec ? paneModel[selSpec.paneId] : undefined) ??
-                  selSpec?.model ??
-                  selMission.model)
-                : ((maestroSpec ? paneModel[maestroSpec.paneId] : undefined) ??
-                  maestroModel ??
-                  undefined)
-          }
-          effort={
-            activeTermPane
-              ? undefined
-              : selMission
-                ? ((selSpec ? paneEffort[selSpec.paneId] : undefined) ?? selMission.effort)
-                : ((maestroSpec ? paneEffort[maestroSpec.paneId] : undefined) ??
-                  maestroEffort ??
-                  undefined)
-          }
-          // sem repetição: o chip de papel já diz MAESTRO/ORQUESTRADOR — o
-          // título é SÓ o nome da missão (PM fica sem título)
-          title={activeTermPane ? activeTermPane.title : selMission ? selMission.title : ''}
-          stats={
-            activeTermPane
-              ? (paneStats[activeTermPane.id] ?? ZERO_STATS)
-              : selMission
-                ? selSpec
-                  ? (paneStats[selSpec.paneId] ?? ZERO_STATS)
-                  : undefined
-                : maestroSpec
-                  ? (paneStats[maestroSpec.paneId] ?? ZERO_STATS)
-                  : undefined
-          }
-          pinStats={Boolean(selMission)}
-          activity={
-            activeTermPane
-              ? paneActivity[activeTermPane.id]
-              : selMission
-                ? selSpec
-                  ? paneActivity[selSpec.paneId]
-                  : undefined
-                : maestroSpec
-                  ? paneActivity[maestroSpec.paneId]
-                  : undefined
-          }
-          priorityDetails={
-            selMission ? (
-              <>
-                {selMission.versionId && (
-                  <span
-                    className="stat-chip version-chip mission-version-chip"
-                    data-tip="Versão do app desta missão — ela integra na branch da versão, não na main"
-                  >
-                    {versionName(selMission.versionId) ?? 'versão'}
-                  </span>
-                )}
-                <button
-                  className={`stat-chip model code-chip mission-ref-chip${
-                    missionCopied ? ' copied' : ''
-                  }`}
-                  data-tip={`Código da missão — clique para copiar e enviar ao Maestro: ${selMission.id}${
-                    selMission.branch
-                      ? ` · branch ${selMission.branch} (base: ${selMission.baseBranch ?? '?'})`
-                      : ''
-                  }`}
-                  aria-label={`Copiar código da missão ${selMission.id}`}
-                  onClick={() => {
-                    void navigator.clipboard.writeText(selMission.id)
-                    setMissionCopied(true)
-                    window.setTimeout(() => setMissionCopied(false), 1500)
-                  }}
-                >
-                  {missionCopied ? '✓ copiado' : `#${selMission.id.slice(0, 8)}`}
-                </button>
-                {selMission.status === 'integrando' && (
-                  <span className="pane-task-badge run-running">⇪ integrando…</span>
-                )}
-                {selMission.integration && selMission.status !== 'integrando' && (
-                  <span
-                    className={`pane-task-badge integration-${selMission.integration.state}`}
-                    data-tip={selMission.integration.lastError}
-                  >
-                    {selMission.integration.state === 'blocked'
-                      ? selMission.integration.owner === 'orchestrator'
-                        ? '⚠ reparo do destino pendente'
-                        : '⚠ Maestro decidindo'
-                      : selMission.integration.state === 'sync_required'
-                        ? '↻ sincronizando'
-                        : `⇪ fila #${selMission.integration.position}/${selMission.integration.total}`}
-                  </span>
-                )}
-                {selMission.status === 'concluida' && (
-                  <span className="pane-task-badge run-done">✓ integrada</span>
-                )}
-              </>
-            ) : undefined
-          }
-        >
-          {/* O SELETOR DE CONVERSAS saiu daqui: em modo 2.0 ele é a linha de
-              pílulas em PAPEL no topo do palco (MissionStageHead). Este chrome
-              escuro só sobrevive na missão LEGADA, que não tem conversa GUI
-              nenhuma para selecionar. */}
-          {/* ONDA D — CHAT ↔ TERMINAL: os terminais da missão (▷ terminal,
-              ▶ teste e, em missão legada, os panes do pipeline) entram como
-              aba nesta mesma barra. Fechar é no × — e fechar DERRUBA o
-              processo (é o mesmo requestClose do trilho), por isso o tooltip
-              diz isso com todas as letras. */}
-          {selMission &&
-            missionTermPanes
-              .filter((p) => p.missionId === selMission.id)
-              .map((pane) => (
-                <span key={pane.id} className="mission-gui-tab-wrap">
-                  <button
-                    className={`term-btn ghost-dim mission-gui-tab${
-                      missionTermId === pane.id ? ' active' : ''
-                    }`}
-                    data-tip={`Ver o terminal "${pane.title}" desta missão`}
-                    onClick={() =>
-                      setMissionTerm((prev) => ({ ...prev, [selMission.id]: pane.id }))
-                    }
-                  >
-                    ▷{' '}
-                    {pane.kind === 'shell'
-                      ? pane.testServer
-                        ? 'teste'
-                        : 'terminal'
-                      : pane.title || 'terminal'}
-                  </button>
-                  <button
-                    className="term-btn ghost-dim mission-gui-tab-close"
-                    data-tip="Fechar o terminal (derruba o que estiver rodando nele)"
-                    aria-label={`Fechar ${pane.title}`}
-                    onClick={() => window.synkora.panes.requestClose(projectId, pane.id)}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-          {/* Os terminais SEM MISSÃO (▶ testar de versão, panes avulsos) saíram
-              desta barra: são onda D e agora entram como PÍLULA do
-              MissionStageHead, junto com os terminais de missão. O que sobra
-              aqui é chrome da era legada. */}
-          {/* ALAVANCAS DO PM MORTAS (ordem do dono, 2026-08-15): 📚 estudar,
-              ⇄ seat e 🧹 limpar eram os controles do Maestro — o papel que a
-              era 2.0 não tem. Saíram daqui e da linha do retrato; o que resta
-              nesta barra são as abas dos terminais, que continuam de pé. As
-              IPCs que elas chamavam também já foram (auditoria de código morto,
-              2026-08-15): do domínio maestro sobraram `getState`, `paneSpec` e
-              o par de perguntas do ask_user, que este arquivo usa. */}
-        </PaneChrome>
-        )}
+        {/* A CABEÇA DO PALCO é sempre em PAPEL. O chrome escuro de terminal
+            (PaneChrome com badges de modelo, effort, contexto e os chips da
+            missão legada) morreu na purga F6 (2026-08-17) junto com o TUI que
+            ele vestia. Sem `actions`: as alavancas do universo — estudar,
+            conta, limpar — saíram do app com o papel de Maestro. */}
+        <MissionStageHead pills={stagePills} meta={stageMetaParts} />
         <div className="maestro-body maestro-terminal" ref={maestroTerminalRef}>
-          {/* PM (Geral) — sempre montado */}
-          {/* visibilidade pelo missionTab (per-projeto, nunca stale) e NÃO pelo
-              selMission, que depende da lista global assíncrona de missões: ao
-              trocar de universo o terminal do PM piscava no lugar do
-              orquestrador por um instante */}
-          <div
-            className={`maestro-slot${maestroSlotActive ? ' is-active' : ''}`}
-            aria-hidden={maestroSlotActive ? undefined : true}
-            inert={maestroSlotActive ? undefined : true}
-          >
-            {maestroSpec ? (
-              <GuiPanelErrorBoundary paneId={maestroSpec.paneId} label="o painel do Maestro">
-              <TerminalPane
-                key={`${maestroSpec.seatId}:${maestroSpec.kind}`}
-                paneId={maestroSpec.paneId}
-                cwd={maestroSpec.cwd}
-                kind={maestroSpec.kind}
-                projectId={projectId}
-                seatId={maestroSpec.seatId}
-                model={maestroSpec.model}
-                cliArgs={maestroSpec.cliArgs}
-                initialPrompt={maestroSpec.initialPrompt}
-                appendSystemPrompt={maestroSpec.appendSystemPrompt}
-                imagePasteProjectId={projectId}
-                fontSize={maestroTerminalFont}
-                lineHeight={maestroTerminalLineHeight}
-                fontFamily={maestroTerminalFontFamily}
-                minCols={terminalMinColsForBox(
-                  maestroSpec.kind,
-                  maestroTerminalFallbackFor(maestroSpec.kind)
-                )}
-                minRows={maestroSpec.kind === 'claude' ? 12 : 6}
-                fallbackSize={maestroTerminalFallbackFor(maestroSpec.kind)}
-                sizeGroup={`${maestroSizeGroup}:${maestroSpec.kind}`}
-                voiceLabel="Maestro"
-              />
-              </GuiPanelErrorBoundary>
-            ) : (
-              /* Sem spec não há PM: o Maestro só nasce para o ecossistema
-                 LEGADO (missão com orquestrador TUI). O texto não manda mais
-                 "escolher o seat" — esse botão morreu com o gate. */
-              <div className="maestro-empty">
-                // sem Maestro aqui — o trabalho 2.0 mora dentro da missão
-              </div>
-            )}
-          </div>
-          {/* Orquestradores das missões já abertas — montados, escondidos */}
-          {Object.values(missionSpecs).map((spec) => (
-            <div
-              key={spec.paneId}
-              className={`maestro-slot${spec.missionId === missionTab ? ' is-active' : ''}`}
-              aria-hidden={spec.missionId === missionTab ? undefined : true}
-              inert={spec.missionId === missionTab ? undefined : true}
-            >
-              <GuiPanelErrorBoundary
-                paneId={spec.paneId}
-                label={`o painel de ${
-                  missions.find((mission) => mission.id === spec.missionId)?.title ?? 'missão'
-                }`}
-              >
-              <TerminalPane
-                key={`${spec.seatId}:${spec.kind}`}
-                paneId={spec.paneId}
-                cwd={spec.cwd}
-                kind={spec.kind}
-                projectId={projectId}
-                seatId={spec.seatId}
-                model={spec.model}
-                cliArgs={spec.cliArgs}
-                initialPrompt={spec.initialPrompt}
-                appendSystemPrompt={spec.appendSystemPrompt}
-                imagePasteProjectId={projectId}
-                fontSize={maestroTerminalFont}
-                lineHeight={maestroTerminalLineHeight}
-                fontFamily={maestroTerminalFontFamily}
-                minCols={terminalMinColsForBox(spec.kind, maestroTerminalFallbackFor(spec.kind))}
-                minRows={spec.kind === 'claude' ? 12 : 6}
-                fallbackSize={maestroTerminalFallbackFor(spec.kind)}
-                sizeGroup={`${maestroSizeGroup}:${spec.kind}`}
-                voiceLabel={`Orquestrador · ${
-                  missions.find((mission) => mission.id === spec.missionId)?.title ?? 'missão'
-                }`}
-              />
-              </GuiPanelErrorBoundary>
-            </div>
-          ))}
+          {/* O SLOT DO PM (o terminal do Maestro, sempre montado) e os slots
+              dos ORQUESTRADORES de missão legada saíram na purga F6
+              (2026-08-17). Sobraram os filhos da era 2.0 — e cada um deles é
+              um FRAGMENTO COM CHAVE de propósito: assim a posição de um irmão
+              não é mais o que identifica a lista, e nenhuma remoção futura
+              pode remontar um TerminalPane vivo (PTY morto). */}
           {/* MISSÃO DIRETA (2.0): as conversas GUI do worktree. Lista KEYADA e
               separada da dos orquestradores — cada slot é uma sessão viva no
               main, então nada aqui pode remontar ao trocar de aba/papel. */}
+          <Fragment key="mission-gui-slots">
           {Object.entries(missionGuiSlots).flatMap(([mid, slots]) =>
             slots.map((slot) => {
               const active =
@@ -1513,6 +1063,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               )
             })
           )}
+          </Fragment>
           {/* MISSÃO SEM CONTA (2.0): a missão nasce só com título, então o
               primeiro habitante do palco é o CARD DE ESCOLHA — não um erro.
               Fica FORA do `.maestro-empty` (que é a casca de "// aguarde"). */}
@@ -1535,6 +1086,15 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                 />
               </div>
             )}
+          {/* MISSÃO LEGADA: o TUI do orquestrador que ocupava este palco morreu
+              na purga F6 (2026-08-17). A missão continua legível — card, fila,
+              branch — mas não tem conversa para abrir aqui. Dizer isso é
+              melhor do que uma coluna em branco sem explicação. */}
+          {selMission && !selMission.direct && !missionTermId && (
+            <div className="maestro-empty">
+              // missão do fluxo antigo — sem conversa para abrir aqui
+            </div>
+          )}
           {selMission?.direct &&
             directSlots.length === 0 &&
             !missionTermId &&
@@ -1562,52 +1122,9 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               )}
             </div>
           )}
-          {selMission &&
-            !selMission.direct &&
-            !missionSpecs[selMission.id] &&
-            (selMission.pendingOrchestrator ? (
-              <div className="maestro-empty">
-                <div style={{ display: 'grid', gap: 10, justifyItems: 'center' }}>
-                  <span>// o Maestro criou esta missão — falta escolher o orquestrador</span>
-                  <button
-                    className="term-btn"
-                    onClick={() =>
-                      setPendingOrchDismissed((prev) => {
-                        const next = { ...prev }
-                        delete next[selMission.id]
-                        return next
-                      })
-                    }
-                  >
-                    ▶ escolher orquestrador
-                  </button>
-                </div>
-              </div>
-            ) : missionHalted[selMission.id] ? (
-              <div className="maestro-empty">
-                <div style={{ display: 'grid', gap: 10, justifyItems: 'center' }}>
-                  <span>
-                    // o orquestrador desta missão morreu 3× seguidas ao abrir — a causa está no
-                    diário da caixa-preta (clis ▾ → ◉ exportar diagnóstico)
-                  </span>
-                  <button
-                    className="term-btn"
-                    onClick={() => {
-                      missionDeaths.current[selMission.id] = []
-                      setMissionHalted((prev) => {
-                        const next = { ...prev }
-                        delete next[selMission.id]
-                        return next
-                      })
-                    }}
-                  >
-                    ⟳ tentar de novo
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="maestro-empty">// abrindo o orquestrador da missão…</div>
-            ))}
+          {/* O ramo do ORQUESTRADOR que não nasceu (escolher orquestrador,
+              anti-loop de 3 mortes, "abrindo o orquestrador…") saiu na purga
+              F6: missão sem conversa 2.0 não tem orquestrador para esperar. */}
           {/* PLANEJAMENTO (2.0): o slot avulso da sessão de planejamento saiu
               daqui — a missão de tipo 'planejamento' entra pelos slots de
               conversa acima, como qualquer outra. O convite que nascia sozinho
@@ -1617,6 +1134,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               TerminalPane vizinhos (PTY morto). Todos ficam montados: quem
               some é o servidor junto com o terminal, e ninguém pediu isso ao
               trocar de aba. */}
+          <Fragment key="terminal-slots">
           {termPanes.map((pane) => {
             const active = pane.missionId
               ? pane.missionId === missionTab && missionTermId === pane.id
@@ -1660,6 +1178,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               </div>
             )
           })}
+          </Fragment>
         </div>
         {/* ÚLTIMO filho de propósito: inserir a alça antes do .maestro-body
             deslocaria os índices dos filhos não-keyados e o React remontaria o
@@ -1797,29 +1316,9 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         </GuiPanelErrorBoundary>
       )}
 
-      {/* Missão criada pelo PM aguardando a escolha do orquestrador: o mesmo
-          modal, com título/goal/versão travados — só conta/modelo/effort
-          (decisão do usuário, 02/08). "depois" fecha; o placeholder da aba
-          da missão reabre. */}
-      {isActive && pendingOrchMission && !pendingOrchDismissed[pendingOrchMission.id] && (
-        <GuiPanelErrorBoundary
-          key={`overlay:pending-mission:${pendingOrchMission.id}`}
-          paneId={`overlay:pending-mission:${pendingOrchMission.id}`}
-          label="a confirmação da missão"
-          onClose={() =>
-            setPendingOrchDismissed((prev) => ({ ...prev, [pendingOrchMission.id]: true }))
-          }
-        >
-          <NewMissionModal
-            key={pendingOrchMission.id}
-            projectId={projectId}
-            confirmMission={pendingOrchMission}
-            onClose={() =>
-              setPendingOrchDismissed((prev) => ({ ...prev, [pendingOrchMission.id]: true }))
-            }
-          />
-        </GuiPanelErrorBoundary>
-      )}
+      {/* O modal de CONFIRMAÇÃO DE ORQUESTRADOR (missão criada pelo PM com
+          conta/modelo/effort ainda por escolher) saiu na purga F6: missão 2.0
+          nasce do dono e a conta dela se escolhe no card do próprio chat. */}
     </div>
   )
 }

@@ -2187,11 +2187,13 @@ test('todo terminal aberto é pílula do seletor do palco, com missão ou sem', 
     /generalTermPanes\)[\s\S]{0,900}?onClose: \(\) => window\.synkora\.panes\.requestClose\(projectId, pane\.id\)/u,
     'fechar a pílula derruba o processo do terminal'
   )
-  // A cabeça do palco aparece por causa das PÍLULAS, não só por missão direta
-  // — sem isto o ✦ geral com um terminal vivo ficaria sem seletor nenhum.
+  // A cabeça do palco é ÚNICA e em papel: o chrome escuro do PaneChrome saiu
+  // com o TUI legado. O ✦ geral com um terminal vivo continua tendo seletor
+  // porque as pílulas dele existem — e a linha fina descreve o que está no ar.
   assert.match(board, /const stageHead = stageMode \|\| stagePills\.length > 0/u)
-  assert.match(board, /\{stageHead \? \(/u)
-  assert.match(board, /maestro-window\$\{stageHead \? ' stage-window' : ' term-window'\}/u)
+  assert.match(board, /<MissionStageHead pills=\{stagePills\} meta=\{stageMetaParts\} \/>/u)
+  assert.match(board, /maestro-window stage-window/u)
+  assert.doesNotMatch(board, /term-window/u)
   // As abas do ✦ geral já saíram da barra escura; as de MISSÃO ainda vivem lá
   // porque a missão LEGADA (sem palco 2.0) é a única que ainda as usa — elas
   // caem junto com o chrome dela, e a asserção de ausência entra ali.
