@@ -28,7 +28,6 @@ import type { MaestroStore } from './maestroStore'
 import type { PolicyStore } from './policies'
 import type { SettingsStore } from './settings'
 import type { PtyManager } from './pty'
-import type { PaneMailbox } from './mailbox'
 import type { SynVoiceService } from './synVoice'
 import type { Blackbox } from './blackbox'
 import type { StallAttribution } from './stallAttribution'
@@ -148,7 +147,6 @@ export interface MainContext {
   readonly policies: PolicyStore
   readonly settings: SettingsStore
   readonly ptys: PtyManager
-  readonly mailbox: PaneMailbox
   readonly synVoice: SynVoiceService
   readonly blackbox: Blackbox
   readonly mainStalls: StallAttribution
@@ -158,7 +156,7 @@ export interface MainContext {
 
   // ——— reatribuíveis em runtime (getters — sempre o valor ATUAL) ———
   /** Getter de propósito: quebra o ciclo Hub↔contexto (HubDeps captura
-   *  projects/ptys/mailbox/blackbox/uiSender antes de o hub existir). */
+   *  projects/ptys/blackbox/uiSender antes de o hub existir). */
   readonly hub: Hub
   readonly uiSender: WebContents | null
   readonly mainWindow: BrowserWindow | null

@@ -200,7 +200,6 @@ import {
 } from './projectAdapters'
 import { setQaRuntimeGuard, stopAllQaRuntimes } from './qaRuntime'
 import { releaseQaCdpPort } from './qaCdp'
-import { PaneMailbox, mailboxKeyOf } from './mailbox'
 import { prepareTaskAdjustment, unapprovedAdjustmentRiskSurfaces } from './taskAdjustment'
 import { Blackbox, describeEntry } from './blackbox'
 import { diagnosticsConsentDetail, exportDiagnostics } from './diagnostics'
@@ -2775,82 +2774,6 @@ app.whenReady().then(async () => {
       `MUDANÇA DE ETAPA (instrução autoritativa): ${instruction}`
     )
   }
-  // CORREIO MCP (CHECK 15 F1 → F5-F2): payload de pane MCP-armado vai para a
-  // caixa postal durável e chega de carona no resultado da próxima tool; o
-  // terminal só recebe o aviso curto abaixo. Pane sem identidade (shell/
-  // teste) segue no caminho antigo de injeção. Desde o F2 a decisão mora no
-  // HUB (hasMailbox/deliverToMailbox) — entrega de correio é IMEDIATA, sem
-  // as guardas de teclado, e o desfecho auditado é 'mailboxed' (o
-  // delivery-injected falso do F1 morreu).
-  const mailbox = new PaneMailbox(join(app.getPath('userData'), 'mailboxes.json'))
-  const MAILBOX_NUDGE =
-    '[synkora] 📬 correio novo — chame check_messages; se ela vier vazia, a entrega já chegou de carona no resultado de outra tool sua: siga o que estava fazendo'
-  const mailboxNudgeAt = new Map<string, number>()
-  function nudgeMailbox(paneId: string, attempt = 0): void {
-    // Re-checagem VIVA a cada tentativa (inclusive re-agendadas): pendência
-    // já drenada (carona/check) ou espera armada nesse meio-tempo = nada a
-    // digitar — o post acorda quem espera sozinho.
-    const identity = hub.identityByPane(paneId)
-    if (!identity || !ptys.has(paneId)) return
-    const key = mailboxKeyOf(identity, paneId)
-    if (mailbox.pending(key) === 0) return
-    if (mailbox.hasWaiters(key)) {
-      blackbox.record({
-        cat: 'msg',
-        event: 'mailbox-nudge',
-        actor: 'harness',
-        ids: { paneId },
-        detail: { outcome: 'skipped-waiter-armed' }
-      })
-      return
-    }
-    const since = Date.now() - (mailboxNudgeAt.get(paneId) ?? 0)
-    if (since < 20_000) {
-      // Throttle NUNCA engole sinal (caso real 22:52: a 2ª mensagem em <20s
-      // só não ficou órfã porque havia long-poll): re-agenda para o fim da
-      // janela; a re-chegada re-checa pendência/espera do zero.
-      if (attempt === 0) setTimeout(() => nudgeMailbox(paneId, 1), 20_000 - since + 500)
-      else
-        blackbox.record({
-          cat: 'msg',
-          event: 'mailbox-nudge',
-          actor: 'harness',
-          ids: { paneId },
-          detail: { outcome: 'throttled' }
-        })
-      return
-    }
-    // PANE EM TURNO NUNCA recebe nudge digitado (2026-08-10, três casos ao
-    // vivo no teste de missões: Maestro trabalhando, gate recém-reportado e
-    // QA na janela read-first do 1º turno — o nudge enfileirado dispara
-    // STALE como turno extra, e na janela read-first é o gatilho exato do
-    // "No such tool" do CHECK 14). A carona entrega de qualquer jeito; o
-    // teclado é só o DESPERTADOR de pane PARADO. Re-checa a cada 5s até
-    // aquietar (teto ~10min; post novo re-arma o ciclo sozinho). O mesmo
-    // degrau cobre o composer sujo do humano.
-    if (!ptys.isIdle(paneId, 2500) || ptys.composerBusy(paneId)) {
-      if (attempt < 120) setTimeout(() => nudgeMailbox(paneId, attempt + 1), 5000)
-      else
-        blackbox.record({
-          cat: 'msg',
-          event: 'mailbox-nudge',
-          actor: 'harness',
-          ids: { paneId },
-          detail: { outcome: 'skipped-busy' }
-        })
-      return
-    }
-    mailboxNudgeAt.set(paneId, Date.now())
-    blackbox.record({
-      cat: 'msg',
-      event: 'mailbox-nudge',
-      actor: 'harness',
-      ids: { paneId },
-      detail: { outcome: 'typed' }
-    })
-    ptys.inject(paneId, MAILBOX_NUDGE, () => {})
-  }
-
   hub = new Hub({
     projectPathOf: (pid) => projects.get(pid)?.path,
     ensureProjectRuntimeWritable: ensureSynkoraGitExcludes,
@@ -2866,39 +2789,12 @@ app.whenReady().then(async () => {
       return ptys.has(maestroPaneId(pid)) ? maestroPaneId(pid) : undefined
     },
     alive: (paneId) => ptys.has(paneId),
-    // F5-F2: inject voltou a ser SÓ o teclado clássico (pane sem identidade).
-    // O desvio de correio saiu daqui — quem decide é o hub, ANTES das guardas
-    // de teclado, via hasMailbox/deliverToMailbox abaixo.
+    // Entrega a pane de TERMINAL, por teclado. O correio MCP durável (caixa
+    // postal por endereço + entrega de carona no resultado da próxima tool)
+    // morreu junto com o catálogo legado: a única identidade que sobrou é a do
+    // chat de planejamento, que não tem terminal para receber texto digitado —
+    // e cujo catálogo nunca teve `check_messages` para drenar caixa nenhuma.
     inject: (paneId, text, onSubmitted) => ptys.inject(paneId, text, onSubmitted),
-    hasMailbox: (paneId) => Boolean(hub.identityByPane(paneId)),
-    deliverToMailbox: (paneId, line, meta) => {
-      const identity = hub.identityByPane(paneId)
-      if (!identity) return false
-      const key = mailboxKeyOf(identity, paneId)
-      // ANTES do post (que acorda e remove os waiters): alguém já espera
-      // este endereço? Então o próprio post o acorda — nenhum aviso é
-      // digitado (o desenho que o dono pediu: "não teria que o Synkora
-      // avisar"; o 📬 fica só para pane sem espera armada).
-      const someoneWaiting = mailbox.hasWaiters(key)
-      mailbox.post(key, {
-        text: line,
-        at: new Date().toISOString(),
-        sourcePaneId: meta.sourcePaneId,
-        kind: meta.kind,
-        correlationId: meta.correlationId,
-        dedupKey: meta.key
-      })
-      if (someoneWaiting)
-        blackbox.record({
-          cat: 'msg',
-          event: 'mailbox-nudge',
-          actor: 'harness',
-          ids: { paneId },
-          detail: { outcome: 'skipped-waiter-armed' }
-        })
-      else nudgeMailbox(paneId)
-      return true
-    },
     composerBusy: (paneId) => ptys.composerBusy(paneId),
     onDelivery: (paneId, status, line, meta) => {
       const identity = hub.identityByPane(paneId)
@@ -2907,10 +2803,8 @@ app.whenReady().then(async () => {
         : undefined
       blackbox.record({
         cat: 'msg',
-        // 'mailboxed' fica com o nome que a validação F1 procura no journal
-        // (mailbox-post); delivery-injected volta a significar SÓ digitação
-        // real no teclado (o falso positivo do F1 morreu no F2).
-        event: status === 'mailboxed' ? 'mailbox-post' : `delivery-${status}`,
+        // delivery-injected significa digitação REAL no teclado do pane.
+        event: `delivery-${status}`,
         ids: {
           paneId,
           projectId: identity?.projectId,
@@ -2926,11 +2820,7 @@ app.whenReady().then(async () => {
         }
       })
       const context = identity ?? sourceIdentity
-      if (
-        (status === 'injected' || status === 'mailboxed') &&
-        meta.sourcePaneId &&
-        context
-      ) {
+      if (status === 'injected' && meta.sourcePaneId && context) {
         const communication: HubCommunicationEvent = {
           id: meta.correlationId
             ? `${meta.correlationId}:${paneId}`
@@ -2983,7 +2873,6 @@ app.whenReady().then(async () => {
     policies,
     settings,
     ptys,
-    mailbox,
     synVoice,
     blackbox,
     mainStalls,

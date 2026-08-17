@@ -2,11 +2,24 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { redactSensitiveText } from './securityRedaction'
 
-// Hub do Synkora: o barramento central de eventos da orquestração.
-// TODO evento relevante (pane aberto/fechado, tarefa criada/movida, report,
-// delegate, merge…) passa por aqui e vira: (a) linha em .synkora/EVENTS.md,
-// (b) evento hub:event para a UI, (c) mensagem digitada no pane do MAESTRO
-// quando ele está ocioso — é assim que o orquestrador "sabe de tudo, sempre".
+// Hub do Synkora: DUAS coisas num arquivo só, e não se pode confundi-las.
+//
+// 1) REGISTRO DE IDENTIDADE (registerPane/unregisterPane/identityByToken/
+//    identityByPane/panesOf). 🔴 ISTO NÃO É MECÂNICA F6: é o que autentica o
+//    CHAT DE PLANEJAMENTO da era 2.0 no servidor MCP. `guiPlannerMcp.ts` emite
+//    o bearer e registra a identidade aqui; `mcpServer.identityForRequest`
+//    resolve o token por aqui a cada request. Apagar isto derruba o
+//    propose_plan — e nenhuma suíte de chat perceberia, porque elas só
+//    COMPILAM o guiPlannerMcp. Por isso existe o test:gui-planner-mcp.
+//
+// 2) BARRAMENTO DE EVENTOS: pane aberto/fechado, missão integrada, merge…
+//    vira (a) linha em .synkora/EVENTS.md e (b) evento hub:event para a UI
+//    (App.tsx toca o blip de marco).
+//
+// O que NÃO existe mais: o correio durável (caixa postal por endereço, entrega
+// de carona no resultado da tool, nudge 📬, long-poll) — morreu com o catálogo
+// MCP legado. A fila de digitação em pane de TERMINAL ainda está aqui e serve
+// só ao pipeline de fases legado, que sai na onda seguinte.
 
 /**
  * `gui-planner` (2.0, onda D) é o forasteiro desta lista: ele identifica um
@@ -97,26 +110,14 @@ export interface HubDeps {
   /** o pane ainda existe? fila de pane morto é DESCARTADA na hora — nunca
    *  fica girando nem entrega em silêncio (paneId morre com o pane) */
   alive: (paneId: string) => boolean
-  /** CORREIO MCP (F5-F2): o pane tem caixa postal (identidade MCP)? Quando
-   *  tem, o payload NUNCA passa pelo teclado — vai direto para a mailbox,
-   *  IMEDIATO por desenho: composer/inFlight/gap são guardas de TECLADO e
-   *  não se aplicam a correio (ordem do dono: "conversa extremamente
-   *  rápida"). */
-  hasMailbox?: (paneId: string) => boolean
-  /** Posta o payload na caixa do pane. Retorna false se o pane perdeu a
-   *  identidade entre o hasMailbox e o post (corrida rara) — a entrega cai
-   *  no caminho clássico. O nudge curto de teclado é responsabilidade do
-   *  adapter (auditado, e só ele respeita o composer). */
-  deliverToMailbox?: (paneId: string, line: string, meta: HubNotificationOptions) => boolean
   onEvent: (evt: HubEvent) => void
   /** caixa-preta: desfecho REAL de cada entrega de mensagem a um pane —
-   *  'injected' chegou ao terminal pelo TECLADO; 'mailboxed' entrou na caixa
-   *  postal MCP (nada foi digitado além do nudge); 'dead' o pane não
-   *  existia; 'discarded' a fila morreu antes da injeção. (O enfileiramento
-   *  em si não é desfecho.) */
+   *  'injected' chegou ao terminal pelo TECLADO; 'dead' o pane não existia;
+   *  'discarded' a fila morreu antes da injeção. (O enfileiramento em si não
+   *  é desfecho.) */
   onDelivery?: (
     paneId: string,
-    status: 'injected' | 'mailboxed' | 'dead' | 'discarded',
+    status: 'injected' | 'dead' | 'discarded',
     line: string,
     meta: Pick<HubNotificationOptions, 'sourcePaneId' | 'kind' | 'correlationId'>
   ) => void
@@ -266,35 +267,9 @@ export class Hub {
           stillNeeded: options.stillNeeded
         }
         if (full.urgent) this.notifyPaneNow(maestroPane, line, deliveryOptions)
-        // CORREIO (F5-F2): o orquestrador tem identidade — o evento vai
-        // direto para a caixa dele; a fila do drain sobra para pane clássico.
-        else if (!this.tryMailbox(maestroPane, line, deliveryOptions))
-          this.enqueue(maestroPane, line, deliveryOptions)
+        else this.enqueue(maestroPane, line, deliveryOptions)
       }
     }
-  }
-
-  /** CORREIO MCP (F5-F2): pane com identidade recebe o payload na caixa
-   *  postal AGORA — sem composer, sem inFlight, sem gap (guardas de teclado
-   *  não se aplicam a correio; o nudge do adapter é quem respeita o
-   *  composer). Retorna undefined quando o pane não tem correio (a entrega
-   *  segue pelo caminho clássico do teclado). */
-  private tryMailbox(
-    paneId: string,
-    line: string,
-    options: HubNotificationOptions
-  ): 'mailboxed' | 'discarded' | undefined {
-    if (!this.deps.hasMailbox?.(paneId) || !this.deps.deliverToMailbox) return undefined
-    if (!this.isStillNeeded(options)) {
-      // o destino já consumiu por outro caminho — mesmo desfecho do drain
-      this.settle(options, false)
-      this.reportDelivery(paneId, 'discarded', line, options)
-      return 'discarded'
-    }
-    if (!this.deps.deliverToMailbox(paneId, line, options)) return undefined
-    this.settle(options, true)
-    this.reportDelivery(paneId, 'mailboxed', line, options)
-    return 'mailboxed'
   }
 
   /** Aviso direto a um pane específico (ex.: delegador quando o ajudante conclui). */
@@ -302,15 +277,13 @@ export class Hub {
     paneId: string,
     text: string,
     options: HubNotificationOptions = {}
-  ): 'queued' | 'mailboxed' | 'discarded' | 'dead' {
+  ): 'queued' | 'discarded' | 'dead' {
     text = redactSensitiveText(text)
     if (!this.deps.alive(paneId)) {
       this.settle(options, false)
       this.reportDelivery(paneId, 'dead', text, options)
       return 'dead'
     }
-    const mailed = this.tryMailbox(paneId, text, options)
-    if (mailed) return mailed
     this.enqueue(paneId, text, options)
     return 'queued'
   }
@@ -336,14 +309,12 @@ export class Hub {
     paneId: string,
     text: string,
     options: HubNotificationOptions = {}
-  ): 'injected' | 'mailboxed' | 'queued' | 'discarded' | 'dead' {
+  ): 'injected' | 'queued' | 'discarded' | 'dead' {
     text = redactSensitiveText(text)
     if (!this.deps.alive(paneId)) {
       this.reportDelivery(paneId, 'dead', text, options)
       return 'dead'
     }
-    const mailed = this.tryMailbox(paneId, text, options)
-    if (mailed) return mailed
     const last = this.lastInject.get(paneId) ?? 0
     if (
       !this.deps.composerBusy(paneId) &&
@@ -431,7 +402,7 @@ export class Hub {
 
   private reportDelivery(
     paneId: string,
-    status: 'injected' | 'mailboxed' | 'dead' | 'discarded',
+    status: 'injected' | 'dead' | 'discarded',
     line: string,
     meta: HubNotificationOptions = {}
   ): void {
