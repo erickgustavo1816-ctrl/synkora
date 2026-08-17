@@ -132,12 +132,13 @@ plans-ui) foi moldado nos irmãos permission/question, que SÃO limpos no
 `result`/turn-end — o card cai na chegada do result. Verificar store.ts: onde a
 interactionQueue é esvaziada em result/fatal/closed, o kind 'plan-proposal'
 precisa da MESMA isenção do ring (+ teste chat-ui espelhando o teste do ring).
-Hipótese nº 2 (verificar ANTES): evidência capturada em
-`.synkora/reports/evidence-plan-card-vanish-20260815.json` (snapshot do
-gui-sessions.json na hora do bug) mostra ZERO `plan-proposal` nos transcripts
-persistidos — se o checkpoint dropou o evento no caminho de persistência, o
-replay/remontagem também não recupera o card e o buraco é duplo (conferir
-guiTranscriptCheckpoint × isGuiPersistedEvent com o draft real do dono).
+Hipótese nº 2: REFUTADA na mesma noite (o "zero plan-proposal no snapshot" era
+falso negativo do scan do orquestrador — assumiu wrapper {seq,evt}; o formato
+persistido é SessionEvent CRU). A proposta real do dono ("V1.0 — Lista de
+tarefas…", 5 missões) está INTEIRA e SEM RESPOSTA no transcript persistido de
+gui-dev-46b9f49c (índice 103/104), e o draft verbatim passou por
+isGuiPersistedEvent + rehydrate completo do ring. A persistência sempre esteve
+correta — ninguém deve reabrir essa trilha.
 Workaround possível para o dono ver o plano hoje: se a hipótese 1 for a única,
 sair da missão e voltar re-replaya o ring e o card deve voltar; se o card não
 voltar, a hipótese 2 é real.
