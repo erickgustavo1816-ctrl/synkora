@@ -11,7 +11,6 @@
  */
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import {
-  type SettingsSecretName,
   type SynkoraSettings,
   type SynkoraSettingsPatch
 } from '../settings'
@@ -49,9 +48,6 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
     validateExternalServices,
     state
   } = extras
-  const validSettingsSecret = (value: unknown): value is SettingsSecretName =>
-    value === 'githubToken'
-
   ipcMain.handle('settings:get', (e) => {
     assertAppRendererSender(e)
     return settings.view()
@@ -83,19 +79,4 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
     return settings.view()
   })
 
-  ipcMain.handle('settings:secret:set', (e, name: unknown, value: unknown) => {
-    assertMainRendererSender(e)
-    if (!validSettingsSecret(name) || typeof value !== 'string') {
-      throw new Error('Credencial inválida.')
-    }
-    settings.setSecret(name, value)
-    return settings.view()
-  })
-
-  ipcMain.handle('settings:secret:clear', (e, name: unknown) => {
-    assertMainRendererSender(e)
-    if (!validSettingsSecret(name)) throw new Error('Credencial inválida.')
-    settings.clearSecret(name)
-    return settings.view()
-  })
 }

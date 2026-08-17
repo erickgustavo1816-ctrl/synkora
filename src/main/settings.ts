@@ -1,8 +1,6 @@
-import { app, safeStorage } from 'electron'
+import { app } from 'electron'
 import {
   SettingsStoreCore,
-  type SecretProtector,
-  type SettingsSecretName,
   type SynkoraPreferences,
   type SynkoraSettings,
   type SynkoraSettingsPatch,
@@ -10,29 +8,22 @@ import {
 } from './settingsCore'
 
 export type {
-  SettingsSecretName,
   SynkoraPreferences,
   SynkoraSettings,
   SynkoraSettingsPatch,
   SynkoraSettingsView
 } from './settingsCore'
 
-function secureStorageReady(): boolean {
-  if (!safeStorage.isEncryptionAvailable()) return false
-  return process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'
-}
-
-const electronProtector: SecretProtector = {
-  isAvailable: secureStorageReady,
-  seal: (value) => safeStorage.encryptString(value).toString('base64'),
-  open: (value) => safeStorage.decryptString(Buffer.from(value, 'base64'))
-}
-
-/** Store do main: o renderer só deve receber `view()`, nunca `get()`. */
+/**
+ * Store do main. Não existe mais assimetria get()/view(): sem cofre de
+ * credenciais, tudo em settings.json pode atravessar para o renderer — que é
+ * exatamente por que o cofre saiu (limpa F6, 2026-08-17). O par continua
+ * declarado porque ~40 call sites o usam e porque o dia em que um segredo
+ * voltar, ele volta por aqui.
+ */
 export class SettingsStore {
   private readonly core = new SettingsStoreCore({
-    userDataPath: app.getPath('userData'),
-    protector: electronProtector
+    userDataPath: app.getPath('userData')
   })
 
   get(): SynkoraSettings {
@@ -45,13 +36,5 @@ export class SettingsStore {
 
   update(patch: SynkoraSettingsPatch): SynkoraSettings {
     return this.core.update(patch)
-  }
-
-  setSecret(name: SettingsSecretName, value: string): SynkoraSettings {
-    return this.core.setSecret(name, value)
-  }
-
-  clearSecret(name: SettingsSecretName): SynkoraSettings {
-    return this.core.clearSecret(name)
   }
 }

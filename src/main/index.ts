@@ -131,7 +131,6 @@ import { SessionStatsWatcher } from './sessionStats'
 import { Hub, type HubCommunicationEvent, type PaneIdentity } from './hub'
 import {
   SettingsStore,
-  type SettingsSecretName,
   type SynkoraSettings,
   type SynkoraSettingsPatch
 } from './settings'

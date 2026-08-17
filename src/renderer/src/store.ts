@@ -12,7 +12,6 @@ import type { PlanDraft } from './planContract'
 import type {
   GuiAttachmentDescriptor,
   HistoryTranscriptMessage,
-  SettingsSecretName,
   SynkoraSettings,
   SynkoraSettingsPatch
 } from '../../preload/index'
@@ -1899,7 +1898,6 @@ interface SynkoraState {
   settings: SynkoraSettings | null
   loadSettings: () => Promise<void>
   patchSettings: (patch: SynkoraSettingsPatch) => Promise<void>
-  setSettingsSecret: (name: SettingsSecretName, value?: string) => Promise<void>
   /** universos já visitados NESTA sessão — ficam MONTADOS (display:none) para
    *  os panes/maestro continuarem rodando ao trocar de projeto */
   mountedProjects: string[]
@@ -2600,13 +2598,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
 
   patchSettings: async (patch) => {
     set({ settings: await window.synkora.settings.set(patch) })
-  },
-
-  setSettingsSecret: async (name, value) => {
-    const next = value
-      ? await window.synkora.settings.setSecret(name, value)
-      : await window.synkora.settings.clearSecret(name)
-    set({ settings: next })
   },
 
   loadSeats: async () => {

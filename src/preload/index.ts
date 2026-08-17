@@ -773,13 +773,9 @@ export interface SynkoraPreferences {
 
 /** Snapshot seguro do main. Nenhum segredo bruto cruza esta fronteira. */
 export interface SynkoraSettings extends SynkoraPreferences {
-  githubTokenConfigured: boolean
-  githubTokenMasked?: string
 }
 
 export type SynkoraSettingsPatch = Partial<SynkoraPreferences>
-export type SettingsSecretName = 'githubToken'
-
 export type SynVoiceProvider = 'openai' | 'openrouter'
 
 export interface SynVoiceProviderConfig {
@@ -1718,10 +1714,6 @@ const api = {
     get: (): Promise<SynkoraSettings> => ipcRenderer.invoke('settings:get'),
     set: (patch: SynkoraSettingsPatch): Promise<SynkoraSettings> =>
       ipcRenderer.invoke('settings:set', patch),
-    setSecret: (name: SettingsSecretName, value: string): Promise<SynkoraSettings> =>
-      ipcRenderer.invoke('settings:secret:set', name, value),
-    clearSecret: (name: SettingsSecretName): Promise<SynkoraSettings> =>
-      ipcRenderer.invoke('settings:secret:clear', name),
     /** F3-c4: o outro lado (host ↔ view de panes) gravou settings — recarrega
      *  (o zoom de fonte do terminal vale nas duas). */
     onChanged: (cb: () => void): (() => void) => {

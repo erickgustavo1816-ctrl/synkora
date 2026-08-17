@@ -384,7 +384,6 @@ export function installDevMock(): void {
 
   let appSettings: SynkoraSettings = {
     externalServicePreparation: 'automatic',
-    githubTokenConfigured: false,
     terminalFontSize: 13,
     terminalLineHeight: 1.25,
     terminalFontFamily: 'Cascadia Code',
@@ -1158,19 +1157,6 @@ export function installDevMock(): void {
           return { ...appSettings }
         },
         onChanged: () => () => undefined,
-        setSecret: async () => {
-          appSettings = {
-            ...appSettings,
-            githubTokenConfigured: true,
-            githubTokenMasked: '••••••••'
-          }
-          return { ...appSettings }
-        },
-        clearSecret: async () => {
-          const { githubTokenMasked: _masked, ...next } = appSettings
-          appSettings = { ...next, githubTokenConfigured: false }
-          return { ...appSettings }
-        }
       },
     progress: {
       ready: () => undefined,
