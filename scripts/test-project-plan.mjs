@@ -11,7 +11,6 @@ import {
   deferProjectMission,
   detachProjectMission,
   ensureGreenfieldProjectPlan,
-  isEffectivelyEmptyProject,
   legacyProjectPlanApproval,
   loadProjectPlan,
   projectPlanReleaseBlockers,
@@ -27,6 +26,9 @@ import {
   summarizeProjectPlanForBoard,
   validateProjectPlanForApproval
 } from '../src/main/projectPlan.ts'
+// S1 do expurgo F6: a pergunta "esta pasta está vazia?" emigrou para um módulo
+// próprio — ela não é sobre plano, e sobrevive à morte do roadmap por ondas.
+import { isEffectivelyEmptyProject } from '../src/main/projectFolder.ts'
 
 const T0 = '2026-07-31T10:00:00.000Z'
 const T1 = '2026-07-31T11:00:00.000Z'

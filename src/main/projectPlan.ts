@@ -19,16 +19,6 @@ export const PROJECT_PLAN_DIRECTORY = '.synkora'
 export const PROJECT_PLAN_JSON = 'PROJECT_PLAN.json'
 export const PROJECT_PLAN_MARKDOWN = 'PROJECT_PLAN.md'
 
-const IGNORED_EMPTY_PROJECT_ENTRIES = new Set([
-  '.git',
-  '.synkora',
-  '.agents',
-  '.claude',
-  '.codex',
-  '.ds_store',
-  'desktop.ini'
-])
-
 export type ProjectPlanStatus =
   | 'draft'
   | 'approved'
@@ -383,12 +373,24 @@ export function projectPlanPaths(projectRoot: string): {
   }
 }
 
-/**
- * Um projeto novo continua "vazio" quando só contém metadados criados pelo
- * Git, Synkora ou pelos runtimes dos agentes. O conteúdo desses diretórios é
- * deliberadamente ignorado: ele não representa implementação do produto.
- */
-export function isEffectivelyEmptyProject(projectRoot: string): boolean {
+// ÂNCORA DO EXPURGO F6 (2026-08-17, costura S1) — NÃO transformar em import.
+// A versão PÚBLICA de "esta pasta está vazia?" emigrou para `projectFolder.ts`
+// (é ela que o GitHub-no-nascimento usa, e é ela que sobrevive). Esta cópia é
+// PRIVADA e existe só porque este arquivo é carregado pelo strip-types do node
+// em `test-project-plan.mjs`: com `moduleResolution: bundler` (sem extensão no
+// especificador) um import de irmão aqui explode no loader. O arquivo inteiro
+// morre na onda 3 do expurgo, e a duplicação morre junto.
+const IGNORED_EMPTY_PROJECT_ENTRIES = new Set([
+  '.git',
+  '.synkora',
+  '.agents',
+  '.claude',
+  '.codex',
+  '.ds_store',
+  'desktop.ini'
+])
+
+function isEffectivelyEmptyProject(projectRoot: string): boolean {
   const root = resolve(projectRoot)
   if (!existsSync(root)) return true
   if (!statSync(root).isDirectory()) return false

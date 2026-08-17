@@ -188,10 +188,10 @@ import {
   type HelperRecoveryRecord,
   type HelperRecoveryStatus
 } from './helperRecovery'
+import { isEffectivelyEmptyProject } from './projectFolder'
 import {
   completeProjectPlanRelease as completeStoredProjectPlanRelease,
   ensureGreenfieldProjectPlan,
-  isEffectivelyEmptyProject,
   legacyProjectPlanApproval,
   loadProjectPlan,
   PROJECT_PLAN_TRUST_CONTRACT_VERSION,

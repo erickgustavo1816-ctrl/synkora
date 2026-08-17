@@ -19,7 +19,8 @@ import { gitOff } from '../gitAsync'
 import { ensureProjectSecurityBaseline } from '../projectSecurityBaseline'
 import { redactSensitiveText } from '../securityRedaction'
 import { cpSync, existsSync } from 'fs'
-import { ensureGreenfieldProjectPlan, isEffectivelyEmptyProject } from '../projectPlan'
+import { ensureGreenfieldProjectPlan } from '../projectPlan'
+import { isEffectivelyEmptyProject } from '../projectFolder'
 import {
   guiPlanningFirstPrompt,
   guiPlanningPaneId,
