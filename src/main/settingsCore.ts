@@ -1,13 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 
-export type SettingsSecretName = 'openrouterKey' | 'githubToken'
+export type SettingsSecretName = 'githubToken'
 
 export interface SynkoraPreferences {
   externalServicePreparation: 'automatic' | 'on-demand'
-  imageProvider: 'codex' | 'openrouter'
-  imageSeatId?: string
-  openrouterModel?: string
   conptyDll?: boolean
   terminalFontSize: number
   terminalLineHeight: number
@@ -21,14 +18,11 @@ export interface SynkoraPreferences {
 
 /** Estado completo, restrito ao processo principal. */
 export interface SynkoraSettings extends SynkoraPreferences {
-  openrouterKey?: string
   githubToken?: string
 }
 
 /** Contrato seguro que pode atravessar para o renderer. */
 export interface SynkoraSettingsView extends SynkoraPreferences {
-  openrouterKeyConfigured: boolean
-  openrouterKeyMasked?: string
   githubTokenConfigured: boolean
   githubTokenMasked?: string
 }
@@ -51,12 +45,11 @@ interface StoredSecrets {
   secrets: Partial<Record<SettingsSecretName, string>>
 }
 
-const SECRET_NAMES: SettingsSecretName[] = ['openrouterKey', 'githubToken']
+const SECRET_NAMES: SettingsSecretName[] = ['githubToken']
 const MASKED_SECRET = '••••••••'
 
 const DEFAULTS: SynkoraPreferences = {
   externalServicePreparation: 'automatic',
-  imageProvider: 'codex',
   terminalFontSize: 13,
   terminalLineHeight: 1.25,
   terminalFontFamily: 'Cascadia Code',
@@ -78,16 +71,11 @@ function cleanOptionalString(value: unknown): string | undefined {
 
 function sanitizePreferences(value: unknown): SynkoraPreferences {
   const source = recordOf(value)
-  const imageSeatId = cleanOptionalString(source.imageSeatId)
-  const openrouterModel = cleanOptionalString(source.openrouterModel)
   const synVoiceInputDeviceId = cleanOptionalString(source.synVoiceInputDeviceId)
   const fontFamily = cleanOptionalString(source.terminalFontFamily)
   return {
     externalServicePreparation:
       source.externalServicePreparation === 'on-demand' ? 'on-demand' : 'automatic',
-    imageProvider: source.imageProvider === 'openrouter' ? 'openrouter' : 'codex',
-    ...(imageSeatId ? { imageSeatId } : {}),
-    ...(openrouterModel ? { openrouterModel } : {}),
     ...(typeof source.conptyDll === 'boolean' ? { conptyDll: source.conptyDll } : {}),
     terminalFontSize: Math.max(8, Math.min(24, Number(source.terminalFontSize) || 13)),
     terminalLineHeight: Math.max(1, Math.min(1.8, Number(source.terminalLineHeight) || 1.25)),
@@ -166,14 +154,9 @@ export class SettingsStoreCore {
 
   /** Única representação permitida no IPC de leitura/resposta. */
   view(): SynkoraSettingsView {
-    const openrouterConfigured = this.isConfigured('openrouterKey')
     const githubConfigured = this.isConfigured('githubToken')
     return {
       ...this.data,
-      openrouterKeyConfigured: openrouterConfigured,
-      ...(openrouterConfigured
-        ? { openrouterKeyMasked: MASKED_SECRET }
-        : {}),
       githubTokenConfigured: githubConfigured,
       ...(githubConfigured
         ? { githubTokenMasked: MASKED_SECRET }

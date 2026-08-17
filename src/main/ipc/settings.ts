@@ -51,7 +51,7 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
     state
   } = extras
   const validSettingsSecret = (value: unknown): value is SettingsSecretName =>
-    value === 'openrouterKey' || value === 'githubToken'
+    value === 'githubToken'
 
   ipcMain.handle('settings:get', (e) => {
     assertAppRendererSender(e)

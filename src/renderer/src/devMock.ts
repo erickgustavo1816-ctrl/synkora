@@ -384,8 +384,6 @@ export function installDevMock(): void {
 
   let appSettings: SynkoraSettings = {
     externalServicePreparation: 'automatic',
-    imageProvider: 'codex',
-    openrouterKeyConfigured: false,
     githubTokenConfigured: false,
     terminalFontSize: 13,
     terminalLineHeight: 1.25,
@@ -1226,21 +1224,17 @@ export function installDevMock(): void {
           return { ...appSettings }
         },
         onChanged: () => () => undefined,
-        setSecret: async (name, _value) => {
-          const masked = '••••••••'
-          appSettings = name === 'openrouterKey'
-            ? { ...appSettings, openrouterKeyConfigured: true, openrouterKeyMasked: masked }
-            : { ...appSettings, githubTokenConfigured: true, githubTokenMasked: masked }
+        setSecret: async () => {
+          appSettings = {
+            ...appSettings,
+            githubTokenConfigured: true,
+            githubTokenMasked: '••••••••'
+          }
           return { ...appSettings }
         },
-        clearSecret: async (name) => {
-          if (name === 'openrouterKey') {
-            const { openrouterKeyMasked: _masked, ...next } = appSettings
-            appSettings = { ...next, openrouterKeyConfigured: false }
-          } else {
-            const { githubTokenMasked: _masked, ...next } = appSettings
-            appSettings = { ...next, githubTokenConfigured: false }
-          }
+        clearSecret: async () => {
+          const { githubTokenMasked: _masked, ...next } = appSettings
+          appSettings = { ...next, githubTokenConfigured: false }
           return { ...appSettings }
         }
       },

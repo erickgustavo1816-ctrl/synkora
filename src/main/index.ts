@@ -66,7 +66,6 @@ import { createMaestroEngine, type MaestroBackend } from './maestroEngine'
 import { createMissionEngine } from './missionEngine'
 import { createPaneLifecycle } from './paneLifecycle'
 import { PanesViewManager } from './panesView'
-import { buildImagesApi } from './mcpApi/images'
 import { buildMailboxApi } from './mcpApi/mailbox'
 import { buildCodeApi } from './mcpApi/code'
 import { buildSkillsApi } from './mcpApi/skills'
@@ -6020,7 +6019,6 @@ app.whenReady().then(async () => {
     }),
     // Domínios extraídos (fase 1, commit 4b) — spreads compõem o literal;
     // o tipo McpApi confere a superfície completa na atribuição.
-    ...buildImagesApi(ctx),
     ...buildMailboxApi(ctx),
     ...buildCodeApi(ctx, {
       planTaskForWorkTask,

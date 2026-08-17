@@ -330,7 +330,6 @@ export interface McpApi {
   ) => string
   /** Arquiva (soft) um plano. Exclusão definitiva é gesto do dono no mapa. */
   deletePlan: (id: PaneIdentity, planId: string, expectedUpdatedAt?: string) => string
-  generateImage: (id: PaneIdentity, prompt: string, fileName?: string) => Promise<string>
   createMission: (id: PaneIdentity, input: NewMissionInput) => string
   /** PM persiste/revisa o mapa macro do projeto sem criar missões reais. */
   saveProjectPlan: (id: PaneIdentity, input: SaveProjectPlanInput) => string
@@ -1165,19 +1164,6 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       }
     },
     async ({ paneId }) => text(api.helperClose(identity, paneId))
-  )
-
-  server.registerTool(
-    'generate_image',
-    {
-      description:
-        'Gera uma imagem com o provedor configurado no Synkora e salva no projeto. Retorna o caminho do arquivo.',
-      inputSchema: {
-        prompt: z.string().describe('descrição detalhada da imagem'),
-        fileName: z.string().optional().describe('nome do arquivo de saída (sem extensão)')
-      }
-    },
-    async ({ prompt, fileName }) => text(await api.generateImage(identity, prompt, fileName))
   )
 
   // F5.7 — tools do ORQUESTRADOR (maestro COM missão): a missão é dirigida por

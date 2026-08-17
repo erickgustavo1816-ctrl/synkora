@@ -2,7 +2,6 @@ import { useStore, type SettingsSection } from '../store'
 import AppearanceSettings from '../components/AppearanceSettings'
 import ChatNoticeSettings from '../components/ChatNoticeSettings'
 import SeatDeck from '../components/SeatDeck'
-import SettingsPanel from '../components/SettingsPanel'
 import SkillsLibrary from '../components/SkillsLibrary'
 import SynVoiceMicrophoneSettings from '../components/SynVoiceMicrophoneSettings'
 import SynkoraMark from '../components/SynkoraMark'
@@ -20,7 +19,6 @@ const NAV: NavItem[] = [
   { id: 'accounts', glyph: '●', label: 'Minhas contas', description: 'seats e logins' },
   { id: 'skills', glyph: '◇', label: 'Skills', description: 'biblioteca global' },
   { id: 'agents', glyph: '⌘', label: 'Subagentes', description: 'especialistas' },
-  { id: 'images', glyph: '▧', label: 'Imagens', description: 'provedor e modelo' },
   { id: 'voice', glyph: '◉', label: 'SynVoice', description: 'microfone e voz' }
 ]
 
@@ -44,11 +42,6 @@ const COPY: Record<SettingsSection, { eyebrow: string; title: string; text: stri
     eyebrow: 'especialistas delegáveis',
     title: 'Subagentes',
     text: 'Gerencie as personas especializadas que os orquestradores podem acionar.'
-  },
-  images: {
-    eyebrow: 'ferramentas dos agentes',
-    title: 'Geração de imagens',
-    text: 'Defina por onde passam as solicitações da ferramenta generate_image.'
   },
   voice: {
     eyebrow: 'ditado inteligente',
@@ -149,11 +142,6 @@ export default function Settings(): React.JSX.Element {
                 {section === 'agents' && (
                   <GuiPanelErrorBoundary paneId="settings:agents" label="os subagentes">
                     <SkillsLibrary kind="agent" openByDefault />
-                  </GuiPanelErrorBoundary>
-                )}
-                {section === 'images' && (
-                  <GuiPanelErrorBoundary paneId="settings:images" label="as configurações de imagens">
-                    <SettingsPanel />
                   </GuiPanelErrorBoundary>
                 )}
                 {section === 'voice' && (

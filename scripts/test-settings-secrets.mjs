@@ -23,11 +23,13 @@ function tempStore(t) {
 
 test('migra segredos legados, limpa settings.json e só expõe flags/máscaras', (t) => {
   const root = tempStore(t)
-  const openrouterKey = 'sk-or-legacy-123456'
   const githubToken = 'github_pat_legacy_987654'
+  // O documento é o que o build F6 gravava: imageProvider/openrouterKey saíram
+  // com a geração de imagens (limpa F6, 2026-08-17) e precisam ser IGNORADOS
+  // sem quebrar a leitura — o disco do dono ainda tem as duas chaves.
   writeFileSync(join(root, 'settings.json'), JSON.stringify({
     imageProvider: 'openrouter',
-    openrouterKey,
+    openrouterKey: 'sk-or-legacy-123456',
     githubToken,
     terminalFontSize: 14
   }))
@@ -38,16 +40,16 @@ test('migra segredos legados, limpa settings.json e só expõe flags/máscaras',
   const persistedSettings = readFileSync(join(root, 'settings.json'), 'utf8')
   const persistedVault = readFileSync(join(root, 'settings-secrets.json'), 'utf8')
 
-  assert.equal(internal.openrouterKey, openrouterKey)
   assert.equal(internal.githubToken, githubToken)
-  assert.equal(view.openrouterKeyConfigured, true)
-  assert.equal(view.openrouterKeyMasked, '••••••••')
   assert.equal(view.githubTokenConfigured, true)
   assert.equal(view.githubTokenMasked, '••••••••')
-  assert.equal('openrouterKey' in view, false)
   assert.equal('githubToken' in view, false)
+  // A chave morta não vira segredo, não vira preferência e não volta ao disco.
+  assert.equal('openrouterKey' in internal, false)
+  assert.equal('imageProvider' in view, false)
+  assert.equal(view.terminalFontSize, 14)
   assert.doesNotMatch(JSON.stringify(view), /legacy|123456|987654/)
-  assert.doesNotMatch(persistedSettings, /openrouterKey|githubToken|legacy|123456|987654/)
+  assert.doesNotMatch(persistedSettings, /openrouterKey|githubToken|imageProvider|legacy|123456|987654/)
   assert.doesNotMatch(persistedVault, /legacy|123456|987654/)
 })
 
@@ -55,16 +57,14 @@ test('troca e remove credenciais sem aceitar segredo pelo patch comum', (t) => {
   const root = tempStore(t)
   const store = new SettingsStoreCore({ userDataPath: root, protector })
 
-  store.setSecret('openrouterKey', 'sk-or-current-abcd')
   store.setSecret('githubToken', 'github_pat_current_wxyz')
-  store.update({ openrouterKey: 'must-not-enter' })
+  store.update({ githubToken: 'must-not-enter' })
 
-  assert.equal(store.get().openrouterKey, 'sk-or-current-abcd')
-  assert.equal(store.view().openrouterKeyMasked, '••••••••')
+  assert.equal(store.get().githubToken, 'github_pat_current_wxyz')
+  assert.equal(store.view().githubTokenMasked, '••••••••')
 
   store.clearSecret('githubToken')
   const reloaded = new SettingsStoreCore({ userDataPath: root, protector })
-  assert.equal(reloaded.get().openrouterKey, 'sk-or-current-abcd')
   assert.equal(reloaded.get().githubToken, undefined)
   assert.equal(reloaded.view().githubTokenConfigured, false)
   assert.equal('githubTokenMasked' in reloaded.view(), false)

@@ -112,7 +112,6 @@ export type SettingsSection =
   | 'accounts'
   | 'skills'
   | 'agents'
-  | 'images'
   | 'voice'
 
 /** Caixa de um pane no canvas: posição no MUNDO (px) + tamanho + z-order. */

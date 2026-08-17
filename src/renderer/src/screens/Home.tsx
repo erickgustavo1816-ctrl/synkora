@@ -255,12 +255,6 @@ export default function Home(): React.JSX.Element {
   const seatExpirado = seats.find((s) => s.status === 'expirado')
   const cliQuebrado = clis.find((c) => c.state === 'missing' || c.state === 'failed')
   const projetoSumido = projects.find((p) => p.missing)
-  const imagemQuebrada =
-    settings?.imageProvider === 'openrouter' && !settings.openrouterKeyConfigured
-      ? 'openrouter sem chave de API — a tool generate_image não vai gerar nada'
-      : settings?.imageProvider === 'codex' && seats.every((s) => s.cli !== 'codex')
-        ? 'geração de imagens aponta para o codex, mas não há nenhuma conta codex'
-        : null
 
   function scrollTo(key: string): void {
     anchorsRef.current
@@ -288,9 +282,7 @@ export default function Home(): React.JSX.Element {
             action: 'ver universo',
             run: () => scrollTo(`project:${projetoSumido.id}`)
           }
-        : imagemQuebrada
-          ? { text: imagemQuebrada, action: 'ajustar', run: () => openSettings('images') }
-          : null
+        : null
 
   // ---- vitais -------------------------------------------------------------
   const panesVivos = Object.values(panesByProject)

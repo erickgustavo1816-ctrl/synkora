@@ -776,9 +776,6 @@ export interface PanesViewTip {
 /** Preferências globais editáveis; não inclui credenciais. */
 export interface SynkoraPreferences {
   externalServicePreparation: 'automatic' | 'on-demand'
-  imageProvider: 'codex' | 'openrouter'
-  imageSeatId?: string
-  openrouterModel?: string
   /** ESCAPE HATCH do conpty.dll empacotado (Windows). Ausente/true = ligado.
    *  O campo existe em main/settings.ts desde a F5.1 e o main já o aplica em
    *  `ptys.setConptyDll`; faltava só no espelho de tipo daqui. */
@@ -798,14 +795,12 @@ export interface SynkoraPreferences {
 
 /** Snapshot seguro do main. Nenhum segredo bruto cruza esta fronteira. */
 export interface SynkoraSettings extends SynkoraPreferences {
-  openrouterKeyConfigured: boolean
-  openrouterKeyMasked?: string
   githubTokenConfigured: boolean
   githubTokenMasked?: string
 }
 
 export type SynkoraSettingsPatch = Partial<SynkoraPreferences>
-export type SettingsSecretName = 'openrouterKey' | 'githubToken'
+export type SettingsSecretName = 'githubToken'
 
 export type SynVoiceProvider = 'openai' | 'openrouter'
 
