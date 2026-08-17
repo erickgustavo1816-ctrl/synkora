@@ -13,6 +13,7 @@ import {
   shouldArmGuiTurnWatchdog
 } from './guiTurnQueue'
 import { limitGuiToolInput } from './guiToolInput'
+import { codexContextFromTokenUsage } from './codexTokenUsage'
 import { terminateGuiProcessTree } from './guiProcessTree'
 import {
   guiCodexErrorWillRetry,
@@ -254,19 +255,6 @@ function fmtReset(epochSecs: unknown): string {
 function firstLines(text: string, max: number): string {
   const sliced = text.slice(0, Math.max(0, max) + 1).trim()
   return sliced.length <= max ? sliced : sliced.slice(0, max) + '…'
-}
-
-/**
- * `thread/tokenUsage/updated` já vem em tokens inteiros. Só a fotografia
- * `last` descreve o contexto vivo; `total` é acumulado de todos os turnos e
- * jamais pode alimentar a régua de contexto.
- */
-function codexContextTokenCount(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
-}
-
-function codexContextWindow(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
 }
 
 function boundedJson(value: Record<string, unknown>, max = 2000): string {
@@ -1702,19 +1690,12 @@ export class CodexSession {
         this.emit({ type: 'command-output', text: 'contexto da thread compactado' })
         break
       case 'thread/tokenUsage/updated': {
-        const usage = p['tokenUsage'] as
-          | {
-              /** Acumulado da sessão — deliberadamente não é contexto. */
-              total?: { totalTokens?: unknown }
-              /** Fotografia do último turno = contexto atualmente carregado. */
-              last?: { totalTokens?: unknown }
-              modelContextWindow?: unknown
-            }
-          | undefined
-        const contextTokens = codexContextTokenCount(usage?.last?.totalTokens)
-        const contextWindow = codexContextWindow(usage?.modelContextWindow)
-        // Ausência não vira fallback para `total`: sem `last`/janela, a UI
-        // remove a régua até o app-server voltar a publicar uma medida válida.
+        // A régua sai da fotografia do ÚLTIMO REQUEST (um turno emite um evento
+        // por chamada de API); o acumulado da thread — restaurado no
+        // thread/resume e sem teto — jamais a alimenta. Ausência não vira
+        // fallback: a UI remove a régua até uma medida válida voltar. Semântica
+        // sondada e provada em `codexTokenUsage.ts`.
+        const { contextTokens, contextWindow } = codexContextFromTokenUsage(p['tokenUsage'])
         this.lastTokens = contextTokens
         this.lastWindow = contextWindow
         this.emit({
