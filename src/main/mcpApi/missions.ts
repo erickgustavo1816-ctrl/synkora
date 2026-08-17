@@ -15,7 +15,6 @@ import { type IntegrationQueueTicketView } from '../integrationQueue'
 import { randomUUID } from 'crypto'
 import { type PaneIdentity } from '../hub'
 import { type NewMissionInput, type SaveProjectPlanInput } from '../mcpServer'
-import { type PlanningMethodEvidence } from '../skillRuntime'
 import {
   approveProjectPlan as approveStoredProjectPlan,
   projectPlanExecutionWindow,
@@ -79,12 +78,6 @@ export interface MissionsApiExtras {
    * com os IPCs projectPlan:approve / projectPlan:startMission. */
   humanProjectPlanApprovals: Set<string>
   humanProjectMissionStarts: Set<string>
-  preparePlanningArtifactEvidence(
-    id: PaneIdentity,
-    skillApplications: string[] | undefined
-  ):
-    | { ok: true; evidence: PlanningMethodEvidence; accept: () => boolean }
-    | { ok: false; message: string }
   /** 2.0: encerra dev/reviewer/ajudantes GUI da missão (fonte única no index). */
   killMissionGuiPanes(missionId: string): void
 }
@@ -127,7 +120,6 @@ export function buildMissionsApi(
     createIntegrationSyncTask,
     humanProjectPlanApprovals,
     humanProjectMissionStarts,
-    preparePlanningArtifactEvidence,
     killMissionGuiPanes
   } = extras
   return {
@@ -249,8 +241,6 @@ export function buildMissionsApi(
     saveProjectPlan: (id, input: SaveProjectPlanInput) => {
       if (id.role !== 'maestro' || id.missionId)
         return 'apenas o PM (Maestro do projeto) mantém o plano mestre'
-      const planningEvidence = preparePlanningArtifactEvidence(id, input.skillApplications)
-      if (!planningEvidence.ok) return `não salvei o plano mestre: ${planningEvidence.message}`
       const project = projects.get(id.projectId)
       if (!project) return 'projeto não encontrado'
       try {
@@ -264,35 +254,12 @@ export function buildMissionsApi(
       try {
         const now = new Date().toISOString()
         const {
-          planningStage,
-          planningContribution,
+          planningStage: _planningStage,
+          planningContribution: _planningContribution,
           skillApplications: _skillApplications,
           ...draft
         } = input
-        const { skillId, ...receiptEvidence } = planningEvidence.evidence
-        const trustedPlanningEvidence = {
-          id: skillId,
-          stage: planningStage,
-          contribution: planningContribution,
-          usedAt: now,
-          ...receiptEvidence,
-          planningRevision: now
-        } as const
-        const plan = saveProjectPlanDraft(project.path, {
-          ...draft,
-          now,
-          planningEvidence: trustedPlanningEvidence
-        })
-        const persistedPlanningEvidence = plan.planningSkills.find(
-          (entry) => entry.receiptId === trustedPlanningEvidence.receiptId
-        )
-        if (!persistedPlanningEvidence?.planningFingerprint) {
-          return 'não salvei o plano mestre: a fotografia não recebeu um fingerprint de conteúdo verificável'
-        }
-        if (!planningEvidence.accept()) {
-          return 'não salvei o plano mestre: o receipt expirou antes da confirmação do artefato; reabra o Maestro'
-        }
-        projects.setPlanningEvidence(id.projectId, persistedPlanningEvidence)
+        const plan = saveProjectPlanDraft(project.path, { ...draft, now })
         syncBoard(id.projectId)
         const missing = validateProjectPlanForApproval(plan)
         return (
@@ -723,8 +690,6 @@ export function buildMissionsApi(
     createMission: (id, input: NewMissionInput) => {
       if (id.role !== 'maestro' || id.missionId)
         return 'apenas o PM (Maestro do projeto) cria missões'
-      const planningEvidence = preparePlanningArtifactEvidence(id, input.skillApplications)
-      if (!planningEvidence.ok) return `não criei a missão: ${planningEvidence.message}`
       const masterPlan = projectPlanOf(id.projectId)
       if (projectModeOf(id.projectId) === 'greenfield' && masterPlan?.status !== 'done') {
         return masterPlan?.status === 'draft'
@@ -744,7 +709,6 @@ export function buildMissionsApi(
           goal: input.goal,
           scope: input.scope,
           versionId: version.versionId,
-          planningMethod: planningEvidence.evidence,
           // Missão do PM NÃO herda seat em silêncio: o usuário escolhe
           // conta/modelo/effort do orquestrador num modal no board e só
           // então o pane nasce (decisão do usuário, 02/08).
@@ -753,9 +717,6 @@ export function buildMissionsApi(
         'maestro'
       )
       if (!mission) return 'projeto não encontrado (ou título vazio)'
-      if (!planningEvidence.accept()) {
-        return 'não criei a missão: o receipt expirou antes da confirmação do artefato; reabra o Maestro'
-      }
       return (
         `missão "${mission.title}" criada (id ${mission.id})` +
         (mission.branch

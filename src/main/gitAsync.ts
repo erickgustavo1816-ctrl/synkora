@@ -2,8 +2,6 @@ import { MessageChannel, Worker } from 'node:worker_threads'
 import { join } from 'path'
 import type * as worktreeApi from './worktree'
 import type * as reviewDiffApi from './reviewDiff'
-import type * as workspaceSkillsApi from './workspaceSkills'
-import type * as skillPackageSecurityApi from './skillPackageSecurity'
 import type * as reviewEvidenceApi from './reviewEvidence'
 
 // PONTE ASSÍNCRONA DO GIT (task #2, 2026-08-04): tira o git do main thread.
@@ -16,8 +14,6 @@ import type * as reviewEvidenceApi from './reviewEvidence'
 
 type GitApi = typeof worktreeApi &
   typeof reviewDiffApi &
-  typeof workspaceSkillsApi &
-  typeof skillPackageSecurityApi &
   typeof reviewEvidenceApi
 
 interface PendingCall {
@@ -36,16 +32,12 @@ function loadSyncFallback(): Promise<GitApi> {
     syncFallback = Promise.all([
       import('./worktree'),
       import('./reviewDiff'),
-      import('./workspaceSkills'),
-      import('./skillPackageSecurity'),
       import('./reviewEvidence')
     ]).then(
-      ([worktree, reviewDiff, workspaceSkills, skillPackageSecurity, reviewEvidence]) =>
+      ([worktree, reviewDiff, reviewEvidence]) =>
         ({
           ...worktree,
           ...reviewDiff,
-          ...workspaceSkills,
-          ...skillPackageSecurity,
           ...reviewEvidence
         }) as GitApi
     )

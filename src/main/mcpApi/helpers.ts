@@ -29,30 +29,7 @@ import { randomUUID } from 'crypto'
 import { Hub, type PaneIdentity } from '../hub'
 import { getSeatUsage } from '../seatUsage'
 import { type DelegateOpts } from '../mcpServer'
-import { type SkillDef } from '../skillsLibrary'
-import {
-  IMPECCABLE_SKILL_ID,
-  SYNKORA_BACKEND_STANDARD_ID,
-  SYNKORA_COPY_STANDARD_ID,
-  SYNKORA_CYBER_STANDARD_ID,
-  SYNKORA_DATA_STANDARD_ID,
-  SYNKORA_DESIGN_SYSTEM_STANDARD_ID,
-  SYNKORA_DEVOPS_STANDARD_ID,
-  SYNKORA_FRONTEND_STANDARD_ID,
-  SYNKORA_QA_STANDARD_ID,
-  SYNKORA_RESEARCH_STANDARD_ID,
-  classifyTaskUiWork,
-  isDevOpsWork,
-  isDesignSystemWork,
-  isVisualMethod,
-  missingMandatoryUiPhaseSkills,
-  selectPhaseSkillPlan,
-  skillCompatibilityIssue,
-  type SkillCapability
-} from '../skillsRouting'
-import { SkillRuntime, type PlannedSkillInput } from '../skillRuntime'
 import { formatHelperCompletionNote, helperCompletionNotificationKey } from '../helperCompletion'
-import { plannedAgentForHelper } from '../agentRouting'
 import {
   HELPER_RECOVERY_VERSION,
   filterHelperRecoveryRecords,
@@ -76,16 +53,6 @@ export interface HelpersApiExtras {
     cli: SeatCli,
     opts?: { strictMcp?: boolean; configDir?: string; sensitive?: boolean }
   ): { paneId: string; cliArgs: string[] }
-  prepareSkillPlanInputs(
-    rootIds: string[],
-    describe: (id: string) => Pick<PlannedSkillInput, 'operation' | 'reason' | 'required'>
-  ): Promise<{ definitions: SkillDef[]; inputs: PlannedSkillInput[]; missing: string[] }>
-  syncPaneSkillLease(
-    paneId: string,
-    cwd: string,
-    ids: string[]
-  ): Promise<{ injected: SkillDef[]; missing: string[] }>
-  releasePaneSkillPlan(paneId: string): void
   terminatePaneNow(projectId: string, paneId: string): void
   executionModeForTask(task: Task): MissionExecutionMode
   storedHelperRecoveries(
@@ -94,18 +61,6 @@ export interface HelpersApiExtras {
   helperTranscriptPath(projectId: string, paneId: string): string | undefined
   isBannedModel(m?: string): boolean
   agentModelPool(seat: { cli: SeatCli; id: string }): Promise<{ id: string; label: string }[]>
-  skillRuntime: SkillRuntime
-  skillPlanScopes: Map<
-    string,
-    {
-      phase: string
-      phaseRun: string
-      agentIds: string[]
-      taskId?: string
-      projectId?: string
-      missionId?: string
-    }
-  >
   helperSpawnReservations: HelperSpawnReservationRegistry
   helperOpenWatchdog: HelperOpenWatchdog
   plannedHelperAssignments: Map<string, { parentPhaseRun: string; agentId?: string }>
@@ -125,7 +80,6 @@ export function buildHelpersApi(
     ptys,
     maestro,
     policies,
-    skillsLib,
     paneSessions,
     helperCompletions,
     phaseWatches,
@@ -138,24 +92,18 @@ export function buildHelpersApi(
     externalPlaywrightForPane,
     unregisterPane,
     cleanPaneMcpFile,
-    releasePaneSkillLease,
     blackbox
   } = ctx
   // hub é atribuído 1× antes do mcpApi nascer — capturar é seguro.
   const hub = ctx.hub
   const {
     armPane,
-    prepareSkillPlanInputs,
-    syncPaneSkillLease,
-    releasePaneSkillPlan,
     terminatePaneNow,
     executionModeForTask,
     storedHelperRecoveries,
     helperTranscriptPath,
     isBannedModel,
     agentModelPool,
-    skillRuntime,
-    skillPlanScopes,
     helperSpawnReservations,
     helperOpenWatchdog,
     plannedHelperAssignments,
@@ -280,12 +228,6 @@ export function buildHelpersApi(
           mcpReady: ctx.mcpPort !== 0,
           browserConfigured: Boolean(externalPlaywrightForPane())
         })
-        const helperCapabilities: SkillCapability[] = [
-          'read',
-          'write',
-          'shell',
-          ...(helperBrowserAvailable ? ['browser' as const] : [])
-        ]
         try {
           ensureSynkoraGitExcludes(project.path)
         } catch (error) {
@@ -359,79 +301,6 @@ export function buildHelpersApi(
             // catálogo indisponível — segue com o id informado (o CLI resolve)
           }
         }
-        // SUBAGENTE especializado (opts.agent): o ajudante NASCE com a persona
-        // do especialista — claude via --append-system-prompt, codex via
-        // developer_instructions (os dois caminhos já validados em PTY real).
-        let agentDef: SkillDef | undefined
-        let agentPersona: string | null = null
-        const parentScope = id.taskId ? skillPlanScopes.get(id.paneId) : undefined
-        const plannedAgentId = parentScope?.agentIds[0]
-        const plannedAlreadyAssigned = Boolean(
-          plannedAgentId &&
-            (plannedAgentAssignedInBatch ||
-              completedPlannedAgentsByPhaseRun
-                .get(parentScope?.phaseRun ?? '')
-                ?.has(plannedAgentId) ||
-              [...plannedHelperAssignments.values()].some(
-                (assignment) =>
-                  assignment.parentPhaseRun === parentScope?.phaseRun &&
-                  assignment.agentId === plannedAgentId
-              ))
-        )
-        const requestedAgentId = plannedAgentForHelper({
-          requestedAgentId: opts.agent,
-          plannedAgentId,
-          plannedAlreadyAssigned
-        })
-        if (id.taskId && opts.agent && opts.agent !== plannedAgentId) {
-          return {
-            ok: false,
-            msg: `subagente "${opts.agent}" não pertence ao plano ativo deste pane; use ${plannedAgentId ?? 'nenhum especialista'}`
-          }
-        }
-        if (opts.agent && plannedAlreadyAssigned) {
-          return {
-            ok: false,
-            msg: `a persona "${opts.agent}" já foi atribuída a outro ajudante desta rodada; abra este bloco como ajudante genérico`
-          }
-        }
-        if (requestedAgentId) {
-          const d = skillsLib.byId(requestedAgentId)
-          if (!d || d.kind !== 'agent' || !skillsLib.isSelectable(requestedAgentId))
-            return {
-              ok: false,
-              msg: `subagente "${requestedAgentId}" não existe ou não está instalado — use um id EXATO de list_skills com tipo=subagente e instalado=true (ou peça ao usuário para instalar em Configurações › Subagentes)`
-            }
-          if (helperDepartment && !d.depts.includes(helperDepartment))
-            return {
-              ok: false,
-              msg: `subagente "${requestedAgentId}" incompativel com a funcao ${helperDepartment}`
-            }
-          if (id.taskId && (!parentScope || !parentScope.agentIds.includes(requestedAgentId)))
-            return {
-              ok: false,
-              msg: `subagente "${requestedAgentId}" nao pertence ao plano ativo deste pane; use o especialista selecionado no card`
-            }
-          agentPersona = await skillsLib.agentBody(requestedAgentId)
-          if (!agentPersona)
-            return { ok: false, msg: `subagente "${requestedAgentId}" está corrompido na biblioteca — reinstale em Configurações › Subagentes` }
-          agentDef = d
-          const incompatibility = skillCompatibilityIssue(
-            agentDef,
-            'helper',
-            helperCapabilities
-          )
-          if (incompatibility) {
-            return {
-              ok: false,
-              msg:
-                incompatibility.reason === 'phase'
-                  ? `subagente "${requestedAgentId}" não permite a fase helper`
-                  : `subagente "${requestedAgentId}" exige capacidades indisponíveis: ${incompatibility.missingCapabilities?.join(', ')}`
-            }
-          }
-        }
-        seats.preseed(seat)
         try {
           ensureSynkoraGitExcludes(project.path)
         } catch (error) {
@@ -449,205 +318,14 @@ export function buildHelpersApi(
           }
         }
         const helperPaneId = randomUUID()
-        const helperPhaseRun = randomUUID()
-        const helperRoutingText = [opts.title, opts.prompt].filter(Boolean).join('\n')
-        const helperUiWork = helperDepartment
-          ? classifyTaskUiWork({
-              department: helperDepartment,
-              title: opts.title,
-              description: opts.prompt,
-              affectsUi: opts.affectsUi
-            })
-          : false
-        const helperDesignSystemWork = Boolean(
-          helperDepartment && helperUiWork && isDesignSystemWork(helperDepartment, helperRoutingText)
-        )
-        const helperDevOpsWork = Boolean(
-          helperDepartment && isDevOpsWork(helperDepartment, helperRoutingText)
-        )
-        if (
-          helperDepartment &&
-          opts.affectsUi === false &&
-          classifyTaskUiWork({
-            department: helperDepartment,
-            title: opts.title,
-            description: opts.prompt,
-            affectsUi: false
-          })
-        ) {
-          return { ok: false, msg: 'affectsUi=false contradiz a superficie visual descrita para o ajudante' }
-        }
-        const eligibleIds = new Set(skillsLib.installedIds())
-        const requestedHelperSkills = [...new Set(opts.skills ?? [])]
-        const rejectedHelperSkills = requestedHelperSkills.filter((skillId) => {
-          const definition = skillsLib.byId(skillId)
-          return (
-            !eligibleIds.has(skillId) ||
-            !definition ||
-            definition.kind !== 'skill' ||
-            (helperDepartment !== undefined && !definition.depts.includes(helperDepartment)) ||
-            definition.adapter === 'synkora-native' ||
-            isVisualMethod(definition)
-          )
-        })
-        if (rejectedHelperSkills.length > 0) {
-          return {
-            ok: false,
-            msg: `skills do ajudante indisponíveis, bloqueadas ou corrompidas: ${rejectedHelperSkills.join(', ')}`
-          }
-        }
-        if (!helperDepartment) {
-          const incompatibleUnscoped = requestedHelperSkills
-            .map((skillId) => skillsLib.byId(skillId))
-            .filter((definition): definition is SkillDef => Boolean(definition))
-            .map((definition) =>
-              skillCompatibilityIssue(definition, 'helper', helperCapabilities)
-            )
-            .filter((issue) => issue !== undefined)
-          if (incompatibleUnscoped.length > 0) {
-            return {
-              ok: false,
-              msg: `skills do ajudante incompatíveis com a fase/capacidades: ${incompatibleUnscoped.map((issue) => issue.id).join(', ')}`
-            }
-          }
-        }
-        const helperSelection = helperDepartment
-          ? selectPhaseSkillPlan({
-              defs: skillsLib.definitions(),
-              isInstalled: (skillId) => eligibleIds.has(skillId),
-              department: helperDepartment,
-              phase: 'helper',
-              taskText: helperRoutingText,
-              explicitSkillIds: opts.skills,
-              executionMode: 'standard',
-              delegationMode: 'none',
-              uiCard: helperUiWork,
-              availableCapabilities: helperCapabilities
-            })
-          : {
-              skillIds: requestedHelperSkills.slice(0, 1),
-              agentIds: [],
-              impeccableOperation: undefined,
-              uiOperation: undefined,
-              incompatibilities: []
-            }
-        if (helperSelection.incompatibilities.length > 0) {
-          const details = helperSelection.incompatibilities.map((issue) =>
-            issue.reason === 'phase'
-              ? `${issue.id} não permite helper`
-              : `${issue.id} exige ${issue.missingCapabilities?.join(', ') || 'capacidade indisponível'}`
-          )
-          return {
-            ok: false,
-            msg: `o ajudante não pode aplicar o método selecionado neste ambiente: ${details.join('; ')}`
-          }
-        }
-        const ignoredRequestedHelperSkills = requestedHelperSkills.filter(
-          (skillId) => !helperSelection.skillIds.includes(skillId)
-        )
-        if (ignoredRequestedHelperSkills.length > 0) {
-          return {
-            ok: false,
-            msg: `o roteador nao escolheu a tecnica pedida para este ajudante: ${ignoredRequestedHelperSkills.join(', ')}`
-          }
-        }
-        let preparedHelperSkills: Awaited<ReturnType<typeof prepareSkillPlanInputs>>
-        try {
-          await syncPaneSkillLease(helperPaneId, id.cwd, [])
-          preparedHelperSkills = await prepareSkillPlanInputs(
-            helperSelection.skillIds,
-            (skillId) => ({
-              operation:
-                skillId === SYNKORA_DESIGN_SYSTEM_STANDARD_ID
-                  ? 'build'
-                  : skillId === SYNKORA_BACKEND_STANDARD_ID ||
-                      skillId === SYNKORA_DEVOPS_STANDARD_ID ||
-                      skillId === SYNKORA_CYBER_STANDARD_ID ||
-                      skillId === SYNKORA_DATA_STANDARD_ID ||
-                      skillId === SYNKORA_RESEARCH_STANDARD_ID ||
-                      skillId === SYNKORA_COPY_STANDARD_ID ||
-                      skillId === SYNKORA_QA_STANDARD_ID
-                    ? 'contract'
-                  : skillId === IMPECCABLE_SKILL_ID || skillId === SYNKORA_FRONTEND_STANDARD_ID
-                    ? helperDesignSystemWork
-                      ? 'build'
-                      : helperSelection.impeccableOperation ?? 'polish'
-                  : 'apply',
-              reason:
-                skillId === SYNKORA_DESIGN_SYSTEM_STANDARD_ID
-                  ? 'design-system.contract'
-                  : skillId === SYNKORA_BACKEND_STANDARD_ID
-                    ? 'backend.contract'
-                    : skillId === SYNKORA_DEVOPS_STANDARD_ID
-                      ? 'devops.contract'
-                      : skillId === SYNKORA_CYBER_STANDARD_ID
-                        ? 'cyber.contract'
-                        : skillId === SYNKORA_DATA_STANDARD_ID
-                          ? 'data.contract'
-                          : skillId === SYNKORA_RESEARCH_STANDARD_ID
-                            ? 'research.contract'
-                            : skillId === SYNKORA_COPY_STANDARD_ID
-                              ? 'copy.contract'
-                              : skillId === SYNKORA_QA_STANDARD_ID
-                                ? 'qa-authoring.contract'
-                  : skillId === SYNKORA_FRONTEND_STANDARD_ID
-                  ? 'ui.contract'
-                  : skillId === IMPECCABLE_SKILL_ID
-                    ? `ui.${helperSelection.impeccableOperation ?? 'polish'}`
-                    : 'helper.technique',
-              required: true
-            })
-          )
-        } catch {
-          releasePaneSkillLease(helperPaneId)
-          return { ok: false, msg: 'falha ao preparar o plano privado do ajudante' }
-        }
-        const helperMandatoryMissing = helperDepartment
-          ? missingMandatoryUiPhaseSkills(
-              preparedHelperSkills.definitions.map((skill) => skill.id),
-              helperDepartment,
-              'dev',
-              helperUiWork,
-              helperDesignSystemWork,
-              helperDevOpsWork
-            )
-          : []
-        const helperMissing = [
-          ...new Set([...preparedHelperSkills.missing, ...helperMandatoryMissing])
-        ]
-        if (helperMissing.length > 0) {
-          releasePaneSkillLease(helperPaneId)
-          return {
-            ok: false,
-            msg: `plano do ajudante não pôde ser preparado integralmente: ${helperMissing.join(', ')}`
-          }
-        }
-        const helperPlan = skillRuntime.planPane({
-          paneId: helperPaneId,
-          phase: 'helper',
-          phaseRun: helperPhaseRun,
-          skills: preparedHelperSkills.inputs
-        })
-        if (!helperPlan.ok) {
-          releasePaneSkillLease(helperPaneId)
-          return { ok: false, msg: 'não foi possível registrar o plano rastreável do ajudante' }
-        }
-        // projectId OBRIGATÓRIO no scope (bug real 2026-08-08, teste do dono):
-        // o guard do activate_skill compara scope.projectId — sem o campo,
-        // TODO ajudante com skills era recusado ("este pane não possui um
-        // plano ativo de skills") e o report(done), que exige os receipts,
-        // virava beco sem saída. Fases e maestro sempre gravaram; só o
-        // ajudante esquecia.
-        skillPlanScopes.set(helperPaneId, {
-          phase: 'helper',
-          phaseRun: helperPhaseRun,
-          agentIds: [],
-          projectId: id.projectId,
-          missionId: id.missionId
-        })
+        // A PERSONA ESPECIALIZADA e o plano de skills do ajudante saíram com a
+        // biblioteca (limpa F6, 2026-08-17): sem catálogo não há subagente a
+        // encarnar nem receipt a emitir. O ajudante nasce generalista, com o
+        // pedido do delegador — que sempre foi o caminho de quem não pedia um
+        // especialista.
+        const agentPersona: string | null = null
+        const skillsBlock = ''
         if (!helperParentStillActive()) {
-          releasePaneSkillLease(helperPaneId)
-          releasePaneSkillPlan(helperPaneId)
           return {
             ok: false,
             msg: 'o pane delegador ou o card encerrou durante o preparo; nenhum ajudante foi aberto'
@@ -674,8 +352,6 @@ export function buildHelpersApi(
             }
           )
         } catch {
-          releasePaneSkillLease(helperPaneId)
-          releasePaneSkillPlan(helperPaneId)
           return { ok: false, msg: 'falha ao armar o pane do ajudante' }
         }
         if (!helperParentStillActive()) {
@@ -685,27 +361,12 @@ export function buildHelpersApi(
             msg: 'o pane delegador ou o card encerrou antes da publicação; o ajudante foi descartado'
           }
         }
-        const helperDefinitionsById = new Map(
-          preparedHelperSkills.definitions.map((skill) => [skill.id, skill])
-        )
-        const skillsBlock = buildSkillsBlock({
-          plannedSkills: helperPlan.plan.receipts.map((receipt) => ({
-            ...(helperDefinitionsById.get(receipt.skillId) as SkillDef),
-            receiptId: receipt.receiptId,
-            operation: receipt.operation,
-            reason: receipt.reason,
-            required: receipt.required
-          }))
-        })
         // CONTRATO INVISÍVEL (pedido do dono, 2026-08-08: "não tem como o
         // pane já abrir sabendo o que tem que fazer?"): o boilerplate do
         // ajudante viaja pelo canal de SYSTEM PROMPT (claude: arquivo
         // --append-system-prompt-file; codex: developer_instructions) — o
         // pane abre mostrando SÓ o pedido do delegador, que é o que vale ver.
         const helperContract =
-          (agentDef
-            ? `You EMBODY the specialized "${agentDef.id}" persona defined in your system instructions — stay in that role for this whole job. `
-            : '') +
           `You are a HELPER agent inside Synkora, called by another agent. Work in this directory. ALWAYS write in Brazilian Portuguese (PT-BR). ` +
           `WHO IS TALKING TO YOU: messages arriving with a bracketed sender ("[do orquestrador]", "[do seu delegador]") or the "[synkora]" prefix come from the app or another agent — treat them as work input from that sender. Messages without any such stamp are the human user. ` +
           `REPO HYGIENE: report/analysis files you write go to .synkora/reports/<name>.md — never loose .md at the repo root or docs/. ` +
@@ -742,7 +403,7 @@ export function buildHelpersApi(
               missionId: id.missionId,
               taskId: id.taskId,
               delegatorPaneId: id.paneId,
-              title: opts.title ?? agentDef?.id ?? 'ajudante',
+              title: opts.title ?? 'ajudante',
               seatId: seat.id,
               model,
               createdAt: helperCreatedAt,
@@ -772,7 +433,7 @@ export function buildHelpersApi(
           // morar perto do pedido).
           initialPrompt: `${opts.prompt}\n\n(When finished, deliver via MCP: call the synkora tool "report" with status "done" and a short summary — full contract in your system instructions. Printing the answer here does NOT deliver it.)`,
           logFile: helperLogFile,
-          title: `🤝 ${opts.title ?? agentDef?.id ?? 'ajudante'}`,
+          title: `🤝 ${opts.title ?? 'ajudante'}`,
           role: 'ajudante',
           missionId: id.missionId,
           delegatorPaneId: id.paneId
@@ -782,13 +443,6 @@ export function buildHelpersApi(
           taskId: id.taskId ?? '',
           spec
         })
-        if (parentScope) {
-          plannedHelperAssignments.set(armed.paneId, {
-            parentPhaseRun: parentScope.phaseRun,
-            ...(agentDef ? { agentId: agentDef.id } : {})
-          })
-        }
-        if (agentDef?.id === plannedAgentId) plannedAgentAssignedInBatch = true
         helperOpenWatchdog.arm(armed.paneId)
         closingPaneIds.delete(armed.paneId)
         ctx.pushAll('panes:open', id.projectId, id.taskId ?? '', spec)
@@ -796,7 +450,7 @@ export function buildHelpersApi(
           projectId: id.projectId,
           missionId: id.missionId,
           kind: 'delegate',
-          text: `${id.role} chamou um ajudante${agentDef ? ` ESPECIALISTA (${agentDef.id})` : ''} (seat ${seat.name}${model ? `, ${model}` : ''}): ${opts.title ?? opts.prompt.slice(0, 60)}`,
+          text: `${id.role} chamou um ajudante (seat ${seat.name}${model ? `, ${model}` : ''}): ${opts.title ?? opts.prompt.slice(0, 60)}`,
           actor: id.role,
           // Agente LIVRE = modo prático sem burocracia: abrir ajudante é ciclo
           // de vida de pane, não marco — vai para EVENTS.md/UI mas NÃO injeta
@@ -807,7 +461,7 @@ export function buildHelpersApi(
         return {
           ok: true,
           msg: `ajudante aberto (paneId ${armed.paneId}, seat ${seat.name}${model ? `, modelo ${model}` : ''}${
-            agentDef ? `, persona ${agentDef.id}` : ''
+            ''
           })${tierClamp}`
         }
       }

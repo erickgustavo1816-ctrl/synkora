@@ -249,12 +249,9 @@ export interface McpApi {
     summary?: string,
     securityReview?: SecurityReviewInput,
     suggestedPatch?: string,
-    skillApplications?: string[],
     verificationEvidence?: GateVerificationEvidence,
     devSnapshot?: PhaseWatch['devSnapshot']
   ) => string | Promise<string>
-  /** Entrega somente a instrucao ja selecionada pelo receipt deste pane. */
-  activateSkill: (id: PaneIdentity, receiptId: string) => Promise<string>
   /** Gate review lê somente o spool SHA-pinado da própria rodada. */
   readReviewEvidence: (
     id: PaneIdentity,
@@ -271,16 +268,6 @@ export interface McpApi {
   /** um OU vários ajudantes numa chamada (lote = uma rodada de modelo só) */
   delegateMany: (id: PaneIdentity, list: DelegateOpts[]) => Promise<string>
   /** biblioteca pesquisável; nunca despeja o catálogo inteiro no contexto. */
-  listSkills: (
-    id: PaneIdentity,
-    filter?: {
-      query?: string
-      kind?: 'skill' | 'agent'
-      department?: (typeof DEPARTMENTS)[number]
-      installedOnly?: boolean
-      limit?: number
-    }
-  ) => string
   notifyMaestro: (id: PaneIdentity, text: string) => string
   /** Maestro/orquestrador → pergunta dirigida ao USUÁRIO: a aba do board
    *  correspondente pulsa até o dono abrir (pergunta em prosa não tem sinal
@@ -834,18 +821,6 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   )
 
   server.registerTool(
-    'activate_skill',
-    {
-      description:
-        'Ativa UMA skill já selecionada no ACTIVE SKILL PLAN deste pane. Informe somente o receiptId fornecido pelo Synkora; a ferramenta valida pane/fase/rodada e devolve a instrução exata com o playbook escolhido.',
-      inputSchema: {
-        receiptId: z.string().min(1).max(160)
-      }
-    },
-    async ({ receiptId }) => text(await api.activateSkill(identity, receiptId))
-  )
-
-  server.registerTool(
     'read_review_evidence',
     {
       description:
@@ -944,7 +919,6 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
           summary,
           securityReview,
           suggestedPatch,
-          skillApplications,
           verificationEvidence,
           guardSnapshot
         )
@@ -1003,23 +977,6 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
         'Lista os seats (contas de CLI) e os MODELOS reais de cada um, com dicas de uso. Consulte ANTES de delegar para escolher deliberadamente o executor certo (modelo forte p/ raciocínio, rápido/barato p/ trabalho mecânico).'
     },
     async () => text(await api.listSeats())
-  )
-
-  server.registerTool(
-    'list_skills',
-    {
-      description:
-        'Pesquisa a BIBLIOTECA do Synkora sem despejar o catálogo inteiro: filtre por função, tipo ou texto. Retorna ids exatos, quando usar e estado de instalação para seleção deliberada.',
-      inputSchema: {
-        query: z.string().trim().max(120).optional().describe('necessidade ou termo curto, ex.: acessibilidade, postgres, planejamento'),
-        kind: z.enum(['skill', 'agent']).optional().describe('skill ou subagente especializado'),
-        department: z.enum(DEPARTMENTS).optional().describe('função do trabalho'),
-        installedOnly: z.boolean().optional().describe('padrão true; use false apenas para descobrir algo que o usuário pode instalar'),
-        limit: z.number().int().min(1).max(20).optional().describe('padrão 16; refine a consulta em vez de ampliar contexto')
-      }
-    },
-    async ({ query, kind, department, installedOnly, limit }) =>
-      text(api.listSkills(identity, { query, kind, department, installedOnly, limit }))
   )
 
   server.registerTool(

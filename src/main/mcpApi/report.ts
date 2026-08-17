@@ -41,8 +41,6 @@ import {
 import { redactSensitiveText } from '../securityRedaction'
 import { appendFileSync, mkdirSync, unlinkSync, writeFileSync } from 'fs'
 import { type PaneIdentity } from '../hub'
-import { classifyTaskUiWork } from '../skillsRouting'
-import { SkillRuntime } from '../skillRuntime'
 import {
   formatHelperCompletionShortNotice,
   helperCompletionNotificationKey
@@ -63,18 +61,6 @@ export interface ReportApiExtras {
     statusAt?: string
   ): HelperRecoveryRecord | undefined
   helperTranscriptPath(projectId: string, paneId: string): string | undefined
-  skillRuntime: SkillRuntime
-  skillPlanScopes: Map<
-    string,
-    {
-      phase: string
-      phaseRun: string
-      agentIds: string[]
-      taskId?: string
-      projectId?: string
-      missionId?: string
-    }
-  >
   securityWaiverOptions(projectId: string): { sensitiveWaiverAllowed: boolean }
   planTaskForWorkTask(task: Task): Task | undefined
   plannedHelperAssignments: Map<string, { parentPhaseRun: string; agentId?: string }>
@@ -111,8 +97,6 @@ export function buildReportApi(
     handleMissionVerdict,
     updateStoredHelperStatus,
     helperTranscriptPath,
-    skillRuntime,
-    skillPlanScopes,
     securityWaiverOptions,
     planTaskForWorkTask,
     plannedHelperAssignments,
@@ -141,7 +125,6 @@ export function buildReportApi(
       summary,
       securityReview: SecurityReviewInput | undefined,
       suggestedPatch?: string,
-      skillApplications?: string[],
       verificationEvidence?: GateVerificationEvidence,
       devSnapshot?: PhaseWatch['devSnapshot']
     ) => {
@@ -151,45 +134,6 @@ export function buildReportApi(
       content = redactSensitiveText(content)
       summary = summary ? redactSensitiveText(summary) : undefined
       if (id.role === 'ajudante') {
-        const helperScope = skillPlanScopes.get(id.paneId)
-        if (!helperScope || helperScope.phase !== 'helper') {
-          return 'report recusado: o plano rastreável de skills deste ajudante não está disponível'
-        }
-        const guardedHelperReport = skillRuntime.guardReport({
-          paneId: id.paneId,
-          phase: 'helper',
-          phaseRun: helperScope.phaseRun,
-          skillApplications
-        })
-        if (!guardedHelperReport.ok) {
-          const details =
-            guardedHelperReport.code === 'report_incomplete'
-              ? [
-                  ...(guardedHelperReport.missingActivated ?? []).map(
-                    (receipt) => `ative ${receipt} com activate_skill`
-                  ),
-                  ...(guardedHelperReport.missingDeclared ?? []).map(
-                    (receipt) => `inclua ${receipt} em skillApplications`
-                  ),
-                  ...(guardedHelperReport.unknownApplications ?? []).map(
-                    (receipt) => `receipt desconhecido ${receipt}`
-                  ),
-                  ...(guardedHelperReport.unactivatedApplications ?? []).map(
-                    (receipt) => `receipt não ativado ${receipt}`
-                  )
-                ]
-              : []
-          return `report de skills incompleto: ${details.join('; ') || guardedHelperReport.message}`
-        }
-        const acceptedHelperReport = skillRuntime.acceptReport({
-          paneId: id.paneId,
-          phase: 'helper',
-          phaseRun: helperScope.phaseRun,
-          skillApplications
-        })
-        if (!acceptedHelperReport.ok) {
-          return 'report recusado: o plano de skills do ajudante mudou durante a conclusão'
-        }
         const plannedAssignment = plannedHelperAssignments.get(id.paneId)
         if (plannedAssignment) {
           completedHelperPhaseRuns.add(plannedAssignment.parentPhaseRun)
@@ -400,9 +344,7 @@ export function buildReportApi(
         securityReview = undefined
       }
       const evidenceTask = tasks.get(watch.taskId)
-      const evidenceUiWork = Boolean(
-        watch.uiWork ?? (evidenceTask && classifyTaskUiWork(evidenceTask))
-      )
+      const evidenceUiWork = Boolean(watch.uiWork)
       const evidenceStatus = /^\s*aprovada\b/i.test(content)
         ? 'aprovada'
         : /^\s*reprovada\b/i.test(content)
@@ -448,9 +390,6 @@ export function buildReportApi(
               observations: sanitizeEvidenceList(verificationEvidence.observations, 32) ?? []
             }
           : undefined
-      const skillScope = skillPlanScopes.get(id.paneId)
-      if (!skillScope)
-        return 'report recusado: o plano rastreável de skills desta rodada não está disponível; reabra somente esta fase'
       const blockedReport = /^\s*bloqueada\b/i.test(content)
       if (
         !blockedReport &&
@@ -493,7 +432,6 @@ export function buildReportApi(
             content,
             undefined,
             sanitizedVerificationEvidence,
-            undefined,
             transitionToken
           )
         } catch (error) {
@@ -503,70 +441,6 @@ export function buildReportApi(
         return advanced
           ? `veredito invalidado antes de consumir receipts: ${boundArtifactProblem}`
           : `artefato imutável inválido e pipeline preservado: ${boundArtifactProblem}`
-      }
-      if (!blockedReport) {
-        const guardedSkillReport = skillRuntime.guardReport({
-          paneId: id.paneId,
-          phase: id.phase ?? watch.phase,
-          phaseRun: skillScope.phaseRun,
-          skillApplications
-        })
-        if (!guardedSkillReport.ok) {
-          const details =
-            guardedSkillReport.code === 'report_incomplete'
-              ? [
-                  ...(guardedSkillReport.missingActivated ?? []).map(
-                    (receipt) => `ative ${receipt} com activate_skill`
-                  ),
-                  ...(guardedSkillReport.missingDeclared ?? []).map(
-                    (receipt) => `inclua ${receipt} em skillApplications`
-                  ),
-                  ...(guardedSkillReport.unknownApplications ?? []).map(
-                    (receipt) => `receipt desconhecido ${receipt}`
-                  ),
-                  ...(guardedSkillReport.unactivatedApplications ?? []).map(
-                    (receipt) => `receipt não ativado ${receipt}`
-                  )
-                ]
-              : []
-          return `report de skills incompleto: ${details.join('; ') || guardedSkillReport.message}`
-        }
-      }
-      const prepareSkillUsageAcceptance = (): {
-        skillUsage: NonNullable<Task['skillUsage']>
-        commitRuntime: () => boolean
-      } | undefined => {
-        if (!id.taskId || !skillScope) return undefined
-        const task = tasks.get(id.taskId)
-        const usage = task?.skillUsage
-        if (usage?.phaseRun !== skillScope.phaseRun) return undefined
-        const updatedAt = new Date().toISOString()
-        const skills = usage.skills.map((skill) => ({ ...skill, status: 'applied' as const }))
-        const agents = usage.agents?.map((agent) => ({
-          ...agent,
-          status: 'completed' as const
-        }))
-        return {
-          skillUsage: {
-            ...usage,
-            updatedAt,
-            runStatus: 'completed',
-            skills,
-            agents,
-            history: (usage.history ?? []).map((run) =>
-              run.phaseRun === skillScope.phaseRun
-                ? { ...run, updatedAt, runStatus: 'completed' as const, skills, agents }
-                : run
-            )
-          },
-          commitRuntime: () =>
-            skillRuntime.acceptReport({
-              paneId: id.paneId,
-              phase: id.phase ?? watch.phase,
-              phaseRun: skillScope.phaseRun,
-              skillApplications
-            }).ok
-        }
       }
       try {
         ensureProjectRuntimeWritable(watch.projectId)
@@ -832,21 +706,6 @@ export function buildReportApi(
           patchNote = ''
         }
       }
-      // Qualquer falha entre o acquire e o advancePhase re-indexa e solta —
-      // "o lock SEMPRE solta no settle" (§3.3); um throw aqui deixaria o card
-      // bricado até o restart.
-      let acceptance: ReturnType<typeof prepareSkillUsageAcceptance>
-      try {
-        acceptance = prepareSkillUsageAcceptance()
-      } catch {
-        acceptance = undefined
-      }
-      if (!acceptance) {
-        // recusa ANTES do advancePhase: o rollback re-indexa (createdAt
-        // renovado) e solta o lock na ordem set→release
-        ctx.phase.rollbackVerdictTransaction(watch, transitionToken)
-        return 'report recusado: o ledger persistido desta rodada não corresponde ao plano ativo; reabra somente esta fase'
-      }
       let advanced = false
       try {
         advanced = await ctx.phase.advancePhase(
@@ -854,7 +713,6 @@ export function buildReportApi(
           patchNote ? `${content}${patchNote}` : content,
           normalizedSecurityReview,
           sanitizedVerificationEvidence,
-          acceptance,
           transitionToken,
           devSnapshot
         )

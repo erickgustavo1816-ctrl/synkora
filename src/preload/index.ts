@@ -316,28 +316,6 @@ export interface NewTask {
 }
 
 // Biblioteca de skills (F4): catálogo curado, instalado da fonte (GitHub) e
-// injetado por workspace nas execuções. Espelho do SkillState do main.
-export interface SkillState {
-  id: string
-  kind: 'skill' | 'agent'
-  depts: Department[]
-  group: string
-  repo: string
-  summary: string
-  hint: string
-  requires?: string[]
-  defaultFor?: Department[]
-  /** Só é injetada quando escolhida explicitamente para o trabalho. */
-  manualOnly?: boolean
-  installed: boolean
-  sha?: string
-  installedAt?: string
-  supplyChainDecision?: 'allow' | 'review' | 'block'
-  supplyChainFindings?: number
-  licenseFiles?: string[]
-  updateAvailable: boolean
-}
-
 // Missões (F3.8): fluxo de trabalho com orquestrador, tarefas e branch próprios.
 export type MissionStatus = 'ativa' | 'integrando' | 'concluida' | 'arquivada'
 
@@ -1823,32 +1801,6 @@ const api = {
     },
     showNotice: (message: string, tone: SynVoiceNoticeTone = 'error'): void =>
       ipcRenderer.send('voice:show-notice', { message, tone })
-  },
-  skills: {
-    list: (): Promise<SkillState[]> => ipcRenderer.invoke('skills:list'),
-    install: (id: string): Promise<{ ok: boolean; msg: string }> =>
-      ipcRenderer.invoke('skills:install', id),
-    installMany: (ids: string[]): Promise<{ ok: boolean; msg: string }> =>
-      ipcRenderer.invoke('skills:installMany', ids),
-    addCustom: (url: string, dept: Department): Promise<{ ok: boolean; msg: string }> =>
-      ipcRenderer.invoke('skills:addCustom', url, dept),
-    /** subagente custom: URL do ARQUIVO .md (blob/raw) — id do frontmatter name */
-    addCustomAgent: (url: string, dept: Department): Promise<{ ok: boolean; msg: string }> =>
-      ipcRenderer.invoke('skills:addCustomAgent', url, dept),
-    remove: (id: string): Promise<{ ok: boolean; msg: string }> =>
-      ipcRenderer.invoke('skills:remove', id),
-    update: (id: string): Promise<{ ok: boolean; msg: string }> =>
-      ipcRenderer.invoke('skills:update', id),
-    check: (): Promise<number> => ipcRenderer.invoke('skills:check'),
-    /** exporta a biblioteca inteira (skills + subagentes + customs) num .zip */
-    exportLib: (): Promise<{ ok: boolean; msg: string }> => ipcRenderer.invoke('skills:export'),
-    /** importa um .zip exportado em outra máquina — instala sem rede */
-    importLib: (): Promise<{ ok: boolean; msg: string }> => ipcRenderer.invoke('skills:import'),
-    onChanged: (cb: () => void): (() => void) => {
-      const listener = (): void => cb()
-      ipcRenderer.on('skills:changed', listener)
-      return () => ipcRenderer.removeListener('skills:changed', listener)
-    }
   },
   blackbox: {
     /** exporta o pacote de diagnóstico completo (diário + estado + Git) */

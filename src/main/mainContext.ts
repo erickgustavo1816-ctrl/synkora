@@ -29,7 +29,6 @@ import type { PolicyStore } from './policies'
 import type { SettingsStore } from './settings'
 import type { PtyManager } from './pty'
 import type { PaneMailbox } from './mailbox'
-import type { SkillsLibrary } from './skillsLibrary'
 import type { SynVoiceService } from './synVoice'
 import type { Blackbox } from './blackbox'
 import type { StallAttribution } from './stallAttribution'
@@ -40,7 +39,6 @@ import type { CodexSession } from './codexSession'
 import type { Hub, PaneIdentity } from './hub'
 import type { McpServerHandle, McpStdioLaunch } from './mcpServer'
 import type { PaneStartupMetrics } from './paneStartupMetrics'
-import type { WorkspaceSkillLeaseRegistry } from './workspaceSkills'
 import type {
   PhaseLaunchGuard,
   PhaseLaunchCapacityGuard,
@@ -98,10 +96,6 @@ export interface PhaseApi {
     content: string,
     securityReview?: SecurityReviewRecord,
     verificationEvidence?: GateVerificationEvidence,
-    acceptance?: {
-      skillUsage: NonNullable<Task['skillUsage']>
-      commitRuntime: () => boolean
-    },
     token?: PhaseTransitionToken,
     /** Fotografia do dev POR VALOR (F2-c5b, §7.10): vem do codeReportGuard
      *  do PRÓPRIO entrante — o campo watch.devSnapshot virou fallback. */
@@ -155,14 +149,12 @@ export interface MainContext {
   readonly settings: SettingsStore
   readonly ptys: PtyManager
   readonly mailbox: PaneMailbox
-  readonly skillsLib: SkillsLibrary
   readonly synVoice: SynVoiceService
   readonly blackbox: Blackbox
   readonly mainStalls: StallAttribution
   readonly sessionStats: SessionStatsWatcher
   readonly helperCompletions: HelperCompletionTracker
   readonly maestroSessions: Map<string, MaestroSession | CodexSession>
-  readonly helperSkillLeases: WorkspaceSkillLeaseRegistry
 
   // ——— reatribuíveis em runtime (getters — sempre o valor ATUAL) ———
   /** Getter de propósito: quebra o ciclo Hub↔contexto (HubDeps captura
@@ -241,7 +233,6 @@ export interface MainContext {
   cleanPaneMcpFile(paneId: string): void
   persistUserQuestions(): void
   abortVoiceRequests(): void
-  releasePaneSkillLease(paneId: string): void
 
   /** Costura de push da Fase 3 (docs/FASE3_PLANO.md §3-D3): o destino deixa
    *  de ser "a janela" e passa a ser a VIEW. `pushBoard` = host (uiSender);

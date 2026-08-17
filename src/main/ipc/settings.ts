@@ -16,7 +16,6 @@ import {
   type SynkoraSettingsPatch
 } from '../settings'
 import { type McpStdioLaunch } from '../mcpServer'
-import { setGithubToken } from '../skillsLibrary'
 import type { MainContext } from '../mainContext'
 
 /** Lets do closure do index que estes handlers leem/escrevem — o call
@@ -65,7 +64,6 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
       patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {}
     const next = settings.update(safePatch)
     ptys.setConptyDll(next.conptyDll !== false)
-    setGithubToken(next.githubToken)
     if (previous.externalServicePreparation !== next.externalServicePreparation) {
       if (next.externalServicePreparation === 'automatic') {
         validateExternalServices()
@@ -90,16 +88,14 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
     if (!validSettingsSecret(name) || typeof value !== 'string') {
       throw new Error('Credencial inválida.')
     }
-    const next = settings.setSecret(name, value)
-    if (name === 'githubToken') setGithubToken(next.githubToken)
+    settings.setSecret(name, value)
     return settings.view()
   })
 
   ipcMain.handle('settings:secret:clear', (e, name: unknown) => {
     assertMainRendererSender(e)
     if (!validSettingsSecret(name)) throw new Error('Credencial inválida.')
-    const next = settings.clearSecret(name)
-    if (name === 'githubToken') setGithubToken(next.githubToken)
+    settings.clearSecret(name)
     return settings.view()
   })
 }

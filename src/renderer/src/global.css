@@ -11935,32 +11935,6 @@ button.pd-mission.waiting:hover {
   gap: 2px;
 }
 
-.skill-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 26px;
-  padding: 1px 6px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-}
-
-.skill-row:hover {
-  border-color: color-mix(in srgb, var(--ink) 14%, transparent);
-  background: color-mix(in srgb, var(--ink) 3%, transparent);
-}
-
-.skill-row .skill-name {
-  font-size: 11px;
-  color: var(--ink-2);
-  cursor: default;
-}
-
-.skill-row.inst .skill-name {
-  color: hsl(var(--dept-hue, 21) 55% 32%);
-  font-weight: 600;
-}
-
 .skill-def {
   border: 0;
   background: none;
@@ -11974,227 +11948,11 @@ button.pd-mission.waiting:hover {
   color: var(--accent);
 }
 
-.skill-spacer {
-  flex: 1;
-}
-
-.skill-state {
-  font-size: 11px;
-  color: var(--ok);
-  cursor: default;
-}
-
-.skill-busy {
-  font-size: 10.5px;
-  color: var(--ink-3);
-  font-style: italic;
-}
-
-.skill-err {
-  font-size: 10.5px;
-  color: var(--err);
-  padding: 4px 6px 0;
-}
-
 .task-skills-line {
   font-size: 10.5px;
   color: var(--accent);
   padding: 2px 0 6px;
   cursor: default;
-}
-
-/* Biblioteca de skills em Configurações (global à máquina): grupos por ocasião em
-   grid responsivo; as linhas compartilham .skill-row com o func-card. */
-.skills-lib {
-  margin: 2px 0;
-}
-
-/* Skills e subagentes são SEÇÕES IRMÃS separadas (decisão do usuário) */
-.skills-lib + .skills-lib {
-  margin-top: 16px;
-}
-
-.skills-lib-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 0;
-}
-
-.skills-lib.open .skills-lib-head {
-  margin-bottom: 8px;
-}
-
-/* Toggle herda a cara do section-label (é o próprio rótulo, clicável). */
-.skills-lib-toggle {
-  font: inherit;
-  font-size: inherit;
-  letter-spacing: inherit;
-  text-transform: inherit;
-  color: inherit;
-  border: 0;
-  background: none;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-
-.skills-lib-toggle:hover {
-  color: var(--ink-2);
-}
-
-.skills-lib-meta {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  letter-spacing: normal;
-  text-transform: none;
-}
-
-.skills-lib-count {
-  font-size: 11px;
-  color: var(--ink-3);
-}
-
-.skills-lib-note {
-  font-size: 11px;
-  color: var(--ink-3);
-  margin: 0 0 10px;
-  max-width: 780px;
-}
-
-.skills-lib-note b {
-  color: var(--ink-2);
-  font-weight: 600;
-}
-
-/* Navegação da biblioteca por FUNÇÃO: um card por função, contagem
-   instaladas/total; função sem rodada = "em breve" esmaecido. */
-.lib-dept-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 2px 0 12px;
-}
-
-.lib-dept-card {
-  font: inherit;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 12px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
-  background: none;
-  color: var(--ink-2);
-  cursor: pointer;
-}
-
-.lib-dept-card:hover {
-  border-color: hsl(var(--dept-hue, 21) 45% 55% / 0.6);
-}
-
-.lib-dept-card.on {
-  border-color: hsl(var(--dept-hue, 21) 45% 50% / 0.75);
-  background: hsl(var(--dept-hue, 21) 55% 45% / 0.1);
-  color: hsl(var(--dept-hue, 21) 55% 28%);
-}
-
-.lib-dept-card.empty {
-  opacity: 0.55;
-}
-
-.lib-dept-name {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-weight: 700;
-}
-
-.lib-dept-count {
-  font-size: 10px;
-  color: var(--ink-3);
-}
-
-.lib-dept-card.on .lib-dept-count {
-  color: inherit;
-}
-
-.lib-dept-upd {
-  font-size: 10px;
-  color: var(--accent);
-}
-
-.skills-lib-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.skills-io-msg {
-  font-size: 11px;
-  color: var(--ok);
-  align-self: center;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.skills-add {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.skills-add-input {
-  flex: 1;
-  font: inherit;
-  font-size: 11.5px;
-  color: var(--ink);
-  background: none;
-  border: 1px solid color-mix(in srgb, var(--ink) 25%, transparent);
-  border-radius: 6px;
-  padding: 6px 10px;
-  outline: none;
-}
-
-.skills-add-input:focus {
-  border-color: var(--accent);
-}
-
-.skills-lib-empty {
-  font-size: 11.5px;
-  color: var(--ink-3);
-  font-style: italic;
-  padding: 8px 2px 4px;
-}
-
-.skills-lib-empty b {
-  color: var(--ink-2);
-}
-
-/* ONDA D: .skill-chip-inst/.chip-star/.chip-upd viviam no func-card da página
-   ✦ geral, que morreu — a biblioteca completa segue em Configurações. */
-
-.skills-lib-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-  gap: 4px 22px;
-  align-items: start;
-}
-
-.skills-lib-group-title {
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-  font-weight: 700;
-  padding: 8px 6px 4px;
 }
 
 .skill-chip.owned {
@@ -14269,18 +14027,12 @@ textarea.synvoice-target:not(.gui-input) {
   animation: rise 260ms var(--ease-out) both;
 }
 
-.settings-section-body .seat-deck,
-.settings-section-body > .skills-lib {
+.settings-section-body .seat-deck {
   padding: 18px;
   border: 1px solid var(--line-strong);
   border-radius: 11px;
   background: rgba(246, 241, 230, 0.78);
 }
-
-.settings-section-body > .skills-lib {
-  margin: 0;
-}
-
 .settings-card {
   overflow: hidden;
   border: 1px solid var(--line-strong);

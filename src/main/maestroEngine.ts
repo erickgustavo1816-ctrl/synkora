@@ -35,9 +35,6 @@ import { MaestroSession, type SessionEvent } from './maestroSession'
 import { CodexSession } from './codexSession'
 import { assessMissionRisk } from './orchestratorFlow'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
-import { SYNKORA_PLANNING_STANDARD_ID } from './skillsRouting'
-import { SkillRuntime, type PlannedSkillInput } from './skillRuntime'
-import type { SkillDef } from './skillsLibrary'
 import type { PendingUserQuestion } from './phaseTypes'
 import type { MainContext } from './mainContext'
 
@@ -58,130 +55,17 @@ export interface MaestroEngineExtras {
   finishProgressMaestroTurn(projectId: string, session: MaestroBackend, force?: boolean): void
   /** Valor const do boot — política de sistema do painel claude (fail closed sem ele). */
   maestroSystemPromptFile: string | undefined
-  /** Infra compartilhada de skill runtime — já é extra do phaseEngine. */
-  prepareSkillPlanInputs(
-    rootIds: string[],
-    describe: (id: string) => Pick<PlannedSkillInput, 'operation' | 'reason' | 'required'>
-  ): Promise<{ definitions: SkillDef[]; inputs: PlannedSkillInput[]; missing: string[] }>
-  syncPaneSkillLease(
-    paneId: string,
-    cwd: string,
-    ids: string[]
-  ): Promise<{ injected: SkillDef[]; missing: string[] }>
-  /** Late-bound: let do index atribuído depois da construção do engine. */
-  releasePaneSkillPlan(paneId: string): void
-  skillRuntime: SkillRuntime
-  skillPlanScopes: Map<
-    string,
-    {
-      phase: string
-      phaseRun: string
-      agentIds: string[]
-      taskId?: string
-      projectId?: string
-      missionId?: string
-    }
-  >
 }
 
 export type MaestroEngine = ReturnType<typeof createMaestroEngine>
 
 export function createMaestroEngine(ctx: MainContext, extras: MaestroEngineExtras) {
-  const { projects, seats, tasks, maestro, maestroSessions, skillsLib, blackbox, syncBoard } = ctx
+  const { projects, seats, tasks, maestro, maestroSessions, blackbox, syncBoard } = ctx
   const {
     killMaestroSession,
     finishProgressMaestroTurn,
-    maestroSystemPromptFile,
-    prepareSkillPlanInputs,
-    syncPaneSkillLease,
-    releasePaneSkillPlan,
-    skillRuntime,
-    skillPlanScopes
+    maestroSystemPromptFile
   } = extras
-
-  const planningPreparationTickets = new Map<string, string>()
-  const preparePlanningRun = async (input: {
-    paneId: string
-    projectId: string
-    missionId?: string
-    cwd: string
-  }): Promise<{ ok: true; phaseRun: string; skillBlock: string } | { ok: false; message: string }> => {
-    const ticket = randomUUID()
-    planningPreparationTickets.set(input.paneId, ticket)
-    let phaseRun: string | undefined
-    const stillOwner = (): boolean => planningPreparationTickets.get(input.paneId) === ticket
-    const fail = (message: string): { ok: false; message: string } => {
-      if (stillOwner()) {
-        planningPreparationTickets.delete(input.paneId)
-        ctx.releasePaneSkillLease(input.paneId)
-        const scope = skillPlanScopes.get(input.paneId)
-        if (scope?.phase === 'planning' && (!phaseRun || scope.phaseRun === phaseRun)) {
-          releasePaneSkillPlan(input.paneId)
-        }
-      }
-      return { ok: false, message }
-    }
-    try {
-      const planningIds = skillsLib.orchestratorPlanningIds()
-      if (
-        planningIds.length !== 1 ||
-        planningIds[0] !== SYNKORA_PLANNING_STANDARD_ID
-      ) {
-        return fail('o método nativo synkora-planning-standard não está íntegro e elegível')
-      }
-      await syncPaneSkillLease(input.paneId, input.cwd, [])
-      const prepared = await prepareSkillPlanInputs(planningIds, () => ({
-        operation: 'plan',
-        reason: 'planning.standard',
-        required: true
-      }))
-      if (!stillOwner()) {
-        return { ok: false, message: 'esta abertura foi substituída por uma geração mais nova' }
-      }
-      if (
-        prepared.missing.length > 0 ||
-        prepared.inputs.length !== 1 ||
-        prepared.definitions.length !== 1
-      ) {
-        return fail('não foi possível carregar exatamente o método nativo de planejamento')
-      }
-      phaseRun = randomUUID()
-      const planned = skillRuntime.planPane({
-        paneId: input.paneId,
-        phase: 'planning',
-        phaseRun,
-        skills: prepared.inputs
-      })
-      if (!planned.ok) return fail('não foi possível registrar o receipt de planejamento')
-      if (!stillOwner()) {
-        skillRuntime.release({ paneId: input.paneId, phase: 'planning', phaseRun })
-        return { ok: false, message: 'esta abertura foi substituída por uma geração mais nova' }
-      }
-      skillPlanScopes.set(input.paneId, {
-        phase: 'planning',
-        phaseRun,
-        agentIds: [],
-        projectId: input.projectId,
-        missionId: input.missionId
-      })
-      planningPreparationTickets.delete(input.paneId)
-      const receipt = planned.plan.receipts[0]
-      const definition = prepared.definitions[0]
-      return {
-        ok: true,
-        phaseRun,
-        skillBlock:
-          `\n\nACTIVE PLANNING METHOD — selected and bound to this exact planning run. ` +
-          `Before analysis or any plan mutation, call activate_skill with receiptId ${receipt.receiptId}. ` +
-          `Use only the returned method; do not browse, stack, or substitute another planning workflow. ` +
-          `Every save_project_plan/create_plan call must pass skillApplications: ["${receipt.receiptId}"]. ` +
-          `The backend rejects stale, foreign, unactivated, or omitted receipts.\n` +
-          `- ${definition.id} · operation ${receipt.operation} · receiptId ${receipt.receiptId} · REQUIRED: ${definition.hint}`
-      }
-    } catch {
-      return fail('falha ao preparar o método nativo de planejamento')
-    }
-  }
 
   // TETO DE CUSTO DO RESUME DO PM/ORQUESTRADOR (pedido do usuário, 2026-08-06:
   // "eles não podem ter que reler a conversa toda — principalmente o maestro,
@@ -547,7 +431,6 @@ export function createMaestroEngine(ctx: MainContext, extras: MaestroEngineExtra
     surveyAborts,
     maestroResumeOverBudget,
     skipMaestroResume,
-    preparePlanningRun,
     pendingUserQuestions,
     persistUserQuestions
   }

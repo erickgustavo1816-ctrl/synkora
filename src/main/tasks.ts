@@ -18,7 +18,6 @@ import type { ProjectAdapterDetection } from './projectAdapters'
 import type { ManualSecurityValidation } from './manualSecurityValidation'
 import type { SecurityReviewRecord } from './securityReview'
 import type { GateVerificationEvidence } from './gateVerificationEvidence'
-import type { PlanningMethodEvidence } from './skillRuntime'
 import { redactSensitiveStrings } from './securityRedaction'
 
 // Funções enxutas (decisão do usuário, 2026-07-23): só existe função quando
@@ -90,12 +89,6 @@ export interface TaskPlan {
   expectedCards?: number
   /** Grafo tipado dos cards/ondas; ausente apenas em planos legados. */
   workItems?: PlanWorkItem[]
-  /** Receipt do metodo nativo que produziu esta proposta. Planos novos sem
-   * esta evidencia nunca podem gerar cards de trabalho. */
-  planningMethod?: PlanningMethodEvidence
-  /** Migração explícita: approved legado pode terminar o que já começou;
-   * proposta nova só chega a verified com receipt nativo válido. */
-  planningEvidenceState?: 'receipt_required' | 'verified' | 'legacy_unverified'
   /** conclusão escrita pelo orquestrador quando o plano termina (markdown) */
   conclusion?: string
   /** ISO de quando o usuário aprovou (status backlog→execucao) */
@@ -105,28 +98,6 @@ export interface TaskPlan {
   executionHead?: string
   /** Evidencia persistida da fotografia inicial e da validacao conjunta. */
   verification?: PlanVerificationState
-}
-
-function isStructurallyValidPlanningMethod(
-  evidence: PlanningMethodEvidence | undefined
-): boolean {
-  return Boolean(
-    evidence?.contractVersion === 1 &&
-      evidence.skillId === 'synkora-planning-standard' &&
-      evidence.operation === 'plan' &&
-      evidence.receiptId?.trim() &&
-      evidence.version?.trim() &&
-      evidence.fingerprint?.trim() &&
-      evidence.phaseRun?.trim() &&
-      evidence.appliedAt?.trim()
-  )
-}
-
-export function isVerifiedTaskPlanPlanningMethod(plan: TaskPlan | undefined): boolean {
-  return Boolean(
-    plan?.planningEvidenceState === 'verified' &&
-      isStructurallyValidPlanningMethod(plan.planningMethod)
-  )
 }
 
 export interface PlanVerificationCheckpoint extends VerificationCheckpoint {
@@ -629,27 +600,11 @@ export class TaskStore {
     this.tasks = raw.map((stored) => {
       const t = redactSensitiveStrings(stored)
       const status = t.status === 'analise' ? 'backlog' : t.status
-      const plan = t.plan
-        ? {
-            ...t.plan,
-            planningEvidenceState:
-              t.plan.planningEvidenceState ??
-              (isStructurallyValidPlanningMethod(t.plan.planningMethod)
-                ? 'verified'
-                : status === 'execucao' ||
-                    status === 'qa' ||
-                    status === 'done' ||
-                    Boolean(t.plan.approvedAt)
-                  ? 'legacy_unverified'
-                  : 'receipt_required')
-          }
-        : undefined
       return {
         ...t,
         status,
         type: t.type ?? 'feature',
-        effort: t.effort ?? 'leve',
-        plan
+        effort: t.effort ?? 'leve'
       }
     }) as Task[]
     // Promove a fotografia migrada usando escrita atômica + backup.

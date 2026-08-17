@@ -44,7 +44,6 @@ import {
   panePermissionArgs,
   type PaneAccessProfile
 } from './panePermissions'
-import { isMethodGovernedPaneRole } from './codexSkillIsolation'
 import { activeQaRuntimes, stopQaRuntime } from './qaRuntime'
 import { decorateBrowserLaunchArgs, qaCdpReservations } from './qaCdp'
 import { parsePortFromUrl, type PortUseEntry } from './portMap'
@@ -241,10 +240,6 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
     opts: { strictMcp?: boolean; configDir?: string; sensitive?: boolean } = {}
   ): { paneId: string; cliArgs: string[] } {
     const paneId = identity.paneId ?? randomUUID()
-    const methodGoverned = isMethodGovernedPaneRole(identity.role)
-    if (cli === 'codex' && methodGoverned && !opts.configDir) {
-      throw new Error('Codex method-governed pane requires an isolated config directory')
-    }
     const token = randomUUID()
     hub.registerPane(token, { ...identity, paneId })
     paneTokens.set(paneId, token)
@@ -263,10 +258,7 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
     const effectiveStrictMcp = sensitive ? true : (opts.strictMcp ?? true)
     const args: string[] = []
     args.push(
-      ...panePermissionArgs(cli, bypass, accessProfile, {
-        sensitive,
-        receiptGoverned: methodGoverned
-      })
+      ...panePermissionArgs(cli, bypass, accessProfile, { sensitive })
     )
     if (sensitive && accessProfile === 'write' && bypass) {
       blackbox.record({
@@ -323,7 +315,7 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
       if (opts.configDir && project) ensureCodexTrust(opts.configDir, project.path)
       // Gates Codex must not inherit arbitrary MCP servers from the seat's
       // persistent CODEX_HOME. The ephemeral Synkora server is appended below.
-      if (opts.configDir && (methodGoverned || accessProfile !== 'write' || sensitive)) {
+      if (opts.configDir && (accessProfile !== 'write' || sensitive)) {
         const configFile = join(opts.configDir, 'config.toml')
         args.push(
           ...codexGateMcpDisableArgs(

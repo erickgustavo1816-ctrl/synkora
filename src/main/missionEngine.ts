@@ -120,7 +120,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     ptys,
     blackbox,
     mainStalls,
-    skillsLib,
     helperCompletions,
     helperReported,
     helperSeen,
@@ -1093,9 +1092,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           'Preservar as entregas já integradas e a intenção desta missão',
           'Rodar os testes rápidos relevantes'
         ],
-        skills: conflictInstruction && skillsLib.isSelectable('resolving-merge-conflicts')
-          ? ['resolving-merge-conflicts']
-          : undefined,
         version: maestro.get(mission.projectId).version,
         missionId: mission.id,
         origin: 'maestro',

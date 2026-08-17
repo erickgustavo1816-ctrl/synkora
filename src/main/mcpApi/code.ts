@@ -28,24 +28,12 @@ import { type PhaseWatch } from '../phaseTypes'
 import { existsSync } from 'fs'
 import type { MainContext } from '../mainContext'
 import type { McpApi } from '../mcpServer'
-import { plannedHelperCompletionProblem } from '../agentRouting'
 
 /** Dependências do closure do index ainda não migradas (mesmo padrão
  * do PhaseEngineExtras). */
 export interface CodeApiExtras {
   planTaskForWorkTask(task: Task): Task | undefined
   missionWorkspacePath(projectPath: string, mission: Mission): string | undefined
-  skillPlanScopes: Map<
-    string,
-    {
-      phase: string
-      phaseRun: string
-      agentIds: string[]
-      taskId?: string
-      projectId?: string
-      missionId?: string
-    }
-  >
   completedPlannedAgentsByPhaseRun: Map<string, Set<string>>
   completedHelperPhaseRuns: Set<string>
 }
@@ -66,7 +54,6 @@ export function buildCodeApi(
   const {
     planTaskForWorkTask,
     missionWorkspacePath,
-    skillPlanScopes,
     completedPlannedAgentsByPhaseRun,
     completedHelperPhaseRuns
   } = extras
@@ -95,16 +82,6 @@ export function buildCodeApi(
       if (openHelpers.length > 0) {
         return block(`${openHelpers.length} ajudante(s) deste card ainda estão abertos. Aguarde o fechamento automático após o report (ou encerre-os explicitamente) antes de reportar done; o snapshot final só nasce depois que nenhum outro processo pode escrever.`)
       }
-      const parentSkillScope = skillPlanScopes.get(id.paneId)
-      const requiredAgentId = parentSkillScope?.agentIds[0]
-      const helperProblem = plannedHelperCompletionProblem({
-        delegationMode: task.delegation,
-        phaseRun: parentSkillScope?.phaseRun,
-        requiredAgentId,
-        completedHelperPhaseRuns,
-        completedAgentsByPhaseRun: completedPlannedAgentsByPhaseRun
-      })
-      if (helperProblem) return block(helperProblem)
       const project = projects.get(task.projectId)
       const mission = task.missionId ? missions.get(task.missionId) : undefined
       if (

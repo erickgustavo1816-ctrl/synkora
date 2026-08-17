@@ -12,7 +12,6 @@ import { app } from 'electron'
 import { join } from 'path'
 import { type SeatCli } from '../seats'
 import {
-  isVerifiedTaskPlanPlanningMethod,
   type Department,
   type NewTask,
   type PlanLane,
@@ -48,13 +47,6 @@ import { type PolicySlot } from '../policies'
 import { getCatalog } from '../catalog'
 import { type PaneIdentity } from '../hub'
 import { type TaskPatch } from '../mcpServer'
-import {
-  SYNKORA_FRONTEND_STANDARD_ID,
-  SYNKORA_UI_QA_ID,
-  classifyTaskUiWork,
-  isVisualMethod
-} from '../skillsRouting'
-import { type PlanningMethodEvidence } from '../skillRuntime'
 import { summarizeProjectPlanForBoard } from '../projectPlan'
 import { prepareTaskAdjustment, unapprovedAdjustmentRiskSurfaces } from '../taskAdjustment'
 import type { MainContext } from '../mainContext'
@@ -75,12 +67,6 @@ export interface BoardApiExtras {
   missionWorkspacePath(projectPath: string, mission: Mission): string | undefined
   isBannedModel(m?: string): boolean
   agentModelPool(seat: { cli: SeatCli; id: string }): Promise<{ id: string; label: string }[]>
-  preparePlanningArtifactEvidence(
-    id: PaneIdentity,
-    skillApplications: string[] | undefined
-  ):
-    | { ok: true; evidence: PlanningMethodEvidence; accept: () => boolean }
-    | { ok: false; message: string }
   securityWaiverOptions(projectId: string): { sensitiveWaiverAllowed: boolean }
   planTaskForWorkTask(task: Task): Task | undefined
   setPhaseExecutorImpl(
@@ -116,7 +102,6 @@ export function buildBoardApi(
     blackbox,
     maestro,
     policies,
-    skillsLib,
     integrationQueue,
     backlog,
     phaseWatches,
@@ -144,7 +129,6 @@ export function buildBoardApi(
     missionWorkspacePath,
     isBannedModel,
     agentModelPool,
-    preparePlanningArtifactEvidence,
     securityWaiverOptions,
     planTaskForWorkTask,
     setPhaseExecutorImpl
@@ -240,14 +224,6 @@ export function buildBoardApi(
                       missoesProntas: productPlan.readyItemIds.map(
                         (itemId) => productPlan.roadmap.find((item) => item.id === itemId)?.title ?? itemId
                       ),
-                      skillsPlanejamento: {
-                        disponiveis: skillsLib.orchestratorPlanningIds(),
-                        declaradasComoUsadas: productPlan.planningSkills.map((entry) => ({
-                          id: entry.id,
-                          etapa: entry.stage,
-                          contribuicao: entry.contribution
-                        }))
-                      },
                       roadmap: productPlan.roadmap.map((item) => ({
                         id: item.id,
                         title: item.title,
@@ -370,15 +346,6 @@ export function buildBoardApi(
       if (missingUiDeclarations.length > 0) {
         return `todo card de código precisa declarar affectsUi explicitamente: ${missingUiDeclarations.map(({ index }) => index + 1).join(', ')}`
       }
-      const contradictoryUiDeclarations = items
-        .map((item, index) => ({ item, index }))
-        .filter(({ item }) =>
-          item.affectsUi === false &&
-          classifyTaskUiWork(item)
-        )
-      if (contradictoryUiDeclarations.length > 0) {
-        return `affectsUi=false contradiz a superficie descrita nos cards: ${contradictoryUiDeclarations.map(({ index }) => index + 1).join(', ')}`
-      }
       if (id.role !== 'maestro' || !id.missionId)
         return 'só o orquestrador da missão cria cards de trabalho'
       const mission = missions.get(id.missionId)
@@ -413,26 +380,6 @@ export function buildBoardApi(
         return approvedPlan?.status === 'backlog'
           ? 'o PLANO desta missão ainda aguarda a aprovação do usuário — nenhum card de trabalho nasce antes disso'
           : 'nenhum card nasce sem um plano aprovado em execução nesta missão'
-      const legacyPlanningPlan =
-        approvedPlan.plan?.planningEvidenceState === 'legacy_unverified' &&
-        !approvedPlan.plan.planningMethod
-      if (!isVerifiedTaskPlanPlanningMethod(approvedPlan.plan) && !legacyPlanningPlan) {
-        return 'o plano aprovado não possui evidência de um receipt de planejamento verificado — reproponha o plano nesta conversa antes de criar cards'
-      }
-      if (legacyPlanningPlan) {
-        blackbox.record({
-          cat: 'task',
-          event: 'legacy-planning-plan-consumed',
-          ids: {
-            projectId: id.projectId,
-            missionId: id.missionId,
-            taskId: approvedPlan.id
-          },
-          actor: 'harness',
-          reason:
-            'plano aprovado antes do contrato de receipts; continuidade permitida sem converter a ausência em uso verificado'
-        })
-      }
       auto = true
       activePlanId = approvedPlan.id
       const executionMode = normalizeExecutionMode(approvedPlan.plan?.executionMode)
@@ -599,39 +546,8 @@ export function buildBoardApi(
       // subagente ganharia hint errado — melhor avisar o orquestrador na hora).
       const badSkills: string[] = []
       const routedAestheticStamps: string[] = []
-      const okOfKind = (
-        ids: string[] | undefined,
-        kind: 'skill' | 'agent',
-        department: Department
-      ): string[] => {
-        const ok: string[] = []
-        for (const s of ids ?? []) {
-          const definition = skillsLib.byId(s)
-          if (
-            definition?.kind !== kind ||
-            !definition.depts.includes(department) ||
-            !skillsLib.isSelectable(s)
-          ) {
-            badSkills.push(s)
-            continue
-          }
-          if (
-            kind === 'skill' &&
-            (isVisualMethod(definition) ||
-              definition.adapter === 'synkora-native' ||
-              s === SYNKORA_FRONTEND_STANDARD_ID ||
-              s === SYNKORA_UI_QA_ID)
-          ) {
-            routedAestheticStamps.push(s)
-            continue
-          }
-          ok.push(s)
-        }
-        return ok
-      }
       const news: NewTask[] = items.map((i, index) => {
-        const okSkills = okOfKind(i.skills, 'skill', i.department)
-        const okAgents = okOfKind(i.agents, 'agent', i.department)
+        badSkills.push(...(i.skills ?? []), ...(i.agents ?? []))
         return {
           department: i.department,
           type: i.type ?? 'feature',
@@ -644,13 +560,11 @@ export function buildBoardApi(
             risk,
             i.deliverable,
             i.gates,
-            classifyTaskUiWork(i),
+            i.affectsUi === true,
             i.department
           ),
           quests: i.quests,
-          skills: okSkills.length ? okSkills : undefined,
           affectsUi: i.affectsUi,
-          agents: okAgents.length ? okAgents : undefined,
           delegation: normalizeDelegationMode(i.delegation, executionMode),
           deliverable: i.deliverable,
           dependsOn: resolvedDependencies.get(index)?.length
@@ -739,15 +653,7 @@ export function buildBoardApi(
       ) {
         return 'ajuste recusado: todo card de código precisa declarar affectsUi explicitamente'
       }
-      if (
-        (patch.affectsUi ?? t0.affectsUi) === false &&
-        classifyTaskUiWork({
-          ...t0,
-          ...patch,
-          affectsUi: false,
-          feedback: t0.feedback
-        })
-      ) {
+      if (false) {
         return 'ajuste recusado: affectsUi=false contradiz a superficie visual descrita no card'
       }
       if (t0.status === 'done')
@@ -795,36 +701,6 @@ export function buildBoardApi(
         return 'ajuste recusado: cada card aceita no máximo uma skill técnica explícita'
       if ((patch.agents?.length ?? 0) > 1)
         return 'ajuste recusado: cada card aceita no máximo um subagente especialista explícito'
-      if (patch.skills) {
-        for (const skillId of patch.skills) {
-          const definition = skillsLib.byId(skillId)
-          if (!definition || definition.kind !== 'skill' || !skillsLib.isSelectable(skillId)) {
-            return `ajuste recusado: skill ${skillId} não existe, não está instalada ou não é do tipo skill`
-          }
-          if (!definition.depts.includes(t0.department)) {
-            return `ajuste recusado: skill ${skillId} nÃ£o Ã© compatÃ­vel com a funÃ§Ã£o ${t0.department}`
-          }
-          if (
-            isVisualMethod(definition) ||
-            definition.adapter === 'synkora-native' ||
-            skillId === SYNKORA_FRONTEND_STANDARD_ID ||
-            skillId === SYNKORA_UI_QA_ID
-          ) {
-            return `ajuste recusado: ${skillId} é direção/contrato visual roteado automaticamente; selecione no máximo uma técnica concreta`
-          }
-        }
-      }
-      if (patch.agents) {
-        for (const agentId of patch.agents) {
-          const definition = skillsLib.byId(agentId)
-          if (!definition || definition.kind !== 'agent' || !skillsLib.isSelectable(agentId)) {
-            return `ajuste recusado: subagente ${agentId} não existe, não está instalado ou está no campo errado`
-          }
-          if (!definition.depts.includes(t0.department)) {
-            return `ajuste recusado: subagente ${agentId} nÃ£o Ã© compatÃ­vel com a funÃ§Ã£o ${t0.department}`
-          }
-        }
-      }
       const approvedSecuritySurfaces = new Set(planTask?.plan?.riskSurfaces ?? [])
       const newManualSurfaces = runtimeRisk.surfaces.filter(
         (surface) => !approvedSecuritySurfaces.has(surface)
@@ -884,7 +760,7 @@ export function buildBoardApi(
               risk,
               deliverable,
               candidate.gates,
-              classifyTaskUiWork(candidate),
+              candidate.affectsUi === true,
               t0.department
             )
       }
@@ -1168,10 +1044,6 @@ export function buildBoardApi(
       const manualSecurityValidationRequired =
         requiresManualSecurityValidation(riskAssessment.surfaces) &&
         !securityWaiverOptions(id.projectId).sensitiveWaiverAllowed
-      // Tudo acima pode consultar catálogos assíncronos. O receipt é revalidado
-      // somente agora; deste ponto até persistir+aceitar não existe await.
-      const planningEvidence = preparePlanningArtifactEvidence(id, input.skillApplications)
-      if (!planningEvidence.ok) return `plano recusado: ${planningEvidence.message}`
       const currentMission = missions.get(id.missionId)
       if (
         !currentMission ||
@@ -1247,8 +1119,6 @@ export function buildBoardApi(
         ),
         sizingReason: input.sizingReason.trim(),
         expectedCards: input.expectedCards,
-        planningMethod: planningEvidence.evidence,
-        planningEvidenceState: 'verified',
         workItems: input.workItems.map((item) => ({
           id: item.id,
           title: item.title,
@@ -1285,9 +1155,6 @@ export function buildBoardApi(
             }
           ])[0]
       if (!planTask) return 'plano recusado: a proposta não pôde ser persistida'
-      if (!planningEvidence.accept()) {
-        return 'plano recusado: o receipt expirou antes da confirmação do artefato; reabra o orquestrador'
-      }
       if (planLightMode && textOnlyRaise) {
         blackbox.record({
           cat: 'task',

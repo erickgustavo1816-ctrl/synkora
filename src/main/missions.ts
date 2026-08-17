@@ -4,7 +4,6 @@ import { randomUUID } from 'crypto'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
 import { redactSensitiveStrings } from './securityRedaction'
 import { missionTypeOf, type MissionType } from './guiMissionContracts'
-import type { PlanningMethodEvidence } from './skillRuntime'
 
 // Missões (F3.8): a unidade de trabalho do universo. Cada missão tem seu
 // PRÓPRIO orquestrador (pane TUI), suas tarefas e — com git — sua própria
@@ -61,8 +60,6 @@ export interface Mission {
   pendingIntegrationApproval?: boolean
   /** versão do backlog a que esta missão pertence (escopo de release) */
   versionId?: string
-  /** Receipt do método que estruturou esta missão pontual. */
-  planningMethod?: PlanningMethodEvidence
   /** Momento real da conclusão. `updatedAt` pode mudar depois por manutenção
    *  e não deve fazer uma missão antiga parecer recém-concluída no radar. */
   completedAt?: string
@@ -78,7 +75,6 @@ export interface NewMission {
   model?: string
   effort?: string
   versionId?: string
-  planningMethod?: PlanningMethodEvidence
   pendingOrchestrator?: boolean
   /** Missão 2.0 (sem orquestrador/plano). Só o nascimento decide. */
   direct?: boolean
@@ -136,7 +132,6 @@ export class MissionStore {
       model: input.model,
       effort: input.effort,
       versionId: input.versionId,
-      planningMethod: input.planningMethod,
       pendingOrchestrator: input.pendingOrchestrator || undefined,
       // Carimbo de nascimento: `update` não lista `direct` no Pick, então
       // ninguém converte missão legada em 2.0 (nem o contrário) depois.

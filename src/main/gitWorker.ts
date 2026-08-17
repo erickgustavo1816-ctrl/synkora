@@ -1,8 +1,6 @@
 import { parentPort, receiveMessageOnPort, type MessagePort } from 'node:worker_threads'
 import * as worktree from './worktree'
 import * as reviewDiff from './reviewDiff'
-import * as workspaceSkills from './workspaceSkills'
-import * as skillPackageSecurity from './skillPackageSecurity'
 import * as reviewEvidence from './reviewEvidence'
 
 // WORKER DE GIT (task #2, 2026-08-04): as "travadas" do app eram o MAIN
@@ -21,15 +19,9 @@ import * as reviewEvidence from './reviewEvidence'
 
 export const CHECKPOINT_MARKER = '__SYNKORA_GIT_CHECKPOINT__'
 
-// workspaceSkills + skillPackageSecurity (task skills-off-main, 2026-08-05):
-// a cópia REAL de skills para worktree novo (rm+cp de dezenas ×2 destinos,
-// 1-4s medidos) e o scan de supply-chain (até 250 arquivos/30MB por skill)
-// também rodam aqui — módulos puros de fs, sem electron.
 const registry: Record<string, unknown> = {
   ...worktree,
   ...reviewDiff,
-  ...workspaceSkills,
-  ...skillPackageSecurity,
   // Fase 2 (R11): a identidade sha256 do artefato de review sai do main.
   ...reviewEvidence
 }

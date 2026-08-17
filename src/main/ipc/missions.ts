@@ -71,7 +71,7 @@ export interface MissionsIpcExtras {
   engine: MissionEngine
   maestroEngine: Pick<
     MaestroEngine,
-    'maestroResumeOverBudget' | 'skipMaestroResume' | 'preparePlanningRun'
+    'maestroResumeOverBudget' | 'skipMaestroResume'
   >
   /** `${projectId}--${missionId}` — chave do maestroStore do orquestrador. */
   orchKey(projectId: string, missionId: string): string
@@ -83,7 +83,6 @@ export interface MissionsIpcExtras {
     opts?: { strictMcp?: boolean; configDir?: string; sensitive?: boolean }
   ): { paneId: string; cliArgs: string[] }
   /** Late-bound: let do index. */
-  releasePaneSkillPlan(paneId: string): void
   /** Registro das sessões de chat por pane (onda A) — o guiSpec consulta o
    *  resume gravado e a vaga livre do ajudante. */
   guiSessions: GuiSessionRegistry
@@ -172,7 +171,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     projectModeOf,
     orchPaneId,
     unregisterPane,
-    releasePaneSkillLease
   } = ctx
   const {
     engine,
@@ -180,11 +178,10 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     emitBacklogChanged,
     staggerPaneSpawn,
     armPane,
-    releasePaneSkillPlan,
     guiSessions,
     killMissionGuiPanes
   } = extras
-  const { maestroResumeOverBudget, skipMaestroResume, preparePlanningRun } = extras.maestroEngine
+  const { maestroResumeOverBudget, skipMaestroResume } = extras.maestroEngine
   const {
     missionsWithIntegration,
     createMissionImpl,
@@ -1158,18 +1155,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     if (ptys.has(paneId)) ptys.kill(paneId)
     unregisterPane(paneId)
     const cwd = missionCwd
-    const planningRun = await preparePlanningRun({ paneId, projectId, missionId, cwd })
-    if (!planningRun.ok) {
-      hub.publish({
-        projectId,
-        missionId,
-        kind: 'error',
-        text: `não abri o orquestrador: ${planningRun.message}`,
-        actor: 'harness',
-        urgent: true
-      })
-      return null
-    }
     const missionRuntimeRisk = assessMissionRisk({
       texts: [mission.title, mission.goal, mission.scope]
     })
@@ -1187,8 +1172,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         }
       )
     } catch {
-      releasePaneSkillLease(paneId)
-      releasePaneSkillPlan(paneId)
       hub.publish({
         projectId,
         missionId,
@@ -1205,7 +1188,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     const plansDir = join(project.path, '.synkora', 'missions')
     mkdirSync(plansDir, { recursive: true })
     const planFile = join(plansDir, `${missionId.slice(0, 8)}.PLAN.md`)
-    const personaWithPlanning = `${missionPersona(mission, planFile)}${planningRun.skillBlock}${buildIdleWaiterHint(seat.cli)}`
+    const personaWithPlanning = `${missionPersona(mission, planFile)}${buildIdleWaiterHint(seat.cli)}`
     const cliArgs = [...armed.cliArgs]
     // Effort do orquestrador (validado: claude tem --effort low..max; codex
     // usa a chave de config). No codex o -c é global e PRECISA vir antes do

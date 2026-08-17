@@ -41,7 +41,6 @@ export interface MaestroIpcExtras {
     opts?: { strictMcp?: boolean; configDir?: string; sensitive?: boolean }
   ): { paneId: string; cliArgs: string[] }
   /** Late-bound: let do index. */
-  releasePaneSkillPlan(paneId: string): void
   projectLifecycleOf(projectId: string): string
 }
 
@@ -58,14 +57,12 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
     projectPlanOf,
     maestroPaneId,
     unregisterPane,
-    releasePaneSkillLease,
     scheduleProgressSnapshot
   } = ctx
-  const { engine, staggerPaneSpawn, armPane, releasePaneSkillPlan, projectLifecycleOf } = extras
+  const { engine, staggerPaneSpawn, armPane, projectLifecycleOf } = extras
   const {
     maestroResumeOverBudget,
     skipMaestroResume,
-    preparePlanningRun,
     pendingUserQuestions,
     persistUserQuestions
   } = engine
@@ -180,18 +177,7 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
     // pane antigo ainda vivo (reload do renderer): mata para renascer limpo
     if (ptys.has(paneId)) ptys.kill(paneId)
     unregisterPane(paneId)
-    const planningRun = await preparePlanningRun({ paneId, projectId, cwd: project.path })
-    if (!planningRun.ok) {
-      hub.publish({
-        projectId,
-        kind: 'error',
-        text: `não abri o Maestro: ${planningRun.message}`,
-        actor: 'harness',
-        urgent: true
-      })
-      return null
-    }
-    const personaWithPlanning = `${basePersona}${planningRun.skillBlock}${buildIdleWaiterHint(seat.cli)}`
+    const personaWithPlanning = `${basePersona}${buildIdleWaiterHint(seat.cli)}`
     let armed: ReturnType<typeof armPane>
     try {
       armed = armPane(
@@ -200,8 +186,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
         { strictMcp: true, configDir: seats.configDirOf(seat) }
       )
     } catch {
-      releasePaneSkillLease(paneId)
-      releasePaneSkillPlan(paneId)
       hub.publish({
         projectId,
         kind: 'error',

@@ -113,35 +113,6 @@ import {
 import { GIT_CHECKPOINT_MARKER, gitOff, gitOffWithCheckpoint } from './gitAsync'
 import { randomUUID } from 'crypto'
 import { type PaneIdentity } from './hub'
-import { type SkillDef } from './skillsLibrary'
-import {
-  IMPECCABLE_SKILL_ID,
-  SYNKORA_BACKEND_QA_ID,
-  SYNKORA_BACKEND_STANDARD_ID,
-  SYNKORA_CYBER_QA_ID,
-  SYNKORA_CYBER_STANDARD_ID,
-  SYNKORA_COPY_QA_ID,
-  SYNKORA_COPY_STANDARD_ID,
-  SYNKORA_DATA_QA_ID,
-  SYNKORA_DATA_STANDARD_ID,
-  SYNKORA_DESIGN_SYSTEM_QA_ID,
-  SYNKORA_DESIGN_SYSTEM_STANDARD_ID,
-  SYNKORA_DEVOPS_QA_ID,
-  SYNKORA_DEVOPS_STANDARD_ID,
-  SYNKORA_FRONTEND_STANDARD_ID,
-  SYNKORA_RESEARCH_QA_ID,
-  SYNKORA_RESEARCH_STANDARD_ID,
-  SYNKORA_QA_QA_ID,
-  SYNKORA_QA_STANDARD_ID,
-  SYNKORA_UI_QA_ID,
-  classifyTaskUiWork,
-  isDevOpsWork,
-  isDesignSystemWork,
-  missingMandatoryUiPhaseSkills,
-  selectPhaseSkillPlan,
-  type SkillCapability
-} from './skillsRouting'
-import { SkillRuntime, type PlannedSkillInput } from './skillRuntime'
 import { type HelperRecoveryRecord } from './helperRecovery'
 import {
   effectiveSensitiveAccess,
@@ -200,34 +171,6 @@ export interface PhaseEngineExtras {
   timedTaskWorktree(
     ...args: Parameters<typeof createTaskWorktree>
   ): Promise<ReturnType<typeof createTaskWorktree>>
-  prepareSkillPlanInputs(
-    rootIds: string[],
-    describe: (id: string) => Pick<PlannedSkillInput, 'operation' | 'reason' | 'required'>
-  ): Promise<{ definitions: SkillDef[]; inputs: PlannedSkillInput[]; missing: string[] }>
-  syncPaneSkillLease(
-    paneId: string,
-    cwd: string,
-    ids: string[]
-  ): Promise<{ injected: SkillDef[]; missing: string[] }>
-  renewLivePaneSkillRun(
-    paneId: string,
-    taskId: string,
-    projectId: string,
-    phase: RunPhase
-  ): Promise<string | undefined>
-  releasePaneSkillPlan(paneId: string): void
-  skillRuntime: SkillRuntime
-  skillPlanScopes: Map<
-    string,
-    {
-      phase: string
-      phaseRun: string
-      agentIds: string[]
-      taskId?: string
-      projectId?: string
-      missionId?: string
-    }
-  >
   storedHelperRecoveries(
     projectId: string
   ): Array<{ file: string; relativePath: string; record: HelperRecoveryRecord }>
@@ -255,7 +198,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     blackbox,
     maestro,
     policies,
-    skillsLib,
     mainStalls,
     paneSessions,
     emitLog,
@@ -263,7 +205,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     ensureProjectRuntimeWritable,
     projectModeOf,
     externalPlaywrightForPane,
-    releasePaneSkillLease,
     orchPaneId
   } = ctx
   // hub é atribuído UMA vez, antes de o engine nascer — capturar é seguro.
@@ -283,12 +224,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     missionWorkspacePath,
     ensureMissionWorktree,
     timedTaskWorktree,
-    prepareSkillPlanInputs,
-    syncPaneSkillLease,
-    renewLivePaneSkillRun,
-    releasePaneSkillPlan,
-    skillRuntime,
-    skillPlanScopes,
     storedHelperRecoveries,
     harnessPortsInUse,
     armPane,
@@ -1077,13 +1012,13 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     ]
       .filter(Boolean)
       .join('\n')
-    const uiWork = classifyTaskUiWork(task, feedback)
+    const uiWork = task.affectsUi === true
     // AJUSTE RÁPIDO (ordem do dono 2026-08-12): carimbo por rodada, gravado
     // pelo run_task — corta protocolo (checks/evidência do delta, review
     // olhada-relâmpago, sem QA), nunca skills/qualidade.
     const quickRound = Boolean(task.quickRound)
-    const designSystemWork = uiWork && isDesignSystemWork(task.department, routingText)
-    const devOpsWork = isDevOpsWork(task.department, routingText)
+    const designSystemWork = uiWork && task.department === 'design'
+    const devOpsWork = false
 
     // QA DE VERDADE, VERSÃO FINAL (decisão do usuário, 2026-08-06 — "não é só
     // o próprio QA subir? que dificuldade"): SEM pré-aquecimento no harness.
@@ -1275,8 +1210,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     const blockForMissingFrontendStandard = (reason: string): void => {
       if (phase === 'qa') stopQaRuntime(taskId)
       phaseWatches.delete(taskId)
-      releasePaneSkillLease(plannedPaneId)
-      releasePaneSkillPlan(plannedPaneId)
       const feedback = `${reason}; a fase foi interrompida antes de abrir o pane`
       tasks.update(taskId, {
         status: phase === 'qa' ? 'qa' : phase === 'review' ? 'execucao' : 'backlog',
@@ -1303,249 +1236,12 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       syncBoard(projectId)
     }
 
-    // Plano mínimo por fase. Disponibilidade no catálogo não equivale a
-    // injeção: o workspace recebe apenas o contrato/método/técnica selecionados
-    // para este pane, e QA usa uma régua independente da criação.
-    const installedSkillIds = new Set(skillsLib.installedIds())
-    if (task.affectsUi === false && uiWork) {
-      blockForMissingFrontendStandard('affectsUi=false contradiz a superficie visual descrita no card')
-      return null
-    }
-    const routedExplicitSkillIds = task.skills ?? []
-    const routedExplicitAgentIds = task.agents ?? []
-    if (routedExplicitSkillIds.length > 1 || routedExplicitAgentIds.length > 1) {
-      blockForMissingFrontendStandard(
-        'card legado possui mais de uma skill técnica ou persona; ajuste o card para uma seleção única antes de executar'
-      )
-      return null
-    }
-    const rejectedExplicitIds = [
-      ...new Set([...routedExplicitSkillIds, ...routedExplicitAgentIds])
-    ]
-      .filter((skillId) => {
-        const definition = skillsLib.byId(skillId)
-        const expectedKind = routedExplicitAgentIds.includes(skillId) ? 'agent' : 'skill'
-        return (
-          !installedSkillIds.has(skillId) ||
-          !definition ||
-          definition.kind !== expectedKind ||
-          !definition.depts.includes(task.department) ||
-          (expectedKind === 'skill' && definition.adapter === 'synkora-native')
-        )
-      })
-    if (rejectedExplicitIds.length > 0) {
-      blockForMissingFrontendStandard(
-        `seleção explícita indisponível, bloqueada ou corrompida: ${rejectedExplicitIds.join(', ')}`
-      )
-      return null
-    }
-    const phaseCapabilities: SkillCapability[] =
-      phase === 'dev'
-        ? ['read', 'write', 'shell', ...(browserAvailable ? ['browser' as const] : [])]
-        : ['read', ...(phase === 'qa' && browserAvailable ? ['browser' as const] : [])]
-    const phaseSkillSelection = selectPhaseSkillPlan({
-      defs: skillsLib.definitions(),
-      isInstalled: (id) => installedSkillIds.has(id),
-      department: task.department,
-      phase,
-      taskText: routingText,
-      explicitSkillIds: routedExplicitSkillIds,
-      explicitAgentIds: routedExplicitAgentIds,
-      executionMode,
-      delegationMode,
-      uiCard: uiWork,
-      securitySensitive: sensitiveRuntime,
-      availableCapabilities: phaseCapabilities
-    })
-    if (phaseSkillSelection.incompatibilities.length > 0) {
-      const details = phaseSkillSelection.incompatibilities.map((issue) =>
-        issue.reason === 'phase'
-          ? `${issue.id} não permite a fase ${phase}`
-          : `${issue.id} exige ${issue.missingCapabilities?.join(', ') || 'capacidade indisponível'}`
-      )
-      blockForMissingFrontendStandard(
-        `o método obrigatório é incompatível com as capacidades reais do pane: ${details.join('; ')}`
-      )
-      return null
-    }
-    const skillIds = phaseSkillSelection.skillIds
-    const agentIds = phaseSkillSelection.agentIds
-    // Skills não entram mais nos diretórios autodetectados pelo CLI. O pane
-    // recebe o corpo somente por receipt/activate_skill, o que preserva a
-    // independência entre dev, review, QA e helpers no mesmo worktree.
-    let preparedSkills: Awaited<ReturnType<typeof prepareSkillPlanInputs>>
-    const injAgents: SkillDef[] = []
-    const missingAgents: string[] = []
-    const operationForSkill = (skillId: string): string => {
-      if (skillId === IMPECCABLE_SKILL_ID) {
-        return phaseSkillSelection.impeccableOperation ?? 'polish'
-      }
-      if (skillId === SYNKORA_DESIGN_SYSTEM_STANDARD_ID) return 'build'
-      if (skillId === SYNKORA_DESIGN_SYSTEM_QA_ID || skillId === SYNKORA_UI_QA_ID) {
-        return 'review'
-      }
-      if (skillId === SYNKORA_FRONTEND_STANDARD_ID) {
-        if (phase === 'qa') return 'verify'
-        return designSystemWork ? 'build' : phaseSkillSelection.uiOperation ?? 'polish'
-      }
-      if (
-        skillId === SYNKORA_BACKEND_STANDARD_ID ||
-        skillId === SYNKORA_DEVOPS_STANDARD_ID ||
-        skillId === SYNKORA_CYBER_STANDARD_ID ||
-        skillId === SYNKORA_DATA_STANDARD_ID ||
-        skillId === SYNKORA_RESEARCH_STANDARD_ID ||
-        skillId === SYNKORA_COPY_STANDARD_ID ||
-        skillId === SYNKORA_QA_STANDARD_ID
-      ) {
-        return phase === 'qa' ? 'verify' : 'contract'
-      }
-      if (
-        skillId === SYNKORA_BACKEND_QA_ID ||
-        skillId === SYNKORA_DEVOPS_QA_ID ||
-        skillId === SYNKORA_CYBER_QA_ID ||
-        skillId === SYNKORA_DATA_QA_ID ||
-        skillId === SYNKORA_RESEARCH_QA_ID ||
-        skillId === SYNKORA_COPY_QA_ID ||
-        skillId === SYNKORA_QA_QA_ID
-      ) return 'verify'
-      if (phase === 'review') return 'review'
-      if (phase === 'qa') return 'verify'
-      return 'apply'
-    }
-    const reasonForSkill = (skillId: string): string => {
-      if (skillId === SYNKORA_DESIGN_SYSTEM_STANDARD_ID) return 'design-system.contract'
-      if (skillId === SYNKORA_DESIGN_SYSTEM_QA_ID) return 'design-system.independent-qa'
-      if (skillId === SYNKORA_FRONTEND_STANDARD_ID) return 'ui.contract'
-      if (skillId === SYNKORA_UI_QA_ID) return 'ui.independent-qa'
-      if (skillId === SYNKORA_BACKEND_STANDARD_ID) return 'backend.contract'
-      if (skillId === SYNKORA_BACKEND_QA_ID) return 'backend.independent-qa'
-      if (skillId === SYNKORA_DEVOPS_STANDARD_ID) return 'devops.contract'
-      if (skillId === SYNKORA_DEVOPS_QA_ID) return 'devops.independent-qa'
-      if (skillId === SYNKORA_CYBER_STANDARD_ID) return 'cyber.contract'
-      if (skillId === SYNKORA_CYBER_QA_ID) return 'cyber.independent-qa'
-      if (skillId === SYNKORA_DATA_STANDARD_ID) return 'data.contract'
-      if (skillId === SYNKORA_DATA_QA_ID) return 'data.independent-qa'
-      if (skillId === SYNKORA_RESEARCH_STANDARD_ID) return 'research.contract'
-      if (skillId === SYNKORA_RESEARCH_QA_ID) return 'research.independent-qa'
-      if (skillId === SYNKORA_COPY_STANDARD_ID) return 'copy.contract'
-      if (skillId === SYNKORA_COPY_QA_ID) return 'copy.independent-qa'
-      if (skillId === SYNKORA_QA_STANDARD_ID) return 'qa-authoring.contract'
-      if (skillId === SYNKORA_QA_QA_ID) return 'qa-authoring.independent-qa'
-      if (skillId === IMPECCABLE_SKILL_ID) {
-        return `ui.${phaseSkillSelection.impeccableOperation ?? 'polish'}`
-      }
-      return `${phase}.technique`
-    }
-    try {
-      await syncPaneSkillLease(plannedPaneId, cwd, [])
-      preparedSkills = await prepareSkillPlanInputs(skillIds, (skillId) => ({
-        operation: operationForSkill(skillId),
-        reason: reasonForSkill(skillId),
-        required: true
-      }))
-      for (const agentId of agentIds) {
-        const definition = skillsLib.byId(agentId)
-        if (!definition || definition.kind !== 'agent' || !(await skillsLib.agentBody(agentId))) {
-          missingAgents.push(agentId)
-        } else {
-          injAgents.push(definition)
-        }
-      }
-    } catch {
-      blockForMissingFrontendStandard('falha ao preparar o plano privado de skills')
-      return null
-    }
-    const injSkills = preparedSkills.definitions
-    const missingPlanned = [...new Set([...preparedSkills.missing, ...missingAgents])]
-    if (missingPlanned.length > 0) {
-      blockForMissingFrontendStandard(
-        `o plano selecionado não pôde ser preparado integralmente: ${missingPlanned.join(', ')}`
-      )
-      return null
-    }
-    const mandatoryMissing = missingMandatoryUiPhaseSkills(
-      injSkills.map((skill) => skill.id),
-      task.department,
-      phase,
-      uiWork,
-      designSystemWork,
-      devOpsWork
-    )
-    if (mandatoryMissing.length > 0) {
-      blockForMissingFrontendStandard(
-        `o contrato obrigatório da fase não entrou no workspace: ${mandatoryMissing.join(', ')}`
-      )
-      return null
-    }
-    const plannedRuntime = skillRuntime.planPane({
-      paneId: plannedPaneId,
-      phase,
-      phaseRun,
-      skills: preparedSkills.inputs
-    })
-    if (!plannedRuntime.ok) {
-      blockForMissingFrontendStandard('não foi possível registrar o plano rastreável de skills')
-      return null
-    }
-    skillPlanScopes.set(plannedPaneId, {
-      phase,
-      phaseRun,
-      agentIds: phaseSkillSelection.agentIds,
-      taskId,
-      projectId
-    })
-    const usageNow = new Date().toISOString()
-    const usageRun = {
-      phase,
-      phaseRun,
-      updatedAt: usageNow,
-      runStatus: 'active' as const,
-      skills: plannedRuntime.plan.receipts.map((receipt) => ({
-        receiptId: receipt.receiptId,
-        id: receipt.skillId,
-        operation: receipt.operation,
-        version: receipt.version,
-        fingerprint: receipt.fingerprint,
-        status: 'planned' as const
-      })),
-      agents: agentIds.map((id) => ({ id, status: 'planned' as const }))
-    }
-    const priorUsage = task.skillUsage
-    const priorHistory = priorUsage?.history ?? (priorUsage ? [{
-      phase: priorUsage.phase,
-      phaseRun: priorUsage.phaseRun,
-      updatedAt: priorUsage.updatedAt,
-      runStatus: priorUsage.runStatus ?? 'interrupted' as const,
-      skills: priorUsage.skills,
-      agents: priorUsage.agents
-    }] : [])
-    tasks.update(taskId, {
-      skillUsage: {
-        ...usageRun,
-        history: [
-          ...priorHistory
-            .filter((run) => run.phaseRun !== phaseRun)
-            .map((run) => ({
-              ...run,
-              runStatus: run.runStatus === 'active' ? 'interrupted' as const : run.runStatus
-            })),
-          usageRun
-        ]
-      }
-    })
-    const injectedById = new Map(injSkills.map((skill) => [skill.id, skill]))
-    const skillsBlock = buildSkillsBlock({
-      plannedSkills: plannedRuntime.plan.receipts.map((receipt) => ({
-        ...(injectedById.get(receipt.skillId) as SkillDef),
-        receiptId: receipt.receiptId,
-        operation: receipt.operation,
-        reason: receipt.reason,
-        required: receipt.required
-      }))
-    })
-    // Persona selecionada fica como id de delegate.agent; não é materializada
-    // em diretório compartilhado nem depende do CLI do pane atual.
-    const agentsBlock = buildAgentsBlock({ injAgents, cli: seat.cli })
+    // O PLANO DE SKILLS POR FASE saiu com a biblioteca (limpa F6,
+    // 2026-08-17). O pane da fase nasce com o briefing do card e nada
+    // mais: sem catálogo não há contrato, método nem persona a injetar,
+    // e um bloco vazio é a resposta honesta — nunca um texto inventado.
+    const skillsBlock = ''
+    const agentsBlock = ''
 
     // Prompts em INGLÊS (rendem melhor); respostas SEMPRE em PT-BR — os
     // vereditos aprovada/reprovada são PROTOCOLO e ficam em PT.
@@ -1693,8 +1389,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     ) {
       if (currentWatchBeforeArm?.paneId === plannedPaneId) phaseWatches.delete(taskId)
       if (phase === 'qa') stopQaRuntime(taskId)
-      releasePaneSkillLease(plannedPaneId)
-      releasePaneSkillPlan(plannedPaneId)
       blackbox.record({
         cat: 'phase',
         event: 'phase-prepare-cancelled',
@@ -1729,8 +1423,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       if (latestBase && latestBase === latestDelivered?.head && !latestRulingChanged) {
         phaseWatches.delete(taskId)
         if (phase === 'qa') stopQaRuntime(taskId)
-        releasePaneSkillLease(plannedPaneId)
-        releasePaneSkillPlan(plannedPaneId)
         returnTaskToDevForSnapshotDrift(
           currentTaskBeforeArm,
           `o ruling de ${phase} mudou durante o preparo e a rodada nao possui delta nem waiver vigente`
@@ -1835,8 +1527,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       armedWatch.paneId = armed.paneId
     } else {
       terminatePaneNow(projectId, armed.paneId)
-      releasePaneSkillLease(plannedPaneId)
-      releasePaneSkillPlan(plannedPaneId)
       return null
     }
     // Effort do EXECUTOR na fase dev; gate herda o effort da LANE 'qa' do
@@ -2239,12 +1929,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
             pane.taskId === watch.taskId && pane.role === 'dev' && ptys.has(pane.paneId)
         )
       if (liveDev) {
-        const renewedSkillsBlock = await renewLivePaneSkillRun(
-          liveDev.paneId,
-          watch.taskId,
-          watch.projectId,
-          'dev'
-        )
+        const renewedSkillsBlock = ''
         if (!renewedSkillsBlock) {
           terminateTaskPhasePane(watch.projectId, watch.taskId, 'dev')
           phaseWatches.delete(watch.taskId)
@@ -3200,12 +2885,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         }
       }
       if (ptys.has(wait.paneId)) {
-        const renewedSkillsBlock = await renewLivePaneSkillRun(
-          wait.paneId,
-          watch.taskId,
-          watch.projectId,
-          phase
-        )
+        const renewedSkillsBlock = ''
         if (!renewedSkillsBlock) {
           // Fallback do reciclo NUNCA é mudo (2026-08-10: o gate vivo em
           // espera foi morto no done e um pane novo nasceu sem o journal
@@ -3242,7 +2922,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         ]
           .filter(Boolean)
           .join('\n')
-        const recycleUiWork = classifyTaskUiWork(latest)
+        const recycleUiWork = latest.affectsUi === true
         const recyclePlanTask = planTaskForWorkTask(latest)
         const recycleSecurity = assessMissionRisk({
           declaredRisk: recyclePlanTask?.plan?.risk,
@@ -3504,10 +3184,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     content: string,
     securityReview?: SecurityReviewRecord,
     verificationEvidence?: GateVerificationEvidence,
-    acceptance?: {
-      skillUsage: NonNullable<Task['skillUsage']>
-      commitRuntime: () => boolean
-    },
     token?: PhaseTransitionToken,
     devSnapshot?: PhaseWatch['devSnapshot']
   ): Promise<boolean> {
@@ -3537,7 +3213,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         content,
         securityReview,
         verificationEvidence,
-        acceptance,
         token,
         devSnapshot,
         chainContinuation
@@ -3553,10 +3228,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     content: string,
     securityReview?: SecurityReviewRecord,
     verificationEvidence?: GateVerificationEvidence,
-    acceptance?: {
-      skillUsage: NonNullable<Task['skillUsage']>
-      commitRuntime: () => boolean
-    },
     token?: PhaseTransitionToken,
     devSnapshotParam?: PhaseWatch['devSnapshot'],
     chainContinuation: (continuation: Promise<unknown>) => void = (continuation) => {
@@ -3585,29 +3256,9 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     }
     const task = tasks.get(watch.taskId)
     if (!task) return false
-    let runtimeAcceptanceCommitted = false
-    const commitRuntimeAcceptance = (): void => {
-      if (!acceptance || runtimeAcceptanceCommitted) return
-      if (acceptance.commitRuntime()) {
-        runtimeAcceptanceCommitted = true
-        return
-      }
-      // A gravação autoritativa já ocorreu numa única atualização do card.
-      // Falha aqui indica divergência interna, não licença para apagar a prova.
-      blackbox.record({
-        cat: 'phase',
-        event: 'skill-runtime-post-commit-mismatch',
-        actor: 'harness',
-        ids: {
-          projectId: watch.projectId,
-          missionId: task.missionId,
-          taskId: watch.taskId,
-          phase: watch.phase,
-          role: watch.phase
-        },
-        reason: 'o ledger persistido aceitou a rodada, mas o stamp efêmero recusou o fechamento'
-      })
-    }
+    // O ledger de skills da rodada morreu com a biblioteca (limpa F6): não
+    // há mais receipt a consumir junto do veredito.
+    const commitRuntimeAcceptance = (): void => undefined
     if (
       watch.phase === 'dev' &&
       hub
@@ -3633,7 +3284,7 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
     // sob o lock, update_task do renderer é sanitizado (hasActivePane) e a
     // mudança legítima de gates chega pela PRÓXIMA rodada, nunca no meio.
     const configuredGates = task.gates ?? ['review', 'qa']
-    const taskUiWork = classifyTaskUiWork(task)
+    const taskUiWork = task.affectsUi === true
     // OS GATES DO CARD SÃO O CONTRATO (ordem do dono, 2026-08-12 — caso real:
     // update_task com ownerOrder gravou gates=["review"] e ESTE force-append
     // reabriu o QA mesmo assim; o orquestrador teve que stop_task no gate):
@@ -3828,7 +3479,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       const phaseSessions = { ...(latestDelivery.phaseSessions ?? {}) }
       if (next) delete phaseSessions[next]
       tasks.update(watch.taskId, {
-        ...(acceptance ? { skillUsage: acceptance.skillUsage } : {}),
         status: next === 'qa' ? 'qa' : 'execucao',
         activePhase: next ?? 'dev',
         phaseState: next ? 'pending' : 'finalizing',
@@ -4190,7 +3840,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
         ...(verificationEvidence ? { verificationEvidence } : {})
       }
       const workTaskPatch: TaskUpdatePatch = {
-        ...(consumeAcceptance && acceptance ? { skillUsage: acceptance.skillUsage } : {}),
         // aprovação encerra a rodada aberta: lista fechada/placar não vazam
         // para a fase seguinte nem para um card aprovado
         ...(verdict === 'approved'
@@ -4237,11 +3886,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
       }
       const approveSecurityPlan = verdict === 'approved' && pendingSecurityPlanApproval
       if (approveSecurityPlan) {
-        if (!consumeAcceptance || !acceptance) {
-          throw new Error(
-            'aprovação de segurança recusada: veredito, plano e receipt precisam da mesma transação'
-          )
-        }
         const committed = tasks.updateMany([
           { id: watch.taskId, patch: workTaskPatch },
           {
@@ -4628,37 +4272,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
             if (watch.phase === 'dev') {
               const identity = watch.paneId ? hub.identityByPane(watch.paneId) : undefined
               if (!identity) return
-              const skillScope = skillPlanScopes.get(identity.paneId)
-              if (!skillScope) {
-                try {
-                  unlinkSync(watch.marker)
-                } catch {
-                  // marcador ja sumiu
-                }
-                hub.notifyPane(
-                  identity.paneId,
-                  'conclusao recusada: o plano de skills desta rodada expirou; reabra somente esta fase'
-                )
-                return
-              }
-              const skillGuard = skillRuntime.guardReport({
-                paneId: identity.paneId,
-                phase: identity.phase ?? 'dev',
-                phaseRun: skillScope.phaseRun,
-                skillApplications: []
-              })
-              if (!skillGuard.ok) {
-                try {
-                  unlinkSync(watch.marker)
-                } catch {
-                  // marcador ja sumiu
-                }
-                hub.notifyPane(
-                  identity.paneId,
-                  'conclusão por arquivo recusada: este pane tem um ACTIVE SKILL PLAN. Ative os receipts exigidos e conclua pela tool MCP report com skillApplications.'
-                )
-                return
-              }
               const guard = await codeReportGuard(identity)
               try {
                 ensureProjectRuntimeWritable(watch.projectId)
@@ -4716,7 +4329,6 @@ export function createPhaseEngine(ctx: MainContext, extras: PhaseEngineExtras) {
               await advancePhase(
                 watch,
                 content,
-                undefined,
                 undefined,
                 undefined,
                 transitionToken,

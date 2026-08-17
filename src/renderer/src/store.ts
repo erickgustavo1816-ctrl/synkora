@@ -13,7 +13,6 @@ import type {
   GuiAttachmentDescriptor,
   HistoryTranscriptMessage,
   SettingsSecretName,
-  SkillState,
   SynkoraSettings,
   SynkoraSettingsPatch
 } from '../../preload/index'
@@ -110,8 +109,6 @@ export type AppPage = 'workspace' | 'settings'
 export type SettingsSection =
   | 'appearance'
   | 'accounts'
-  | 'skills'
-  | 'agents'
   | 'voice'
 
 /** Caixa de um pane no canvas: posição no MUNDO (px) + tamanho + z-order. */
@@ -1860,9 +1857,6 @@ interface SynkoraState {
   loadMaestroLog: (projectId: string) => Promise<void>
   policies: ProjectPolicies
   loadPolicies: (projectId: string) => Promise<void>
-  /** biblioteca de skills (F4) — GLOBAL à máquina (não é por projeto) */
-  skillsLib: SkillState[]
-  loadSkills: () => Promise<void>
   /** missões do projeto ATIVO */
   missions: Mission[]
   loadMissions: (projectId: string) => Promise<void>
@@ -2444,12 +2438,6 @@ export const useStore = create<SynkoraState>((set, get) => ({
     // com os dados do outro, de forma permanente).
     if (get().openProjectId !== projectId) return
     set({ policies })
-  },
-
-  skillsLib: [],
-  loadSkills: async () => {
-    const skillsLib = await window.synkora.skills.list()
-    set({ skillsLib })
   },
 
   surveyBusyByProject: {},

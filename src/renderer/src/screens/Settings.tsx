@@ -2,7 +2,6 @@ import { useStore, type SettingsSection } from '../store'
 import AppearanceSettings from '../components/AppearanceSettings'
 import ChatNoticeSettings from '../components/ChatNoticeSettings'
 import SeatDeck from '../components/SeatDeck'
-import SkillsLibrary from '../components/SkillsLibrary'
 import SynVoiceMicrophoneSettings from '../components/SynVoiceMicrophoneSettings'
 import SynkoraMark from '../components/SynkoraMark'
 import GuiPanelErrorBoundary from '../components/GuiPanelErrorBoundary'
@@ -17,8 +16,6 @@ interface NavItem {
 const NAV: NavItem[] = [
   { id: 'appearance', glyph: 'Aa', label: 'Aparência', description: 'fonte dos painéis' },
   { id: 'accounts', glyph: '●', label: 'Minhas contas', description: 'seats e logins' },
-  { id: 'skills', glyph: '◇', label: 'Skills', description: 'biblioteca global' },
-  { id: 'agents', glyph: '⌘', label: 'Subagentes', description: 'especialistas' },
   { id: 'voice', glyph: '◉', label: 'SynVoice', description: 'microfone e voz' }
 ]
 
@@ -33,16 +30,6 @@ const COPY: Record<SettingsSection, { eyebrow: string; title: string; text: stri
     title: 'Minhas contas',
     text: 'Cadastre os seats usados pelo Claude Code e Codex e mantenha os logins prontos.'
   },
-  skills: {
-    eyebrow: 'capacidade global',
-    title: 'Biblioteca de skills',
-    text: 'Instale, atualize e leve suas skills para todos os universos do Synkora.'
-  },
-  agents: {
-    eyebrow: 'especialistas delegáveis',
-    title: 'Subagentes',
-    text: 'Gerencie as personas especializadas que os orquestradores podem acionar.'
-  },
   voice: {
     eyebrow: 'ditado inteligente',
     title: 'SynVoice',
@@ -54,13 +41,10 @@ export default function Settings(): React.JSX.Element {
   const section = useStore((s) => s.settingsSection)
   const openSettings = useStore((s) => s.openSettings)
   const seats = useStore((s) => s.seats)
-  const skills = useStore((s) => s.skillsLib)
   const copy = COPY[section]
 
   const countFor = (id: SettingsSection): string | null => {
     if (id === 'accounts') return String(seats.length)
-    if (id === 'skills') return String(skills.filter((item) => item.kind === 'skill' && item.installed).length)
-    if (id === 'agents') return String(skills.filter((item) => item.kind === 'agent' && item.installed).length)
     return null
   }
 
@@ -132,16 +116,6 @@ export default function Settings(): React.JSX.Element {
                 {section === 'accounts' && (
                   <GuiPanelErrorBoundary paneId="settings:accounts" label="as contas">
                     <SeatDeck />
-                  </GuiPanelErrorBoundary>
-                )}
-                {section === 'skills' && (
-                  <GuiPanelErrorBoundary paneId="settings:skills" label="a biblioteca de skills">
-                    <SkillsLibrary kind="skill" openByDefault />
-                  </GuiPanelErrorBoundary>
-                )}
-                {section === 'agents' && (
-                  <GuiPanelErrorBoundary paneId="settings:agents" label="os subagentes">
-                    <SkillsLibrary kind="agent" openByDefault />
                   </GuiPanelErrorBoundary>
                 )}
                 {section === 'voice' && (

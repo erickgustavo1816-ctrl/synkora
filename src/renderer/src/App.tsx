@@ -138,10 +138,6 @@ export default function App(): React.JSX.Element {
       setMissionTab(projectId, missionId ?? null)
     })
     window.synkora.progress.ready()
-    // Biblioteca de skills (F4): global à máquina — carrega uma vez e
-    // acompanha instalações/updates feitos em qualquer tela.
-    void useStore.getState().loadSkills()
-    const offSkills = window.synkora.skills.onChanged(() => void useStore.getState().loadSkills())
     // PM pode redefinir o kit ★ por função (set_default_skills) — as
     // estrelas da página ✦ geral acompanham na hora.
     const offPolicies = window.synkora.policies.onChanged(
@@ -201,7 +197,6 @@ export default function App(): React.JSX.Element {
       offPolicies()
       offProgressTarget()
       offProjectFlow()
-      offSkills()
       offSeats()
       offStats()
       offEffort()

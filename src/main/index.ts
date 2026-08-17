@@ -17,7 +17,6 @@ import { ProjectStore } from './projects'
 import { SeatStore, type SeatCli } from './seats'
 import {
   interruptActiveSkillUsage,
-  isVerifiedTaskPlanPlanningMethod,
   sanitizeRendererTaskPatch,
   TaskStore,
   type NewTask,
@@ -56,7 +55,6 @@ import {
 } from './orchestratorFlow'
 import { HelperSpawnReservationRegistry } from './helperSpawnReservations'
 import { HelperOpenWatchdog } from './helperOpenWatchdog'
-import { removeCodexSkillIsolationProfile } from './codexSkillIsolation'
 import { buildSkillsBlock } from './phasePrompts'
 import type { RunPhase } from './phaseTypes'
 import type { MainContext } from './mainContext'
@@ -68,7 +66,6 @@ import { createPaneLifecycle } from './paneLifecycle'
 import { PanesViewManager } from './panesView'
 import { buildMailboxApi } from './mcpApi/mailbox'
 import { buildCodeApi } from './mcpApi/code'
-import { buildSkillsApi } from './mcpApi/skills'
 import { buildPanesApi } from './mcpApi/panes'
 import { buildMissionsApi } from './mcpApi/missions'
 import { buildHelpersApi } from './mcpApi/helpers'
@@ -98,7 +95,6 @@ import {
 import { registerPlansIpc } from './ipc/plans'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerProgressIpc } from './ipc/progress'
-import { registerSkillsIpc } from './ipc/skills'
 import { registerMiscIpc } from './ipc/misc'
 import { SECURITY_POLICY_VERSION, securityPromptForRole } from './securityPolicy'
 import {
@@ -152,18 +148,6 @@ import {
   type NewTaskInput,
   type TaskPatch
 } from './mcpServer'
-import { selectStaleBundledIds } from './bundledSkillRevision'
-import { SkillsLibrary, setGithubToken, type SkillDef } from './skillsLibrary'
-import { SYNKORA_PLANNING_STANDARD_ID } from './skillsRouting'
-import {
-  SkillRuntime,
-  type PlannedSkillInput,
-  type PlanningMethodEvidence
-} from './skillRuntime'
-import { WorkspaceSkillLeaseRegistry } from './workspaceSkills'
-import { CURATED_SKILLS } from './skillsCatalog'
-import { BUNDLED_AGENTS } from './agentsBundled'
-import { BUNDLED_SKILLS } from './skillsBundled'
 import { SynVoiceService, type SynVoiceProvider } from './synVoice'
 import { WindowsTextInput } from './windowsTextInput'
 import { WindowsGlobalActivation, type GlobalActivationBinding } from './windowsGlobalActivation'
@@ -296,20 +280,13 @@ function cleanPaneMcpFile(paneId: string): void {
   } catch {
     // já sumiu
   }
-  const profile = paneCodexSkillProfiles.get(paneId)
-  paneCodexSkillProfiles.delete(paneId)
-  removeCodexSkillIsolationProfile(profile)
 }
 // Hub de eventos + porta do servidor MCP (inicializados no whenReady).
 let hub: Hub
 let mcpPort = 0
 let mcpServerHandle: McpServerHandle | undefined
 let paneStartupMetrics: PaneStartupMetrics | undefined
-let releasePaneSkillLease: (paneId: string) => void = () => undefined
-let releasePaneSkillPlan: (paneId: string) => void = () => undefined
 function unregisterPane(paneId: string): PaneIdentity | undefined {
-  releasePaneSkillLease(paneId)
-  releasePaneSkillPlan(paneId)
   plannedHelperAssignments.delete(paneId)
   // nota viva morre com o pane — nota velha em pane novo mentiria no radar
   paneStatusNotes.delete(paneId)
@@ -2729,8 +2706,6 @@ app.whenReady().then(async () => {
     'survey.system.md',
     SURVEY_SECURITY_PROMPT
   )
-  // token opcional do GitHub p/ a biblioteca de skills (60/h → 5.000/h)
-  setGithubToken(settings.get().githubToken)
 
 
   // SYNVOICE: bytes do microfone entram por IPC e a chamada externa acontece
@@ -2743,131 +2718,6 @@ app.whenReady().then(async () => {
   }
 
 
-  // BIBLIOTECA DE SKILLS (F4): catálogo curado instalado da fonte (GitHub)
-  // em userData/skills/lib. Execução usa plano mínimo + árvore privada por
-  // receipt; a UI instala/atualiza e mostra disponibilidade, não um kit ativo.
-  const skillsLib = new SkillsLibrary([...CURATED_SKILLS, ...BUNDLED_AGENTS, ...BUNDLED_SKILLS])
-  // Pacotes ativados vivem fora do projeto e de qualquer root autodetectada.
-  // Como o app e single-instance, o sweep remove com seguranca residuos de um
-  // crash anterior antes de abrir a raiz aleatoria desta sessao.
-  const privateSkillRuntimeBase = join(app.getPath('temp'), 'synkora-skill-runtime')
-  const privateSkillRuntimeRoot = join(privateSkillRuntimeBase, `${process.pid}-${randomUUID()}`)
-  try {
-    rmSync(privateSkillRuntimeBase, { recursive: true, force: true })
-    mkdirSync(privateSkillRuntimeRoot, { recursive: true })
-  } catch (error) {
-    throw new Error(`nao foi possivel preparar o runtime privado de skills: ${error instanceof Error ? error.message : String(error)}`)
-  }
-  app.once('will-quit', () => {
-    try {
-      rmSync(privateSkillRuntimeRoot, { recursive: true, force: true })
-    } catch {
-      // O proximo boot repete o sweep; nao bloqueia o encerramento.
-    }
-  })
-  // Skill embutida é conteúdo versionado: instala antes de registrar o fluxo de
-  // panes e reinstala quando os bytes do app mudam. Assim a régua nova chega a
-  // quem já tinha `sha: bundled`, sem rede, delay de boot ou versão manual.
-  const bundledPackageMatches = (id: string): boolean => skillsLib.bundledPackageMatches(id)
-  const appOwnedSkillPackages = [...BUNDLED_SKILLS, ...BUNDLED_AGENTS]
-  const staleBundled = selectStaleBundledIds(
-    appOwnedSkillPackages,
-    skillsLib.listState(),
-    bundledPackageMatches
-  )
-  if (staleBundled.length > 0) {
-    const bundledInstall = await skillsLib.installMany(staleBundled)
-    const unresolvedBundled = selectStaleBundledIds(
-      appOwnedSkillPackages,
-      skillsLib.listState(),
-      bundledPackageMatches
-    )
-    if (!bundledInstall.ok || unresolvedBundled.length > 0) {
-      console.error(`[skills] falha ao atualizar contrato embutido: ${bundledInstall.msg}`)
-      dialog.showErrorBox(
-        'Não foi possível iniciar o Synkora',
-        'Os contratos e especialistas nativos não puderam ser atualizados. Reinicie o aplicativo; se o problema continuar, verifique as permissões da pasta de dados.'
-      )
-      app.quit()
-      return
-    }
-  }
-  // BACKFILL de supply-chain (2026-08-04): skills legadas sem assessment
-  // ficavam invisíveis em TODO menu de pane. Avalia em lotes fora do caminho
-  // quente; cada avaliação persiste no manifest e o menu enche em segundos.
-  const backfillSkillAssessments = async (): Promise<void> => {
-    try {
-      const remaining = await skillsLib.assessMissingBatch(8)
-      if (remaining > 0) {
-        setTimeout(() => void backfillSkillAssessments(), 400)
-        return
-      }
-      blackbox.record({
-        cat: 'app',
-        event: 'skills-backfill-done',
-        actor: 'app',
-        reason: 'assessments de supply-chain preenchidos para as skills legadas'
-      })
-    } catch {
-      // próximo boot retenta; instalação/uso explícito também reavalia
-    }
-  }
-  setTimeout(() => void backfillSkillAssessments(), 5_000)
-  skillsLib.onChanged = () => {
-    pushBoard('skills:changed')
-  }
-
-  // Todos os panes que compartilham um worktree mantem leases. O disco recebe
-  // somente a UNIAO exata dos planos vivos; nenhuma skill instalada fica
-  // disponivel por acidente e um pane nunca poda o contexto de outro.
-  const paneSkillLeases = new WorkspaceSkillLeaseRegistry()
-  const workspaceSkillKey = (cwd: string): string =>
-    resolve(cwd).replace(/\\/g, '/').toLocaleLowerCase('en-US')
-  const expandedPaneSkillIds = (ids: string[]): Set<string> => {
-    const expanded = new Set<string>()
-    const visit = (id: string): void => {
-      if (expanded.has(id)) return
-      expanded.add(id)
-      for (const dependency of skillsLib.byId(id)?.requires ?? []) visit(dependency)
-    }
-    for (const id of ids) visit(id)
-    return expanded
-  }
-  const activePaneSkillIds = (cwd: string): string[] => {
-    const workspaceKey = workspaceSkillKey(cwd)
-    return [
-      ...new Set(
-        paneSkillLeases.activeIds(workspaceKey)
-      )
-    ]
-  }
-  /** Toda sincronizacao respeita as leases ativas no mesmo workspace. O
-   *  retorno continua restrito ao menu pedido pelo chamador. */
-  const syncWorkspaceSkills = async (
-    cwd: string,
-    ids: string[]
-  ): Promise<{ injected: SkillDef[]; missing: string[] }> => {
-    const own = expandedPaneSkillIds(ids)
-    const union = [...new Set([...activePaneSkillIds(cwd), ...ids])]
-    const syncStarted = Date.now()
-    const synced = await skillsLib.syncToWorkspace(cwd, union)
-    const syncMs = Date.now() - syncStarted
-    // Atribuição dos stalls medidos pelo watchdog (spawn 1-2s): a cópia de
-    // dezenas de skills ×2 destinos é a suspeita nº 1 — só o dado decide.
-    if (syncMs > 250) {
-      blackbox.record({
-        cat: 'app',
-        event: 'slow-skill-sync',
-        actor: 'app',
-        reason: `syncToWorkspace levou ${syncMs}ms (${union.length} skills; no worker, main livre)`,
-        detail: { cwd }
-      })
-    }
-    return {
-      injected: synced.injected.filter((skill) => own.has(skill.id)),
-      missing: synced.missing.filter((id) => own.has(id))
-    }
-  }
   /** createTaskWorktree cronometrado e FORA do main thread (task #2): roda no
    *  gitWorker; lento continua virando evidência na caixa-preta (agora sem
    *  congelar a UI enquanto acontece). */
@@ -2888,319 +2738,11 @@ app.whenReady().then(async () => {
     }
     return result
   }
-  const syncPaneSkillLease = (
-    paneId: string,
-    cwd: string,
-    ids: string[]
-  ): Promise<{ injected: SkillDef[]; missing: string[] }> => {
-    const workspaceKey = workspaceSkillKey(cwd)
-    paneSkillLeases.acquire(paneId, {
-      cwd,
-      workspaceKey,
-      ids: [...new Set(ids)]
-    })
-    return syncWorkspaceSkills(cwd, ids)
-  }
-  const releaseSkillLease = (paneId: string): void => {
-    const released = paneSkillLeases.release(paneId)
-    if (!released) return
-    syncWorkspaceSkills(released.cwd, []).catch(() => {
-      // A proxima sincronizacao tenta de novo; nunca derruba o encerramento.
-    })
-  }
-  releasePaneSkillLease = releaseSkillLease
-  const skillRuntime = new SkillRuntime()
-  const skillPlanScopes = new Map<
-    string,
-    {
-      phase: string
-      phaseRun: string
-      agentIds: string[]
-      taskId?: string
-      projectId?: string
-      missionId?: string
-    }
-  >()
-  const prepareSkillPlanInputs = async (
-    rootIds: string[],
-    describe: (id: string) => Pick<PlannedSkillInput, 'operation' | 'reason' | 'required'>
-  ): Promise<{
-    definitions: SkillDef[]
-    inputs: PlannedSkillInput[]
-    missing: string[]
-  }> => {
-    const definitions: SkillDef[] = []
-    const inputs: PlannedSkillInput[] = []
-    const missing: string[] = []
-    for (const skillId of expandedPaneSkillIds(rootIds)) {
-      const definition = skillsLib.byId(skillId)
-      const descriptor = describe(skillId)
-      const activation = await skillsLib.loadActivationPackage(skillId, descriptor.operation)
-      if (!definition || definition.kind !== 'skill' || !activation) {
-        missing.push(skillId)
-        continue
-      }
-      definitions.push(definition)
-      inputs.push({
-        skillId,
-        ...descriptor,
-        version: activation.version,
-        fingerprint: activation.fingerprint
-      })
-    }
-    return { definitions, inputs, missing }
-  }
-  releasePaneSkillPlan = (paneId: string): void => {
-    const scope = skillPlanScopes.get(paneId)
-    if (!scope) return
-    const persistInterruptedUsage = (): boolean => {
-      if (!scope.taskId) return true
-      const task = tasks.get(scope.taskId)
-      if (task?.skillUsage?.phaseRun !== scope.phaseRun) return true
-      const interrupted = interruptActiveSkillUsage(task.skillUsage)
-      if (interrupted === task.skillUsage) return true
-      tasks.update(scope.taskId, { skillUsage: interrupted })
-      if (scope.projectId) {
-        try {
-          pushAll('tasks:changed', scope.projectId)
-        } catch {
-          // A persistência é autoritativa; a UI recupera no próximo refresh.
-        }
-      }
-      return true
-    }
-    const retryInterruptedUsage = (attempt: number): void => {
-      setTimeout(() => {
-        try {
-          persistInterruptedUsage()
-        } catch (error) {
-          if (attempt < 3) {
-            retryInterruptedUsage(attempt + 1)
-            return
-          }
-          blackbox.record({
-            cat: 'pane',
-            event: 'skill-usage-interruption-persist-failed',
-            actor: 'harness',
-            ids: {
-              projectId: scope.projectId,
-              taskId: scope.taskId,
-              paneId,
-              phase: scope.phase
-            },
-            reason: 'task-store-persist-failed-after-pane-release'
-          })
-        }
-      }, attempt * 250)
-    }
-    try {
-      persistInterruptedUsage()
-    } catch {
-      // Encerrar o processo/identidade é prioritário. O ledger é retomado em
-      // background e também reconciliado no boot se o disco seguir indisponível.
-      retryInterruptedUsage(1)
-    }
-    skillPlanScopes.delete(paneId)
-    completedPlannedAgentsByPhaseRun.delete(scope.phaseRun)
-    completedHelperPhaseRuns.delete(scope.phaseRun)
-    try {
-      skillRuntime.release({ paneId, phase: scope.phase, phaseRun: scope.phaseRun })
-    } catch {
-      // O runtime é efêmero e não pode impedir o encerramento do pane.
-    }
-    void gitOff(
-      'removePrivateSkillPlan',
-      privateSkillRuntimeRoot,
-      paneId,
-      scope.phaseRun
-    ).catch(() => undefined)
-  }
 
-  /**
-   * Um pane vivo pode receber outra rodada sem perder a conversa. A conversa
-   * e reutilizada; os receipts nao. Cada novo report recebe phaseRun e IDs
-   * novos, presos novamente aos bytes atuais dos pacotes.
-   */
-  const renewLivePaneSkillRun = async (
-    paneId: string,
-    taskId: string,
-    projectId: string,
-    phase: RunPhase
-  ): Promise<string | undefined> => {
-    const scope = skillPlanScopes.get(paneId)
-    const task = tasks.get(taskId)
-    if (!scope || scope.phase !== phase || !task) return undefined
-    const activePlan = skillRuntime
-      .safeSnapshot()
-      .plans.find(
-        (plan) =>
-          plan.paneId === paneId &&
-          plan.phase === scope.phase &&
-          plan.phaseRun === scope.phaseRun
-      )
-    if (!activePlan) return undefined
-
-    const definitions: SkillDef[] = []
-    const inputs: PlannedSkillInput[] = []
-    for (const receipt of activePlan.receipts) {
-      const definition = skillsLib.byId(receipt.skillId)
-      const activation = await skillsLib.loadActivationPackage(
-        receipt.skillId,
-        receipt.operation
-      )
-      if (!definition || definition.kind !== 'skill' || !activation) return undefined
-      definitions.push(definition)
-      inputs.push({
-        skillId: receipt.skillId,
-        operation: receipt.operation,
-        version: activation.version,
-        fingerprint: activation.fingerprint,
-        reason: receipt.reason,
-        required: receipt.required
-      })
-    }
-
-    // CAS da rodada: a corrente do card é a MINHA (renovação normal) OU é de
-    // OUTRA fase com a minha preservada no history (intercalação legítima
-    // dev↔gate — caso real 2026-08-11: a reprovação reabria o dev, que
-    // sobrescrevia a corrente; o gate em espera nunca mais renovava e TODO
-    // reciclo de gate vivo caía no fallback, matando a conversa). Ilegítimo
-    // segue: corrente da MESMA fase com run diferente (outro pane desta fase
-    // renovou por baixo).
-    const currentUsageRun = task.skillUsage
-    const scopeRunKnown =
-      currentUsageRun &&
-      (currentUsageRun.phaseRun === scope.phaseRun ||
-        (currentUsageRun.history ?? []).some((run) => run.phaseRun === scope.phaseRun))
-    if (!scopeRunKnown) return undefined
-    if (currentUsageRun.phase === phase && currentUsageRun.phaseRun !== scope.phaseRun)
-      return undefined
-    const phaseRun = randomUUID()
-    const previousUsage = task.skillUsage
-    const planned = skillRuntime.replacePanePlan(
-      {
-        paneId,
-        phase,
-        phaseRun,
-        expectedPhase: scope.phase,
-        expectedPhaseRun: scope.phaseRun,
-        skills: inputs
-      },
-      {
-        commit: (_previousPlan, nextPlan) => {
-          const latestTask = tasks.get(taskId)
-          // Mesmo CAS relaxado do pré-check acima: corrente minha, ou de
-          // outra fase com a minha rodada no history.
-          const commitUsage = latestTask?.skillUsage
-          const commitRunKnown =
-            commitUsage &&
-            (commitUsage.phaseRun === scope.phaseRun ||
-              (commitUsage.history ?? []).some((run) => run.phaseRun === scope.phaseRun))
-          if (
-            !latestTask ||
-            latestTask.projectId !== projectId ||
-            !commitUsage ||
-            !commitRunKnown ||
-            (commitUsage.phase === phase && commitUsage.phaseRun !== scope.phaseRun)
-          ) {
-            throw new Error('skill usage mudou durante a renovacao')
-          }
-          const updatedAt = new Date().toISOString()
-          const usageRun = {
-            phase,
-            phaseRun,
-            updatedAt,
-            runStatus: 'active' as const,
-            skills: nextPlan.receipts.map((receipt) => ({
-              receiptId: receipt.receiptId,
-              id: receipt.skillId,
-              operation: receipt.operation,
-              version: receipt.version,
-              fingerprint: receipt.fingerprint,
-              status: 'planned' as const
-            }))
-          }
-          const currentUsage = commitUsage
-          const priorHistory = [...(currentUsage.history ?? [])]
-          if (!priorHistory.some((run) => run.phaseRun === currentUsage.phaseRun)) {
-            priorHistory.push({
-              phase: currentUsage.phase,
-              phaseRun: currentUsage.phaseRun,
-              updatedAt: currentUsage.updatedAt,
-              runStatus: currentUsage.runStatus ?? 'interrupted',
-              skills: currentUsage.skills
-            })
-          }
-          tasks.update(taskId, {
-            skillUsage: {
-              ...usageRun,
-              history: [
-                ...priorHistory
-                  .filter((run) => run.phaseRun !== phaseRun)
-                  .map((run) => ({
-                    ...run,
-                    runStatus:
-                      run.runStatus === 'active' ? 'interrupted' as const : run.runStatus
-                  })),
-                usageRun
-              ]
-            }
-          })
-        },
-        rollback: () => {
-          tasks.update(taskId, { skillUsage: previousUsage })
-        }
-      }
-    )
-    if (!planned.ok) return undefined
-    skillPlanScopes.set(paneId, { ...scope, phase, phaseRun, taskId, projectId })
-    await gitOff(
-      'removePrivateSkillPlan',
-      privateSkillRuntimeRoot,
-      paneId,
-      scope.phaseRun
-    ).catch(() => undefined)
-
-    // A remoção da árvore é assíncrona. O pane pode encerrar justamente nessa
-    // janela; nesse caso não persista uma rodada "active" que já nasceu morta.
-    const renewedIdentity = hub.identityByPane(paneId)
-    const renewedScope = skillPlanScopes.get(paneId)
-    const renewedTask = tasks.get(taskId)
-    if (
-      !renewedIdentity ||
-      !ptys.has(paneId) ||
-      renewedIdentity.projectId !== projectId ||
-      renewedIdentity.taskId !== taskId ||
-      renewedIdentity.phase !== phase ||
-      renewedScope?.phaseRun !== phaseRun ||
-      renewedScope.phase !== phase ||
-      renewedTask?.projectId !== projectId
-    ) {
-      if (renewedScope?.phaseRun === phaseRun) releasePaneSkillPlan(paneId)
-      await gitOff(
-        'removePrivateSkillPlan',
-        privateSkillRuntimeRoot,
-        paneId,
-        phaseRun
-      ).catch(() => undefined)
-      return undefined
-    }
-    pushAll('tasks:changed', projectId)
-
-    const definitionsById = new Map(definitions.map((definition) => [definition.id, definition]))
-    return [
-      'ACTIVE SKILL PLAN RENEWED — every receipt from the previous round is expired. Activate and report only the receiptIds below.',
-      buildSkillsBlock({
-        plannedSkills: planned.plan.receipts.map((receipt) => ({
-          ...(definitionsById.get(receipt.skillId) as SkillDef),
-          receiptId: receipt.receiptId,
-          operation: receipt.operation,
-          reason: receipt.reason,
-          required: receipt.required
-        }))
-      })
-    ].join('\n\n')
-  }
+  // A BIBLIOTECA DE SKILLS E SUBAGENTES saiu inteira na limpa F6
+  // (2026-08-17): catálogo, instalador, cofre de pacotes, leases por
+  // worktree e o runtime de receipts. Nenhum pane recebe skill hoje; a
+  // pasta userData/skills FICA no disco — é conteúdo do dono, não código.
 
 
   // ————— Hub Synkora: event bus + servidor MCP local —————
@@ -3455,14 +2997,12 @@ app.whenReady().then(async () => {
     settings,
     ptys,
     mailbox,
-    skillsLib,
     synVoice,
     blackbox,
     mainStalls,
     sessionStats,
     helperCompletions,
     maestroSessions,
-    helperSkillLeases: paneSkillLeases,
     paneTokens,
     paneMcpFiles,
     paneSessions,
@@ -3571,7 +3111,6 @@ app.whenReady().then(async () => {
     cleanPaneMcpFile: (...args) => cleanPaneMcpFile(...args),
     persistUserQuestions: () => persistUserQuestions(),
     abortVoiceRequests: () => abortVoiceRequests(),
-    releasePaneSkillLease: (...args) => releasePaneSkillLease(...args),
     pushBoard: (channel, ...args) => pushBoard(channel, ...args),
     pushPanes: (channel, ...args) => pushPanes(channel, ...args),
     pushAll: (channel, ...args) => pushAll(channel, ...args),
@@ -5745,11 +5284,6 @@ app.whenReady().then(async () => {
     killMaestroSession,
     finishProgressMaestroTurn,
     maestroSystemPromptFile,
-    prepareSkillPlanInputs,
-    syncPaneSkillLease,
-    releasePaneSkillPlan: (paneId) => releasePaneSkillPlan(paneId),
-    skillRuntime,
-    skillPlanScopes
   })
   const {
     emitLog,
@@ -5760,7 +5294,6 @@ app.whenReady().then(async () => {
     surveyAborts,
     maestroResumeOverBudget,
     skipMaestroResume,
-    preparePlanningRun,
     pendingUserQuestions,
     persistUserQuestions
   } = maestroEngine
@@ -5776,12 +5309,6 @@ app.whenReady().then(async () => {
     missionWorkspacePath,
     ensureMissionWorktree,
     timedTaskWorktree,
-    prepareSkillPlanInputs,
-    syncPaneSkillLease,
-    renewLivePaneSkillRun,
-    releasePaneSkillPlan: (paneId) => releasePaneSkillPlan(paneId),
-    skillRuntime,
-    skillPlanScopes,
     storedHelperRecoveries,
     harnessPortsInUse,
     armPane,
@@ -5861,87 +5388,11 @@ app.whenReady().then(async () => {
   // `start_project_mission` passam a recusar sempre. Morrem juntos na onda 3.
   const humanProjectPlanApprovals = new Set<string>()
   const humanProjectMissionStarts = new Set<string>()
-  const preparePlanningArtifactEvidence = (
-    id: PaneIdentity,
-    skillApplications: string[] | undefined
-  ):
-    | { ok: true; evidence: PlanningMethodEvidence; accept: () => boolean }
-    | { ok: false; message: string } => {
-    const scope = skillPlanScopes.get(id.paneId)
-    const currentIdentity = hub.identityByPane(id.paneId)
-    if (
-      id.role !== 'maestro' ||
-      !scope ||
-      scope.phase !== 'planning' ||
-      scope.projectId !== id.projectId ||
-      scope.missionId !== id.missionId ||
-      !currentIdentity ||
-      currentIdentity.projectId !== id.projectId ||
-      currentIdentity.missionId !== id.missionId
-    ) {
-      return { ok: false, message: 'esta conversa não possui uma rodada ativa de planejamento' }
-    }
-    const guarded = skillRuntime.guardReport({
-      paneId: id.paneId,
-      phase: 'planning',
-      phaseRun: scope.phaseRun,
-      skillApplications
-    })
-    if (!guarded.ok) {
-      return {
-        ok: false,
-        message: 'ative e declare o receipt obrigatório do ACTIVE PLANNING METHOD desta rodada'
-      }
-    }
-    const activePlan = skillRuntime
-      .safeSnapshot()
-      .plans.find(
-        (plan) =>
-          plan.paneId === id.paneId &&
-          plan.phase === 'planning' &&
-          plan.phaseRun === scope.phaseRun
-      )
-    const receipt = activePlan?.receipts.find(
-      (candidate) => guarded.skillApplications.includes(candidate.receiptId)
-    )
-    if (
-      !receipt ||
-      receipt.skillId !== SYNKORA_PLANNING_STANDARD_ID ||
-      receipt.operation !== 'plan' ||
-      !receipt.activatedAt
-    ) {
-      return { ok: false, message: 'o receipt declarado não corresponde ao método nativo ativado' }
-    }
-    const evidence: PlanningMethodEvidence = {
-      contractVersion: 1,
-      receiptId: receipt.receiptId,
-      skillId: receipt.skillId,
-      operation: receipt.operation,
-      version: receipt.version,
-      fingerprint: receipt.fingerprint,
-      phaseRun: scope.phaseRun,
-      appliedAt: receipt.appliedAt ?? new Date().toISOString()
-    }
-    return {
-      ok: true,
-      evidence,
-      accept: () =>
-        skillRuntime.acceptReport({
-          paneId: id.paneId,
-          phase: 'planning',
-          phaseRun: scope.phaseRun,
-          skillApplications
-        }).ok
-    }
-  }
-
   const mcpApi: McpApi = {
     ...buildReportApi(ctx, {
       handleMissionVerdict,
       updateStoredHelperStatus,
       helperTranscriptPath,
-      skillRuntime,
-      skillPlanScopes,
       securityWaiverOptions,
       planTaskForWorkTask,
       plannedHelperAssignments,
@@ -5966,22 +5417,16 @@ app.whenReady().then(async () => {
       createIntegrationSyncTask,
       humanProjectPlanApprovals,
       humanProjectMissionStarts,
-      preparePlanningArtifactEvidence,
       killMissionGuiPanes
     }),
     ...buildHelpersApi(ctx, {
       armPane,
-      prepareSkillPlanInputs,
-      syncPaneSkillLease,
-      releasePaneSkillPlan: (paneId) => releasePaneSkillPlan(paneId),
       terminatePaneNow,
       executionModeForTask,
       storedHelperRecoveries,
       helperTranscriptPath,
       isBannedModel,
       agentModelPool,
-      skillRuntime,
-      skillPlanScopes,
       helperSpawnReservations,
       helperOpenWatchdog,
       plannedHelperAssignments,
@@ -6002,7 +5447,6 @@ app.whenReady().then(async () => {
       missionWorkspacePath,
       isBannedModel,
       agentModelPool,
-      preparePlanningArtifactEvidence,
       securityWaiverOptions,
       planTaskForWorkTask,
       setPhaseExecutorImpl
@@ -6023,11 +5467,9 @@ app.whenReady().then(async () => {
     ...buildCodeApi(ctx, {
       planTaskForWorkTask,
       missionWorkspacePath,
-      skillPlanScopes,
       completedPlannedAgentsByPhaseRun,
       completedHelperPhaseRuns
     }),
-    ...buildSkillsApi(ctx, { skillRuntime, skillPlanScopes, privateSkillRuntimeRoot }),
     ...buildPanesApi(ctx, { securityWaiverOptions, planTaskForWorkTask, agentModelPool }),
     hub,
 
@@ -6529,7 +5971,6 @@ app.whenReady().then(async () => {
   // ANTES do createWindow (o renderer, unico cliente, ainda nao existe —
   // registrar tarde e identico a registrar cedo, e aqui TODO simbolo do
   // closure ja foi declarado: zero TDZ). NUNCA registrar no import.
-  registerSkillsIpc(ctx)
   // NOTIFICAÇÕES DE DESKTOP (2.0, onda D): acessor PREGUIÇOSO da janela — o
   // createWindow só roda no fim deste bloco, e o módulo só consulta a janela
   // na hora de notificar (é ela que decide se o app está em foco; em foco,
@@ -6731,7 +6172,6 @@ app.whenReady().then(async () => {
     surveySystemPromptFile,
     staggerPaneSpawn,
     armPane,
-    releasePaneSkillPlan: (paneId) => releasePaneSkillPlan(paneId),
     projectLifecycleOf
   })
   registerMissionsIpc(ctx, {
@@ -6741,7 +6181,6 @@ app.whenReady().then(async () => {
     emitBacklogChanged,
     staggerPaneSpawn,
     armPane,
-    releasePaneSkillPlan: (paneId) => releasePaneSkillPlan(paneId),
     guiSessions: guiSessionRegistry,
     killMissionGuiPanes
   })
@@ -6794,9 +6233,6 @@ app.whenReady().then(async () => {
       })
       // Skills também não podem envelhecer (o diferencial da biblioteca): check
       // diário no boot — TTL de 24h e batch por repo dentro do próprio método.
-      void skillsLib.checkUpdates().then((n) => {
-        if (n > 0) console.log(`[skills] ${n} atualização(ões) disponíveis na biblioteca`)
-      })
     })
   }, 2500)
 

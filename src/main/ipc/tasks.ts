@@ -12,7 +12,6 @@
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'path'
 import {
-  isVerifiedTaskPlanPlanningMethod,
   sanitizeRendererTaskPatch,
   type NewTask,
   type PlanLane,
@@ -30,7 +29,6 @@ import {
   normalizeRiskLevel
 } from '../orchestratorFlow'
 import { resolveManualSecurityValidation } from '../manualSecurityValidation'
-import { classifyTaskUiWork } from '../skillsRouting'
 import type { MainContext } from '../mainContext'
 
 /** Dependências do closure do index ainda não migradas (mesmo padrão
@@ -107,16 +105,7 @@ export function registerTasksIpc(ctx: MainContext, extras: TasksIpcExtras): void
     const manualDeliverable = item.deliverable ?? 'code'
     const manualAffectsUi =
       item.affectsUi ??
-      (manualDeliverable === 'code'
-        ? ['front', 'design'].includes(item.department) ||
-          classifyTaskUiWork({
-            department: item.department,
-            title: item.title,
-            description: item.description,
-            briefing: item.briefing,
-            quests: item.quests
-          })
-        : false)
+      (manualDeliverable === 'code' ? ['front', 'design'].includes(item.department) : false)
     const created = tasks.createMany(projectId, [
       {
         ...item,
@@ -224,23 +213,6 @@ export function registerTasksIpc(ctx: MainContext, extras: TasksIpcExtras): void
     // o usuário VIU; plano mudou desde então → recusa e o modal recarrega.
     if (seenRevision && task.updatedAt !== seenRevision) {
       return { staleRevision: true, currentRevision: task.updatedAt }
-    }
-    const resumableLegacyPlan =
-      task.plan.planningEvidenceState === 'legacy_unverified' &&
-      Boolean(task.plan.approvedAt) &&
-      !task.plan.planningMethod
-    if (!isVerifiedTaskPlanPlanningMethod(task.plan) && !resumableLegacyPlan) {
-      hub.publish({
-        projectId: task.projectId,
-        missionId: task.missionId,
-        kind: 'error',
-        text:
-          'este plano foi criado sem um receipt verificável do método de planejamento. ' +
-          'Nenhum status mudou; peça ao orquestrador para reapresentar a proposta.',
-        actor: 'harness',
-        urgent: true
-      })
-      return { planningEvidenceRequired: true as const }
     }
     const mission = task.missionId ? missions.get(task.missionId) : undefined
     const project = projects.get(task.projectId)

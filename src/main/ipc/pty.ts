@@ -23,11 +23,6 @@ import { ipcMain, app } from 'electron'
 import { join, resolve } from 'path'
 import { randomUUID } from 'crypto'
 import { ptyPreparationCanContinue } from '../ptyPreparationGuard'
-import {
-  isMethodGovernedPaneRole,
-  prepareCodexSkillIsolationProfile,
-  removeCodexSkillIsolationProfile
-} from '../codexSkillIsolation'
 import { resolveProjectPlaywrightTest, writeClaudeMcpConfig } from '../mcpServer'
 import { paneAccessProfile, paneExternalMcpCapabilities } from '../panePermissions'
 import { stopQaRuntime } from '../qaRuntime'
@@ -251,60 +246,12 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
         }
         return false
       }
-      if (
-        !reusedPty &&
-        seat.cli === 'codex' &&
-        isMethodGovernedPaneRole(pendingIdentity?.role)
-      ) {
-        let preparedProfile:
-          | { profileName: string; profilePath: string }
-          | undefined
-        try {
-          preparedProfile = await prepareCodexSkillIsolationProfile({
-            paneGenerationId: `${req.id}-${randomUUID()}`,
-            cwd: req.cwd,
-            configDir: dir,
-            // F5 (sonda P1–P3): o contrato invisível do pane codex viaja no
-            // MESMO profile por pane — arquivo, sem o teto do argv. O spawn
-            // NUNCA leva também -c developer_instructions (P3: o -c vence o
-            // profile e mataria o contrato).
-            developerInstructions: req.appendSystemPrompt ?? undefined
-          })
-        } catch (error) {
-          const stillOwnsPreparation =
-            pendingPtyPreparations.get(req.id) === preparationTicket
-          if (stillOwnsPreparation) {
-            pendingPtyPreparations.delete(req.id)
-            rollbackFailedPaneSpawn(
-              req.id,
-              `catálogo de skills do Codex não pôde ser isolado: ${String(error)}`
-            )
-          }
-          return false
-        }
-        // Profile generation executes the provider binary and crosses an
-        // await. Revalidate the complete pane generation before spawning.
-        if (!preparationCanContinue()) {
-          removeCodexSkillIsolationProfile(preparedProfile.profilePath)
-          if (pendingPtyPreparations.get(req.id) === preparationTicket) {
-            pendingPtyPreparations.delete(req.id)
-          }
-          return false
-        }
-        const previousProfile = paneCodexSkillProfiles.get(req.id)
-        paneCodexSkillProfiles.set(req.id, preparedProfile.profilePath)
-        if (previousProfile && previousProfile !== preparedProfile.profilePath) {
-          removeCodexSkillIsolationProfile(previousProfile)
-        }
-        effectiveCliArgs = [
-          ...(effectiveCliArgs ?? []),
-          '-p',
-          preparedProfile.profileName
-        ]
-      } else if (!reusedPty && seat.cli === 'codex' && req.appendSystemPrompt) {
-        // Fallback para spec codex FORA do ramo do profile (hoje nenhum):
-        // instruções via -c inline — a guarda de argv dá erro legível se
-        // estourar; nunca descarte silencioso de contrato.
+      if (!reusedPty && seat.cli === 'codex' && req.appendSystemPrompt) {
+        // O contrato invisível do pane codex viaja por -c inline. O profile
+        // isolado por pane morreu com o catálogo de skills (limpa F6): sem
+        // biblioteca não há catálogo do seat para esconder do agente.
+        // A guarda de argv dá erro legível se estourar; nunca descarte
+        // silencioso de contrato.
         effectiveCliArgs = [
           ...(effectiveCliArgs ?? []),
           '-c',
