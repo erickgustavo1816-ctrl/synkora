@@ -13,7 +13,16 @@
   --accent: #d96c3f;
   --accent-deep: #c05a2e;
   --ok: #3e9b5f;
-  --err: #c4453a;
+  /* O vermelho é `color:` direto em dezenas de regras, então ele é TEXTO antes
+     de ser paleta: 4,63:1 sobre `--paper` (o piso AA de texto pequeno é 4,5).
+     O #c4453a anterior media 4,08:1 e reprovava em toda tela de uma vez. Este
+     é o valor MAIS CLARO da mesma matiz (4,7°) que alcança o piso — trocar por
+     um vermelho mais escuro mudaria a identidade sem comprar legibilidade. */
+  --err: #b54036;
+  /* O MESMO vermelho não se lê sobre `--panel` (2,77:1): fundo escuro pede o
+     par claro, não o de papel. 6,14:1 sobre `--panel` e 5,59:1 sobre
+     `--panel-2`. Só para texto e sinal DENTRO de painel escuro. */
+  --err-on-dark: #e8897f;
   /* âmbar do contrato visual (docs/MOCKUP_WORKSPACE.md): "espera o dono" —
      nem sucesso, nem erro; é o sinal de que a decisão é sua */
   --warn: #d9a23f;
@@ -368,7 +377,7 @@ select {
 }
 
 .tb-btn.warn {
-  color: var(--err);
+  color: var(--err-on-dark);
 }
 
 .tb-status-dot {
@@ -388,7 +397,7 @@ select {
 }
 
 .tb-status-dot.warn {
-  background: var(--err);
+  background: var(--err-on-dark);
 }
 
 .tb-status-dot.updating {
@@ -620,7 +629,7 @@ select {
 }
 
 .meter-fill.hot {
-  background: var(--err);
+  background: var(--err-on-dark);
 }
 
 @keyframes meter-grow {
@@ -1109,7 +1118,7 @@ select {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: var(--err);
+  background: var(--err-on-dark);
   border: 3px solid var(--panel);
 }
 
@@ -1265,7 +1274,7 @@ select {
 
 .meta-dot.err {
   background: var(--err);
-  box-shadow: 0 0 0 3px rgba(196, 69, 58, 0.2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--err) 20%, transparent);
 }
 
 /* ---------- janela de terminal (painel escuro) ---------- */
@@ -1858,17 +1867,17 @@ select {
 }
 
 .universe-card.needs-perm {
-  border-color: rgba(196, 69, 58, 0.58);
+  border-color: color-mix(in srgb, var(--err) 58%, transparent);
 }
 
 /* ainda usado pelas contas expiradas; os universos deixaram de pulsar */
 @keyframes alert-halo {
   0%,
   100% {
-    box-shadow: inset 0 0 0 1.5px rgba(196, 69, 58, 0.28);
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--err) 28%, transparent);
   }
   50% {
-    box-shadow: inset 0 0 0 1.5px rgba(196, 69, 58, 0.75);
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--err) 75%, transparent);
   }
 }
 
@@ -1960,12 +1969,12 @@ select {
 }
 
 .uc-menu-pop button.danger {
-  color: #e8897f;
+  color: var(--err-on-dark);
 }
 
 .uc-menu-pop button.danger:hover,
 .uc-menu-pop button.danger:focus-visible {
-  background: rgba(196, 69, 58, 0.18);
+  background: color-mix(in srgb, var(--err) 18%, transparent);
   color: #f09a91;
 }
 
@@ -1998,7 +2007,7 @@ select {
 
 .uc-act.danger:hover {
   color: var(--err);
-  background: rgba(196, 69, 58, 0.12);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
 }
 
 /* confirmação DENTRO da caixa: window.confirm quebra o foco da janela */
@@ -2340,8 +2349,8 @@ select {
 
 .sc-status.expirado {
   color: var(--err);
-  border-color: rgba(196, 69, 58, 0.25);
-  background: rgba(196, 69, 58, 0.06);
+  border-color: color-mix(in srgb, var(--err) 25%, transparent);
+  background: color-mix(in srgb, var(--err) 6%, transparent);
 }
 
 .sc-status .meta-dot {
@@ -2885,7 +2894,7 @@ select {
     box-shadow: 0 0 0 0 rgba(217, 108, 63, 0.55);
   }
   50% {
-    border-color: #c4453a;
+    border-color: var(--err);
     box-shadow: 0 0 0 7px rgba(217, 108, 63, 0);
   }
 }
@@ -2929,7 +2938,7 @@ select {
 
 .picker-item.deny.active {
   color: #e0655a;
-  background: rgba(196, 69, 58, 0.12);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
 }
 
 .m-tag.maestro {
@@ -3134,7 +3143,7 @@ select {
    usuário) — fundo levemente avermelhado e tinta vermelha forte, sempre legível */
 .btn.danger:hover,
 .btn.tiny.danger:hover {
-  background: rgba(196, 69, 58, 0.12);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
   border-color: var(--err);
   color: var(--err);
 }
@@ -4190,10 +4199,10 @@ select {
 @keyframes node-perm {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(196, 69, 58, 0.45);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--err) 45%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 9px rgba(196, 69, 58, 0);
+    box-shadow: 0 0 0 9px transparent;
   }
 }
 
@@ -4369,11 +4378,11 @@ select {
   0%,
   100% {
     transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(196, 69, 58, 0.55);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--err) 55%, transparent);
   }
   50% {
     transform: scale(1.35);
-    box-shadow: 0 0 0 5px rgba(196, 69, 58, 0);
+    box-shadow: 0 0 0 5px transparent;
   }
 }
 
@@ -4858,7 +4867,7 @@ body.pane-docking .pane-bar.draggable {
 
 .mission-action-btn.mission-archive {
   color: #ef8e84;
-  border-color: rgba(196, 69, 58, 0.8);
+  border-color: color-mix(in srgb, var(--err) 80%, transparent);
 }
 
 .mission-action-btn.mission-archive:hover:not(:disabled) {
@@ -5884,8 +5893,10 @@ body.pane-docking .pane-bar.draggable {
   line-height: 1.35;
 }
 
+/* Mesma volta de tinta do `.bl-nv-error`: sobre `--paper-2` o vermelho puro
+   para em 4,29:1, e este texto tem 9px. Escurecido dá 5,40:1. */
 .mh-patch-error {
-  color: var(--err);
+  color: color-mix(in srgb, var(--err) 80%, var(--ink));
 }
 
 .mh-diff {
@@ -6109,7 +6120,7 @@ body.pane-docking .pane-bar.draggable {
 }
 
 .cdv-minus {
-  color: var(--err);
+  color: var(--err-on-dark);
 }
 
 .cdv-close {
@@ -6259,7 +6270,7 @@ body.pane-docking .pane-bar.draggable {
 }
 
 .cdv-kind.del {
-  color: var(--err);
+  color: var(--err-on-dark);
 }
 
 .cdv-kind.mod {
@@ -6381,7 +6392,7 @@ body.pane-docking .pane-bar.draggable {
 }
 
 .cdv-line.remove .cdv-sign {
-  color: var(--err);
+  color: var(--err-on-dark);
 }
 
 .cdv-line code {
@@ -6819,8 +6830,8 @@ body.pane-docking .pane-bar.draggable {
 }
 
 .term-btn.danger:hover {
-  color: var(--err);
-  border-color: var(--err);
+  color: var(--err-on-dark);
+  border-color: var(--err-on-dark);
 }
 
 .term-btn:disabled {
@@ -9226,8 +9237,9 @@ body.pane-docking .pane-bar.draggable {
 
 /* A recusa mora colada ao campo que a produziu, e quebra em vez de cortar: ela
    nomeia duas versões e a saída ("…escolha um número acima"), e a lateral tem
-   280px. `var(--err)` cru daria 3,8:1 sobre `--paper-2`; escurecido com tinta
-   dá 4,9:1 e continua sendo vermelho. */
+   280px. `var(--err)` cru daria 4,29:1 sobre `--paper-2` — a lateral é o fundo
+   mais escuro dos claros, e é só ali que o token não alcança o piso sozinho;
+   escurecido com tinta dá 5,40:1 e continua sendo vermelho. */
 .bl-nv-error {
   font-size: 10px;
   line-height: 1.45;
@@ -11039,8 +11051,8 @@ button.pd-mission.waiting:hover {
 
 .task-phase-badge.interrupted {
   color: #a53830;
-  border-color: rgba(196, 69, 58, 0.62);
-  background: rgba(196, 69, 58, 0.08);
+  border-color: color-mix(in srgb, var(--err) 62%, transparent);
+  background: color-mix(in srgb, var(--err) 8%, transparent);
 }
 
 /* O app é user-select:none global (cara de desktop) — mas o PLANO existe para
@@ -11091,7 +11103,7 @@ button.pd-mission.waiting:hover {
   justify-content: center;
   gap: 6px;
   color: #ffb0a7;
-  background: rgba(196, 69, 58, 0.16);
+  background: color-mix(in srgb, var(--err) 16%, transparent);
 }
 
 .synvoice-title-control.processing .synvoice-trigger,
@@ -11150,7 +11162,7 @@ button.pd-mission.waiting:hover {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--err);
+  background: var(--err-on-dark);
   box-shadow: 0 0 0 2px var(--panel);
 }
 
@@ -11426,8 +11438,8 @@ button.pd-mission.waiting:hover {
 }
 
 .synvoice-configured.warn {
-  border-color: rgba(196, 69, 58, 0.3);
-  background: rgba(196, 69, 58, 0.07);
+  border-color: color-mix(in srgb, var(--err) 30%, transparent);
+  background: color-mix(in srgb, var(--err) 7%, transparent);
   color: #e98278;
 }
 
@@ -11553,7 +11565,7 @@ button.pd-mission.waiting:hover {
 
 .synvoice-vocabulary-chip:hover:not(:disabled) i,
 .synvoice-vocabulary-chip:focus-visible i {
-  background: rgba(196, 69, 58, 0.2);
+  background: color-mix(in srgb, var(--err) 20%, transparent);
   color: #ffb0a7;
 }
 
@@ -11610,7 +11622,7 @@ button.pd-mission.waiting:hover {
 }
 
 .synvoice-panel .btn.danger {
-  border-color: rgba(196, 69, 58, 0.5);
+  border-color: color-mix(in srgb, var(--err) 50%, transparent);
   color: #e98278;
 }
 
@@ -12492,7 +12504,7 @@ body.synvoice-overlay-page #root {
 }
 
 .synvoice-overlay-history .synvoice-history-empty.error {
-  border-color: rgba(196, 69, 58, 0.24);
+  border-color: color-mix(in srgb, var(--err) 24%, transparent);
   color: #d98d84;
 }
 
@@ -12647,7 +12659,7 @@ body.synvoice-overlay-page #root {
 .synvoice-overlay-shell.recording .synvoice-overlay-main-icon {
   width: 34px;
   height: 34px;
-  background: rgba(196, 69, 58, 0.18);
+  background: color-mix(in srgb, var(--err) 18%, transparent);
   color: #ffb0a7;
 }
 
@@ -13060,7 +13072,7 @@ body.progress-overlay-page #root {
 }
 
 .progress-project.tone-attention {
-  border-color: rgba(196, 69, 58, 0.3);
+  border-color: color-mix(in srgb, var(--err) 30%, transparent);
 }
 
 .progress-project-head {

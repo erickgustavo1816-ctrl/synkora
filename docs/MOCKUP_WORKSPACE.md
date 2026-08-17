@@ -85,6 +85,11 @@ código).
 
 ## Paleta (a de sempre)
 
-papel `#efe9dc` · ink `#26241f` · accent `#d96c3f` · ok `#3e9b5f` · err `#c4453a` ·
+papel `#efe9dc` · ink `#26241f` · accent `#d96c3f` · ok `#3e9b5f` · err `#b54036` ·
 warn `#d9a23f` · mono Cascadia. Painel escuro `--panel` é EXCLUSIVO de terminal
 (TerminalPane) — nenhuma superfície de chat o usa.
+
+O err tem PAR: `--err` (`#b54036`) é o de papel, 4,63:1 — o `#c4453a` de antes
+media 4,08:1 e reprovava o piso AA de texto pequeno. `--err-on-dark` (`#e8897f`)
+é o mesmo vermelho para painel escuro (6,14:1 sobre `--panel`), porque o de
+papel cai para 2,77:1 lá. Texto vermelho em superfície escura usa o par escuro.

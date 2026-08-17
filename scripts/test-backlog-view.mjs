@@ -281,10 +281,11 @@ test('o bloco de criar versão se lê inteiro — legenda, rótulo, exemplo e re
   // A lateral é `--paper-2`, e é contra ela que tudo aqui se mede.
   const background = tokens['--paper-2']
 
-  // `var(--err)` cru mede 3,78:1 aqui e `--ink-3` mede 2,59:1 — os dois abaixo
-  // do piso de 4,5:1 de texto pequeno. O segundo era a legenda do bloco desde
-  // sempre; ela deixou de ser decoração no dia em que o bloco passou a ter um
-  // campo para preencher.
+  // `var(--err)` cru mede 4,29:1 aqui e `--ink-3` mede 2,59:1 — os dois abaixo
+  // do piso de 4,5:1 de texto pequeno. A lateral é o fundo mais escuro dos
+  // claros: o token passa em `--paper` e no cartão, e só aqui precisa de tinta.
+  // O segundo era a legenda do bloco desde sempre; ela deixou de ser decoração
+  // no dia em que o bloco passou a ter um campo para preencher.
   for (const selector of ['.bl-nv-error', '.bl-nv-label', '.bl-nv-own-label', '.bl-nv-input::placeholder']) {
     const declared = prop(ruleBody(css, selector), 'color')
     assert.ok(declared, `${selector} precisa declarar a própria cor`)
