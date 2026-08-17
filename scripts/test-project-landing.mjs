@@ -297,7 +297,8 @@ test('o painel do projeto é PAPEL, mostra o que os chips não dizem e nunca inv
 
   assert.match(css, /\.pd-mission\.waiting\s*\{[\s\S]*?var\(--warn\)/u)
   assert.match(css, /\.pd-dot\.ask\s*\{[\s\S]*?background:\s*var\(--warn\)/u)
-  assert.match(css, /\.pd-count\s*\{[\s\S]*?font-variant-numeric:\s*tabular-nums/u)
+  // `.pd-count` (o ▣ feitos/total) saiu do CSS junto com o contador na purga
+  // F6 (2026-08-17) — a asserção de tabular-nums perdeu o objeto.
 })
 
 test('o Board escolhe a tela pelo módulo puro e mantém as duas no mesmo limite de erro', async () => {
