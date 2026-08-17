@@ -12,6 +12,7 @@ import NewMissionModal from './NewMissionModal'
 import Select from './Select'
 import { TestServerModal } from './TestServerModal'
 import { MISSION_CARD_TIP, missionCardAccess } from '../missionCardAccess'
+import { allowsOwnVersionNumber, versionSuggestions } from '../versionChoice'
 
 const MISSION_ICON: Record<MissionStatus, string> = {
   ativa: '🚀',
@@ -285,17 +286,6 @@ const TYPE_ICON: Record<BacklogItemType, string> = {
   melhoria: '🔧'
 }
 
-// "V1.2.3" / "v1.2" / "1.3" → [major, minor, patch] (espelho do backlog.ts).
-function parseVer(name: string): [number, number, number] | null {
-  const m = name.trim().match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/i)
-  return m ? [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)] : null
-}
-
-function cmpVer(a: [number, number, number], b: [number, number, number]): number {
-  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]
-  return 0
-}
-
 interface Props {
   projectId: string
 }
@@ -397,32 +387,10 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   // Sugestões de versão CALCULADAS da mais alta existente (patch/minor/major):
   // por construção nunca duplicam nem ficam abaixo da main, e resolvem com um
   // clique o produto que nasceu aqui. Elas não resolvem o produto que CHEGOU
-  // pronto — daí o campo do número próprio logo abaixo (ordem do dono,
-  // 2026-08-17: "posso colocar um projeto que já esteja na 1.20").
+  // pronto — daí o campo do número próprio logo abaixo. A régua mora no módulo
+  // compartilhado: o modal de missão nova aplica a MESMA num projeto virgem.
   const typedVersionId = `bl-nv-${projectId}`
-  const nextOptions = ((): { label: string; kind: string }[] => {
-    const parsed = versions
-      .map((v) => ({ v, p: parseVer(v.name) }))
-      .filter((x): x is { v: Version; p: [number, number, number] } => x.p != null)
-    // Projeto NOVO escolhe onde começa (pedido do usuário, 2026-08-06): nem
-    // todo produto nasce 1.0 — alfa/beta começam no 0.x e o semver segue
-    // naturalmente dali (as opções patch/minor/major são calculadas da mais
-    // alta existente).
-    if (parsed.length === 0)
-      return [
-        { label: 'V1.0', kind: 'primeira versão — produto direto' },
-        { label: 'V0.1.0', kind: 'beta — produto em validação' },
-        { label: 'V0.0.1', kind: 'alfa — começo de tudo' }
-      ]
-    const top = [...parsed].sort((a, b) => cmpVer(b.p, a.p))[0]
-    const [ma, mi, pa] = top.p
-    const prefix = /^v/i.test(top.v.name) ? top.v.name.slice(0, 1) : ''
-    return [
-      { label: `${prefix}${ma}.${mi}.${pa + 1}`, kind: 'patch — correções' },
-      { label: `${prefix}${ma}.${mi + 1}`, kind: 'minor — features' },
-      { label: `${prefix}${ma + 1}.0`, kind: 'major — marco grande' }
-    ].filter((c) => !versions.some((v) => v.name.toLowerCase() === c.label.toLowerCase()))
-  })()
+  const nextOptions = versionSuggestions(versions)
 
   // Excluir = via SELEÇÃO (decisão do usuário): um ou vários de uma vez,
   // sempre com confirmação.
@@ -622,37 +590,44 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
               </button>
             ))}
           </div>
-          <div className="bl-nv-own">
-            <label className="bl-nv-own-label" htmlFor={typedVersionId}>
-              ou escreva o número
-            </label>
-            <div className="bl-nv-own-row">
-              <input
-                id={typedVersionId}
-                className="bl-nv-input"
-                value={typedVersion}
-                /* exemplo, nunca rótulo: "1.20" sozinho dentro da caixa lê como
-                   um valor já preenchido — o "ex.:" desfaz a confusão */
-                placeholder="ex.: 1.20"
-                spellCheck={false}
-                autoComplete="off"
-                data-tip="O número do jeito que o produto já é numerado — 1.20, 2.0.1, 1.2.0.4 ou um codinome"
-                onChange={(e) => {
-                  setTypedVersion(e.target.value)
-                  setNewVersionError(null)
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && void addVersionNamed(typedVersion)}
-              />
-              <button
-                className="btn ghost tiny"
-                disabled={!typedVersion.trim()}
-                data-tip="Criar a versão com este número"
-                onClick={() => void addVersionNamed(typedVersion)}
-              >
-                ◈ criar
-              </button>
+          {/* O NÚMERO PRÓPRIO SÓ EXISTE NO PROJETO VIRGEM (refinamento do dono,
+              2026-08-17): ele resolve o produto que CHEGA numerado. Criada a
+              primeira versão, o app já sabe de onde contar e o número escrito à
+              mão só serviria para furar a sequência — as sugestões acima
+              passam a ser o caminho inteiro. */}
+          {allowsOwnVersionNumber(versions) && (
+            <div className="bl-nv-own">
+              <label className="bl-nv-own-label" htmlFor={typedVersionId}>
+                ou escreva o número
+              </label>
+              <div className="bl-nv-own-row">
+                <input
+                  id={typedVersionId}
+                  className="bl-nv-input"
+                  value={typedVersion}
+                  /* exemplo, nunca rótulo: "1.20" sozinho dentro da caixa lê como
+                     um valor já preenchido — o "ex.:" desfaz a confusão */
+                  placeholder="ex.: 1.20"
+                  spellCheck={false}
+                  autoComplete="off"
+                  data-tip="O número do jeito que o produto já é numerado — 1.20, 2.0.1, 1.2.0.4 ou um codinome"
+                  onChange={(e) => {
+                    setTypedVersion(e.target.value)
+                    setNewVersionError(null)
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && void addVersionNamed(typedVersion)}
+                />
+                <button
+                  className="btn ghost tiny"
+                  disabled={!typedVersion.trim()}
+                  data-tip="Criar a versão com este número"
+                  onClick={() => void addVersionNamed(typedVersion)}
+                >
+                  ◈ criar
+                </button>
+              </div>
             </div>
-          </div>
+          )}
           {newVersionError && (
             <span className="bl-nv-error" role="alert">
               {newVersionError}

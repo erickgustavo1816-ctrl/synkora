@@ -19102,3 +19102,42 @@ details.gui-error-line {
     justify-self: end;
   }
 }
+
+/* PRIMEIRA VERSÃO NO MODAL DE MISSÃO NOVA (2026-08-17) — o projeto sem
+   nenhuma versão escolhe o número ANTES de a missão nascer; até aqui o motor
+   semeava "V1.0" sozinho e o dono nunca via a pergunta. Só ARRANJO: as
+   sugestões são `.btn tiny` (a seleção é o `ghost` que sai) e a recusa do main
+   usa o aviso que o modal já tem. O bloco mora dentro de
+   `.mission-version-choice`, que é CAIXA ALTA — o rótulo pede isso, o número
+   digitado e o exemplo dentro dele não. */
+.mission-first-version-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mission-first-version-input {
+  width: 100%;
+  min-width: 0;
+  background: #fffdf6;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: normal;
+  text-transform: none;
+  padding: 7px 10px;
+  outline: none;
+}
+
+.mission-first-version-input:focus {
+  border-color: var(--ink);
+}
+
+/* o exemplo dentro do campo é TEXTO que se lê: o cinza padrão do navegador
+   mede 3,5:1 aqui, e o piso do placeholder é o mesmo do corpo */
+.mission-first-version-input::placeholder {
+  color: var(--ink-2);
+  opacity: 1;
+}

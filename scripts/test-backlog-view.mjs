@@ -234,6 +234,34 @@ test('a lateral aceita um número digitado ao lado das sugestões', async () => 
   assert.match(view, /disabled=\{!typedVersion\.trim\(\)\}/u)
 })
 
+test('o campo do número próprio só existe enquanto o projeto tem ZERO versões', async () => {
+  const view = await source('src/renderer/src/components/BacklogView.tsx')
+
+  // REFINAMENTO da ordem (2026-08-17): o campo livre resolve o produto que
+  // CHEGA numerado — e só ele. Criada a primeira versão, o app passa a saber de
+  // onde contar, e dali em diante o número escrito à mão só serviria para furar
+  // a sequência. A régua vem do módulo compartilhado (o modal de missão nova
+  // aplica a MESMA), nunca de uma comparação escrita aqui.
+  assert.match(
+    view,
+    /import \{ allowsOwnVersionNumber, versionSuggestions \} from '\.\.\/versionChoice'/u
+  )
+  assert.match(view, /const nextOptions = versionSuggestions\(versions\)/u)
+  assert.match(view, /\{allowsOwnVersionNumber\(versions\) && \(/u)
+
+  // O gate cobre o CAMPO, nunca as sugestões: elas continuam sendo o caminho
+  // normal de quem começou o produto aqui.
+  const gateAt = view.indexOf('allowsOwnVersionNumber(versions) && (')
+  const optionsAt = view.indexOf('nextOptions.map')
+  const ownBlockAt = view.indexOf('className="bl-nv-own"')
+  assert.ok(optionsAt !== -1 && optionsAt < gateAt, 'as sugestões ficam fora do gate')
+  assert.ok(gateAt !== -1 && gateAt < ownBlockAt, 'o campo do número próprio fica dentro do gate')
+
+  // a recusa do main segue FORA do gate: ela também explica um clique numa
+  // sugestão recusada, e não pode sumir junto com o campo
+  assert.ok(view.indexOf('className="bl-nv-error"') > ownBlockAt)
+})
+
 test('a recusa do main chega à tela — nenhuma criação falha em silêncio', async () => {
   const [ipc, view, preload, mock] = await Promise.all([
     source('src/main/ipc/backlog.ts'),
