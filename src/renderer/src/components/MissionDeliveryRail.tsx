@@ -52,7 +52,8 @@ export default function MissionDeliveryRail({
   onTerminal,
   onTestServer,
   onKillTestServer,
-  onArchive
+  onArchive,
+  onConclude
 }: {
   mission: Mission
   versionLabel?: string
@@ -75,6 +76,8 @@ export default function MissionDeliveryRail({
   onTestServer: () => void
   onKillTestServer: () => void
   onArchive: () => void
+  /** planejamento: conclui num clique (missão encerra; plano/ e a aba do mapa ficam) */
+  onConclude?: () => void
 }): React.JSX.Element {
   const integration = mission.integration
   const live = mission.status === 'ativa'
@@ -335,13 +338,26 @@ export default function MissionDeliveryRail({
           `archiveMission` — deixavam a alavanca invisível para quem não sabia
           que concluir era arquivar. Sem confirmação, como na missão de dev: o
           gesto se desfaz no próprio trilho. */}
+      {/* PLANEJAMENTO tem DOIS desfechos (ordem do dono, 2026-08-17): CONCLUIR
+          é o caminho feliz de um clique — a missão encerra, sai da coluna, o
+          plano/ fica no repo e o plano segue no mapa (nada de excluir depois);
+          ARQUIVAR é a pausa — retomar futuramente ou excluir de vez. */}
+      {planning && live && onConclude && (
+        <button
+          className="btn tiny dr-btn"
+          data-tip="Encerra esta sessão de planejamento: a missão conclui e some da coluna; o plano/ fica no repo e o plano continua no mapa"
+          onClick={onConclude}
+        >
+          ✔ concluir planejamento
+        </button>
+      )}
       {(mission.status === 'ativa' || mission.status === 'arquivada') && (
         <button
           className={`btn tiny dr-btn ${live ? 'dr-quiet' : ''}`}
           data-tip={
             live
               ? planning
-                ? 'Arquiva esta sessão de planejamento: o que ela escreveu em plano/ fica no repo e o plano continua no mapa'
+                ? 'Pausa esta sessão de planejamento para retomar depois — ou excluir de vez; o plano/ fica no repo'
                 : 'Arquivar a missão (branch preservada)'
               : planning
                 ? 'Reabrir esta sessão de planejamento'

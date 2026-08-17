@@ -106,6 +106,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const [projectPlans, setProjectPlans] = useState<PlanView[]>([])
   const loadMissions = useStore((s) => s.loadMissions)
   const archiveMission = useStore((s) => s.archiveMission)
+  const concludePlanningMission = useStore((s) => s.concludePlanningMission)
   const deleteMission = useStore((s) => s.deleteMission)
   const integrateMission = useStore((s) => s.integrateMission)
   const missionTab = useStore((s) => s.missionTabByProject[projectId] ?? null)
@@ -1215,6 +1216,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               if (testPane) window.synkora.panes.requestClose(projectId, testPane.id)
             }}
             onArchive={() => void archiveMission(selMission.id, selMission.status === 'ativa')}
+            onConclude={() => void concludePlanningMission(selMission.id)}
           />
         </GuiPanelErrorBoundary>
       )}

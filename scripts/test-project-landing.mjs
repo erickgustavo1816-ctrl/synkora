@@ -219,49 +219,34 @@ test('a coluna e o trilho consomem o módulo — nenhuma cópia da regra sobrou'
 })
 
 // ————————————————————————————————————————————————————————————————————————
-// ARQUIVAR A MISSÃO DE PLANEJAMENTO (ordem do dono, 2026-08-17: "preciso de um
-// lugar de fácil acesso para arquivar a missão").
-//
-// A alavanca SEMPRE esteve no trilho — mas com outro nome. Numa missão de dev
-// ela se chama "⊟ arquivar"; numa de planejamento se chamava "⊟ concluir
-// planejamento", e o dono, procurando arquivar, leu a tela inteira sem achar o
-// que procurava. Duas palavras para o MESMO ato (o clique chama o mesmo
-// `archiveMission`) é a definição de vocabulário inconsistente: quem não sabe
-// que concluir É arquivar não tem como descobrir.
-//
-// O que se prende aqui é o vocabulário e a unicidade do gesto — não o texto
-// bonito: se alguém devolver a palavra "concluir" ao rótulo, ou acrescentar uma
-// SEGUNDA alavanca de arquivo só para o planejamento, isto reprova.
+// A alavanca de ARQUIVAR do planejamento diz "arquivar" (2026-08-17): a régua
+// da rodada 3 fica — mas o CONCLUIR voltou como alavanca PRÓPRIA por ordem do
+// dono na mesma noite (teste irmão no fim do arquivo). Aqui prende-se que o
+// botão de arquivo continua UM e continua dizendo arquivar.
 // ————————————————————————————————————————————————————————————————————————
 
 test('o trilho do planejamento chama arquivar de ARQUIVAR', async () => {
   const rail = await source('src/renderer/src/components/MissionDeliveryRail.tsx')
   const code = withoutComments(rail)
 
-  // Os quatro rótulos do botão, na ordem em que o código os escolhe:
+  // Os quatro rótulos do botão de ARQUIVO, na ordem em que o código os escolhe:
   // planejamento vivo, dev vivo, planejamento arquivado, dev arquivado.
   const button = code.match(/onClick=\{onArchive\}\s*>([\s\S]*?)<\/button>/u)
   assert.ok(button, 'o botão de arquivar/reativar mudou de forma')
   const labels = [...button[1].matchAll(/'([^']+)'/gu)].map((m) => m[1])
   assert.equal(labels.length, 4, 'as duas naturezas × os dois sentidos do gesto')
   assert.match(labels[0], /arquivar/u, 'planejamento vivo: o rótulo tem de dizer arquivar')
-  assert.doesNotMatch(labels[0], /concluir/u, '"concluir" é o nome que escondia a alavanca')
+  assert.doesNotMatch(labels[0], /concluir/u, 'concluir é a OUTRA alavanca, nunca o rótulo desta')
   assert.match(labels[1], /arquivar/u, 'dev vivo: o rótulo continua dizendo arquivar')
   assert.match(labels[2], /reabrir|reativar/u)
   assert.match(labels[3], /reabrir|reativar/u)
 
-  // A dica responde a dúvida que o gesto levanta — o plano some junto? — em vez
-  // de repetir o rótulo: o plano/ é do PROJETO, a conversa é que encerra.
+  // A dica responde a dúvida que o gesto levanta — o plano some junto? O
+  // arquivar é a PAUSA (retomar ou excluir); o plano/ é do PROJETO e fica.
   const tip = code.match(/data-tip=\{\s*live([\s\S]*?)\}\s*onClick=\{onArchive\}/u)
   assert.ok(tip, 'a dica da alavanca de arquivo mudou de forma')
-  assert.match(tip[1], /[Aa]rquiva/u)
+  assert.match(tip[1], /[Pp]ausa/u)
   assert.match(tip[1], /plano\//u)
-  assert.match(tip[1], /mapa/u)
-
-  // UMA alavanca, sem confirmação, como na missão de dev: o gesto se desfaz no
-  // próprio trilho ("↩ reabrir/reativar"), então confirmar seria atrito.
-  assert.equal((code.match(/onClick=\{onArchive\}/gu) ?? []).length, 1)
-  assert.doesNotMatch(code, /confirm/iu)
 })
 
 test('a alavanca de arquivo do planejamento não depende de branch nem de fila', async () => {
@@ -693,4 +678,32 @@ test('o painel largo mostra plano, espera e cronologia sem inventar conta nova',
   // A cronologia vem do módulo puro, com as duas datas que existem de verdade.
   assert.match(dashboard, /missionTimeline\(missions\)/u)
   assert.doesNotMatch(withoutComments(dashboard), /updatedAt/u)
+})
+
+// O PLANEJAMENTO tem DOIS desfechos (ordem do dono, 2026-08-17): CONCLUIR é o
+// caminho feliz de um clique (a missão encerra e some da coluna; plano/ e a
+// aba do mapa ficam) e ARQUIVAR é a pausa (retomar depois ou excluir). A
+// rodada 3 tinha unificado tudo em "arquivar" e o dono mandou o concluir de
+// volta — este teste impede as duas palavras de voltarem a ser uma só.
+test('o trilho do planejamento oferece concluir E arquivar, com portas distintas', async () => {
+  const rail = await source('src/renderer/src/components/MissionDeliveryRail.tsx')
+  assert.match(rail, /✔ concluir planejamento/u, 'o concluir de um clique precisa existir')
+  assert.match(rail, /⊟ arquivar planejamento/u, 'o arquivar continua sendo a pausa')
+  assert.match(rail, /↩ reabrir planejamento/u, 'reabrir cobre a volta do arquivado')
+  assert.match(rail, /onConclude\?: \(\) => void/u, 'o desfecho é prop própria, nunca o onArchive')
+
+  const board = await source('src/renderer/src/components/Board.tsx')
+  assert.match(board, /onConclude=\{\(\) => void concludePlanningMission\(selMission\.id\)\}/u)
+
+  const ipc = await source('src/main/ipc/missions.ts')
+  assert.match(
+    ipc,
+    /patch\.status === 'concluida' && missionTypeOf\(mission\) !== 'planejamento'/u,
+    'a porta do concluir-por-clique é EXCLUSIVA do planejamento — dev conclui pela integração'
+  )
+  assert.match(
+    ipc,
+    /patch\.status === 'arquivada' \|\| patch\.status === 'concluida'/u,
+    'concluir encerra os chats da missão como o arquivar (conversa fica gravada)'
+  )
 })

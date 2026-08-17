@@ -932,7 +932,7 @@ const api = {
       ipcRenderer.invoke('missions:create', projectId, input),
     update: (
       id: string,
-      patch: { title?: string; goal?: string; scope?: string; status?: 'ativa' | 'arquivada' }
+      patch: { title?: string; goal?: string; scope?: string; status?: 'ativa' | 'arquivada' | 'concluida' }
     ): Promise<Mission | null> => ipcRenderer.invoke('missions:update', id, patch),
     integrate: (missionId: string): Promise<string> =>
       ipcRenderer.invoke('missions:integrate', missionId),

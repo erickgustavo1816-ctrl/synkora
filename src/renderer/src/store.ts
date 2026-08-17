@@ -1568,6 +1568,10 @@ interface SynkoraState {
   loadMissions: (projectId: string) => Promise<void>
   createMission: (projectId: string, input: NewMissionInput) => Promise<Mission | null>
   archiveMission: (id: string, archived: boolean) => Promise<void>
+  /** planejamento: conclui num clique — a missão encerra e some da coluna; o
+   *  plano/ fica no repo e a aba do plano segue no mapa (o main guarda a porta:
+   *  'concluida' por aqui só entra em missão de PLANEJAMENTO). */
+  concludePlanningMission: (id: string) => Promise<void>
   deleteMission: (id: string) => Promise<void>
   integrateMission: (missionId: string) => Promise<string>
   /** aba de missão selecionada no board, POR projeto (null = Geral) */
@@ -1789,6 +1793,16 @@ export const useStore = create<SynkoraState>((set, get) => ({
     await window.synkora.missions.update(id, { status: archived ? 'arquivada' : 'ativa' })
     const pid = get().openProjectId
     if (pid) await get().loadMissions(pid)
+  },
+  concludePlanningMission: async (id) => {
+    if (!window.synkora.missions) return
+    await window.synkora.missions.update(id, { status: 'concluida' })
+    const pid = get().openProjectId
+    if (pid) {
+      await get().loadMissions(pid)
+      // a missão saiu da coluna — a aba volta para o painel do projeto
+      get().setMissionTab(pid, null)
+    }
   },
   deleteMission: async (id) => {
     if (!window.synkora.missions?.remove) return

@@ -787,12 +787,18 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
 
   ipcMain.handle(
     'missions:update',
-    (e, id: string, patch: { title?: string; goal?: string; scope?: string; status?: 'ativa' | 'arquivada' }) => {
+    (e, id: string, patch: { title?: string; goal?: string; scope?: string; status?: 'ativa' | 'arquivada' | 'concluida' }) => {
       const mission = missions.get(id)
       if (!mission) return null
-      // status só transita entre ativa e arquivada pela UI (integração tem
-      // caminho próprio; concluída é terminal — a branch já foi embora).
+      // status transita entre ativa e arquivada pela UI (integração tem caminho
+      // próprio; concluída é terminal). EXCEÇÃO (ordem do dono, 2026-08-17):
+      // missão de PLANEJAMENTO conclui num clique — sem branch, sem fila e sem
+      // merge, "concluir" é só encerrar bonito: a missão sai da coluna, o
+      // plano/ fica no repo e a aba do plano segue no mapa. Missão de dev
+      // continua concluindo SÓ pela integração.
       if (patch.status && mission.status !== 'ativa' && mission.status !== 'arquivada')
+        delete patch.status
+      if (patch.status === 'concluida' && missionTypeOf(mission) !== 'planejamento')
         delete patch.status
       if (patch.status && patch.status !== mission.status) {
         if (patch.status === 'arquivada') {
@@ -825,12 +831,12 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         // Missão ARQUIVADA não fica com orquestrador vivo (bug real: o pane
         // seguia aberto com o CLI rodando): mata o pty e desarma o hub —
         // reativar respawna via resume (tuiSessionId persiste no maestroStore).
-        if (patch.status === 'arquivada') {
+        if (patch.status === 'arquivada' || patch.status === 'concluida') {
           const paneId = orchPaneId(updated.projectId, id)
           if (ptys.has(paneId)) ptys.kill(paneId)
           unregisterPane(paneId)
           // 2.0: dev/reviewer/ajudantes da missão encerram junto (a conversa
-          // fica gravada; reativar reabre no resume).
+          // fica gravada; concluída abre congelada, arquivada reabre no resume).
           killMissionGuiPanes(id)
         }
         // Arquivar/reativar é MARCO — o PM comenta (decisão do usuário: ele
@@ -840,9 +846,11 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
             projectId: updated.projectId,
             kind: 'info',
             text:
-              patch.status === 'arquivada'
-                ? `missão "${updated.title}" foi ARQUIVADA${updated.branch ? ` (branch ${updated.branch} preservada)` : ''}`
-                : `missão "${updated.title}" foi REATIVADA`,
+              patch.status === 'concluida'
+                ? `planejamento "${updated.title}" foi CONCLUÍDO — o plano segue no mapa`
+                : patch.status === 'arquivada'
+                  ? `missão "${updated.title}" foi ARQUIVADA${updated.branch ? ` (branch ${updated.branch} preservada)` : ''}`
+                  : `missão "${updated.title}" foi REATIVADA`,
             actor: 'user'
           })
         }
