@@ -6,7 +6,7 @@
  * dono (shellSpec), que compartilham a mesma prova de isolamento. A mecânica mora
  * no missionEngine (extras.engine); o lado maestro do paneSpec
  * (resume budget/planejamento) vem do maestroEngine pelos extras, e o pane
- * lifecycle (armPane/stagger) segue no index até a obra própria.
+ * lifecycle (stagger de spawn) segue no index até a obra própria.
  *
  * Corpo movido VERBATIM do whenReady do index.ts. CERCA VIVA da Fase 0:
  * register*Ipc é CHAMADO do whenReady (bloco único antes do createWindow),
@@ -19,7 +19,7 @@
 import { app, ipcMain } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import { existsSync, mkdirSync, unlinkSync } from 'fs'
+import { existsSync, unlinkSync } from 'fs'
 import {
   ensureSynkoraGitExcludes,
   removeWorktreeAndBranch,
@@ -52,14 +52,12 @@ import {
   type GuiSessionRegistry
 } from '../guiSessions'
 import { armGuiPlannerMcp, type GuiPlannerMcpDeps } from '../guiPlannerMcp'
-import { assessMissionRisk } from '../orchestratorFlow'
-import { missionPersona } from '../maestro'
-import { buildIdleWaiterHint } from '../phasePrompts'
-import { ensureProjectSecurityBaseline } from '../projectSecurityBaseline'
-import { requiresManualSecurityValidation } from '../securityPolicy'
+import {} from '../orchestratorFlow'
+import {} from '../maestro'
+import {} from '../projectSecurityBaseline'
 import { migrateCliSessionBetweenSeats } from '../cliSessionTransplant'
-import type { PaneIdentity } from '../hub'
-import type { SeatCli } from '../seats'
+import type {} from '../hub'
+import type {} from '../seats'
 import type { MainContext } from '../mainContext'
 import type { MissionEngine } from '../missionEngine'
 import type { MaestroEngine } from '../maestroEngine'
@@ -77,12 +75,6 @@ export interface MissionsIpcExtras {
   orchKey(projectId: string, missionId: string): string
   emitBacklogChanged(projectId: string): void
   staggerPaneSpawn(): Promise<void>
-  armPane(
-    identity: Omit<PaneIdentity, 'paneId'> & { paneId?: string },
-    cli: SeatCli,
-    opts?: { strictMcp?: boolean; configDir?: string; sensitive?: boolean }
-  ): { paneId: string; cliArgs: string[] }
-  /** Late-bound: let do index. */
   /** Registro das sessões de chat por pane (onda A) — o guiSpec consulta o
    *  resume gravado e a vaga livre do ajudante. */
   guiSessions: GuiSessionRegistry
@@ -168,7 +160,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     blackbox,
     hub,
     syncBoard,
-    projectModeOf,
     orchPaneId,
     unregisterPane,
   } = ctx
@@ -177,7 +168,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     orchKey,
     emitBacklogChanged,
     staggerPaneSpawn,
-    armPane,
     guiSessions,
     killMissionGuiPanes
   } = extras
@@ -823,24 +813,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
             })
             return mission
           }
-          // F2-c4 (§5.3 do mapa da Fase 2): arquivar com veredito em voo
-          // perderia a rodada — recusa ANTES de qualquer mutação, com receita.
-          const inTransition = tasks
-            .list(mission.projectId)
-            .filter(
-              (t) => t.missionId === mission.id && ctx.phaseTransitions.isLocked(t.id)
-            )
-          if (inTransition.length > 0) {
-            hub.publish({
-              projectId: mission.projectId,
-              kind: 'error',
-              text: `não arquivei "${mission.title}": há veredito de fase fechando em ${inTransition
-                .map((t) => `"${t.title}"`)
-                .join(', ')} — aguarde alguns segundos e tente de novo`,
-              actor: 'harness'
-            })
-            return mission
-          }
         }
         const planError = transitionLinkedProjectPlanMission(
           mission.projectId,
@@ -913,23 +885,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     if (!mission || mission.status !== 'arquivada') return false
     const project = projects.get(mission.projectId)
     if (!project) return false
-    // F2-c4 (§5.3): exclusão com veredito em voo em card da missão — recusa
-    // com receita antes de qualquer mutação (missão arquivada raramente tem
-    // transição viva; o caso é corrida real de segundos).
-    const inTransition = tasks
-      .list(mission.projectId)
-      .filter((t) => t.missionId === missionId && ctx.phaseTransitions.isLocked(t.id))
-    if (inTransition.length > 0) {
-      hub.publish({
-        projectId: mission.projectId,
-        kind: 'error',
-        text: `não excluí a missão "${mission.title}": há veredito de fase fechando em ${inTransition
-          .map((t) => `"${t.title}"`)
-          .join(', ')} — aguarde alguns segundos e tente de novo`,
-        actor: 'harness'
-      })
-      return false
-    }
     try {
       ensureSynkoraGitExcludes(project.path)
     } catch (error) {
@@ -1009,232 +964,11 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     return true
   })
 
-  // Spec do pane TUI do ORQUESTRADOR da missão (mesma mecânica do PM: persona
-  // via --append-system-prompt/1º prompt + resume + MCP). O seat é herdado do
-  // PM na primeira abertura e fica preso à missão (sessão pertence ao seat).
-  ipcMain.handle('missions:paneSpec', async (e, projectId: string, missionId: string) => {
-    await staggerPaneSpawn()
-    const project = projects.get(projectId)
-    let mission = missions.get(missionId)
-    if (!project || !mission || mission.projectId !== projectId) return null
-    if (mission.status === 'concluida' || mission.status === 'arquivada') return null
-    // Missão criada pelo PM aguardando a escolha de conta/modelo/effort no
-    // modal: o orquestrador NÃO nasce com fallback silencioso (decisão do
-    // usuário, 02/08) — o Board mostra o modal e chama confirmOrchestrator.
-    if (mission.pendingOrchestrator) return null
-    // SYNKORA 2.0: missão DIRETA não tem orquestrador. O silêncio é o contrato
-    // (o renderer nem pede a spec); esta é a cerca autoritativa do main para
-    // que nenhum caminho legado ressuscite um pane que a missão não quer.
-    if (mission.direct) return null
-    // Integração EM VOO: o harness matou este pane DE PROPÓSITO
-    // (completeMissionMerge fecha o orquestrador ANTES do merge — um processo
-    // com cwd no worktree travaria a remoção) e o Board reage à morte
-    // rebuscando esta spec. Renascer aqui recoloca um claude DENTRO do
-    // worktree que a limpeza vai remover (caso real M02d 06/08: o orquestrador
-    // ressuscitado virou o próprio lock e a fila pausou em
-    // target_repair_pending). Rota de saída garantida: sucesso → 'concluida'
-    // (nunca respawna); falha → 'ativa' + missions:changed → o Board rebusca e
-    // o pane nasce para executar o reparo; crash no meio → o recovery de boot
-    // solta 'integrando' para 'ativa'.
-    if (mission.status === 'integrando') {
-      blackbox.record({
-        cat: 'pane',
-        event: 'orchestrator-respawn-refused-integration-in-flight',
-        ids: { projectId, missionId, paneId: orchPaneId(projectId, missionId) },
-        actor: 'harness',
-        reason:
-          'integração em voo: o pane do orquestrador foi fechado de propósito antes do merge; renascer agora seguraria a remoção do worktree'
-      })
-      return null
-    }
-    // pasta do projeto sumiu (renomeada fora do app) — relocar antes de abrir
-    if (!existsSync(project.path)) return null
-    // TRAVADINHA DA ABERTURA (triagem 2026-08-08, ESTADO 9): o caminho quente
-    // rodava ~18 execFileSync de git NO MAIN (~450ms por missão — culpado
-    // nomeado pelo journal: ipc:missions:paneSpec ×3 num stall de ~1,5s). A
-    // leitura agrupada viaja UMA vez pelo gitWorker; qualquer divergência cai
-    // no caminho completo síncrono de sempre (promoção/reparo, raro).
-    const readout = await gitOff(
-      'missionWorkspaceReadout',
-      project.path,
-      mission.id,
-      mission.branch,
-      mission.worktree
-    )
-    // Janela de await: revalida o estado que as guardas do topo checaram.
-    {
-      const fresh = missions.get(missionId)
-      if (!fresh || fresh.projectId !== projectId) return null
-      if (fresh.status === 'concluida' || fresh.status === 'arquivada') return null
-      if (fresh.pendingOrchestrator || fresh.status === 'integrando') return null
-      if (fresh.direct) return null
-      mission = fresh
-    }
-    if (readout.excludesError) {
-      // Mesmo guard mudo do missions:remove (02/08): sem esta mensagem o
-      // orquestrador simplesmente NÃO abria e nada explicava o porquê.
-      hub.publish({
-        projectId,
-        missionId,
-        kind: 'error',
-        text: `não abri o orquestrador de "${mission.title}": ${readout.excludesError}`,
-        actor: 'harness',
-        urgent: true
-      })
-      return null
-    }
-    // Promove missão antiga sem Git e também tenta reanexar um worktree que
-    // desapareceu. Mesmo após a tentativa, projeto Git só abre isolado.
-    const missionProjectMode = projectModeOf(projectId)
-    try {
-      ensureProjectSecurityBaseline(project.path, {
-        installRepositoryAdapters: missionProjectMode === 'greenfield',
-        projectName: project.name
-      })
-    } catch {
-      // Existing projects retain the trusted system policy for compatibility;
-      // a new app does not start work without materializing its local baseline.
-      if (missionProjectMode === 'greenfield') {
-        hub.publish({
-          projectId,
-          missionId,
-          kind: 'error',
-          text: `não abri o orquestrador de "${mission.title}": não foi possível preparar a política local de segurança`,
-          actor: 'harness',
-          urgent: true
-        })
-        return null
-      }
-    }
-    let missionCwd: string | undefined
-    if (readout.healthy) {
-      // fast path: missão saudável — zero git no main.
-      missionCwd = readout.workspace
-    } else {
-      const before = mission.branch
-      mission = ensureMissionWorktree(missionId) ?? mission
-      if (mission.branch && mission.branch !== before) {
-        hub.publish({
-          projectId,
-          kind: 'info',
-          text: `missão "${mission.title}" promovida: agora tem branch própria (${mission.branch})`,
-          actor: 'harness',
-          quiet: true
-        })
-        emitMissionsChanged(projectId)
-      }
-      missionCwd = missionWorkspacePath(project.path, mission)
-    }
-    if (!missionCwd) {
-      hub.publish({
-        projectId,
-        missionId,
-        kind: 'error',
-        text: `não foi possível provar o worktree isolado da missão "${mission.title}"; o orquestrador não será aberto na branch principal`,
-        actor: 'harness',
-        urgent: true
-      })
-      return null
-    }
-    const key = orchKey(projectId, missionId)
-    let state = maestro.get(key)
-    // Seat do orquestrador: o escolhido no modal da missão > o já usado nesta
-    // missão > herdado do PM.
-    const seatId = mission.seatId ?? state.seatId ?? maestro.get(projectId).seatId
-    const seat = seatId ? seats.get(seatId) : undefined
-    if (!seat) return null
-    if (state.seatId !== seatId) maestro.update(key, { seatId })
-    seats.preseed(seat)
-    const paneId = orchPaneId(projectId, missionId)
-    // Conversa acima do teto de custo: não retoma — nasce fresco com o caderno.
-    const resumeOverBudget = maestroResumeOverBudget(key)
-    if (resumeOverBudget !== undefined) {
-      skipMaestroResume(key, resumeOverBudget, { projectId, missionId, paneId })
-      state = maestro.get(key)
-    }
-    if (ptys.has(paneId)) ptys.kill(paneId)
-    unregisterPane(paneId)
-    const cwd = missionCwd
-    const missionRuntimeRisk = assessMissionRisk({
-      texts: [mission.title, mission.goal, mission.scope]
-    })
-    let armed: ReturnType<typeof armPane>
-    try {
-      armed = armPane(
-        { paneId, projectId, role: 'maestro', missionId, cwd, seatId: seat.id },
-        seat.cli,
-        {
-          strictMcp: true,
-          configDir: seats.configDirOf(seat),
-          sensitive:
-            missionRuntimeRisk.effectiveRisk === 'high' ||
-            requiresManualSecurityValidation(missionRuntimeRisk.surfaces)
-        }
-      )
-    } catch {
-      hub.publish({
-        projectId,
-        missionId,
-        kind: 'error',
-        text: 'não abri o orquestrador: falha ao armar o pane com o método de planejamento',
-        actor: 'harness',
-        urgent: true
-      })
-      return null
-    }
-    // Plano de ondas PERSISTENTE da missão: memória do orquestrador que
-    // sobrevive a fechamento do app/sessão perdida (fica no projeto, não no
-    // worktree — sobrevive também à integração/limpeza).
-    const plansDir = join(project.path, '.synkora', 'missions')
-    mkdirSync(plansDir, { recursive: true })
-    const planFile = join(plansDir, `${missionId.slice(0, 8)}.PLAN.md`)
-    const personaWithPlanning = `${missionPersona(mission, planFile)}${buildIdleWaiterHint(seat.cli)}`
-    const cliArgs = [...armed.cliArgs]
-    // Effort do orquestrador (validado: claude tem --effort low..max; codex
-    // usa a chave de config). No codex o -c é global e PRECISA vir antes do
-    // subcomando resume — por isso entra aqui, antes dos blocos de resume.
-    if (mission.effort) {
-      if (seat.cli === 'claude') cliArgs.push('--effort', mission.effort)
-      else cliArgs.push('-c', `model_reasoning_effort="${mission.effort}"`)
-    }
-    let initialPrompt: string | undefined
-    let appendSystemPrompt: string | undefined
-    // Sem intro o pane abre MUDO e o usuário acha que o contexto não chegou —
-    // a 1ª sessão sempre se apresenta lendo o plano e declarando goal/escopo.
-    // Missão criada à MÃO (goal magro) ≠ missão vinda do PM (goal-briefing
-    // rico): com goal curto o usuário vai explicar AQUI — o orquestrador não
-    // sai adivinhando nem abrindo interrogatório (feedback real, 2026-07-28).
-    const goalRich = (mission.goal ?? '').trim().length >= 80
-    // Apresentação é a PRIMEIRA saída, antes de qualquer tool call: o usuário
-    // via um pane trabalhando mudo sem saber de que missão se tratava (caso
-    // real 2026-08-05). E o caderno PLAN.md é NOMEADO — "o plano não existe"
-    // soava como se o briefing do Maestro tivesse se perdido.
-    const introPrompt = resumeOverBudget !== undefined
-      ? `Your previous conversation was NOT resumed on purpose (~${Math.round(resumeOverBudget / 1000)}k tokens of context — replaying it would burn a real slice of the account limit; deliberate economy, no work lost). Your VERY FIRST output — before ANY tool call — is a 2-3 line PT-BR note telling the user exactly that. THEN rebuild your working memory from the durable files: read your mission notebook .synkora/missions/${missionId.slice(0, 8)}.PLAN.md (if missing, say so and recreate it as you go), call board_status, and continue from where the notebook says. Do NOT re-plan from scratch, do NOT re-create existing cards, do NOT re-ask questions the user already answered.`
-      : goalRich
-      ? 'Your VERY FIRST output — before ANY tool call — is a 2-3 line introduction (PT-BR) as the orchestrator of this mission: restate the mission goal and scope you were given. ONLY THEN read your mission PLAN.md notebook if it exists (.synkora/missions/<id>.PLAN.md — your own persistent notebook, not the master plan nor the briefing; if missing, say "o caderno PLAN.md desta missão ainda não existe — normal em missão nova", NEVER the ambiguous "o plano não existe"). If the goal is already clear enough to plan, STUDY the project now and propose the plan via create_plan (the user reads and approves it on the board); if not, ask what is missing. NEVER create work cards before the plan is approved.'
-      : 'Your VERY FIRST output — before ANY tool call — is a 1-2 line introduction (PT-BR) inviting the user to explain the mission: it was created with only a short title/goal and they will explain what they want HERE, in their next message. Then read your mission PLAN.md notebook if it exists (.synkora/missions/<id>.PLAN.md — your own persistent notebook; if missing, say "o caderno PLAN.md desta missão ainda não existe — normal em missão nova"). Do NOT guess the scope, do NOT open a detailed questionnaire and do NOT propose any plan yet — wait for their explanation first.'
-    // Persona pelos canais POR ARQUIVO nos dois CLIs (F5, sonda P1–P3):
-    // claude via --append-system-prompt-file; codex via PROFILE por pane
-    // (o ipc/pty leva o appendSystemPrompt ao developer_instructions do
-    // profile — maestro é method-governed). Mata o risco do teto de argv da
-    // F6.4 (missionPersona ~27KB + goal rico estourava o -c inline); o
-    // profile sobrevive a /new e vale no resume, como o -c valia.
-    appendSystemPrompt = personaWithPlanning
-    if (state.tuiSessionId)
-      cliArgs.push(...(seat.cli === 'claude' ? ['--resume', state.tuiSessionId] : ['resume', state.tuiSessionId]))
-    else initialPrompt = introPrompt
-    return {
-      paneId,
-      kind: seat.cli,
-      seatId: seat.id,
-      cwd,
-      cliArgs,
-      initialPrompt,
-      appendSystemPrompt,
-      // modelo escolhido no modal da missão (--model no spawn do pane)
-      model: mission.model,
-      missionId
-    }
-  })
+  // O PANE TUI DO ORQUESTRADOR MORREU NA LIMPA F6 (2026-08-17). O handler já
+  // recusava para toda missão nascida na era 2.0 (`mission.direct` → null, e
+  // `missions:create` carimba `direct: true` por padrão): só um registro
+  // pré-2.0 o alcançava. Fica como RECUSA HONESTA em vez de canal ausente —
+  // `ipcMain.handle` removido faz o `invoke` do Board legado REJEITAR sem
+  // `.catch`. Some junto com o consumidor, do lado do renderer.
+  ipcMain.handle('missions:paneSpec', () => null)
 }

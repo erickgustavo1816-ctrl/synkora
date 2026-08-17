@@ -2,10 +2,10 @@
  * MAINCONTEXT — contrato explícito do estado do main (Fase 1, commit 1).
  *
  * A cirurgia do índice (docs/PLANO_NIVEL_5.md + docs/FASE1_MAPA_MAINCONTEXT.md)
- * extrai módulos (phaseEngine, mcpApi/, ipc/) que recebem ESTE contrato em vez
- * de viver no closure do whenReady. Aqui só há TIPOS — o objeto é construído
- * no index, logo após o hub nascer, expondo o que já existe (zero movimentação
- * de código; qualquer divergência de shape quebra o typecheck).
+ * extrai módulos (ipc/, missionEngine, paneLifecycle…) que recebem ESTE
+ * contrato em vez de viver no closure do whenReady. Aqui só há TIPOS — o
+ * objeto é construído no index, logo após o hub nascer, expondo o que já
+ * existe (qualquer divergência de shape quebra o typecheck).
  *
  * Regras de implementação (valem para quem constrói e para quem consome):
  * - Campos `readonly` podem ser getter por trás: variáveis reatribuídas em
@@ -38,99 +38,10 @@ import type { CodexSession } from './codexSession'
 import type { Hub, PaneIdentity } from './hub'
 import type { McpServerHandle, McpStdioLaunch } from './mcpServer'
 import type { PaneStartupMetrics } from './paneStartupMetrics'
-import type {
-  PhaseLaunchGuard,
-  PhaseLaunchCapacityGuard,
-  PhaseLaunchToken
-} from './phaseLaunchGuard'
-import type {
-  PhaseTransitionLock,
-  PhaseTransitionToken
-} from './phaseTransitionLock'
 import type { MaestroEvent } from './maestro'
-import type { SecurityReviewRecord } from './securityReview'
-import type { GateVerificationEvidence } from './gateVerificationEvidence'
 import type { ProjectPlan } from './projectPlan'
-import type {
-  DevPaneSpec,
-  LiveGateWait,
-  MissionWatch,
-  PendingUserQuestion,
-  PhaseWatch,
-  RunPhase
-} from './phaseTypes'
-
-/**
- * Máquina de fases por delegação (o corpo vira phaseEngine.ts no commit 3).
- * Permite extrair o mcpApi antes OU depois do phaseEngine sem retrabalho.
- */
-export interface PhaseApi {
-  preparePhasePane(
-    projectId: string,
-    taskId: string,
-    phase: RunPhase,
-    devSeatId: string,
-    devModel?: string,
-    devEffort?: string,
-    feedback?: string,
-    launchToken?: PhaseLaunchToken
-  ): Promise<DevPaneSpec | null>
-  /** ASSÍNCRONO POR SERIALIZAÇÃO (Fase 2, F2-c5): a atomicidade do veredito
-   *  vem do PhaseTransitionLock (lock por card), não mais da sincronicidade —
-   *  a barreira síncrona morreu aqui. A CICATRIZ do "[object Promise]"
-   *  (2026-08-05) continua a régua: todo consumidor DEVE `await` — uma
-   *  Promise não-aguardada tratada como valor volta a ser possível a cada
-   *  await esquecido, e o typecheck de Promise<boolean> é o que força os call
-   *  sites. Arity COMPLETA (fix do commit 3): o tipo antigo parava em
-   *  securityReview e um consumidor via ctx.phase droparia
-   *  verificationEvidence/acceptance em silêncio.
-   *  `token` é a posse adquirida pelo ENTRANTE (report/poller) — o
-   *  advancePhase assume o release nos desfechos normais (imediato ou no
-   *  settle da cadeia de continuação); no THROW a posse volta ao call site,
-   *  que faz rollback + release via rollbackVerdictTransaction (§8.2 do
-   *  mapa: o release vem DEPOIS do re-index). Chamada sem posse emite
-   *  `phase-advance-without-lock` na caixa-preta, nunca lança. */
-  advancePhase(
-    watch: PhaseWatch,
-    content: string,
-    securityReview?: SecurityReviewRecord,
-    verificationEvidence?: GateVerificationEvidence,
-    token?: PhaseTransitionToken,
-    /** Fotografia do dev POR VALOR (F2-c5b, §7.10): vem do codeReportGuard
-     *  do PRÓPRIO entrante — o campo watch.devSnapshot virou fallback. */
-    devSnapshot?: PhaseWatch['devSnapshot']
-  ): Promise<boolean>
-  /** Rollback padrão do caminho de THROW do veredito (F2-c5): re-indexa o
-   *  watch com createdAt renovado (§7.4) — a menos que o registry já tenha um
-   *  watch NOVO do card (R2: o novo vence e o artefato do velho é limpo) — e
-   *  SÓ ENTÃO solta o lock. Idempotente; token errado/velho é no-op. */
-  rollbackVerdictTransaction(watch: PhaseWatch, token?: PhaseTransitionToken): void
-  openPhasePane(watchSpec: DevPaneSpec, projectId: string, taskId: string): void
-  terminateTaskPhasePane(projectId: string, taskId: string, role: RunPhase): void
-  // ——— superfície extra do engine consumida pelo mcpApi (commit 4a) ———
-  /** Valida o artefato imutável do review (hash/tamanho/containment).
-   *  Async desde o F2-c5 (R11): o sha256 de patch grande roda no worker via
-   *  gitOff('reviewArtifactIdentity') — era o único I/O pesado sem caminho. */
-  reviewArtifactProblem(watch: PhaseWatch): Promise<string | undefined>
-  /** Remove o artefato do storage privado (fim de rodada/veredito). */
-  cleanupReviewArtifact(watch: PhaseWatch): void
-  /** Chunk autenticado do diff SHA-pinado servido ao reviewer. */
-  readReviewArtifactChunk(watch: PhaseWatch, offset: number, maxBytes?: number): string
-  /** Marcador `synkora-task:<id>` usado no recibo de integração. */
-  taskIntegrationMarker(task: Task): string
-  /** Retoma merge/finalize interrompido sobre os gates já aprovados. */
-  recoverFinalizingTask(task: Task): Promise<boolean>
-  // ——— superfície extra do engine consumida pelo ipc/ (commit 5e) ———
-  /** Fecha um gate VIVO em espera (higiene do mapa + kill do pane). */
-  closeLiveGateWait(projectId: string, taskId: string, reason: string): void
-  /** Drena os respawns LAZY anotados pelo recovery de boot (projeto aberto). */
-  drainPendingRespawns(projectId: string): void
-  /** Ocupação REAL do projeto para o teto MAX_PARALLEL_RUNS (§7.6 do mapa da
-   *  Fase 2): fases com watch + cards em TRANSIÇÃO (lock tomado com o watch
-   *  detached) — um veredito em voo não pode furar o teto em 1. Card com
-   *  watch E lock (rollback/continuação re-indexada) conta UMA vez. */
-  phaseOccupancy(projectId: string, excludeTaskId?: string): number
-}
+import type { DevPaneSpec } from './paneLifecycle'
+import type { PendingUserQuestion } from './maestroEngine'
 
 export interface MainContext {
   // ——— stores e serviços (referência estável — atribuídos 1×) ———
@@ -174,9 +85,6 @@ export interface MainContext {
   readonly helperSeen: Set<string>
   readonly voiceRequests: Map<string, { controller: AbortController; senderId: number }>
   readonly expiredSeats: Map<string, number>
-  readonly baselineVerificationRuns: Map<string, Promise<PlanVerificationCheckpoint>>
-  readonly finalVerificationRuns: Map<string, Promise<void>>
-  readonly missionWatches: Map<string, MissionWatch>
   readonly integrationDrainTimers: Map<string, NodeJS.Timeout>
   readonly integrationDraining: Set<string>
   readonly surveyAborts: Map<string, () => void>
@@ -198,19 +106,7 @@ export interface MainContext {
   >
   readonly closingPaneIds: Set<string>
   readonly paneEverSpawned: Set<string>
-  /** PhaseWatchRegistry do phaseEngine (tipo estrutural para não criar ciclo
-   *  de import): delete() limpa o artefato de review; detach() remove só a
-   *  indexação durante a transação do report — advancePhase continua dono do
-   *  artefato até aceitar ou restaurar a rodada. */
-  readonly phaseWatches: Map<string, PhaseWatch> & { detach(taskId: string): boolean }
-  readonly phaseLaunches: PhaseLaunchGuard
-  readonly phaseLaunchCapacity: PhaseLaunchCapacityGuard
-  /** Lock de transição por card (Fase 2, docs/FASE2_PLANO.md §3): "sem watch"
-   *  deixou de significar "card livre" — quem pergunta consulta isLocked. */
-  readonly phaseTransitions: PhaseTransitionLock
   readonly pendingUserQuestions: Map<string, PendingUserQuestion>
-  readonly liveGateWaits: Map<string, LiveGateWait>
-  readonly gateCooldownUntil: Map<string, number>
   readonly pendingPtyPreparations: Map<string, symbol>
   readonly mcpCatalogServedByPane: Map<string, string>
   readonly mcpPaneFirstContact: Map<string, number>
@@ -243,6 +139,4 @@ export interface MainContext {
   pushBoard(channel: string, ...args: unknown[]): void
   pushPanes(channel: string, ...args: unknown[]): void
   pushAll(channel: string, ...args: unknown[]): void
-
-  readonly phase: PhaseApi
 }

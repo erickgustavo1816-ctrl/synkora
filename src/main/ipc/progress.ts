@@ -8,7 +8,7 @@
  * NUNCA no import — instrumentIpcMain só cobre handlers registrados depois
  * dele. uiSender/mainWindow/mcpPort e afins são lidos via ctx a cada uso.
  */
-import { BrowserWindow, app, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { type ProgressOverlaySnapshot } from '../progressSnapshot'
 import { progressOverlayExpandedSize } from '../progressOverlayWindow'
 import type { MainContext } from '../mainContext'

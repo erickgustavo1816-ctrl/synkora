@@ -72,7 +72,6 @@ export interface VoiceIpcExtras {
 
 export function registerVoiceIpc(ctx: MainContext, extras: VoiceIpcExtras): void {
   const {
-    settings,
     synVoice,
     voiceRequests
   } = ctx

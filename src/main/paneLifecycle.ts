@@ -9,50 +9,22 @@
  * MainContext seguem textualmente intactos.
  *
  * Contratos que este módulo NÃO pode quebrar:
- * - ORDEM OBRIGATÓRIA de construção: paneLifecycle → mission → maestro →
- *   phase. O phaseEngine desestrutura ctx.livePaneSpecs/ctx.closingPaneIds
- *   NA CONSTRUÇÃO — nascer depois dele é TDZ de boot, não erro de typecheck.
- * - A corrida armPane×cleanPaneMcpFile: armPane grava paneMcpFiles; o
- *   pty:create RE-GRAVA o arquivo MCP no spawn (idempotente); pty:kill NUNCA
- *   desarma — o desarme vive no onExit sob guard de geração. Os três moram
- *   em módulos diferentes desde o commit 7; o invariante é o conjunto.
- * - phaseWatches é lido em CALL TIME via ctx (o alias nasce no phaseEngine,
- *   construído depois) — nunca desestruturar na construção.
  * - unregisterPane/cleanPaneMcpFile/paneTokens/paneMcpFiles FICAM no index
- *   (cross-domain: mcpApi/helpers e o gui-planner) — o engine os lê via ctx.
- *   A inteligência de código e os leases de skill, que também dependiam
- *   deles, saíram na limpa F6 (2026-08-17).
+ *   (cross-domain com o gui-planner) — o engine os lê via ctx.
+ *
+ * O ARMAMENTO MORREU NA LIMPA F6 (2026-08-17). `armPane`/`mcpPaneArgs` eram o
+ * caminho dos panes TUI de fase (dev/review/qa/ajudante): identidade no hub,
+ * perfil de permissão por papel, Playwright/test-runner por pane. Com o
+ * pipeline de fases fora, restam duas famílias de pane e NENHUMA passa por
+ * aqui para ganhar ferramenta: o chat GUI (missions:guiSpec → guiSessions,
+ * cujo único armamento MCP é o do gui-planner, em guiPlannerMcp.ts) e o pane
+ * SHELL (missions:shellSpec, panes:testServerSpec, login-<seatId>). Este
+ * módulo é, hoje, o ciclo de vida do pane shell.
  */
-import { app } from 'electron'
-import { join, resolve } from 'path'
-import { existsSync, readFileSync } from 'fs'
-import { randomUUID } from 'crypto'
-import {
-  claudeMcpArgs,
-  codexMcpArgs,
-  ensurePlaywrightCmd,
-  ensurePlaywrightTestCmd,
-  resolveProjectPlaywrightTest,
-  writeClaudeMcpConfig
-} from './mcpServer'
-import {
-  codexGateMcpDisableArgs,
-  codexGateMcpPolicyArgs,
-  effectiveSensitiveAccess,
-  paneAccessProfile,
-  paneBrowserAvailable,
-  paneExternalMcpCapabilities,
-  panePermissionArgs,
-  type PaneAccessProfile
-} from './panePermissions'
-import { activeQaRuntimes, stopQaRuntime } from './qaRuntime'
-import { decorateBrowserLaunchArgs, qaCdpReservations } from './qaCdp'
-import { parsePortFromUrl, type PortUseEntry } from './portMap'
+import { resolve } from 'path'
 import { isPaneStartupRole, type PaneStartupDescriptor } from './paneStartupMetrics'
 import type { PaneKind } from './pty'
-import type { SeatCli } from './seats'
-import type { PaneIdentity } from './hub'
-import type { DevPaneSpec } from './phaseTypes'
+import type { PortUseEntry } from './portMap'
 import type { HelperOpenWatchdog } from './helperOpenWatchdog'
 import type { HelperRecoveryRecord, HelperRecoveryStatus } from './helperRecovery'
 import type { MainContext } from './mainContext'
@@ -70,6 +42,32 @@ export interface PaneRequest {
   cols?: number
   rows?: number
   logFile?: string
+}
+
+/**
+ * Descrição de um pane que o main mandou o renderer abrir. Morava em
+ * `phaseTypes.ts` com o resto da máquina de fases; sobrevive porque
+ * `livePaneSpecs` — o registro de "o que está aberto agora" — é lido pelo
+ * ipc/panes (panes:live), pelo ipc/history (rótulo da sessão) e pelo
+ * ipc/pty (remount). O espelho no preload é `DevPaneSpec` lá também.
+ */
+export interface DevPaneSpec {
+  /** id do pane definido pelo MAIN (o hub conhece cada pane pelo id) */
+  paneId: string
+  kind: 'claude' | 'codex'
+  seatId: string
+  model?: string
+  cwd: string
+  cliArgs?: string[]
+  initialPrompt: string
+  appendSystemPrompt?: string
+  logFile: string
+  title: string
+  role: 'dev' | 'review' | 'qa' | 'ajudante'
+  /** missão dona do pane */
+  missionId?: string
+  /** pane que delegou (ajudante) */
+  delegatorPaneId?: string
 }
 
 // Só o watchdog de helper lê a graça — const de módulo (era do poller do index).
@@ -122,255 +120,19 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
     extras
 
   /** Classificação allowlisted da abertura do pane. Não inclui cwd, modelo,
-   *  argumentos, token, prompt ou qualquer conteúdo do terminal. */
+   *  argumentos, token, prompt ou qualquer conteúdo do terminal.
+   *  A contagem de MCP externo (Playwright/test-runner por pane) saiu na
+   *  limpa F6 junto com o armamento — pane shell não recebe ferramenta. */
   function paneStartupDescriptor(req: PaneRequest): PaneStartupDescriptor {
     const identity = hub.identityByPane(req.id)
-    const rawArgs = req.cliArgs ?? []
-    const strict =
-      req.kind === 'claude'
-        ? rawArgs.includes('--strict-mcp-config')
-        : rawArgs.some((arg) => arg.includes('mcp_servers.playwright.command='))
-    const allowsBrowser = identity?.role !== 'review'
-    const allowsTestRunner =
-      identity?.role !== 'review' && identity?.role !== 'qa'
-    const externalMcpCount = strict
-      ? Number(allowsBrowser && Boolean(externalPlaywrightForPane())) +
-        Number(allowsTestRunner && Boolean(resolveProjectPlaywrightTest(req.cwd)))
-      : 0
-    const mode: PaneStartupDescriptor['mode'] =
-      req.kind === 'shell'
-        ? 'shell'
-        : identity?.role === 'maestro'
-          ? 'maestro'
-          : strict
-            ? 'estrito'
-            : 'livre'
     return {
       kind: req.kind,
       // Papel de PTY apenas: identidade de chat (gui-planner) não mede partida
       // de pane — e o descritor prefere OMITIR a inventar um papel de terminal.
       ...(isPaneStartupRole(identity?.role) ? { role: identity.role } : {}),
-      mode,
-      externalMcpCount,
+      mode: req.kind === 'shell' ? 'shell' : 'livre',
+      externalMcpCount: 0,
       hasInitialPrompt: Boolean(req.initialPrompt)
-    }
-  }
-
-  /** Flags de MCP do pane (claude: arquivo de config; codex: overrides -c). */
-  function mcpPaneArgs(
-    cli: SeatCli,
-    paneId: string,
-    token: string,
-    strict: boolean,
-    cwd?: string,
-    configDir?: string,
-    accessProfile: PaneAccessProfile = 'write',
-    sensitive = false,
-    paneRole?: string,
-    taskId?: string
-  ): string[] {
-    if (ctx.mcpPort === 0) return [] // servidor ainda subindo (raro): pane nasce sem tools
-    // Dev/ajudante recebem browser + runner. Gates recebem somente
-    // Synkora/code_*: o Playwright MCP bruto não é uma fronteira segura.
-    const external = paneExternalMcpCapabilities(accessProfile)
-    const configuredBrowser = externalPlaywrightForPane()
-    const browserBase = paneBrowserAvailable(accessProfile, {
-      sensitive,
-      sensitiveAutoOk: false,
-      strict,
-      mcpReady: ctx.mcpPort !== 0,
-      browserConfigured: Boolean(configuredBrowser)
-    })
-      ? configuredBrowser
-      : undefined
-    // Decoração POR PANE dos args do playwright numa fonte única (qaCdp):
-    // --output-dir <cwd>/.playwright-mcp (evidência nunca nasce git-visível,
-    // caso real 2026-08-06) e, para o pane de QA de card Electron com porta
-    // CDP reservada, --cdp-endpoint (Fase 4 — o QA dirige o app REAL). O
-    // wrapper codex é fingerprinted por args — cada cwd/porta ganha o seu.
-    // A regravação anti-corrida do pty:create usa o MESMO decorador.
-    const browser = browserBase
-      ? {
-          ...browserBase,
-          args: decorateBrowserLaunchArgs(browserBase.args, { cwd, role: paneRole, taskId })
-        }
-      : browserBase
-    const testRunner =
-      strict && !sensitive && external.testRunner ? resolveProjectPlaywrightTest(cwd) : undefined
-    if (cli === 'claude') {
-      // panes de EXECUÇÃO (strict) ganham também o Playwright MCP — browser
-      // de teste que funciona em qualquer seat (Chrome ext. é por conta).
-      const file = writeClaudeMcpConfig(
-        join(app.getPath('userData'), 'mcp'),
-        paneId,
-        ctx.mcpPort,
-        token,
-        browser,
-        testRunner
-      )
-      paneMcpFiles.set(paneId, file)
-      return claudeMcpArgs(file, strict)
-    }
-    // panes codex de EXECUÇÃO (mesmo critério do claude) ganham o Playwright
-    // MCP via wrapper .cmd — QA/dev/ajudante codex abrem browser de verdade
-    // A sonda do protocolo MCP moderno do codex saiu na limpa F6 (R-7):
-    // nenhum pane da era 2.0 a usava e o gui-planner tem os próprios args.
-    const protocolArgs: string[] = []
-    const args = codexMcpArgs(
-      ctx.mcpPort,
-      browser ? ensurePlaywrightCmd(join(app.getPath('userData'), 'mcp'), browser) : undefined,
-      testRunner ? ensurePlaywrightTestCmd(join(app.getPath('userData'), 'mcp'), testRunner) : undefined,
-      protocolArgs
-    )
-    if (accessProfile !== 'write') {
-      args.push(...codexGateMcpPolicyArgs())
-      if (browser) {
-        args.push('-c', 'mcp_servers.playwright.default_tools_approval_mode="approve"')
-      }
-      if (testRunner) {
-        args.push('-c', 'mcp_servers.playwright-test.default_tools_approval_mode="approve"')
-      }
-    }
-    return args
-  }
-
-  /** Registra um pane no hub e devolve os cliArgs de MCP + permissões dele. */
-  function armPane(
-    identity: Omit<PaneIdentity, 'paneId'> & { paneId?: string },
-    cli: SeatCli,
-    opts: { strictMcp?: boolean; configDir?: string; sensitive?: boolean } = {}
-  ): { paneId: string; cliArgs: string[] } {
-    const paneId = identity.paneId ?? randomUUID()
-    const token = randomUUID()
-    hub.registerPane(token, { ...identity, paneId })
-    paneTokens.set(paneId, token)
-    try {
-    const bypass = bypassOn(identity.projectId)
-    const accessProfile = paneAccessProfile(identity.role)
-    // OVERRIDE DO DONO (por projeto, decisão do usuário 2026-08-04): em domínio
-    // onde TODA missão cita PII/fiscal (ex.: app de PER/DCOMP fala CPF/CNPJ em
-    // qualquer goal), a classificação de superfície sensível degeneraria para
-    // "sempre" e mataria a automação do projeto inteiro. Com o switch ligado,
-    // o toggle de bypass volta a mandar; cada uso fica auditado na caixa-preta.
-    // O padrão continua protegido (override desligado).
-    const sensitiveOverride =
-      opts.sensitive === true && maestro.get(identity.projectId).sensitiveAutoOk === true
-    const sensitive = effectiveSensitiveAccess(opts.sensitive === true, sensitiveOverride)
-    const effectiveStrictMcp = sensitive ? true : (opts.strictMcp ?? true)
-    const args: string[] = []
-    args.push(
-      ...panePermissionArgs(cli, bypass, accessProfile, { sensitive })
-    )
-    if (sensitive && accessProfile === 'write' && bypass) {
-      blackbox.record({
-        cat: 'pane',
-        event: 'automatic-bypass-suppressed',
-        actor: 'harness',
-        ids: {
-          paneId,
-          projectId: identity.projectId,
-          missionId: identity.missionId,
-          taskId: identity.taskId,
-          role: identity.role,
-          seatId: identity.seatId
-        },
-        reason: 'superfície sensível detectada; o pane escritor exige autorização interativa'
-      })
-    }
-    if (sensitiveOverride) {
-      blackbox.record({
-        cat: 'pane',
-        event: 'sensitive-bypass-override',
-        actor: 'harness',
-        ids: {
-          paneId,
-          projectId: identity.projectId,
-          missionId: identity.missionId,
-          taskId: identity.taskId,
-          role: identity.role,
-          seatId: identity.seatId
-        },
-        reason:
-          'superfície sensível detectada, mas o usuário liberou bypass para este projeto (switch no board)'
-      })
-    }
-    if (cli === 'claude') {
-      // aceite de bypass + trust do cwd — TODO pane claude, inclusive gates
-      // read-only e sensíveis (caso real 2026-08-06: QA claude nasceu PRESO no
-      // "trust this folder" do worktree do card porque este pré-trust só
-      // cobria accessProfile 'write'; dev codex + QA claude no mesmo worktree
-      // era o caso descoberto). O trust do ROOT do projeto vai junto, em
-      // grafia UTF-8 correta — entrada mojibake antiga ("GESTÃƒO") nunca casa
-      // com o path real e não conta como cobertura.
-      if (opts.configDir) {
-        ensureBypassAccepted(opts.configDir, identity.cwd)
-        const project = projects.get(identity.projectId)
-        if (project && project.path !== identity.cwd)
-          ensureBypassAccepted(opts.configDir, project.path)
-      }
-    } else {
-      // trust/sandbox pré-gravados SEMPRE (o onboarding do codex 0.145+
-      // aparece mesmo com a flag de bypass); o trust vale para o ROOT do
-      // repo, então cobre também os worktrees em userData.
-      const project = projects.get(identity.projectId)
-      if (opts.configDir && project) ensureCodexTrust(opts.configDir, project.path)
-      // Gates Codex must not inherit arbitrary MCP servers from the seat's
-      // persistent CODEX_HOME. The ephemeral Synkora server is appended below.
-      if (opts.configDir && (accessProfile !== 'write' || sensitive)) {
-        const configFile = join(opts.configDir, 'config.toml')
-        args.push(
-          ...codexGateMcpDisableArgs(
-            existsSync(configFile) ? readFileSync(configFile, 'utf-8') : ''
-          )
-        )
-      }
-    }
-    args.push(
-      ...mcpPaneArgs(
-        cli,
-        paneId,
-        token,
-        effectiveStrictMcp,
-        identity.cwd,
-        opts.configDir,
-        accessProfile,
-        sensitive,
-        identity.role,
-        identity.taskId
-      )
-    )
-    // Caixa-preta: papel/CLI/perfil solicitados + se a config MCP saiu de
-    // verdade (ctx.mcpPort 0 = pane nasce sem tools; isso precisa aparecer).
-    blackbox.record({
-      cat: 'mcp',
-      event: 'pane-armed',
-      ids: {
-        projectId: identity.projectId,
-        missionId: identity.missionId,
-        taskId: identity.taskId,
-        paneId,
-        phase: identity.phase,
-        role: identity.role,
-        seatId: identity.seatId
-      },
-      detail: {
-        cli,
-        accessProfile,
-        strictMcp: effectiveStrictMcp,
-        sensitive,
-        sensitiveOverridden: sensitiveOverride || undefined,
-        mcpPort: ctx.mcpPort,
-        mcpConfigured: ctx.mcpPort !== 0,
-        argCount: args.length
-      },
-      err: ctx.mcpPort === 0 ? 'servidor MCP interno ainda não estava de pé' : undefined
-    })
-      return { paneId, cliArgs: args }
-    } catch (error) {
-      hub.unregisterPane(paneId)
-      paneTokens.delete(paneId)
-      cleanPaneMcpFile(paneId)
-      throw error
     }
   }
 
@@ -412,20 +174,13 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
       purpose?: 'test-server' | 'mission-shell'
     }
   >()
-  // Mapa de portas do harness (decisão do dono, 2026-08-07): QA e modal do
-  // ▶ testar veem as MESMAS entradas — runtime de QA com a porta REAL da URL
-  // anunciada; servidor de teste com a porta PEDIDA (produto pinado pode ter
-  // ido para outra — o flag 'requested' mantém a honestidade).
+  // Mapa de portas do harness (decisão do dono, 2026-08-07): o modal do
+  // ▶ testar mostra quem já ocupa porta — servidor de teste com a porta
+  // PEDIDA (produto pinado pode ter ido para outra; o flag 'requested'
+  // mantém a honestidade). As duas outras fontes do mapa original — runtime
+  // de QA e reserva de porta CDP — morreram com o pipeline de fases.
   function harnessPortsInUse(projectId: string): PortUseEntry[] {
     const entries: PortUseEntry[] = []
-    for (const runtime of activeQaRuntimes()) {
-      const task = tasks.get(runtime.taskId)
-      if (task && task.projectId !== projectId) continue
-      entries.push({
-        port: parsePortFromUrl(runtime.url),
-        owner: `QA do card "${task?.title?.slice(0, 48) ?? runtime.taskId.slice(0, 8)}"`
-      })
-    }
     for (const [paneId, srv] of testServerPanes) {
       if (srv.projectId !== projectId) continue
       // Terminal avulso da missão não sobe servidor nenhum: anunciá-lo como
@@ -436,17 +191,6 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
         port: srv.port,
         requested: srv.port !== undefined,
         owner: `servidor de teste do dono${srv.label ? ` (${srv.label.slice(0, 40)})` : ''}`
-      })
-    }
-    // Portas CDP reservadas (Fase 4): entram no mapa mesmo antes de o app
-    // subir — o pane de QA já nasceu apontando para elas, então ninguém mais
-    // pode usá-las (dono×QA e QA×QA na mesma régua do resto do mapa).
-    for (const { taskId, port } of qaCdpReservations()) {
-      const task = tasks.get(taskId)
-      if (task && task.projectId !== projectId) continue
-      entries.push({
-        port,
-        owner: `CDP do QA do card "${task?.title?.slice(0, 48) ?? taskId.slice(0, 8)}"`
       })
     }
     return entries
@@ -516,32 +260,6 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
           `ajudante ${paneId.slice(0, 8)} não conseguiu abrir (${reason}); nenhum processo ficou rodando`
         )
       }
-    } else if (
-      identity.taskId &&
-      (identity.role === 'dev' || identity.role === 'review' || identity.role === 'qa')
-    ) {
-      const watch = ctx.phaseWatches.get(identity.taskId)
-      if (watch?.paneId === paneId && watch.phase === identity.role) {
-        ctx.phaseWatches.delete(identity.taskId)
-        const task = tasks.get(identity.taskId)
-        if (task && task.status !== 'done') {
-          tasks.update(identity.taskId, {
-            status: identity.role === 'qa' ? 'qa' : identity.role === 'review' ? 'execucao' : 'backlog',
-            activePhase: identity.role,
-            phaseState: 'interrupted',
-            phaseStartedAt: undefined,
-            feedback: `fase ${identity.role} não abriu (${reason}) — trabalho e conversa foram preservados para retomar o mesmo card`
-          })
-          hub.publish({
-            projectId: identity.projectId,
-            missionId: identity.missionId,
-            kind: 'error',
-            text: `não consegui abrir o pane ${identity.role} de "${task.title}"; retome somente esta fase do mesmo card`,
-            actor: 'harness'
-          })
-          syncBoard(identity.projectId)
-        }
-      }
     }
     ctx.pushAll('panes:closeById', identity.projectId, paneId)
     ctx.pushAll('tasks:changed', identity.projectId)
@@ -563,11 +281,6 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
   function terminatePaneNow(projectId: string, paneId: string): void {
     helperOpenWatchdog.acknowledge(paneId)
     pendingPtyPreparations.delete(paneId)
-    const terminatingIdentity = hub.identityByPane(paneId)
-    const terminatingSpec = livePaneSpecs.get(paneId)
-    const terminatingTaskId = terminatingIdentity?.taskId ?? terminatingSpec?.taskId
-    const terminatingRole = terminatingIdentity?.role ?? terminatingSpec?.spec.role
-    if (terminatingRole === 'qa' && terminatingTaskId) stopQaRuntime(terminatingTaskId)
     const hadPty = ptys.has(paneId)
     unregisterPane(paneId)
     livePaneSpecs.delete(paneId)
@@ -685,8 +398,7 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
     paneEverSpawned,
     pendingPtyPreparations,
     testServerPanes,
-    // ——— armamento ———
-    armPane,
+    // ——— partida ———
     paneStartupDescriptor,
     staggerPaneSpawn,
     // ——— encerramento ———

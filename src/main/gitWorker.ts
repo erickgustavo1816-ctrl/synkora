@@ -1,15 +1,12 @@
 import { parentPort, receiveMessageOnPort, type MessagePort } from 'node:worker_threads'
 import * as worktree from './worktree'
-import * as reviewDiff from './reviewDiff'
-import * as reviewEvidence from './reviewEvidence'
 
 // WORKER DE GIT (task #2, 2026-08-04): as "travadas" do app eram o MAIN
 // congelado em execFileSync de git (spawn 1-2s, transição 2-3,5s, merge
 // ~5s medidos pelo watchdog). As funções síncronas de worktree.ts/
-// reviewDiff.ts rodam AQUI, intactas — o main só espera a mensagem. Um
+// worktree.ts rodam AQUI, intactas — o main só espera a mensagem. Um
 // worker único = operações git naturalmente serializadas (nunca dois
-// merges/worktrees concorrentes), que é o que a máquina de fases já
-// assumiva. Este arquivo NÃO pode importar 'electron'.
+// merges/worktrees concorrentes). Este arquivo NÃO pode importar 'electron'.
 //
 // CHECKPOINT SÍNCRONO: mergeTaskWorktree persiste o RECIBO de integração no
 // meio do merge (beforeTargetUpdate — espinha do merge-repair). Função não
@@ -19,11 +16,11 @@ import * as reviewEvidence from './reviewEvidence'
 
 export const CHECKPOINT_MARKER = '__SYNKORA_GIT_CHECKPOINT__'
 
+// DESPACHO POR STRING: cada export de worktree.ts é uma chave do contrato
+// (gitOff('<nome>')). Antes de remover qualquer export de lá, grepe pelo NOME
+// — o typecheck não enxerga este mapa.
 const registry: Record<string, unknown> = {
-  ...worktree,
-  ...reviewDiff,
-  // Fase 2 (R11): a identidade sha256 do artefato de review sai do main.
-  ...reviewEvidence
+  ...worktree
 }
 
 interface GitWorkerRequest {

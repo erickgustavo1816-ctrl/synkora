@@ -11,7 +11,6 @@
  */
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import {
-  type SynkoraSettings,
   type SynkoraSettingsPatch
 } from '../settings'
 import { type McpStdioLaunch } from '../mcpServer'
@@ -38,12 +37,10 @@ export interface SettingsIpcExtras {
 
 export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras): void {
   const {
-    seats,
     ptys,
     settings
   } = ctx
   const {
-    assertMainRendererSender,
     assertAppRendererSender,
     validateExternalServices,
     state

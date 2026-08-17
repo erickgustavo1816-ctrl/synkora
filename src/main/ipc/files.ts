@@ -50,7 +50,6 @@ export function registerFilesIpc(ctx: MainContext, extras: FilesIpcExtras): void
   const {
     projects,
     missions,
-    maestro,
     hub
   } = ctx
   const fileActions = new FileActionService(

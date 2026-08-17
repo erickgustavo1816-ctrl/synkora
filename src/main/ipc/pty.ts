@@ -20,15 +20,9 @@
  *   antes do createWindow), NUNCA no import.
  */
 import { ipcMain, app } from 'electron'
-import { join, resolve } from 'path'
 import { randomUUID } from 'crypto'
-import { ptyPreparationCanContinue } from '../ptyPreparationGuard'
-import { resolveProjectPlaywrightTest, writeClaudeMcpConfig } from '../mcpServer'
-import { paneAccessProfile, paneExternalMcpCapabilities } from '../panePermissions'
-import { stopQaRuntime } from '../qaRuntime'
-import { decorateBrowserLaunchArgs } from '../qaCdp'
 import type { StatsWatchHandle } from '../sessionStats'
-import type { PaneIdentity } from '../hub'
+import type {} from '../hub'
 import type { HelperOpenWatchdog } from '../helperOpenWatchdog'
 import type { HelperRecoveryRecord, HelperRecoveryStatus } from '../helperRecovery'
 import type { PaneLifecycleEngine, PaneRequest } from '../paneLifecycle'
@@ -66,21 +60,17 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
     projects,
     seats,
     tasks,
-    missions,
     maestro,
     ptys,
     blackbox,
     sessionStats,
     helperCompletions,
     paneTokens,
-    paneMcpFiles,
     paneSessions,
     helperReported,
     helperSeen,
     expiredSeats,
-    syncBoard,
     ensureProjectRuntimeWritable,
-    externalPlaywrightForPane,
     unregisterPane,
     cleanPaneMcpFile,
     hub
@@ -90,12 +80,9 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
     updateStoredHelperStatus,
     helperTranscriptPath,
     helperOpenWatchdog,
-    paneCodexSkillProfiles,
     scheduleProgressLiveSnapshot,
     refreshProgressLiveSnapshot,
     progressLiveIdleTimers,
-    emitMissionsChanged,
-    recordGateDeath
   } = extras
   const {
     livePaneSpecs,
@@ -105,7 +92,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
     testServerPanes,
     paneStartupDescriptor,
     rollbackFailedPaneSpawn,
-    terminateTaskHelpers
   } = engine
 
   ipcMain.on('pty:startup-request', (_e, paneId: string) => {
@@ -142,48 +128,14 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
       pendingIdentity == null &&
       token == null &&
       cached == null
+    // O ARMAMENTO MORREU NA LIMPA F6 (2026-08-17): nenhum pane que chega aqui
+    // carrega identidade de hub, token ou spec. Sobraram o pane SHELL
+    // (missions:shellSpec, panes:testServerSpec, panes:open-free) e o terminal
+    // de login por seat — e o login já tem a checagem estrita acima.
     if (req.kind !== 'shell' && !isSeatLogin) {
-      const identityMismatch =
-        !pendingIdentity ||
-        !token ||
-        closingPaneIds.has(req.id) ||
-        resolve(req.cwd).toLocaleLowerCase('en-US') !==
-          resolve(pendingIdentity.cwd).toLocaleLowerCase('en-US') ||
-        req.taskId !== pendingIdentity.taskId ||
-        req.seatId !== pendingIdentity.seatId ||
-        (cached != null &&
-          (cached.spec.kind !== req.kind ||
-            cached.spec.cwd !== req.cwd ||
-            cached.spec.seatId !== req.seatId ||
-            cached.taskId !== (req.taskId ?? '')))
-      if (identityMismatch) {
-        const projectId = pendingIdentity?.projectId ?? cached?.projectId
-        if (pendingIdentity || cached) {
-          rollbackFailedPaneSpawn(req.id, 'armamento ausente, encerrando ou divergente')
-        } else {
-          paneTokens.delete(req.id)
-          cleanPaneMcpFile(req.id)
-        }
-        // pushAll: o pane nasceu na lista das DUAS views via panes:open — a
-        // falha de armamento precisa removê-lo do espelho do host também.
-        if (projectId) ctx.pushAll('panes:closeById', projectId, req.id)
-        return false
-      }
-    }
-    if (pendingIdentity?.role === 'ajudante' && pendingIdentity.taskId) {
-      const owner = tasks.get(pendingIdentity.taskId)
-      if (
-        !owner ||
-        owner.status !== 'execucao' ||
-        owner.activePhase !== 'dev' ||
-        (owner.phaseState !== 'pending' && owner.phaseState !== 'running')
-      ) {
-        unregisterPane(req.id)
-        paneTokens.delete(req.id)
-        cleanPaneMcpFile(req.id)
-        ctx.pushAll('panes:closeById', pendingIdentity.projectId, req.id)
-        return false
-      }
+      paneTokens.delete(req.id)
+      cleanPaneMcpFile(req.id)
+      return false
     }
     const reusedPty = ptys.has(req.id)
     if (!reusedPty) ctx.paneStartupMetrics?.begin(req.id, paneStartupDescriptor(req))
@@ -195,48 +147,13 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
       const preparationTicket = Symbol(req.id)
       pendingPtyPreparations.set(req.id, preparationTicket)
       await seats.prepare(seat)
-      const phaseStillActive = (): boolean => {
-        if (reusedPty || !pendingIdentity?.taskId) return true
-        const owner = tasks.get(pendingIdentity.taskId)
-        if (pendingIdentity.role === 'ajudante') {
-          return Boolean(
-            owner &&
-              owner.status === 'execucao' &&
-              owner.activePhase === 'dev' &&
-              (owner.phaseState === 'pending' || owner.phaseState === 'running')
-          )
-        }
-        if (
-          pendingIdentity.role === 'dev' ||
-          pendingIdentity.role === 'review' ||
-          pendingIdentity.role === 'qa'
-        ) {
-          const watch = ctx.phaseWatches.get(pendingIdentity.taskId)
-          return Boolean(
-            owner &&
-              owner.status !== 'done' &&
-              owner.activePhase === pendingIdentity.role &&
-              (owner.phaseState === 'pending' || owner.phaseState === 'running') &&
-              watch?.phase === pendingIdentity.role &&
-              watch.paneId === req.id
-          )
-        }
-        return true
-      }
+      // Prova de geração da preparação assíncrona do seat: só o ticket, o
+      // sender e o fechamento — identidade/token/spec eram do armamento, que
+      // saiu na limpa F6, e nenhum pane restante os tem.
       const preparationCanContinue = (): boolean =>
-        ptyPreparationCanContinue({
-          ticketMatches: pendingPtyPreparations.get(req.id) === preparationTicket,
-          senderAlive: !e.sender.isDestroyed(),
-          closing: closingPaneIds.has(req.id),
-          requiresPaneGeneration: req.kind !== 'shell' && !isSeatLogin,
-          capturedIdentity: pendingIdentity,
-          currentIdentity: hub.identityByPane(req.id),
-          capturedToken: token,
-          currentToken: paneTokens.get(req.id),
-          capturedSpec: cached,
-          currentSpec: livePaneSpecs.get(req.id),
-          phaseStillActive: phaseStillActive()
-        })
+        pendingPtyPreparations.get(req.id) === preparationTicket &&
+        !e.sender.isDestroyed() &&
+        !closingPaneIds.has(req.id)
       if (!preparationCanContinue()) {
         if (pendingPtyPreparations.get(req.id) === preparationTicket) {
           pendingPtyPreparations.delete(req.id)
@@ -267,50 +184,11 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
     // ACORDA o turno com zero digitação. A URL vai no env de todo pane com
     // token (inofensivo onde não usada; codex espera via long-poll do
     // check_messages — sonda W5: lá não existe acordar pós-turno).
-    if (token && ctx.mcpPort) {
-      extraEnv['SYNKORA_MAIL_WAIT_URL'] = `http://127.0.0.1:${ctx.mcpPort}/mail-wait`
-    }
-    // CORRIDA REAL (maestro da Luma nasceu com "MCP config file not found"):
-    // remount do pane reusa o MESMO id — o kill do pty antigo roda
-    // cleanPaneMcpFile e apaga o arquivo que o armPane acabou de (re)gravar
-    // para o pty novo. Regrava aqui, na hora do spawn: idempotente, o nome é
-    // derivado do paneId e o conteúdo só depende de porta+token.
-    if (req.kind === 'claude' && token && req.cliArgs?.includes('--mcp-config')) {
-      const strict = req.cliArgs.includes('--strict-mcp-config')
-      // Remount precisa reproduzir EXATAMENTE o perfil decidido em armPane.
-      // Sem identidade comprovada, falha fechado sem MCP externo.
-      const external = pendingIdentity
-        ? paneExternalMcpCapabilities(paneAccessProfile(pendingIdentity.role))
-        : { browser: false, testRunner: false }
-      const browserBase = strict && external.browser ? externalPlaywrightForPane() : undefined
-      // MESMO decorador do armPane (qaCdp): esta regravação vinha CRUA e
-      // dropava o --output-dir no remount (a lição F6.8i só valia no primeiro
-      // caminho); com o --cdp-endpoint da Fase 4 a divergência deixaria o QA
-      // de Electron cego ao app real — fonte única, nunca separar de novo.
-      const browser = browserBase
-        ? {
-            ...browserBase,
-            args: decorateBrowserLaunchArgs(browserBase.args, {
-              cwd: req.cwd || undefined,
-              role: pendingIdentity?.role,
-              taskId: pendingIdentity?.taskId
-            })
-          }
-        : undefined
-      const testRunner =
-        strict && external.testRunner
-          ? resolveProjectPlaywrightTest(req.cwd)
-          : undefined
-      const file = writeClaudeMcpConfig(
-        join(app.getPath('userData'), 'mcp'),
-        req.id,
-        ctx.mcpPort,
-        token,
-        browser,
-        testRunner
-      )
-      paneMcpFiles.set(req.id, file)
-    }
+    // A REGRAVAÇÃO DA CONFIG MCP saiu na limpa F6 (2026-08-17). Ela existia
+    // para a corrida armPane × cleanPaneMcpFile no remount de pane TUI; com o
+    // armamento fora, nenhum pane que passa por `pty:create` tem config MCP —
+    // o gui-planner nasce por `missions:guiSpec`, nunca por aqui (verificado:
+    // é o caminho que test:gui-sessions compila).
     const sender = e.sender
     const cwd = req.cwd || app.getPath('home')
     let statsWatchHandle: StatsWatchHandle | undefined
@@ -562,138 +440,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
             )
           }
         }
-        // FASE ATIVA morreu junto com o pane (usuário fechou/crash): solta o
-        // watch, devolve a tarefa para o backlog com o motivo e avisa o
-        // orquestrador AO VIVO — nada fica preso em "execução" fantasma.
-        if (identity.taskId) {
-          // O runtime do QA vive e morre com o PANE do QA (gate vivo em
-          // espera mantém os dois; morte por qualquer motivo derruba a
-          // árvore do dev server — nada de Electron/vite órfão).
-          if (identity.role === 'qa') stopQaRuntime(identity.taskId)
-          // Gate VIVO em espera fechado na mão: só higiene do mapa — o
-          // reciclo seguinte detecta o pane morto e abre um gate novo.
-          const gateWait = ctx.liveGateWaits.get(identity.taskId)
-          if (gateWait && gateWait.paneId === identity.paneId)
-            ctx.liveGateWaits.delete(identity.taskId)
-          const watch = ctx.phaseWatches.get(identity.taskId)
-          // F2-c4 (§7.7 do mapa da Fase 2): com o veredito do card em
-          // processamento (lock tomado — ex.: rollback re-indexou o watch com
-          // a continuação em voo), o onExit só REGISTRA e deixa a decisão
-          // para o dono do lock; mutar aqui devolveria o card ao backlog por
-          // baixo de um report que respondeu "preservado".
-          if (
-            watch &&
-            watch.phase === identity.phase &&
-            ctx.phaseTransitions.isLocked(identity.taskId)
-          ) {
-            blackbox.record({
-              cat: 'pane',
-              event: 'pane-exit-during-transition',
-              actor: 'harness',
-              ids: {
-                projectId: identity.projectId,
-                missionId: identity.missionId,
-                taskId: identity.taskId,
-                paneId: identity.paneId,
-                phase: identity.phase,
-                role: identity.role
-              },
-              reason: `pane morreu com o card em transição sob ${
-                ctx.phaseTransitions.holderLabel(identity.taskId) ?? '?'
-              } — nenhuma mutação; o dono do lock decide o desfecho`
-            })
-          } else if (watch && watch.phase === identity.phase) {
-            ctx.phaseWatches.delete(identity.taskId)
-            const task = tasks.get(identity.taskId)
-            if (task && task.status !== 'done') {
-              if (watch.phase === 'review' || watch.phase === 'qa') {
-                // GATE morreu sem veredito: o trabalho do dev está INTACTO no
-                // worktree — voltar ao backlog custava uma rodada inteira de
-                // dev (caso real 2026-07-30). O card fica onde está e o
-                // orquestrador reabre SÓ o gate.
-                // BREAKER DE CRASH-LOOP (caso real 05/08 16:59: review morreu
-                // 3× em 33s e cada morte foi reaberta às cegas — precedente do
-                // Board: 3 mortes/30s param de ressuscitar).
-                const { looping, deaths } = recordGateDeath(identity.taskId)
-                tasks.update(identity.taskId, {
-                  status: watch.phase === 'qa' ? 'qa' : 'execucao',
-                  activePhase: watch.phase,
-                  phaseState: 'interrupted',
-                  ...(task.feedback
-                    ? {}
-                    : {
-                        feedback: `gate ${watch.phase} interrompido (pane fechado) — o desenvolvimento está preservado`
-                      })
-                })
-                hub.publish({
-                  projectId: identity.projectId,
-                  missionId: identity.missionId,
-                  kind: 'error',
-                  text: looping
-                    ? `gate ${watch.phase} de "${task.title}" morreu ${deaths}× em 1 minuto SEM veredito — reabertura automática SUSPENSA por 5 minutos. NÃO re-rode em reflexo: leia as últimas linhas no evento pane/exit da caixa-preta, avalie trocar o seat/modelo do gate (config do reviewer ou lane) e só então reabra com run_task {id: "${identity.taskId}", phase: "${watch.phase}"}`
-                    : `gate ${watch.phase} de "${task.title}" fechou SEM veredito — o trabalho do dev está intacto; reabra só o gate com run_task {id: "${identity.taskId}", phase: "${watch.phase}"}`,
-                  actor: 'harness'
-                })
-              } else {
-                terminateTaskHelpers(
-                  identity.projectId,
-                  identity.taskId,
-                  'pane dev encerrou antes de concluir a fase'
-                )
-                tasks.update(identity.taskId, {
-                  status: 'backlog',
-                  ...(task.feedback
-                    ? {}
-                    : {
-                        feedback: `fase ${watch.phase} interrompida (pane fechado) — transcript .synkora/runs/${identity.taskId}.md registra o que já foi feito`
-                      }),
-                  activePhase: 'dev',
-                  phaseState: 'interrupted'
-                })
-                hub.publish({
-                  projectId: identity.projectId,
-                  missionId: identity.missionId,
-                  kind: 'error',
-                  text: `pane ${identity.role} de "${task.title}" FECHOU no meio da fase ${watch.phase} — worktree, briefing e transcript foram preservados; retome o MESMO card com run_task {id: "${identity.taskId}"}. Atualize o briefing somente se o escopo real tiver mudado`,
-                  actor: 'harness'
-                })
-              }
-              ctx.pushAll('tasks:changed', identity.projectId)
-              syncBoard(identity.projectId)
-            }
-          }
-        } else if (identity.missionId && identity.role === 'review') {
-          // gate de INTEGRAÇÃO fechado sem veredito
-          const mw = ctx.missionWatches.get(identity.missionId)
-          if (mw && mw.paneId === identity.paneId) {
-            ctx.missionWatches.delete(identity.missionId)
-            missions.update(identity.missionId, { status: 'ativa' })
-            hub.publish({
-              projectId: identity.projectId,
-              missionId: identity.missionId,
-              kind: 'error',
-              text: 'o gate de integração fechou sem veredito — chame integrate_mission de novo quando quiser',
-              actor: 'harness'
-            })
-            emitMissionsChanged(identity.projectId)
-          }
-        }
-        if (identity.role !== 'maestro') {
-          hub.publish({
-            projectId: identity.projectId,
-            missionId: identity.missionId,
-            kind: 'pane-close',
-            text: `pane ${identity.role} encerrado${identity.taskId ? ` (tarefa ${tasks.get(identity.taskId)?.title ?? identity.taskId})` : ''}`,
-            actor: identity.role,
-            // QUIET (decisão 2026-07-28, coerente com o PM silencioso):
-            // abrir pane manual nunca avisou — fechar avisar era assimétrico
-            // e ruído ("pane livre encerrado" → PM responde "Ok."). O ciclo
-            // de vida cru de pane fica em EVENTS.md/UI; o que IMPORTA já tem
-            // evento próprio: fase interrompida (error), ajudante morto sem
-            // report (notifyPane) e missão direta do agente livre.
-            quiet: true
-          })
-        }
       }
       })
     } catch (error) {
@@ -789,26 +535,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
       closingPaneIds.delete(req.id)
       ctx.paneStartupMetrics?.mark(req.id, 'pty_spawn_completed')
       if (req.initialPrompt) ctx.paneStartupMetrics?.markFirstMessage(req.id)
-      const identity = hub.identityByPane(req.id)
-      if (
-        identity?.taskId &&
-        (identity.role === 'dev' || identity.role === 'review' || identity.role === 'qa')
-      ) {
-        const task = tasks.get(identity.taskId)
-        const watch = ctx.phaseWatches.get(identity.taskId)
-        if (
-          task?.phaseState === 'pending' &&
-          watch?.paneId === req.id &&
-          watch.phase === identity.role
-        ) {
-          tasks.update(identity.taskId, {
-            phaseState: 'running',
-            phaseStartedAt: new Date().toISOString()
-          })
-          ctx.pushAll('tasks:changed', identity.projectId)
-          syncBoard(identity.projectId)
-        }
-      }
     }
     // Badges ao vivo: tokens/contexto lidos do JSONL que o próprio CLI grava.
     if (ptyCreated && req.kind !== 'shell') {

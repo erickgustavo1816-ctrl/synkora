@@ -16,12 +16,11 @@ import { existsSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { createVersionWorktree } from '../worktree'
 import {
-  activeQaRuntimes,
   detectRuntimeScript,
   installCommand,
   portInvocation,
   readScriptCommand
-} from '../qaRuntime'
+} from '../runtimeScripts'
 import { formatPortMap } from '../portMap'
 import type { Mission } from '../missions'
 import type { MainContext } from '../mainContext'
@@ -117,23 +116,11 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
           : `[ -d node_modules ] || ${install}; `
         : ''
       // A nota (porta não se aplica / convenção PORT=) aparece NO PANE, onde
-      // o usuário está olhando — o modal fecha no sucesso.
-      // Porta PINADA + runtime de QA vivo = colisão anunciada ANTES do crash
-      // (caso real 2026-08-07: o dono escolheu outra porta, o produto foi na
-      // 5174 pinada e morreu contra o runtime do QA de outra missão — o erro
-      // cru não dizia quem segurava).
-      let noteText = inv.note
-      if (inv.note && /Electron/i.test(inv.note)) {
-        const live = activeQaRuntimes()
-        if (live.length > 0) {
-          noteText = `${inv.note} · ATENÇÃO: runtime de QA vivo (${live
-            .map((r) => {
-              const t = tasks.get(r.taskId)
-              return `card "${t?.title?.slice(0, 40) ?? r.taskId.slice(0, 8)}"${r.url ? ` em ${r.url}` : ''}`
-            })
-            .join(', ')}) — a porta pinada do produto provavelmente está OCUPADA; derrube aquele gate (■) ou teste depois`
-        }
-      }
+      // o usuário está olhando — o modal fecha no sucesso. O aviso de colisão
+      // com "runtime de QA vivo" saiu junto com o gerente de runtime do gate:
+      // hoje quem ocupa porta do harness é outro terminal de teste, e esses o
+      // mapa de portas (panes:portsInUse) já anuncia.
+      const noteText = inv.note
       const noteEcho = noteText
         ? isWin
           ? `Write-Host 'nota: ${noteText.replace(/'/g, "''")}'; `

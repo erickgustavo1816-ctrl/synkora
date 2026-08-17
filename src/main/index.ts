@@ -1,28 +1,20 @@
 import {
   app,
   BrowserWindow,
-  clipboard,
   crashReporter,
-  dialog,
   ipcMain,
-  nativeImage,
   screen,
   shell,
   type IpcMainEvent,
   type IpcMainInvokeEvent
 } from 'electron'
-import { basename, extname, isAbsolute, join, resolve } from 'path'
+import {    join, resolve } from 'path'
 import { pathToFileURL } from 'url'
 import { ProjectStore } from './projects'
 import { SeatStore, type SeatCli } from './seats'
 import {
-  interruptActiveSkillUsage,
-  sanitizeRendererTaskPatch,
   TaskStore,
-  type NewTask,
   type Task,
-  type TaskPlan,
-  type TaskUpdatePatch,
   type PlanLane,
   type PlanVerificationCheckpoint
 } from './tasks'
@@ -30,16 +22,13 @@ import { PERSONA_DEV, SURVEY_SECURITY_PROMPT } from './maestro'
 import { MaestroStore } from './maestroStore'
 import {
   alignWorktreeFromSnapshot,
-  createTaskWorktree,
   currentBranch,
   ensureSynkoraGitExcludes,
   gitCommitReached,
   gitHead,
-  hasGitCommit,
   isExactCleanPreCasSnapshot,
   isWorktreeClean,
   isExpectedVersionWorktree,
-  mergeTaskWorktree,
   pruneWorktrees,
   removeWorktreeAndBranch
 } from './worktree'
@@ -47,7 +36,6 @@ import { MissionStore, type Mission } from './missions'
 import { PlanStore } from './plans'
 import { IntegrationQueueStore } from './integrationQueue'
 import {
-  EXECUTION_MODE_LABEL,
   normalizeExecutionMode,
   normalizeRiskLevel,
   retryLimitForExecutionMode,
@@ -55,17 +43,13 @@ import {
 } from './orchestratorFlow'
 import { HelperSpawnReservationRegistry } from './helperSpawnReservations'
 import { HelperOpenWatchdog } from './helperOpenWatchdog'
-import { buildSkillsBlock } from './phasePrompts'
-import type { RunPhase } from './phaseTypes'
 import type { MainContext } from './mainContext'
-import { createPhaseEngine } from './phaseEngine'
-import { migrateCliSessionBetweenSeats } from './cliSessionTransplant'
+import {} from './cliSessionTransplant'
 import { createMaestroEngine, type MaestroBackend } from './maestroEngine'
 import { createMissionEngine } from './missionEngine'
 import { createPaneLifecycle } from './paneLifecycle'
 import { PanesViewManager } from './panesView'
 import { buildPlansApi } from './mcpApi/plans'
-import { registerTasksIpc } from './ipc/tasks'
 import { registerMaestroIpc } from './ipc/maestro'
 import { registerMissionsIpc } from './ipc/missions'
 import { registerPtyIpc } from './ipc/pty'
@@ -89,45 +73,30 @@ import { registerPlansIpc } from './ipc/plans'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerProgressIpc } from './ipc/progress'
 import { registerMiscIpc } from './ipc/misc'
-import { SECURITY_POLICY_VERSION, securityPromptForRole } from './securityPolicy'
-import {
-  initialManualSecurityValidation,
-  manualSecurityValidationOf,
-  manualSecurityValidationPending,
-  resolveManualSecurityValidation
-} from './manualSecurityValidation'
-import {
-  persistSecurityReview,
-  type SecurityReviewInput,
-  type SecurityReviewRecord
-} from './securityReview'
 import { ensureProjectSecurityBaseline } from './projectSecurityBaseline'
 import { redactSensitiveText } from './securityRedaction'
-import { BacklogStore, type BacklogItemType, type Version } from './backlog'
-import { PolicyStore, type DeptPolicy, type PolicySlot } from './policies'
+import { BacklogStore, type Version } from './backlog'
+import { PolicyStore } from './policies'
 import { clearCatalogCache, getCatalog } from './catalog'
 import {
   getCliStatus,
   isUpdatingClis,
   onCliStatus,
   updateAllClis,
-  type CliStatus
 } from './cliUpdate'
-import type { Department } from './tasks'
-import { appendFileSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'fs'
+import type {} from './tasks'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs'
 import { StallAttribution, instrumentIpcMain } from './stallAttribution'
 import { gitOff } from './gitAsync'
 import { execFile } from 'child_process'
-import { createHash, randomUUID } from 'crypto'
+import {  randomUUID } from 'crypto'
 import { PtyManager } from './pty'
 import { SessionStatsWatcher } from './sessionStats'
 import { Hub, type HubCommunicationEvent, type PaneIdentity } from './hub'
 import {
   SettingsStore,
-  type SynkoraSettings,
-  type SynkoraSettingsPatch
 } from './settings'
-import { getSeatUsage } from './seatUsage'
+import {} from './seatUsage'
 import {
   resolveBundledPlaywrightMcp,
   startMcpServer,
@@ -135,9 +104,9 @@ import {
   type McpServerHandle,
   type McpStdioLaunch
 } from './mcpServer'
-import { SynVoiceService, type SynVoiceProvider } from './synVoice'
+import { SynVoiceService } from './synVoice'
 import { WindowsTextInput } from './windowsTextInput'
-import { WindowsGlobalActivation, type GlobalActivationBinding } from './windowsGlobalActivation'
+import { WindowsGlobalActivation } from './windowsGlobalActivation'
 import { PaneStartupMetrics } from './paneStartupMetrics'
 import { HelperCompletionTracker } from './helperCompletion'
 import {
@@ -198,26 +167,9 @@ import {
   selectProjectAdapterCommands,
   type ProjectAdapterDetection
 } from './projectAdapters'
-import { setQaRuntimeGuard, stopAllQaRuntimes } from './qaRuntime'
-import { releaseQaCdpPort } from './qaCdp'
-import { prepareTaskAdjustment, unapprovedAdjustmentRiskSurfaces } from './taskAdjustment'
-import { Blackbox, describeEntry } from './blackbox'
-import { diagnosticsConsentDetail, exportDiagnostics } from './diagnostics'
-import {
-  findTerminalFileLinks,
-  readProjectMarkdown,
-  resolveTerminalFile,
-  terminalFileOpenKind,
-  type TerminalFileRoot
-} from './terminalFileLinks'
+import { Blackbox } from './blackbox'
 
 const ptys = new PtyManager()
-// Runtime do QA entra no guardião de job objects: crash sujo do app não deixa
-// mais a árvore órfã (fix E5×Q4 do mapa de retomada, 2026-08-06).
-setQaRuntimeGuard({
-  guard: (name, pid) => ptys.guardExternalPid(name, pid),
-  unguard: (name) => ptys.unguardExternalPid(name)
-})
 // Frases vivas dos agentes (tool status_note): paneId → nota curta. Morrem
 // com o pane (nota é "agora", não histórico); o consumidor é o radar de
 // andamento (pedido do usuário, 2026-08-06: "preciso saber exatamente o que
@@ -2306,7 +2258,6 @@ app.on('will-quit', () => {
     actor: 'user',
     detail: { context: crashContext() }
   })
-  stopAllQaRuntimes()
   if (progressSnapshotTimer) {
     clearTimeout(progressSnapshotTimer)
     progressSnapshotTimer = null
@@ -2704,26 +2655,6 @@ app.whenReady().then(async () => {
   }
 
 
-  /** createTaskWorktree cronometrado e FORA do main thread (task #2): roda no
-   *  gitWorker; lento continua virando evidência na caixa-preta (agora sem
-   *  congelar a UI enquanto acontece). */
-  const timedTaskWorktree = async (
-    ...args: Parameters<typeof createTaskWorktree>
-  ): Promise<ReturnType<typeof createTaskWorktree>> => {
-    const started = Date.now()
-    const result = await gitOff('createTaskWorktree', ...args)
-    const ms = Date.now() - started
-    if (ms > 250) {
-      blackbox.record({
-        cat: 'app',
-        event: 'slow-task-worktree',
-        actor: 'app',
-        reason: `createTaskWorktree levou ${ms}ms (no worker, main livre)`,
-        detail: { taskId: args[2] }
-      })
-    }
-    return result
-  }
 
   // A BIBLIOTECA DE SKILLS E SUBAGENTES saiu inteira na limpa F6
   // (2026-08-17): catálogo, instalador, cofre de pacotes, leases por
@@ -2910,15 +2841,6 @@ app.whenReady().then(async () => {
     get expiredSeats() {
       return expiredSeats
     },
-    get baselineVerificationRuns() {
-      return baselineVerificationRuns
-    },
-    get finalVerificationRuns() {
-      return finalVerificationRuns
-    },
-    get missionWatches() {
-      return missionWatches
-    },
     get integrationDrainTimers() {
       return integrationDrainTimers
     },
@@ -2940,26 +2862,8 @@ app.whenReady().then(async () => {
     get paneEverSpawned() {
       return paneEverSpawned
     },
-    get phaseWatches() {
-      return phaseWatches
-    },
-    get phaseLaunches() {
-      return phaseLaunches
-    },
-    get phaseLaunchCapacity() {
-      return phaseLaunchCapacity
-    },
-    get phaseTransitions() {
-      return phaseTransitions
-    },
     get pendingUserQuestions() {
       return pendingUserQuestions
-    },
-    get liveGateWaits() {
-      return liveGateWaits
-    },
-    get gateCooldownUntil() {
-      return gateCooldownUntil
     },
     get pendingPtyPreparations() {
       return pendingPtyPreparations
@@ -2989,23 +2893,7 @@ app.whenReady().then(async () => {
     abortVoiceRequests: () => abortVoiceRequests(),
     pushBoard: (channel, ...args) => pushBoard(channel, ...args),
     pushPanes: (channel, ...args) => pushPanes(channel, ...args),
-    pushAll: (channel, ...args) => pushAll(channel, ...args),
-    phase: {
-      preparePhasePane: (...args) => preparePhasePane(...args),
-      advancePhase: (...args) => advancePhase(...args),
-      openPhasePane: (...args) => openPhasePane(...args),
-      terminateTaskPhasePane: (...args) => terminateTaskPhasePane(...args),
-      reviewArtifactProblem: (...args) => reviewArtifactProblem(...args),
-      cleanupReviewArtifact: (...args) => cleanupReviewArtifact(...args),
-      readReviewArtifactChunk: (...args) => readReviewArtifactChunk(...args),
-      taskIntegrationMarker: (...args) => taskIntegrationMarker(...args),
-      recoverFinalizingTask: (...args) => recoverFinalizingTask(...args),
-      closeLiveGateWait: (...args) => closeLiveGateWait(...args),
-      drainPendingRespawns: (...args) => drainPendingRespawns(...args),
-      phaseOccupancy: (...args) => phaseEngine.phaseOccupancy(...args),
-      rollbackVerdictTransaction: (...args) =>
-        phaseEngine.rollbackVerdictTransaction(...args)
-    }
+    pushAll: (channel, ...args) => pushAll(channel, ...args)
   }
   // consumidores do ctx: phaseEngine (commit 3); mcpApi/ipc nos commits 4–5
 
@@ -3208,92 +3096,6 @@ app.whenReady().then(async () => {
   })
 
 
-  /** Remove a tarefa e TODO o rastro dela: watch, panes das fases, transcript,
-   *  marcadores e worktree/branch (best-effort). Compartilhado entre o IPC
-   *  tasks:remove e a tool MCP delete_task do orquestrador (F5.7). */
-  function removeTaskCascade(task: Task): boolean {
-    // F2-c4 (§7.11 do mapa): remover o card no meio de um veredito faria o
-    // advancePhase continuar contra um card inexistente (throw → rollback de
-    // watch fantasma) e o worktree sumiria sob um finalize em voo. Recusa.
-    if (phaseTransitions.isLocked(task.id)) {
-      blackbox.record({
-        cat: 'task',
-        event: 'task-remove-refused-transition',
-        actor: 'harness',
-        ids: { projectId: task.projectId, missionId: task.missionId, taskId: task.id },
-        reason: `card em transição sob ${
-          phaseTransitions.holderLabel(task.id) ?? '?'
-        } — exclusão recusada; repita em segundos`
-      })
-      return false
-    }
-    const project = projects.get(task.projectId)
-    if (project) {
-      try {
-        ensureSynkoraGitExcludes(project.path)
-      } catch {
-        return false
-      }
-    }
-    const activeWatchToRemove = phaseWatches.get(task.id)
-    const terminatedPaneIds = new Set<string>()
-    const liveWaitToRemove = liveGateWaits.get(task.id)
-    if (liveWaitToRemove) terminatedPaneIds.add(liveWaitToRemove.paneId)
-    closeLiveGateWait(task.projectId, task.id, 'tarefa removida')
-    for (const pane of hub
-      .panesOf(task.projectId)
-      .filter((candidate) => candidate.taskId === task.id)) {
-      terminatedPaneIds.add(pane.paneId)
-      if (pane.role === 'ajudante') {
-        helperCompletions.discard(pane.paneId)
-        updateStoredHelperStatus(task.projectId, pane.paneId, 'interrupted')
-        terminatePaneNow(task.projectId, pane.paneId)
-      }
-    }
-    phaseWatches.delete(task.id)
-    for (const role of ['dev', 'review', 'qa'] as const) {
-      terminateTaskPhasePane(task.projectId, task.id, role)
-    }
-    if (activeWatchToRemove?.paneId && !terminatedPaneIds.has(activeWatchToRemove.paneId)) {
-      terminatePaneNow(task.projectId, activeWatchToRemove.paneId)
-    }
-    // Reserva CDP por card morre com o card (o fecho normal é o finalize/
-    // complete_task; remoção em cascata cobre o resto).
-    releaseQaCdpPort(task.id)
-    // Só apaga o card depois que nenhum processo consegue mais escrever no
-    // worktree ou reportar contra o estado removido.
-    tasks.remove(task.id)
-    // Depois do estado, remove transcript, marcadores e worktree.
-    if (project) {
-      const runsDir = join(project.path, '.synkora', 'runs')
-      for (const f of [
-        `${task.id}.md`,
-        `${task.id}.done`,
-        `${task.id}.review.verdict`,
-        `${task.id}.qa.verdict`
-      ]) {
-        try {
-          unlinkSync(join(runsDir, f))
-        } catch {
-          // nunca existiu
-        }
-      }
-      if (hasGitCommit(project.path)) {
-        const taskWorktree = join(
-          app.getPath('userData'),
-          'worktrees',
-          task.projectId,
-          task.id.slice(0, 8)
-        )
-        removeWorktreeAndBranch(
-          project.path,
-          taskWorktree,
-          `task/${task.id.slice(0, 8)}`
-        )
-      }
-    }
-    return true
-  }
 
 
   // ————— F5.7: missão dirigida por PLANO —————
@@ -3625,7 +3427,6 @@ app.whenReady().then(async () => {
   function closeVerifiedPlan(planId: string): void {
     const planTask = tasks.get(planId)
     if (!planTask?.plan || planTask.status !== 'execucao' || !planTask.missionId) return
-    if (manualSecurityValidationPending(planTask.plan, securityWaiverOptions(planTask.projectId))) return
     const final = planTask.plan.verification?.final
     const workspace = verificationWorkspace(planTask)
     const planCards = tasks
@@ -4726,11 +4527,10 @@ app.whenReady().then(async () => {
       for (const ent of readdirSync(runsDir)) {
         const full = join(runsDir, ent)
         if (/\.(done|verdict)$/.test(ent)) {
-          // marcador de fase COM watch ativo é o fallback do report — fica;
-          // card em TRANSIÇÃO (F2-c4, §8.4 do mapa) também: o watch está
-          // detached mas o .done ainda não foi consumido pelo veredito.
-          const tid = ent.replace(/\.(done|(review|qa)\.verdict|verdict)$/i, '')
-          if (!phaseWatches.has(tid) && !phaseTransitions.isLocked(tid)) zap(full)
+          // Marcadores da orquestração por arquivo da era F6 (o fallback do
+          // report do dev/gate). Sem máquina de fases não há watch que os
+          // preserve — o que sobrou no disco é resíduo.
+          zap(full)
         } else if (ent.startsWith('helper-')) {
           const short = ent.replace(/^helper-/, '').replace(/\..*$/, '')
           if (liveHelperShorts.has(short)) continue
@@ -4783,197 +4583,6 @@ app.whenReady().then(async () => {
     return removed
   }
 
-
-  // Corpo compartilhado da troca de executor de fase: o botão ⇄ do dono e a
-  // tool set_phase_executor (orquestrador POR ORDEM do dono, CHECK 6
-  // 2026-08-07) passam pelo MESMO caminho — transplante/resume/carimbo/evento.
-  async function setPhaseExecutorImpl(
-    projectId: string,
-    taskId: string,
-    choice: { seatId: string; model?: string; effort?: string },
-    swapActor: 'user' | 'maestro',
-    ownerOrder?: string
-  ): Promise<{ ok: boolean; msg: string }> {
-    // Guards baratos ANTES do lock: não se espera na fila por um pedido
-    // inválido. O Inner re-lê o card SOB o lock — o estado pode ter mudado
-    // enquanto a troca esperava a transição fechar.
-    const pending = tasks.get(taskId)
-    if (!pending || pending.projectId !== projectId)
-      return { ok: false, msg: 'card não encontrado' }
-    if (pending.kind === 'plan' || pending.status === 'done')
-      return { ok: false, msg: 'este card não tem fase executável para trocar de conta' }
-    if (!choice?.seatId || !seats.get(choice.seatId))
-      return { ok: false, msg: 'escolha uma conta válida' }
-    // F2-c4 (§3.3 do plano da Fase 2): troca de executor é ORDEM DO DONO —
-    // ESPERA a transição em voo fechar (waitAndAcquire), nunca recusa nem
-    // some. O span lock-wait separa a fila do trabalho real no ranking da
-    // Fase 0 (senão a espera viraria "duração da troca" e poluiria o mapa).
-    const transitionToken = await mainStalls.wrap(
-      'advancePhase:lock-wait',
-      taskId.slice(0, 8),
-      () =>
-        phaseTransitions.waitAndAcquire(taskId, {
-          label: swapActor === 'user' ? 'reseat:user' : 'reseat:maestro',
-          projectId
-        })
-    )
-    try {
-      return await setPhaseExecutorLocked(projectId, taskId, choice, swapActor, ownerOrder)
-    } finally {
-      phaseTransitions.release(taskId, transitionToken)
-    }
-  }
-  async function setPhaseExecutorLocked(
-    projectId: string,
-    taskId: string,
-    choice: { seatId: string; model?: string; effort?: string },
-    swapActor: 'user' | 'maestro',
-    ownerOrder?: string
-  ): Promise<{ ok: boolean; msg: string }> {
-    {
-      const task = tasks.get(taskId)
-      if (!task || task.projectId !== projectId)
-        return { ok: false, msg: 'card não encontrado' }
-      if (task.kind === 'plan' || task.status === 'done')
-        return { ok: false, msg: 'este card não tem fase executável para trocar de conta' }
-      const nextSeat = choice?.seatId ? seats.get(choice.seatId) : undefined
-      if (!nextSeat) return { ok: false, msg: 'escolha uma conta válida' }
-      const phase = task.activePhase ?? 'dev'
-      const watch = phaseWatches.get(taskId)
-      const livePane = hub
-        .panesOf(projectId)
-        .find((pane) => pane.taskId === taskId && pane.role === phase)
-      const prevSeatId =
-        livePane?.seatId ?? task.phaseSessions?.[phase]?.seatId ?? task.runSeat
-      const prevSeat = prevSeatId ? seats.get(prevSeatId) : undefined
-      const sessionId =
-        (livePane && paneSessions.get(livePane.paneId)) ??
-        task.phaseSessions?.[phase]?.sessionId
-      const worktreeGuess = join(
-        app.getPath('userData'),
-        'worktrees',
-        projectId,
-        taskId.slice(0, 8)
-      )
-      const cwd =
-        watch?.cwd ??
-        (existsSync(worktreeGuess) ? worktreeGuess : projects.get(projectId)?.path)
-      // encerra a fase atual preservando tudo (worktree/transcript/fase)
-      phaseWatches.delete(taskId)
-      terminateTaskPhasePane(projectId, taskId, phase)
-      const sameSeat = Boolean(prevSeat && prevSeat.id === nextSeat.id)
-      const migrated = Boolean(
-        prevSeat &&
-          !sameSeat &&
-          prevSeat.cli === nextSeat.cli &&
-          nextSeat.cli === 'claude' &&
-          sessionId &&
-          cwd &&
-          migrateCliSessionBetweenSeats(nextSeat.cli, prevSeat.id, nextSeat.id, cwd, sessionId)
-      )
-      // MESMO seat claude não precisa de transplante nenhum (mesmo config
-      // dir): preserva a sessão e o respawn resume — apagar aqui perdia a
-      // conversa à toa (achado do E2E, 2026-08-05).
-      const keepSession = Boolean(
-        sessionId && nextSeat.cli === 'claude' && (migrated || sameSeat)
-      )
-      const phaseSessions = { ...(task.phaseSessions ?? {}) }
-      if (keepSession && sessionId) {
-        phaseSessions[phase] = {
-          phase,
-          sessionId,
-          seatId: nextSeat.id,
-          cli: nextSeat.cli,
-          model: choice.model?.trim() || undefined,
-          effort:
-            choice.effort?.trim() ||
-            (phase === 'dev' ? task.devEffort : task.phaseSessions?.[phase]?.effort),
-          capturedAt: new Date().toISOString()
-        }
-      } else {
-        delete phaseSessions[phase]
-      }
-      const nextEffort =
-        choice.effort?.trim() || (phase === 'dev' ? task.devEffort : undefined)
-      tasks.update(taskId, {
-        activePhase: phase,
-        phaseState: 'interrupted',
-        phaseSessions,
-        phaseResume: phaseSessions[phase],
-        runSeat: nextSeat.id,
-        runModel: choice.model?.trim() || undefined,
-        ...(phase === 'dev' && choice.effort?.trim() ? { devEffort: choice.effort.trim() } : {})
-      })
-      blackbox.record({
-        cat: 'pane',
-        event: 'seat-swap',
-        actor: swapActor,
-        ids: { projectId, missionId: task.missionId, taskId, phase, role: phase, seatId: nextSeat.id },
-        reason:
-          (migrated
-            ? `fase ${phase} migrada de ${prevSeat?.name ?? prevSeatId ?? '?'} para ${nextSeat.name} COM a conversa (transplante de sessão)`
-            : keepSession
-              ? `fase ${phase} respawnada na MESMA conta ${nextSeat.name} com a conversa preservada (model/effort novos via resume)`
-              : `fase ${phase} trocada de ${prevSeat?.name ?? prevSeatId ?? '?'} para ${nextSeat.name} sem migração (codex/cross-CLI/sem sessão) — renasce sobre o trabalho preservado`) +
-          (ownerOrder ? ` · POR ORDEM DO DONO (verbatim): "${ownerOrder.slice(0, 300)}"` : '')
-      })
-      // respawn imediato na conta nova (o recovery prompt/resume cuida do resto)
-      const launchToken = phaseLaunches.reserve(taskId)
-      if (launchToken) {
-        try {
-          const spec = await preparePhasePane(
-            projectId,
-            taskId,
-            phase,
-            nextSeat.id,
-            choice.model?.trim() || undefined,
-            nextEffort,
-            undefined,
-            launchToken
-          )
-          if (spec) openPhasePane(spec, projectId, taskId)
-        } finally {
-          phaseLaunches.release(taskId, launchToken)
-        }
-      }
-      // NÃO-QUIET (caso real 2026-08-06: o usuário trocou o dev para Opus via
-      // ⇄ e o orquestrador — sem saber que a troca existe — INVENTOU a
-      // explicação "o app reabriu com Opus, um degrau abaixo do contrato da
-      // lane". Decisão do dono precisa chegar como FATO no pane dele).
-      hub.publish({
-        projectId,
-        missionId: task.missionId,
-        kind: 'info',
-        text: `${
-          swapActor === 'user'
-            ? 'o USUÁRIO trocou'
-            : 'o orquestrador trocou POR ORDEM REGISTRADA DO DONO'
-        } o executor da fase ${phase} de "${task.title}" para ${nextSeat.name}${
-          choice.model?.trim() ? ` · ${choice.model.trim()}` : ''
-        }${nextEffort ? ` · ${nextEffort}` : ''} (${
-          swapActor === 'user' ? 'botão ⇄ do pane — prerrogativa do dono' : 'set_phase_executor'
-        }). ${
-          migrated || keepSession ? 'A conversa foi preservada.' : 'O pane renasceu fresco sobre o trabalho preservado.'
-        } Este é o NOVO carimbo do card: não trate como anomalia nem re-imponha o modelo da lane`,
-        actor: 'harness'
-      })
-      pushAll('tasks:changed', projectId)
-      return {
-        ok: true,
-        msg: migrated
-          ? 'conta trocada COM a conversa transplantada — o pane renasceu via resume'
-          : keepSession
-            ? 'mesma conta com model/effort novos — o pane renasceu via resume com a conversa preservada'
-            : 'conta trocada; o pane renasceu fresco sobre o trabalho preservado'
-      }
-    }
-  }
-
-
-  // A máquina de execução HEADLESS da F3 (o "espelho") morreu no commit 0.5
-  // da Fase 1: o pipeline inteiro roda em panes TUI reais desde a F3.5 e o
-  // taskRuns nunca mais recebia .set() — código morto provado no mapa
-  // (docs/FASE1_MAPA_MAINCONTEXT.md, "ACHADO DE OURO").
 
   const STATUS_LABEL: Record<string, string> = {
     backlog: 'Backlog',
@@ -5070,14 +4679,8 @@ app.whenReady().then(async () => {
     paneEverSpawned,
     pendingPtyPreparations,
     testServerPanes,
-    armPane,
-    paneStartupDescriptor,
     staggerPaneSpawn,
-    rollbackFailedPaneSpawn,
     discardUnstartedPane,
-    terminatePaneNow,
-    terminateTaskHelpers,
-    harnessPortsInUse,
     closeTestServersUnder
   } = paneLifecycle
 
@@ -5124,27 +4727,14 @@ app.whenReady().then(async () => {
     killMissionGuiPanes
   })
   const {
-    missionWatches,
     integrationDrainTimers,
     integrationDraining,
     emitMissionsChanged,
-    missionsWithIntegration,
     missionWorkspacePath,
     ensureMissionWorktree,
-    createMissionImpl,
-    ensureMissionVersion,
-    stopMissionExecution,
-    writeMissionStartIntent,
-    clearMissionStartIntent,
-    rollbackPlannedMission,
-    ensurePlannedMissionBacklogItem,
-    transitionLinkedProjectPlanMission,
     reconcileConcludedMission,
-    resolveMissionIntegrationTarget,
-    createIntegrationSyncTask,
     scheduleIntegrationDrain,
     startMissionIntegration,
-    handleMissionVerdict,
     recoverMissionStartIntents,
     recoverMissionIntegrationIntents,
     repairIntegrationSyncTickets
@@ -5163,68 +4753,15 @@ app.whenReady().then(async () => {
   })
   const {
     emitLog,
-    emitLive,
-    makeEmitter,
-    ensureSession,
-    surveyViaCodex,
     surveyAborts,
-    maestroResumeOverBudget,
-    skipMaestroResume,
     pendingUserQuestions,
     persistUserQuestions
   } = maestroEngine
 
-  const phaseEngine = createPhaseEngine(ctx, {
-    terminatePaneNow,
-    terminateTaskHelpers,
-    discardUnstartedPane,
-    planTaskForWorkTask,
-    retryLimitForTask,
-    executionModeForTask,
-    securityWaiverOptions,
-    missionWorkspacePath,
-    ensureMissionWorktree,
-    timedTaskWorktree,
-    storedHelperRecoveries,
-    harnessPortsInUse,
-    armPane,
-    // A tool `report` morreu com o catálogo legado: nenhuma identidade
-    // enxerga ferramenta de entrega, então o guard não tem mais o que
-    // liberar. Bloquear é a resposta HONESTA (passar em silêncio deixaria
-    // um done legado atravessar sem a fotografia que o guard existia para
-    // exigir). O caminho inteiro sai na onda do pipeline de fases.
-    codeReportGuard: async () => ({
-      blocked:
-        'a entrega por ferramenta MCP não existe mais neste app — o catálogo legado (report/done) foi removido com a era F6'
-    })
-  })
-  const {
-    phaseWatches,
-    phaseLaunches,
-    phaseLaunchCapacity,
-    phaseTransitions,
-    liveGateWaits,
-    gateCooldownUntil,
-    preparePhasePane,
-    advancePhase,
-    openPhasePane,
-    terminateTaskPhasePane,
-    closeLiveGateWait,
-    notePendingRespawn,
-    drainPendingRespawns,
-    recoverFinalizingTask,
-    taskIntegrationMarker,
-    reviewArtifactProblem,
-    cleanupReviewArtifact,
-    readReviewArtifactChunk
-  } = phaseEngine
 
 
   setInterval(() => {
-    phaseEngine.tickPhaseWatches()
     paneLifecycle.tickHelperOpenWatchdog()
-
-    missionEngine.tickMissionWatches()
   }, 3000)
 
 
@@ -5588,116 +5125,6 @@ app.whenReady().then(async () => {
         }
         continue
       }
-      const recoveredSkillUsage = interruptActiveSkillUsage(t.skillUsage)
-      if (recoveredSkillUsage !== t.skillUsage) {
-        tasks.update(t.id, { skillUsage: recoveredSkillUsage })
-        dirty = true
-      }
-      const recoveryDecision = (decision: string, reason: string): void => {
-        blackbox.record({
-          cat: 'recovery',
-          event: decision,
-          ids: {
-            projectId: p.id,
-            missionId: t.missionId,
-            taskId: t.id,
-            phase: t.activePhase
-          },
-          actor: 'boot',
-          prev: `${t.status}/${t.activePhase ?? '-'}/${t.phaseState ?? '-'}`,
-          reason,
-          evidence: 'estado persistido em tasks.json; nenhum processo sobrevive a um reinício'
-        })
-      }
-      if (t.phaseState === 'finalizing') {
-        recoveryDecision(
-          'finalizing-recheck',
-          runtimeWritable
-            ? 'card estava em finalização — reconciliando com o journal Git antes de qualquer decisão'
-            : 'runtime do projeto bloqueado; finalização marcada como interrompida sem fingir fase ativa'
-        )
-        if (runtimeWritable) {
-          void recoverFinalizingTask(t)
-        } else {
-          tasks.update(t.id, {
-            phaseState: 'interrupted',
-            feedback: 'finalização interrompida pelo reinício; o runtime do projeto está bloqueado e nenhuma fase foi fingida como ativa'
-          })
-        }
-        dirty = true
-        continue
-      }
-      if (t.status === 'execucao') {
-        if (t.activePhase === 'review') {
-          recoveryDecision(
-            'gate-preserved',
-            'review estava ativo no fechamento — fase preservada; reabre sozinha quando o projeto abrir'
-          )
-          tasks.update(t.id, {
-            activePhase: 'review',
-            phaseState: 'interrupted',
-            ...(t.feedback
-              ? {}
-              : {
-                  feedback: 'review interrompido pelo fechamento/reinício — o desenvolvimento está preservado; o gate reabre AUTOMATICAMENTE quando você abrir o projeto'
-                })
-          })
-          notePendingRespawn(p.id, t.id)
-        } else if (t.activePhase === 'qa') {
-          recoveryDecision(
-            'gate-preserved',
-            'QA estava ativo no fechamento — fase preservada; reabre sozinha quando o projeto abrir'
-          )
-          tasks.update(t.id, {
-            status: 'qa',
-            activePhase: 'qa',
-            phaseState: 'interrupted',
-            ...(t.feedback
-              ? {}
-              : {
-                  feedback: 'QA interrompido pelo fechamento/reinício — o trabalho está preservado; o gate reabre AUTOMATICAMENTE quando você abrir o projeto'
-                })
-          })
-          notePendingRespawn(p.id, t.id)
-        } else {
-          recoveryDecision(
-            'dev-interrupted',
-            'dev estava ativo no fechamento — fase preservada; reabre sozinha (resume) quando o projeto abrir'
-          )
-          tasks.update(t.id, {
-            status: 'backlog',
-            activePhase: 'dev',
-            phaseState: 'interrupted',
-            // task.feedback é do GATE (a lista da reprovação — o prompt-delta
-            // a consome no respawn). Nota operacional NUNCA sobrescreve lista
-            // pendente (bug real 05/08: o boot apagava o motivo da reprovação
-            // e o dev retomava sem saber o que corrigir).
-            ...(t.feedback
-              ? {}
-              : {
-                  feedback: `execução interrompida pelo fechamento/reinício — o pane reabre AUTOMATICAMENTE quando você abrir o projeto (dev claude retoma a MESMA conversa; comandos e helpers que estavam rodando foram encerrados, e os transcripts em .synkora/runs preservam o que já ocorreu)`
-                })
-          })
-          notePendingRespawn(p.id, t.id)
-        }
-        dirty = true
-      } else if (t.status === 'qa') {
-        recoveryDecision(
-          'gate-preserved',
-          'card em QA no fechamento — fase preservada; reabre sozinha quando o projeto abrir'
-        )
-        tasks.update(t.id, {
-          activePhase: 'qa',
-          phaseState: 'interrupted',
-          ...(t.feedback
-            ? {}
-            : {
-                feedback: 'QA interrompido pelo fechamento/reinício — desenvolvimento e review estão preservados; o gate reabre AUTOMATICAMENTE quando você abrir o projeto'
-              })
-        })
-        notePendingRespawn(p.id, t.id)
-        dirty = true
-      }
     }
     for (const m of missions.list(p.id)) {
       if (m.status === 'integrando') missions.update(m.id, { status: 'ativa' })
@@ -5920,15 +5347,6 @@ app.whenReady().then(async () => {
     releaseVersionImpl,
     versionIsolationIsValid
   })
-  registerTasksIpc(ctx, {
-    assertMainRendererSender,
-    removeTaskCascade,
-    fmtLane,
-    ensurePlanBaseline,
-    missionWorkspacePath,
-    securityWaiverOptions,
-    setPhaseExecutorImpl
-  })
   registerMaestroIpc(ctx, {
     engine: maestroEngine,
     sweepProjectFiles,
@@ -5937,10 +5355,7 @@ app.whenReady().then(async () => {
     finishProgressMaestroTurn,
     beginProgressHeadlessActivity,
     endProgressHeadlessActivity,
-    surveySystemPromptFile,
-    staggerPaneSpawn,
-    armPane,
-    projectLifecycleOf
+    surveySystemPromptFile
   })
   registerMissionsIpc(ctx, {
     engine: missionEngine,
@@ -5948,7 +5363,6 @@ app.whenReady().then(async () => {
     orchKey,
     emitBacklogChanged,
     staggerPaneSpawn,
-    armPane,
     guiSessions: guiSessionRegistry,
     killMissionGuiPanes
   })
@@ -5962,7 +5376,7 @@ app.whenReady().then(async () => {
     refreshProgressLiveSnapshot,
     progressLiveIdleTimers,
     emitMissionsChanged,
-    recordGateDeath: phaseEngine.recordGateDeath
+    recordGateDeath: () => ({ looping: false, deaths: 0 })
   })
   registerPanesIpc(ctx, {
     engine: paneLifecycle,

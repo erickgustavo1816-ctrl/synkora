@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { SECURITY_POLICY_VERSION } from './securityPolicy'
-import { persistMcpRiskRegister } from './securityReview'
+import { redactSensitiveText } from './securityRedaction'
 
 export const PROJECT_SECURITY_BASELINE_SCHEMA_VERSION = 1 as const
 const MANAGED_MARKER = '<!-- synkora-security-baseline:managed -->'
@@ -226,4 +226,130 @@ export function ensureProjectSecurityBaseline(
     repositoryAdaptersRequested: options.installRepositoryAdapters,
     adapters
   }
+}
+
+/**
+ * REGISTRO DE RISCO DE MCP — quais servidores MCP este projeto expõe ao
+ * agente, com que permissões e quem os revoga. Morava em `securityReview.ts`
+ * junto com o veredito estruturado do gate de segurança da era F6; o gate
+ * morreu na limpa F6 (2026-08-17), o registro não: ele é parte da linha de
+ * base que todo projeto ganha, e o chat 2.0 lê o arquivo como qualquer
+ * outra regra do repositório.
+ */
+export interface McpRiskEntryInput {
+  id: string
+  server: string
+  owner: 'synkora' | 'project' | 'user'
+  transport: 'http-local' | 'stdio' | 'unknown'
+  source: string
+  permissions: string[]
+  dataAccess: string[]
+  sensitiveActions: string[]
+  humanApprovalRequired: boolean
+  revocation: string
+  version?: string
+}
+
+export interface McpRiskEntry extends McpRiskEntryInput {
+  recordedAt: string
+}
+
+export interface McpRiskRegister {
+  schemaVersion: 1
+  updatedAt: string
+  entries: McpRiskEntry[]
+}
+
+export function persistMcpRiskRegister(
+  projectRoot: string,
+  inputs: readonly McpRiskEntryInput[],
+  now = new Date().toISOString()
+): McpRiskRegister {
+  const directory = join(projectRoot, '.synkora')
+  mkdirSync(directory, { recursive: true })
+  const file = join(directory, 'MCP_RISK_REGISTER.json')
+  const current = safeJsonRead(file)
+  const previous =
+    current && typeof current === 'object' && !Array.isArray(current)
+      ? (current as { entries?: unknown }).entries
+      : undefined
+  const byId = new Map<string, McpRiskEntry>()
+  if (Array.isArray(previous)) {
+    for (const entry of previous) if (validMcpEntry(entry)) byId.set(entry.id, entry)
+  }
+  for (const input of inputs) {
+    const id = safeIdentifier(input.id, 'mcp')
+    byId.set(id, {
+      id,
+      server: safeText(input.server, 200),
+      owner: input.owner,
+      transport: input.transport,
+      source: safeText(input.source, 500),
+      permissions: safeList(input.permissions, 40, 300),
+      dataAccess: safeList(input.dataAccess, 40, 300),
+      sensitiveActions: safeList(input.sensitiveActions, 40, 300),
+      humanApprovalRequired: input.humanApprovalRequired,
+      revocation: safeText(input.revocation, 500),
+      ...(safeText(input.version, 100) ? { version: safeText(input.version, 100) } : {}),
+      recordedAt: now
+    })
+  }
+  const register: McpRiskRegister = {
+    schemaVersion: 1,
+    updatedAt: now,
+    entries: [...byId.values()].sort((left, right) => left.id.localeCompare(right.id, 'en'))
+  }
+  atomicWrite(file, `${JSON.stringify(register, null, 2)}\n`)
+  return register
+}
+
+function safeJsonRead(file: string): unknown {
+  if (!existsSync(file)) return undefined
+  try {
+    return JSON.parse(readFileSync(file, 'utf8')) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+function safeIdentifier(value: unknown, fallback: string): string {
+  const normalized = safeText(value, 100)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return normalized || fallback
+}
+
+function safeText(value: unknown, max: number): string {
+  if (typeof value !== 'string') return ''
+  return redactSensitiveText(value)
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max)
+}
+
+function safeList(value: unknown, maxItems: number, maxText: number): string[] {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.map((item) => safeText(item, maxText)).filter(Boolean))].slice(
+    0,
+    maxItems
+  )
+}
+
+function validMcpEntry(value: unknown): value is McpRiskEntry {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const entry = value as Partial<McpRiskEntry>
+  return (
+    typeof entry.id === 'string' &&
+    typeof entry.server === 'string' &&
+    (entry.owner === 'synkora' || entry.owner === 'project' || entry.owner === 'user') &&
+    (entry.transport === 'http-local' || entry.transport === 'stdio' || entry.transport === 'unknown') &&
+    Array.isArray(entry.permissions) &&
+    Array.isArray(entry.dataAccess) &&
+    Array.isArray(entry.sensitiveActions) &&
+    typeof entry.humanApprovalRequired === 'boolean' &&
+    typeof entry.revocation === 'string' &&
+    typeof entry.recordedAt === 'string'
+  )
 }

@@ -15,9 +15,25 @@ import type {
   VerificationComparison
 } from './missionVerification'
 import type { ProjectAdapterDetection } from './projectAdapters'
-import type { ManualSecurityValidation } from './manualSecurityValidation'
-import type { SecurityReviewRecord } from './securityReview'
-import type { GateVerificationEvidence } from './gateVerificationEvidence'
+
+/** Veredito estruturado do gate de segurança da era F6 e a validação humana
+ *  do plano. As duas máquinas morreram na limpa F6 (2026-08-17); as FORMAS
+ *  ficam declaradas porque `tasks.json` do dono ainda as carrega e o store
+ *  precisa lê-las sem perder nada. */
+type ManualSecurityValidation = Record<string, unknown>
+type SecurityReviewRecord = Record<string, unknown>
+
+/** Evidência que um gate F6 anexava ao veredito. O validador morreu com o
+ *  pipeline de fases; a FORMA fica declarada aqui porque `tasks.json` do dono
+ *  ainda a carrega em cards antigos e o store precisa lê-la sem perder nada. */
+export interface GateVerificationEvidence {
+  summary: string
+  surfaces?: string[]
+  states?: string[]
+  viewports?: string[]
+  observations: string[]
+}
+
 import { redactSensitiveStrings } from './securityRedaction'
 
 // Funções enxutas (decisão do usuário, 2026-07-23): só existe função quando

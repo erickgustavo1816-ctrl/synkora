@@ -13,7 +13,7 @@
  * dele. uiSender/mainWindow/mcpPort e afins são lidos via ctx a cada uso.
  */
 import { app, dialog, ipcMain, nativeImage } from 'electron'
-import { isAbsolute, join, resolve } from 'path'
+import { isAbsolute, join } from 'path'
 import { ensureSynkoraGitExcludes, hasGitCommit, repairWorktrees } from '../worktree'
 import { gitOff } from '../gitAsync'
 import { ensureProjectSecurityBaseline } from '../projectSecurityBaseline'
@@ -63,7 +63,6 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     maestro,
     backlog,
     blackbox,
-    phaseWatches,
     syncBoard,
     scheduleProgressSnapshot,
     hub
@@ -71,7 +70,6 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
   const {
     killMaestroSession,
     ensureBypassAccepted,
-    discardUnstartedPane,
     guiSessions,
     killProjectGuiPanes
   } = extras
@@ -223,16 +221,6 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     const norm = (p: string): string => p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
     const clash = projects.list().find((p) => p.id !== id && norm(p.path) === norm(newPath))
     if (clash) return { ok: false, error: `essa pasta já é o universo "${clash.name}"` }
-    // F2-c4 (§5.4 do mapa da Fase 2): relocar no meio de um veredito faria o
-    // cwd do watch em voo sumir sob o advancePhase. Gesto raro e explícito do
-    // dono — recusar com receita é trivial e correto.
-    if (ctx.phaseTransitions.lockedCount(id) > 0) {
-      return {
-        ok: false,
-        error:
-          'há um veredito de fase fechando neste projeto agora — aguarde alguns segundos e tente relocar de novo'
-      }
-    }
     const oldPath = project.path
     // 1. derruba tudo que roda no projeto (panes no cwd velho ficariam zumbis)
     killMaestroSession(id)
@@ -245,12 +233,6 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     for (const pane of hub.panesOf(id)) {
       if (ptys.has(pane.paneId)) ptys.kill(pane.paneId)
       ctx.pushAll('panes:closeById', id, pane.paneId)
-    }
-    for (const [tid, watch] of phaseWatches) {
-      if (watch.projectId === id) {
-        phaseWatches.delete(tid)
-        if (watch.paneId && !ptys.has(watch.paneId)) discardUnstartedPane(watch.paneId)
-      }
     }
     // 2. caminho novo no store (única fonte de verdade do path)
     projects.setPath(id, newPath)

@@ -1,20 +1,16 @@
 import { MessageChannel, Worker } from 'node:worker_threads'
 import { join } from 'path'
 import type * as worktreeApi from './worktree'
-import type * as reviewDiffApi from './reviewDiff'
-import type * as reviewEvidenceApi from './reviewEvidence'
 
 // PONTE ASSÍNCRONA DO GIT (task #2, 2026-08-04): tira o git do main thread.
-// `gitOff('fn', ...args)` executa a função exportada de worktree.ts/
-// reviewDiff.ts DENTRO do gitWorker (tipada por Parameters/ReturnType — a
+// `gitOff('fn', ...args)` executa a função exportada de worktree.ts
+// DENTRO do gitWorker (tipada por Parameters/ReturnType — a
 // assinatura é a mesma da função síncrona). O worker é único e processa em
 // série; morte/erro do worker rejeita os pendentes e o próximo call respawna.
 // FALLBACK: se o worker não subir (ex.: empacotamento sem o entry), a chamada
 // roda SÍNCRONA no main — comportamento idêntico ao anterior, nunca pior.
 
-type GitApi = typeof worktreeApi &
-  typeof reviewDiffApi &
-  typeof reviewEvidenceApi
+type GitApi = typeof worktreeApi
 
 interface PendingCall {
   resolve: (value: unknown) => void
@@ -29,18 +25,7 @@ let syncFallback: Promise<GitApi> | null = null
 
 function loadSyncFallback(): Promise<GitApi> {
   if (!syncFallback) {
-    syncFallback = Promise.all([
-      import('./worktree'),
-      import('./reviewDiff'),
-      import('./reviewEvidence')
-    ]).then(
-      ([worktree, reviewDiff, reviewEvidence]) =>
-        ({
-          ...worktree,
-          ...reviewDiff,
-          ...reviewEvidence
-        }) as GitApi
-    )
+    syncFallback = import('./worktree').then((worktree) => ({ ...worktree }) as GitApi)
   }
   return syncFallback
 }

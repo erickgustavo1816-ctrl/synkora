@@ -4,10 +4,9 @@
  *
  * Corpo movido VERBATIM do closure do whenReady em index.ts (cirurgia do
  * índice, docs/FASE1_MAPA_MISSIONENGINE.md). O estado do domínio
- * (missionWatches, integrationDrainTimers, integrationDraining) nasce AQUI;
- * o index expõe aliases para os call sites legados (onExit do PTY, boot
- * recovery, extras do mcpApi/) e os getters do MainContext seguem
- * textualmente intactos.
+ * (integrationDrainTimers, integrationDraining) nasce AQUI; o index expõe
+ * aliases para os call sites legados (onExit do PTY, boot recovery) e os
+ * getters do MainContext seguem textualmente intactos.
  *
  * Contratos que este módulo NÃO pode quebrar:
  * - startMissionIntegration devolve string SÍNCRONA (mensagem da tool MCP e
@@ -17,9 +16,9 @@
  * - completeMissionMerge é wrapper fino da Fase 0
  *   (mainStalls.wrap('completeMissionMerge', …)) — manter par wrapper→Inner
  *   e o rótulo idêntico, senão o ranking de stall perde a série.
- * - missionWatches está MORTO (sem nenhum .set() em src/main — resíduo do
- *   gate de integração aposentado na F6.1); movido como está, remoção é
- *   card de higiene separado, nunca dentro da cirurgia.
+ * - missionWatches/handleMissionVerdict/tickMissionWatches — o marcador de
+ *   veredito do gate de integração aposentado na F6.1 — saíram na limpa F6
+ *   (2026-08-17): o Map nunca teve um `.set()` em src/main.
  * - versionIsolationIsValid/releaseVersionImpl são domínio VERSÃO e ficam
  *   no index (extras) — mover inverteria o acoplamento com ipc/backlog.
  */
@@ -61,7 +60,6 @@ import {
   startProjectMission as bindProjectMission,
   type ProjectPlan
 } from './projectPlan'
-import { manualSecurityValidationPending } from './manualSecurityValidation'
 import { gitOff } from './gitAsync'
 import {
   existsSync,
@@ -72,7 +70,6 @@ import {
   unlinkSync,
   writeFileSync
 } from 'fs'
-import { type MissionWatch } from './phaseTypes'
 import { type Task, type PlanVerificationCheckpoint } from './tasks'
 import { type Version } from './backlog'
 import { type MainContext } from './mainContext'
@@ -916,8 +913,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     zap(join(project.path, '.synkora', 'missions', `${short}.PLAN.md`))
   }
 
-  // Gate de integração pendente por missão (tipo em phaseTypes.ts).
-  const missionWatches = new Map<string, MissionWatch>()
   const integrationDrainTimers = new Map<string, NodeJS.Timeout>()
   const integrationDraining = new Set<string>()
 
@@ -1255,14 +1250,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         return integrateBlocked(
           'no-plan',
           'integração bloqueada: esta missão ainda não tem um plano aprovado e concluído — abra a aba da missão e combine o plano com o orquestrador'
-        )
-      }
-      if (
-        manualSecurityValidationPending(missionPlan.plan, securityWaiverOptions(mission.projectId))
-      ) {
-        return integrateBlocked(
-          'security-validation',
-          'integracao bloqueada: a validacao humana de seguranca deste plano continua pendente. Confirme a evidencia ou dispense com justificativa no card do plano.'
         )
       }
       if (missionPlan.status !== 'done') {
@@ -2344,38 +2331,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         }
   }
 
-  function handleMissionVerdict(watch: MissionWatch, content: string): void {
-    const mission = missions.get(watch.missionId)
-    if (!mission) return
-    ctx.pushAll('panes:closeById', watch.projectId, watch.paneId)
-    const m = content.match(/^\s*(aprovada|reprovada)\s*:?\s*([\s\S]*)$/i)
-    const approved = m?.[1]?.toLowerCase() === 'aprovada'
-    const motivo = (m?.[2] ?? '').trim().slice(0, 300) || 'sem motivo'
-    if (!m || !approved) {
-      const why = !m ? `veredito ilegível: ${content.slice(0, 120)}` : motivo
-      missions.update(watch.missionId, { status: 'ativa' })
-      // PM sabe do resultado; o orquestrador recebe o que fazer.
-      hub.publish({
-        projectId: watch.projectId,
-        kind: 'error',
-        text: `integração da missão "${mission.title}" REPROVADA: ${why}`,
-        actor: 'review'
-      })
-      hub.publish({
-        projectId: watch.projectId,
-        missionId: watch.missionId,
-        kind: 'report',
-        text: `gate de integração reprovou: ${why} — corrija (crie tarefas se preciso) e chame integrate_mission de novo`,
-        actor: 'review'
-      })
-      emitMissionsChanged(watch.projectId)
-      return
-    }
-    // Aprovada (marcador órfão de sessão antiga): entra na mesma fila durável;
-    // nenhum caminho legado pode furar a ordem dos merges.
-    startMissionIntegration(watch.missionId, 'review legado')
-  }
-
   function stopMissionExecution(projectId: string, missionId: string, reason: string): void {
     const missionTaskIds = new Set(
       tasks
@@ -2384,41 +2339,11 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         .map((task) => task.id)
     )
     for (const taskId of missionTaskIds) {
-      // F2-c4 (§5.3 do mapa da Fase 2): card em TRANSIÇÃO não entra na parada
-      // em lote — apagar o watch/marcador sob um veredito em voo perderia a
-      // rodada. Os chamadores pré-checam e recusam a operação inteira; este
-      // continue é o cinto contra a corrida entre a checagem e a execução.
-      if (ctx.phaseTransitions.isLocked(taskId)) {
-        blackbox.record({
-          cat: 'phase',
-          event: 'mission-stop-skipped-transition',
-          actor: 'harness',
-          ids: { projectId, missionId, taskId },
-          reason: `card em transição sob ${
-            ctx.phaseTransitions.holderLabel(taskId) ?? '?'
-          } — a parada da missão pulou este card; o veredito em voo decide o estado dele`
-        })
-        continue
-      }
-      // phaseWatches/livePaneSpecs em CALL TIME via ctx: os aliases do index
-      // nascem no createPhaseEngine, DEPOIS deste engine — destructurar na
-      // construção seria TDZ.
-      const watch = ctx.phaseWatches.get(taskId)
-      ctx.phaseWatches.delete(taskId)
-      if (watch) {
-        try {
-          ensureProjectRuntimeWritable(projectId)
-          unlinkSync(watch.marker)
-        } catch {
-          // marcador já consumido ou nunca criado
-        }
-      }
       const task = tasks.get(taskId)
       if (task && (task.status === 'execucao' || task.status === 'qa')) {
         tasks.update(taskId, {
           status: 'backlog',
           feedback: reason,
-          activePhase: watch?.phase ?? task.activePhase ?? 'dev',
           phaseState: 'interrupted'
         })
       }
@@ -2438,37 +2363,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     syncBoard(projectId)
   }
 
-  /** Poller de 3s (a parte de MISSÕES; fases e watchdog de helper seguem no
-   * index). Marcadores de INTEGRAÇÃO de missão (fallback do report MCP do
-   * gate). Preservar o catch { continue } do runtime não gravável: sem ele,
-   * um projeto com .synkora versionado travaria o poller inteiro. */
-  function tickMissionWatches(): void {
-    for (const [missionId, watch] of [...missionWatches]) {
-      if (!existsSync(watch.marker)) continue
-      let content = ''
-      try {
-        content = readFileSync(watch.marker, 'utf-8')
-      } catch {
-        continue // ainda sendo escrito
-      }
-      try {
-        ensureProjectRuntimeWritable(watch.projectId)
-      } catch {
-        continue
-      }
-      try {
-        unlinkSync(watch.marker)
-      } catch {
-        // já sumiu
-      }
-      missionWatches.delete(missionId)
-      handleMissionVerdict(watch, content)
-    }
-  }
-
   return {
     // ——— estado (nasce aqui; ctx expõe por getter via alias no index) ———
-    missionWatches,
     integrationDrainTimers,
     integrationDraining,
     // ——— ciclo de vida de missão ———
@@ -2491,12 +2387,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     createIntegrationSyncTask,
     scheduleIntegrationDrain,
     startMissionIntegration,
-    handleMissionVerdict,
     // ——— recuperação (chamada pelo boot) ———
     recoverMissionStartIntents,
     recoverMissionIntegrationIntents,
     repairIntegrationSyncTickets,
     // ——— tick do poller de 3s ———
-    tickMissionWatches
   }
 }

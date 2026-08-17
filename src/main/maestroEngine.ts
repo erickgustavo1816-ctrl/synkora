@@ -35,7 +35,17 @@ import { MaestroSession, type SessionEvent } from './maestroSession'
 import { CodexSession } from './codexSession'
 import { assessMissionRisk } from './orchestratorFlow'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
-import type { PendingUserQuestion } from './phaseTypes'
+
+/** Pergunta dirigida ao DONO (tool `ask_user` da era F6) — persistida entre
+ *  boots em userData/user-questions.json. A tool morreu com o catálogo MCP
+ *  legado; o tipo continua enquanto o store existir. */
+export type PendingUserQuestion = {
+  projectId: string
+  missionKey: string
+  question: string
+  at: string
+}
+
 import type { MainContext } from './mainContext'
 
 /** Painel de fundo do Maestro: claude stream-json ou codex app-server, mesma
