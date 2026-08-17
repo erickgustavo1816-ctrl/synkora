@@ -20,11 +20,9 @@
  *   antes do createWindow), NUNCA no import.
  */
 import { ipcMain, app } from 'electron'
-import { randomUUID } from 'crypto'
+import {} from 'crypto'
 import type { StatsWatchHandle } from '../sessionStats'
 import type {} from '../hub'
-import type { HelperOpenWatchdog } from '../helperOpenWatchdog'
-import type { HelperRecoveryRecord, HelperRecoveryStatus } from '../helperRecovery'
 import type { PaneLifecycleEngine, PaneRequest } from '../paneLifecycle'
 import type { MainContext } from '../mainContext'
 
@@ -34,15 +32,6 @@ import type { MainContext } from '../mainContext'
  * existem (zero arrow late-bound). */
 export interface PtyIpcExtras {
   engine: PaneLifecycleEngine
-  /** helperRecovery — carimbo + caminho do transcript do ajudante. */
-  updateStoredHelperStatus(
-    projectId: string,
-    paneId: string,
-    status: HelperRecoveryStatus,
-    statusAt?: string
-  ): HelperRecoveryRecord | undefined
-  helperTranscriptPath(projectId: string, paneId: string): string | undefined
-  helperOpenWatchdog: HelperOpenWatchdog
   /** Escopo de módulo do index — perfil de skills isolado do codex. */
   paneCodexSkillProfiles: Map<string, string>
   /** Overlay de ANDAMENTO (escopo de módulo do index). */
@@ -57,18 +46,14 @@ export interface PtyIpcExtras {
 
 export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
   const {
-    projects,
     seats,
     tasks,
     maestro,
     ptys,
     blackbox,
     sessionStats,
-    helperCompletions,
     paneTokens,
     paneSessions,
-    helperReported,
-    helperSeen,
     expiredSeats,
     ensureProjectRuntimeWritable,
     unregisterPane,
@@ -77,9 +62,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
   } = ctx
   const {
     engine,
-    updateStoredHelperStatus,
-    helperTranscriptPath,
-    helperOpenWatchdog,
     scheduleProgressLiveSnapshot,
     refreshProgressLiveSnapshot,
     progressLiveIdleTimers,
@@ -414,32 +396,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
         // pushAll substitui o fallback `ctx.uiSender ?? sender` (F3-c0): a
         // lista de panes vive nas DUAS views e o exit precisa limpar ambas.
         ctx.pushAll('panes:closeById', identity.projectId, req.id)
-        // Ajudante que morreu SEM reportar done (crash/fechado): o delegador
-        // é avisado na hora — controle total sobre os ajudantes (pedido do
-        // usuário). SEM ruído: com report, com helper_close deliberado ou com
-        // a saída já lida (helper_output), avisar atrapalha em vez de ajudar.
-        if (identity.role === 'ajudante' && identity.delegatorPaneId) {
-          const reported = helperReported.delete(identity.paneId)
-          const seen = helperSeen.delete(identity.paneId)
-          if (!reported) helperCompletions.discard(identity.paneId)
-          if (!reported) updateStoredHelperStatus(identity.projectId, identity.paneId, 'interrupted')
-          if (!reported && !seen) {
-            const helperPath = helperTranscriptPath(identity.projectId, identity.paneId)
-            const project = projects.get(identity.projectId)
-            const relativePath = helperPath && project
-              ? helperPath.slice(project.path.length + 1).replace(/\\/g, '/')
-              : `.synkora/runs/helper-${identity.paneId}.md`
-            hub.notifyPane(
-              identity.delegatorPaneId,
-              `ajudante ${identity.paneId.slice(0, 8)} ENCERROU SEM reportar done — helper_output ainda lê o final da saída; transcript em ${relativePath}`,
-              {
-                sourcePaneId: identity.paneId,
-                kind: 'feedback',
-                correlationId: randomUUID()
-              }
-            )
-          }
-        }
       }
       })
     } catch (error) {
@@ -459,7 +415,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
     }
     if (ptyCreated) {
       paneEverSpawned.add(req.id)
-      helperOpenWatchdog.acknowledge(req.id)
       // Servidor de teste do dono: o pane shell nasce cru — o comando entra
       // digitado (inject fatiado) assim que o prompt do PowerShell assentar.
       // 2.0: o terminal avulso da missão entra no MESMO registro (para morrer

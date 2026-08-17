@@ -21,12 +21,10 @@
  * SHELL (missions:shellSpec, panes:testServerSpec, login-<seatId>). Este
  * módulo é, hoje, o ciclo de vida do pane shell.
  */
-import { resolve } from 'path'
+import {} from 'path'
 import { isPaneStartupRole, type PaneStartupDescriptor } from './paneStartupMetrics'
 import type { PaneKind } from './pty'
 import type { PortUseEntry } from './portMap'
-import type { HelperOpenWatchdog } from './helperOpenWatchdog'
-import type { HelperRecoveryRecord, HelperRecoveryStatus } from './helperRecovery'
 import type { MainContext } from './mainContext'
 
 export interface PaneRequest {
@@ -70,9 +68,6 @@ export interface DevPaneSpec {
   delegatorPaneId?: string
 }
 
-// Só o watchdog de helper lê a graça — const de módulo (era do poller do index).
-const HELPER_OPEN_GRACE_MS = 30_000
-
 /**
  * Dependências do closure do index que o domínio de pane consome e que ainda
  * não migraram — todas declaradas ANTES do ponto de construção (nenhuma
@@ -83,41 +78,22 @@ export interface PaneLifecycleExtras {
   ensureBypassAccepted(configDir: string, trustCwd?: string): void
   /** Trust do projeto + sandbox do Windows no config.toml do seat codex. */
   ensureCodexTrust(configDir: string, projectPath: string): void
-  /** Carimbo de status no transcript durável do ajudante (helperRecovery). */
-  updateStoredHelperStatus(
-    projectId: string,
-    paneId: string,
-    status: HelperRecoveryStatus,
-    statusAt?: string
-  ): HelperRecoveryRecord | undefined
-  /** Escopo de módulo do index — compartilhado com mcpApi/helpers. */
-  helperOpenWatchdog: HelperOpenWatchdog
 }
 
 export type PaneLifecycleEngine = ReturnType<typeof createPaneLifecycle>
 
 export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtras) {
   const {
-    projects,
-    tasks,
-    maestro,
-    settings,
     ptys,
     blackbox,
-    helperCompletions,
     paneTokens,
-    paneMcpFiles,
     paneSessions,
-    syncBoard,
-    externalPlaywrightForPane,
-    bypassOn,
     unregisterPane,
     cleanPaneMcpFile
   } = ctx
   // hub é atribuído UMA vez, antes de o engine nascer — capturar é seguro.
   const hub = ctx.hub
-  const { ensureBypassAccepted, ensureCodexTrust, updateStoredHelperStatus, helperOpenWatchdog } =
-    extras
+  const { ensureBypassAccepted, ensureCodexTrust } = extras
 
   /** Classificação allowlisted da abertura do pane. Não inclui cwd, modelo,
    *  argumentos, token, prompt ou qualquer conteúdo do terminal.
@@ -241,7 +217,6 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
   /** Reverte um armamento que nunca chegou a produzir um PTY. Arquivos,
    * worktree e sessões permanecem; apenas a afirmação "está rodando" cai. */
   function rollbackFailedPaneSpawn(paneId: string, reason: string): void {
-    helperOpenWatchdog.acknowledge(paneId)
     pendingPtyPreparations.delete(paneId)
     const identity = hub.identityByPane(paneId)
     livePaneSpecs.delete(paneId)
@@ -251,16 +226,6 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
     cleanPaneMcpFile(paneId)
     if (!identity) return
 
-    if (identity.role === 'ajudante') {
-      helperCompletions.discard(paneId)
-      updateStoredHelperStatus(identity.projectId, paneId, 'interrupted')
-      if (identity.delegatorPaneId) {
-        hub.notifyPane(
-          identity.delegatorPaneId,
-          `ajudante ${paneId.slice(0, 8)} não conseguiu abrir (${reason}); nenhum processo ficou rodando`
-        )
-      }
-    }
     ctx.pushAll('panes:closeById', identity.projectId, paneId)
     ctx.pushAll('tasks:changed', identity.projectId)
   }
@@ -268,7 +233,6 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
   /** Limpa um pane já armado que nunca ganhou PTY, sem alterar o estado do card. */
   function discardUnstartedPane(paneId: string): void {
     if (ptys.has(paneId)) return
-    helperOpenWatchdog.acknowledge(paneId)
     pendingPtyPreparations.delete(paneId)
     livePaneSpecs.delete(paneId)
     closingPaneIds.delete(paneId)
@@ -279,7 +243,6 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
 
   /** Encerra um pane pelo id mesmo quando o registro do Hub ja se perdeu. */
   function terminatePaneNow(projectId: string, paneId: string): void {
-    helperOpenWatchdog.acknowledge(paneId)
     pendingPtyPreparations.delete(paneId)
     const hadPty = ptys.has(paneId)
     unregisterPane(paneId)
@@ -296,100 +259,9 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
     ctx.pushAll('panes:closeById', projectId, paneId)
   }
 
-  /** Helpers pertencem ao ciclo de vida do DEV que os delegou. Se esse DEV
-   * morre, não deixe escritores órfãos bloquearem ou alterarem a retomada. */
-  function terminateTaskHelpers(projectId: string, taskId: string, reason: string): void {
-    const helpers = hub
-      .panesOf(projectId)
-      .filter((pane) => pane.role === 'ajudante' && pane.taskId === taskId)
-    for (const helper of helpers) {
-      helperCompletions.discard(helper.paneId)
-      updateStoredHelperStatus(projectId, helper.paneId, 'interrupted')
-      blackbox.record({
-        cat: 'pane',
-        event: 'task-helper-terminated',
-        actor: 'harness',
-        ids: { projectId, taskId, paneId: helper.paneId },
-        reason
-      })
-      terminatePaneNow(projectId, helper.paneId)
-    }
-  }
-
   // Um modal pode ser fechado enquanto o seed assíncrono do seat ainda está
   // em andamento. O ticket impede que a continuação abra um processo órfão.
   const pendingPtyPreparations = new Map<string, symbol>()
-
-  /** Poller de 3s (a parte do WATCHDOG DE HELPER; fases e missões têm os
-   * ticks próprios nos engines delas). panes:open é push sem ACK — uma
-   * notificação perdida não pode criar escritor fantasma no Hub. */
-  function tickHelperOpenWatchdog(): void {
-    // Helper tambem nasce por `panes:open`, que e um push sem ACK. Uma
-    // notificacao perdida nao pode criar um escritor fantasma no Hub e ocupar
-    // para sempre o unico slot de delegacao do card. Reenvie uma vez; sem PTY
-    // depois da segunda janela, reverta todo o armamento de forma auditada.
-    for (const pending of helperOpenWatchdog.due(Date.now(), HELPER_OPEN_GRACE_MS)) {
-      const identity = hub.identityByPane(pending.paneId)
-      const live = livePaneSpecs.get(pending.paneId)
-      if (ptys.has(pending.paneId) || paneEverSpawned.has(pending.paneId)) {
-        helperOpenWatchdog.acknowledge(pending.paneId)
-        continue
-      }
-      if (!identity || identity.role !== 'ajudante' || !live) {
-        helperOpenWatchdog.acknowledge(pending.paneId)
-        if (identity) rollbackFailedPaneSpawn(pending.paneId, 'armamento do ajudante perdeu a spec')
-        continue
-      }
-      const delegatorAlive =
-        !identity.delegatorPaneId || Boolean(hub.identityByPane(identity.delegatorPaneId))
-      // Guard de destino: sem renderer vivo o retry seria um push para o vazio
-      // gastando a única janela — o rollback auditado do fallback é o desfecho
-      // certo. (F3-c2 troca este guard pelo predicado da VIEW de panes.)
-      if (
-        pending.action === 'retry' &&
-        delegatorAlive &&
-        ctx.uiSender &&
-        !ctx.uiSender.isDestroyed()
-      ) {
-        ctx.pushAll('panes:open', live.projectId, live.taskId, live.spec)
-        blackbox.record({
-          cat: 'pane',
-          event: 'helper-open-retried',
-          actor: 'harness',
-          ids: {
-            projectId: identity.projectId,
-            missionId: identity.missionId,
-            taskId: identity.taskId,
-            paneId: pending.paneId,
-            role: 'ajudante'
-          },
-          reason: 'ajudante armado nao criou PTY apos o primeiro push; panes:open reenviado uma vez'
-        })
-        continue
-      }
-      blackbox.record({
-        cat: 'pane',
-        event: 'helper-open-expired',
-        actor: 'harness',
-        ids: {
-          projectId: identity.projectId,
-          missionId: identity.missionId,
-          taskId: identity.taskId,
-          paneId: pending.paneId,
-          role: 'ajudante'
-        },
-        reason: delegatorAlive
-          ? 'ajudante nao criou PTY depois de duas tentativas'
-          : 'delegador encerrou antes de o ajudante criar PTY'
-      })
-      rollbackFailedPaneSpawn(
-        pending.paneId,
-        delegatorAlive
-          ? 'o pedido de abertura se perdeu duas vezes'
-          : 'o pane delegador encerrou antes do inicio'
-      )
-    }
-  }
 
   return {
     // ——— estado vivo (aliases do index → getters do MainContext) ———
@@ -405,11 +277,8 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
     rollbackFailedPaneSpawn,
     discardUnstartedPane,
     terminatePaneNow,
-    terminateTaskHelpers,
     // ——— servidor de teste do dono ———
     harnessPortsInUse,
-    closeTestServersUnder,
-    // ——— fatia do poller de 3s ———
-    tickHelperOpenWatchdog
+    closeTestServersUnder
   }
 }

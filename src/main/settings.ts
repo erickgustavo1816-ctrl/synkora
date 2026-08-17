@@ -1,7 +1,6 @@
 import { app } from 'electron'
 import {
   SettingsStoreCore,
-  type SynkoraPreferences,
   type SynkoraSettings,
   type SynkoraSettingsPatch,
   type SynkoraSettingsView

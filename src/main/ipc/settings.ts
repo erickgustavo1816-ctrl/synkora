@@ -13,16 +13,7 @@ import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import {
   type SynkoraSettingsPatch
 } from '../settings'
-import { type McpStdioLaunch } from '../mcpServer'
 import type { MainContext } from '../mainContext'
-
-/** Lets do closure do index que estes handlers leem/escrevem — o call
- * site entrega getters/setters fechando sobre as variáveis reais. */
-export interface SettingsIpcState {
-  preparedPlaywright: McpStdioLaunch | undefined
-  externalServicesAvailable: boolean | null
-  externalServicesCheckedAt: number | null
-}
 
 /** Dependências do closure do index ainda não migradas (mesmo padrão
  * do PhaseEngineExtras). */
@@ -31,8 +22,6 @@ export interface SettingsIpcExtras {
   /** F3-c4: host OU view de panes — settings GERAIS são das duas superfícies
    *  (a view lê a fonte do terminal e o zoom Ctrl+/- grava dela). */
   assertAppRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
-  validateExternalServices(): McpStdioLaunch | undefined
-  state: SettingsIpcState
 }
 
 export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras): void {
@@ -42,8 +31,6 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
   } = ctx
   const {
     assertAppRendererSender,
-    validateExternalServices,
-    state
   } = extras
   ipcMain.handle('settings:get', (e) => {
     assertAppRendererSender(e)
@@ -57,16 +44,6 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
       patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {}
     const next = settings.update(safePatch)
     ptys.setConptyDll(next.conptyDll !== false)
-    if (previous.externalServicePreparation !== next.externalServicePreparation) {
-      if (next.externalServicePreparation === 'automatic') {
-        validateExternalServices()
-      }
-      else {
-        state.preparedPlaywright = undefined
-        state.externalServicesAvailable = null
-        state.externalServicesCheckedAt = null
-      }
-    }
     // F3-c4: o OUTRO lado (host ↔ view de panes) recarrega — sem isto o zoom
     // de fonte feito numa view não chegava à outra.
     ctx.pushAll('settings:changed')

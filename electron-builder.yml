@@ -23,14 +23,6 @@ files:
   - out/**
   - package.json
   - '!**/*.map'
-  # Não excluir `*.d.ts` globalmente: o runtime nativo do TypeScript 7 carrega
-  # as bibliotecas `lib.*.d.ts` ao lado de tsc/tsc.exe. `src/` já fica fora
-  # porque apenas `out/**` e as dependências de produção entram no pacote.
-  - 'node_modules/@typescript/typescript-*/lib/*.d.ts'
-  # Browsers nunca são baixados/embutidos silenciosamente. O MCP usa o canal
-  # Chrome do sistema; caches locais não podem contaminar um release.
-  - '!**/node_modules/playwright/.local-browsers{,/**}'
-  - '!**/node_modules/playwright-core/.local-browsers{,/**}'
 
 # NÃO EMPACOTAR O NODE-PTY DENTRO DO ASAR. Os binários nativos (.node) e,
 # principalmente, a `conpty.dll` do ConPTY v2 são carregados por caminho de
@@ -39,17 +31,6 @@ files:
 # plataforma (`@lydell/node-pty-win32-x64`), que é onde os binários moram.
 asarUnpack:
   - '**/node_modules/@lydell/node-pty*/**'
-  # O browser MCP é iniciado como processo stdio separado. Seu entrypoint e
-  # as dependências Playwright precisam existir como paths reais para o
-  # `process.execPath` com ELECTRON_RUN_AS_NODE, inclusive offline.
-  - '**/node_modules/@playwright/mcp/**'
-  - '**/node_modules/playwright/**'
-  - '**/node_modules/playwright-core/**'
-  # TypeScript 7 expõe o LSP pelo executável nativo da plataforma. O binário
-  # não pode permanecer virtual dentro do ASAR: o Code Intelligence Manager
-  # precisa iniciá-lo diretamente, sem npm/npx nem download no primeiro uso.
-  - '**/node_modules/typescript/**'
-  - '**/node_modules/@typescript/typescript-*/**'
 
 # O main procura o ícone em `process.resourcesPath` quando empacotado
 # (resolveAppIcon em src/main/index.ts) — este `extraResources` é o que põe o

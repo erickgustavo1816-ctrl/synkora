@@ -22,7 +22,7 @@
  */
 import { app } from 'electron'
 import { join } from 'path'
-import { randomUUID } from 'crypto'
+import {} from 'crypto'
 import {
   parseTasks as parseTasksJson,
   PERSONA_DEV,

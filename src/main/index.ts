@@ -41,8 +41,6 @@ import {
   retryLimitForExecutionMode,
   type MissionExecutionMode
 } from './orchestratorFlow'
-import { HelperSpawnReservationRegistry } from './helperSpawnReservations'
-import { HelperOpenWatchdog } from './helperOpenWatchdog'
 import type { MainContext } from './mainContext'
 import {} from './cliSessionTransplant'
 import { createMaestroEngine, type MaestroBackend } from './maestroEngine'
@@ -89,32 +87,23 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renam
 import { StallAttribution, instrumentIpcMain } from './stallAttribution'
 import { gitOff } from './gitAsync'
 import { execFile } from 'child_process'
-import {  randomUUID } from 'crypto'
+import {   } from 'crypto'
 import { PtyManager } from './pty'
 import { SessionStatsWatcher } from './sessionStats'
-import { Hub, type HubCommunicationEvent, type PaneIdentity } from './hub'
+import { Hub, type PaneIdentity } from './hub'
 import {
   SettingsStore,
 } from './settings'
 import {} from './seatUsage'
 import {
-  resolveBundledPlaywrightMcp,
   startMcpServer,
   type McpApi,
-  type McpServerHandle,
-  type McpStdioLaunch
+  type McpServerHandle
 } from './mcpServer'
 import { SynVoiceService } from './synVoice'
 import { WindowsTextInput } from './windowsTextInput'
 import { WindowsGlobalActivation } from './windowsGlobalActivation'
 import { PaneStartupMetrics } from './paneStartupMetrics'
-import { HelperCompletionTracker } from './helperCompletion'
-import {
-  parseHelperRecoveryTranscript,
-  updateHelperRecoveryStatus,
-  type HelperRecoveryRecord,
-  type HelperRecoveryStatus
-} from './helperRecovery'
 import { isEffectivelyEmptyProject } from './projectFolder'
 import {
   completeProjectPlanRelease as completeStoredProjectPlanRelease,
@@ -175,16 +164,8 @@ const ptys = new PtyManager()
 // andamento (pedido do usuário, 2026-08-06: "preciso saber exatamente o que
 // está acontecendo sem abrir o Synkora").
 const paneStatusNotes = new Map<string, { text: string; at: string }>()
-// Ajudantes que já chamaram report(done) — o onExit deles não re-avisa o
-// delegador (o aviso de conclusão já foi dado pelo report).
-const helperReported = new Set<string>()
-// Ajudantes cuja saída o delegador JÁ LEU (helper_output) — morte depois
-// disso não gera o aviso "encerrou sem reportar": quem leu está no controle
-// (feedback real do usuário: o aviso chegava DEPOIS de tudo incorporado).
-const helperSeen = new Set<string>()
 // Entrega única da conclusão: helper_output após report consome o resumo e o
 // aviso assíncrono deixa de ser injetado como uma segunda mensagem.
-const helperCompletions = new HelperCompletionTracker()
 const plannedHelperAssignments = new Map<
   string,
   { parentPhaseRun: string; agentId?: string }
@@ -196,8 +177,6 @@ const completedPlannedAgentsByPhaseRun = new Map<string, Set<string>>()
 const completedHelperPhaseRuns = new Set<string>()
 // Check + spawn de helper atravessa awaits (catálogo, skills, armamento). Esta
 // reserva impede duas calls MCP concorrentes de consumirem o mesmo slot.
-const helperSpawnReservations = new HelperSpawnReservationRegistry()
-const helperOpenWatchdog = new HelperOpenWatchdog()
 // Telemetria viva dos panes (tokens/contexto lidos dos JSONL dos CLIs).
 const sessionStats = new SessionStatsWatcher()
 // sessionId real do CLI por pane (descoberto pelo watcher) — resume/handoff.
@@ -2595,23 +2574,6 @@ app.whenReady().then(async () => {
     }
     return mode
   }
-  let preparedPlaywright: McpStdioLaunch | undefined
-  let externalServicesCheckedAt: number | null = null
-  let externalServicesAvailable: boolean | null = null
-  const validateExternalServices = (): McpStdioLaunch | undefined => {
-    const launch = resolveBundledPlaywrightMcp()
-    preparedPlaywright = launch
-    externalServicesAvailable = Boolean(launch)
-    externalServicesCheckedAt = Date.now()
-    return launch
-  }
-  const externalPlaywrightForPane = (): McpStdioLaunch | undefined => {
-    if (settings.get().externalServicePreparation === 'automatic') {
-      return externalServicesCheckedAt == null ? validateExternalServices() : preparedPlaywright
-    }
-    return validateExternalServices()
-  }
-  if (settings.get().externalServicePreparation === 'automatic') validateExternalServices()
   const synVoice = new SynVoiceService()
 
   // ConPTY v2 (conpty.dll do pacote) — a correção de raiz da TUI que repintava
@@ -2690,84 +2652,10 @@ app.whenReady().then(async () => {
     if (previous === lifecycle) return
     maestro.update(projectId, { projectLifecycle: lifecycle })
 
-    const paneId = maestroPaneId(projectId)
-    if (!ptys.has(paneId)) return
-    const instruction =
-      lifecycle === 'greenfield-planning'
-        ? 'O projeto está no PLANO MESTRE. Continue pelas cinco etapas salvas em .synkora/PROJECT_PLAN.md; mostre sempre onde estamos e não abra trabalho fora da próxima missão aprovada.'
-        : lifecycle === 'greenfield-awaiting-release'
-          ? 'Todas as missões planejadas foram integradas, mas o projeto ainda AGUARDA A PUBLICAÇÃO FINAL. Não abra outra missão e não publique silenciosamente: mostre a versão pendente e espere a aceitação explícita do usuário.'
-          : lifecycle === 'greenfield-established'
-            ? 'O plano mestre original foi CONCLUÍDO e agora é histórico. A partir daqui trate este como projeto pronto: crie apenas missões focadas para melhorias, funcionalidades ou correções pedidas pelo usuário; não reabra o roadmap antigo.'
-            : 'Este é um PROJETO EXISTENTE. Use missões focadas para melhorias concretas; o fluxo de plano mestre de pasta vazia não se aplica.'
-    hub.notifyPaneNow(
-      paneId,
-      `MUDANÇA DE ETAPA (instrução autoritativa): ${instruction}`
-    )
   }
   hub = new Hub({
     projectPathOf: (pid) => projects.get(pid)?.path,
     ensureProjectRuntimeWritable: ensureSynkoraGitExcludes,
-    // Evento de missão → SÓ o pane do orquestrador dela (decisão do usuário,
-    // 2026-07-28: nenhum pane de missão fala com o PM — orquestrador morto =
-    // o evento fica em EVENTS.md e o board_status recupera no respawn; antes
-    // o fallback despejava assunto de missão no PM). Evento de projeto → PM.
-    maestroPaneOf: (pid, missionId) => {
-      if (missionId) {
-        const orch = orchPaneId(pid, missionId)
-        return ptys.has(orch) ? orch : undefined
-      }
-      return ptys.has(maestroPaneId(pid)) ? maestroPaneId(pid) : undefined
-    },
-    alive: (paneId) => ptys.has(paneId),
-    // Entrega a pane de TERMINAL, por teclado. O correio MCP durável (caixa
-    // postal por endereço + entrega de carona no resultado da próxima tool)
-    // morreu junto com o catálogo legado: a única identidade que sobrou é a do
-    // chat de planejamento, que não tem terminal para receber texto digitado —
-    // e cujo catálogo nunca teve `check_messages` para drenar caixa nenhuma.
-    inject: (paneId, text, onSubmitted) => ptys.inject(paneId, text, onSubmitted),
-    composerBusy: (paneId) => ptys.composerBusy(paneId),
-    onDelivery: (paneId, status, line, meta) => {
-      const identity = hub.identityByPane(paneId)
-      const sourceIdentity = meta.sourcePaneId
-        ? hub.identityByPane(meta.sourcePaneId)
-        : undefined
-      blackbox.record({
-        cat: 'msg',
-        // delivery-injected significa digitação REAL no teclado do pane.
-        event: `delivery-${status}`,
-        ids: {
-          paneId,
-          projectId: identity?.projectId,
-          missionId: identity?.missionId,
-          taskId: identity?.taskId,
-          role: identity?.role
-        },
-        detail: {
-          line,
-          sourcePaneId: meta.sourcePaneId,
-          communicationKind: meta.kind,
-          correlationId: meta.correlationId
-        }
-      })
-      const context = identity ?? sourceIdentity
-      if (status === 'injected' && meta.sourcePaneId && context) {
-        const communication: HubCommunicationEvent = {
-          id: meta.correlationId
-            ? `${meta.correlationId}:${paneId}`
-            : randomUUID(),
-          ts: new Date().toISOString(),
-          projectId: context.projectId,
-          missionId: identity?.missionId ?? sourceIdentity?.missionId,
-          taskId: identity?.taskId ?? sourceIdentity?.taskId,
-          sourcePaneId: meta.sourcePaneId,
-          targetPaneId: paneId,
-          kind: meta.kind ?? 'message'
-        }
-        // pushPanes: só o ConstellationMap (view de panes) consome este canal.
-        pushPanes('hub:communication', communication)
-      }
-    },
     onEvent: (evt) => {
       // Caixa-preta: TODO evento do hub (mensagens/estados entre agentes) vira
       // entrada correlacionada — é o espelho estruturado do EVENTS.md.
@@ -2808,14 +2696,11 @@ app.whenReady().then(async () => {
     blackbox,
     mainStalls,
     sessionStats,
-    helperCompletions,
     maestroSessions,
     paneTokens,
     paneMcpFiles,
     paneSessions,
     paneStatusNotes,
-    helperReported,
-    helperSeen,
     voiceRequests,
     get hub() {
       return hub
@@ -2883,7 +2768,6 @@ app.whenReady().then(async () => {
     ensureProjectRuntimeWritable: (...args) => ensureProjectRuntimeWritable(...args),
     projectModeOf: (...args) => projectModeOf(...args),
     projectPlanOf: (...args) => projectPlanOf(...args),
-    externalPlaywrightForPane: () => externalPlaywrightForPane(),
     bypassOn: (...args) => bypassOn(...args),
     maestroPaneId: (...args) => maestroPaneId(...args),
     orchPaneId: (...args) => orchPaneId(...args),
@@ -4408,74 +4292,6 @@ app.whenReady().then(async () => {
   }
 
 
-  interface StoredHelperRecovery {
-    file: string
-    relativePath: string
-    record: HelperRecoveryRecord
-  }
-
-  function helperTranscriptPath(projectId: string, paneId: string): string | undefined {
-    const project = projects.get(projectId)
-    if (!project) return undefined
-    const runsDir = join(project.path, '.synkora', 'runs')
-    const exact = join(runsDir, `helper-${paneId}.md`)
-    const legacy = join(runsDir, `helper-${paneId.slice(0, 8)}.md`)
-    return existsSync(exact) || !existsSync(legacy) ? exact : legacy
-  }
-
-  function storedHelperRecoveries(projectId: string): StoredHelperRecovery[] {
-    const project = projects.get(projectId)
-    if (!project) return []
-    const runsDir = join(project.path, '.synkora', 'runs')
-    const entries: StoredHelperRecovery[] = []
-    try {
-      for (const name of readdirSync(runsDir).sort((left, right) => left.localeCompare(right, 'en'))) {
-        if (!/^helper-.*\.md$/i.test(name)) continue
-        const file = join(runsDir, name)
-        try {
-          const record = parseHelperRecoveryTranscript(readFileSync(file, 'utf-8').slice(0, 32_768))
-          if (!record || record.projectId !== projectId) continue
-          entries.push({ file, relativePath: `.synkora/runs/${name}`, record })
-        } catch {
-          // transcript legado/corrompido não entra no índice, mas é preservado
-        }
-      }
-    } catch {
-      // projeto ainda não possui runs
-    }
-    return entries
-  }
-
-  function updateStoredHelperStatus(
-    projectId: string,
-    paneId: string,
-    status: HelperRecoveryStatus,
-    statusAt = new Date().toISOString()
-  ): HelperRecoveryRecord | undefined {
-    const file = helperTranscriptPath(projectId, paneId)
-    if (!file) return undefined
-    try {
-      ensureProjectRuntimeWritable(projectId)
-      const current = readFileSync(file, 'utf-8')
-      const updated = updateHelperRecoveryStatus(current, status, statusAt)
-      if (updated.changed) writeFileSync(file, updated.transcript, 'utf-8')
-      return updated.record
-    } catch {
-      return undefined
-    }
-  }
-
-  // 🧹 LIMPEZA do .synkora (botão no chrome do Maestro): remove os .md e
-  // marcadores SEM USO — transcripts de tarefas que não existem mais,
-  // arquivos de missões que já eram (concluídas/excluídas), helpers e
-  // marcadores órfãos. O que ainda serve (CONTEXT/BOARD/EVENTS, transcripts
-  // de tarefas vivas, PLANs de missões ativas/arquivadas) FICA.
-  /** VASSOURA do .synkora — a MESMA para o 🧹 manual, o boot e o pós-
-   *  integração (bug real: a limpeza automática da integração não pegava os
-   *  helper-*.md, e o modo plano multiplica ajudantes — o usuário achava o
-   *  .synkora "cheio de lixo" e só o 🧹 manual resolvia). Poupa o que está
-   *  VIVO: transcript de helper com pane aberto (o delegador ainda lê via
-   *  helper_output) e marcador .done/.verdict de fase com watch ativo. */
   function sweepProjectFiles(
     projectId: string,
     opts: { preserveInterruptedHelpers?: boolean } = {}
@@ -4515,13 +4331,6 @@ app.whenReady().then(async () => {
         })
         .map((t) => t.id)
     )
-    // helper-<paneId8>.md de pane VIVO não se toca — o delegador ainda lê
-    const liveHelperShorts = new Set(
-      hub
-        .panesOf(projectId)
-        .filter((p) => p.role === 'ajudante' && ptys.has(p.paneId))
-        .flatMap((p) => [p.paneId, p.paneId.slice(0, 8)])
-    )
     const runsDir = join(project.path, '.synkora', 'runs')
     try {
       for (const ent of readdirSync(runsDir)) {
@@ -4531,40 +4340,6 @@ app.whenReady().then(async () => {
           // report do dev/gate). Sem máquina de fases não há watch que os
           // preserve — o que sobrou no disco é resíduo.
           zap(full)
-        } else if (ent.startsWith('helper-')) {
-          const short = ent.replace(/^helper-/, '').replace(/\..*$/, '')
-          if (liveHelperShorts.has(short)) continue
-          let belongsToOpenWork = false
-          try {
-            const record = parseHelperRecoveryTranscript(
-              readFileSync(full, 'utf-8').slice(0, 32_768)
-            )
-            const ownerTask = record?.taskId ? tasks.get(record.taskId) : undefined
-            const ownerMission = record?.missionId ? missions.get(record.missionId) : undefined
-            belongsToOpenWork = Boolean(
-              record &&
-                ((ownerTask &&
-                  ownerTask.projectId === projectId &&
-                  ownerTask.status !== 'done' &&
-                  (!ownerMission || ownerMission.status !== 'concluida')) ||
-                  (!record.taskId &&
-                    ownerMission?.projectId === projectId &&
-                    ownerMission.status !== 'concluida') ||
-                  (!record.taskId && !record.missionId && record.projectId === projectId))
-            )
-          } catch {
-            // transcript legado segue a política antiga da vassoura
-          }
-          // Uma integração limpa o projeto inteiro, mas missões irmãs podem
-          // continuar em paralelo. O transcript delas é estado recuperável,
-          // não lixo da missão que acabou de integrar.
-          if (!belongsToOpenWork && !opts.preserveInterruptedHelpers) zap(full)
-        } else if (ent.startsWith('mission-')) {
-          const short = ent.replace(/^mission-/, '').replace(/\..*$/, '')
-          if (!liveShorts.has(short)) zap(full)
-        } else if (/\.md$/.test(ent)) {
-          const tid = ent.replace(/\.md$/, '')
-          if (!taskIds.has(tid) || staleTaskIds.has(tid)) zap(full)
         }
       }
     } catch {
@@ -4670,8 +4445,6 @@ app.whenReady().then(async () => {
   const paneLifecycle = createPaneLifecycle(ctx, {
     ensureBypassAccepted,
     ensureCodexTrust,
-    updateStoredHelperStatus,
-    helperOpenWatchdog
   })
   const {
     livePaneSpecs,
@@ -4761,7 +4534,6 @@ app.whenReady().then(async () => {
 
 
   setInterval(() => {
-    paneLifecycle.tickHelperOpenWatchdog()
   }, 3000)
 
 
@@ -5034,19 +4806,6 @@ app.whenReady().then(async () => {
         const full = join(runsDir, ent)
         try {
           if (/\.(done|verdict)$/.test(ent)) unlinkSync(full)
-          else if (ent.startsWith('helper-')) {
-            if (Date.now() - statSync(full).mtimeMs > HELPER_TTL) {
-              unlinkSync(full)
-            } else {
-              const transcript = readFileSync(full, 'utf-8')
-              const recovered = updateHelperRecoveryStatus(
-                transcript,
-                'interrupted',
-                new Date().toISOString()
-              )
-              if (recovered.changed) writeFileSync(full, recovered.transcript, 'utf-8')
-            }
-          }
         } catch {
           // best-effort
         }
@@ -5282,31 +5041,7 @@ app.whenReady().then(async () => {
     }
   })
   registerFilesIpc(ctx, { assertAppRendererSender })
-  registerSettingsIpc(ctx, {
-    assertMainRendererSender,
-    assertAppRendererSender,
-    validateExternalServices,
-    state: {
-      get preparedPlaywright() {
-        return preparedPlaywright
-      },
-      set preparedPlaywright(v) {
-        preparedPlaywright = v
-      },
-      get externalServicesAvailable() {
-        return externalServicesAvailable
-      },
-      set externalServicesAvailable(v) {
-        externalServicesAvailable = v
-      },
-      get externalServicesCheckedAt() {
-        return externalServicesCheckedAt
-      },
-      set externalServicesCheckedAt(v) {
-        externalServicesCheckedAt = v
-      }
-    }
-  })
+  registerSettingsIpc(ctx, { assertMainRendererSender, assertAppRendererSender })
   registerHarnessIpc(ctx)
   // PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md): sessão de chat
   // por pane. Nenhum CLI filho sobrevive ao quit.
@@ -5368,9 +5103,6 @@ app.whenReady().then(async () => {
   })
   registerPtyIpc(ctx, {
     engine: paneLifecycle,
-    updateStoredHelperStatus,
-    helperTranscriptPath,
-    helperOpenWatchdog,
     paneCodexSkillProfiles,
     scheduleProgressLiveSnapshot,
     refreshProgressLiveSnapshot,

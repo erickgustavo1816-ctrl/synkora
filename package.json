@@ -70,7 +70,6 @@
     "@lydell/node-pty": "^1.2.0-beta.12",
     "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
-    "@playwright/mcp": "0.0.78",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",

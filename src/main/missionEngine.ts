@@ -117,21 +117,16 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     ptys,
     blackbox,
     mainStalls,
-    helperCompletions,
-    helperReported,
-    helperSeen,
     syncBoard,
     scheduleProgressSnapshot,
     projectModeOf,
     orchPaneId,
     unregisterPane,
-    ensureProjectRuntimeWritable
   } = ctx
   // hub é atribuído UMA vez, antes de o engine nascer — capturar é seguro.
   const hub = ctx.hub
   const {
     orchKey,
-    securityWaiverOptions,
     currentPlanOf,
     finalVerificationAccepted,
     versionIsolationIsValid,
@@ -2352,9 +2347,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     for (const pane of hub
       .panesOf(projectId)
       .filter((candidate) => candidate.missionId === missionId)) {
-      helperCompletions.discard(pane.paneId)
-      helperReported.add(pane.paneId)
-      helperSeen.add(pane.paneId)
       if (ptys.has(pane.paneId)) ptys.kill(pane.paneId)
       unregisterPane(pane.paneId)
       ctx.livePaneSpecs.delete(pane.paneId)

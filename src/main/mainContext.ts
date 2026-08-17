@@ -19,7 +19,7 @@
 import type { BrowserWindow, WebContents } from 'electron'
 import type { ProjectStore } from './projects'
 import type { SeatStore } from './seats'
-import type { TaskStore, Task, PlanVerificationCheckpoint } from './tasks'
+import type { TaskStore } from './tasks'
 import type { MissionStore } from './missions'
 import type { PlanStore } from './plans'
 import type { IntegrationQueueStore } from './integrationQueue'
@@ -32,11 +32,10 @@ import type { SynVoiceService } from './synVoice'
 import type { Blackbox } from './blackbox'
 import type { StallAttribution } from './stallAttribution'
 import type { SessionStatsWatcher } from './sessionStats'
-import type { HelperCompletionTracker } from './helperCompletion'
 import type { MaestroSession } from './maestroSession'
 import type { CodexSession } from './codexSession'
 import type { Hub, PaneIdentity } from './hub'
-import type { McpServerHandle, McpStdioLaunch } from './mcpServer'
+import type { McpServerHandle } from './mcpServer'
 import type { PaneStartupMetrics } from './paneStartupMetrics'
 import type { MaestroEvent } from './maestro'
 import type { ProjectPlan } from './projectPlan'
@@ -62,7 +61,6 @@ export interface MainContext {
   readonly blackbox: Blackbox
   readonly mainStalls: StallAttribution
   readonly sessionStats: SessionStatsWatcher
-  readonly helperCompletions: HelperCompletionTracker
   readonly maestroSessions: Map<string, MaestroSession | CodexSession>
 
   // ——— reatribuíveis em runtime (getters — sempre o valor ATUAL) ———
@@ -81,8 +79,6 @@ export interface MainContext {
   readonly paneMcpFiles: Map<string, string>
   readonly paneSessions: Map<string, string>
   readonly paneStatusNotes: Map<string, { text: string; at: string }>
-  readonly helperReported: Set<string>
-  readonly helperSeen: Set<string>
   readonly voiceRequests: Map<string, { controller: AbortController; senderId: number }>
   readonly expiredSeats: Map<string, number>
   readonly integrationDrainTimers: Map<string, NodeJS.Timeout>
@@ -119,7 +115,6 @@ export interface MainContext {
   ensureProjectRuntimeWritable(projectId: string): void
   projectModeOf(projectId: string): 'greenfield' | 'existing'
   projectPlanOf(projectId: string): ProjectPlan | undefined
-  externalPlaywrightForPane(): McpStdioLaunch | undefined
   bypassOn(projectId: string): boolean
   maestroPaneId(projectId: string): string
   orchPaneId(projectId: string, missionId: string): string

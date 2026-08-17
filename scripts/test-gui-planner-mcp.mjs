@@ -48,23 +48,17 @@ const PLANNER_TOOLS = Object.freeze([
 /** Hub REAL com as dependências mínimas que ele exige (o registro de
  *  identidade não usa nenhuma delas — é justamente o ponto).
  *
- *  `dispose()` é OBRIGATÓRIO: o construtor arma o intervalo do drain e sem
- *  ele o processo de teste nunca termina. Esta suíte passa a ser a única
- *  chamadora de `Hub.dispose()` no repo — quem remover o método trava o
- *  gate, e é bom que trave. */
+ *  O hub NÃO tem mais timer: a fila de digitação morreu com o pipeline de
+ *  fases (2026-08-17), e com ela o `dispose()`. Construir e largar é seguro —
+ *  o que o teste precisa fechar é o servidor HTTP, não o hub. */
 function hubIn(t) {
   const root = mkdtempSync(join(tmpdir(), 'synkora-planner-mcp-'))
   const hub = new Hub({
     projectPathOf: () => root,
     ensureProjectRuntimeWritable: () => {},
-    maestroPaneOf: () => undefined,
-    inject: () => false,
-    composerBusy: () => false,
-    alive: () => false,
     onEvent: () => {}
   })
   t.after(() => {
-    hub.dispose()
     rmSync(root, { recursive: true, force: true })
   })
   return { hub, root }

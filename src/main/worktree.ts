@@ -1,16 +1,12 @@
 import { execFileSync } from 'child_process'
-import { createHash } from 'crypto'
+import {} from 'crypto'
 import {
   existsSync,
-  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   realpathSync,
-  renameSync,
   rmdirSync,
-  rmSync,
   unlinkSync,
   writeFileSync,
   type Dirent

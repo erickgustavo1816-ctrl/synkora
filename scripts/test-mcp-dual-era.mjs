@@ -55,10 +55,6 @@ async function serverIn(t) {
   const hub = new Hub({
     projectPathOf: () => root,
     ensureProjectRuntimeWritable: () => {},
-    maestroPaneOf: () => undefined,
-    inject: () => false,
-    composerBusy: () => false,
-    alive: () => false,
     onEvent: () => {}
   })
   const calls = []
@@ -75,7 +71,6 @@ async function serverIn(t) {
   })
   t.after(async () => {
     await handle.close()
-    hub.dispose()
     rmSync(root, { recursive: true, force: true })
   })
   return { hub, root, calls, url: new URL(`http://127.0.0.1:${handle.port}/mcp`) }
