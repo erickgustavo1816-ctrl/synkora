@@ -64,6 +64,7 @@
     "test:mission-verification": "node --experimental-strip-types --test scripts/test-mission-verification.mjs",
     "test:mission-creation": "tsc --outDir .tmp/mission-creation-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --noCheck --types node src/main/ipc/missions.ts src/main/missionEngine.ts && node --test scripts/test-mission-creation.mjs",
     "test:project-adapters": "node --experimental-strip-types --test scripts/test-project-adapters.mjs",
+    "test:mcp-dual-era": "tsc --outDir .tmp/mcp-dual-era-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/hub.ts src/main/mcpServer.ts src/main/securityRedaction.ts && node --test scripts/test-mcp-dual-era.mjs",
     "test:mission-worktree": "tsc --outDir .tmp/mission-worktree-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/worktree.ts src/main/winPath.ts && node --test scripts/test-mission-worktree.mjs",
     "test:commit-graph": "node --experimental-strip-types --test scripts/test-commit-graph.mjs",
     "test:blackbox": "tsc --outDir .tmp/blackbox-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/blackbox.ts src/main/securityRedaction.ts && node scripts/test-blackbox.mjs",
