@@ -13,6 +13,18 @@ import { ensureSynkoraGitExcludes, gitHead, removeWorktreeAndBranch } from '../w
 import { type BacklogItemType, type Version } from '../backlog'
 import type { MainContext } from '../mainContext'
 
+/**
+ * Resposta do `backlog:createVersion`. Ela deixou de ser `Version | null`
+ * quando a lateral de Versões passou a aceitar um número DIGITADO pelo dono
+ * (2026-08-17): enquanto todo nome vinha das sugestões calculadas, `null` era
+ * um caso teórico — a tela só oferecia opções válidas. Com o campo aberto,
+ * `null` virou o comportamento normal de quem erra o número, e um clique que
+ * não cria nada nem diz por quê é um beco. O MOTIVO viaja junto.
+ */
+export type CreateVersionResult =
+  | { ok: true; version: Version }
+  | { ok: false; error: string }
+
 /** Dependências do closure do index ainda não migradas (mesmo padrão
  * do PhaseEngineExtras). */
 export interface BacklogIpcExtras {
@@ -45,14 +57,20 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
 
   ipcMain.handle(
     'backlog:createVersion',
-    (e, projectId: string, input: { name: string; theme?: string; goal?: string }) => {
-      if (!input.name.trim()) return null
-      // duplicada ou inferior à main → não cria (a UI só oferece opções
-      // válidas; isto é a rede de segurança)
-      if (backlog.validateNewVersion(projectId, input.name.trim())) return null
-      const version = backlog.createVersion(projectId, { ...input, name: input.name.trim() })
+    (
+      e,
+      projectId: string,
+      input: { name: string; theme?: string; goal?: string }
+    ): CreateVersionResult => {
+      const name = input.name.trim()
+      // A RÉGUA É UMA SÓ para o número calculado pela tela e para o digitado
+      // pelo dono (vazio, duplicado, abaixo/igual à lançada) — o que mudou é
+      // que a recusa volta escrita, em vez de virar um `null` mudo.
+      const refusal = backlog.validateNewVersion(projectId, name)
+      if (refusal) return { ok: false, error: refusal }
+      const version = backlog.createVersion(projectId, { ...input, name })
       emitBacklogChanged(projectId)
-      return version
+      return { ok: true, version }
     }
   )
 

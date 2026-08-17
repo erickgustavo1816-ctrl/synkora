@@ -74,17 +74,34 @@ export interface BacklogItem {
   updatedAt: string
 }
 
-/** "V1.2.3" / "v1.2" / "1.3" → [major, minor, patch]; sem padrão → null. */
-export function parseVersionName(name: string): [number, number, number] | null {
-  const m = name.trim().match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/i)
-  return m ? [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)] : null
+/**
+ * "V1.2.3" / "v1.2" / "1.3" / "1.2.0.4" → os segmentos numéricos do nome;
+ * nome sem padrão numérico ("MVP", "Beta") → null, e continua sendo um nome
+ * legítimo — o que ele perde é lugar na ORDENAÇÃO, não o direito de existir.
+ *
+ * O resultado tem SEMPRE ao menos 3 posições (preenchidas com zero) para que
+ * major/minor/patch possam ser lidos por índice, e preserva os segmentos
+ * extras: um build "1.2.0.4" existe no mundo real, e o parser antigo, que
+ * parava no terceiro ponto, devolvia `null` para ele. Nome que PARECE número e
+ * some da comparação é pior que nome sem padrão nenhum: ele atravessava a
+ * guarda da versão lançada em silêncio.
+ */
+export function parseVersionName(name: string): number[] | null {
+  const trimmed = name.trim()
+  if (!/^v?\d+(?:\.\d+)*$/i.test(trimmed)) return null
+  const parts = trimmed.replace(/^v/i, '').split('.').map(Number)
+  while (parts.length < 3) parts.push(0)
+  return parts
 }
 
-export function cmpVersionTriples(
-  a: [number, number, number],
-  b: [number, number, number]
-): number {
-  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]
+/** Ordem entre dois nomes já convertidos em segmentos. Segmento ausente vale
+ *  zero dos dois lados, então "1.2" e "1.2.0" empatam, como manda o semver. */
+export function compareVersionNumbers(a: readonly number[], b: readonly number[]): number {
+  const len = Math.max(a.length, b.length)
+  for (let i = 0; i < len; i++) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0)
+    if (diff !== 0) return diff
+  }
   return 0
 }
 
@@ -200,7 +217,9 @@ export class BacklogStore {
     return this.data.versions.find((v) => v.id === id)
   }
 
-  /** null = pode criar; string = motivo da recusa. Regras (decisão do
+  /** null = pode criar; string = motivo da recusa, escrito para ser LIDO pelo
+   *  dono (o número passou a ser digitável na lateral de Versões, 2026-08-17:
+   *  "posso colocar um projeto que já esteja na 1.20"). Regras (decisão do
    *  usuário): nome duplicado nunca; e se a main já está na X, criar uma
    *  versão numericamente INFERIOR ou igual a X não faz sentido. */
   validateVersionName(
@@ -209,7 +228,7 @@ export class BacklogStore {
     excludeVersionId?: string
   ): string | null {
     const trimmed = name.trim()
-    if (!trimmed) return 'nome vazio'
+    if (!trimmed) return 'o nome da versão não pode ficar vazio'
     if (
       this.listVersions(projectId).some(
         (v) =>
@@ -222,10 +241,17 @@ export class BacklogStore {
     const released = this.listVersions(projectId)
       .filter((v) => v.status === 'lancada')
       .map((v) => ({ v, p: parseVersionName(v.name) }))
-      .filter((x): x is { v: Version; p: [number, number, number] } => x.p != null)
-      .sort((a, b) => cmpVersionTriples(b.p, a.p))[0]
-    if (p && released && cmpVersionTriples(p, released.p) <= 0)
-      return `a main já está na ${released.v.name} — ${trimmed} seria uma versão inferior`
+      .filter((x): x is { v: Version; p: number[] } => x.p != null)
+      .sort((a, b) => compareVersionNumbers(b.p, a.p))[0]
+    if (!p || !released) return null
+    // "seria uma versão inferior" para 2.0 contra uma V2.0 lançada é falso: não
+    // é inferior, é ELA com outra grafia. A recusa nomeia o que aconteceu e
+    // como sair — quem digitou um número precisa saber qual digitar.
+    const order = compareVersionNumbers(p, released.p)
+    if (order === 0)
+      return `a main já está na ${released.v.name}: ${trimmed} é o número dela — escolha um acima`
+    if (order < 0)
+      return `a main já está na ${released.v.name}: ${trimmed} ficaria abaixo dela — escolha um número acima`
     return null
   }
 
@@ -244,10 +270,9 @@ export class BacklogStore {
       .filter((version) => version.projectId === projectId && version.status === 'lancada')
       .map((version) => ({ version, parsed: parseVersionName(version.name) }))
       .filter(
-        (entry): entry is { version: Version; parsed: [number, number, number] } =>
-          entry.parsed !== null
+        (entry): entry is { version: Version; parsed: number[] } => entry.parsed !== null
       )
-      .sort((left, right) => cmpVersionTriples(right.parsed, left.parsed))[0]
+      .sort((left, right) => compareVersionNumbers(right.parsed, left.parsed))[0]
     // Segue a maior versão numérica histórica, mesmo se a mais recente tiver nome legado.
     const prefix = highestNumeric
       ? (highestNumeric.version.name.trim().match(/^v/i)?.[0] ?? '')

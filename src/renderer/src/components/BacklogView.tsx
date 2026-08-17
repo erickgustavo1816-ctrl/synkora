@@ -322,6 +322,11 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   const [confirmRemoveItems, setConfirmRemoveItems] = useState<BacklogItem[] | null>(null)
   const [confirmRelease, setConfirmRelease] = useState<Version | null>(null)
   const [releaseMsg, setReleaseMsg] = useState<string | null>(null)
+  // NÚMERO DIGITADO PELO DONO (ordem de 2026-08-17) + a recusa do main quando
+  // ele não serve. As duas coisas andam juntas: sem a recusa na tela, o campo
+  // seria um botão que às vezes não faz nada.
+  const [typedVersion, setTypedVersion] = useState('')
+  const [newVersionError, setNewVersionError] = useState<string | null>(null)
   // servidor de teste do dono: sobe a branch da versão num pane shell
   const [testVersion, setTestVersion] = useState<Version | null>(null)
   /** missão encerrada cuja conversa 2.0 o dono abriu para LER (fotografia) —
@@ -389,9 +394,12 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   const selectable = shown.filter((i) => i.status === 'pendente')
   const picked = shown.filter((i) => selected.has(i.id) && i.status === 'pendente')
 
-  // Criação AUTOMÁTICA de versão (decisão do usuário): nada de digitar
-  // número — as opções são calculadas da versão mais alta (patch/minor/major)
-  // e por construção nunca duplicam nem ficam abaixo da main.
+  // Sugestões de versão CALCULADAS da mais alta existente (patch/minor/major):
+  // por construção nunca duplicam nem ficam abaixo da main, e resolvem com um
+  // clique o produto que nasceu aqui. Elas não resolvem o produto que CHEGOU
+  // pronto — daí o campo do número próprio logo abaixo (ordem do dono,
+  // 2026-08-17: "posso colocar um projeto que já esteja na 1.20").
+  const typedVersionId = `bl-nv-${projectId}`
   const nextOptions = ((): { label: string; kind: string }[] => {
     const parsed = versions
       .map((v) => ({ v, p: parseVer(v.name) }))
@@ -425,10 +433,23 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
     await refresh()
   }
 
+  /**
+   * A ÚNICA porta de criação de versão da tela: o clique numa sugestão e o
+   * número digitado passam por aqui, então a régua (e a recusa) é a mesma para
+   * os dois. O main devolve o motivo; guardá-lo em estado é o que transforma
+   * "o botão não fez nada" em "1.20 ficaria abaixo da V2.0 — escolha um acima".
+   */
   async function addVersionNamed(name: string): Promise<void> {
-    if (!window.synkora.backlog) return
-    const created = await window.synkora.backlog.createVersion(projectId, { name })
-    if (created) setSelVersion(created.id)
+    const trimmed = name.trim()
+    if (!trimmed || !window.synkora.backlog) return
+    const created = await window.synkora.backlog.createVersion(projectId, { name: trimmed })
+    if (!created.ok) {
+      setNewVersionError(created.error)
+      return
+    }
+    setNewVersionError(null)
+    setTypedVersion('')
+    setSelVersion(created.version.id)
     await refresh()
   }
 
@@ -583,9 +604,10 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
         <div className="bl-head">
           <span className="files-title">versões</span>
         </div>
-        {/* criar versão EM CIMA, sem digitar número: patch/minor/major
-            calculados da versão mais alta — nunca duplica nem fica abaixo
-            da main (decisão do usuário) */}
+        {/* criar versão EM CIMA: um clique nas sugestões (patch/minor/major
+            calculados da mais alta) OU o número escrito à mão, para o produto
+            que já vinha de outro lugar. A régua é a mesma nos dois caminhos —
+            quem recusa é o main, e a recusa aparece aqui embaixo. */}
         <div className="bl-newversion top">
           <span className="bl-nv-label">+ nova versão</span>
           <div className="bl-nv-opts">
@@ -600,6 +622,42 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
               </button>
             ))}
           </div>
+          <div className="bl-nv-own">
+            <label className="bl-nv-own-label" htmlFor={typedVersionId}>
+              ou escreva o número
+            </label>
+            <div className="bl-nv-own-row">
+              <input
+                id={typedVersionId}
+                className="bl-nv-input"
+                value={typedVersion}
+                /* exemplo, nunca rótulo: "1.20" sozinho dentro da caixa lê como
+                   um valor já preenchido — o "ex.:" desfaz a confusão */
+                placeholder="ex.: 1.20"
+                spellCheck={false}
+                autoComplete="off"
+                data-tip="O número do jeito que o produto já é numerado — 1.20, 2.0.1, 1.2.0.4 ou um codinome"
+                onChange={(e) => {
+                  setTypedVersion(e.target.value)
+                  setNewVersionError(null)
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && void addVersionNamed(typedVersion)}
+              />
+              <button
+                className="btn ghost tiny"
+                disabled={!typedVersion.trim()}
+                data-tip="Criar a versão com este número"
+                onClick={() => void addVersionNamed(typedVersion)}
+              >
+                ◈ criar
+              </button>
+            </div>
+          </div>
+          {newVersionError && (
+            <span className="bl-nv-error" role="alert">
+              {newVersionError}
+            </span>
+          )}
         </div>
         {/* abertas EM CIMA (é onde o trabalho acontece), sempre da mais
             recente para a mais antiga; lançadas embaixo, idem */}

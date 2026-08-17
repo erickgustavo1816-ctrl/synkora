@@ -466,7 +466,7 @@ export function installDevMock(): void {
     },
     backlog: {
       listVersions: async () => [],
-      createVersion: async () => null,
+      createVersion: async () => ({ ok: false, error: 'preview: sem backlog no browser' }),
       removeVersion: async () => 'mock: versão removida',
       releaseVersion: async () => 'mock: sem git no preview',
       listItems: async () => [],

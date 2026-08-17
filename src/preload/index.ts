@@ -295,6 +295,13 @@ export interface Version {
   updatedAt: string
 }
 
+/** Espelho de `CreateVersionResult` (main/ipc/backlog): criar versão devolve a
+ *  versão OU o motivo da recusa — a lateral aceita um número digitado pelo
+ *  dono, e recusa muda ali é um clique que não produz nada e não se explica. */
+export type CreateVersionResult =
+  | { ok: true; version: Version }
+  | { ok: false; error: string }
+
 /** Versoes abertas que uma nova missao pode escolher, mais o destino padrao. */
 export interface MissionVersionChoices {
   versions: Version[]
@@ -984,10 +991,14 @@ const api = {
   backlog: {
     listVersions: (projectId: string): Promise<Version[]> =>
       ipcRenderer.invoke('backlog:listVersions', projectId),
+    /** Devolve a VERSÃO criada ou o MOTIVO da recusa (nome vazio, duplicado,
+     *  abaixo/igual à lançada): o número passou a ser digitável na lateral de
+     *  Versões, e um clique que não cria nada precisa dizer por quê. */
     createVersion: (
       projectId: string,
       input: { name: string; theme?: string; goal?: string }
-    ): Promise<Version | null> => ipcRenderer.invoke('backlog:createVersion', projectId, input),
+    ): Promise<CreateVersionResult> =>
+      ipcRenderer.invoke('backlog:createVersion', projectId, input),
     removeVersion: (projectId: string, id: string): Promise<string> =>
       ipcRenderer.invoke('backlog:removeVersion', projectId, id),
     releaseVersion: (id: string): Promise<string> =>

@@ -34,12 +34,65 @@ function versionMissionsRegion(src) {
   return src.slice(start, end)
 }
 
-/** o corpo de uma regra CSS pelo seletor EXATO, ancorado em início de linha */
+/** o corpo de uma regra CSS pelo seletor EXATO, ancorado em início de linha —
+ *  sem os comentários, que separam declarações e confundem a leitura por
+ *  propriedade (`prop` procura a partir do `;` anterior) */
 function ruleBody(css, selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
   const found = css.match(new RegExp(`\\n${escaped}\\s*\\{([^}]*)\\}`, 'u'))
   assert.ok(found, `regra ausente: ${selector}`)
-  return found[1]
+  return found[1].replace(/\/\*[\s\S]*?\*\//gu, '')
+}
+
+/** o valor de uma propriedade dentro de um corpo de regra */
+function prop(body, name) {
+  const found = body.match(new RegExp(`(?:^|;)\\s*${name}:\\s*([^;]+)`, 'u'))
+  return found ? found[1].trim() : null
+}
+
+/* ---------- contraste: os tokens do :root + color-mix(in srgb) ---------- */
+
+const hex = (value) => {
+  const raw = value.replace('#', '')
+  const pairs = raw.length === 3 ? [...raw].map((c) => c + c) : raw.match(/../gu)
+  return pairs.map((c) => parseInt(c, 16) / 255)
+}
+
+function rootTokens(css) {
+  const block = css.slice(css.indexOf(':root {'), css.indexOf('}', css.indexOf(':root {')))
+  const out = {}
+  for (const [, name, value] of block.matchAll(/--([\w-]+):\s*(#[0-9a-fA-F]{3,8})\s*;/gu))
+    out[`--${name}`] = hex(value)
+  return out
+}
+
+function resolveColor(expr, tokens) {
+  const value = expr.trim()
+  const mix = value.match(/^color-mix\(in srgb,\s*(.+?)\s+([\d.]+)%,\s*(.+)\)$/u)
+  if (mix) {
+    const a = resolveColor(mix[1], tokens)
+    const pct = Number(mix[2]) / 100
+    const b = resolveColor(mix[3], tokens)
+    return a.map((v, i) => v * pct + b[i] * (1 - pct))
+  }
+  const varRef = value.match(/^var\((--[\w-]+)\)$/u)
+  if (varRef) {
+    assert.ok(tokens[varRef[1]], `token desconhecido no teste: ${varRef[1]}`)
+    return tokens[varRef[1]]
+  }
+  if (value.startsWith('#')) return hex(value)
+  throw new Error(`cor não resolvível pelo teste: ${expr}`)
+}
+
+const channel = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
+const luminance = (rgb) => {
+  const [r, g, b] = rgb.map(channel)
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+const contrast = (fg, bg) => {
+  const a = luminance(fg)
+  const b = luminance(bg)
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
 }
 
 /* ---------- 1. o retrato por versão é uma GRADE de cards ---------- */
@@ -144,6 +197,103 @@ test('a regra não foi copiada: as DUAS superfícies montam o mesmo viewer', asy
   // nenhuma reimplementação da classificação nesta tela
   assert.doesNotMatch(view, /status !== 'arquivada' \?/u)
   assert.match(view, /import \{ MISSION_CARD_TIP, missionCardAccess \} from '\.\.\/missionCardAccess'/u)
+})
+
+/* ---------- 3. o número da versão que o DONO escreve ---------- */
+
+// Ordem do dono (2026-08-17): "posso colocar um projeto que já esteja na 1.20 e
+// não tem como eu controlar isso". As sugestões calculadas (patch/minor/major)
+// são ótimas para um produto que nasceu aqui — e inúteis para um que chegou
+// pronto, porque elas partem SEMPRE da maior versão que este app conhece.
+//
+// O que estes testes prendem não é "existe um input": é que a porta nova passa
+// pela MESMA régua da antiga e que a recusa CHEGA NA TELA. O `createVersion`
+// devolvia `null` para todo motivo — nome duplicado, número abaixo da main,
+// campo vazio — e a tela tratava `null` como "não faz nada". Com o número
+// digitado à mão isso deixa de ser teórico: o clique não produz versão nenhuma
+// e não explica por quê.
+
+test('a lateral aceita um número digitado ao lado das sugestões', async () => {
+  const view = await source('src/renderer/src/components/BacklogView.tsx')
+
+  // As sugestões FICAM: um clique continua sendo o caminho de quem começou o
+  // produto aqui. O campo é a segunda porta, não a substituta.
+  assert.match(view, /nextOptions\.map/u)
+  assert.match(view, /className="bl-nv-own"/u)
+  assert.match(view, /className="bl-nv-input"/u)
+
+  // Rótulo PERSISTENTE, ligado ao campo: o placeholder é o exemplo ("1.20"),
+  // nunca o rótulo — some no primeiro caractere digitado.
+  assert.match(view, /htmlFor=\{typedVersionId\}/u)
+  assert.match(view, /id=\{typedVersionId\}/u)
+  assert.match(view, /placeholder="[^"]*1\.20[^"]*"/u)
+
+  // Enter cria (padrão da casa) e existe um botão visível para quem procura o
+  // gesto com o mouse.
+  assert.match(view, /onKeyDown=\{\(e\) => e\.key === 'Enter'/u)
+  assert.match(view, /disabled=\{!typedVersion\.trim\(\)\}/u)
+})
+
+test('a recusa do main chega à tela — nenhuma criação falha em silêncio', async () => {
+  const [ipc, view, preload, mock] = await Promise.all([
+    source('src/main/ipc/backlog.ts'),
+    source('src/renderer/src/components/BacklogView.tsx'),
+    source('src/preload/index.ts'),
+    source('src/renderer/src/devMock.ts')
+  ])
+
+  // MAIN: o handler devolve o motivo, não `null`. `validateNewVersion` continua
+  // sendo a régua — a mudança é que a resposta dela viaja.
+  assert.match(ipc, /export type CreateVersionResult/u)
+  assert.match(ipc, /\{ ok: false; error: string \}/u)
+  assert.match(ipc, /const refusal = backlog\.validateNewVersion\(projectId, name\)/u)
+  assert.match(ipc, /if \(refusal\) return \{ ok: false, error: refusal \}/u)
+  assert.match(ipc, /return \{ ok: true, version \}/u)
+
+  // PONTE: o tipo atravessa o preload (e o preview do browser devolve a mesma
+  // forma — um mock que devolvesse `null` quebraria a tela só no navegador).
+  assert.match(preload, /createVersion:[\s\S]{0,200}Promise<CreateVersionResult>/u)
+  assert.match(mock, /createVersion: async \(\) => \(\{ ok: false, error: /u)
+
+  // TELA: uma porta só para os dois caminhos, e o motivo vira estado visível.
+  assert.match(view, /const \[newVersionError, setNewVersionError\] = useState<string \| null>\(null\)/u)
+  assert.match(view, /if \(!created\.ok\) \{\s*\r?\n\s*setNewVersionError\(created\.error\)/u)
+  assert.match(view, /setSelVersion\(created\.version\.id\)/u)
+  assert.match(view, /newVersionError && \(/u)
+  assert.match(view, /className="bl-nv-error" role="alert"/u)
+  // e o clique nas sugestões usa a MESMA função (nada de segunda criação)
+  assert.equal((view.match(/backlog\.createVersion\(/gu) ?? []).length, 1)
+})
+
+test('a recusa se apaga quando o dono volta a escrever', async () => {
+  const view = await source('src/renderer/src/components/BacklogView.tsx')
+  const field = view.match(/className="bl-nv-input"[\s\S]*?\/>/u)
+  assert.ok(field, 'o campo do número digitado sumiu')
+
+  // Erro que fica na tela enquanto o texto muda vira ruído: ele descreve um
+  // nome que já não está mais ali.
+  assert.match(field[0], /setNewVersionError\(null\)/u)
+})
+
+test('o bloco de criar versão se lê inteiro — legenda, rótulo, exemplo e recusa', async () => {
+  const css = await source('src/renderer/src/global.css')
+  const tokens = rootTokens(css)
+  // A lateral é `--paper-2`, e é contra ela que tudo aqui se mede.
+  const background = tokens['--paper-2']
+
+  // `var(--err)` cru mede 3,78:1 aqui e `--ink-3` mede 2,59:1 — os dois abaixo
+  // do piso de 4,5:1 de texto pequeno. O segundo era a legenda do bloco desde
+  // sempre; ela deixou de ser decoração no dia em que o bloco passou a ter um
+  // campo para preencher.
+  for (const selector of ['.bl-nv-error', '.bl-nv-label', '.bl-nv-own-label', '.bl-nv-input::placeholder']) {
+    const declared = prop(ruleBody(css, selector), 'color')
+    assert.ok(declared, `${selector} precisa declarar a própria cor`)
+    const ratio = contrast(resolveColor(declared, tokens), background)
+    assert.ok(ratio >= 4.5, `${selector}: ${declared} dá ${ratio.toFixed(2)}:1 — o piso é 4,5:1`)
+  }
+
+  // ... e a recusa QUEBRA: "a main já está na V2.0…" não cabe em 280px de coluna
+  assert.equal(prop(ruleBody(css, '.bl-nv-error'), 'white-space'), null)
 })
 
 test('a linha inerte para de se oferecer ao mouse', async () => {

@@ -9149,7 +9149,10 @@ body.pane-docking .pane-bar.draggable {
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--ink-3);
+  /* era `--ink-3`: 2,6:1 sobre a lateral. O bloco ganhou um campo para digitar
+     o número (2026-08-17) e a legenda dele é a primeira coisa que se lê ali —
+     legenda que não se lê não anuncia nada. */
+  color: var(--ink-2);
 }
 
 .bl-nv-opts {
@@ -9180,6 +9183,55 @@ body.pane-docking .pane-bar.draggable {
 
 .bl-newversion input:focus {
   border-color: var(--ink);
+}
+
+/* O NÚMERO ESCRITO À MÃO (2026-08-17). Segunda porta da mesma criação: as
+   sugestões servem ao produto que nasceu aqui; o campo serve ao que chegou
+   numerado de outro lugar ("um projeto que já esteja na 1.20"). Ele vem DEPOIS
+   das sugestões e com um degrau de espaço próprio — 10px acima do rótulo (6px
+   do bloco + 4px daqui) contra 4px do rótulo para o campo: o par rótulo+campo
+   lê como uma coisa só, separada do que veio antes. */
+.bl-nv-own {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.bl-nv-own-label {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  /* `--ink-3` (o tom do rótulo do bloco) mede 2,6:1 aqui: serve para uma
+     legenda em caixa alta, não para a instrução de um campo. */
+  color: var(--ink-2);
+}
+
+.bl-nv-own-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bl-nv-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* O exemplo dentro do campo é TEXTO que se lê: o cinza padrão do navegador
+   mede 3,5:1 no papel e o piso de placeholder é o mesmo do corpo. */
+.bl-nv-input::placeholder {
+  color: var(--ink-2);
+  opacity: 1;
+}
+
+/* A recusa mora colada ao campo que a produziu, e quebra em vez de cortar: ela
+   nomeia duas versões e a saída ("…escolha um número acima"), e a lateral tem
+   280px. `var(--err)` cru daria 3,8:1 sobre `--paper-2`; escurecido com tinta
+   dá 4,9:1 e continua sendo vermelho. */
+.bl-nv-error {
+  font-size: 10px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--err) 80%, var(--ink));
 }
 
 .bl-items {
