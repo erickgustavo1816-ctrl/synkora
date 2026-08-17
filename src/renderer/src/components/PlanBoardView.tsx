@@ -15,8 +15,8 @@ import {
 import { missionChatSummary } from '../guiMissionPanes'
 import NewMissionModal from './NewMissionModal'
 
-// A ABA DE UM PLANO (D4.5) — irmã do PlanMapView, que segue intocado servindo
-// ao roadmap por ondas da era F6.
+// A ABA DE UM PLANO (D4.5) — a ÚNICA tela de plano do app desde o expurgo F6
+// (2026-08-17): não existe mais uma segunda gramática competindo com esta.
 //
 // O que esta tela responde: "o que este plano prometeu, o que dele já virou
 // missão, e o que está acontecendo com essas missões AGORA". Por isso o

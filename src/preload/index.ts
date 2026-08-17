@@ -521,38 +521,6 @@ export interface MaestroState {
   version: string | null
 }
 
-/** Espelho READ-ONLY do plano mestre (.synkora/PROJECT_PLAN.json) para a aba
- *  Mapa. Tipagem estrutural mínima — o main envia o objeto completo. */
-export interface ProjectPlanItemView {
-  id: string
-  title: string
-  objective: string
-  status: 'planned' | 'active' | 'done' | 'deferred'
-  dependsOn: string[]
-  wave: { id: string; name?: string }
-  version?: { name: string; theme?: string }
-  release?: { versionName: string; releasedAt?: string }
-  missionId?: string
-  outcome?: string
-  deferredReason?: string
-}
-
-export interface ProjectPlanView {
-  status: 'draft' | 'approved' | 'in_progress' | 'revision_pending' | 'awaiting_release' | 'done'
-  projectName: string
-  problem: string
-  vision: string
-  successCriteria: string[]
-  decisions: string[]
-  roadmapMeta: { expectedCount?: number; complete: boolean }
-  roadmap: ProjectPlanItemView[]
-  activeItemIds: string[]
-  readyItemIds: string[]
-  currentWaveId?: string
-  approvedAt?: string
-  updatedAt: string
-}
-
 // ————— PLANOS DO UNIVERSO (2.0, onda D) — BLOCO NOVO, contrato do MAPA —————
 //
 // Espelho ESTRUTURAL de src/main/plans.ts (o renderer nunca importa main). Os
@@ -1781,20 +1749,6 @@ const api = {
     /** libera bypass mesmo em superfície sensível (por projeto; auditado) */
     setSensitiveBypass: (projectId: string, on: boolean): Promise<void> =>
       ipcRenderer.invoke('harness:setSensitiveBypass', projectId, on)
-  },
-  projectPlan: {
-    /** plano mestre (PROJECT_PLAN.json) para a aba Mapa — null sem plano */
-    get: (projectId: string): Promise<ProjectPlanView | null> =>
-      ipcRenderer.invoke('projectPlan:get', projectId),
-    /** Ações autoritativas do dono; tools do Maestro só conseguem solicitá-las. */
-    approve: (projectId: string, expectedUpdatedAt: string): Promise<string> =>
-      ipcRenderer.invoke('projectPlan:approve', projectId, expectedUpdatedAt),
-    startMission: (
-      projectId: string,
-      itemId: string,
-      expectedUpdatedAt: string
-    ): Promise<string> =>
-      ipcRenderer.invoke('projectPlan:startMission', projectId, itemId, expectedUpdatedAt)
   },
   // ————— PLANOS DO UNIVERSO (2.0, onda D) — BLOCO NOVO —————
   plans: {

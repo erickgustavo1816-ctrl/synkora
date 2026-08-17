@@ -1218,11 +1218,6 @@ export function installDevMock(): void {
       attachmentPreview: async () => ({ ok: false, error: 'prévias só funcionam no app' }),
       attachmentAction: async () => ({ ok: false, error: 'anexos só funcionam no app' })
     },
-    projectPlan: {
-      get: async () => null,
-      approve: async () => 'mock: roadmap aprovado pelo usuário',
-      startMission: async (_projectId, itemId) => `mock: missão ${itemId} aberta pelo usuário`
-    },
     // ————— BLOCO NOVO (2.0, onda D): planos do universo —————
     // Sem main não há store: a leitura é vazia e toda mutação RECUSA com a
     // mesma honestidade dos outros mocks — nunca finge que gravou.

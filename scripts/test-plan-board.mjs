@@ -95,7 +95,6 @@ test('abas do mapa: rotas primeiro, mestre na frente dos livres, arquivado fora'
   const { mapTabs, resolveMapTab } = await presentation()
 
   const tabs = mapTabs({
-    hasLegacyPlan: true,
     plans: [
       planTab({ id: 'b', title: 'Dívida técnica', order: 2 }),
       planTab({ id: 'a', title: 'V1.1', order: 1 }),
@@ -103,16 +102,23 @@ test('abas do mapa: rotas primeiro, mestre na frente dos livres, arquivado fora'
       planTab({ id: 'x', title: 'Antigo', status: 'arquivado', order: 0 })
     ]
   })
+  // UMA DIMENSÃO A MENOS desde o expurgo F6: entre `rotas` e os planos não há
+  // mais espaço para a aba do roadmap por ondas.
   assert.deepEqual(
     tabs.map((tab) => tab.id),
-    ['rotas', 'plano-mestre-f6', 'plano:m', 'plano:a', 'plano:b']
+    ['rotas', 'plano:m', 'plano:a', 'plano:b']
+  )
+  assert.ok(
+    !tabs.some((tab) => tab.kind === 'mestre-f6' || tab.id === 'plano-mestre-f6'),
+    'a aba do roadmap F6 voltou'
   )
   // Plano arquivado não ocupa espaço permanente na fila.
   assert.ok(!tabs.some((tab) => tab.id === 'plano:x'))
 
-  const semRoadmap = mapTabs({ hasLegacyPlan: false, plans: [] })
+  // Universo sem plano nenhum: só o quadro de rotas, e sem fila de abas.
+  const semPlano = mapTabs({ plans: [] })
   assert.deepEqual(
-    semRoadmap.map((tab) => tab.id),
+    semPlano.map((tab) => tab.id),
     ['rotas']
   )
 
@@ -319,17 +325,32 @@ test('CONTRATO: a aba do plano não fala com a ponte direto e não usa diálogo 
   assert.match(board, /excluir plano/u)
 })
 
-test('CONTRATO: o roadmap F6 continua de pé e a aba de plano é outra tela', async () => {
-  const map = await source('src/renderer/src/components/UniverseMapView.tsx')
-  const legacy = await source('src/renderer/src/components/PlanMapView.tsx')
+test('CONTRATO: o roadmap F6 MORREU — existe UMA tela de plano no app', async () => {
+  // ESTE TESTE FOI INVERTIDO no expurgo de 2026-08-17. Ele afirmava
+  // "o roadmap F6 continua de pé" e exigia o `import PlanMapView` — era a
+  // ordem antiga ("suprimir, não demolir") escrita em código. A ordem foi
+  // REVOGADA pelo dono; agora ele prova a AUSÊNCIA, para que ninguém
+  // ressuscite a segunda tela de plano em silêncio.
+  const map = withoutComments(await source('src/renderer/src/components/UniverseMapView.tsx'))
 
-  // "suprimir, não demolir": o mapa novo ainda monta o PlanMapView quando o
-  // projeto tem roadmap da era F6.
-  assert.match(map, /import PlanMapView from '\.\/PlanMapView'/u)
-  assert.match(map, /<PlanMapView projectId=\{projectId\} \/>/u)
+  assert.ok(!/PlanMapView/u.test(map), 'o PlanMapView voltou ao mapa')
+  assert.ok(!/projectPlan/u.test(map), 'o mapa voltou a sondar o roadmap F6')
+  assert.ok(!/hasLegacyPlan/u.test(map), 'a sondagem do roadmap legado voltou')
   assert.match(map, /<PlanBoardView/u)
-  // A tela legada não conhece o domínio novo (nenhum import cruzado).
-  assert.ok(!/plansApi|planContract|planBoardPresentation/u.test(legacy))
+
+  // O arquivo da tela legada não existe mais — e o import morto reprovaria.
+  await assert.rejects(
+    () => source('src/renderer/src/components/PlanMapView.tsx'),
+    'PlanMapView.tsx foi recriado'
+  )
+
+  // A ponte legada também não existe: nem o handler, nem o namespace.
+  const preload = withoutComments(await source('src/preload/index.ts'))
+  assert.ok(!/projectPlan:/u.test(preload), 'o preload voltou a expor projectPlan')
+  await assert.rejects(
+    () => source('src/main/ipc/projectPlan.ts'),
+    'o IPC projectPlan foi recriado'
+  )
 
   // A aba ativa é POR PROJETO: dois universos abertos não dividem a escolha.
   const store = await source('src/renderer/src/store.ts')
@@ -338,6 +359,21 @@ test('CONTRATO: o roadmap F6 continua de pé e a aba de plano é outra tela', as
   // E a fila se refaz quando o plano OU as missões mudam (o progresso vem delas).
   assert.match(map, /plansApi\.onChanged/u)
   assert.match(map, /missions\?\.onChanged/u)
+})
+
+test('CONTRATO: cadastrar universo não semeia PROJECT_PLAN.json nem classifica modo', async () => {
+  // A causa provada do print do dono: `ipc/projects.ts` semeava um
+  // PROJECT_PLAN.json vazio em todo universo novo, e a listagem re-derivava o
+  // modo chamando `projectModeOf` — que semeava de novo pela porta dos fundos.
+  const projects = withoutComments(await source('src/main/ipc/projects.ts'))
+
+  assert.ok(!/ensureGreenfieldProjectPlan/u.test(projects), 'a semeadura voltou')
+  assert.ok(!/projectModeOf|projectPlanOf/u.test(projects), 'a classificação F6 voltou')
+  assert.ok(!/'greenfield'/u.test(projects), 'o modo greenfield voltou ao cadastro')
+  assert.match(projects, /projects\.create\(name, path\)/u)
+  // A pergunta "esta pasta está vazia?" sobrevive — ela decide CLONAR × PUBLICAR.
+  assert.match(projects, /isEffectivelyEmptyProject/u)
+  assert.match(projects, /from '\.\.\/projectFolder'/u)
 })
 
 test('CONTRATO: criar missão a partir do item é gesto do DONO', async () => {

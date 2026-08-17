@@ -4,19 +4,19 @@ import { plansApi } from '../plansApi'
 import type { PlanView } from '../planContract'
 import { mapTabs, resolveMapTab } from '../planBoardPresentation'
 import MissionRouteBoard from './MissionRouteBoard'
-import PlanMapView from './PlanMapView'
 import PlanBoardView from './PlanBoardView'
 
 // ————————————————————————————————————————————————————————————————————————
 // ABA MAPA = MENU DE PLANEJAMENTO (D4.5 do desenho de 2026-08-15).
 //
-// Antes daqui existiam DOIS modos fixos numa união literal. Agora a fila de
-// abas é DERIVADA: `rotas` (sempre) + `plano mestre` da era F6 (só onde ele
-// existe) + UMA ABA POR PLANO vivo — que é como o dono descreveu o menu
-// ("plano 1, plano 2, plano 3 de um app existente").
+// A fila de abas é DERIVADA: `rotas` (sempre, e primeira) + UMA ABA POR PLANO
+// vivo — que é como o dono descreveu o menu ("plano 1, plano 2, plano 3 de um
+// app existente").
 //
-// A CONSTELAÇÃO segue dormente e o PlanMapView segue INTOCADO (suprimir, não
-// demolir): o roadmap por ondas continua sendo lido pela tela dele.
+// EXPURGO F6 (2026-08-17): a segunda tela de plano — o roadmap por ondas da
+// era anterior — morreu inteira. Ela abria sozinha em todo universo novo,
+// mostrando zero, com outro visual. Agora existe UMA gramática de plano no
+// app, e é a do PlanBoardView. A CONSTELAÇÃO segue dormente.
 //
 // Nada nesta aba roda processo: monta/desmonta com a aba, sem custo. Os planos
 // se releem em `plans:changed` (o agente edita pela tool) e em
@@ -28,7 +28,6 @@ export default function UniverseMapView({
 }: {
   projectId: string
 }): React.JSX.Element {
-  const [hasLegacyPlan, setHasLegacyPlan] = useState(false)
   const [plans, setPlans] = useState<PlanView[]>([])
   const [plansLoaded, setPlansLoaded] = useState(false)
   // As posições arrastadas da constelação continuam no store (nada foi
@@ -40,26 +39,6 @@ export default function UniverseMapView({
   useEffect(() => {
     loadPanesUi(projectId)
   }, [projectId, loadPanesUi])
-
-  // Plano mestre da era F6 existe? Só projeto greenfield tem. A sondagem é
-  // barata (leitura de store no main) e acompanha as missões: abrir onda ou
-  // integrar muda o roadmap.
-  useEffect(() => {
-    if (!window.synkora.projectPlan) return
-    let alive = true
-    const probe = async (): Promise<void> => {
-      const plan = await window.synkora.projectPlan.get(projectId)
-      if (alive) setHasLegacyPlan(Boolean(plan))
-    }
-    void probe()
-    const off = window.synkora.missions?.onChanged?.((pid: string) => {
-      if (pid === projectId) void probe()
-    })
-    return () => {
-      alive = false
-      off?.()
-    }
-  }, [projectId])
 
   const refreshPlans = useCallback(async (): Promise<void> => {
     const list = await plansApi.list(projectId)
@@ -83,12 +62,9 @@ export default function UniverseMapView({
     }
   }, [projectId, refreshPlans])
 
-  const tabs = useMemo(
-    () => mapTabs({ hasLegacyPlan, plans }),
-    [hasLegacyPlan, plans]
-  )
-  // Aba lembrada que sumiu (plano excluído, roadmap que deixou de existir)
-  // nunca prende a tela numa visão vazia.
+  const tabs = useMemo(() => mapTabs({ plans }), [plans])
+  // Aba lembrada que sumiu (plano excluído, ou a aba do roadmap F6 que deixou
+  // de existir) nunca prende a tela numa visão vazia: cai em `rotas`.
   const active = useMemo(() => resolveMapTab(tabs, activeTabId), [tabs, activeTabId])
   const activePlan = active.planId ? plans.find((plan) => plan.id === active.planId) : undefined
 
@@ -115,9 +91,7 @@ export default function UniverseMapView({
       )}
 
       <div className="universe-map-stage">
-        {active.kind === 'mestre-f6' && hasLegacyPlan ? (
-          <PlanMapView projectId={projectId} />
-        ) : active.kind === 'plano' && activePlan ? (
+        {active.kind === 'plano' && activePlan ? (
           <PlanBoardView
             projectId={projectId}
             plan={activePlan}

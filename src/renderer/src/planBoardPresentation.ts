@@ -174,7 +174,7 @@ export interface PlanTabSource {
   order: number
 }
 
-export type MapTabKind = 'rotas' | 'mestre-f6' | 'plano'
+export type MapTabKind = 'rotas' | 'plano'
 
 export interface MapTab {
   /** id estável usado na persistência por projeto */
@@ -192,13 +192,6 @@ export const MAP_TAB_ROTAS: MapTab = {
   tip: 'O quadro de rotas: uma linha por versão, uma coluna por etapa da missão'
 }
 
-const MAP_TAB_MESTRE_F6: MapTab = {
-  id: 'plano-mestre-f6',
-  kind: 'mestre-f6',
-  label: 'plano mestre',
-  tip: 'O roadmap por ondas do projeto criado do zero (era anterior) — leitura apenas'
-}
-
 /** Rótulo curto para caber na fila de abas sem cortar no meio da palavra. */
 export function planTabLabel(plan: PlanTabSource, max = 22): string {
   const title = plan.title.trim() || 'plano sem título'
@@ -206,17 +199,16 @@ export function planTabLabel(plan: PlanTabSource, max = 22): string {
 }
 
 /**
- * A fila de abas do MAPA. `rotas` é fixa e primeira; o plano mestre F6 só
- * aparece onde ele existe; cada plano vivo vira uma aba, o `mestre` na frente.
- * Plano arquivado NÃO tem aba (ele volta pela lista de arquivados, nunca
- * ocupando espaço permanente na fila).
+ * A fila de abas do MAPA: `rotas` é fixa e primeira; cada plano vivo vira uma
+ * aba, o mestre na frente. Plano arquivado NÃO tem aba (ele volta pela lista
+ * de arquivados, nunca ocupando espaço permanente na fila).
+ *
+ * Uma DIMENSÃO A MENOS desde o expurgo F6 (2026-08-17): a aba do roadmap por
+ * ondas da era anterior morreu, e com ela o `hasLegacyPlan`. Universo sem
+ * plano nenhum mostra o quadro de rotas SEM fila de abas.
  */
-export function mapTabs(input: {
-  hasLegacyPlan: boolean
-  plans: readonly PlanTabSource[]
-}): MapTab[] {
+export function mapTabs(input: { plans: readonly PlanTabSource[] }): MapTab[] {
   const tabs: MapTab[] = [MAP_TAB_ROTAS]
-  if (input.hasLegacyPlan) tabs.push(MAP_TAB_MESTRE_F6)
   const visible = input.plans
     .filter((plan) => plan.status !== 'arquivado')
     .slice()

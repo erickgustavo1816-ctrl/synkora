@@ -17,9 +17,7 @@ import { isAbsolute, join, resolve } from 'path'
 import { ensureSynkoraGitExcludes, hasGitCommit, repairWorktrees } from '../worktree'
 import { gitOff } from '../gitAsync'
 import { ensureProjectSecurityBaseline } from '../projectSecurityBaseline'
-import { redactSensitiveText } from '../securityRedaction'
 import { cpSync, existsSync } from 'fs'
-import { ensureGreenfieldProjectPlan } from '../projectPlan'
 import { isEffectivelyEmptyProject } from '../projectFolder'
 import {
   guiPlanningFirstPrompt,
@@ -41,7 +39,6 @@ import type { MainContext } from '../mainContext'
  * do PhaseEngineExtras). */
 export interface ProjectsIpcExtras {
   killMaestroSession(projectId: string): void
-  hasProjectPlanArtifacts(projectPath: string): boolean
   ensureBypassAccepted(configDir: string, trustCwd?: string): void
   discardUnstartedPane(paneId: string): void
   /** Registro das conversas GUI (onda A) — o planningGuiSpec consulta o
@@ -69,13 +66,10 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     phaseWatches,
     syncBoard,
     scheduleProgressSnapshot,
-    projectModeOf,
-    projectPlanOf,
     hub
   } = ctx
   const {
     killMaestroSession,
-    hasProjectPlanArtifacts,
     ensureBypassAccepted,
     discardUnstartedPane,
     guiSessions,
@@ -83,19 +77,15 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
   } = extras
   // `missing` é COMPUTADO na listagem (nunca persistido): pasta renomeada ou
   // movida fora do app → a UI mostra o estado quebrado e oferece relocação.
+  //
+  // EXPURGO F6 (2026-08-17, costura S6): a listagem NÃO classifica mais nada.
+  // Derivar o modo aqui chamava `projectModeOf`, que SEMEAVA um
+  // PROJECT_PLAN.json na primeira listagem de todo universo novo — a porta dos
+  // fundos que devolveria exatamente o arquivo que este corte veio matar. O
+  // `mode` que sai daqui é só o que já estava PERSISTIDO (registro legado
+  // continua legível); universo novo nasce sem modo, e ninguém 2.0 pergunta.
   ipcMain.handle('projects:list', () =>
-    projects.list().map((p) => {
-      const exists = existsSync(p.path)
-      // Projeto legado ainda sem classificação não deve ser carimbado como
-      // existente só porque a pasta está temporariamente ausente.
-      const mode = p.mode ?? (exists ? projectModeOf(p.id) : undefined)
-      return {
-        ...p,
-        ...(mode ? { mode } : {}),
-        missing: !exists,
-        ...(mode === 'greenfield' ? { planStatus: projectPlanOf(p.id)?.status } : {})
-      }
-    })
+    projects.list().map((p) => ({ ...p, missing: !existsSync(p.path) }))
   )
 
   ipcMain.handle('projects:create', async (_e, name: string, path: string, gitUrl?: string) => {
@@ -134,44 +124,26 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
         gitWarning = attached.warning
       }
     }
-    // A classificação acontece ANTES de qualquer injeção de skills, que cria
-    // .agents/.claude e faria uma pasta vazia parecer um projeto existente.
-    const mode =
-      hasProjectPlanArtifacts(path) || isEffectivelyEmptyProject(path)
-        ? 'greenfield'
-        : 'existing'
-    const project = projects.create(name, path, mode)
-    if (mode === 'greenfield') {
-      try {
-        ensureSynkoraGitExcludes(path)
-        ensureGreenfieldProjectPlan(path, { projectName: name })
-        ensureProjectSecurityBaseline(path, {
-          installRepositoryAdapters: true,
-          projectName: name
-        })
-      } catch (error) {
-        // O cadastro continua disponível, mas o primeiro pane fica bloqueado
-        // até a política local poder ser materializada.
-        hub.publish({
-          projectId: project.id,
-          kind: 'error',
-          text: `projeto cadastrado, mas a política local de segurança não pôde ser preparada: ${redactSensitiveText(error instanceof Error ? error.message : String(error))}`,
-          actor: 'harness',
-          urgent: true
-        })
-      }
-    }
-    if (mode === 'existing') {
-      try {
-        ensureSynkoraGitExcludes(path)
-        ensureProjectSecurityBaseline(path, {
-          installRepositoryAdapters: false,
-          projectName: name
-        })
-      } catch {
-        // Projetos existentes continuam sob a política de sistema; nenhum
-        // arquivo do repositório é alterado para forçar uma migração.
-      }
+    // EXPURGO F6 (2026-08-17, costura S6): a CLASSIFICAÇÃO greenfield×existing
+    // morreu junto com o roadmap por ondas que ela servia — e com ela a
+    // semeadura de um PROJECT_PLAN.json vazio em todo universo novo, que era
+    // exatamente o que fazia o dono abrir um projeto recém-criado e encontrar
+    // uma segunda aba de plano mostrando zero.
+    const project = projects.create(name, path)
+    try {
+      ensureSynkoraGitExcludes(path)
+      // `installRepositoryAdapters: false` é o caminho NÃO-INVASIVO que já
+      // valia para todo universo com conteúdo: nenhum arquivo do repositório
+      // do dono é alterado no cadastro. Se o baseline de segurança quiser
+      // instalar adaptadores em pasta nova, a decisão é daquele subsistema —
+      // não deste corte (risco R10 do mapa).
+      ensureProjectSecurityBaseline(path, {
+        installRepositoryAdapters: false,
+        projectName: name
+      })
+    } catch {
+      // O projeto continua sob a política de sistema; nenhum arquivo do
+      // repositório é alterado para forçar uma migração.
     }
     scheduleProgressSnapshot()
     // O aviso viaja NO projeto (campo extra, nunca persistido): o renderer

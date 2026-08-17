@@ -1,17 +1,19 @@
 /**
  * PLANOS DO UNIVERSO (Synkora 2.0, onda D — o MAPA vira menu de planejamento).
  *
- * Terceiro — e ÚLTIMO — significado da palavra "plano" no repo, e o único com
- * nome próprio para não virar ambiguidade fatal:
+ * O significado VIVO da palavra "plano" neste repo. Eram três; o expurgo F6
+ * (2026-08-17) matou o roadmap por ondas (`PROJECT_PLAN.json`) e sobraram
+ * dois — um deles já de saída:
  *
- * - `projectPlan.ts`  → PROJECT_PLAN.json, o roadmap por ondas da era F6.
- *   Mora no REPO do produto e só o PM TUI legado escreve. INTOCADO.
  * - `TaskPlan` (tasks.ts, `create_plan`) → o card de plano de uma missão
- *   legada, com lanes por departamento. INTOCADO.
+ *   LEGADA, com lanes por departamento. Morre com o board legado.
  * - `Plan` (aqui)     → o plano do DONO na era 2.0: uma lista ordenada de
  *   missões futuras, nascida numa CONVERSA e aprovada por clique. Mora em
  *   `userData/plans.json` — fora do repo, então não suja worktree nenhum nem
  *   invalida veredito de gate legado.
+ *
+ * Com o roadmap fora do caminho, "plano mestre" passou a nomear UMA coisa só —
+ * e foi isso que liberou a palavra para virar DESIGNAÇÃO (ver `setKind`).
  *
  * REGRAS QUE VALEM COMO CONTRATO:
  * - PROPOSTA NÃO ENTRA NO STORE. O rascunho (planDraft.ts) vive no card do

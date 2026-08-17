@@ -12,9 +12,10 @@
 // defensiva do rascunho mora onde ela é usada (`readPlanDraft`, no guiApi —
 // espelho 3 do contrato dos cinco espelhos).
 //
-// FRONTEIRA DE NOME (risco R4 da investigação): "Plan" aqui NUNCA é o
-// `ProjectPlan` do roadmap F6 (`.synkora/PROJECT_PLAN.json`, era legada) nem o
-// `TaskPlan` do orquestrador de missão. Três coisas, três nomes.
+// FRONTEIRA DE NOME: "Plan" aqui NUNCA é o `TaskPlan` do orquestrador de
+// missão legada — a última homônima que sobrou. O `ProjectPlan` do roadmap por
+// ondas morreu no expurgo F6 (2026-08-17), e é por isso que a palavra "mestre"
+// voltou a significar UMA coisa só neste app.
 
 /** No máximo UM plano `mestre` ativo por projeto; o resto é `livre`. */
 export type PlanKind = 'mestre' | 'livre'

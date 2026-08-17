@@ -142,7 +142,7 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
           <button
             className={`tab ${tab === 'mapa' ? 'active' : ''}`}
             onClick={() => setTab(projectId, 'mapa')}
-            data-tip="O planejamento do projeto: cada versão é uma linha, cada missão anda de backlog → rodando → fila ⇪ → integrada (em projeto criado do zero, o plano mestre fica ao lado)"
+            data-tip="O planejamento do projeto: cada versão é uma linha, cada missão anda de backlog → rodando → fila ⇪ → integrada"
           >
             Mapa
           </button>
@@ -214,8 +214,7 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
         {/* MAPA = a CONSTELAÇÃO (2.0): ela perdeu a casa quando o deck de panes
             saiu e voltou aqui como conteúdo primário. Monta/desmonta com a aba
             de propósito — o mapa não roda processo, e caixa desmontada é o que
-            pausa o rAF decorativo e o campo de partículas. O plano mestre fica
-            no seletor interno, só em projeto greenfield. */}
+            pausa o rAF decorativo e o campo de partículas. */}
         {tab === 'mapa' && (
           <div className="tab-content">
             <GuiPanelErrorBoundary paneId={`view:${projectId}:mapa`} label="o mapa">

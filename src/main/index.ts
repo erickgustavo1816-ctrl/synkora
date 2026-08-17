@@ -97,7 +97,6 @@ import {
   WINDOWS_TOAST_ACTIVATOR_CLSID,
   windowsNotificationShortcutSpec
 } from './desktopNotificationPolicy'
-import { registerProjectPlanIpc } from './ipc/projectPlan'
 import { registerPlansIpc } from './ipc/plans'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerProgressIpc } from './ipc/progress'
@@ -5954,6 +5953,12 @@ app.whenReady().then(async () => {
   // Autorizações humanas de uso único. Só handlers IPC acionados pela UI
   // entram nestes conjuntos e consomem a autorização na mesma pilha síncrona;
   // nenhuma tool MCP consegue fabricar o gesto do dono.
+  //
+  // EXPURGO F6 (2026-08-17): o único preenchedor destes conjuntos era o
+  // `ipc/projectPlan.ts`, que morreu com a aba do roadmap. Eles seguem aqui
+  // PERMANENTEMENTE VAZIOS porque o `mcpApi/missions` legado ainda os exige —
+  // e vazio é o veredito certo: sem tela, `approve_project_plan` e
+  // `start_project_mission` passam a recusar sempre. Morrem juntos na onda 3.
   const humanProjectPlanApprovals = new Set<string>()
   const humanProjectMissionStarts = new Set<string>()
   const preparePlanningArtifactEvidence = (
@@ -6880,17 +6885,14 @@ app.whenReady().then(async () => {
     assertAppRendererSender,
     guiSessions: guiSessionRegistry
   })
-  registerProjectPlanIpc(ctx, {
-    humanProjectPlanApprovals,
-    humanProjectMissionStarts,
-    getMcpApi: () => mcpApi
-  })
   // PLANOS DO UNIVERSO (2.0, onda D): as abas do MAPA e os gestos do dono
   // sobre elas. A leitura já traz o progresso derivado das missões.
+  //
+  // EXPURGO F6 (2026-08-17): o `registerProjectPlanIpc` que ficava aqui morreu
+  // com a aba do roadmap por ondas — `plans:*` é a ÚNICA ponte de plano viva.
   registerPlansIpc(ctx, { assertAppRendererSender })
   registerProjectsIpc(ctx, {
     killMaestroSession,
-    hasProjectPlanArtifacts,
     ensureBypassAccepted,
     discardUnstartedPane,
     guiSessions: guiSessionRegistry,
