@@ -19,8 +19,9 @@
  * - phaseWatches é lido em CALL TIME via ctx (o alias nasce no phaseEngine,
  *   construído depois) — nunca desestruturar na construção.
  * - unregisterPane/cleanPaneMcpFile/paneTokens/paneMcpFiles FICAM no index
- *   (cross-domain: codeIntelligence, skill leases, mcpApi/helpers) — o
- *   engine os lê via ctx.
+ *   (cross-domain: mcpApi/helpers e o gui-planner) — o engine os lê via ctx.
+ *   A inteligência de código e os leases de skill, que também dependiam
+ *   deles, saíram na limpa F6 (2026-08-17).
  */
 import { app } from 'electron'
 import { join, resolve } from 'path'
