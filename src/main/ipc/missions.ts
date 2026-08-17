@@ -52,6 +52,7 @@ import {
   type GuiSessionRegistry
 } from '../guiSessions'
 import { armGuiPlannerMcp, type GuiPlannerMcpDeps } from '../guiPlannerMcp'
+import { guiPlannerMcpDepsFor } from '../guiPlannerArm'
 import {} from '../orchestratorFlow'
 import {} from '../maestro'
 import {} from '../projectSecurityBaseline'
@@ -183,17 +184,11 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   } = engine
 
   /** Costura do MCP do planejador: token por pane, porta viva do ctx, e o
-   *  mesmo `paneTokens` que o teardown do chat usa para revogar. */
-  const guiPlannerMcpDeps: GuiPlannerMcpDeps = {
-    hub,
-    port: () => ctx.mcpPort,
-    configRoot: () => join(app.getPath('userData'), 'mcp'),
-    tokenOf: (paneId) => ctx.paneTokens.get(paneId),
-    remember: (paneId, { token, mcpFile }) => {
-      ctx.paneTokens.set(paneId, token)
-      if (mcpFile) ctx.paneMcpFiles.set(paneId, mcpFile)
-    }
-  }
+   *  mesmo `paneTokens` que o teardown do chat usa para revogar.
+   *  FONTE ÚNICA (guiPlannerArm): o re-arme por spawn do registro de sessões
+   *  usa exatamente estas deps — duas cópias foi o que deixou o respawn sem
+   *  ferramentas por uma noite inteira. */
+  const guiPlannerMcpDeps: GuiPlannerMcpDeps = guiPlannerMcpDepsFor(ctx)
 
   ipcMain.handle('missions:list', (_e, projectId: string) => missionsWithIntegration(projectId))
 

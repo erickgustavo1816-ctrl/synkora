@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -2994,6 +2995,196 @@ test('/clear troca o backend, apaga fio e resume; kill sozinho preserva até exc
   )
   assert.equal(gui.state(spawn.paneId).exists, false, 'exclusão definitiva purga o fio')
   assert.equal(gui.remembered(spawn.paneId), undefined)
+})
+
+// FERRAMENTAS DO PLANEJADOR ATRAVESSAM O RESPAWN (bug ao vivo de 2026-08-17).
+//
+// O caso real: o dono trocou o chat de planejamento para "acesso completo" e a
+// conversa morreu com `Invalid MCP configuration: MCP config file not found`.
+// A cadeia: trocar o modo muda o fingerprint → `create` disposa → o teardown
+// (ipc/gui.ts) apaga o arquivo de config e revoga o token → o processo novo
+// nascia com `--mcp-config <arquivo apagado>` e o claude saía com exit 1.
+//
+// O harness abaixo espelha os dois lados dessa costura: um teardown que revoga
+// de verdade e um re-arme que reescreve de verdade. O que ele prende é o
+// INSTANTE DO SPAWN — o que o processo encontraria no disco.
+
+/** Registro com token+arquivo por pane, como o main os mantém de verdade. */
+function plannerToolsHarness(t, paneId) {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-gui-rearm-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const mcpRoot = join(root, 'mcp')
+  mkdirSync(mcpRoot, { recursive: true })
+  const configFile = join(mcpRoot, `${paneId}.json`)
+  const live = new Map()
+  let minted = 0
+  /** O mesmo par do armGuiPlannerMcp: token novo + arquivo reescrito nele. */
+  const arm = () => {
+    const token = `token-${++minted}`
+    live.set(paneId, token)
+    writeFileSync(configFile, JSON.stringify({ bearer: token }), 'utf8')
+    return { args: ['--mcp-config', configFile, '--strict-mcp-config'] }
+  }
+  /** O mesmo teardown do ipc/gui.ts: revoga o token e apaga o arquivo. */
+  const teardown = () => {
+    live.delete(paneId)
+    rmSync(configFile, { force: true })
+  }
+  const spawned = []
+  /** Fotografia do que o CLI encontraria: existe? o token bate com o vivo? */
+  const observeSpawn = (input) => {
+    const args = input.mcp?.args ?? []
+    const at = args.indexOf('--mcp-config')
+    const file = at >= 0 ? args[at + 1] : undefined
+    const exists = Boolean(file) && existsSync(file)
+    spawned.push({
+      hasTools: Boolean(input.mcp),
+      file,
+      exists,
+      tokenMatchesLive:
+        exists && JSON.parse(readFileSync(file, 'utf8')).bearer === live.get(paneId)
+    })
+  }
+  return { root, configFile, live, arm, teardown, spawned, observeSpawn }
+}
+
+function plannerRegistry(harness, opts = {}) {
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile: join(harness.root, 'gui-sessions.json'),
+    onPaneDisposed: () => harness.teardown(),
+    ...(opts.withoutRearm ? {} : { rearmPaneTools: () => harness.arm() })
+  })
+  gui.spawnSession = (input, sink) => {
+    harness.observeSpawn(input)
+    sink({
+      type: 'init',
+      model: 'claude',
+      sessionId: `session-${harness.spawned.length}`,
+      permissionMode: input.permissionMode ?? 'default',
+      toolCount: 5,
+      contextWindow: 1_000_000
+    })
+    return {
+      alive: true,
+      turnActive: false,
+      send: () => undefined,
+      waitCaps: async () => ({ commands: [], models: [] }),
+      kill: () => undefined
+    }
+  }
+  return gui
+}
+
+test('trocar o modo de permissão do planejador não deixa o processo novo sem ferramentas', (t) => {
+  const paneId = 'gui-dev-planner1'
+  const h = plannerToolsHarness(t, paneId)
+  const gui = plannerRegistry(h)
+  const spawn = {
+    paneId,
+    projectId: 'proj-planner',
+    cli: 'claude',
+    configDir: 'seat-a',
+    cwd: h.root,
+    // o que o renderer devolve: o eco do que o `missions:guiSpec` armou
+    mcp: h.arm()
+  }
+
+  assert.equal(gui.create(spawn).ok, true)
+  assert.equal(h.spawned[0].exists, true, 'o nascimento já vinha certo')
+
+  // O CLIQUE DO DONO: "acesso completo". Mesmo spawn, modo novo.
+  assert.equal(gui.create({ ...spawn, permissionMode: 'bypass' }).ok, true)
+  assert.equal(h.spawned.length, 2, 'trocar o modo TEM de respawnar')
+  assert.equal(h.spawned[1].hasTools, true, 'o pane do planejador não perde o servidor')
+  assert.equal(
+    h.spawned[1].exists,
+    true,
+    'o processo novo nunca pode nascer apontando para o arquivo que o teardown apagou'
+  )
+  assert.equal(
+    h.spawned[1].tokenMatchesLive,
+    true,
+    'o token no arquivo é o que o hub reconhece agora — arquivo velho autenticaria em nada'
+  )
+  assert.equal(existsSync(h.configFile), true)
+})
+
+test('/clear do planejador também renasce com as ferramentas', (t) => {
+  const paneId = 'gui-dev-planner2'
+  const h = plannerToolsHarness(t, paneId)
+  const gui = plannerRegistry(h)
+  const spawn = {
+    paneId,
+    projectId: 'proj-planner',
+    cli: 'claude',
+    configDir: 'seat-a',
+    cwd: h.root,
+    mcp: h.arm()
+  }
+  assert.equal(gui.create(spawn).ok, true)
+  assert.equal(gui.send(paneId, '/clear', 'msg-clear').ok, true)
+  assert.equal(h.spawned.length, 2, '/clear troca o processo')
+  assert.equal(h.spawned[1].exists, true, 'conversa nova, ferramentas de pé')
+  assert.equal(h.spawned[1].tokenMatchesLive, true)
+})
+
+test('pane que pediu ferramentas e não pôde receber sai anotado, nunca mudo', (t) => {
+  const paneId = 'gui-dev-planner3'
+  const h = plannerToolsHarness(t, paneId)
+  const recorded = []
+  // Re-arme que RECUSA (servidor fora do ar / pane que não é o planejador).
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile: join(h.root, 'gui-sessions.json'),
+    record: (event, ids, detail) => recorded.push({ event, ...ids, ...detail }),
+    onPaneDisposed: () => h.teardown(),
+    rearmPaneTools: () => undefined
+  })
+  gui.spawnSession = (input, sink) => {
+    h.observeSpawn(input)
+    sink({ type: 'ready', caps: { commands: [], models: [] } })
+    return { alive: true, kill: () => undefined, send: () => undefined }
+  }
+  assert.equal(
+    gui.create({
+      paneId,
+      projectId: 'proj-planner',
+      cli: 'claude',
+      configDir: 'seat-a',
+      cwd: h.root,
+      mcp: h.arm()
+    }).ok,
+    true
+  )
+  assert.equal(h.spawned[0].hasTools, false, 'sem re-arme o spawn sai limpo, não quebrado')
+  assert.equal(
+    recorded.some((entry) => entry.event === 'gui-pane-tools-unarmed' && entry.paneId === paneId),
+    true,
+    'o diário nomeia o pane que ficou sem ferramentas'
+  )
+})
+
+test('sem o gancho de re-arme o registro não opina sobre as ferramentas do spawn', (t) => {
+  const paneId = 'gui-dev-planner4'
+  const h = plannerToolsHarness(t, paneId)
+  const gui = plannerRegistry(h, { withoutRearm: true })
+  const mcp = h.arm()
+  assert.equal(
+    gui.create({
+      paneId,
+      projectId: 'proj-planner',
+      cli: 'claude',
+      configDir: 'seat-a',
+      cwd: h.root,
+      mcp
+    }).ok,
+    true
+  )
+  assert.equal(h.spawned[0].file, mcp.args[1], 'o spawn vai exatamente como veio')
+  assert.equal(h.spawned[0].hasTools, true)
 })
 
 // MODO DE PERMISSÃO POR CONVERSA (onda D — item 3 do docs/PLANO_2_0_GUI.md).

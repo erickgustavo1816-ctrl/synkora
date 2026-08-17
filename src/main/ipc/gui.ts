@@ -68,6 +68,7 @@ import {
   type GuiFileOpenResult
 } from '../guiFileResolver'
 import { ensureSynkoraGitExcludes } from '../worktree'
+import { rearmGuiPlannerMcp } from '../guiPlannerArm'
 import type { MainContext } from '../mainContext'
 import { GuiWorkspaceFileIndex, type GuiWorkspaceFilesResult } from '../guiWorkspaceFiles'
 
@@ -311,10 +312,18 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
       // único com identidade MCP, e o token dele não pode sobreviver ao
       // processo — um pane novo no mesmo id ganha token novo. Para todo outro
       // pane GUI isto é no-op: eles nunca tiveram identidade.
+      //
+      // RESPAWN TAMBÉM PASSA POR AQUI, e é por isso que existe o par
+      // `rearmPaneTools` abaixo: quem revoga não sabe se um processo novo vem
+      // logo atrás, então quem SPAWNA re-materializa. Nunca condicione esta
+      // limpeza ao motivo do teardown — a revogação tem de valer sempre.
       ctx.paneTokens.delete(paneId)
       ctx.unregisterPane(paneId)
       ctx.cleanPaneMcpFile(paneId)
-    }
+    },
+    // O par do teardown acima: o main reescreve config + token para o processo
+    // que está nascendo, provando de novo que este pane é o planejador.
+    rearmPaneTools: (spawn) => rearmGuiPlannerMcp(ctx, spawn)
   })
   // Índice curto por cwd para basename/sufixo. A raiz nunca vem do renderer;
   // cada chamada abaixo a reencontra no registro vivo da conversa.

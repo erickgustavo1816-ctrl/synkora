@@ -69,6 +69,21 @@ export interface GuiPaneSpawn {
   mcp?: { args: string[]; env?: Record<string, string> }
 }
 
+/**
+ * Troca as ferramentas de um spawn pelas que o main acabou de re-materializar.
+ * `undefined` REMOVE a chave (em vez de deixá-la com valor vazio): o spawn de
+ * um pane sem ferramentas tem de ser indistinguível do de um pane que nunca as
+ * teve — é o mesmo objeto que alimenta `spawnSession` e o registro vivo.
+ */
+export function withGuiPaneTools(
+  spawn: GuiPaneSpawn,
+  mcp: GuiPaneSpawn['mcp'] | undefined
+): GuiPaneSpawn {
+  if (mcp) return { ...spawn, mcp }
+  const { mcp: _dropped, ...rest } = spawn
+  return rest
+}
+
 export type GuiPermBehavior = 'allow' | 'allow-always' | 'deny'
 
 // ————— modo de permissão POR CONVERSA (2.0, onda D) —————
@@ -1196,6 +1211,29 @@ export interface GuiSessionDeps {
     projectId: string
     reason: string
   }): void
+  /**
+   * RE-ARMA AS FERRAMENTAS DO PANE, UMA VEZ POR SPAWN, DEPOIS DO TEARDOWN.
+   *
+   * O teardown é o dono da revogação: `onPaneDisposed` apaga o arquivo de
+   * config MCP e revoga o token. Só que um RESPAWN passa pelo mesmo teardown —
+   * trocar o modo de permissão, `/clear` e a entrega da fila com modo novo
+   * disposam e recriam no mesmo instante. Sem este gancho, o processo novo
+   * nascia apontando para o arquivo que o teardown ACABARA de apagar e o
+   * claude morria no boot com `Invalid MCP configuration: MCP config file not
+   * found` (visto ao vivo em 2026-08-17, duas vezes).
+   *
+   * Por isso a re-materialização mora AQUI, no seam do spawn, e não no
+   * chamador: as três rotas de respawn passam por `create`, e nenhuma delas
+   * sabe que revogou nada. É a mesma lição que o `pty:create` já tinha
+   * aprendido para os panes TUI (a corrida armPane × cleanPaneMcpFile).
+   *
+   * Contrato: idempotente e derivado do PANE, nunca do que o renderer mandou —
+   * o main é a autoridade sobre quem tem ferramenta. `undefined` = este pane
+   * não pode tê-las agora (servidor fora do ar, pane que não é o planejador):
+   * o spawn sai SEM elas, que é honesto, em vez de apontar para um arquivo que
+   * não existe. Ausência do gancho = ninguém opina e o spawn vai como veio.
+   */
+  rearmPaneTools?(spawn: GuiPaneSpawn): GuiPaneSpawn['mcp'] | undefined
 }
 
 /** Espera do handshake antes de soltar o firstPrompt (waitCaps resolve antes
@@ -1335,6 +1373,26 @@ export class GuiSessionRegistry {
       this.dispose(spawn.paneId, 'respawn', true)
     }
 
+    // FERRAMENTAS RE-MATERIALIZADAS DEPOIS DO TEARDOWN E ANTES DO PROCESSO.
+    // Esta é a única ordem correta: o dispose acima revoga token e arquivo, e
+    // é o processo que nasce logo abaixo que vai lê-los. O FINGERPRINT fica de
+    // fora de propósito — ele é a identidade do que o RENDERER pediu, e o
+    // re-arme é derivado do pane (mesmo caminho de arquivo, mesmas flags).
+    // Carimbar o re-arme no fingerprint faria a próxima remontagem divergir de
+    // si mesma e matar uma conversa viva a cada troca de aba.
+    const armedSpawn = spawn.mcp && this.deps.rearmPaneTools
+      ? withGuiPaneTools(spawn, this.deps.rearmPaneTools(spawn))
+      : spawn
+    if (spawn.mcp && !armedSpawn.mcp) {
+      // O pane PEDIU ferramentas e não pôde recebê-las: a conversa continua, e
+      // o diário nomeia o pane em vez de deixar o dono com um chat mudo.
+      this.deps.record?.(
+        'gui-pane-tools-unarmed',
+        { paneId: spawn.paneId, projectId: spawn.projectId },
+        { cli: spawn.cli }
+      )
+    }
+
     const ring = replayRing ?? new GuiEventRing()
     // Vale já DURANTE o construtor da sessão (um 'fatal' síncrono é captado
     // antes de a entrada existir no Map).
@@ -1461,7 +1519,7 @@ export class GuiSessionRegistry {
 
     let session: GuiBackend
     try {
-      session = this.spawnSession(spawn, sink)
+      session = this.spawnSession(armedSpawn, sink)
     } catch (error) {
       token.alive = false
       const text = error instanceof Error ? error.message : String(error)
@@ -1505,7 +1563,9 @@ export class GuiSessionRegistry {
     }
 
     this.panes.set(spawn.paneId, {
-      spawn,
+      // O spawn REALMENTE executado, com as ferramentas desta geração: é ele
+      // que a entrega da fila e o `/clear` espalham para recriar o pane.
+      spawn: armedSpawn,
       fingerprint,
       session,
       ring,

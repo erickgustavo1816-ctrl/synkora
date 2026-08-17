@@ -973,6 +973,32 @@ test('planejador armado que chega sem ferramenta deixa recibo no diário', () =>
   assert.match(ipc, /event: 'gui-planner-mcp-dropped'/u)
 })
 
+test('quem revoga as ferramentas no teardown tem par que as re-materializa no spawn', () => {
+  const ipc = readFileSync(new URL('../src/main/ipc/gui.ts', import.meta.url), 'utf8')
+  // O teardown do pane apaga o arquivo de config e revoga o token — inclusive
+  // quando o "teardown" é só a primeira metade de um RESPAWN (trocar o modo de
+  // permissão, `/clear`, entrega da fila com modo novo). Sem o par abaixo, o
+  // processo seguinte nascia com `--mcp-config <arquivo apagado>` e o claude
+  // saía com exit 1 (caso real de 2026-08-17, duas ocorrências no journal).
+  // Os dois ganchos vivem no MESMO literal de deps de propósito: quem mexer em
+  // um vê o outro.
+  assert.match(ipc, /onPaneDisposed: \(\{ paneId \}\) => \{/u)
+  assert.match(ipc, /ctx\.cleanPaneMcpFile\(paneId\)/u)
+  assert.match(
+    ipc,
+    /rearmPaneTools: \(spawn\) => rearmGuiPlannerMcp\(ctx, spawn\)/u,
+    'o teardown ficou sem o par que rearma o pane no spawn seguinte'
+  )
+  const arm = readFileSync(new URL('../src/main/guiPlannerArm.ts', import.meta.url), 'utf8')
+  // A autoridade sobre quem tem ferramenta é do main, e ela é RE-PROVADA a
+  // cada spawn: o `spawn.mcp` que chega do renderer é só o eco do que este
+  // main entregou, nunca a permissão em si.
+  assert.match(arm, /missionTypeOf\(mission\) !== 'planejamento'/u)
+  assert.match(arm, /event: 'gui-planner-arm-refused'/u)
+  // E a prova final: o arquivo que o claude vai abrir tem de existir AGORA.
+  assert.match(arm, /if \(!file \|\| !existsSync\(file\)\) return refuse\('config-file-missing'\)/u)
+})
+
 test('a remontagem para respawn não pinta o medidor com contexto de conversa morta', () => {
   const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
 
