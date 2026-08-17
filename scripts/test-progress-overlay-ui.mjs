@@ -46,9 +46,7 @@ function mission(id, completedAt) {
     tone: 'success',
     label: 'concluída',
     updatedAt: completedAt,
-    completedAt,
-    progress: { done: 1, total: 1, active: 0 },
-    activeCards: []
+    completedAt
   }
 }
 
@@ -60,7 +58,6 @@ function snapshot(completions) {
       projects: 1,
       activeProjects: 0,
       activeMissions: 0,
-      activeCards: 0,
       activeCoordinators: 0,
       attentionMissions: 0,
       attentionProjects: 0,

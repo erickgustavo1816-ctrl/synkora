@@ -19,13 +19,11 @@
 import type { BrowserWindow, WebContents } from 'electron'
 import type { ProjectStore } from './projects'
 import type { SeatStore } from './seats'
-import type { TaskStore } from './tasks'
 import type { MissionStore } from './missions'
 import type { PlanStore } from './plans'
 import type { IntegrationQueueStore } from './integrationQueue'
 import type { BacklogStore } from './backlog'
 import type { MaestroStore } from './maestroStore'
-import type { PolicyStore } from './policies'
 import type { SettingsStore } from './settings'
 import type { PtyManager } from './pty'
 import type { SynVoiceService } from './synVoice'
@@ -45,15 +43,12 @@ export interface MainContext {
   // ——— stores e serviços (referência estável — atribuídos 1×) ———
   readonly projects: ProjectStore
   readonly seats: SeatStore
-  /** onMutation/onCreate/onRemove pertencem ao index — nunca reatribuir. */
-  readonly tasks: TaskStore
   readonly missions: MissionStore
   /** Planos do universo (2.0, onda D — userData/plans.json). */
   readonly plans: PlanStore
   readonly integrationQueue: IntegrationQueueStore
   readonly backlog: BacklogStore
   readonly maestro: MaestroStore
-  readonly policies: PolicyStore
   readonly settings: SettingsStore
   readonly ptys: PtyManager
   readonly synVoice: SynVoiceService

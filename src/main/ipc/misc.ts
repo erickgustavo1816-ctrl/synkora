@@ -39,7 +39,6 @@ export function registerMiscIpc(ctx: MainContext, extras: MiscIpcExtras): void {
     seats,
     projects,
     blackbox,
-    policies,
     expiredSeats
   } = ctx
   const {
@@ -65,8 +64,6 @@ export function registerMiscIpc(ctx: MainContext, extras: MiscIpcExtras): void {
     e.sender.send('cli:status', getCliStatus())
     return updateAllClis()
   })
-
-  ipcMain.handle('policies:get', (_e, projectId: string) => policies.get(projectId))
 
   ipcMain.handle('seats:list', () => {
     return seats.list().map((s) => {

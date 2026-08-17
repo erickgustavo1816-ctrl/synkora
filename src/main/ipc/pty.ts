@@ -47,7 +47,6 @@ export interface PtyIpcExtras {
 export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
   const {
     seats,
-    tasks,
     maestro,
     ptys,
     blackbox,
@@ -266,18 +265,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
             tuiContextTokens: undefined
           })
         }
-        const identity = hub.identityByPane(req.id)
-        if (identity?.taskId && (identity.role === 'dev' || identity.role === 'review' || identity.role === 'qa')) {
-          const task = tasks.get(identity.taskId)
-          if (task) {
-            const phaseSessions = { ...(task.phaseSessions ?? {}) }
-            delete phaseSessions[identity.role]
-            tasks.update(identity.taskId, {
-              phaseSessions,
-              ...(task.phaseResume?.phase === identity.role ? { phaseResume: undefined } : {})
-            })
-          }
-        }
       },
       // /clear (claude) e /new|/fork (codex) começam conversa NOVA no TUI, mas o
       // arquivo de sessão novo só nasce na 1ª mensagem seguinte — se o app
@@ -316,18 +303,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
             tuiSessionId: undefined,
             tuiContextTokens: undefined
           })
-        }
-        const identity = hub.identityByPane(req.id)
-        if (identity?.taskId && (identity.role === 'dev' || identity.role === 'review' || identity.role === 'qa')) {
-          const task = tasks.get(identity.taskId)
-          if (task) {
-            const phaseSessions = { ...(task.phaseSessions ?? {}) }
-            delete phaseSessions[identity.role]
-            tasks.update(identity.taskId, {
-              phaseSessions,
-              ...(task.phaseResume?.phase === identity.role ? { phaseResume: undefined } : {})
-            })
-          }
         }
       },
       // "Login expired" na saída → seat marcado como expirado no rail + hub.
@@ -501,27 +476,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
       if (resumeIdx >= 0 && rawArgs[resumeIdx + 1] && !rawArgs[resumeIdx + 1].startsWith('-')) {
         sessionHint = rawArgs[resumeIdx + 1]
       }
-      // TETO DE CUSTO DO RESUME (2026-08-06): carimba o contexto vivo da fase
-      // no card para o próximo respawn decidir resume × fresco. Throttle por
-      // delta (25k) — gravar a cada tick seria churn no tasks.json.
-      let lastStampedCtx = 0
-      const stampPhaseContext = (contextTokens: number | null): void => {
-        if (contextTokens == null) return
-        const identity = hub.identityByPane(req.id)
-        const phase = identity?.phase
-        if (!identity?.taskId || !phase) return
-        if (Math.abs(contextTokens - lastStampedCtx) < 25_000) return
-        const task = tasks.get(identity.taskId)
-        const entry = task?.phaseSessions?.[phase]
-        if (!entry) return
-        lastStampedCtx = contextTokens
-        tasks.update(identity.taskId, {
-          phaseSessions: {
-            ...task!.phaseSessions,
-            [phase]: { ...entry, lastContextTokens: contextTokens }
-          }
-        })
-      }
       // TETO DE CUSTO DO RESUME DO PM/ORQUESTRADOR (pedido do usuário,
       // 2026-08-06: "eles não podem ter que reler a conversa toda"): mesmo
       // carimbo da fase, gravado no maestroStore para o próximo paneSpec
@@ -544,7 +498,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
           // broadcast: os medidores dos chips vivem no chrome das DUAS views
           // (Board lê PM/orquestrador, canvas lê execução — e vice-versa).
           ctx.pushAll('panes:stats', req.id, stats)
-          stampPhaseContext(stats.contextTokens)
           stampMaestroContext(stats.contextTokens)
         },
         onSession: (sessionId) => {
@@ -560,45 +513,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
               tuiSessionId: sessionId,
               ...(prevSession !== sessionId ? { tuiContextTokens: undefined } : {})
             })
-          }
-          const identity = hub.identityByPane(req.id)
-          if (
-            identity?.taskId &&
-            (identity.role === 'dev' || identity.role === 'review' || identity.role === 'qa')
-          ) {
-            const task = tasks.get(identity.taskId)
-            if (task && task.status !== 'done' && req.seatId) {
-              const rawArgs = req.cliArgs ?? []
-              const effortFromArgs =
-                req.kind === 'claude'
-                  ? (() => {
-                      const at = rawArgs.indexOf('--effort')
-                      return at >= 0 ? rawArgs[at + 1] : undefined
-                    })()
-                  : rawArgs
-                      .find((arg) => arg.startsWith('model_reasoning_effort='))
-                      ?.replace(/^model_reasoning_effort=["']?|["']$/g, '')
-              const phaseSession = {
-                phase: identity.role,
-                sessionId,
-                seatId: req.seatId,
-                cli: req.kind === 'claude' ? 'claude' as const : 'codex' as const,
-                model: req.model,
-                effort:
-                  task.phaseSessions?.[identity.role]?.effort ??
-                  (task.phaseResume?.phase === identity.role
-                    ? task.phaseResume.effort
-                    : effortFromArgs),
-                capturedAt: new Date().toISOString()
-              }
-              tasks.update(identity.taskId, {
-                phaseSessions: {
-                  ...(task.phaseSessions ?? {}),
-                  [identity.role]: phaseSession
-                },
-                ...(task.activePhase === identity.role ? { phaseResume: phaseSession } : {})
-              })
-            }
           }
         }
       })

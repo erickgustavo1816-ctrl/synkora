@@ -117,7 +117,6 @@ export type {
 
 export type {
   MissionProgressState,
-  ProgressCardPreview,
   ProgressCoordinatorActivityKind,
   ProgressCoordinatorActivityInput,
   ProgressCoordinatorRole,

@@ -152,7 +152,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     projects,
     seats,
     missions,
-    tasks,
     backlog,
     maestro,
     integrationQueue,
@@ -897,9 +896,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     killMissionGuiPanes(missionId)
     if (mission.branch && mission.worktree) {
       removeWorktreeAndBranch(project.path, mission.worktree, mission.branch)
-    }
-    for (const t of tasks.list(mission.projectId).filter((x) => x.missionId === missionId)) {
-      tasks.remove(t.id)
     }
     backlog.releaseMissionItems(missionId) // itens não-feitos voltam a pendente
     missions.remove(missionId)

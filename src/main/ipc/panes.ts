@@ -35,7 +35,7 @@ export interface PanesIpcExtras {
 }
 
 export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void {
-  const { projects, tasks, backlog, blackbox, hub } = ctx
+  const { projects, backlog, blackbox, hub } = ctx
   const { engine, ensureMissionWorktree } = extras
   const { livePaneSpecs, closingPaneIds, testServerPanes, harnessPortsInUse } = engine
 

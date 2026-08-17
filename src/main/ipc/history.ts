@@ -1,14 +1,13 @@
 /** IPC da paleta: pesquisa e montagem segura de históricos locais. */
-import { app, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import {  ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'crypto'
-import { join, resolve } from 'path'
+import {  resolve } from 'path'
 import type { MainContext } from '../mainContext'
 import type { GuiSessionRegistry } from '../guiSessions'
 import {
   guiMissionPaneId,
   guiPlanningPaneId
 } from '../guiMissionContracts'
-import { taskWorktreeDescriptor } from '../worktree'
 import {
   loadLocalHistoryTranscript,
   localHistoryLocatorIsSafe,
@@ -163,29 +162,6 @@ function historyIndex(
           missionId: mission.id,
           paneId: ctx.orchPaneId(project.id, mission.id),
           label: `${mission.title} · orquestrador`
-        })
-      }
-    }
-
-    for (const task of ctx.tasks.list(project.id)) {
-      const taskCwd = taskWorktreeDescriptor(
-        join(app.getPath('userData'), 'worktrees', project.id),
-        task.id
-      ).dir
-      workspaces.push({
-        cwd: taskCwd,
-        projectId: project.id,
-        ...(task.missionId ? { missionId: task.missionId } : {}),
-        label: task.title
-      })
-      for (const phase of ['dev', 'review', 'qa'] as const) {
-        const resume = task.phaseSessions?.[phase]
-        if (!resume?.sessionId) continue
-        addBinding(bindings, {
-          sessionId: resume.sessionId,
-          projectId: project.id,
-          ...(task.missionId ? { missionId: task.missionId } : {}),
-          label: `${task.title} · ${phase}`
         })
       }
     }

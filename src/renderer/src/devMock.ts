@@ -30,7 +30,6 @@ export function installDevMock(): void {
         projects: 3,
         activeProjects: 2,
         activeMissions: 3,
-        activeCards: 1,
         activeCoordinators: 3,
         attentionMissions: 1,
         attentionProjects: 0,
@@ -78,19 +77,6 @@ export function installDevMock(): void {
               label: 'revisando o trabalho',
               detail: 'Validar janela flutuante',
               updatedAt: new Date().toISOString(),
-              progress: { done: 3, total: 5, active: 1 },
-              activeCards: [
-                {
-                  id: 'card-radar-review',
-                  title: 'Validar janela flutuante em tamanhos diferentes',
-                  phase: 'review',
-                  phaseLabel: 'em revisão',
-                  interrupted: false,
-                  tone: 'running',
-                  note: 'lendo o diff da janela flutuante',
-                  updatedAt: new Date().toISOString()
-                }
-              ]
             },
             {
               id: 'mission-queue',
@@ -101,8 +87,6 @@ export function installDevMock(): void {
               label: 'integração bloqueada',
               detail: 'o Maestro está decidindo como resolver o conflito',
               updatedAt: new Date(Date.now() - 90_000).toISOString(),
-              progress: { done: 4, total: 4, active: 0 },
-              activeCards: [],
               queue: { state: 'blocked', position: 1, total: 2, owner: 'maestro' }
             }
           ],
@@ -137,8 +121,6 @@ export function installDevMock(): void {
               label: 'aguardando sua aprovação',
               detail: 'o plano da missão está pronto para revisão',
               updatedAt: new Date(Date.now() - 180_000).toISOString(),
-              progress: { done: 0, total: 0, active: 0 },
-              activeCards: []
             }
           ],
           recentCompletions: [
@@ -151,8 +133,6 @@ export function installDevMock(): void {
               label: 'concluída',
               updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
               completedAt: new Date(Date.now() - 3_600_000).toISOString(),
-              progress: { done: 0, total: 0, active: 0 },
-              activeCards: []
             }
           ]
         },
@@ -178,7 +158,6 @@ export function installDevMock(): void {
           projects: snapshot.projects.length,
           activeProjects: 0,
           activeMissions: 0,
-          activeCards: 0,
           activeCoordinators: 0,
           attentionMissions: 0,
           attentionProjects: 0,
@@ -204,11 +183,7 @@ export function installDevMock(): void {
           ...original,
           id: 'many-mission-' + index,
           title: 'Missão simultânea ' + (index + 1),
-          updatedAt: new Date(Date.now() - index * 12_000).toISOString(),
-          activeCards: original.activeCards.map((card, cardIndex) => ({
-            ...card,
-            id: 'many-card-' + index + '-' + cardIndex
-          }))
+          updatedAt: new Date(Date.now() - index * 12_000).toISOString()
         }
       })
       snapshot = {
@@ -218,10 +193,6 @@ export function installDevMock(): void {
           projects: 1,
           activeProjects: 1,
           activeMissions: activeMissions.length,
-          activeCards: activeMissions.reduce(
-            (total, mission) => total + mission.activeCards.length,
-            0
-          ),
           activeCoordinators: source.coordinators.length,
           attentionMissions: activeMissions.filter((mission) => mission.tone === 'attention').length,
           attentionProjects: 1,
@@ -250,7 +221,6 @@ export function installDevMock(): void {
           projects: 1,
           activeProjects: 0,
           activeMissions: 0,
-          activeCards: 0,
           activeCoordinators: 0,
           attentionMissions: 0,
           attentionProjects: 0,
@@ -1159,7 +1129,6 @@ export function installDevMock(): void {
           projects: projects.length,
           activeProjects: 1,
           activeMissions: 2,
-          activeCards: 1,
           activeCoordinators: 1,
           attentionMissions: 1,
           attentionProjects: 0,

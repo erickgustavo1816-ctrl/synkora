@@ -6,7 +6,6 @@ const EMPTY_TOTALS: ProgressOverlaySnapshot['totals'] = {
   projects: 0,
   activeProjects: 0,
   activeMissions: 0,
-  activeCards: 0,
   activeCoordinators: 0,
   attentionMissions: 0,
   attentionProjects: 0,
@@ -30,14 +29,13 @@ export default function ProgressRadarButton(): React.JSX.Element {
   }, [])
 
   const attentionCount = totals.attentionMissions + totals.attentionProjects
-  const liveCount = totals.activeCards + totals.activeCoordinators
+  const liveCount = totals.activeCoordinators
   const count = attentionCount || liveCount || totals.activeMissions || totals.activeProjects
   const attention = attentionCount > 0
   const details: string[] = []
   if (totals.attentionMissions > 0) details.push(`${totals.attentionMissions} missão(ões) precisam de atenção`)
   if (totals.attentionProjects > 0) details.push(`${totals.attentionProjects} projeto(s) precisam de atenção`)
   if (totals.activeCoordinators > 0) details.push(`${totals.activeCoordinators} agente(s) de coordenação trabalhando`)
-  if (totals.activeCards > 0) details.push(`${totals.activeCards} card(s) em andamento`)
   if (details.length === 0 && totals.activeMissions > 0) {
     details.push(`${totals.activeMissions} missão(ões) sendo acompanhadas`)
   }

@@ -60,7 +60,6 @@ import {
   unlinkSync,
   writeFileSync
 } from 'fs'
-import { type Task, type PlanVerificationCheckpoint } from './tasks'
 import { type Version } from './backlog'
 import { type MainContext } from './mainContext'
 
@@ -73,9 +72,6 @@ export interface MissionEngineExtras {
   /** `${projectId}--${missionId}` — chave do maestroStore do orquestrador. */
   orchKey(projectId: string, missionId: string): string
   securityWaiverOptions(projectId: string): { sensitiveWaiverAllowed: boolean }
-  /** Plano ativo da missão (card kind:'plan'). */
-  currentPlanOf(projectId: string, missionId: string): Task | undefined
-  finalVerificationAccepted(checkpoint: PlanVerificationCheckpoint | undefined): boolean
   /** Domínio VERSÃO — fica no index (também extra do ipc/backlog). */
   versionIsolationIsValid(
     projectPath: string,
@@ -100,7 +96,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   const {
     missions,
     projects,
-    tasks,
     backlog,
     integrationQueue,
     maestro,
@@ -116,8 +111,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   const hub = ctx.hub
   const {
     orchKey,
-    currentPlanOf,
-    finalVerificationAccepted,
     versionIsolationIsValid,
     emitBacklogChanged,
     sweepProjectFiles,
@@ -242,23 +235,9 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       missions.update(mission.id, { branch: expectedBranch })
       return missions.get(mission.id)
     }
-    if (
-      !mission.branch &&
-      tasks.list(mission.projectId).some((task) => task.missionId === mission.id)
-    ) {
-      // Já existe contrato/histórico desta missão. Inventar uma branch nova a
-      // partir do HEAD atual poderia transformar perda de metadado em entrega
-      // falsa; preserve e peça reparo explícito.
-      return mission
-    }
-    if (
-      mission.branch &&
-      tasks.list(mission.projectId).some((task) => task.missionId === mission.id) &&
-      gitLocalBranchExists(project.path, mission.branch) !== true
-    ) {
-      // A branch registrada sumiu. Recriá-la do HEAD atual manteria o nome,
-      // mas perderia a fotografia histórica dos cards — bloqueia em vez de
-      // fabricar uma origem nova.
+    if (mission.branch && gitLocalBranchExists(project.path, mission.branch) !== true) {
+      // A branch registrada sumiu. Recriá-la do HEAD atual manteria o nome e
+      // perderia a origem histórica — bloqueia em vez de fabricar uma.
       return mission
     }
     // Uma pasta existente que não prova a identidade esperada é preservada e
@@ -287,10 +266,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
               (candidate.status === 'concluida' ||
                 candidate.status === 'integrando' ||
                 Boolean(candidate.branch) ||
-                Boolean(candidate.worktree) ||
-                tasks
-                  .list(mission.projectId)
-                  .some((task) => task.missionId === candidate.id))
+                Boolean(candidate.worktree))
           )
         if (versionHasExecutionHistory) return mission
         const versionWt = createVersionWorktree(
@@ -487,20 +463,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         // best-effort
       }
     }
-    const missionTaskIds = new Set(
-      tasks
-        .list(projectId)
-        .filter((t) => t.missionId === missionId)
-        .map((t) => t.id)
-    )
     const runsDir = join(project.path, '.synkora', 'runs')
     try {
       for (const ent of readdirSync(runsDir)) {
         if (ent.startsWith(`mission-${short}`)) zap(join(runsDir, ent))
-        else {
-          const tid = ent.replace(/\.(md|done|(review|qa)\.verdict|verdict)$/i, '')
-          if (missionTaskIds.has(tid)) zap(join(runsDir, ent))
-        }
       }
     } catch {
       // sem runs
@@ -613,169 +579,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     integrationDrainTimers.set(projectId, timer)
   }
 
-  function createIntegrationSyncTask(
-    ticket: IntegrationQueueTicketView,
-    mission: Mission,
-    target: MissionIntegrationTarget,
-    targetHead: string,
-    instruction?: string
-  ): boolean {
-    const current = currentPlanOf(mission.projectId, mission.id)
-    const plan = ticket.planId ? tasks.get(ticket.planId) : current
-    if (
-      !plan?.plan ||
-      plan.projectId !== mission.projectId ||
-      plan.missionId !== mission.id ||
-      plan.kind !== 'plan' ||
-      current?.id !== plan.id ||
-      (plan.status !== 'done' && plan.status !== 'execucao')
-    )
-      return false
-    const marker = `[fila:${ticket.id}:${targetHead}]`
-    // Dedupe por IDENTIDADE PERSISTENTE (2026-08-10): o marcador do briefing
-    // morre em reescrita — queueSync é a placa que sobrevive. Um ticket por
-    // missão de cada vez: QUALQUER card de sync vivo da missão conta como
-    // existente (criar outro era a fábrica de fantasmas).
-    const existing = tasks
-      .list(mission.projectId)
-      .find(
-        (task) =>
-          task.missionId === mission.id &&
-          task.kind !== 'plan' &&
-          (task.queueSync === true || task.briefing?.includes(`[fila:${ticket.id}:`))
-      )
-    if (existing) return true
-
-    if (plan.status === 'done') {
-      tasks.update(plan.id, {
-        status: 'execucao',
-        plan: {
-          ...plan.plan,
-          conclusion: plan.plan.conclusion
-        }
-      })
-    }
-    const lane =
-      plan.plan.lanes.find((candidate) => candidate.dept === 'back') ?? plan.plan.lanes[0]
-    const department = lane?.dept ?? 'back'
-    const conflictInstruction = instruction?.trim()
-      ? `\n\nDECISÃO PERSISTIDA DO MAESTRO (siga-a; não invente outra estratégia):\n${instruction.trim()}`
-      : ''
-    tasks.createMany(mission.projectId, [
-      {
-        department,
-        type: 'bug',
-        effort: conflictInstruction ? 'pesada' : 'leve',
-        title: `Sincronizar a fila com ${target.branch}`,
-        description: 'Atualizar a missão contra tudo que integrou antes dela e validar novamente.',
-        briefing:
-          `${marker}\nEsta missão chegou à cabeça da fila, mas ${target.label} avançou. ` +
-          `Traga ${target.branch} para esta branch de trabalho, preserve a intenção das duas linhas, ` +
-          `resolva conflitos conforme a orientação abaixo (se houver), rode os testes rápidos do projeto ` +
-           `e reporte done. O review e o QA deste card precisam passar antes de a missão voltar à fila.` +
-          conflictInstruction,
-        gates: ['review', 'qa'],
-        deliverable: 'code',
-        delegation: 'none',
-        quests: [
-          `Mesclar ${target.branch} nesta linha de trabalho`,
-          'Preservar as entregas já integradas e a intenção desta missão',
-          'Rodar os testes rápidos relevantes'
-        ],
-        version: maestro.get(mission.projectId).version,
-        missionId: mission.id,
-        origin: 'maestro',
-        auto: true,
-        planId: plan.id,
-        // Identidade PERSISTENTE de card do harness (2026-08-10): o marcador
-        // [fila:...] do briefing morre se o briefing for reescrito — este
-        // campo é o que mantém o card fora do contrato de proporcionalidade.
-        queueSync: true
-      }
-    ])
-    ctx.pushAll('tasks:changed', mission.projectId)
-    return true
-  }
-
-  function repairIntegrationSyncTickets(projectId: string): void {
-    const project = projects.get(projectId)
-    if (!project) return
-    for (const ticket of integrationQueue
-      .listPending(projectId)
-      .filter((candidate) => candidate.state === 'sync_required')) {
-      // Qualquer card deste ticket, inclusive já done aguardando conclude_plan,
-      // prova que não estamos na janela entre decisão e criação. Identidade
-      // PERSISTENTE (2026-08-10): a detecção só por marcador criava um
-      // FANTASMA a cada boot quando o briefing tinha sido reescrito (caso
-      // real M06: duplicata em backlog ressuscitou o deadlock já resolvido).
-      const syncCards = tasks
-        .list(projectId)
-        .filter(
-          (task) =>
-            task.missionId === ticket.missionId &&
-            task.kind !== 'plan' &&
-            (task.queueSync === true || task.briefing?.includes(`[fila:${ticket.id}:`))
-        )
-      // Autocura dos fantasmas de boots anteriores: fica UM card (o mais
-      // avançado); duplicata parada em backlog sai com auditoria.
-      if (syncCards.length > 1) {
-        const rank = (s: string): number =>
-          s === 'done' ? 3 : s === 'qa' ? 2 : s === 'execucao' ? 1 : 0
-        const keep = [...syncCards].sort((a, b) => rank(b.status) - rank(a.status))[0]
-        for (const ghost of syncCards) {
-          if (ghost.id === keep.id || ghost.status !== 'backlog') continue
-          tasks.remove(ghost.id)
-          blackbox.record({
-            cat: 'recovery',
-            event: 'queue-sync-ghost-removed',
-            actor: 'harness',
-            ids: { projectId, missionId: ticket.missionId, taskId: ghost.id, ticketId: ticket.id },
-            reason: `duplicata de card de sync em backlog removida no boot (identidade por marcador falhou em boot anterior); card mantido: ${keep.id.slice(0, 8)} (${keep.status})`
-          })
-        }
-        ctx.pushAll('tasks:changed', projectId)
-        syncBoard(projectId)
-      }
-      if (syncCards.length > 0) continue
-      let mission = missions.get(ticket.missionId)
-      if (!mission || mission.projectId !== projectId) continue
-      mission = ensureMissionWorktree(mission.id) ?? mission
-      const source = missionWorkspacePath(project.path, mission)
-      const target = source ? resolveMissionIntegrationTarget(project, mission) : undefined
-      const targetHead = target ? gitHead(target.dir) : undefined
-      if (
-        !target ||
-        !targetHead ||
-        !createIntegrationSyncTask(
-          ticket,
-          mission,
-          target,
-          targetHead,
-          ticket.resolution?.instruction
-        )
-      ) {
-        hub.publish({
-          projectId,
-          kind: 'error',
-          text: `a fila preservou #${ticket.position} (missão "${mission?.title ?? ticket.missionId}"), mas ainda não conseguiu reparar o card operacional; o Maestro deve revisar o plano aprovado`,
-          actor: 'harness',
-          urgent: true
-        })
-        continue
-      }
-      hub.publish({
-        projectId,
-        missionId: mission.id,
-        kind: 'info',
-        text: 'recuperei após reinício o card operacional que faltava na fila; execute-o e conclua o plano para retomar a mesma posição',
-        actor: 'harness',
-        urgent: true
-      })
-      emitMissionsChanged(projectId)
-      syncBoard(projectId)
-    }
-  }
-
   function startMissionIntegration(missionId: string, actor: string): string {
     let mission = missions.get(missionId)
     if (!mission) return 'missão não encontrada'
@@ -834,46 +637,11 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         ? 'missão já integrada; backlog, versão e plano mestre foram reconciliados'
         : 'missão já integrada; a reconciliação ficou registrada para nova tentativa no próximo boot'
     }
-    // MISSÃO 2.0 (direct): não existe plano, nem validação humana de plano,
-    // nem verificação conjunta — o contrato é a conversa do dev com o dono e
-    // o ⇪ é o aval. Tudo o que continua valendo (árvore limpa, heads, lacre,
-    // FIFO, identidade do destino, precheck de conflito) vale IGUAL abaixo.
-    const direct = isDirectMission(mission)
-    const missionPlan = direct ? undefined : currentPlanOf(mission.projectId, missionId)
-    if (!direct) {
-      if (!missionPlan) {
-        return integrateBlocked(
-          'no-plan',
-          'integração bloqueada: esta missão ainda não tem um plano aprovado e concluído — abra a aba da missão e combine o plano com o orquestrador'
-        )
-      }
-      if (missionPlan.status !== 'done') {
-        return integrateBlocked(
-          'plan-not-done',
-          missionPlan.status === 'backlog'
-            ? 'integração bloqueada: o plano da missão ainda aguarda sua aprovação (ou está pausado)'
-            : 'integração bloqueada: o plano aprovado ainda está em execução — conclua todos os cards e o plano antes de integrar'
-        )
-      }
-      if (missionPlan.plan?.verification && !finalVerificationAccepted(missionPlan.plan.verification.final)) {
-        return integrateBlocked(
-          'final-verification',
-          'integração bloqueada: a verificação conjunta do plano não está aprovada'
-        )
-      }
-    }
-    // Fotografia lacrada pela verificação conjunta — só existe no fluxo legado.
-    const verifiedFinal = missionPlan?.plan?.verification?.final
-    const open = tasks
-      .list(mission.projectId)
-      .filter((t) => t.missionId === missionId && t.status !== 'done')
-    if (open.length > 0)
-      return integrateBlocked(
-        'open-cards',
-        `ainda há ${open.length} tarefa(s) não concluída(s) na missão — finalize (ou remova) antes de integrar: ${open
-          .map((t) => `"${t.title}"`)
-          .join(' · ')}`
-      )
+    // A ÚNICA missão que existe é a 2.0: não há plano, validação humana de
+    // plano nem verificação conjunta — o contrato é a conversa do dev com o
+    // dono e o ⇪ é o aval. O que segue valendo (árvore limpa, heads, lacre,
+    // FIFO, identidade do destino, precheck de conflito) está abaixo, e vale
+    // igual para um registro pré-2.0 que ainda esteja ativo.
     mission = ensureMissionWorktree(missionId) ?? mission
     const gitProject = hasGitCommit(project.path)
     const missionSource = missionWorkspacePath(project.path, mission)
@@ -898,12 +666,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           return integrateBlocked(
             'agent-dirty-tree',
             'a missão NÃO está pronta para o aval do dono: a branch tem alterações não commitadas depois dos gates — enquadre a árvore (commit auditado ou limpeza) antes de pedir integração'
-          )
-        const agentHead = gitHead(missionSource)
-        if (verifiedFinal?.head && agentHead && verifiedFinal.head !== agentHead)
-          return integrateBlocked(
-            'agent-photo-stale',
-            `a missão NÃO está pronta para o aval do dono: a branch mudou depois da verificação conjunta (${verifiedFinal.head.slice(0, 12)} → ${agentHead.slice(0, 12)}). Chame conclude_plan para REVALIDAR a fotografia (o plano reabre só para a verificação re-rodar e fecha sozinho); depois peça a integração de novo.`
           )
       }
       if (!missions.get(missionId)?.pendingIntegrationApproval) {
@@ -972,14 +734,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         'heads',
         'integração bloqueada: não consegui identificar os commits atuais da missão e do destino'
       )
-    // Missão 2.0 não tem verificação conjunta: `verifiedFinal` é undefined e
-    // esta cerca some sozinha — o lacre do ticket (sourceHead) segue valendo.
-    if (verifiedFinal?.head && verifiedFinal.head !== sourceHead) {
-      return integrateBlocked(
-        'photo-stale',
-        `integração bloqueada: a branch mudou depois da verificação conjunta (${verifiedFinal.head.slice(0, 12)} → ${sourceHead.slice(0, 12)}). RECEITA: o orquestrador chama conclude_plan para REVALIDAR a fotografia (o plano reabre só para a verificação re-rodar no head atual e fecha sozinho); depois clique ⇪ de novo.`
-      )
-    }
     // O AVAL do dono só se consome quando o clique ATRAVESSA todas as
     // checagens (2026-08-10: o clear precoce apagava a pulsação do botão
     // mesmo com o clique bloqueado — a intenção do agente se perdia).
@@ -998,8 +752,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         return `a missão mantém a posição #${existing.position} na fila e ainda precisa concluir o card de sincronização com ${target.branch}`
       }
       integrationQueue.requeueAfterSync(missionId, {
-        // 2.0: sem plano — o ticket entra sem planId (campo opcional da fila).
-        planId: missionPlan?.id,
         sourceHead,
         validatedTargetHead: targetHead,
         targetBranch: target.branch,
@@ -1012,7 +764,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         requestedBy: actor,
         targetKind: target.kind,
         versionId: target.versionId,
-        planId: missionPlan?.id,
         sourceHead,
         validatedTargetHead: targetHead,
         targetBranch: target.branch,
@@ -1087,64 +838,19 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           return
         }
 
-        // Reparo da pequena janela entre os dois stores: se o card operacional
-        // foi persistido e o app caiu antes de o ticket mudar de estado, a
-        // fila reconhece o marcador e volta a aguardar esse mesmo card.
-        const preparedSyncTask = tasks
-          .list(projectId)
-          .find(
-            (task) =>
-              task.missionId === mission.id &&
-              task.kind !== 'plan' &&
-              task.status !== 'done' &&
-              task.briefing?.includes(`[fila:${ticket.id}:`)
-          )
-        if (preparedSyncTask) {
-          integrationQueue.requireSync(mission.id, {
-            code: 'sync_task_prepared',
-            owner: 'orchestrator',
-            detail: 'o card operacional da fila já existe e ainda precisa terminar'
-          })
-          missions.update(mission.id, { status: 'ativa' })
-          emitMissionsChanged(projectId)
-          syncBoard(projectId)
-          return
-        }
-
         // O ticket é uma fotografia do artefato aprovado. Nada que apareceu
         // depois (plano, card, commit ou arquivo solto) pode entrar escondido.
         // Missão 2.0 não tem plano nem verificação conjunta: o lacre que
         // sobrevive é o COMMIT (ticket.sourceHead) e a árvore limpa — as duas
         // cercas que provam que o que entra é o que o dono aprovou.
-        const directTicket = isDirectMission(mission)
-        const approvedPlan = directTicket ? undefined : currentPlanOf(projectId, mission.id)
-        const openCards = tasks
-          .list(projectId)
-          .filter(
-            (task) =>
-              task.missionId === mission.id && task.kind !== 'plan' && task.status !== 'done'
-          )
         const sourceHead = gitHead(missionSource)
         const snapshotProblems: string[] = []
-        const approvedFinal = approvedPlan?.plan?.verification?.final
-        if (!directTicket) {
-          if (!approvedPlan || approvedPlan.status !== 'done')
-            snapshotProblems.push('o plano aprovado não está concluído')
-          if (approvedPlan?.plan?.verification && !finalVerificationAccepted(approvedFinal))
-            snapshotProblems.push('a verificação conjunta não está aprovada')
-        }
-        if (ticket.planId && approvedPlan?.id !== ticket.planId)
-          snapshotProblems.push('o plano corrente não é o plano que autorizou a entrada na fila')
-        if (openCards.length > 0)
-          snapshotProblems.push(`${openCards.length} card(s) voltaram a ficar abertos`)
         if (!ticket.sourceHead || !sourceHead)
           snapshotProblems.push('não foi possível confirmar o commit aprovado')
         else if (sourceHead !== ticket.sourceHead)
           snapshotProblems.push(
             `a branch avançou depois da autorização (${ticket.sourceHead.slice(0, 12)} → ${sourceHead.slice(0, 12)})`
           )
-        if (approvedFinal?.head && sourceHead && approvedFinal.head !== sourceHead)
-          snapshotProblems.push('o commit atual não é o mesmo que passou na verificação conjunta')
         if (isWorktreeClean(missionSource) !== true)
           snapshotProblems.push('há arquivos não commitados na branch da missão')
         if (snapshotProblems.length > 0) {
@@ -1221,40 +927,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
             emitIntegrationBlockForMaestro(blocked, mission, target, pre.detail, pre.conflictFiles)
             return
           }
-          // MISSÃO 2.0: destino que andou NÃO vira card de sincronização (não
-          // há plano para reabrir nem orquestrador para disparar o card). O
-          // precheck acima acabou de provar que a mescla é limpa contra o
-          // destino ATUAL — cai fora do if e segue para o merge; conflito real
-          // parou no bloqueio acima e a receita chegou na conversa do dev.
-          if (!directTicket) {
-            if (!createIntegrationSyncTask(ticket, mission, target, targetHead)) {
-              const detail =
-                'não consegui reabrir exatamente o plano aprovado para criar o card de sincronização'
-              const blocked = integrationQueue.block(mission.id, {
-                code: 'sync_task_unavailable',
-                owner: 'maestro',
-                detail
-              })
-              emitIntegrationBlockForMaestro(blocked, mission, target, detail)
-              return
-            }
-            integrationQueue.requireSync(mission.id, {
-              code: 'target_advanced',
-              owner: 'orchestrator',
-              detail: `${target.branch} avançou desde a validação desta missão`
-            })
-            hub.publish({
-              projectId,
-              missionId: mission.id,
-              kind: 'info',
-              text: `chegou sua vez na fila, mas ${target.branch} avançou. A fila abriu um único card de sincronização + testes; conclua o plano e ela retomará automaticamente a autorização original`,
-              actor: 'harness',
-              urgent: true
-            })
-            emitMissionsChanged(projectId)
-            syncBoard(projectId)
-            return
-          }
+          // Destino que andou NAO vira card de sincronizacao: o precheck
+          // acima acabou de provar que a mescla e limpa contra o destino
+          // ATUAL. Conflito real parou no bloqueio acima, e a receita chegou
+          // na conversa do dev.
         }
 
         integrationQueue.beginMerge(mission.id)
@@ -1926,24 +1602,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         }
   }
 
+  /** Encerra os panes vivos de uma missao. `reason` continua na assinatura
+   *  porque os chamadores o usam como rastro do gesto (arquivar, excluir). */
   function stopMissionExecution(projectId: string, missionId: string, reason: string): void {
-    const missionTaskIds = new Set(
-      tasks
-        .list(projectId)
-        .filter((task) => task.missionId === missionId && task.kind !== 'plan')
-        .map((task) => task.id)
-    )
-    for (const taskId of missionTaskIds) {
-      const task = tasks.get(taskId)
-      if (task && (task.status === 'execucao' || task.status === 'qa')) {
-        tasks.update(taskId, {
-          status: 'backlog',
-          feedback: reason,
-          phaseState: 'interrupted'
-        })
-      }
-    }
-
+    void reason
     for (const pane of hub
       .panesOf(projectId)
       .filter((candidate) => candidate.missionId === missionId)) {
@@ -1971,12 +1633,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     reconcileConcludedMission,
     // ——— fila de integração ———
     resolveMissionIntegrationTarget,
-    createIntegrationSyncTask,
     scheduleIntegrationDrain,
     startMissionIntegration,
     // ——— recuperação (chamada pelo boot) ———
     recoverMissionIntegrationIntents,
-    repairIntegrationSyncTickets,
     // ——— tick do poller de 3s ———
   }
 }

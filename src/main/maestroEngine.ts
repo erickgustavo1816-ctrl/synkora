@@ -24,7 +24,6 @@ import { app } from 'electron'
 import { join } from 'path'
 import {} from 'crypto'
 import {
-  parseTasks as parseTasksJson,
   PERSONA_DEV,
   SURVEY_PROMPT,
   SURVEY_SECURITY_PROMPT,
@@ -33,7 +32,6 @@ import {
 } from './maestro'
 import { MaestroSession, type SessionEvent } from './maestroSession'
 import { CodexSession } from './codexSession'
-import { assessMissionRisk } from './orchestratorFlow'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
 
 /** Pergunta dirigida ao DONO (tool `ask_user` da era F6) — persistida entre
@@ -70,7 +68,7 @@ export interface MaestroEngineExtras {
 export type MaestroEngine = ReturnType<typeof createMaestroEngine>
 
 export function createMaestroEngine(ctx: MainContext, extras: MaestroEngineExtras) {
-  const { projects, seats, tasks, maestro, maestroSessions, blackbox, syncBoard } = ctx
+  const { projects, seats, maestro, maestroSessions, blackbox, syncBoard } = ctx
   const {
     killMaestroSession,
     finishProgressMaestroTurn,
@@ -156,35 +154,11 @@ export function createMaestroEngine(ctx: MainContext, extras: MaestroEngineExtra
           emitLive({ type: 'thinking' })
           break
         case 'text': {
-          // Bloco de texto final do turno: extrai <tasks> e persiste a fala.
-          const match = evt.text.match(/<tasks>([\s\S]*?)<\/tasks>/)
-          const items = match ? parseTasksJson(match[1]) : []
-          const text = (match ? evt.text.replace(match[0], '') : evt.text).trim()
+          // Bloco de texto final do turno. O parser do bloco <tasks> saiu com
+          // o TaskStore na limpa F6: o PM nao cria mais card nenhum.
           emitLive({ type: 'flush' })
+          const text = evt.text.trim()
           if (text) emitLog(projectId, { kind: 'say', text })
-          if (items.length > 0) {
-            const unplannedRisk = assessMissionRisk({
-              texts: items.flatMap((item) => [item.title, item.description])
-            })
-            if (unplannedRisk.surfaces.length > 0) {
-              emitLog(projectId, {
-                kind: 'err',
-                text:
-                  `cards legados recusados: o pedido toca ${unplannedRisk.surfaces.join(', ')}. ` +
-                  'Trabalho com superfície de risco precisa nascer em uma missão e seguir um plano aprovado; nenhum card avulso foi criado.'
-              })
-              break
-            }
-            const created = tasks.createMany(projectId, items)
-            for (const t of created)
-              emitLog(projectId, { kind: 'log', tag: t.department, text: t.title })
-            emitLog(projectId, {
-              kind: 'ok',
-              text: `${created.length} tarefas criadas no backlog`
-            })
-            ctx.pushAll('tasks:changed', projectId)
-            syncBoard(projectId)
-          }
           break
         }
         case 'tool':

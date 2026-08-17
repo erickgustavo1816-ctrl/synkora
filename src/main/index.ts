@@ -12,12 +12,6 @@ import {    join, resolve } from 'path'
 import { pathToFileURL } from 'url'
 import { ProjectStore } from './projects'
 import { SeatStore, type SeatCli } from './seats'
-import {
-  TaskStore,
-  type Task,
-  type PlanLane,
-  type PlanVerificationCheckpoint
-} from './tasks'
 import { PERSONA_DEV, SURVEY_SECURITY_PROMPT } from './maestro'
 import { MaestroStore } from './maestroStore'
 import {
@@ -32,15 +26,9 @@ import {
   pruneWorktrees,
   removeWorktreeAndBranch
 } from './worktree'
-import { MissionStore, type Mission } from './missions'
+import { MissionStore } from './missions'
 import { PlanStore } from './plans'
 import { IntegrationQueueStore } from './integrationQueue'
-import {
-  normalizeExecutionMode,
-  normalizeRiskLevel,
-  retryLimitForExecutionMode,
-  type MissionExecutionMode
-} from './orchestratorFlow'
 import type { MainContext } from './mainContext'
 import {} from './cliSessionTransplant'
 import { createMaestroEngine, type MaestroBackend } from './maestroEngine'
@@ -74,7 +62,6 @@ import { registerMiscIpc } from './ipc/misc'
 import {} from './projectSecurityBaseline'
 import { redactSensitiveText } from './securityRedaction'
 import { BacklogStore, type Version } from './backlog'
-import { PolicyStore } from './policies'
 import { clearCatalogCache, getCatalog } from './catalog'
 import {
   getCliStatus,
@@ -82,11 +69,10 @@ import {
   onCliStatus,
   updateAllClis,
 } from './cliUpdate'
-import type {} from './tasks'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs'
 import { StallAttribution, instrumentIpcMain } from './stallAttribution'
 import { gitOff } from './gitAsync'
-import { execFile } from 'child_process'
+import {} from 'child_process'
 import {   } from 'crypto'
 import { PtyManager } from './pty'
 import { SessionStatsWatcher } from './sessionStats'
@@ -132,20 +118,6 @@ import {
   synVoiceOverlaySize
 } from './synVoiceOverlayWindow'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
-import {
-  compareVerificationEvidence,
-  detectVerificationCommands,
-  recoverInterruptedVerification,
-  runVerificationCommands,
-  verificationBudget,
-  verificationCommandDefinitionHash,
-  type VerificationCommand
-} from './missionVerification'
-import {
-  detectProjectAdapters,
-  selectProjectAdapterCommands,
-  type ProjectAdapterDetection
-} from './projectAdapters'
 import { Blackbox } from './blackbox'
 
 const ptys = new PtyManager()
@@ -202,7 +174,6 @@ function unregisterPane(paneId: string): PaneIdentity | undefined {
 
 let projects: ProjectStore
 let seats: SeatStore
-let tasks: TaskStore
 
 // Painéis de fundo do Maestro (um processo persistente por projeto:
 // claude stream-json ou codex app-server, mesma interface de eventos).
@@ -298,7 +269,6 @@ let progressCoordinatorActivitySource: (() => ProgressCoordinatorActivityInput[]
 let latestProgressSnapshot = buildProgressSnapshot({
   projects: [],
   missions: [],
-  tasks: [],
   integrationQueue: [],
   revision: 0
 })
@@ -2334,78 +2304,16 @@ app.whenReady().then(async () => {
   const endBootStores = mainStalls.begin('boot:stores')
   projects = new ProjectStore()
   seats = new SeatStore()
-  tasks = new TaskStore()
   const missions = new MissionStore()
   // Planos do universo (2.0, onda D): a fonte das abas do MAPA. Fica em
   // userData, fora do repo do produto — worktree limpo e veredito de gate
   // legado intactos.
   const plans = new PlanStore()
-  // Caixa-preta: toda mudança de estado de card entra no diário com estado
-  // anterior/seguinte — é a espinha da reconstrução de qualquer fluxo.
-  tasks.onMutation = (prev, next) => {
-    const summary = (t: Task): string =>
-      `${t.status}/${t.activePhase ?? '-'}/${t.phaseState ?? '-'}`
-    const changedState = summary(prev) !== summary(next)
-    const changedFeedback = prev.feedback !== next.feedback
-    if (!changedState && !changedFeedback) return
-    blackbox.record({
-      cat: 'task',
-      event: changedState ? 'state-change' : 'feedback-change',
-      ids: {
-        projectId: next.projectId,
-        missionId: next.missionId,
-        taskId: next.id,
-        planId: next.planId,
-        phase: next.activePhase
-      },
-      prev: summary(prev),
-      next: summary(next),
-      reason: changedFeedback ? next.feedback : undefined,
-      detail: {
-        title: next.title,
-        kind: next.kind,
-        cycles: next.cycles,
-        devHead: next.verification?.dev?.head?.slice(0, 12),
-        devBaseHead: next.verification?.dev?.baseHead?.slice(0, 12)
-      }
-    })
-  }
-  tasks.onCreate = (created) => {
-    for (const t of created) {
-      blackbox.record({
-        cat: 'task',
-        event: 'created',
-        ids: {
-          projectId: t.projectId,
-          missionId: t.missionId,
-          taskId: t.id,
-          planId: t.planId
-        },
-        next: t.status,
-        detail: { title: t.title, kind: t.kind, department: t.department, auto: t.auto }
-      })
-    }
-  }
-  tasks.onRemove = (removed) => {
-    blackbox.record({
-      cat: 'task',
-      event: 'removed',
-      ids: {
-        projectId: removed.projectId,
-        missionId: removed.missionId,
-        taskId: removed.id,
-        planId: removed.planId
-      },
-      prev: removed.status,
-      detail: { title: removed.title, kind: removed.kind }
-    })
-  }
   const integrationQueue = new IntegrationQueueStore(
     join(app.getPath('userData'), 'integration-queue.json')
   )
   const backlog = new BacklogStore()
   const maestro = new MaestroStore()
-  const policies = new PolicyStore()
   const settings = new SettingsStore()
   endBootStores()
   progressCoordinatorActivitySource = () => {
@@ -2454,7 +2362,6 @@ app.whenReady().then(async () => {
     return buildProgressSnapshot({
       projects: allProjects,
       missions: allProjects.flatMap((project) => missions.list(project.id)),
-      tasks: allProjects.flatMap((project) => tasks.list(project.id)),
       integrationQueue: integrationQueue.listPending(),
       coordinatorActivity: progressCoordinatorActivitySource?.() ?? [],
       missingProjectIds: allProjects
@@ -2583,13 +2490,11 @@ app.whenReady().then(async () => {
   const ctx: MainContext = {
     projects,
     seats,
-    tasks,
     missions,
     plans,
     integrationQueue,
     backlog,
     maestro,
-    policies,
     settings,
     ptys,
     synVoice,
@@ -2700,68 +2605,6 @@ app.whenReady().then(async () => {
   // restaurando lockfile) saturavam o disco e as congeladas da UI coincidiam
   // com essas janelas. UM bootstrap por vez — segundos de fila custam menos
   // que a máquina do dono travada.
-  let verificationBootstrapChain: Promise<void> = Promise.resolve()
-
-  function ensureVerificationBootstrap(
-    cwd: string,
-    ids: { projectId: string; missionId?: string; taskId?: string }
-  ): Promise<void> {
-    const queued = verificationBootstrapChain.then(
-      () => runVerificationBootstrap(cwd, ids),
-      () => runVerificationBootstrap(cwd, ids)
-    )
-    verificationBootstrapChain = queued.catch(() => undefined)
-    return queued
-  }
-
-  async function runVerificationBootstrap(
-    cwd: string,
-    ids: { projectId: string; missionId?: string; taskId?: string }
-  ): Promise<void> {
-    try {
-      if (!existsSync(join(cwd, 'package.json'))) return
-      if (existsSync(join(cwd, 'node_modules'))) return
-      if (!existsSync(join(cwd, 'package-lock.json'))) return
-      blackbox.record({
-        cat: 'verify',
-        event: 'bootstrap-npm-ci',
-        actor: 'harness',
-        ids,
-        reason: 'worktree sem node_modules — rodando npm ci antes da verificação conjunta'
-      })
-      await new Promise<void>((resolveBootstrap) => {
-        execFile(
-          'npm',
-          ['ci', '--no-audit', '--no-fund'],
-          {
-            cwd,
-            shell: true,
-            windowsHide: true,
-            timeout: 600_000,
-            env: { ...process.env, CI: '1' }
-          },
-          (error) => {
-            if (error) {
-              blackbox.record({
-                cat: 'verify',
-                event: 'bootstrap-npm-ci-failed',
-                actor: 'harness',
-                ids,
-                err: String(error).slice(0, 300)
-              })
-            }
-            resolveBootstrap()
-          }
-        )
-      })
-    } catch {
-      // bootstrap é best-effort: a verificação real dá o veredito com contexto
-    }
-  }
-
-  // claude: pré-aceita no config do seat os diálogos que travariam o pane —
-  // o aceite do bypassPermissions (uma vez por seat) e o "trust this folder"
-  // do cwd (uma vez por seat+pasta; seats novos e worktrees caíam nele).
   function ensureBypassAccepted(configDir: string, trustCwd?: string): void {
     try {
       const file = join(configDir, '.claude.json')
@@ -2878,843 +2721,6 @@ app.whenReady().then(async () => {
   })
 
 
-
-
-  // ————— F5.7: missão dirigida por PLANO —————
-  // O orquestrador propõe UM card de plano (tool create_plan); o usuário lê no
-  // board, pode ajustar seat/modelo/effort por lane e aprova aqui. Aprovado,
-  // a missão é 100% do orquestrador (cards auto + run_task) até o
-  // conclude_plan pousar a conclusão no card. Pausar devolve o plano ao
-  // backlog e corta novos runs (os já abertos terminam a fase).
-
-  function fmtLane(l: PlanLane): string {
-    const seatName = l.seatId ? (seats.get(l.seatId)?.name ?? l.seatId) : 'política do dept'
-    return `${l.dept} → ${seatName}${l.model ? ` · ${l.model}` : ''}${l.effort ? ` · ${l.effort}` : ''}`
-  }
-
-  /** Plano corrente da missão: o não-concluído mais recente, senão o último. */
-  function currentPlanOf(projectId: string, missionId: string): Task | undefined {
-    const plans = tasks
-      .list(projectId)
-      .filter((t) => t.missionId === missionId && t.kind === 'plan')
-    return [...plans].reverse().find((t) => t.status !== 'done') ?? plans.at(-1)
-  }
-
-  function planTaskForWorkTask(task: Task): Task | undefined {
-    if (task.planId) {
-      const exact = tasks.get(task.planId)
-      if (exact?.kind === 'plan') return exact
-    }
-    return task.missionId ? currentPlanOf(task.projectId, task.missionId) : undefined
-  }
-
-  function executionModeForTask(task: Task): MissionExecutionMode {
-    if (task.adjustment) return 'fast'
-    return normalizeExecutionMode(planTaskForWorkTask(task)?.plan?.executionMode)
-  }
-
-  function retryLimitForTask(task: Task): number {
-    return retryLimitForExecutionMode(executionModeForTask(task))
-  }
-
-  const baselineVerificationRuns = new Map<string, Promise<PlanVerificationCheckpoint>>()
-  const finalVerificationRuns = new Map<string, Promise<void>>()
-
-  function updatePlanVerification(
-    planId: string,
-    stage: 'baseline' | 'final',
-    checkpoint: PlanVerificationCheckpoint
-  ): Task | undefined {
-    const current = tasks.get(planId)
-    if (!current?.plan) return undefined
-    return tasks.update(planId, {
-      plan: {
-        ...current.plan,
-        verification: {
-          ...(current.plan.verification ?? {}),
-          [stage]: checkpoint
-        }
-      }
-    })
-  }
-
-  function verificationWorkspace(planTask: Task): {
-    mission: Mission
-    cwd: string
-    head?: string
-  } | undefined {
-    const mission = planTask.missionId ? missions.get(planTask.missionId) : undefined
-    const project = projects.get(planTask.projectId)
-    if (!mission || !project) return undefined
-    const cwd = missionWorkspacePath(project.path, mission)
-    if (!cwd) return undefined
-    return { mission, cwd, head: gitHead(cwd) }
-  }
-
-  /**
-   * Junta os checks normais do projeto aos módulos opcionais que ele próprio
-   * declarou. Scripts declarados de publish/deploy/release e seus hooks são
-   * recusados; só validadores locais da allowlist conservadora consomem uma
-   * parcela pequena do orçamento.
-   */
-  function planVerificationProfile(planTask: Task, cwd: string): {
-    adapters: ProjectAdapterDetection[]
-    commands: ReturnType<typeof detectVerificationCommands>
-  } {
-    const mode = normalizeExecutionMode(planTask.plan?.executionMode)
-    const risk = normalizeRiskLevel(planTask.plan?.risk)
-    const budget = verificationBudget(mode, risk)
-    const adapters = detectProjectAdapters({ root: cwd })
-    const core = detectVerificationCommands({ root: cwd, mode, risk })
-    const maxAdapterCommands = Math.min(
-      mode === 'deep' ? 2 : 1,
-      Math.max(0, budget.maxCommands - (core.length > 0 ? 1 : 0))
-    )
-    const optional = selectProjectAdapterCommands({
-      detections: adapters,
-      mode,
-      risk,
-      riskSurfaces: planTask.plan?.riskSurfaces ?? [],
-      missionText: `${planTask.title}\n${planTask.plan?.summary ?? ''}`,
-      maxCommands: maxAdapterCommands
-    }).map((command) => {
-      const normalized = {
-        id: command.id,
-        kind: 'check' as const,
-        label: command.label,
-        command: command.command,
-        args: command.args,
-        cwd: command.cwd,
-        source: `adaptador ${command.id.split(':')[1] ?? 'do projeto'} · ${command.sourcePath}`,
-        timeoutMs: Math.min(command.timeoutMs, budget.perCommandTimeoutMs)
-      }
-      return {
-        ...normalized,
-        definitionHash: verificationCommandDefinitionHash(normalized)
-      }
-    })
-    const invocationKey = (command: { command: string; args: string[]; cwd: string }): string =>
-      `${command.command}\0${command.args.join('\0')}\0${command.cwd}`
-    const optionalKeys = new Set(optional.map(invocationKey))
-    const coreWithoutDuplicates = core.filter((command) => !optionalKeys.has(invocationKey(command)))
-    const coreSlots = Math.max(0, budget.maxCommands - optional.length)
-    return {
-      adapters,
-      commands: [...coreWithoutDuplicates.slice(0, coreSlots), ...optional].slice(
-        0,
-        budget.maxCommands
-      )
-    }
-  }
-
-  function baselineVerificationUsable(
-    checkpoint: PlanVerificationCheckpoint | undefined
-  ): boolean {
-    if (!checkpoint || checkpoint.lastError || !checkpoint.result) return false
-    return (
-      checkpoint.result.status === 'passed' ||
-      checkpoint.result.status === 'failed' ||
-      checkpoint.result.status === 'not_required'
-    )
-  }
-
-  function verificationCommandIdentity(
-    command: Pick<
-      VerificationCommand,
-      'id' | 'command' | 'args' | 'cwd' | 'blockedReason' | 'definitionHash'
-    >
-  ): string {
-    const cwd = resolve(command.cwd)
-    return `${command.id}\0${command.command}\0${command.args.join('\0')}\0${process.platform === 'win32' ? cwd.toLowerCase() : cwd}\0${command.blockedReason ?? 'not-blocked'}\0${command.definitionHash ?? 'definition-missing'}`
-  }
-
-  /** Lista ampla usada só para REVALIDAR comandos persistidos. A execução
-   * continua limitada pelo perfil; aqui precisamos saber se um check antigo
-   * ainda existe e continua seguro antes de chamá-lo pelo mesmo nome. */
-  function currentVerificationCommandAllowlist(planTask: Task, cwd: string): Set<string> {
-    const mode = normalizeExecutionMode(planTask.plan?.executionMode)
-    const risk = normalizeRiskLevel(planTask.plan?.risk)
-    const core = detectVerificationCommands({
-      root: cwd,
-      mode,
-      risk,
-      maxCommands: 100
-    })
-    const adapterCommands = detectProjectAdapters({ root: cwd })
-      .filter((adapter) => adapter.state === 'active')
-      .flatMap((adapter) => adapter.verificationCommands)
-    return new Set(
-      [...core, ...adapterCommands].map((command) =>
-        verificationCommandIdentity({
-          ...command,
-          definitionHash:
-            'definitionHash' in command && typeof command.definitionHash === 'string'
-              ? command.definitionHash
-              : verificationCommandDefinitionHash(command)
-        })
-      )
-    )
-  }
-
-  async function ensurePlanBaseline(planTask: Task): Promise<PlanVerificationCheckpoint> {
-    const latest = tasks.get(planTask.id) ?? planTask
-    const stored = latest.plan?.verification?.baseline
-    if (baselineVerificationUsable(stored)) return stored as PlanVerificationCheckpoint
-    const inFlight = baselineVerificationRuns.get(planTask.id)
-    if (inFlight) return inFlight
-
-    const run = (async (): Promise<PlanVerificationCheckpoint> => {
-      const current = tasks.get(planTask.id) ?? planTask
-      const workspace = verificationWorkspace(current)
-      const mode = normalizeExecutionMode(current.plan?.executionMode)
-      const risk = normalizeRiskLevel(current.plan?.risk)
-      if (!workspace) {
-        const now = new Date().toISOString()
-        const checkpoint: PlanVerificationCheckpoint = {
-          status: 'unavailable',
-          commands: [],
-          startedAt: now,
-          finishedAt: now,
-          lastError: 'workspace da missão indisponível para a fotografia inicial'
-        }
-        updatePlanVerification(planTask.id, 'baseline', checkpoint)
-        return checkpoint
-      }
-      const cleanBefore = isWorktreeClean(workspace.cwd)
-      if (!workspace.head || cleanBefore === undefined) {
-        const now = new Date().toISOString()
-        const checkpoint: PlanVerificationCheckpoint = {
-          status: 'unavailable',
-          commands: [],
-          startedAt: now,
-          finishedAt: now,
-          lastError:
-            'o fluxo de missão verificável exige um repositório Git válido; inicialize/repare o Git do projeto antes de executar cards'
-        }
-        updatePlanVerification(planTask.id, 'baseline', checkpoint)
-        return checkpoint
-      }
-      if (!cleanBefore) {
-        const now = new Date().toISOString()
-        const checkpoint: PlanVerificationCheckpoint = {
-          status: 'unavailable',
-          head: workspace.head,
-          commands: [],
-          startedAt: now,
-          finishedAt: now,
-          lastError:
-            'a branch da missão já estava suja antes da fotografia inicial; preserve o conteúdo e enquadre-o antes de iniciar um card'
-        }
-        updatePlanVerification(planTask.id, 'baseline', checkpoint)
-        return checkpoint
-      }
-      const profile = planVerificationProfile(current, workspace.cwd)
-      // Baseline ainda não utilizável nunca é um contrato: após timeout,
-      // ferramenta ausente, crash ou erro interno, redetectamos a configuração
-      // atual em vez de repetir cegamente um comando antigo/alterado.
-      const commands = profile.commands
-      const adapters = profile.adapters
-      const startedAt = new Date().toISOString()
-      const running: PlanVerificationCheckpoint = {
-        status: 'running',
-        head: workspace.head,
-        commands,
-        adapters,
-        startedAt,
-        interruptedAt: stored?.status === 'running'
-          ? recoverInterruptedVerification(stored).interruptedAt
-          : stored?.interruptedAt
-      }
-      updatePlanVerification(planTask.id, 'baseline', running)
-      const budget = verificationBudget(mode, risk)
-      try {
-        await ensureVerificationBootstrap(workspace.cwd, {
-          projectId: planTask.projectId,
-          missionId: planTask.missionId,
-          taskId: planTask.id
-        })
-        const result = await runVerificationCommands(commands, {
-          totalTimeoutMs: budget.totalTimeoutMs,
-          maxOutputChars: budget.maxOutputChars,
-          env: { CI: '1', NODE_ENV: 'test' }
-        })
-        const headAfter = gitHead(workspace.cwd)
-        const cleanAfter = isWorktreeClean(workspace.cwd)
-        const changedByBaseline =
-          Boolean(workspace.head && headAfter && workspace.head !== headAfter) || cleanAfter !== true
-        const checkpoint: PlanVerificationCheckpoint = {
-          status: result.status,
-          head: workspace.head,
-          commands,
-          adapters,
-          result,
-          startedAt: result.startedAt,
-          finishedAt: result.finishedAt,
-          ...(changedByBaseline
-            ? {
-                lastError:
-                  'a verificação inicial alterou arquivos visíveis ao Git; o conteúdo foi preservado e a execução será bloqueada até a árvore voltar a ficar limpa'
-              }
-            : {})
-        }
-        updatePlanVerification(planTask.id, 'baseline', checkpoint)
-        blackbox.record({
-          cat: 'verify',
-          event: 'plan-verification-baseline',
-          ids: { projectId: planTask.projectId, missionId: planTask.missionId, taskId: planTask.id },
-          actor: 'harness',
-          reason: `fotografia inicial: ${result.status}`,
-          detail: { commands: result.results.map((r) => `${r.label}:${r.status}`) }
-        })
-        hub.publish({
-          projectId: planTask.projectId,
-          missionId: planTask.missionId,
-          kind: changedByBaseline ? 'error' : 'info',
-          text: changedByBaseline
-            ? 'a fotografia inicial deixou alterações no projeto; nenhum card deve iniciar até o orquestrador inspecionar e restaurar uma base limpa'
-            : result.status === 'passed'
-              ? `fotografia inicial verde (${commands.map((command) => command.label).join(' · ') || 'sem comando necessário'})`
-              : `fotografia inicial registrada como ${result.status}; o final será comparado com esse estado`,
-          actor: 'harness',
-          quiet: !changedByBaseline
-        })
-        return checkpoint
-      } catch (error) {
-        const now = new Date().toISOString()
-        const checkpoint: PlanVerificationCheckpoint = {
-          status: 'unavailable',
-          head: workspace.head,
-          commands,
-          adapters,
-          startedAt,
-          finishedAt: now,
-          lastError: error instanceof Error ? error.message : String(error)
-        }
-        updatePlanVerification(planTask.id, 'baseline', checkpoint)
-        return checkpoint
-      }
-    })().finally(() => baselineVerificationRuns.delete(planTask.id))
-    baselineVerificationRuns.set(planTask.id, run)
-    return run
-  }
-
-  function finalVerificationAccepted(checkpoint: PlanVerificationCheckpoint | undefined): boolean {
-    return (
-      checkpoint?.comparison?.status === 'passed' ||
-      checkpoint?.comparison?.status === 'passed_with_baseline_failures' ||
-      checkpoint?.comparison?.status === 'not_required'
-    )
-  }
-
-  function closeVerifiedPlan(planId: string): void {
-    const planTask = tasks.get(planId)
-    if (!planTask?.plan || planTask.status !== 'execucao' || !planTask.missionId) return
-    const final = planTask.plan.verification?.final
-    const workspace = verificationWorkspace(planTask)
-    const planCards = tasks
-      .list(planTask.projectId)
-      .filter(
-        (task) =>
-          task.missionId === planTask.missionId &&
-          task.kind !== 'plan' &&
-          (task.planId === planTask.id || (!task.planId && !planTask.plan?.executionMode))
-      )
-    const reopened = planCards.filter((task) => task.status !== 'done')
-    if (final && reopened.length > 0) {
-      updatePlanVerification(planTask.id, 'final', {
-        ...final,
-        comparison: {
-          status: 'blocked',
-          items: [
-            ...(final.comparison?.items ?? []),
-            {
-              commandId: 'synkora:cards-still-closed',
-              label: 'estado dos cards durante a verificação final',
-              verdict: 'blocked',
-              detail: `${reopened.length} card(s) foram reabertos antes do fechamento do plano`
-            }
-          ]
-        },
-        lastError: 'um card foi reaberto enquanto a verificação conjunta estava em andamento'
-      })
-      hub.publish({
-        projectId: planTask.projectId,
-        missionId: planTask.missionId,
-        kind: 'error',
-        text: 'a verificação conjunta terminou, mas o plano não fechou porque um card foi reaberto durante a execução',
-        actor: 'harness',
-        urgent: true
-      })
-      pushAll('tasks:changed', planTask.projectId)
-      syncBoard(planTask.projectId)
-      return
-    }
-    if (
-      !workspace ||
-      !finalVerificationAccepted(final) ||
-      !final?.pendingConclusion ||
-      !final.head ||
-      gitHead(workspace.cwd) !== final.head ||
-      isWorktreeClean(workspace.cwd) !== true
-    ) return
-    const mission = workspace.mission
-    const queueTicket = integrationQueue.getByMission(mission.id)
-    const resumesAuthorizedQueue =
-      queueTicket?.state === 'sync_required' &&
-      (!queueTicket.planId || queueTicket.planId === planTask.id)
-    tasks.update(planTask.id, {
-      status: 'done',
-      plan: {
-        ...planTask.plan,
-        conclusion: final.pendingConclusion,
-        executionHead: final.head
-      }
-    })
-    // Paridade de ambiente quebrado ("a mesma falha já existia na base") NÃO
-    // é evidência de teste — a mensagem antiga dizia só "CONCLUÍDOS" e o
-    // usuário lia como suíte verde (caso real 02/08: npm nem subia no
-    // worktree e a missão fechou com cara de testada).
-    const degraded = final.comparison?.status === 'passed_with_baseline_failures'
-    const degradedNote = degraded
-      ? ' · ATENÇÃO: a verificação passou por PARIDADE (as falhas de comando já existiam na base — ex.: ambiente sem dependências); NENHUM teste rodou de verdade'
-      : ''
-    blackbox.record({
-      cat: 'verify',
-      event: 'plan-verification-final',
-      ids: { projectId: planTask.projectId, missionId: planTask.missionId, taskId: planTask.id },
-      actor: 'harness',
-      reason: degraded ? 'aceita por paridade de falhas pré-existentes' : 'aprovada com comandos verdes',
-      detail: {
-        comparison: final.comparison?.status,
-        commands: (final.result?.results ?? []).map((r) => `${r.label}:${r.status}`)
-      }
-    })
-    hub.publish({
-      projectId: planTask.projectId,
-      kind: 'report',
-      text:
-        (resumesAuthorizedQueue
-          ? `missão "${mission.title}": sincronização e verificação conjunta APROVADAS — retomando automaticamente a posição #${queueTicket.position} com o aval original`
-          : `missão "${mission.title}": plano e verificação conjunta CONCLUÍDOS — a integração aguarda o aval do usuário`) + degradedNote,
-      actor: 'orchestrator',
-      urgent: true
-    })
-    pushAll('tasks:changed', planTask.projectId)
-    syncBoard(planTask.projectId)
-    if (resumesAuthorizedQueue) startMissionIntegration(mission.id, 'orquestrador · retomada autorizada')
-  }
-
-  function startFinalPlanVerification(planTask: Task, conclusion: string): void {
-    if (finalVerificationRuns.has(planTask.id)) return
-    const run = (async (): Promise<void> => {
-      const current = tasks.get(planTask.id) ?? planTask
-      const workspace = verificationWorkspace(current)
-      if (!current.plan) return
-      if (!workspace) {
-        const now = new Date().toISOString()
-        const detail =
-          'o worktree isolado da missão não pôde ser provado na retomada da verificação conjunta'
-        updatePlanVerification(current.id, 'final', {
-          status: 'unavailable',
-          commands: [],
-          startedAt: now,
-          finishedAt: now,
-          pendingConclusion: conclusion,
-          comparison: {
-            status: 'blocked',
-            items: [
-              {
-                commandId: 'synkora:mission-workspace',
-                label: 'worktree isolado da missão',
-                verdict: 'blocked',
-                detail
-              }
-            ]
-          },
-          lastError: detail
-        })
-        hub.publish({
-          projectId: current.projectId,
-          missionId: current.missionId,
-          kind: 'error',
-          text: `verificação conjunta BLOQUEADA: ${detail}. Nenhum comando foi executado na branch principal.`,
-          actor: 'harness',
-          urgent: true
-        })
-        pushAll('tasks:changed', current.projectId)
-        syncBoard(current.projectId)
-        return
-      }
-      const mode = normalizeExecutionMode(current.plan.executionMode)
-      const risk = normalizeRiskLevel(current.plan.risk)
-      const baseline = await ensurePlanBaseline(current)
-      const profile = planVerificationProfile(current, workspace.cwd)
-      const budget = verificationBudget(mode, risk)
-      const currentAllowlist = currentVerificationCommandAllowlist(current, workspace.cwd)
-      const invalidBaselineCommands = baseline.commands.filter(
-        (command) =>
-          !currentAllowlist.has(
-            verificationCommandIdentity({ ...command, cwd: workspace.cwd })
-          )
-      )
-      const baselineCommands = baseline.commands
-        .filter((command) => !invalidBaselineCommands.includes(command))
-        .map((command) => ({
-          ...command,
-          cwd: workspace.cwd
-        }))
-      const baselineIds = new Set(baselineCommands.map((command) => command.id))
-      const baselineInvocations = new Set(
-        baselineCommands.map(
-          (command) => `${command.command}\0${command.args.join('\0')}\0${command.cwd}`
-        )
-      )
-      const extraSlots = Math.max(0, budget.maxCommands - baselineCommands.length)
-      const newCommands = profile.commands
-        .filter(
-          (command) =>
-            !baselineIds.has(command.id) &&
-            !baselineInvocations.has(
-              `${command.command}\0${command.args.join('\0')}\0${command.cwd}`
-            )
-        )
-        .slice(0, extraSlots)
-      // O baseline é contrato: apagar/renomear um teste durante a missão não
-      // pode fazer a fotografia final ficar vazia e parecer "não necessária".
-      const commands = [...baselineCommands, ...newCommands]
-      const adapters = profile.adapters
-      const head = gitHead(workspace.cwd)
-      const startedAt = new Date().toISOString()
-      if (!baselineVerificationUsable(baseline)) {
-        const detail = baseline.lastError || `baseline ${baseline.status}`
-        updatePlanVerification(current.id, 'final', {
-          status: 'unavailable',
-          head,
-          commands,
-          adapters,
-          startedAt,
-          finishedAt: new Date().toISOString(),
-          pendingConclusion: conclusion,
-          comparison: {
-            status: 'blocked',
-            items: [
-              {
-                commandId: 'synkora:baseline-required',
-                label: 'fotografia inicial da missão',
-                verdict: 'blocked',
-                detail
-              }
-            ]
-          },
-          lastError: detail
-        })
-        hub.publish({
-          projectId: current.projectId,
-          missionId: current.missionId,
-          kind: 'error',
-          text: `verificação conjunta BLOQUEADA: a fotografia inicial não ficou válida (${detail})`,
-          actor: 'harness',
-          urgent: true
-        })
-        pushAll('tasks:changed', current.projectId)
-        syncBoard(current.projectId)
-        return
-      }
-      // MODO LEVE aceita comando REDEFINIDO pela própria entrega (caso real
-      // 2026-08-04, M02b: a missão trocou o script test de Electron+SQLite
-      // para vitest puro — mudança legítima, revisada em 4 rodadas de gate —
-      // e a conclusão travou em loop de escalação sem caminho sancionado):
-      // a redefinição roda na definição ATUAL (redetectada e DENTRO da
-      // allowlist segura) e o resultado exige verde absoluto; o evento fica
-      // auditado. Modo estrito preserva o bloqueio integral.
-      if (invalidBaselineCommands.length > 0) {
-        const redefined = securityWaiverOptions(current.projectId).sensitiveWaiverAllowed
-          ? invalidBaselineCommands
-              .map((invalid) => profile.commands.find((c) => c.id === invalid.id))
-              .filter((c): c is (typeof profile.commands)[number] => Boolean(c))
-          : []
-        if (redefined.length === invalidBaselineCommands.length && redefined.length > 0) {
-          for (const command of redefined) {
-            if (!commands.some((existing) => existing.id === command.id)) commands.push(command)
-          }
-          blackbox.record({
-            cat: 'verify',
-            event: 'verification-command-redefined-accepted',
-            actor: 'harness',
-            ids: {
-              projectId: current.projectId,
-              missionId: current.missionId,
-              taskId: current.id
-            },
-            reason: `modo leve: definição de comando alterada pela missão aceita com verde absoluto — ${invalidBaselineCommands.map((c) => c.label).join(' · ')}`
-          })
-          hub.publish({
-            projectId: current.projectId,
-            missionId: current.missionId,
-            kind: 'info',
-            text: `verificação conjunta: comando redefinido pela missão aceito em MODO LEVE (${invalidBaselineCommands.map((c) => c.label).join(' · ')}) — rodando a definição atual com exigência de verde absoluto`,
-            actor: 'harness'
-          })
-        } else {
-        const labels = invalidBaselineCommands.map((command) => command.label).join(' · ')
-        const detail = `o contrato de verificação mudou ou deixou de ser seguro: ${labels}`
-        updatePlanVerification(current.id, 'final', {
-          status: 'unavailable',
-          head,
-          commands,
-          adapters,
-          startedAt,
-          finishedAt: new Date().toISOString(),
-          pendingConclusion: conclusion,
-          comparison: {
-            status: 'blocked',
-            items: invalidBaselineCommands.map((command) => ({
-              commandId: command.id,
-              label: command.label,
-              verdict: 'blocked' as const,
-              detail: 'existia no baseline, mas foi removido, renomeado ou deixou a allowlist segura'
-            }))
-          },
-          lastError: detail
-        })
-        hub.publish({
-          projectId: current.projectId,
-          missionId: current.missionId,
-          kind: 'error',
-          text: `verificação conjunta BLOQUEADA sem executar o comando alterado: ${labels}`,
-          actor: 'harness',
-          urgent: true
-        })
-        pushAll('tasks:changed', current.projectId)
-        syncBoard(current.projectId)
-        return
-        }
-      }
-      updatePlanVerification(current.id, 'final', {
-        status: 'running',
-        head,
-        commands,
-        adapters,
-        startedAt,
-        pendingConclusion: conclusion
-      })
-      try {
-        await ensureVerificationBootstrap(workspace.cwd, {
-          projectId: current.projectId,
-          missionId: current.missionId,
-          taskId: current.id
-        })
-        const result = await runVerificationCommands(commands, {
-          totalTimeoutMs: budget.totalTimeoutMs,
-          maxOutputChars: budget.maxOutputChars,
-          env: { CI: '1', NODE_ENV: 'test' }
-        })
-        let comparison = compareVerificationEvidence(baseline.result, result)
-        const headAfter = gitHead(workspace.cwd)
-        if (!head || headAfter !== head || isWorktreeClean(workspace.cwd) !== true) {
-          comparison = {
-            status: 'blocked',
-            items: [
-              ...comparison.items,
-              {
-                commandId: 'synkora:immutable-head',
-                label: 'fotografia combinada da missão',
-                verdict: 'blocked',
-                detail: 'a branch ou os arquivos mudaram durante a verificação final'
-              }
-            ]
-          }
-        }
-        const checkpoint: PlanVerificationCheckpoint = {
-          status: result.status,
-          head,
-          commands,
-          adapters,
-          result,
-          comparison,
-          startedAt: result.startedAt,
-          finishedAt: result.finishedAt,
-          pendingConclusion: conclusion
-        }
-        updatePlanVerification(current.id, 'final', checkpoint)
-        if (finalVerificationAccepted(checkpoint)) {
-          closeVerifiedPlan(current.id)
-          return
-        }
-        const detail = comparison.items
-          .filter((item) => item.verdict === 'blocked')
-          .map((item) => `${item.label}: ${item.detail}`)
-          .join(' · ') || `verificação ${result.status}`
-        // EVIDÊNCIA DO BLOQUEIO (caso real 2026-08-06: "npm run test falhou no
-        // final" chegou SEM nenhum trecho da saída — o orquestrador teve que
-        // re-rodar os testes para descobrir o motivo, e a falha original ficou
-        // irrecuperável para diagnóstico. Veredito mecânico sem evidência é
-        // beco): o tail dos comandos falhos viaja na caixa-preta E na mensagem.
-        const failedEvidence = result.results
-          .filter((r) => r.status !== 'passed')
-          .map((r) => {
-            const tail = `${r.stderrTail || ''}\n${r.stdoutTail || ''}`.trim().slice(-1500)
-            return tail ? `--- ${r.label} (${r.status}) ---\n${tail}` : `--- ${r.label} (${r.status}) — sem saída capturada ---`
-          })
-          .join('\n')
-        blackbox.record({
-          cat: 'verify',
-          event: 'plan-verification-blocked',
-          ids: { projectId: current.projectId, missionId: current.missionId, taskId: current.id },
-          actor: 'harness',
-          reason: detail.slice(0, 300),
-          detail: {
-            comparison: comparison.status,
-            commands: result.results.map((r) => `${r.label}:${r.status}`),
-            evidence: redactSensitiveText(failedEvidence).slice(0, 4000)
-          }
-        })
-        const latestCards = tasks
-          .list(current.projectId)
-          .filter(
-            (task) =>
-              task.planId === current.id &&
-              task.kind !== 'plan' &&
-              task.status === 'done' &&
-              task.deliverable === 'code'
-          )
-        const repairCard = latestCards.at(-1)
-        // MODO LEVE (2026-08-04): a verificação conjunta NUNCA desfaz card já
-        // aprovado nos gates — a falha vira evento urgente e o orquestrador
-        // decide (card de correção, re-verificação…). Sem o switch, o
-        // comportamento estrito de devolver ao dev continua.
-        const lightMode = securityWaiverOptions(current.projectId).sensitiveWaiverAllowed
-        if (
-          repairCard &&
-          !lightMode &&
-          result.status !== 'unavailable' &&
-          result.status !== 'timed_out'
-        ) {
-          tasks.update(repairCard.id, {
-            status: 'backlog',
-            feedback: `verificação conjunta reprovou: ${detail}`.slice(0, 600),
-            activePhase: 'dev',
-            phaseState: 'interrupted',
-            verification: { contractVersion: 1 }
-          })
-        }
-        hub.publish({
-          projectId: current.projectId,
-          missionId: current.missionId,
-          kind: 'error',
-          text: `verificação conjunta BLOQUEOU a conclusão: ${detail}${
-            lightMode
-              ? ' — modo leve: nenhum card foi desfeito; avalie a falha e, se for real, crie um card de correção e re-chame conclude_plan'
-              : repairCard && repairCard.status === 'done'
-                ? ` — reabri "${repairCard.title}" para o orquestrador ajustar o briefing e rodar novamente`
-                : ''
-          }${
-            failedEvidence
-              ? `. EVIDÊNCIA (tail da saída): ${redactSensitiveText(failedEvidence).slice(-900)}`
-              : ''
-          }`,
-          actor: 'harness',
-          urgent: true
-        })
-        pushAll('tasks:changed', current.projectId)
-        syncBoard(current.projectId)
-      } catch (error) {
-        const now = new Date().toISOString()
-        const detail = error instanceof Error ? error.message : String(error)
-        updatePlanVerification(current.id, 'final', {
-          status: 'unavailable',
-          head,
-          commands,
-          adapters,
-          startedAt,
-          finishedAt: now,
-          pendingConclusion: conclusion,
-          comparison: {
-            status: 'blocked',
-            items: [{
-              commandId: 'synkora:verification-runtime',
-              label: 'verificação conjunta',
-              verdict: 'blocked',
-              detail
-            }]
-          },
-          lastError: detail
-        })
-        hub.publish({
-          projectId: current.projectId,
-          missionId: current.missionId,
-          kind: 'error',
-          text: `verificação conjunta BLOQUEOU a conclusão por erro interno: ${detail}`,
-          actor: 'harness',
-          urgent: true
-        })
-        pushAll('tasks:changed', current.projectId)
-        syncBoard(current.projectId)
-      }
-    })().finally(() => finalVerificationRuns.delete(planTask.id))
-    finalVerificationRuns.set(planTask.id, run)
-  }
-
-  function resumePlanVerificationIfNeeded(planTask: Task | undefined): void {
-    const final = planTask?.plan?.verification?.final
-    if (
-      !planTask ||
-      planTask.status !== 'execucao' ||
-      !final?.pendingConclusion ||
-      finalVerificationRuns.has(planTask.id)
-    ) return
-    if (finalVerificationAccepted(final)) {
-      closeVerifiedPlan(planTask.id)
-      const reconciled = tasks.get(planTask.id)
-      if (reconciled?.status === 'done') return
-      if (!finalVerificationAccepted(reconciled?.plan?.verification?.final)) return
-      const workspace = reconciled ? verificationWorkspace(reconciled) : undefined
-      const actualHead = workspace ? gitHead(workspace.cwd) : undefined
-      const expectedHead = reconciled?.plan?.executionHead
-      const detail = !workspace
-        ? 'o worktree isolado não pôde ser provado ao reconciliar a verificação final'
-        : expectedHead && actualHead !== expectedHead
-          ? `a branch avançou fora da cadeia de cards (${expectedHead.slice(0, 12)} → ${actualHead?.slice(0, 12) ?? 'desconhecido'})`
-          : isWorktreeClean(workspace.cwd) !== true
-            ? 'a branch possui alterações fora da fotografia aprovada'
-            : 'a evidência terminal não pôde ser reconciliada com o plano aprovado'
-      const terminal = reconciled?.plan?.verification?.final ?? final
-      updatePlanVerification(planTask.id, 'final', {
-        ...terminal,
-        status: 'unavailable',
-        finishedAt: new Date().toISOString(),
-        comparison: {
-          status: 'blocked',
-          items: [
-            ...(terminal.comparison?.items ?? []),
-            {
-              commandId: 'synkora:resume-final-snapshot',
-              label: 'reconciliação da fotografia final',
-              verdict: 'blocked',
-              detail
-            }
-          ]
-        },
-        lastError: detail
-      })
-      hub.publish({
-        projectId: planTask.projectId,
-        missionId: planTask.missionId,
-        kind: 'error',
-        text: `a verificação final já havia terminado, mas a conclusão não foi reconciliada: ${detail}. Nenhum commit novo foi aceito automaticamente.`,
-        actor: 'harness',
-        urgent: true
-      })
-      pushAll('tasks:changed', planTask.projectId)
-      syncBoard(planTask.projectId)
-      return
-    }
-    if (final.status !== 'running' && final.status !== 'pending') return
-    if (final.status === 'running') {
-      updatePlanVerification(planTask.id, 'final', recoverInterruptedVerification(final))
-    }
-    startFinalPlanVerification(planTask, final.pendingConclusion)
-  }
 
 
   // versionIsolation* fica AQUI (domínio VERSÃO — extras do ipc/backlog
@@ -4151,24 +3157,10 @@ app.whenReady().then(async () => {
         // best-effort
       }
     }
-    const taskIds = new Set(tasks.list(projectId).map((t) => t.id))
     const allMissions = missions.list(projectId)
     const missionById = new Map(allMissions.map((m) => [m.id, m]))
     const liveShorts = new Set(
       allMissions.filter((m) => m.status !== 'concluida').map((m) => m.id.slice(0, 8))
-    )
-    // Transcript de tarefa de missão CONCLUÍDA/EXCLUÍDA também é lixo (bug
-    // real: a tarefa segue existindo no board como done, então o filtro por
-    // "tarefa inexistente" nunca pegava esses .md).
-    const staleTaskIds = new Set(
-      tasks
-        .list(projectId)
-        .filter((t) => {
-          if (!t.missionId) return false
-          const m = missionById.get(t.missionId)
-          return !m || m.status === 'concluida'
-        })
-        .map((t) => t.id)
     )
     const runsDir = join(project.path, '.synkora', 'runs')
     try {
@@ -4217,7 +3209,6 @@ app.whenReady().then(async () => {
       ensureSynkoraGitExcludes(project.path)
       const dir = join(project.path, '.synkora')
       mkdirSync(dir, { recursive: true })
-      const all = tasks.list(projectId)
       const ms = missions.list(projectId)
       const missionTitle = (mid?: string): string | undefined =>
         mid ? ms.find((m) => m.id === mid)?.title : undefined
@@ -4229,41 +3220,12 @@ app.whenReady().then(async () => {
       if (ms.length > 0) {
         lines.push('## Missões')
         for (const m of ms) {
-          const count = all.filter((t) => t.missionId === m.id && t.kind !== 'plan')
-          const done = count.filter((t) => t.status === 'done').length
           lines.push(
-            `- [${m.status}] "${m.title}"${m.branch ? ` (branch ${m.branch})` : ''} — ${done}/${count.length} tarefas concluídas${m.scope ? ` · escopo: ${m.scope}` : ''}`
+            `- [${m.status}] "${m.title}"${m.branch ? ` (branch ${m.branch})` : ''}${m.scope ? ` · escopo: ${m.scope}` : ''}`
           )
         }
         lines.push('')
       }
-      for (const status of ['execucao', 'qa', 'backlog', 'done']) {
-        const bucket = all.filter((t) => t.status === status)
-        if (bucket.length === 0) continue
-        lines.push(`## ${STATUS_LABEL[status]}`)
-        for (const t of bucket) {
-          const mt = missionTitle(t.missionId)
-          // F5.7: card de PLANO tem linha própria — nunca lê como trabalho.
-          if (t.kind === 'plan') {
-            const st =
-              t.status === 'backlog'
-                ? t.plan?.approvedAt
-                  ? 'PAUSADO pelo usuário'
-                  : 'aguardando aprovação do usuário'
-                : t.status === 'execucao'
-                  ? 'APROVADO — orquestrador executando sozinho'
-                  : 'concluído'
-            lines.push(`- [PLANO]${mt ? ` [missão: ${mt}]` : ''} ${t.title} — ${st}`)
-            continue
-          }
-          lines.push(
-            `- [${t.department}]${mt ? ` [missão: ${mt}]` : ''} ${t.title} (${t.type}, ${t.effort})`
-          )
-          if (t.description) lines.push(`  ${t.description.replace(/\s+/g, ' ').slice(0, 300)}`)
-        }
-        lines.push('')
-      }
-      if (all.length === 0) lines.push('(sem tarefas no board)')
       writeFileSync(join(dir, 'BOARD.md'), lines.join('\n'), 'utf-8')
     } catch {
       // board é best-effort — nunca derruba o fluxo
@@ -4328,8 +3290,6 @@ app.whenReady().then(async () => {
   const missionEngine = createMissionEngine(ctx, {
     orchKey,
     securityWaiverOptions,
-    currentPlanOf,
-    finalVerificationAccepted,
     versionIsolationIsValid,
     emitBacklogChanged,
     sweepProjectFiles,
@@ -4341,13 +3301,10 @@ app.whenReady().then(async () => {
     integrationDrainTimers,
     integrationDraining,
     emitMissionsChanged,
-    missionWorkspacePath,
     ensureMissionWorktree,
     reconcileConcludedMission,
     scheduleIntegrationDrain,
-    startMissionIntegration,
     recoverMissionIntegrationIntents,
-    repairIntegrationSyncTickets
   } = missionEngine
 
   // MAESTRO → maestroEngine.ts (fase 1, commit 6b). Sessão de fundo do PM,
@@ -4693,34 +3650,6 @@ app.whenReady().then(async () => {
       recoverMissionIntegrationIntents(p.id)
       recoverVersionReleaseIntents(p.id)
     }
-    let dirty = false
-    for (const t of tasks.list(p.id)) {
-      // Plano não é pane, mas a verificação conjunta É um processo. Se o app
-      // caiu durante ela, o próprio boot converte running→pending e relança;
-      // não depende de o orquestrador lembrar de chamar board_status.
-      if (t.kind === 'plan') {
-        if (runtimeWritable) {
-          resumePlanVerificationIfNeeded(t)
-        } else if (t.plan?.verification) {
-          const verification = t.plan.verification
-          const baseline = verification.baseline?.status === 'running'
-            ? recoverInterruptedVerification(verification.baseline)
-            : verification.baseline
-          const final = verification.final?.status === 'running'
-            ? recoverInterruptedVerification(verification.final)
-            : verification.final
-          if (baseline !== verification.baseline || final !== verification.final) {
-            tasks.update(t.id, {
-              plan: {
-                ...t.plan,
-                verification: { ...verification, baseline, final }
-              }
-            })
-          }
-        }
-        continue
-      }
-    }
     for (const m of missions.list(p.id)) {
       if (m.status === 'integrando') missions.update(m.id, { status: 'ativa' })
       if (runtimeWritable && m.status === 'concluida') {
@@ -4738,9 +3667,8 @@ app.whenReady().then(async () => {
       // stall de boot (~1,9s aos 3s com culprits vazio no 1º boot medido).
       const endSweep = mainStalls.begin('boot:project-sweep', p.id.slice(0, 8))
       sweepProjectFiles(p.id, { preserveInterruptedHelpers: true })
-      repairIntegrationSyncTickets(p.id)
       if (integrationQueue.head(p.id)?.state === 'queued') scheduleIntegrationDrain(p.id)
-      if (dirty) syncBoard(p.id)
+      syncBoard(p.id)
       endSweep()
     }
   }

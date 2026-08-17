@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
-  ProgressCardPreview,
   ProgressCoordinatorSnapshot,
   ProgressMissionSnapshot,
   ProgressOverlaySnapshot,
@@ -16,7 +15,6 @@ const EMPTY_SNAPSHOT: ProgressOverlaySnapshot = {
     projects: 0,
     activeProjects: 0,
     activeMissions: 0,
-    activeCards: 0,
     activeCoordinators: 0,
     attentionMissions: 0,
     attentionProjects: 0,
@@ -56,21 +54,10 @@ function overallSummary(snapshot: ProgressOverlaySnapshot, completion?: string):
   if (snapshot.totals.activeCoordinators > 0) {
     active.push(`${plural(snapshot.totals.activeCoordinators, 'coordenador')} trabalhando`)
   }
-  if (snapshot.totals.activeCards > 0) {
-    active.push(`${plural(snapshot.totals.activeCards, 'card')} em andamento`)
-  }
   if (active.length > 0) return active.join(' · ')
   if (snapshot.totals.activeMissions > 0) return `${plural(snapshot.totals.activeMissions, 'missão')} sendo acompanhada${snapshot.totals.activeMissions === 1 ? '' : 's'}`
   if (snapshot.totals.recentCompletions > 0) return 'Tudo terminou por enquanto'
   return 'Nada rodando agora'
-}
-
-function cardActor(card: ProgressCardPreview): string {
-  if (card.phaseState === 'pending' || card.phaseState === 'finalizing') return 'Pipeline'
-  if (card.phase === 'review') return 'Revisor'
-  if (card.phase === 'qa') return 'QA'
-  if (card.phase === 'dev') return 'Executor'
-  return 'Pipeline'
 }
 
 // Pill de status por agente (a ideia do radar detalhado, 2026-08-06): bater o
@@ -173,18 +160,6 @@ function compactFocus(
       }
     }
   }
-  for (const project of snapshot.projects) {
-    for (const mission of project.activeMissions) {
-      const card = mission.activeCards[0]
-      if (card) {
-        return {
-          title: `${cardActor(card)} · ${card.phaseLabel}`,
-          detail: `${card.title} · ${project.name} / ${mission.title}`,
-          tone: card.interrupted ? 'attention' : 'running'
-        }
-      }
-    }
-  }
   const followed = snapshot.projects.find((project) => project.activeMissions.length > 0)
   if (followed) {
     const mission = followed.activeMissions[0]
@@ -253,28 +228,6 @@ function CoordinatorActivity({
   )
 }
 
-function ActiveCard({
-  card,
-  nowMs
-}: {
-  card: ProgressCardPreview
-  nowMs: number
-}): React.JSX.Element {
-  return (
-    <span className={`progress-active-card${card.interrupted ? ' interrupted' : ''}`}>
-      <em>{cardActor(card)}</em>
-      <span>
-        <span className="progress-active-card-head">
-          <b>{card.title}</b>
-          <StatusPill tone={card.tone} updatedAt={card.updatedAt} nowMs={nowMs} />
-        </span>
-        <small>{card.phaseLabel}</small>
-        {card.note && <span className="progress-note">▸ {card.note}</span>}
-      </span>
-    </span>
-  )
-}
-
 function MissionRow({
   mission,
   highlighted,
@@ -284,9 +237,6 @@ function MissionRow({
   highlighted: boolean
   nowMs: number
 }): React.JSX.Element {
-  const hasProgress = mission.progress.total > 0
-  const ratio = hasProgress ? Math.round((mission.progress.done / mission.progress.total) * 100) : 0
-  const hiddenActiveCards = Math.max(0, mission.progress.active - mission.activeCards.length)
   return (
     <button
       type="button"
@@ -303,27 +253,8 @@ function MissionRow({
         <span className="progress-mission-title">{mission.title}</span>
         <span className="progress-mission-state">{mission.label}</span>
         {mission.question && <QuestionLine question={mission.question} />}
-        {mission.detail && (mission.tone === 'attention' || mission.activeCards.length === 0) && (
+        {mission.detail && (
           <span className="progress-mission-detail">{mission.detail}</span>
-        )}
-        {mission.activeCards.length > 0 && (
-          <span className="progress-active-cards">
-            {mission.activeCards.map((card) => (
-              <ActiveCard key={card.id} card={card} nowMs={nowMs} />
-            ))}
-            {hiddenActiveCards > 0 && (
-              <small className="progress-active-more">
-                +{hiddenActiveCards} {hiddenActiveCards === 1 ? 'outro card acompanhado' : 'outros cards acompanhados'}
-              </small>
-            )}
-          </span>
-        )}
-        {hasProgress && (
-          <span className="progress-card-progress" aria-label={`${mission.progress.done} de ${mission.progress.total} tarefas concluídas`}>
-            <i><b style={{ width: `${ratio}%` }} /></i>
-            <em>{mission.progress.done}/{mission.progress.total}</em>
-            {mission.progress.active > 1 && <small>{mission.progress.active} acompanhados</small>}
-          </span>
         )}
       </span>
       <span className="progress-mission-open" aria-hidden="true">›</span>

@@ -1,12 +1,10 @@
 import { spawn } from 'child_process'
 import { freshWindowsPath } from './winPath'
-import type { Department } from './tasks'
 import { securityPromptForRole } from './securityPolicy'
-export { parseMaestroTasks as parseTasks } from './maestroTasks'
 
 export interface MaestroEvent {
   kind: 'cmd' | 'log' | 'ok' | 'err' | 'say' | 'tool' | 'out' | 'ask'
-  tag?: Department | 'maestro'
+  tag?: string
   text: string
   /** tool: input real (JSON) para expandir na UI · ask: input do pedido de permissão */
   detail?: string

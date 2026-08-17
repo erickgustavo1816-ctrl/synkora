@@ -31,14 +31,16 @@ export type BlackboxCategory =
   | 'pane' // nascimento, remount e encerramento de pane/processo
   | 'mcp' // config MCP gerada, conexão do pane, chamadas de tool
   | 'msg' // mensagens entre agentes (hub): publicação, entrega, descarte
-  | 'task' // mudanças de estado de card (status/fase/feedback)
-  | 'phase' // início/fim de dev, review, qa, finalização
   | 'git' // fotografias: commit base, entregue, fingerprint, diff
   | 'merge' // tentativa de merge, resultado, bloqueio, reparo
   | 'queue' // fila de integração
   | 'recovery' // reconciliação no boot e decisões de recuperação
-  | 'verify' // verificação proporcional (typecheck/test)
   | 'user' // intervenções e autorizações manuais
+
+// NARROWED, NUNCA O LEITOR: 'task', 'phase' e 'verify' saíram da união quando
+// o pipeline de cards/fases morreu (limpa F6, 2026-08-17). Os journals de 14
+// dias do dono AINDA têm essas linhas — `scripts/bbwatch.mjs` e o export de
+// diagnóstico continuam renderizando qualquer categoria que encontrarem.
 
 export interface BlackboxIds {
   projectId?: string

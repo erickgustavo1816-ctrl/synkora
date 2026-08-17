@@ -29,13 +29,11 @@ export interface DiagnosticsInput {
 }
 
 const STORE_FILES = [
-  'tasks.json',
-  'tasks.json.bak',
   'missions.json',
+  'plans.json',
   'backlog.json',
   'maestro.json',
   'projects.json',
-  'policies.json',
   'progress-overlay.json',
   'integration-queue.json'
 ]
@@ -270,7 +268,7 @@ function gitEvidence(projectPath: string): Record<string, unknown> {
 function projectArtifactSummary(projectPath: string): Record<string, unknown> {
   const synkoraDir = join(projectPath, '.synkora')
   const documents: Record<string, unknown> = {}
-  for (const name of ['EVENTS.md', 'BOARD.md', 'PROJECT_PLAN.json', 'PROJECT_PLAN.md']) {
+  for (const name of ['EVENTS.md']) {
     const summary = fileSummary(join(synkoraDir, name))
     if (summary) documents[name] = summary
   }
