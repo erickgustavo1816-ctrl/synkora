@@ -52,9 +52,13 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
     (m) => m.integration || m.status === 'integrando' || m.pendingIntegrationApproval
   ).length
   const esperandoVoce = vivas.some((m) => m.pendingIntegrationApproval)
-  // Versão de referência: a primeira ABERTA (é nela que tudo integra); sem
-  // nenhuma aberta, a última lançada entra com ✓.
-  const versao = stats?.versoes.find((v) => !v.lancada) ?? stats?.versoes[0]
+  // O ◈ RESPONDE "O QUE ESTÁ NA MAIN" (ordem do dono, 2026-08-17): a última
+  // versão LANÇADA, e nada mais. A régua anterior elegia a versão ABERTA mais
+  // antiga — o oposto: a linha em construção, que ainda não subiu — e o dono
+  // lia "◈ V1.0" com os contadores de outra linha ao lado. Sem release o chip
+  // não nasce: o que está EM CONSTRUÇÃO se lê no painel do ✦ geral, versão por
+  // versão, com a contagem certa de cada uma.
+  const versaoNaMain = stats?.versaoNaMain
 
   return (
     <div className="workspace">
@@ -93,17 +97,12 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
           />
           {/* CHIPS DO PROJETO — o placar que antes ocupava o centro do board. */}
           <span className="ws-chips">
-            {versao && (
+            {versaoNaMain && (
               <span
-                className={`ws-chip${versao.lancada ? ' quiet' : ''}`}
-                data-tip={
-                  versao.lancada
-                    ? `Última versão lançada — ${versao.name} já está na main`
-                    : `Versão em construção: toda missão desta linha integra na branch da ${versao.name}`
-                }
+                className="ws-chip quiet"
+                data-tip={`${versaoNaMain} é a versão que está na main — a última lançada.\nO que está em construção fica no painel do ✦ geral, versão por versão.`}
               >
-                ◈ {versao.name}
-                {versao.lancada && ' ✓'}
+                ◈ {versaoNaMain} ✓
               </span>
             )}
             <span

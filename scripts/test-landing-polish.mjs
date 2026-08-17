@@ -137,6 +137,29 @@ test('nenhum texto destas telas volta para baixo do piso de leitura', async () =
     ['.pd-kpis .stat-label', TILE, 4.5],
     ['.pd-kpis .stat-tile.hot .stat-num', TILE, 3],
     ['.pd-kpis .stat-tile.ok .stat-num', TILE, 3],
+    // as superfícies que o painel largo trouxe (2026-08-17). Nenhuma delas é
+    // grande o bastante para o piso de 3:1 — tudo aqui é 9,5-11,5px.
+    ['.pd-identity-mark', PAPER, 4.5],
+    ['.pd-identity-note', PAPER, 4.5],
+    ['.pd-alert', PAPER, 4.5],
+    ['.pd-alert-names', PAPER, 4.5],
+    ['.pd-section-link', PAPER, 4.5],
+    // `.pd-seat` fica FORA da lista de propósito: ele não declara cor — herda a
+    // do `.pd-meta`, que já está medido acima. Uma cor própria ali seria uma
+    // segunda fonte da mesma decisão.
+    ['.pd-drawer-toggle', PAPER, 4.5],
+    ['.pd-drawer', PAPER, 4.5],
+    ['.pd-drawer-note.err', PAPER, 4.5],
+    ['.pd-drawer-ins', PAPER, 4.5],
+    ['.pd-drawer-del', PAPER, 4.5],
+    ['.pd-commit-at', PAPER, 4.5],
+    ['.pd-plan-title', CARD, 4.5],
+    ['.pd-plan-count', CARD, 4.5],
+    ['.pd-plan-running', CARD, 4.5],
+    ['.pd-plan-kind', CARD, 4.5],
+    ['.pd-event-kind', PAPER, 4.5],
+    ['.pd-event-day', PAPER, 4.5],
+    ['.pd-event-mark.integrada', PAPER, 4.5],
     ['.arch-chat-sub', CARD, 4.5],
     ['.arch-chat-glyph', CARD, 4.5],
     ['.arch-chat-head .pane-close', CARD, 4.5],
@@ -147,9 +170,12 @@ test('nenhum texto destas telas volta para baixo do piso de leitura', async () =
     const body = rule(css, selector)
     const declared = prop(body, 'color')
     assert.ok(declared, `${selector} precisa declarar uma cor de texto`)
-    // um selo PREENCHIDO se mede contra o próprio preenchimento
+    // um selo PREENCHIDO se mede contra o próprio preenchimento. `none` e
+    // `transparent` são RESET de <button> (o link "ver no mapa", o ▸ da
+    // gaveta): eles não pintam nada, então quem vale é o fundo herdado.
     const fill = prop(body, 'background')
-    const bg = fill ? resolveColor(fill, tokens, background) : background
+    const painted = fill && !/^(none|transparent)$/u.test(fill.trim())
+    const bg = painted ? resolveColor(fill, tokens, background) : background
     const ratio = contrast(resolveColor(declared, tokens, bg), bg)
     assert.ok(
       ratio >= floor,
@@ -372,24 +398,40 @@ test('o painel perdeu o teto de largura — quem tem teto é o instrumento e a p
     )
 })
 
-test('coluna larga vira mais de uma linha lado a lado, nunca uma faixa de 1600px', async () => {
+test('folha larga vira DUAS COLUNAS de papéis diferentes, nunca uma faixa de 1600px', async () => {
   const css = await source('src/renderer/src/global.css')
-  const query = atRuleContaining(css, '@container boardcontent (min-width: 1000px)', '.pd-list')
+  // 900, não 1000: a cadeia do board é `janela − 32 − 240 − 12`, então a janela
+  // de 1280 entrega 996px ao container e um corte redondo em 1000 deixaria o
+  // notebook mais comum de fora do desenho por 4 pixels.
+  const query = atRuleContaining(css, '@container boardcontent (min-width: 900px)', '.pd-grid')
 
-  // Uma linha de missão a 1600px teria o título à esquerda, a data à direita e
-  // um deserto no meio. O container é o mesmo `.board-content` que o painel já
-  // usa no aperto — a régua é a COLUNA, nunca a janela.
-  assert.match(query, /\.pd-list\s*\{[^}]*display:\s*grid/u)
+  // A MESMA dor de sempre — painel de 1600px com tudo à esquerda e deserto à
+  // direita — mudou de remédio em 2026-08-17. Até então quem virava grade era a
+  // LISTA (2-3 linhas de missão lado a lado); agora quem dá a segunda coluna é
+  // o `.pd-grid`, e ela tem PAPEL: trabalho vivo | contexto (plano, história,
+  // cronologia). As linhas ficam inteiras, e é isso que abre lugar para conta,
+  // modelo, fila e a gaveta do diff sem cortar nada com reticências.
   assert.match(
     query,
-    /grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(\d+px,\s*1fr\)\)/u,
-    'auto-fill: quem decide quantas colunas cabem é a largura, não um número de colunas'
+    /\.pd-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*[\d.]+fr\)\s+minmax\(\d+px,\s*1fr\)/u,
+    'a segunda coluna tem piso em px: abaixo dele o contexto não se lê e tem de empilhar'
   )
 
-  // A lista BASE continua uma coluna vertical: o grid é o ganho da largura, e
-  // trocar a base quebraria o painel na coluna estreita do modo palco.
+  // A BASE continua UMA coluna: é o que segura o painel na coluna estreita do
+  // modo palco, onde o ✦ geral divide a largura com a conversa.
+  assert.match(
+    rule(css, '.pd-grid'),
+    /grid-template-columns:\s*minmax\(0,\s*1fr\)/u,
+    'sem largura, tudo empilha na ordem de leitura'
+  )
+  // E a lista de missões nunca mais vira grade — a linha inteira É o desenho.
   assert.equal(prop(rule(css, '.pd-list'), 'display'), 'flex')
   assert.equal(prop(rule(css, '.pd-list'), 'flex-direction'), 'column')
+  assert.doesNotMatch(
+    query,
+    /\.pd-list\s*\{[^}]*display:\s*grid/u,
+    'a grade de linhas lado a lado foi substituída pelas duas colunas do .pd-grid'
+  )
 })
 
 test('os KPIs do painel falam com o acento da casa, não com o hue de uma função', async () => {

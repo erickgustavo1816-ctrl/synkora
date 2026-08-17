@@ -15,6 +15,7 @@ import type {
   SynkoraSettingsPatch
 } from '../../preload/index'
 import { applyDeptHueVars, DEPT_HUES_LS_KEY, loadDeptHues } from './departments'
+import { versionPortrait } from './projectLanding'
 import { transitionGuiStartedAt } from './guiActivity'
 import { claimGuiItemId, guiItemId } from './guiItemIdentity'
 import {
@@ -153,6 +154,11 @@ export interface HomeStats {
    *  nenhuma aberta, a última LANÇADA entra sozinha como referência ("o que
    *  ela entregou"). Vazio = projeto nunca teve versão. */
   versoes: VersionStats[]
+  /** O QUE ESTÁ NA MAIN: nome da última versão LANÇADA (ordem do dono,
+   *  2026-08-17). Ausente = nada subiu ainda — e aí a tela não mostra chip de
+   *  identidade nenhum, em vez de eleger a aberta mais antiga e chamá-la de
+   *  "a versão do projeto". A régua mora em `projectLanding.versionPortrait`. */
+  versaoNaMain?: string
   /** quando foi lido (a ausência da entrada é que significa "não li ainda") */
   at: number
 }
@@ -1918,35 +1924,12 @@ export const useStore = create<SynkoraState>((set, get) => ({
       window.synkora.missions.list(projectId),
       window.synkora.backlog.listVersions(projectId)
     ])
-    // TODAS as versões abertas contam (pode haver 2/3/6 em dev ao mesmo
-    // tempo), da mais antiga para a mais nova; sem nenhuma aberta, a lançada
-    // mais recente entra sozinha como referência ("o que ela entregou")
-    const abertas = versions
-      .filter((v) => v.status === 'aberta')
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    const lancadas = versions
-      .filter((v) => v.status === 'lancada')
-      .sort((a, b) => (b.releasedAt ?? '').localeCompare(a.releasedAt ?? ''))
-    const refs = abertas.length ? abertas : lancadas.slice(0, 1)
-    // missão VIVA sem carimbo de versão conta na CORRENTE (aberta mais
-    // antiga) — é nela que vai integrar (ensureDefaultVersion na integração)
-    const correnteId = abertas[0]?.id
-    const versoes = refs.map((v) => {
-      const daVersao = (m: Mission): boolean =>
-        m.versionId === v.id ||
-        (!m.versionId &&
-          v.id === correnteId &&
-          (m.status === 'ativa' || m.status === 'integrando'))
-      const vivas = missions.filter(
-        (m) => daVersao(m) && (m.status === 'ativa' || m.status === 'integrando')
-      ).length
-      return {
-        name: v.name,
-        lancada: v.status === 'lancada',
-        missoesFeitas: v.deliveries.length,
-        missoesTotal: v.deliveries.length + vivas
-      }
-    })
+    // A ATRIBUIÇÃO mora em `projectLanding.versionPortrait` (puro e testado):
+    // linha por versão contando missão CARIMBADA nela, e o nome do que está NA
+    // MAIN. Aqui fica só a leitura do disco — quando a régua morava neste
+    // corpo, o chip de identidade elegia a aberta mais antiga e o dono lia
+    // "◈ V1.0" com os números de outra linha ao lado.
+    const { versoes, versaoNaMain } = versionPortrait(versions, missions)
     set((s) => ({
       homeStats: {
         ...s.homeStats,
@@ -1955,6 +1938,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
             (m) => m.status === 'ativa' || m.status === 'integrando'
           ).length,
           versoes,
+          ...(versaoNaMain ? { versaoNaMain } : {}),
           at: Date.now()
         }
       }

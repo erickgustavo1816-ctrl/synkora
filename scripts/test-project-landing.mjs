@@ -257,10 +257,15 @@ test('o convite perdeu o rodapé da foto e ganhou o centro', async () => {
 })
 
 test('o painel do projeto é PAPEL, mostra o que os chips não dizem e nunca inventa número', async () => {
-  const [dashboard, css] = await Promise.all([
+  const [panel, row, css] = await Promise.all([
     source('src/renderer/src/components/ProjectDashboard.tsx'),
+    source('src/renderer/src/components/MissionDashboardRow.tsx'),
     source('src/renderer/src/global.css')
   ])
+  // A LINHA saiu do painel para arquivo próprio quando ganhou a GAVETA do diff
+  // (2026-08-17): ela passou a ter estado de busca, que não é do painel. As
+  // invariantes valem para o PAR — "o painel", aqui, são os dois arquivos.
+  const dashboard = `${panel}\n${row}`
   const code = withoutComments(dashboard)
 
   // O erro que o mockup nomeia: painel escuro fora de terminal.
@@ -268,9 +273,16 @@ test('o painel do projeto é PAPEL, mostra o que os chips não dizem e nunca inv
   assert.doesNotMatch(code, /--panel/u)
   assert.doesNotMatch(css, /\.project-dashboard[^{]*\{[^}]*--panel/u)
   assert.doesNotMatch(css, /\.pd-[a-z-]+[^{]*\{[^}]*var\(--panel/u)
-  // Componente burro: quem busca é o Board (nada de IPC nem store aqui).
+  // Componente burro: quem busca é o Board (nada de IPC nem store aqui). A
+  // gaveta da linha lê o diff, mas pelas costuras que o trilho de entrega já
+  // usa (`missionWorkspace`/`missionHistory`) — `window.synkora` direto
+  // continua proibido, e o `useStore` também.
   assert.doesNotMatch(code, /window\.synkora/u)
   assert.doesNotMatch(code, /useStore/u)
+  // NENHUM LEQUE: a leitura de Git nasce no CLIQUE do dono, nunca num efeito de
+  // montagem. Dez missões abertas não podem virar dez leituras por render.
+  assert.doesNotMatch(withoutComments(row), /useEffect/u)
+  assert.match(row, /onClick=\{\(\) => void toggle\(\)\}/u)
 
   // Tooltip é `data-tip` (o `title=` nativo é proibido no app).
   assert.match(dashboard, /data-tip=/u)
@@ -310,7 +322,11 @@ test('o Board escolhe a tela pelo módulo puro e mantém as duas no mesmo limite
     board,
     /paneId=\{`board-general:\$\{projectId\}`\}[\s\S]{0,600}projectLanding\(projectMissions\) === 'invite'[\s\S]{0,600}<ProjectGeneral/u
   )
-  assert.match(board, /<ProjectDashboard[\s\S]{0,400}<\/GuiPanelErrorBoundary>/u)
+  assert.match(board, /<ProjectDashboard[\s\S]{0,700}<\/GuiPanelErrorBoundary>/u)
+  // Os PLANOS chegam prontos do Board (mesma lista da aba Mapa) e o gesto do
+  // painel leva para lá — a casa mostra o relance, o mapa é onde se edita.
+  assert.match(board, /plans=\{projectPlans\}/u)
+  assert.match(board, /onOpenPlans=\{\(\) => setUniverseTab\(projectId, 'mapa'\)\}/u)
   // O convite passou a receber TODAS as missões (era `liveMissions.length`).
   assert.doesNotMatch(board, /missionCount=\{liveMissions\.length\}/u)
   assert.match(board, /missionCount=\{projectMissions\.length\}/u)
@@ -424,4 +440,196 @@ test('a foto do universo troca nos dois avatares do alto da janela', async () =>
   // O avatar do workspace era `aria-hidden` e inerte — virar botão sem tirar o
   // aria-hidden esconderia o próprio controle do leitor de tela.
   assert.doesNotMatch(universe, /className="ws-avatar"[\s\S]{0,200}aria-hidden/u)
+})
+
+/* ---------- ATRIBUIÇÃO DE VERSÃO (ordem do dono, 2026-08-17) ----------
+   Duas regras que a tela violava ao mesmo tempo, e por isso o dono lia
+   "◈ V1.0" ao lado de contadores que somavam missão de OUTRA linha:
+
+   (1) o chip ◈ de IDENTIDADE responde "o que está na main" — e o que está na
+       main é a última versão LANÇADA. A régua antiga (`versoes.find(v =>
+       !v.lancada)`) devolvia a versão ABERTA MAIS ANTIGA, que é o oposto: a
+       linha em construção. Sem nada lançado o chip simplesmente não existe —
+       inventar "◈ V1.0" para um projeto que nunca subiu nada é afirmar um
+       release que não aconteceu.
+   (2) cada LINHA de versão conta as missões CARIMBADAS nela. A única exceção
+       (deliberada) é a missão viva SEM carimbo: ela conta na versão corrente,
+       porque é nela que vai integrar (`ensureDefaultVersion`). */
+
+const version = (over = {}) => ({
+  id: over.id ?? 'v1',
+  projectId: 'p1',
+  name: over.name ?? 'V1.0',
+  status: over.status ?? 'aberta',
+  createdAt: over.createdAt ?? '2026-08-01T00:00:00.000Z',
+  updatedAt: over.updatedAt ?? '2026-08-01T00:00:00.000Z',
+  deliveries: over.deliveries ?? [],
+  ...over
+})
+
+test('◈ de identidade = a versão que está NA MAIN (a última LANÇADA)', async () => {
+  const { versionPortrait } = await landing()
+
+  const portrait = versionPortrait(
+    [
+      version({ id: 'a', name: 'V1.0', status: 'lancada', releasedAt: '2026-08-02T00:00:00.000Z' }),
+      version({ id: 'b', name: 'V1.1', status: 'lancada', releasedAt: '2026-08-10T00:00:00.000Z' }),
+      version({ id: 'c', name: 'V2.0', status: 'aberta', createdAt: '2026-08-11T00:00:00.000Z' })
+    ],
+    []
+  )
+  assert.equal(portrait.versaoNaMain, 'V1.1', 'a lançada MAIS RECENTE é a que está na main')
+
+  // A REGRESSÃO EXATA que o dono viu: duas abertas, nada lançado. A régua
+  // antiga elegia a aberta mais antiga e a chamava de identidade do projeto.
+  const nadaLancado = versionPortrait(
+    [
+      version({ id: 'a', name: 'V1.0', createdAt: '2026-08-13T00:00:00.000Z' }),
+      version({ id: 'b', name: 'V1.0.1', createdAt: '2026-08-15T00:00:00.000Z' })
+    ],
+    []
+  )
+  assert.equal(
+    nadaLancado.versaoNaMain,
+    undefined,
+    'sem release não há versão na main — o chip não nasce'
+  )
+  assert.equal(versionPortrait([], []).versaoNaMain, undefined)
+})
+
+test('cada linha de versão conta as missões CARIMBADAS nela', async () => {
+  const { versionPortrait } = await landing()
+
+  const versions = [
+    version({ id: 'v10', name: 'V1.0', createdAt: '2026-08-13T00:00:00.000Z' }),
+    version({ id: 'v101', name: 'V1.0.1', createdAt: '2026-08-15T00:00:00.000Z' })
+  ]
+  const { versoes } = versionPortrait(versions, [
+    mission({ id: 'a', status: 'ativa', versionId: 'v10' }),
+    mission({ id: 'b', status: 'ativa', versionId: 'v101' }),
+    mission({ id: 'c', status: 'integrando', versionId: 'v101' }),
+    // viva SEM carimbo: cai na CORRENTE (aberta mais antiga) — é lá que integra
+    mission({ id: 'd', status: 'ativa' }),
+    // concluída sem carimbo não tem linha nenhuma: ela integrou em algum lugar
+    // que o registro não sabe dizer, e chutar seria inventar.
+    mission({ id: 'e', status: 'concluida' }),
+    mission({ id: 'f', status: 'concluida', versionId: 'v101' }),
+    // arquivada não conta em lado nenhum (saiu do board de propósito)
+    mission({ id: 'g', status: 'arquivada', versionId: 'v10' })
+  ])
+
+  assert.deepEqual(versoes, [
+    { name: 'V1.0', lancada: false, missoesFeitas: 0, missoesTotal: 2 },
+    { name: 'V1.0.1', lancada: false, missoesFeitas: 1, missoesTotal: 3 }
+  ])
+})
+
+test('a linha soma entrega registrada e missão concluída SEM contar duas vezes', async () => {
+  const { versionPortrait } = await landing()
+
+  const { versoes } = versionPortrait(
+    [
+      version({
+        id: 'v10',
+        name: 'V1.0',
+        deliveries: [
+          // a mesma missão pelas DUAS provas: recibo da integração e status
+          { id: 'd1', missionId: 'm9', title: 'x', at: '2026-08-10T00:00:00.000Z' },
+          // recibo de missão que não está mais na lista (excluída/arquivada):
+          // ela SUBIU de verdade e continua contando
+          { id: 'd2', missionId: 'sumida', title: 'y', at: '2026-08-11T00:00:00.000Z' }
+        ]
+      })
+    ],
+    [mission({ id: 'm9', status: 'concluida', versionId: 'v10' })]
+  )
+
+  assert.deepEqual(versoes, [
+    { name: 'V1.0', lancada: false, missoesFeitas: 2, missoesTotal: 2 }
+  ])
+})
+
+test('o chip ◈ do universo e do painel leem NA MAIN, nunca a aberta mais antiga', async () => {
+  const [universe, dashboard] = await Promise.all([
+    source('src/renderer/src/screens/Universe.tsx'),
+    source('src/renderer/src/components/ProjectDashboard.tsx')
+  ])
+
+  for (const [name, file] of [
+    ['Universe', universe],
+    ['ProjectDashboard', dashboard]
+  ]) {
+    assert.match(file, /versaoNaMain/u, `${name}: a identidade vem do campo da main`)
+    assert.doesNotMatch(
+      withoutComments(file),
+      /versoes\.find\(/u,
+      `${name}: eleger a versão do chip varrendo as ABERTAS é a régua que o dono reprovou`
+    )
+  }
+})
+
+test('a atividade recente só existe onde há CARIMBO — updatedAt nunca vira tempo', async () => {
+  const { missionTimeline, RECENT_ACTIVITY_CAP } = await landing()
+
+  const events = missionTimeline([
+    mission({ id: 'a', title: 'nasceu', createdAt: '2026-08-10T10:00:00.000Z' }),
+    mission({
+      id: 'b',
+      title: 'integrou',
+      status: 'concluida',
+      createdAt: '2026-08-01T10:00:00.000Z',
+      completedAt: '2026-08-12T10:00:00.000Z'
+    }),
+    // A CERCA: concluída SEM `completedAt` e com `updatedAt` recentíssimo. O
+    // `updatedAt` anda em qualquer mutação de store (status, seat, branch) e
+    // não mede atividade nenhuma — a linha "integrada" não pode nascer dele.
+    mission({
+      id: 'c',
+      title: 'sem carimbo',
+      status: 'concluida',
+      createdAt: '2026-08-02T10:00:00.000Z',
+      updatedAt: '2026-08-30T10:00:00.000Z'
+    })
+  ])
+
+  assert.deepEqual(
+    events.map((e) => `${e.kind}:${e.title}`),
+    ['integrada:integrou', 'criada:nasceu', 'criada:sem carimbo', 'criada:integrou']
+  )
+  assert.equal(events[0].day, '12/08/2026')
+  // uma missão pode dar DOIS eventos (nasceu e integrou) sem colidir de chave
+  assert.equal(events.filter((e) => e.missionId === 'b').length, 2)
+
+  const muitas = Array.from({ length: 9 }, (_, i) =>
+    mission({ id: `m${i}`, createdAt: `2026-08-0${i + 1}T00:00:00.000Z` })
+  )
+  assert.equal(missionTimeline(muitas).length, RECENT_ACTIVITY_CAP)
+  assert.equal(missionTimeline(muitas, 2).length, 2)
+  assert.deepEqual(missionTimeline([]), [])
+  // data ilegível não vira evento em vez de virar "Invalid Date" na tela
+  assert.deepEqual(missionTimeline([mission({ createdAt: 'ontem' })]), [])
+})
+
+test('o painel largo mostra plano, espera e cronologia sem inventar conta nova', async () => {
+  const dashboard = await source('src/renderer/src/components/ProjectDashboard.tsx')
+
+  // A FRAÇÃO DO PLANO é a do mapa: duas contas do mesmo plano divergiriam no
+  // primeiro item descartado (que sai do denominador só numa delas).
+  assert.match(dashboard, /import \{ planProgress \} from '\.\.\/planBoardPresentation'/u)
+  assert.doesNotMatch(
+    withoutComments(dashboard),
+    /Math\.round\(\((done|progress\.done)/u,
+    'a porcentagem do plano se calcula no módulo compartilhado, não aqui'
+  )
+  // Plano ARQUIVADO não é retrato do projeto — ele foi engavetado de propósito.
+  assert.match(dashboard, /plan\.status !== 'arquivado'/u)
+
+  // O QUE ESPERA VOCÊ sobe para uma faixa própria: dentro da linha da missão,
+  // uma pergunta na quinta posição de uma lista longa fica abaixo da dobra.
+  assert.match(dashboard, /pd-alert/u)
+  assert.match(dashboard, /pendingIntegrationApproval \|\| entryOf\.get\(m\.id\)\?\.pulse/u)
+
+  // A cronologia vem do módulo puro, com as duas datas que existem de verdade.
+  assert.match(dashboard, /missionTimeline\(missions\)/u)
+  assert.doesNotMatch(withoutComments(dashboard), /updatedAt/u)
 })

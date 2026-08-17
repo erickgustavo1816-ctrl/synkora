@@ -37,6 +37,8 @@ import { GuiRequestEpoch, withoutMissionGuiSlots } from '../guiRequestEpoch'
 import GuiSeatPick from './GuiSeatPick'
 import { missionShell } from '../missionShell'
 import { projectLanding } from '../projectLanding'
+import { plansApi } from '../plansApi'
+import type { PlanView } from '../planContract'
 // O convite de planejamento que nascia sozinho no ✦ geral MORREU (ordem do
 // dono, 2026-08-13 — "o universo começa vazio"). Planejar virou um TIPO de
 // missão que o dono cria, e o chat dela abre pelo `missions:guiSpec` como
@@ -96,6 +98,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // busca aqui: o Universe, que hospeda este Board, já faz o load preguiçoso
   // do `homeStats` deste projeto, e os canais *:changed o mantêm fresco.
   const homeStats = useStore((s) => s.homeStats[projectId])
+  // OS PLANOS NA CASA DO PROJETO (2026-08-17): o painel do ✦ geral mostra o
+  // relance (título, mestre, fração concluída) e o gesto leva ao mapa, onde
+  // eles se editam. Uma leitura por projeto, com o mesmo `plans:changed` que a
+  // aba do mapa assina — o agente edita por tool e a casa acompanha.
+  const setUniverseTab = useStore((s) => s.setUniverseTab)
+  const [projectPlans, setProjectPlans] = useState<PlanView[]>([])
   const loadMissions = useStore((s) => s.loadMissions)
   const archiveMission = useStore((s) => s.archiveMission)
   const deleteMission = useStore((s) => s.deleteMission)
@@ -163,6 +171,26 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   }, [projectId])
   const versionName = (vid?: string): string | undefined =>
     vid ? versionsList.find((v) => v.id === vid)?.name : undefined
+
+  // PLANOS: uma leitura no mount + o canal de mudança. Sem a ponte a lista fica
+  // vazia e a seção do painel simplesmente não nasce — a aba Mapa é quem tem de
+  // explicar a falta dela, não a casa do projeto.
+  useEffect(() => {
+    let alive = true
+    const read = (): void => {
+      void plansApi.list(projectId).then((list) => {
+        if (alive) setProjectPlans(list)
+      })
+    }
+    read()
+    const off = plansApi.onChanged((pid) => {
+      if (pid === projectId) read()
+    })
+    return () => {
+      alive = false
+      off()
+    }
+  }, [projectId])
 
   const winRef = useRef<HTMLDivElement>(null)
   const maestroTerminalRef = useRef<HTMLDivElement>(null)
@@ -1150,8 +1178,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               missions={projectMissions}
               entries={missionColumnEntries}
               versoes={homeStats?.versoes}
+              versaoNaMain={homeStats?.versaoNaMain}
+              plans={projectPlans}
               versionLabelOf={(m) => versionName(m.versionId)}
               onOpenMission={(id) => setMissionTab(projectId, id)}
+              onOpenPlans={() => setUniverseTab(projectId, 'mapa')}
               onNewMission={() => setNewMissionOpen(true)}
             />
           )}

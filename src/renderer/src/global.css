@@ -9465,6 +9465,58 @@ body.pane-docking .pane-bar.draggable {
      leitura). */
 }
 
+/* ---------- BANDA DE TOPO (2026-08-17) ----------
+   O dono olhou a tela e disse "olha o tanto de espaço que sobra". Sobrava
+   porque cada bloco era uma FAIXA CURTA empilhada à esquerda: identidade,
+   depois quatro tiles, depois um chip, cada um com um terço da folha e dois
+   terços de papel à direita. A banda passa a ter DOIS EIXOS por linha — o que
+   o projeto é × o que fazer nele; o instrumento × as linhas de versão — e o
+   que sobrava vira informação que já existia e não estava sendo mostrada. */
+.pd-top {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pd-top-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+}
+
+/* o instrumento e as linhas de versão dividem a segunda faixa: nenhum dos dois
+   estica (tile de 400px é cartaz, não retrato) e o vão entre eles é o respiro */
+.pd-top-line.instruments {
+  align-items: flex-start;
+}
+
+/* IDENTIDADE: responde "o que está na main". Nome forte, papel do nome fraco —
+   a hierarquia dentro do próprio bloco evita precisar de rótulo em cima. */
+.pd-identity {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pd-identity-mark {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--ok) 65%, var(--ink));
+}
+
+.pd-identity-note {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
 /* os quatro KPIs são UM instrumento: 6px os costura em faixa em vez de deixar
    quatro cartões soltos.
    E instrumento tem TAMANHO PRÓPRIO: quatro tiles de 400px com um número de
@@ -9473,6 +9525,7 @@ body.pane-docking .pane-bar.draggable {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
+  flex: 1 1 420px;
   max-width: 560px;
 }
 
@@ -9501,12 +9554,18 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink-2);
 }
 
-/* Retrato por versão COMPACTO: o placar inteiro é da aba Versões. */
+/* Retrato por versão COMPACTO: o placar inteiro é da aba Versões.
+   Ele mora na banda de topo, do lado DIREITO do instrumento — o outro eixo do
+   mesmo placar (missões por linha de versão). `justify-content: flex-end`
+   ancora os chips na borda quando sobra folha. */
 .pd-versions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
+  flex: 1 1 auto;
+  padding-top: 3px;
 }
 
 /* A COR CONTINUA SENDO A MESMA FALA (laranja = em construção, verde = na main);
@@ -9535,6 +9594,66 @@ body.pane-docking .pane-bar.draggable {
   font-weight: 400;
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
+}
+
+/* O QUE ESPERA VOCÊ, atravessando a folha. Estava só dentro da linha da missão
+   (`.pd-waiting`), e ali uma pergunta parada na quinta linha de uma lista
+   longa ficava abaixo da dobra — o painel existe justamente para isso não
+   acontecer. Âmbar `--warn` é a cor de "a decisão é sua" no tema. */
+.pd-alert {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--warn) 45%, var(--ink));
+  background: color-mix(in srgb, var(--warn) 12%, var(--card));
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.pd-alert-names {
+  font-weight: 400;
+  color: var(--ink-2);
+  min-width: 0;
+}
+
+/* ---------- AS DUAS COLUNAS (2026-08-17) ----------
+   O trabalho VIVO à esquerda, com a linha inteira para caber conta, modelo,
+   fila e a gaveta do diff; o CONTEXTO (plano, história, cronologia) à direita.
+   Quem manda é o `.board-content`, nunca a janela: o ✦ geral divide a largura
+   com o palco.
+
+   O CORTE É 900, e o número saiu de CONTA, não de gosto. A cadeia real do
+   board é `janela − 32 (padding) − 240 (coluna de missões) − 12 (gap)`, então
+   uma janela de 1280 — a mais comum de todas — entrega 996px ao container.
+   Com o corte em 1000 ela caía por 4px na coluna única: o notebook inteiro
+   ficaria de fora do desenho por causa de um número redondo. A 900 o pior caso
+   distribui 589 | 381, e os dois lados continuam legíveis (o piso de 300px na
+   segunda coluna é a cerca). Abaixo disso o board já empilhou por conta
+   própria (`@container board (max-width: 1103px)`) e o painel empilha junto. */
+.pd-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+@container boardcontent (min-width: 900px) {
+  .pd-grid {
+    grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr);
+    gap: 18px 26px;
+  }
+}
+
+.pd-col {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
 }
 
 .pd-section {
@@ -9578,19 +9697,11 @@ body.pane-docking .pane-bar.draggable {
   gap: 6px;
 }
 
-/* COLUNA LARGA = MAIS LINHAS LADO A LADO, nunca uma linha de 1600px com o
-   título à esquerda, a data à direita e um deserto no meio. O container é o
-   `.board-content` (container-name: boardcontent), o mesmo que o painel já usa
-   no aperto. 460px é a largura em que a linha ainda cabe título + estado +
-   selo + meta sem cortar; o `gap: 6px` do `.pd-list` vale igual em grid e o
-   `.pd-mission` já é `width: 100%`. */
-@container boardcontent (min-width: 1000px) {
-  .pd-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
-    align-items: start;
-  }
-}
+/* 2026-08-17: a lista deixou de virar grade de 2-3 colunas em folha larga. Ela
+   fazia sentido quando a lista de missões ERA a tela inteira; agora quem dá a
+   segunda coluna é o `.pd-grid` (trabalho | contexto), e as linhas ficam
+   inteiras — é isso que dá lugar para conta, modelo, fila e a gaveta do diff
+   sem cortar nada com reticências. */
 
 /* A LINHA DA MISSÃO. Botão quando dá para abrir; <div> quando a missão já
    fechou — o clique morto seria uma promessa falsa. */
@@ -9795,6 +9906,278 @@ button.pd-mission.waiting:hover {
 
 .pd-cta {
   align-self: flex-start;
+  flex: none;
+}
+
+/* A CONTA E O MODELO da conversa daquela missão (o `entries` já os carregava e
+   só a coluna da esquerda os mostrava). Sem cor própria: dentro da linha de
+   metadados eles são contexto, não notícia. */
+.pd-seat {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "ver no mapa →": um link dentro do título de seção. Ele reseta a roupa de
+   <button> em vez de virar um `.btn`, que competiria com o CTA da banda. */
+.pd-section-link {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: color-mix(in srgb, var(--accent-deep) 70%, var(--ink));
+  cursor: pointer;
+}
+
+.pd-section-link:hover {
+  text-decoration: underline;
+}
+
+.pd-section-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* ---------- A GAVETA DA LINHA (2026-08-17) ----------
+   A linha continua sendo o botão que sempre foi; a gaveta é IRMÃ dele, recuada
+   e presa por um fio à esquerda — o recuo é o que diz "isto pertence à linha
+   de cima" sem precisar de um segundo cartão em volta (cartão dentro de cartão
+   é sempre errado). */
+.pd-mission-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+
+.pd-drawer-toggle {
+  align-self: flex-start;
+  margin: 3px 0 0 14px;
+  border: 0;
+  background: none;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 10px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.pd-drawer-toggle:hover {
+  color: var(--ink);
+}
+
+.pd-drawer-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.pd-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 2px 18px;
+  border-left: 1px solid var(--line-strong);
+  padding: 6px 0 6px 12px;
+  font-size: 10.5px;
+  color: var(--ink-2);
+}
+
+.pd-drawer-note {
+  color: var(--ink-2);
+}
+
+.pd-drawer-note.err {
+  color: color-mix(in srgb, var(--err) 72%, var(--ink));
+}
+
+.pd-drawer-stat {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.pd-drawer-sep {
+  margin: 0 6px;
+  color: var(--ink-3);
+}
+
+.pd-drawer-ins {
+  color: color-mix(in srgb, var(--ok) 65%, var(--ink));
+}
+
+.pd-drawer-del {
+  color: color-mix(in srgb, var(--err) 72%, var(--ink));
+}
+
+.pd-commits {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pd-commit {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pd-commit-subject {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.pd-commit-at {
+  flex: none;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- PLANOS (2026-08-17) ----------
+   O relance do que o mapa desenha item a item. A barra é a única figura desta
+   tela, e ela mede uma fração real (`planProgress`, a MESMA conta do mapa) —
+   não é ornamento de dashboard. */
+.pd-plans {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pd-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 9px 12px;
+}
+
+.pd-plan.done {
+  border-style: dashed;
+}
+
+.pd-plan-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pd-plan-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-plan-kind {
+  flex: none;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.pd-plan-bar {
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  overflow: hidden;
+}
+
+.pd-plan-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ok) 72%, var(--ink));
+}
+
+.pd-plan-count {
+  font-size: 10px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.pd-plan-running {
+  color: color-mix(in srgb, var(--accent-deep) 70%, var(--ink));
+}
+
+/* ---------- ATIVIDADE (2026-08-17) ----------
+   Cronologia por carimbo REAL — nasceu e integrou. Linhas, não cartões: são
+   seis itens de uma frase, e um cartão por frase seria o "container preguiçoso"
+   que a folha inteira evita. */
+.pd-activity {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pd-event {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 10.5px;
+}
+
+.pd-event-mark {
+  flex: none;
+  width: 12px;
+  color: var(--ink-2);
+}
+
+.pd-event-mark.integrada {
+  color: color-mix(in srgb, var(--ok) 65%, var(--ink));
+}
+
+.pd-event-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.pd-event-kind {
+  flex: none;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.pd-event-day {
+  flex: none;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Coluna apertada (o ✦ geral divide a largura com o palco): os KPIs viram duas
@@ -9821,6 +10204,16 @@ button.pd-mission.waiting:hover {
   .pd-cta {
     align-self: stretch;
     justify-content: center;
+  }
+
+  /* Na coluna apertada os chips de versão voltam a começar pela esquerda: a
+     ancoragem à direita só existe para fechar o vão da banda larga. */
+  .pd-versions {
+    justify-content: flex-start;
+  }
+
+  .pd-top-line {
+    align-items: stretch;
   }
 }
 
