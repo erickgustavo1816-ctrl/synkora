@@ -31,16 +31,10 @@ export interface MaestroIpcExtras {
 
 export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): void {
   const {
-    projects,
-    missions,
     maestro,
-    scheduleProgressSnapshot
   } = ctx
   const { engine } = extras
-  const {
-    pendingUserQuestions,
-    persistUserQuestions
-  } = engine
+  void engine
 
   ipcMain.handle('maestro:getState', (e, projectId: string) => {
     const state = maestro.get(projectId)
@@ -52,8 +46,6 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
       model: state.model ?? null,
       effort: state.effort ?? null,
       sessionId: state.sessionId ?? null,
-      bypass: !state.bypassOff,
-      sensitiveBypassOk: state.sensitiveAutoOk === true,
       seatId: state.seatId ?? null,
       version: state.version ?? null
     }
@@ -66,31 +58,12 @@ export function registerMaestroIpc(ctx: MainContext, extras: MaestroIpcExtras): 
   // junto com o consumidor, do lado do renderer.
   ipcMain.handle('maestro:paneSpec', () => null)
 
-  ipcMain.handle('maestro:pendingQuestions', (e, projectId: string) => {
-    // PODA PREGUIÇOSA: pergunta de projeto removido ou de missão que deixou de
-    // estar viva não tem aba para pulsar — resíduo sai do arquivo aqui mesmo.
-    let pruned = false
-    for (const [key, q] of [...pendingUserQuestions]) {
-      const projectAlive = Boolean(projects.get(q.projectId))
-      const mission = q.missionKey !== 'geral' ? missions.get(q.missionKey) : undefined
-      const missionAlive =
-        q.missionKey === 'geral' ||
-        (mission && (mission.status === 'ativa' || mission.status === 'integrando'))
-      if (!projectAlive || !missionAlive) {
-        pendingUserQuestions.delete(key)
-        pruned = true
-      }
-    }
-    if (pruned) persistUserQuestions()
-    return [...pendingUserQuestions.values()].filter((q) => q.projectId === projectId)
-  })
+  // A tool `ask_user` e a fila de perguntas ao dono morreram na limpa F6
+  // (2026-08-17): o canal 2.0 é o card de pergunta dentro do próprio chat.
+  // Os dois handlers ficam como respostas vazias até o consumidor do renderer
+  // sair — `invoke` num canal ausente REJEITA, e o Board legado não trata.
+  ipcMain.handle('maestro:pendingQuestions', () => [])
 
-  ipcMain.handle('maestro:questionSeen', (e, projectId: string, missionKey: string) => {
-    if (pendingUserQuestions.delete(`${projectId}--${missionKey}`)) {
-      persistUserQuestions()
-      scheduleProgressSnapshot()
-    }
-    return true
-  })
+  ipcMain.handle('maestro:questionSeen', () => false)
 
 }

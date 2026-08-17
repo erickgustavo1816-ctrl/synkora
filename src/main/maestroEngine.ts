@@ -4,7 +4,7 @@
  *
  * Corpo movido VERBATIM do closure do whenReady em index.ts (cirurgia do
  * índice, docs/FASE1_MAPA_MAESTROENGINE.md). surveyAborts e
- * pendingUserQuestions/persistUserQuestions nascem AQUI; o index expõe
+ * O estado do PM nasce AQUI; o index expõe
  * aliases para os call sites legados e os getters do MainContext seguem
  * textualmente intactos.
  *
@@ -20,8 +20,8 @@
  *   (mcpApi/panes.ts) via ctx — a Map continua exposta por
  *   ctx.pendingUserQuestions/persistUserQuestions.
  */
-import { app } from 'electron'
-import { join } from 'path'
+import {} from 'electron'
+import {} from 'path'
 import {} from 'crypto'
 import {
   PERSONA_DEV,
@@ -32,17 +32,6 @@ import {
 } from './maestro'
 import { MaestroSession, type SessionEvent } from './maestroSession'
 import { CodexSession } from './codexSession'
-import { loadJsonStore, persistJsonStore } from './jsonStore'
-
-/** Pergunta dirigida ao DONO (tool `ask_user` da era F6) — persistida entre
- *  boots em userData/user-questions.json. A tool morreu com o catálogo MCP
- *  legado; o tipo continua enquanto o store existir. */
-export type PendingUserQuestion = {
-  projectId: string
-  missionKey: string
-  question: string
-  at: string
-}
 
 import type { MainContext } from './mainContext'
 
@@ -387,24 +376,6 @@ export function createMaestroEngine(ctx: MainContext, extras: MaestroEngineExtra
   // PERSISTIDAS (fix 2026-08-06, célula 🔴 do mapa de retomada confirmada ao
   // vivo na M02d: a pergunta que pediu o restart foi apagada pelo próprio
   // restart) — o boot reidrata e a aba volta a pulsar até o dono ver.
-  const userQuestionsFile = join(app.getPath('userData'), 'user-questions.json')
-  const pendingUserQuestions = new Map<string, PendingUserQuestion>(
-    Object.entries(
-      loadJsonStore<Record<string, PendingUserQuestion>>(
-        userQuestionsFile,
-        () => ({}),
-        (v): v is Record<string, PendingUserQuestion> =>
-          typeof v === 'object' && v !== null && !Array.isArray(v)
-      )
-    )
-  )
-  const persistUserQuestions = (): void => {
-    try {
-      persistJsonStore(userQuestionsFile, Object.fromEntries(pendingUserQuestions))
-    } catch {
-      // pergunta viva em memória segue valendo; a próxima mutação re-tenta
-    }
-  }
 
   return {
     emitLog,
@@ -414,8 +385,6 @@ export function createMaestroEngine(ctx: MainContext, extras: MaestroEngineExtra
     surveyViaCodex,
     surveyAborts,
     maestroResumeOverBudget,
-    skipMaestroResume,
-    pendingUserQuestions,
-    persistUserQuestions
+    skipMaestroResume
   }
 }

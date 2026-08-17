@@ -71,7 +71,6 @@ import { type MainContext } from './mainContext'
 export interface MissionEngineExtras {
   /** `${projectId}--${missionId}` — chave do maestroStore do orquestrador. */
   orchKey(projectId: string, missionId: string): string
-  securityWaiverOptions(projectId: string): { sensitiveWaiverAllowed: boolean }
   /** Domínio VERSÃO — fica no index (também extra do ipc/backlog). */
   versionIsolationIsValid(
     projectPath: string,

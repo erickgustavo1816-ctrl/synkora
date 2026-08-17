@@ -44,7 +44,6 @@ import { registerProjectsIpc } from './ipc/projects'
 import { registerBacklogIpc } from './ipc/backlog'
 import { registerFilesIpc } from './ipc/files'
 import { registerSettingsIpc } from './ipc/settings'
-import { registerHarnessIpc } from './ipc/harness'
 import { registerGuiIpc } from './ipc/gui'
 import { registerHistoryIpc } from './ipc/history'
 import { waitForGuiCliStable } from './guiCliLaunch'
@@ -2388,7 +2387,6 @@ app.whenReady().then(async () => {
           }
         ]
       }),
-      pendingQuestions: [...pendingUserQuestions.values()],
       revision
     })
   }
@@ -2552,9 +2550,6 @@ app.whenReady().then(async () => {
     get paneEverSpawned() {
       return paneEverSpawned
     },
-    get pendingUserQuestions() {
-      return pendingUserQuestions
-    },
     get pendingPtyPreparations() {
       return pendingPtyPreparations
     },
@@ -2571,12 +2566,10 @@ app.whenReady().then(async () => {
     emitLog: (...args) => emitLog(...args),
     scheduleProgressSnapshot: () => scheduleProgressSnapshot(),
     ensureProjectRuntimeWritable: (...args) => ensureProjectRuntimeWritable(...args),
-    bypassOn: (...args) => bypassOn(...args),
     maestroPaneId: (...args) => maestroPaneId(...args),
     orchPaneId: (...args) => orchPaneId(...args),
     unregisterPane: (...args) => unregisterPane(...args),
     cleanPaneMcpFile: (...args) => cleanPaneMcpFile(...args),
-    persistUserQuestions: () => persistUserQuestions(),
     abortVoiceRequests: () => abortVoiceRequests(),
     pushBoard: (channel, ...args) => pushBoard(channel, ...args),
     pushPanes: (channel, ...args) => pushPanes(channel, ...args),
@@ -2586,14 +2579,6 @@ app.whenReady().then(async () => {
 
   // Bypass de permissões é o PADRÃO (fluxo reto, como no overclock);
   // o toggle 🛡 religa as aprovações por projeto.
-  const bypassOn = (projectId: string): boolean => !maestro.get(projectId).bypassOff
-  /** Opções de validação humana: o switch "sensível ok" do projeto autoriza a
-   *  DISPENSA com justificativa mesmo em plano sensível (2026-08-04). */
-  const securityWaiverOptions = (
-    projectId: string
-  ): { sensitiveWaiverAllowed: boolean } => ({
-    sensitiveWaiverAllowed: maestro.get(projectId).sensitiveAutoOk === true
-  })
 
   /** Worktree recém-criado NÃO tem node_modules — a verificação conjunta caía
    *  em paridade de ambiente quebrado (armadilha prevista no handoff; caso
@@ -2999,16 +2984,6 @@ app.whenReady().then(async () => {
     }
     // Servidor de teste do dono no worktree da versão fecha antes do merge.
     if (version.worktree) closeTestServersUnder(version.worktree)
-    // HOLD do PM (02/08): o release subiu no meio de uma verificação do
-    // Maestro e a limpeza apagou a branch da versão debaixo dele. Com hold
-    // ativo, nada sobe — nem pelo botão, nem pela tool.
-    const releaseHold = maestro.get(version.projectId).releaseHold
-    if (releaseHold) {
-      return (
-        `release BLOQUEADO por hold do Maestro (desde ${releaseHold.at.slice(0, 16).replace('T', ' ')}): ` +
-        `${releaseHold.reason} — quando a verificação terminar, o PM libera com set_release_hold {on: false}`
-      )
-    }
     // R-5 DA LIMPA F6: o gate de release do plano mestre saiu SEM substituto.
     // O que continua barrando uma publicação prematura são as travas reais —
     // fila de integração, worktree limpo, missão viva na versão e item de
@@ -3289,7 +3264,6 @@ app.whenReady().then(async () => {
   // consome missionWorkspacePath/ensureMissionWorktree).
   const missionEngine = createMissionEngine(ctx, {
     orchKey,
-    securityWaiverOptions,
     versionIsolationIsValid,
     emitBacklogChanged,
     sweepProjectFiles,
@@ -3321,8 +3295,6 @@ app.whenReady().then(async () => {
   const {
     emitLog,
     surveyAborts,
-    pendingUserQuestions,
-    persistUserQuestions
   } = maestroEngine
 
 
@@ -3797,7 +3769,6 @@ app.whenReady().then(async () => {
   })
   registerFilesIpc(ctx, { assertAppRendererSender })
   registerSettingsIpc(ctx, { assertMainRendererSender, assertAppRendererSender })
-  registerHarnessIpc(ctx)
   // PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md): sessão de chat
   // por pane. Nenhum CLI filho sobrevive ao quit.
   guiSessions = registerGuiIpc(ctx, {

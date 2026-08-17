@@ -37,7 +37,6 @@ import type { McpServerHandle } from './mcpServer'
 import type { PaneStartupMetrics } from './paneStartupMetrics'
 import type { MaestroEvent } from './maestro'
 import type { DevPaneSpec } from './paneLifecycle'
-import type { PendingUserQuestion } from './maestroEngine'
 
 export interface MainContext {
   // ——— stores e serviços (referência estável — atribuídos 1×) ———
@@ -96,7 +95,6 @@ export interface MainContext {
   >
   readonly closingPaneIds: Set<string>
   readonly paneEverSpawned: Set<string>
-  readonly pendingUserQuestions: Map<string, PendingUserQuestion>
   readonly pendingPtyPreparations: Map<string, symbol>
   readonly mcpCatalogServedByPane: Map<string, string>
   readonly mcpPaneFirstContact: Map<string, number>
@@ -107,12 +105,10 @@ export interface MainContext {
   emitLog(projectId: string, evt: MaestroEvent): void
   scheduleProgressSnapshot(): void
   ensureProjectRuntimeWritable(projectId: string): void
-  bypassOn(projectId: string): boolean
   maestroPaneId(projectId: string): string
   orchPaneId(projectId: string, missionId: string): string
   unregisterPane(paneId: string): PaneIdentity | undefined
   cleanPaneMcpFile(paneId: string): void
-  persistUserQuestions(): void
   abortVoiceRequests(): void
 
   /** Costura de push da Fase 3 (docs/FASE3_PLANO.md §3-D3): o destino deixa

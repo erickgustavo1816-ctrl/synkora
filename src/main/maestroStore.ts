@@ -17,39 +17,23 @@ export interface MaestroProjectState {
   personaSent?: boolean
   /** claude: fast mode ligado (/fast) */
   fastMode?: boolean
-  /** aprovações religadas (bypass é o PADRÃO — ausência de flag = bypass on) */
-  bypassOff?: boolean
-  /** o DONO liberou bypass mesmo em superfície sensível (domínio do projeto
-   *  cita PII/fiscal em toda missão — sem isto a automação morre; auditado
-   *  na caixa-preta a cada pane) */
-  sensitiveAutoOk?: boolean
-  /** T9 (2026-08-10): caminhos de RUNTIME do produto (relativos ao repo,
-   *  ex.: "data") declarados via declare_runtime_paths — arquivos rastreados
-   *  que o app grava AO RODAR. Divergência de gate composta só deles é
-   *  restaurada ao commit julgado e revalidada (restoreRuntimeAndRevalidate)
-   *  em vez de descartar o veredito. */
-  runtimePaths?: string[]
   /** sessão do PANE TUI do Maestro (resume ao reabrir o projeto/app) */
   tuiSessionId?: string
   /** contexto vivo da conversa do pane TUI (carimbo do sessionStats) — o
    *  paneSpec usa para decidir resume × fresco (teto de custo, 2026-08-06:
    *  replay integral de conversa grande custa fatia real do limite) */
   tuiContextTokens?: number
-  /** categoria da persona usada no último pane Codex (planejamento/publicação/pronto) */
-  projectLifecycle?: string
   /** versão atual do projeto — tarefas novas são carimbadas com ela */
   version?: string
-  /** REVIEWER do gate de integração (escolhido na página geral do projeto);
-   *  ausente = política do qa (pesada > leve) → seat do PM */
-  reviewerSeatId?: string
-  reviewerModel?: string
-  reviewerEffort?: string
-  /** HOLD de release do PM (02/08): enquanto presente, NENHUMA versão sobe —
-   *  o release passou no meio de uma verificação e limpou a branch debaixo
-   *  do PM. set_release_hold liga/desliga. */
-  releaseHold?: { reason: string; at: string }
   log: MaestroEvent[]
 }
+
+/* REGISTRO LEGADO (limpa F6, 2026-08-17): `bypassOff`, `sensitiveAutoOk`,
+ * `runtimePaths`, `projectLifecycle`, `reviewerSeatId/Model/Effort` e
+ * `releaseHold` saíram do tipo com os subsistemas que os liam (permissão por
+ * pane, gate de segurança, persona do orquestrador, reviewer de integração,
+ * hold de release). O loader não valida chave por chave, então o
+ * maestro.json do dono continua carregando e regravando o que já tem. */
 
 // Ferramentas e saídas do painel de fundo também entram no histórico.
 const MAX_LOG = 800
@@ -112,7 +96,7 @@ export class MaestroStore {
 
   /** /clear: zera sessão e conversa, preserva modelo/effort/limite configurados. */
   clear(projectId: string): void {
-    const { model, effort, contextLimit, contextWindow, fastMode, seatId, bypassOff, sensitiveAutoOk } =
+    const { model, effort, contextLimit, contextWindow, fastMode, seatId } =
       this.get(projectId)
     this.data[projectId] = {
       model,
@@ -121,8 +105,6 @@ export class MaestroStore {
       contextWindow,
       fastMode,
       seatId,
-      bypassOff,
-      sensitiveAutoOk,
       log: []
     }
     this.persist()
