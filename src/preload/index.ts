@@ -122,7 +122,6 @@ export type {
   ProgressCoordinatorActivityInput,
   ProgressCoordinatorRole,
   ProgressCoordinatorSnapshot,
-  ProgressMasterPlanSnapshot,
   ProgressMissionSnapshot,
   ProgressOverlaySnapshot,
   ProgressProjectSnapshot,

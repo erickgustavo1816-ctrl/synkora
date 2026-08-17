@@ -38,7 +38,6 @@ import type { Hub, PaneIdentity } from './hub'
 import type { McpServerHandle } from './mcpServer'
 import type { PaneStartupMetrics } from './paneStartupMetrics'
 import type { MaestroEvent } from './maestro'
-import type { ProjectPlan } from './projectPlan'
 import type { DevPaneSpec } from './paneLifecycle'
 import type { PendingUserQuestion } from './maestroEngine'
 
@@ -113,8 +112,6 @@ export interface MainContext {
   emitLog(projectId: string, evt: MaestroEvent): void
   scheduleProgressSnapshot(): void
   ensureProjectRuntimeWritable(projectId: string): void
-  projectModeOf(projectId: string): 'greenfield' | 'existing'
-  projectPlanOf(projectId: string): ProjectPlan | undefined
   bypassOn(projectId: string): boolean
   maestroPaneId(projectId: string): string
   orchPaneId(projectId: string, missionId: string): string

@@ -73,19 +73,14 @@ const { createMissionEngine } = require(join(COMPILED, 'missionEngine.js'))
  * Registra o IPC real com o MÍNIMO que o `registerMissionsIpc` desestrutura na
  * construção e devolve o handler de `missions:create` + os espiões.
  *
- * `projectMode`/`planStatus` reproduzem exatamente o estado que a cerca morta
- * vigiava. `projectPlanOf` é um espião: se alguém reintroduzir a consulta ao
- * plano mestre neste caminho, o teste denuncia mesmo que a recusa mude de
- * texto.
+ * O plano MESTRE F6 e a classificação greenfield×existente saíram do app na
+ * limpa F6 (2026-08-17): não há mais o que espionar neste caminho.
  */
 function createHarness({
-  projectMode = 'greenfield',
-  planStatus = 'draft',
   versionChoices = { versions: [], defaultVersionId: undefined }
 } = {}) {
   handlers.clear()
   const calls = []
-  const planReads = []
   const published = []
   const versionChoiceReads = []
   const ctx = {
@@ -105,11 +100,6 @@ function createHarness({
     blackbox: { record: () => {} },
     hub: { publish: (event) => published.push(event) },
     syncBoard: () => {},
-    projectModeOf: () => projectMode,
-    projectPlanOf: (projectId) => {
-      planReads.push(projectId)
-      return { status: planStatus }
-    },
     orchPaneId: (projectId, missionId) => `${projectId}--${missionId}`,
     unregisterPane: () => {},
     releasePaneSkillLease: () => {}
@@ -126,8 +116,7 @@ function createHarness({
       missionWorkspacePath: () => undefined,
       scheduleIntegrationDrain: () => {},
       startMissionIntegration: () => undefined,
-      stopMissionExecution: () => {},
-      transitionLinkedProjectPlanMission: () => {}
+      stopMissionExecution: () => {}
     },
     maestroEngine: {
       maestroResumeOverBudget: () => false,
@@ -145,7 +134,7 @@ function createHarness({
   registerMissionsIpc(ctx, extras)
   const create = handlers.get('missions:create')
   assert.ok(create, 'o canal missions:create precisa existir')
-  return { create, calls, planReads, published, versionChoiceReads }
+  return { create, calls, published, versionChoiceReads }
 }
 
 /**
@@ -201,7 +190,6 @@ function createMissionEngineHarness(versionChoices) {
     pushAll: () => {},
     syncBoard: () => {},
     scheduleProgressSnapshot: () => {},
-    projectModeOf: () => 'existing',
     orchPaneId: (projectId, missionId) => `${projectId}--${missionId}`,
     unregisterPane: () => {},
     ensureProjectRuntimeWritable: () => true
@@ -221,11 +209,8 @@ function createMissionEngineHarness(versionChoices) {
   return { create: engine.createMissionImpl, createdInputs, defaultEnsures: () => defaultEnsures }
 }
 
-test('o dono cria missão DIRETA em projeto greenfield com plano mestre em rascunho', () => {
-  const { create, calls, planReads, published } = createHarness({
-    projectMode: 'greenfield',
-    planStatus: 'draft'
-  })
+test('o dono cria missão DIRETA e nada no projeto pode recusá-la', () => {
+  const { create, calls, published } = createHarness()
 
   const mission = create({}, 'proj-1', { title: 'Ajustar a máscara de CNPJ' })
 
@@ -239,9 +224,6 @@ test('o dono cria missão DIRETA em projeto greenfield com plano mestre em rascu
   assert.equal(calls[0].input.direct, true)
   assert.equal(mission.direct, true)
 
-  // O caminho do dono NÃO consulta o plano mestre: nem para recusar, nem para
-  // "avisar". Qualquer leitura aqui é a cerca voltando por outra porta.
-  assert.deepEqual(planReads, [])
   assert.deepEqual(
     published.filter((event) => event.kind === 'error'),
     [],
@@ -249,15 +231,17 @@ test('o dono cria missão DIRETA em projeto greenfield com plano mestre em rascu
   )
 })
 
-test('nenhum modo de projeto interdita a criação — greenfield ou existente', () => {
-  for (const mode of ['greenfield', 'existing']) {
-    for (const planStatus of ['draft', 'awaiting_approval', 'approved', 'done', undefined]) {
-      const { create, calls } = createHarness({ projectMode: mode, planStatus })
-      const mission = create({}, 'proj-1', { title: `missão em ${mode}/${planStatus}` })
-      assert.ok(mission, `recusa indevida em ${mode}/${planStatus}`)
-      assert.equal(calls.length, 1)
-      assert.equal(calls[0].input.direct, true)
-    }
+test('a criação de missão não consulta mais nenhum estado de projeto', () => {
+  // A cerca do plano mestre (greenfield × existente × status do roadmap) saiu
+  // do app na limpa F6. O harness já não oferece `projectModeOf` nem
+  // `projectPlanOf` no contexto: se o caminho voltar a lê-los, este teste
+  // quebra antes de qualquer asserção.
+  for (const title of ['missão A', 'missão B', 'missão C']) {
+    const { create, calls } = createHarness()
+    const mission = create({}, 'proj-1', { title })
+    assert.ok(mission, `recusa indevida em "${title}"`)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].input.direct, true)
   }
 })
 
@@ -378,8 +362,6 @@ test('seat removido invalida resume e executor antes de reabrir no mesmo CLI', (
     blackbox: { record: () => {} },
     hub: { publish: () => {} },
     syncBoard: () => {},
-    projectModeOf: () => 'existing',
-    projectPlanOf: () => undefined,
     orchPaneId: (projectId, missionId) => `${projectId}--${missionId}`,
     unregisterPane: () => {},
     releasePaneSkillLease: () => {}
@@ -392,8 +374,7 @@ test('seat removido invalida resume e executor antes de reabrir no mesmo CLI', (
       missionWorkspacePath: () => undefined,
       scheduleIntegrationDrain: () => {},
       startMissionIntegration: () => undefined,
-      stopMissionExecution: () => {},
-      transitionLinkedProjectPlanMission: () => {}
+      stopMissionExecution: () => {}
     },
     maestroEngine: {
       maestroResumeOverBudget: () => false,

@@ -181,7 +181,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     scheduleIntegrationDrain,
     startMissionIntegration,
     stopMissionExecution,
-    transitionLinkedProjectPlanMission
   } = engine
 
   /** Costura do MCP do planejador: token por pane, porta viva do ctx, e o
@@ -814,20 +813,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
             return mission
           }
         }
-        const planError = transitionLinkedProjectPlanMission(
-          mission.projectId,
-          mission.id,
-          patch.status === 'arquivada' ? 'archive' : 'reactivate'
-        )
-        if (planError) {
-          hub.publish({
-            projectId: mission.projectId,
-            kind: 'error',
-            text: `não alterei a missão "${mission.title}": ${planError}`,
-            actor: 'harness'
-          })
-          return mission
-        }
         if (patch.status === 'arquivada') {
           const queued = integrationQueue.getByMission(mission.id)
           if (queued) {
@@ -902,20 +887,6 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     const queued = integrationQueue.getByMission(missionId)
     if (queued?.state === 'merging') return false
     if (queued) integrationQueue.cancel(missionId)
-    const planError = transitionLinkedProjectPlanMission(
-      mission.projectId,
-      missionId,
-      'detach'
-    )
-    if (planError) {
-      hub.publish({
-        projectId: mission.projectId,
-        kind: 'error',
-        text: `não excluí a missão "${mission.title}": ${planError}`,
-        actor: 'harness'
-      })
-      return false
-    }
     stopMissionExecution(
       mission.projectId,
       missionId,

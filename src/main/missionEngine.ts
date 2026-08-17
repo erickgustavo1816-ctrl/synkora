@@ -50,16 +50,6 @@ import {
 } from './guiMissionContracts'
 import { notifyDesktop } from './desktopNotifications'
 import { type IntegrationQueueTicketView } from './integrationQueue'
-import {
-  completeProjectMission as completeStoredProjectMission,
-  deferProjectMission as deferStoredProjectMission,
-  detachProjectMission as detachStoredProjectMission,
-  loadProjectPlan,
-  projectPlanReleaseGate,
-  reactivateProjectMission as reactivateStoredProjectMission,
-  startProjectMission as bindProjectMission,
-  type ProjectPlan
-} from './projectPlan'
 import { gitOff } from './gitAsync'
 import {
   existsSync,
@@ -119,7 +109,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     mainStalls,
     syncBoard,
     scheduleProgressSnapshot,
-    projectModeOf,
     orchPaneId,
     unregisterPane,
   } = ctx
@@ -430,360 +419,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     return { versionId: created.id, name: created.name }
   }
 
-  interface MissionStartIntent {
-    projectId: string
-    itemId: string
-    missionId: string
-    createdAt: string
-  }
-
-  function missionStartIntentPath(projectPath: string, missionId: string): string {
-    return join(projectPath, '.synkora', 'mission-starts', `${missionId}.json`)
-  }
-
-  function writeMissionStartIntent(projectPath: string, intent: MissionStartIntent): void {
-    ensureSynkoraGitExcludes(projectPath)
-    const directory = join(projectPath, '.synkora', 'mission-starts')
-    const file = missionStartIntentPath(projectPath, intent.missionId)
-    const temporary = `${file}.tmp-${process.pid}-${Date.now()}`
-    mkdirSync(directory, { recursive: true })
-    try {
-      writeFileSync(temporary, `${JSON.stringify(intent, null, 2)}\n`, 'utf8')
-      renameSync(temporary, file)
-    } catch (error) {
-      try {
-        unlinkSync(temporary)
-      } catch {
-        // temporário nunca criado ou já promovido
-      }
-      throw error
-    }
-  }
-
-  function clearMissionStartIntent(projectPath: string, missionId: string): void {
-    try {
-      ensureSynkoraGitExcludes(projectPath)
-      unlinkSync(missionStartIntentPath(projectPath, missionId))
-    } catch {
-      // nunca iniciou ou já foi reconciliada
-    }
-  }
-
-  function rollbackPlannedMission(projectId: string, missionId: string): void {
-    const project = projects.get(projectId)
-    const mission = missions.get(missionId)
-    if (project && mission?.branch && mission.worktree) {
-      removeWorktreeAndBranch(project.path, mission.worktree, mission.branch)
-    }
-    missions.remove(missionId)
-    backlog.releaseMissionItems(missionId)
-    maestro.forget(orchKey(projectId, missionId))
-    hub.purgeMissionEvents(projectId, missionId)
-    emitMissionsChanged(projectId)
-    emitBacklogChanged(projectId)
-    syncBoard(projectId)
-  }
-
-  function ensurePlannedMissionBacklogItem(
-    projectId: string,
-    mission: Mission,
-    item: ProjectPlan['roadmap'][number]
-  ): string | undefined {
-    try {
-      const roadmapNote = `Roadmap ${item.id}: ${item.objective}`
-      const existing = backlog
-        .listItems(projectId)
-        .find(
-          (candidate) =>
-            candidate.missionId === mission.id ||
-            (candidate.status === 'pendente' &&
-              candidate.title === item.title &&
-              candidate.notes === roadmapNote &&
-              candidate.versionId === mission.versionId)
-        )
-      if (existing) {
-        if (existing.missionId !== mission.id || existing.status !== 'em-missao') {
-          backlog.updateItem(existing.id, { status: 'em-missao', missionId: mission.id })
-          emitBacklogChanged(projectId)
-          syncBoard(projectId)
-        }
-      } else {
-        backlog.createItem(projectId, {
-          title: item.title,
-          type: 'feature',
-          notes: roadmapNote,
-          versionId: mission.versionId,
-          status: 'em-missao',
-          missionId: mission.id
-        })
-        emitBacklogChanged(projectId)
-        syncBoard(projectId)
-      }
-      return undefined
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error)
-    }
-  }
-
-  function recoverMissionStartIntents(projectId: string): void {
-    const project = projects.get(projectId)
-    if (!project) return
-    try {
-      ensureSynkoraGitExcludes(project.path)
-    } catch {
-      return
-    }
-    const directory = join(project.path, '.synkora', 'mission-starts')
-    let entries: string[] = []
-    try {
-      entries = readdirSync(directory).filter((entry) => entry.endsWith('.json'))
-    } catch {
-      return
-    }
-
-    for (const entry of entries) {
-      const missionId = entry.slice(0, -'.json'.length)
-      let intent: MissionStartIntent
-      try {
-        intent = JSON.parse(readFileSync(join(directory, entry), 'utf8')) as MissionStartIntent
-        if (
-          intent.projectId !== projectId ||
-          intent.missionId !== missionId ||
-          !intent.itemId
-        ) {
-          throw new Error('intent inconsistente')
-        }
-      } catch (error) {
-        const mission = missions.get(missionId)
-        if (!mission || mission.projectId !== projectId) {
-          clearMissionStartIntent(project.path, missionId)
-          continue
-        }
-        try {
-          const plan = loadProjectPlan(project.path)
-          if (!plan && projectModeOf(projectId) === 'greenfield') {
-            throw new Error('plano mestre ausente')
-          }
-          const linked = plan?.roadmap.find((candidate) => candidate.missionId === missionId)
-          if (linked) {
-            const mirrorError = ensurePlannedMissionBacklogItem(projectId, mission, linked)
-            if (!mirrorError) clearMissionStartIntent(project.path, missionId)
-            continue
-          }
-          rollbackPlannedMission(projectId, missionId)
-          clearMissionStartIntent(project.path, missionId)
-        } catch {
-          hub.publish({
-            projectId,
-            kind: 'error',
-            text:
-              `não consegui interpretar o ponto de recuperação da missão "${mission.title}" nem validar o plano mestre; preservei a missão para revisão: ` +
-              (error instanceof Error ? error.message : String(error)),
-            actor: 'harness'
-          })
-        }
-        continue
-      }
-
-      let mission = missions.get(missionId)
-      if (!mission || mission.projectId !== projectId) {
-        try {
-          const plan = loadProjectPlan(project.path)
-          if (!plan && projectModeOf(projectId) === 'greenfield') {
-            throw new Error('plano mestre ausente')
-          }
-          const linked = plan?.roadmap.find((candidate) => candidate.missionId === missionId)
-          if (linked?.status === 'active') {
-            deferStoredProjectMission(project.path, {
-              itemId: linked.id,
-              reason:
-                'Criação interrompida: o registro da missão não sobreviveu; objetivo devolvido ao roadmap.'
-            })
-            detachStoredProjectMission(project.path, { missionId })
-          } else if (linked?.status === 'deferred') {
-            detachStoredProjectMission(project.path, { missionId })
-          }
-          clearMissionStartIntent(project.path, missionId)
-          syncBoard(projectId)
-        } catch (error) {
-          hub.publish({
-            projectId,
-            kind: 'error',
-            text:
-              `a missão ${missionId.slice(0, 8)} não existe mais, mas o plano mestre ainda precisa ser reconciliado; preservei o marcador de recuperação: ` +
-              (error instanceof Error ? error.message : String(error)),
-            actor: 'harness'
-          })
-        }
-        continue
-      }
-      let plan: ProjectPlan | undefined
-      try {
-        plan = loadProjectPlan(project.path)
-      } catch (error) {
-        hub.publish({
-          projectId,
-          kind: 'error',
-          text:
-            'há uma missão planejada aguardando reconciliação, mas o plano mestre está inválido: ' +
-            (error instanceof Error ? error.message : String(error)),
-          actor: 'harness'
-        })
-        continue
-      }
-      const item = plan?.roadmap.find((candidate) => candidate.id === intent.itemId)
-      if (!plan || !item || (item.missionId && item.missionId !== missionId)) {
-        rollbackPlannedMission(projectId, missionId)
-        clearMissionStartIntent(project.path, missionId)
-        continue
-      }
-
-      if (!item.missionId) {
-        if (mission.status !== 'ativa') {
-          rollbackPlannedMission(projectId, missionId)
-          clearMissionStartIntent(project.path, missionId)
-          continue
-        }
-        mission = ensureMissionWorktree(missionId) ?? mission
-        if (
-          !mission.branch ||
-          !mission.worktree ||
-          !missionWorkspacePath(project.path, mission)
-        ) {
-          rollbackPlannedMission(projectId, missionId)
-          clearMissionStartIntent(project.path, missionId)
-          hub.publish({
-            projectId,
-            kind: 'error',
-            text: `não consegui recuperar a missão planejada "${mission.title}" com isolamento Git; a criação incompleta foi desfeita para não quebrar o roadmap`,
-            actor: 'harness'
-          })
-          continue
-        }
-        const version =
-          mission.branch && mission.versionId ? backlog.getVersion(mission.versionId) : undefined
-        try {
-          bindProjectMission(project.path, {
-            itemId: item.id,
-            missionId,
-            validation: {
-              requireTrustedEvidence: true,
-              trustedEvidence: project.planningEvidence,
-              trustedLegacyApproval: project.legacyPlanningApproval
-            },
-            ...(version
-              ? { release: { versionId: version.id, versionName: version.name } }
-              : {})
-          })
-        } catch {
-          rollbackPlannedMission(projectId, missionId)
-          clearMissionStartIntent(project.path, missionId)
-          continue
-        }
-      }
-
-      const mirrorError = ensurePlannedMissionBacklogItem(projectId, mission, item)
-      if (!mirrorError) clearMissionStartIntent(project.path, missionId)
-      else {
-        hub.publish({
-          projectId,
-          kind: 'error',
-          text: `a missão "${mission.title}" foi recuperada e vinculada ao mapa, mas o espelho em Versões ainda precisa ser reconciliado: ${mirrorError}`,
-          actor: 'harness'
-        })
-      }
-    }
-  }
-
-  /**
-   * Avança o mapa macro quando uma missão ligada ao roadmap é integrada.
-   * O JSON continua sendo a fonte da verdade; o Markdown é regenerado pela
-   * camada de projectPlan, então isto funciona mesmo com o pane do Maestro
-   * fechado. Missões pontuais simplesmente não têm vínculo e são ignoradas.
-   */
-  function completeLinkedProjectPlanMission(
-    projectId: string,
-    missionId: string,
-    fallbackOutcome: string
-  ): boolean {
-    const project = projects.get(projectId)
-    if (!project) return false
-    let stored: ProjectPlan | undefined
-    try {
-      ensureSynkoraGitExcludes(project.path)
-      stored = loadProjectPlan(project.path)
-    } catch (error) {
-      hub.publish({
-        projectId,
-        kind: 'error',
-        text:
-          'a missão terminou, mas não consegui ler o plano mestre para avançá-lo: ' +
-          (error instanceof Error ? error.message : String(error)),
-        actor: 'harness'
-      })
-      return false
-    }
-    if (!stored) {
-      if (projectModeOf(projectId) === 'greenfield') {
-        hub.publish({
-          projectId,
-          kind: 'error',
-          text:
-            'a missão terminou, mas o plano mestre do projeto novo não foi encontrado; preservei a reconciliação pendente para recuperação',
-          actor: 'harness'
-        })
-        return false
-      }
-      return true
-    }
-    const linked = stored?.roadmap.find((item) => item.missionId === missionId)
-    if (!linked || linked.status === 'done') return true
-    if (linked.status !== 'active') return false
-
-    const planCard = currentPlanOf(projectId, missionId)
-    const outcome = planCard?.plan?.conclusion?.trim() || fallbackOutcome
-    try {
-      const updated = completeStoredProjectMission(project.path, { missionId, outcome })
-      const next = updated.roadmap.find((item) => item.id === updated.nextItemId)
-      const releaseGate = projectPlanReleaseGate(updated)
-      const pendingReleaseNames = [
-        ...new Set(
-          updated.roadmap
-            .filter((item) => item.release && !item.release.releasedAt)
-            .map((item) => item.release?.versionName)
-            .filter((name): name is string => Boolean(name))
-        )
-      ]
-      const progress =
-        updated.status === 'revision_pending'
-          ? '— o mapa mudou e precisa de nova aprovação antes do próximo passo'
-          : releaseGate
-            ? `— próximo passo único: revisar e publicar ${releaseGate.versionName}; a próxima missão fica bloqueada até essa versão chegar à base`
-            : next
-              ? `— próxima missão indicada: "${next.title}" [${next.id}]; aguarde autorização do usuário para abri-la`
-              : updated.status === 'awaiting_release'
-                ? `— próximo passo único: aceitação final e publicação de ${pendingReleaseNames.join(', ') || 'a versão planejada'}`
-                : '— todas as missões planejadas foram encerradas'
-      hub.publish({
-        projectId,
-        kind: 'info',
-        text: `plano mestre avançou: "${linked.title}" concluída ${progress}`,
-        actor: 'harness'
-      })
-      return true
-    } catch (error) {
-      hub.publish({
-        projectId,
-        kind: 'error',
-        text:
-          `a missão "${linked.title}" foi concluída, mas o plano mestre não avançou: ` +
-          (error instanceof Error ? error.message : String(error)),
-        actor: 'harness'
-      })
-      return false
-    }
-  }
-
   /**
    * Reconcilia todos os registros derivados de uma missão já pousada. É
    * deliberadamente idempotente para poder rodar no clique, no boot e depois
@@ -818,9 +453,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         if (!delivered) return { ok: false, doneItems }
       }
       if (doneItems > 0 || (mission.versionId && !hadDelivery)) emitBacklogChanged(projectId)
-      const planOk = completeLinkedProjectPlanMission(projectId, missionId, fallbackOutcome)
       syncBoard(projectId)
-      return { ok: planOk, doneItems }
+      return { ok: true, doneItems }
     } catch (error) {
       hub.publish({
         projectId,
@@ -831,40 +465,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         actor: 'harness'
       })
       return { ok: false, doneItems: 0 }
-    }
-  }
-
-  function transitionLinkedProjectPlanMission(
-    projectId: string,
-    missionId: string,
-    action: 'archive' | 'reactivate' | 'detach'
-  ): string | undefined {
-    const project = projects.get(projectId)
-    if (!project) return undefined
-    let stored: ProjectPlan | undefined
-    try {
-      ensureSynkoraGitExcludes(project.path)
-      stored = loadProjectPlan(project.path)
-    } catch (error) {
-      return 'o plano mestre está inválido: ' +
-        (error instanceof Error ? error.message : String(error))
-    }
-    const linked = stored?.roadmap.find((item) => item.missionId === missionId)
-    if (!linked) return undefined
-    try {
-      if (action === 'archive') {
-        deferStoredProjectMission(project.path, {
-          itemId: linked.id,
-          reason: 'Missão real arquivada; branch preservada para possível retomada.'
-        })
-      } else if (action === 'reactivate') {
-        reactivateStoredProjectMission(project.path, { itemId: linked.id })
-      } else {
-        detachStoredProjectMission(project.path, { missionId })
-      }
-      return undefined
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error)
     }
   }
 
@@ -2368,11 +1968,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     ensureMissionVersion,
     stopMissionExecution,
     // ——— vínculo com o plano mestre (roadmap) ———
-    writeMissionStartIntent,
-    clearMissionStartIntent,
-    rollbackPlannedMission,
-    ensurePlannedMissionBacklogItem,
-    transitionLinkedProjectPlanMission,
     reconcileConcludedMission,
     // ——— fila de integração ———
     resolveMissionIntegrationTarget,
@@ -2380,7 +1975,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     scheduleIntegrationDrain,
     startMissionIntegration,
     // ——— recuperação (chamada pelo boot) ———
-    recoverMissionStartIntents,
     recoverMissionIntegrationIntents,
     repairIntegrationSyncTickets,
     // ——— tick do poller de 3s ———

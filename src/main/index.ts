@@ -71,7 +71,7 @@ import { registerPlansIpc } from './ipc/plans'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerProgressIpc } from './ipc/progress'
 import { registerMiscIpc } from './ipc/misc'
-import { ensureProjectSecurityBaseline } from './projectSecurityBaseline'
+import {} from './projectSecurityBaseline'
 import { redactSensitiveText } from './securityRedaction'
 import { BacklogStore, type Version } from './backlog'
 import { PolicyStore } from './policies'
@@ -104,17 +104,7 @@ import { SynVoiceService } from './synVoice'
 import { WindowsTextInput } from './windowsTextInput'
 import { WindowsGlobalActivation } from './windowsGlobalActivation'
 import { PaneStartupMetrics } from './paneStartupMetrics'
-import { isEffectivelyEmptyProject } from './projectFolder'
-import {
-  completeProjectPlanRelease as completeStoredProjectPlanRelease,
-  ensureGreenfieldProjectPlan,
-  legacyProjectPlanApproval,
-  loadProjectPlan,
-  PROJECT_PLAN_TRUST_CONTRACT_VERSION,
-  projectPlanPaths,
-  projectPlanReleaseBlockers,
-  type ProjectPlan
-} from './projectPlan'
+import {} from './projectFolder'
 import {
   applyProgressCoordinatorActivity,
   buildProgressSnapshot,
@@ -2418,43 +2408,6 @@ app.whenReady().then(async () => {
   const policies = new PolicyStore()
   const settings = new SettingsStore()
   endBootStores()
-  const progressPlanUnavailableProjectIds = new Set<string>()
-  const projectPlanOf = (projectId: string): ProjectPlan | undefined => {
-    const project = projects.get(projectId)
-    if (!project || !existsSync(project.path)) return undefined
-    try {
-      // loadProjectPlan também pode reparar JSON/backup/Markdown; portanto a
-      // leitura passa pela mesma guarda de qualquer mutação do runtime.
-      ensureSynkoraGitExcludes(project.path)
-      return loadProjectPlan(project.path)
-    } catch {
-      progressPlanUnavailableProjectIds.add(projectId)
-      return undefined
-    }
-  }
-  // Migração one-shot, antes de qualquer pane de agente nascer. Somente um
-  // plano que já estava aprovado no primeiro boot deste contrato recebe a
-  // exceção legacy; depois disso, editar o JSON do workspace nunca consegue
-  // fabricar o carimbo guardado em userData.
-  for (const project of projects.list()) {
-    if (
-      (project.planningTrustVersion ?? 0) >= PROJECT_PLAN_TRUST_CONTRACT_VERSION
-    ) {
-      continue
-    }
-    let legacyApproval: ReturnType<typeof legacyProjectPlanApproval> = undefined
-    if (existsSync(project.path)) {
-      try {
-        ensureSynkoraGitExcludes(project.path)
-        const plan = loadProjectPlan(project.path)
-        if (plan) legacyApproval = legacyProjectPlanApproval(plan)
-      } catch {
-        // Falha fechada: concluímos a migração sem grandfathering. O plano
-        // precisa ser reparado e salvo novamente com receipt real.
-      }
-    }
-    projects.migratePlanningTrust(project.id, legacyApproval)
-  }
   progressCoordinatorActivitySource = () => {
     const activityNow = Date.now()
     return projects.list().flatMap((project) => {
@@ -2498,21 +2451,15 @@ app.whenReady().then(async () => {
   }
   progressSnapshotSource = (revision) => {
     const allProjects = projects.list()
-    progressPlanUnavailableProjectIds.clear()
-    const projectPlans = Object.fromEntries(
-      allProjects.map((project) => [project.id, projectPlanOf(project.id)])
-    )
     return buildProgressSnapshot({
       projects: allProjects,
       missions: allProjects.flatMap((project) => missions.list(project.id)),
       tasks: allProjects.flatMap((project) => tasks.list(project.id)),
       integrationQueue: integrationQueue.listPending(),
-      projectPlans,
       coordinatorActivity: progressCoordinatorActivitySource?.() ?? [],
       missingProjectIds: allProjects
         .filter((project) => !existsSync(project.path))
         .map((project) => project.id),
-      planUnavailableProjectIds: [...progressPlanUnavailableProjectIds],
       // frases vivas dos agentes de execução/gate (status_note) — resolvidas
       // pela identidade do pane no instante do snapshot
       paneNotes: [...paneStatusNotes].flatMap(([paneId, note]) => {
@@ -2538,41 +2485,10 @@ app.whenReady().then(async () => {
       revision
     })
   }
-  const hasProjectPlanArtifacts = (projectPath: string): boolean => {
-    const paths = projectPlanPaths(projectPath)
-    return existsSync(paths.json) || existsSync(paths.backup)
-  }
   const ensureProjectRuntimeWritable = (projectId: string): void => {
     const project = projects.get(projectId)
     if (!project) throw new Error('projeto não encontrado')
     ensureSynkoraGitExcludes(project.path)
-  }
-  /** Projetos antigos ganham a classificação uma única vez; depois ela não
-   *  muda quando as primeiras missões criarem código. */
-  const projectModeOf = (projectId: string): 'greenfield' | 'existing' => {
-    const project = projects.get(projectId)
-    if (!project) return 'existing'
-    if (project.mode) return project.mode
-    const mode =
-      projectPlanOf(projectId) ||
-      hasProjectPlanArtifacts(project.path) ||
-      isEffectivelyEmptyProject(project.path)
-        ? 'greenfield'
-        : 'existing'
-    projects.setMode(projectId, mode)
-    if (mode === 'greenfield' && existsSync(project.path)) {
-      try {
-        ensureSynkoraGitExcludes(project.path)
-        ensureGreenfieldProjectPlan(project.path, { projectName: project.name })
-        ensureProjectSecurityBaseline(project.path, {
-          installRepositoryAdapters: true,
-          projectName: project.name
-        })
-      } catch {
-        /* o pane ainda explica o modo; a tool devolve o erro ao tentar salvar */
-      }
-    }
-    return mode
   }
   const synVoice = new SynVoiceService()
 
@@ -2636,23 +2552,7 @@ app.whenReady().then(async () => {
   const orchKey = (projectId: string, missionId: string): string => `${projectId}--${missionId}`
   const orchPaneId = (projectId: string, missionId: string): string =>
     `maestro-${orchKey(projectId, missionId)}`
-  const projectLifecycleOf = (projectId: string): string => {
-    if (projectModeOf(projectId) !== 'greenfield') return 'existing'
-    const status = projectPlanOf(projectId)?.status
-    if (status === 'done') return 'greenfield-established'
-    if (status === 'awaiting_release') return 'greenfield-awaiting-release'
-    return 'greenfield-planning'
-  }
 
-  /** Mantem um Maestro ja aberto alinhado quando o projeto muda de etapa. O
-   *  proximo spawn tambem recebe a persona atual via developer instructions. */
-  const syncMaestroProjectLifecycle = (projectId: string): void => {
-    const lifecycle = projectLifecycleOf(projectId)
-    const previous = maestro.get(projectId).projectLifecycle
-    if (previous === lifecycle) return
-    maestro.update(projectId, { projectLifecycle: lifecycle })
-
-  }
   hub = new Hub({
     projectPathOf: (pid) => projects.get(pid)?.path,
     ensureProjectRuntimeWritable: ensureSynkoraGitExcludes,
@@ -2766,8 +2666,6 @@ app.whenReady().then(async () => {
     emitLog: (...args) => emitLog(...args),
     scheduleProgressSnapshot: () => scheduleProgressSnapshot(),
     ensureProjectRuntimeWritable: (...args) => ensureProjectRuntimeWritable(...args),
-    projectModeOf: (...args) => projectModeOf(...args),
-    projectPlanOf: (...args) => projectPlanOf(...args),
     bypassOn: (...args) => bypassOn(...args),
     maestroPaneId: (...args) => maestroPaneId(...args),
     orchPaneId: (...args) => orchPaneId(...args),
@@ -4067,25 +3965,9 @@ app.whenReady().then(async () => {
       if (version.status !== 'lancada') {
         backlog.markVersionReleased(versionId)
       }
-      let reconciled = true
-      try {
-        completeStoredProjectPlanRelease(project.path, { versionId })
-      } catch (error) {
-        reconciled = projectModeOf(projectId) !== 'greenfield'
-        if (!reconciled) {
-          hub.publish({
-            projectId,
-            kind: 'error',
-            text:
-              `a versão ${version.name} já chegou à base, mas o plano mestre ainda precisa ser reconciliado: ` +
-              (error instanceof Error ? error.message : String(error)),
-            actor: 'harness'
-          })
-        }
-      }
       emitBacklogChanged(projectId)
       syncBoard(projectId)
-      if (reconciled) clearVersionReleaseIntent(project.path, versionId)
+      clearVersionReleaseIntent(project.path, versionId)
       hub.publish({
         projectId,
         kind: 'merge',
@@ -4106,15 +3988,7 @@ app.whenReady().then(async () => {
     }
     if (!project) return 'projeto não encontrado'
     if (version.status === 'lancada') {
-      let reconciled = true
-      try {
-        completeStoredProjectPlanRelease(project.path, { versionId: version.id })
-        syncBoard(version.projectId)
-      } catch {
-        // Projeto existente ou plano ausente: a versão continua lançada.
-        reconciled = projectModeOf(version.projectId) !== 'greenfield'
-      }
-      if (reconciled) clearVersionReleaseIntent(project.path, version.id)
+      clearVersionReleaseIntent(project.path, version.id)
       return `a versão ${version.name} já foi lançada`
     }
     // Servidor de teste do dono no worktree da versão fecha antes do merge.
@@ -4129,30 +4003,10 @@ app.whenReady().then(async () => {
         `${releaseHold.reason} — quando a verificação terminar, o PM libera com set_release_hold {on: false}`
       )
     }
-    if (projectModeOf(version.projectId) === 'greenfield') {
-      let masterPlan: ProjectPlan | undefined
-      try {
-        masterPlan = loadProjectPlan(project.path)
-      } catch (error) {
-        return `o plano mestre está inválido; não subi a versão: ${error instanceof Error ? error.message : String(error)}`
-      }
-      if (!masterPlan)
-        return 'o plano mestre deste projeto novo não foi encontrado; recupere-o antes de subir a versão'
-      if (masterPlan.status === 'draft' || masterPlan.status === 'revision_pending') {
-        return 'o plano mestre foi revisado e ainda aguarda aprovação explícita — aprove a revisão antes de publicar qualquer versão'
-      }
-      const blockers = projectPlanReleaseBlockers(masterPlan, {
-        versionId: version.id,
-        versionName: version.name
-      })
-      if (blockers.length > 0) {
-        return (
-          `a versão ${version.name} ainda contém ${blockers.length} missão(ões) futura(s) no plano mestre: ` +
-          blockers.map((item) => `"${item.title}" [${item.id}]`).join(', ') +
-          ' — conclua, adie para outra versão durante uma revisão aprovada ou remova do mapa explicitamente antes de publicar'
-        )
-      }
-    }
+    // R-5 DA LIMPA F6: o gate de release do plano mestre saiu SEM substituto.
+    // O que continua barrando uma publicação prematura são as travas reais —
+    // fila de integração, worktree limpo, missão viva na versão e item de
+    // backlog em aberto — logo abaixo.
     const queuedIntegrations = integrationQueue
       .listPending(version.projectId)
       .filter((ticket) => ticket.versionId === versionId)
@@ -4253,21 +4107,6 @@ app.whenReady().then(async () => {
         : `falhou: ${res.detail}`
     }
     backlog.markVersionReleased(versionId)
-    let planReconciled = true
-    try {
-      const masterPlan = completeStoredProjectPlanRelease(project.path, { versionId })
-      if (masterPlan.status === 'done') {
-        hub.publish({
-          projectId: version.projectId,
-          kind: 'info',
-          text: 'plano mestre concluído: todas as missões terminaram e todas as versões planejadas subiram para a base',
-          actor: 'harness'
-        })
-      }
-    } catch {
-      // O release real já ocorreu. A recuperação de boot reconcilia o plano.
-      planReconciled = projectModeOf(version.projectId) !== 'greenfield'
-    }
     emitBacklogChanged(version.projectId)
     syncBoard(version.projectId)
     hub.publish({
@@ -4287,7 +4126,7 @@ app.whenReady().then(async () => {
         actor: 'harness'
       })
     }
-    if (planReconciled) clearVersionReleaseIntent(project.path, versionId)
+    clearVersionReleaseIntent(project.path, versionId)
     return `versão ${version.name} subiu para a main (${releaseDetail}) — é a versão atual`
   }
 
@@ -4429,7 +4268,6 @@ app.whenReady().then(async () => {
     } catch {
       // board é best-effort — nunca derruba o fluxo
     }
-    syncMaestroProjectLifecycle(projectId)
     pushAll('projects:flowChanged', projectId)
     scheduleProgressSnapshot()
   }
@@ -4508,7 +4346,6 @@ app.whenReady().then(async () => {
     reconcileConcludedMission,
     scheduleIntegrationDrain,
     startMissionIntegration,
-    recoverMissionStartIntents,
     recoverMissionIntegrationIntents,
     repairIntegrationSyncTickets
   } = missionEngine
@@ -4853,7 +4690,6 @@ app.whenReady().then(async () => {
       runtimeWritable = false
     }
     if (runtimeWritable) {
-      recoverMissionStartIntents(p.id)
       recoverMissionIntegrationIntents(p.id)
       recoverVersionReleaseIntents(p.id)
     }
@@ -4896,15 +4732,6 @@ app.whenReady().then(async () => {
       }
     }
     if (runtimeWritable) {
-      for (const version of backlog
-        .listVersions(p.id)
-        .filter((candidate) => candidate.status === 'lancada')) {
-        try {
-          completeStoredProjectPlanRelease(p.path, { versionId: version.id })
-        } catch {
-          // Projeto existente/plano ausente ou inválido: não afeta o release real.
-        }
-      }
       // Vassoura no BOOT: marcadores sem processo podem sair, mas resultados de
       // helpers interrompidos ainda pertencem ao trabalho recuperável do card.
       // Fase 0: etapa medida — fs sync por projeto é candidato clássico do

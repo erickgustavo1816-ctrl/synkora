@@ -3,32 +3,27 @@ import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { persistJsonStore } from './jsonStore'
-import {
-  PROJECT_PLAN_TRUST_CONTRACT_VERSION,
-  type ProjectPlanLegacyApproval,
-  type ProjectPlanningSkillUse
-} from './projectPlan'
 
 export interface Project {
   id: string
   name: string
   path: string
   createdAt: string
-  /** Fluxo do Maestro: projeto vazio nasce greenfield e conserva esse modo
-   *  mesmo depois que as primeiras missões criarem arquivos. */
+  /** LETRA MORTA desde a limpa F6 (2026-08-17): a classificação greenfield ×
+   *  existente era do plano mestre. O campo fica DECLARADO e sem leitor para
+   *  que o registro antigo continue carregando e regravando o valor. */
   mode?: 'greenfield' | 'existing'
   /** avatar do projeto (data URL PNG 128px) — rail estilo Discord */
   photo?: string
-  /** Carimbo control-plane da ultima revisao de roadmap produzida por um
-   * receipt real. A copia em .synkora e apenas a representacao legivel. */
-  planningEvidence?: ProjectPlanningSkillUse
-  /** Migração one-shot do contrato de confiança. Ausente significa projeto
-   * criado antes do contrato; projetos novos já nascem na versão atual. */
-  planningTrustVersion?: typeof PROJECT_PLAN_TRUST_CONTRACT_VERSION
-  /** Única exceção para planos aprovados antes de receipts. Fica no
-   * control-plane (userData), nunca no JSON gravável do workspace. */
-  legacyPlanningApproval?: ProjectPlanLegacyApproval
 }
+
+/* REGISTRO LEGADO (limpa F6, 2026-08-17): `planningEvidence`,
+ * `planningTrustVersion` e `legacyPlanningApproval` eram do plano mestre e
+ * saíram do tipo. NADA foi apagado do disco: o loader faz `JSON.parse` cru,
+ * sem validador nem allowlist, e `persist()` grava o objeto parseado — as
+ * chaves órfãs sobrevivem intactas em projects.json. Por isso NÃO se
+ * acrescenta validador/sanitizador a este store (R-12): ele apagaria a
+ * evidência real do dono. */
 
 // Persistência em JSON no F0; migra para SQLite na F2 quando o modelo
 // de domínio (departamentos, tarefas, runs) entrar.
@@ -58,14 +53,12 @@ export class ProjectStore {
     return this.projects.find((p) => p.id === id)
   }
 
-  create(name: string, path: string, mode?: Project['mode']): Project {
+  create(name: string, path: string): Project {
     const project: Project = {
       id: randomUUID(),
       name,
       path,
-      createdAt: new Date().toISOString(),
-      mode,
-      planningTrustVersion: PROJECT_PLAN_TRUST_CONTRACT_VERSION
+      createdAt: new Date().toISOString()
     }
     this.projects.push(project)
     this.persist()
@@ -105,50 +98,6 @@ export class ProjectStore {
     else delete project.photo
     this.persist()
     return project
-  }
-
-  setPlanningEvidence(
-    id: string,
-    evidence: ProjectPlanningSkillUse | undefined
-  ): Project | undefined {
-    const index = this.projects.findIndex((project) => project.id === id)
-    if (index < 0) return undefined
-    const previous = this.projects[index]
-    const updated: Project = {
-      ...previous,
-      ...(evidence ? { planningEvidence: { ...evidence } } : {})
-    }
-    if (!evidence) delete updated.planningEvidence
-    else delete updated.legacyPlanningApproval
-    const next = [...this.projects]
-    next[index] = updated
-    persistJsonStore(this.file, next)
-    this.projects = next
-    return updated
-  }
-
-  migratePlanningTrust(
-    id: string,
-    legacyApproval?: ProjectPlanLegacyApproval
-  ): Project | undefined {
-    const index = this.projects.findIndex((project) => project.id === id)
-    if (index < 0) return undefined
-    const previous = this.projects[index]
-    if (
-      (previous.planningTrustVersion ?? 0) >= PROJECT_PLAN_TRUST_CONTRACT_VERSION
-    ) {
-      return previous
-    }
-    const updated: Project = {
-      ...previous,
-      planningTrustVersion: PROJECT_PLAN_TRUST_CONTRACT_VERSION,
-      ...(legacyApproval ? { legacyPlanningApproval: { ...legacyApproval } } : {})
-    }
-    const next = [...this.projects]
-    next[index] = updated
-    persistJsonStore(this.file, next)
-    this.projects = next
-    return updated
   }
 
   remove(id: string): void {

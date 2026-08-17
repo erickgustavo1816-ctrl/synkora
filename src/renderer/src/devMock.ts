@@ -127,14 +127,6 @@ export function installDevMock(): void {
               updatedAt: new Date().toISOString()
             }
           ],
-          masterPlan: {
-            status: 'in_progress',
-            label: 'projeto em construção',
-            done: 8,
-            active: 1,
-            total: 24,
-            currentWave: 'onda-3'
-          },
           activeMissions: [
             {
               id: 'mission-app',
@@ -271,8 +263,7 @@ export function installDevMock(): void {
           label: 'sem missão em andamento',
           coordinators: [],
           activeMissions: [],
-          recentCompletions,
-          masterPlan: undefined
+          recentCompletions
         }]
       }
     }

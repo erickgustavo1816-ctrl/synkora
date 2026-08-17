@@ -11,7 +11,6 @@
 import { ipcMain } from 'electron'
 import { ensureSynkoraGitExcludes, gitHead, removeWorktreeAndBranch } from '../worktree'
 import { type BacklogItemType, type Version } from '../backlog'
-import { loadProjectPlan, type ProjectPlan } from '../projectPlan'
 import type { MainContext } from '../mainContext'
 
 /** Dependências do closure do index ainda não migradas (mesmo padrão
@@ -30,7 +29,6 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
     projects,
     missions,
     backlog,
-    projectModeOf
   } = ctx
   const {
     emitBacklogChanged,
@@ -73,25 +71,6 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
     const missionRefs = missions.list(projectId).filter((mission) => mission.versionId === id)
     if (missionRefs.length > 0) {
       return `não excluí ${version.name}: ela já está ligada a ${missionRefs.length} missão(ões) reais — arquive/revise o roadmap ou publique a versão; o histórico não pode ficar órfão`
-    }
-    if (projectModeOf(projectId) === 'greenfield') {
-      let plan: ProjectPlan | undefined
-      try {
-        plan = loadProjectPlan(project.path)
-      } catch (error) {
-        return `não excluí ${version.name}: o plano mestre está inválido (${error instanceof Error ? error.message : String(error)})`
-      }
-      const planRefs =
-        plan?.roadmap.filter(
-          (item) =>
-            item.release?.versionId === id ||
-            item.version?.id === id ||
-            item.version?.name.toLocaleLowerCase('pt-BR') ===
-              version.name.toLocaleLowerCase('pt-BR')
-        ) ?? []
-      if (planRefs.length > 0) {
-        return `não excluí ${version.name}: ela ainda aparece em ${planRefs.length} etapa(s) do plano mestre — revise e aprove o mapa antes de remover a versão`
-      }
     }
     if (version.branch || version.worktree) {
       if (!versionIsolationIsValid(project.path, version)) {

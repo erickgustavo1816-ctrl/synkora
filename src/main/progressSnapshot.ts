@@ -1,6 +1,5 @@
 import type { IntegrationQueueTicketView } from './integrationQueue'
 import type { Mission } from './missions'
-import type { ProjectPlan, ProjectPlanStatus } from './projectPlan'
 import type { Project } from './projects'
 import type { Task } from './tasks'
 
@@ -128,25 +127,14 @@ export interface ProgressMissionSnapshot {
   question?: string
 }
 
-export interface ProgressMasterPlanSnapshot {
-  status: ProjectPlanStatus
-  label: string
-  done: number
-  active: number
-  total: number
-  currentWave?: string
-}
-
 export interface ProgressProjectSnapshot {
   id: string
   name: string
   mode?: Project['mode']
   missing: boolean
-  planUnavailable?: boolean
   state: ProjectProgressState
   tone: ProgressTone
   label: string
-  masterPlan?: ProgressMasterPlanSnapshot
   coordinators: ProgressCoordinatorSnapshot[]
   activeMissions: ProgressMissionSnapshot[]
   recentCompletions: ProgressMissionSnapshot[]
@@ -175,10 +163,9 @@ export interface ProgressSnapshotInput {
   missions: readonly Mission[]
   tasks: readonly Task[]
   integrationQueue: readonly IntegrationQueueTicketView[]
-  projectPlans?: Readonly<Record<string, ProjectPlan | undefined>>
-  coordinatorActivity?: readonly ProgressCoordinatorActivityInput[]
+  /** projetos cuja pasta sumiu do disco — o radar mostra "pasta não encontrada" */
   missingProjectIds?: readonly string[]
-  planUnavailableProjectIds?: readonly string[]
+  coordinatorActivity?: readonly ProgressCoordinatorActivityInput[]
   paneNotes?: readonly ProgressPaneNoteInput[]
   pendingQuestions?: readonly ProgressQuestionInput[]
   revision?: number
@@ -565,8 +552,7 @@ function missionSnapshotInner(
 
 function coordinatorSnapshot(
   activity: ProgressCoordinatorActivityInput,
-  missions: readonly ProgressMissionSnapshot[],
-  masterPlan: ProgressMasterPlanSnapshot | undefined
+  missions: readonly ProgressMissionSnapshot[]
 ): ProgressCoordinatorSnapshot | undefined {
   if (!activity.working) return undefined
   const mission = activity.missionId
@@ -692,15 +678,9 @@ function coordinatorSnapshot(
     ? 'decidindo como resolver uma integração bloqueada'
     : integrating
       ? 'coordenando a integração das missões'
-      : masterPlan?.status === 'draft'
-        ? 'estruturando o plano mestre do projeto'
-        : masterPlan?.status === 'revision_pending'
-          ? 'revisando o plano mestre do projeto'
-          : masterPlan?.status === 'awaiting_release'
-            ? 'preparando o lançamento do projeto'
-            : missions.length > 0
-              ? 'acompanhando o projeto e suas missões'
-              : 'analisando o projeto'
+      : missions.length > 0
+        ? 'acompanhando o projeto e suas missões'
+        : 'analisando o projeto'
   const detail = maestroBlock?.title ?? integrating?.title
   return {
     id: `maestro:${activity.projectId}`,
@@ -741,51 +721,19 @@ function generalWorkSnapshot(
   return { ...synthetic, kind: 'general' }
 }
 
-function masterPlanSnapshot(plan: ProjectPlan): ProgressMasterPlanSnapshot {
-  const done = plan.roadmap.filter((item) => item.status === 'done').length
-  const active = plan.roadmap.filter((item) => item.status === 'active').length
-  const label: Record<ProjectPlanStatus, string> = {
-    draft: 'planejamento do projeto',
-    approved: 'plano aprovado',
-    in_progress: 'projeto em construção',
-    revision_pending: 'plano precisa de revisão',
-    awaiting_release: 'aguardando lançamento',
-    done: 'projeto concluído'
-  }
-  return {
-    status: plan.status,
-    label: label[plan.status],
-    done,
-    active,
-    total: plan.roadmap.length,
-    ...(plan.currentWaveId ? { currentWave: plan.currentWaveId } : {})
-  }
-}
-
 function projectState(
   missing: boolean,
-  planUnavailable: boolean,
   missions: readonly ProgressMissionSnapshot[],
-  masterPlan: ProgressMasterPlanSnapshot | undefined,
   activeCoordinators = 0,
   hasQuestion = false
 ): Pick<ProgressProjectSnapshot, 'state' | 'tone' | 'label'> {
   if (missing) return { state: 'attention', tone: 'attention', label: 'pasta não encontrada' }
-  if (planUnavailable) {
-    return { state: 'attention', tone: 'attention', label: 'não foi possível ler o plano mestre' }
-  }
   // pergunta do PM esperando o dono: nada é mais urgente que uma decisão parada
   if (hasQuestion || missions.some((mission) => mission.question)) {
     return { state: 'attention', tone: 'attention', label: 'pergunta esperando você' }
   }
   if (missions.some((mission) => ATTENTION_STATES.has(mission.state))) {
     return { state: 'attention', tone: 'attention', label: 'precisa de atenção' }
-  }
-  if (masterPlan?.status === 'revision_pending') {
-    return { state: 'attention', tone: 'attention', label: 'plano precisa de revisão' }
-  }
-  if (masterPlan?.status === 'awaiting_release') {
-    return { state: 'attention', tone: 'attention', label: 'aguardando sua aprovação para publicar' }
   }
   if (missions.some((mission) => mission.state === 'integrating')) {
     return { state: 'integrating', tone: 'running', label: 'integrando missão' }
@@ -798,12 +746,6 @@ function projectState(
   }
   if (missions.length > 0) {
     return { state: 'planning', tone: 'waiting', label: 'missões em preparação' }
-  }
-  if (masterPlan?.status === 'done') {
-    return { state: 'completed', tone: 'success', label: 'projeto concluído' }
-  }
-  if (masterPlan) {
-    return { state: 'planning', tone: 'waiting', label: masterPlan.label }
   }
   return { state: 'idle', tone: 'idle', label: 'sem missão em andamento' }
 }
@@ -820,11 +762,7 @@ export function applyProgressCoordinatorActivity(
   const projects = snapshot.projects.map((project): ProgressProjectSnapshot => {
     const coordinators = activity
       .filter((candidate) => candidate.projectId === project.id)
-      .map((candidate) => coordinatorSnapshot(
-        candidate,
-        project.activeMissions,
-        project.masterPlan
-      ))
+      .map((candidate) => coordinatorSnapshot(candidate, project.activeMissions))
       .filter((candidate): candidate is ProgressCoordinatorSnapshot => Boolean(candidate))
       .sort((a, b) => {
         if (a.role !== b.role) return a.role === 'orchestrator' ? -1 : 1
@@ -834,9 +772,7 @@ export function applyProgressCoordinatorActivity(
       ...project,
       ...projectState(
         project.missing,
-        Boolean(project.planUnavailable),
         project.activeMissions,
-        project.masterPlan,
         coordinators.length,
         Boolean(project.question)
       ),
@@ -850,12 +786,7 @@ export function applyProgressCoordinatorActivity(
     (sum, project) => sum + project.coordinators.length,
     0
   )
-  const attentionProjects = projects.filter((project) =>
-    project.missing ||
-    project.planUnavailable ||
-    project.masterPlan?.status === 'revision_pending' ||
-    project.masterPlan?.status === 'awaiting_release'
-  ).length
+  const attentionProjects = projects.filter((project) => project.missing).length
   return {
     ...snapshot,
     revision: Math.max(0, Math.trunc(revision)),
@@ -878,7 +809,6 @@ export function buildProgressSnapshot(input: ProgressSnapshotInput): ProgressOve
   const recentDays = Math.max(1, Math.min(90, input.recentCompletionDays ?? 7))
   const recentCutoff = now.getTime() - recentDays * 24 * 60 * 60 * 1000
   const missingIds = new Set(input.missingProjectIds ?? [])
-  const planUnavailableIds = new Set(input.planUnavailableProjectIds ?? [])
   const queueByMission = new Map(input.integrationQueue.map((ticket) => [ticket.missionId, ticket]))
 
   const result = input.projects.map((project): ProgressProjectSnapshot => {
@@ -921,11 +851,9 @@ export function buildProgressSnapshot(input: ProgressSnapshotInput): ProgressOve
       )
       .sort((a, b) => (b.completedAt ?? b.updatedAt).localeCompare(a.completedAt ?? a.updatedAt))
       .slice(0, 5)
-    const plan = input.projectPlans?.[project.id]
-    const masterPlan = plan ? masterPlanSnapshot(plan) : undefined
     const coordinators = (input.coordinatorActivity ?? [])
       .filter((activity) => activity.projectId === project.id)
-      .map((activity) => coordinatorSnapshot(activity, activeMissions, masterPlan))
+      .map((activity) => coordinatorSnapshot(activity, activeMissions))
       .filter((activity): activity is ProgressCoordinatorSnapshot => Boolean(activity))
       .sort((a, b) => {
         if (a.role !== b.role) return a.role === 'orchestrator' ? -1 : 1
@@ -933,9 +861,7 @@ export function buildProgressSnapshot(input: ProgressSnapshotInput): ProgressOve
       })
     const status = projectState(
       missingIds.has(project.id),
-      planUnavailableIds.has(project.id),
       activeMissions,
-      masterPlan,
       coordinators.length,
       Boolean(generalQuestion)
     )
@@ -944,9 +870,7 @@ export function buildProgressSnapshot(input: ProgressSnapshotInput): ProgressOve
       name: project.name,
       mode: project.mode,
       missing: missingIds.has(project.id),
-      ...(planUnavailableIds.has(project.id) ? { planUnavailable: true } : {}),
       ...status,
-      ...(masterPlan ? { masterPlan } : {}),
       coordinators,
       activeMissions,
       recentCompletions,
@@ -972,12 +896,7 @@ export function buildProgressSnapshot(input: ProgressSnapshotInput): ProgressOve
       sum + project.activeMissions.filter((mission) => ATTENTION_STATES.has(mission.state)).length,
     0
   )
-  const attentionProjects = result.filter((project) =>
-    project.missing ||
-    project.planUnavailable ||
-    project.masterPlan?.status === 'revision_pending' ||
-    project.masterPlan?.status === 'awaiting_release'
-  ).length
+  const attentionProjects = result.filter((project) => project.missing).length
   const recentCompletions = result.reduce(
     (sum, project) => sum + project.recentCompletions.length,
     0

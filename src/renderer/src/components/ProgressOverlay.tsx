@@ -156,9 +156,7 @@ function compactFocus(
     if (project.tone === 'attention') {
       return {
         title: `Atenção · ${project.label}`,
-        detail: project.masterPlan?.label
-          ? `${project.name} / ${project.masterPlan.label}`
-          : project.name,
+        detail: project.name,
         tone: 'attention'
       }
     }
@@ -204,9 +202,7 @@ function compactFocus(
   if (activeProject) {
     return {
       title: activeProject.label,
-      detail: activeProject.masterPlan?.label
-        ? `${activeProject.name} / ${activeProject.masterPlan.label}`
-        : activeProject.name,
+      detail: activeProject.name,
       tone: activeProject.tone === 'running' ? 'running' : 'idle'
     }
   }
@@ -372,14 +368,6 @@ function ProjectGroup({
           {project.coordinators.map((activity) => (
             <CoordinatorActivity key={activity.id} activity={activity} nowMs={nowMs} />
           ))}
-        </div>
-      )}
-      {project.masterPlan && (
-        <div className="progress-master-plan">
-          <span>{project.masterPlan.label}</span>
-          {project.masterPlan.total > 0 && (
-            <b>{project.masterPlan.done}/{project.masterPlan.total} missões do mapa</b>
-          )}
         </div>
       )}
       <div className="progress-mission-list">
