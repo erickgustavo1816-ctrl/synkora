@@ -61,7 +61,8 @@
     "test:blackbox": "tsc --outDir .tmp/blackbox-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/blackbox.ts src/main/securityRedaction.ts && node scripts/test-blackbox.mjs",
     "test:security-redaction": "tsc --outDir .tmp/security-redaction-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/securityRedaction.ts && node scripts/test-security-redaction.mjs",
     "test:project-security-baseline": "tsc --outDir .tmp/project-security-baseline-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/projectSecurityBaseline.ts src/main/securityPolicy.ts src/main/securityRedaction.ts src/main/orchestratorFlow.ts && node --test scripts/test-project-security-baseline.mjs",
-    "test:plans": "tsc --outDir .tmp/plans-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/plans.ts src/main/planDraft.ts src/main/jsonStore.ts && node --test scripts/test-plans.mjs"
+    "test:plans": "tsc --outDir .tmp/plans-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/plans.ts src/main/planDraft.ts src/main/jsonStore.ts && node --test scripts/test-plans.mjs",
+    "test:store-legacy-documents": "tsc --outDir .tmp/store-legacy-test --target ES2022 --module Node16 --moduleResolution Node16 --esModuleInterop --skipLibCheck --types node src/main/projects.ts src/main/missions.ts src/main/maestroStore.ts src/main/backlog.ts src/main/plans.ts src/main/planDraft.ts src/main/jsonStore.ts src/main/securityRedaction.ts && node --test scripts/test-store-legacy-documents.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.12",
