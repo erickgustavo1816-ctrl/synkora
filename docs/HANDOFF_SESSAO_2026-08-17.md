@@ -90,3 +90,23 @@ ABERTOS desta rodada: medidor do CODEX passa de 100% (404k numa janela de
   estourou e queimou 35min de rodada.
 - Browser de agente = interno do Claude, nunca o Chrome real do dono.
 - Design sempre com a skill impeccable, roteada pelo orquestrador.
+
+## RODADA 3 (mesma noite — 5 achados do dono, todos fechados)
+1. Barra APROVAR/AJUSTAR fantasma: era a heurística `.gui-ask` (bag-of-words)
+   disparando em "está aprovado" 148 chars antes de uma pergunta aberta — o
+   ÚNICO disparo dela no corpus real de 123 mensagens era o falso positivo.
+   Novo `guiAskForGo.ts` precisão-primeiro (marcador na frase que pergunta;
+   particípio fora); as 4 hipóteses do briefing refutadas com evidência; bug
+   latente do `\b` pós-"?" morto de carona.
+2. ◈ = versão NA MAIN (última lançada; nenhuma → sem chip); linhas de versão
+   contam o carimbo próprio (viva sem carimbo → corrente); `missoesFeitas` =
+   união recibo∪concluída-carimbada. Raiz era o LEITOR (`find(!lancada)`).
+3. Dashboard profissional: banda de topo, duas colunas (trabalho|contexto),
+   conta·modelo, gaveta de diff sob demanda, planos do mapa com progresso,
+   cronologia só createdAt/completedAt. Corte de grade em 996px por conta.
+4. Versão DIGITÁVEL na lateral (guardas mantidas; recusa explica a saída) —
+   e o parser que parava no 3º ponto deixava "1.2.0.4" ATRAVESSAR a guarda de
+   lançada em silêncio: morto, com compareVersionNumbers N-segmentos.
+5. Rail do planejamento nomeia o arquivar (a alavanca existia, a palavra não).
+Gate raiz REAL_EXIT=0 pós-integração. Sobras no Desktop: Synkora-wt-limpa-mcp
+e -pipeline (locks, inertes, deletar à mão).
