@@ -21365,6 +21365,14 @@ details.gui-error-line {
   color: var(--ink-2);
 }
 
+/* a designação proposta: mesma régua do rótulo acima, com o acento reservado
+   ao que muda a natureza do plano (o dono está aprovando isto junto) */
+.gui-proposal-kind {
+  font-size: 11px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--accent-deep) 78%, var(--ink));
+}
+
 .gui-proposal-empty {
   margin: 0;
   font-size: 12px;

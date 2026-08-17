@@ -294,7 +294,7 @@ test('CONTRATO: toda mutação de plano leva o updatedAt que a tela mostrou', as
 
   // CAS otimista: o agente edita o plano pela tool enquanto a aba está aberta.
   // Sem `expectedUpdatedAt` a tela escreveria por cima do que mudou.
-  for (const call of ['update', 'archive', 'remove', 'linkMission']) {
+  for (const call of ['update', 'archive', 'remove', 'linkMission', 'setKind']) {
     assert.match(
       api,
       new RegExp(`${call}:\\s*\\([^)]*expectedUpdatedAt`, 'su'),
@@ -374,6 +374,41 @@ test('CONTRATO: cadastrar universo não semeia PROJECT_PLAN.json nem classifica 
   // A pergunta "esta pasta está vazia?" sobrevive — ela decide CLONAR × PUBLICAR.
   assert.match(projects, /isEffectivelyEmptyProject/u)
   assert.match(projects, /from '\.\.\/projectFolder'/u)
+})
+
+test('CONTRATO: designar plano mestre é gesto do DONO, num canal próprio', async () => {
+  const board = await source('src/renderer/src/components/PlanBoardView.tsx')
+  const clean = withoutComments(board)
+
+  // O VERBO mora nas ações, ao lado de concluir/arquivar/excluir. O chip lá
+  // em cima continua sendo IDENTIDADE: chip é estado, nunca botão.
+  assert.match(clean, /plansApi\.setKind\(plan\.id, 'mestre', plan\.updatedAt\)/u)
+  assert.match(clean, /plansApi\.setKind\(plan\.id, 'livre', plan\.updatedAt\)/u)
+  assert.match(clean, /definir como plano mestre/u)
+  assert.match(clean, /remover designação/u)
+  // Sem modal: designar é reversível, nomeado e auditado — o modal existe onde
+  // a ação é irreversível (excluir).
+  assert.equal((clean.match(/confirm-modal/gu) ?? []).length, 1)
+
+  // A PORTEIRA: `kind` jamais viaja num patch, senão `update_plan` — que
+  // executa direto — daria ao agente o gesto do dono.
+  assert.ok(
+    !/plansApi\.update\([^)]*kind/su.test(clean),
+    'a aba do plano passou a mandar kind num patch'
+  )
+  const api = withoutComments(await source('src/renderer/src/plansApi.ts'))
+  assert.ok(
+    !/patch:\s*\{[^}]*kind/su.test(api),
+    'o acessor de planos aceitou kind dentro do patch'
+  )
+
+  // E o card de proposta deixa de ser um clique cego: o dono vê que está
+  // aprovando o plano de fundo do universo.
+  const card = withoutComments(
+    await source('src/renderer/src/components/GuiPlanProposalCard.tsx')
+  )
+  assert.match(card, /draft\.kind === 'mestre'/u)
+  assert.match(card, /plano mestre/u)
 })
 
 test('CONTRATO: criar missão a partir do item é gesto do DONO', async () => {

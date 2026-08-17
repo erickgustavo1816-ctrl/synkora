@@ -61,6 +61,16 @@ export default function GuiPlanProposalCard({
 
         <span className="gui-proposal-count">{planDraftItemCountLabel(draft.items.length)}</span>
 
+        {/* CONSENTIMENTO INFORMADO (2026-08-17): `propose_plan` aceita
+            kind:'mestre', e antes disto o card não mostrava — o dono criava o
+            plano de fundo do universo num clique cego. Designar depois é gesto
+            dele; nascer designado tem de ser também. */}
+        {draft.kind === 'mestre' && (
+          <span className="gui-proposal-kind">
+            proposto como <b>plano mestre</b> — o plano de fundo deste universo
+          </span>
+        )}
+
         {draft.items.length === 0 ? (
           <p className="gui-proposal-empty">
             O plano nasce vazio: as missões você pede conversando, e elas entram na aba dele no

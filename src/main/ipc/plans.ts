@@ -141,6 +141,41 @@ export function registerPlansIpc(ctx: MainContext, extras: PlansIpcExtras): void
     }
   )
 
+  /**
+   * DESIGNAÇÃO DE MESTRE — canal SEPARADO por desenho (2026-08-17). Ele não
+   * entra no `PlanPatch` porque `update_plan` executa direto: o agente passaria
+   * a se autodesignar plano de fundo do universo. Aqui só chega clique do dono,
+   * e a caixa-preta grava a transição com `actor: 'user'`.
+   */
+  ipcMain.handle(
+    'plans:setKind',
+    (e, planId: unknown, kind: unknown, expectedUpdatedAt: unknown): PlanMutation => {
+      extras.assertAppRendererSender(e)
+      const projectId = projectOf(planId)
+      if (!projectId || typeof planId !== 'string') {
+        return { ok: false, error: PLAN_NOT_FOUND_ERROR }
+      }
+      if (kind !== 'mestre' && kind !== 'livre') {
+        return { ok: false, error: 'natureza de plano desconhecida' }
+      }
+      const before = ctx.plans.get(planId)?.kind
+      const result = ctx.plans.setKind(planId, kind, expected(expectedUpdatedAt))
+      if (result.ok) {
+        ctx.blackbox.record({
+          cat: 'user',
+          event: kind === 'mestre' ? 'plan-designated-master' : 'plan-master-designation-removed',
+          actor: 'user',
+          ids: { projectId, planId },
+          prev: before,
+          next: kind,
+          detail: { title: result.plan.title }
+        })
+        changed(projectId)
+      }
+      return result
+    }
+  )
+
   /** Exclusão DURA — o modal de confirmação do mapa é a única porta. */
   ipcMain.handle(
     'plans:remove',

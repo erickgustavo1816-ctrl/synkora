@@ -1765,6 +1765,13 @@ const api = {
       expectedUpdatedAt: string
     ): Promise<PlanMutationResult> =>
       ipcRenderer.invoke('plans:update', planId, patch, expectedUpdatedAt),
+    /** DESIGNAÇÃO do dono: promove/rebaixa o plano mestre. Não existe por tool. */
+    setKind: (
+      planId: string,
+      kind: PlanKindView,
+      expectedUpdatedAt: string
+    ): Promise<PlanMutationResult> =>
+      ipcRenderer.invoke('plans:setKind', planId, kind, expectedUpdatedAt),
     /** Reversível: a aba some do mapa, o conteúdo fica. */
     archive: (planId: string, expectedUpdatedAt: string): Promise<PlanMutationResult> =>
       ipcRenderer.invoke('plans:archive', planId, expectedUpdatedAt),

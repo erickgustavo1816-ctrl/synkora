@@ -195,7 +195,15 @@ test('o ceifar por projeto pega o planejamento e NUNCA um chat de missão', () =
 test('o planejador PROPÕE o plano, não executa produto nem cria missão', () => {
   const contract = guiPlanningSystemPrompt()
   assert.ok(contract.length > 200, 'contrato vazio demais')
-  assert.ok(contract.length < 3200, 'contrato virou constituição')
+  // O TETO subiu de 3200 para 3350 UMA vez, em 2026-08-17, para caber a única
+  // regra de governança que o expurgo F6 criou: "mestre" virou DESIGNAÇÃO do
+  // dono, e o planejador precisa saber que propor não é designar. As duas
+  // linhas de absorção de documento legado viraram UMA no mesmo movimento —
+  // o teto é para conter constituição, não para proibir regra nova.
+  assert.ok(contract.length < 3350, 'contrato virou constituição')
+  assert.match(contract, /"mestre" is a DESIGNATION the owner grants/u)
+  assert.match(contract, /only his click designates or removes it/u)
+  assert.match(contract, /PROJECT_PLAN\.md/u)
   assert.match(contract, /PT-BR/)
   assert.match(contract, /ONE-OFF/)
   assert.match(contract, /do NOT execute product work/i)

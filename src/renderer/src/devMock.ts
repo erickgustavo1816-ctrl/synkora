@@ -1225,6 +1225,7 @@ export function installDevMock(): void {
       list: async () => [],
       create: async () => ({ ok: false, error: 'planos só funcionam no app' }),
       update: async () => ({ ok: false, error: 'planos só funcionam no app' }),
+      setKind: async () => ({ ok: false, error: 'planos só funcionam no app' }),
       archive: async () => ({ ok: false, error: 'planos só funcionam no app' }),
       remove: async () => ({ ok: false, error: 'planos só funcionam no app' }),
       linkMission: async () => ({ ok: false, error: 'planos só funcionam no app' }),

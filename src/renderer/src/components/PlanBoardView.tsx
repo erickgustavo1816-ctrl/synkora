@@ -141,6 +141,35 @@ export default function PlanBoardView({
           </span>
 
           <span className="planboard-actions">
+            {/* DESIGNAÇÃO (2026-08-17): o chip lá em cima é IDENTIDADE — chip é
+                estado, nunca verbo. O verbo mora aqui, junto de concluir e
+                arquivar, e a recusa cai sozinha em .planboard-message pelo
+                mesmo `run()` de sempre. Sem modal: é reversível e nomeado. */}
+            {plan.kind === 'livre'
+              ? plan.status === 'ativo' && (
+                  <button
+                    className="btn ghost tiny"
+                    disabled={Boolean(pending)}
+                    data-tip="Marca este como o plano de fundo do universo. Só um por vez — e dá para tirar depois."
+                    onClick={() =>
+                      void run('mestre', () => plansApi.setKind(plan.id, 'mestre', plan.updatedAt))
+                    }
+                  >
+                    {pending === 'mestre' ? 'designando…' : 'definir como plano mestre'}
+                  </button>
+                )
+              : (
+                  <button
+                    className="btn ghost tiny"
+                    disabled={Boolean(pending)}
+                    data-tip="Este deixa de ser o plano de fundo do universo. Nada do conteúdo muda."
+                    onClick={() =>
+                      void run('mestre', () => plansApi.setKind(plan.id, 'livre', plan.updatedAt))
+                    }
+                  >
+                    {pending === 'mestre' ? 'removendo…' : 'remover designação'}
+                  </button>
+                )}
             {!concluded && (
               <button
                 className="btn ghost tiny"

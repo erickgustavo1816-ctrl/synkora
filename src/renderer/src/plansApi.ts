@@ -1,4 +1,4 @@
-import type { PlanDraft, PlanMutationResult, PlanView } from './planContract'
+import type { PlanDraft, PlanKind, PlanMutationResult, PlanView } from './planContract'
 
 // ÚNICA costura do renderer com `window.synkora.plans` (D4.2). Nenhum
 // componente do mapa fala com a ponte direto — mesma regra do `guiApi.ts`.
@@ -18,6 +18,11 @@ interface PlansBridge {
   update: (
     planId: string,
     patch: { title?: string; description?: string; status?: 'ativo' | 'concluido' },
+    expectedUpdatedAt: string
+  ) => Promise<PlanMutationResult>
+  setKind: (
+    planId: string,
+    kind: PlanKind,
     expectedUpdatedAt: string
   ) => Promise<PlanMutationResult>
   archive: (planId: string, expectedUpdatedAt: string) => Promise<PlanMutationResult>
@@ -80,6 +85,22 @@ export const plansApi = {
     if (!api?.update) return { ok: false, error: NO_BRIDGE }
     try {
       return await api.update(planId, patch, expectedUpdatedAt)
+    } catch (error) {
+      return failure(error)
+    }
+  },
+
+  /** DESIGNAÇÃO: promover/rebaixar o plano mestre. Canal PRÓPRIO — `kind` nunca
+   *  entra num patch, senão `update_plan` daria ao agente o gesto do dono. */
+  async setKind(
+    planId: string,
+    kind: PlanKind,
+    expectedUpdatedAt: string
+  ): Promise<PlanMutationResult> {
+    const api = bridge()
+    if (!api?.setKind) return { ok: false, error: NO_BRIDGE }
+    try {
+      return await api.setKind(planId, kind, expectedUpdatedAt)
     } catch (error) {
       return failure(error)
     }

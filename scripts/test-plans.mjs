@@ -470,3 +470,101 @@ test('JSON quebrado no principal é reparado pelo backup; sem backup válido, co
   writeFileSync(`${file}.bak`, JSON.stringify({ nao: 'é lista' }), 'utf8')
   assert.deepEqual(new PlanStore(file).list('p1'), [])
 })
+
+// ————— DESIGNAÇÃO DE MESTRE (ordem do dono, 2026-08-17) —————
+//
+// `kind` deixou de ser carimbo de nascimento: promover e rebaixar são gestos
+// do dono. Continua FORA de todo patch — só `setKind` o move —, e é ele que
+// guarda o invariante de UM mestre ATIVO por universo.
+
+const masterDraft = (title) =>
+  normalizePlanDraft({ title, kind: 'mestre', items: [{ title: 'A', objective: 'a' }] }).draft
+
+test('designação: promover um plano livre e rebaixá-lo de volta', (t) => {
+  const { store } = storeIn(t, 'setkind-promote')
+  const plan = store.create('p1', draftOf([{ title: 'A', objective: 'a' }]), { manual: true }).plan
+  assert.equal(plan.kind, 'livre')
+
+  const promoted = store.setKind(plan.id, 'mestre', plan.updatedAt)
+  assert.equal(promoted.ok, true)
+  assert.equal(promoted.plan.kind, 'mestre')
+  // O disco pousa antes da fotografia viva: reler o store confirma.
+  assert.equal(store.get(plan.id).kind, 'mestre')
+
+  const demoted = store.setKind(plan.id, 'livre', promoted.plan.updatedAt)
+  assert.equal(demoted.ok, true)
+  assert.equal(demoted.plan.kind, 'livre')
+})
+
+test('designação: o segundo mestre é recusado NOMEANDO quem tem o título', (t) => {
+  const { store } = storeIn(t, 'setkind-taken')
+  const holder = store.create('p1', masterDraft('O plano de fundo'), { manual: true }).plan
+  const other = store.create('p1', draftOf([{ title: 'B', objective: 'b' }]), { manual: true }).plan
+
+  const refused = store.setKind(other.id, 'mestre', other.updatedAt)
+  assert.equal(refused.ok, false)
+  // A receita tem de nomear o plano e dizer o que fazer — "já existe um" não
+  // diz ao dono ONDE está o que ele precisa rebaixar.
+  assert.match(refused.error, /O plano de fundo/u)
+  assert.match(refused.error, /remova a designação/u)
+
+  // Rebaixar o atual libera o slot no mesmo universo.
+  assert.equal(store.setKind(holder.id, 'livre', holder.updatedAt).ok, true)
+  assert.equal(store.setKind(other.id, 'mestre', other.updatedAt).ok, true)
+
+  // Outro universo nunca disputa o slot.
+  const alheio = store.create('p2', draftOf([{ title: 'C', objective: 'c' }]), { manual: true }).plan
+  assert.equal(store.setKind(alheio.id, 'mestre', alheio.updatedAt).ok, true)
+})
+
+test('designação: mestre só se o plano estiver ATIVO; rebaixar é sempre possível', (t) => {
+  const { store } = storeIn(t, 'setkind-status')
+  const arquivado = store.create('p1', draftOf([{ title: 'A', objective: 'a' }]), { manual: true })
+    .plan
+  const archived = store.archive(arquivado.id, arquivado.updatedAt)
+  const refusedArchived = store.setKind(arquivado.id, 'mestre', archived.plan.updatedAt)
+  assert.equal(refusedArchived.ok, false)
+  assert.match(refusedArchived.error, /reabra este plano/u)
+
+  const concluido = store.create('p1', draftOf([{ title: 'B', objective: 'b' }]), { manual: true })
+    .plan
+  const done = store.update(concluido.id, { status: 'concluido' }, concluido.updatedAt)
+  assert.equal(store.setKind(concluido.id, 'mestre', done.plan.updatedAt).ok, false)
+
+  // Mas um mestre que foi concluído/arquivado NUNCA fica preso no título.
+  const mestre = store.create('p1', masterDraft('Mestre'), { manual: true }).plan
+  const guardado = store.archive(mestre.id, mestre.updatedAt)
+  const solto = store.setKind(mestre.id, 'livre', guardado.plan.updatedAt)
+  assert.equal(solto.ok, true)
+  assert.equal(solto.plan.kind, 'livre')
+  assert.equal(solto.plan.status, 'arquivado')
+})
+
+test('designação: CAS defasado recusa, e designar de novo não bombeia updatedAt', (t) => {
+  const { store } = storeIn(t, 'setkind-cas')
+  const plan = store.create('p1', draftOf([{ title: 'A', objective: 'a' }]), { manual: true }).plan
+
+  const stale = store.setKind(plan.id, 'mestre', '2020-01-01T00:00:00.000Z')
+  assert.equal(stale.ok, false)
+  assert.equal(stale.error, PLAN_STALE_ERROR)
+  assert.equal(store.get(plan.id).kind, 'livre')
+
+  const promoted = store.setKind(plan.id, 'mestre', plan.updatedAt)
+  const again = store.setKind(promoted.plan.id, 'mestre', promoted.plan.updatedAt)
+  assert.equal(again.ok, true)
+  // Idempotente SEM ESCRITA: a fotografia do dono continua válida depois.
+  assert.equal(again.plan.updatedAt, promoted.plan.updatedAt)
+
+  assert.equal(store.setKind('inexistente', 'mestre').ok, false)
+})
+
+test('designação: nenhum patch move o `kind` — só o gesto do dono', (t) => {
+  const { store } = storeIn(t, 'setkind-patch')
+  const plan = store.create('p1', draftOf([{ title: 'A', objective: 'a' }]), { manual: true }).plan
+  // `update_plan` executa direto por desenho: se `kind` entrasse no patch, o
+  // agente se autodesignaria plano mestre.
+  const patched = store.update(plan.id, { kind: 'mestre', title: 'Outro' }, plan.updatedAt)
+  assert.equal(patched.ok, true)
+  assert.equal(patched.plan.title, 'Outro')
+  assert.equal(patched.plan.kind, 'livre')
+})

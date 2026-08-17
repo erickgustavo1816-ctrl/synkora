@@ -18,8 +18,11 @@
  * REGRAS QUE VALEM COMO CONTRATO:
  * - PROPOSTA NÃO ENTRA NO STORE. O rascunho (planDraft.ts) vive no card do
  *   chat; o Plan só nasce, já 'ativo', no clique de aprovação do dono.
- * - `kind` e `origin` são CARIMBO DE NASCIMENTO (padrão `Mission.direct`):
- *   fora de todo patch, então plano nenhum troca de natureza depois.
+ * - `origin` é CARIMBO DE NASCIMENTO (padrão `Mission.direct`): fora de todo
+ *   patch, então ninguém reescreve de onde o plano veio.
+ * - `kind` é DESIGNAÇÃO DO DONO (2026-08-17), não carimbo: continua fora de
+ *   todo patch — o agente jamais se autodesigna plano mestre —, e o único
+ *   caminho que o move é `setKind`, alcançado só pelo clique no mapa.
  * - PROGRESSO É DERIVADO, NUNCA PERSISTIDO: item vinculado a uma missão lê o
  *   estado da missão em `planView`. O que o disco guarda é a INTENÇÃO.
  * - `missionId` só entra por `linkMission` (gesto do dono no mapa). Nenhum
@@ -237,6 +240,17 @@ export const PLAN_NOT_FOUND_ERROR = 'plano não encontrado'
 export const PLAN_MASTER_TAKEN_ERROR =
   'este universo já tem um plano mestre ativo — conclua ou arquive o atual antes de criar outro'
 
+/** Promover pede plano EM ANDAMENTO: mestre arquivado não teria aba no mapa
+ *  (mapTabs filtra arquivado) e seguraria o slot invisível. */
+export const PLAN_MASTER_NEEDS_ACTIVE_ERROR =
+  'só um plano em andamento pode ser o principal — reabra este plano antes de designá-lo'
+
+/** A recusa NOMEIA quem tem o título e receita o caminho: "já existe um" não
+ *  diz ao dono onde está o plano que ele precisa rebaixar. */
+export function planMasterTakenError(title: string): string {
+  return `"${title}" já é o plano mestre deste universo — remova a designação dele antes de passar o título adiante`
+}
+
 export type PlanMutation = { ok: true; plan: Plan } | { ok: false; error: string }
 export type PlanRemoval = { ok: true } | { ok: false; error: string }
 
@@ -365,6 +379,35 @@ export class PlanStore {
    */
   update(id: string, patch: PlanPatch, expectedUpdatedAt?: string): PlanMutation {
     return this.mutate(id, expectedUpdatedAt, (current) => applyPatch(current, patch))
+  }
+
+  /**
+   * DESIGNAÇÃO (ordem do dono, 2026-08-17): `kind` deixou de ser carimbo de
+   * nascimento. Continua FORA de todo patch — só este método o move, e é ele
+   * que guarda o invariante de UM mestre ATIVO por universo (o mesmo de
+   * `create`). Idempotente: designar de novo não bombeia `updatedAt`.
+   *
+   * Duas regras deliberadas: REBAIXAR é sempre permitido (não há invariante a
+   * proteger, e plano nenhum pode ficar preso no título depois de arquivado);
+   * PROMOVER exige `status === 'ativo'`, o mesmo recorte do `create`.
+   */
+  setKind(id: string, kind: PlanKind, expectedUpdatedAt?: string): PlanMutation {
+    return this.mutate(id, expectedUpdatedAt, (current) => {
+      if (current.kind === kind) return { ok: true, plan: current }
+      if (kind === 'livre') return { ok: true, plan: { ...current, kind } }
+      if (current.status !== 'ativo') {
+        return { ok: false, error: PLAN_MASTER_NEEDS_ACTIVE_ERROR }
+      }
+      const holder = this.plans.find(
+        (plan) =>
+          plan.projectId === current.projectId &&
+          plan.id !== current.id &&
+          plan.kind === 'mestre' &&
+          plan.status === 'ativo'
+      )
+      if (holder) return { ok: false, error: planMasterTakenError(holder.title) }
+      return { ok: true, plan: { ...current, kind } }
+    })
   }
 
   archive(id: string, expectedUpdatedAt?: string): PlanMutation {
