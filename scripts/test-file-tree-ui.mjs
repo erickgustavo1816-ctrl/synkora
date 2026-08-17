@@ -161,6 +161,41 @@ test('a bancada de leitura é PAPEL e continua declarando somente leitura', asyn
   assert.match(css, /\.files-reader-blank-sheet\s*\{/u)
 })
 
+test('o .md lido na bancada ocupa a folha inteira', async () => {
+  const css = await readFile(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  // ORDEM DO DONO (2026-08-17, a mesma da prosa do plano): texto USA a
+  // largura. O leitor de .md tinha uma coluna de 78ch centrada dentro de um
+  // painel muito mais largo — a folha ficava com um vão morto de cada lado.
+  const reader = css.match(/\.file-markdown\s*\{(?<body>[\s\S]*?)\}/u)?.groups?.body ?? ''
+  assert.ok(reader, 'a moldura do leitor de markdown sumiu')
+  assert.ok(!/max-width/u.test(reader), 'o leitor de .md voltou a ter teto de largura')
+  assert.ok(
+    !/margin:\s*0\s+auto/u.test(reader),
+    'o leitor de .md voltou a se centrar dentro da folha'
+  )
+  assert.match(reader, /width:\s*100%/u, 'o leitor de .md deixou de ocupar a folha')
+  // Ocupar a largura não é encostar na borda: o respiro continua declarado.
+  assert.match(reader, /padding:/u)
+
+  // O renderer COMPARTILHADO é o mesmo (.md-view) — e ele também não pode
+  // ganhar um teto por dentro, senão o cap voltaria para todo mundo.
+  const shared = css.match(/^\.md-view\s*\{(?<body>[\s\S]*?)\}/mu)?.groups?.body ?? ''
+  assert.ok(shared, 'o renderer compartilhado de markdown sumiu')
+  assert.ok(
+    !/max-width:\s*\d+(?:ch|rem|em)|max-width:\s*\d{2,}px/u.test(shared),
+    'o .md-view compartilhado ganhou um teto de leitura'
+  )
+
+  // E não sobra NENHUMA outra superfície de markdown com medida em `ch`: o
+  // app tem um leitor de .md só, e a régua dele é a largura do container.
+  for (const [, body] of css.matchAll(
+    /(\.(?:file-markdown|md-view|gui-md)[a-z0-9-]*)\s*\{([\s\S]*?)\}/gu
+  )) {
+    assert.ok(!/max-width:\s*\d+ch/u.test(body), `medida de leitura em ch sobrevivendo: ${body}`)
+  }
+})
+
 test('árvore densa: guias de indentação, dotfile discreto e movimento opcional', async () => {
   const [tree, css] = await Promise.all([
     readFile(new URL('../src/renderer/src/file-tree/FileTree.tsx', import.meta.url), 'utf8'),

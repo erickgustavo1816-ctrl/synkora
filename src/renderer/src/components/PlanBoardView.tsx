@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { plansApi } from '../plansApi'
 import type { PlanItemView, PlanView } from '../planContract'
@@ -26,6 +26,55 @@ import NewMissionModal from './NewMissionModal'
 //
 // O dono é a única porta de criação de missão: o agente escreve o plano, o
 // clique daqui abre o modal PRÉ-PREENCHIDO e o item se amarra à missão criada.
+
+/**
+ * A DESCRIÇÃO do plano é prosa do dono e pode ter parágrafos inteiros — no
+ * teste ao vivo ela empurrou a primeira missão para fora da tela.
+ *
+ * O que se controla é a ALTURA, nunca a largura: a medida de leitura em `ch`
+ * morreu nas superfícies de plano por ordem do dono (2026-08-17) e não volta
+ * pela porta dos fundos. O cabeçalho mostra a abertura; o resto abre no clique.
+ *
+ * O botão só existe quando há texto escondido DE VERDADE, e isso é MEDIDO no
+ * que renderizou (`scrollHeight` contra `clientHeight`) — contar letras erraria
+ * a cada largura de aba. Aberto, a medida é pulada de propósito: com o corte
+ * suspenso os dois valores se igualam e o próprio botão se apagaria.
+ */
+function PlanDescription({ text }: { text: string }): React.JSX.Element {
+  const ref = useRef<HTMLParagraphElement | null>(null)
+  const [open, setOpen] = useState(false)
+  const [clipped, setClipped] = useState(false)
+
+  useLayoutEffect(() => {
+    const node = ref.current
+    if (!node || open) return
+    const measure = (): void => setClipped(node.scrollHeight - node.clientHeight > 1)
+    measure()
+    // A aba do mapa muda de largura com a janela e com o rail: o mesmo texto
+    // corta em 1200px e não corta em 1800px.
+    const observer = new ResizeObserver(measure)
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [text, open])
+
+  return (
+    <div className="planboard-lede">
+      <p ref={ref} className={`planboard-desc${open ? ' open' : ''}`}>
+        {text}
+      </p>
+      {clipped && (
+        <button
+          type="button"
+          className="planboard-desc-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open ? 'ver menos' : 'ver mais'}
+        </button>
+      )}
+    </div>
+  )
+}
 
 export default function PlanBoardView({
   projectId,
@@ -114,13 +163,27 @@ export default function PlanBoardView({
   return (
     <div className="planboard">
       <header className="planboard-head">
-        <div className="planboard-title-row">
+        {/* IDENTIDADE de um lado, ESTADO do outro (2026-08-17). Os dois selos
+            estavam colados no título falando gramáticas opostas — "plano
+            mestre" em caixa baixa e "EM ANDAMENTO" em caixa alta —, e o dono
+            leu isso como uma tag só, sem sentido. Agora a caixa é a MESMA para
+            os dois (a voz de rótulo da casa) e o que os separa é o que eles
+            são: a marca de mestre é IDENTIDADE e anda com o título; o estado é
+            ESTADO e vai para a outra ponta da linha. */}
+        <div className="planboard-identity">
           <h2 className="planboard-title">{plan.title.trim() || 'plano sem título'}</h2>
-          {plan.kind === 'mestre' && <span className="planboard-chip mestre">plano mestre</span>}
+          {plan.kind === 'mestre' && (
+            <span
+              className="planboard-chip mestre"
+              data-tip="O plano de fundo deste universo — o recorte que vale para o projeto inteiro. Só um por vez, e a designação é sua: sai quando você quiser."
+            >
+              plano mestre
+            </span>
+          )}
           <span className={`planboard-status ${plan.status}`}>{PLAN_STATUS_LABEL[plan.status]}</span>
         </div>
 
-        {plan.description && <p className="planboard-desc">{plan.description}</p>}
+        {plan.description && <PlanDescription text={plan.description} />}
 
         <div className="planboard-meta">
           <span className="planboard-progress">
@@ -130,6 +193,7 @@ export default function PlanBoardView({
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={progress.percent}
+              aria-valuetext={progress.label}
               aria-label="Missões concluídas neste plano"
             >
               <span
@@ -192,8 +256,13 @@ export default function PlanBoardView({
             >
               {pending === 'arquivar' ? 'arquivando…' : 'arquivar'}
             </button>
+            {/* Quatro botões idênticos em fila é um clique errado esperando
+                acontecer: o irreversível ganha um filete que o separa dos
+                reversíveis E a roupa de perigo da casa — a mesma da exclusão
+                de versão na aba Versões. */}
+            <span className="planboard-actions-split" aria-hidden="true" />
             <button
-              className="btn ghost tiny"
+              className="btn ghost tiny danger"
               disabled={Boolean(pending)}
               data-tip="Apaga o plano de vez. As missões já criadas continuam existindo."
               onClick={() => setConfirmRemove(true)}

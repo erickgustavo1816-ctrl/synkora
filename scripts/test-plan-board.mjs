@@ -140,6 +140,136 @@ test('título de plano longo encolhe na aba sem virar id ilegível', async () =>
   assert.equal(planTabLabel(planTab({ title: '   ' })), 'plano sem título')
 })
 
+test('rótulo cortado na aba nunca é a única cópia do título', async () => {
+  const { mapTabs } = await presentation()
+
+  // O corte é a MOLDURA da fila; o título inteiro tem que sobreviver em algum
+  // lugar alcançável, senão a aba vira um id e o dono perde de qual plano se
+  // trata. O tooltip é esse lugar — e o título inteiro ABRE a frase, para o
+  // sufixo explicativo nunca empurrar o nome para fora da leitura.
+  const inteiro = 'Reforma completa da fila de integração e da retomada'
+  const [, livre, mestre, concluido] = mapTabs({
+    plans: [
+      planTab({ id: 'l', title: inteiro, order: 1 }),
+      planTab({ id: 'm', title: inteiro, kind: 'mestre', order: 2 }),
+      planTab({ id: 'c', title: inteiro, status: 'concluido', order: 3 })
+    ]
+  })
+  for (const tab of [livre, mestre, concluido]) {
+    assert.notEqual(tab.label, inteiro, 'o rótulo devia estar cortado neste título')
+    assert.ok(tab.tip.startsWith(inteiro), `tooltip sem o título inteiro na frente: ${tab.tip}`)
+  }
+
+  // E o corte do JS não é a única rede: a fila é flex e aperta com muitos
+  // planos, então a pastilha também corta por CSS em vez de estourar a barra.
+  const css = await source('src/renderer/src/global.css')
+  const pill = css.match(/\.universe-map-tab\.plano\s*\{(?<body>[\s\S]*?)\}/u)?.groups?.body ?? ''
+  assert.match(pill, /text-overflow:\s*ellipsis/u)
+  assert.match(pill, /overflow:\s*hidden/u)
+  assert.match(pill, /white-space:\s*nowrap/u)
+  assert.match(pill, /max-width:/u)
+
+  // A pastilha de plano é FRASE, não rótulo de sistema: caixa alta aqui
+  // transformaria o nome que o dono escreveu num carimbo.
+  assert.match(pill, /text-transform:\s*none/u)
+})
+
+test('os dois selos do cabeçalho falam UMA gramática só', async () => {
+  const css = await source('src/renderer/src/global.css')
+
+  // A reclamação do dono, literal: "uma tag em minúsculo outra em MAIÚSCULO
+  // não tem sentido". A gramática passa a nascer de UMA declaração
+  // compartilhada — duas regras irmãs voltariam a divergir na primeira
+  // manutenção.
+  const sharedRule = css.match(/\.planboard-chip,\s*\.planboard-status\s*\{[\s\S]*?\}/u)?.[0] ?? ''
+  assert.ok(sharedRule, 'os dois selos não têm declaração compartilhada')
+  assert.match(sharedRule, /text-transform:\s*uppercase/u)
+  assert.match(sharedRule, /letter-spacing:/u)
+  assert.match(sharedRule, /font-size:/u)
+
+  // E nenhuma das duas pode voltar a redefinir a gramática por conta própria:
+  // o que as separa é a TINTA (mestre é marca de identidade, estado é estado),
+  // nunca a caixa nem o corpo do tipo. A regra compartilhada sai da busca —
+  // senão ela casaria com ela mesma pelo segundo seletor.
+  const solo = css.replace(sharedRule, '')
+  for (const selector of ['\\.planboard-chip\\.mestre', '\\.planboard-status']) {
+    const body =
+      solo.match(new RegExp(`${selector}\\s*\\{(?<body>[\\s\\S]*?)\\}`, 'u'))?.groups?.body ?? ''
+    assert.ok(body, `regra ausente: ${selector}`)
+    assert.ok(
+      !/text-transform:|font-size:|letter-spacing:/u.test(body),
+      `${selector} redefine a gramática em vez de herdá-la`
+    )
+  }
+})
+
+test('a marca de plano mestre se explica sozinha', async () => {
+  const board = await source('src/renderer/src/components/PlanBoardView.tsx')
+
+  // "não entendi essa tag de plano mestre" (dono, no teste ao vivo): um selo
+  // que só nomeia a si mesmo não ensina nada. Ele passa a dizer o que É ser
+  // mestre, na MESMA língua do verbo que o liga e desliga logo abaixo.
+  const seal = board.match(/<span[^>]*planboard-chip mestre[\s\S]{0,400}?<\/span>/u)?.[0] ?? ''
+  assert.ok(seal, 'o selo de plano mestre sumiu do cabeçalho')
+  assert.match(seal, /data-tip=/u, 'o selo de mestre continua mudo')
+  assert.match(seal, /plano de fundo/u, 'o selo não fala a língua do verbo de designação')
+})
+
+test('a descrição do plano é uma abertura, nunca um paredão', async () => {
+  const board = await source('src/renderer/src/components/PlanBoardView.tsx')
+  const css = await source('src/renderer/src/global.css')
+
+  // O que se controla é a ALTURA, nunca a largura: a medida de leitura em `ch`
+  // morreu por ordem do dono (2026-08-17) e não volta pela porta dos fundos.
+  const desc = css.match(/\.planboard-desc\s*\{(?<body>[\s\S]*?)\}/u)?.groups?.body ?? ''
+  assert.ok(desc, 'a regra da descrição sumiu')
+  assert.match(desc, /line-clamp:\s*\d/u, 'a descrição não tem corte por linhas')
+  assert.ok(!/max-width/u.test(desc), 'a descrição voltou a ter teto de largura')
+
+  // Aberta, ela não fica presa no corte.
+  const open = css.match(/\.planboard-desc\.open\s*\{(?<body>[\s\S]*?)\}/u)?.groups?.body ?? ''
+  assert.ok(open, 'não existe estado aberto da descrição')
+
+  // E o controle NOMEIA a ação, nos dois sentidos.
+  assert.match(board, /ver mais/u)
+  assert.match(board, /ver menos/u)
+  assert.match(board, /aria-expanded=/u)
+  // Controle que mente é pior que controle ausente: ele só existe quando há
+  // texto escondido de verdade — medido, nunca chutado por contagem de letras.
+  assert.match(board, /scrollHeight/u, 'o corte não é medido no que renderizou')
+  assert.match(board, /ResizeObserver/u, 'o corte não é remedido quando a aba muda de largura')
+})
+
+test('o cabeçalho do plano tem hierarquia: título lidera, estado se afasta', async () => {
+  const css = await source('src/renderer/src/global.css')
+  const board = await source('src/renderer/src/components/PlanBoardView.tsx')
+
+  // IDENTIDADE (título + marca de mestre) e ESTADO param de disputar o mesmo
+  // canto: o que agrupa é a proximidade, não mais uma caixa.
+  assert.match(board, /planboard-identity/u)
+  const solo = css.replace(/\.planboard-chip,\s*\.planboard-status\s*\{[\s\S]*?\}/u, '')
+  const status = solo.match(/\.planboard-status\s*\{(?<body>[\s\S]*?)\}/u)?.groups?.body ?? ''
+  assert.match(status, /margin-left:\s*auto/u, 'o estado não se afastou da identidade')
+
+  // O título lidera de fato — degrau de tamanho contra a prosa, não 4,5px.
+  const title = css.match(/\.planboard-title\s*\{(?<body>[\s\S]*?)\}/u)?.groups?.body ?? ''
+  const titleSize = Number(title.match(/font-size:\s*([\d.]+)px/u)?.[1] ?? 0)
+  const descSize = Number(
+    (css.match(/\.planboard-desc\s*\{(?<body>[\s\S]*?)\}/u)?.groups?.body ?? '').match(
+      /font-size:\s*([\d.]+)px/u
+    )?.[1] ?? 0
+  )
+  assert.ok(titleSize >= descSize * 1.5, `título fraco demais: ${titleSize}px vs ${descSize}px`)
+
+  // A ação irreversível deixa de ter o peso das outras três: hairline antes
+  // dela e a roupa de perigo da casa (a mesma da exclusão na aba Versões).
+  assert.match(board, /planboard-actions-split/u)
+  assert.match(css, /\.planboard-actions-split\s*\{/u)
+  const excluir = board.match(/<button[^>]*>\s*excluir\s*<\/button>/u)?.[0] ?? ''
+  const excluirOpen = board.match(/<button[\s\S]{0,320}?>\s*excluir\s*\n?\s*<\/button>/u)?.[0] ?? excluir
+  assert.match(excluirOpen, /danger/u, 'excluir plano não usa a roupa de perigo da casa')
+})
+
 test('pulso da ficha: o que EXIGE o dono vence o que só está andando', async () => {
   const { planMissionPulse } = await presentation()
 

@@ -8576,12 +8576,16 @@ body.pane-docking .pane-bar.draggable {
 }
 
 /* O RENDERER do markdown é o `.md-view` compartilhado e não se mexe aqui — o
-   que muda é a MOLDURA: medida de leitura confortável, centrada na folha. */
+   que muda é a MOLDURA.
+   2026-08-17: a medida de leitura de 78ch CENTRADA morreu (ordem do dono, a
+   mesma da prosa do plano — texto USA a largura). Ela abria um vão morto dos
+   dois lados da folha, e o leitor de um repo é tabela, bloco de código e lista
+   tanto quanto parágrafo: nada disso quer 78 colunas.
+   Ocupar a largura não é encostar na borda — o respiro CRESCE com a folha, em
+   vez de virar um filete fixo em painel largo. */
 .file-markdown {
   width: 100%;
-  max-width: 78ch;
-  margin: 0 auto;
-  padding: 24px 30px 44px;
+  padding: 26px clamp(24px, 2.6%, 48px) 48px;
 }
 
 .file-image-preview {
@@ -18235,40 +18239,62 @@ details.gui-error-line {
   padding: 0 8px 14px;
 }
 
-.planboard-title-row {
+/* IDENTIDADE (título + marca de mestre) numa ponta, ESTADO na outra: o que
+   agrupa é a distância, não mais uma caixa. `center` e não `baseline` — os
+   selos têm altura própria e alinhá-los pela base do título de 21px os
+   pendurava tortos. */
+.planboard-identity {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
 
+/* o título LIDERA: contra a prosa de 13px o degrau antigo era de 4,5px e nada
+   liderava coisa nenhuma */
 .planboard-title {
   margin: 0;
-  font-size: 17px;
-  letter-spacing: 0.02em;
+  min-width: 0;
+  font-size: 21px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
 }
 
-.planboard-chip {
-  font-size: 10px;
+/* UMA GRAMÁTICA SÓ para os dois selos (2026-08-17, reclamação literal do dono:
+   "uma tag em minúsculo outra em MAIÚSCULO não tem sentido"). Ela nasce AQUI,
+   compartilhada — duas regras irmãs voltariam a divergir na primeira
+   manutenção. Caixa alta espaçada é a voz de rótulo desta casa (.files-title,
+   .file-preview-badge, .vs-tab, .btn).
+   O que separa os dois é a TINTA e o LUGAR, nunca o corpo do tipo: mestre é
+   marca de identidade (preenchida, colada no título), estado é estado
+   (contornado, na outra ponta). */
+.planboard-chip,
+.planboard-status {
+  flex: none;
+  height: 19px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
-  padding: 1px 8px;
   color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .planboard-chip.mestre {
-  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
-  color: color-mix(in srgb, var(--accent-deep) 76%, var(--ink));
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: color-mix(in srgb, var(--accent-deep) 55%, var(--ink));
+  cursor: help;
 }
 
 .planboard-status {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 2px 8px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  color: var(--ink-2);
+  margin-left: auto;
 }
 
 .planboard-status.ativo {
@@ -18278,21 +18304,64 @@ details.gui-error-line {
 
 .planboard-status.concluido {
   border-color: color-mix(in srgb, var(--ok) 60%, transparent);
-  color: color-mix(in srgb, var(--ok) 58%, var(--ink));
+  color: color-mix(in srgb, var(--ok) 45%, var(--ink));
 }
 
+.planboard-lede {
+  margin: 11px 0 0;
+}
+
+/* A LARGURA é a da aba (ordem do dono); o que se corta é a ALTURA. `pre-line`
+   preserva os parágrafos que o dono escreveu em vez de fundir tudo num bloco. */
 .planboard-desc {
-  margin: 10px 0 0;
-  font-size: 12.5px;
-  line-height: 1.55;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.62;
   color: var(--ink-2);
+  white-space: pre-line;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.planboard-desc.open {
+  display: block;
+  overflow: visible;
+}
+
+.planboard-desc-toggle {
+  margin-top: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.planboard-desc-toggle:hover {
+  color: var(--ink);
+}
+
+.planboard-desc-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
 }
 
 .planboard-meta {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-top: 12px;
+  margin-top: 18px;
   flex-wrap: wrap;
   font-size: 12px;
 }
@@ -18328,11 +18397,23 @@ details.gui-error-line {
   gap: 6px;
 }
 
+/* o filete que separa o irreversível dos reversíveis */
+.planboard-actions-split {
+  flex: none;
+  width: 1px;
+  height: 15px;
+  margin: 0 3px;
+  background: var(--line-strong);
+}
+
+/* a recusa da ação fala na moldura da casa: superfície tingida com borda
+   inteira, e não uma barra colorida de um lado só */
 .planboard-message {
-  margin: 12px 0 0;
-  padding: 8px 10px;
-  border-left: 2px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  margin: 14px 0 0;
+  padding: 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--ink-2);
   font-size: 12px;
   line-height: 1.45;
@@ -18524,6 +18605,19 @@ details.gui-error-line {
 @media (max-width: 880px) {
   .planboard {
     padding: 16px 16px 32px;
+  }
+
+  .planboard-title {
+    font-size: 18px;
+  }
+
+  /* medida e verbos param de disputar a mesma linha: o progresso fica onde
+     está e as ações passam a ocupar a linha inteira, ancoradas à direita */
+  .planboard-actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+    flex-wrap: wrap;
   }
 
   /* o item vira duas linhas: o texto em cima; tamanho e ficha da missao
