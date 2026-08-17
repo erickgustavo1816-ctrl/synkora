@@ -129,6 +129,11 @@ import {
   retainGuiInteractionsAfterTurnEnd,
   settleGuiInteractionFailure
 } from '../src/renderer/src/guiInteractionQueue.ts'
+import {
+  guiAsksForGo,
+  guiAwaitingGoDecision,
+  guiFinalQuestion
+} from '../src/renderer/src/guiAskForGo.ts'
 import { guiToolResultDetails } from '../src/main/guiToolResults.ts'
 import {
   GUI_PROTOCOL_LINE_MAX_CHARS,
@@ -2932,4 +2937,165 @@ test('o redutor espelha a isenção do anel em result, fatal e closed', () => {
   assert.match(store, /guiInteractionBlocksTurn\(/u)
   // E a chegada da proposta no meio da fala não pode mais fingir fim de turno.
   assert.match(store, /const turnInFlight = state\.status === 'working'/u)
+})
+
+/* ————————————————————————————————————————————————————————————————
+   A BARRA DE ACEITE INLINE ("esperando você · aprovar · ajustar")
+
+   Regressão do caso real do dono (transcript gui-dev-31ba7077, pane de
+   planejamento do PAINEL DE GESTÃO, 2026-08-17): plano JÁ aprovado, já virado
+   aba no mapa — e a barra apareceu mesmo assim pedindo aprovação.
+   ———————————————————————————————————————————————————————————————— */
+
+/**
+ * A fala EXATA que acendeu a barra indevidamente, copiada byte a byte do
+ * gui-sessions.json do dono (evento 416 do transcript). O plano já estava
+ * aprovado: a palavra "aprovado" aqui AFIRMA um fato, e a pergunta de verdade
+ * — a última frase — é um menu aberto, nunca um sim/não.
+ */
+const OWNER_PLAN_ALREADY_APPROVED =
+  'Oi, Erick! Por aqui está tudo encerrado da parte do planejamento: o plano **"V1.0 completa — do visual novo ao QA final"** está aprovado no mapa, com os 13 briefs em `plano/`. Precisa de alguma coisa — ajustar alguma missão, repensar ordem, ou tirar dúvida sobre o plano?'
+
+test('plano já aprovado não acende a barra de aceite (caso do dono)', () => {
+  // O detector antigo procurava a marca nos últimos 320 caracteres e achava
+  // "aprovado" 148 caracteres ANTES do "?", numa frase que só constata estado.
+  assert.equal(
+    guiAsksForGo(OWNER_PLAN_ALREADY_APPROVED),
+    false,
+    'fala que ANUNCIA plano aprovado e termina em pergunta aberta não pede aceite'
+  )
+  // A pergunta que o dono lê é só a última frase — e ela não pede nada.
+  assert.equal(
+    guiFinalQuestion(OWNER_PLAN_ALREADY_APPROVED),
+    'Precisa de alguma coisa — ajustar alguma missão, repensar ordem, ou tirar dúvida sobre o plano?'
+  )
+})
+
+test('a sequência persistida do dono não deixa nenhuma decisão na tela', () => {
+  // Reprodução da sequência gravada: as DUAS propostas de plano foram
+  // resolvidas (a 1ª ajustada, a 2ª aprovada), então nada sobrevive na fila —
+  // é o que prova que o card da proposta não é o que estava na tela.
+  const queue = []
+  const first = { kind: 'plan-proposal', requestId: 'plan-proposal-838b7149' }
+  const second = { kind: 'plan-proposal', requestId: 'plan-proposal-e014f6c5' }
+  let pending = enqueueGuiInteraction(queue, first)
+  pending = removeGuiInteraction(pending, first.requestId) // resolvida: approve=false
+  pending = enqueueGuiInteraction(pending, second)
+  pending = retainGuiInteractionsAfterTurnEnd(pending) // proposta atravessa o fim do turno
+  assert.equal(pending.length, 1, 'a 2ª proposta espera o dono enquanto não é resolvida')
+  pending = removeGuiInteraction(pending, second.requestId) // resolvida: approve=true
+  assert.deepEqual(pending, [], 'proposta resolvida nunca volta para a fila')
+
+  // Fio como o replay o remonta depois do respawn: "oi" do dono, resposta do
+  // agente já revelada por inteiro, turno fechado.
+  const items = [
+    { id: 'u1', kind: 'user', text: 'oi', at: 1 },
+    {
+      id: 'a1',
+      kind: 'assistant',
+      text: OWNER_PLAN_ALREADY_APPROVED,
+      at: 2,
+      live: false,
+      animateFrom: OWNER_PLAN_ALREADY_APPROVED.length
+    }
+  ]
+  assert.equal(
+    guiAwaitingGoDecision(items, {
+      status: 'idle',
+      perm: false,
+      stream: false,
+      awaitingCard: pending.length > 0
+    }),
+    false,
+    'com tudo resolvido e nenhuma pergunta real, a conversa não está esperando o dono'
+  )
+})
+
+test('a barra continua acendendo em pedido de aceite de verdade', () => {
+  // Cobertura preservada: o que a barra existe para responder.
+  for (const text of [
+    'Terminei a fundação do visual. Posso seguir para as telas?',
+    'O ajuste está pronto — pode seguir?',
+    'Fiz do jeito que combinamos. Confirma?',
+    'Deixei a paleta nova só no cabeçalho. Segue assim?',
+    'Escrevi os 13 briefs. Aprova?',
+    'Reorganizei a ordem das missões. Sigo?',
+    // "fechado?" só é marca COM o sinal de pergunta — a frase final chega ao
+    // detector com o "?" preservado.
+    'Deixo o instalador para a última missão. Fechado?'
+  ]) {
+    assert.equal(guiAsksForGo(text), true, `pedido de aceite deveria acender: ${text}`)
+  }
+  assert.equal(
+    guiFinalQuestion('Fiz o ajuste. Fechado?'),
+    'Fechado?',
+    'a frase final preserva o sinal de pergunta'
+  )
+})
+
+test('a marca precisa morar na frase que termina em pergunta', () => {
+  // A classe inteira do bug: marca numa frase, pergunta em outra.
+  assert.equal(
+    guiAsksForGo('O plano está aprovado no mapa. Quer ver os briefs?'),
+    false,
+    'marca numa frase anterior não transforma pergunta aberta em pedido de aceite'
+  )
+  assert.equal(
+    guiAsksForGo('Posso seguir com isso depois. O que você acha da ordem?'),
+    false,
+    'nem quando a frase anterior contém a marca inteira'
+  )
+  // Particípio é forma de AFIRMAR estado, nunca de pedir — vale inclusive
+  // quando cai na mesma frase da pergunta (o agente escreve com travessão).
+  assert.equal(
+    guiAsksForGo('O plano está aprovado — precisa de mais alguma coisa?'),
+    false,
+    'travessão não faz de "está aprovado" um pedido de aprovação'
+  )
+  // Fala sem pergunta nenhuma nunca teve barra, e continua sem.
+  assert.equal(guiAsksForGo('O plano está aprovado no mapa.'), false)
+  assert.equal(guiFinalQuestion('Sem pergunta aqui.'), null)
+})
+
+test('a barra só existe com o turno fechado e nada mais na tela', () => {
+  const asking = [
+    { id: 'a1', kind: 'assistant', text: 'Posso seguir?', at: 1, live: false, animateFrom: 13 }
+  ]
+  assert.equal(guiAwaitingGoDecision(asking, { status: 'idle' }), true)
+  // Cada trava sozinha derruba a barra.
+  assert.equal(guiAwaitingGoDecision(asking, { status: 'working' }), false)
+  assert.equal(guiAwaitingGoDecision(asking, { status: 'idle', perm: true }), false)
+  assert.equal(guiAwaitingGoDecision(asking, { status: 'idle', stream: true }), false)
+  assert.equal(guiAwaitingGoDecision(asking, { status: 'idle', awaitingCard: true }), false)
+  // Fala ainda sendo revelada não é fala fechada.
+  assert.equal(
+    guiAwaitingGoDecision(
+      [{ id: 'a1', kind: 'assistant', text: 'Posso seguir?', at: 1, live: true, animateFrom: 13 }],
+      { status: 'idle' }
+    ),
+    false
+  )
+  assert.equal(
+    guiAwaitingGoDecision(
+      [{ id: 'a1', kind: 'assistant', text: 'Posso seguir?', at: 1, live: false, animateFrom: 4 }],
+      { status: 'idle' }
+    ),
+    false
+  )
+  // O dono já respondeu: a última voz do fio é dele.
+  assert.equal(
+    guiAwaitingGoDecision([...asking, { id: 'u1', kind: 'user', text: 'pode', at: 2 }], {
+      status: 'idle'
+    }),
+    false
+  )
+})
+
+test('GuiPane consome o detector do módulo, sem heurística própria', () => {
+  const pane = readFileSync(new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url), 'utf8')
+  assert.match(pane, /guiAwaitingGoDecision/u, 'a barra pergunta ao módulo')
+  assert.ok(
+    !/const ASK_RE\b/u.test(pane),
+    'a régua do aceite mora em guiAskForGo.ts — cópia no componente volta a divergir'
+  )
 })

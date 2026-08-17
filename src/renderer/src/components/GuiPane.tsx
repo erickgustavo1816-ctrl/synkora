@@ -87,6 +87,7 @@ import {
   planGuiAttachmentBatch
 } from '../guiComposerAttachments'
 import { shouldBlurGuiComposerOnOutsidePointerDown } from '../guiComposerFocus'
+import { guiAwaitingGoDecision } from '../guiAskForGo'
 import { guiComposerClearPlan } from '../guiComposerDelivery'
 import { parseGuiJsonCard } from '../guiJsonCard'
 import { useGuiTranscriptWindow } from '../useGuiTranscriptWindow'
@@ -438,19 +439,6 @@ function GuiPermCard({
       </div>
     </div>
   )
-}
-
-/** Marcadores de PEDIDO DE ACEITE: o dev fecha o turno com uma pergunta de
- *  seguir/parar (mini-plano, "posso implementar?"). Só aí a linha de ação
- *  inline aparece — pergunta comum de conteúdo continua sendo respondida no
- *  composer, como qualquer conversa. */
-const ASK_RE =
-  /\b(aprova(?:r|do|ção)?|posso (?:seguir|implementar|começar|continuar|ir)|pode (?:seguir|ir)|sigo|prossigo|confirma|de acordo|fecha(?:do)?\?|segue assim)\b/iu
-
-function asksForGo(text: string): boolean {
-  const trimmed = text.trim()
-  if (!trimmed.endsWith('?')) return false
-  return ASK_RE.test(trimmed.slice(-320))
 }
 
 /** Os dois glifos do botão de envio moram na MESMA grade de 16, desenhados à
@@ -1385,19 +1373,19 @@ export default function GuiPane({
 
   /** Última fala do dev pedindo um "pode seguir" — só com o turno FECHADO e
    *  nada pendente; é isso que torna os botões inline uma resposta, não um
-   *  atalho no meio do trabalho. */
-  const askingGo = useMemo(() => {
-    if (gui.status !== 'idle' || gui.perm || gui.stream || awaitingCard) return false
-    for (let i = gui.items.length - 1; i >= 0; i -= 1) {
-      const item = gui.items[i]
-      if (item.kind === 'user') return false
-      if (item.kind === 'assistant') {
-        if (item.live || item.animateFrom < item.text.length) return false
-        return asksForGo(item.text)
-      }
-    }
-    return false
-  }, [gui.items, gui.status, gui.perm, gui.stream, awaitingCard])
+   *  atalho no meio do trabalho. A régua de "isto é um pedido de aceite?" mora
+   *  em `guiAskForGo` (precisão antes de cobertura: clicar em aprovar ENVIA
+   *  uma frase que o dono não escreveu). */
+  const askingGo = useMemo(
+    () =>
+      guiAwaitingGoDecision(gui.items, {
+        status: gui.status,
+        perm: Boolean(gui.perm),
+        stream: Boolean(gui.stream),
+        awaitingCard
+      }),
+    [gui.items, gui.status, gui.perm, gui.stream, awaitingCard]
+  )
 
   // A injeção deixou de suprimir o vazio: o pane que nasce mudo PRECISA dizer
   // o que fazer, senão lê como chat quebrado com um `<details>` solto em cima.
