@@ -64,14 +64,7 @@ import { createMaestroEngine, type MaestroBackend } from './maestroEngine'
 import { createMissionEngine } from './missionEngine'
 import { createPaneLifecycle } from './paneLifecycle'
 import { PanesViewManager } from './panesView'
-import { buildMailboxApi } from './mcpApi/mailbox'
-import { buildCodeApi } from './mcpApi/code'
-import { buildPanesApi } from './mcpApi/panes'
-import { buildMissionsApi } from './mcpApi/missions'
-import { buildHelpersApi } from './mcpApi/helpers'
-import { buildBoardApi } from './mcpApi/board'
 import { buildPlansApi } from './mcpApi/plans'
-import { buildReportApi } from './mcpApi/report'
 import { registerTasksIpc } from './ipc/tasks'
 import { registerMaestroIpc } from './ipc/maestro'
 import { registerMissionsIpc } from './ipc/missions'
@@ -138,14 +131,9 @@ import { getSeatUsage } from './seatUsage'
 import {
   resolveBundledPlaywrightMcp,
   startMcpServer,
-  type DelegateOpts,
   type McpApi,
   type McpServerHandle,
-  type McpStdioLaunch,
-  type NewMissionInput,
-  type SaveProjectPlanInput,
-  type NewTaskInput,
-  type TaskPatch
+  type McpStdioLaunch
 } from './mcpServer'
 import { SynVoiceService, type SynVoiceProvider } from './synVoice'
 import { WindowsTextInput } from './windowsTextInput'
@@ -5311,7 +5299,15 @@ app.whenReady().then(async () => {
     storedHelperRecoveries,
     harnessPortsInUse,
     armPane,
-    codeReportGuard: (identity) => mcpApi.codeReportGuard(identity)
+    // A tool `report` morreu com o catálogo legado: nenhuma identidade
+    // enxerga ferramenta de entrega, então o guard não tem mais o que
+    // liberar. Bloquear é a resposta HONESTA (passar em silêncio deixaria
+    // um done legado atravessar sem a fotografia que o guard existia para
+    // exigir). O caminho inteiro sai na onda do pipeline de fases.
+    codeReportGuard: async () => ({
+      blocked:
+        'a entrega por ferramenta MCP não existe mais neste app — o catálogo legado (report/done) foi removido com a era F6'
+    })
   })
   const {
     phaseWatches,
@@ -5387,72 +5383,11 @@ app.whenReady().then(async () => {
   // `start_project_mission` passam a recusar sempre. Morrem juntos na onda 3.
   const humanProjectPlanApprovals = new Set<string>()
   const humanProjectMissionStarts = new Set<string>()
+  // KIT DO CHAT DE PLANEJAMENTO (2.0, onda D): o único catálogo do Synkora.
+  // `propose_plan` apresenta e devolve — quem cria o plano é o clique do dono
+  // no card (porteira mecânica, nunca persona). O `hub` entra porque é ele
+  // quem autentica o bearer do pane no `startMcpServer`.
   const mcpApi: McpApi = {
-    ...buildReportApi(ctx, {
-      handleMissionVerdict,
-      updateStoredHelperStatus,
-      helperTranscriptPath,
-      securityWaiverOptions,
-      planTaskForWorkTask,
-      plannedHelperAssignments,
-      completedPlannedAgentsByPhaseRun,
-      completedHelperPhaseRuns
-    }),
-    ...buildMissionsApi(ctx, {
-      emitMissionsChanged,
-      emitBacklogChanged,
-      missionWorkspacePath,
-      clearMissionStartIntent,
-      writeMissionStartIntent,
-      createMissionImpl,
-      ensureMissionVersion,
-      rollbackPlannedMission,
-      startMissionIntegration,
-      ensurePlannedMissionBacklogItem,
-      transitionLinkedProjectPlanMission,
-      stopMissionExecution,
-      scheduleIntegrationDrain,
-      resolveMissionIntegrationTarget,
-      createIntegrationSyncTask,
-      humanProjectPlanApprovals,
-      humanProjectMissionStarts,
-      killMissionGuiPanes
-    }),
-    ...buildHelpersApi(ctx, {
-      armPane,
-      terminatePaneNow,
-      executionModeForTask,
-      storedHelperRecoveries,
-      helperTranscriptPath,
-      isBannedModel,
-      agentModelPool,
-      helperSpawnReservations,
-      helperOpenWatchdog,
-      plannedHelperAssignments,
-      completedPlannedAgentsByPhaseRun,
-      securityWaiverOptions,
-      planTaskForWorkTask
-    }),
-    ...buildBoardApi(ctx, {
-      currentPlanOf,
-      finalVerificationAccepted,
-      resumePlanVerificationIfNeeded,
-      baselineVerificationUsable,
-      ensurePlanBaseline,
-      startFinalPlanVerification,
-      closeVerifiedPlan,
-      removeTaskCascade,
-      ensureMissionWorktree,
-      missionWorkspacePath,
-      isBannedModel,
-      agentModelPool,
-      securityWaiverOptions,
-      planTaskForWorkTask,
-      setPhaseExecutorImpl
-    }),
-    // KIT DO CHAT DE PLANEJAMENTO (2.0, onda D): o único catálogo que a role
-    // 'gui-planner' enxerga. `propose_plan` apresenta e devolve — quem cria o
-    // plano é o clique do dono no card (porteira mecânica, nunca persona).
     ...buildPlansApi(ctx, {
       proposePlanToPane: (paneId, draft) =>
         guiSessions?.proposePlan(paneId, draft) ?? {
@@ -5460,19 +5395,7 @@ app.whenReady().then(async () => {
           error: 'o chat deste pane não está aberto'
         }
     }),
-    // Domínios extraídos (fase 1, commit 4b) — spreads compõem o literal;
-    // o tipo McpApi confere a superfície completa na atribuição.
-    ...buildMailboxApi(ctx),
-    ...buildCodeApi(ctx, {
-      planTaskForWorkTask,
-      missionWorkspacePath,
-      completedPlannedAgentsByPhaseRun,
-      completedHelperPhaseRuns
-    }),
-    ...buildPanesApi(ctx, { securityWaiverOptions, planTaskForWorkTask, agentModelPool }),
-    hub,
-
-
+    hub
   }
 
   // VARREDURA DE BOOT (política do usuário: arquivo sem função não fica):
@@ -5493,49 +5416,6 @@ app.whenReady().then(async () => {
   // volume, zero decisão).
   const mcpPaneFirstContact = new Map<string, number>()
   const seenMcpTokens = new Set<string>()
-  // GATE PARCIALMENTE EQUIPADO (plano 02/08, frente 2): um Reviewer/QA sem
-  // conexão MCP não tem como registrar veredito — deixá-lo vivo é uma sessão
-  // inútil que termina em silêncio (caso real de 01/08: Codex read-only).
-  // Depois do spawn, o main espera a PRIMEIRA requisição autenticada do pane;
-  // sem ela dentro da janela, o gate é encerrado com causa explícita e a fase
-  // fica preservada para uma nova tentativa segura.
-  const GATE_MCP_CONTACT_MS = 75_000
-  function armGateMcpWatchdog(identity: PaneIdentity, paneId: string): void {
-    setTimeout(() => {
-      if (!ptys.has(paneId)) return
-      if (mcpPaneFirstContact.has(paneId)) return
-      const stillSame = hub.identityByPane(paneId)
-      if (!stillSame || stillSame.role !== identity.role || stillSame.taskId !== identity.taskId)
-        return
-      blackbox.record({
-        cat: 'mcp',
-        event: 'gate-mcp-timeout',
-        ids: {
-          projectId: identity.projectId,
-          missionId: identity.missionId,
-          taskId: identity.taskId,
-          paneId,
-          phase: identity.phase,
-          role: identity.role,
-          seatId: identity.seatId
-        },
-        actor: 'harness',
-        reason: `o CLI do gate não fez NENHUMA requisição ao servidor MCP em ${GATE_MCP_CONTACT_MS / 1000}s — sem conexão não há report`,
-        evidence: 'mcpPaneFirstContact ausente para o paneId'
-      })
-      hub.publish({
-        projectId: identity.projectId,
-        missionId: identity.missionId,
-        kind: 'error',
-        text:
-          `o gate ${identity.role} nasceu SEM conexão com o servidor MCP do Synkora (nenhuma requisição em ${GATE_MCP_CONTACT_MS / 1000}s) — sem isso não existe veredito possível. ` +
-          `O pane foi encerrado e a fase está preservada; reabra com run_task {id: "${identity.taskId ?? '?'}", phase: "${identity.phase ?? identity.role}"}. Se repetir, o problema é a preparação MCP deste seat, não o trabalho do card`,
-        actor: 'harness',
-        urgent: true
-      })
-      ptys.kill(paneId)
-    }, GATE_MCP_CONTACT_MS)
-  }
   function noteMcpConnected(identity: PaneIdentity): void {
     if (mcpPaneFirstContact.has(identity.paneId)) return
     mcpPaneFirstContact.set(identity.paneId, Date.now())
@@ -5604,7 +5484,7 @@ app.whenReady().then(async () => {
         // grava o evento oficial (mcp/catalog-served, com dedupe) — logá-la
         // aqui triplicava o journal a cada request do pane (ruído real
         // visto em 2026-08-07).
-        if (prop === 'noteCatalogServed' || prop === 'drainInboxFor') return value
+        if (prop === 'noteCatalogServed') return value
         return (...args: unknown[]): unknown => {
           const first = args[0]
           const id =
@@ -6189,7 +6069,6 @@ app.whenReady().then(async () => {
     helperTranscriptPath,
     helperOpenWatchdog,
     paneCodexSkillProfiles,
-    armGateMcpWatchdog,
     scheduleProgressLiveSnapshot,
     refreshProgressLiveSnapshot,
     progressLiveIdleTimers,

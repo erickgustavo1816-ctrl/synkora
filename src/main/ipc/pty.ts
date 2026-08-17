@@ -51,8 +51,6 @@ export interface PtyIpcExtras {
   helperOpenWatchdog: HelperOpenWatchdog
   /** Escopo de módulo do index — perfil de skills isolado do codex. */
   paneCodexSkillProfiles: Map<string, string>
-  /** Watchdog de 1º contato MCP do gate. */
-  armGateMcpWatchdog(identity: PaneIdentity, paneId: string): void
   /** Overlay de ANDAMENTO (escopo de módulo do index). */
   scheduleProgressLiveSnapshot(paneId: string): void
   refreshProgressLiveSnapshot(): unknown
@@ -93,7 +91,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
     helperTranscriptPath,
     helperOpenWatchdog,
     paneCodexSkillProfiles,
-    armGateMcpWatchdog,
     scheduleProgressLiveSnapshot,
     refreshProgressLiveSnapshot,
     progressLiveIdleTimers,
@@ -729,13 +726,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
         }, 1200)
       }
       const spawnIdentity = hub.identityByPane(req.id)
-      if (
-        spawnIdentity &&
-        (spawnIdentity.role === 'review' || spawnIdentity.role === 'qa') &&
-        spawnIdentity.taskId
-      ) {
-        armGateMcpWatchdog(spawnIdentity, req.id)
-      }
       // DEV SEM MCP NUNCA É SILENCIOSO (caso real 04/08 23:28: dev codex
       // trabalhou a fase INTEIRA sem nenhuma requisição autenticada —
       // notify_pane não alcançava e ninguém sabia). Irmão SOFT do watchdog de
