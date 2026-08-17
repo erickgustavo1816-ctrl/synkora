@@ -5,6 +5,7 @@ import type { PlanItemView, PlanView } from '../planContract'
 import {
   PLAN_STATUS_LABEL,
   planClipLine,
+  planItemCanDiscard,
   planItemLink,
   planItemMissionGoal,
   planItemPresentation,
@@ -93,6 +94,9 @@ export default function PlanBoardView({
 
   const [creatingFor, setCreatingFor] = useState<PlanItemView | null>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  // Item cuja pergunta de exclusão está aberta. Um por vez: abrir a de outro
+  // fecha a anterior sozinha.
+  const [discarding, setDiscarding] = useState('')
   const [pending, setPending] = useState('')
   const [message, setMessage] = useState('')
 
@@ -314,34 +318,85 @@ export default function PlanBoardView({
                 </span>
                 {tier && <span className="pb-tier">{tier}</span>}
 
-                {link.kind === 'linked' ? (
-                  <button
-                    className={`pb-mission${link.pulse.waiting ? ' asking' : ''}`}
-                    data-tip={`${link.mission.title}\nclique para abrir a missão no Board`}
-                    onClick={() =>
-                      openMission(
-                        link.mission.id,
-                        link.mission.status === 'ativa' || link.mission.status === 'integrando'
-                      )
-                    }
-                  >
-                    <span className={`pb-dot ${link.pulse.dot}`} aria-hidden="true" />
-                    <span className="pb-mission-label">{link.pulse.label}</span>
-                  </button>
-                ) : link.kind === 'missing' ? (
-                  <span className="pb-note">missão removida</span>
-                ) : item.status === 'descartada' ? (
-                  <span className="pb-note">{state.label}</span>
-                ) : (
-                  <button
-                    className="btn ghost tiny pb-create"
-                    disabled={Boolean(pending)}
-                    data-tip="Abre a nova missão com o título e o objetivo deste item já preenchidos"
-                    onClick={() => setCreatingFor(item)}
-                  >
-                    criar missão
-                  </button>
-                )}
+                {/* OS DOIS VERBOS DO DONO (2026-08-17): começar — "criar
+                    missão", que já existia — e EXCLUIR. Eles dividem UMA célula
+                    da grade: abrir coluna nova empurraria o título do item para
+                    reticências em toda largura. */}
+                <span className="pb-actions">
+                  {discarding === item.id ? (
+                    /* Confirmação INLINE: a pergunta TROCA as ações da linha.
+                       Diálogo nativo quebra o foco da janela no Windows, e um
+                       overlay rouba a tela inteira por um gesto pequeno. */
+                    <span
+                      className="pb-confirm"
+                      role="group"
+                      aria-label={`excluir "${item.title}" do plano?`}
+                    >
+                      <span className="pb-confirm-q">excluir?</span>
+                      <button
+                        className="btn ghost tiny danger"
+                        disabled={Boolean(pending)}
+                        onClick={() => {
+                          setDiscarding('')
+                          void run(`descartar:${item.id}`, () =>
+                            plansApi.update(
+                              plan.id,
+                              { items: [{ id: item.id, status: 'descartada' }] },
+                              plan.updatedAt
+                            )
+                          )
+                        }}
+                      >
+                        sim
+                      </button>
+                      <button className="btn ghost tiny" onClick={() => setDiscarding('')}>
+                        não
+                      </button>
+                    </span>
+                  ) : (
+                    <>
+                      {link.kind === 'linked' ? (
+                        <button
+                          className={`pb-mission${link.pulse.waiting ? ' asking' : ''}`}
+                          data-tip={`${link.mission.title}\nclique para abrir a missão no Board`}
+                          onClick={() =>
+                            openMission(
+                              link.mission.id,
+                              link.mission.status === 'ativa' ||
+                                link.mission.status === 'integrando'
+                            )
+                          }
+                        >
+                          <span className={`pb-dot ${link.pulse.dot}`} aria-hidden="true" />
+                          <span className="pb-mission-label">{link.pulse.label}</span>
+                        </button>
+                      ) : link.kind === 'missing' ? (
+                        <span className="pb-note">missão removida</span>
+                      ) : item.status === 'descartada' ? (
+                        <span className="pb-note">{state.label}</span>
+                      ) : (
+                        <button
+                          className="btn ghost tiny pb-create"
+                          disabled={Boolean(pending)}
+                          data-tip="Abre a nova missão com o título e o objetivo deste item já preenchidos"
+                          onClick={() => setCreatingFor(item)}
+                        >
+                          criar missão
+                        </button>
+                      )}
+                      {planItemCanDiscard(item.status) && (
+                        <button
+                          className="btn ghost tiny danger pb-discard"
+                          disabled={Boolean(pending)}
+                          data-tip="Tira esta missão do plano: ela sai do progresso e deixa de segurar a publicação da versão. Se já virou missão, a missão continua no Board."
+                          onClick={() => setDiscarding(item.id)}
+                        >
+                          excluir
+                        </button>
+                      )}
+                    </>
+                  )}
+                </span>
               </li>
             )
           })}

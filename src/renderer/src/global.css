@@ -19141,3 +19141,46 @@ details.gui-error-line {
   color: var(--ink-2);
   opacity: 1;
 }
+/* ————— OS DOIS VERBOS DA LINHA DO ITEM (2026-08-17) — BLOCO NOVO —————
+   O item ganhou o verbo EXCLUIR ao lado do que já existia, e os dois dividem
+   UMA célula da grade: abrir coluna nova espremeria o título em toda largura.
+   A confirmação é inline e TROCA as ações — por isso mora no mesmo lugar, com
+   a mesma altura, e a linha não pula quando o dono pergunta. */
+.pb-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: end;
+  min-width: 0;
+}
+
+.pb-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.pb-confirm-q {
+  font-size: 10.5px;
+  color: var(--ink-2);
+}
+
+/* botão e ficha da missão dividem a linha: MESMA altura e mesmo respiro
+   lateral da `.pb-mission`, senão a fileira ganha um degrau que se vê em
+   todas as linhas de uma vez */
+.pb-actions .btn.tiny {
+  height: 22px;
+  padding: 0 9px;
+}
+
+/* estreitou: quem desce para a segunda linha é a CÉLULA inteira — a regra irmã
+   acima move .pb-mission/.pb-note/.pb-create, que agora são filhos dela. */
+@media (max-width: 880px) {
+  .pb-actions {
+    grid-column: 4;
+    grid-row: 2;
+    justify-self: end;
+  }
+}
+/* ————— fim do BLOCO NOVO dos verbos do item ————— */

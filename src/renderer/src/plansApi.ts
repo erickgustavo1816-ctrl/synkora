@@ -12,12 +12,25 @@ import type { PlanDraft, PlanKind, PlanMutationResult, PlanView } from './planCo
 // tool, então `expectedUpdatedAt` é o que separa "eu decidi sobre o que estou
 // vendo" de "escrevi por cima do que mudou" (padrão de `ipc/projectPlan.ts`).
 
+/**
+ * O que a ABA do plano pode escrever. `kind` NUNCA entra (canal próprio: a
+ * designação é gesto do dono) e 'concluida' não é autoral — vem da missão
+ * vinculada. Itens entram por MERGE de id: hoje só o verbo EXCLUIR do dono,
+ * que marca 'descartada' e tira o item do progresso e da trava de release.
+ */
+export interface PlanBoardPatch {
+  title?: string
+  description?: string
+  status?: 'ativo' | 'concluido'
+  items?: { id: string; status: 'planejada' | 'em_andamento' | 'descartada' }[]
+}
+
 interface PlansBridge {
   list: (projectId: string) => Promise<PlanView[]>
   create: (projectId: string, draft: PlanDraft) => Promise<PlanMutationResult>
   update: (
     planId: string,
-    patch: { title?: string; description?: string; status?: 'ativo' | 'concluido' },
+    patch: PlanBoardPatch,
     expectedUpdatedAt: string
   ) => Promise<PlanMutationResult>
   setKind: (
@@ -78,7 +91,7 @@ export const plansApi = {
 
   async update(
     planId: string,
-    patch: { title?: string; description?: string; status?: 'ativo' | 'concluido' },
+    patch: PlanBoardPatch,
     expectedUpdatedAt: string
   ): Promise<PlanMutationResult> {
     const api = bridge()

@@ -91,6 +91,19 @@ test('cada status do item tem glifo E palavra (nunca só a cor)', async () => {
   assert.equal(planItemPresentation('concluida').label, 'concluída')
 })
 
+test('o verbo EXCLUIR só existe onde ainda há trabalho a tirar do plano', async () => {
+  const { planItemCanDiscard } = await presentation()
+
+  // Os DOIS verbos do dono na linha do item (ordem dele, 2026-08-17):
+  // "começar" (criar missão) e "excluir" — "ou eu excluo ou eu faço".
+  assert.equal(planItemCanDiscard('planejada'), true)
+  assert.equal(planItemCanDiscard('em_andamento'), true)
+  // Concluída não se descarta: o trabalho aconteceu, e apagá-lo do progresso
+  // seria reescrever a história. Descartada já saiu.
+  assert.equal(planItemCanDiscard('concluida'), false)
+  assert.equal(planItemCanDiscard('descartada'), false)
+})
+
 test('abas do mapa: rotas primeiro, mestre na frente dos livres, arquivado fora', async () => {
   const { mapTabs, resolveMapTab } = await presentation()
 
@@ -567,6 +580,57 @@ test('CONTRATO: designar plano mestre é gesto do DONO, num canal próprio', asy
   )
   assert.match(card, /draft\.kind === 'mestre'/u)
   assert.match(card, /plano mestre/u)
+})
+
+test('CONTRATO: excluir o item é gesto do DONO, confirmado na própria linha', async () => {
+  const board = await source('src/renderer/src/components/PlanBoardView.tsx')
+  const clean = withoutComments(board)
+  const css = await source('src/renderer/src/global.css')
+
+  // O verbo novo mora ao lado do que já existia, na LINHA do item — e quem
+  // decide onde ele aparece é a regra pura, nunca uma condição solta na tela.
+  assert.match(clean, /planItemCanDiscard\(/u, 'a visibilidade do verbo não usa a regra pura')
+  assert.match(clean, /pb-discard/u, 'o verbo excluir sumiu da linha do item')
+
+  // O efeito é 'descartada' — o item sai do progresso E da trava de release —
+  // com o CAS que a tela mostrou. A missão vinculada NÃO é tocada.
+  assert.match(
+    clean,
+    /plansApi\.update\([\s\S]{0,200}?status: 'descartada'[\s\S]{0,120}?plan\.updatedAt/u,
+    'o descarte não leva o updatedAt que a tela mostrou'
+  )
+  assert.ok(
+    !/linkMission\([^)]*undefined|missions\.(update|archive)\(/u.test(clean),
+    'o descarte do item passou a mexer na missão vinculada'
+  )
+
+  // CONFIRMAÇÃO INLINE: as ações da linha são TROCADAS pela pergunta, por item.
+  // Nunca diálogo nativo, nunca um segundo overlay/modal (o único do arquivo
+  // continua sendo o de excluir o PLANO, que é irreversível de verdade).
+  assert.match(clean, /=== item\.id \? \(/u, 'a confirmação não é por item')
+  assert.match(clean, /pb-confirm/u)
+  assert.match(clean, /excluir\?/u, 'a pergunta inline não nomeia a ação')
+  assert.equal(
+    (clean.match(/confirm-modal/gu) ?? []).length,
+    1,
+    'o item ganhou um modal em vez da confirmação inline'
+  )
+  assert.equal(
+    (clean.match(/className="overlay"/gu) ?? []).length,
+    1,
+    'nasceu um segundo overlay na aba do plano'
+  )
+  assert.ok(!/window\.(confirm|alert)\(/u.test(clean), 'a confirmação virou diálogo nativo')
+
+  // SEM BOTÃO DE EDITAR — decisão explícita do dono nesta rodada: editar é
+  // CONVERSA (a missão de planejamento pede, `update_plan` executa).
+  assert.ok(!/>\s*editar\b/u.test(clean), 'nasceu uma superfície de edição manual no item')
+
+  // A roupa: as ações da linha moram num contêiner só (a grade do item tem uma
+  // célula de ação), e a pergunta é uma linha, não um bloco.
+  assert.match(clean, /pb-actions/u)
+  assert.match(css, /\.pb-actions\s*\{/u)
+  assert.match(css, /\.pb-confirm\s*\{/u)
 })
 
 test('CONTRATO: criar missão a partir do item é gesto do DONO', async () => {

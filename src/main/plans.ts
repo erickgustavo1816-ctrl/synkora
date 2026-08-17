@@ -189,9 +189,13 @@ export interface PlanView extends Plan {
  * Estado efetivo de um item. A missão é a fonte quando existe:
  * concluída ⇒ concluída; viva/integrando ⇒ em andamento; ARQUIVADA preserva o
  * estado autoral (missão engavetada não desfaz nem completa trabalho).
+ *
+ * O parâmetro é o MÍNIMO que a regra lê: a trava de release (planReleaseLock.ts)
+ * chega com uma fotografia do item, não com o registro inteiro, e a semântica
+ * não pode ser reimplementada lá.
  */
 export function effectivePlanItemStatus(
-  item: PlanItem,
+  item: Pick<PlanItem, 'status'>,
   mission: PlanMissionSnapshot | undefined
 ): PlanItemStatus {
   if (item.status === 'descartada') return 'descartada'

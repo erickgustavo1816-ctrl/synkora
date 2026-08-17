@@ -53,6 +53,20 @@ export function planItemPresentation(status: PlanItemStatus): PlanItemPresentati
   return ITEM_PRESENTATION[status] ?? ITEM_PRESENTATION.planejada
 }
 
+/**
+ * O verbo EXCLUIR do dono (2026-08-17), irmão do "começar" que já existia:
+ * "ou eu excluo ou eu faço". Ele só existe onde ainda há trabalho a tirar do
+ * plano — concluída não se descarta (o trabalho aconteceu, e apagá-lo do
+ * progresso seria reescrever a história) e descartada já saiu.
+ *
+ * A régua vive aqui porque é a MESMA que a trava de release aplica do outro
+ * lado (`src/main/planReleaseLock.ts`): o que a tela deixa excluir é
+ * exatamente o que pode estar segurando uma publicação.
+ */
+export function planItemCanDiscard(status: PlanItemStatus): boolean {
+  return status === 'planejada' || status === 'em_andamento'
+}
+
 /** Uma linha útil, sem heading nem cauda — a mesma régua do tooltip do plano
  *  mestre: prosa longa cobrindo a tela é ruído, não contexto. */
 export function planClipLine(text: string, max = 110): string {

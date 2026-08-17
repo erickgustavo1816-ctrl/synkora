@@ -28,6 +28,7 @@ import {
 } from './worktree'
 import { MissionStore } from './missions'
 import { PlanStore } from './plans'
+import { activeMasterPlan, planReleaseLock } from './planReleaseLock'
 import { IntegrationQueueStore } from './integrationQueue'
 import type { MainContext } from './mainContext'
 import {} from './cliSessionTransplant'
@@ -2999,6 +3000,21 @@ app.whenReady().then(async () => {
       return `a versão ${version.name} ainda tem ${openItems.length} item(ns) de backlog pendente(s): ${openItems
         .map((i) => `"${i.title}"`)
         .join(', ')} — faça (vire missão) ou exclua (remove_backlog_item) antes de subir`
+    // TRAVA DE RELEASE DO PLANO MESTRE (ordem do dono, 17/08): item pendente do
+    // plano do MAPA atribuído a esta versão recusa a publicação — "ou eu excluo
+    // ou eu faço". A régua inteira mora no módulo puro; aqui só a fotografia.
+    const planLock = planReleaseLock({
+      versionId,
+      versionName: version.name,
+      plan: activeMasterPlan(plans.list(version.projectId)),
+      missions: missions.list(version.projectId).map((mission) => ({
+        id: mission.id,
+        title: mission.title,
+        status: mission.status,
+        ...(mission.versionId ? { versionId: mission.versionId } : {})
+      }))
+    })
+    if (planLock) return planLock.message
     if (existsSync(versionReleaseIntentPath(project.path, version.id))) {
       return `a versão ${version.name} já possui um journal de publicação pendente; reinicie o Synkora para reconciliá-lo com segurança antes de tentar novamente`
     }
