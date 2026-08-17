@@ -89,10 +89,21 @@ node_modules).
      ajudante (quem decide: agente com defaults? dono?), teto de paralelo,
      e a cerca de que ajudante NUNCA herda o MCP de delegação (sem cadeia
      infinita nível 2 — espelho da regra dos nativos).
-3º Push + instalador (`npm run dist` não roda desde a limpa;
-   electron-builder.yml mudou — validar o build).
-4º BROWSER EMBUTIDO (design fechado: DESIGN_SYNKORA_BROWSER_2026-08-15.md —
-   RightDock estilo Claude Code primeiro, sonda CDP, browser por missão).
+3º **RIGHTDOCK — a lateral direita vira dock de painéis estilo Claude Code**
+   (antecipado a etapa própria por ordem do dono, 17/08: "vou conseguir
+   redimensionar bem e isso ajuda a redimensionar o browser"). Spec já
+   pronta em DESIGN_SYNKORA_BROWSER_2026-08-15.md, D5.1 + "Fase 0 do wave":
+   coluna com LARGURA ajustável (como hoje) + cada painel com ALTURA própria
+   por alça de arrasto, colapsar/maximizar por painel, persistência por
+   projeto; o conteúdo atual do rail (ENTREGA/HISTÓRICO/ações) vira o
+   primeiro painel SEM mudar de conteúdo; testes no padrão right-rail
+   (geometria pura + contrato de fonte + cerca de animação). Entrega valor
+   sozinha e é pré-requisito de UX do browser.
+4º BROWSER EMBUTIDO (design fechado no mesmo doc — sonda do proxy CDP,
+   browser por missão como painel do dock).
+REMOVIDO DO ROADMAP por ordem do dono (17/08): push + instalador novo — ele
+segue no build instalado antigo (só usa o instalado para o SynVoice; o dev
+roda por npm run dev). Push do git fica sob demanda quando ele pedir.
 Opcional não pedido: planos no radar ANDAMENTO.
 
 ### 3. Regras de processo (memória — NÃO repetir os erros)
