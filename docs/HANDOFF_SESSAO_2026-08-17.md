@@ -3,7 +3,57 @@
 Sessão operada no esquema orquestrador (Fable) + frota Opus 5 max. Continuação
 direta da 2026-08-15b (ler antes). TUDO na `nivel5-fase1`, nada pushado.
 
-## ⚡ PRÓXIMA SESSÃO — COMEÇAR AQUI, NESTA ORDEM
+## ✅ SESSÃO B (17/08, mesma data) — a parte 1 (bugs) FECHOU
+
+Rodada no mesmo esquema (design em
+`.synkora/reports/DESIGN_RODADA_BUGS_2026-08-17B.md`; 5 agentes Opus max; bug 5
+e bug 6 em worktrees próprios, integrados por cherry-pick; gate raiz verde).
+Estado dos itens da lista abaixo:
+
+1. **Medidor do CODEX — o bug NÃO existia mais**: sonda de binário real
+   (0.147.0, relatório com aritmética fechada 8/8 frames + cross-check do
+   rollout) provou que `tokenUsage.last` é POR REQUEST e que a fonte atual está
+   certa; o 404k era série histórica do código pré-`c8ceecd` (14/08). Residual
+   aplicado: comentário corrigido ("último turno" → último REQUEST), leitura
+   extraída para módulo puro `codexTokenUsage.ts` e regressão
+   `test:codex-token-usage` com os frames REAIS da sonda embutidos. Residual
+   honesto do medidor: `last` inclui a saída do request — pode passar de 100%
+   por no máximo ~5% às vésperas da compactação; o clamp da UI cobre isso
+   legitimamente.
+2. **`--err` corrigido** (`c75593f`): `#c4453a` (4,08:1) → `#b54036` (4,63:1
+   sobre papel, o MAIS CLARO da matiz que cumpre ≥4,6 — minimalidade provada) +
+   token novo `--err-on-dark #e8897f` para painel escuro (9 pontos roteados,
+   5 já reprovavam antes e agora passam); 27 gêmeos hardcoded viraram token;
+   ANSI-16 do terminal intocada; suíte `test:design-tokens` prende o contrato.
+   ABERTOS anotados no relatório do agente: `--ok`/`--accent`/`--warn` têm o
+   MESMO problema sobre papel (2,87/2,81/1,89) — mesma classe, rodada própria;
+   hovers `.btn.danger`/`.gui-send.stop` melhoraram mas não alcançam AA.
+3. Desktop: `Synkora-wt-pipeline` já não existe; `Synkora-wt-limpa-mcp` segue
+   preso por lock (pós-reboot). `synkora2-teste` aguarda a palavra do dono.
+4. Validação visual do dono: segue pendente, agora incluindo o picker de
+   primeira versão no modal de missão e o verbo "excluir" do mapa.
+5. **Regra da versão refinada** (`eb70ac3`): campo livre SÓ com ZERO versões
+   (lançada conta); régua no módulo puro `versionChoice.ts` (fonte única das
+   duas telas); e a armadilha do `ensureDefaultVersion` fechou com o PICKER de
+   primeira versão no NewMissionModal (cria a versão ANTES da missão; provado
+   que o modal é o único caminho vivo de criação — o motor ficou intocado).
+6. **Trava de release do plano mestre** (`76ec10c`): módulo puro
+   `planReleaseLock.ts` (amarração candidato (i): item vinculado herda a versão
+   da missão; item sem missão do mestre ativo trava qualquer release) +
+   costura de 15 linhas no `releaseVersionImpl`; verbo EXCLUIR com confirmação
+   INLINE no PlanBoardView (status 'descartada' via CAS; missão intocada; SEM
+   botão de editar). `test:plan-release-lock` 12 casos + `test:plan-board`
+   estendido — vermelhos provados antes do verde.
+
+PARALELO (fora do Synkora): o projeto PAINEL DE GESTÃO - ERICK ganhou o
+protocolo de trabalho externo — `TRABALHO-EXTERNO.md` + `plano/PROGRESSO.md`
+commitados na master dele (`5e4dbec`); o retorno reconcilia o mapa carimbando
+`plans.json` com o app fechado (receita no próprio arquivo).
+
+PRÓXIMO: itens 2º (subagentes sem aba), 3º (RightDock) e 4º (browser) do
+roadmap abaixo — a parte 1 acabou.
+
+## ⚡ PRÓXIMA SESSÃO — COMEÇAR AQUI, NESTA ORDEM (SUPERADO pela sessão B acima; itens 2º-4º do roadmap seguem valendo)
 
 ### 0. RECUPERAR node_modules (bloqueia tudo; app do dono FECHADO antes)
 Incidente no fim da sessão: ao limpar pastas velhas do Desktop, um
