@@ -3,6 +3,52 @@
 Sessão operada no esquema orquestrador (Fable) + frota Opus 5 max. Continuação
 direta da 2026-08-15b (ler antes). TUDO na `nivel5-fase1`, nada pushado.
 
+## ⚡ PRÓXIMA SESSÃO — COMEÇAR AQUI, NESTA ORDEM
+
+### 0. RECUPERAR node_modules (bloqueia tudo; app do dono FECHADO antes)
+Incidente no fim da sessão: ao limpar pastas velhas do Desktop, um
+`Remove-Item -Recurse` atravessou junction viva de node_modules (a armadilha
+da memória feedback-worktree-junction, violada) e destripou o node_modules do
+repo; o `npm ci` de recuperação morreu em EPERM porque o `npm run dev` do dono
+segurava o esbuild.exe. Com o app fechado:
+`npm ci && node node_modules/electron/install.js && npm test`
+CÓDIGO INTACTO — HEAD `5af421c`, tudo committado. Último gate raiz 100% verde
+foi em `88c2964`; depois entrou só o concluir-planejamento (`5af421c`,
+typecheck + test:project-landing 23/23 verdes; gate raiz pendente do
+node_modules).
+
+### 1. BUGS PARA ARRUMAR (primeira frente de trabalho)
+1. 🐛 Medidor de contexto do CODEX passa de 100% (ex.: 404.325 tokens numa
+   janela de 258.400 — clampa em 100% na UI mas a fonte está errada; a rodada
+   do claude consertou só o lado claude; evidência em gui-sessions.json,
+   pane gui-dev-7bcd1b79).
+2. 🐛 Token `--err` sobre papel: 4,08:1 em texto pequeno (ex. botão excluir
+   do quadro do plano; a aba Versões usa a mesma roupa em 3 lugares) —
+   decisão de PALETA global, escurecer o token ou aceitar.
+3. 🧹 Desktop: `Synkora-wt-limpa-mcp` e `-pipeline` presos por lock (inertes,
+   junctions já removidas — deletar quando o Windows soltar / pós-reboot).
+   `synkora2-teste`: perguntar ao dono se apaga. `Synkora2` NUNCA apagar
+   (pedreira de ideias, decisão dele).
+4. 👁 VALIDAÇÃO VISUAL pendente do dono: rodada 3 (barra APROVAR/AJUSTAR só
+   em pergunta real; dashboard novo; ◈ = versão na main; versão digitável) +
+   concluir planejamento (`5af421c`) + popover de contexto pós-fix.
+
+### 2. Depois dos bugs (aguardando ordem do dono)
+- Push + instalador (`npm run dist` não roda desde a limpa;
+  electron-builder.yml mudou — validar o build).
+- BROWSER EMBUTIDO (design fechado: DESIGN_SYNKORA_BROWSER_2026-08-15.md —
+  RightDock estilo Claude Code primeiro, sonda CDP, browser por missão).
+- Opcionais que o dono ainda não pediu: planos no radar ANDAMENTO; trava de
+  release amarrada ao plano novo ("não sobe versão com missão do plano
+  pendente" — explicado ao dono em 17/08, ele decide se quer).
+
+### 3. Regras de processo (memória — NÃO repetir os erros)
+- Relatório de agente SEMPRE em arquivo; schema mínimo.
+- Browser de agente = interno do Claude, nunca claude-in-chrome.
+- Design = skill impeccable roteada pelo orquestrador.
+- Worktree: junction SEMPRE checada antes de remoção recursiva; limpar tudo
+  ao fim da rodada; agentes Opus max; teste novo vermelho antes de verde.
+
 ## O que entrou (ordem cronológica)
 1. **Fix do card de proposta que sumia** (`001dc13`): política pura
    `guiInteractionQueue.ts` — pendência que não bloqueia o CLI não é tratada
