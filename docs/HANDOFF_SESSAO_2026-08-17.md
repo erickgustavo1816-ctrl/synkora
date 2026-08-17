@@ -45,6 +45,31 @@ direta da 2026-08-15b (ler antes). TUDO na `nivel5-fase1`, nada pushado.
   legível; missão legada no board mostra "missão do fluxo antigo, sem
   conversa" — nunca crasha (suíte store-legacy-documents prova).
 
+## RODADA 2 DE FIXES (mesma noite — 5 achados do dono no app real)
+1. 🔴 "Acesso completo" matava o pane do planejador: respawn (troca de modo /
+   /clear / fila com modo novo) nascia apontando para o config MCP que o
+   dispose apagou ("MCP config file not found", 2 ocorrências no journal, com
+   CONTROLE NEGATIVO provando que o bypass era inocente). Fix no seam do
+   spawn: `guiPlannerArm.ts` re-arma idempotente a cada create (re-prova
+   autoridade + confere o arquivo no disco); recusas auditadas por nome.
+2. 🔴 Medidor de contexto MENTIA: `result.usage` do claude é o AGREGADO DO
+   TURNO (soma das chamadas de API — 3×176k = os 528.703 da tela) e não o
+   contexto. Provado por aritmética exata contra o /context do dono (176,3k
+   reais). Fonte trocada para o usage da ÚLTIMA mensagem do turno; comando
+   local não zera mais o medidor; rótulos honestos ("contexto", "custo da
+   sessão" — o custo é verdadeiro, acumulado do processo).
+3. Recibo de aprovação de plano deixou de virar bolha "VOCÊ" com uuid: novo
+   `registry.announce` entrega ao modelo sem user-message; copy limpa.
+4. Cabeçalho do quadro do plano (impeccable): gramática única de selos
+   (mestre = identidade preenchida colada ao título; estado = contorno na
+   outra ponta), descrição com "ver mais" (corta altura, nunca largura),
+   título 21px/800, excluir isolado com roupa de perigo.
+5. Leitor de .md da aba Arquivos: `max-width: 78ch` morreu — 51,5% → 93,7% de
+   aproveitamento da folha, respiro proporcional.
+ABERTOS desta rodada: medidor do CODEX passa de 100% (404k numa janela de
+258k — rodada própria); token `--err` sobre papel dá 4,08:1 em texto pequeno
+(decisão de token global, não de um botão); validação visual do popover.
+
 ## Pendências
 1. **VALIDAÇÃO VISUAL NO APP REAL da limpa inteira** (agentes verificaram em
    harness; ninguém rodou o app): Home sem seções mortas, Settings 3 seções,
