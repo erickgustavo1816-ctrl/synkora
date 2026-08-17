@@ -33,12 +33,24 @@ test('falha de painel é contida, recuperável e não revela a exceção', () =>
 })
 
 test('painéis do board e do canvas ficam dentro do limite isolado', () => {
-  // A ilha panes-view morreu na purga F6 (2026-08-17): o board é o único
-  // renderer com painéis. Os limites que ela trazia saíram com ela; o piso
-  // abaixo cobre só o que o host monta.
-  assert.ok((board.match(/<GuiPanelErrorBoundary/g) ?? []).length >= 12)
+  // A ilha panes-view morreu na purga F6 (2026-08-17) e o pipeline F6 saiu do
+  // Board (PlanModal, TaskModal, reseat do orquestrador, confirmação de
+  // exclusão): o piso caiu de 12 para 10. A CONTAGEM sozinha não protege nada
+  // — o que protege é a lista de paneId abaixo, que diz QUAL painel precisa
+  // estar dentro do limite. Baixar o número sem tirar um nome da lista é a
+  // única mexida legítima aqui.
+  assert.ok((board.match(/<GuiPanelErrorBoundary/g) ?? []).length >= 10)
   assert.match(board, /<GuiPanelErrorBoundary[\s\S]*<GuiPane/)
   assert.match(board, /<GuiPanelErrorBoundary[\s\S]*<TerminalPane/)
+  for (const paneId of [
+    'paneId={`board-general:${projectId}`}',
+    'paneId={`mission-delivery:${selMission.id}`}',
+    'paneId={`mission-column:${projectId}`}',
+    'paneId={`overlay:test-server:${selMission.id}`}',
+    'paneId="overlay:new-mission"',
+    'paneId={slot.spawn.paneId}'
+  ])
+    assert.ok(board.includes(paneId), `painel fora do limite isolado: ${paneId}`)
   assert.match(board, /paneId=\{`board-general:\$\{projectId\}`\}[\s\S]*<ProjectGeneral/)
   assert.match(board, /paneId=\{`mission-delivery:\$\{selMission\.id\}`\}[\s\S]*<MissionDeliveryRail/)
   assert.match(board, /paneId=\{`mission-column:\$\{projectId\}`\}[\s\S]*<MissionColumn/)

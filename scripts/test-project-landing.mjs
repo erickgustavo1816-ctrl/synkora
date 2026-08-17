@@ -317,8 +317,10 @@ test('o Board escolhe a tela pelo módulo puro e mantém as duas no mesmo limite
   assert.match(board, /onOpenMission=\{\(id\) => setMissionTab\(projectId, id\)\}/u)
   // O painel não busca stats: o Board entrega o que o Universe já carregou.
   assert.match(board, /versoes=\{homeStats\?\.versoes\}/u)
-  // KANBAN LEGADO INTOCADO (suprimir, não demolir).
-  assert.match(board, /const showKanban =/u)
+  // O KANBAN LEGADO foi DEMOLIDO na purga F6 (2026-08-17) — a supressão virou
+  // remoção por ordem do dono. O painel do projeto ocupa a coluna sozinho.
+  assert.doesNotMatch(board, /const showKanban =/u)
+  assert.doesNotMatch(board, /board-columns/u)
 })
 
 /* ---------- a coluna de missões: UMA largura, sempre ---------- */
