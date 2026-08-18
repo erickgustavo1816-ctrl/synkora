@@ -33,12 +33,14 @@ import {
   type GuiHelperLogEntry,
   type GuiHelperProcess,
   type GuiHelperReceipt,
+  type GuiHelperRequest,
   type GuiHelperSeat,
   type GuiHelperSnapshot,
   type GuiHelperSpawnRequest,
   type GuiHelperChange,
   type GuiHelperResultOutcome
 } from './guiHelperSessions'
+import type { GuiDelegationDefaults } from './guiSessions'
 import type { McpHelperRequestInput } from './mcpServer'
 
 /** A conta como o main a conhece (SeatStore + configDir já resolvido). */
@@ -316,17 +318,108 @@ export function createGuiHelperEngine(wiring: GuiHelperEngineWiring): GuiHelperE
   })
 }
 
+// ————— A CADEIA DO PADRÃO (D8): explícito > painel do dono > clone —————
+
+/**
+ * De onde saiu cada valor do ajudante. É o que o recibo carimba: sem isso o
+ * dono lê "opus · high" e não sabe se aquilo foi escolha do agente, pino dele
+ * no painel ou herança da conversa — três coisas que ele julga de formas
+ * diferentes.
+ */
+export type GuiDelegationOrigin = 'explicito' | 'painel' | 'herdado'
+
+export interface GuiHelperOrigins {
+  model: GuiDelegationOrigin
+  effort: GuiDelegationOrigin
+}
+
+export interface GuiHelperRequestPlan {
+  request: GuiHelperRequest
+  origins: GuiHelperOrigins
+}
+
+const ORIGIN_LABEL: Record<GuiDelegationOrigin, string> = {
+  explicito: 'explícito',
+  painel: 'painel',
+  herdado: 'herdado'
+}
+
+/** String vazia é AUSÊNCIA, nunca valor (a mesma régua do motor). */
+function asked(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+/**
+ * TRADUZ o pedido da tool no pedido do motor, aplicando a cadeia do D8.
+ *
+ * A ordem é a do dono: o que o agente escreveu na chamada VENCE (ele está
+ * decidindo aquela fatia), depois o pino do PAINEL ("como padrão vai vir eles")
+ * e, por último, o clone do delegador — que é a regra da onda 1 e continua
+ * inteira embaixo desta: quando NADA foi carimbado, o motor herda modelo e (só
+ * dentro do mesmo CLI) o effort da conversa.
+ *
+ * Um valor do painel viaja como pedido EXPLÍCITO para o motor de propósito: o
+ * dono escolheu aquele nível PARA AQUELE MODELO no painel (que filtra effort
+ * pelo CLI do modelo), então ele não pode cair na regra do cruzado, que existe
+ * para a herança silenciosa da conversa.
+ *
+ * Aqui também mora a tradução `seat` → `seatId`: a tool publica `seat` (é o que
+ * o `list_seats` devolve) e o motor lê `seatId`.
+ */
+export function planGuiHelperRequests(
+  helpers: readonly McpHelperRequestInput[],
+  defaults: GuiDelegationDefaults | undefined
+): GuiHelperRequestPlan[] {
+  const pinnedModel = asked(defaults?.model)
+  const pinnedEffort = asked(defaults?.effort)
+  return helpers.map((helper) => {
+    const model = asked(helper.model)
+    const effort = asked(helper.effort)
+    const chosenModel = model ?? pinnedModel
+    const chosenEffort = effort ?? pinnedEffort
+    const seatId = asked(helper.seat)
+    const name = asked(helper.name)
+    return {
+      request: {
+        prompt: typeof helper.prompt === 'string' ? helper.prompt : '',
+        ...(chosenModel ? { model: chosenModel } : {}),
+        ...(chosenEffort ? { effort: chosenEffort } : {}),
+        ...(seatId ? { seatId } : {}),
+        ...(name ? { name } : {})
+      },
+      origins: {
+        model: model ? 'explicito' : pinnedModel ? 'painel' : 'herdado',
+        effort: effort ? 'explicito' : pinnedEffort ? 'painel' : 'herdado'
+      }
+    }
+  })
+}
+
 // ————— o texto que o delegador lê —————
 
-function receiptLine(receipt: GuiHelperReceipt): string {
+function stamped(
+  value: string | undefined,
+  origin: GuiDelegationOrigin | undefined
+): string | undefined {
+  if (!value) return undefined
+  return origin ? `${value} (${ORIGIN_LABEL[origin]})` : value
+}
+
+function receiptLine(receipt: GuiHelperReceipt, origins?: GuiHelperOrigins): string {
   if (!receipt.ok) {
     return `✗ ${receipt.name ? `${receipt.name}: ` : ''}${receipt.error}`
   }
   // Modelo vazio = o delegador roda no padrão da conta e o card não pode
-  // inventar um nome; a linha simplesmente não mostra o campo.
-  const parts = [receipt.model, receipt.effort, receipt.seatName ?? receipt.seatId, receipt.cli].filter(
-    (part): part is string => Boolean(part)
-  )
+  // inventar um nome; a linha simplesmente não mostra o campo. Effort que o
+  // motor derrubou também não aparece — e o motivo vem logo abaixo.
+  const parts = [
+    stamped(receipt.model, origins?.model),
+    stamped(receipt.effort, origins?.effort),
+    receipt.seatName ?? receipt.seatId,
+    receipt.cli
+  ].filter((part): part is string => Boolean(part))
   const head = `✓ ${receipt.name ? `${receipt.name} — ` : ''}${receipt.helperId}`
   const dropped = receipt.effortDropped ? `\n    · ${receipt.effortDropped}` : ''
   return `${head}\n    ${parts.join(' · ')}${dropped}`
@@ -334,7 +427,11 @@ function receiptLine(receipt: GuiHelperReceipt): string {
 
 export function guiHelperSpawnText(
   receipts: readonly GuiHelperReceipt[],
-  warning?: string
+  warning?: string,
+  /** Uma entrada por recibo, NA MESMA ORDEM (o motor devolve um recibo por
+   *  pedido, na ordem em que recebeu). Ausente = recibo sem carimbo de origem,
+   *  que é o que os chamadores antigos continuam vendo. */
+  origins?: readonly GuiHelperOrigins[]
 ): string {
   const opened = receipts.filter((receipt) => receipt.ok).length
   const head =
@@ -343,7 +440,7 @@ export function guiHelperSpawnText(
       : opened === 1
         ? '1 ajudante aberto (trabalhando agora, em sessão própria)'
         : `${opened} ajudantes abertos (trabalhando agora, cada um em sessão própria)`
-  const body = receipts.map(receiptLine).join('\n')
+  const body = receipts.map((receipt, index) => receiptLine(receipt, origins?.[index])).join('\n')
   const tail =
     opened > 0
       ? '\n\nEles NÃO bloqueiam você: siga conversando. Acompanhe por helpers_status, ' +
@@ -436,6 +533,9 @@ export interface GuiDelegationApiDeps {
   /** Abre/fecha a janela do lote no anel do delegador (a costura de correlação). */
   beginBatch(paneId: string): string | undefined
   endBatch(paneId: string): void
+  /** O PINO DO DONO no painel deste chat (D8). Ausente/vazio = os ajudantes
+   *  clonam a conversa, que é o comportamento da onda 1. */
+  defaults?(paneId: string): GuiDelegationDefaults | undefined
   seats(): GuiDelegationSeat[]
   seatUsage?(seat: GuiDelegationSeat): Promise<SeatUsageInfo | null>
   now?(): number
@@ -490,6 +590,10 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
       if (!Array.isArray(helpers) || helpers.length === 0) {
         return 'mande ao menos um ajudante em `helpers` — cada item é uma fatia de trabalho.'
       }
+      // A CADEIA DO D8 mora AQUI, e não no motor: o motor recebe valores já
+      // decididos (é o que o mantém puro e testável), e quem conhece o pino do
+      // dono é a costura com o main.
+      const plans = planGuiHelperRequests(helpers, deps.defaults?.(id.paneId))
       // A JANELA DO LOTE envolve o spawn INTEIRO: os avisos `spawned` chegam
       // dentro dele, e é o lote aberto que os liga à chamada `delegate` que o
       // CLI publicou. Sem o try/finally, uma exceção deixaria a janela aberta e
@@ -497,11 +601,20 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
       deps.beginBatch(id.paneId)
       let outcome
       try {
-        outcome = deps.engine.spawn(delegator, helpers)
+        outcome = deps.engine.spawn(
+          delegator,
+          plans.map((plan) => plan.request)
+        )
       } finally {
         deps.endBatch(id.paneId)
       }
-      return guiHelperSpawnText(outcome.receipts, outcome.warning)
+      // Um recibo por pedido, na ordem (contrato do `spawn`): é o que deixa a
+      // origem viajar por índice sem inventar um id de correlação novo.
+      return guiHelperSpawnText(
+        outcome.receipts,
+        outcome.warning,
+        plans.map((plan) => plan.origins)
+      )
     },
 
     async listSeats(id) {

@@ -794,6 +794,14 @@ export function installDevMock(): void {
         model: patch.model ?? null,
         effort: patch.effort ?? null
       }),
+      // Padrão dos ajudantes (D8): sem main não há documento por pane, então a
+      // leitura é VAZIA ("herdado da conversa", que é a verdade) e a escrita
+      // recusa em vez de fingir um pino que ninguém gravou.
+      delegationDefaults: async () => ({}),
+      setDelegationDefaults: async () => ({
+        ok: false,
+        error: 'o padrão dos ajudantes só funciona no app'
+      }),
       send: async () => ({ ok: true }),
       deliverQueued: async () => ({ ok: true }),
       permission: async () => ({ ok: true }),

@@ -16704,6 +16704,200 @@ details.gui-error-line {
   background: color-mix(in srgb, var(--paper) 92%, var(--card));
 }
 
+/* ---- ABINHA DO PADRÃO DOS AJUDANTES (D8) ----
+   Encostada no composer, na MESMA coluna dele e alinhada à direita — o lado em
+   que a lateral de subagentes mora. Recolhida ela é uma linha apagada de 20px:
+   o pino se mexe uma vez e se esquece, então cobrar uma coluna permanente do
+   chat seria cobrar atenção todo dia. PAPEL, sempre: `--panel` é exclusivo do
+   TerminalPane. */
+
+.gui-deleg-defaults {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  width: 100%;
+  max-width: var(--gui-column);
+  min-width: 0;
+  margin: 0 auto 6px;
+}
+
+.gui-deleg-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.gui-deleg-tab:hover,
+.gui-deleg-tab.open {
+  border-color: var(--gui-line);
+  background: var(--gui-fill);
+  color: var(--ink-2);
+}
+
+.gui-deleg-tab:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.gui-deleg-tab-name {
+  flex: none;
+}
+
+/* O VALOR é o que o dono procura de relance: ele fica na tinta cheia enquanto o
+   rótulo recua. */
+.gui-deleg-tab-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-deleg-panel {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  max-height: min(280px, 46dvh);
+  margin-top: 4px;
+  padding: 8px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--ink-2);
+  font-size: 11px;
+}
+
+.gui-deleg-note {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 10px;
+}
+
+.gui-deleg-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gui-deleg-label {
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.gui-deleg-list,
+.gui-deleg-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gui-deleg-group-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-3);
+  font-size: 10px;
+}
+
+.gui-deleg-item {
+  height: 22px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 1px solid var(--gui-line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gui-deleg-item:hover:not(:disabled) {
+  border-color: var(--gui-line-strong);
+  background: var(--gui-fill);
+  color: var(--ink);
+}
+
+.gui-deleg-item.active {
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--gui-line-strong));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--ink);
+}
+
+.gui-deleg-item:disabled,
+.gui-deleg-clear:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.gui-deleg-item:focus-visible,
+.gui-deleg-clear:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.gui-deleg-empty {
+  color: var(--ink-3);
+  font-size: 10px;
+}
+
+.gui-deleg-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gui-deleg-clear {
+  height: 22px;
+  flex: none;
+  padding: 0 9px;
+  border: 1px solid var(--gui-line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.gui-deleg-clear:hover:not(:disabled) {
+  border-color: var(--gui-line-strong);
+  background: var(--gui-fill);
+  color: var(--ink);
+}
+
+.gui-deleg-error {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--err);
+  font-size: 10px;
+}
+
 .gui-composer-surface {
   width: 100%;
   max-width: var(--gui-column);

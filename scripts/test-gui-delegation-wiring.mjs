@@ -26,6 +26,7 @@ import test from 'node:test'
 import * as cards from '../.tmp/gui-delegation-wiring-test/guiHelperCards.js'
 import * as sessions from '../.tmp/gui-delegation-wiring-test/guiSessions.js'
 import * as wiring from '../.tmp/gui-delegation-wiring-test/guiDelegationWiring.js'
+import * as engineModule from '../.tmp/gui-delegation-wiring-test/guiHelperSessions.js'
 
 const {
   GUI_HELPER_CARD_ACTIVITY_MAX,
@@ -40,7 +41,12 @@ const {
   guiOrphanHelperCancellations,
   isGuiDelegateToolName
 } = cards
-const { GuiSessionRegistry, guiSpawnSuppressesNativeAgents, spawnFingerprint } = sessions
+const {
+  GuiSessionRegistry,
+  guiDelegationDefaultsOf,
+  guiSpawnSuppressesNativeAgents,
+  spawnFingerprint
+} = sessions
 const {
   GuiHelperCatalogCache,
   buildGuiDelegationApi,
@@ -49,8 +55,10 @@ const {
   guiHelperEventFor,
   guiHelperSpawnText,
   guiHelperStatusText,
+  planGuiHelperRequests,
   resolveGuiHelperSeat
 } = wiring
+const { GuiHelperEngine } = engineModule
 
 const source = (relative) =>
   readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8')
@@ -830,4 +838,256 @@ test('a frota morre com o pane e com o app', () => {
   assert.match(index, /guiHelperEngine\.cancelAll\(/u, 'o quit tem de matar os headless do codex')
   assert.match(index, /helpers: guiHelperEngine/u)
   assert.match(index, /delegateHelpers: \(id, helpers\)/u, 'as tools de delegação saíram do McpApi')
+})
+
+// ————— 9. O PAINEL DE PADRÕES DO DONO (D8) —————
+//
+// "Como padrão vai vir eles; caso eu queira outros, aí eu falo" (dono, 18/08).
+// A cadeia é: pedido EXPLÍCITO na tool > padrão do PAINEL > clone do delegador
+// (a regra same-CLI da onda 1 continua valendo abaixo dela). O recibo carimba a
+// ORIGEM de cada valor — sem isso o dono lê "opus · high" e não sabe se aquilo
+// foi escolha do agente, pino dele ou herança da conversa.
+
+const PANEL_SEATS = [
+  { id: 'seat-claude', name: 'Claude A', cli: 'claude', status: 'logado', configDir: 'a' },
+  { id: 'seat-codex', name: 'Codex A', cli: 'codex', status: 'logado', configDir: 'c' }
+]
+
+/** Motor REAL com adaptadores de mentira: a cadeia só se prova de ponta a ponta
+ *  (o que o painel carimba tem de chegar ao `GuiHelperSpawnRequest`). */
+function panelApi(options = {}) {
+  const spawned = []
+  const adapter = (request) => {
+    spawned.push(request)
+    return { send: () => undefined, dispose: () => undefined }
+  }
+  let seq = 0
+  const engine = new GuiHelperEngine({
+    spawnClaude: adapter,
+    spawnCodex: adapter,
+    resolveSeat: (query) => resolveGuiHelperSeat(PANEL_SEATS, query),
+    newId: () => `h-${(seq += 1)}`,
+    now: () => 0
+  })
+  const api = buildGuiDelegationApi({
+    engine,
+    delegator: () => ({
+      paneId: 'p1',
+      projectId: 'proj',
+      cwd: '/w',
+      cli: 'claude',
+      model: 'opus',
+      effort: 'high',
+      seatId: 'seat-claude'
+    }),
+    beginBatch: () => undefined,
+    endBatch: () => undefined,
+    seats: () => PANEL_SEATS,
+    ...(options.defaults ? { defaults: () => options.defaults } : {}),
+    now: () => 0
+  })
+  return { api, spawned }
+}
+
+test('a cadeia do delegate: pedido explícito vence o painel, que vence o clone', async () => {
+  const { api, spawned } = panelApi({ defaults: { model: 'fable', effort: 'low' } })
+  const receipt = await api.delegateHelpers(delegatorId, [
+    { prompt: 'a', model: 'sonnet', effort: 'max' },
+    { prompt: 'b' }
+  ])
+  assert.deepEqual(
+    spawned.map((request) => [request.model, request.effort]),
+    [
+      ['sonnet', 'max'],
+      ['fable', 'low']
+    ],
+    'o painel só entra onde o pedido calou'
+  )
+  assert.match(receipt, /sonnet \(explícito\)/u)
+  assert.match(receipt, /max \(explícito\)/u)
+  assert.match(receipt, /fable \(painel\)/u)
+  assert.match(receipt, /low \(painel\)/u)
+})
+
+test('sem painel o ajudante clona a conversa, e o recibo diz de onde veio', async () => {
+  const { api, spawned } = panelApi()
+  const receipt = await api.delegateHelpers(delegatorId, [{ prompt: 'a' }])
+  assert.deepEqual(
+    [spawned[0].model, spawned[0].effort],
+    ['opus', 'high'],
+    'a regra da onda 1 continua embaixo do painel'
+  )
+  assert.match(receipt, /opus \(herdado\)/u)
+  assert.match(receipt, /high \(herdado\)/u)
+})
+
+test('o painel pode carimbar o modelo do OUTRO CLI — a conta segue o modelo', async () => {
+  const { api, spawned } = panelApi({ defaults: { model: 'gpt-5.6-sol', effort: 'medium' } })
+  const receipt = await api.delegateHelpers(delegatorId, [{ prompt: 'a' }])
+  assert.equal(spawned[0].cli, 'codex', 'cross-CLI é cidadão de primeira classe')
+  assert.equal(spawned[0].seat.seatId, 'seat-codex', 'a conta do delegador é de outro binário')
+  // O effort do PAINEL é pedido explícito para o motor: ele nunca cai na regra
+  // do cruzado (que só existe para a HERANÇA silenciosa da conversa).
+  assert.equal(spawned[0].effort, 'medium')
+  assert.match(receipt, /gpt-5\.6-sol \(painel\)/u)
+  assert.match(receipt, /medium \(painel\)/u)
+  assert.doesNotMatch(receipt, /não viaja para o codex/u)
+})
+
+test('modelo do painel sem effort cai na regra same-CLI da onda 1', async () => {
+  const { api, spawned } = panelApi({ defaults: { model: 'gpt-5.6-sol' } })
+  const receipt = await api.delegateHelpers(delegatorId, [{ prompt: 'a' }])
+  assert.equal(spawned[0].effort, undefined, 'escala de um CLI nunca vira nível do outro')
+  assert.match(receipt, /não viaja para o codex/u, 'a queda de effort nunca é silenciosa')
+})
+
+test('a conta pedida na tool chega ao motor (o campo se chama `seat` lá fora)', async () => {
+  const { api, spawned } = panelApi()
+  await api.delegateHelpers(delegatorId, [{ prompt: 'a', model: 'gpt-5.6-sol', seat: 'seat-codex' }])
+  assert.equal(spawned[0].seat.seatId, 'seat-codex')
+  const plans = planGuiHelperRequests([{ prompt: 'a', seat: 'seat-codex' }], undefined)
+  assert.equal(plans[0].request.seatId, 'seat-codex', 'o motor lê seatId, a tool publica seat')
+})
+
+test('a origem é decidida por campo, e o plano preserva o pedido', () => {
+  const plans = planGuiHelperRequests(
+    [
+      { prompt: 'a', model: 'sonnet' },
+      { prompt: 'b', effort: 'max' },
+      { prompt: 'c', name: 'revisor' }
+    ],
+    { model: 'fable', effort: 'low' }
+  )
+  assert.deepEqual(
+    plans.map((plan) => [plan.origins.model, plan.origins.effort]),
+    [
+      ['explicito', 'painel'],
+      ['painel', 'explicito'],
+      ['painel', 'painel']
+    ]
+  )
+  assert.equal(plans[2].request.name, 'revisor')
+  assert.equal(plans[2].request.prompt, 'c')
+  const inherited = planGuiHelperRequests([{ prompt: 'a' }], undefined)
+  assert.deepEqual(
+    [inherited[0].origins.model, inherited[0].origins.effort],
+    ['herdado', 'herdado']
+  )
+  assert.equal(inherited[0].request.model, undefined, 'herdar é NÃO carimbar nada')
+  // Campo vazio é AUSÊNCIA: um `model: ""` viraria modelo de verdade.
+  const blank = planGuiHelperRequests([{ prompt: 'a', model: '  ', effort: '' }], {
+    model: 'fable'
+  })
+  assert.equal(blank[0].request.model, 'fable')
+  assert.equal(blank[0].origins.model, 'painel')
+  assert.equal(blank[0].origins.effort, 'herdado')
+})
+
+test('o recibo só carimba origem do valor que existe', () => {
+  const text = guiHelperSpawnText(
+    [{ ok: true, helperId: 'h-1', cli: 'claude', model: 'opus', seatId: 'seat-claude' }],
+    undefined,
+    [{ model: 'painel', effort: 'painel' }]
+  )
+  assert.match(text, /opus \(painel\)/u)
+  assert.doesNotMatch(text, /\(painel\) · \(painel\)/u, 'effort ausente não vira parêntese solto')
+  // Chamada SEM origens continua válida e devolve a linha crua de sempre.
+  assert.match(
+    guiHelperSpawnText([{ ok: true, helperId: 'h-1', cli: 'claude', model: 'opus', seatId: 's' }]),
+    /\n {4}opus · s · claude\n/u
+  )
+})
+
+test('o padrão do painel persiste POR PANE e volta do disco', () => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-panel-'))
+  try {
+    const storeFile = join(root, 'gui-sessions.json')
+    const first = registryWith(storeFile)
+    assert.equal(first.gui.create(devSpawn).ok, true)
+    assert.deepEqual(first.gui.delegationDefaults(devSpawn.paneId), {})
+    assert.deepEqual(
+      first.gui.setDelegationDefaults(devSpawn.paneId, { model: 'fable', effort: 'low' }),
+      { ok: true, model: 'fable', effort: 'low' }
+    )
+    // O create regrava o record inteiro: sem carregar o pino adiante, trocar o
+    // modo de permissão apagaria a escolha do dono sem ninguém saber.
+    assert.equal(first.gui.create({ ...devSpawn, permissionMode: 'plan' }).ok, true)
+    assert.deepEqual(first.gui.delegationDefaults(devSpawn.paneId), {
+      model: 'fable',
+      effort: 'low'
+    })
+
+    const second = registryWith(storeFile)
+    assert.deepEqual(second.gui.delegationDefaults(devSpawn.paneId), {
+      model: 'fable',
+      effort: 'low'
+    })
+    // Trocar a conta invalida modelo/effort DA CONVERSA; o pino dos ajudantes é
+    // escolha portátil do dono (e pode ser de outro CLI de propósito).
+    second.gui.forgetSessionIdentity(devSpawn.paneId)
+    assert.deepEqual(second.gui.delegationDefaults(devSpawn.paneId), {
+      model: 'fable',
+      effort: 'low'
+    })
+    // `null` LIMPA campo a campo; ausente conserva.
+    assert.deepEqual(second.gui.setDelegationDefaults(devSpawn.paneId, { effort: null }), {
+      ok: true,
+      model: 'fable'
+    })
+    assert.deepEqual(second.gui.setDelegationDefaults(devSpawn.paneId, { model: null }), {
+      ok: true
+    })
+    assert.deepEqual(second.gui.delegationDefaults(devSpawn.paneId), {})
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('o painel recusa o que não é escolha, e o documento sujo não vira padrão', () => {
+  const { gui } = registryWith()
+  assert.equal(gui.create(devSpawn).ok, true)
+  assert.equal(gui.setDelegationDefaults('pane-que-nao-existe', { model: 'fable' }).ok, false)
+  assert.match(gui.setDelegationDefaults(devSpawn.paneId, {}).error ?? '', /modelo ou o effort/u)
+  assert.equal(gui.setDelegationDefaults(devSpawn.paneId, { model: '   ' }).ok, false)
+  assert.equal(gui.setDelegationDefaults(devSpawn.paneId, { model: 'x'.repeat(129) }).ok, false)
+  assert.equal(gui.setDelegationDefaults(devSpawn.paneId, { effort: 7 }).ok, false)
+  assert.deepEqual(gui.delegationDefaults(devSpawn.paneId), {}, 'recusa não grava metade')
+
+  // Hidratação: documento escrito à mão (ou de uma versão futura) não passa.
+  assert.deepEqual(guiDelegationDefaultsOf(undefined), {})
+  assert.deepEqual(
+    guiDelegationDefaultsOf({ cli: 'claude', projectId: 'p', updatedAt: 'x', delegateModel: 42 }),
+    {}
+  )
+  assert.deepEqual(
+    guiDelegationDefaultsOf({
+      cli: 'claude',
+      projectId: 'p',
+      updatedAt: 'x',
+      delegateModel: ' fable ',
+      delegateEffort: ''
+    }),
+    { model: 'fable' },
+    'valor com espaço é aparado; vazio é ausência'
+  )
+})
+
+test('a costura do painel existe dos dois lados do IPC', () => {
+  const ipc = source('src/main/ipc/gui.ts')
+  assert.match(ipc, /ipcMain\.handle\(\s*'gui:delegationDefaults'/u)
+  assert.match(ipc, /ipcMain\.handle\(\s*'gui:setDelegationDefaults'/u)
+  const handlers = ipc.slice(ipc.indexOf("'gui:delegationDefaults'"))
+  assert.match(handlers, /extras\.assertAppRendererSender\(e\)/u, 'canal sem cerca de remetente')
+  const preload = source('src/preload/index.ts')
+  assert.match(preload, /invoke\('gui:delegationDefaults', paneId\)/u)
+  assert.match(preload, /invoke\('gui:setDelegationDefaults', paneId, patch\)/u)
+  const mock = source('src/renderer/src/devMock.ts')
+  assert.match(mock, /delegationDefaults: async/u, 'o preview do browser espelha o namespace')
+  assert.match(mock, /setDelegationDefaults: async/u)
+  const index = source('src/main/index.ts')
+  assert.match(
+    index,
+    /defaults: \(paneId\) => guiSessions\?\.delegationDefaults\(paneId\)/u,
+    'a tool `delegate` tem de ler o painel do dono'
+  )
 })

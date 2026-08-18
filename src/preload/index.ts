@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { ProgressOverlaySnapshot } from '../main/progressSnapshot'
 import type {
+  GuiDelegationDefaults,
+  GuiDelegationDefaultsPatch,
+  GuiDelegationDefaultsResult,
   GuiExecutorPatch,
   GuiExecutorResult,
   GuiLivePayload as MainGuiLivePayload,
@@ -70,6 +73,9 @@ import type {
 export type GuiLivePayload = Omit<MainGuiLivePayload, 'evt'> & { evt: SessionEvent }
 
 export type {
+  GuiDelegationDefaults,
+  GuiDelegationDefaultsPatch,
+  GuiDelegationDefaultsResult,
   GuiExecutorPatch,
   GuiExecutorResult,
   GuiPaneSpawn,
@@ -810,6 +816,17 @@ const api = {
       patch: GuiExecutorPatch
     ): Promise<GuiExecutorResult> =>
       ipcRenderer.invoke('gui:configureExecutor', paneId, patch),
+    /** PADRÃO DOS AJUDANTES deste chat (D8): o modelo/effort que o dono carimba
+     *  na abinha e que toda delegação sem pedido explícito passa a usar.
+     *  Vazio = herdar da conversa. */
+    delegationDefaults: (paneId: string): Promise<GuiDelegationDefaults> =>
+      ipcRenderer.invoke('gui:delegationDefaults', paneId),
+    /** `null` limpa o campo; ausente conserva. Devolve a fotografia canônica. */
+    setDelegationDefaults: (
+      paneId: string,
+      patch: GuiDelegationDefaultsPatch
+    ): Promise<GuiDelegationDefaultsResult> =>
+      ipcRenderer.invoke('gui:setDelegationDefaults', paneId, patch),
     /** Turno novo com descritores revalidados pelo main antes de chegar ao CLI. */
     send: (
       paneId: string,

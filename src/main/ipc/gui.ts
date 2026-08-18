@@ -24,6 +24,9 @@ import {
   GuiSessionRegistry,
   guiMessageIdProblem,
   guiPromptProblem,
+  type GuiDelegationDefaults,
+  type GuiDelegationDefaultsPatch,
+  type GuiDelegationDefaultsResult,
   type GuiExecutorPatch,
   type GuiExecutorResult,
   type GuiPaneSpawn,
@@ -402,6 +405,37 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     (e, paneId: string, patch: GuiExecutorPatch): Promise<GuiExecutorResult> => {
       extras.assertAppRendererSender(e)
       return registry.configureExecutor(paneId, patch)
+    }
+  )
+
+  /**
+   * PADRÃO DOS AJUDANTES (D8 — a "abinha do lado"): o modelo/effort que o dono
+   * carimba para TODA delegação deste chat. Leitura e escrita, e nada mais: não
+   * há push de mudança porque o painel é o ÚNICO escritor e recebe a fotografia
+   * canônica de volta na própria resposta — quem consome o pino do outro lado é
+   * a tool `delegate`, que o lê do registro na hora de abrir a frota.
+   *
+   * SEM cerca de "este pane pode delegar?": quem decide isso é o CATÁLOGO do
+   * MCP (só o chat de missão dev recebe a tool `delegate`), e um pino gravado em
+   * pane que não delega é INERTE — recusar aqui exigiria uma segunda autoridade
+   * sobre a mesma pergunta, que é como duas réguas divergem em silêncio.
+   */
+  ipcMain.handle('gui:delegationDefaults', (e, paneId: unknown): GuiDelegationDefaults => {
+    extras.assertAppRendererSender(e)
+    // O getter não tem canal de erro: "nada carimbado" e "id que este app não
+    // conhece" levam à MESMA tela ("herdado da conversa"), que é a verdade.
+    if (typeof paneId !== 'string' || !paneId || paneId.length > 256) return {}
+    return registry.delegationDefaults(paneId)
+  })
+
+  ipcMain.handle(
+    'gui:setDelegationDefaults',
+    (e, paneId: unknown, patch: GuiDelegationDefaultsPatch): GuiDelegationDefaultsResult => {
+      extras.assertAppRendererSender(e)
+      if (typeof paneId !== 'string' || !paneId || paneId.length > 256) {
+        return { ok: false, error: 'pane sem identificador válido' }
+      }
+      return registry.setDelegationDefaults(paneId, patch)
     }
   )
 

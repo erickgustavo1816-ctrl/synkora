@@ -3382,6 +3382,9 @@ app.whenReady().then(async () => {
   const guiDelegation = buildGuiDelegationApi({
     engine: guiHelperEngine,
     delegator: (paneId) => guiSessions?.delegatorFor(paneId),
+    // O PINO DO DONO no painel do chat (D8): pedido sem modelo/effort abre com
+    // o que ele carimbou, e o recibo diz de onde cada valor veio.
+    defaults: (paneId) => guiSessions?.delegationDefaults(paneId),
     beginBatch: (paneId) => guiSessions?.beginHelperBatch(paneId),
     endBatch: (paneId) => guiSessions?.endHelperBatch(paneId),
     seats: () =>

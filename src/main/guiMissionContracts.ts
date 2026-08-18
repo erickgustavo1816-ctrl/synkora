@@ -93,12 +93,17 @@ export function guiMissionRoleOf(paneId: string): GuiMissionRole | undefined {
  * MESMA ferramenta — cercar um remove os dois), e o codex 0.147 publica
  * `functions.collaboration.spawn_agent`.
  *
+ * A linha do PINO DO DONO (D8) é a única coisa que a seção diz sobre PADRÃO:
+ * ela existe porque um agente que não sabe do painel escreve `model` em toda
+ * chamada "para não errar" — e assim atropela, sem saber, a escolha do dono.
+ *
  * O chat de PLANEJAMENTO não recebe esta seção: ele não delega (D2).
  */
 const DELEGATION_STANDING_ORDER = `DELEGATION — STANDING ORDER FROM THE OWNER:
 - Native subagents are RETIRED in this chat: never Task, never Agent, never the codex collab spawn_agent. They are fenced mechanically as well, so reaching for one only burns a turn.
 - EVERY helper is opened with the synkora MCP delegate tool: the only path where the owner sees each helper's model, effort, account and live activity in his sidebar. The native one shows him nothing.
 - ONE call opens the whole fleet: "abre 5 opus" is ONE delegate with 5 helpers, never 5 calls. Cross-CLI is first-class — a claude chat opens gpt-* helpers and a codex chat opens opus/fable ones.
+- The owner may PIN a default model/effort for helpers in the side panel: omit them and his pin opens, stamped in the receipt.
 - You OWN your helpers: watch them with helpers_status, steer a live one with helper_send, collect with helper_result (it long-polls; calling it again is cheap), stop one with helper_cancel — in a claude chat they appear as mcp__synkora__*.
 - Before a large fleet, read list_seats and spread the helpers across the accounts with the most limit left.
 - Helpers share THIS worktree: split the work by file boundaries, the way you would if you were running a team, and never hand the same file to two of them.

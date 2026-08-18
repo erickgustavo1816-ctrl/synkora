@@ -2,6 +2,9 @@ import type {
   GuiAlertPayload,
   GuiAttachPayload,
   GuiAttachResult,
+  GuiDelegationDefaults,
+  GuiDelegationDefaultsPatch,
+  GuiDelegationDefaultsResult,
   GuiAttachmentAction,
   GuiAttachmentActionResult,
   GuiAttachmentDescriptor,
@@ -389,6 +392,12 @@ interface GuiBridge {
     paneId: string,
     patch: GuiExecutorPatch
   ) => Promise<GuiExecutorResult>
+  /** PADRÃO DOS AJUDANTES deste chat (D8) — o pino do dono na abinha. */
+  delegationDefaults: (paneId: string) => Promise<GuiDelegationDefaults>
+  setDelegationDefaults: (
+    paneId: string,
+    patch: GuiDelegationDefaultsPatch
+  ) => Promise<GuiDelegationDefaultsResult>
   send: (
     paneId: string,
     text: string,
@@ -529,6 +538,31 @@ export const guiApi = {
     if (!api?.configureExecutor) return { ok: false, error: NO_BRIDGE }
     try {
       return await api.configureExecutor(paneId, patch)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+
+  /** O pino dos ajudantes (D8). Sem ponte, VAZIO: "herdado da conversa" é a
+   *  verdade num preview sem main, e nunca um pino que ninguém gravou. */
+  async delegationDefaults(paneId: string): Promise<GuiDelegationDefaults> {
+    const api = bridge()
+    if (!api?.delegationDefaults) return {}
+    try {
+      return (await api.delegationDefaults(paneId)) ?? {}
+    } catch {
+      return {}
+    }
+  },
+
+  async setDelegationDefaults(
+    paneId: string,
+    patch: GuiDelegationDefaultsPatch
+  ): Promise<GuiDelegationDefaultsResult> {
+    const api = bridge()
+    if (!api?.setDelegationDefaults) return { ok: false, error: NO_BRIDGE }
+    try {
+      return await api.setDelegationDefaults(paneId, patch)
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }

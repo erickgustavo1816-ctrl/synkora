@@ -862,6 +862,17 @@ export interface GuiSessionRecord {
    *  significa que esta conversa ainda não escolheu e pode herdar a missão. */
   model?: string | null
   effort?: string | null
+  /**
+   * PADRÃO DOS AJUDANTES deste chat (D8 — "abinha do lado", ordem do dono de
+   * 18/08: "como padrão vai vir eles; caso eu queira outros, aí eu falo").
+   *
+   * AUSENTE = herdar da conversa; não existe `null` aqui de propósito. Modelo/
+   * effort do composer precisam do terceiro estado ("padrão do CLI" é uma
+   * escolha diferente de "não escolhi"), mas o pino do dono só tem dois: ou ele
+   * carimbou um valor, ou os ajudantes clonam o chat. Limpar REMOVE o campo.
+   */
+  delegateModel?: string
+  delegateEffort?: string
   /** Última fotografia canônica de contexto desta identidade de sessão. */
   contextTokens?: number | null
   contextWindow?: number | null
@@ -971,6 +982,63 @@ export function rememberedGuiExecutorValue(
   return typeof value === 'string' && value.trim() ? value : fallback
 }
 
+// ————— PADRÃO DOS AJUDANTES (D8) — o pino do dono, por pane —————
+
+/** O que o painel carimbou. Campo ausente = herdar da conversa. */
+export interface GuiDelegationDefaults {
+  model?: string
+  effort?: string
+}
+
+/** `null` LIMPA o campo; campo ausente CONSERVA o que já está gravado (mesma
+ *  gramática do `GuiExecutorPatch`, para o renderer não precisar de duas). */
+export interface GuiDelegationDefaultsPatch {
+  model?: string | null
+  effort?: string | null
+}
+
+export type GuiDelegationDefaultsResult =
+  | ({ ok: true } & GuiDelegationDefaults)
+  | { ok: false; error: string }
+
+/** Mesmo teto do modelo/effort do envelope da fila: nome de modelo é rótulo,
+ *  não payload. */
+export const GUI_DELEGATION_DEFAULT_MAX_CHARS = 128
+
+/**
+ * O painel só valida a FORMA. Recusar um id que o catálogo do momento não
+ * conhece seria pior que aceitá-lo: o catálogo é assíncrono e por conta, e o
+ * dono pode carimbar um modelo do outro CLI de propósito (cross-CLI é cidadão
+ * de primeira classe). Quem sabe dizer "esse modelo não existe" é o motor, na
+ * hora de abrir o ajudante — e ele diz com o recibo na mão.
+ */
+export function guiDelegationDefaultProblem(label: string, value: unknown): string | null {
+  if (typeof value !== 'string') return `${label} do painel em formato inválido`
+  const trimmed = value.trim()
+  if (!trimmed) return `${label} do painel veio vazio — use "limpar" para voltar a herdar`
+  if (trimmed.length > GUI_DELEGATION_DEFAULT_MAX_CHARS) return `${label} do painel é longo demais`
+  return null
+}
+
+/**
+ * Lê o pino do documento. Valor sujo (versão futura, arquivo editado à mão) é
+ * DESCARTADO em vez de virar padrão silencioso — um modelo inventado abriria a
+ * frota inteira errada.
+ */
+export function guiDelegationDefaultsOf(
+  record: GuiSessionRecord | undefined
+): GuiDelegationDefaults {
+  const clean = (value: unknown): string | undefined =>
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    value.trim().length <= GUI_DELEGATION_DEFAULT_MAX_CHARS
+      ? value.trim()
+      : undefined
+  const model = clean(record?.delegateModel)
+  const effort = clean(record?.delegateEffort)
+  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
+}
+
 /**
  * Um transplante de conversa que falhou invalida somente o endereço de
  * resume. As escolhas do pane continuam úteis quando ele recomeçar.
@@ -988,6 +1056,10 @@ export function guiSessionWithoutResume(record: GuiSessionRecord): GuiSessionRec
  * A conta anterior sumiu ou o CLI mudou: além do endereço da conversa, modelo
  * e effort deixam de ter procedência confiável. A permissão continua sendo uma
  * escolha portátil do dono e pode sobreviver.
+ *
+ * O PINO DOS AJUDANTES (D8) também sobrevive, e por um motivo forte: ele nunca
+ * dependeu do CLI deste pane. O dono pode ter carimbado `gpt-*` num chat claude
+ * de propósito — apagá-lo aqui trocaria a escolha dele por uma dedução nossa.
  */
 export function guiSessionWithoutIdentity(record: GuiSessionRecord): GuiSessionRecord {
   const next = guiSessionWithoutResume(record)
@@ -1298,6 +1370,85 @@ export class GuiSessionRegistry {
   /** Conversa gravada para este pane — a chave do resume pós-boot. */
   remembered(paneId: string): GuiSessionRecord | undefined {
     return this.doc.panes[paneId]
+  }
+
+  /**
+   * O PINO DOS AJUDANTES deste pane (D8). Vazio = herdar da conversa, que é o
+   * comportamento de sempre — o painel só existe para o dono dizer outra coisa.
+   */
+  delegationDefaults(paneId: string): GuiDelegationDefaults {
+    return guiDelegationDefaultsOf(this.doc.panes[paneId])
+  }
+
+  /**
+   * Carimba (ou limpa) o pino. Devolve a fotografia CANÔNICA, que é o que o
+   * painel passa a mostrar — o renderer nunca fica com uma escolha otimista que
+   * o disco não aceitou.
+   */
+  setDelegationDefaults(
+    paneId: string,
+    patch: GuiDelegationDefaultsPatch
+  ): GuiDelegationDefaultsResult {
+    const previous = this.doc.panes[paneId]
+    const entry = this.panes.get(paneId)
+    // O pane pode ter registro no disco (conversa gravada), sessão viva, ou os
+    // dois. Nenhum dos dois = endereço que este app não conhece.
+    const base: GuiSessionRecord | undefined =
+      previous ??
+      (entry
+        ? {
+            cli: entry.spawn.cli,
+            projectId: entry.spawn.projectId,
+            updatedAt: new Date().toISOString()
+          }
+        : undefined)
+    if (!base) return { ok: false, error: 'este pane não tem conversa aberta' }
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+      return { ok: false, error: 'escolha do painel em formato inválido' }
+    }
+    // Tudo é decidido ANTES de tocar no documento: uma recusa nunca pode gravar
+    // metade da escolha e deixar o painel contando outra história que o disco.
+    const writes: { field: 'delegateModel' | 'delegateEffort'; value: string | null }[] = []
+    for (const key of ['model', 'effort'] as const) {
+      const value = patch[key]
+      // Ausente CONSERVA (o painel manda um campo por clique); `null` LIMPA.
+      if (value === undefined) continue
+      const field = key === 'model' ? 'delegateModel' : 'delegateEffort'
+      if (value === null) {
+        writes.push({ field, value: null })
+        continue
+      }
+      const problem = guiDelegationDefaultProblem(key === 'model' ? 'modelo' : 'effort', value)
+      if (problem) return { ok: false, error: problem }
+      writes.push({ field, value: value.trim() })
+    }
+    if (writes.length === 0) {
+      return { ok: false, error: 'diga o modelo ou o effort padrão dos ajudantes' }
+    }
+    const next: GuiSessionRecord = { ...base }
+    for (const write of writes) {
+      if (write.value === null) delete next[write.field]
+      else next[write.field] = write.value
+    }
+    next.updatedAt = new Date().toISOString()
+    this.doc.panes[paneId] = next
+    if (this.deps.storeFile) {
+      try {
+        persistJsonStore(this.deps.storeFile, this.doc)
+      } catch {
+        // O pino já vale em memória para a próxima delegação; o disco tenta de
+        // novo no próximo checkpoint em vez de derrubar a escolha do dono.
+      }
+    }
+    const applied = guiDelegationDefaultsOf(next)
+    // O diário responde à pergunta que o dono faria depois ("por que a frota
+    // abriu em fable?") sem depender de ele lembrar quando mexeu na abinha.
+    this.deps.record?.(
+      'gui-delegation-defaults',
+      { paneId, projectId: next.projectId },
+      { model: applied.model ?? 'herdado', effort: applied.effort ?? 'herdado' }
+    )
+    return { ok: true, ...applied }
   }
 
   /** Transplante de seat falhou: conserva preferências genéricas, mas o id
@@ -2559,6 +2710,11 @@ export class GuiSessionRegistry {
         : sameIdentity && Object.prototype.hasOwnProperty.call(previous, 'effort')
           ? previous.effort
           : undefined
+    // O PINO DOS AJUDANTES ATRAVESSA (D8). Este método REESCREVE o record
+    // inteiro, e todo respawn passa por aqui — trocar o modo de permissão ou
+    // dar `/clear` apagaria a escolha do dono sem nenhum sinal. Ele viaja mesmo
+    // com o CLI trocado: o pino pode ser do outro binário de propósito.
+    const delegation = guiDelegationDefaultsOf(previous)
     if (
       previous?.cli === spawn.cli &&
       previous.sessionId === nextSession &&
@@ -2575,6 +2731,8 @@ export class GuiSessionRegistry {
       permissionMode: mode,
       ...(rememberedModel !== undefined ? { model: rememberedModel } : {}),
       ...(rememberedEffort !== undefined ? { effort: rememberedEffort } : {}),
+      ...(delegation.model ? { delegateModel: delegation.model } : {}),
+      ...(delegation.effort ? { delegateEffort: delegation.effort } : {}),
       ...(rememberedContext
         ? {
             contextTokens: rememberedContext.contextTokens,

@@ -22,8 +22,10 @@ import GuiAttachmentChips from './GuiAttachmentChips'
 import GuiJsonCard from './GuiJsonCard'
 import GuiSlashMenu from './GuiSlashMenu'
 import GuiContextPanel from './GuiContextPanel'
+import GuiDelegationDefaults from './GuiDelegationDefaults'
 import GuiFileMentionMenu from './GuiFileMentionMenu'
 import GuiMentionOverlay from './GuiMentionOverlay'
+import { guiPaneDelegates } from '../guiDelegationDefaults'
 import {
   completeSlashCommand,
   filterSlashCommands,
@@ -1357,6 +1359,13 @@ export default function GuiPane({
       ].join(' · ')
     : undefined
 
+  // A ABINHA DO PADRÃO DOS AJUDANTES (D8) só existe em chat que DELEGA. O sinal
+  // é derivado dos args do MCP pelo mesmo motivo que a cerca do codex é
+  // (`guiSpawnSuppressesNativeAgents`): campo novo no spawn precisaria ser
+  // repetido à mão em quatro listas do renderer, e foi o silêncio delas que já
+  // deixou o chat de planejamento sem ferramenta por uma noite inteira.
+  const delegatesHelpers = useMemo(() => guiPaneDelegates(mcp), [mcp])
+
   const injection = useMemo(() => {
     const text = firstPrompt?.trim()
     // Conversa RETOMADA não recebe 1º prompt (o briefing já está lá dentro):
@@ -1742,6 +1751,9 @@ export default function GuiPane({
               onHover={fileMentions.setIndex}
             />
           )}
+          {/* O pino do dono para a frota deste chat: encostado no composer,
+              recolhido, do lado em que a lateral de subagentes vai morar. */}
+          {delegatesHelpers && <GuiDelegationDefaults paneId={paneId} seats={seats} />}
           <div
             className="gui-composer-surface"
             ref={composerSurfaceRef}
