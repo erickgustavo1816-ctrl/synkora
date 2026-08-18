@@ -41,6 +41,7 @@ import {
   armGuiDelegateMcp,
   guiPaneToolKind,
   CLAUDE_NATIVE_AGENT_FENCE,
+  GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS,
   GUI_DELEGATE_CLAUDE_TOOL_TIMEOUT_MS,
   GUI_DELEGATE_CODEX_TOOL_TIMEOUT_SEC
 } from '../.tmp/gui-delegate-mcp-test/guiDelegateMcp.js'
@@ -487,6 +488,39 @@ test('claude: config própria, strict, a CERCA de subagente nativo e o teto de t
     `Bearer ${remembered[0].token}`
   )
   assert.deepEqual(Object.keys(config.mcpServers), ['synkora'], 'catálogo fechado: nenhum MCP extra')
+})
+
+test('claude: as SEIS ferramentas internas são pré-sancionadas, e a cerca continua de pé', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { mcp } = delegator(hub, root, 5151)
+
+  // SONDA 2026-08-18 (claude 2.1.234, scratchpad/probe-elicit/claude):
+  //   CL1, sem --allowedTools → `can_use_tool` DISPARA para
+  //        mcp__synkora__list_seats (o dono ganha um card para aprovar a
+  //        própria ferramenta do app);
+  //   CL2, com --allowedTools ao lado do --disallowedTools → ZERO permissões,
+  //        a tool responde, e a cerca segue intacta (Task/Agent/ToolSearch
+  //        ausentes de um catálogo de 25 ferramentas).
+  // É a paridade com o codex, que aceita a elicitation da mesma chamada em
+  // silêncio: ferramenta interna é encanamento, não decisão do dono.
+  const allowAt = mcp.args.indexOf('--allowedTools')
+  assert.notEqual(allowAt, -1, 'sem --allowedTools o dono aprova à mão a ferramenta do próprio app')
+  assert.equal(mcp.args[allowAt + 1], GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS.join(','))
+
+  // O par com o catálogo REAL: tool nova no delegador sem entrar aqui volta a
+  // pedir aprovação, e este teste é quem avisa.
+  assert.deepEqual(
+    [...GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS].sort(),
+    DELEGATOR_TOOLS.map((tool) => `mcp__synkora__${tool}`).sort()
+  )
+
+  // A pré-sanção é NARROW: nada nativo entra de carona, e ela nunca desfaz a
+  // cerca (as duas flags convivem — medido no binário).
+  for (const allowed of GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS) {
+    assert.match(allowed, /^mcp__synkora__/u, `${allowed} não é ferramenta interna`)
+    assert.equal(CLAUDE_NATIVE_AGENT_FENCE.includes(allowed), false)
+  }
+  assert.notEqual(mcp.args.indexOf('--disallowedTools'), -1, 'a cerca não pode sair no lugar')
 })
 
 test('codex: teto de tool por config, cerca multi_agent e nenhum valor com espaço', async (t) => {

@@ -112,7 +112,34 @@ export function guiPaneToolKind(
   return missionTypeOf(mission) === 'planejamento' ? 'planner' : 'delegator'
 }
 
-/** Flags do claude: config por arquivo + strict + a cerca, numa flag só. */
+/**
+ * As SEIS ferramentas internas do `gui-delegator`, no nome que o claude usa
+ * (`mcp__<servidor>__<tool>`; o servidor é `synkora`, escrito por
+ * `writeClaudeMcpConfig`). Elas são PRÉ-SANCIONADAS: aprovar a ferramenta do
+ * próprio app não é decisão do dono, é encanamento — a mesma doutrina que faz
+ * o `CodexSession` aceitar em silêncio a elicitation de aprovação do codex.
+ *
+ * MEDIDO no claude 2.1.234 (sonda 2026-08-18, `scratchpad/probe-elicit/claude`):
+ * sem esta flag, `permissionMode: 'default'` levanta `can_use_tool` para
+ * `mcp__synkora__list_seats` (card de permissão para o dono); com ela, ZERO
+ * permissões, a tool responde, e `--disallowedTools` continua valendo no mesmo
+ * spawn (Task/Agent/ToolSearch ausentes de um catálogo de 25 ferramentas).
+ * `--allowedTools` NÃO filtra catálogo — Bash/Read/Edit seguem lá, e seguem
+ * pedindo o que sempre pediram.
+ *
+ * A lista é fechada de propósito: ferramenta nova no catálogo do delegador tem
+ * de entrar aqui à mão, e `scripts/test-gui-delegate-mcp.mjs` prende o par.
+ */
+export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
+  'mcp__synkora__delegate',
+  'mcp__synkora__list_seats',
+  'mcp__synkora__helpers_status',
+  'mcp__synkora__helper_result',
+  'mcp__synkora__helper_send',
+  'mcp__synkora__helper_cancel'
+]
+
+/** Flags do claude: config por arquivo + strict + a cerca + a pré-sanção. */
 export function guiDelegateClaudeArgs(mcpFile: string): string[] {
   return [
     // `--strict-mcp-config`: o chat que delega não herda MCP do seat. Servidor
@@ -120,7 +147,9 @@ export function guiDelegateClaudeArgs(mcpFile: string): string[] {
     // superfície nova que ninguém pediu.
     ...claudeMcpArgs(mcpFile, true),
     '--disallowedTools',
-    CLAUDE_NATIVE_AGENT_FENCE.join(',')
+    CLAUDE_NATIVE_AGENT_FENCE.join(','),
+    '--allowedTools',
+    GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS.join(',')
   ]
 }
 

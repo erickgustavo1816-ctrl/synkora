@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { CodexSession } from '../.tmp/codex-collab-signals-test/codexSession.js'
+import {
+  CODEX_SYNKORA_MCP_SERVER_NAME,
+  CodexSession,
+  codexElicitationVerdict
+} from '../.tmp/codex-collab-signals-test/codexSession.js'
 import { GuiCodexAgentRegistry } from '../.tmp/codex-collab-signals-test/guiCodexAgents.js'
 
 // Sinais de colaboração do `codex app-server` — a forma REAL do 0.147, medida
@@ -341,4 +345,159 @@ test('subAgentActivity continua registrando: binário que emita o sinal legado s
     ]
   )
   assert.equal(session.codexAgents.size, 0)
+})
+
+// ————— mcpServer/elicitation/request (bug ao vivo de 2026-08-18 15:08) —————
+//
+// O chat de missão codex nasce com permissionMode 'default', e
+// `guiPermissionProfile('codex','default')` é `{}` — nem sandbox nem
+// approvalPolicy viajam. Sem approvalPolicy explícita o app-server usa o
+// DEFAULT DE CONFIG, e o config dir de um seat não define `approval_policy`:
+// vale o default embutido do binário, que é `on-request`. Nesse regime o
+// 0.147 pede aprovação de CADA chamada de tool MCP pelo request
+// server->client `mcpServer/elicitation/request`, e a recusa genérica do
+// `handleServerRequest` transformava a nossa PRÓPRIA ferramenta em
+// "user rejected MCP tool call".
+//
+// Payloads abaixo são CÓPIA CRUA do fio (sonda 2026-08-18,
+// scratchpad/probe-elicit/raw/{C-seathome-omitted,E-foreign-server}-summary.json).
+const PROBED_SYNKORA_ELICITATION = {
+  threadId: '01a01577-da32-76c2-bf13-6d3e7d8590ce',
+  turnId: '01a01577-dd67-7580-81e4-4e53f6e56bf0',
+  serverName: 'synkora',
+  mode: 'form',
+  _meta: {
+    codex_approval_kind: 'mcp_tool_call',
+    persist: ['session', 'always'],
+    tool_description: 'Lista as contas disponíveis (probe).',
+    tool_params: {},
+    tool_params_display: []
+  },
+  message: 'Allow the synkora MCP server to run tool "list_seats"?',
+  requestedSchema: { type: 'object', properties: {} }
+}
+const PROBED_FOREIGN_ELICITATION = {
+  ...PROBED_SYNKORA_ELICITATION,
+  serverName: 'outro',
+  _meta: { ...PROBED_SYNKORA_ELICITATION._meta, tool_description: 'Radar dos ajudantes (probe).' },
+  message: 'Allow the outro MCP server to run tool "helpers_status"?'
+}
+
+/** Sessão de mentira para requests DO SERVIDOR: guarda o que foi escrito no
+ *  stdin (a resposta JSON-RPC) e o que foi emitido para a conversa. */
+function serverRequestSession() {
+  const session = Object.create(CodexSession.prototype)
+  const events = []
+  const written = []
+  session.opts = { cwd: '/w' }
+  session.emit = (event) => events.push(event)
+  session.killed = false
+  session.closed = false
+  session.child = { exitCode: 0, signalCode: null, stdin: { write: (line) => written.push(line) } }
+  session.approvals = new Map()
+  session.idleTimer = null
+  session.turnSilenceTimer = null
+  session.turnId = 'turn-root'
+  session.pendingTurnStart = null
+  return {
+    session,
+    events,
+    ask: (method, params) => {
+      session.handleServerRequest(7, method, params)
+      return written.map((line) => JSON.parse(line))
+    }
+  }
+}
+
+test('elicitation do NOSSO servidor é aceita em silêncio — a delegação é o caminho sancionado', () => {
+  const { events, ask } = serverRequestSession()
+  const sent = ask('mcpServer/elicitation/request', PROBED_SYNKORA_ELICITATION)
+
+  // Forma provada na sonda: `{action:'accept'}` completa a chamada de tool.
+  assert.deepEqual(sent, [{ jsonrpc: '2.0', id: 7, result: { action: 'accept', content: {} } }])
+  // SILÊNCIO: aprovar a própria ferramenta não é notícia para o dono.
+  assert.deepEqual(events, [])
+})
+
+test('elicitation de servidor DESCONHECIDO segue recusada, com a mensagem de sempre', () => {
+  const { events, ask } = serverRequestSession()
+  const sent = ask('mcpServer/elicitation/request', PROBED_FOREIGN_ELICITATION)
+
+  assert.deepEqual(sent, [{ jsonrpc: '2.0', id: 7, result: { action: 'decline' } }])
+  assert.deepEqual(events, [
+    { type: 'limit', text: 'pedido não suportado do codex negado: mcpServer/elicitation/request' }
+  ])
+})
+
+test('formulário nosso com campo obrigatório sem default é recusado — nunca inventamos resposta', () => {
+  const { events, ask } = serverRequestSession()
+  const sent = ask('mcpServer/elicitation/request', {
+    ...PROBED_SYNKORA_ELICITATION,
+    _meta: { persist: ['session'] },
+    requestedSchema: {
+      type: 'object',
+      properties: { ticket: { type: 'string', title: 'número do chamado' } },
+      required: ['ticket']
+    }
+  })
+
+  assert.deepEqual(sent, [{ jsonrpc: '2.0', id: 7, result: { action: 'decline' } }])
+  assert.equal(events.length, 1)
+  assert.equal(events[0].type, 'limit')
+})
+
+test('campo com default vira a resposta; campo opcional sem default fica de fora', () => {
+  const { events, ask } = serverRequestSession()
+  const sent = ask('mcpServer/elicitation/request', {
+    ...PROBED_SYNKORA_ELICITATION,
+    requestedSchema: {
+      type: 'object',
+      properties: {
+        seguir: { type: 'boolean', default: true },
+        observacao: { type: 'string' }
+      },
+      required: ['seguir']
+    }
+  })
+
+  assert.deepEqual(sent, [
+    { jsonrpc: '2.0', id: 7, result: { action: 'accept', content: { seguir: true } } }
+  ])
+  assert.deepEqual(events, [])
+})
+
+test('modo url (reautenticação) é recusado mesmo sendo nosso — não há navegador aqui', () => {
+  const { events, ask } = serverRequestSession()
+  const sent = ask('mcpServer/elicitation/request', {
+    threadId: 'thread-root',
+    serverName: 'synkora',
+    mode: 'url',
+    elicitationId: 'elic-1',
+    message: 'Reautentique o servidor',
+    url: 'https://exemplo.invalido/auth'
+  })
+
+  assert.deepEqual(sent, [{ jsonrpc: '2.0', id: 7, result: { action: 'decline' } }])
+  assert.equal(events.length, 1)
+})
+
+test('outros pedidos não suportados seguem exatamente como antes', () => {
+  const { events, ask } = serverRequestSession()
+  const sent = ask('item/tool/requestUserInput', { threadId: 'thread-root' })
+
+  assert.deepEqual(sent, [{ jsonrpc: '2.0', id: 7, result: { decision: 'decline' } }])
+  assert.deepEqual(events, [
+    { type: 'limit', text: 'pedido não suportado do codex negado: item/tool/requestUserInput' }
+  ])
+})
+
+test('o nome do servidor interno é o mesmo que os args de spawn declaram', () => {
+  // O outro lado deste par está em scripts/test-gui-delegate-mcp.mjs, que
+  // fixa `mcp_servers.synkora.url=` nos args reais. Divergir quebra os dois.
+  assert.equal(CODEX_SYNKORA_MCP_SERVER_NAME, 'synkora')
+  assert.equal(
+    codexElicitationVerdict(PROBED_SYNKORA_ELICITATION).kind,
+    'accept'
+  )
+  assert.equal(codexElicitationVerdict(PROBED_FOREIGN_ELICITATION).kind, 'refuse')
 })

@@ -60,6 +60,86 @@ export function codexNativeAgentFenceConfig(): Record<string, unknown> {
   return { features: { multi_agent: false } }
 }
 
+/**
+ * O NOME do nosso servidor MCP dentro do codex. É o mesmo literal que
+ * `guiPlannerCodexArgs` escreve em `mcp_servers.synkora.*` — a única coisa que
+ * o `mcpServer/elicitation/request` nos dá para reconhecer a origem é este
+ * nome, e por isso ele mora aqui, do lado de quem julga.
+ *
+ * Duplicar o literal em vez de importar é deliberado: a suíte
+ * `test:codex-collab-signals` compila SÓ este arquivo, e puxar o módulo de
+ * arme traria o SDK do MCP inteiro para dentro de um teste puro. O par vive
+ * fixado nos DOIS lados — `scripts/test-gui-delegate-mcp.mjs` prende o mesmo
+ * literal nos args reais do spawn, então uma divergência quebra as duas.
+ */
+export const CODEX_SYNKORA_MCP_SERVER_NAME = 'synkora'
+
+/** O que fazer com um `mcpServer/elicitation/request`. */
+export type CodexElicitationVerdict =
+  | { kind: 'accept'; content: Record<string, unknown> }
+  | { kind: 'refuse' }
+
+/**
+ * ELICITATION DO CODEX = APROVAÇÃO DE CHAMADA DE TOOL MCP (bug ao vivo de
+ * 2026-08-18 15:08, reproduzido 1:1 na sonda `scratchpad/probe-elicit`).
+ *
+ * Um chat de missão codex nasce com `permissionMode: 'default'`, e
+ * `guiPermissionProfile('codex','default')` é `{}`: nem sandbox nem
+ * approvalPolicy viajam. Sem approvalPolicy explícita vale o default de
+ * config, e o config dir de um seat não define `approval_policy` — ou seja, o
+ * default embutido do binário, que é `on-request`. Nesse regime o 0.147 pede
+ * aprovação de CADA chamada de tool MCP por este request server→cliente:
+ *
+ *   { serverName:"synkora", mode:"form", threadId, turnId,
+ *     _meta:{ codex_approval_kind:"mcp_tool_call", persist:["session","always"],
+ *             tool_description, tool_params, tool_params_display },
+ *     message:'Allow the synkora MCP server to run tool "list_seats"?',
+ *     requestedSchema:{ type:"object", properties:{} } }
+ *
+ * A recusa genérica que existia aqui respondia `{decision:'decline'}` e o
+ * app-server derrubava a chamada com "user rejected MCP tool call" — o chat
+ * do dono ficava sem `list_seats` e o modelo passava a CHUTAR conta. As
+ * sondas da onda 2 nunca viram isto porque rodaram com `approvalPolicy:
+ * 'never'`, e o `~/.codex` desta máquina também tem `approval_policy =
+ * "never"` gravado: o regime do bug só aparece com um config dir de seat.
+ *
+ * A REGRA, na doutrina do dono (a delegação é o caminho sancionado, controle
+ * total, zero burocracia): aprovar a NOSSA PRÓPRIA ferramenta não é decisão
+ * do dono — é encanamento. Então:
+ *
+ *  - servidor nosso + formulário que não pede NADA (o caso da aprovação) →
+ *    `accept` em silêncio, sem card e sem aviso;
+ *  - servidor nosso + campo com `default` → responde o default declarado;
+ *  - servidor nosso + campo obrigatório SEM default → recusa: inventar dado
+ *    em nome do dono seria fabricar resposta;
+ *  - modo `url` (reautenticação) ou servidor DESCONHECIDO → recusa, com a
+ *    mensagem de sempre. Um servidor de terceiro pedindo dados nunca é
+ *    respondido às escondidas.
+ *
+ * Pura e exportada de propósito: é a regra, e ela é testada sem processo.
+ */
+export function codexElicitationVerdict(p: Record<string, unknown>): CodexElicitationVerdict {
+  if (p['serverName'] !== CODEX_SYNKORA_MCP_SERVER_NAME) return { kind: 'refuse' }
+  // `openai/form` traz schema opaco e `url` não tem o que responder daqui.
+  if (p['mode'] !== 'form') return { kind: 'refuse' }
+  const schema = (p['requestedSchema'] ?? {}) as {
+    properties?: Record<string, { default?: unknown } | undefined>
+    required?: unknown
+  }
+  const declared = Array.isArray(schema.required) ? schema.required : []
+  const required = new Set(declared.filter((key): key is string => typeof key === 'string'))
+  const content: Record<string, unknown> = {}
+  for (const [key, field] of Object.entries(schema.properties ?? {})) {
+    const fallback = field?.default
+    if (fallback !== undefined && fallback !== null) {
+      content[key] = fallback
+      continue
+    }
+    if (required.has(key)) return { kind: 'refuse' }
+  }
+  return { kind: 'accept', content }
+}
+
 /** Opções do painel codex: as de sempre mais a cerca acima, que só existe deste
  *  lado (no claude a mesma ordem do dono vira `--disallowedTools`, por
  *  `extraArgs`). Default DESLIGADO — quem decide é a costura do spawn: chat de
@@ -1680,6 +1760,23 @@ export class CodexSession {
         reason: typeof p['reason'] === 'string' ? firstLines(p['reason'], 500) : undefined,
         canAlways: true
       })
+      return
+    }
+    if (method === 'mcpServer/elicitation/request') {
+      // Ver `codexElicitationVerdict`: com approvalPolicy != never, TODA
+      // chamada de tool MCP passa por aqui. A nossa é pré-sancionada e é
+      // aceita SEM RUÍDO — o recibo já existe no fio, no par tool/tool-result
+      // da própria chamada. O resto cai na recusa de sempre, logo abaixo.
+      const verdict = codexElicitationVerdict(p)
+      if (verdict.kind === 'accept') {
+        this.respond(id, { action: 'accept', content: verdict.content })
+        return
+      }
+      this.emit({ type: 'limit', text: `pedido não suportado do codex negado: ${method}` })
+      // `action` é o campo do McpServerElicitationRequestResponse; o
+      // `{decision:...}` genérico chega como resposta ilegível e o app-server
+      // trata como recusa por acidente. Recusar de propósito é melhor.
+      this.respond(id, { action: 'decline' })
       return
     }
     // Pedido que a UI não suporta: nega para o turno seguir.
