@@ -105,8 +105,27 @@ verdade e achou 5 bugs/pedidos; 6 commits e8f5862 + 2fe59cb..5cb29b6):
    debounce 2,5s) + poll 15s só à vista + reloadToken; histórico só re-lê
    com fingerprint novo (não fecha o commit expandido do dono).
 
-PENDENTE DA ETAPA: re-validação visual do dono (frota + cronômetro + rail
-vivo + wake no fim). PRÓXIMO DO ROADMAP: 3º RightDock → 4º browser embutido.
+RODADAS 5-6 EM ABERTO (18/08 noite — 3ª leva de achados do dono; DESIGN
+FECHADO em DESIGN_SUBAGENTES_SEM_ABA_2026-08-18.md, seções Rodada 5 no
+prompt do workflow wf_c0ac9e3d-e3d e R6.1-R6.6 no doc; NADA implementado
+ainda — TRÊS lançamentos de agente morreram no 529 da Anthropic, janela de
+sobrecarga real da noite):
+- R5: entrega SEMPRE em arquivo (.synkora/helpers/<id>.md escrito pelo
+  harness) + aviso por helper NA HORA via carona nos resultados das tools
+  (o agente disse "nenhum terminou" com 2 prontos, cego no meio do turno).
+- R6 = O CICLO REDONDO (ordem do dono: "não faz remendo, faz planejamento"):
+  estado interrupted + persistência gui-helpers.json + helper_resume/
+  descarte + ■ atômico (turno+frota+wakes — caso real: o despertador
+  re-acordou o pane que o dono tinha calado) + escalonador de spawn 2s
+  (spec literal dele; a rajada de 5 spawns simultâneos é a causa dos 529
+  dos helpers) + auto-retry transitório + "enviar agora" no rascunho da
+  fila. Ondas R6-A/B/C no doc.
+- VALIDADO AO VIVO nesta leva: pino respeitado ("preservarei exatamente o
+  pino do painel"), cronômetro contando, wake em produção (bolha [synkora]
+  com placar 3/5 e ids), retry manual do agente em outra conta.
+
+PENDENTE DA ETAPA: implementar R5+R6 quando a sobrecarga passar →
+re-validação do dono. PRÓXIMO DO ROADMAP: 3º RightDock → 4º browser.
 
 ## ⚡ PRÓXIMA SESSÃO — COMEÇAR AQUI, NESTA ORDEM (SUPERADO pela sessão B acima; itens 2º-4º do roadmap seguem valendo)
 
