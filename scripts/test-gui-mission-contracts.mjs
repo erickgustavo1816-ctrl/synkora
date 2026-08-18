@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   GUI_MISSION_ROLES,
@@ -99,9 +100,12 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // ("cada ajudante que terminar, avisar o orquestrador... pra não poluir o
     // chat"). E de 3200 para 3700 na mesma noite (rodada 6, o CICLO REDONDO:
     // "não faz só um remendo, faz um planejamento por trás"), pelas duas linhas
-    // de parar/retomar/descartar — o dev mede 3636. O teto continua sendo contra
+    // de parar/retomar/descartar — o dev mede 3636. E de 3700 para 4200 na
+    // rodada 7 (2026-08-18, validação ao vivo — achado 3), pelas duas linhas do
+    // INSUMO ("o arquivo não tem que ficar lá, a não ser que seja uma
+    // implementação"): o dev mede 4110. O teto continua sendo contra
     // CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
-    assert.ok(contract.length < 3700, `${role}: contrato virou constituição`)
+    assert.ok(contract.length < 4200, `${role}: contrato virou constituição`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -136,6 +140,35 @@ function delegationSection(contract) {
   return at < 0 ? undefined : contract.slice(at)
 }
 
+/**
+ * A PERSONA DO AJUDANTE — o outro lado da mesma régua, e ela mora no
+ * `guiDelegationWiring` (nasce junto dos adaptadores dos dois CLIs). Importar
+ * aquele módulo aqui puxaria maestro/codex/catálogo/seats para dentro de uma
+ * suíte que roda em `--experimental-strip-types`, então o teste lê a FONTE,
+ * ancorado no nome do export: se ele mudar de casa, este assert cai primeiro.
+ *
+ * Devolve o TEXTO que o ajudante recebe (as linhas do array coladas como o
+ * `.join('\n')` faz), nunca a sintaxe do TypeScript.
+ */
+function helperPersona() {
+  const source = readFileSync(
+    new URL('../src/main/guiDelegationWiring.ts', import.meta.url),
+    'utf8'
+  )
+  const block = source.match(/export const GUI_HELPER_PERSONA = \[[\s\S]*?\n\]\.join\('\\n'\)/u)
+  assert.ok(block, 'GUI_HELPER_PERSONA saiu de guiDelegationWiring.ts — o teste perdeu o alvo')
+  const lines = [...block[0].matchAll(/^\s*'((?:[^'\\]|\\.)*)',?\s*$/gmu)].map((match) => match[1])
+  assert.ok(lines.length > 5, 'a persona não foi lida linha a linha')
+  return lines.join('\n')
+}
+
+/** UMA regra da persona (com as linhas de continuação dela), pelo começo do
+ *  texto. Sem este recorte, um `assert.match` no bloco inteiro passaria por
+ *  causa da regra VIZINHA — e as vizinhas já dizem "NEVER" e ".synkora/". */
+function personaRule(persona, head) {
+  return persona.split('\n- ').find((rule) => rule.startsWith(head))
+}
+
 test('a ordem da delegação viaja idêntica nos três papéis', () => {
   const sections = GUI_MISSION_ROLES.map((role) => {
     const section = delegationSection(guiMissionSystemPrompt(role))
@@ -155,10 +188,12 @@ test('a ordem da delegação viaja idêntica nos três papéis', () => {
   // de 1400 para 1800 UMA vez (2026-08-18, 2º teste ao vivo) pela régua do PINO
   // e de 1800 para 2000 na noite do mesmo dia, pela linha da ENTREGA EM ARQUIVO
   // + correio. E de 2000 para 2500 na mesma noite (rodada 6, o CICLO REDONDO),
-  // pelas DUAS linhas de parar/retomar/descartar: a seção mede 2448 — os dois
-  // tetos andam juntos, sempre. Discurso continua sem espaço aqui.
+  // pelas DUAS linhas de parar/retomar/descartar: a seção media 2448 — os dois
+  // tetos andam juntos, sempre. E de 2500 para 3000 na rodada 7 (validação ao
+  // vivo, achado 3), pelas duas linhas do INSUMO: a seção mede 2922. Discurso
+  // continua sem espaço aqui.
   assert.ok(sections[0].length > 600, 'a ordem ficou vaga demais')
-  assert.ok(sections[0].length < 2500, 'a ordem permanente virou constituição')
+  assert.ok(sections[0].length < 3000, 'a ordem permanente virou constituição')
 })
 
 // A ENTREGA VEM SOZINHA, E VEM EM ARQUIVO (2026-08-18, 5º teste ao vivo).
@@ -178,6 +213,50 @@ test('a ordem diz que a entrega chega sozinha e mora em ARQUIVO', () => {
     assert.match(section, /\[synkora\] ajudantes:/, `${role}: sem a marca do correio`)
     assert.match(section, /tool result/i, `${role}: sem dizer POR ONDE a novidade chega`)
   }
+})
+
+// A ENTREGA DE PESQUISA É INSUMO, NUNCA PRODUTO (rodada 7, achado 3 da
+// validação ao vivo do dono).
+//
+// Caso real: numa missão cuja entrega pedida era uma RESPOSTA NO CHAT, o
+// delegador claude copiou os SEIS relatórios dos ajudantes para `reports/` e
+// commitou (43d3270). Palavras dele: "o arquivo não tem que ficar lá, a não ser
+// que seja uma implementação". São dois lados da mesma régua: o delegador (aqui)
+// e o ajudante (GUI_HELPER_PERSONA, no guiDelegationWiring).
+
+test('a entrega do ajudante é INSUMO do delegador: nunca commit, nunca cópia no repo', () => {
+  for (const role of GUI_MISSION_ROLES) {
+    const section = delegationSection(guiMissionSystemPrompt(role))
+    assert.match(section, /RAW MATERIAL/i, `${role}: a entrega ainda pode passar por produto`)
+    // a resposta ao dono é a do DELEGADOR, e ela vai no CHAT
+    assert.match(section, /in (?:this|the) chat/i, `${role}: sem dizer ONDE o dono é respondido`)
+    assert.match(section, /never commit/i, `${role}: nada impede o commit do relatório`)
+    assert.match(section, /repositor/i, `${role}: copiar para o repo continua livre`)
+    // TODA guarda nasce com rota de saída sancionada (CLAUDE.md): o pedido
+    // explícito do dono é a dele.
+    assert.match(
+      section,
+      /unless he|unless the owner/i,
+      `${role}: a guarda ficou sem rota de saída — o dono não pode nem pedir o arquivo`
+    )
+    // e a faxina: o que a frota deixou para trás e não é a mudança pedida sai
+    assert.match(section, /delete/i, `${role}: a frota pode deixar lixo versionado para trás`)
+  }
+})
+
+test('a persona do AJUDANTE manda pesquisa para .synkora, nunca para pasta versionada', () => {
+  const rule = personaRule(helperPersona(), 'RESEARCH AND CONSULTATION')
+  assert.ok(rule, 'a persona do ajudante não diz onde a pesquisa dele pousa')
+  assert.match(rule, /\.synkora\//u, 'sem o endereço git-invisível da pesquisa')
+  assert.match(rule, /NEVER/u, 'a proibição virou sugestão')
+  assert.match(rule, /versioned/iu, 'a palavra que separa os dois destinos sumiu')
+  // A régua tem o LADO POSITIVO: arquivo versionado quando a TAREFA é mudar
+  // código — sem ele o ajudante de implementação não saberia onde escrever.
+  assert.match(
+    rule,
+    /when the task/iu,
+    'sem a exceção, o ajudante que muda código fica sem lugar para escrever'
+  )
 })
 
 // O CICLO REDONDO (2026-08-18, noite — rodada 6 do design, R6.1/R6.2/R6.3).

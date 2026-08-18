@@ -123,6 +123,18 @@ export function guiMissionRoleOf(paneId: string): GuiMissionRole | undefined {
  * tool e que a entrega mora num arquivo; o mecanismo é do `guiDelegationWiring`
  * (correio + gravação), e não depende de o agente ter lido esta linha.
  *
+ * A LINHA DO INSUMO (rodada 7, achado 3 da validação ao vivo) nasceu de um
+ * commit real: numa missão cuja entrega pedida era uma RESPOSTA NO CHAT, o
+ * delegador copiou os SEIS relatórios dos ajudantes para `reports/` e commitou
+ * (43d3270). Palavras do dono: "o arquivo não tem que ficar lá, a não ser que
+ * seja uma implementação". Entrega de ajudante é INSUMO: ela nasce em
+ * `.synkora/` (git-invisível, e morre com o worktree), quem responde ao dono é o
+ * delegador NO CHAT, e o que a frota deixou para trás sai antes de encerrar. A
+ * saída sancionada é o pedido explícito dele — sem ela a regra proibiria o dono
+ * de pedir o próprio arquivo. O outro lado da mesma régua mora na persona do
+ * ajudante (`GUI_HELPER_PERSONA`, no guiDelegationWiring): pesquisa escreve em
+ * `.synkora/`, nunca em pasta versionada.
+ *
  * AS DUAS LINHAS DO CICLO (rodada 6 do design, R6.1-R6.3) são a metade que o
  * modelo lê de uma mecânica que já existe no motor: PARAR DEIXOU DE SER PERDER.
  * O ■ do dono e o fechamento do app INTERROMPEM a frota preservando registro,
@@ -143,6 +155,8 @@ const DELEGATION_STANDING_ORDER = `DELEGATION — STANDING ORDER FROM THE OWNER:
 - You leave his pin only when HE names another model in this chat, or when no seat of that CLI is logged — and then you SAY it here. Quietly opening something else is inventing an order he never gave.
 - You OWN your helpers: watch them with helpers_status, steer a live one with helper_send, collect with helper_result (it long-polls; calling it again is cheap), discard one with helper_cancel — in a claude chat they appear as mcp__synkora__*.
 - Helpers deliver in FILES: the moment one ends, a "[synkora] ajudantes:" block rides your next tool result naming it and its file (.synkora/helpers/<id>.md). Open the file — never ask a helper to paste its work again.
+- THAT DELIVERY IS RAW MATERIAL FOR YOU, never the product: read it, use it, and the answer the owner gets is YOURS, written here in the chat. NEVER commit a helper report and never copy one into the repository, unless he explicitly asked for that file.
+- Before you finish, delete whatever the fleet left behind that is not the change he asked for: .synkora/ is invisible to git and dies with the worktree, but a report sitting in the repo is cleanup he has to do himself.
 - STOPPING PRESERVES: the owner's ■ stop button, and closing the app, INTERRUPT your fleet instead of discarding it — those helpers wait in his sidebar as "interrompido", their conversation and partial work intact.
 - helper_resume puts one back to work in the SAME conversation, same pin, same account: when he says "volta com os subagentes", that is one resume per interrupted helper. helper_cancel is the opposite verb — it DISCARDS, deleting that helper's delivery file.
 - Before a large fleet, read list_seats and spread it across the accounts with the most limit left — accounts of the pinned model's CLI: switching CLI switches the model, and that is substituting, not spreading.

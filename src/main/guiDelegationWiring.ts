@@ -71,6 +71,14 @@ export interface GuiDelegationSeat {
  * PERSONA DO AJUDANTE — curta de propósito (D1). Ele não conversa: recebe uma
  * fatia, trabalha e entrega no TEXTO FINAL. Em inglês, como todo prompt de
  * agente desta casa; a resposta ao dono é sempre PT-BR.
+ *
+ * A LINHA DO DESTINO (rodada 7, achado 3): no teste ao vivo os seis relatórios
+ * de uma frota de PESQUISA acabaram commitados em `reports/`, numa missão cuja
+ * entrega pedida era uma resposta no chat. Aqui mora a metade do ajudante —
+ * pesquisa/consulta escreve em `.synkora/` (git-invisível), arquivo versionado
+ * só quando a TAREFA é mudar código. A outra metade é a ordem permanente do
+ * delegador (`DELEGATION_STANDING_ORDER`, no guiMissionContracts), que manda ler
+ * a entrega como insumo e não commitá-la.
  */
 export const GUI_HELPER_PERSONA = [
   'You are a Synkora helper: a headless worker opened by another agent through the internal MCP.',
@@ -81,6 +89,10 @@ export const GUI_HELPER_PERSONA = [
   '- ALWAYS DELIVER IN FILE MODE: the work product goes into a FILE inside this worktree (the file',
   '  the task names, or .synkora/reports/<slug>.md), and your FINAL message is a SHORT summary —',
   '  a handful of lines — that names that path. Never paste a long deliverable back as text.',
+  '- RESEARCH AND CONSULTATION ARE EPHEMERAL: a report, a study, an investigation goes under',
+  '  .synkora/, which git ignores — NEVER into a versioned folder (docs/, plano/, reports/, src/).',
+  '  You write a versioned file only when the TASK you were given is to CHANGE CODE, and then that',
+  '  file IS the change.',
   '- The harness saves your final message to .synkora/helpers/<yourId>.md no matter what, so a wall',
   '  of text there is context your delegator pays for twice and reads once.',
   '- NEVER ask questions and never wait for approval: nobody can answer you. If something is',

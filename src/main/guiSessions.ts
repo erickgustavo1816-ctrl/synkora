@@ -1842,6 +1842,61 @@ export class GuiSessionRegistry {
     return { ok: true }
   }
 
+  /**
+   * ENTREGA EM VOO NESTE PANE — a recusa TRANSITÓRIA, escrita uma vez só.
+   *
+   * Duas coisas ocupam a linha: a mensagem da FILA saindo (que pode até recriar
+   * a sessão, se o modo de permissão dela for outro) e a TROCA DE EXECUTOR
+   * esperando o ACK do backend. Enfiar um envio no meio de qualquer uma delas é
+   * mandar texto para uma sessão que está sendo trocada — e o `send` recusa
+   * isso desde sempre. O despertador (`wakeDelegator`) precisa da MESMA leitura:
+   * ele deixou de passar pelo `send` na rodada 7 e perderia as duas guardas.
+   *
+   * Sessão MORTA não é "ocupada": quem chama tem uma recusa mais verdadeira para
+   * dar ("a sessão deste pane encerrou"), e é ela que o dono lê no composer.
+   */
+  private paneBusyReason(
+    paneId: string,
+    entry: GuiPaneEntry | undefined,
+    queuedToken?: symbol
+  ): string | undefined {
+    const queuedLock = this.queuedDeliveries.get(paneId)
+    if (queuedLock && queuedLock.token !== queuedToken) {
+      return 'aguarde a mensagem da fila terminar de sair'
+    }
+    if (entry?.session.alive && this.executorChanges.has(entry)) {
+      return 'aguarde a troca de modelo ou effort terminar'
+    }
+    return undefined
+  }
+
+  /**
+   * O CAMINHO DOS BASTIDORES: texto para o MODELO, sem bolha de dono.
+   *
+   * `turn-started` + `session.send`, e mais nada: nenhum `user-message`, nenhum
+   * messageId, nenhuma linha no fio. Ele nasceu no recibo de decisão de plano
+   * (`announce`) e a rodada 7 mudou o despertador de ajudantes para cá — os dois
+   * são o APP falando com o agente, e app não fala na voz do dono.
+   *
+   * A validação mora AQUI, e não em cada chamador: o `guiPromptProblem` é o
+   * mesmo teto que o `send` mede, então nenhum caminho de entrega pode mandar ao
+   * backend um texto que o outro recusaria.
+   *
+   * O `pendingBriefing` NÃO é consumido de propósito: aviso do app não é a
+   * primeira mensagem do dono, e queimar o briefing da missão num texto de
+   * máquina deixaria a primeira pergunta dele chegar sem contrato nenhum.
+   */
+  private deliverBackstage(paneId: string, text: string, label: string): GuiResult {
+    const entry = this.panes.get(paneId)
+    if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
+    if (!entry.session.alive) return { ok: false, error: 'a sessão deste pane encerrou' }
+    const problem = guiPromptProblem(text, label, true)
+    if (problem) return { ok: false, error: problem }
+    entry.sink({ type: 'turn-started' })
+    entry.session.send(text)
+    return { ok: true }
+  }
+
   send(
     paneId: string,
     text: string,
@@ -1856,15 +1911,10 @@ export class GuiSessionRegistry {
       if (idProblem) return { ok: false, error: idProblem }
     }
     const entry = this.panes.get(paneId)
-    const queuedLock = this.queuedDeliveries.get(paneId)
-    if (queuedLock && queuedLock.token !== queuedToken) {
-      return { ok: false, error: 'aguarde a mensagem da fila terminar de sair' }
-    }
+    const busy = this.paneBusyReason(paneId, entry, queuedToken)
+    if (busy) return { ok: false, error: busy }
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
     if (!entry.session.alive) return { ok: false, error: 'a sessão deste pane encerrou' }
-    if (this.executorChanges.has(entry)) {
-      return { ok: false, error: 'aguarde a troca de modelo ou effort terminar' }
-    }
     const messageId = clientMessageId ?? `main-${++this.nextMessageId}`
     const messageIds = entry.messageIds ?? (entry.messageIds = new Set<string>())
     if (messageIds.has(messageId)) return { ok: true }
@@ -1945,19 +1995,13 @@ export class GuiSessionRegistry {
    * `turn-started` continua sendo emitido porque um turno REAL começa — sem
    * ele o composer ficaria ocioso enquanto o agente já está trabalhando.
    *
-   * O `pendingBriefing` não é consumido de propósito: recibo não é a primeira
-   * mensagem do dono. Na prática ele nem alcança um pane que ainda não falou —
-   * uma proposta de plano exige o agente ter conversado antes.
+   * O recibo NÃO consulta o `paneBusyReason`: ele é disparado pelo clique do
+   * dono e não tem quem o repita (o `ipc/gui` o entrega e segue), então recusar
+   * numa janela transitória seria perdê-lo. O despertador, que tem relógio para
+   * tentar de novo, é quem paga esse pedágio.
    */
   announce(paneId: string, text: string): GuiResult {
-    const entry = this.panes.get(paneId)
-    if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
-    if (!entry.session.alive) return { ok: false, error: 'a sessão deste pane encerrou' }
-    const problem = guiPromptProblem(text, 'recibo', true)
-    if (problem) return { ok: false, error: problem }
-    entry.sink({ type: 'turn-started' })
-    entry.session.send(text)
-    return { ok: true }
+    return this.deliverBackstage(paneId, text, 'recibo')
   }
 
   /**
@@ -2463,16 +2507,16 @@ export class GuiSessionRegistry {
    * o dono ficou olhando uma conversa parada com o trabalho pronto do outro
    * lado. Um agente parado não tem como se acordar; quem acorda é o app.
    *
-   * PELO `send`, e não pelo `announce`: este aviso PRECISA ser visível no fio.
-   * O recibo do plano pode ser invisível porque o redutor já escreve a nota
-   * "plano criado: <título>" na tela; aqui não há nota nenhuma, e um turno que
-   * nasce do nada seria o app movendo a conversa às escondidas. É o mesmo
-   * idioma da receita de conflito de integração (`deliverToGuiPane`), com o
-   * mesmo prefixo `[synkora]` dizendo de quem é a voz.
+   * PELOS BASTIDORES (rodada 7, A1), e não mais pelo `send`. Ele nascia como
+   * `user-message` — bolha "VOCÊ" no fio com texto de máquina —, e o dono viu
+   * isso no teste ao vivo de 18/08: "avisar por trás dos panos, sem ser via
+   * chat". O estímulo não precisa de bolha porque o que ele produz É visível: o
+   * agente abre o turno e conta ao dono o que voltou, e a lateral já mostrou os
+   * cards encerrando. Mesmo caminho do recibo de plano — `deliverBackstage`.
    *
-   * (O `pendingBriefing` que o `send` consome não corre risco: para haver
-   * ajudante encerrado o agente já teve pelo menos um turno, e o briefing sai
-   * colado na PRIMEIRA mensagem do dono, muito antes disto.)
+   * As guardas de trânsito continuam todas de pé: turno vivo nunca se
+   * interrompe, e a mensagem da fila / a troca de executor em voo seguram o
+   * aviso pelo `paneBusyReason` (o que o `send` fazia por dentro).
    *
    * `true` = entregue ou definitivamente descartado; `false` = recusa
    * transitória, o correlacionador tenta de novo na batida seguinte.
@@ -2483,7 +2527,10 @@ export class GuiSessionRegistry {
     // impede o relógio de bater para sempre contra um pane morto.
     if (!entry || !entry.session.alive) return true
     if (entry.session.turnActive) return false
-    const sent = this.send(paneId, wake.text)
+    const busy = this.paneBusyReason(paneId, entry)
+    const sent: GuiResult = busy
+      ? { ok: false, error: busy }
+      : this.deliverBackstage(paneId, wake.text, 'aviso dos ajudantes')
     this.deps.record?.(
       sent.ok ? 'gui-helper-wake' : 'gui-helper-wake-held',
       { paneId, projectId: entry.spawn.projectId },
@@ -2492,6 +2539,11 @@ export class GuiSessionRegistry {
         done: wake.done,
         failed: wake.failed,
         stillWorking: wake.stillWorking,
+        // QUAL caminho de entrega rodou. Sem esta marca, um diário de antes da
+        // rodada 7 (quando o aviso virava bolha do dono) e um de depois ficam
+        // idênticos — e é justamente isso que uma sessão futura vai querer
+        // distinguir ao ler um wake antigo.
+        silent: true,
         ...(sent.ok ? {} : { err: sent.error })
       }
     )

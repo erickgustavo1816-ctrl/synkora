@@ -408,8 +408,9 @@ export const GUI_HELPER_INBOX_TAG = '[synkora] ajudantes:'
  * avisar o orquestrador que terminou e entregar via MCP, pra não poluir o chat".
  *
  * Daí DOIS caminhos de entrega para o MESMO fato: o despertador (conversa
- * ociosa, mensagem visível no fio) e a CARONA no resultado da próxima tool
- * (dentro do turno, sem interromper nada). Este pote é o que os mantém
+ * ociosa, texto direto ao modelo — nos bastidores desde a rodada 7) e a CARONA
+ * no resultado da próxima tool (dentro do turno, sem interromper nada). Este
+ * pote é o que os mantém
  * coerentes: quem entrega primeiro CONSOME, então o dono nunca lê a mesma
  * novidade duas vezes nem fica sem ela. É o padrão do correio F6
  * (CLAUDE.md F6.10: "[synkora inbox]" nos resultados de tool), agora com o
@@ -513,15 +514,17 @@ export function guiHelperInboxBlock(
 }
 
 /**
- * O TEXTO QUE O HARNESS FALA NA CONVERSA quando a frota encerra e o agente já
- * encerrou o turno (o bug real de 18/08: cinco ajudantes entregaram e o chat
- * ficou mudo para sempre, porque ninguém tinha como saber).
+ * O TEXTO QUE O HARNESS DIZ AO AGENTE quando a frota encerra e ele já encerrou
+ * o turno (o bug real de 18/08: cinco ajudantes entregaram e o chat ficou mudo
+ * para sempre, porque ninguém tinha como saber).
  *
  * Curto de propósito, e com TRÊS coisas obrigatórias: quem encerrou (apelido +
  * modelo, o mesmo vocabulário da lateral), o placar honesto (falha também se
  * conta ao dono) e o MOVIMENTO — `helper_result` com os ids na mão. O prefixo
- * `[synkora]` é o mesmo da receita de conflito: o dono lê o fio e sabe de cara
- * que quem falou foi o app, não ele.
+ * `[synkora]` continua sendo o mesmo da receita de conflito, e agora ele fala
+ * com UM leitor só: desde a rodada 7 o aviso vai ao modelo pelos bastidores
+ * (nada no fio), e é ele quem precisa saber de cara que quem falou foi o app —
+ * o dono lê a REAÇÃO, que é o turno que o agente abre em seguida.
  */
 export function guiHelperWakeMessage(
   entries: readonly GuiHelperWakeEntry[],
@@ -642,9 +645,10 @@ export interface GuiHelperCardDeps {
   /** `true` = o CLI está no meio de um turno neste pane. */
   turnActive?(paneId: string): boolean
   /**
-   * ENTREGA O DESPERTADOR na conversa do delegador — visível no fio E abrindo
-   * turno (é o registro de sessões quem sabe fazer isso; este módulo nunca fala
-   * com backend).
+   * ENTREGA O DESPERTADOR ao delegador — abrindo turno, e pelos BASTIDORES
+   * (rodada 7: o texto vai ao MODELO sem virar bolha do dono no fio). É o
+   * registro de sessões quem sabe fazer isso; este módulo nunca fala com
+   * backend, e por isso nunca soube qual dos dois caminhos de entrega é usado.
    *
    * `true` = entregue, a pendência morre. `false` = recusa TRANSITÓRIA (troca
    * de executor em voo, mensagem da fila saindo): o aviso volta para a

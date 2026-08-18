@@ -8,11 +8,11 @@
 // quem está vivo, e o dono ficou olhando uma conversa parada.
 //
 // O que esta suíte prova: quando um ajudante ENCERRA e a conversa do delegador
-// está OCIOSA, o harness ENTREGA um aviso curto na conversa — pelo MESMO idioma
-// de entrega da receita de conflito (`registry.send`: bolha visível no fio +
-// `turn-started` + `session.send`), porque o dono precisa VER o app acordando o
-// agente. Cancelamento não acorda ninguém, o mesmo ajudante nunca acorda duas
-// vezes, e turno em andamento SEGURA o aviso até a conversa aquietar.
+// está OCIOSA, o harness ENTREGA um aviso curto ao MODELO — pelos BASTIDORES
+// (R7 A1: `turn-started` + `session.send`, o caminho do `announce`), porque o
+// estímulo é do app e não pode nascer como bolha do dono no fio. Cancelamento
+// não acorda ninguém, o mesmo ajudante nunca acorda duas vezes, e turno em
+// andamento SEGURA o aviso até a conversa aquietar.
 //
 // Como rodar (o package.json não foi tocado — a linha para registrar está no
 // relatório w4-wake.md):
@@ -380,7 +380,19 @@ function registryHarness(patch = {}) {
   return { gui, paneId, timers, records, sent, state, inbox }
 }
 
-test('o aviso chega ao modelo E fica VISÍVEL no fio do dono', () => {
+// R7 A1 — O WAKE É DO HARNESS, NUNCA DO DONO (achado 1 da validação ao vivo).
+//
+// O que o dono viu no print 1 (chat codex): o despertador entregava pelo `send`,
+// então nascia uma bolha "VOCÊ" no fio com texto de máquina — o app aparecendo
+// como se ELE tivesse digitado "[synkora] o ajudante que você abriu encerrou".
+// Palavras dele: "avisar por trás dos panos, sem ser via chat".
+//
+// O caminho passou a ser o do `announce` (precedente exato: o recibo de decisão
+// de plano): `turn-started` + `session.send`, sem `user-message` e sem
+// messageId. O estímulo não precisa de bolha — a reação do agente é o que o dono
+// vê, e a lateral já mostra os cards encerrando.
+
+test('o aviso chega ao modelo pelos BASTIDORES: o turno abre e nada nasce no fio', () => {
   const { gui, paneId, timers, records, sent } = registryHarness()
   const record = helperRecord()
   gui.beginHelperBatch(paneId)
@@ -391,19 +403,25 @@ test('o aviso chega ao modelo E fica VISÍVEL no fio do dono', () => {
 
   assert.equal(sent.length, 1, 'o texto foi para o modelo — um turno de verdade começa')
   assert.match(sent[0], /helper_result/u)
+  assert.ok(sent[0].includes('h-1'), 'o id é o argumento do helper_result')
 
   const events = gui.state(paneId).events.map(({ evt }) => evt)
-  const bubble = events.find((evt) => evt.type === 'user-message' && evt.text.includes('[synkora]'))
-  assert.ok(bubble, 'o dono VÊ o app acordando o agente (mesmo idioma da receita de conflito)')
-  assert.ok(bubble.text.includes('h-1'))
-  const bubbleAt = events.indexOf(bubble)
-  assert.ok(
-    events.slice(bubbleAt).some((evt) => evt.type === 'turn-started'),
-    'a mensagem ABRE turno, senão o modelo nunca a processa'
+  assert.equal(
+    events.some((evt) => evt.type === 'user-message'),
+    false,
+    'o despertador voltou a nascer como bolha do dono no fio'
   )
   assert.ok(
-    records.some((entry) => entry.event.startsWith('gui-helper-wake')),
-    'a caixa-preta registra o despertar pelo seam de sempre'
+    events.some((evt) => evt.type === 'turn-started'),
+    'sem `turn-started` o composer fica ocioso enquanto o agente já está trabalhando'
+  )
+  const audit = records.find((entry) => entry.event === 'gui-helper-wake')
+  assert.ok(audit, 'a caixa-preta registra o despertar pelo seam de sempre')
+  assert.equal(
+    audit.detail.silent,
+    true,
+    'o diário tem de dizer QUAL caminho de entrega rodou — sem a marca, um wake antigo ' +
+      'e um novo ficam idênticos no histórico'
   )
 })
 
@@ -669,11 +687,86 @@ test('conversa que reabre com ajudante interrompido recebe UM aviso com os dois 
   assert.ok(sent[0].includes('busca'), 'o apelido do card')
   assert.ok(!sent[0].includes('h-2'), 'quem ENTREGOU não entra no aviso de interrompidos')
 
+  // R7 A1: o despertador de boot é O MESMO caminho de entrega do de settle —
+  // dois verbos, um caminho só. Bastidores aqui também.
+  const events = gui.state(paneId).events.map(({ evt }) => evt)
+  assert.equal(
+    events.some((evt) => evt.type === 'user-message'),
+    false,
+    'o aviso de boot nasceu como bolha do dono — o app falando na voz dele'
+  )
+  assert.ok(
+    events.some((evt) => evt.type === 'turn-started'),
+    'o aviso de boot tem de abrir turno como qualquer entrega ao modelo'
+  )
+
   // Uma vez por boot: remontar a mesma conversa (aba, reload da view) não
   // repete o aviso.
   assert.equal(gui.create(spawn).ok, true)
   timers.tick()
   assert.equal(sent.length, 1, 'o aviso de boot saiu de novo numa remontagem')
+})
+
+test('o despertador não queima o briefing da missão — ele continua esperando o dono', () => {
+  // Consequência DIRETA do caminho novo: `announce` não consome o
+  // `pendingBriefing` (recibo não é a primeira mensagem do dono). Pelo `send`, o
+  // aviso de boot saía com o briefing da missão colado na frente e o dono ficava
+  // sem ele na primeira coisa que digitasse.
+  const timers = fakeTimers()
+  const sent = []
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    helperWakeTimer: timers.setTimer,
+    helperInbox: new GuiHelperInbox(),
+    record: () => undefined
+  })
+  gui.spawnSession = () => ({
+    alive: true,
+    turnActive: false,
+    send: (text) => sent.push(text),
+    kill: () => undefined
+  })
+  gui.attachHelpers({
+    interruptPane: () => 0,
+    status: () => [
+      {
+        helperId: 'h-1',
+        cli: 'claude',
+        model: 'opus[1m]',
+        seatId: 'seat-1',
+        state: 'interrupted',
+        startedAt: 0,
+        elapsedMs: 5_000,
+        hasResult: false
+      }
+    ]
+  })
+
+  const paneId = 'gui-dev-abc12345'
+  assert.equal(
+    gui.create({
+      paneId,
+      projectId: 'proj',
+      cli: 'claude',
+      configDir: 'seat-1',
+      cwd: '/tmp',
+      firstPrompt: 'MISSAO: por o despertador nos bastidores'
+    }).ok,
+    true
+  )
+  timers.tick()
+  assert.equal(sent.length, 1)
+  assert.ok(
+    !sent[0].includes('MISSAO:'),
+    'o aviso do harness levou o briefing da missão embora com ele'
+  )
+
+  assert.equal(gui.send(paneId, 'e aí, como estamos?').ok, true)
+  assert.ok(
+    sent[1].includes('MISSAO:'),
+    'o briefing tem de viajar colado na PRIMEIRA mensagem do dono, não no aviso do app'
+  )
 })
 
 test('conversa sem ajudante parado abre calada', () => {
