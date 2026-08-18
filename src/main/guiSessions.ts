@@ -37,7 +37,8 @@ import { GuiAttachmentCapabilityStore } from './guiAttachmentCapabilities'
 import { isPlanDraft, type PlanDraft } from './planDraft'
 import {
   GuiHelperCardCorrelator,
-  guiOrphanHelperCancellations
+  guiOrphanHelperCancellations,
+  type GuiHelperWake
 } from './guiHelperCards'
 import type { GuiHelperChange, GuiHelperDelegator } from './guiHelperSessions'
 
@@ -1311,6 +1312,12 @@ export interface GuiSessionDeps {
    * não existe. Ausência do gancho = ninguém opina e o spawn vai como veio.
    */
   rearmPaneTools?(spawn: GuiPaneSpawn): GuiPaneSpawn['mcp'] | undefined
+  /**
+   * Relógio do DESPERTADOR dos ajudantes (a janela de coalescência do
+   * `guiHelperCards`). Só existe para o teste não esperar 3s de verdade;
+   * ausente, o correlacionador usa `setTimeout` com `unref`.
+   */
+  helperWakeTimer?(ms: number, fn: () => void): () => void
 }
 
 /** Espera do handshake antes de soltar o firstPrompt (waitCaps resolve antes
@@ -1343,7 +1350,15 @@ export class GuiSessionRegistry {
     this.attachmentCapabilities = deps.attachmentCapabilities ?? new GuiAttachmentCapabilityStore()
     this.helperCards = new GuiHelperCardCorrelator({
       emit: (paneId, evt) => this.panes.get(paneId)?.sink(evt),
-      turnActive: (paneId) => this.panes.get(paneId)?.session.turnActive === true
+      // SESSÃO MORTA NÃO TEM TURNO. Sem o `alive`, um processo que caiu com
+      // `turnActive` cravado em `true` prenderia para sempre o despertador (e o
+      // `turn-continuation` do fim de frota) num pane que nunca mais responde.
+      turnActive: (paneId) => {
+        const entry = this.panes.get(paneId)
+        return entry?.session.alive === true && entry.session.turnActive === true
+      },
+      wake: (paneId, wake) => this.wakeDelegator(paneId, wake),
+      ...(deps.helperWakeTimer ? { setTimer: deps.helperWakeTimer } : {})
     })
     const loaded = deps.storeFile
       ? loadJsonStore<GuiSessionsDoc>(deps.storeFile, emptyDoc, isDoc)
@@ -2340,6 +2355,50 @@ export class GuiSessionRegistry {
   /** O motor falou (nasceu / mexeu / encerrou): vira card no anel do delegador. */
   noteHelperChange(change: GuiHelperChange): void {
     this.helperCards.change(change)
+  }
+
+  /**
+   * O DESPERTADOR: a frota encerrou e o delegador tem de saber.
+   *
+   * Caso real do dono (18/08): um chat abriu cinco ajudantes, anunciou "cinco
+   * abertos e trabalhando" e ENCERROU O TURNO. Os cinco entregaram e o chat
+   * ficou mudo — o agente não tinha como saber (nunca chamou `helper_result`) e
+   * o dono ficou olhando uma conversa parada com o trabalho pronto do outro
+   * lado. Um agente parado não tem como se acordar; quem acorda é o app.
+   *
+   * PELO `send`, e não pelo `announce`: este aviso PRECISA ser visível no fio.
+   * O recibo do plano pode ser invisível porque o redutor já escreve a nota
+   * "plano criado: <título>" na tela; aqui não há nota nenhuma, e um turno que
+   * nasce do nada seria o app movendo a conversa às escondidas. É o mesmo
+   * idioma da receita de conflito de integração (`deliverToGuiPane`), com o
+   * mesmo prefixo `[synkora]` dizendo de quem é a voz.
+   *
+   * (O `pendingBriefing` que o `send` consome não corre risco: para haver
+   * ajudante encerrado o agente já teve pelo menos um turno, e o briefing sai
+   * colado na PRIMEIRA mensagem do dono, muito antes disto.)
+   *
+   * `true` = entregue ou definitivamente descartado; `false` = recusa
+   * transitória, o correlacionador tenta de novo na batida seguinte.
+   */
+  private wakeDelegator(paneId: string, wake: GuiHelperWake): boolean {
+    const entry = this.panes.get(paneId)
+    // Sem conversa viva não há quem acordar. Descartar (e não segurar) é o que
+    // impede o relógio de bater para sempre contra um pane morto.
+    if (!entry || !entry.session.alive) return true
+    if (entry.session.turnActive) return false
+    const sent = this.send(paneId, wake.text)
+    this.deps.record?.(
+      sent.ok ? 'gui-helper-wake' : 'gui-helper-wake-held',
+      { paneId, projectId: entry.spawn.projectId },
+      {
+        helpers: wake.helperIds.length,
+        done: wake.done,
+        failed: wake.failed,
+        stillWorking: wake.stillWorking,
+        ...(sent.ok ? {} : { err: sent.error })
+      }
+    )
+    return sent.ok
   }
 
   interrupt(paneId: string): GuiResult {

@@ -73,6 +73,21 @@ export const GUI_HELPER_CARD_ACTIVITY_MAX = 16
  *  chamada `delegate` que nunca virou lote é lixo, não memória. */
 export const GUI_HELPER_PENDING_ENVELOPE_CAP = 8
 
+/**
+ * DESPERTADOR — a janela de coalescência.
+ *
+ * Uma frota que encerra junto (o caso comum: cinco ajudantes soltos no mesmo
+ * turno) tem de virar UMA mensagem, não cinco. O primeiro encerramento abre a
+ * janela e quem cair dentro dela entra no mesmo aviso; re-armar a cada
+ * encerramento seria pior — uma frota escalonada empurraria o aviso para
+ * sempre, que é exatamente o silêncio que este módulo veio matar.
+ */
+export const GUI_HELPER_WAKE_COALESCE_MS = 3_000
+
+/** Teto de LINHAS do aviso. Trinta ajudantes numa mensagem só é despejo de
+ *  contexto; o resto se lê no `helpers_status`, que existe para isso. */
+export const GUI_HELPER_WAKE_LIST_MAX = 20
+
 /** Nomes NATIVOS de delegação — a MESMA âncora do renderer. */
 const NATIVE_DELEGATION_RE = /^(task|agent|delegate|subagent|spawn(?:_?agent)?)$/iu
 /** `mcp__<servidor>__<tool>`: a forma que o claude publica (sonda probe-claude-fence §3). */
@@ -223,6 +238,77 @@ export function guiHelperEnvelopeSettledEvent(
   }
 }
 
+// ————— o despertador (a mensagem) —————
+
+/** Um ajudante que ENCERROU e o delegador ainda não sabe. Cancelado nunca chega
+ *  aqui: ninguém está esperando um trabalho que o próprio app (ou o agente)
+ *  mandou parar. */
+export interface GuiHelperWakeEntry {
+  helperId: string
+  name?: string
+  model: string
+  /** `true` = entregou (`done`); `false` = falhou. */
+  ok: boolean
+}
+
+/** O aviso pronto para ser entregue na conversa do delegador. */
+export interface GuiHelperWake {
+  /** Ids na ORDEM em que encerraram — a mesma ordem das linhas do texto. */
+  helperIds: string[]
+  done: number
+  failed: number
+  /** Ajudantes deste chat que continuam trabalhando (0 = a frota acabou). */
+  stillWorking: number
+  text: string
+}
+
+function plural(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`
+}
+
+/**
+ * O TEXTO QUE O HARNESS FALA NA CONVERSA quando a frota encerra e o agente já
+ * encerrou o turno (o bug real de 18/08: cinco ajudantes entregaram e o chat
+ * ficou mudo para sempre, porque ninguém tinha como saber).
+ *
+ * Curto de propósito, e com TRÊS coisas obrigatórias: quem encerrou (apelido +
+ * modelo, o mesmo vocabulário da lateral), o placar honesto (falha também se
+ * conta ao dono) e o MOVIMENTO — `helper_result` com os ids na mão. O prefixo
+ * `[synkora]` é o mesmo da receita de conflito: o dono lê o fio e sabe de cara
+ * que quem falou foi o app, não ele.
+ */
+export function guiHelperWakeMessage(
+  entries: readonly GuiHelperWakeEntry[],
+  stillWorking = 0
+): string {
+  const done = entries.filter((entry) => entry.ok).length
+  const failed = entries.length - done
+  const head =
+    entries.length === 1
+      ? '[synkora] o ajudante que você abriu encerrou.'
+      : `[synkora] ${entries.length} ajudantes que você abriu encerraram: ` +
+        `${plural(done, 'concluído', 'concluídos')}, ${plural(failed, 'falhou', 'falharam')}.`
+  const shown = entries.slice(0, GUI_HELPER_WAKE_LIST_MAX)
+  const lines = shown.map((entry) => {
+    const label = entry.name ? `${entry.name} · ` : ''
+    return `· ${label}${entry.model} · ${entry.ok ? 'concluído' : 'falhou'} · id ${entry.helperId}`
+  })
+  if (entries.length > shown.length) {
+    lines.push(`· … e mais ${entries.length - shown.length} (a lista inteira está no helpers_status)`)
+  }
+  const tail = [
+    entries.length === 1
+      ? 'Colha a entrega com helper_result e conte ao dono o que voltou.'
+      : 'Colha cada um com helper_result (um id por chamada) e conte ao dono o que voltou.'
+  ]
+  if (stillWorking > 0) {
+    tail.push(
+      `Outros ${stillWorking} ainda estão trabalhando — o app te acorda de novo quando encerrarem.`
+    )
+  }
+  return [head, ...lines, tail.join(' ')].join('\n')
+}
+
 /**
  * BOOT/REMONTAGEM: cards de ajudante (e envelopes) que ficaram ABERTOS numa
  * fotografia de outro processo. Ajudante não sobrevive a restart (D1, MVP
@@ -294,6 +380,19 @@ export interface GuiHelperCardDeps {
   emit(paneId: string, evt: SessionEvent): void
   /** `true` = o CLI está no meio de um turno neste pane. */
   turnActive?(paneId: string): boolean
+  /**
+   * ENTREGA O DESPERTADOR na conversa do delegador — visível no fio E abrindo
+   * turno (é o registro de sessões quem sabe fazer isso; este módulo nunca fala
+   * com backend).
+   *
+   * `true` = entregue, a pendência morre. `false` = recusa TRANSITÓRIA (troca
+   * de executor em voo, mensagem da fila saindo): o aviso volta para a
+   * pendência e a próxima batida tenta de novo. Ausente = ninguém para acordar
+   * e a pendência é descartada em vez de crescer sem fim.
+   */
+  wake?(paneId: string, wake: GuiHelperWake): boolean
+  /** Relógio da coalescência. Injetável para o teste não esperar 3s de verdade. */
+  setTimer?(ms: number, fn: () => void): () => void
   now?(): number
   newId?(): string
 }
@@ -317,17 +416,30 @@ interface HelperPaneState {
   batches: Map<string, HelperBatch>
   batchOfHelper: Map<string, string>
   activity: Map<string, { at: number; count: number }>
+  /** Ajudantes que ENCERRARAM e o delegador ainda não foi avisado. */
+  pendingWake: GuiHelperWakeEntry[]
+  /** Cancelador do relógio de coalescência (ausente = nenhum armado). */
+  cancelWake?: () => void
 }
 
 export class GuiHelperCardCorrelator {
   private readonly deps: GuiHelperCardDeps
   private readonly panes = new Map<string, HelperPaneState>()
   private readonly now: () => number
+  private readonly setTimer: (ms: number, fn: () => void) => () => void
   private syntheticSeq = 0
 
   constructor(deps: GuiHelperCardDeps) {
     this.deps = deps
     this.now = deps.now ?? Date.now
+    this.setTimer =
+      deps.setTimer ??
+      ((ms, fn) => {
+        const handle = setTimeout(fn, ms)
+        // Aviso pendente nunca segura o encerramento do app.
+        handle.unref?.()
+        return () => clearTimeout(handle)
+      })
   }
 
   /**
@@ -438,8 +550,11 @@ export class GuiHelperCardCorrelator {
     else this.settled(change.record)
   }
 
-  /** O pane sumiu: o estado de correlação morre com ele (o anel é a memória). */
+  /** O pane sumiu: o estado de correlação morre com ele (o anel é a memória) —
+   *  e com ele o aviso pendente. Acordar uma conversa que está sendo desmontada
+   *  seria barulho para ninguém. */
   forgetPane(paneId: string): void {
+    this.panes.get(paneId)?.cancelWake?.()
     this.panes.delete(paneId)
   }
 
@@ -450,7 +565,8 @@ export class GuiHelperCardCorrelator {
         pendingEnvelopes: [],
         batches: new Map(),
         batchOfHelper: new Map(),
-        activity: new Map()
+        activity: new Map(),
+        pendingWake: []
       }
       this.panes.set(paneId, state)
     }
@@ -496,8 +612,88 @@ export class GuiHelperCardCorrelator {
     if (!state || !batch) return
     if (!batch.live.delete(record.helperId)) return
     this.deps.emit(record.delegatorPaneId, guiHelperSettledEvent(record))
+    // O DESPERTADOR (a correção de 18/08). O card fechar na lateral não conta
+    // nada ao AGENTE: se ele já encerrou o turno, ninguém mais vai chamar
+    // `helper_result` e a conversa morre em silêncio com a entrega pronta na
+    // mão do harness. `cancelled` fica DE FORA: pane desmontado, quit e órfão
+    // de boot não têm ninguém esperando, e acordar um chat que está morrendo é
+    // barulho puro.
+    if (record.state === 'done' || record.state === 'failed') {
+      this.armWake(record.delegatorPaneId, state, record)
+    }
     if (batch.live.size > 0 || batch.open) return
     this.closeBatch(record.delegatorPaneId, batch)
+  }
+
+  private armWake(paneId: string, state: HelperPaneState, record: GuiHelperRecord): void {
+    // O `live.delete` acima já é a barreira de "encerra uma vez só"; este
+    // segundo pente cobre o motor repetindo um `settled` sem passar por lá.
+    if (state.pendingWake.some((entry) => entry.helperId === record.helperId)) return
+    state.pendingWake.push({
+      helperId: record.helperId,
+      ...(record.name ? { name: record.name } : {}),
+      model: record.model,
+      ok: record.state === 'done'
+    })
+    this.scheduleWake(paneId, state)
+  }
+
+  /** Janela ÚNICA por pane: quem já tem relógio armado não arma outro. */
+  private scheduleWake(paneId: string, state: HelperPaneState): void {
+    if (state.cancelWake) return
+    state.cancelWake = this.setTimer(GUI_HELPER_WAKE_COALESCE_MS, () => {
+      const current = this.panes.get(paneId)
+      if (!current) return
+      current.cancelWake = undefined
+      this.flushWake(paneId, current)
+    })
+  }
+
+  /**
+   * A BATIDA DO DESPERTADOR.
+   *
+   * Turno em andamento SEGURA o aviso: o agente está falando, os cards fecham
+   * sozinhos na lateral e interrompê-lo seria pior que esperar. O relógio então
+   * se re-arma — batida de 3 em 3s que só existe ENQUANTO há aviso preso, e que
+   * morre no primeiro desfecho (entregue, pane esquecido, sessão morta). É de
+   * propósito que a espera não dependa de observar o `result` do turno: o
+   * mesmo laço cobre também as recusas que não são de turno (troca de executor
+   * em voo, entrega da fila saindo), e uma recusa dessas nunca deixa o dono no
+   * silêncio que este código veio consertar.
+   */
+  private flushWake(paneId: string, state: HelperPaneState): void {
+    if (state.pendingWake.length === 0) return
+    const deliver = this.deps.wake
+    if (!deliver) {
+      state.pendingWake = []
+      return
+    }
+    if (!this.deps.turnActive?.(paneId)) {
+      const entries = state.pendingWake
+      const done = entries.filter((entry) => entry.ok).length
+      const stillWorking = this.liveHelperCount(state)
+      // LIMPA ANTES DE ENTREGAR: a entrega ABRE UM TURNO, e um turno é evento —
+      // pendência viva aqui viraria um segundo aviso para o mesmo ajudante.
+      state.pendingWake = []
+      const delivered = deliver(paneId, {
+        helperIds: entries.map((entry) => entry.helperId),
+        done,
+        failed: entries.length - done,
+        stillWorking,
+        text: guiHelperWakeMessage(entries, stillWorking)
+      })
+      if (delivered) return
+      // Devolve os antigos NA FRENTE do que possa ter encerrado durante a
+      // tentativa — recusa não pode reordenar nem comer encerramento novo.
+      state.pendingWake = [...entries, ...state.pendingWake]
+    }
+    this.scheduleWake(paneId, state)
+  }
+
+  private liveHelperCount(state: HelperPaneState): number {
+    let count = 0
+    for (const batch of state.batches.values()) count += batch.live.size
+    return count
   }
 
   private closeBatch(paneId: string, batch: HelperBatch): void {
