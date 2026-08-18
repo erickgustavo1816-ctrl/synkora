@@ -17,20 +17,31 @@ import {  mkdirSync, writeFileSync } from 'fs'
 import {   join } from 'path'
 import type { Hub, PaneIdentity } from './hub'
 import type { PlanPatch } from './plans'
+// Os números que o catálogo ENSINA ao agente saem do motor, nunca de uma
+// cópia à mão: teto de espera, teto de prompt e a trava anti-laço. Se o motor
+// mudar um deles, a descrição da ferramenta muda junto — descrição que mente
+// sobre o próprio limite é pior que descrição ausente.
+import {
+  GUI_HELPER_PROMPT_MAX_CHARS,
+  GUI_HELPER_RUNAWAY_BACKSTOP,
+  GUI_HELPER_WAIT_DEFAULT_SECONDS,
+  GUI_HELPER_WAIT_MAX_SECONDS
+} from './guiHelperSessions'
 
 const requireFromMain = createRequire(
   typeof __filename === 'string' ? __filename : join(process.cwd(), 'package.json')
 )
 
-// Servidor MCP local do Synkora: é por AQUI que o CHAT DE PLANEJAMENTO fala com
+// Servidor MCP local do Synkora: é por AQUI que os CHATS da era 2.0 falam com
 // o app. Cada pane com identidade nasce com um bearer token próprio; o token
-// identifica QUEM chama (hoje: só a role `gui-planner`, de qual projeto/missão/
-// worktree) e as ferramentas agem no contexto certo. HTTP em 127.0.0.1, porta
-// aleatória.
+// identifica QUEM chama (a role, o projeto, a missão, o worktree) e as
+// ferramentas agem no contexto certo. HTTP em 127.0.0.1, porta aleatória.
 //
-// O catálogo é ÚNICO e fechado (ver `buildServer`): identidade que não seja o
-// planejador recebe um servidor VAZIO — nunca um erro. O antigo catálogo por
-// papel (maestro/dev/review/qa/ajudante) morreu com a era F6.
+// DOIS catálogos, cada um fechado no seu retorno antecipado (ver `buildServer`):
+// `gui-planner` recebe o kit de PLANOS e `gui-delegator` o kit de AJUDANTES.
+// Um pane tem UM dos dois, nunca os dois, e qualquer outra identidade recebe um
+// servidor VAZIO — nunca um erro. O antigo catálogo por papel (maestro/dev/
+// review/qa/ajudante) morreu com a era F6.
 
 /** Implementada em index.ts — as tools delegam para o harness real. */
 export interface McpApi {
@@ -55,11 +66,51 @@ export interface McpApi {
   /** instrumentação CHECK 14: o app registra qual catálogo cada identidade
    *  recebeu (dedupe por pane no app — mudança de catálogo é o alarme) */
   noteCatalogServed?: (id: PaneIdentity, tools: string[]) => void
+
+  // ——— kit de DELEGAÇÃO (subagentes sem aba, 2026-08-18 — role
+  // 'gui-delegator'; design DESIGN_SUBAGENTES_SEM_ABA_2026-08-18.md D2) ———
+  // Opcionais durante a montagem da onda 2: o catálogo guarda com recusa
+  // legível quando o harness ainda não ligou o motor. Todos devolvem TEXTO
+  // legível (padrão text()); recibos carregam helperId/cli/model/effort/seat.
+  /** Abre N helpers headless de uma vez. Devolve os recibos NA HORA. */
+  delegateHelpers?: (id: PaneIdentity, helpers: McpHelperRequestInput[]) => Promise<string>
+  /** As contas: id/nome, CLI, logada e os limites reais (cache). */
+  listSeats?: (id: PaneIdentity) => Promise<string>
+  /** Fotografia dos helpers do pane: estado, decorrido, última atividade. */
+  helpersStatus?: (id: PaneIdentity) => string
+  /** LONG-POLL pelo resultado (teto do SERVIDOR: default 45s, máx 240s). */
+  helperResult?: (id: PaneIdentity, helperId: string, waitSeconds?: number) => Promise<string>
+  /** Steering: mensagem para o helper VIVO. */
+  helperSend?: (id: PaneIdentity, helperId: string, text: string) => string
+  helperCancel?: (id: PaneIdentity, helperId: string) => string
+}
+
+/** Um helper pedido no `delegate` (contrato D2; validação zod no catálogo). */
+export interface McpHelperRequestInput {
+  prompt: string
+  model?: string
+  effort?: string
+  seat?: string
+  name?: string
 }
 
 function text(s: string): { content: { type: 'text'; text: string }[] } {
   return { content: [{ type: 'text', text: s }] }
 }
+
+/** Teto do steering. Mensagem de rumo é curta por natureza; o briefing inteiro
+ *  já viajou no `prompt` do delegate. */
+const HELPER_SEND_MAX_CHARS = 16 * 1024
+
+/**
+ * A resposta quando o harness ainda não ligou o motor de ajudantes (os métodos
+ * do `McpApi` são opcionais durante a montagem da onda 2). É RESULTADO, não
+ * erro de protocolo: o chat continua conversando e o agente lê uma frase que
+ * explica o que aconteceu, em vez de um -32603 que ele vai racionalizar como
+ * "o ajudante foi aberto e falhou".
+ */
+const DELEGATION_ENGINE_OFF =
+  'o motor de delegação ainda não está ligado — reinicie o app para reabrir esta conversa com as ferramentas de ajudante. NADA foi aberto: não relate ajudante nenhum ao dono.'
 
 function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   // SEM cacheHints de tools/list (CHECK 14, 2026-08-07): o hint de cache da
@@ -242,6 +293,156 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       },
       async ({ planId, expectedUpdatedAt }) =>
         text(api.deletePlan(identity, planId, expectedUpdatedAt))
+    )
+
+    return finishCatalog()
+  }
+
+  // ————— CHAT DE MISSÃO QUE DELEGA (2026-08-18) — o kit de AJUDANTES —————
+  //
+  // Ordem do dono: "ele NUNCA MAIS vai abrir subagentes dele — ele vai abrir
+  // subagentes via MCP. Porque via MCP eu vejo na lateral o MODELO e o EFFORT
+  // que subiu". Este bloco é o outro lado dessa ordem: o subagente nativo do
+  // CLI é cercado no spawn (guiDelegateMcp) e a capacidade volta AQUI, num
+  // caminho que o app enxerga inteiro.
+  //
+  // O catálogo dá CONTROLE TOTAL, de propósito (ordem do dono: "como se
+  // estivesse rodando um subagente nativo — ele consegue fazer qualquer coisa
+  // com aquele subagente"): abrir a frota, ver o estado, ler a entrega,
+  // dirigir e cancelar. Tirar qualquer um desses verbos deixaria a troca pior
+  // do que o nativo que ela aposenta.
+  //
+  // Mesma cerca do planejador: retorno antecipado. Quem não é `gui-delegator`
+  // não enxerga uma linha disto — inclusive um AJUDANTE, que nasce sem MCP
+  // nenhum (frota que abre frota é o laço que o backstop existe para conter).
+  if (identity.role === 'gui-delegator') {
+    server.registerTool(
+      'delegate',
+      {
+        description:
+          'Abre AJUDANTES para você: sessões headless que trabalham no MESMO worktree e devolvem o texto final. Este é o ÚNICO caminho de delegação deste chat — o subagente nativo do seu CLI está desligado aqui, porque só por este caminho o dono vê na lateral o modelo, o effort e a conta de cada ajudante. UMA chamada abre a frota INTEIRA (cinco ajudantes são um `delegate` com cinco itens, nunca cinco chamadas) e ela responde NA HORA com o recibo de cada um: a tool nunca bloqueia. Cross-CLI é normal e esperado — um chat claude abre gpt-*, um chat codex abre opus/fable. Depois de abrir, o comando é seu: helpers_status para ver, helper_result para ler, helper_send para dirigir, helper_cancel para encerrar.',
+        inputSchema: {
+          helpers: z
+            .array(
+              z.object({
+                prompt: z
+                  .string()
+                  .min(1)
+                  .max(GUI_HELPER_PROMPT_MAX_CHARS)
+                  .describe(
+                    'a tarefa COMPLETA deste ajudante. Ele nasce sem o seu contexto, não vê esta conversa e não pode perguntar nada: diga o objetivo, os arquivos, o critério de pronto e o que ele NÃO deve tocar'
+                  ),
+                model: z
+                  .string()
+                  .max(120)
+                  .optional()
+                  .describe(
+                    "id do modelo, como o dono o escreve (ex.: 'opus[1m]', 'gpt-5.6-luna'). É ELE que decide o CLI do ajudante. Ausente = o seu modelo"
+                  ),
+                effort: z
+                  .string()
+                  .max(40)
+                  .optional()
+                  .describe(
+                    'nível de raciocínio. Ausente = o seu, quando o CLI é o mesmo (escalas diferentes não se herdam entre CLIs). Numa frota grande, effort UNIFORME é materialmente mais barato: variar quebra o cache de prompt'
+                  ),
+                seat: z
+                  .string()
+                  .max(120)
+                  .optional()
+                  .describe(
+                    'id da conta que vai rodar este ajudante (vem do list_seats). Ausente = resolução automática: a sua conta no mesmo CLI, ou a primeira logada do CLI cruzado'
+                  ),
+                name: z
+                  .string()
+                  .max(80)
+                  .optional()
+                  .describe('apelido curto — é o rótulo do card deste ajudante na lateral do dono')
+              })
+            )
+            .min(1)
+            .max(GUI_HELPER_RUNAWAY_BACKSTOP)
+            .describe(
+              `um item por ajudante — a frota inteira numa chamada só. NÃO existe cota: se o trabalho pede vinte ajudantes, peça vinte. O teto de ${GUI_HELPER_RUNAWAY_BACKSTOP} é uma trava contra laço de repetição, não um orçamento`
+            )
+        }
+      },
+      async ({ helpers }) =>
+        api.delegateHelpers
+          ? text(await api.delegateHelpers(identity, helpers))
+          : text(DELEGATION_ENGINE_OFF)
+    )
+
+    server.registerTool(
+      'list_seats',
+      {
+        description:
+          'As contas deste app: id, nome, CLI, se está logada e os LIMITES reais de cada uma. Chame ANTES de abrir uma frota grande e distribua os ajudantes pelas contas com mais folga — limite estourado numa conta nunca precisa prender a missão. Também é daqui que sai o `seat` do delegate.'
+      },
+      async () => (api.listSeats ? text(await api.listSeats(identity)) : text(DELEGATION_ENGINE_OFF))
+    )
+
+    server.registerTool(
+      'helpers_status',
+      {
+        description:
+          'A fotografia dos SEUS ajudantes: estado, tempo decorrido, última atividade e contexto consumido. Não traz o texto das entregas (para isso existe o helper_result) — é o radar, e é barato de chamar quantas vezes você quiser.'
+      },
+      () => (api.helpersStatus ? text(api.helpersStatus(identity)) : text(DELEGATION_ENGINE_OFF))
+    )
+
+    server.registerTool(
+      'helper_result',
+      {
+        description: `A entrega de UM ajudante. LONG-POLL: esta chamada SEGURA até \`waitSeconds\` (padrão ${GUI_HELPER_WAIT_DEFAULT_SECONDS}s, máximo ${GUI_HELPER_WAIT_MAX_SECONDS}s) e devolve o texto final se ele terminar nesse meio-tempo; senão devolve "ainda trabalhando" com o estado. Re-chamar é BARATO e é o esperado — a leitura é idempotente: o mesmo resultado sai quantas vezes você pedir. Prefira UMA espera longa a um laço de esperas curtas.`,
+        inputSchema: {
+          helperId: z.string().min(1).max(120).describe('o id que veio no recibo do delegate'),
+          waitSeconds: z
+            .number()
+            .int()
+            .min(1)
+            .max(GUI_HELPER_WAIT_MAX_SECONDS)
+            .optional()
+            .describe(
+              `quanto segurar esta chamada esperando o desfecho. Ausente = ${GUI_HELPER_WAIT_DEFAULT_SECONDS}s`
+            )
+        }
+      },
+      async ({ helperId, waitSeconds }) =>
+        api.helperResult
+          ? text(await api.helperResult(identity, helperId, waitSeconds))
+          : text(DELEGATION_ENGINE_OFF)
+    )
+
+    server.registerTool(
+      'helper_send',
+      {
+        description:
+          'Manda uma mensagem para um ajudante VIVO: corrigir o rumo, responder uma dúvida que ele levantou, apertar o escopo. É o mesmo comando que você teria sobre um subagente nativo — a diferença é que aqui o dono vê o que está acontecendo.',
+        inputSchema: {
+          helperId: z.string().min(1).max(120),
+          text: z
+            .string()
+            .min(1)
+            .max(HELPER_SEND_MAX_CHARS)
+            .describe('a mensagem, direta. O briefing completo já foi no prompt do delegate')
+        }
+      },
+      ({ helperId, text: message }) =>
+        api.helperSend ? text(api.helperSend(identity, helperId, message)) : text(DELEGATION_ENGINE_OFF)
+    )
+
+    server.registerTool(
+      'helper_cancel',
+      {
+        description:
+          'Encerra um ajudante. O que ele já escreveu em disco fica; a sessão morre. Use quando o trabalho dele deixou de fazer sentido — segurar ajudante inútil gasta limite da conta.',
+        inputSchema: {
+          helperId: z.string().min(1).max(120)
+        }
+      },
+      ({ helperId }) =>
+        api.helperCancel ? text(api.helperCancel(identity, helperId)) : text(DELEGATION_ENGINE_OFF)
     )
 
     return finishCatalog()

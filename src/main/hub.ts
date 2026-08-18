@@ -35,6 +35,10 @@ export type HubPaneRole =
   | 'dev'
   | 'review'
   | 'qa'
+  // Chat de missão dev da era 2.0 com o MCP de DELEGAÇÃO (subagentes sem
+  // aba, 2026-08-18): mesma natureza do gui-planner — autentica e escopa,
+  // nunca recebe injeção.
+  | 'gui-delegator'
   | 'ajudante'
   | 'livre'
   | 'gui-planner'

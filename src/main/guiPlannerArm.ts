@@ -1,10 +1,15 @@
 /**
- * COSTURA DO MCP DO PLANEJADOR COM O CONTEXTO DO MAIN.
+ * COSTURA DOS MCPs DE CHAT COM O CONTEXTO DO MAIN.
  *
- * `guiPlannerMcp.ts` é o motor puro (token, flags, limpeza) e não conhece o
- * `MainContext` — é o que o mantém compilável sozinho na suíte
- * `test:gui-planner-mcp`. Este módulo é a única ponte entre os dois, e existe
- * porque DOIS caminhos precisam armar exatamente do mesmo jeito:
+ * São DOIS kits desde 2026-08-18 — o de PLANOS (`guiPlannerMcp`) e o de
+ * AJUDANTES (`guiDelegateMcp`) — e cada pane recebe UM deles, pela régua única
+ * `guiPaneToolKind`.
+ *
+ * Os dois motores são puros (token, flags, limpeza) e não conhecem o
+ * `MainContext` — é o que os mantém compiláveis sozinhos nas suítes
+ * `test:gui-planner-mcp` e `test:gui-delegate-mcp`. Este módulo é a única ponte
+ * entre eles e o main, e existe porque DOIS caminhos precisam armar exatamente
+ * do mesmo jeito:
  *
  *  1. `missions:guiSpec` — o nascimento do chat de planejamento;
  *  2. o RE-ARME por spawn do `GuiSessionRegistry` — todo respawn (troca de modo
@@ -23,6 +28,7 @@ import { app } from 'electron'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { armGuiPlannerMcp, type GuiPlannerMcp, type GuiPlannerMcpDeps } from './guiPlannerMcp'
+import { armGuiDelegateMcp, guiPaneToolKind } from './guiDelegateMcp'
 import { guiMissionRoleOf, missionShortId, missionTypeOf } from './guiMissionContracts'
 import type { GuiPaneSpawn } from './guiSessions'
 import type { MainContext } from './mainContext'
@@ -32,6 +38,15 @@ import type { MainContext } from './mainContext'
 export type GuiPlannerArmRefusal =
   | 'server-down'
   | 'not-a-planner'
+  | 'write-failed'
+  | 'config-file-missing'
+
+/** O mesmo enum, para a trilha do DELEGADOR. Separado de propósito: o diário
+ *  precisa distinguir "este chat não é planejador" de "este chat não é de
+ *  missão dev" — as duas frases apontam para bugs diferentes. */
+export type GuiDelegateArmRefusal =
+  | 'server-down'
+  | 'not-a-dev-mission'
   | 'write-failed'
   | 'config-file-missing'
 
@@ -79,7 +94,84 @@ function missionOfPane(
  * `undefined` = este pane sai SEM ferramentas, com o motivo no diário. É a
  * saída honesta: um chat sem tools continua conversando; um chat apontando
  * para um arquivo apagado morre no boot do CLI.
+ *
+ * ROTEADOR do re-arme por spawn: chat de PLANEJAMENTO re-arma o kit de planos,
+ * chat de missão DEV re-arma o MCP de DELEGAÇÃO (guiDelegateMcp). Um pane só
+ * tem UM dos dois — e a régua (`guiPaneToolKind`) é a MESMA do nascimento em
+ * `missions:guiSpec`, de propósito: duas cópias da decisão foi exatamente o que
+ * produziu o chat mudo de 2026-08-17.
+ *
+ * Quem não é nenhum dos dois cai na trilha do planejador, que recusa com
+ * `not-a-planner` — o mesmo diário de sempre para um pane que pediu ferramenta
+ * sem ter direito a ela.
  */
+export function rearmGuiPaneTools(
+  ctx: MainContext,
+  spawn: GuiPaneSpawn
+): GuiPlannerMcp | undefined {
+  const mission = missionOfPane(ctx, spawn.projectId, spawn.paneId)
+  return guiPaneToolKind(spawn.paneId, mission) === 'delegator'
+    ? rearmGuiDelegateMcp(ctx, spawn)
+    : rearmGuiPlannerMcp(ctx, spawn)
+}
+
+/**
+ * Re-materializa o MCP de DELEGAÇÃO do chat de missão dev. Gêmeo exato do
+ * `rearmGuiPlannerMcp` — mesma ordem de guardas, mesma prova final — porque a
+ * falha que ele previne é a mesma: um processo nascendo com `--mcp-config`
+ * apontando para um arquivo que o teardown acabou de apagar.
+ */
+export function rearmGuiDelegateMcp(
+  ctx: MainContext,
+  spawn: GuiPaneSpawn
+): GuiPlannerMcp | undefined {
+  const refuse = (reason: GuiDelegateArmRefusal): undefined => {
+    ctx.blackbox.record({
+      cat: 'pane',
+      event: 'gui-delegate-arm-refused',
+      actor: 'harness',
+      ids: { paneId: spawn.paneId, projectId: spawn.projectId },
+      detail: { reason, cli: spawn.cli }
+    })
+    return undefined
+  }
+
+  if (ctx.mcpPort === 0) return refuse('server-down')
+
+  const mission = missionOfPane(ctx, spawn.projectId, spawn.paneId)
+  if (!mission || guiPaneToolKind(spawn.paneId, mission) !== 'delegator')
+    return refuse('not-a-dev-mission')
+
+  let armed: GuiPlannerMcp | undefined
+  try {
+    armed = armGuiDelegateMcp(
+      {
+        paneId: spawn.paneId,
+        projectId: spawn.projectId,
+        cwd: spawn.cwd,
+        cli: spawn.cli,
+        missionId: mission.id,
+        // O seat da CONVERSA VIVA, não o do nascimento da missão: o dono pode
+        // ter trocado a conta, e a identidade tem de refletir quem está falando
+        // (é ela que resolve a conta do ajudante quando o pedido não diz).
+        ...(spawn.seatId ? { seatId: spawn.seatId } : {})
+      },
+      guiPlannerMcpDepsFor(ctx)
+    )
+  } catch {
+    // Disco cheio, permissão negada, userData somindo: o motivo bruto pode
+    // carregar a árvore do usuário e não entra no diário.
+    return refuse('write-failed')
+  }
+  if (!armed) return refuse('server-down')
+
+  if (spawn.cli === 'claude') {
+    const file = ctx.paneMcpFiles.get(spawn.paneId)
+    if (!file || !existsSync(file)) return refuse('config-file-missing')
+  }
+  return armed
+}
+
 export function rearmGuiPlannerMcp(
   ctx: MainContext,
   spawn: GuiPaneSpawn
