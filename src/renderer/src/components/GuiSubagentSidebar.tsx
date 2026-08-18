@@ -5,12 +5,25 @@ import {
 } from '../guiSubagentSidebar'
 import type { GuiItem } from '../store'
 
+/** A leitura de relance do dono: modelo, effort e conta na MESMA fileira. O
+ *  nativo aposentado não informa effort nem conta — a etiqueta então some, em
+ *  vez de mentir um valor. */
+function metaLabel(entry: GuiSubagentSidebarEntry): string {
+  const parts = [`Modelo: ${entry.model}`]
+  if (entry.effort) parts.push(`Effort: ${entry.effort}`)
+  if (entry.seat) parts.push(`Conta: ${entry.seat}`)
+  return parts.join(' · ')
+}
+
 function SubagentCard({ entry }: { entry: GuiSubagentSidebarEntry }): React.JSX.Element {
   return (
+    // Cross-CLI é indistinguível por desenho: o CLI vira CARIMBO (estilo e
+    // depuração), nunca mais um texto disputando a fileira de metadados.
     <article
       className={`gui-subagent-row ${entry.status}`}
       data-subagent-id={entry.toolUseId}
       data-subagent-status={entry.status}
+      data-subagent-cli={entry.cli ?? undefined}
     >
       <header className="gui-subagent-row-head">
         <span className="gui-subagent-row-dot" aria-hidden="true" />
@@ -19,8 +32,10 @@ function SubagentCard({ entry }: { entry: GuiSubagentSidebarEntry }): React.JSX.
           {entry.statusLabel}
         </span>
       </header>
-      <div className="gui-subagent-row-meta" aria-label={`Modelo: ${entry.model}`}>
+      <div className="gui-subagent-row-meta" aria-label={metaLabel(entry)}>
         <span>{entry.model}</span>
+        {entry.effort && <span>{entry.effort}</span>}
+        {entry.seat && <span>{entry.seat}</span>}
         {entry.type && <span>{entry.type}</span>}
       </div>
       <p className="gui-subagent-row-task" aria-label={`Tarefa: ${entry.task}`} title={entry.task}>

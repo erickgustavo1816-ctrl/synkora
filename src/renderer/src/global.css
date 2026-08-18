@@ -19184,3 +19184,24 @@ details.gui-error-line {
   }
 }
 /* ————— fim do BLOCO NOVO dos verbos do item ————— */
+
+/* ————— BLOCO NOVO: ficha de ajudante MCP na lateral (modelo · effort · conta) —————
+   Três campos não cabem na linha de ~165px que sobra do trilho de entrega
+   (~204px menos os respiros): espremer os três deixaria o nome da conta em
+   "Codex - Hotm…". A fileira passa a QUEBRAR — e o separador vira `::after` do
+   item anterior, porque um `·` ABRINDO a segunda linha lê como texto quebrado.
+   Com dois campos (o caminho nativo) o desenho continua idêntico ao de antes. */
+.gui-subagent-row-meta {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.gui-subagent-row-meta span + span::before {
+  content: none;
+}
+
+.gui-subagent-row-meta span:not(:last-child)::after {
+  content: '·';
+  margin-left: 5px;
+}
+/* ————— fim do BLOCO NOVO da ficha de ajudante MCP ————— */
