@@ -19423,3 +19423,28 @@ details.gui-error-line {
   font-variant-numeric: tabular-nums;
 }
 /* ————— fim do BLOCO NOVO do cronômetro da ficha ————— */
+
+/* ————— BLOCO NOVO: a ficha INTERROMPIDA (rodada 6, o ciclo redondo) —————
+   O ■ do dono e o fechamento do app PARAM a frota preservando ela: a ficha fica
+   na lateral esperando um helper_resume. Ela precisa se distinguir de duas
+   coisas ao mesmo tempo — do vivo (que é laranja e tem ponto cheio) e do erro
+   (que é vermelho) —, e a diferença é dita por FORMA antes de cor: o trilho da
+   esquerda vira tracejado (o mesmo vocabulário do card de projeto sumido) e o
+   ponto se esvazia num anel. Parado não é falha, então nada de `--err`; e nada
+   de animação nova: o que se mexe na lateral é o que está trabalhando. */
+.gui-subagent-row.interrupted {
+  border-left-style: dashed;
+  border-left-color: var(--ink-3);
+}
+
+.gui-subagent-row.interrupted .gui-subagent-row-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ink-3);
+}
+
+/* O estado sobe um tom em relação ao cinza da fileira de metadados: "interrompido"
+   é a palavra que diz ao dono qual frota ele ainda pode retomar. */
+.gui-subagent-row.interrupted .gui-subagent-row-status {
+  color: var(--ink-2);
+}
+/* ————— fim do BLOCO NOVO da ficha interrompida ————— */

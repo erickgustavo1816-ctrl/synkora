@@ -223,10 +223,12 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   // (rodada padrão-é-lei, 18/08: a seção ganhou a regra do pino do dono e
   // mede 1752; os DOIS tetos andam juntos, sempre). E 1800→2000 / 3000→3200 na
   // noite do MESMO dia (5º teste ao vivo), pela linha da ENTREGA EM ARQUIVO +
-  // o correio que chega sozinho no próximo resultado de tool.
-  assert.ok(order.length < 2000, `a ordem permanente virou constituição (${order.length})`)
+  // o correio que chega sozinho no próximo resultado de tool. E 2000→2500 /
+  // 3200→3700 na mesma noite (rodada 6, o CICLO REDONDO), pelas duas linhas de
+  // parar/retomar/descartar: a seção mede 2448 e o contrato do dev, 3636.
+  assert.ok(order.length < 2500, `a ordem permanente virou constituição (${order.length})`)
   for (const role of GUI_MISSION_ROLES) {
-    assert.ok(guiMissionSystemPrompt(role).length < 3200, `${role}: contrato virou constituição`)
+    assert.ok(guiMissionSystemPrompt(role).length < 3700, `${role}: contrato virou constituição`)
   }
   // O planejador não delega: ele nunca recebe a seção nem o pino.
   assert.doesNotMatch(guiPlanningSystemPrompt(), /STANDING ORDER FROM THE OWNER/u)

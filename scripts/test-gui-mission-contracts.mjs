@@ -97,9 +97,11 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // do list_seats reescrita. E de 3000 para 3200 na noite do MESMO dia, pelo
     // 5º teste: a linha da ENTREGA EM ARQUIVO + o correio que chega sozinho
     // ("cada ajudante que terminar, avisar o orquestrador... pra não poluir o
-    // chat"). O teto continua sendo contra CONSTITUIÇÃO: régua nova do dono
-    // cabe, discurso não.
-    assert.ok(contract.length < 3200, `${role}: contrato virou constituição`)
+    // chat"). E de 3200 para 3700 na mesma noite (rodada 6, o CICLO REDONDO:
+    // "não faz só um remendo, faz um planejamento por trás"), pelas duas linhas
+    // de parar/retomar/descartar — o dev mede 3636. O teto continua sendo contra
+    // CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
+    assert.ok(contract.length < 3700, `${role}: contrato virou constituição`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -152,9 +154,11 @@ test('a ordem da delegação viaja idêntica nos três papéis', () => {
   // tight de propósito: ela viaja em TODO spawn de chat de missão. O teto subiu
   // de 1400 para 1800 UMA vez (2026-08-18, 2º teste ao vivo) pela régua do PINO
   // e de 1800 para 2000 na noite do mesmo dia, pela linha da ENTREGA EM ARQUIVO
-  // + correio — a única coisa que entrou; discurso continua sem espaço aqui.
+  // + correio. E de 2000 para 2500 na mesma noite (rodada 6, o CICLO REDONDO),
+  // pelas DUAS linhas de parar/retomar/descartar: a seção mede 2448 — os dois
+  // tetos andam juntos, sempre. Discurso continua sem espaço aqui.
   assert.ok(sections[0].length > 600, 'a ordem ficou vaga demais')
-  assert.ok(sections[0].length < 2000, 'a ordem permanente virou constituição')
+  assert.ok(sections[0].length < 2500, 'a ordem permanente virou constituição')
 })
 
 // A ENTREGA VEM SOZINHA, E VEM EM ARQUIVO (2026-08-18, 5º teste ao vivo).
@@ -174,6 +178,37 @@ test('a ordem diz que a entrega chega sozinha e mora em ARQUIVO', () => {
     assert.match(section, /\[synkora\] ajudantes:/, `${role}: sem a marca do correio`)
     assert.match(section, /tool result/i, `${role}: sem dizer POR ONDE a novidade chega`)
   }
+})
+
+// O CICLO REDONDO (2026-08-18, noite — rodada 6 do design, R6.1/R6.2/R6.3).
+//
+// Ordem do dono: "não faz só um remendo, faz um planejamento por trás". Parar
+// deixou de ser sinônimo de perder: o ■ dele e o fechamento do app INTERROMPEM
+// a frota preservando conversa, pino e entrega parcial; helper_resume a traz de
+// volta e helper_cancel virou o DESCARTE explícito (apaga o arquivo de entrega).
+//
+// A metade mecânica é das ondas A/B; esta é a metade que o MODELO lê — sem ela
+// o agente fica com a ferramenta na mão e sem saber que "volta com os
+// subagentes" é um helper_resume por ajudante interrompido.
+
+test('a ordem ensina o CICLO: parar preserva, resume retoma, cancel descarta', () => {
+  for (const role of GUI_MISSION_ROLES) {
+    const section = delegationSection(guiMissionSystemPrompt(role))
+    assert.match(section, /INTERRUPT/, `${role}: parar ainda parece perder o trabalho`)
+    assert.match(section, /helper_resume/, `${role}: sem o verbo da retomada`)
+    // a frase EXATA do dono: é ela que chega ao chat depois de uma interrupção
+    assert.match(section, /volta com os subagentes/, `${role}: a frase do dono não é reconhecida`)
+    assert.match(section, /DISCARD/, `${role}: helper_cancel sem a semântica nova`)
+    assert.match(section, /delivery file/i, `${role}: o descarte não diz o que apaga`)
+    // interromper NÃO é descartar: as duas palavras não podem se confundir
+    assert.match(
+      section,
+      /instead of discarding it/i,
+      `${role}: a diferença entre pausa e descarte ficou implícita`
+    )
+  }
+  // o planejador não delega — nem o ciclo entra no chat dele
+  assert.doesNotMatch(guiPlanningSystemPrompt(), /helper_resume/u)
 })
 
 // O PINO DO PAINEL É A PALAVRA DO DONO (2026-08-18, 2º teste ao vivo dele).
@@ -243,7 +278,7 @@ test('o subagente nativo é PROIBIDO pelos nomes que os binários usam', () => {
   }
 })
 
-test('a ordem nomeia o caminho MCP inteiro: abrir, ver, dirigir, colher e cancelar', () => {
+test('a ordem nomeia o caminho MCP inteiro: abrir, ver, dirigir, colher, retomar e descartar', () => {
   const section = delegationSection(guiMissionSystemPrompt('dev'))
   assert.ok(section, 'sem a ordem permanente da delegação')
   for (const tool of [
@@ -251,6 +286,7 @@ test('a ordem nomeia o caminho MCP inteiro: abrir, ver, dirigir, colher e cancel
     'helpers_status',
     'helper_send',
     'helper_result',
+    'helper_resume',
     'helper_cancel',
     'list_seats'
   ]) {
@@ -288,6 +324,7 @@ test('o planejador não delega: a ordem não entra no chat de plano', () => {
     'helpers_status',
     'helper_send',
     'helper_result',
+    'helper_resume',
     'helper_cancel',
     'list_seats'
   ]) {

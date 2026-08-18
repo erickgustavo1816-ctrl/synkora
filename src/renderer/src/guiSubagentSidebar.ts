@@ -25,7 +25,18 @@ export interface GuiSubagentMetadata {
   description?: string
 }
 
-export type GuiSubagentSidebarTone = 'running' | 'completed' | 'failed' | 'denied' | 'cancelled'
+/**
+ * Tom da ficha. `interrupted` é o único terminal que NÃO encerra a ficha (ver
+ * `guiSubagentSidebarEntries`): parar preservando é pausa, e o dono precisa
+ * enxergar qual frota ele ainda pode retomar.
+ */
+export type GuiSubagentSidebarTone =
+  | 'running'
+  | 'interrupted'
+  | 'completed'
+  | 'failed'
+  | 'denied'
+  | 'cancelled'
 
 export interface GuiSubagentSidebarEntry {
   id: string
@@ -99,6 +110,23 @@ const HELPER_CARD_NAME_RE = /^helper:/iu
  *  irmão sem extensão — um import de VALOR aqui derrubaria os testes. */
 function isLaunchedSubagent(item: GuiToolItem): boolean {
   return item.result?.agentStatus === 'launched'
+}
+
+/**
+ * PARADA PRESERVADORA — o contrato entre as ondas da rodada 6 (design R6.1):
+ * o ■ do dono e o fechamento do app INTERROMPEM a frota em vez de descartá-la,
+ * e o card sintetizado do ajudante chega com este status. É o irmão novo do
+ * 'cancelled', que continua significando DESCARTE (o dono não quer mais).
+ *
+ * A palavra vem do harness e atravessa o store sem validação (o redutor copia
+ * `evt.outcome` para `result.status`), então a leitura é feita pelo TEXTO: o
+ * vocabulário tipado `GuiToolOutcome` ainda não a conhece, e alargá-lo mexeria
+ * em módulos de outra frente. Ler por texto é honesto e não mente sobre o tipo.
+ */
+export const GUI_SUBAGENT_INTERRUPTED_STATUS = 'interrupted'
+
+function isInterruptedResult(result: { status?: string }): boolean {
+  return result.status === GUI_SUBAGENT_INTERRUPTED_STATUS
 }
 
 /** Ferramenta de uma thread filha. O reducer usa esta fronteira para guardar
@@ -210,11 +238,15 @@ function isPotentialParent(item: GuiToolItem): boolean {
  * o recibo de despacho ('launched'): o agente segue trabalhando em background e
  * o terminal de verdade chega depois ('settled'). Sem `agentStatus` — Codex e
  * ferramenta comum — resultado É o terminal, como sempre foi.
+ *
+ * `interrupted` vem PRIMEIRO porque é o único terminal que a lateral guarda: a
+ * ordem dos testes seguintes é a de desfechos que encerram a ficha.
  */
 function terminalTone(item: GuiToolItem): Exclude<GuiSubagentSidebarTone, 'running'> | null {
   const result = item.result
   if (!result) return null
   if (isLaunchedSubagent(item)) return null
+  if (isInterruptedResult(result)) return 'interrupted'
   if (result.status === 'denied') return 'denied'
   if (result.status === 'cancelled') return 'cancelled'
   if (result.status === 'failed' || result.isError) return 'failed'
@@ -246,6 +278,35 @@ export function formatGuiSubagentElapsed(elapsedMs: number): string {
     : `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
+/**
+ * O CRONÔMETRO CONGELADO (design R6.1: "o card dele PERMANECE na lateral como
+ * interrompido, cronômetro congelado").
+ *
+ * Ficha viva conta contra o tique compartilhado e DEIXA GRAVADA a última
+ * leitura. Ficha parada não calcula nada: ela devolve essa leitura gravada, e é
+ * por isso que o relógio nunca mais anda — não existe caminho em que o estado
+ * parado consulte o relógio. Uma ficha que continuasse contando diria ao dono
+ * "trabalhando há 40 minutos" de um processo que morreu no minuto 4.
+ *
+ * `null` = NÃO HÁ tempo a mostrar, e é o caso do card que volta do anel já
+ * interrompido (o boot que remonta a conversa): o carimbo `at` daquele card é a
+ * hora do REPLAY, não a do trabalho, então qualquer número ali seria invenção.
+ * A ficha então mostra estado e identidade, sem relógio — que é a verdade.
+ *
+ * A memória é do componente (um Map por montagem da lateral): ela morre com o
+ * pane e é limitada aos ajudantes do anel, que já tem teto próprio de itens.
+ */
+export function guiSubagentElapsedMs(
+  entry: { toolUseId: string; status: GuiSubagentSidebarTone; at: number },
+  now: number,
+  memory: Map<string, number>
+): number | null {
+  if (entry.status !== 'running') return memory.get(entry.toolUseId) ?? null
+  const elapsed = Math.max(0, now - entry.at)
+  memory.set(entry.toolUseId, elapsed)
+  return elapsed
+}
+
 function statusLabel(status: GuiSubagentSidebarTone): string {
   switch (status) {
     case 'completed':
@@ -256,6 +317,10 @@ function statusLabel(status: GuiSubagentSidebarTone): string {
       return 'negado'
     case 'cancelled':
       return 'cancelado'
+    // Palavra PRÓPRIA, nunca um parente de "cancelado": é ela que diz ao dono
+    // qual frota ainda dá para retomar (helper_resume) e qual foi descartada.
+    case 'interrupted':
+      return 'interrompido'
     default:
       return 'trabalhando'
   }
@@ -316,10 +381,17 @@ function childrenFor(
 }
 
 /**
- * Normaliza eventos crus em fichas independentes. A ordem é a ordem factual
- * do tool call, portanto dois subagentes concorrentes não se sobrescrevem.
+ * Normaliza eventos crus nas fichas da LATERAL. A ordem é a ordem factual do
+ * tool call, portanto dois subagentes concorrentes não se sobrescrevem — e uma
+ * ficha nunca pula de lugar por mudar de estado (a régua da casa: o que o dono
+ * já leu numa posição continua nela).
+ *
+ * Quem sai da lista é o desfecho que ENCERRA o trabalho (concluído, falhou,
+ * negado, cancelado). Quem fica é quem trabalha e quem foi INTERROMPIDO: parar
+ * preservando é pausa, e a ficha parada é o único lugar onde o dono vê o que
+ * ainda dá para retomar.
  */
-export function normalizeGuiSubagentSidebar(
+export function guiSubagentSidebarEntries(
   items: readonly GuiItem[]
 ): GuiSubagentSidebarEntry[] {
   const tools = items.filter((item): item is GuiToolItem => item.kind === 'tool')
@@ -345,12 +417,13 @@ export function normalizeGuiSubagentSidebar(
 
   return parents.filter((parent) => {
     const toolUseId = parent.toolUseId as string
-    if (seenParentIds.has(toolUseId) || terminalTone(parent) !== null) return false
+    const tone = terminalTone(parent)
+    if (seenParentIds.has(toolUseId) || (tone !== null && tone !== 'interrupted')) return false
     seenParentIds.add(toolUseId)
     return true
   }).map((parent) => {
     const children = childrenFor(parent, tools)
-    const status: GuiSubagentSidebarTone = 'running'
+    const status: GuiSubagentSidebarTone = terminalTone(parent) ?? 'running'
     const metadata = parent.subagent
     const type = metadata?.type ?? null
     const name = metadata?.name ?? type ?? 'subagente'
@@ -364,7 +437,10 @@ export function normalizeGuiSubagentSidebar(
       seat: metadata?.seat ?? null,
       cli: metadata?.cli ?? null,
       task: taskFor(parent),
-      activity: activityFor(children, parent),
+      // "agora" é presente do indicativo: ajudante parado não tem atividade em
+      // curso. O terminal do card já fecha a árvore dele no redutor, mas um
+      // filho pendente de replay/queda suja não pode ressuscitar um "agora".
+      activity: status === 'running' ? activityFor(children, parent) : null,
       status,
       statusLabel: statusLabel(status),
       outcome: null,
@@ -373,4 +449,20 @@ export function normalizeGuiSubagentSidebar(
       at: parent.at
     }
   })
+}
+
+/**
+ * As fichas que representam trabalho EM CURSO — a projeção que o FIO consome
+ * ("N subagentes trabalhando em segundo plano", em `GuiPane`).
+ *
+ * O nome continua sendo o da lateral porque é a MESMA normalização: o indicador
+ * do fio nunca conta por conta própria, ele lê uma fatia do que a lateral
+ * mostra. A fatia existe desde que a lateral passou a guardar o interrompido
+ * (R6.1): frota parada é trabalho PARADO, e contá-la no fio diria ao dono que o
+ * app está trabalhando enquanto ninguém está.
+ */
+export function normalizeGuiSubagentSidebar(
+  items: readonly GuiItem[]
+): GuiSubagentSidebarEntry[] {
+  return guiSubagentSidebarEntries(items).filter((entry) => entry.status === 'running')
 }

@@ -3,10 +3,13 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   formatGuiSubagentElapsed,
+  guiSubagentElapsedMs,
   guiSubagentMetadataForTool,
+  guiSubagentSidebarEntries,
   isGuiSubagentToolEvent,
   normalizeGuiSubagentSidebar
 } from '../src/renderer/src/guiSubagentSidebar.ts'
+import { guiBackgroundWorkPresentation } from '../src/renderer/src/guiBackgroundWorkPresentation.ts'
 import {
   closePendingGuiTools,
   settleLaunchedGuiSubagents
@@ -319,7 +322,7 @@ test('superfície da seção tem nome acessível e campos pedidos', () => {
   }
   assert.doesNotMatch(source, /id do subagente/u)
   assert.match(source, /role="status"/u)
-  assert.match(source, /useMemo\(\(\) => normalizeGuiSubagentSidebar\(items\), \[items\]\)/u)
+  assert.match(source, /useMemo\(\(\) => guiSubagentSidebarEntries\(items\), \[items\]\)/u)
   assert.doesNotMatch(pane, /GuiSubagentContainer/u)
   assert.match(pane, /if \(item\.kind === 'subagent'\)[\s\S]*?continue/u)
   assert.match(pane, /item\.kind === 'tool' && item\.subagent/u)
@@ -542,11 +545,19 @@ test('C5 — o card do ajudante segue o ciclo de vida launched/settled', () => {
   }
   assert.deepEqual(normalizeGuiSubagentSidebar(assentado), [])
 
-  // Respawn e morte de sessão levam ajudante e atividade juntos.
+  // Respawn (boot): o AJUDANTE vira INTERROMPIDO (R6.1 — o motor preservou o
+  // registro dele, retomável; "cancelado" mentiria) e a atividade filha fecha.
+  // A ficha FICA na lateral (guiSubagentSidebarEntries) mas sai do FIO
+  // (normalizeGuiSubagentSidebar só conta quem trabalha).
   const respawn = settleLaunchedGuiSubagents(items)
-  assert.equal(respawn[1].result.status, 'cancelled')
+  assert.equal(respawn[1].result.status, 'interrupted')
   assert.equal(respawn[2].result.status, 'cancelled')
   assert.deepEqual(normalizeGuiSubagentSidebar(respawn), [])
+  assert.deepEqual(
+    guiSubagentSidebarEntries(respawn).map((entry) => entry.status),
+    ['interrupted'],
+    'a ficha do interrompido tem de sobreviver ao boot'
+  )
   assert.deepEqual(
     normalizeGuiSubagentSidebar(closePendingGuiTools(items, { type: 'closed', code: 0 })),
     []
@@ -648,12 +659,18 @@ test('W4 — a lista tem UM relógio só, com faxina, e a ficha mostra o cronôm
   assert.match(relogio, /if \(!active\) return/u, 'lateral vazia não mantém timer de pé')
   assert.doesNotMatch(source.slice(cardStart), /setInterval/u, 'nunca um timer POR card')
 
-  // Ligado ao único fato que liga/desliga a seção: ter ficha.
-  assert.match(source, /useGuiSubagentClock\(entries\.length > 0\)/u)
+  // Ligado ao único fato que faz o relógio ANDAR: haver ficha trabalhando. A
+  // R6-C trocou "ter ficha" por "ter ficha viva" porque a lateral passou a
+  // guardar o interrompido — cujo cronômetro está congelado e não pede tique.
+  assert.match(
+    source,
+    /useGuiSubagentClock\(entries\.some\(\(entry\) => entry\.status === 'running'\)\)/u
+  )
 
-  // O cronômetro é medido do carimbo FACTUAL do card contra o tique dividido.
+  // O cronômetro é medido do carimbo FACTUAL do card contra o tique dividido —
+  // e passa pela régua que CONGELA o interrompido (R6-C), nunca pelo `now` cru.
   assert.match(source, /gui-subagent-row-elapsed/u)
-  assert.match(source, /formatGuiSubagentElapsed\(now - entry\.at\)/u)
+  assert.match(source, /guiSubagentElapsedMs\(entry, now, clock\)/u)
 
   // FORA da região viva do estado: um live region que muda a cada segundo faria
   // o leitor de tela narrar o relógio para sempre.
@@ -668,4 +685,229 @@ test('W4 — a lista tem UM relógio só, com faxina, e a ficha mostra o cronôm
   // metadados — o cronômetro informa, nunca disputa com o nome do ajudante.
   assert.match(css, /\.gui-subagent-row-elapsed \{[^}]*font-variant-numeric: tabular-nums/u)
   assert.match(css, /\.gui-subagent-row-elapsed \{[^}]*var\(--ink-3\)/u)
+})
+
+// ————— R6-C · O CICLO REDONDO: interrompido é PAUSA, não descarte —————
+//
+// Design vinculante R6.1/R6.3 (`.synkora/reports/DESIGN_SUBAGENTES_SEM_ABA_
+// 2026-08-18.md`): o ■ do dono e o fechamento do app INTERROMPEM a frota
+// PRESERVANDO ela, e o card do ajudante interrompido FICA na lateral, com o
+// cronômetro congelado, para o dono ver qual frota ele pode retomar.
+//
+// O contrato entre as ondas é literal: o card sintetizado do ajudante
+// interrompido chega com `result.status === 'interrupted'` — irmão do
+// 'cancelled' que a lateral já lê hoje.
+
+/** O terminal que a onda B carimba quando a frota é parada PRESERVANDO. */
+function interruptedResult(text = 'entrega parcial preservada') {
+  return result(text, 'interrupted', false, { agentStatus: 'settled' })
+}
+
+const HELPER_PROFILE = {
+  helperId: 'h-1',
+  name: 'sonda A',
+  model: 'opus[1m]',
+  effort: 'max',
+  seat: 'Claude - Gmail',
+  cli: 'claude',
+  prompt: 'sonde o binário do codex'
+}
+
+// R6C.1 — a ficha SOBREVIVE ao terminal, com rótulo próprio. É o oposto de
+// todos os outros desfechos: eles encerram a ficha, este a deixa esperando.
+test('R6C — o ajudante INTERROMPIDO fica na lateral, com rótulo próprio', () => {
+  const parado = helperCard('10', 'h-1', HELPER_PROFILE, { result: interruptedResult() })
+  const atividade = {
+    ...tool('20', 'Read', 'src/main/index.ts'),
+    toolUseId: 'act-1',
+    parentToolUseId: 'helper:h-1',
+    result: result('encerrado com o subagente')
+  }
+  const [ficha] = guiSubagentSidebarEntries([
+    delegateEnvelope('1', [HELPER_PROFILE]),
+    parado,
+    atividade
+  ])
+
+  assert.ok(ficha, 'interromper PRESERVA: a ficha não pode sumir da lateral')
+  assert.equal(ficha.toolUseId, 'helper:h-1')
+  assert.equal(ficha.status, 'interrupted')
+  assert.equal(ficha.statusLabel, 'interrompido')
+  // O dono precisa ver QUAL frota ele pode retomar — modelo, effort e conta
+  // continuam na ficha exatamente como quando ela estava viva.
+  assert.equal(ficha.model, 'opus[1m]')
+  assert.equal(ficha.effort, 'max')
+  assert.equal(ficha.seat, 'Claude - Gmail')
+  assert.equal(ficha.cli, 'claude')
+  assert.equal(ficha.task, 'sonde o binário do codex')
+  // "agora" é presente do indicativo: ajudante parado não tem atividade em
+  // curso, nem quando o filho ficou pendente no anel (replay/queda suja).
+  assert.equal(ficha.activity, null)
+  const [comFilhoAberto] = guiSubagentSidebarEntries([
+    parado,
+    { ...tool('21', 'Grep', 'varredura'), toolUseId: 'act-2', parentToolUseId: 'helper:h-1' }
+  ])
+  assert.equal(comFilhoAberto.activity, null, 'ficha parada nunca diz "agora"')
+})
+
+// R6C.2 — os dois verbos do dono são estados DIFERENTES na tela: cancelar é
+// descarte (sai), interromper é pausa (fica). Sem essa distinção ele não sabe
+// o que ainda dá para retomar.
+test('R6C — cancelado é DESCARTE e sai; interrompido é pausa e fica', () => {
+  const descartado = helperCard(
+    '11',
+    'h-2',
+    { ...HELPER_PROFILE, helperId: 'h-2', name: 'sonda B' },
+    { result: result('', 'cancelled', false, { agentStatus: 'settled' }) }
+  )
+  const parado = helperCard('12', 'h-1', HELPER_PROFILE, { result: interruptedResult() })
+
+  assert.deepEqual(
+    guiSubagentSidebarEntries([descartado, parado]).map((entry) => [
+      entry.toolUseId,
+      entry.statusLabel
+    ]),
+    [['helper:h-1', 'interrompido']]
+  )
+
+  // E os outros desfechos continuam encerrando a ficha, como sempre.
+  for (const status of ['completed', 'failed', 'denied', 'cancelled']) {
+    assert.deepEqual(
+      guiSubagentSidebarEntries([
+        helperCard('13', 'h-3', { ...HELPER_PROFILE, helperId: 'h-3' }, {
+          result: result('fim', status, status === 'failed', { agentStatus: 'settled' })
+        })
+      ]),
+      [],
+      `${status} não pode virar pausa`
+    )
+  }
+})
+
+// R6C.3 — O FIO NÃO CONTA FROTA PARADA. `normalizeGuiSubagentSidebar` continua
+// sendo a projeção VIVA (é ela que o GuiPane entrega ao indicador "N
+// subagentes trabalhando em segundo plano"): contar um ajudante interrompido
+// ali diria ao dono que o app está trabalhando enquanto ninguém está.
+test('R6C — o indicador do fio conta só quem trabalha; a lateral guarda o parado', () => {
+  const parado = helperCard('10', 'h-1', HELPER_PROFILE, { result: interruptedResult() })
+  const vivo = helperCard(
+    '11',
+    'h-2',
+    { ...HELPER_PROFILE, helperId: 'h-2', name: 'sonda B' },
+    { result: launched('helper-task-2') }
+  )
+
+  assert.deepEqual(normalizeGuiSubagentSidebar([parado]), [])
+  assert.equal(
+    guiBackgroundWorkPresentation({
+      status: 'working',
+      liveSubagents: normalizeGuiSubagentSidebar([parado])
+    }),
+    null,
+    'frota parada não pode piscar trabalho no fio'
+  )
+  assert.equal(guiSubagentSidebarEntries([parado]).length, 1)
+
+  // Com um irmão vivo o fio conta UM, e a lateral mostra os DOIS.
+  assert.deepEqual(
+    normalizeGuiSubagentSidebar([parado, vivo]).map((entry) => entry.toolUseId),
+    ['helper:h-2']
+  )
+  assert.equal(
+    guiBackgroundWorkPresentation({
+      status: 'working',
+      liveSubagents: normalizeGuiSubagentSidebar([parado, vivo])
+    }).label,
+    '1 subagente trabalhando em segundo plano'
+  )
+  assert.deepEqual(
+    guiSubagentSidebarEntries([parado, vivo]).map((entry) => entry.status),
+    ['interrupted', 'running'],
+    'a ordem é a do fato, não a do estado: ficha nunca pula de lugar sozinha'
+  )
+})
+
+// R6C.4 — O CRONÔMETRO CONGELA. Uma ficha parada que continua contando é a
+// mentira mais fácil desta tela: o dono leria "trabalhando há 40 minutos" de
+// um processo que morreu no minuto 4.
+test('R6C — o cronômetro congela na interrupção e nunca volta a andar', () => {
+  const memoria = new Map()
+  const vivo = { toolUseId: 'helper:h-1', status: 'running', at: 1_000 }
+
+  assert.equal(guiSubagentElapsedMs(vivo, 1_000, memoria), 0)
+  assert.equal(guiSubagentElapsedMs(vivo, 126_000, memoria), 125_000)
+  assert.equal(formatGuiSubagentElapsed(125_000), '2:05')
+
+  const parado = { ...vivo, status: 'interrupted' }
+  assert.equal(
+    guiSubagentElapsedMs(parado, 200_000, memoria),
+    125_000,
+    'o relógio para onde o trabalho parou'
+  )
+  assert.equal(
+    guiSubagentElapsedMs(parado, 9_999_000, memoria),
+    125_000,
+    'nem uma hora depois ele anda um segundo'
+  )
+
+  // Ficha que JÁ NASCE parada (o card interrompido que volta do anel no boot):
+  // não existe tempo trabalhado nesta montagem, e a lateral prefere não mostrar
+  // nada a inventar um "0:00" que seria falso.
+  assert.equal(
+    guiSubagentElapsedMs({ toolUseId: 'helper:h-9', status: 'interrupted', at: 5 }, 900_000, new Map()),
+    null
+  )
+
+  // Retomar (helper_resume) é trabalho NOVO: o card novo conta do zero dele.
+  assert.equal(
+    guiSubagentElapsedMs(
+      { toolUseId: 'helper:h-1#r2', status: 'running', at: 300_000 },
+      302_000,
+      memoria
+    ),
+    2_000
+  )
+
+  // Relógio torto continua não virando texto torto (a régua da W4 vale aqui).
+  assert.equal(guiSubagentElapsedMs({ ...vivo, at: 999_999 }, 1_000, new Map()), 0)
+})
+
+// R6C.5 — a superfície: tom próprio, sem animação nova, e o fio intocado.
+test('R6C — a ficha parada tem tom próprio no papel & painel, sem movimento novo', () => {
+  const source = readFileSync(
+    new URL('../src/renderer/src/components/GuiSubagentSidebar.tsx', import.meta.url),
+    'utf8'
+  )
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  // A lateral consome a projeção COMPLETA; o cronômetro passa pela memória.
+  assert.match(source, /guiSubagentSidebarEntries/u)
+  assert.match(source, /guiSubagentElapsedMs\(entry, now, clock\)/u)
+  // Sem tempo medido nesta montagem, a ficha NÃO desenha o relógio.
+  assert.match(source, /elapsed && \(/u)
+
+  // O FIO continua consumindo a projeção viva — é o que impede o indicador de
+  // "N subagentes trabalhando" de contar uma frota interrompida.
+  assert.match(
+    pane,
+    /useMemo\(\(\) => normalizeGuiSubagentSidebar\(gui\.items\), \[gui\.items\]\)/u,
+    'o indicador do fio não pode passar a contar ficha parada'
+  )
+
+  // Pausa NÃO é erro: o tom da ficha parada é o traço apagado do papel, nunca
+  // o vermelho de falha — e nada de animação nova (a lateral já pulsa o vivo).
+  const bloco = css.match(/\.gui-subagent-row\.interrupted \{[^}]*\}/u)?.[0] ?? ''
+  assert.ok(bloco, 'a ficha interrompida não tem casa no CSS')
+  assert.match(bloco, /border-left-style: dashed/u)
+  assert.doesNotMatch(bloco, /var\(--err\)/u, 'interromper não é falhar')
+  assert.doesNotMatch(bloco, /animation/u, 'a R6-C não traz movimento novo')
+  assert.match(
+    css,
+    /\.gui-subagent-row\.interrupted \.gui-subagent-row-dot \{[^}]*background: transparent/u,
+    'o ponto cheio é de quem está vivo'
+  )
 })

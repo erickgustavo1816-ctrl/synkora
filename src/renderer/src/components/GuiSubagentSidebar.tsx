@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   formatGuiSubagentElapsed,
-  normalizeGuiSubagentSidebar,
+  guiSubagentElapsedMs,
+  guiSubagentSidebarEntries,
   type GuiSubagentSidebarEntry
 } from '../guiSubagentSidebar'
 import type { GuiItem } from '../store'
@@ -22,11 +23,12 @@ function metaLabel(entry: GuiSubagentSidebarEntry): string {
  * ajudantes abertos — e o lote do dono abre cinco de uma vez.
  *
  * O tique é de 1s porque é assim que um cronômetro se lê: contando. Ele só
- * existe enquanto HÁ ficha (`active`) — lateral vazia não mantém timer de pé —
- * e a faxina do efeito o encerra na desmontagem do pane. Cada ficha tem a
- * própria fase (o `at` dela), então o relógio compartilhado nunca é alinhado a
- * todas: a leitura de uma ficha recém-aberta assenta no tique seguinte, e o
- * `setNow` de entrada re-sincroniza quando a seção volta a existir.
+ * existe enquanto há ficha TRABALHANDO (`active`) — lateral vazia, ou só com
+ * frota interrompida, não mantém timer de pé, porque cronômetro congelado não
+ * pede tique — e a faxina do efeito o encerra na desmontagem do pane. Cada
+ * ficha tem a própria fase (o `at` dela), então o relógio compartilhado nunca é
+ * alinhado a todas: a leitura de uma ficha recém-aberta assenta no tique
+ * seguinte, e o `setNow` de entrada re-sincroniza quando a seção volta a viver.
  */
 function useGuiSubagentClock(active: boolean): number {
   const [now, setNow] = useState(() => Date.now())
@@ -41,14 +43,17 @@ function useGuiSubagentClock(active: boolean): number {
 
 function SubagentCard({
   entry,
-  now
+  elapsedMs
 }: {
   entry: GuiSubagentSidebarEntry
-  now: number
+  /** `null` = não há tempo trabalhado a mostrar nesta montagem (ficha que já
+   *  voltou parada do anel) — a ficha então simplesmente não desenha relógio. */
+  elapsedMs: number | null
 }): React.JSX.Element {
   // O zero do cronômetro é o carimbo FACTUAL do tool call, nunca a hora em que
   // a ficha apareceu na tela: replay de transcript e re-render não zeram nada.
-  const elapsed = formatGuiSubagentElapsed(now - entry.at)
+  const elapsed = elapsedMs === null ? null : formatGuiSubagentElapsed(elapsedMs)
+  const working = entry.status === 'running'
   return (
     // Cross-CLI é indistinguível por desenho: o CLI vira CARIMBO (estilo e
     // depuração), nunca mais um texto disputando a fileira de metadados.
@@ -62,10 +67,17 @@ function SubagentCard({
         <span className="gui-subagent-row-dot" aria-hidden="true" />
         <strong>{entry.name}</strong>
         {/* Fora da região viva do estado DE PROPÓSITO: um live region que muda
-            a cada segundo faria o leitor de tela narrar o relógio para sempre. */}
-        <time className="gui-subagent-row-elapsed" aria-label={`Trabalhando há ${elapsed}`}>
-          {elapsed}
-        </time>
+            a cada segundo faria o leitor de tela narrar o relógio para sempre.
+            Parado, o verbo vai para o passado — o número é história, não um
+            cronômetro que ainda anda. */}
+        {elapsed && (
+          <time
+            className="gui-subagent-row-elapsed"
+            aria-label={working ? `Trabalhando há ${elapsed}` : `Trabalhou ${elapsed}`}
+          >
+            {elapsed}
+          </time>
+        )}
         <span className="gui-subagent-row-status" role="status" aria-live="polite">
           {entry.statusLabel}
         </span>
@@ -105,10 +117,17 @@ export default function GuiSubagentSidebar({
 }): React.JSX.Element | null {
   // A normalização varre a lista inteira do pane; o trilho renderiza a cada
   // delta da conversa, então ela só roda quando os itens realmente mudam.
-  const entries = useMemo(() => normalizeGuiSubagentSidebar(items), [items])
+  const entries = useMemo(() => guiSubagentSidebarEntries(items), [items])
   // Antes do retorno vazio: a regra dos hooks não admite chamada condicional —
   // quem desliga o timer é o `active`, não o early return.
-  const now = useGuiSubagentClock(entries.length > 0)
+  const now = useGuiSubagentClock(entries.some((entry) => entry.status === 'running'))
+  // A memória do cronômetro congelado vive por MONTAGEM da lateral: ela guarda
+  // a última leitura viva de cada ficha e é dela que a ficha parada lê seu
+  // número. Fora de um ref ela seria recriada a cada render e o congelamento
+  // viraria um "0:00" novo a cada tique.
+  const clockRef = useRef<Map<string, number> | null>(null)
+  if (!clockRef.current) clockRef.current = new Map()
+  const clock = clockRef.current
   if (entries.length === 0) return null
   return (
     <aside className="gui-subagent-sidebar" aria-label="Subagentes desta conversa">
@@ -127,7 +146,11 @@ export default function GuiSubagentSidebar({
       </header>
       <div className="gui-subagent-sidebar-list">
         {entries.map((entry) => (
-          <SubagentCard key={entry.id} entry={entry} now={now} />
+          <SubagentCard
+            key={entry.id}
+            entry={entry}
+            elapsedMs={guiSubagentElapsedMs(entry, now, clock)}
+          />
         ))}
       </div>
     </aside>

@@ -123,6 +123,16 @@ export function guiMissionRoleOf(paneId: string): GuiMissionRole | undefined {
  * tool e que a entrega mora num arquivo; o mecanismo é do `guiDelegationWiring`
  * (correio + gravação), e não depende de o agente ter lido esta linha.
  *
+ * AS DUAS LINHAS DO CICLO (rodada 6 do design, R6.1-R6.3) são a metade que o
+ * modelo lê de uma mecânica que já existe no motor: PARAR DEIXOU DE SER PERDER.
+ * O ■ do dono e o fechamento do app INTERROMPEM a frota preservando registro,
+ * conversa e entrega parcial; `helper_resume` a traz de volta no mesmo pino, e
+ * `helper_cancel` virou o DESCARTE explícito, que apaga o arquivo de entrega.
+ * Sem estas linhas o agente fica com a ferramenta na mão sem saber que "volta
+ * com os subagentes" — a frase que o dono vai dizer depois de interromper — é
+ * um resume por ajudante parado, e trataria a frota interrompida como perdida,
+ * abrindo tudo de novo do zero (o custo que a persistência veio matar).
+ *
  * O chat de PLANEJAMENTO não recebe esta seção: ele não delega (D2).
  */
 const DELEGATION_STANDING_ORDER = `DELEGATION — STANDING ORDER FROM THE OWNER:
@@ -131,8 +141,10 @@ const DELEGATION_STANDING_ORDER = `DELEGATION — STANDING ORDER FROM THE OWNER:
 - ONE call opens the whole fleet: "abre 5 opus" is ONE delegate with 5 helpers, never 5 calls. Cross-CLI is first-class — a claude chat opens gpt-* helpers and a codex chat opens opus/fable ones.
 - THE OWNER'S PIN IS HIS WORD. When his message names no model or effort, EVERY helper of that fleet opens on what he pinned in the side panel — exactly, all of them, stamped in the receipt.
 - You leave his pin only when HE names another model in this chat, or when no seat of that CLI is logged — and then you SAY it here. Quietly opening something else is inventing an order he never gave.
-- You OWN your helpers: watch them with helpers_status, steer a live one with helper_send, collect with helper_result (it long-polls; calling it again is cheap), stop one with helper_cancel — in a claude chat they appear as mcp__synkora__*.
+- You OWN your helpers: watch them with helpers_status, steer a live one with helper_send, collect with helper_result (it long-polls; calling it again is cheap), discard one with helper_cancel — in a claude chat they appear as mcp__synkora__*.
 - Helpers deliver in FILES: the moment one ends, a "[synkora] ajudantes:" block rides your next tool result naming it and its file (.synkora/helpers/<id>.md). Open the file — never ask a helper to paste its work again.
+- STOPPING PRESERVES: the owner's ■ stop button, and closing the app, INTERRUPT your fleet instead of discarding it — those helpers wait in his sidebar as "interrompido", their conversation and partial work intact.
+- helper_resume puts one back to work in the SAME conversation, same pin, same account: when he says "volta com os subagentes", that is one resume per interrupted helper. helper_cancel is the opposite verb — it DISCARDS, deleting that helper's delivery file.
 - Before a large fleet, read list_seats and spread it across the accounts with the most limit left — accounts of the pinned model's CLI: switching CLI switches the model, and that is substituting, not spreading.
 - Helpers share THIS worktree: split the work by file boundaries, the way you would if you were running a team, and never hand the same file to two of them.
 - If these tools are not in your catalog, say so to the owner and do the work yourself — never fall back to a native subagent.`
