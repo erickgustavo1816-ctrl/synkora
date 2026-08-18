@@ -41,6 +41,33 @@ import type {
 // trocar não exige respawn. Aprovações (comando/patch) chegam como requests
 // JSON-RPC do servidor e a UI responde accept/acceptForSession/decline.
 
+/** Cerca anti-subagente NATIVO, aplicada POR THREAD. Sondada no codex-cli
+ *  0.147 (2026-08-18, relatório probe-codex-fence §A.2): `ThreadStartParams` e
+ *  `ThreadResumeParams` aceitam `config`, e `features.multi_agent=false` REMOVE
+ *  a ferramenta de colaboração do catálogo do modelo — com o MESMO prompt que
+ *  sem a cerca abre um subagente, o modelo responde "spawn_agent tool is
+ *  unavailable". Prosa não cerca (na sonda o modelo furou uma proibição
+ *  absoluta entregue por config), então ou a cerca é mecânica ou não existe.
+ *
+ *  Este é o SUSPENSÓRIO: o cinto é `-c features.multi_agent=false` nos args do
+ *  `app-server`, que chega por `extraArgs` na costura do spawn (sem espaço no
+ *  valor — é o que sobrevive ao `shell: true` do Windows). A cerca por thread
+ *  vale mesmo quando o processo nasceu sem o `-c`, e acompanha o resume.
+ *  Chave desconhecida é ignorada em silêncio pelo binário: a cerca nunca
+ *  derruba a thread — por isso o rastreio de spawn nativo abaixo continua vivo
+ *  como espelho honesto, em vez de confiar que a cerca está sempre armada. */
+export function codexNativeAgentFenceConfig(): Record<string, unknown> {
+  return { features: { multi_agent: false } }
+}
+
+/** Opções do painel codex: as de sempre mais a cerca acima, que só existe deste
+ *  lado (no claude a mesma ordem do dono vira `--disallowedTools`, por
+ *  `extraArgs`). Default DESLIGADO — quem decide é a costura do spawn: chat de
+ *  missão e helper nascem cercados, o chat do planejador fica como está. */
+export interface CodexSessionOpts extends MaestroSessionOpts {
+  suppressNativeAgents?: boolean
+}
+
 interface RpcResponse {
   result?: Record<string, unknown>
   error?: { message?: string; timeout?: boolean }
@@ -301,7 +328,7 @@ function commandText(command: unknown): string {
 }
 
 export class CodexSession {
-  readonly opts: MaestroSessionOpts
+  readonly opts: CodexSessionOpts
   // Persona vai como developerInstructions no thread/start — nunca no prompt.
   personaSent = true
   readyAnnounced = false
@@ -348,12 +375,13 @@ export class CodexSession {
   private collabParentByThreadId = new Map<string, string>()
   private startedCollabToolIds = new Set<string>()
   private deferredCollabResult: Extract<SessionEvent, { type: 'result' }> | null = null
-  /** Sub-agentes do wire REAL (`subAgentActivity` + frames do thread filho).
-   *  Caminho independente do `collabAgentToolCall` acima, que em produção só
-   *  chega com `tool: "wait"` e sem identidade utilizável. */
+  /** Sub-agentes NATIVOS vivos: a chave é o thread do FILHO, e é ela que faz o
+   *  roteador aceitar os frames dele. Alimentado pelas duas formas de spawn —
+   *  o `collabAgentToolCall`/`spawnAgent` do 0.147 (que entrega
+   *  `receiverThreadIds` no `item/completed`) e o `subAgentActivity` legado. */
   private codexAgents = new GuiCodexAgentRegistry()
 
-  constructor(opts: MaestroSessionOpts, persona: string, emit: (evt: SessionEvent) => void) {
+  constructor(opts: CodexSessionOpts, persona: string, emit: (evt: SessionEvent) => void) {
     this.opts = opts
     this.persona = persona
     this.emit = emit
@@ -991,9 +1019,27 @@ export class CodexSession {
     return undefined
   }
 
+  /** Threads filhas de um `spawn_agent`: viram linhagem do card pai E entram no
+   *  registro de sub-agentes. O registro é o que faz o roteador aceitar os
+   *  frames do thread do FILHO (`handleNotification`) — sem ele o trabalho do
+   *  subagente nativo é descartado inteiro. É a correção de fato da sonda de
+   *  2026-08-18: `subAgentActivity` nunca é emitido pelo 0.147, e o sinal REAL
+   *  de spawn é este par `collabAgentToolCall`/`spawnAgent`, cujo
+   *  `item/completed` carrega `receiverThreadIds` + `agentsStates`.
+   *  O card do pai continua sendo o ITEM do protocolo (ele nasce no
+   *  `item/started`, quando o filho ainda não existe): o id sintético do
+   *  registro só vale no caminho legado do `subAgentActivity`. */
   private rememberCollabThreads(parentId: string, item: CodexItem): string[] {
     const threadIds = guiCodexCollabThreadIds(item)
-    for (const threadId of threadIds) this.collabParentByThreadId.set(threadId, parentId)
+    for (const threadId of threadIds) {
+      // Auto-referência (a raiz anunciada como filha de si mesma) esconderia a
+      // conversa inteira atrás do roteador de sub-agentes.
+      if (threadId === this.threadId) continue
+      this.collabParentByThreadId.set(threadId, parentId)
+      // Idempotente por desenho: started e completed do mesmo spawn chegam com
+      // o payload repetido, e agente já encerrado nunca ressuscita.
+      this.codexAgents.noteStarted(threadId, item.agentPath)
+    }
     return threadIds
   }
 
@@ -1053,7 +1099,14 @@ export class CodexSession {
   ): void {
     if (!this.activeCollabParentIds.delete(parentId)) return
     for (const [threadId, mappedParent] of this.collabParentByThreadId) {
-      if (mappedParent === parentId) this.collabParentByThreadId.delete(threadId)
+      if (mappedParent !== parentId) continue
+      this.collabParentByThreadId.delete(threadId)
+      // O registro fecha JUNTO com o card: o `turn/completed` do filho pode
+      // chegar depois do veredito do `wait`, e um agente sobrevivente prenderia
+      // o terminal do turno (`turnActive`) e fecharia um id sintético que card
+      // nenhum abriu. Ferramenta do filho sem retorno cai aqui também.
+      const agent = this.codexAgents.noteSettled(threadId)
+      if (agent) this.closeChildToolCards(agent)
     }
     this.emit(commandResultEvent(
       detail ??
@@ -1141,7 +1194,7 @@ export class CodexSession {
     this.emitTurnResult(result)
   }
 
-  // ————— sub-agentes do wire REAL (subAgentActivity + thread do filho) —————
+  // ————— sub-agentes: registro do filho + frames do thread dele —————
 
   /** Card de ferramenta do Codex. A MESMA projeção serve para a raiz e para o
    *  thread de um sub-agente — só a linhagem (`parentToolUseId`) muda. */
@@ -1170,7 +1223,12 @@ export class CodexSession {
     }
   }
 
-  /** `subAgentActivity` no thread RAIZ: o ÚNICO sinal de spawn do Codex.
+  /** `subAgentActivity` no thread RAIZ: sinal de spawn dos binários que o
+   *  emitem. O codex-cli 0.147 NÃO emite (sonda de 2026-08-18: zero ocorrências
+   *  em 6 rodadas vivas com spawn real) — lá quem anuncia é o
+   *  `collabAgentToolCall`/`spawnAgent` tratado acima. Este caminho fica como
+   *  compatibilidade: se um binário voltar a emitir, o card nasce por aqui, com
+   *  o id SINTÉTICO do registro (não há item de protocolo para o spawn).
    *  `item/started` e `item/completed` chegam com payload IDÊNTICO ~1ms depois
    *  um do outro — o registro faz o dedupe e o card nasce uma vez só. */
   private noteSubAgentActivity(item: CodexItem): void {
@@ -1231,9 +1289,12 @@ export class CodexSession {
         const item = p['item'] as CodexItem | undefined
         const event = item ? this.codexToolEvent(item) : null
         if (!event) break
-        const parentToolUseId = this.codexAgents.noteChildTool(agentThreadId, item?.id)
-        if (!parentToolUseId) break
-        this.emit({ ...event, parentToolUseId })
+        const registered = this.codexAgents.noteChildTool(agentThreadId, item?.id)
+        if (!registered) break
+        this.emit({
+          ...event,
+          parentToolUseId: this.agentParentToolUseId(agentThreadId, registered)
+        })
         break
       }
       case 'item/completed': {
@@ -1251,31 +1312,53 @@ export class CodexSession {
     }
   }
 
-  /** Terminal do card do pai. Os cards de ferramenta do filho que ficaram sem
-   *  resultado fecham JUNTO: o tool-result do Codex não carrega `agentStatus`
-   *  (cerca entre os backends), então o renderer não cascateia sozinho — e card
-   *  filho pendente faz o terminal do turno inventar o erro de órfão. */
+  /** Card PAI de um sub-agente registrado: o item do protocolo quando o spawn
+   *  veio por `collabAgentToolCall` (o card já existe no anel com esse id), o
+   *  id sintético do registro no caminho legado do `subAgentActivity`. Um id
+   *  sintético emitido sobre um spawn collab seria linhagem para um card que
+   *  ninguém abriu. */
+  private agentParentToolUseId(agentThreadId: string, fallback: string): string {
+    return this.collabParentByThreadId.get(agentThreadId) ?? fallback
+  }
+
+  /** Cards de ferramenta do filho que ficaram sem resultado fecham JUNTO com o
+   *  sub-agente: o tool-result do Codex não carrega `agentStatus` (cerca entre
+   *  os backends), então o renderer não cascateia sozinho — e card filho
+   *  pendente faz o terminal do turno inventar o erro de órfão. */
+  private closeChildToolCards(agent: GuiCodexAgent): void {
+    for (const toolUseId of agent.openToolUseIds) {
+      this.emit(commandResultEvent('encerrado com o subagente', false, toolUseId, 'cancelled'))
+    }
+  }
+
+  /** Terminal do card do pai a partir do estado FACTUAL do filho. */
   private emitCodexAgentSettled(
     agent: GuiCodexAgent,
     outcome: GuiCodexCollabOutcome,
     detail?: string
   ): void {
-    for (const toolUseId of agent.openToolUseIds) {
-      this.emit(commandResultEvent('encerrado com o subagente', false, toolUseId, 'cancelled'))
-    }
-    this.emit(
-      commandResultEvent(
-        detail ??
-          (outcome === 'completed'
-            ? 'subagente concluído'
-            : outcome === 'failed'
-              ? 'subagente falhou'
-              : 'subagente cancelado'),
-        outcome === 'failed',
-        agent.toolUseId,
-        outcome
+    this.closeChildToolCards(agent)
+    const collabParentId = this.collabParentByThreadId.get(agent.agentThreadId)
+    if (collabParentId) {
+      // Spawn nativo do 0.147: quem fecha é sempre o dono do card do protocolo,
+      // uma vez só — o `wait` e o `turn/completed` do filho disputam o mesmo
+      // desfecho, e quem chegar primeiro leva.
+      this.finishCollabParent(collabParentId, outcome, detail)
+    } else {
+      this.emit(
+        commandResultEvent(
+          detail ??
+            (outcome === 'completed'
+              ? 'subagente concluído'
+              : outcome === 'failed'
+                ? 'subagente falhou'
+                : 'subagente cancelado'),
+          outcome === 'failed',
+          agent.toolUseId,
+          outcome
+        )
       )
-    )
+    }
     this.flushDeferredCollabResult()
   }
 
@@ -1386,6 +1469,9 @@ export class CodexSession {
       developerInstructions: this.persona
     }
     if (this.opts.sandbox) base['sandbox'] = this.opts.sandbox
+    // A cerca viaja no MESMO `base`, então vale no start E no resume: thread
+    // retomada não volta a poder abrir subagente nativo.
+    if (this.opts.suppressNativeAgents) base['config'] = codexNativeAgentFenceConfig()
     let resp: RpcResponse | null = null
     if (this.opts.resumeSessionId) {
       resp = await this.request('thread/resume', {
