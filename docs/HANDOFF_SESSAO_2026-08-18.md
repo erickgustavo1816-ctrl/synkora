@@ -134,6 +134,34 @@ Disciplina: vermelho-antes-de-verde nas 3 frentes (registrado nos relatórios
 `r7a/r7b/r7c` do scratchpad), review do orquestrador no diff inteiro, gate
 raiz NPM-EXIT=0 pós-integração.
 
+## ✅ CAUDA DA RODADA 7 (madrugada — o caso do Painel de Gestão)
+
+O dono validou de novo e trouxe: o menu "onde abrir" era para o CHAT (frente D,
+`aec9adb` — token do fio + painel de código, rota `gui:fileOpenExternal` com a
+MESMA cerca do gui:fileOpen; executável nunca abre); e o caso real dos 50 mil
+linhas no projeto externo. Diagnóstico: a master do Painel avançou 50 commits
+POR FORA do Synkora e a base da versão ficou no commit inicial — missão nasceu
+em worktree vazio, o agente mergeou a master (corretamente) e a entrega contou
+o repo inteiro. AÇÃO MANUAL (opção B do dono): base V1.0 fast-forwarded até a
+master (dentro do worktree da versão); as 3 missões velhas do Painel
+(a5fa56da, be3a6649, de237c87) nasceram da base vazia — o dono arquiva e
+recria. ESTRUTURAL:
+
+- **C2** (`46bf930`): `syncVersionBaseWithMain` (worktree.ts, via gitWorker) +
+  `alignVersionBaseWithMain` dentro do createMissionImpl — base atrás e
+  ancestral = fast-forward automático (layout com branch checada coberto;
+  sujo = blocked preservando; CAS no update-ref); divergiu = advisory auditado
+  com as duas saídas; falha de git nunca bloqueia a criação. Blackbox
+  version-base-* + aviso no hub no nível do PROJETO.
+- **E** (`728ff2b`): ■ com tools em voo nunca mais vira "falhou · erro sem
+  detalhe" — `interrupted: true` aditivo no result dos DOIS motores
+  (normalizado + bandeira ganha no renderer), card fecha "interrompida pelo
+  dono", fio ganha nota neutra "turno interrompido". R6 intocado por
+  construção (frota vai por stopPreserving).
+
+Dívida de higiene ACUMULADA para rodada própria (package.json liberado):
+`guiHelperSessions.ts` ~1990 e `missionEngine.ts` ~1778 linhas — dividir.
+
 ## ⚡ PRÓXIMO (nesta ordem)
 
 1. **VALIDAÇÃO DO DONO ao vivo** do ciclo redondo completo: abrir frota → ver
