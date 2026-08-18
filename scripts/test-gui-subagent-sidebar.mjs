@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
+  formatGuiSubagentElapsed,
   guiSubagentMetadataForTool,
   isGuiSubagentToolEvent,
   normalizeGuiSubagentSidebar
@@ -567,4 +568,104 @@ test('C4 — a ficha exibe effort e conta e carimba o CLI', () => {
   assert.match(source, /Effort: \$\{entry\.effort\}/u)
   // Três campos não cabem numa linha de ~165px do trilho: a fileira quebra.
   assert.match(css, /\.gui-subagent-row-meta \{[^}]*flex-wrap: wrap/u)
+})
+
+// ————— W4 · CRONÔMETRO DA FICHA (ordem do dono, 18/08: "há quanto tempo ele
+// tá trabalhando") —————
+//
+// A ficha já dizia QUEM e O QUE; faltava HÁ QUANTO TEMPO. Como a lateral é
+// só-trabalhando (terminal factual encerra a ficha), o cronômetro é a única
+// leitura de "esse ajudante empacou" que o dono tem sem abrir o transcript.
+
+// W4.1 — a régua do relógio, isolada do React.
+test('W4 — o cronômetro conta em m:ss e vira h:mm:ss depois da primeira hora', () => {
+  assert.equal(formatGuiSubagentElapsed(0), '0:00')
+  assert.equal(formatGuiSubagentElapsed(999), '0:00', 'o segundo só troca quando fecha')
+  assert.equal(formatGuiSubagentElapsed(1_000), '0:01')
+  assert.equal(formatGuiSubagentElapsed(7_000), '0:07')
+  assert.equal(formatGuiSubagentElapsed(59_999), '0:59')
+  assert.equal(formatGuiSubagentElapsed(60_000), '1:00')
+  assert.equal(formatGuiSubagentElapsed(65_000), '1:05')
+  assert.equal(formatGuiSubagentElapsed(600_000), '10:00')
+  assert.equal(formatGuiSubagentElapsed(3_599_000), '59:59', 'o último segundo antes da hora')
+  assert.equal(formatGuiSubagentElapsed(3_600_000), '1:00:00')
+  assert.equal(formatGuiSubagentElapsed(3_661_000), '1:01:01')
+  assert.equal(formatGuiSubagentElapsed(45_296_000), '12:34:56')
+
+  // O idioma é o MESMO do cronômetro do turno (`formatGuiElapsed`, na barra de
+  // atividade): duas telas do app contando o tempo de jeitos diferentes é a
+  // desarmonia que o dono lê como bug.
+  const barra = readFileSync(
+    new URL('../src/renderer/src/guiActivity.ts', import.meta.url),
+    'utf8'
+  )
+  assert.match(barra, /\$\{hours\}:\$\{String\(minutes\)\.padStart\(2, '0'\)\}/u)
+
+  // Relógio torto nunca vira TEXTO torto: carimbo no futuro, virada de fuso ou
+  // valor não-finito aterrissam em 0:00 — nunca "-1:59" nem "NaN:NaN".
+  assert.equal(formatGuiSubagentElapsed(-1), '0:00')
+  assert.equal(formatGuiSubagentElapsed(-86_400_000), '0:00')
+  assert.equal(formatGuiSubagentElapsed(Number.NaN), '0:00')
+  assert.equal(formatGuiSubagentElapsed(Number.POSITIVE_INFINITY), '0:00')
+  assert.equal(formatGuiSubagentElapsed(Number.NEGATIVE_INFINITY), '0:00')
+
+  // O carimbo factual do card é o zero do cronômetro — a normalização preserva
+  // `at` justamente para isso.
+  const [entry] = normalizeGuiSubagentSidebar([
+    {
+      ...tool('1770000000000', 'Task', 'trabalho longo'),
+      toolUseId: 'agent-1',
+      subagent: guiSubagentMetadataForTool('Task', { prompt: 'trabalho longo' })
+    }
+  ])
+  assert.equal(entry.at, 1_770_000_000_000)
+  assert.equal(formatGuiSubagentElapsed(1_770_000_125_000 - entry.at), '2:05')
+})
+
+// W4.2 — o relógio é UM para a lista inteira. Um timer por ficha multiplicaria
+// o custo pelo número de ajudantes abertos (o lote do dono abre cinco), e um
+// timer sobrevivendo à lateral vazia seria vazamento puro.
+test('W4 — a lista tem UM relógio só, com faxina, e a ficha mostra o cronômetro', () => {
+  const source = readFileSync(
+    new URL('../src/renderer/src/components/GuiSubagentSidebar.tsx', import.meta.url),
+    'utf8'
+  )
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  assert.equal(
+    (source.match(/setInterval/gu) ?? []).length,
+    1,
+    'um timer por ficha multiplicaria o custo por ajudante aberto'
+  )
+  const hookStart = source.indexOf('function useGuiSubagentClock')
+  const cardStart = source.indexOf('function SubagentCard')
+  assert.ok(hookStart >= 0, 'o relógio compartilhado tem nome próprio')
+  assert.ok(cardStart > hookStart, 'o relógio mora ACIMA da ficha, não dentro dela')
+
+  const relogio = source.slice(hookStart, cardStart)
+  assert.match(relogio, /window\.setInterval\(/u)
+  assert.match(relogio, /window\.clearInterval\(timer\)/u, 'timer sem faxina vaza no unmount')
+  assert.match(relogio, /if \(!active\) return/u, 'lateral vazia não mantém timer de pé')
+  assert.doesNotMatch(source.slice(cardStart), /setInterval/u, 'nunca um timer POR card')
+
+  // Ligado ao único fato que liga/desliga a seção: ter ficha.
+  assert.match(source, /useGuiSubagentClock\(entries\.length > 0\)/u)
+
+  // O cronômetro é medido do carimbo FACTUAL do card contra o tique dividido.
+  assert.match(source, /gui-subagent-row-elapsed/u)
+  assert.match(source, /formatGuiSubagentElapsed\(now - entry\.at\)/u)
+
+  // FORA da região viva do estado: um live region que muda a cada segundo faria
+  // o leitor de tela narrar o relógio para sempre.
+  const status = source.slice(source.indexOf('role="status"'))
+  assert.doesNotMatch(
+    status.slice(0, status.indexOf('</span>')),
+    /elapsed/u,
+    'o relógio não pode ser narrado a cada tique'
+  )
+
+  // Dígito não dança a cada segundo (largura fixa) e o tom é o da fileira de
+  // metadados — o cronômetro informa, nunca disputa com o nome do ajudante.
+  assert.match(css, /\.gui-subagent-row-elapsed \{[^}]*font-variant-numeric: tabular-nums/u)
+  assert.match(css, /\.gui-subagent-row-elapsed \{[^}]*var\(--ink-3\)/u)
 })

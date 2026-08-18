@@ -5607,6 +5607,14 @@ body.pane-docking .pane-bar.draggable {
   text-overflow: ellipsis;
 }
 
+/* W4: a queixa que aparece DEPOIS de já haver placar mora fora do `.dr-diff`
+   (é linha própria do trilho, não segunda coluna da linha do número) — então
+   ela precisa herdar o mesmo corpo de 11px da linha de cima. */
+.dr-diff-stale {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .dr-diff-toggle {
   flex: none;
   background: none;
@@ -19399,3 +19407,19 @@ details.gui-error-line {
   margin-left: 5px;
 }
 /* ————— fim do BLOCO NOVO da ficha de ajudante MCP ————— */
+
+/* ————— BLOCO NOVO: cronômetro da ficha de ajudante —————
+   "Há quanto tempo ele tá trabalhando" (ordem do dono, 18/08). O relógio entra
+   na fileira do cabeçalho, entre o nome e o estado: mesmo tom e mesmo corpo da
+   fileira de metadados, porque ele INFORMA — nunca disputa com o nome do
+   ajudante. `tabular-nums` é o que impede o dígito de dançar a cada segundo (a
+   mono do app tem largura fixa, mas a regra explícita protege de troca de
+   fonte); `flex: none` mantém a régua inteira enquanto o nome, e só ele, cede
+   espaço na fileira apertada do trilho. */
+.gui-subagent-row-elapsed {
+  flex: none;
+  color: var(--ink-3);
+  font-size: 8.5px;
+  font-variant-numeric: tabular-nums;
+}
+/* ————— fim do BLOCO NOVO do cronômetro da ficha ————— */

@@ -221,6 +221,31 @@ function terminalTone(item: GuiToolItem): Exclude<GuiSubagentSidebarTone, 'runni
   return 'completed'
 }
 
+/**
+ * CRONÔMETRO DA FICHA (ordem do dono, 18/08: "há quanto tempo ele tá
+ * trabalhando"). Abaixo de uma hora conta em `m:ss`; a partir dela, `h:mm:ss`.
+ *
+ * O idioma é o MESMO do cronômetro do turno (`formatGuiElapsed`, na barra de
+ * atividade) — duas telas do app contando o tempo de jeitos diferentes é o tipo
+ * de desarmonia que o dono lê como bug. A régua está DUPLICADA de propósito, e
+ * não importada: as suítes carregam este módulo com type-stripping do node, que
+ * não resolve import de irmão sem extensão — o mesmo motivo já anotado em
+ * `isLaunchedSubagent`. Mudou lá, muda aqui junto (a suíte cobra as duas).
+ *
+ * Relógio torto nunca vira TEXTO torto: carimbo no futuro, virada de fuso ou
+ * valor não-finito aterrissam em `0:00`, nunca em "-1:59" ou "NaN:NaN".
+ */
+export function formatGuiSubagentElapsed(elapsedMs: number): string {
+  const safe = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0
+  const totalSeconds = Math.floor(safe / 1_000)
+  const hours = Math.floor(totalSeconds / 3_600)
+  const minutes = Math.floor((totalSeconds % 3_600) / 60)
+  const seconds = totalSeconds % 60
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
 function statusLabel(status: GuiSubagentSidebarTone): string {
   switch (status) {
     case 'completed':
