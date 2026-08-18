@@ -21,7 +21,7 @@
  * token nenhum — quem delega é o chat do dono, e frota que abre frota é o laço
  * que o backstop existe para conter.
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CLAUDE_NATIVE_AGENT_FENCE } from './guiDelegateMcp'
 import { CodexSession, type CodexSessionOpts } from './codexSession'
@@ -199,6 +199,31 @@ export function writeGuiHelperDelivery(delivery: GuiHelperDelivery): GuiHelperDe
     return { ok: true, path: relative }
   } catch (error) {
     return { ok: false, error: `não deu para gravar ${relative}: ${helperErrorText(error)}` }
+  }
+}
+
+/**
+ * APAGA a entrega canônica — o DESCARTE do R6.2 ("helper_cancel apaga o arquivo
+ * de entrega"), e o par exato do `writeGuiHelperDelivery`.
+ *
+ * O caminho é RECONSTRUÍDO pelo helperId, nunca lido do `resultPath` do
+ * registro: é a mesma função que escreveu, então os dois lados não podem
+ * divergir, e um id hostil já sai saneado dela — um `resultPath` vindo de um
+ * arquivo de disco editado à mão jamais vira `rm` fora da pasta de ajudantes.
+ *
+ * Arquivo ausente é o caso NORMAL (ajudante cancelado antes de qualquer
+ * gravação): erro nenhum sobe daqui, porque o motor não pode depender do disco
+ * para encerrar um registro.
+ */
+export function discardGuiHelperDelivery(record: GuiHelperRecord): void {
+  const cwd = record.cwd?.trim()
+  if (!cwd) return
+  const relative = guiHelperDeliveryPath(record.helperId)
+  try {
+    rmSync(join(cwd, ...relative.split('/')), { force: true })
+  } catch {
+    // Arquivo travado por outro processo vira lixo no worktree — nunca um
+    // descarte que não acontece.
   }
 }
 
@@ -542,6 +567,10 @@ export function createGuiHelperEngine(wiring: GuiHelperEngineWiring): GuiHelperE
     // ordem do dono ("todo ajudante sempre entrega em modelo de ARQUIVO") não
     // pode depender de um índice se lembrar de ligá-la.
     deliver: (delivery) => writeGuiHelperDelivery(delivery),
+    // E o outro lado dela (R6.2): descartar um ajudante tira a entrega do disco.
+    // Também não é opção do chamador — "descartei" com o arquivo ainda lá seria
+    // a UI mentindo sobre o que o dono acabou de mandar fazer.
+    discardDelivery: (record) => discardGuiHelperDelivery(record),
     onChange: wiring.onChange,
     log: wiring.log
   })
@@ -790,7 +819,8 @@ export function guiHelperSpawnText(
   const tail =
     opened > 0
       ? '\n\nEles NÃO bloqueiam você: siga conversando. Acompanhe por helpers_status, ' +
-        'colha com helper_result (long-poll), dirija com helper_send e desista com helper_cancel.'
+        'colha com helper_result (long-poll), dirija com helper_send, retome um parado com ' +
+        'helper_resume e jogue fora com helper_cancel (que DESCARTA: registro e entrega somem).'
       : ''
   const notes = (typeof warning === 'string' ? [warning] : (warning ?? []))
     .filter((note): note is string => Boolean(note && note.trim()))
@@ -815,7 +845,12 @@ export function guiHelperStatusText(snapshots: readonly GuiHelperSnapshot[]): st
     const meta = [snapshot.model, snapshot.effort, snapshot.seatName ?? snapshot.seatId].filter(
       (part): part is string => Boolean(part)
     )
-    const detail: string[] = [`${helperStateLabel(snapshot.state)} há ${elapsedText(snapshot.elapsedMs)}`]
+    // SEGUNDA VIDA (R6.2): o decorrido conta da VOLTA, e sem esta marca um
+    // ajudante que já trabalhou meia hora pareceria recém-nascido.
+    const vida = snapshot.resumedAt !== undefined ? ' (retomado)' : ''
+    const detail: string[] = [
+      `${helperStateLabel(snapshot.state)}${vida} há ${elapsedText(snapshot.elapsedMs)}`
+    ]
     // RE-TENTATIVA EM CURSO (R6.4): enquanto o respiro corre, o card diz por que
     // ele ainda não partiu — "abrindo há 20s" sozinho pareceria travado.
     if (snapshot.retriedAt !== undefined && snapshot.state === 'spawning') {
@@ -831,7 +866,15 @@ export function guiHelperStatusText(snapshots: readonly GuiHelperSnapshot[]): st
     return `- ${head}\n    ${meta.join(' · ')}\n    ${detail.join(' · ')}`
   })
   const live = snapshots.filter((snapshot) => snapshot.state === 'spawning' || snapshot.state === 'working')
-  return `${snapshots.length} ajudante(s) neste chat · ${live.length} vivo(s):\n${lines.join('\n')}`
+  // A RECEITA DOS PARADOS vem UMA vez, no fim: repeti-la por ajudante seria
+  // contexto pago em toda linha de uma frota de vinte.
+  const parados = snapshots.filter((snapshot) => snapshot.state === 'interrupted').length
+  const receita =
+    parados > 0
+      ? `\n\n${parados} interrompido(s): retome com helper_resume (volta de onde parou) ou ` +
+        'descarte com helper_cancel — na dúvida, pergunte ao dono qual dos dois ele quer.'
+      : ''
+  return `${snapshots.length} ajudante(s) neste chat · ${live.length} vivo(s):\n${lines.join('\n')}${receita}`
 }
 
 /**
@@ -863,8 +906,9 @@ export function guiHelperResultText(outcome: GuiHelperResultOutcome): string {
   if (outcome.state === 'interrupted') {
     const head =
       `o ajudante ${outcome.helperId} está INTERROMPIDO: ${outcome.failure ?? 'parado sem motivo declarado'}. ` +
-      'O processo dele morreu, mas a conversa ficou guardada — dá para retomar de onde parou, ' +
-      'em vez de recomeçar o trabalho do zero.'
+      'O processo dele morreu, mas a conversa ficou guardada — dá para RETOMAR com helper_resume ' +
+      '(ele volta de onde parou, na mesma conversa) ou descartar com helper_cancel. ' +
+      'Se não estiver claro o que o dono quer, pergunte a ele antes.'
     return outcome.resultPath
       ? `${head}\n\nO que ele chegou a escrever está em ${outcome.resultPath}.`
       : head
@@ -990,6 +1034,7 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
   helperResult(id: GuiDelegationIdentity, helperId: string, waitSeconds?: number): Promise<string>
   helperSend(id: GuiDelegationIdentity, helperId: string, text: string): string
   helperCancel(id: GuiDelegationIdentity, helperId: string): string
+  helperResume(id: GuiDelegationIdentity, helperId: string): string
 } {
   const now = deps.now ?? Date.now
   const guard = (id: GuiDelegationIdentity): string | null =>
@@ -1158,12 +1203,34 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
       if (refusal) return refusal
       const owned = helperOfPane(deps, id, helperId)
       if (!owned.ok) return owned.error
-      const cancelled = deps.engine.cancel(helperId, 'cancelado pelo chat que o abriu')
+      const cancelled = deps.engine.cancel(helperId, 'descartado pelo chat que o abriu')
       return withInbox(
         id.paneId,
         cancelled.ok
-          ? `ajudante ${helperId} cancelado — o que ele já escreveu no worktree continua lá.`
+          ? `ajudante ${helperId} DESCARTADO: a sessão morreu e o arquivo de entrega dele saiu do ` +
+              'worktree. O que ele chegou a MUDAR no código continua lá — desfazer isso é git, e é ' +
+              'seu: peça ao dono antes de mexer.'
           : cancelled.error
+      )
+    },
+
+    /**
+     * RETOMAR (R6.2) — o verbo que fecha o ciclo. Recusa do motor viaja
+     * VERBATIM: ela é que nomeia o estado real e o verbo certo, e reescrevê-la
+     * aqui seria uma segunda verdade sobre o mesmo ajudante.
+     */
+    helperResume(id, helperId) {
+      const refusal = guard(id)
+      if (refusal) return refusal
+      const owned = helperOfPane(deps, id, helperId)
+      if (!owned.ok) return owned.error
+      const resumed = deps.engine.resume(helperId)
+      return withInbox(
+        id.paneId,
+        resumed.ok
+          ? `ajudante ${helperId} RETOMADO: mesma conversa, mesmo executor, continuando de onde ` +
+              'parou. Acompanhe por helpers_status e colha a entrega com helper_result.'
+          : resumed.error
       )
     }
   }

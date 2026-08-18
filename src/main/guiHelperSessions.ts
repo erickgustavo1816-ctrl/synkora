@@ -100,6 +100,11 @@ export function isGuiHelperResumable(state: GuiHelperState): boolean {
   return state === 'interrupted'
 }
 
+/** Fim da linha de verdade: nem se retoma, nem se descarta — já acabou. */
+export function isGuiHelperTerminal(state: GuiHelperState): boolean {
+  return GUI_HELPER_TERMINAL_STATES.includes(state)
+}
+
 // ————— tetos —————
 
 /** Briefing de ajudante é recorte de trabalho, não anexo: acima disto RECUSA.
@@ -291,6 +296,13 @@ export interface GuiHelperRecord {
   seatId: string
   seatName?: string
   prompt: string
+  /**
+   * A MÃO QUE O DELEGADOR TINHA no nascimento. Persistido porque o resume (R6.2)
+   * reconstrói o pedido do REGISTRO: sem ele, um ajudante nascido num chat de
+   * bypass renasceria em modo `default` e morreria no primeiro pedido de
+   * permissão — beco, porque sessão headless não tem ninguém para responder.
+   */
+  permissionMode?: string
   state: GuiHelperState
   startedAt: number
   settledAt?: number
@@ -318,6 +330,13 @@ export interface GuiHelperRecord {
   retriedAt?: number
   /** Em PT-BR e curto, para a ficha do dono: "sobrecarga do provedor". */
   retryReason?: string
+  /**
+   * Quando o delegador o RETOMOU (R6.2). Presente = este ajudante está na
+   * segunda vida: o `startedAt` re-arma no instante da volta (o cronômetro do
+   * dono conta o trabalho, não o tempo em que ele esteve parado) e este campo é
+   * o que impede a ficha de mentir que ele nasceu agora.
+   */
+  resumedAt?: number
 }
 
 // ————— o disco (R6.1) —————
@@ -421,6 +440,8 @@ export function sanitizeGuiHelperRecord(value: unknown): GuiHelperRecord | undef
   const sessionId = optionalString(raw['sessionId'])
   const retriedAt = optionalNumber(raw['retriedAt'])
   const retryReason = optionalString(raw['retryReason'])
+  const permissionMode = optionalString(raw['permissionMode'])
+  const resumedAt = optionalNumber(raw['resumedAt'])
   return {
     helperId,
     delegatorPaneId,
@@ -433,6 +454,7 @@ export function sanitizeGuiHelperRecord(value: unknown): GuiHelperRecord | undef
     seatId,
     ...(seatName ? { seatName } : {}),
     prompt: raw['prompt'],
+    ...(permissionMode ? { permissionMode } : {}),
     state: state as GuiHelperState,
     startedAt,
     ...(settledAt !== undefined ? { settledAt } : {}),
@@ -444,7 +466,8 @@ export function sanitizeGuiHelperRecord(value: unknown): GuiHelperRecord | undef
     ...(failure ? { failure } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(retriedAt !== undefined ? { retriedAt } : {}),
-    ...(retryReason ? { retryReason } : {})
+    ...(retryReason ? { retryReason } : {}),
+    ...(resumedAt !== undefined ? { resumedAt } : {})
   }
 }
 
@@ -496,6 +519,9 @@ export interface GuiHelperSnapshot {
    *  curso; depois, a marca honesta de que este ajudante nasceu duas vezes. */
   retriedAt?: number
   retryReason?: string
+  /** Retomado pelo delegador (R6.2): o decorrido conta da VOLTA, e é este campo
+   *  que explica por que ele é curto num ajudante que já trabalhou meia hora. */
+  resumedAt?: number
 }
 
 // ————— o pedido —————
@@ -568,7 +594,12 @@ export type GuiHelperResultOutcome =
 
 // ————— observação (a lateral e o diário) —————
 
-export type GuiHelperChangeKind = 'spawned' | 'activity' | 'settled'
+/**
+ * `resumed` (R6.2) é o nascimento de uma SEGUNDA VIDA: o card do interrompido já
+ * fechou na lateral, e no renderer um card fechado nunca mais aceita resultado.
+ * Sem este aviso próprio, o ajudante que voltou entregaria no vazio.
+ */
+export type GuiHelperChangeKind = 'spawned' | 'activity' | 'settled' | 'resumed'
 
 export interface GuiHelperChange {
   kind: GuiHelperChangeKind
@@ -583,6 +614,10 @@ export type GuiHelperLogEvent =
   | 'helper-fleet-effort'
   /** Uma re-tentativa automática de falha passageira (R6.4). */
   | 'helper-retry'
+  /** O delegador retomou um interrompido (R6.2) — a mesma conversa, de volta. */
+  | 'helper-resumed'
+  /** DESCARTE explícito: o registro encerra e a entrega sai do disco (R6.2). */
+  | 'helper-discarded'
   /** O boot reencontrou um ajudante vivo da sessão anterior e o marcou como
    *  interrompido — o rastro de que o app fechou por cima de trabalho. */
   | 'helper-restored'
@@ -619,6 +654,16 @@ export interface GuiHelperEngineDeps {
    * motor roda sem tocar em disco).
    */
   deliver?(delivery: GuiHelperDelivery): GuiHelperDeliveryOutcome
+  /**
+   * APAGA a entrega canônica — o outro lado do `deliver`, e a metade mecânica do
+   * DESCARTE (R6.2: "helper_cancel apaga o arquivo de entrega").
+   *
+   * Injetado pelo mesmo motivo: o motor decide QUANDO jogar fora, o wiring sabe
+   * ONDE. Falhar aqui nunca derruba o descarte — um arquivo que resistiu é lixo
+   * no worktree, e um registro que não encerra é um card preso para sempre.
+   * Ausente = o motor só esquece o caminho (é como as suítes rodam).
+   */
+  discardDelivery?(record: GuiHelperRecord): void
   /**
    * O DISCO (R6.1). Ausente = nada persiste e o boot não reencontra nada — é
    * como as suítes do motor rodam. Presente, ele é lido UMA vez no nascimento
@@ -1047,6 +1092,9 @@ export class GuiHelperEngine {
         seatId: seat.seatId,
         ...(seat.name ? { seatName: seat.name } : {}),
         prompt,
+        // O modo do delegador é PINO de nascimento: é ele que o resume reusa,
+        // inclusive depois de um boot em que o chat nem esteja aberto.
+        ...(delegator.permissionMode ? { permissionMode: delegator.permissionMode } : {}),
         state: 'spawning',
         startedAt: this.now()
       }
@@ -1190,13 +1238,123 @@ export class GuiHelperEngine {
     return { ok: true }
   }
 
+  /**
+   * RETOMAR (R6.2) — o verbo que fecha o ciclo redondo.
+   *
+   * A MESMA conversa volta, no MESMO executor: o pedido é reconstruído a partir
+   * do REGISTRO, nunca de estado em memória. Não é economia — o registro que
+   * volta do disco depois de um boot jamais terá um `spawnRequest`, e um resume
+   * que dependesse dele funcionaria na sessão e quebraria exatamente no caso que
+   * o dono pediu ("fechar o app e voltar os subagentes voltarem").
+   *
+   * O pino do nascimento vale: modelo, effort e modo de permissão são os de
+   * origem, e a CONTA se re-resolve pelo `seatId` guardado (a de origem pode ter
+   * saído do login desde então). Trocar executor não é retomar — é descartar e
+   * abrir outro.
+   */
+  resume(helperId: string): GuiHelperCommandResult {
+    this.sweep()
+    const live = this.helpers.get(helperId)
+    if (!live) return { ok: false, error: helperNotFound(helperId) }
+    const record = live.record
+    if (!isGuiHelperResumable(record.state)) {
+      return { ok: false, error: notResumable(record.state) }
+    }
+    // SEM ENDEREÇO DA CONVERSA não há retomada: o nudge é curto porque a
+    // conversa carrega o briefing, e sem ela ele chegaria a um ajudante em
+    // branco — "continue de onde parou" sem nenhum "onde".
+    const sessionId = trimmedOrUndefined(record.sessionId)
+    if (!sessionId) return { ok: false, error: RESUME_WITHOUT_CONVERSATION }
+    const seat = this.deps.resolveSeat({ cli: record.cli, preferredSeatId: record.seatId })
+    if (!seat) {
+      return {
+        ok: false,
+        error:
+          `não há conta ${record.cli} logada para retomar este ajudante — ` +
+          `entre na conta ${record.seatName ?? record.seatId} ou descarte-o e abra outro com delegate`
+      }
+    }
+
+    const at = this.now()
+    live.spawnRequest = {
+      helperId,
+      projectId: record.projectId,
+      delegatorPaneId: record.delegatorPaneId,
+      cwd: record.cwd,
+      cli: record.cli,
+      model: record.model,
+      ...(record.effort ? { effort: record.effort } : {}),
+      seat,
+      prompt: GUI_HELPER_RESUME_NUDGE,
+      ...(record.permissionMode ? { permissionMode: record.permissionMode } : {}),
+      resumeSessionId: sessionId
+    }
+    record.state = 'spawning'
+    // O CRONÔMETRO RE-ARMA (R6.2): o dono conta o trabalho, não o tempo em que o
+    // ajudante ficou parado. O `resumedAt` é o que impede a ficha de mentir que
+    // ele nasceu agora, e o watchdog volta a contar da volta — que é o certo,
+    // porque o processo é outro.
+    record.startedAt = at
+    record.resumedAt = at
+    record.seatId = seat.seatId
+    if (seat.name) record.seatName = seat.name
+    else delete record.seatName
+    delete record.settledAt
+    delete record.failure
+    // A entrega PARCIAL sai do registro: quem retomou vai entregar de novo, e o
+    // arquivo canônico é reescrito no desfecho seguinte.
+    delete record.result
+    delete record.resultTruncated
+    delete record.deliveryError
+    record.lastActivity = { at, summary: 'retomado — continuando de onde parou' }
+    live.settledSeq = undefined
+    live.text = ''
+    live.activityNotifiedAt = at
+    // O PROCESSO MORTO SAI DE CENA. Ele ficou pendurado no registro desde a
+    // interrupção (o `settle` descarta, mas não solta a referência), e a fila de
+    // partida trata "já tem processo" como "não precisa nascer" — sem esta
+    // linha o resume seria aceito e nenhum CLI subiria.
+    live.process = undefined
+    this.journal({
+      event: 'helper-resumed',
+      paneId: record.delegatorPaneId,
+      helperId,
+      detail: { cli: record.cli, model: record.model, seatId: seat.seatId, sessionId }
+    })
+    // O card da SEGUNDA VIDA nasce antes do processo, como no `spawn`: a ordem
+    // publicada é sempre nascimento → … → desfecho.
+    this.notify({ kind: 'resumed', record: { ...record } })
+    this.persistSoon()
+    // PELA FILA, como qualquer partida (R6.4): retomar cinco de uma vez é a
+    // mesma rajada que o escalonador existe para espaçar.
+    this.spawnQueue.push(helperId)
+    this.pumpSpawnQueue()
+    return { ok: true }
+  }
+
+  /**
+   * DESCARTAR (R6.2). "Não quero mais nada": mata o processo se ele vive, apaga
+   * a entrega canônica e encerra o registro de vez.
+   *
+   * O INTERROMPIDO entra aqui — e é o ponto do par de verbos: quem parou pode
+   * voltar (`resume`) ou ser jogado fora, e só o segundo é irreversível. Quem
+   * já ENCERROU não: descartar um `done` apagaria justamente o produto do
+   * trabalho.
+   *
+   * Honestidade de escopo (R6.2): isto cobre o registro e a entrega canônica. O
+   * que o ajudante escreveu no worktree COMPARTILHADO é do delegador desfazer
+   * pelo git quando o dono pedir — atribuir arquivo a ajudante seria adivinhação.
+   */
   cancel(helperId: string, reason?: string): GuiHelperCommandResult {
     this.sweep()
     const live = this.helpers.get(helperId)
     if (!live) return { ok: false, error: helperNotFound(helperId) }
-    if (isGuiHelperSettled(live.record.state)) {
-      return { ok: false, error: alreadySettled(live.record.state) }
+    const state = live.record.state
+    if (isGuiHelperResumable(state)) {
+      this.discard(live, cancelReason(reason))
+      return { ok: true }
     }
+    if (isGuiHelperSettled(state)) return { ok: false, error: alreadySettled(state) }
     this.settle(live, 'cancelled', { failure: cancelReason(reason) })
     return { ok: true }
   }
@@ -1279,12 +1437,59 @@ export class GuiHelperEngine {
   }
 
   /**
-   * O nome que o `will-quit` do índice chama. Ele é o `interruptAll` — e é por
-   * isso que ainda existe: encerrar o app NUNCA mais descarta frota (R6.1), e a
-   * única chamada deste método na casa é justamente a do quit.
+   * O DESCARTE de quem já estava parado. Ele não passa pelo `settle` de
+   * propósito: aquele caminho é a barreira do "encerra uma vez só" e recusaria
+   * um registro que JÁ está assentado. Aqui a transição é legítima e é a única
+   * que existe entre dois desfechos — interrompido → cancelado, por ordem do
+   * delegador.
    */
-  cancelAll(reason?: string): number {
-    return this.interruptAll(reason)
+  private discard(live: LiveHelper, failure: string): void {
+    const record = live.record
+    record.state = 'cancelled'
+    record.settledAt = this.now()
+    record.failure = failure
+    this.dropDelivery(live)
+    try {
+      // O processo já morreu na interrupção; descartar é idempotente por
+      // contrato, então isto é cinto, não expectativa.
+      live.process?.dispose()
+    } catch {
+      /* processo que já se foi é o caso NORMAL aqui */
+    }
+    live.process = undefined
+    live.spawnRequest = undefined
+    live.text = ''
+    // Quem esperava no long-poll acorda: o ajudante dele acabou de virar
+    // história, e segurar a espera até o teto seria mentir por 240 segundos.
+    for (const waiter of live.waiters.splice(0)) waiter()
+    this.persistNow()
+    this.notify({ kind: 'settled', record: { ...record } })
+    this.journal({
+      event: 'helper-discarded',
+      paneId: record.delegatorPaneId,
+      helperId: record.helperId,
+      detail: { from: 'interrupted', reason: failure }
+    })
+  }
+
+  /**
+   * Tira a entrega do registro E do disco. O caminho sai do registro ANTES do
+   * apagar: se o disco recusar, o pior caso é um arquivo órfão no worktree —
+   * nunca um card apontando para um arquivo que já não existe.
+   */
+  private dropDelivery(live: LiveHelper): void {
+    const record = live.record
+    delete record.result
+    delete record.resultTruncated
+    delete record.deliveryError
+    const resultPath = record.resultPath
+    if (!resultPath) return
+    delete record.resultPath
+    try {
+      this.deps.discardDelivery?.({ ...record, resultPath })
+    } catch {
+      /* apagar arquivo nunca é pré-condição de encerrar registro */
+    }
   }
 
   /**
@@ -1604,11 +1809,13 @@ export class GuiHelperEngine {
 
     // A ENTREGA EM ARQUIVO vem AQUI, entre o registro e o anúncio: o caminho
     // precisa existir antes de os long-polls acordarem, do card `settled` sair e
-    // do correio ser postado — os três citam o arquivo. `cancelled` fica de fora:
-    // ninguém está esperando o trabalho que o próprio app mandou parar.
+    // do correio ser postado — os três citam o arquivo. `cancelled` é o
+    // contrário: DESCARTE apaga a entrega (R6.2), e um cancelamento de ajudante
+    // vivo não tem arquivo nenhum para apagar (nada foi gravado antes).
     // `interrupted` ENTRA: o que ele conseguiu escrever é justamente o que a
     // parada preservadora existe para não perder.
-    if (state !== 'cancelled') this.persist(live, payload.text ?? live.text)
+    if (state === 'cancelled') this.dropDelivery(live)
+    else this.persist(live, payload.text ?? live.text)
 
     // O KILL É DO MOTOR: o app-server do codex nunca encerra sozinho ao fim do
     // turno (sonda §6). Descartar em TODO desfecho é o que impede órfão — e o
@@ -1716,7 +1923,8 @@ export class GuiHelperEngine {
       ...(record.resultPath ? { resultPath: record.resultPath } : {}),
       ...(record.failure ? { failure: record.failure } : {}),
       ...(record.retriedAt !== undefined ? { retriedAt: record.retriedAt } : {}),
-      ...(record.retryReason ? { retryReason: record.retryReason } : {})
+      ...(record.retryReason ? { retryReason: record.retryReason } : {}),
+      ...(record.resumedAt !== undefined ? { resumedAt: record.resumedAt } : {})
     }
   }
 
@@ -1761,20 +1969,59 @@ function helperNotFound(helperId: string): string {
 }
 
 /**
- * INTERROMPIDO NÃO É ENCERRADO. A recusa de quem tenta dirigir ou cancelar um
- * ajudante parado precisa dizer a única coisa que muda o desfecho: dele se volta.
- * O nome da ferramenta de retomada fica de fora de propósito — ela nasce na onda
- * R6-B, e prometer uma tool que ainda não existe é pior que não prometer nada.
+ * INTERROMPIDO NÃO É ENCERRADO. A recusa de quem tenta dirigir um ajudante
+ * parado precisa dizer a única coisa que muda o desfecho: dele se volta — e,
+ * desde a R6-B, com o NOME dos dois verbos, porque uma saída que o agente não
+ * consegue nomear é uma saída que ele não usa.
  */
 function alreadySettled(state: GuiHelperState): string {
   if (state === 'interrupted') {
     return (
       'o ajudante está INTERROMPIDO: o processo dele parou, mas a conversa ficou guardada — ' +
-      'dá para retomar de onde parou em vez de recomeçar'
+      'dá para RETOMAR de onde parou com helper_resume, ou descartar com helper_cancel'
     )
   }
   return `o ajudante já encerrou (${state}) — abra outro com delegate se ainda falta trabalho`
 }
+
+/**
+ * O NUDGE DA RETOMADA (R6.2). Curto por obrigação: a conversa retomada JÁ tem o
+ * briefing inteiro, e repeti-lo seria o re-briefing perseguindo o pane que a era
+ * F6 aprendeu a não fazer (lição F6.8i). Ele diz só o que a conversa não sabe —
+ * que houve uma parada e que ela acabou.
+ */
+export const GUI_HELPER_RESUME_NUDGE =
+  '[synkora] você foi interrompido e está sendo RETOMADO agora: continue de onde parou. ' +
+  'Não recomece do zero nem repita o que já fez — se o trabalho já estava pronto, ' +
+  'entregue o resultado final agora, no formato de sempre (arquivo + resumo curto).'
+
+/** Só o interrompido volta. A recusa nomeia o ESTADO e o verbo que serve para
+ *  ele: mandar o agente "tentar de novo" sem dizer o quê é como se queima turno. */
+function notResumable(state: GuiHelperState): string {
+  if (state === 'spawning' || state === 'working') {
+    return (
+      'o ajudante ainda está trabalhando — não há o que retomar. ' +
+      'Dirija com helper_send, acompanhe com helpers_status ou descarte com helper_cancel.'
+    )
+  }
+  if (state === 'done') {
+    return 'o ajudante já entregou — leia a entrega com helper_result; retomar não acrescenta nada.'
+  }
+  if (state === 'cancelled') {
+    return 'o ajudante foi DESCARTADO (o registro e a entrega dele já foram jogados fora) — abra outro com delegate.'
+  }
+  return (
+    'o ajudante FALHOU: retomar não desfaz a queda. Leia o motivo no helpers_status e ' +
+    'abra outro com delegate, com o briefing corrigido.'
+  )
+}
+
+/** Sem `sessionId` não existe conversa a retomar (o CLI caiu antes de anunciar o
+ *  endereço dela). Recomeçar em silêncio seria pior: o nudge é curto e chegaria
+ *  a um ajudante que nunca ouviu falar do trabalho. */
+const RESUME_WITHOUT_CONVERSATION =
+  'este ajudante parou antes de o CLI anunciar o endereço da conversa dele: não há de onde retomar. ' +
+  'Descarte com helper_cancel e abra outro com delegate, repetindo o briefing.'
 
 function cancelReason(reason?: string): string {
   const clean = typeof reason === 'string' ? reason.trim() : ''

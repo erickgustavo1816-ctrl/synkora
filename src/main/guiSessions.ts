@@ -39,9 +39,14 @@ import {
   GuiHelperCardCorrelator,
   guiOrphanHelperCancellations,
   type GuiHelperInbox,
+  type GuiHelperInterruptedInput,
   type GuiHelperWake
 } from './guiHelperCards'
-import type { GuiHelperChange, GuiHelperDelegator } from './guiHelperSessions'
+import type {
+  GuiHelperChange,
+  GuiHelperDelegator,
+  GuiHelperSnapshot
+} from './guiHelperSessions'
 
 export const GUI_PROMPT_MAX_CHARS = 256 * 1024
 export const GUI_PROMPT_MAX_BYTES = 1024 * 1024
@@ -549,7 +554,12 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
           event['outcome'] === 'completed' ||
           event['outcome'] === 'failed' ||
           event['outcome'] === 'denied' ||
-          event['outcome'] === 'cancelled') &&
+          event['outcome'] === 'cancelled' ||
+          // R6.1: o card de um AJUDANTE parado de forma preservadora. Sem este
+          // literal aqui, o card do interrompido seria DESCARTADO na hidratação
+          // — a fotografia do boot perderia justamente o card em que o dono
+          // ainda tem uma decisão a tomar.
+          event['outcome'] === 'interrupted') &&
         // Ciclo de vida de subagente em background (Claude). Ausente = evento
         // comum, hidratado exatamente como antes.
         (event['agentStatus'] === undefined ||
@@ -1328,6 +1338,23 @@ export interface GuiSessionDeps {
   helperInbox?: GuiHelperInbox
 }
 
+/**
+ * O QUE O REGISTRO PRECISA DO MOTOR DE AJUDANTES (R6-B). Só duas coisas, e as
+ * duas de mão única: PARAR a frota deste chat preservando, e OLHAR quem ficou
+ * parado. O `GuiHelperEngine` satisfaz isto por estrutura — o registro não
+ * conhece o motor, e a suíte injeta um duplo de três linhas.
+ */
+export interface GuiSessionHelperControls {
+  /** Parada PRESERVADORA da frota do pane (nunca descarte). Devolve quantos. */
+  interruptPane(paneId: string, reason?: string): number
+  /** Fotografia dos ajudantes do pane — é dela que sai a lista de parados. */
+  status(paneId: string): GuiHelperSnapshot[]
+}
+
+/** O motivo que o dono vê no card e na ficha quando ele mesmo aperta o ■. */
+export const GUI_HELPER_OWNER_INTERRUPTION =
+  'o dono interrompeu esta conversa — o trabalho dele ficou guardado e dá para retomar'
+
 /** Espera do handshake antes de soltar o firstPrompt (waitCaps resolve antes
  *  disso no caminho feliz; o teto só existe para o CLI que não responde). */
 // Codex: initialize (até 20 s) + loadCaps (até 20 s) são sequenciais.
@@ -1352,6 +1379,9 @@ export class GuiSessionRegistry {
    *  sintetizados. Publica SEMPRE pelo sink da sessão viva: card que nascesse
    *  por fora não entraria no replay da remontagem. */
   private readonly helperCards: GuiHelperCardCorrelator
+  /** O motor dos ajudantes, amarrado depois do nascimento (ver `attachHelpers`).
+   *  Ausente = registro sem frota: o ■ para só o turno. */
+  private helpers?: GuiSessionHelperControls
 
   constructor(deps: GuiSessionDeps) {
     this.deps = deps
@@ -1803,6 +1833,11 @@ export class GuiSessionRegistry {
       }
     )
 
+    // O QUE FICOU PARADO (R6.1): conversa que ABRE de verdade — boot do app,
+    // reabrir o chat — descobre aqui se o motor guarda ajudantes interrompidos
+    // dela, e o aviso com os dois verbos entra no correio. `current` presente é
+    // respawn (modo, /clear, remontagem): mesma conversa, nada a anunciar.
+    if (!current) this.announceInterruptedHelpers(spawn.paneId, spawn.projectId)
     // NENHUM TURNO NASCE AQUI. O chat abre calado e espera o dono.
     return { ok: true }
   }
@@ -2361,9 +2396,62 @@ export class GuiSessionRegistry {
     this.helperCards.end(paneId)
   }
 
-  /** O motor falou (nasceu / mexeu / encerrou): vira card no anel do delegador. */
+  /** O motor falou (nasceu / mexeu / voltou / encerrou): vira card no anel. */
   noteHelperChange(change: GuiHelperChange): void {
     this.helperCards.change(change)
+  }
+
+  /**
+   * AMARRA O MOTOR DE AJUDANTES ao registro — a segunda metade de uma costura
+   * CIRCULAR, e é por isso que ela é tardia e não uma dep do construtor.
+   *
+   * O motor nasce ANTES do registro (o índice precisa dele para amarrar o
+   * teardown do pane) e já fala com ele por closure (`onChange` →
+   * `noteHelperChange`). Esta é a aresta de volta: o ■ do dono e o despertador
+   * de boot precisam PERGUNTAR ao motor. Uma dep de construtor exigiria inverter
+   * a ordem de nascimento dos dois.
+   *
+   * Ausente, tudo continua funcionando com uma coisa a menos: o ■ interrompe só
+   * o turno e a conversa abre sem o aviso dos parados.
+   */
+  attachHelpers(controls: GuiSessionHelperControls): void {
+    this.helpers = controls
+  }
+
+  /**
+   * O DESPERTADOR DE BOOT (R6.1, cauda): a conversa reabriu e o motor guarda
+   * ajudantes PARADOS deste pane. O aviso entra no pote de sempre — o mesmo do
+   * correio —, então ele sai pelo primeiro caminho de entrega que passar e nunca
+   * duas vezes.
+   *
+   * Só em ABERTURA de verdade (nunca num respawn): quem troca o modo de
+   * permissão ou remonta a aba está na mesma conversa, e repetir o aviso ali
+   * seria o app cutucando o dono a cada clique.
+   */
+  private announceInterruptedHelpers(paneId: string, projectId: string): void {
+    const controls = this.helpers
+    if (!controls) return
+    let parados: GuiHelperInterruptedInput[] = []
+    try {
+      parados = controls
+        .status(paneId)
+        .filter((snapshot) => snapshot.state === 'interrupted')
+        .map((snapshot) => ({
+          helperId: snapshot.helperId,
+          ...(snapshot.name ? { name: snapshot.name } : {}),
+          model: snapshot.model,
+          ...(snapshot.resultPath ? { resultPath: snapshot.resultPath } : {}),
+          elapsedMs: snapshot.elapsedMs
+        }))
+    } catch {
+      // Fotografia indisponível nunca pode impedir a conversa de abrir.
+      return
+    }
+    if (parados.length === 0) return
+    const posted = this.helperCards.noteInterrupted(paneId, parados)
+    if (posted > 0) {
+      this.deps.record?.('gui-helper-boot-interrupted', { paneId, projectId }, { helpers: posted })
+    }
   }
 
   /**
@@ -2410,10 +2498,36 @@ export class GuiSessionRegistry {
     return sent.ok
   }
 
+  /**
+   * O ■ DO DONO — ATÔMICO (R6.3), e as três partes são uma decisão só:
+   *
+   *  1. o TURNO do CLI para (o que o botão sempre fez);
+   *  2. a FROTA deste chat para PRESERVANDO — `interrupted`, não `cancelled`:
+   *     "para agora" nunca quis dizer "joga fora", e cada ajudante volta com
+   *     helper_resume;
+   *  3. as pendências de DESPERTADOR do pane são descartadas — o caso real que
+   *     originou este item foi o app abrindo um turno novo por cima da
+   *     interrupção que o dono acabara de fazer.
+   *
+   * A ORDEM importa: o turno primeiro (é o que o dono está vendo), a frota
+   * depois, e o silêncio por último — assim um encerramento que caia no meio do
+   * caminho também é engolido, em vez de acordar a conversa logo em seguida.
+   *
+   * Sem turno ativo o ■ ainda vale: o dono pode ter apertado justamente para
+   * parar a frota, e recusar aqui deixaria os ajudantes rodando.
+   */
   interrupt(paneId: string): GuiResult {
     const entry = this.panes.get(paneId)
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
-    if (!entry.session.interrupt())
+    const turnStopped = entry.session.interrupt()
+    const helpers = this.helpers?.interruptPane(paneId, GUI_HELPER_OWNER_INTERRUPTION) ?? 0
+    const wakes = this.helperCards.discardPending(paneId)
+    this.deps.record?.(
+      'gui-interrupt',
+      { paneId, projectId: entry.spawn.projectId },
+      { turn: turnStopped, helpers, wakes }
+    )
+    if (!turnStopped && helpers === 0)
       return { ok: false, error: 'não há turno ativo para interromper' }
     return { ok: true }
   }

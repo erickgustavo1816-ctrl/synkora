@@ -10,7 +10,7 @@
  * Aqui a propriedade que dá nome ao arquivo é a CERCA EM TRÊS FAIXAS
  * (design DESIGN_SUBAGENTES_SEM_ABA_2026-08-18.md, D2 e D7):
  *
- *   gui-delegator → EXATAMENTE as 6 ferramentas de ajudante, e nenhum plano;
+ *   gui-delegator → EXATAMENTE as 7 ferramentas de ajudante, e nenhum plano;
  *   gui-planner   → EXATAMENTE as 5 de plano, e nenhum ajudante;
  *   qualquer outro (inclusive quem parece ajudante) → catálogo VAZIO.
  *
@@ -53,6 +53,11 @@ const DELEGATOR_TOOLS = Object.freeze([
   'delegate',
   'helper_cancel',
   'helper_result',
+  // R6.2 — o VERBO QUE FECHA O CICLO: o ajudante interrompido volta de onde
+  // parou. Ele nasce aqui junto com o descarte porque os dois são um par: sem
+  // `helper_resume`, `helper_cancel` seria a única saída de uma interrupção e
+  // "parar" voltaria a significar "jogar fora".
+  'helper_resume',
   'helper_send',
   'helpers_status',
   'list_seats'
@@ -140,7 +145,11 @@ async function serverIn(t, hub, { engine = true } = {}) {
         },
         helperCancel: (id, helperId) => {
           calls.push({ tool: 'helper_cancel', paneId: id.paneId, helperId })
-          return 'ajudante encerrado'
+          return 'ajudante descartado'
+        },
+        helperResume: (id, helperId) => {
+          calls.push({ tool: 'helper_resume', paneId: id.paneId, helperId })
+          return 'ajudante retomado'
         }
       }
     : {}
@@ -212,7 +221,7 @@ function delegator(hub, root, port, paneId = 'gui-dev-abcd1234') {
 
 // ————— 1. o catálogo do delegador, e só ele —————
 
-test('o arm registra a identidade gui-delegator e o servidor serve as SEIS ferramentas', async (t) => {
+test('o arm registra a identidade gui-delegator e o servidor serve as SETE ferramentas', async (t) => {
   const { hub, root } = hubIn(t)
   const { url, served } = await serverIn(t, hub)
   const { mcp, token } = delegator(hub, root, 4242)
@@ -376,19 +385,47 @@ test('o controle do delegador é total: status, resultado, steering e cancelamen
     'mensagem entregue'
   )
   assert.equal(
+    textOf(await client.callTool({ name: 'helper_resume', arguments: { helperId: 'h-1' } })),
+    'ajudante retomado'
+  )
+  assert.equal(
     textOf(await client.callTool({ name: 'helper_cancel', arguments: { helperId: 'h-1' } })),
-    'ajudante encerrado'
+    'ajudante descartado'
   )
 
   assert.deepEqual(
     calls.map((call) => call.tool),
-    ['helpers_status', 'list_seats', 'helper_result', 'helper_send', 'helper_cancel']
+    [
+      'helpers_status',
+      'list_seats',
+      'helper_result',
+      'helper_send',
+      'helper_resume',
+      'helper_cancel'
+    ]
   )
   // waitSeconds ausente = o motor aplica o padrão de 45s; o catálogo não
   // inventa número nenhum no lugar dele.
   assert.equal(calls[2].waitSeconds, undefined)
   assert.equal(calls[3].text, 'foca no css')
   assert.equal(calls[4].helperId, 'h-1')
+  assert.equal(calls[5].helperId, 'h-1')
+})
+
+test('os DOIS verbos da interrupção estão no catálogo, e o motor desligado recusa os dois', async (t) => {
+  // R6.2: quem interrompe tem de poder VOLTAR. Um catálogo com `helper_cancel`
+  // e sem `helper_resume` transformaria a única parada preservadora do motor
+  // num descarte com nome bonito.
+  const { hub, root } = hubIn(t)
+  const { url } = await serverIn(t, hub, { engine: false })
+  const { token } = delegator(hub, root, 4242)
+  const client = await connect(t, url, token, 'motor-desligado')
+
+  for (const name of ['helper_resume', 'helper_cancel']) {
+    const result = await client.callTool({ name, arguments: { helperId: 'h-1' } })
+    assert.notEqual(result.isError, true, `${name} devia responder texto, nunca erro de protocolo`)
+    assert.match(textOf(result), /motor de delegação ainda não está ligado/u)
+  }
 })
 
 test('helper_result carrega o waitSeconds pedido e o schema grampeia o teto de 240s', async (t) => {
@@ -420,7 +457,7 @@ test('helper_result carrega o waitSeconds pedido e o schema grampeia o teto de 2
   assert.equal(quebrado.isError, true, 'espera fracionária não existe')
 })
 
-test('sem o motor ligado, as SEIS respondem com recusa LEGÍVEL — nunca erro de protocolo', async (t) => {
+test('sem o motor ligado, as SETE respondem com recusa LEGÍVEL — nunca erro de protocolo', async (t) => {
   const { hub, root } = hubIn(t)
   const { url } = await serverIn(t, hub, { engine: false })
   const { token } = delegator(hub, root, 4242)
@@ -490,7 +527,7 @@ test('claude: config própria, strict, a CERCA de subagente nativo e o teto de t
   assert.deepEqual(Object.keys(config.mcpServers), ['synkora'], 'catálogo fechado: nenhum MCP extra')
 })
 
-test('claude: as SEIS ferramentas internas são pré-sancionadas, e a cerca continua de pé', async (t) => {
+test('claude: as SETE ferramentas internas são pré-sancionadas, e a cerca continua de pé', async (t) => {
   const { hub, root } = hubIn(t)
   const { mcp } = delegator(hub, root, 5151)
 

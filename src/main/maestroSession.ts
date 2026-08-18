@@ -310,7 +310,11 @@ export type SessionEvent =
       type: 'tool-result'
       text: string
       isError: boolean
-      outcome?: 'completed' | 'failed' | 'denied' | 'cancelled'
+      /** `interrupted` (R6.1, 2026-08-18) não vem de CLI nenhum: é o desfecho
+       *  que o harness sintetiza no card de um AJUDANTE parado de forma
+       *  preservadora — ele não terminou (`completed`), não caiu (`failed`) e
+       *  não foi jogado fora (`cancelled`); dele se volta. */
+      outcome?: 'completed' | 'failed' | 'denied' | 'cancelled' | 'interrupted'
       toolUseId?: string
       /** Metadados do output INTEIRO, calculados antes do preview capado. */
       lineCount?: number

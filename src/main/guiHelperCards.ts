@@ -45,10 +45,34 @@
  * simplesmente não casa com card nenhum.
  */
 import type { SessionEvent } from './maestroSession'
+// A régua do "fim da linha" é do MOTOR, e vem dele: duplicar a lista de estados
+// terminais aqui seria a segunda cópia de uma decisão que já tem dono.
+import { isGuiHelperTerminal } from './guiHelperSessions'
 import type { GuiHelperChange, GuiHelperRecord } from './guiHelperSessions'
 
 /** Marcador do card sintetizado — o renderer promove o card por ele. */
 export const GUI_HELPER_CARD_PREFIX = 'helper:'
+
+/**
+ * O DESFECHO DO CARD DE UM AJUDANTE PARADO (contrato R6-B × R6-C).
+ *
+ * A lateral decide o tom do card por `result.status`, e já conhece 'cancelled'
+ * (terminal sem conclusão). 'interrupted' é o irmão novo: parou, guardou e
+ * VOLTA — o único desfecho em que o dono ainda tem uma escolha na mão. Ele mora
+ * numa constante para os dois lados do contrato falarem do mesmo literal.
+ */
+export const GUI_HELPER_INTERRUPTED_OUTCOME = 'interrupted' as const
+
+/** O mínimo de um ajudante PARADO para o aviso de boot (o `GuiHelperSnapshot`
+ *  do motor cabe aqui inteiro, e o registro também). */
+export interface GuiHelperInterruptedInput {
+  helperId: string
+  name?: string
+  model: string
+  resultPath?: string
+  /** Quanto ele trabalhou antes de parar — congelado no encerramento. */
+  elapsedMs?: number
+}
 
 /** Trecho do briefing que viaja no card. A ficha da lateral corta em 240; mais
  *  que isso é peso morto no anel (que tem teto de bytes). */
@@ -99,6 +123,22 @@ const SERVER_QUALIFIED_TOOL_RE = /^[\w-]+(?:__|[/.])(.+)$/u
 /** `helper:<helperId>` — nome e toolUseId do card sintetizado são o MESMO id. */
 export function guiHelperCardId(helperId: string): string {
   return `${GUI_HELPER_CARD_PREFIX}${helperId}`
+}
+
+/**
+ * O card da SEGUNDA VIDA (R6.2), quando o delegador retoma um interrompido.
+ *
+ * Ele NÃO pode reusar o id do primeiro, e a razão é mecânica: no renderer, dois
+ * cards com o mesmo `toolUseId` fazem `guiToolResultTargetIndex` desistir de
+ * ambos ("sem unicidade, nenhum card recebe o resultado") — o ajudante retomado
+ * entregaria no vazio e o card ficaria aberto para sempre. E reaproveitar o card
+ * FECHADO também não serve: um card com desfecho não aceita outro resultado.
+ *
+ * O prefixo continua sendo `helper:`, então a limpeza de órfãos do boot e a
+ * promoção da lateral (que lê o `helperId` do input) seguem valendo iguais.
+ */
+export function guiHelperResumeCardId(helperId: string, life: number): string {
+  return `${guiHelperCardId(helperId)}#vida${life}`
 }
 
 export function isGuiHelperCardId(value: string): boolean {
@@ -159,9 +199,12 @@ export function guiHelperLaunchReceipt(record: GuiHelperRecord): string {
  */
 export function guiHelperSpawnedEvents(
   record: GuiHelperRecord,
-  envelopeToolUseId: string
+  envelopeToolUseId: string,
+  /** Card desta VIDA. Ausente = o primeiro (`helper:<id>`); presente = a
+   *  retomada, que precisa de id próprio (ver `guiHelperResumeCardId`). */
+  cardId?: string
 ): SessionEvent[] {
-  const toolUseId = guiHelperCardId(record.helperId)
+  const toolUseId = cardId ?? guiHelperCardId(record.helperId)
   return [
     {
       type: 'tool',
@@ -191,11 +234,12 @@ export function guiHelperSpawnedEvents(
  */
 export function guiHelperActivityEvent(
   record: GuiHelperRecord,
-  index: number
+  index: number,
+  cardId?: string
 ): SessionEvent | null {
   const summary = record.lastActivity?.summary
   if (!summary) return null
-  const parent = guiHelperCardId(record.helperId)
+  const parent = cardId ?? guiHelperCardId(record.helperId)
   return {
     type: 'tool',
     name: 'atividade',
@@ -213,20 +257,33 @@ export function guiHelperActivityEvent(
  * anel tem teto de bytes — só que agora ele aponta para o arquivo, que é onde a
  * entrega inteira está, e não para uma tool que só o agente pode chamar.
  */
-export function guiHelperSettledEvent(record: GuiHelperRecord): SessionEvent {
+export function guiHelperSettledEvent(record: GuiHelperRecord, cardId?: string): SessionEvent {
   const failed = record.state === 'failed'
   const cancelled = record.state === 'cancelled'
-  const body = failed || cancelled ? (record.failure ?? '') : (record.result ?? '')
+  const interrupted = record.state === 'interrupted'
+  const body = failed || cancelled || interrupted ? (record.failure ?? '') : (record.result ?? '')
   const truncated = body.length > GUI_HELPER_CARD_RESULT_CHARS
   const shown = truncated
     ? `${body.slice(0, GUI_HELPER_CARD_RESULT_CHARS)}…\n[synkora] o texto inteiro está ${record.resultPath ? `em ${record.resultPath}` : 'no helper_result'}`
     : body
   return {
     type: 'tool-result',
-    toolUseId: guiHelperCardId(record.helperId),
+    toolUseId: cardId ?? guiHelperCardId(record.helperId),
     text: record.resultPath ? `entrega: ${record.resultPath}\n\n${shown}` : shown,
     isError: failed,
-    outcome: failed ? 'failed' : cancelled ? 'cancelled' : 'completed',
+    // O DESFECHO `interrupted` É CONTRATO (R6.1×R6-C): a lateral já lê
+    // `result.status === 'cancelled'` e ganha aqui o irmão novo. Fechar um
+    // interrompido como 'completed' — o que a onda A fazia — diria ao dono que o
+    // trabalho terminou bem, e é justamente o card em que ele precisa decidir
+    // entre retomar e descartar. Interromper também NÃO é falhar: `isError`
+    // continua falso.
+    outcome: interrupted
+      ? GUI_HELPER_INTERRUPTED_OUTCOME
+      : failed
+        ? 'failed'
+        : cancelled
+          ? 'cancelled'
+          : 'completed',
     agentStatus: 'settled',
     truncated
   }
@@ -256,11 +313,22 @@ export interface GuiHelperWakeEntry {
   helperId: string
   name?: string
   model: string
-  /** `true` = entregou (`done`); `false` = falhou. */
+  /** `true` = entregou (`done`); `false` = falhou. Não se lê com `interrupted`:
+   *  um ajudante parado não terminou de jeito nenhum. */
   ok: boolean
   /** O ARQUIVO da entrega (relativo ao worktree). É o endereço que o delegador
    *  abre — o texto inteiro nunca viaja no aviso. */
   resultPath?: string
+  /**
+   * PAROU, não terminou (R6.1). É o aviso do BOOT: a conversa reabriu e há
+   * trabalho preservado esperando uma decisão — retomar ou descartar. Ele viaja
+   * pelo MESMO pote dos encerramentos porque o leitor é o mesmo e o custo de um
+   * segundo canal seria dois lugares para a mesma novidade se perder.
+   */
+  interrupted?: boolean
+  /** Quanto ele trabalhou ANTES de parar (congelado). Só faz sentido com
+   *  `interrupted`: é o que diz ao dono se vale a pena retomar. */
+  elapsedMs?: number
 }
 
 /** O aviso pronto para ser entregue na conversa do delegador. */
@@ -278,13 +346,50 @@ function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`
 }
 
-/** A linha de UM ajudante encerrado — a MESMA nos dois caminhos de entrega
- *  (despertador e correio), porque é o mesmo fato contado ao mesmo leitor. */
+/** Quanto tempo ele trabalhou antes de parar, na régua do dono (segundos até um
+ *  minuto e meio; minutos depois disso). */
+function workedFor(ms: number | undefined): string {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return ''
+  const seconds = Math.round(ms / 1000)
+  return seconds < 90 ? ` depois de ${seconds}s` : ` depois de ${Math.round(seconds / 60)}min`
+}
+
+/** O placar honesto: parado NÃO é falha, e chamar de falha faria o agente
+ *  reabrir o trabalho do zero em vez de retomá-lo. */
+function tally(entries: readonly GuiHelperWakeEntry[]): {
+  done: number
+  failed: number
+  interrupted: number
+} {
+  let done = 0
+  let failed = 0
+  let interrupted = 0
+  for (const entry of entries) {
+    if (entry.interrupted) interrupted += 1
+    else if (entry.ok) done += 1
+    else failed += 1
+  }
+  return { done, failed, interrupted }
+}
+
+/** A linha de UM ajudante — a MESMA nos dois caminhos de entrega (despertador e
+ *  correio), porque é o mesmo fato contado ao mesmo leitor. */
 function settledLine(entry: GuiHelperWakeEntry): string {
   const label = entry.name ? `${entry.name} · ` : ''
   const file = entry.resultPath ? ` · ${entry.resultPath}` : ''
-  return `· ${label}${entry.model} · ${entry.ok ? 'concluído' : 'falhou'} · id ${entry.helperId}${file}`
+  const state = entry.interrupted
+    ? `interrompido${workedFor(entry.elapsedMs)}`
+    : entry.ok
+      ? 'concluído'
+      : 'falhou'
+  return `· ${label}${entry.model} · ${state} · id ${entry.helperId}${file}`
 }
+
+/** A receita dos DOIS verbos, escrita UMA vez: repeti-la por ajudante seria
+ *  contexto pago em toda linha de uma frota de vinte. */
+const RESUME_OR_DISCARD =
+  'Retome com helper_resume (ele volta de onde parou, na mesma conversa) ou descarte com ' +
+  'helper_cancel. Se não estiver claro o que o dono quer, PERGUNTE a ele antes.'
 
 // ————— o correio (o pote ÚNICO dos dois caminhos de entrega) —————
 
@@ -377,23 +482,31 @@ export function guiHelperInboxBlock(
   options: { stillWorking?: number } = {}
 ): string {
   if (entries.length === 0) return ''
-  const done = entries.filter((entry) => entry.ok).length
-  const failed = entries.length - done
+  const { done, failed, interrupted } = tally(entries)
+  const placar = [
+    done > 0 ? plural(done, 'concluído', 'concluídos') : '',
+    failed > 0 ? plural(failed, 'falhou', 'falharam') : '',
+    interrupted > 0 ? plural(interrupted, 'interrompido', 'interrompidos') : ''
+  ].filter(Boolean)
   const head =
     entries.length === 1
-      ? `${GUI_HELPER_INBOX_TAG} 1 encerrou enquanto você trabalhava.`
-      : `${GUI_HELPER_INBOX_TAG} ${entries.length} encerraram enquanto você trabalhava ` +
-        `(${plural(done, 'concluído', 'concluídos')}, ${plural(failed, 'falhou', 'falharam')}).`
+      ? `${GUI_HELPER_INBOX_TAG} 1 novidade enquanto você trabalhava (${placar.join(', ')}).`
+      : `${GUI_HELPER_INBOX_TAG} ${entries.length} novidades enquanto você trabalhava ` +
+        `(${placar.join(', ')}).`
   const shown = entries.slice(0, GUI_HELPER_WAKE_LIST_MAX)
   const lines = shown.map(settledLine)
   if (entries.length > shown.length) {
     lines.push(`· … e mais ${entries.length - shown.length} (a lista inteira está no helpers_status)`)
   }
-  const tail = [
-    entries.some((entry) => entry.resultPath)
-      ? `A entrega ${entries.length === 1 ? 'inteira está' : 'de cada um está'} no ARQUIVO citado — abra o arquivo (o helper_result devolve o mesmo caminho).`
-      : 'Colha cada um com helper_result.'
-  ]
+  const tail: string[] = []
+  if (done + failed > 0) {
+    tail.push(
+      entries.some((entry) => entry.resultPath && !entry.interrupted)
+        ? `A entrega ${done + failed === 1 ? 'inteira está' : 'de cada um está'} no ARQUIVO citado — abra o arquivo (o helper_result devolve o mesmo caminho).`
+        : 'Colha cada um com helper_result.'
+    )
+  }
+  if (interrupted > 0) tail.push(RESUME_OR_DISCARD)
   const working = Math.max(0, Math.trunc(options.stillWorking ?? 0))
   if (working > 0) tail.push(`Ainda trabalhando: ${working}.`)
   return [head, ...lines, tail.join(' ')].join('\n')
@@ -414,25 +527,41 @@ export function guiHelperWakeMessage(
   entries: readonly GuiHelperWakeEntry[],
   stillWorking = 0
 ): string {
-  const done = entries.filter((entry) => entry.ok).length
-  const failed = entries.length - done
+  const { done, failed, interrupted } = tally(entries)
+  const settled = done + failed
+  // O AVISO DE BOOT (R6.1) é só de interrompidos, e ele não fala de
+  // encerramento nenhum: o que aconteceu com esses ajudantes foi uma PARADA, e
+  // dizer "encerraram" faria o agente abrir tudo de novo do zero.
   const head =
-    entries.length === 1
-      ? '[synkora] o ajudante que você abriu encerrou.'
-      : `[synkora] ${entries.length} ajudantes que você abriu encerraram: ` +
-        `${plural(done, 'concluído', 'concluídos')}, ${plural(failed, 'falhou', 'falharam')}.`
+    settled === 0
+      ? interrupted === 1
+        ? '[synkora] um ajudante deste chat ficou INTERROMPIDO: o processo dele parou e a conversa ficou guardada.'
+        : `[synkora] ${interrupted} ajudantes deste chat ficaram INTERROMPIDOS: os processos pararam e as conversas ficaram guardadas.`
+      : entries.length === 1
+        ? '[synkora] o ajudante que você abriu encerrou.'
+        : `[synkora] ${entries.length} ajudantes que você abriu encerraram: ` +
+          [
+            `${plural(done, 'concluído', 'concluídos')}`,
+            `${plural(failed, 'falhou', 'falharam')}`,
+            ...(interrupted > 0 ? [plural(interrupted, 'interrompido', 'interrompidos')] : [])
+          ].join(', ') +
+          '.'
   const shown = entries.slice(0, GUI_HELPER_WAKE_LIST_MAX)
   const lines = shown.map(settledLine)
   if (entries.length > shown.length) {
     lines.push(`· … e mais ${entries.length - shown.length} (a lista inteira está no helpers_status)`)
   }
-  const tail = [
-    entries.some((entry) => entry.resultPath)
-      ? `A entrega ${entries.length === 1 ? 'está' : 'de cada um está'} no ARQUIVO citado — abra o arquivo (o helper_result devolve o mesmo caminho) e conte ao dono o que voltou.`
-      : entries.length === 1
-        ? 'Colha a entrega com helper_result e conte ao dono o que voltou.'
-        : 'Colha cada um com helper_result (um id por chamada) e conte ao dono o que voltou.'
-  ]
+  const tail: string[] = []
+  if (settled > 0) {
+    tail.push(
+      entries.some((entry) => entry.resultPath && !entry.interrupted)
+        ? `A entrega ${settled === 1 ? 'está' : 'de cada um está'} no ARQUIVO citado — abra o arquivo (o helper_result devolve o mesmo caminho) e conte ao dono o que voltou.`
+        : settled === 1
+          ? 'Colha a entrega com helper_result e conte ao dono o que voltou.'
+          : 'Colha cada um com helper_result (um id por chamada) e conte ao dono o que voltou.'
+    )
+  }
+  if (interrupted > 0) tail.push(RESUME_OR_DISCARD)
   if (stillWorking > 0) {
     tail.push(
       `Outros ${stillWorking} ainda estão trabalhando — o app te acorda de novo quando encerrarem.`
@@ -550,6 +679,15 @@ interface HelperPaneState {
   openBatchId?: string
   batches: Map<string, HelperBatch>
   batchOfHelper: Map<string, string>
+  /** Card VIVO de cada ajudante. Ele muda quando o ajudante é retomado (a
+   *  segunda vida tem card próprio), e é por ele que a atividade e o desfecho
+   *  encontram o card certo — nunca por derivação do helperId. */
+  cardOfHelper: Map<string, string>
+  /** Quantas vidas cada ajudante já teve (1 = nasceu; 2 = foi retomado uma vez). */
+  lives: Map<string, number>
+  /** Ajudantes cujo ÚLTIMO card foi fechado como interrompido. Eles saíram do
+   *  `live` do lote mas ainda podem receber um desfecho novo — o descarte. */
+  interrupted: Set<string>
   activity: Map<string, { at: number; count: number }>
   /** Cancelador do relógio de coalescência (ausente = nenhum armado). */
   cancelWake?: () => void
@@ -679,11 +817,67 @@ export class GuiHelperCardCorrelator {
     if (batch.live.size === 0) this.closeBatch(paneId, batch)
   }
 
-  /** O motor falou: nasceu, mexeu ou encerrou. */
+  /** O motor falou: nasceu, mexeu, voltou ou encerrou. */
   change(change: GuiHelperChange): void {
     if (change.kind === 'spawned') this.spawned(change.record)
     else if (change.kind === 'activity') this.activity(change.record)
+    else if (change.kind === 'resumed') this.resumed(change.record)
     else this.settled(change.record)
+  }
+
+  /**
+   * O ■ DO DONO (R6.3), terceira parte: as pendências de aviso deste pane são
+   * DESCARTADAS.
+   *
+   * O caso real: o dono interrompeu a conversa e o despertador, que tinha um
+   * aviso preso, abriu um turno NOVO por cima — o app falando justamente na
+   * conversa que ele mandou calar. Silenciar é o certo aqui: quem interrompe
+   * está no teclado, vendo a lateral, e vai perguntar o que quiser saber.
+   *
+   * O que NÃO se esquece: os lotes e os ajudantes vivos. Isto não é
+   * `forgetPane` — a conversa continua de pé, e o que encerrar DEPOIS do ■
+   * volta a ser anunciado normalmente.
+   */
+  discardPending(paneId: string): number {
+    const state = this.panes.get(paneId)
+    const dropped = this.inbox.drain(paneId).length
+    if (state?.cancelWake) {
+      state.cancelWake()
+      state.cancelWake = undefined
+    }
+    return dropped
+  }
+
+  /**
+   * O DESPERTADOR DE BOOT (R6.1, cauda): a conversa reabriu e há ajudantes
+   * PARADOS esperando uma decisão. Eles entram no MESMO pote dos encerramentos
+   * — o dono não tem dois correios, e o primeiro caminho de entrega que passar
+   * (a carona numa tool ou o despertador) consome a novidade uma vez só.
+   *
+   * Devolve quantos foram postados: repetição (remontagem, aviso já entregue)
+   * devolve zero, e é assim que "uma vez por boot" acontece sem estado novo.
+   */
+  noteInterrupted(paneId: string, helpers: readonly GuiHelperInterruptedInput[]): number {
+    let posted = 0
+    for (const helper of helpers) {
+      const entered = this.inbox.post(paneId, {
+        helperId: helper.helperId,
+        ...(helper.name ? { name: helper.name } : {}),
+        model: helper.model,
+        ok: false,
+        interrupted: true,
+        ...(helper.resultPath ? { resultPath: helper.resultPath } : {}),
+        ...(typeof helper.elapsedMs === 'number' ? { elapsedMs: helper.elapsedMs } : {})
+      })
+      if (entered) posted += 1
+    }
+    if (posted > 0) this.scheduleWake(paneId, this.state(paneId))
+    return posted
+  }
+
+  /** Há aviso preso neste pane? (o ■ do dono usa para auditar o que calou). */
+  pendingWakes(paneId: string): number {
+    return this.inbox.count(paneId)
   }
 
   /** O pane sumiu: o estado de correlação morre com ele (o anel é a memória) —
@@ -702,6 +896,9 @@ export class GuiHelperCardCorrelator {
         pendingEnvelopes: [],
         batches: new Map(),
         batchOfHelper: new Map(),
+        cardOfHelper: new Map(),
+        lives: new Map(),
+        interrupted: new Set(),
         activity: new Map()
       }
       this.panes.set(paneId, state)
@@ -723,8 +920,60 @@ export class GuiHelperCardCorrelator {
     batch.helperIds.push(record.helperId)
     batch.live.add(record.helperId)
     state.batchOfHelper.set(record.helperId, batch.batchId)
-    for (const evt of guiHelperSpawnedEvents(record, batch.envelopeToolUseId)) {
+    const cardId = guiHelperCardId(record.helperId)
+    state.cardOfHelper.set(record.helperId, cardId)
+    state.lives.set(record.helperId, 1)
+    for (const evt of guiHelperSpawnedEvents(record, batch.envelopeToolUseId, cardId)) {
       this.deps.emit(record.delegatorPaneId, evt)
+    }
+  }
+
+  /**
+   * A SEGUNDA VIDA (R6.2). O card do interrompido já fechou — e no renderer um
+   * card fechado nunca mais aceita resultado —, então o retomado ganha card
+   * PRÓPRIO, com id novo, sob o mesmo envelope de sempre.
+   *
+   * Depois de um BOOT não há lote nenhum na memória (o correlacionador nasce
+   * vazio com o processo): o ajudante ganha um lote só dele, com envelope
+   * SINTÉTICO — que não tem card para fechar, e é exatamente o caso que a
+   * costura de correlação já sabia tratar.
+   */
+  private resumed(record: GuiHelperRecord): void {
+    const paneId = record.delegatorPaneId
+    const state = this.state(paneId)
+    const batchId = state.batchOfHelper.get(record.helperId)
+    let batch = batchId ? state.batches.get(batchId) : undefined
+    if (!batch) {
+      const newBatchId = this.deps.newId?.() ?? `lote-${(this.syntheticSeq += 1)}`
+      batch = {
+        batchId: newBatchId,
+        paneId,
+        envelopeToolUseId: `${GUI_HELPER_CARD_PREFIX}lote:${newBatchId}`,
+        paired: false,
+        open: false,
+        helperIds: [record.helperId],
+        live: new Set(),
+        closed: false
+      }
+      state.batches.set(newBatchId, batch)
+      state.batchOfHelper.set(record.helperId, newBatchId)
+    }
+    // O LOTE VOLTA A TER VIDA: sem isto o `hasLiveHelpers` diria "não" e o
+    // `result` do turno deixaria de carregar `continues`, o que faria o renderer
+    // cancelar o card recém-aberto no fim do turno.
+    batch.closed = false
+    batch.live.add(record.helperId)
+    if (!batch.helperIds.includes(record.helperId)) batch.helperIds.push(record.helperId)
+    state.interrupted.delete(record.helperId)
+    // A amostragem de atividade recomeça: a segunda vida tem o próprio
+    // orçamento de cards no anel.
+    state.activity.delete(record.helperId)
+    const life = (state.lives.get(record.helperId) ?? 1) + 1
+    state.lives.set(record.helperId, life)
+    const cardId = guiHelperResumeCardId(record.helperId, life)
+    state.cardOfHelper.set(record.helperId, cardId)
+    for (const evt of guiHelperSpawnedEvents(record, batch.envelopeToolUseId, cardId)) {
+      this.deps.emit(paneId, evt)
     }
   }
 
@@ -735,7 +984,7 @@ export class GuiHelperCardCorrelator {
     const at = this.now()
     if (seen.count >= GUI_HELPER_CARD_ACTIVITY_MAX) return
     if (seen.count > 0 && at - seen.at < GUI_HELPER_CARD_ACTIVITY_MS) return
-    const evt = guiHelperActivityEvent(record, seen.count + 1)
+    const evt = guiHelperActivityEvent(record, seen.count + 1, state.cardOfHelper.get(record.helperId))
     if (!evt) return
     state.activity.set(record.helperId, { at, count: seen.count + 1 })
     this.deps.emit(record.delegatorPaneId, evt)
@@ -746,8 +995,21 @@ export class GuiHelperCardCorrelator {
     const batchId = state?.batchOfHelper.get(record.helperId)
     const batch = state && batchId ? state.batches.get(batchId) : undefined
     if (!state || !batch) return
-    if (!batch.live.delete(record.helperId)) return
-    this.deps.emit(record.delegatorPaneId, guiHelperSettledEvent(record))
+    const cardId = state.cardOfHelper.get(record.helperId)
+    if (!batch.live.delete(record.helperId)) {
+      // DESCARTE DE UM INTERROMPIDO (R6.2): ele já saiu do `live` quando parou,
+      // mas o card dele continua na tela mostrando "interrompido" — e o dono
+      // acabou de mandar jogar fora. O tool-result novo cai no MESMO card e
+      // reescreve o desfecho; sem isto a lateral mentiria para sempre.
+      if (!state.interrupted.has(record.helperId) || !isGuiHelperTerminal(record.state)) return
+      state.interrupted.delete(record.helperId)
+      state.cardOfHelper.delete(record.helperId)
+      this.deps.emit(record.delegatorPaneId, guiHelperSettledEvent(record, cardId))
+      return
+    }
+    if (record.state === 'interrupted') state.interrupted.add(record.helperId)
+    else state.cardOfHelper.delete(record.helperId)
+    this.deps.emit(record.delegatorPaneId, guiHelperSettledEvent(record, cardId))
     // O CORREIO + O DESPERTADOR (as duas correções de 18/08). O card fechar na
     // lateral não conta nada ao AGENTE: se ele já encerrou o turno, ninguém mais
     // vai chamar `helper_result` e a conversa morre em silêncio com a entrega

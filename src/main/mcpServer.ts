@@ -82,7 +82,10 @@ export interface McpApi {
   helperResult?: (id: PaneIdentity, helperId: string, waitSeconds?: number) => Promise<string>
   /** Steering: mensagem para o helper VIVO. */
   helperSend?: (id: PaneIdentity, helperId: string, text: string) => string
+  /** DESCARTE (R6.2): mata, apaga a entrega e encerra o registro. */
   helperCancel?: (id: PaneIdentity, helperId: string) => string
+  /** RETOMAR (R6.2): o interrompido volta à MESMA conversa, de onde parou. */
+  helperResume?: (id: PaneIdentity, helperId: string) => string
 }
 
 /** Um helper pedido no `delegate` (contrato D2; validação zod no catálogo). */
@@ -309,8 +312,13 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   // O catálogo dá CONTROLE TOTAL, de propósito (ordem do dono: "como se
   // estivesse rodando um subagente nativo — ele consegue fazer qualquer coisa
   // com aquele subagente"): abrir a frota, ver o estado, ler a entrega,
-  // dirigir e cancelar. Tirar qualquer um desses verbos deixaria a troca pior
-  // do que o nativo que ela aposenta.
+  // dirigir, RETOMAR e descartar. Tirar qualquer um desses verbos deixaria a
+  // troca pior do que o nativo que ela aposenta.
+  //
+  // O PAR DA INTERRUPÇÃO (R6.2) é o que fecha o ciclo redondo: `helper_resume`
+  // traz de volta quem parou e `helper_cancel` joga fora. Sem os dois, a parada
+  // preservadora do motor não teria saída nenhuma — e "parar" voltaria a
+  // significar "perder".
   //
   // Mesma cerca do planejador: retorno antecipado. Quem não é `gui-delegator`
   // não enxerga uma linha disto — inclusive um AJUDANTE, que nasce sem MCP
@@ -433,10 +441,23 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     )
 
     server.registerTool(
+      'helper_resume',
+      {
+        description:
+          'RETOMA um ajudante INTERROMPIDO: ele volta para a MESMA conversa e continua de onde parou, no mesmo modelo, effort e conta do nascimento. Um ajudante fica interrompido quando o dono aperta ■ ou quando o app é fechado com ele trabalhando — o processo morre, mas a conversa dele fica guardada no disco do CLI. Só existe sobre `interrompido`: quem está trabalhando se dirige com helper_send, quem entregou se lê com helper_result, e quem falhou ou foi descartado se substitui com delegate. Trocar de modelo/effort NÃO é retomar — para isso, descarte com helper_cancel e abra outro.',
+        inputSchema: {
+          helperId: z.string().min(1).max(120).describe('o id do ajudante parado (vem do helpers_status)')
+        }
+      },
+      ({ helperId }) =>
+        api.helperResume ? text(api.helperResume(identity, helperId)) : text(DELEGATION_ENGINE_OFF)
+    )
+
+    server.registerTool(
       'helper_cancel',
       {
         description:
-          'Encerra um ajudante. O que ele já escreveu em disco fica; a sessão morre. Use quando o trabalho dele deixou de fazer sentido — segurar ajudante inútil gasta limite da conta.',
+          'DESCARTA um ajudante: mata a sessão se ela ainda vive, APAGA o arquivo de entrega dele e encerra o registro de vez. É o par do helper_resume — sobre um ajudante interrompido, `resume` traz de volta e `cancel` joga fora. Use quando o trabalho dele deixou de fazer sentido (segurar ajudante inútil gasta limite da conta) e nunca como forma de "pausar": pausar é o ■ do dono, e dele se volta. O que o ajudante MUDOU no worktree não é apagado por esta ferramenta — desfazer código é git, e é seu.',
         inputSchema: {
           helperId: z.string().min(1).max(120)
         }

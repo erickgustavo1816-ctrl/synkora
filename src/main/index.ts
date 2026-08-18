@@ -3422,6 +3422,7 @@ app.whenReady().then(async () => {
       guiDelegation.helperResult(id, helperId, waitSeconds),
     helperSend: (id, helperId, text) => guiDelegation.helperSend(id, helperId, text),
     helperCancel: (id, helperId) => guiDelegation.helperCancel(id, helperId),
+    helperResume: (id, helperId) => guiDelegation.helperResume(id, helperId),
     hub
   }
 
@@ -3826,11 +3827,18 @@ app.whenReady().then(async () => {
     helpers: guiHelperEngine
   })
   const guiSessionRegistry = guiSessions
+  // A ARESTA DE VOLTA da costura circular (R6-B): o motor já fala com o registro
+  // por closure (`onChange`, acima); aqui o registro ganha o motor, que é o que
+  // o ■ do dono e o despertador de boot precisam perguntar. Uma linha, e é ela
+  // que torna a interrupção ATÔMICA (turno + frota + avisos pendentes).
+  guiSessionRegistry.attachHelpers(guiHelperEngine)
   app.once('will-quit', () => {
-    // A frota morre ANTES dos chats: cancelar primeiro dá ao motor a chance de
-    // descartar cada processo de CLI headless (o app-server do codex nunca
-    // encerra sozinho — sonda probe-helper-matrix §6).
-    guiHelperEngine.cancelAll('o app foi fechado')
+    // A frota para ANTES dos chats: é o motor que descarta cada processo de CLI
+    // headless (o app-server do codex nunca encerra sozinho — sonda
+    // probe-helper-matrix §6). E fechar o app INTERROMPE, nunca descarta (R6.1,
+    // ordem do dono): os registros vão ao disco retomáveis, e a conversa que
+    // reabrir recebe o aviso com os dois verbos.
+    guiHelperEngine.interruptAll('o app foi fechado')
     guiSessionRegistry.killAll()
   })
   // Cmd/Ctrl+K: só depois do registro GUI existir, porque o índice de

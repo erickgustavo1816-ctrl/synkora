@@ -119,6 +119,11 @@ function harness(over = {}) {
     },
     ...(over.modelSupportsEffort ? { modelSupportsEffort: over.modelSupportsEffort } : {}),
     ...(over.store ? { store: over.store } : {}),
+    // O DISCO DA ENTREGA (R5) e o DESCARTE dela (R6.2) entram pela mesma porta
+    // do `store`: o motor não conhece arquivo, então a bancada observa os dois
+    // sem escrever um byte.
+    ...(over.deliver ? { deliver: over.deliver } : {}),
+    ...(over.discardDelivery ? { discardDelivery: over.discardDelivery } : {}),
     // ESCALONADOR DESLIGADO POR PADRÃO NESTA BANCADA. A cadência de partida
     // (~2s entre processos) tem bloco PRÓPRIO mais abaixo; aqui os testes falam
     // da máquina de estados, e fazê-los conviver com a fila só acrescentaria
@@ -676,25 +681,23 @@ test('forgetPane é o chat que sumiu de vez: cancela E esquece', () => {
 })
 
 test('o QUIT interrompe, nunca descarta (R6.1) — e nenhum processo sobrevive', () => {
-  // Ordem do dono (R6.1): "fechar o app" é INTERRUPÇÃO. O `cancelAll` que o
-  // will-quit do índice chama é o mesmo verbo do `interruptAll` — o processo
-  // morre, o registro fica retomável, e nada é descartado por trás do dono.
+  // Ordem do dono (R6.1): "fechar o app" é INTERRUPÇÃO. O `will-quit` do índice
+  // chama `interruptAll` — o processo morre, o registro fica retomável, e nada é
+  // descartado por trás do dono. O apelido `cancelAll` da onda A MORREU junto
+  // com a chamada antiga: dois nomes para o mesmo verbo é como a semântica de
+  // descarte volta por distração.
   const { engine, spawns } = harness()
   engine.spawn(DELEGATOR, [{ prompt: 'a' }, { prompt: 'b' }])
   engine.spawn(OTHER_DELEGATOR, [{ prompt: 'c' }])
 
-  assert.equal(engine.cancelAll('o app foi fechado'), 3)
+  assert.equal(typeof engine.cancelAll, 'undefined', 'o apelido de descarte continua vivo no motor')
+  assert.equal(engine.interruptAll('o app foi fechado'), 3)
   assert.equal(engine.liveCount(), 0)
   for (const spawn of spawns) assert.equal(spawn.disposed, 1)
   for (const snapshot of engine.status(DELEGATOR.paneId)) {
     assert.equal(snapshot.state, 'interrupted', 'o quit descartou a frota do dono')
   }
-  assert.equal(engine.cancelAll(), 0)
-
-  const direto = harness()
-  direto.engine.spawn(DELEGATOR, [{ prompt: 'a' }])
-  assert.equal(direto.engine.interruptAll('o app foi fechado'), 1)
-  assert.equal(direto.engine.status(DELEGATOR.paneId)[0].state, 'interrupted')
+  assert.equal(engine.interruptAll(), 0)
 })
 
 test('send dirige o ajudante VIVO e recusa o que já encerrou', () => {
@@ -1396,4 +1399,209 @@ test('a memória tem fim: encerrado antigo sai, vivo NUNCA sai', () => {
   assert.equal(engine.get(ids[2]).result, 'entrega 2')
   assert.equal(engine.get(ids.at(-1)).result, `entrega ${GUI_HELPER_SETTLED_MEMORY + 1}`)
   assert.equal(engine.get(vivo.receipts[0].helperId).state, 'spawning')
+})
+
+// ————— R6.2: os DOIS verbos da interrupção (retomar × descartar) —————
+//
+// O ciclo redondo do dono (18/08): "não faz só um remendo, faz um planejamento
+// por trás". A parada preservadora da onda A só faz sentido com uma VOLTA — e a
+// volta tem de nascer do REGISTRO, nunca de estado em memória: o registro que
+// veio do disco depois de um boot é o único que existe nos dois casos.
+
+/** Um ajudante interrompido, com endereço de conversa — o caso de todo resume. */
+function interrupted(over = {}) {
+  const kit = harness(over.harness)
+  const outcome = kit.engine.spawn(DELEGATOR, [{ prompt: 'levante os arquivos', name: 'busca' }])
+  const helperId = outcome.receipts[0].helperId
+  kit.spawns[0].emit({ type: 'session', sessionId: over.sessionId ?? 'sess-abc' })
+  kit.spawns[0].emit({ type: 'text', text: 'comecei a olhar' })
+  kit.engine.interruptPane(DELEGATOR.paneId, 'o dono apertou o quadrado')
+  return { ...kit, helperId }
+}
+
+test('helper_resume volta a MESMA conversa, com o pino do nascimento intacto', () => {
+  const { engine, helperId, spawns, changes, logs, clock } = interrupted()
+  const nascimento = engine.get(helperId)
+  clock.t += 60_000
+
+  assert.deepEqual(engine.resume(helperId), { ok: true })
+
+  assert.equal(spawns.length, 2, 'o resume não abriu processo nenhum')
+  const pedido = spawns[1].request
+  assert.equal(pedido.resumeSessionId, 'sess-abc', 'sem o endereço da conversa isto é um recomeço')
+  assert.equal(pedido.model, nascimento.model, 'o pino do nascimento vale')
+  assert.equal(pedido.effort, nascimento.effort)
+  assert.equal(pedido.seat.seatId, nascimento.seatId)
+  assert.equal(pedido.cwd, nascimento.cwd)
+  assert.equal(pedido.helperId, helperId, 'retomar é o MESMO ajudante, nunca um irmão')
+  assert.ok(pedido.prompt.length < 400, `o nudge tem de ser curto (${pedido.prompt.length} chars)`)
+  assert.match(pedido.prompt, /continue de onde parou/iu)
+
+  const record = engine.get(helperId)
+  assert.equal(record.state, 'spawning')
+  assert.equal(record.settledAt, undefined, 'quem voltou a trabalhar não tem hora de encerramento')
+  assert.equal(record.failure, undefined)
+  assert.equal(record.resumedAt, clock.t, 'o cronômetro re-arma no instante da volta')
+  assert.equal(record.startedAt, clock.t)
+
+  spawns[1].emit({ type: 'result', isError: false, text: 'terminei o que faltava' })
+  assert.equal(engine.get(helperId).state, 'done')
+  assert.equal(engine.get(helperId).result, 'terminei o que faltava')
+  assert.deepEqual(
+    changes.map((change) => change.kind),
+    ['spawned', 'settled', 'resumed', 'settled'],
+    'a lateral precisa saber que o card voltou a viver'
+  )
+  assert.ok(logs.some((entry) => entry.event === 'helper-resumed' && entry.helperId === helperId))
+})
+
+test('resume DEPOIS DO BOOT: o pedido nasce do registro do disco, não da memória', () => {
+  // O `spawnRequest` é solto no desfecho de propósito (onda A): um resume que
+  // dependesse dele funcionaria na sessão e quebraria justamente no caso que o
+  // dono pediu — fechar o app e voltar.
+  const store = memoryStore()
+  const primeiro = harness({ store })
+  const helperId = primeiro.engine.spawn(DELEGATOR, [{ prompt: 'o trabalho', name: 'busca' }])
+    .receipts[0].helperId
+  primeiro.spawns[0].emit({ type: 'session', sessionId: 'codex-thread:uuid-9' })
+  primeiro.drain()
+
+  const segundo = harness({ store })
+  assert.equal(segundo.engine.get(helperId).state, 'interrupted')
+  assert.deepEqual(segundo.engine.resume(helperId), { ok: true })
+
+  assert.equal(segundo.spawns.length, 1, 'o boot não reabre nada sozinho, mas o resume abre')
+  const pedido = segundo.spawns[0].request
+  assert.equal(pedido.resumeSessionId, 'codex-thread:uuid-9')
+  assert.equal(pedido.model, DELEGATOR.model)
+  assert.equal(pedido.cwd, DELEGATOR.cwd)
+  // A CONTA se re-resolve pelo registro: o objeto de conta do boot anterior não
+  // existe mais, e é o `resolveSeat` que sabe quais estão logadas AGORA.
+  const query = segundo.seatQueries.at(-1)
+  assert.equal(query.cli, 'claude')
+  assert.equal(query.preferredSeatId, segundo.engine.get(helperId).seatId)
+})
+
+test('o modo de permissão do nascimento atravessa o disco e volta no resume', () => {
+  // Sem isto o ajudante renasce em modo `default` num chat de bypass e morre no
+  // primeiro pedido de permissão — beco sem ninguém do outro lado.
+  const store = memoryStore()
+  const primeiro = harness({ store })
+  const helperId = primeiro.engine
+    .spawn({ ...DELEGATOR, permissionMode: 'bypass' }, [{ prompt: 'escreva o arquivo' }])
+    .receipts[0].helperId
+  assert.equal(primeiro.spawns[0].request.permissionMode, 'bypass')
+  primeiro.spawns[0].emit({ type: 'session', sessionId: 'sess-perm' })
+  primeiro.drain()
+
+  const segundo = harness({ store })
+  assert.equal(segundo.engine.resume(helperId).ok, true)
+  assert.equal(segundo.spawns[0].request.permissionMode, 'bypass')
+})
+
+test('resume só existe sobre o interrompido, e a recusa nomeia o verbo certo', () => {
+  const vivo = oneHelper()
+  const trabalhando = vivo.engine.resume(vivo.helperId)
+  assert.equal(trabalhando.ok, false)
+  assert.match(trabalhando.error, /trabalhando/iu)
+  assert.match(trabalhando.error, /helper_send|helper_cancel/u, 'a recusa tem de dizer o que fazer')
+
+  vivo.spawn.emit({ type: 'result', isError: false, text: 'entreguei' })
+  const pronto = vivo.engine.resume(vivo.helperId)
+  assert.equal(pronto.ok, false)
+  assert.match(pronto.error, /helper_result/u, 'quem já entregou se lê, não se retoma')
+
+  const descartado = oneHelper()
+  descartado.engine.cancel(descartado.helperId, 'não quero mais')
+  const morto = descartado.engine.resume(descartado.helperId)
+  assert.equal(morto.ok, false)
+  assert.match(morto.error, /delegate/u, 'descartado não volta: abre-se outro')
+
+  assert.equal(vivo.engine.resume('helper-fantasma').ok, false)
+})
+
+test('sem endereço da conversa o resume RECUSA em vez de recomeçar do zero', () => {
+  // O nudge é curto porque a CONVERSA carrega o briefing. Sem sessionId ele
+  // chegaria a um ajudante em branco — "continue de onde parou" sem nenhum
+  // "onde".
+  const { engine, helperId } = interrupted({ sessionId: '   ' })
+  const outcome = engine.resume(helperId)
+  assert.equal(outcome.ok, false)
+  assert.match(outcome.error, /delegate/u, 'a saída honesta é abrir outro com o briefing')
+  assert.equal(engine.get(helperId).state, 'interrupted', 'a recusa não pode mexer no registro')
+})
+
+test('o resume passa PELA FILA de partida — nunca dois processos no mesmo instante', () => {
+  const kit = harness({ spawnIntervalMs: 2_000 })
+  const outcome = kit.engine.spawn(DELEGATOR, [{ prompt: 'a' }, { prompt: 'b' }])
+  const [primeiro, segundo] = outcome.receipts.map((receipt) => receipt.helperId)
+  kit.spawns[0].emit({ type: 'session', sessionId: 'sess-1' })
+  fireSpawnTimer(kit)
+  kit.spawns[1].emit({ type: 'session', sessionId: 'sess-2' })
+  assert.equal(kit.spawns.length, 2)
+
+  kit.engine.interruptPane(DELEGATOR.paneId, 'o dono apertou o quadrado')
+  assert.equal(kit.engine.resume(primeiro).ok, true)
+  assert.equal(kit.engine.resume(segundo).ok, true)
+  // "Volta com os subagentes" é uma frota inteira renascendo de uma vez — a
+  // MESMA rajada que o escalonador existe para espaçar. Nenhum dos dois parte
+  // antes de o intervalo da última partida vencer.
+  assert.equal(kit.spawns.length, 2, 'os dois resumes partiram na mesma rajada')
+
+  fireSpawnTimer(kit)
+  assert.equal(kit.spawns.length, 3)
+  fireSpawnTimer(kit)
+  assert.equal(kit.spawns.length, 4, 'o segundo resume nunca chegou a subir')
+  // Cada um voltou para a PRÓPRIA conversa: uma fila que embaralhasse os
+  // pedidos daria a um ajudante o histórico do outro.
+  assert.equal(kit.spawns[2].request.resumeSessionId, 'sess-1')
+  assert.equal(kit.spawns[3].request.resumeSessionId, 'sess-2')
+})
+
+test('helper_cancel é DESCARTE: mata o que vive, apaga a entrega e vira terminal', () => {
+  const discarded = []
+  const { engine, helperId, spawns } = interrupted({
+    harness: {
+      discardDelivery: (record) => discarded.push(record.helperId),
+      deliver: () => ({ ok: true, path: '.synkora/helpers/entrega.md' })
+    }
+  })
+  assert.equal(spawns[0].disposed, 1)
+  const parado = engine.get(helperId)
+  assert.equal(parado.state, 'interrupted')
+  assert.equal(parado.resultPath, '.synkora/helpers/entrega.md', 'a parada preservadora gravou')
+
+  assert.deepEqual(engine.cancel(helperId, 'o dono não quer mais'), { ok: true })
+  const registro = engine.get(helperId)
+  assert.equal(registro.state, 'cancelled', 'descartar um parado tem de encerrá-lo de vez')
+  assert.match(registro.failure, /não quer mais/u)
+  assert.equal(registro.resultPath, undefined, 'o card continuaria apontando um arquivo apagado')
+  assert.equal(registro.result, undefined)
+  assert.deepEqual(discarded, [helperId], 'o arquivo canônico da entrega continua no worktree')
+
+  assert.equal(engine.resume(helperId).ok, false, 'descartado não se retoma')
+})
+
+test('descartar o que JÁ entregou é recusado — a entrega dele é o produto', () => {
+  const discarded = []
+  const { engine, helperId, spawn } = oneHelper({
+    harness: { discardDelivery: (record) => discarded.push(record.helperId) }
+  })
+  spawn.emit({ type: 'result', isError: false, text: 'a entrega' })
+
+  const outcome = engine.cancel(helperId)
+  assert.equal(outcome.ok, false)
+  assert.match(outcome.error, /entregou|encerrou/iu)
+  assert.deepEqual(discarded, [], 'o descarte apagou a entrega de um ajudante que terminou')
+  assert.equal(engine.get(helperId).state, 'done')
+})
+
+test('cancelar um ajudante VIVO não procura arquivo que nunca existiu', () => {
+  const discarded = []
+  const { engine, helperId } = oneHelper({
+    harness: { discardDelivery: (record) => discarded.push(record.helperId) }
+  })
+  assert.equal(engine.cancel(helperId).ok, true)
+  assert.equal(engine.get(helperId).state, 'cancelled')
+  assert.deepEqual(discarded, [], 'nada foi gravado antes do descarte — não há o que apagar')
 })

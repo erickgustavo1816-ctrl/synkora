@@ -113,7 +113,7 @@ export function guiPaneToolKind(
 }
 
 /**
- * As SEIS ferramentas internas do `gui-delegator`, no nome que o claude usa
+ * As SETE ferramentas internas do `gui-delegator`, no nome que o claude usa
  * (`mcp__<servidor>__<tool>`; o servidor é `synkora`, escrito por
  * `writeClaudeMcpConfig`). Elas são PRÉ-SANCIONADAS: aprovar a ferramenta do
  * próprio app não é decisão do dono, é encanamento — a mesma doutrina que faz
@@ -136,6 +136,10 @@ export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   'mcp__synkora__helpers_status',
   'mcp__synkora__helper_result',
   'mcp__synkora__helper_send',
+  // O par da interrupção (R6.2). Sem a pré-sanção do `resume`, retomar um
+  // ajudante parado levantaria card de permissão para o dono — justamente no
+  // gesto que ele acabou de pedir.
+  'mcp__synkora__helper_resume',
   'mcp__synkora__helper_cancel'
 ]
 

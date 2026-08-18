@@ -15,7 +15,7 @@
 //       src/main/guiHelperCards.ts src/main/guiSessions.ts src/main/guiDelegationWiring.ts \
 //   && node --test scripts/test-gui-delegation-wiring.mjs
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -41,6 +41,7 @@ const {
   guiHelperInboxBlock,
   guiHelperSettledEvent,
   guiHelperSpawnedEvents,
+  guiHelperWakeMessage,
   guiOrphanHelperCancellations,
   isGuiDelegateToolName
 } = cards
@@ -63,6 +64,7 @@ const {
   codexHelperSessionOptions,
   codexHelperThreadId,
   createGuiHelperStore,
+  discardGuiHelperDelivery,
   guiHelperDeliveryDocument,
   guiHelperDeliveryPath,
   guiHelperEventFor,
@@ -782,7 +784,8 @@ function delegationApi(overrides = {}) {
       }
     },
     send: () => ({ ok: true }),
-    cancel: () => ({ ok: true })
+    cancel: () => ({ ok: true }),
+    resume: (helperId) => overrides.resume?.(helperId) ?? { ok: true }
   }
   const overlap = overrides.duringResult
   const api = buildGuiDelegationApi({
@@ -864,13 +867,27 @@ test('chat de missão DEV arma o MCP de delegação; o planejador segue no kit d
   assert.match(missions, /delegateTools:/u, 'o diário tem de distinguir os dois kits')
 })
 
-test('a frota morre com o pane e com o app', () => {
+test('a frota morre com o pane e PARA com o app — fechar nunca é descartar', () => {
   const ipc = source('src/main/ipc/gui.ts')
   assert.match(ipc, /extras\.helpers\?\.cancelPane\(paneId,/u, 'teardown do chat sem cancelar a frota')
   const index = source('src/main/index.ts')
-  assert.match(index, /guiHelperEngine\.cancelAll\(/u, 'o quit tem de matar os headless do codex')
+  // R6.1, ordem do dono ("fechar o app e voltar os subagentes voltarem"): o
+  // quit INTERROMPE. O processo headless do codex morre igual (ele nunca
+  // encerra sozinho), mas o registro fica retomável no disco.
+  assert.match(index, /guiHelperEngine\.interruptAll\(/u, 'o quit tem de matar os headless do codex')
+  assert.equal(
+    /guiHelperEngine\.cancelAll\(/u.test(index),
+    false,
+    'o quit voltou a DESCARTAR a frota do dono'
+  )
   assert.match(index, /helpers: guiHelperEngine/u)
+  assert.match(
+    index,
+    /guiSessionRegistry\.attachHelpers\(guiHelperEngine\)/u,
+    'sem a aresta de volta o ■ do dono para só o turno'
+  )
   assert.match(index, /delegateHelpers: \(id, helpers\)/u, 'as tools de delegação saíram do McpApi')
+  assert.match(index, /helperResume: \(id, helperId\)/u, 'o verbo da retomada não chegou ao McpApi')
 })
 
 // ————— 9. O PAINEL DE PADRÕES DO DONO (D8) —————
@@ -1972,4 +1989,212 @@ test('a ficha mostra a re-tentativa do provedor enquanto ela acontece', () => {
   ])
   assert.match(status, /re-tentando/u)
   assert.match(status, /sobrecarga do provedor/u)
+})
+
+// ————— 12. R6-B: OS DOIS VERBOS (retomar × descartar) —————
+//
+// R6.2 do design vinculante. A parada preservadora da onda A só fecha o ciclo
+// com uma VOLTA; e o descarte, que antes era "encerra a sessão", passa a ser o
+// verbo que joga fora de verdade — inclusive o arquivo da entrega.
+
+test('helper_resume: a tool existe, chega ao motor e o texto ensina o par de verbos', async () => {
+  const calls = []
+  const { api } = delegationApi({
+    resume: (helperId) => {
+      calls.push(helperId)
+      return { ok: true }
+    }
+  })
+  const text = await api.helperResume(delegatorId, 'h-meu')
+  assert.deepEqual(calls, ['h-meu'])
+  assert.match(text, /retomad/iu)
+  assert.match(text, /h-meu/u)
+  assert.match(text, /helpers_status|helper_result/u, 'a resposta diz como acompanhar a volta')
+
+  // Escopo por pane: o id opaco de outro chat não é autorização, aqui como nas
+  // outras cinco.
+  assert.match(api.helperResume(delegatorId, 'h-alheio'), /não é deste chat/u)
+  assert.match(
+    api.helperResume({ ...delegatorId, role: 'gui-planner' }, 'h-meu'),
+    /não delega/u
+  )
+})
+
+test('resume recusado devolve o motivo do MOTOR, sem inventar sucesso', async () => {
+  const { api } = delegationApi({
+    resume: () => ({ ok: false, error: 'o ajudante está trabalhando — dirija com helper_send' })
+  })
+  const text = await api.helperResume(delegatorId, 'h-meu')
+  assert.match(text, /helper_send/u)
+  assert.ok(!/retomado/iu.test(text), 'a recusa não pode soar como retomada')
+})
+
+test('helper_cancel DESCARTA: o arquivo canônico some do worktree', () => {
+  const cwd = tmpWorktree()
+  const record = deliveredRecord(cwd, { helperId: 'h-descartado', state: 'interrupted' })
+  const written = writeGuiHelperDelivery({ record, text: 'metade do trabalho' })
+  assert.equal(written.ok, true)
+  const file = join(cwd, ...written.path.split('/'))
+  assert.equal(readFileSync(file, 'utf8').includes('metade do trabalho'), true)
+
+  discardGuiHelperDelivery({ ...record, resultPath: written.path })
+  assert.equal(existsSync(file), false, 'descartar deixou a entrega no disco do dono')
+
+  // Descartar de novo (ou sem arquivo nenhum) NUNCA é erro: o motor não pode
+  // depender de disco para encerrar um registro.
+  discardGuiHelperDelivery({ ...record, resultPath: written.path })
+  discardGuiHelperDelivery({ ...record, resultPath: undefined })
+  discardGuiHelperDelivery({ ...record, cwd: '' })
+})
+
+test('o descarte nunca escapa da pasta de ajudantes do worktree', () => {
+  const cwd = tmpWorktree()
+  const vitima = join(cwd, 'importante.md')
+  writeFileSync(vitima, 'o trabalho do dono', 'utf8')
+  discardGuiHelperDelivery(
+    deliveredRecord(cwd, { helperId: '../../importante', resultPath: '../../importante.md' })
+  )
+  assert.equal(existsSync(vitima), true, 'um id hostil apagou arquivo fora da pasta de entregas')
+})
+
+test('o motor de produção nasce com o DESCARTE ligado, não só com a entrega', () => {
+  const wiringSource = source('src/main/guiDelegationWiring.ts')
+  assert.match(wiringSource, /discardDelivery:\s*\(record\)\s*=>\s*discardGuiHelperDelivery\(record\)/u)
+})
+
+test('o card do interrompido carrega o desfecho `interrupted` — o contrato da lateral', () => {
+  // A lateral já lê `result.status === 'cancelled'`; `interrupted` é o irmão
+  // novo. Fechar um interrompido como 'completed' (o que a onda A fazia) diria
+  // ao dono que o trabalho terminou bem.
+  const evt = guiHelperSettledEvent(
+    helperRecord({
+      state: 'interrupted',
+      failure: 'o app fechou com o ajudante trabalhando',
+      result: 'metade do caminho',
+      resultPath: '.synkora/helpers/h-1.md'
+    })
+  )
+  assert.equal(evt.outcome, 'interrupted')
+  assert.equal(evt.isError, false, 'interromper não é falhar')
+  assert.equal(evt.agentStatus, 'settled')
+  assert.match(evt.text, /\.synkora\/helpers\/h-1\.md/u, 'o parcial dele tem endereço')
+
+  const descartado = guiHelperSettledEvent(helperRecord({ state: 'cancelled', failure: 'descartado' }))
+  assert.equal(descartado.outcome, 'cancelled')
+  const feito = guiHelperSettledEvent(helperRecord({ state: 'done', result: 'entrega' }))
+  assert.equal(feito.outcome, 'completed')
+})
+
+test('helper_result de um interrompido nomeia os DOIS verbos', () => {
+  const text = guiHelperResultText({
+    ok: true,
+    helperId: 'h-1',
+    state: 'interrupted',
+    pending: false,
+    waitedMs: 0,
+    failure: 'o app fechou com o ajudante trabalhando',
+    resultPath: '.synkora/helpers/h-1.md',
+    snapshot: {
+      helperId: 'h-1',
+      cli: 'claude',
+      model: 'opus',
+      seatId: 's',
+      state: 'interrupted',
+      startedAt: 0,
+      elapsedMs: 1_000,
+      hasResult: true
+    }
+  })
+  assert.match(text, /INTERROMPIDO/u)
+  assert.match(text, /helper_resume/u)
+  assert.match(text, /helper_cancel/u)
+  assert.match(text, /\.synkora\/helpers\/h-1\.md/u)
+})
+
+test('a ficha do interrompido ensina o par de verbos uma vez só', () => {
+  const status = guiHelperStatusText([
+    {
+      helperId: 'h-1',
+      cli: 'claude',
+      model: 'opus[1m]',
+      seatId: 'seat-1',
+      state: 'interrupted',
+      startedAt: 0,
+      elapsedMs: 12 * 60_000,
+      hasResult: true,
+      resultPath: '.synkora/helpers/h-1.md',
+      failure: 'o app fechou com o ajudante trabalhando'
+    },
+    {
+      helperId: 'h-2',
+      cli: 'claude',
+      model: 'opus[1m]',
+      seatId: 'seat-1',
+      state: 'interrupted',
+      startedAt: 0,
+      elapsedMs: 60_000,
+      hasResult: false
+    }
+  ])
+  assert.match(status, /interrompido/u)
+  assert.match(status, /helper_resume/u)
+  assert.match(status, /helper_cancel/u)
+  assert.equal(status.match(/helper_resume/gu).length, 1, 'a receita se repetiu por ajudante')
+})
+
+test('a ficha do retomado diz que ele está na segunda vida', () => {
+  const status = guiHelperStatusText([
+    {
+      helperId: 'h-1',
+      cli: 'claude',
+      model: 'opus[1m]',
+      seatId: 'seat-1',
+      state: 'working',
+      startedAt: 0,
+      elapsedMs: 5_000,
+      hasResult: false,
+      resumedAt: 1_000
+    }
+  ])
+  assert.match(status, /retomado/iu)
+})
+
+test('o aviso de boot nomeia os interrompidos, o tempo parado e os dois verbos', () => {
+  const text = guiHelperWakeMessage(
+    [
+      {
+        helperId: 'h-1',
+        name: 'busca',
+        model: 'opus[1m]',
+        ok: false,
+        interrupted: true,
+        elapsedMs: 12 * 60_000,
+        resultPath: '.synkora/helpers/h-1.md'
+      },
+      { helperId: 'h-2', model: 'fable', ok: false, interrupted: true, elapsedMs: 30_000 }
+    ],
+    0
+  )
+  assert.ok(text.startsWith('[synkora]'))
+  assert.match(text, /interrompid/iu)
+  assert.match(text, /helper_resume/u)
+  assert.match(text, /helper_cancel/u)
+  assert.ok(text.includes('h-1') && text.includes('h-2'))
+  assert.ok(text.includes('busca'))
+  assert.match(text, /12min/u, 'quanto ele trabalhou antes de parar')
+  assert.ok(!/concluíd/iu.test(text), 'nada de dizer que um interrompido concluiu')
+  assert.ok(text.length < 900, `o aviso continua curto (${text.length} chars)`)
+})
+
+test('o correio mistura honestamente quem terminou e quem ficou parado', () => {
+  const bloco = guiHelperInboxBlock(
+    [
+      { helperId: 'h-1', model: 'opus', ok: true, resultPath: '.synkora/helpers/h-1.md' },
+      { helperId: 'h-2', model: 'opus', ok: false, interrupted: true, elapsedMs: 60_000 }
+    ],
+    { stillWorking: 1 }
+  )
+  assert.match(bloco, /1 concluído/u)
+  assert.match(bloco, /1 interrompido/u, 'o placar não pode contar parado como falha')
+  assert.match(bloco, /helper_resume/u)
 })

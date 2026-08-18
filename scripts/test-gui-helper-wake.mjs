@@ -362,6 +362,8 @@ function registryHarness(patch = {}) {
       return state.turnActive
     },
     send: (text) => sent.push(text),
+    // O ■ do dono (R6.3) atravessa o turno do CLI antes de tocar na frota.
+    interrupt: () => true,
     kill: () => undefined
   })
   const paneId = 'gui-dev-abc12345'
@@ -535,4 +537,219 @@ test('fechar o chat com aviso pendente não entrega nada', () => {
   assert.equal(timers.pending, 0)
   timers.tick()
   assert.equal(sent.length, 0)
+})
+
+// ————— R6.3: o ■ do dono é ATÔMICO —————
+//
+// Semântica do dono (R6.3): apertar ■ (1) interrompe o turno do CLI, (2) para a
+// frota PRESERVANDO (interrupted, retomável — nunca descarte) e (3) DESCARTA as
+// pendências de despertador do pane. O caso real que produziu o item 3: o
+// despertador abriu um turno novo POR CIMA da interrupção que o dono acabara de
+// fazer — o app falando justamente na conversa que ele mandou calar.
+
+test('discardPending esvazia o pote e mata o relógio, sem esquecer os lotes', () => {
+  const { correlator, inbox, timers, wakes } = harness({ turnActive: () => true })
+  const paneId = 'gui-dev-abc12345'
+  const fleet = openBatch(correlator, paneId, [
+    helperRecord({ helperId: 'h-1' }),
+    helperRecord({ helperId: 'h-2' })
+  ])
+  settle(correlator, fleet[0], 'done')
+  assert.equal(inbox.count(paneId), 1)
+  assert.equal(timers.pending, 1)
+
+  assert.equal(correlator.discardPending(paneId), 1, 'o descarte devolve quantas novidades caíram')
+  assert.equal(inbox.count(paneId), 0, 'o pote continuou cheio — o aviso sairia depois do ■')
+  assert.equal(timers.pending, 0, 'o relógio do despertador sobreviveu ao ■')
+  timers.tick()
+  assert.equal(wakes.length, 0)
+
+  // O LOTE continua de pé: o ajudante que sobrou ainda é deste pane, e o card
+  // dele tem de fechar quando ele encerrar.
+  settle(correlator, fleet[1], 'failed', { failure: 'quebrou' })
+  assert.equal(inbox.count(paneId), 1, 'o pane esqueceu quem ainda estava vivo')
+})
+
+test('o ■ do dono para o turno, PRESERVA a frota e cala o despertador na mesma tacada', () => {
+  const { gui, paneId, timers, sent, records } = registryHarness()
+  const calls = []
+  gui.attachHelpers({
+    interruptPane: (id, reason) => {
+      calls.push({ id, reason })
+      return 2
+    },
+    status: () => []
+  })
+
+  const record = helperRecord()
+  gui.beginHelperBatch(paneId)
+  gui.noteHelperChange({ kind: 'spawned', record })
+  gui.endHelperBatch(paneId)
+  gui.noteHelperChange({ kind: 'settled', record: { ...record, state: 'done' } })
+  assert.equal(timers.pending, 1, 'havia aviso marcado quando o dono apertou o quadrado')
+
+  const outcome = gui.interrupt(paneId)
+  assert.equal(outcome.ok, true)
+  assert.equal(calls.length, 1, 'a frota do pane não foi interrompida junto com o turno')
+  assert.equal(calls[0].id, paneId)
+  assert.equal(timers.pending, 0, 'o despertador voltaria a falar na conversa que o dono calou')
+  timers.tick()
+  assert.equal(sent.length, 0)
+  const audit = records.find((entry) => entry.event === 'gui-interrupt')
+  assert.ok(audit, 'a caixa-preta não registrou o ■')
+  assert.equal(audit.detail.helpers, 2, 'o diário tem de dizer quantos ajudantes pararam junto')
+  assert.equal(audit.detail.wakes, 1, 'e quantos avisos foram descartados')
+})
+
+test('sem motor ligado o ■ continua interrompendo o turno', () => {
+  // O registro nasce antes do motor no índice (a costura é circular). Um ■ que
+  // dependesse do motor estar amarrado deixaria o dono sem o botão no boot.
+  const { gui, paneId } = registryHarness()
+  assert.equal(gui.interrupt(paneId).ok, true)
+})
+
+// ————— R6.1 (cauda): o DESPERTADOR DE BOOT com os dois verbos —————
+
+test('conversa que reabre com ajudante interrompido recebe UM aviso com os dois verbos', () => {
+  const timers = fakeTimers()
+  const sent = []
+  const inbox = new GuiHelperInbox()
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    helperWakeTimer: timers.setTimer,
+    helperInbox: inbox,
+    record: () => undefined
+  })
+  gui.spawnSession = () => ({
+    alive: true,
+    turnActive: false,
+    send: (text) => sent.push(text),
+    kill: () => undefined
+  })
+  gui.attachHelpers({
+    interruptPane: () => 0,
+    status: () => [
+      {
+        helperId: 'h-1',
+        name: 'busca',
+        cli: 'claude',
+        model: 'opus[1m]',
+        seatId: 'seat-1',
+        state: 'interrupted',
+        startedAt: 0,
+        elapsedMs: 12 * 60_000,
+        hasResult: true,
+        resultPath: '.synkora/helpers/h-1.md'
+      },
+      {
+        helperId: 'h-2',
+        cli: 'claude',
+        model: 'fable',
+        seatId: 'seat-1',
+        state: 'done',
+        startedAt: 0,
+        elapsedMs: 1_000,
+        hasResult: true
+      }
+    ]
+  })
+
+  const paneId = 'gui-dev-abc12345'
+  const spawn = { paneId, projectId: 'proj', cli: 'claude', configDir: 'seat-1', cwd: '/tmp' }
+  assert.equal(gui.create(spawn).ok, true)
+  assert.equal(sent.length, 0, 'o aviso de boot não pode sair antes da janela de coalescência')
+  timers.tick()
+
+  assert.equal(sent.length, 1)
+  assert.match(sent[0], /interrompid/iu)
+  assert.match(sent[0], /helper_resume/u, 'o dono tem de poder retomar')
+  assert.match(sent[0], /helper_cancel/u, 'e tem de poder descartar')
+  assert.ok(sent[0].includes('h-1'), 'o id é o argumento dos dois verbos')
+  assert.ok(sent[0].includes('busca'), 'o apelido do card')
+  assert.ok(!sent[0].includes('h-2'), 'quem ENTREGOU não entra no aviso de interrompidos')
+
+  // Uma vez por boot: remontar a mesma conversa (aba, reload da view) não
+  // repete o aviso.
+  assert.equal(gui.create(spawn).ok, true)
+  timers.tick()
+  assert.equal(sent.length, 1, 'o aviso de boot saiu de novo numa remontagem')
+})
+
+test('conversa sem ajudante parado abre calada', () => {
+  const { gui, timers, sent } = registryHarness()
+  timers.tick()
+  assert.equal(sent.length, 0)
+})
+
+// ————— R6.2: o card do retomado —————
+
+test('o retomado ganha um card NOVO e o desfecho seguinte chega ao anel', () => {
+  // O card do interrompido já fechou, e no renderer um card fechado não aceita
+  // outro resultado (`acceptsGuiToolResult`). Sem card novo, o ajudante que
+  // voltou entregaria no vazio: a lateral ficaria "interrompida" para sempre e
+  // o correio nunca receberia o encerramento.
+  const { correlator, emitted, inbox, timers } = harness()
+  const paneId = 'gui-dev-abc12345'
+  const [record] = openBatch(correlator, paneId, [helperRecord()])
+  settle(correlator, record, 'interrupted', { failure: 'o app fechou' })
+  assert.equal(inbox.count(paneId), 0, 'interrompido NÃO é encerramento: ninguém acorda por ele')
+
+  const primeiroCard = emitted.find((entry) => entry.evt.type === 'tool').evt.toolUseId
+  emitted.length = 0
+  correlator.change({ kind: 'resumed', record: { ...record, state: 'spawning' } })
+
+  const aberto = emitted.filter((entry) => entry.evt.type === 'tool')
+  assert.equal(aberto.length, 1, 'o retomado precisa de um card')
+  assert.notEqual(
+    aberto[0].evt.toolUseId,
+    primeiroCard,
+    'card com id repetido faz o renderer descartar TODO resultado dos dois'
+  )
+  assert.equal(aberto[0].evt.input.helperId, record.helperId, 'a lateral promove pelo helperId')
+
+  emitted.length = 0
+  settle(correlator, record, 'done', { result: 'terminei', resultPath: '.synkora/helpers/h-1.md' })
+  const fechado = emitted.find((entry) => entry.evt.type === 'tool-result' && entry.evt.agentStatus === 'settled')
+  assert.ok(fechado, 'o desfecho do retomado não chegou ao anel')
+  assert.equal(fechado.evt.toolUseId, aberto[0].evt.toolUseId, 'o desfecho fechou o card errado')
+  assert.equal(inbox.count(paneId), 1, 'o encerramento do retomado tem de chegar ao delegador')
+  timers.tick()
+})
+
+test('retomar depois do boot funciona mesmo sem lote nenhum na memória', () => {
+  // Depois do restart o correlacionador nasce vazio: o lote da chamada
+  // `delegate` original morreu com o processo. O ajudante retomado ganha um
+  // lote próprio, com envelope sintético (que não tem card para fechar).
+  const { correlator, emitted, inbox } = harness()
+  const paneId = 'gui-dev-abc12345'
+  const record = helperRecord({ state: 'spawning' })
+
+  correlator.change({ kind: 'resumed', record })
+  const aberto = emitted.filter((entry) => entry.evt.type === 'tool')
+  assert.equal(aberto.length, 1)
+  assert.equal(aberto[0].evt.input.helperId, 'h-1')
+
+  emitted.length = 0
+  settle(correlator, record, 'done', { result: 'entreguei' })
+  assert.ok(
+    emitted.some((entry) => entry.evt.type === 'tool-result' && entry.evt.agentStatus === 'settled'),
+    'o retomado sem lote entregou no vazio'
+  )
+  assert.equal(inbox.count(paneId), 1)
+})
+
+test('descartar um interrompido re-escreve o card, e não acorda ninguém', () => {
+  const { correlator, emitted, inbox, timers } = harness()
+  const paneId = 'gui-dev-abc12345'
+  const [record] = openBatch(correlator, paneId, [helperRecord()])
+  settle(correlator, record, 'interrupted', { failure: 'o dono apertou o quadrado' })
+  emitted.length = 0
+
+  settle(correlator, record, 'cancelled', { failure: 'descartado pelo chat que o abriu' })
+  const fechado = emitted.find((entry) => entry.evt.type === 'tool-result')
+  assert.ok(fechado, 'o card ficaria "interrompido" para sempre depois do descarte')
+  assert.equal(fechado.evt.outcome, 'cancelled')
+  assert.equal(inbox.count(paneId), 0, 'descarte nunca acorda o delegador')
+  timers.tick()
 })
