@@ -124,8 +124,24 @@ sobrecarga real da noite):
   pino do painel"), cronômetro contando, wake em produção (bolha [synkora]
   com placar 3/5 e ids), retry manual do agente em outra conta.
 
-PENDENTE DA ETAPA: implementar R5+R6 quando a sobrecarga passar →
-re-validação do dono. PRÓXIMO DO ROADMAP: 3º RightDock → 4º browser.
+DESFECHO DA NOITE: a janela de 529 durou 1h+ e SETE lançamentos de agente
+morreram na largada (backoff 8→16min respeitado; zero resíduo na árvore). O
+"ENVIAR AGORA" foi implementado PELO ORQUESTRADOR na contingência (9cc93d8 —
+renderer-only: o send() do main nunca travou por turno, o composer é que
+enfileirava por UX; protocolo claim→send→ack/restore reusado; opções não
+divergem porque spawnChangeLocked trava com fila; vermelho→15/15).
+
+⚡ RETOMADA (próxima sessão, NESTA ordem):
+1. Relançar a R5: Workflow {scriptPath:
+   <sessão>/workflows/scripts/fix-helper-delivery-model-wf_c0ac9e3d-e3d.js,
+   resumeFromRunId: wf_c0ac9e3d-e3d} — ou reescrever do design (a spec
+   inteira está no prompt do script e no doc). Entrega em ARQUIVO
+   (.synkora/helpers/<id>.md pelo harness) + inbox por helper de carona nos
+   resultados das tools.
+2. Ondas R6-A/B/C do CICLO REDONDO (R6.1-R6.6 no design): interrupted +
+   persistência gui-helpers.json + helper_resume/descarte + ■ atômico +
+   escalonador 2s + auto-retry. R6.5 (enviar agora) JÁ FEITA.
+3. Re-validação do dono → RightDock → browser.
 
 ## ⚡ PRÓXIMA SESSÃO — COMEÇAR AQUI, NESTA ORDEM (SUPERADO pela sessão B acima; itens 2º-4º do roadmap seguem valendo)
 
