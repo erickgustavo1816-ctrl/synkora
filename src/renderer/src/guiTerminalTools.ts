@@ -14,7 +14,9 @@ type GuiTerminalEvent =
 type GuiTerminalToolResult = {
   text: string
   isError: boolean
-  status: 'failed' | 'cancelled' | 'completed'
+  /** `interrupted` (R6.1) só nasce no replay de boot, para o card de AJUDANTE
+   *  despachado: o motor preservou o registro, e "cancelado" mentiria. */
+  status: 'failed' | 'cancelled' | 'completed' | 'interrupted'
   lineCount: number
   truncated: false
   provisional?: boolean
@@ -106,6 +108,29 @@ function cancelledSubagentResult(): GuiTerminalToolResult {
     text: 'a sessão encerrou antes de o subagente reportar',
     isError: false,
     status: 'cancelled',
+    lineCount: 1,
+    truncated: false,
+    agentStatus: 'settled'
+  }
+}
+
+/**
+ * O PREFIXO do card sintetizado de AJUDANTE MCP (contrato com o main:
+ * `GUI_HELPER_CARD_PREFIX` em guiHelperCards.ts — duplicado aqui porque o
+ * renderer nunca importa do main). É ele que separa, no replay de boot, quem
+ * foi INTERROMPIDO preservando (helper — o motor persiste o registro retomável)
+ * de quem morreu com a sessão (subagente nativo — cancelado, como sempre).
+ */
+const GUI_HELPER_CARD_ID_PREFIX = 'helper:'
+
+/** AJUDANTE despachado que o boot reencontra: INTERROMPIDO, nunca cancelado
+ *  (R6.1 — "fechar o app" é interrupção; o registro dele está no motor,
+ *  retomável com helper_resume). */
+function interruptedSubagentResult(): GuiTerminalToolResult {
+  return {
+    text: 'o app fechou com o ajudante trabalhando — interrompido; a conversa dele ficou guardada e dá para retomar (helper_resume) ou descartar (helper_cancel)',
+    isError: false,
+    status: 'interrupted',
     lineCount: 1,
     truncated: false,
     agentStatus: 'settled'
@@ -239,9 +264,16 @@ export function settleLaunchedGuiSubagents(items: GuiItem[]): GuiItem[] {
     return isLaunchedSubagent(parent) || descendsFromLaunched(parent, chain)
   }
 
+  const interruptedParent = interruptedSubagentResult()
   return items.map((item) => {
     if (item.kind !== 'tool') return item
-    if (isLaunchedSubagent(item)) return { ...item, result: cancelledParent }
+    if (isLaunchedSubagent(item)) {
+      // AJUDANTE MCP × subagente nativo (R6.1): o helper foi preservado pelo
+      // motor no fechamento — o card diz "interrompido" e a lateral o guarda
+      // como retomável; o nativo morreu com a sessão e segue cancelado.
+      const helper = item.toolUseId?.startsWith(GUI_HELPER_CARD_ID_PREFIX) === true
+      return { ...item, result: helper ? interruptedParent : cancelledParent }
+    }
     if (item.result) return item
     return descendsFromLaunched(item, new Set())
       ? { ...item, result: cancelledChild }

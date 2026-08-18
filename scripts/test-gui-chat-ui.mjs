@@ -3108,3 +3108,67 @@ test('GuiPane consome o detector do módulo, sem heurística própria', () => {
     'a régua do aceite mora em guiAskForGo.ts — cópia no componente volta a divergir'
   )
 })
+
+// ————— AS COSTURAS DO CICLO REDONDO (R6, integração das ondas B×C) —————
+//
+// A onda C mapeou (relatório r6c-sidebar §5) três furos FORA das fronteiras das
+// duas ondas; a integração os fecha aqui. O contrato: card de ajudante
+// interrompido carrega result.status 'interrupted' e NÃO é a última palavra —
+// helper_cancel o fecha, helper_resume abre a segunda vida, e o boot nunca o
+// confunde com um cancelamento.
+
+test('card INTERROMPIDO aceita um segundo desfecho — o descarte fecha a ficha', () => {
+  const interrupted = {
+    ...tool('h1', 'delegate', 'ajudante parado'),
+    toolUseId: 'helper:h-1',
+    result: {
+      text: 'interrompido',
+      isError: false,
+      status: 'interrupted',
+      lineCount: 1,
+      truncated: false,
+      agentStatus: 'settled'
+    }
+  }
+  const done = {
+    ...tool('h2', 'delegate', 'ajudante entregue'),
+    toolUseId: 'helper:h-2',
+    result: { text: 'ok', isError: false, status: 'completed', lineCount: 1, truncated: false }
+  }
+  // O interrompido ainda espera a última palavra (cancel/resume); o concluído
+  // não — reabrir um desfecho REAL continua proibido.
+  assert.equal(guiToolResultTargetIndex([interrupted, done], 'helper:h-1'), 0)
+  assert.equal(guiToolResultTargetIndex([interrupted, done], 'helper:h-2'), -1)
+})
+
+test('no replay de boot o AJUDANTE vira interrompido; o subagente nativo, cancelado', () => {
+  const helper = {
+    ...tool('h1', 'delegate', 'ajudante'),
+    toolUseId: 'helper:h-9',
+    result: {
+      text: 'aberto',
+      isError: false,
+      status: 'completed',
+      lineCount: 1,
+      truncated: false,
+      agentStatus: 'launched'
+    }
+  }
+  const native = {
+    ...tool('n1', 'Agent', 'nativo'),
+    toolUseId: 'task-1',
+    result: {
+      text: 'aberto',
+      isError: false,
+      status: 'completed',
+      lineCount: 1,
+      truncated: false,
+      agentStatus: 'launched'
+    }
+  }
+  const settled = settleLaunchedGuiSubagents([helper, native])
+  assert.equal(settled[0].result.status, 'interrupted', 'o motor preservou o registro — o card não pode dizer cancelado')
+  assert.equal(settled[0].result.isError, false, 'interromper não é falhar')
+  assert.match(settled[0].result.text, /helper_resume/u, 'o card ensina o verbo da volta')
+  assert.equal(settled[1].result.status, 'cancelled', 'o nativo morreu com a sessão, como sempre')
+})

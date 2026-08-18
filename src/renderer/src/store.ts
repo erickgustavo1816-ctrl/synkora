@@ -641,7 +641,12 @@ function capGuiItems(items: GuiItem[]): GuiItem[] {
   if (excess <= 0) return items
   const kept: GuiItem[] = []
   for (const item of items) {
-    if (excess > 0 && !(item.kind === 'tool' && isLaunchedGuiSubagentTool(item))) {
+    // A ficha INTERROMPIDA (R6.1) também não se poda: é o único lugar onde o
+    // dono vê a frota retomável — uma conversa longa a comeria em silêncio.
+    const protectedCard =
+      item.kind === 'tool' &&
+      (isLaunchedGuiSubagentTool(item) || item.result?.status === 'interrupted')
+    if (excess > 0 && !protectedCard) {
       excess -= 1
       continue
     }

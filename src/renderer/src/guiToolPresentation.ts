@@ -59,10 +59,15 @@ export function isLaunchedGuiSubagentTool(item: GuiToolItem): boolean {
 }
 
 /** Card que ainda pode receber um desfecho autoritativo: pendente, fechado
- *  provisoriamente pelo terminal do turno, ou apenas despachado. */
+ *  provisoriamente pelo terminal do turno, apenas despachado — ou INTERROMPIDO
+ *  (R6.1): pausa não é a última palavra, e sem esta porta o `helper_cancel` de
+ *  um ajudante parado nunca fecharia a ficha na lateral. */
 function acceptsGuiToolResult(item: GuiToolItem): boolean {
   return (
-    !item.result || item.result.provisional === true || isLaunchedGuiSubagentTool(item)
+    !item.result ||
+    item.result.provisional === true ||
+    item.result.status === 'interrupted' ||
+    isLaunchedGuiSubagentTool(item)
   )
 }
 

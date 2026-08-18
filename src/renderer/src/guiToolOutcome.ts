@@ -1,4 +1,6 @@
-export type GuiToolOutcome = 'completed' | 'failed' | 'denied' | 'cancelled'
+/** `interrupted` (R6.1): parada PRESERVADORA de um ajudante — não terminou,
+ *  não caiu, não foi jogado fora; dele se volta (helper_resume). */
+export type GuiToolOutcome = 'completed' | 'failed' | 'denied' | 'cancelled' | 'interrupted'
 
 export interface GuiToolResultLike {
   text: string
@@ -23,6 +25,12 @@ export function guiToolOutcomeView(
   }
   if (result.status === 'cancelled') {
     return { tone: 'cancel', compactLabel: 'cancelada', statusLabel: 'cancelado' }
+  }
+  // Interrompido não é falha nem cancelamento definitivo: o tom neutro é o do
+  // cancel (nenhuma cor nova), mas a PALAVRA é própria — é ela que diz ao dono
+  // que dele se volta.
+  if (result.status === 'interrupted') {
+    return { tone: 'cancel', compactLabel: 'interrompida', statusLabel: 'interrompido' }
   }
   if (result.status === 'failed' || result.isError) {
     return {

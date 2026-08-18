@@ -196,7 +196,9 @@ export type GuiSessionEvent =
       type: 'tool-result'
       text: string
       isError: boolean
-      outcome?: 'completed' | 'failed' | 'denied' | 'cancelled'
+      /** `interrupted` (R6.1): card de AJUDANTE parado de forma preservadora —
+       *  espelho do union do main (maestroSession.ts). */
+      outcome?: 'completed' | 'failed' | 'denied' | 'cancelled' | 'interrupted'
       toolUseId?: string
       lineCount?: number
       truncated?: boolean
