@@ -51,13 +51,18 @@ const {
   spawnFingerprint
 } = sessions
 const {
+  GUI_HELPERS_STORE_FILE,
   GUI_HELPER_DELIVERY_DIR,
   GUI_HELPER_PERSONA,
   GUI_HELPER_RESULT_HEAD_CHARS,
   GuiHelperCatalogCache,
   buildGuiDelegationApi,
   claudeHelperArgs,
+  claudeHelperSessionOptions,
   codexHelperArgs,
+  codexHelperSessionOptions,
+  codexHelperThreadId,
+  createGuiHelperStore,
   guiHelperDeliveryDocument,
   guiHelperDeliveryPath,
   guiHelperEventFor,
@@ -896,6 +901,10 @@ function panelApi(options = {}) {
     spawnCodex: adapter,
     resolveSeat: (query) => resolveGuiHelperSeat(PANEL_SEATS, query),
     newId: () => `h-${(seq += 1)}`,
+    // Cadência de partida DESLIGADA: estes testes leem o pedido que chega ao
+    // adaptador, e com o escalonador real só o primeiro da frota teria partido.
+    // A fila do R6.4 é provada na bancada do motor, com relógio próprio.
+    spawnIntervalMs: 0,
     now: () => 0
   })
   const api = buildGuiDelegationApi({
@@ -1704,4 +1713,263 @@ test('o bloco do correio é curto, nomeia cada ajudante e ensina o movimento', (
   assert.match(bloco, /2/u, 'quantos ainda trabalham')
   assert.ok(bloco.length < 700, `o bloco viaja em TODA tool: ${bloco.length} chars é despejo`)
   assert.equal(guiHelperInboxBlock([], {}), '', 'sem pendência, sem bloco')
+})
+
+// ————— 12. O CICLO REDONDO (R6-A: fundação do motor) —————
+//
+// A rodada 6 do design fecha o ciclo do ajudante: interromper preservando,
+// guardar o registro em disco, saber a conversa de cada um (sessionId) e espaçar
+// a partida da frota. Aqui provamos a metade que mora na COSTURA — o motor tem
+// bancada própria (`test:gui-helper-sessions`).
+
+test('o session-id do CLI vira o carimbo do motor, nos dois binários', () => {
+  // claude: o id sobe no `result` de cada turno; codex: no thread/start, com o
+  // prefixo próprio da casa. O motor guarda os dois CRUS — quem tira o prefixo é
+  // o adaptador, no instante do resume.
+  assert.deepEqual(guiHelperEventFor({ type: 'session-id', sessionId: 'sess-1' }), {
+    type: 'session',
+    sessionId: 'sess-1'
+  })
+  assert.deepEqual(guiHelperEventFor({ type: 'session-id', sessionId: 'codex-thread:uuid-9' }), {
+    type: 'session',
+    sessionId: 'codex-thread:uuid-9'
+  })
+})
+
+test('as opções do helper CLAUDE: cerca, worktree, conta — e nenhuma ferramenta', () => {
+  const request = {
+    helperId: 'h-1',
+    projectId: 'p',
+    delegatorPaneId: 'gui-dev-1',
+    cwd: 'C:/work/mission',
+    cli: 'claude',
+    model: 'opus[1m]',
+    effort: 'high',
+    seat: { seatId: 's1', configDir: 'C:/cfg/claude', name: 'Claude A' },
+    prompt: 'trabalhe',
+    permissionMode: 'edits'
+  }
+  const opts = claudeHelperSessionOptions(request, 'C:/prompts/h-1.system.md')
+  assert.equal(opts.cwd, request.cwd)
+  assert.equal(opts.configDir, 'C:/cfg/claude')
+  assert.equal(opts.model, 'opus[1m]')
+  assert.equal(opts.effort, 'high')
+  assert.equal(opts.systemPromptFile, 'C:/prompts/h-1.system.md')
+  assert.deepEqual(opts.extraArgs, claudeHelperArgs())
+  assert.equal(opts.resumeSessionId, undefined, 'ajudante novo nunca nasce retomando conversa alheia')
+  // SEM CADEIA: o ajudante não recebe token nem config de ferramenta nenhuma.
+  for (const forbidden of ['extraEnv', 'mcp']) {
+    assert.ok(!(forbidden in opts), `o ajudante claude recebeu "${forbidden}"`)
+  }
+  // Effort ausente = flag ausente (o motor já decidiu; a costura não inventa).
+  assert.equal(claudeHelperSessionOptions({ ...request, effort: undefined }).effort, undefined)
+})
+
+test('as opções do helper CODEX: cerca DUPLA e o thread sem o prefixo da casa', () => {
+  const request = {
+    helperId: 'h-2',
+    projectId: 'p',
+    delegatorPaneId: 'gui-dev-1',
+    cwd: 'C:/work/mission',
+    cli: 'codex',
+    model: 'gpt-5.6-sol',
+    seat: { seatId: 's2', configDir: 'C:/cfg/codex' },
+    prompt: 'trabalhe'
+  }
+  const opts = codexHelperSessionOptions(request)
+  assert.deepEqual(opts.extraArgs, codexHelperArgs(), 'o cinto do app-server')
+  assert.equal(opts.suppressNativeAgents, true, 'o suspensório por thread')
+  assert.equal(opts.resumeSessionId, undefined)
+
+  // O RESUME (R6.2): a MESMA conversa volta, e o thread/resume quer o uuid cru.
+  assert.equal(
+    codexHelperSessionOptions({ ...request, resumeSessionId: 'codex-thread:uuid-9' }).resumeSessionId,
+    'uuid-9'
+  )
+  assert.equal(codexHelperThreadId('codex-thread:uuid-9'), 'uuid-9')
+  assert.equal(codexHelperThreadId('uuid-9'), 'uuid-9', 'id já cru passa intacto')
+  assert.equal(codexHelperThreadId('   '), undefined)
+  assert.equal(codexHelperThreadId(undefined), undefined)
+})
+
+test('o RESUME do claude é o --resume headless, e a cerca vai junto', () => {
+  const opts = claudeHelperSessionOptions({
+    helperId: 'h-3',
+    projectId: 'p',
+    delegatorPaneId: 'gui-dev-1',
+    cwd: 'C:/work/mission',
+    cli: 'claude',
+    model: 'opus[1m]',
+    seat: { seatId: 's1', configDir: 'C:/cfg/claude' },
+    prompt: 'continue de onde parou',
+    resumeSessionId: 'sess-abc'
+  })
+  assert.equal(opts.resumeSessionId, 'sess-abc')
+  assert.deepEqual(opts.extraArgs, claudeHelperArgs(), 'retomar não pode abrir a porta do subagente nativo')
+
+  // E os adaptadores REAIS consomem estas funções — sem isso o contrato do
+  // resume existiria só no teste.
+  const src = source('src/main/guiDelegationWiring.ts')
+  assert.match(src, /new MaestroSession\(\s*claudeHelperSessionOptions\(/u)
+  assert.match(src, /new CodexSession\(\s*codexHelperSessionOptions\(/u)
+})
+
+test('o store de produção é o jsonStore da casa: atômico, com backup e reparável', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'synkora-helpers-store-'))
+  try {
+    const file = join(dir, GUI_HELPERS_STORE_FILE)
+    const store = createGuiHelperStore(file)
+    assert.deepEqual(store.load(), [], 'arquivo inexistente não é erro — é frota vazia')
+
+    const record = {
+      helperId: 'h-1',
+      delegatorPaneId: 'gui-dev-1',
+      projectId: 'p',
+      cwd: 'C:/work/mission',
+      cli: 'claude',
+      model: 'opus[1m]',
+      seatId: 's1',
+      prompt: 'trabalhe',
+      state: 'interrupted',
+      startedAt: 1_000,
+      settledAt: 2_000,
+      sessionId: 'sess-abc'
+    }
+    store.save([record])
+    assert.deepEqual(createGuiHelperStore(file).load(), [record])
+    // O backup é a segunda fotografia da MESMA gravação (padrão jsonStore).
+    assert.deepEqual(JSON.parse(readFileSync(`${file}.bak`, 'utf8')).helpers, [record])
+
+    // Documento estragado à mão cai no backup, e nunca derruba o boot.
+    writeFileSync(file, '{ não é json', 'utf8')
+    assert.deepEqual(createGuiHelperStore(file).load(), [record])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('o motor de produção liga a persistência quando o índice passa o arquivo', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'synkora-helpers-engine-'))
+  try {
+    const file = join(dir, GUI_HELPERS_STORE_FILE)
+    createGuiHelperStore(file).save([
+      {
+        helperId: 'h-vivo',
+        delegatorPaneId: 'gui-dev-1',
+        projectId: 'p',
+        cwd: dir,
+        cli: 'claude',
+        model: 'opus[1m]',
+        seatId: 's1',
+        prompt: 'estava trabalhando quando o app fechou',
+        state: 'working',
+        startedAt: Date.now() - 60_000
+      }
+    ])
+    const engine = wiring.createGuiHelperEngine({
+      storeFile: file,
+      seats: () => [],
+      systemPromptFile: () => undefined,
+      onChange: () => undefined,
+      log: () => undefined
+    })
+    assert.equal(engine.get('h-vivo')?.state, 'interrupted', 'o ajudante do boot anterior sumiu')
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).helpers[0].state, 'interrupted')
+
+    // Sem arquivo, nada persiste — é como as suítes rodam sem tocar em disco.
+    const semStore = wiring.createGuiHelperEngine({
+      seats: () => [],
+      systemPromptFile: () => undefined,
+      onChange: () => undefined,
+      log: () => undefined
+    })
+    assert.equal(semStore.size, 0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('o texto do interrompido diz que dá para RETOMAR — e não que acabou', () => {
+  const snapshot = {
+    helperId: 'h-1',
+    cli: 'claude',
+    model: 'opus[1m]',
+    seatId: 'seat-1',
+    state: 'interrupted',
+    startedAt: 0,
+    elapsedMs: 90_000,
+    settledAt: 90_000,
+    hasResult: true,
+    resultPath: '.synkora/helpers/h-1.md',
+    failure: 'o app foi fechado'
+  }
+  const status = guiHelperStatusText([snapshot])
+  assert.match(status, /interrompido/iu, 'a ficha do dono mostrou o estado em inglês')
+  assert.match(status, /\.synkora\/helpers\/h-1\.md/u)
+
+  const text = guiHelperResultText({
+    ok: true,
+    helperId: 'h-1',
+    state: 'interrupted',
+    pending: false,
+    waitedMs: 0,
+    result: 'metade do trabalho',
+    resultPath: '.synkora/helpers/h-1.md',
+    failure: 'o app foi fechado',
+    snapshot
+  })
+  assert.match(text, /interrompid/iu)
+  assert.match(text, /retomar/iu, 'a única saída que existe não pode ficar escondida')
+  assert.match(text, /\.synkora\/helpers\/h-1\.md/u, 'o que ele chegou a escrever tem endereço')
+  assert.ok(!/encerrou como/u.test(text), 'interrompido não é desfecho')
+})
+
+test('depois do boot a entrega vive só no ARQUIVO, e a resposta diz isso', () => {
+  // O disco guarda o registro, nunca o texto — ele já está no arquivo canônico.
+  // Uma resposta que fingisse ter a entrega em mãos devolveria vazio.
+  const text = guiHelperResultText({
+    ok: true,
+    helperId: 'h-1',
+    state: 'done',
+    pending: false,
+    waitedMs: 0,
+    resultPath: '.synkora/helpers/h-1.md',
+    snapshot: {
+      helperId: 'h-1',
+      cli: 'claude',
+      model: 'opus[1m]',
+      seatId: 'seat-1',
+      state: 'done',
+      startedAt: 0,
+      elapsedMs: 0,
+      hasResult: false,
+      resultPath: '.synkora/helpers/h-1.md'
+    }
+  })
+  assert.match(text, /\.synkora\/helpers\/h-1\.md/u)
+  assert.match(text, /arquivo/u)
+  assert.ok(
+    !/a entrega, inteira/u.test(text),
+    'a resposta anunciou a entrega inteira e não tinha uma linha dela em mãos'
+  )
+  assert.ok(text.length < 400, `resposta sem entrega em mãos virou parágrafo: ${text.length} chars`)
+})
+
+test('a ficha mostra a re-tentativa do provedor enquanto ela acontece', () => {
+  const status = guiHelperStatusText([
+    {
+      helperId: 'h-1',
+      cli: 'claude',
+      model: 'opus[1m]',
+      seatId: 'seat-1',
+      state: 'spawning',
+      startedAt: 0,
+      elapsedMs: 21_000,
+      hasResult: false,
+      retriedAt: 1_000,
+      retryReason: 'sobrecarga do provedor'
+    }
+  ])
+  assert.match(status, /re-tentando/u)
+  assert.match(status, /sobrecarga do provedor/u)
 })

@@ -48,7 +48,11 @@ import { registerGuiIpc } from './ipc/gui'
 import { registerHistoryIpc } from './ipc/history'
 import { waitForGuiCliStable } from './guiCliLaunch'
 import type { GuiSessionRegistry } from './guiSessions'
-import { buildGuiDelegationApi, createGuiHelperEngine } from './guiDelegationWiring'
+import {
+  GUI_HELPERS_STORE_FILE,
+  buildGuiDelegationApi,
+  createGuiHelperEngine
+} from './guiDelegationWiring'
 import { isGuiMissionPaneId, isGuiPlanningPaneId } from './guiMissionContracts'
 import { initDesktopNotifications } from './desktopNotifications'
 import {
@@ -3349,6 +3353,9 @@ app.whenReady().then(async () => {
   // ele já existe. Sem chat aberto, o card sintetizado simplesmente não nasce —
   // o ajudante segue trabalhando e a entrega continua no helper_result.
   const guiHelperEngine = createGuiHelperEngine({
+    // A FROTA SOBREVIVE AO APP (R6.1): sem este arquivo nada persiste e o boot
+    // não reencontra ninguém — a ordem do dono só existe com esta linha.
+    storeFile: join(app.getPath('userData'), GUI_HELPERS_STORE_FILE),
     seats: () =>
       seats.list().map((seat) => ({
         id: seat.id,

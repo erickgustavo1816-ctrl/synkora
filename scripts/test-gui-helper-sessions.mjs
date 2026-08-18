@@ -4,8 +4,13 @@ import {
   GUI_HELPER_PROMPT_MAX_CHARS,
   GUI_HELPER_RESULT_MAX_CHARS,
   GUI_HELPER_RESULT_TRUNCATION_NOTICE,
+  GUI_HELPER_RETRY_DELAY_MS,
+  GUI_HELPER_RETRY_STARTUP_WINDOW_MS,
   GUI_HELPER_RUNAWAY_BACKSTOP,
   GUI_HELPER_SETTLED_MEMORY,
+  GUI_HELPER_SPAWN_INTERVAL_MS,
+  GUI_HELPER_STORE_RETENTION_MS,
+  GUI_HELPER_TERMINAL_STATES,
   GUI_HELPER_WAIT_DEFAULT_SECONDS,
   GUI_HELPER_WAIT_MAX_SECONDS,
   GUI_HELPER_WATCHDOG_MS,
@@ -14,7 +19,13 @@ import {
   clampHelperWaitSeconds,
   fleetEffortWarning,
   helperEffortDecision,
-  resolveHelperCli
+  isGuiHelperResumable,
+  isGuiHelperSettled,
+  isGuiHelperStoreDoc,
+  persistableGuiHelperRecord,
+  resolveHelperCli,
+  sanitizeGuiHelperRecord,
+  transientHelperFailure
 } from '../src/main/guiHelperSessions.ts'
 
 // MOTOR DOS AJUDANTES SEM ABA (D1 do design vinculante
@@ -46,6 +57,25 @@ const OTHER_DELEGATOR = {
   seatId: 'seat-claude-hotmail'
 }
 
+/**
+ * Um `GuiHelperStore` de memória — a MESMA forma que o `jsonStore` do main
+ * entrega, sem tocar em disco. Ele guarda o documento SERIALIZADO de propósito:
+ * é o que prova que o registro atravessa JSON de verdade (nada de referência
+ * compartilhada mentindo que o round-trip funcionou).
+ */
+function memoryStore(seed = []) {
+  const store = {
+    saves: 0,
+    doc: JSON.stringify(seed),
+    load: () => JSON.parse(store.doc),
+    save: (records) => {
+      store.saves += 1
+      store.doc = JSON.stringify(records)
+    }
+  }
+  return store
+}
+
 function harness(over = {}) {
   const clock = { t: 1_700_000_000_000 }
   const spawns = []
@@ -58,7 +88,8 @@ function harness(over = {}) {
   const adapter = (cli) => (request, emit) => {
     const entry = { cli, request, emit, sent: [], disposed: 0 }
     spawns.push(entry)
-    if (over.spawnThrows) throw new Error('o CLI não subiu')
+    const boom = over.spawnThrows
+    if (boom) throw new Error(typeof boom === 'string' ? boom : 'o CLI não subiu')
     entry.process = {
       send: (text) => entry.sent.push(text),
       dispose: () => {
@@ -87,10 +118,19 @@ function harness(over = {}) {
       return resolveSeat(query)
     },
     ...(over.modelSupportsEffort ? { modelSupportsEffort: over.modelSupportsEffort } : {}),
+    ...(over.store ? { store: over.store } : {}),
+    // ESCALONADOR DESLIGADO POR PADRÃO NESTA BANCADA. A cadência de partida
+    // (~2s entre processos) tem bloco PRÓPRIO mais abaixo; aqui os testes falam
+    // da máquina de estados, e fazê-los conviver com a fila só acrescentaria
+    // ruído de relógio a asserções que nada têm a ver com ela.
+    // `defaultSpawnInterval` OMITE a chave — é como se prova que o padrão do
+    // motor é o do dono, e não um valor que só existe na bancada.
+    ...(over.defaultSpawnInterval ? {} : { spawnIntervalMs: over.spawnIntervalMs ?? 0 }),
+    ...(over.retryDelayMs === undefined ? {} : { retryDelayMs: over.retryDelayMs }),
     now: () => clock.t,
     newId: () => `helper-${++ids}`,
     setTimer: (ms, fn) => {
-      const timer = { ms, fn, cancelled: false }
+      const timer = { ms, fn, cancelled: false, fired: false }
       timers.push(timer)
       return () => {
         timer.cancelled = true
@@ -100,7 +140,22 @@ function harness(over = {}) {
     log: (entry) => logs.push(entry)
   })
 
-  return { engine, clock, spawns, changes, logs, timers, seatQueries }
+  /** Avança o relógio e dispara o próximo temporizador pendente (fila de
+   *  partida, respiro de re-tentativa, gravação adiada). */
+  const tick = () => {
+    const timer = timers.find((entry) => !entry.cancelled && !entry.fired)
+    if (!timer) return false
+    timer.fired = true
+    clock.t += timer.ms
+    timer.fn()
+    return true
+  }
+  const drain = (limit = 500) => {
+    for (let guard = 0; guard < limit; guard += 1) if (!tick()) return
+    throw new Error('os temporizadores não drenaram')
+  }
+
+  return { engine, clock, spawns, changes, logs, timers, seatQueries, tick, drain }
 }
 
 /** Um ajudante já aberto — o caminho feliz de quase todo teste. */
@@ -117,6 +172,15 @@ function fireLastTimer(timers) {
   const timer = timers.at(-1)
   assert.ok(timer, 'o long-poll não armou temporizador nenhum')
   assert.equal(timer.cancelled, false, 'o temporizador já havia sido cancelado')
+  timer.fn()
+}
+
+/** Avança o relógio até a próxima partida da fila e a dispara. */
+function fireSpawnTimer({ timers, clock }) {
+  const timer = timers.find((entry) => !entry.cancelled && !entry.fired)
+  assert.ok(timer, 'a fila de partida não agendou o próximo ajudante')
+  timer.fired = true
+  clock.t += timer.ms
   timer.fn()
 }
 
@@ -611,15 +675,26 @@ test('forgetPane é o chat que sumiu de vez: cancela E esquece', () => {
   assert.equal(engine.size, 1)
 })
 
-test('cancelAll é o quit: nenhum processo sobrevive', () => {
+test('o QUIT interrompe, nunca descarta (R6.1) — e nenhum processo sobrevive', () => {
+  // Ordem do dono (R6.1): "fechar o app" é INTERRUPÇÃO. O `cancelAll` que o
+  // will-quit do índice chama é o mesmo verbo do `interruptAll` — o processo
+  // morre, o registro fica retomável, e nada é descartado por trás do dono.
   const { engine, spawns } = harness()
   engine.spawn(DELEGATOR, [{ prompt: 'a' }, { prompt: 'b' }])
   engine.spawn(OTHER_DELEGATOR, [{ prompt: 'c' }])
 
-  assert.equal(engine.cancelAll('o app fechou'), 3)
+  assert.equal(engine.cancelAll('o app foi fechado'), 3)
   assert.equal(engine.liveCount(), 0)
   for (const spawn of spawns) assert.equal(spawn.disposed, 1)
+  for (const snapshot of engine.status(DELEGATOR.paneId)) {
+    assert.equal(snapshot.state, 'interrupted', 'o quit descartou a frota do dono')
+  }
   assert.equal(engine.cancelAll(), 0)
+
+  const direto = harness()
+  direto.engine.spawn(DELEGATOR, [{ prompt: 'a' }])
+  assert.equal(direto.engine.interruptAll('o app foi fechado'), 1)
+  assert.equal(direto.engine.status(DELEGATOR.paneId)[0].state, 'interrupted')
 })
 
 test('send dirige o ajudante VIVO e recusa o que já encerrou', () => {
@@ -876,6 +951,434 @@ test('a poda escolhe pelo ENCERRAMENTO, nunca pelo nascimento', () => {
     'a entrega que demorou',
     'a poda comeu justamente o resultado que acabou de ficar pronto'
   )
+})
+
+// ————— R6.1: `interrupted` entra na máquina —————
+//
+// O estado que faltava: parada PRESERVADORA. O processo morre, o registro fica
+// e a conversa do CLI (que já vive no disco dele) continua retomável. É o único
+// desfecho de onde se pode VOLTAR — `cancelled` é descarte, `failed` é queda.
+
+test('interruptPane PRESERVA: processo morre, registro e entrega parcial ficam', () => {
+  const { engine, spawns } = harness()
+  engine.spawn(DELEGATOR, [{ prompt: 'a' }, { prompt: 'b' }])
+  engine.spawn(OTHER_DELEGATOR, [{ prompt: 'c' }])
+  spawns[0].emit({ type: 'session', sessionId: 'sess-abc' })
+  spawns[0].emit({ type: 'text', text: 'metade do trabalho' })
+
+  assert.equal(engine.interruptPane(DELEGATOR.paneId, 'o dono apertou o ■'), 2)
+  const [primeiro, segundo] = engine.status(DELEGATOR.paneId)
+  assert.equal(primeiro.state, 'interrupted')
+  assert.equal(segundo.state, 'interrupted')
+  assert.match(primeiro.failure, /■/u)
+  assert.equal(spawns[0].disposed, 1)
+  assert.equal(spawns[2].disposed, 0, 'a interrupção vazou para o chat vizinho')
+  // O que ele conseguiu escrever continua com ele — é isso que "preservadora"
+  // quer dizer, e é o material que o resume da onda B reencontra.
+  const record = engine.get(primeiro.helperId)
+  assert.equal(record.result, 'metade do trabalho')
+  assert.equal(record.sessionId, 'sess-abc')
+})
+
+test('interrompido é ASSENTADO e RETOMÁVEL — e não ocupa vaga do backstop', () => {
+  assert.equal(isGuiHelperSettled('interrupted'), true, 'interrompido não é ajudante vivo')
+  assert.equal(isGuiHelperResumable('interrupted'), true)
+  for (const state of ['spawning', 'working', 'done', 'failed', 'cancelled']) {
+    assert.equal(isGuiHelperResumable(state), false, `${state} não se retoma`)
+  }
+  // `interrupted` NÃO é terminal: os três de sempre continuam sendo o fim da
+  // linha, e é isso que separa "parou" de "acabou".
+  assert.deepEqual([...GUI_HELPER_TERMINAL_STATES].sort(), ['cancelled', 'done', 'failed'])
+
+  const { engine } = harness()
+  engine.spawn(DELEGATOR, [{ prompt: 'a' }])
+  engine.interruptPane(DELEGATOR.paneId)
+  assert.equal(engine.liveCount(DELEGATOR.paneId), 0)
+})
+
+test('o long-poll acorda no interrompido e a leitura NÃO mente que encerrou', async () => {
+  const { engine, helperId, spawn, timers } = oneHelper()
+  spawn.emit({ type: 'text', text: 'até aqui eu fui' })
+
+  const pending = engine.result(helperId, 240)
+  engine.interruptPane(DELEGATOR.paneId, 'o dono apertou o ■')
+  const outcome = await settledWithin(pending, 'interrupção durante a espera')
+
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.pending, false, 'quem espera ficaria pendurado num ajudante já parado')
+  assert.equal(outcome.state, 'interrupted')
+  assert.equal(outcome.result, 'até aqui eu fui')
+  assert.equal(timers[0].cancelled, true)
+})
+
+test('dirigir um interrompido é recusado com o ESTADO na cara, nunca "encerrou"', () => {
+  const { engine, helperId } = oneHelper()
+  engine.interruptPane(DELEGATOR.paneId, 'o app foi fechado')
+
+  const enviado = engine.send(helperId, 'muda o rumo')
+  assert.equal(enviado.ok, false)
+  assert.match(enviado.error, /interrompid/iu)
+  assert.match(enviado.error, /retomar/iu, 'a recusa tem de dizer que dá para voltar')
+  assert.ok(
+    !/encerrou/iu.test(enviado.error),
+    'interrompido não é encerrado — o texto apagaria a única saída que existe'
+  )
+})
+
+// ————— R6.1: a persistência (userData/gui-helpers.json) —————
+
+test('round-trip pelo store: o vivo volta INTERROMPIDO e o assentado volta inteiro', () => {
+  const store = memoryStore()
+  const primeiro = harness({ store })
+  const outcome = primeiro.engine.spawn(DELEGATOR, [
+    { prompt: 'o que entregou', name: 'diff' },
+    { prompt: 'o que ficou no meio', name: 'testes' }
+  ])
+  const [entregue, cortado] = outcome.receipts.map((receipt) => receipt.helperId)
+  primeiro.spawns[0].emit({ type: 'session', sessionId: 'sess-entregue' })
+  primeiro.spawns[0].emit({ type: 'result', isError: false, text: 'a entrega' })
+  primeiro.spawns[1].emit({ type: 'session', sessionId: 'codex-thread:uuid-1' })
+  primeiro.drain()
+
+  // O app fecha SEM passar pelo quit (crash): o disco é a única fotografia.
+  const segundo = harness({ store })
+  const volta = segundo.engine.status(DELEGATOR.paneId)
+  assert.deepEqual(
+    volta.map((snapshot) => snapshot.helperId),
+    [entregue, cortado],
+    'a ordem da lateral se perdeu no disco'
+  )
+  assert.equal(volta[0].state, 'done')
+  assert.equal(volta[1].state, 'interrupted')
+  assert.match(volta[1].failure, /app/iu, 'o motivo tem de dizer que foi o app que fechou')
+  assert.equal(segundo.engine.get(cortado).sessionId, 'codex-thread:uuid-1')
+  assert.equal(segundo.engine.get(cortado).model, DELEGATOR.model)
+  assert.equal(segundo.engine.get(cortado).cwd, DELEGATOR.cwd)
+  assert.equal(segundo.engine.get(cortado).name, 'testes')
+  // Nada volta vivo: um processo de outro boot não existe mais.
+  assert.equal(segundo.engine.liveCount(), 0)
+})
+
+test('o store NÃO carrega a entrega inline — o arquivo é que é a entrega', () => {
+  const store = memoryStore()
+  const { engine, spawns } = harness({ store })
+  const receipt = engine.spawn(DELEGATOR, [{ prompt: 'x' }]).receipts[0]
+  spawns[0].emit({ type: 'result', isError: false, text: 'z'.repeat(5_000) })
+
+  const [saved] = JSON.parse(store.doc)
+  assert.equal(saved.helperId, receipt.helperId)
+  assert.equal(saved.result, undefined, 'o disco guardou 64KB de entrega que já está em arquivo')
+  assert.equal(saved.prompt, 'x')
+  assert.equal(saved.state, 'done')
+  assert.equal(persistableGuiHelperRecord({ helperId: 'h', result: 'x' }).result, undefined)
+})
+
+test('o desfecho GRAVA NA HORA; o resto pode esperar a batida', () => {
+  const store = memoryStore()
+  const { engine, spawns, tick } = harness({ store })
+  const saidasNoBoot = store.saves
+
+  engine.spawn(DELEGATOR, [{ prompt: 'x' }])
+  assert.equal(store.saves, saidasNoBoot, 'o spawn gravou de forma síncrona (rajada de 100 = 100 escritas)')
+  tick()
+  assert.equal(store.saves, saidasNoBoot + 1, 'a gravação adiada nunca aconteceu')
+
+  const antes = store.saves
+  spawns[0].emit({ type: 'result', isError: false, text: 'pronto' })
+  assert.equal(store.saves, antes + 1, 'o desfecho não foi descarregado na hora')
+  assert.equal(JSON.parse(store.doc)[0].state, 'done')
+})
+
+test('encerrar a frota INTEIRA grava UMA vez, não uma por ajudante', () => {
+  // O ■ do dono e o quit derrubam tudo no mesmo instante. Uma gravação síncrona
+  // por ajudante seria N reescritas do MESMO arquivo no main — a classe de
+  // travada que esta casa já pagou caro para matar.
+  const store = memoryStore()
+  const { engine } = harness({ store })
+  engine.spawn(
+    DELEGATOR,
+    Array.from({ length: 12 }, (_, index) => ({ prompt: `f${index}` }))
+  )
+  const antes = store.saves
+
+  assert.equal(engine.interruptAll('o app foi fechado'), 12)
+  assert.equal(store.saves - antes, 1, 'a frota inteira virou uma reescrita por ajudante')
+  assert.equal(
+    JSON.parse(store.doc).filter((record) => record.state === 'interrupted').length,
+    12
+  )
+})
+
+test('o boot re-grava a fotografia JÁ marcada — um segundo crash não perde nada', () => {
+  const store = memoryStore([
+    {
+      helperId: 'h-vivo',
+      delegatorPaneId: DELEGATOR.paneId,
+      projectId: DELEGATOR.projectId,
+      cwd: DELEGATOR.cwd,
+      cli: 'claude',
+      model: 'opus[1m]',
+      seatId: 'seat-1',
+      prompt: 'trabalho interrompido',
+      state: 'working',
+      startedAt: 1_699_999_000_000
+    }
+  ])
+  const { engine, logs } = harness({ store })
+
+  assert.equal(engine.get('h-vivo').state, 'interrupted')
+  assert.equal(JSON.parse(store.doc)[0].state, 'interrupted')
+  assert.ok(
+    logs.some((entry) => entry.event === 'helper-restored' && entry.helperId === 'h-vivo'),
+    'a marcação de boot não deixou rastro no diário'
+  )
+})
+
+test('disco sujo NUNCA derruba o motor: registro inválido cai, o bom fica', () => {
+  const bom = {
+    helperId: 'h-bom',
+    delegatorPaneId: DELEGATOR.paneId,
+    projectId: DELEGATOR.projectId,
+    cwd: DELEGATOR.cwd,
+    cli: 'codex',
+    model: 'gpt-5.6-sol',
+    seatId: 'seat-1',
+    prompt: 'ok',
+    state: 'done',
+    startedAt: 1_699_999_000_000,
+    settledAt: 1_699_999_100_000
+  }
+  const store = memoryStore([
+    null,
+    'lixo',
+    { helperId: 'sem-o-resto' },
+    { ...bom, helperId: 'h-cli-torto', cli: 'gemini' },
+    { ...bom, helperId: 'h-estado-torto', state: 'pensando' },
+    bom
+  ])
+  const { engine } = harness({ store })
+
+  assert.deepEqual(
+    engine.status(DELEGATOR.paneId).map((snapshot) => snapshot.helperId),
+    ['h-bom']
+  )
+  assert.equal(sanitizeGuiHelperRecord(bom).helperId, 'h-bom')
+  assert.equal(sanitizeGuiHelperRecord({ ...bom, startedAt: 'ontem' }), undefined)
+  assert.equal(isGuiHelperStoreDoc({ version: 1, helpers: [] }), true)
+  assert.equal(isGuiHelperStoreDoc({ helpers: 'nenhum' }), false)
+  assert.equal(isGuiHelperStoreDoc(null), false)
+})
+
+test('a retenção corta o que já é história — 7 dias, e nunca o que acabou de parar', () => {
+  const agora = 1_700_000_000_000
+  const velho = {
+    helperId: 'h-velho',
+    delegatorPaneId: DELEGATOR.paneId,
+    projectId: DELEGATOR.projectId,
+    cwd: DELEGATOR.cwd,
+    cli: 'claude',
+    model: 'opus',
+    seatId: 'seat-1',
+    prompt: 'de semanas atrás',
+    state: 'done',
+    startedAt: agora - GUI_HELPER_STORE_RETENTION_MS - 60_000,
+    settledAt: agora - GUI_HELPER_STORE_RETENTION_MS - 1
+  }
+  const store = memoryStore([
+    velho,
+    { ...velho, helperId: 'h-de-ontem', settledAt: agora - 24 * 60 * 60 * 1000 }
+  ])
+  const { engine } = harness({ store })
+
+  assert.deepEqual(
+    engine.status(DELEGATOR.paneId).map((snapshot) => snapshot.helperId),
+    ['h-de-ontem']
+  )
+})
+
+// ————— R6.1: o sessionId, matéria-prima do resume —————
+
+test('o motor carimba o sessionId no instante em que o CLI o anuncia', () => {
+  const { engine, helperId, spawn } = oneHelper()
+  assert.equal(engine.get(helperId).sessionId, undefined)
+
+  spawn.emit({ type: 'session', sessionId: '  sess-1  ' })
+  assert.equal(engine.get(helperId).sessionId, 'sess-1', 'o id chegou com espaço e foi guardado cru')
+  // O claude reemite no `result` (resume/fork podem trocar o id): o ÚLTIMO vale.
+  spawn.emit({ type: 'session', sessionId: 'sess-2' })
+  assert.equal(engine.get(helperId).sessionId, 'sess-2')
+  spawn.emit({ type: 'session', sessionId: '   ' })
+  assert.equal(engine.get(helperId).sessionId, 'sess-2', 'id vazio apagou o resume que existia')
+
+  // Sinal de vida como qualquer outro: o card sai de "abrindo".
+  assert.equal(engine.get(helperId).state, 'working')
+})
+
+// ————— R6.4: o escalonador de partida (spec do dono: "abre um, espera 2s") —————
+
+test('abre UM na hora e os outros de dois em dois segundos — o recibo volta inteiro', () => {
+  const { engine, spawns, clock, timers } = harness({ spawnIntervalMs: GUI_HELPER_SPAWN_INTERVAL_MS })
+  const t0 = clock.t
+  const outcome = engine.spawn(DELEGATOR, [
+    { prompt: 'a' },
+    { prompt: 'b' },
+    { prompt: 'c' }
+  ])
+
+  // A TOOL NÃO BLOQUEIA: os três recibos voltam na mesma chamada.
+  assert.equal(outcome.receipts.filter((receipt) => receipt.ok).length, 3)
+  assert.equal(spawns.length, 1, 'a frota partiu em rajada — é a classe de 529 que o dono viu')
+  // E os que ainda não partiram já aparecem na ficha como "abrindo".
+  assert.deepEqual(
+    engine.status(DELEGATOR.paneId).map((snapshot) => snapshot.state),
+    ['spawning', 'spawning', 'spawning']
+  )
+  assert.equal(timers.at(-1).ms, GUI_HELPER_SPAWN_INTERVAL_MS)
+
+  const kit = { timers, clock }
+  fireSpawnTimer(kit)
+  assert.equal(spawns.length, 2)
+  assert.equal(clock.t - t0, GUI_HELPER_SPAWN_INTERVAL_MS)
+  fireSpawnTimer(kit)
+  assert.equal(spawns.length, 3)
+  assert.equal(clock.t - t0, 2 * GUI_HELPER_SPAWN_INTERVAL_MS)
+  assert.deepEqual(
+    spawns.map((spawn) => spawn.request.prompt),
+    ['a', 'b', 'c'],
+    'a fila é FIFO: o ajudante 3 furou a fila'
+  )
+})
+
+test('o intervalo é GLOBAL: a segunda chamada de delegate respeita a primeira', () => {
+  const { engine, spawns, clock, timers } = harness({ spawnIntervalMs: GUI_HELPER_SPAWN_INTERVAL_MS })
+  engine.spawn(DELEGATOR, [{ prompt: 'a' }])
+  assert.equal(spawns.length, 1)
+
+  clock.t += 500
+  engine.spawn(OTHER_DELEGATOR, [{ prompt: 'b' }])
+  assert.equal(spawns.length, 1, 'dois chats delegando ao mesmo tempo voltam a fazer rajada')
+  assert.equal(timers.at(-1).ms, GUI_HELPER_SPAWN_INTERVAL_MS - 500)
+
+  fireSpawnTimer({ timers, clock })
+  assert.equal(spawns.length, 2)
+
+  // Passado o intervalo, o pedido seguinte parte na hora — sem espera à toa.
+  clock.t += GUI_HELPER_SPAWN_INTERVAL_MS
+  engine.spawn(DELEGATOR, [{ prompt: 'c' }])
+  assert.equal(spawns.length, 3)
+})
+
+test('cancelado na FILA nunca vira processo', () => {
+  const { engine, spawns, clock, timers } = harness({ spawnIntervalMs: GUI_HELPER_SPAWN_INTERVAL_MS })
+  const outcome = engine.spawn(DELEGATOR, [{ prompt: 'a' }, { prompt: 'b' }, { prompt: 'c' }])
+  const naFila = outcome.receipts[1].helperId
+
+  assert.deepEqual(engine.cancel(naFila, 'não precisa mais'), { ok: true })
+  fireSpawnTimer({ timers, clock })
+
+  assert.equal(spawns.length, 2)
+  assert.deepEqual(
+    spawns.map((spawn) => spawn.request.prompt),
+    ['a', 'c'],
+    'o motor abriu um ajudante que o delegador já tinha cancelado'
+  )
+  assert.equal(engine.get(naFila).state, 'cancelled')
+})
+
+test('o padrão do escalonador é o do dono: dois segundos', () => {
+  assert.equal(GUI_HELPER_SPAWN_INTERVAL_MS, 2_000)
+  // Sem override, o motor usa o padrão — a bancada é que desliga a cadência.
+  const { engine, spawns, timers } = harness({ defaultSpawnInterval: true })
+  engine.spawn(DELEGATOR, [{ prompt: 'a' }, { prompt: 'b' }])
+  assert.equal(spawns.length, 1)
+  assert.equal(timers.at(-1).ms, GUI_HELPER_SPAWN_INTERVAL_MS)
+})
+
+// ————— R6.4: a re-tentativa da falha transitória (os 529 ao vivo) —————
+
+test('o matcher de falha transitória é CONSERVADOR', () => {
+  assert.match(transientHelperFailure('API Error: 529 {"type":"overloaded_error"}'), /sobrecarga/u)
+  assert.match(transientHelperFailure('Overloaded'), /sobrecarga/u)
+  assert.match(transientHelperFailure('429 Too Many Requests'), /requisi/u)
+  assert.match(transientHelperFailure('rate_limit_error'), /requisi/u)
+
+  for (const definitivo of [
+    'o processo do CLI encerrou (código 1) sem entregar resultado',
+    'limite da conta estourou — troque de seat',
+    'watchdog: o ajudante passou de 30 min sem encerrar',
+    'spawn ENOENT',
+    'o ajudante parou pedindo permissão',
+    'erro no arquivo 1529.ts',
+    ''
+  ]) {
+    assert.equal(
+      transientHelperFailure(definitivo),
+      undefined,
+      `"${definitivo}" foi tratado como passageiro — re-tentar isso é queimar conta à toa`
+    )
+  }
+})
+
+test('529 na partida = UMA re-tentativa com respiro, carimbada e visível', () => {
+  const { engine, spawns, logs, changes, clock, timers } = harness({ retryDelayMs: 20_000 })
+  const helperId = engine.spawn(DELEGATOR, [{ prompt: 'a' }]).receipts[0].helperId
+  spawns[0].emit({ type: 'result', isError: true, errorText: 'API Error: 529 overloaded_error' })
+
+  // NÃO encerrou: o motor segurou a queda e marcou o respiro.
+  const record = engine.get(helperId)
+  assert.equal(record.state, 'spawning')
+  assert.equal(record.retriedAt, clock.t)
+  assert.match(record.retryReason, /sobrecarga/u)
+  assert.match(record.lastActivity.summary, /re-tentando/u)
+  assert.equal(spawns[0].disposed, 1, 'o processo caído ficou vivo durante o respiro')
+  assert.ok(
+    changes.some((change) => change.kind === 'activity' && /re-tentando/u.test(change.record.lastActivity?.summary ?? '')),
+    'a ficha do dono não mostrou a re-tentativa'
+  )
+  assert.ok(logs.some((entry) => entry.event === 'helper-retry'))
+
+  // O respiro é de verdade, e a partida volta PELA FILA (nunca por fora dela).
+  assert.equal(timers.at(-1).ms, 20_000)
+  assert.equal(spawns.length, 1)
+  timers.at(-1).fired = true
+  clock.t += 20_000
+  timers.at(-1).fn()
+  assert.equal(spawns.length, 2, 'a re-tentativa não abriu processo nenhum')
+  assert.equal(spawns[1].request.prompt, 'a')
+  assert.equal(spawns[1].request.seat.seatId, spawns[0].request.seat.seatId)
+
+  // A segunda queda é queda: o motor não fica tentando para sempre.
+  spawns[1].emit({ type: 'result', isError: true, errorText: '529 overloaded' })
+  assert.equal(engine.get(helperId).state, 'failed')
+  assert.match(engine.get(helperId).failure, /529/u)
+})
+
+test('a re-tentativa é da PARTIDA: trabalho já feito nunca é jogado fora', () => {
+  // Um ajudante que já mexeu no worktree e toma um 529 no meio NÃO recomeça: o
+  // motor não sabe desfazer o que ele escreveu, e refazer por cima é pior que a
+  // falha honesta.
+  const comTrabalho = harness()
+  comTrabalho.engine.spawn(DELEGATOR, [{ prompt: 'a' }])
+  comTrabalho.spawns[0].emit({ type: 'activity', summary: 'Edit src/x.ts' })
+  comTrabalho.spawns[0].emit({ type: 'result', isError: true, errorText: '529 overloaded' })
+  assert.equal(comTrabalho.engine.status(DELEGATOR.paneId)[0].state, 'failed')
+
+  const tarde = harness()
+  tarde.engine.spawn(DELEGATOR, [{ prompt: 'a' }])
+  tarde.clock.t += GUI_HELPER_RETRY_STARTUP_WINDOW_MS + 1
+  tarde.spawns[0].emit({ type: 'result', isError: true, errorText: '529 overloaded' })
+  assert.equal(tarde.engine.status(DELEGATOR.paneId)[0].state, 'failed')
+
+  assert.equal(GUI_HELPER_RETRY_DELAY_MS, 20_000)
+})
+
+test('529 que estoura no próprio spawn também ganha o respiro, e o recibo não recusa', () => {
+  const { engine, spawns } = harness({ spawnThrows: '529 overloaded_error' })
+  const outcome = engine.spawn(DELEGATOR, [{ prompt: 'a' }])
+
+  assert.equal(outcome.receipts[0].ok, true, 'o ajudante foi recusado quando ainda ia re-tentar')
+  assert.equal(engine.get(outcome.receipts[0].helperId).state, 'spawning')
+  assert.equal(spawns.length, 1)
 })
 
 test('a memória tem fim: encerrado antigo sai, vivo NUNCA sai', () => {

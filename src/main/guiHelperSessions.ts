@@ -43,28 +43,61 @@
  *   effort variado numa frota claude estoura o prompt-cache (§2.3, 3,7× medido).
  *   As duas armadilhas viraram função pura, para o aviso existir antes do gasto.
  *
- * FORA DE ESCOPO (MVP, explícito no design): ajudante NÃO sobrevive a restart do
- * app. O registro é de memória; o boot encerra os órfãos do anel como
- * `cancelled`, e nada aqui persiste.
+ * O CICLO REDONDO (R6-A, 2026-08-18 à noite — ordem do dono: "não faz só um
+ * remendo, faz um planejamento por trás"). O MVP da não-persistência MORREU:
+ * - `interrupted` é a parada PRESERVADORA (o ■ do dono, o app fechando). O
+ *   processo morre, o registro fica, e é o ÚNICO estado de onde se volta;
+ * - os registros pousam num `store` INJETADO (userData/gui-helpers.json no app,
+ *   memória nas suítes). Boot marca quem estava vivo como `interrupted` — "o app
+ *   fechou" é interrupção, nunca descarte;
+ * - o `sessionId` de cada ajudante é carimbado no instante em que o CLI o
+ *   anuncia: é a matéria-prima do resume (a conversa em si já persiste de graça
+ *   no disco do próprio CLI);
+ * - a frota parte ESCALONADA (~2s entre processos — a spec literal do dono), e
+ *   uma queda claramente passageira (529/overloaded/rate-limit) na PARTIDA ganha
+ *   UMA re-tentativa automática.
  */
 import { randomUUID } from 'node:crypto'
 
 export type GuiHelperCli = 'claude' | 'codex'
 
 /**
- * `spawning` = pedido aceito, processo nascendo; `working` = o CLI deu o
- * primeiro sinal de vida. Os três desfechos são finais e mutuamente exclusivos.
+ * `spawning` = pedido aceito, processo nascendo (ou esperando a vez na fila de
+ * partida); `working` = o CLI deu o primeiro sinal de vida.
+ *
+ * `interrupted` (R6.1) é o quarto desfecho e o único de MÃO DUPLA: parada
+ * preservadora, com registro, sessionId e entrega parcial intactos. `cancelled`
+ * é descarte ("não quero mais nada"), `failed` é queda, `done` é entrega.
  */
-export type GuiHelperState = 'spawning' | 'working' | 'done' | 'failed' | 'cancelled'
+export type GuiHelperState =
+  | 'spawning'
+  | 'working'
+  | 'done'
+  | 'failed'
+  | 'interrupted'
+  | 'cancelled'
 
+/** O fim da linha — `interrupted` NÃO entra aqui de propósito: dele se volta. */
 export const GUI_HELPER_TERMINAL_STATES: readonly GuiHelperState[] = [
   'done',
   'failed',
   'cancelled'
 ]
 
+/**
+ * ASSENTADO = não está mais vivo. Escrito pela negativa (nem `spawning` nem
+ * `working`) porque é isso que o motor pergunta: quem espera no long-poll acorda,
+ * quem conta o backstop não conta, e o processo já foi descartado. Um estado novo
+ * de PARADA entra sozinho na regra certa; um estado novo de vida obriga a mexer
+ * aqui, que é exatamente onde se deve pensar.
+ */
 export function isGuiHelperSettled(state: GuiHelperState): boolean {
-  return state === 'done' || state === 'failed' || state === 'cancelled'
+  return state !== 'spawning' && state !== 'working'
+}
+
+/** Só o interrompido se retoma: os outros três desfechos são finais. */
+export function isGuiHelperResumable(state: GuiHelperState): boolean {
+  return state === 'interrupted'
 }
 
 // ————— tetos —————
@@ -120,6 +153,41 @@ export const GUI_HELPER_WATCHDOG_MS = 30 * 60 * 1000
  *  enxurrada de card sintetizado no anel do delegador. */
 export const GUI_HELPER_ACTIVITY_THROTTLE_MS = 2_000
 
+/**
+ * ESCALONADOR DE PARTIDA — spec LITERAL do dono (R6.4): "abre um, espera dois
+ * segundos, abre o outro".
+ *
+ * O caso real: cinco ajudantes disparados no mesmo instante tomaram 529 do
+ * provedor, e a re-tentativa manual do agente numa conta alternativa tomou 529 de
+ * novo. Rajada é a causa; espaçar é o remédio. Precedente da casa: o escalonador
+ * de panes da F6.10 (~350ms) matou a mesma classe.
+ *
+ * O que escalona é a PARTIDA DO PROCESSO — o recibo do `delegate` continua
+ * voltando na hora para a frota inteira, e quem ainda não partiu aparece na ficha
+ * como `spawning`.
+ */
+export const GUI_HELPER_SPAWN_INTERVAL_MS = 2_000
+
+/** Respiro antes da única re-tentativa automática (R6.4). Curto o bastante para
+ *  o dono não achar que travou, longo o bastante para a sobrecarga passar. */
+export const GUI_HELPER_RETRY_DELAY_MS = 20_000
+
+/**
+ * Janela em que uma queda ainda conta como falha DE PARTIDA. Passado isto — ou
+ * havendo qualquer trabalho já feito — a re-tentativa está proibida: o motor não
+ * sabe desfazer o que o ajudante escreveu no worktree, e recomeçar por cima é
+ * pior que a falha honesta.
+ */
+export const GUI_HELPER_RETRY_STARTUP_WINDOW_MS = 60_000
+
+/** Registro assentado mais velho que isto não volta do disco: é história, e a
+ *  entrega dele já mora no arquivo canônico do worktree. */
+export const GUI_HELPER_STORE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+
+/** Gravações de rotina (nascimento, 1º sinal de vida, sessionId) se juntam nesta
+ *  janela. O DESFECHO nunca espera — ele é descarregado na hora. */
+export const GUI_HELPER_PERSIST_DEBOUNCE_MS = 250
+
 // ————— o contrato do adaptador (o mínimo que um CLI precisa prometer) —————
 
 /**
@@ -132,6 +200,12 @@ export type GuiHelperEvent =
   | { type: 'text'; text: string }
   /** Resumo curto do que ele está fazendo agora (nome de ferramenta, arquivo). */
   | { type: 'activity'; summary: string }
+  /**
+   * A conversa deste ajudante ganhou endereço no disco do CLI (claude: session
+   * id; codex: `codex-thread:<uuid>`). É o que torna a interrupção RETOMÁVEL —
+   * guardado CRU, porque quem traduz para cada binário é o adaptador.
+   */
+  | { type: 'session'; sessionId: string }
   /** Contexto vivo medido pelo CLI; `null` = o backend não informou. */
   | { type: 'context'; contextTokens: number | null }
   /** Fim do turno. `text` ausente = usa o acumulado. */
@@ -176,6 +250,16 @@ export interface GuiHelperSpawnRequest {
   prompt: string
   /** Modo de permissão do delegador — o ajudante herda a mão do dono. */
   permissionMode?: string
+  /**
+   * RETOMAR A MESMA CONVERSA (R6.2), no id CRU do registro: o adaptador do
+   * claude o passa ao `--resume`, o do codex tira o prefixo `codex-thread:` e
+   * abre por `thread/resume`.
+   *
+   * O motor ainda não preenche este campo — o verbo `helper_resume` é da onda
+   * R6-B. Ele nasce aqui porque o CONTRATO do adaptador é desta camada: a onda
+   * seguinte carimba o valor, sem reabrir a costura dos dois CLIs.
+   */
+  resumeSessionId?: string
 }
 
 export type GuiHelperSpawnAdapter = (
@@ -221,8 +305,147 @@ export interface GuiHelperRecord {
   /** Por que a entrega não virou arquivo. Silêncio aqui faria o delegador
    *  procurar um arquivo que nunca existiu. */
   deliveryError?: string
-  /** Motivo de `failed`/`cancelled`, na voz de quem encerrou. */
+  /** Motivo de `failed`/`interrupted`/`cancelled`, na voz de quem encerrou. */
   failure?: string
+  /**
+   * A CONVERSA deste ajudante no disco do CLI (claude: session id; codex:
+   * `codex-thread:<uuid>`). É o que faz `interrupted` ser retomável — sem ele o
+   * ajudante interrompido só pode recomeçar do zero.
+   */
+  sessionId?: string
+  /** Quando o motor re-tentou sozinho (R6.4). Presente = a cota de UMA
+   *  re-tentativa já foi gasta; nunca há uma segunda. */
+  retriedAt?: number
+  /** Em PT-BR e curto, para a ficha do dono: "sobrecarga do provedor". */
+  retryReason?: string
+}
+
+// ————— o disco (R6.1) —————
+
+export const GUI_HELPER_STORE_VERSION = 1
+
+/** A fotografia inteira, como ela pousa em `userData/gui-helpers.json`. */
+export interface GuiHelperStoreDoc {
+  version: number
+  helpers: GuiHelperRecord[]
+}
+
+/**
+ * O DISCO, INJETADO. O motor decide O QUE e QUANDO gravar; onde e como é da
+ * costura com o main (`createGuiHelperStore`, sobre o `jsonStore` atômico da
+ * casa). Ausente = nada persiste — é assim que as suítes rodam sem tocar disco,
+ * e é a mesma disciplina do `deliver`.
+ */
+export interface GuiHelperStore {
+  load(): GuiHelperRecord[]
+  save(records: readonly GuiHelperRecord[]): void
+}
+
+export function isGuiHelperStoreDoc(value: unknown): value is GuiHelperStoreDoc {
+  if (typeof value !== 'object' || value === null) return false
+  const doc = value as { helpers?: unknown }
+  return Array.isArray(doc.helpers)
+}
+
+/**
+ * O QUE VAI AO DISCO: tudo, MENOS a entrega inline.
+ *
+ * O texto já está no arquivo canônico do worktree (`resultPath`) — guardá-lo de
+ * novo faria uma frota de cem ajudantes reescrever megabytes a cada mudança de
+ * estado, e o `helper_result` pós-boot passa a ENDEREÇAR o arquivo em vez de
+ * fingir que tem a entrega em mãos. É a mesma regra do design: o arquivo é a
+ * entrega.
+ */
+export function persistableGuiHelperRecord(record: GuiHelperRecord): GuiHelperRecord {
+  const { result: _result, ...rest } = record
+  return rest
+}
+
+const GUI_HELPER_STATES: readonly string[] = [
+  'spawning',
+  'working',
+  'done',
+  'failed',
+  'interrupted',
+  'cancelled'
+]
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+/**
+ * O arquivo é do DISCO DO DONO: ele pode estar truncado por uma queda, editado à
+ * mão ou vindo de uma versão anterior do app. Registro que não passa nesta régua
+ * é DESCARTADO — um motor que morre no boot por causa de uma linha estragada
+ * levaria junto a frota inteira que ele existe para recuperar.
+ */
+export function sanitizeGuiHelperRecord(value: unknown): GuiHelperRecord | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const raw = value as Record<string, unknown>
+  const helperId = optionalString(raw['helperId'])
+  const delegatorPaneId = optionalString(raw['delegatorPaneId'])
+  const projectId = optionalString(raw['projectId'])
+  const cwd = optionalString(raw['cwd'])
+  const cli = raw['cli']
+  const model = optionalString(raw['model'])
+  const seatId = optionalString(raw['seatId'])
+  const state = raw['state']
+  const startedAt = optionalNumber(raw['startedAt'])
+  if (!helperId || !delegatorPaneId || !projectId || !cwd || !model || !seatId) return undefined
+  if (cli !== 'claude' && cli !== 'codex') return undefined
+  if (typeof state !== 'string' || !GUI_HELPER_STATES.includes(state)) return undefined
+  if (typeof raw['prompt'] !== 'string' || startedAt === undefined) return undefined
+  const activity = raw['lastActivity']
+  const lastActivity =
+    typeof activity === 'object' && activity !== null
+      ? (() => {
+          const entry = activity as Record<string, unknown>
+          const at = optionalNumber(entry['at'])
+          const summary = optionalString(entry['summary'])
+          return at !== undefined && summary ? { at, summary } : undefined
+        })()
+      : undefined
+  const name = optionalString(raw['name'])
+  const seatName = optionalString(raw['seatName'])
+  const effort = optionalString(raw['effort'])
+  const settledAt = optionalNumber(raw['settledAt'])
+  const contextTokens = optionalNumber(raw['contextTokens'])
+  const resultPath = optionalString(raw['resultPath'])
+  const deliveryError = optionalString(raw['deliveryError'])
+  const failure = optionalString(raw['failure'])
+  const sessionId = optionalString(raw['sessionId'])
+  const retriedAt = optionalNumber(raw['retriedAt'])
+  const retryReason = optionalString(raw['retryReason'])
+  return {
+    helperId,
+    delegatorPaneId,
+    projectId,
+    ...(name ? { name } : {}),
+    cwd,
+    cli,
+    model,
+    ...(effort ? { effort } : {}),
+    seatId,
+    ...(seatName ? { seatName } : {}),
+    prompt: raw['prompt'],
+    state: state as GuiHelperState,
+    startedAt,
+    ...(settledAt !== undefined ? { settledAt } : {}),
+    ...(lastActivity ? { lastActivity } : {}),
+    ...(contextTokens !== undefined ? { contextTokens } : {}),
+    ...(raw['resultTruncated'] === true ? { resultTruncated: true } : {}),
+    ...(resultPath ? { resultPath } : {}),
+    ...(deliveryError ? { deliveryError } : {}),
+    ...(failure ? { failure } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(retriedAt !== undefined ? { retriedAt } : {}),
+    ...(retryReason ? { retryReason } : {})
+  }
 }
 
 /**
@@ -269,6 +492,10 @@ export interface GuiHelperSnapshot {
   /** O arquivo da entrega — a fotografia diz ONDE ler, nunca O QUE foi escrito. */
   resultPath?: string
   failure?: string
+  /** Re-tentativa automática já gasta (R6.4): com `spawning`, é o respiro em
+   *  curso; depois, a marca honesta de que este ajudante nasceu duas vezes. */
+  retriedAt?: number
+  retryReason?: string
 }
 
 // ————— o pedido —————
@@ -354,6 +581,11 @@ export type GuiHelperLogEvent =
   | 'helper-settled'
   | 'helper-watchdog'
   | 'helper-fleet-effort'
+  /** Uma re-tentativa automática de falha passageira (R6.4). */
+  | 'helper-retry'
+  /** O boot reencontrou um ajudante vivo da sessão anterior e o marcou como
+   *  interrompido — o rastro de que o app fechou por cima de trabalho. */
+  | 'helper-restored'
 
 export interface GuiHelperLogEntry {
   event: GuiHelperLogEvent
@@ -387,6 +619,13 @@ export interface GuiHelperEngineDeps {
    * motor roda sem tocar em disco).
    */
   deliver?(delivery: GuiHelperDelivery): GuiHelperDeliveryOutcome
+  /**
+   * O DISCO (R6.1). Ausente = nada persiste e o boot não reencontra nada — é
+   * como as suítes do motor rodam. Presente, ele é lido UMA vez no nascimento
+   * (marcando como `interrupted` quem estava vivo) e reescrito a cada mudança
+   * que importa.
+   */
+  store?: GuiHelperStore
   /** `undefined` = não há conta logada daquele CLI: o motor RECUSA em vez de
    *  abrir na conta errada. */
   resolveSeat(query: GuiHelperSeatQuery): GuiHelperSeat | undefined
@@ -397,6 +636,11 @@ export interface GuiHelperEngineDeps {
   newId?(): string
   /** Injetável para o teste do long-poll ser determinístico. */
   setTimer?(ms: number, fn: () => void): () => void
+  /** Cadência da fila de partida. `0` desliga o escalonamento (a bancada do
+   *  motor usa isso para falar da máquina de estados sem ruído de relógio). */
+  spawnIntervalMs?: number
+  /** Respiro da re-tentativa automática. */
+  retryDelayMs?: number
   onChange?(change: GuiHelperChange): void
   log?(entry: GuiHelperLogEntry): void
 }
@@ -523,6 +767,40 @@ export function fleetEffortWarning(
   )
 }
 
+/**
+ * FALHA PASSAGEIRA — a régua da re-tentativa automática (R6.4), deliberadamente
+ * ESTREITA.
+ *
+ * O caso do dono (18/08): cinco ajudantes na mesma rajada, 529 do provedor, e a
+ * re-tentativa manual do agente em outra conta tomou 529 também. Só entram aqui
+ * assinaturas em que esperar RESOLVE — sobrecarga do lado de lá e limite de
+ * requisições. Tudo o mais (conta sem crédito, binário fora do PATH, permissão,
+ * watchdog, processo que morreu sem falar) é definitivo: re-tentar seria queimar
+ * limite e esconder o problema do dono por mais 20 segundos.
+ *
+ * As assinaturas são as do CLI, em inglês; os motivos que o PRÓPRIO motor
+ * escreve são PT-BR e nunca casam aqui — o que é proposital, porque nenhum deles
+ * é passageiro.
+ */
+const GUI_HELPER_TRANSIENT_SIGNATURES: readonly { re: RegExp; label: string }[] = [
+  { re: /\b529\b/u, label: 'sobrecarga do provedor' },
+  { re: /overloaded/iu, label: 'sobrecarga do provedor' },
+  { re: /\b(?:503|502)\b/u, label: 'provedor indisponível' },
+  { re: /\b429\b/u, label: 'limite de requisições' },
+  { re: /rate[\s_-]?limit/iu, label: 'limite de requisições' },
+  { re: /too many requests/iu, label: 'limite de requisições' }
+]
+
+/** O motivo curto, em PT-BR, quando a queda é passageira; `undefined` quando ela
+ *  é definitiva. */
+export function transientHelperFailure(text: string | undefined): string | undefined {
+  if (typeof text !== 'string' || !text.trim()) return undefined
+  for (const signature of GUI_HELPER_TRANSIENT_SIGNATURES) {
+    if (signature.re.test(text)) return signature.label
+  }
+  return undefined
+}
+
 /** Texto opcional do pedido: string vazia é AUSÊNCIA, nunca valor. Sem isto um
  *  `model: ""` viraria modelo de verdade e o ajudante nasceria sem executor. */
 function trimmedOrUndefined(value: unknown): string | undefined {
@@ -538,6 +816,10 @@ const cleanEffort = trimmedOrUndefined
 interface LiveHelper {
   record: GuiHelperRecord
   process?: GuiHelperProcess
+  /** O pedido EXATO com que este ajudante nasce — guardado porque a partida é
+   *  ADIADA (fila do R6.4) e porque a re-tentativa o reusa inteiro (mesma conta,
+   *  mesmo modelo, mesmo effort: o pino do nascimento vale). */
+  spawnRequest?: GuiHelperSpawnRequest
   /** Texto acumulado dos eventos `text` — a entrega quando o `result` não a traz. */
   text: string
   /** Long-polls esperando o desfecho deste ajudante. */
@@ -550,6 +832,11 @@ interface LiveHelper {
   settledSeq?: number
 }
 
+/** O que o boot escreve em quem estava vivo quando o app fechou (R6.1: fechar o
+ *  app é INTERRUPÇÃO, nunca descarte). */
+export const GUI_HELPER_BOOT_INTERRUPTION =
+  'o app fechou com o ajudante trabalhando — o processo morreu, mas a conversa dele ficou guardada e dá para retomar de onde parou'
+
 export class GuiHelperEngine {
   private readonly deps: GuiHelperEngineDeps
   private readonly helpers = new Map<string, LiveHelper>()
@@ -560,8 +847,21 @@ export class GuiHelperEngine {
   private readonly now: () => number
   private readonly newId: () => string
   private readonly setTimer: (ms: number, fn: () => void) => () => void
+  private readonly spawnIntervalMs: number
+  private readonly retryDelayMs: number
   private sweeping = false
   private settleCounter = 0
+  /** FILA GLOBAL DE PARTIDA (R6.4): ids esperando a vez de virar processo. É
+   *  global, e não por pane, porque quem se sobrecarrega é o PROVEDOR — dois
+   *  chats delegando ao mesmo tempo fariam a mesma rajada. */
+  private readonly spawnQueue: string[] = []
+  private cancelSpawnTimer?: () => void
+  private lastSpawnStartedAt = Number.NEGATIVE_INFINITY
+  private cancelPersistTimer?: () => void
+  /** Profundidade do encerramento em massa e se ele sujou a fotografia — juntos,
+   *  transformam N gravações síncronas do mesmo arquivo em uma. */
+  private bulkDepth = 0
+  private bulkDirty = false
 
   constructor(deps: GuiHelperEngineDeps) {
     this.deps = deps
@@ -575,6 +875,74 @@ export class GuiHelperEngine {
         handle.unref?.()
         return () => clearTimeout(handle)
       })
+    this.spawnIntervalMs = deps.spawnIntervalMs ?? GUI_HELPER_SPAWN_INTERVAL_MS
+    this.retryDelayMs = deps.retryDelayMs ?? GUI_HELPER_RETRY_DELAY_MS
+    this.restore()
+  }
+
+  /**
+   * O BOOT (R6.1). Quem estava `spawning`/`working` na fotografia do disco vira
+   * `interrupted` — o processo daquele boot não existe mais, mas o registro, o
+   * `sessionId` e a entrega parcial ficam, e a conversa que reabrir pode retomar.
+   *
+   * Nada volta VIVO daqui: ressuscitar processo no boot seria abrir frota sem o
+   * dono pedir. E a fotografia é re-gravada já marcada, para um segundo crash não
+   * reencontrar o mesmo "vivo" de novo.
+   */
+  private restore(): void {
+    const store = this.deps.store
+    if (!store) return
+    let raw: unknown[] = []
+    try {
+      raw = store.load() ?? []
+    } catch {
+      // Disco ilegível é frota vazia, nunca um app que não abre.
+      return
+    }
+    if (!Array.isArray(raw)) return
+    const now = this.now()
+    const restored: GuiHelperRecord[] = []
+    for (const entry of raw) {
+      const record = sanitizeGuiHelperRecord(entry)
+      if (!record) continue
+      const interrupted = !isGuiHelperSettled(record.state)
+      if (interrupted) {
+        record.state = 'interrupted'
+        record.settledAt = now
+        record.failure = GUI_HELPER_BOOT_INTERRUPTION
+      }
+      // Retenção: o que já é história não volta — a entrega dele mora no arquivo
+      // canônico do worktree, que ninguém apaga por passar de sete dias.
+      if (now - (record.settledAt ?? record.startedAt) > GUI_HELPER_STORE_RETENTION_MS) continue
+      restored.push(record)
+      if (interrupted) {
+        this.journal({
+          event: 'helper-restored',
+          paneId: record.delegatorPaneId,
+          helperId: record.helperId,
+          detail: { state: 'interrupted', model: record.model, cli: record.cli }
+        })
+      }
+    }
+    // A ordem de ENCERRAMENTO é o que a poda usa, e ela não sobrevive ao disco:
+    // reconstruímos pelo relógio de assentamento, preservando a ordem de CRIAÇÃO
+    // (a do arquivo) para a lateral.
+    const bySettle = [...restored].sort(
+      (a, b) => (a.settledAt ?? a.startedAt) - (b.settledAt ?? b.startedAt)
+    )
+    const seqOf = new Map(bySettle.map((record, index) => [record.helperId, index + 1]))
+    this.settleCounter = bySettle.length
+    for (const record of restored) {
+      this.remember({
+        record,
+        text: '',
+        waiters: [],
+        activityNotifiedAt: 0,
+        settledSeq: seqOf.get(record.helperId) ?? 0
+      })
+    }
+    for (const paneId of this.byPane.keys()) this.prune(paneId)
+    this.persistNow()
   }
 
   /** Registros conhecidos (vivos + os encerrados ainda lembrados). */
@@ -682,41 +1050,28 @@ export class GuiHelperEngine {
         state: 'spawning',
         startedAt: this.now()
       }
-      const live: LiveHelper = { record, text: '', waiters: [], activityNotifiedAt: 0 }
+      const live: LiveHelper = {
+        record,
+        spawnRequest: {
+          helperId,
+          projectId: delegator.projectId,
+          delegatorPaneId: delegator.paneId,
+          cwd: delegator.cwd,
+          cli,
+          model,
+          ...(effort.send ? { effort: effort.send } : {}),
+          seat,
+          prompt,
+          ...(delegator.permissionMode ? { permissionMode: delegator.permissionMode } : {})
+        },
+        text: '',
+        waiters: [],
+        activityNotifiedAt: 0
+      }
       this.remember(live)
       // O card nasce ANTES do processo: assim a ordem publicada é sempre
       // spawned → … → settled, inclusive quando o spawn morre no nascimento.
       this.notify({ kind: 'spawned', record: { ...record } })
-
-      try {
-        const adapter = cli === 'codex' ? this.deps.spawnCodex : this.deps.spawnClaude
-        live.process = adapter(
-          {
-            helperId,
-            projectId: delegator.projectId,
-            delegatorPaneId: delegator.paneId,
-            cwd: delegator.cwd,
-            cli,
-            model,
-            ...(effort.send ? { effort: effort.send } : {}),
-            seat,
-            prompt,
-            ...(delegator.permissionMode ? { permissionMode: delegator.permissionMode } : {})
-          },
-          (event) => this.consume(helperId, event)
-        )
-        // O adaptador pode ter emitido o desfecho DENTRO do próprio spawn: aí o
-        // descarte já rodou sem processo nenhum em mãos, e sem esta linha o
-        // processo devolvido viveria para sempre sem dono.
-        if (isGuiHelperSettled(live.record.state)) live.process.dispose()
-      } catch (error) {
-        // O registro FICA como failed: sumir sem rastro esconderia a queda do
-        // dono, que veria a lateral vazia e nenhum motivo.
-        const detail = errorText(error)
-        this.settle(live, 'failed', { failure: `o ajudante não subiu: ${detail}` })
-        refuse(detail)
-        continue
-      }
 
       fleet.push({ cli, model, ...(effort.applied ? { effort: effort.applied } : {}) })
       this.journal({
@@ -731,6 +1086,19 @@ export class GuiHelperEngine {
           ...(effort.dropped ? { effortDropped: effort.dropped } : {})
         }
       })
+
+      // A PARTIDA ENTRA NA FILA (R6.4). O `pump` derruba o primeiro AQUI DENTRO
+      // quando a fila estava vazia e o intervalo já venceu — e é só por isso que
+      // uma queda de spawn ainda pode virar recibo recusado: o recibo recusa o
+      // que se sabe NA HORA. Os seguintes partem depois, e a queda deles chega
+      // pelo card e pelo correio, como qualquer outro desfecho.
+      this.spawnQueue.push(helperId)
+      this.pumpSpawnQueue()
+      if (live.record.state === 'failed') {
+        refuse(live.record.failure ?? 'o ajudante não subiu')
+        continue
+      }
+
       receipts.push({
         ok: true,
         helperId,
@@ -752,6 +1120,9 @@ export class GuiHelperEngine {
         detail: { warning }
       })
     }
+    // Uma gravação para o LOTE inteiro: cem ajudantes num pedido não podem virar
+    // cem reescritas do arquivo.
+    this.persistSoon()
     return { receipts, ...(warning ? { warning } : {}) }
   }
 
@@ -834,13 +1205,15 @@ export class GuiHelperEngine {
    *  ficam — a lateral continua mostrando o desfecho de cada card. */
   cancelPane(paneId: string, reason?: string): number {
     this.sweep()
-    let count = 0
-    for (const live of this.pick(paneId)) {
-      if (isGuiHelperSettled(live.record.state)) continue
-      this.settle(live, 'cancelled', { failure: cancelReason(reason) })
-      count += 1
-    }
-    return count
+    return this.bulk(() => {
+      let count = 0
+      for (const live of this.pick(paneId)) {
+        if (isGuiHelperSettled(live.record.state)) continue
+        this.settle(live, 'cancelled', { failure: cancelReason(reason) })
+        count += 1
+      }
+      return count
+    })
   }
 
   /** O pane sumiu de vez (chat fechado, projeto trocado): cancela E esquece.
@@ -849,19 +1222,69 @@ export class GuiHelperEngine {
     const cancelled = this.cancelPane(paneId, reason)
     for (const helperId of this.byPane.get(paneId) ?? []) this.helpers.delete(helperId)
     this.byPane.delete(paneId)
+    this.persistSoon()
     return cancelled
   }
 
-  /** O quit: nada sobrevive ao fechamento do app. */
-  cancelAll(reason?: string): number {
+  /**
+   * O ■ DO DONO (R6.3): a frota do pane PARA PRESERVANDO. Processo morto,
+   * registro/`sessionId`/entrega parcial intactos, e cada um retomável.
+   *
+   * A diferença para o `cancelPane` é a intenção, e ela é do dono: interromper é
+   * "para agora"; cancelar é "não quero mais nada" — e só o segundo é descarte.
+   */
+  interruptPane(paneId: string, reason?: string): number {
     this.sweep()
-    let count = 0
-    for (const live of this.helpers.values()) {
-      if (isGuiHelperSettled(live.record.state)) continue
-      this.settle(live, 'cancelled', { failure: cancelReason(reason) })
-      count += 1
-    }
-    return count
+    return this.bulk(() => {
+      let count = 0
+      for (const live of this.pick(paneId)) {
+        if (isGuiHelperSettled(live.record.state)) continue
+        this.stopPreserving(live, reason)
+        count += 1
+      }
+      return count
+    })
+  }
+
+  /**
+   * O QUIT. Ordem do dono (R6.1): "fechar o app" é INTERRUPÇÃO, nunca descarte —
+   * "fechar o app e voltar os subagentes voltarem". Os processos morrem (o
+   * app-server do codex nunca encerra sozinho), os registros vão ao disco como
+   * `interrupted`, e a conversa que reabrir pode retomá-los.
+   */
+  interruptAll(reason?: string): number {
+    this.sweep()
+    return this.bulk(() => {
+      let count = 0
+      for (const live of this.helpers.values()) {
+        if (isGuiHelperSettled(live.record.state)) continue
+        this.stopPreserving(live, reason)
+        count += 1
+      }
+      return count
+    })
+  }
+
+  /**
+   * A PARADA PRESERVADORA, num lugar só. O que o ajudante conseguiu escrever até
+   * aqui vira a entrega PARCIAL dele — registro e arquivo —, porque é exatamente
+   * isso que separa interromper de cancelar. Texto vazio não vira entrega vazia:
+   * a ficha diria "entrega pronta" sobre nada.
+   */
+  private stopPreserving(live: LiveHelper, reason?: string): void {
+    this.settle(live, 'interrupted', {
+      failure: interruptReason(reason),
+      ...(live.text.trim() ? { text: live.text } : {})
+    })
+  }
+
+  /**
+   * O nome que o `will-quit` do índice chama. Ele é o `interruptAll` — e é por
+   * isso que ainda existe: encerrar o app NUNCA mais descarta frota (R6.1), e a
+   * única chamada deste método na casa é justamente a do quit.
+   */
+  cancelAll(reason?: string): number {
+    return this.interruptAll(reason)
   }
 
   /**
@@ -875,25 +1298,29 @@ export class GuiHelperEngine {
     if (this.sweeping) return []
     this.sweeping = true
     try {
-      const now = this.now()
-      const reaped: GuiHelperRecord[] = []
-      for (const live of this.helpers.values()) {
-        if (isGuiHelperSettled(live.record.state)) continue
-        if (now - live.record.startedAt < GUI_HELPER_WATCHDOG_MS) continue
-        this.settle(live, 'failed', {
-          failure:
-            'watchdog: o ajudante passou de 30 min sem encerrar e foi derrubado — ' +
-            'o que ele escreveu no worktree continua lá'
-        })
-        this.journal({
-          event: 'helper-watchdog',
-          paneId: live.record.delegatorPaneId,
-          helperId: live.record.helperId,
-          detail: { elapsedMs: now - live.record.startedAt }
-        })
-        reaped.push({ ...live.record })
-      }
-      return reaped
+      // Uma varredura pode derrubar a frota inteira de uma vez: as gravações se
+      // juntam numa só, como no ■ e no quit.
+      return this.bulk(() => {
+        const now = this.now()
+        const reaped: GuiHelperRecord[] = []
+        for (const live of this.helpers.values()) {
+          if (isGuiHelperSettled(live.record.state)) continue
+          if (now - live.record.startedAt < GUI_HELPER_WATCHDOG_MS) continue
+          this.settle(live, 'failed', {
+            failure:
+              'watchdog: o ajudante passou de 30 min sem encerrar e foi derrubado — ' +
+              'o que ele escreveu no worktree continua lá'
+          })
+          this.journal({
+            event: 'helper-watchdog',
+            paneId: live.record.delegatorPaneId,
+            helperId: live.record.helperId,
+            detail: { elapsedMs: now - live.record.startedAt }
+          })
+          reaped.push({ ...live.record })
+        }
+        return reaped
+      })
     } finally {
       this.sweeping = false
     }
@@ -918,12 +1345,125 @@ export class GuiHelperEngine {
     this.byPane.set(live.record.delegatorPaneId, ids)
   }
 
+  // ————— a fila de partida (R6.4) —————
+
+  /**
+   * Deixa partir quem pode, e agenda o próximo. A cadeia é sempre a mesma: o
+   * primeiro de uma fila vazia com o intervalo já vencido parte AQUI DENTRO (o
+   * dono aperta e vê algo acontecer), e cada seguinte espera a sua vez.
+   *
+   * A fila é varrida de quem já não deve partir — cancelado, interrompido ou que
+   * de alguma forma já ganhou processo —, porque entre entrar na fila e chegar a
+   * vez o mundo muda.
+   */
+  private pumpSpawnQueue(): void {
+    while (this.spawnQueue.length > 0) {
+      // A guarda mora DENTRO do laço: ela cobre a entrada (já há partida
+      // agendada) e a reentrada (uma queda no `startHelper` que agende a
+      // re-tentativa). Duas bombas correndo juntas deixariam um temporizador
+      // órfão e duas partidas no mesmo instante — a rajada de volta.
+      if (this.cancelSpawnTimer) return
+      const helperId = this.spawnQueue[0] as string
+      const live = this.helpers.get(helperId)
+      if (!live || isGuiHelperSettled(live.record.state) || live.process || !live.spawnRequest) {
+        this.spawnQueue.shift()
+        continue
+      }
+      const wait = this.spawnIntervalMs - (this.now() - this.lastSpawnStartedAt)
+      if (wait > 0) {
+        this.cancelSpawnTimer = this.setTimer(wait, () => {
+          this.cancelSpawnTimer = undefined
+          this.pumpSpawnQueue()
+        })
+        return
+      }
+      this.spawnQueue.shift()
+      this.startHelper(live)
+    }
+  }
+
+  private startHelper(live: LiveHelper): void {
+    const request = live.spawnRequest
+    if (!request) return
+    const helperId = live.record.helperId
+    // O relógio anda ANTES da tentativa: um spawn que estoura também consumiu a
+    // vez com o provedor, e é justamente essa rajada que se está espaçando.
+    this.lastSpawnStartedAt = this.now()
+    try {
+      const adapter = request.cli === 'codex' ? this.deps.spawnCodex : this.deps.spawnClaude
+      live.process = adapter(request, (event) => this.consume(helperId, event))
+      // O adaptador pode ter emitido o desfecho DENTRO do próprio spawn: aí o
+      // descarte já rodou sem processo nenhum em mãos, e sem esta linha o
+      // processo devolvido viveria para sempre sem dono.
+      if (isGuiHelperSettled(live.record.state)) live.process.dispose()
+    } catch (error) {
+      // O registro FICA (failed ou re-tentando): sumir sem rastro esconderia a
+      // queda do dono, que veria a lateral vazia e nenhum motivo.
+      this.fail(live, `o ajudante não subiu: ${errorText(error)}`)
+    }
+  }
+
+  // ————— o disco (R6.1) —————
+
+  /** Rotina (nascimento, 1º sinal de vida, sessionId, respiro): junta na janela
+   *  do debounce. Uma frota de cem não pode virar cem reescritas do arquivo. */
+  private persistSoon(): void {
+    if (!this.deps.store || this.cancelPersistTimer) return
+    this.cancelPersistTimer = this.setTimer(GUI_HELPER_PERSIST_DEBOUNCE_MS, () => {
+      this.cancelPersistTimer = undefined
+      this.persistNow()
+    })
+  }
+
+  /** DESFECHO e boot: descarrega na hora. O que o dono acabou de ver mudar tem de
+   *  estar no disco antes de a próxima queda do app apagar a diferença. */
+  private persistNow(): void {
+    const store = this.deps.store
+    if (!store) return
+    // VARREDURA EM LOTE (o ■ do dono, o quit, a vassoura): a frota inteira
+    // encerra no mesmo instante, e gravar por ajudante seria N reescritas
+    // SÍNCRONAS do mesmo arquivo no main — a classe de travada que esta casa
+    // paga caro. Quem abriu o lote descarrega uma vez, no fim.
+    if (this.bulkDepth > 0) {
+      this.bulkDirty = true
+      return
+    }
+    this.cancelPersistTimer?.()
+    this.cancelPersistTimer = undefined
+    try {
+      store.save([...this.helpers.values()].map((live) => persistableGuiHelperRecord(live.record)))
+    } catch {
+      // Disco cheio ou arquivo travado não pode derrubar um motor que segura
+      // processos de CLI vivos: a próxima gravação tenta de novo.
+    }
+  }
+
+  /** Segura as gravações de um encerramento em massa numa só. */
+  private bulk<T>(fn: () => T): T {
+    this.bulkDepth += 1
+    try {
+      return fn()
+    } finally {
+      this.bulkDepth -= 1
+      if (this.bulkDepth === 0 && this.bulkDirty) {
+        this.bulkDirty = false
+        this.persistNow()
+      }
+    }
+  }
+
   private consume(helperId: string, event: GuiHelperEvent): void {
     const live = this.helpers.get(helperId)
     // Evento atrasado de ajudante já encerrado NUNCA ressuscita: um turno que
     // volta a abrir depois do desfecho deixaria o card aberto para sempre.
     if (!live || isGuiHelperSettled(live.record.state)) return
-    if (live.record.state === 'spawning') live.record.state = 'working'
+    // O PRIMEIRO SINAL DE VIDA vai ao disco (uma vez por ajudante, não a cada
+    // evento): é a diferença entre um registro que o boot reencontra como "nunca
+    // chegou a rodar" e um que ele reencontra como trabalho interrompido.
+    if (live.record.state === 'spawning') {
+      live.record.state = 'working'
+      this.persistSoon()
+    }
 
     if (event.type === 'text') {
       live.text += event.text
@@ -944,18 +1484,27 @@ export class GuiHelperEngine {
       }
       return
     }
+    // O ENDEREÇO DA CONVERSA (R6.1). Vale o ÚLTIMO: no claude ele sobe a cada
+    // `result` e um resume pode trocá-lo. Vazio nunca apaga o que já se sabia —
+    // perder o id é perder a única saída de um ajudante interrompido.
+    if (event.type === 'session') {
+      const sessionId = trimmedOrUndefined(event.sessionId)
+      if (sessionId && sessionId !== live.record.sessionId) {
+        live.record.sessionId = sessionId
+        this.persistSoon()
+      }
+      return
+    }
     if (event.type === 'result') {
       if (event.isError) {
-        this.settle(live, 'failed', {
-          failure: event.errorText?.trim() || 'o turno do ajudante falhou sem motivo declarado'
-        })
+        this.fail(live, event.errorText?.trim() || 'o turno do ajudante falhou sem motivo declarado')
         return
       }
       this.settle(live, 'done', { text: event.text ?? live.text })
       return
     }
     if (event.type === 'fatal') {
-      this.settle(live, 'failed', { failure: event.text })
+      this.fail(live, event.text)
       return
     }
     // PROCESSO ENCERRADO É DESFECHO (sonda §2.6): o `claude -p` entrega o
@@ -966,14 +1515,80 @@ export class GuiHelperEngine {
       return
     }
     const code = typeof event.code === 'number' ? `código ${event.code}` : 'sem código de saída'
-    this.settle(live, 'failed', {
-      failure: `o processo do CLI encerrou (${code}) sem entregar resultado`
+    this.fail(live, `o processo do CLI encerrou (${code}) sem entregar resultado`)
+  }
+
+  /**
+   * A QUEDA, com a válvula da R6.4: assinatura claramente passageira NA PARTIDA
+   * ganha UMA re-tentativa automática; o resto encerra como sempre.
+   *
+   * Devolve `true` quando encerrou de fato — é o que deixa o `spawn` saber se
+   * ainda pode transformar a queda em recibo recusado.
+   */
+  private fail(live: LiveHelper, failure: string): boolean {
+    const reason = this.retryReasonFor(live, failure)
+    if (reason) {
+      this.scheduleRetry(live, reason, failure)
+      return false
+    }
+    this.settle(live, 'failed', { failure })
+    return true
+  }
+
+  /**
+   * Quando vale re-tentar. TRÊS cercas, e todas necessárias:
+   * - UMA VEZ SÓ. Depois disso a inteligência do agente assume (trocar de conta,
+   *   esperar, desistir) — laço de re-tentativa é como se queima limite dormindo.
+   * - SÓ NA PARTIDA. Passada a janela, ou havendo QUALQUER trabalho já feito
+   *   (uma ferramenta usada, um pedaço de texto), o ajudante já mexeu no worktree
+   *   compartilhado: recomeçar por cima é pior que a falha honesta.
+   * - SÓ ASSINATURA PASSAGEIRA (`transientHelperFailure`).
+   */
+  private retryReasonFor(live: LiveHelper, failure: string): string | undefined {
+    if (live.record.retriedAt !== undefined) return undefined
+    if (isGuiHelperSettled(live.record.state)) return undefined
+    if (this.now() - live.record.startedAt > GUI_HELPER_RETRY_STARTUP_WINDOW_MS) return undefined
+    if (live.record.lastActivity || live.text.trim()) return undefined
+    return transientHelperFailure(failure)
+  }
+
+  private scheduleRetry(live: LiveHelper, reason: string, failure: string): void {
+    const at = this.now()
+    const helperId = live.record.helperId
+    live.record.retriedAt = at
+    live.record.retryReason = reason
+    live.record.state = 'spawning'
+    // A ficha do dono conta o que está acontecendo pela MESMA linha de sempre —
+    // sem inventar um tipo de card novo para a lateral aprender.
+    live.record.lastActivity = { at, summary: `re-tentando · ${reason}` }
+    live.activityNotifiedAt = at
+    live.text = ''
+    try {
+      live.process?.dispose()
+    } catch {
+      // Processo que já morreu é o caso NORMAL aqui.
+    }
+    live.process = undefined
+    this.journal({
+      event: 'helper-retry',
+      paneId: live.record.delegatorPaneId,
+      helperId,
+      detail: { reason, failure, delayMs: this.retryDelayMs }
+    })
+    this.notify({ kind: 'activity', record: { ...live.record } })
+    this.persistSoon()
+    this.setTimer(this.retryDelayMs, () => {
+      const current = this.helpers.get(helperId)
+      // Cancelado/interrompido durante o respiro nunca vira processo.
+      if (!current || isGuiHelperSettled(current.record.state) || current.process) return
+      this.spawnQueue.push(helperId)
+      this.pumpSpawnQueue()
     })
   }
 
   private settle(
     live: LiveHelper,
-    state: 'done' | 'failed' | 'cancelled',
+    state: 'done' | 'failed' | 'interrupted' | 'cancelled',
     payload: { text?: string; failure?: string }
   ): void {
     if (isGuiHelperSettled(live.record.state)) return
@@ -991,6 +1606,8 @@ export class GuiHelperEngine {
     // precisa existir antes de os long-polls acordarem, do card `settled` sair e
     // do correio ser postado — os três citam o arquivo. `cancelled` fica de fora:
     // ninguém está esperando o trabalho que o próprio app mandou parar.
+    // `interrupted` ENTRA: o que ele conseguiu escrever é justamente o que a
+    // parada preservadora existe para não perder.
     if (state !== 'cancelled') this.persist(live, payload.text ?? live.text)
 
     // O KILL É DO MOTOR: o app-server do codex nunca encerra sozinho ao fim do
@@ -1002,8 +1619,16 @@ export class GuiHelperEngine {
       // Descarte que falha não pode impedir o desfecho de ser publicado: o card
       // ficaria aberto para sempre por causa de um processo que já se foi.
     }
+    // O pedido de nascimento morre com o desfecho — de propósito, e não por
+    // economia: o registro que volta do DISCO nunca terá um, então um resume que
+    // dependesse dele funcionaria na mesma sessão e quebraria depois do boot. Quem
+    // retomar reconstrói do registro (a onda R6-B), que é a única fonte que existe
+    // nos dois casos.
+    live.spawnRequest = undefined
     for (const waiter of live.waiters.splice(0)) waiter()
     this.prune(live.record.delegatorPaneId)
+    // O DESFECHO NÃO ESPERA A BATIDA: é o estado que o dono acabou de ver mudar.
+    this.persistNow()
     this.notify({ kind: 'settled', record: { ...live.record } })
     this.journal({
       event: 'helper-settled',
@@ -1089,7 +1714,9 @@ export class GuiHelperEngine {
       ...(record.contextTokens !== undefined ? { contextTokens: record.contextTokens } : {}),
       hasResult: record.result !== undefined,
       ...(record.resultPath ? { resultPath: record.resultPath } : {}),
-      ...(record.failure ? { failure: record.failure } : {})
+      ...(record.failure ? { failure: record.failure } : {}),
+      ...(record.retriedAt !== undefined ? { retriedAt: record.retriedAt } : {}),
+      ...(record.retryReason ? { retryReason: record.retryReason } : {})
     }
   }
 
@@ -1133,13 +1760,30 @@ function helperNotFound(helperId: string): string {
   return `ajudante ${helperId} não encontrado neste chat — confira o id no helpers_status`
 }
 
+/**
+ * INTERROMPIDO NÃO É ENCERRADO. A recusa de quem tenta dirigir ou cancelar um
+ * ajudante parado precisa dizer a única coisa que muda o desfecho: dele se volta.
+ * O nome da ferramenta de retomada fica de fora de propósito — ela nasce na onda
+ * R6-B, e prometer uma tool que ainda não existe é pior que não prometer nada.
+ */
 function alreadySettled(state: GuiHelperState): string {
+  if (state === 'interrupted') {
+    return (
+      'o ajudante está INTERROMPIDO: o processo dele parou, mas a conversa ficou guardada — ' +
+      'dá para retomar de onde parou em vez de recomeçar'
+    )
+  }
   return `o ajudante já encerrou (${state}) — abra outro com delegate se ainda falta trabalho`
 }
 
 function cancelReason(reason?: string): string {
   const clean = typeof reason === 'string' ? reason.trim() : ''
   return clean || 'cancelado pelo delegador'
+}
+
+function interruptReason(reason?: string): string {
+  const clean = typeof reason === 'string' ? reason.trim() : ''
+  return clean || 'interrompido — o trabalho dele ficou guardado'
 }
 
 function errorText(error: unknown): string {

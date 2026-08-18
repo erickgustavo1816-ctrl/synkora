@@ -24,13 +24,16 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CLAUDE_NATIVE_AGENT_FENCE } from './guiDelegateMcp'
-import { CodexSession } from './codexSession'
-import { MaestroSession, type SessionEvent } from './maestroSession'
+import { CodexSession, type CodexSessionOpts } from './codexSession'
+import { MaestroSession, type MaestroSessionOpts, type SessionEvent } from './maestroSession'
 import { getCatalog } from './catalog'
+import { loadJsonStore, persistJsonStore } from './jsonStore'
 import { getSeatUsage, type SeatUsageInfo } from './seatUsage'
 import { guiPermissionProfile, isGuiPermissionMode } from './guiSessions'
 import {
+  GUI_HELPER_STORE_VERSION,
   GuiHelperEngine,
+  isGuiHelperStoreDoc,
   type GuiHelperCli,
   type GuiHelperDelegator,
   type GuiHelperDelivery,
@@ -44,6 +47,9 @@ import {
   type GuiHelperSeat,
   type GuiHelperSnapshot,
   type GuiHelperSpawnRequest,
+  type GuiHelperState,
+  type GuiHelperStore,
+  type GuiHelperStoreDoc,
   type GuiHelperChange,
   type GuiHelperResultOutcome,
   resolveHelperCli
@@ -100,10 +106,25 @@ export const GUI_HELPER_DELIVERY_DIR = '.synkora/helpers'
  *  substituí-lo. */
 export const GUI_HELPER_RESULT_HEAD_CHARS = 2_000
 
-const HELPER_OUTCOME_LABEL: Record<string, string> = {
+/**
+ * OS ESTADOS EM PT-BR. Eles aparecem no documento da entrega, na ficha do
+ * `helpers_status` e no card — três lugares que o DONO lê. `interrupted` cru
+ * seria a única palavra em inglês da tela, e justamente a que carrega a decisão
+ * dele (retomar ou descartar).
+ */
+const HELPER_OUTCOME_LABEL: Record<GuiHelperState, string> = {
+  spawning: 'abrindo',
+  working: 'trabalhando',
   done: 'concluído',
   failed: 'falhou',
+  interrupted: 'interrompido',
   cancelled: 'cancelado'
+}
+
+/** O mapa é EXAUSTIVO por tipo: um estado novo na união quebra o typecheck aqui,
+ *  que é onde alguém tem de escolher a palavra que o dono vai ler. */
+function helperStateLabel(state: GuiHelperState): string {
+  return HELPER_OUTCOME_LABEL[state]
 }
 
 /** O id vira NOME DE ARQUIVO: a mesma régua do `writeClaudeMcpConfig` (paneId
@@ -125,7 +146,7 @@ function isoOrUnknown(at: number | undefined): string {
  * Sem isso, uma pasta com dez arquivos de uuid não conta nada a ninguém.
  */
 export function guiHelperDeliveryDocument(record: GuiHelperRecord, text: string): string {
-  const outcome = HELPER_OUTCOME_LABEL[record.state] ?? record.state
+  const outcome = helperStateLabel(record.state)
   const executor = [record.model, record.effort, record.seatName ?? record.seatId, record.cli]
     .filter((part): part is string => Boolean(part))
     .join(' · ')
@@ -221,6 +242,11 @@ export function guiHelperEventFor(evt: SessionEvent): GuiHelperEvent | null {
       return { type: 'activity', summary: toolActivitySummary(evt) }
     case 'context-usage':
       return { type: 'context', contextTokens: evt.contextTokens }
+    // O ENDEREÇO DA CONVERSA (R6.1): claude manda o session id em todo `result`,
+    // codex manda o thread no `thread/start` (já com o prefixo da casa). Viaja
+    // CRU — quem traduz para cada binário é o adaptador, no instante do resume.
+    case 'session-id':
+      return { type: 'session', sessionId: evt.sessionId }
     case 'result':
       // `continues` = o turno lógico ainda não acabou (mensagem enfileirada,
       // trabalho de fundo). Encerrar aqui mataria um ajudante em pleno trabalho.
@@ -275,21 +301,70 @@ function permissionProfileFor(
   return guiPermissionProfile(cli, isGuiPermissionMode(permissionMode) ? permissionMode : undefined)
 }
 
+/**
+ * O id do thread como o `thread/resume` o quer: CRU.
+ *
+ * O evento `session-id` do codex publica `codex-thread:<uuid>` (a convenção da
+ * casa, que distingue thread de session id do claude no mesmo campo). Precedente
+ * exato: `guiSessions.spawnSession`, que faz o mesmo corte no respawn dos chats.
+ */
+export function codexHelperThreadId(sessionId: string | undefined): string | undefined {
+  const clean = sessionId?.trim()
+  if (!clean) return undefined
+  return clean.startsWith('codex-thread:') ? clean.slice('codex-thread:'.length) : clean
+}
+
+/**
+ * AS OPÇÕES DO HELPER CLAUDE — função pura de propósito.
+ *
+ * O adaptador só sabe instanciar; a decisão (cerca, conta, worktree, resume) vive
+ * aqui, onde a suíte a lê sem subir um processo de CLI. É o que torna o contrato
+ * do R6.2 provável hoje, com o verbo `helper_resume` ainda na onda seguinte.
+ *
+ * NENHUM canal de ferramenta: ajudante não tem token nem config de MCP (D1).
+ */
+export function claudeHelperSessionOptions(
+  request: GuiHelperSpawnRequest,
+  systemPromptFile?: string
+): MaestroSessionOpts {
+  return {
+    cwd: request.cwd,
+    configDir: request.seat.configDir || undefined,
+    model: request.model,
+    ...(request.effort ? { effort: request.effort } : {}),
+    ...permissionProfileFor('claude', request.permissionMode),
+    ...(systemPromptFile ? { systemPromptFile } : {}),
+    // RETOMAR A MESMA CONVERSA (R6.2): o `--resume` headless do claude. Ausente
+    // em ajudante novo — retomar é sempre um pedido explícito.
+    ...(request.resumeSessionId ? { resumeSessionId: request.resumeSessionId } : {}),
+    extraArgs: claudeHelperArgs()
+  }
+}
+
+/** As opções do helper CODEX, com a cerca DUPLA do D5 e o thread já sem prefixo. */
+export function codexHelperSessionOptions(request: GuiHelperSpawnRequest): CodexSessionOpts {
+  const threadId = codexHelperThreadId(request.resumeSessionId)
+  return {
+    cwd: request.cwd,
+    configDir: request.seat.configDir || undefined,
+    model: request.model,
+    ...(request.effort ? { effort: request.effort } : {}),
+    ...permissionProfileFor('codex', request.permissionMode),
+    // Cerca DUPLA do D5: cinto nos args do app-server, suspensório no
+    // thread/start — e o MESMO `base` do codexSession leva a cerca ao
+    // thread/resume, então retomar não reabre a porta do subagente nativo.
+    ...(threadId ? { resumeSessionId: threadId } : {}),
+    extraArgs: codexHelperArgs(),
+    suppressNativeAgents: true
+  }
+}
+
 export function createClaudeHelperAdapter(deps: GuiHelperAdapterDeps) {
   return (request: GuiHelperSpawnRequest, emit: (event: GuiHelperEvent) => void): GuiHelperProcess => {
     deps.prepareSeat?.(request.seat, 'claude')
     const file = deps.systemPromptFile(`helper-${request.helperId}.system.md`, GUI_HELPER_PERSONA)
     const session = new MaestroSession(
-      {
-        cwd: request.cwd,
-        configDir: request.seat.configDir || undefined,
-        model: request.model,
-        ...(request.effort ? { effort: request.effort } : {}),
-        ...permissionProfileFor('claude', request.permissionMode),
-        ...(file ? { systemPromptFile: file } : {}),
-        // NENHUM `extraEnv`/`mcp`: ajudante não tem ferramenta Synkora (D1).
-        extraArgs: claudeHelperArgs()
-      },
+      claudeHelperSessionOptions(request, file),
       (evt) => {
         const translated = guiHelperEventFor(evt)
         if (translated) emit(translated)
@@ -309,17 +384,7 @@ export function createCodexHelperAdapter(deps: GuiHelperAdapterDeps) {
   return (request: GuiHelperSpawnRequest, emit: (event: GuiHelperEvent) => void): GuiHelperProcess => {
     deps.prepareSeat?.(request.seat, 'codex')
     const session = new CodexSession(
-      {
-        cwd: request.cwd,
-        configDir: request.seat.configDir || undefined,
-        model: request.model,
-        ...(request.effort ? { effort: request.effort } : {}),
-        ...permissionProfileFor('codex', request.permissionMode),
-        // Cerca DUPLA do D5: cinto nos args do app-server, suspensório no
-        // thread/start (e no thread/resume, que este ajudante nem usa).
-        extraArgs: codexHelperArgs(),
-        suppressNativeAgents: true
-      },
+      codexHelperSessionOptions(request),
       GUI_HELPER_PERSONA,
       (evt) => {
         const translated = guiHelperEventFor(evt)
@@ -410,10 +475,43 @@ export function resolveGuiHelperSeat(
   return logged ? asSeat(logged) : undefined
 }
 
-// ————— o motor, montado —————
+// ————— o disco da frota (R6.1) —————
+
+/** O arquivo, em `userData`. O índice compõe o caminho; o nome mora aqui para os
+ *  dois lados falarem do MESMO arquivo. */
+export const GUI_HELPERS_STORE_FILE = 'gui-helpers.json'
+
+/**
+ * O `GuiHelperStore` de PRODUÇÃO, sobre o `jsonStore` atômico da casa — o mesmo
+ * que guarda as conversas (`gui-sessions.json`): escrita por rename, backup `.bak`
+ * reparável e leitura que cai no backup quando o principal está estragado.
+ *
+ * O motor não conhece disco (é o que mantém a suíte dele em node puro); esta é a
+ * única costura entre os dois, e ela é minúscula de propósito.
+ */
+export function createGuiHelperStore(file: string): GuiHelperStore {
+  return {
+    load: () =>
+      loadJsonStore<GuiHelperStoreDoc>(
+        file,
+        () => ({ version: GUI_HELPER_STORE_VERSION, helpers: [] }),
+        isGuiHelperStoreDoc
+      ).helpers,
+    save: (records) =>
+      persistJsonStore(file, { version: GUI_HELPER_STORE_VERSION, helpers: records })
+  }
+}
 
 export interface GuiHelperEngineWiring extends GuiHelperAdapterDeps {
   seats(): GuiDelegationSeat[]
+  /**
+   * `userData/gui-helpers.json` — ausente DESLIGA a persistência (é como as
+   * suítes rodam sem tocar disco, a mesma convenção do `GuiSessionDeps`).
+   *
+   * Com ele, a frota sobrevive ao fechamento do app: quem estava trabalhando
+   * volta como `interrupted` e a conversa que reabrir pode retomá-lo (R6.1).
+   */
+  storeFile?: string
   onChange(change: GuiHelperChange): void
   log(entry: GuiHelperLogEntry): void
 }
@@ -437,6 +535,9 @@ export function createGuiHelperEngine(wiring: GuiHelperEngineWiring): GuiHelperE
     spawnCodex: createCodexHelperAdapter(wiring),
     resolveSeat: (query) => resolveGuiHelperSeat(wiring.seats(), query),
     modelSupportsEffort: (query) => catalog.supportsEffort(query),
+    // A FROTA SOBREVIVE AO APP (R6.1). Ler o disco é a PRIMEIRA coisa que o motor
+    // faz no nascimento: quem estava vivo no boot anterior volta `interrupted`.
+    ...(wiring.storeFile ? { store: createGuiHelperStore(wiring.storeFile) } : {}),
     // A ENTREGA EM ARQUIVO é do motor de PRODUÇÃO, não uma opção do chamador: a
     // ordem do dono ("todo ajudante sempre entrega em modelo de ARQUIVO") não
     // pode depender de um índice se lembrar de ligá-la.
@@ -714,7 +815,12 @@ export function guiHelperStatusText(snapshots: readonly GuiHelperSnapshot[]): st
     const meta = [snapshot.model, snapshot.effort, snapshot.seatName ?? snapshot.seatId].filter(
       (part): part is string => Boolean(part)
     )
-    const detail: string[] = [`${snapshot.state} há ${elapsedText(snapshot.elapsedMs)}`]
+    const detail: string[] = [`${helperStateLabel(snapshot.state)} há ${elapsedText(snapshot.elapsedMs)}`]
+    // RE-TENTATIVA EM CURSO (R6.4): enquanto o respiro corre, o card diz por que
+    // ele ainda não partiu — "abrindo há 20s" sozinho pareceria travado.
+    if (snapshot.retriedAt !== undefined && snapshot.state === 'spawning') {
+      detail.push(`re-tentando · ${snapshot.retryReason ?? 'falha passageira na partida'}`)
+    }
     if (snapshot.lastActivity) detail.push(`agora: ${snapshot.lastActivity.summary}`)
     if (snapshot.contextTokens) detail.push(`contexto ~${Math.round(snapshot.contextTokens / 1000)}k`)
     // O ARQUIVO é o endereço da entrega; o helper_result devolve o mesmo
@@ -745,14 +851,26 @@ export function guiHelperResultText(outcome: GuiHelperResultOutcome): string {
   if (outcome.pending) {
     const activity = outcome.snapshot.lastActivity?.summary
     return (
-      `ainda trabalhando (${outcome.snapshot.state} há ${elapsedText(outcome.snapshot.elapsedMs)}` +
+      `ainda trabalhando (${helperStateLabel(outcome.snapshot.state)} há ${elapsedText(outcome.snapshot.elapsedMs)}` +
       `${activity ? `, agora: ${activity}` : ''}). ` +
       'Esperei o que pedi e devolvi a fotografia — chame de novo quando quiser, ' +
       'ou siga com outra coisa: o ajudante não para porque você saiu.'
     )
   }
+  // INTERROMPIDO NÃO É DESFECHO (R6.1). Dizer "encerrou" aqui apagaria a única
+  // saída que este ajudante tem: a conversa dele está guardada e ele volta de
+  // onde parou. O verbo da retomada chega na onda R6-B; a honestidade, agora.
+  if (outcome.state === 'interrupted') {
+    const head =
+      `o ajudante ${outcome.helperId} está INTERROMPIDO: ${outcome.failure ?? 'parado sem motivo declarado'}. ` +
+      'O processo dele morreu, mas a conversa ficou guardada — dá para retomar de onde parou, ' +
+      'em vez de recomeçar o trabalho do zero.'
+    return outcome.resultPath
+      ? `${head}\n\nO que ele chegou a escrever está em ${outcome.resultPath}.`
+      : head
+  }
   if (outcome.state !== 'done') {
-    const head = `o ajudante ${outcome.helperId} encerrou como ${outcome.state}: ${outcome.failure ?? 'sem motivo declarado'}`
+    const head = `o ajudante ${outcome.helperId} encerrou como ${helperStateLabel(outcome.state)}: ${outcome.failure ?? 'sem motivo declarado'}`
     return outcome.resultPath
       ? `${head}\n\nO registro (com o que ele chegou a escrever) está em ${outcome.resultPath}.`
       : head
@@ -761,6 +879,12 @@ export function guiHelperResultText(outcome: GuiHelperResultOutcome): string {
   if (!outcome.resultPath) {
     const why = outcome.deliveryError ? `\n[synkora] a entrega NÃO virou arquivo: ${outcome.deliveryError}` : ''
     return `entrega do ajudante ${outcome.helperId}${outcome.truncated ? ' (cortada no teto)' : ''}:${why}\n\n${full}`
+  }
+  // DEPOIS DO BOOT a cópia inline não existe (o disco guarda o registro, nunca a
+  // entrega — ela já está no arquivo). Anunciar "a entrega, inteira" seguida de
+  // nada seria a resposta mais enganosa do catálogo.
+  if (!full.trim()) {
+    return `entrega do ajudante ${outcome.helperId}: está inteira no arquivo ${outcome.resultPath} — abra ele.`
   }
   const cut = full.length > GUI_HELPER_RESULT_HEAD_CHARS
   const head = cut ? `${full.slice(0, GUI_HELPER_RESULT_HEAD_CHARS)}…` : full
