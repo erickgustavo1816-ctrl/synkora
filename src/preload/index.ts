@@ -40,6 +40,8 @@ import type {
 /** Abrir arquivo fora do app (rodada 7, C1) — contrato do MAIN importado direto:
  *  a resposta do canal tem uma fonte só, sem espelho para desencontrar. */
 import type { FileExternalOpenMode, FileExternalOpenResult } from '../main/ipc/files'
+/** O irmão do canal acima para o CHAT: mesmo menu, autoridade do PANE. */
+import type { GuiFileExternalOpenMode, GuiFileExternalOpenResult } from '../main/ipc/gui'
 import type {
   MissionCommit,
   MissionWorkspaceFile,
@@ -89,6 +91,9 @@ export type {
 }
 export type { GuiAlertPayload }
 export type { GuiFileChoice, GuiFileOpenResult, GuiFilePreview }
+/** Saída do arquivo CITADO NO FIO para fora do app (rodada 7, C1 — metade do
+ *  chat): programa padrão do sistema ou pasta com ele selecionado. */
+export type { GuiFileExternalOpenMode, GuiFileExternalOpenResult }
 
 /** Anexos do composer: o renderer recebe somente capacidade opaca; caminho,
  * prévia e ações de disco permanecem no main. */
@@ -903,6 +908,18 @@ const api = {
       selectedPath?: string
     ): Promise<GuiFileOpenResult> =>
       ipcRenderer.invoke('gui:fileOpen', paneId, reference, selectedPath),
+    /** Rodada 7 (C1, metade do CHAT): manda o arquivo citado no fio para FORA do
+     *  app — programa padrão do sistema (`default`) ou pasta com ele selecionado
+     *  (`reveal`). MESMA cerca do `fileOpen`: a raiz é o `cwd` do pane e o
+     *  caminho absoluto nasce e morre no main. Nome ambíguo é RECUSADO até o
+     *  painel escolher (a escolha volta em `selectedPath`). */
+    fileOpenExternal: (
+      paneId: string,
+      reference: string,
+      selectedPath: string | undefined,
+      mode: GuiFileExternalOpenMode
+    ): Promise<GuiFileExternalOpenResult> =>
+      ipcRenderer.invoke('gui:fileOpenExternal', paneId, reference, selectedPath, mode),
     /** Anexa print da área de transferência ou arquivo ao chat: o main grava
      *  em `<cwd do pane>/.synkora/attachments` e devolve capacidade opaca. */
     attach: (paneId: string, payload: GuiAttachPayload): Promise<GuiAttachResult> =>

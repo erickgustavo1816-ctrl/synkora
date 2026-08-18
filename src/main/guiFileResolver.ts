@@ -44,7 +44,9 @@ const SKIPPED_DIRECTORIES = new Set([
 
 /** Formatos cujo clique pode virar execução/instalação/atalho no SO. Eles não
  * entram nem no preview nem no fallback de revelar. Código-fonte continua
- * legível internamente; o main nunca usa `shell.openPath`. */
+ * legível internamente; e desde a rodada 7 o `shell.openPath` do menu "onde
+ * abrir" (gui:fileOpenExternal) só recebe caminho que ESTE resolver aprovou —
+ * um executável citado no fio morre aqui, nunca vira associação do sistema. */
 const EXECUTABLE_FILE_EXTENSIONS = new Set([
   '.appref-ms',
   '.application',

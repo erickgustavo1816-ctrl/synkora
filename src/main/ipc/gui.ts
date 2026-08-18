@@ -68,7 +68,8 @@ import type { GuiAlertPayload, GuiNoticeKind } from '../guiNotices'
 import {
   GuiFileResolver,
   prepareGuiFileOpen,
-  type GuiFileOpenResult
+  type GuiFileOpenResult,
+  type GuiFileResolveReason
 } from '../guiFileResolver'
 import { ensureSynkoraGitExcludes } from '../worktree'
 import { rearmGuiPaneTools } from '../guiPlannerArm'
@@ -93,6 +94,22 @@ export interface GuiIpcExtras {
    *  delegador — o teardown do chat encerra a frota dele. */
   helpers?: GuiHelperLifecycle
 }
+
+/**
+ * ABRIR O ARQUIVO DO CHAT FORA DO APP (rodada 7, C1 — a metade do FIO).
+ *
+ * FONTE ÚNICA do contrato: o preload importa estes tipos daqui (nada de espelho
+ * para desencontrar). Vocabulário IGUAL ao de `files:openExternal`
+ * (src/main/ipc/files.ts) de propósito — o dono vê o mesmo menu nas duas
+ * superfícies —, mas a AUTORIDADE é outra: lá a raiz vem de um ID lógico, aqui
+ * do `cwd` que o registro de sessões guarda para o pane. O par no renderer é
+ * `FileOpenOutcome` (src/renderer/src/guiFileContextMenu.ts).
+ */
+export type GuiFileExternalOpenMode = 'default' | 'reveal'
+
+export type GuiFileExternalOpenResult =
+  | { ok: true; action: 'external' | 'reveal' }
+  | { ok: false; reason: GuiFileResolveReason; error: string }
 
 const BEHAVIORS: GuiPermBehavior[] = ['allow', 'allow-always', 'deny']
 
@@ -696,6 +713,101 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
         detail: { action: 'reveal' }
       })
       return { ok: true, action: 'reveal', message: prepared.message }
+    }
+  )
+
+  /**
+   * O IRMÃO do `gui:fileOpen`: o mesmo arquivo, mandado para FORA do app.
+   *
+   * Ordem do dono (rodada 7): clicar num `.html` que o agente citou não pode
+   * terminar num painel de código sem saída — ele quer escolher entre ler aqui,
+   * abrir no programa padrão do sistema (o `.html` cai no navegador) ou mostrar
+   * na pasta. O menu vive no renderer; a AUTORIDADE continua aqui.
+   *
+   * Este canal executa a associação do sistema — por isso passa pela MESMA cerca
+   * do preview, e por nenhuma outra: `cwd` do registro de sessões (nunca do
+   * renderer) + `fileResolver.resolve`, que já recusa traversal, link/junction,
+   * arquivo fora do worktree, segredo e extensão executável. Só o caminho que o
+   * resolver PROVOU chega ao `shell.*`.
+   */
+  ipcMain.handle(
+    'gui:fileOpenExternal',
+    async (
+      e,
+      paneId: unknown,
+      reference: unknown,
+      selectedPath?: unknown,
+      mode?: unknown
+    ): Promise<GuiFileExternalOpenResult> => {
+      extras.assertAppRendererSender(e)
+      const openMode: GuiFileExternalOpenMode = mode === 'reveal' ? 'reveal' : 'default'
+      if (typeof paneId !== 'string' || !paneId || paneId.length > 256) {
+        return { ok: false, reason: 'invalid', error: 'pane sem identificador válido' }
+      }
+      if (typeof reference !== 'string') {
+        return { ok: false, reason: 'invalid', error: 'caminho inválido' }
+      }
+      if (selectedPath !== undefined && typeof selectedPath !== 'string') {
+        return { ok: false, reason: 'invalid', error: 'escolha de arquivo inválida' }
+      }
+
+      // Token, escolha e caminho podem carregar árvore/username. Só a classe
+      // segura da recusa e o modo pedido entram no journal (régua do `fileOpen`).
+      const refuse = (
+        reason: GuiFileResolveReason,
+        error: string
+      ): GuiFileExternalOpenResult => {
+        blackbox.record({
+          cat: 'pane',
+          event: 'gui-file-open-external-refused',
+          actor: 'user',
+          ids: { paneId },
+          detail: { reason, mode: openMode }
+        })
+        return { ok: false, reason, error }
+      }
+
+      const cwd = registry.cwdOf(paneId)
+      if (!cwd) return refuse('unavailable', 'este pane não tem sessão aberta')
+
+      const resolved = fileResolver.resolve(cwd, reference, selectedPath)
+      if (!resolved.ok) {
+        // Nome ambíguo NÃO vira aposta: a receita é abrir no app, escolher no
+        // painel, e só então mandar para fora (a escolha volta em `selectedPath`).
+        if (resolved.reason === 'ambiguous') {
+          return refuse(
+            'ambiguous',
+            'há mais de um arquivo com esse nome: abra no app primeiro, '
+              + 'escolha qual, e então mande para fora'
+          )
+        }
+        return refuse(resolved.reason, resolved.error)
+      }
+
+      if (openMode === 'reveal') {
+        shell.showItemInFolder(resolved.file.absolutePath)
+        blackbox.record({
+          cat: 'pane',
+          event: 'gui-file-revealed',
+          actor: 'user',
+          ids: { paneId },
+          detail: { action: 'reveal', from: 'chat-menu' }
+        })
+        return { ok: true, action: 'reveal' }
+      }
+
+      // O erro do `shell` carrega caminho ABSOLUTO do sistema: ele não atravessa
+      // para o renderer nem para a caixa-preta.
+      const failure = await shell.openPath(resolved.file.absolutePath)
+      if (failure) return refuse('unavailable', 'o sistema não conseguiu abrir este arquivo')
+      blackbox.record({
+        cat: 'pane',
+        event: 'gui-file-opened-external',
+        actor: 'user',
+        ids: { paneId },
+        detail: { action: 'external' }
+      })
+      return { ok: true, action: 'external' }
     }
   )
 

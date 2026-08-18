@@ -9,14 +9,28 @@
 //     branch não oferece nenhuma);
 //   · a GUARDA — o caminho que sai daqui é sempre o que o resolver do main
 //     aceitaria; caminho cru do renderer nunca chega ao `shell.*`;
-//   · a ponte tipada do canal novo (`files:openExternal`), no mesmo padrão de
+//   · as pontes tipadas dos canais de saída, no mesmo padrão de
 //     `missionWorkspace.ts`: cast estreito resolvido A CADA CHAMADA, porque o
 //     namespace do preload pode nascer depois deste módulo ser importado.
 //
 // Browser embutido NÃO mora aqui (é a 4ª etapa do roadmap do dono): "abrir com
 // o programa padrão" entrega o arquivo ao sistema e acabou.
+//
+// RODADA 7-D (esclarecimento do dono): a superfície que ele queria é o CHAT —
+// "quando o agente cita um `.html` e eu clico, abre o painelzinho de código;
+// quero o botão direito ali, como o app do Codex faz". O modelo, os rótulos e a
+// guarda são os MESMOS; o que muda é o DIALETO do pedido:
+//
+//   · aba de arquivos / trilho de entrega → `projectId` + raiz lógica +
+//     caminho relativo (canal `files:openExternal`);
+//   · chat → `paneId` + a referência crua que o agente escreveu (canal
+//     `gui:fileOpenExternal`), porque no fio a autoridade é o `cwd` do pane.
 
-import type { FileExternalOpenResult, FileTreeRoot } from '../../preload/index'
+import type {
+  FileExternalOpenResult,
+  FileTreeRoot,
+  GuiFileExternalOpenResult
+} from '../../preload/index'
 
 /** As três saídas do menu, na ordem em que o dono as pediu. */
 export type FileContextAction = 'open-in-app' | 'open-default' | 'reveal'
@@ -26,20 +40,44 @@ export type FileContextAction = 'open-in-app' | 'open-default' | 'reveal'
  *  (src/main/ipc/files.ts) — o par está declarado nos dois lados. */
 export type FileOpenMode = 'default' | 'reveal'
 
-/**
- * Um arquivo apontado por uma superfície do app. O caminho é SEMPRE relativo à
- * raiz autorizada (worktree da missão ou raiz do projeto) — caminho absoluto
- * não atravessa o renderer, nem para dentro nem para fora.
- */
-export interface FileContextTarget {
-  projectId: string
-  root: FileTreeRoot
-  /** caminho relativo à raiz, com `/` */
+/** O que TODA superfície declara sobre o arquivo, seja qual for o dialeto. */
+export interface FileContextTargetBase {
+  /** o que o dono LÊ na tela: dá o nome do menu e a família da dica */
   path: string
   /** letra do git quando a origem é o trilho de entrega (`D` = apagado) */
   status?: string
   /** este arquivo JÁ está aberto na superfície que abriu o menu (o viewer) */
   current?: boolean
+}
+
+/**
+ * Um arquivo apontado pela ABA DE ARQUIVOS ou pelo trilho de entrega. O caminho
+ * é SEMPRE relativo à raiz autorizada (worktree da missão ou raiz do projeto) —
+ * caminho absoluto não atravessa o renderer, nem para dentro nem para fora.
+ */
+export interface FileTreeContextTarget extends FileContextTargetBase {
+  projectId: string
+  root: FileTreeRoot
+}
+
+/**
+ * Um arquivo CITADO NO FIO. Aqui não existe raiz lógica: quem sabe onde a
+ * conversa mora é o registro de sessões do main, pelo `paneId`. A `reference` é
+ * o token cru do agente (pode ser nome curto, caminho relativo ou absoluto
+ * dentro do worktree) — quem normaliza é o resolver do main, nunca esta camada.
+ */
+export interface ChatFileContextTarget extends FileContextTargetBase {
+  paneId: string
+  reference: string
+  /** escolha JÁ feita no painel (fecha a ambiguidade antes de sair do app) */
+  selectedPath?: string
+}
+
+export type FileContextTarget = FileTreeContextTarget | ChatFileContextTarget
+
+/** Discrimina o dialeto sem adivinhar: o chat é quem tem `paneId`. */
+export function isChatFileTarget(target: FileContextTarget): target is ChatFileContextTarget {
+  return typeof (target as ChatFileContextTarget).paneId === 'string'
 }
 
 export interface FileContextOption {
@@ -135,6 +173,47 @@ export interface FileOpenRequest {
 }
 
 /**
+ * ESPELHO DECLARADO de `cleanReference` (src/main/guiFileResolver.ts): o que o
+ * agente escreveu no fio vai INTACTO para o main (só ele sabe normalizar contra
+ * o worktree), mas o que nem referência é morre aqui.
+ */
+function acceptableReference(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  if (value.length === 0 || value.length > MAX_PATH_LENGTH) return null
+  if (value.includes('\0') || /[\r\n]/u.test(value)) return null
+  // ESPELHO de `hasTraversal`: o resolver recusa, então o menu não oferece.
+  if (value.replace(/\\/g, '/').split('/').some((part) => part === '..')) return null
+  return value
+}
+
+export interface GuiChatFileOpenRequest {
+  paneId: string
+  reference: string
+  selectedPath?: string
+}
+
+/**
+ * A GUARDA do dialeto do CHAT. A escolha do painel segue a régua da seleção no
+ * resolver (`resolve` com `selectedPath`): relativa, sem `..` e sem raiz de
+ * disco — ela nomeia um arquivo DENTRO da conversa, nunca um lugar do sistema.
+ */
+export function guiChatFileRequest(target: unknown): GuiChatFileOpenRequest | null {
+  if (!target || typeof target !== 'object') return null
+  const value = target as { paneId?: unknown; reference?: unknown; selectedPath?: unknown }
+  if (typeof value.paneId !== 'string') return null
+  if (value.paneId.length === 0 || value.paneId.length > MAX_ID_LENGTH) return null
+  const reference = acceptableReference(value.reference)
+  if (reference == null) return null
+  if (value.selectedPath === undefined) return { paneId: value.paneId, reference }
+  const selected = acceptableReference(value.selectedPath)
+  if (selected == null) return null
+  if (selected.startsWith('/') || selected.startsWith('\\') || /^[a-zA-Z]:/u.test(selected)) {
+    return null
+  }
+  return { paneId: value.paneId, reference, selectedPath: selected }
+}
+
+/**
  * A GUARDA. Devolve o pedido normalizado — ou `null`, e então nada atravessa a
  * ponte. É o único caminho por onde o renderer fala com `files:openExternal`.
  */
@@ -157,7 +236,10 @@ export function fileContextRequest(target: unknown): FileOpenRequest | null {
  */
 export function fileContextOptions(target: FileContextTarget): FileContextOption[] {
   if (target.status === 'D') return []
-  if (!fileContextRequest(target)) return []
+  const accepted = isChatFileTarget(target)
+    ? guiChatFileRequest(target)
+    : fileContextRequest(target)
+  if (!accepted) return []
   const family = fileOpenFamily(target.path)
   return [
     {
@@ -224,17 +306,77 @@ export async function runFileOpen(
   if (typeof api?.openExternal !== 'function') return { ok: false, error: NO_BRIDGE }
   try {
     const raw = await api.openExternal(request.projectId, request.root, request.path, mode)
-    if (!raw || typeof raw !== 'object') {
-      return { ok: false, error: 'o canal de abrir arquivo não respondeu' }
-    }
-    if (raw.ok === true) {
-      return { ok: true, action: raw.action === 'reveal' ? 'reveal' : 'external' }
-    }
-    const error = (raw as { error?: unknown }).error
-    return {
-      ok: false,
-      error: typeof error === 'string' && error ? error : 'não deu para abrir este arquivo agora'
-    }
+    return openOutcome(raw)
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/** A resposta do main (dos DOIS canais) vira o mesmo desfecho para a tela. */
+function openOutcome(raw: FileExternalOpenResult | GuiFileExternalOpenResult): FileOpenOutcome {
+  if (!raw || typeof raw !== 'object') {
+    return { ok: false, error: 'o canal de abrir arquivo não respondeu' }
+  }
+  if (raw.ok === true) {
+    return { ok: true, action: raw.action === 'reveal' ? 'reveal' : 'external' }
+  }
+  const error = (raw as { error?: unknown }).error
+  return {
+    ok: false,
+    error: typeof error === 'string' && error ? error : 'não deu para abrir este arquivo agora'
+  }
+}
+
+interface GuiChatFileOpenBridge {
+  fileOpenExternal: (
+    paneId: string,
+    reference: string,
+    selectedPath: string | undefined,
+    mode: FileOpenMode
+  ) => Promise<GuiFileExternalOpenResult>
+}
+
+/**
+ * ESPELHO DECLARADO de `guiApi.fileOpenExternal` (src/renderer/src/guiApi.ts),
+ * que é o par tipado deste canal para o resto do renderer.
+ *
+ * Este módulo NÃO importa o `guiApi` de propósito: ele é carregado DIRETO pelo
+ * node nas suítes (`--experimental-strip-types`), e import relativo sem extensão
+ * não resolve fora do bundler. O cast estreito é resolvido A CADA CHAMADA porque
+ * o namespace do preload pode nascer depois deste módulo ser importado.
+ */
+function guiBridge(): Partial<GuiChatFileOpenBridge> | undefined {
+  return (window as unknown as { synkora?: { gui?: Partial<GuiChatFileOpenBridge> } }).synkora?.gui
+}
+
+const NO_GUI_BRIDGE =
+  'reinicie o app (npm run dev) para abrir arquivo fora do Synkora — este chat ainda '
+  + 'não tem a ponte'
+
+const CHAT_REFUSED =
+  'este caminho não pode ser aberto: o chat só abre arquivo de dentro da pasta desta conversa'
+
+/**
+ * A saída de fora do app para um arquivo CITADO NO FIO. O main resolve a
+ * conversa pelo `paneId` e o arquivo pelo resolver físico antes de tocar em
+ * `shell.*`; aqui a guarda serve para o app não pedir o impossível.
+ */
+export async function runGuiChatFileOpen(
+  mode: FileOpenMode,
+  target: FileContextTarget
+): Promise<FileOpenOutcome> {
+  const request = guiChatFileRequest(target)
+  if (!request) return { ok: false, error: CHAT_REFUSED }
+  const api = guiBridge()
+  if (typeof api?.fileOpenExternal !== 'function') return { ok: false, error: NO_GUI_BRIDGE }
+  try {
+    const raw = await api.fileOpenExternal(
+      request.paneId,
+      request.reference,
+      request.selectedPath,
+      mode
+    )
+    return openOutcome(raw)
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }

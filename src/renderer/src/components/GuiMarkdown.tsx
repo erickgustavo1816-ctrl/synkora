@@ -3,6 +3,13 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { guiApi, type GuiFileOpenResult } from '../guiApi'
 import { findGuiFileTokens, guiInlineCodeFileToken } from '../guiFileTokens'
+import {
+  isChatFileTarget,
+  runGuiChatFileOpen,
+  type ChatFileContextTarget,
+  type FileContextTarget
+} from '../guiFileContextMenu'
+import GuiFileContextMenu, { useFileContextMenu } from './GuiFileContextMenu'
 import GuiFileOpenPanel from './GuiFileOpenPanel'
 
 const GUI_MARKDOWN_TAGS = [
@@ -56,10 +63,24 @@ function fileButton(token: string): HTMLButtonElement {
   button.type = 'button'
   button.className = 'gui-file-link'
   button.dataset.guiFileToken = token
-  button.title = `Abrir ${token} no Synkora`
+  // Rodada 7-D: o clique continua lendo aqui; o botão direito (e a tecla de
+  // menu) abre ONDE ABRIR — inclusive fora do app.
+  button.title = `Abrir ${token} no Synkora · botão direito: onde abrir`
   button.setAttribute('aria-label', `Abrir arquivo ${token}`)
+  button.setAttribute('aria-haspopup', 'menu')
   button.textContent = token
   return button
+}
+
+/** O token clicado, se o gesto nasceu DENTRO desta mensagem. */
+function fileTokenFrom(
+  event: React.SyntheticEvent<HTMLDivElement>,
+  node: EventTarget | null
+): HTMLButtonElement | null {
+  if (!(node instanceof Element)) return null
+  const button = node.closest('button[data-gui-file-token]')
+  if (!(button instanceof HTMLButtonElement)) return null
+  return event.currentTarget.contains(button) ? button : null
 }
 
 /** O HTML já passou por DOMPurify. Esta transformação pós-sanitize opera
@@ -224,33 +245,85 @@ export default function GuiMarkdown({
     setFileResult(result)
   }, [clearFileBusy, paneId])
 
-  const handleLinkOpenAttempt = useCallback((event: React.MouseEvent<HTMLDivElement>): void => {
-    const target = event.target
-    if (!(target instanceof Element)) return
+  /** Lê o arquivo AQUI, na folha de código. `trigger` é o token que iniciou o
+   *  gesto — quando ele já saiu do fio (mensagem substituída), a leitura segue
+   *  mesmo assim, só sem o pisca do botão e sem foco de volta. */
+  const readFileHere = useCallback(
+    (trigger: HTMLButtonElement | null, reference: string): void => {
+      if (fileBusyRef.current) return
+      fileTriggerRef.current?.classList.remove('gui-file-opening')
+      fileTriggerRef.current = trigger
+      void openFileReference(reference)
+    },
+    [openFileReference]
+  )
 
-    const fileLink = target.closest('button[data-gui-file-token]')
-    if (fileLink instanceof HTMLButtonElement && event.currentTarget.contains(fileLink)) {
+  const handleLinkOpenAttempt = useCallback((event: React.MouseEvent<HTMLDivElement>): void => {
+    const fileLink = fileTokenFrom(event, event.target)
+    if (fileLink) {
       event.stopPropagation()
       const reference = fileLink.dataset.guiFileToken
-      if (!reference || fileBusyRef.current) return
-      fileTriggerRef.current?.classList.remove('gui-file-opening')
-      fileTriggerRef.current = fileLink
-      void openFileReference(reference)
+      if (reference) readFileHere(fileLink, reference)
       return
     }
 
+    const target = event.target
+    if (!(target instanceof Element)) return
     const link = target.closest('a[href]')
     if (!(link instanceof HTMLAnchorElement) || !event.currentTarget.contains(link)) return
 
     // Enter sintetiza o mesmo click nativo; não há atalho paralelo que possa
     // atrasar ou duplicar a abertura do destino externo.
     beginLinkOpenFeedback(link)
-  }, [beginLinkOpenFeedback, openFileReference])
+  }, [beginLinkOpenFeedback, readFileHere])
+
+  // ONDE ABRIR O ARQUIVO DO FIO (rodada 7, C1 — a metade do CHAT). O clique
+  // ESQUERDO não muda uma vírgula: lê aqui, na folha de código. O botão direito
+  // (e a tecla de menu) abre as outras duas saídas do dono — programa padrão do
+  // sistema e mostrar na pasta —, que atravessam o canal do PANE.
+  const menuAnchorRef = useRef<HTMLButtonElement | null>(null)
+
+  const openFromMenu = useCallback((menuTarget: FileContextTarget): void => {
+    if (!isChatFileTarget(menuTarget)) return
+    const anchor = menuAnchorRef.current
+    readFileHere(anchor?.isConnected ? anchor : null, menuTarget.reference)
+  }, [readFileHere])
+
+  const fileMenu = useFileContextMenu(openFromMenu, runGuiChatFileOpen)
+  // O controlador é um objeto novo a cada render; os gestos dependem só das
+  // funções dele, que são estáveis.
+  const { openFromPointer, openFromKeyboard } = fileMenu
+
+  const tokenTarget = useCallback((fileLink: HTMLButtonElement): ChatFileContextTarget | null => {
+    const reference = fileLink.dataset.guiFileToken
+    // O token é o que o AGENTE escreveu: quem normaliza é o resolver do main.
+    return reference ? { paneId, reference, path: reference } : null
+  }, [paneId])
+
+  const handleTokenContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>): void => {
+    const fileLink = fileTokenFrom(event, event.target)
+    if (!fileLink) return
+    const target = tokenTarget(fileLink)
+    if (!target) return
+    menuAnchorRef.current = fileLink
+    openFromPointer(event, target, fileLink)
+  }, [openFromPointer, tokenTarget])
+
+  const handleTokenMenuKey = useCallback((event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const fileLink = fileTokenFrom(event, event.target)
+    if (!fileLink) return
+    const target = tokenTarget(fileLink)
+    if (!target) return
+    menuAnchorRef.current = fileLink
+    openFromKeyboard(event, target, fileLink)
+  }, [openFromKeyboard, tokenTarget])
 
   return (
     <div
       className={className ? `gui-md ${className}` : 'gui-md'}
       onClickCapture={handleLinkOpenAttempt}
+      onContextMenu={handleTokenContextMenu}
+      onKeyDown={handleTokenMenuKey}
     >
       <div
         className="gui-md-content"
@@ -260,15 +333,29 @@ export default function GuiMarkdown({
       <span className="gui-link-opening-status" role="status" aria-live="polite" aria-atomic="true">
         {openingLinkLabel ?? fileOpeningLabel}
       </span>
+      {/* Recusa do sistema ao pé da mensagem: onde o gesto aconteceu. */}
+      {fileMenu.notice && <p className="gui-file-open-notice">// {fileMenu.notice}</p>}
       {fileResult && (
         <GuiFileOpenPanel
+          paneId={paneId}
           result={fileResult}
           busy={fileBusy}
           onChoose={(path) => {
             const reference = fileReferenceRef.current
             if (reference) void openFileReference(reference, path)
           }}
+          onReopen={(reference, selectedPath) => void openFileReference(reference, selectedPath)}
           onClose={() => closeFilePanel(true)}
+        />
+      )}
+      {fileMenu.menu && (
+        <GuiFileContextMenu
+          target={fileMenu.menu.target}
+          options={fileMenu.menu.options}
+          x={fileMenu.menu.x}
+          y={fileMenu.menu.y}
+          onChoose={fileMenu.choose}
+          onDismiss={fileMenu.dismiss}
         />
       )}
     </div>

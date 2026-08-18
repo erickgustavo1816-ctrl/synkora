@@ -826,6 +826,11 @@ export function installDevMock(): void {
         reason: 'unavailable',
         error: 'arquivos do chat só abrem no app'
       }),
+      fileOpenExternal: async () => ({
+        ok: false,
+        reason: 'unavailable',
+        error: 'abrir arquivo fora do app só funciona no app'
+      }),
       onLive: () => () => undefined,
       visibility: () => undefined,
       presented: () => undefined,

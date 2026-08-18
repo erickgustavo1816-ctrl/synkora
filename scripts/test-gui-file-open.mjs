@@ -29,6 +29,11 @@ writeFileSync(join(cwd, 'packages', 'ui', 'components', 'unique.ts'), 'export {}
 writeFileSync(join(cwd, 'one', 'duplicate.ts'), 'one\n')
 writeFileSync(join(cwd, 'two', 'duplicate.ts'), 'two\n')
 writeFileSync(join(cwd, 'manual.pdf'), '%PDF synthetic')
+// A entrega que o dono clica no fio (rodada 7-D) e um homônimo raso/profundo,
+// para provar a escolha do painel fechando ambiguidade de NOME CURTO.
+writeFileSync(join(cwd, 'src', 'relatorio.html'), '<!doctype html><title>x</title>')
+writeFileSync(join(cwd, 'nota.md'), 'raso\n')
+writeFileSync(join(cwd, 'one', 'nota.md'), 'fundo\n')
 writeFileSync(join(cwd, 'run.exe'), 'not really executable')
 writeFileSync(join(cwd, 'script.ps1'), 'Write-Host no')
 writeFileSync(join(cwd, '.env'), 'SECRET=redacted')
@@ -143,18 +148,36 @@ test('recusa junction antes de seguir o alvo', { skip: !junctionAvailable }, () 
  * os alcança; a normalização mantém isso verdadeiro se algum deles crescer.
  * Marcador que não resolve FALHA ALTO: recorte que degrada em silêncio (virar o
  * arquivo inteiro, ou vazio) é guarda morto fingindo estar vivo.
+ *
+ * Rodada 7-D: o canal IRMÃO (`gui:fileOpenExternal`) nasceu logo abaixo e ele
+ * PODE executar a associação do sistema — por ordem do dono, e só depois da
+ * mesma cerca. Por isso o recorte do preview agora termina nele: cada um tem o
+ * seu contrato, e nenhum dos dois passa a valer pelo silêncio do outro.
  */
 const FILE_OPEN_START = "'gui:fileOpen'"
-const FILE_OPEN_END = "ipcMain.handle('gui:attach'"
+const FILE_OPEN_END = "'gui:fileOpenExternal'"
+const EXTERNAL_OPEN_START = "'gui:fileOpenExternal'"
+const EXTERNAL_OPEN_END = "ipcMain.handle('gui:attach'"
 
-function fileOpenHandlerRegion(source) {
+function handlerRegion(source, startMarker, endMarker) {
   const normalized = source.replace(/\r\n/gu, '\n')
-  const start = normalized.indexOf(FILE_OPEN_START)
-  assert.notEqual(start, -1, `marcador inicial sumiu de ipc/gui.ts: ${FILE_OPEN_START}`)
-  const end = normalized.indexOf(FILE_OPEN_END, start)
-  assert.notEqual(end, -1, `marcador final sumiu de ipc/gui.ts: ${FILE_OPEN_END}`)
+  const start = normalized.indexOf(startMarker)
+  assert.notEqual(start, -1, `marcador inicial sumiu de ipc/gui.ts: ${startMarker}`)
+  const end = normalized.indexOf(endMarker, start + startMarker.length)
+  assert.notEqual(end, -1, `marcador final sumiu de ipc/gui.ts: ${endMarker}`)
   return normalized.slice(start, end)
 }
+
+function fileOpenHandlerRegion(source) {
+  return handlerRegion(source, FILE_OPEN_START, FILE_OPEN_END)
+}
+
+function externalOpenHandlerRegion(source) {
+  return handlerRegion(source, EXTERNAL_OPEN_START, EXTERNAL_OPEN_END)
+}
+
+const ipcSourceText = () =>
+  readFileSync(new URL('../src/main/ipc/gui.ts', import.meta.url), 'utf8')
 
 test('fallback apenas revela: nenhuma associação externa executa o arquivo', () => {
   const resolver = new GuiFileResolver()
@@ -183,4 +206,126 @@ test('fallback apenas revela: nenhuma associação externa executa o arquivo', (
     )
   )
   assert.match(regression, /shell\.openPath/u)
+})
+
+/**
+ * RODADA 7-D — "abrir onde eu quiser" no CHAT (esclarecimento do dono).
+ *
+ * A metade entregue na rodada 7 pousou na aba Arquivos e no trilho de entrega;
+ * a superfície que ele QUERIA é o fio: o agente cita um `.html`, o dono clica no
+ * token e cai no painel de código sem saída. Agora o botão direito no token (e
+ * no painel aberto) oferece as mesmas três saídas — e a de fora do app passa por
+ * ESTE canal, que é irmão do preview e usa a MESMA cerca (o `cwd` do pane, o
+ * resolver físico), nunca a raiz-por-ID da aba Arquivos.
+ */
+test('a rota externa do CHAT resolve pelo cwd do pane antes de tocar no shell', () => {
+  const handler = externalOpenHandlerRegion(ipcSourceText())
+
+  assert.ok(
+    handler.includes('extras.assertAppRendererSender(e)'),
+    'canal que dispara programa do sistema tem que autenticar o remetente'
+  )
+  assert.ok(
+    handler.includes('registry.cwdOf(paneId)'),
+    'a raiz precisa vir do registro do pane, nunca do renderer'
+  )
+  assert.match(
+    handler,
+    /fileResolver\.resolve\(cwd, reference, selectedPath\)/u,
+    'a rota externa precisa passar pelo MESMO resolver do preview'
+  )
+
+  // O que vai para o sistema é SEMPRE o caminho que o resolver provou.
+  for (const call of ['shell.openPath(', 'shell.showItemInFolder(']) {
+    const at = handler.indexOf(call)
+    assert.notEqual(at, -1, `chamada ausente: ${call}`)
+    assert.ok(
+      handler.slice(at + call.length).startsWith('resolved.file.absolutePath'),
+      `${call} recebeu algo que não veio do resolver`
+    )
+    assert.ok(handler.indexOf('fileResolver.resolve(') < at, `${call} roda antes do resolver`)
+  }
+  assert.equal(
+    /shell\.(?:openPath|showItemInFolder)\(\s*(?:reference|selectedPath|paneId|cwd)/u.test(handler),
+    false,
+    'caminho cru do renderer chegando ao shell'
+  )
+
+  // O modo do menu vira o verbo do sistema, e nada além dos dois existe.
+  assert.match(handler, /mode === 'reveal' \? 'reveal' : 'default'/u)
+
+  // CONTROLE NEGATIVO do recorte: com o caminho cru plantado, o guarda acusa.
+  const forged = externalOpenHandlerRegion(
+    ipcSourceText().replace(
+      'shell.openPath(resolved.file.absolutePath)',
+      'shell.openPath(reference)'
+    )
+  )
+  assert.match(forged, /shell\.openPath\(reference\)/u, 'o recorte não alcança a chamada real')
+})
+
+test('a rota externa recusa por CLASSE e nunca journaliza caminho', () => {
+  const handler = externalOpenHandlerRegion(ipcSourceText())
+
+  // Ambiguidade não vira aposta: a recusa NOMEIA a receita (escolher no painel).
+  assert.match(handler, /resolved\.reason === 'ambiguous'/u, 'nome ambíguo virou escolha do acaso')
+  assert.match(handler, /abra no app/u, 'recusa sem receita é beco sem saída')
+
+  const details = handler.match(/detail: \{[^}]*\}/gu) ?? []
+  assert.ok(details.length > 0, 'a rota nova não deixa rastro nenhum na caixa-preta')
+  for (const detail of details) {
+    for (const leak of ['reference', 'selectedPath', 'absolutePath', 'path', 'cwd', 'error']) {
+      assert.equal(detail.includes(leak), false, `caminho/erro no journal: ${detail}`)
+    }
+  }
+
+  // A cerca do domínio gui continua de pé no arquivo inteiro.
+  const ipc = ipcSourceText()
+  assert.ok((ipc.match(/extras\.assertAppRendererSender\(e\)/gu) ?? []).length >= 20, 'a cerca do domínio gui encolheu')
+})
+
+test('a rota externa herda a cerca do resolver: nada perigoso alcança o sistema', () => {
+  // O recorte precisa existir para esta prova valer (rota nova, cerca velha).
+  assert.ok(externalOpenHandlerRegion(ipcSourceText()).length > 0)
+
+  const resolver = new GuiFileResolver()
+  for (const candidate of ['run.exe', 'script.ps1', '.env', '../outside/escape.txt']) {
+    const refused = resolver.resolve(cwd, candidate)
+    assert.equal(refused.ok, false, candidate)
+    if (!refused.ok) assert.equal(refused.reason, 'denied', candidate)
+  }
+
+  // A entrega do dono (.html citada no fio) resolve para um absoluto DENTRO do
+  // worktree — é esse, e só esse, que o `shell.openPath` recebe.
+  const page = resolver.resolve(cwd, 'relatorio.html')
+  assert.equal(page.ok, true)
+  if (!page.ok) return
+  assert.equal(page.file.path, 'src/relatorio.html')
+  assert.equal(page.file.absolutePath, join(cwd, 'src', 'relatorio.html'))
+})
+
+test('nome ambíguo recusa a saída externa; a escolha do painel a destrava', () => {
+  assert.ok(externalOpenHandlerRegion(ipcSourceText()).length > 0)
+
+  const resolver = new GuiFileResolver()
+  const ambiguous = resolver.resolve(cwd, 'nota.md')
+  assert.equal(ambiguous.ok, false)
+  if (ambiguous.ok) return
+  assert.equal(ambiguous.reason, 'ambiguous')
+
+  // DIALETO DO PAINEL: referência = caminho já resolvido, escolha = ele mesmo.
+  // É o que fecha a ambiguidade antes de qualquer `shell.*` — inclusive para um
+  // nome curto que tem homônimo mais fundo na árvore.
+  const bare = resolver.resolve(cwd, 'nota.md', 'nota.md')
+  assert.equal(bare.ok, true)
+  if (bare.ok) assert.equal(bare.file.path, 'nota.md')
+
+  const deep = resolver.resolve(cwd, 'one/nota.md', 'one/nota.md')
+  assert.equal(deep.ok, true)
+  if (deep.ok) assert.equal(deep.file.path, 'one/nota.md')
+
+  // Escolha que não pertence à referência continua recusada (nada de forjar).
+  const forged = resolver.resolve(cwd, 'nota.md', 'src/app.ts')
+  assert.equal(forged.ok, false)
+  if (!forged.ok) assert.equal(forged.reason, 'invalid')
 })

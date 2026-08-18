@@ -8,6 +8,8 @@ import type {
   GuiAttachmentAction,
   GuiAttachmentActionResult,
   GuiAttachmentDescriptor,
+  GuiFileExternalOpenMode,
+  GuiFileExternalOpenResult,
   GuiFileOpenResult,
   GuiWorkspaceFilesResult,
   GuiAttachmentPreviewPurpose,
@@ -18,6 +20,7 @@ import type {
 import type { PlanDraft, PlanItemDraft, PlanItemTier, PlanKind } from './planContract'
 
 export type { GuiFileChoice, GuiFileOpenResult, GuiFilePreview } from '../../preload'
+export type { GuiFileExternalOpenMode, GuiFileExternalOpenResult } from '../../preload'
 
 // Ponte tipada do PANE GUI (Synkora 2.0, onda A).
 //
@@ -445,6 +448,12 @@ interface GuiBridge {
     reference: string,
     selectedPath?: string
   ) => Promise<GuiFileOpenResult>
+  fileOpenExternal: (
+    paneId: string,
+    reference: string,
+    selectedPath: string | undefined,
+    mode: GuiFileExternalOpenMode
+  ) => Promise<GuiFileExternalOpenResult>
   attach: (paneId: string, payload: GuiAttachPayload) => Promise<GuiAttachResult>
   attachFolder: (paneId: string) => Promise<GuiAttachResult>
   attachmentPreview: (
@@ -710,6 +719,32 @@ export const guiApi = {
     }
     try {
       return await api.fileOpen(paneId, reference, selectedPath)
+    } catch (error) {
+      return {
+        ok: false,
+        reason: 'unavailable',
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+  },
+
+  /** Manda o arquivo citado no fio para FORA do app (rodada 7, C1 — a metade do
+   *  CHAT). Espelho tipado do canal; o par de transporte que o menu de contexto
+   *  usa mora em `guiFileContextMenu.ts` (ele é carregado direto pelo node nas
+   *  suítes e por isso não pode importar este módulo — o comentário de lá
+   *  aponta para cá). */
+  async fileOpenExternal(
+    paneId: string,
+    reference: string,
+    selectedPath: string | undefined,
+    mode: GuiFileExternalOpenMode
+  ): Promise<GuiFileExternalOpenResult> {
+    const api = bridge()
+    if (!api?.fileOpenExternal) {
+      return { ok: false, reason: 'unavailable', error: NO_BRIDGE }
+    }
+    try {
+      return await api.fileOpenExternal(paneId, reference, selectedPath, mode)
     } catch (error) {
       return {
         ok: false,

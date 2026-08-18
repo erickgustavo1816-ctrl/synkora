@@ -19666,4 +19666,36 @@ details.gui-error-line {
 .gui-file-reader-sheet .files-reader {
   min-height: 0;
 }
+
+/* ——— o mesmo menu no CHAT (rodada 7-D, esclarecimento do dono) ———
+   O dono queria o gesto NO FIO: botão direito no token que o agente citou e no
+   painelzinho de código que ele abre. A fileira do cabeçalho do painel ganha o
+   ↗ "onde abrir" ao lado do fechar — a MESMA caixa do `×`, para a régua da
+   linha continuar sendo uma só. */
+.gui-file-panel-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Mesma caixa 24×24 do `×`; a seta é menor e por isso pede centro explícito. */
+.gui-file-panel-open {
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.gui-file-panel-open[aria-expanded='true'] {
+  border-color: var(--gui-line);
+  color: var(--ink);
+}
+
+/* A MESMA recusa, agora dentro da mensagem do fio: sem a borda de cabeçalho
+   (aqui ela não separaria nada) e encostada no corpo do texto. */
+.gui-md > .gui-file-open-notice {
+  padding: 6px 0 0;
+  border-bottom: none;
+}
 /* ————— fim do BLOCO NOVO de abrir arquivo onde o dono quiser ————— */

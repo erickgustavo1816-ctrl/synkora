@@ -21,7 +21,10 @@ import {
   fileContextOptions,
   fileContextRequest,
   fileOpenFamily,
-  runFileOpen
+  guiChatFileRequest,
+  isChatFileTarget,
+  runFileOpen,
+  runGuiChatFileOpen
 } from '../src/renderer/src/guiFileContextMenu.ts'
 
 const source = (relative) => readFile(new URL(`../${relative}`, import.meta.url), 'utf8')
@@ -29,6 +32,15 @@ const source = (relative) => readFile(new URL(`../${relative}`, import.meta.url)
 const target = (patch = {}) => ({
   projectId: 'proj-1',
   root: { kind: 'mission', missionId: 'mission-1' },
+  path: 'docs/relatorio.html',
+  ...patch
+})
+
+/** O dialeto do CHAT (rodada 7-D): a autoridade é o PANE, e o caminho é a
+ *  referência crua que o agente escreveu no fio. */
+const chatTarget = (patch = {}) => ({
+  paneId: 'pane-1',
+  reference: 'docs/relatorio.html',
   path: 'docs/relatorio.html',
   ...patch
 })
@@ -41,6 +53,22 @@ function stubBridge(impl) {
       files: {
         openExternal: async (projectId, root, relativePath, mode) => {
           calls.push({ projectId, root, relativePath, mode })
+          return impl ? impl() : { ok: true, action: mode === 'reveal' ? 'reveal' : 'external' }
+        }
+      }
+    }
+  }
+  return calls
+}
+
+/** Ponte falsa do canal do CHAT (`gui:fileOpenExternal`). */
+function stubGuiBridge(impl) {
+  const calls = []
+  globalThis.window = {
+    synkora: {
+      gui: {
+        fileOpenExternal: async (paneId, reference, selectedPath, mode) => {
+          calls.push({ paneId, reference, selectedPath, mode })
           return impl ? impl() : { ok: true, action: mode === 'reveal' ? 'reveal' : 'external' }
         }
       }
@@ -257,6 +285,215 @@ test('o preload publica a ponte com o tipo do MAIN (fonte única, sem espelho to
   assert.match(preload, /export type \{[^}]*FileExternalOpenResult/u)
 })
 
+/**
+ * RODADA 7-D — o esclarecimento do dono: a superfície que ele QUERIA é o CHAT.
+ *
+ * "Quando o agente cita um arquivo e eu clico, abre aquele painelzinho de
+ * código — quero o botão direito ali, como o app do Codex faz." O menu, o
+ * modelo e a guarda são os MESMOS; o que muda é o dialeto do pedido: a aba de
+ * arquivos fala `projectId + raiz lógica + caminho relativo`, o chat fala
+ * `paneId + referência` (a autoridade é o `cwd` do pane, como todo o resto do
+ * fio já é).
+ */
+test('o token do fio tem o MESMO menu de três saídas, no dialeto do pane', () => {
+  const options = fileContextOptions(chatTarget())
+  assert.deepEqual(
+    options.map((option) => option.action),
+    ['open-in-app', 'open-default', 'reveal']
+  )
+  assert.deepEqual(options.map((option) => option.label), [
+    'abrir no app',
+    'abrir com o programa padrão',
+    'mostrar na pasta'
+  ])
+  // A dica continua contando PARA ONDE o arquivo vai — o `.html` do dono.
+  assert.match(
+    options.find((option) => option.action === 'open-default').tip,
+    /navegador/u
+  )
+  assert.match(
+    fileContextOptions(chatTarget({ path: 'shot.png', reference: 'shot.png' }))
+      .find((option) => option.action === 'open-default').tip,
+    /imagens|visualizador/u
+  )
+  // No painel já aberto, "abrir no app" diz a verdade: recarrega esta folha.
+  assert.match(
+    fileContextOptions(chatTarget({ current: true }))
+      .find((option) => option.action === 'open-in-app').tip,
+    /já está aberto|recarrega/u
+  )
+  assert.equal(isChatFileTarget(chatTarget()), true)
+  assert.equal(isChatFileTarget(target()), false)
+})
+
+test('GUARDA do dialeto do chat: nada torto atravessa o canal do pane', async () => {
+  const calls = stubGuiBridge()
+  const recusados = [
+    chatTarget({ paneId: '' }),
+    chatTarget({ paneId: 'a'.repeat(300) }),
+    chatTarget({ paneId: 42 }),
+    chatTarget({ reference: '' }),
+    chatTarget({ reference: 'docs/../../segredo.env' }),
+    chatTarget({ reference: 'a'.repeat(4096) }),
+    chatTarget({ reference: 'docs/a\u0000.html' }),
+    chatTarget({ reference: 'docs/a\n.html' }),
+    chatTarget({ reference: 17 }),
+    chatTarget({ selectedPath: '' }),
+    chatTarget({ selectedPath: '../fora.html' }),
+    chatTarget({ selectedPath: 'C:\\Windows\\System32\\calc.exe' }),
+    chatTarget({ selectedPath: 9 })
+  ]
+  for (const bad of recusados) {
+    assert.equal(guiChatFileRequest(bad), null, `guarda deixou passar: ${JSON.stringify(bad)}`)
+    const outcome = await runGuiChatFileOpen('default', bad)
+    assert.equal(outcome.ok, false)
+    assert.ok(outcome.error, 'recusa sem motivo é beco sem saída')
+  }
+  assert.equal(calls.length, 0, 'referência torta do renderer chegou ao IPC')
+
+  // Referência boa atravessa INTACTA (quem normaliza é o resolver do main), e o
+  // modo do menu vira o verbo do sistema.
+  assert.deepEqual(guiChatFileRequest(chatTarget()), {
+    paneId: 'pane-1',
+    reference: 'docs/relatorio.html'
+  })
+  assert.deepEqual(
+    guiChatFileRequest(chatTarget({ reference: 'nota.md', selectedPath: 'nota.md' })),
+    { paneId: 'pane-1', reference: 'nota.md', selectedPath: 'nota.md' }
+  )
+  assert.deepEqual(await runGuiChatFileOpen('default', chatTarget()), {
+    ok: true,
+    action: 'external'
+  })
+  assert.deepEqual(
+    await runGuiChatFileOpen('reveal', chatTarget({ selectedPath: 'docs/relatorio.html' })),
+    { ok: true, action: 'reveal' }
+  )
+  assert.deepEqual(calls, [
+    {
+      paneId: 'pane-1',
+      reference: 'docs/relatorio.html',
+      selectedPath: undefined,
+      mode: 'default'
+    },
+    {
+      paneId: 'pane-1',
+      reference: 'docs/relatorio.html',
+      selectedPath: 'docs/relatorio.html',
+      mode: 'reveal'
+    }
+  ])
+})
+
+test('os dois dialetos não se misturam — nem por engano de superfície', async () => {
+  const filesCalls = stubBridge()
+  // Alvo do CHAT no abridor da aba de arquivos: recusa, e nada atravessa.
+  const wrongDialect = await runFileOpen('default', chatTarget())
+  assert.equal(wrongDialect.ok, false)
+  assert.ok(wrongDialect.error)
+  assert.equal(filesCalls.length, 0)
+
+  const guiCalls = stubGuiBridge()
+  // E o contrário: alvo da aba de arquivos no abridor do chat.
+  const otherWay = await runGuiChatFileOpen('reveal', target())
+  assert.equal(otherWay.ok, false)
+  assert.ok(otherWay.error)
+  assert.equal(guiCalls.length, 0)
+
+  // Sem a ponte do pane, a recusa NOMEIA a receita (nunca beco sem saída).
+  globalThis.window = { synkora: { gui: {} } }
+  const noBridge = await runGuiChatFileOpen('default', chatTarget())
+  assert.equal(noBridge.ok, false)
+  assert.match(noBridge.error, /npm run dev/u)
+
+  // Ponte que explode no meio vira recusa legível.
+  stubGuiBridge(() => {
+    throw new Error('canal caiu')
+  })
+  const crashed = await runGuiChatFileOpen('default', chatTarget())
+  assert.equal(crashed.ok, false)
+  assert.ok(crashed.error)
+})
+
+test('o menu recebe o ABRIDOR de fora: o padrão é o de sempre, o chat injeta o seu', async () => {
+  const menu = await source('src/renderer/src/components/GuiFileContextMenu.tsx')
+  assert.match(
+    menu,
+    /opener: FileMenuOpener = runFileOpen/u,
+    'o abridor precisa ser injetável, com o dialeto de hoje como padrão'
+  )
+  assert.match(
+    menu,
+    /opener\(action === 'reveal' \? 'reveal' : 'default', current\.target\)/u,
+    'o menu continua grampeado num dialeto só'
+  )
+
+  // As superfícies velhas seguem no dialeto delas; as novas injetam o do pane.
+  for (const velha of ['MissionDeliveryRail', 'FilePreviewPanel']) {
+    const code = await source(`src/renderer/src/components/${velha}.tsx`)
+    assert.ok(code.includes('useFileContextMenu('), `${velha} perdeu o controlador`)
+    assert.equal(
+      code.includes('runGuiChatFileOpen'),
+      false,
+      `${velha} não fala o dialeto do chat`
+    )
+  }
+  for (const nova of ['GuiMarkdown', 'GuiFileOpenPanel']) {
+    const code = await source(`src/renderer/src/components/${nova}.tsx`)
+    assert.ok(code.includes('useFileContextMenu('), `${nova} não monta o controlador`)
+    assert.ok(code.includes('runGuiChatFileOpen'), `${nova} não injeta o abridor do pane`)
+  }
+})
+
+test('o token do chat abre o menu no botão direito e pelo teclado', async () => {
+  const markdown = await source('src/renderer/src/components/GuiMarkdown.tsx')
+  assert.ok(markdown.includes('onContextMenu'), 'botão direito não abre nada no fio')
+  assert.ok(markdown.includes('openFromPointer('), 'o gesto do mouse não abre o menu')
+  assert.ok(markdown.includes('openFromKeyboard('), 'sem teclado o menu é só do mouse')
+  assert.ok(markdown.includes('<GuiFileContextMenu'), 'o fio não monta o menu')
+  assert.ok(
+    markdown.includes("closest('button[data-gui-file-token]')"),
+    'o menu tem que nascer do TOKEN, não da mensagem inteira'
+  )
+  // O CLIQUE ESQUERDO continua exatamente o de sempre.
+  assert.match(markdown, /guiApi\.fileOpen\(paneId, reference, selectedPath\)/u)
+  assert.match(markdown, /aria-haspopup/u, 'o token não anuncia que tem menu')
+  for (const forbidden of ['window.confirm', 'window.alert', 'Menu.popup']) {
+    assert.equal(markdown.includes(forbidden), false, `superfície nativa no fio: ${forbidden}`)
+  }
+})
+
+test('o painel de código ganhou o ↗ — sobre o arquivo JÁ resolvido', async () => {
+  const panel = await source('src/renderer/src/components/GuiFileOpenPanel.tsx')
+  assert.ok(panel.includes('aria-haspopup="menu"'), 'sem gatilho de teclado o menu é só do mouse')
+  assert.ok(panel.includes('onContextMenu'), 'botão direito não abre nada no painel')
+  assert.ok(panel.includes('<GuiFileContextMenu'), 'o painel não monta o menu')
+  // A ambiguidade JÁ está resolvida aqui: referência e escolha são o caminho
+  // que o main provou, então a saída externa nunca cai em "qual arquivo?".
+  assert.match(panel, /reference: preview\.path/u)
+  assert.match(panel, /selectedPath: preview\.path/u)
+  assert.ok(panel.includes('current: true'), 'o painel não diz que o arquivo já está aberto aqui')
+  // A recusa do sistema fica ONDE o gesto aconteceu.
+  assert.ok(panel.includes('gui-file-open-notice'), 'a recusa do sistema não tem lugar no painel')
+})
+
+test('o canal do CHAT existe no preload e no espelho do guiApi', async () => {
+  const preload = await source('src/preload/index.ts')
+  assert.match(preload, /fileOpenExternal:\s*\(/u)
+  assert.ok(preload.includes("ipcRenderer.invoke('gui:fileOpenExternal'"))
+  assert.match(
+    preload,
+    /GuiFileExternalOpenResult[\s\S]{0,400}from '\.\.\/main\/ipc\/gui'/u,
+    'o tipo do canal novo tem que vir do MAIN (fonte única)'
+  )
+  assert.match(preload, /export type \{[^}]*GuiFileExternalOpenResult/u)
+
+  const api = await source('src/renderer/src/guiApi.ts')
+  assert.match(api, /fileOpenExternal:\s*\(/u, 'o espelho do guiApi não declara o canal')
+  assert.match(api, /async fileOpenExternal\(/u, 'o guiApi não implementa o canal')
+  assert.ok(api.includes('GuiFileExternalOpenResult'))
+})
+
 test('o bloco de estilo novo é papel & painel, sem animação e sem tema escuro', async () => {
   const css = await source('src/renderer/src/global.css')
   const block = css.slice(css.indexOf('BLOCO NOVO: abrir arquivo onde o dono quiser'))
@@ -268,4 +505,10 @@ test('o bloco de estilo novo é papel & painel, sem animação e sem tema escuro
   assert.ok(block.includes('.gui-file-reader-backdrop'))
   assert.equal(/animation:|@keyframes|transition:/u.test(block), false, 'animação nova no bloco')
   assert.equal(/var\(--panel/u.test(block), false, 'painel escuro é exclusivo do TerminalPane')
+
+  // Rodada 7-D: a fileira de ações do painel de código do CHAT mora no MESMO
+  // bloco (uma decisão, um lugar) e segue a régua acima.
+  assert.ok(block.includes('.gui-file-panel-actions'), 'o ↗ do painel do chat não tem lugar')
+  assert.ok(block.includes('.gui-file-panel-open'))
+  assert.match(block, /\.gui-file-panel-open\[aria-expanded='true'\]/u, 'o ↗ aberto não se declara')
 })

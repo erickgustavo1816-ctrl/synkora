@@ -5,7 +5,9 @@ import {
   runFileOpen,
   type FileContextAction,
   type FileContextOption,
-  type FileContextTarget
+  type FileContextTarget,
+  type FileOpenMode,
+  type FileOpenOutcome
 } from '../guiFileContextMenu'
 
 // MENU DE CONTEXTO DE ARQUIVO (rodada 7, C1) — a superfície das três saídas.
@@ -73,7 +75,9 @@ export default function GuiFileContextMenu({
     itemRefs.current[(index + options.length) % options.length]?.focus()
   }
 
-  const name = target.path.split('/').at(-1) ?? target.path
+  // O caminho pode vir do FIO (token cru do agente, com `\` do Windows): o nome
+  // do menu tem que ser o arquivo nos dois dialetos.
+  const name = target.path.replace(/\\/g, '/').split('/').at(-1) || target.path
 
   return createPortal(
     <div
@@ -136,27 +140,49 @@ interface FileContextMenuState {
   y: number
 }
 
+/**
+ * O ABRIDOR das duas saídas de fora do app. Injetável porque o pedido tem
+ * DIALETOS: a aba de arquivos fala raiz-por-ID (`files:openExternal`, o padrão),
+ * o chat fala pane+referência (`gui:fileOpenExternal`). O menu, o teclado e a
+ * recusa em texto são os mesmos nos dois.
+ */
+export type FileMenuOpener = (
+  mode: FileOpenMode,
+  target: FileContextTarget
+) => Promise<FileOpenOutcome>
+
 export interface FileContextMenuController {
   menu: FileContextMenuState | null
   /** última recusa do sistema; a superfície mostra e some no gesto seguinte */
   notice: string | null
-  openFromPointer(event: React.MouseEvent, target: FileContextTarget): void
-  openFromKeyboard(event: React.KeyboardEvent, target: FileContextTarget): void
+  /** `anchor` só é preciso quando o gesto vem por DELEGAÇÃO (o fio escuta a
+   *  mensagem inteira e o alvo real é o token clicado, não o `currentTarget`) */
+  openFromPointer(
+    event: React.MouseEvent,
+    target: FileContextTarget,
+    anchor?: HTMLElement | null
+  ): void
+  openFromKeyboard(
+    event: React.KeyboardEvent,
+    target: FileContextTarget,
+    anchor?: HTMLElement | null
+  ): void
   openFromAnchor(element: HTMLElement | null, target: FileContextTarget): void
   choose(action: FileContextAction): void
   dismiss(restoreFocus: boolean): void
 }
 
 /**
- * O estado do menu vive AQUI porque duas superfícies o usam (o trilho de
- * entrega e a bancada de leitura) e nenhuma das duas deve reimplementar o
- * teclado, o foco de volta nem a recusa em texto.
+ * O estado do menu vive AQUI porque quatro superfícies o usam (o trilho de
+ * entrega, a bancada de leitura, o token do chat e o painel de código do chat) e
+ * nenhuma delas deve reimplementar o teclado, o foco de volta nem a recusa.
  *
  * `openInApp` é a saída DEFAULT — o que o clique de sempre já fazia; as outras
- * duas atravessam o `files:openExternal` pela guarda de `guiFileContextMenu.ts`.
+ * duas atravessam o canal do `opener` pela guarda de `guiFileContextMenu.ts`.
  */
 export function useFileContextMenu(
-  openInApp: (target: FileContextTarget) => void
+  openInApp: (target: FileContextTarget) => void,
+  opener: FileMenuOpener = runFileOpen
 ): FileContextMenuController {
   const [menu, setMenu] = useState<FileContextMenuState | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -176,10 +202,14 @@ export function useFileContextMenu(
   )
 
   const openFromPointer = useCallback(
-    (event: React.MouseEvent, target: FileContextTarget): void => {
+    (event: React.MouseEvent, target: FileContextTarget, anchor?: HTMLElement | null): void => {
       event.preventDefault()
       event.stopPropagation()
-      open(target, { x: event.clientX, y: event.clientY }, event.currentTarget as HTMLElement)
+      open(
+        target,
+        { x: event.clientX, y: event.clientY },
+        anchor === undefined ? (event.currentTarget as HTMLElement) : anchor
+      )
     },
     [open]
   )
@@ -193,12 +223,12 @@ export function useFileContextMenu(
   )
 
   const openFromKeyboard = useCallback(
-    (event: React.KeyboardEvent, target: FileContextTarget): void => {
+    (event: React.KeyboardEvent, target: FileContextTarget, anchor?: HTMLElement | null): void => {
       // As MESMAS teclas da árvore de arquivos: tecla de menu e Shift+F10.
       const wanted = event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)
       if (!wanted) return
       event.preventDefault()
-      openFromAnchor(event.currentTarget as HTMLElement, target)
+      openFromAnchor(anchor === undefined ? (event.currentTarget as HTMLElement) : anchor, target)
     },
     [openFromAnchor]
   )
@@ -218,13 +248,13 @@ export function useFileContextMenu(
         openInApp(current.target)
         return
       }
-      void runFileOpen(action === 'reveal' ? 'reveal' : 'default', current.target).then(
+      void opener(action === 'reveal' ? 'reveal' : 'default', current.target).then(
         (outcome) => {
           setNotice(outcome.ok ? null : (outcome.error ?? 'não deu para abrir este arquivo agora'))
         }
       )
     },
-    [menu, openInApp]
+    [menu, openInApp, opener]
   )
 
   return { menu, notice, openFromPointer, openFromKeyboard, openFromAnchor, choose, dismiss }
