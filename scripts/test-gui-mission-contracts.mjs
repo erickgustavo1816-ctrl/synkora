@@ -89,7 +89,11 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
   for (const role of GUI_MISSION_ROLES) {
     const contract = guiMissionSystemPrompt(role)
     assert.ok(contract.length > 200, `${role}: contrato vazio demais`)
-    assert.ok(contract.length < 2400, `${role}: contrato virou constituição`)
+    // O TETO subiu de 2400 para 2600 UMA vez, em 2026-08-18, para caber a ORDEM
+    // PERMANENTE DA DELEGAÇÃO — a MESMA seção nos três papéis (ordem do dono:
+    // "todo chat que eu criar nunca mais abre subagente dele"). O teto continua
+    // sendo contra CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
+    assert.ok(contract.length < 2600, `${role}: contrato virou constituição`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -106,6 +110,125 @@ test('o dev espera aval antes de trabalho grande e trabalha só no worktree', ()
   const contract = guiMissionSystemPrompt('dev')
   assert.match(contract, /MINI-PLAN/)
   assert.match(contract, /ONLY inside this worktree/i)
+})
+
+// ORDEM PERMANENTE DA DELEGAÇÃO (2026-08-18 — design D4). O dono: "deixe claro
+// pra todo chat que eu criar que ele NUNCA MAIS vai abrir subagentes dele — ele
+// vai abrir via MCP, porque via MCP eu vejo na lateral o MODELO e o EFFORT que
+// subiu; o nativo (Claude E Codex) não me mostra nada". A seção é UMA só e
+// viaja IDÊNTICA nos três papéis; o chat de planejamento não delega e não a
+// recebe. A cerca mecânica (--disallowedTools / features.multi_agent=false)
+// mora no spawn — esta é a metade que o modelo lê.
+
+const DELEGATION_HEADER = 'DELEGATION — STANDING ORDER FROM THE OWNER:'
+
+/** O bloco compartilhado, lido da FONTE (o teste nunca guarda uma cópia dele). */
+function delegationSection(contract) {
+  const at = contract.indexOf(DELEGATION_HEADER)
+  return at < 0 ? undefined : contract.slice(at)
+}
+
+test('a ordem da delegação viaja idêntica nos três papéis', () => {
+  const sections = GUI_MISSION_ROLES.map((role) => {
+    const section = delegationSection(guiMissionSystemPrompt(role))
+    assert.ok(section, `${role}: sem a ordem permanente da delegação`)
+    return section
+  })
+  // FONTE ÚNICA: nenhum papel tem a própria versão da ordem do dono
+  for (const section of sections) assert.equal(section, sections[0])
+  // e ela FECHA o contrato — nada se pendura depois da ordem permanente
+  for (const role of GUI_MISSION_ROLES) {
+    assert.ok(
+      guiMissionSystemPrompt(role).endsWith(sections[0]),
+      `${role}: a ordem não é a última palavra do contrato`
+    )
+  }
+  // tight de propósito: ela viaja em TODO spawn de chat de missão
+  assert.ok(sections[0].length > 600, 'a ordem ficou vaga demais')
+  assert.ok(sections[0].length < 1400, 'a ordem permanente virou constituição')
+})
+
+test('o subagente nativo é PROIBIDO pelos nomes que os binários usam', () => {
+  for (const role of GUI_MISSION_ROLES) {
+    const contract = guiMissionSystemPrompt(role)
+    const mentions = contract
+      .split('\n')
+      .filter((line) => /\bTask\b|\bAgent\b|spawn_agent/.test(line))
+    assert.ok(mentions.length > 0, `${role}: o nativo nem é citado`)
+    // TODA menção é PROIBIÇÃO — nunca uma receita de uso
+    for (const line of mentions) {
+      assert.match(line, /\bnever\b/i, `${role}: menção sem negação: ${line}`)
+    }
+    // Os três nomes REAIS (sondas de 2026-08-18): 'Task' é o id do catálogo do
+    // claude, 'Agent' é o nome que o modelo chama no tool_use, e o codex expõe
+    // functions.collaboration.spawn_agent. Cercar um só deixa porta aberta.
+    const fence = mentions.join('\n')
+    for (const nativeName of ['Task', 'Agent', 'spawn_agent']) {
+      assert.ok(fence.includes(nativeName), `${role}: sem o nome ${nativeName}`)
+    }
+    assert.match(
+      delegationSection(contract),
+      /RETIRED/,
+      `${role}: a aposentadoria não é explícita`
+    )
+  }
+})
+
+test('a ordem nomeia o caminho MCP inteiro: abrir, ver, dirigir, colher e cancelar', () => {
+  const section = delegationSection(guiMissionSystemPrompt('dev'))
+  assert.ok(section, 'sem a ordem permanente da delegação')
+  for (const tool of [
+    'delegate',
+    'helpers_status',
+    'helper_send',
+    'helper_result',
+    'helper_cancel',
+    'list_seats'
+  ]) {
+    assert.ok(section.includes(tool), `sem a ferramenta ${tool}`)
+  }
+  // as duas grafias: o codex vê o nome cru, o claude vê mcp__<servidor>__<tool>
+  assert.match(section, /mcp__synkora__/)
+  // O PORQUÊ da ordem — o que o dono vê na lateral e o nativo nunca mostrou
+  assert.match(section, /sidebar/i)
+  for (const visible of ['model', 'effort', 'account', 'activity']) {
+    assert.match(section, new RegExp(visible), `a lateral mostra ${visible}`)
+  }
+  // "abre 5 opus" = UMA chamada com 5 ajudantes, nunca cinco chamadas
+  assert.match(section, /ONE delegate with 5 helpers/)
+  // cross-CLI é cidadão de primeira classe, nos dois sentidos
+  assert.match(section, /[Cc]ross-CLI/)
+  assert.match(section, /gpt-\*/)
+  // controle total sobre o ajudante vivo (a ordem "como se fosse nativo")
+  assert.match(section, /long-poll/i)
+  assert.match(section, /cheap/i)
+  // frota grande escolhe a conta pelo limite que SOBRA (list_seats)
+  assert.match(section, /limit left/i)
+  // eles dividem ESTE worktree: a fronteira é o arquivo
+  assert.match(section, /file boundaries/)
+  // MCP fora do ar: falar com o dono, nunca cair no nativo
+  assert.match(section, /catalog/i)
+  assert.match(section, /never fall back/i)
+})
+
+test('o planejador não delega: a ordem não entra no chat de plano', () => {
+  const planning = guiPlanningSystemPrompt()
+  assert.equal(delegationSection(planning), undefined, 'o planejador ganhou ordem de delegação')
+  for (const tool of [
+    'delegate',
+    'helpers_status',
+    'helper_send',
+    'helper_result',
+    'helper_cancel',
+    'list_seats'
+  ]) {
+    assert.equal(planning.includes(tool), false, `o planejador não tem ${tool}`)
+  }
+  assert.equal(/spawn_agent/.test(planning), false)
+  // e o kit dele continua o de planos, intocado por esta mudança
+  for (const tool of ['list_plans', 'get_plan', 'propose_plan', 'update_plan', 'delete_plan']) {
+    assert.ok(planning.includes(tool), `sumiu a ferramenta ${tool}`)
+  }
 })
 
 // PRIMEIRO TURNO: é o único briefing que o pane recebe.
