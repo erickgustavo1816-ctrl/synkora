@@ -101,6 +101,39 @@ Review pessoal do diff INTEIRO das quatro frentes.
   antigas ("tá ótimo"), rodada de cores --ok/--accent/--warn ("por enquanto
   não vi problema").
 
+## ✅ RODADA 7 (mesma noite — 5 achados da validação ao vivo do dono)
+
+O dono validou o ciclo com DUAS frotas cross-CLI e achou 5 pontos; 3 frentes
+Opus max (A na árvore; B e C em worktrees `Synkora-wt-r7*`, integradas por
+cherry-pick e já removidos). Commits `0fe177d` · `f5f25ad` · `632ad82` ·
+`b6dfad0`; design em `.synkora/reports/DESIGN_RODADA_7_2026-08-18.md`:
+
+1. **Wake pelos bastidores** (A1): o despertador (settle E boot) deixou o
+   `send()` — `deliverBackstage()` fatorou o caminho do `announce` (turno abre,
+   nada no fio, sem bolha "VOCÊ") e `paneBusyReason()` compartilha as guardas
+   de fila/troca de executor. Blackbox marca `silent: true`. Bônus preso em
+   teste: o wake não queima mais o `pendingBriefing`.
+2. **Entrega é INSUMO** (A2): personas dos dois lados — delegador nunca
+   commita/copia relatório de helper (o 43d3270 do teste) e apaga o que a
+   frota deixou; helper escreve pesquisa só em `.synkora/`. Tetos 3000/4200.
+3. **Fim da ficha fantasma** (B1): `helperId` no input não promove mais —
+   promoção só por NOME (delegate / helper:* / type); o long-poll do
+   `helper_result` volta a ser card comum.
+4. **Painel D8 digno** (B2): labels do seletor do composer injetadas no módulo
+   puro (`GuiDelegationModelNamer`), id cru vira metadado; polish impeccable
+   (contraste 6,3:1, aria-pressed/controls, alvos 30px, esperando≠vazio, pino
+   fora do catálogo visível). Ficha da lateral com `guiSubagentModelName`.
+5. **Abrir arquivo onde quiser** (C1): menu de contexto custom (portal,
+   teclado completo) no trilho da entrega e na bancada de leitura — abrir no
+   app / programa padrão do sistema / mostrar na pasta; IPC
+   `files:openExternal` guardado pelo resolver do preview (caminho absoluto
+   nasce e morre no main). Suíte nova `test:gui-file-context-menu` registrada
+   no gate raiz pelo orquestrador.
+
+Disciplina: vermelho-antes-de-verde nas 3 frentes (registrado nos relatórios
+`r7a/r7b/r7c` do scratchpad), review do orquestrador no diff inteiro, gate
+raiz NPM-EXIT=0 pós-integração.
+
 ## ⚡ PRÓXIMO (nesta ordem)
 
 1. **VALIDAÇÃO DO DONO ao vivo** do ciclo redondo completo: abrir frota → ver
