@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { missionTypeOf, type GuiItem, type Mission } from '../store'
 import { missionWorkspace, type MissionWorkspaceSummary } from '../missionWorkspace'
 import { MISSION_STATUS_LABEL as STATUS_LABEL } from '../missionPresentation'
@@ -45,6 +45,47 @@ function fileStatus(status: string): { glyph: string; label: string; cls: string
   return FILE_STATUS[status] ?? { glyph: '·', label: status, cls: 'mod' }
 }
 
+// ————— O TRILHO MEDE SOZINHO (onda W4, 2026-08-18 — bug ao vivo do dono) —————
+//
+// Ele viu um commit nascer e um arquivo aparecer, e o trilho seguiu dizendo
+// "+0 −0 · 0 arquivos" até ele SAIR da aba e VOLTAR: o único gatilho de
+// re-medida era o `reloadToken` do Board, que só anda quando o próprio dono
+// clica em alguma coisa. Nas palavras dele: "tudo ali tem que atualizar em
+// tempo real; não tenho que sair e voltar pra ver o que tá acontecendo".
+//
+// TRÊS gatilhos, um caminho de medida só:
+//   (a) ATIVIDADE da conversa da missão (agente + o que os ajudantes assentam
+//       no fio dele) — chega como `activityToken` do Board, com debounce de
+//       CAUDA: uma rajada de deltas mede uma vez, no silêncio depois dela;
+//   (b) POLL LENTO enquanto o trilho está À VISTA — a doutrina do
+//       reconciliador (F6.13): nenhum passo depende de entrega única. Turno
+//       longo e contínuo (que nunca cala e por isso nunca fecha o debounce)
+//       é exatamente o buraco que este gatilho tapa;
+//   (c) o `reloadToken` de sempre — o clique do dono (⇪, arquivar…).
+
+/** Cauda do debounce da atividade: maior que o intervalo entre deltas de um
+ *  turno (para a rajada medir UMA vez) e curta o bastante para o dono não
+ *  sentir atraso depois que o agente cala. */
+const RAIL_ACTIVITY_DEBOUNCE_MS = 2_500
+
+/** Reconciliador do trilho, no mesmo princípio do board ativo da F6.13: o
+ *  push pode se perder, o estado não. Só roda com o trilho À VISTA. */
+const RAIL_POLL_MS = 15_000
+
+/** Impressão digital do worktree. É ela que decide se o HISTÓRICO precisa
+ *  re-ler: sem esse portão, o poll de 15s fecharia o commit expandido do dono
+ *  (e a janela de diff aberta) a cada volta, sem novidade nenhuma na branch.
+ *  Commit novo sempre move o `ahead`; arquivo novo/alterado move a lista. */
+function workspaceFingerprint(summary: MissionWorkspaceSummary | null): string {
+  if (!summary) return ''
+  return [
+    summary.ahead,
+    summary.insertions,
+    summary.deletions,
+    summary.files.map((file) => `${file.status}:${file.path}`).join('|')
+  ].join('|')
+}
+
 export default function MissionDeliveryRail({
   mission,
   versionLabel,
@@ -55,6 +96,8 @@ export default function MissionDeliveryRail({
   testServerOpen,
   subagentItems = [],
   reloadToken,
+  visible = true,
+  activityToken,
   onIntegrate,
   onReview,
   onTerminal,
@@ -81,6 +124,17 @@ export default function MissionDeliveryRail({
   /** o Board incrementa depois do ⇪ (e de qualquer ação que mexa na branch):
    *  o diffstat re-mede sem o dono precisar clicar em nada */
   reloadToken?: number
+  /** o trilho está NA TELA? O Board fica montado fora da aba e fora do projeto
+   *  ativo (desmontar mataria as conversas), então quem sabe disso é ele — e
+   *  sem esta palavra o poll abriria `git` para universo que ninguém olha.
+   *  Padrão `true`: prop esquecida nunca deixa o trilho parado (o desfecho
+   *  ruim é uma leitura barata a mais, nunca o bug que esta onda veio matar). */
+  visible?: boolean
+  /** contador que só ANDA quando aconteceu alguma coisa nas conversas desta
+   *  missão (mensagem, resultado de ferramenta, ajudante que assenta no fio).
+   *  O trilho não lê evento nenhum: ele faz o debounce de cauda em cima deste
+   *  número e mede o worktree quando a rajada acaba. */
+  activityToken?: number
   onIntegrate: () => void
   /** dá o toque de revisão no chat do agente (nunca abre pane) */
   onReview: () => void
@@ -99,37 +153,128 @@ export default function MissionDeliveryRail({
   // repo desde que a conversa escreveu.
   const planning = missionTypeOf(mission) === 'planejamento'
 
-  // ——— diff vivo da branch (onda D) ———
+  // ——— diff vivo da branch (onda D; medida viva na W4) ———
   const [summary, setSummary] = useState<MissionWorkspaceSummary | null>(null)
   const [diffError, setDiffError] = useState<string | null>(null)
   const [filesOpen, setFilesOpen] = useState(false)
   const [diffBusy, setDiffBusy] = useState(false)
+  // Contador PRÓPRIO do histórico: ele só anda quando a fotografia da branch
+  // muda de verdade. Somado ao `reloadToken` do Board — os dois só crescem,
+  // então a soma muda exatamente quando um deles muda — é o que o
+  // `MissionCommitHistory` recebe.
+  const [historyBump, setHistoryBump] = useState(0)
+  // A janela do app está mesmo na frente? Minimizada/atrás de outro app, medir
+  // é gastar `git` para ninguém (mesmo padrão do GuiPane).
+  const [docVisible, setDocVisible] = useState(() => document.visibilityState === 'visible')
 
-  const refreshDiff = useCallback(async (): Promise<void> => {
+  // Alvo corrente: uma medida do worktree ANTERIOR que chega atrasada não pode
+  // pintar o trilho da missão que o dono acabou de abrir.
+  const missionRef = useRef(mission.id)
+  missionRef.current = mission.id
+  // COALESCÊNCIA: uma medida em voo por vez. Sem isto, o poll e a atividade
+  // abririam dois `git` concorrentes no mesmo worktree.
+  const measuringRef = useRef(false)
+  const dirtyRef = useRef(false)
+  // A impressão digital pertence a UMA missão: sem o carimbo do dono dela, a
+  // primeira medida da missão seguinte compararia contra a fotografia da
+  // anterior e mandaria o histórico re-ler uma leitura que ele já fez sozinho.
+  const fingerprintRef = useRef<{ id: string; mark: string } | null>(null)
+
+  const measure = useCallback(async (): Promise<void> => {
     // Planejamento nem pergunta: o motor responderia "esta missão não tem
     // worktree aberto", e essa recusa correta viraria um erro na tela.
     if (planning || !missionWorkspace.available()) {
       setDiffError(null)
       setSummary(null)
+      fingerprintRef.current = null
       return
     }
-    setDiffBusy(true)
-    const res = await missionWorkspace.files(mission.id)
-    setDiffBusy(false)
-    if (!res.ok) {
-      setDiffError(res.error ?? 'não deu para ler o diff desta branch')
+    // Gatilho durante o voo não abre leitura nova: marca sujo e sai — quem
+    // está no ar re-roda UMA vez ao terminar, já com o estado de agora.
+    if (measuringRef.current) {
+      dirtyRef.current = true
       return
     }
-    setDiffError(null)
-    setSummary(res.summary ?? null)
+    measuringRef.current = true
+    const id = mission.id
+    try {
+      do {
+        dirtyRef.current = false
+        setDiffBusy(true)
+        const res = await missionWorkspace.files(id)
+        // Trocou de missão no meio da viagem: este resultado não é mais desta
+        // tela. O `finally` abaixo ainda solta a trava.
+        if (missionRef.current !== id) return
+        setDiffBusy(false)
+        if (!res.ok) {
+          // O placar anterior FICA na tela: `git` que tropeça num poll de
+          // fundo não pode apagar a fotografia boa que o dono já está lendo.
+          setDiffError(res.error ?? 'não deu para ler o diff desta branch')
+          continue
+        }
+        setDiffError(null)
+        // Payload torto (motor antigo, campo faltando) também preserva o que
+        // está na tela — trocar número bom por vazio seria o mesmo pisca.
+        if (!res.summary) continue
+        setSummary(res.summary)
+        const mark = workspaceFingerprint(res.summary)
+        const seen = fingerprintRef.current
+        // A branch ANDOU → o histórico re-lê. Igual → ninguém encosta nele (é
+        // o que mantém o commit expandido aberto durante o poll).
+        if (seen && seen.id === id && seen.mark !== mark) setHistoryBump((n) => n + 1)
+        fingerprintRef.current = { id, mark }
+      } while (dirtyRef.current)
+    } finally {
+      measuringRef.current = false
+      setDiffBusy(false)
+    }
   }, [mission.id, planning])
 
-  // Mede ao entrar na missão e a cada sinal do Board (⇪, arquivar…). Abrir a
-  // lista re-mede também: quem abre quer o estado de AGORA, não o do minuto
-  // passado.
+  // Missão nova: a fotografia da anterior não pode sobreviver nem um frame —
+  // "medindo o diff…" é honesto, número de OUTRA branch não. (Declarado ANTES
+  // do efeito de medida de propósito: efeitos rodam na ordem em que aparecem.)
   useEffect(() => {
-    void refreshDiff()
-  }, [refreshDiff, reloadToken])
+    setSummary(null)
+    setDiffError(null)
+    fingerprintRef.current = null
+  }, [mission.id])
+
+  // (c) GATILHO DE SEMPRE: entrar na missão e cada sinal do Board (⇪,
+  // arquivar…). Abrir a lista re-mede também: quem abre quer o estado de
+  // AGORA, não o do minuto passado.
+  useEffect(() => {
+    void measure()
+  }, [measure, reloadToken])
+
+  // (a) ATIVIDADE, com debounce de CAUDA: cada evento novo rearma o relógio e
+  // a faxina cancela o anterior, então uma rajada de deltas vira UMA medida —
+  // no silêncio depois dela, que é justamente quando o commit já caiu.
+  // Este gatilho NÃO olha para a visibilidade (o poll é que olha): o número
+  // avança só quando há agente trabalhando, a cauda dá no máximo uma leitura
+  // por silêncio, e assim voltar para a missão já encontra a conta feita.
+  const activityRef = useRef(activityToken)
+  useEffect(() => {
+    if (activityToken === activityRef.current) return
+    activityRef.current = activityToken
+    const timer = window.setTimeout(() => void measure(), RAIL_ACTIVITY_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [activityToken, measure])
+
+  useEffect(() => {
+    const update = (): void => setDocVisible(document.visibilityState === 'visible')
+    document.addEventListener('visibilitychange', update)
+    return () => document.removeEventListener('visibilitychange', update)
+  }, [])
+
+  // (b) POLL LENTO — só à vista, e devolvendo o intervalo ao sair de cena.
+  useEffect(() => {
+    if (!visible || !docVisible || planning) return
+    // Voltar à vista mede NA HORA: esperar o primeiro tique seria a mesma
+    // espera de que o dono reclamou.
+    void measure()
+    const timer = window.setInterval(() => void measure(), RAIL_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [visible, docVisible, planning, measure])
 
   const files = summary?.files ?? []
   const diffLabel = summary
@@ -157,43 +302,47 @@ export default function MissionDeliveryRail({
         </div>
       )}
 
-      {/* DIFF VIVO: o que esta branch mudou, sem sair da tela da decisão. */}
+      {/* DIFF VIVO: o que esta branch mudou, sem sair da tela da decisão.
+          O ramo do `summary` vem PRIMEIRO de propósito (W4): com número na
+          tela, nem "medindo o diff…" nem um erro passageiro tomam o lugar
+          dele — re-medir a cada 15s não pode piscar debaixo da leitura. */}
       {(diffLabel || diffError) && (
         <div className="dr-diff">
-          {diffError ? (
-            <span className="dr-diff-error">// {diffError}</span>
-          ) : (
+          {summary ? (
             <>
               <span
                 className="dr-diff-stat"
-                data-tip={
-                  summary
-                    ? `${summary.ahead} ${summary.ahead === 1 ? 'commit' : 'commits'} à frente de ${
-                        mission.baseBranch ?? 'base'
-                      }`
-                    : undefined
-                }
+                data-tip={`${summary.ahead} ${
+                  summary.ahead === 1 ? 'commit' : 'commits'
+                } à frente de ${mission.baseBranch ?? 'base'}`}
               >
                 {diffLabel}
               </span>
-              {summary && (
-                <button
-                  className="dr-diff-toggle"
-                  aria-expanded={filesOpen}
-                  data-tip={filesOpen ? 'Esconder a lista' : 'Ver os arquivos que esta branch mudou'}
-                  onClick={() => {
-                    const next = !filesOpen
-                    setFilesOpen(next)
-                    if (next) void refreshDiff()
-                  }}
-                >
-                  {filesOpen ? '▾ ver arquivos' : '▸ ver arquivos'}
-                </button>
-              )}
+              <button
+                className="dr-diff-toggle"
+                aria-expanded={filesOpen}
+                data-tip={filesOpen ? 'Esconder a lista' : 'Ver os arquivos que esta branch mudou'}
+                onClick={() => {
+                  const next = !filesOpen
+                  setFilesOpen(next)
+                  if (next) void measure()
+                }}
+              >
+                {filesOpen ? '▾ ver arquivos' : '▸ ver arquivos'}
+              </button>
             </>
+          ) : diffError ? (
+            <span className="dr-diff-error">// {diffError}</span>
+          ) : (
+            <span className="dr-diff-stat">{diffLabel}</span>
           )}
         </div>
       )}
+      {/* Falha DEPOIS de já haver número: o placar fica e a queixa desce para a
+          própria linha. Apagar a fotografia boa por um `git` que tropeçou seria
+          justamente o pisca que esta onda veio matar — e sumir com o aviso
+          esconderia uma falha que insiste. */}
+      {summary && diffError && <span className="dr-diff-error dr-diff-stale">// {diffError}</span>}
       {filesOpen && summary && (
         <div className="dr-files">
           {files.length === 0 && <span className="dr-files-empty">nada mudou ainda</span>}
@@ -213,8 +362,17 @@ export default function MissionDeliveryRail({
 
       {/* P24: fotografia visual do histórico próprio da missão. O main já
           recortou `base..HEAD` e a expansão pede o patch de um SHA completo;
-          o rail só exibe, nunca stageia, commita ou altera o worktree. */}
-      {!planning && <MissionCommitHistory missionId={mission.id} reloadToken={reloadToken} />}
+          o rail só exibe, nunca stageia, commita ou altera o worktree.
+          W4: o histórico anda pelos MESMOS gatilhos do diffstat — a medida é
+          uma só —, mas o `historyBump` só cresce quando a fotografia da branch
+          MUDA. Os dois contadores são monotônicos, então a soma muda
+          exatamente quando um deles muda. */}
+      {!planning && (
+        <MissionCommitHistory
+          missionId={mission.id}
+          reloadToken={(reloadToken ?? 0) + historyBump}
+        />
+      )}
 
       {!planning && <GuiSubagentSidebar items={subagentItems} />}
 

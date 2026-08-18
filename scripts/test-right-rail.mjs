@@ -672,3 +672,146 @@ test('o botão de revisar diz a verdade nova — e a trava do chat fora do ar fi
   assert.match(button, /disabled=\{!guiAvailable \|\| !reviewReady\}/u)
   assert.match(rail, /reviewReady: boolean/u)
 })
+
+// ————— O TRILHO MEDE SOZINHO (W4, 2026-08-18 — bug ao vivo do dono) —————
+//
+// Ele viu um commit nascer e um arquivo aparecer, e o trilho seguiu dizendo
+// "+0 −0 · 0 arquivos" até ele SAIR da aba e VOLTAR: o único gatilho de
+// re-medida era o `reloadToken` do Board, que só anda no clique dele. Palavras
+// do dono: "tudo ali tem que atualizar em tempo real; não tenho que sair e
+// voltar pra ver o que tá acontecendo".
+//
+// Os quatro testes abaixo são a cerca dos TRÊS gatilhos (atividade com
+// debounce · poll lento à vista · o reloadToken de sempre), da coalescência
+// (nunca dois `git` no mesmo worktree) e do não-pisca (o número que já está na
+// tela nunca some para "medindo…" nem para um erro passageiro).
+
+/** O corpo de um `useEffect`, achado pela ÚLTIMA abertura antes do ponto onde
+ *  a constante é usada. Recortar pelo uso — e não por uma regex sobre o arquivo
+ *  inteiro — mantém o contrato preso ao efeito certo quando o trilho crescer. */
+function effectUsing(src, needle, tail = 340) {
+  const at = src.indexOf(needle)
+  assert.ok(at > 0, `o uso de ${needle} não foi encontrado`)
+  const start = src.lastIndexOf('useEffect', at)
+  assert.ok(start >= 0, `o uso de ${needle} precisa morar dentro de um useEffect`)
+  return src.slice(start, at + tail)
+}
+
+/** Número escrito no fonte com separador de milhar do TS (`15_000`). */
+function constantOf(src, name) {
+  const raw = src.match(new RegExp(`${name}\\s*=\\s*([\\d_]+)`, 'u'))?.[1]
+  assert.ok(raw, `a constante ${name} precisa existir no trilho`)
+  return Number(raw.replace(/_/gu, ''))
+}
+
+test('o trilho re-mede na ATIVIDADE do chat — debounce de cauda com faxina do timer', async () => {
+  const [rail, board] = await Promise.all([
+    source('src/renderer/src/components/MissionDeliveryRail.tsx'),
+    source('src/renderer/src/components/Board.tsx')
+  ])
+  const railCode = withoutComments(rail)
+  const boardCode = withoutComments(board)
+
+  // A prop é OPCIONAL: missão de planejamento e o devMock não têm conversa
+  // para observar, e a falta dela nunca pode derrubar o trilho.
+  assert.match(railCode, /activityToken\?:\s*number/u)
+
+  // DEBOUNCE DE CAUDA: cada evento novo rearma o relógio e a faxina cancela o
+  // anterior — uma rajada de 200 deltas mede UMA vez, não 200.
+  const debounce = effectUsing(railCode, ', RAIL_ACTIVITY_DEBOUNCE_MS)')
+  assert.match(debounce, /window\.setTimeout\(/u)
+  assert.match(debounce, /return \(\) => window\.clearTimeout\(/u)
+  assert.match(debounce, /\[activityToken/u, 'o efeito precisa depender do sinal de atividade')
+
+  const ms = constantOf(rail, 'RAIL_ACTIVITY_DEBOUNCE_MS')
+  assert.ok(ms >= 2_000 && ms <= 3_000, `a cauda precisa ficar em 2–3s (veio ${ms}ms)`)
+
+  // O Board deriva o sinal do que JÁ tem: `eventRevision` é o contador que o
+  // store avança a cada evento REAL do backend (mensagem, resultado de
+  // ferramenta, ajudante que assenta no fio do agente). Zero canal novo.
+  assert.match(boardCode, /eventRevision \?\? 0/u)
+  assert.match(boardCode, /activityToken=\{railActivity\}/u)
+})
+
+test('poll lento do trilho só roda À VISTA — e devolve intervalo e ouvinte ao sair', async () => {
+  const [rail, board] = await Promise.all([
+    source('src/renderer/src/components/MissionDeliveryRail.tsx'),
+    source('src/renderer/src/components/Board.tsx')
+  ])
+  const railCode = withoutComments(rail)
+  const boardCode = withoutComments(board)
+
+  assert.match(railCode, /visible\?:\s*boolean/u)
+
+  // Doutrina do reconciliador (F6.13): nenhum passo depende de entrega única.
+  const poll = effectUsing(railCode, ', RAIL_POLL_MS)')
+  assert.match(poll, /window\.setInterval\(/u)
+  assert.match(poll, /return \(\) => window\.clearInterval\(/u)
+  // A CERCA: escondido não mede. O Board fica MONTADO fora da aba e fora do
+  // projeto ativo (desmontar mataria as conversas), então sem esta saída
+  // antecipada o poll abriria `git` para universo que ninguém está olhando.
+  assert.match(poll, /if \(!visible \|\| !docVisible/u)
+
+  const every = constantOf(rail, 'RAIL_POLL_MS')
+  assert.ok(every >= 10_000 && every <= 20_000, `o poll precisa ficar em 10–20s (veio ${every}ms)`)
+
+  // Janela minimizada / outro app: o ouvinte entra e SAI (sem a devolução, cada
+  // troca de missão deixaria um `visibilitychange` pendurado).
+  assert.match(railCode, /document\.addEventListener\('visibilitychange'/u)
+  assert.match(railCode, /document\.removeEventListener\('visibilitychange'/u)
+
+  // O Board é a autoridade do "à vista": só ele sabe o projeto ativo e a aba.
+  assert.match(boardCode, /visible=\{isActive && uniTab === 'board'\}/u)
+
+  // O GATILHO VELHO FICA: o clique do dono (⇪, arquivar…) continua re-medindo.
+  assert.match(railCode, /reloadToken\?:\s*number/u)
+  assert.match(boardCode, /reloadToken=\{railReload\}/u)
+})
+
+test('medida do trilho é COALESCIDA: uma em voo, e o gatilho de dentro re-roda uma vez', async () => {
+  const railCode = withoutComments(
+    await source('src/renderer/src/components/MissionDeliveryRail.tsx')
+  )
+
+  // Gatilho que chega durante o voo NÃO abre um segundo `git` no mesmo
+  // worktree: marca sujo e sai.
+  assert.match(railCode, /if \(measuringRef\.current\) \{\s*dirtyRef\.current = true\s*return\s*\}/u)
+  // …e quem está no ar re-roda UMA vez, já com o estado de agora.
+  assert.match(railCode, /do \{\s*dirtyRef\.current = false/u)
+  assert.match(railCode, /\} while \(dirtyRef\.current\)/u)
+  // A trava SEMPRE cai — inclusive se a leitura estourar no meio.
+  assert.match(railCode, /finally \{\s*measuringRef\.current = false/u)
+  // Resposta atrasada da missão ANTERIOR nunca pinta o trilho da atual.
+  assert.match(railCode, /missionRef\.current !== id/u)
+})
+
+test('re-medir não PISCA: o número fica na tela e o histórico só re-lê quando a branch anda', async () => {
+  const rail = await source('src/renderer/src/components/MissionDeliveryRail.tsx')
+  const railCode = withoutComments(rail)
+
+  // "medindo o diff…" é estado de PRIMEIRA medida: com número na tela ele nunca
+  // volta (o ramo do `summary` vem ANTES do `diffBusy`).
+  assert.match(railCode, /summary\s*\?[\s\S]{0,240}?:\s*diffBusy\s*\?/u)
+
+  // Nenhuma medida zera o resumo antes de ter o novo — nem a que falha.
+  const start = railCode.indexOf('measuringRef.current = true')
+  const end = railCode.indexOf('} while (dirtyRef.current)')
+  assert.ok(start > 0 && end > start, 'o laço da medida precisa existir')
+  const inFlight = railCode.slice(start, end)
+  assert.doesNotMatch(
+    inFlight,
+    /setSummary\(null\)/u,
+    'a medida nova nunca apaga a fotografia boa que já está na tela'
+  )
+  // Falha passageira do git no poll não derruba o placar: ela desce para a
+  // própria linha, abaixo dos números.
+  assert.match(rail, /dr-diff-stale/u)
+  assert.match(rail, /\{summary && diffError &&/u)
+
+  // O HISTÓRICO anda pelos MESMOS gatilhos — mas só quando a fotografia da
+  // branch MUDA: sem esse portão o poll de 15s fecharia o commit expandido do
+  // dono (e a janela de diff aberta) a cada volta, sem novidade nenhuma.
+  assert.match(railCode, /function workspaceFingerprint\(/u)
+  assert.match(railCode, /setHistoryBump\(\(n\) => n \+ 1\)/u)
+  assert.match(railCode, /reloadToken=\{\(reloadToken \?\? 0\) \+ historyBump\}/u)
+})

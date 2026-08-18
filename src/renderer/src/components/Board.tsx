@@ -702,6 +702,16 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const directSlot =
     directSlots.find((s) => s.spawn.paneId === directActiveId) ?? directSlots[0] ?? undefined
   const directGui = directSlot ? guiPanes[directSlot.spawn.paneId] : undefined
+  // SINAL DE ATIVIDADE do trilho de entrega (W4, 2026-08-18): `eventRevision`
+  // é o contador que o store JÁ avança a cada evento REAL do backend —
+  // mensagem, resultado de ferramenta, ajudante que assenta no fio do agente.
+  // Somar as conversas desta missão dá, de graça, um número que só anda quando
+  // algo aconteceu de verdade; o debounce de cauda mora no trilho. Zero canal
+  // novo e zero leitura extra: o Board já re-renderiza a cada evento.
+  const railActivity = directSlots.reduce(
+    (total, slot) => total + (guiPanes[slot.spawn.paneId]?.eventRevision ?? 0),
+    0
+  )
   const directSeat = directSlot
     ? seats.find((x) => x.configDir && x.configDir === directSlot.spawn.configDir)
     : undefined
@@ -1244,7 +1254,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       )}
 
       {/* MISSÃO DIRETA: sem kanban e sem filtro de função — o que resta do
-          board é o TRILHO DE ENTREGA (estado da branch + alavancas). */}
+          board é o TRILHO DE ENTREGA (estado da branch + alavancas).
+          W4: `visible` e `activityToken` são o que faz o trilho medir SOZINHO.
+          O Board é a autoridade do "à vista" — ele fica MONTADO fora da aba e
+          fora do projeto ativo (desmontar mataria as conversas e os PTYs), então
+          só ele sabe se o trilho está mesmo na tela do dono. */}
       {isDirect && selMission && (
         <GuiPanelErrorBoundary
           paneId={`mission-delivery:${selMission.id}`}
@@ -1260,6 +1274,8 @@ export default function Board({ projectId }: Props): React.JSX.Element {
             subagentItems={directGui?.items ?? []}
             testServerOpen={panes.some((p) => p.testServer && p.missionId === selMission.id)}
             reloadToken={railReload}
+            visible={isActive && uniTab === 'board'}
+            activityToken={railActivity}
             onIntegrate={() => void onIntegrate()}
             onReview={() => void nudgeReview()}
             onTerminal={() => void openMissionShell(selMission.id)}
