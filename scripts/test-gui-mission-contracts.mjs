@@ -94,9 +94,12 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // "todo chat que eu criar nunca mais abre subagente dele"). E de 2600 para
     // 3000 na MESMA data, no 2º teste ao vivo, para caber a régua do PINO ("ele
     // teria que abrir os cinco do padrão que eu mandei"): duas linhas novas e a
-    // do list_seats reescrita. O teto continua sendo contra CONSTITUIÇÃO: régua
-    // nova do dono cabe, discurso não.
-    assert.ok(contract.length < 3000, `${role}: contrato virou constituição`)
+    // do list_seats reescrita. E de 3000 para 3200 na noite do MESMO dia, pelo
+    // 5º teste: a linha da ENTREGA EM ARQUIVO + o correio que chega sozinho
+    // ("cada ajudante que terminar, avisar o orquestrador... pra não poluir o
+    // chat"). O teto continua sendo contra CONSTITUIÇÃO: régua nova do dono
+    // cabe, discurso não.
+    assert.ok(contract.length < 3200, `${role}: contrato virou constituição`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -148,9 +151,29 @@ test('a ordem da delegação viaja idêntica nos três papéis', () => {
   }
   // tight de propósito: ela viaja em TODO spawn de chat de missão. O teto subiu
   // de 1400 para 1800 UMA vez (2026-08-18, 2º teste ao vivo) pela régua do PINO
-  // — a única coisa que entrou; discurso continua sem espaço aqui.
+  // e de 1800 para 2000 na noite do mesmo dia, pela linha da ENTREGA EM ARQUIVO
+  // + correio — a única coisa que entrou; discurso continua sem espaço aqui.
   assert.ok(sections[0].length > 600, 'a ordem ficou vaga demais')
-  assert.ok(sections[0].length < 1800, 'a ordem permanente virou constituição')
+  assert.ok(sections[0].length < 2000, 'a ordem permanente virou constituição')
+})
+
+// A ENTREGA VEM SOZINHA, E VEM EM ARQUIVO (2026-08-18, 5º teste ao vivo).
+//
+// Caso real: dois ajudantes encerraram enquanto o delegador estava DENTRO do
+// turno esperando um terceiro no long-poll; o despertador segurou o aviso (não
+// se interrompe turno vivo) e o agente disse ao dono "nenhum terminou" com a
+// lateral mostrando três rodando. As duas ordens dele viraram uma linha só aqui:
+// o encerramento pega carona no próximo resultado de tool, e a entrega mora num
+// ARQUIVO (memória feedback-agente-saida-em-arquivo: payload inline gigante já
+// queimou uma rodada de 35 minutos).
+
+test('a ordem diz que a entrega chega sozinha e mora em ARQUIVO', () => {
+  for (const role of GUI_MISSION_ROLES) {
+    const section = delegationSection(guiMissionSystemPrompt(role))
+    assert.match(section, /\.synkora\/helpers\//, `${role}: sem o endereço da entrega`)
+    assert.match(section, /\[synkora\] ajudantes:/, `${role}: sem a marca do correio`)
+    assert.match(section, /tool result/i, `${role}: sem dizer POR ONDE a novidade chega`)
+  }
 })
 
 // O PINO DO PAINEL É A PALAVRA DO DONO (2026-08-18, 2º teste ao vivo dele).

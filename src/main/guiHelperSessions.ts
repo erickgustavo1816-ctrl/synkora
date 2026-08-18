@@ -21,6 +21,10 @@
  *   backstop, o long-poll e o watchdog são provados em node puro
  *   (`test:gui-helper-sessions`) em vez de conferidos no olho com o app aberto.
  *
+ * - não sabe ESCREVER a entrega: o arquivo canônico de cada ajudante nasce pelo
+ *   `deliver` injetado (2026-08-18, ordem do dono: "todo ajudante sempre entrega
+ *   em modelo de ARQUIVO"). O motor só decide QUANDO gravar e guarda o caminho.
+ *
  * SEM CADEIA (cerca dura do D1): o `GuiHelperSpawnRequest` NÃO tem campo de
  * ferramenta. Ajudante nasce sem o MCP de delegação — quem delega é o chat do
  * dono, e uma frota que abre frota é justamente o laço que o backstop existe
@@ -70,11 +74,17 @@ export function isGuiHelperSettled(state: GuiHelperState): boolean {
  *  instrução sem ninguém saber qual metade sumiu. */
 export const GUI_HELPER_PROMPT_MAX_CHARS = 64 * 1024
 
-/** Teto da ENTREGA, aviso incluído (o corte nunca empurra o aviso para fora). */
+/**
+ * Teto da ENTREGA guardada EM MEMÓRIA, aviso incluído (o corte nunca empurra o
+ * aviso para fora). Ele não é mais o fim da linha: desde 2026-08-18 o texto
+ * INTEIRO vai para o arquivo canônico do worktree (ver `deliver` nas deps), e
+ * este teto passou a governar só a cópia que o motor carrega para responder na
+ * hora.
+ */
 export const GUI_HELPER_RESULT_MAX_CHARS = 64 * 1024
 
 export const GUI_HELPER_RESULT_TRUNCATION_NOTICE =
-  '\n\n[synkora] entrega cortada no teto de 64KB — o resto ficou no worktree. Peça o ARQUIVO ao ajudante, nunca o texto de novo.'
+  '\n\n[synkora] entrega cortada no teto de 64KB — o texto inteiro está no arquivo da entrega. Abra o arquivo, nunca peça o texto de novo ao ajudante.'
 
 /**
  * BACKSTOP ANTI-RUNAWAY — NUNCA UMA COTA.
@@ -186,6 +196,10 @@ export interface GuiHelperRecord {
   projectId: string
   /** Apelido dado pelo delegador — é o rótulo do card na lateral. */
   name?: string
+  /** Worktree onde o ajudante trabalhou (o MESMO do delegador). Mora no
+   *  registro porque é onde a ENTREGA EM ARQUIVO pousa: quem escreve o arquivo
+   *  recebe o registro, não o pedido de spawn, que já morreu no nascimento. */
+  cwd: string
   cli: GuiHelperCli
   model: string
   /** O que a UI pode carimbar HONESTAMENTE (ausente = o CLI não recebeu nível). */
@@ -201,9 +215,35 @@ export interface GuiHelperRecord {
   /** Presente só em `done` — já cortado no teto. */
   result?: string
   resultTruncated?: boolean
+  /** ARQUIVO canônico da entrega, relativo ao worktree — o endereço que o
+   *  delegador abre. Ausente = o disco recusou (ver `deliveryError`). */
+  resultPath?: string
+  /** Por que a entrega não virou arquivo. Silêncio aqui faria o delegador
+   *  procurar um arquivo que nunca existiu. */
+  deliveryError?: string
   /** Motivo de `failed`/`cancelled`, na voz de quem encerrou. */
   failure?: string
 }
+
+/**
+ * O QUE VAI PARA O DISCO no desfecho — o texto INTEIRO, antes do teto de 64KB.
+ *
+ * Ordem do dono (2026-08-18, 5º teste ao vivo): "todo ajudante sempre entrega em
+ * modelo de ARQUIVO". A persona pede isso ao ajudante (cinto), mas persona não é
+ * mecanismo: um ajudante que despeje 200KB no texto final continuaria custando o
+ * contexto do delegador. Este é o suspensório — o harness grava SEMPRE, e o que
+ * viaja inline vira um começo com o caminho na frente.
+ */
+export interface GuiHelperDelivery {
+  /** Fotografia do registro JÁ encerrado (state/settledAt/failure preenchidos). */
+  record: GuiHelperRecord
+  /** Entrega inteira, sem teto: o arquivo é onde nada se perde. */
+  text: string
+}
+
+export type GuiHelperDeliveryOutcome =
+  | { ok: true; path: string }
+  | { ok: false; error: string }
 
 /**
  * A fotografia do `helpers_status`: estado, decorrido, última atividade e
@@ -226,6 +266,8 @@ export interface GuiHelperSnapshot {
   lastActivity?: GuiHelperActivity
   contextTokens?: number
   hasResult: boolean
+  /** O arquivo da entrega — a fotografia diz ONDE ler, nunca O QUE foi escrito. */
+  resultPath?: string
   failure?: string
 }
 
@@ -284,6 +326,10 @@ export interface GuiHelperResultView {
   waitedMs: number
   result?: string
   truncated?: boolean
+  /** Onde a entrega INTEIRA está — é o que a resposta cita primeiro. */
+  resultPath?: string
+  /** Disco recusou: a resposta degrada para o texto inline COM o motivo. */
+  deliveryError?: string
   failure?: string
   settledAt?: number
   snapshot: GuiHelperSnapshot
@@ -330,6 +376,17 @@ export interface GuiHelperCatalogQuery {
 export interface GuiHelperEngineDeps {
   spawnClaude: GuiHelperSpawnAdapter
   spawnCodex: GuiHelperSpawnAdapter
+  /**
+   * GRAVA A ENTREGA EM ARQUIVO no desfecho (`done`/`failed`). Injetado porque o
+   * motor não conhece disco — quem sabe escrever é a costura com o main.
+   *
+   * É SÍNCRONO por contrato: o caminho tem de estar no registro ANTES de os
+   * long-polls acordarem e antes de o card `settled` sair, senão o delegador
+   * receberia a entrega citando um arquivo que ainda não existe. Ausente = o
+   * motor segue como antes, só com a cópia em memória (é assim que a suíte do
+   * motor roda sem tocar em disco).
+   */
+  deliver?(delivery: GuiHelperDelivery): GuiHelperDeliveryOutcome
   /** `undefined` = não há conta logada daquele CLI: o motor RECUSA em vez de
    *  abrir na conta errada. */
   resolveSeat(query: GuiHelperSeatQuery): GuiHelperSeat | undefined
@@ -615,6 +672,7 @@ export class GuiHelperEngine {
         delegatorPaneId: delegator.paneId,
         projectId: delegator.projectId,
         ...named,
+        cwd: delegator.cwd,
         cli,
         model,
         ...(effort.applied ? { effort: effort.applied } : {}),
@@ -929,6 +987,12 @@ export class GuiHelperEngine {
     }
     if (payload.failure !== undefined) live.record.failure = payload.failure
 
+    // A ENTREGA EM ARQUIVO vem AQUI, entre o registro e o anúncio: o caminho
+    // precisa existir antes de os long-polls acordarem, do card `settled` sair e
+    // do correio ser postado — os três citam o arquivo. `cancelled` fica de fora:
+    // ninguém está esperando o trabalho que o próprio app mandou parar.
+    if (state !== 'cancelled') this.persist(live, payload.text ?? live.text)
+
     // O KILL É DO MOTOR: o app-server do codex nunca encerra sozinho ao fim do
     // turno (sonda §6). Descartar em TODO desfecho é o que impede órfão — e o
     // `dispose` é idempotente, então o claude que já morreu não se importa.
@@ -948,9 +1012,30 @@ export class GuiHelperEngine {
       detail: {
         state,
         elapsedMs: (live.record.settledAt ?? 0) - live.record.startedAt,
-        ...(live.record.resultTruncated ? { truncated: true } : {})
+        ...(live.record.resultTruncated ? { truncated: true } : {}),
+        ...(live.record.resultPath ? { resultPath: live.record.resultPath } : {}),
+        ...(live.record.deliveryError ? { deliveryError: live.record.deliveryError } : {})
       }
     })
+  }
+
+  /**
+   * Grava a entrega e carimba o caminho — ou o motivo de não ter gravado.
+   *
+   * Falha de disco NUNCA derruba o desfecho: o registro continua com o texto em
+   * memória e o `deliveryError` viaja junto para o delegador ler o que voltou
+   * inline e saber por que não há arquivo. Perder a entrega porque o disco
+   * encheu seria trocar um problema pequeno por um irreversível.
+   */
+  private persist(live: LiveHelper, text: string): void {
+    if (!this.deps.deliver) return
+    try {
+      const outcome = this.deps.deliver({ record: { ...live.record }, text })
+      if (outcome.ok) live.record.resultPath = outcome.path
+      else live.record.deliveryError = outcome.error
+    } catch (error) {
+      live.record.deliveryError = errorText(error)
+    }
   }
 
   /**
@@ -1003,6 +1088,7 @@ export class GuiHelperEngine {
       ...(record.lastActivity ? { lastActivity: record.lastActivity } : {}),
       ...(record.contextTokens !== undefined ? { contextTokens: record.contextTokens } : {}),
       hasResult: record.result !== undefined,
+      ...(record.resultPath ? { resultPath: record.resultPath } : {}),
       ...(record.failure ? { failure: record.failure } : {})
     }
   }
@@ -1016,6 +1102,8 @@ export class GuiHelperEngine {
       waitedMs,
       ...(record.result !== undefined ? { result: record.result } : {}),
       ...(record.resultTruncated ? { truncated: true } : {}),
+      ...(record.resultPath ? { resultPath: record.resultPath } : {}),
+      ...(record.deliveryError ? { deliveryError: record.deliveryError } : {}),
       ...(record.failure ? { failure: record.failure } : {}),
       ...(record.settledAt !== undefined ? { settledAt: record.settledAt } : {}),
       snapshot: this.snapshot(live)

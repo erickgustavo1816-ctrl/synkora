@@ -38,6 +38,7 @@ import { isPlanDraft, type PlanDraft } from './planDraft'
 import {
   GuiHelperCardCorrelator,
   guiOrphanHelperCancellations,
+  type GuiHelperInbox,
   type GuiHelperWake
 } from './guiHelperCards'
 import type { GuiHelperChange, GuiHelperDelegator } from './guiHelperSessions'
@@ -1318,6 +1319,13 @@ export interface GuiSessionDeps {
    * ausente, o correlacionador usa `setTimeout` com `unref`.
    */
   helperWakeTimer?(ms: number, fn: () => void): () => void
+  /**
+   * O CORREIO dos ajudantes — o pote que o despertador e as tools do MCP
+   * dividem. Ausente = o de produção (`guiHelperInbox`), que é exatamente o que
+   * o app usa dos dois lados; a injeção existe para a suíte não dividir um pote
+   * global entre dois registros do mesmo paneId.
+   */
+  helperInbox?: GuiHelperInbox
 }
 
 /** Espera do handshake antes de soltar o firstPrompt (waitCaps resolve antes
@@ -1358,6 +1366,7 @@ export class GuiSessionRegistry {
         return entry?.session.alive === true && entry.session.turnActive === true
       },
       wake: (paneId, wake) => this.wakeDelegator(paneId, wake),
+      ...(deps.helperInbox ? { inbox: deps.helperInbox } : {}),
       ...(deps.helperWakeTimer ? { setTimer: deps.helperWakeTimer } : {})
     })
     const loaded = deps.storeFile

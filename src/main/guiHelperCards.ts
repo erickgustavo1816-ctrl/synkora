@@ -205,21 +205,30 @@ export function guiHelperActivityEvent(
   }
 }
 
-/** Desfecho FACTUAL do ajudante — fecha o card e, no renderer, a árvore dele. */
+/**
+ * Desfecho FACTUAL do ajudante — fecha o card e, no renderer, a árvore dele.
+ *
+ * O CAMINHO DA ENTREGA abre o texto: o dono lê o card na lateral e já sabe qual
+ * arquivo abrir, sem passar pelo agente. O corte continua existindo porque o
+ * anel tem teto de bytes — só que agora ele aponta para o arquivo, que é onde a
+ * entrega inteira está, e não para uma tool que só o agente pode chamar.
+ */
 export function guiHelperSettledEvent(record: GuiHelperRecord): SessionEvent {
   const failed = record.state === 'failed'
   const cancelled = record.state === 'cancelled'
-  const text = failed || cancelled ? (record.failure ?? '') : (record.result ?? '')
+  const body = failed || cancelled ? (record.failure ?? '') : (record.result ?? '')
+  const truncated = body.length > GUI_HELPER_CARD_RESULT_CHARS
+  const shown = truncated
+    ? `${body.slice(0, GUI_HELPER_CARD_RESULT_CHARS)}…\n[synkora] o texto inteiro está ${record.resultPath ? `em ${record.resultPath}` : 'no helper_result'}`
+    : body
   return {
     type: 'tool-result',
     toolUseId: guiHelperCardId(record.helperId),
-    text: text.length > GUI_HELPER_CARD_RESULT_CHARS
-      ? `${text.slice(0, GUI_HELPER_CARD_RESULT_CHARS)}…\n[synkora] o texto inteiro está no helper_result`
-      : text,
+    text: record.resultPath ? `entrega: ${record.resultPath}\n\n${shown}` : shown,
     isError: failed,
     outcome: failed ? 'failed' : cancelled ? 'cancelled' : 'completed',
     agentStatus: 'settled',
-    truncated: text.length > GUI_HELPER_CARD_RESULT_CHARS
+    truncated
   }
 }
 
@@ -249,6 +258,9 @@ export interface GuiHelperWakeEntry {
   model: string
   /** `true` = entregou (`done`); `false` = falhou. */
   ok: boolean
+  /** O ARQUIVO da entrega (relativo ao worktree). É o endereço que o delegador
+   *  abre — o texto inteiro nunca viaja no aviso. */
+  resultPath?: string
 }
 
 /** O aviso pronto para ser entregue na conversa do delegador. */
@@ -264,6 +276,127 @@ export interface GuiHelperWake {
 
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`
+}
+
+/** A linha de UM ajudante encerrado — a MESMA nos dois caminhos de entrega
+ *  (despertador e correio), porque é o mesmo fato contado ao mesmo leitor. */
+function settledLine(entry: GuiHelperWakeEntry): string {
+  const label = entry.name ? `${entry.name} · ` : ''
+  const file = entry.resultPath ? ` · ${entry.resultPath}` : ''
+  return `· ${label}${entry.model} · ${entry.ok ? 'concluído' : 'falhou'} · id ${entry.helperId}${file}`
+}
+
+// ————— o correio (o pote ÚNICO dos dois caminhos de entrega) —————
+
+/** A marca do bloco que pega carona nos resultados de tool. O agente e o dono
+ *  leem a mesma linha e sabem de cara que quem falou foi o app. */
+export const GUI_HELPER_INBOX_TAG = '[synkora] ajudantes:'
+
+/**
+ * O CORREIO DOS AJUDANTES — onde um encerramento espera até alguém entregá-lo.
+ *
+ * O BUG REAL (5º teste do dono, 18/08): dois ajudantes encerraram enquanto o
+ * delegador estava DENTRO do turno, esperando um terceiro no long-poll. O
+ * despertador segurou o aviso — e segurar está certo, nunca se interrompe um
+ * turno vivo —, mas o agente, cego lá dentro, disse ao dono "nenhum terminou"
+ * com a lateral mostrando três rodando. Ordem dele: "cada ajudante que terminar,
+ * avisar o orquestrador que terminou e entregar via MCP, pra não poluir o chat".
+ *
+ * Daí DOIS caminhos de entrega para o MESMO fato: o despertador (conversa
+ * ociosa, mensagem visível no fio) e a CARONA no resultado da próxima tool
+ * (dentro do turno, sem interromper nada). Este pote é o que os mantém
+ * coerentes: quem entrega primeiro CONSOME, então o dono nunca lê a mesma
+ * novidade duas vezes nem fica sem ela. É o padrão do correio F6
+ * (CLAUDE.md F6.10: "[synkora inbox]" nos resultados de tool), agora com o
+ * escopo estreito da delegação.
+ *
+ * Ele é uma INSTÂNCIA, e a de produção é o `guiHelperInbox` abaixo: o
+ * correlacionador (que posta) e as tools do MCP (que colhem) moram em módulos
+ * diferentes e nunca se enxergam — pedir ao `index.ts` uma segunda costura para
+ * ligar os dois seria repetir uma fiação que ele já fez uma vez (a mesma
+ * disciplina do `engineJournals` no guiDelegationWiring). Os dois lados aceitam
+ * a instância por injeção, que é como a suíte fica hermética.
+ */
+export class GuiHelperInbox {
+  private readonly panes = new Map<string, GuiHelperWakeEntry[]>()
+
+  /** `false` = este ajudante já estava no pote (o motor repetiu o `settled`). */
+  post(paneId: string, entry: GuiHelperWakeEntry): boolean {
+    const pending = this.panes.get(paneId) ?? []
+    if (pending.some((known) => known.helperId === entry.helperId)) return false
+    pending.push(entry)
+    this.panes.set(paneId, pending)
+    return true
+  }
+
+  count(paneId: string): number {
+    return this.panes.get(paneId)?.length ?? 0
+  }
+
+  has(paneId: string): boolean {
+    return this.count(paneId) > 0
+  }
+
+  /**
+   * Tira TODAS as pendências do pane. `except` sai do RETORNO mas some do pote
+   * do mesmo jeito: quem lê a entrega de um ajudante já ficou sabendo dele — o
+   * eco só gastaria contexto e faria o agente achar que houve um segundo fim.
+   */
+  drain(paneId: string, except?: string): GuiHelperWakeEntry[] {
+    const pending = this.panes.get(paneId)
+    if (!pending || pending.length === 0) return []
+    this.panes.delete(paneId)
+    return except ? pending.filter((entry) => entry.helperId !== except) : pending
+  }
+
+  /** Devolve à FRENTE (recusa transitória da entrega): a ordem de encerramento
+   *  é a ordem em que o delegador vai colher, e ela não pode se embaralhar. */
+  restore(paneId: string, entries: readonly GuiHelperWakeEntry[]): void {
+    if (entries.length === 0) return
+    this.panes.set(paneId, [...entries, ...(this.panes.get(paneId) ?? [])])
+  }
+
+  /** Conversa desmontada: novidade sem ninguém para ler é lixo, não memória. */
+  forget(paneId: string): void {
+    this.panes.delete(paneId)
+  }
+}
+
+/** O correio de PRODUÇÃO — um por processo, chaveado por paneId (que é único
+ *  no app inteiro). Testes injetam o próprio; o app usa este dos dois lados. */
+export const guiHelperInbox = new GuiHelperInbox()
+
+/**
+ * O BLOCO QUE PEGA CARONA num resultado de tool. Curto por obrigação: ele viaja
+ * em TODA tool do catálogo de delegação, então cada linha é contexto que o
+ * delegador paga em toda chamada. Diz o mínimo acionável — quem encerrou, como
+ * encerrou, o ARQUIVO da entrega — e nunca o texto dela.
+ */
+export function guiHelperInboxBlock(
+  entries: readonly GuiHelperWakeEntry[],
+  options: { stillWorking?: number } = {}
+): string {
+  if (entries.length === 0) return ''
+  const done = entries.filter((entry) => entry.ok).length
+  const failed = entries.length - done
+  const head =
+    entries.length === 1
+      ? `${GUI_HELPER_INBOX_TAG} 1 encerrou enquanto você trabalhava.`
+      : `${GUI_HELPER_INBOX_TAG} ${entries.length} encerraram enquanto você trabalhava ` +
+        `(${plural(done, 'concluído', 'concluídos')}, ${plural(failed, 'falhou', 'falharam')}).`
+  const shown = entries.slice(0, GUI_HELPER_WAKE_LIST_MAX)
+  const lines = shown.map(settledLine)
+  if (entries.length > shown.length) {
+    lines.push(`· … e mais ${entries.length - shown.length} (a lista inteira está no helpers_status)`)
+  }
+  const tail = [
+    entries.some((entry) => entry.resultPath)
+      ? `A entrega ${entries.length === 1 ? 'inteira está' : 'de cada um está'} no ARQUIVO citado — abra o arquivo (o helper_result devolve o mesmo caminho).`
+      : 'Colha cada um com helper_result.'
+  ]
+  const working = Math.max(0, Math.trunc(options.stillWorking ?? 0))
+  if (working > 0) tail.push(`Ainda trabalhando: ${working}.`)
+  return [head, ...lines, tail.join(' ')].join('\n')
 }
 
 /**
@@ -289,17 +422,16 @@ export function guiHelperWakeMessage(
       : `[synkora] ${entries.length} ajudantes que você abriu encerraram: ` +
         `${plural(done, 'concluído', 'concluídos')}, ${plural(failed, 'falhou', 'falharam')}.`
   const shown = entries.slice(0, GUI_HELPER_WAKE_LIST_MAX)
-  const lines = shown.map((entry) => {
-    const label = entry.name ? `${entry.name} · ` : ''
-    return `· ${label}${entry.model} · ${entry.ok ? 'concluído' : 'falhou'} · id ${entry.helperId}`
-  })
+  const lines = shown.map(settledLine)
   if (entries.length > shown.length) {
     lines.push(`· … e mais ${entries.length - shown.length} (a lista inteira está no helpers_status)`)
   }
   const tail = [
-    entries.length === 1
-      ? 'Colha a entrega com helper_result e conte ao dono o que voltou.'
-      : 'Colha cada um com helper_result (um id por chamada) e conte ao dono o que voltou.'
+    entries.some((entry) => entry.resultPath)
+      ? `A entrega ${entries.length === 1 ? 'está' : 'de cada um está'} no ARQUIVO citado — abra o arquivo (o helper_result devolve o mesmo caminho) e conte ao dono o que voltou.`
+      : entries.length === 1
+        ? 'Colha a entrega com helper_result e conte ao dono o que voltou.'
+        : 'Colha cada um com helper_result (um id por chamada) e conte ao dono o que voltou.'
   ]
   if (stillWorking > 0) {
     tail.push(
@@ -391,6 +523,9 @@ export interface GuiHelperCardDeps {
    * e a pendência é descartada em vez de crescer sem fim.
    */
   wake?(paneId: string, wake: GuiHelperWake): boolean
+  /** O CORREIO onde o encerramento espera. Ausente = o de produção
+   *  (`guiHelperInbox`), que é o MESMO pote que as tools do MCP colhem. */
+  inbox?: GuiHelperInbox
   /** Relógio da coalescência. Injetável para o teste não esperar 3s de verdade. */
   setTimer?(ms: number, fn: () => void): () => void
   now?(): number
@@ -416,8 +551,6 @@ interface HelperPaneState {
   batches: Map<string, HelperBatch>
   batchOfHelper: Map<string, string>
   activity: Map<string, { at: number; count: number }>
-  /** Ajudantes que ENCERRARAM e o delegador ainda não foi avisado. */
-  pendingWake: GuiHelperWakeEntry[]
   /** Cancelador do relógio de coalescência (ausente = nenhum armado). */
   cancelWake?: () => void
 }
@@ -425,12 +558,15 @@ interface HelperPaneState {
 export class GuiHelperCardCorrelator {
   private readonly deps: GuiHelperCardDeps
   private readonly panes = new Map<string, HelperPaneState>()
+  /** Os ajudantes encerrados esperam AQUI — o mesmo pote que as tools colhem. */
+  private readonly inbox: GuiHelperInbox
   private readonly now: () => number
   private readonly setTimer: (ms: number, fn: () => void) => () => void
   private syntheticSeq = 0
 
   constructor(deps: GuiHelperCardDeps) {
     this.deps = deps
+    this.inbox = deps.inbox ?? guiHelperInbox
     this.now = deps.now ?? Date.now
     this.setTimer =
       deps.setTimer ??
@@ -556,6 +692,7 @@ export class GuiHelperCardCorrelator {
   forgetPane(paneId: string): void {
     this.panes.get(paneId)?.cancelWake?.()
     this.panes.delete(paneId)
+    this.inbox.forget(paneId)
   }
 
   private state(paneId: string): HelperPaneState {
@@ -565,8 +702,7 @@ export class GuiHelperCardCorrelator {
         pendingEnvelopes: [],
         batches: new Map(),
         batchOfHelper: new Map(),
-        activity: new Map(),
-        pendingWake: []
+        activity: new Map()
       }
       this.panes.set(paneId, state)
     }
@@ -612,12 +748,13 @@ export class GuiHelperCardCorrelator {
     if (!state || !batch) return
     if (!batch.live.delete(record.helperId)) return
     this.deps.emit(record.delegatorPaneId, guiHelperSettledEvent(record))
-    // O DESPERTADOR (a correção de 18/08). O card fechar na lateral não conta
-    // nada ao AGENTE: se ele já encerrou o turno, ninguém mais vai chamar
-    // `helper_result` e a conversa morre em silêncio com a entrega pronta na
-    // mão do harness. `cancelled` fica DE FORA: pane desmontado, quit e órfão
-    // de boot não têm ninguém esperando, e acordar um chat que está morrendo é
-    // barulho puro.
+    // O CORREIO + O DESPERTADOR (as duas correções de 18/08). O card fechar na
+    // lateral não conta nada ao AGENTE: se ele já encerrou o turno, ninguém mais
+    // vai chamar `helper_result` e a conversa morre em silêncio com a entrega
+    // pronta na mão do harness; e se ele está DENTRO de um turno, o despertador
+    // (que nunca interrompe) o deixaria cego até o turno acabar. A novidade
+    // entra no pote e sai pelo primeiro dos dois caminhos. `cancelled` fica DE
+    // FORA: pane desmontado, quit e órfão de boot não têm ninguém esperando.
     if (record.state === 'done' || record.state === 'failed') {
       this.armWake(record.delegatorPaneId, state, record)
     }
@@ -626,15 +763,17 @@ export class GuiHelperCardCorrelator {
   }
 
   private armWake(paneId: string, state: HelperPaneState, record: GuiHelperRecord): void {
-    // O `live.delete` acima já é a barreira de "encerra uma vez só"; este
-    // segundo pente cobre o motor repetindo um `settled` sem passar por lá.
-    if (state.pendingWake.some((entry) => entry.helperId === record.helperId)) return
-    state.pendingWake.push({
+    // O `live.delete` acima já é a barreira de "encerra uma vez só"; o `post`
+    // devolvendo `false` é o segundo pente, para o motor que repetisse um
+    // `settled` sem passar por lá.
+    const posted = this.inbox.post(paneId, {
       helperId: record.helperId,
       ...(record.name ? { name: record.name } : {}),
       model: record.model,
-      ok: record.state === 'done'
+      ok: record.state === 'done',
+      ...(record.resultPath ? { resultPath: record.resultPath } : {})
     })
+    if (!posted) return
     this.scheduleWake(paneId, state)
   }
 
@@ -653,28 +792,31 @@ export class GuiHelperCardCorrelator {
    * A BATIDA DO DESPERTADOR.
    *
    * Turno em andamento SEGURA o aviso: o agente está falando, os cards fecham
-   * sozinhos na lateral e interrompê-lo seria pior que esperar. O relógio então
-   * se re-arma — batida de 3 em 3s que só existe ENQUANTO há aviso preso, e que
-   * morre no primeiro desfecho (entregue, pane esquecido, sessão morta). É de
-   * propósito que a espera não dependa de observar o `result` do turno: o
-   * mesmo laço cobre também as recusas que não são de turno (troca de executor
-   * em voo, entrega da fila saindo), e uma recusa dessas nunca deixa o dono no
-   * silêncio que este código veio consertar.
+   * sozinhos na lateral e interrompê-lo seria pior que esperar — quem alcança o
+   * agente lá dentro é o CORREIO, de carona no resultado da próxima tool. O
+   * relógio então se re-arma — batida de 3 em 3s que só existe ENQUANTO há aviso
+   * preso, e que morre no primeiro desfecho (entregue por qualquer um dos dois
+   * caminhos, pane esquecido, sessão morta). É de propósito que a espera não
+   * dependa de observar o `result` do turno: o mesmo laço cobre também as
+   * recusas que não são de turno (troca de executor em voo, entrega da fila
+   * saindo), e uma recusa dessas nunca deixa o dono no silêncio que este código
+   * veio consertar.
    */
   private flushWake(paneId: string, state: HelperPaneState): void {
-    if (state.pendingWake.length === 0) return
+    // Pote vazio = o correio já entregou esta novidade numa tool. O relógio
+    // simplesmente não se re-arma e o despertador se apaga sozinho.
+    if (!this.inbox.has(paneId)) return
     const deliver = this.deps.wake
     if (!deliver) {
-      state.pendingWake = []
+      this.inbox.forget(paneId)
       return
     }
     if (!this.deps.turnActive?.(paneId)) {
-      const entries = state.pendingWake
+      // COLHE ANTES DE ENTREGAR: a entrega ABRE UM TURNO, e um turno é evento —
+      // pendência viva aqui viraria um segundo aviso para o mesmo ajudante.
+      const entries = this.inbox.drain(paneId)
       const done = entries.filter((entry) => entry.ok).length
       const stillWorking = this.liveHelperCount(state)
-      // LIMPA ANTES DE ENTREGAR: a entrega ABRE UM TURNO, e um turno é evento —
-      // pendência viva aqui viraria um segundo aviso para o mesmo ajudante.
-      state.pendingWake = []
       const delivered = deliver(paneId, {
         helperIds: entries.map((entry) => entry.helperId),
         done,
@@ -685,7 +827,7 @@ export class GuiHelperCardCorrelator {
       if (delivered) return
       // Devolve os antigos NA FRENTE do que possa ter encerrado durante a
       // tentativa — recusa não pode reordenar nem comer encerramento novo.
-      state.pendingWake = [...entries, ...state.pendingWake]
+      this.inbox.restore(paneId, entries)
     }
     this.scheduleWake(paneId, state)
   }

@@ -112,6 +112,17 @@ export function guiMissionRoleOf(paneId: string): GuiMissionRole | undefined {
  * advisory AUDITADO do `guiDelegationWiring`, que nomeia o desvio no recibo em
  * vez de recusar a entrega.
  *
+ * A LINHA DA ENTREGA EM ARQUIVO (5º teste ao vivo, mesma data) fecha as duas
+ * ordens daquela noite. Caso real: dois ajudantes encerraram enquanto o
+ * delegador estava DENTRO do turno esperando um terceiro no long-poll — o
+ * despertador segurou o aviso (turno vivo não se interrompe) e o agente, cego,
+ * disse ao dono "nenhum terminou". Ordens dele: "cada ajudante que terminar,
+ * avisar o orquestrador que terminou e entregar via MCP, pra não poluir o chat"
+ * e "todo ajudante sempre entrega em modelo de ARQUIVO". Aqui só mora o que o
+ * MODELO precisa saber — que a novidade chega sozinha no próximo resultado de
+ * tool e que a entrega mora num arquivo; o mecanismo é do `guiDelegationWiring`
+ * (correio + gravação), e não depende de o agente ter lido esta linha.
+ *
  * O chat de PLANEJAMENTO não recebe esta seção: ele não delega (D2).
  */
 const DELEGATION_STANDING_ORDER = `DELEGATION — STANDING ORDER FROM THE OWNER:
@@ -121,6 +132,7 @@ const DELEGATION_STANDING_ORDER = `DELEGATION — STANDING ORDER FROM THE OWNER:
 - THE OWNER'S PIN IS HIS WORD. When his message names no model or effort, EVERY helper of that fleet opens on what he pinned in the side panel — exactly, all of them, stamped in the receipt.
 - You leave his pin only when HE names another model in this chat, or when no seat of that CLI is logged — and then you SAY it here. Quietly opening something else is inventing an order he never gave.
 - You OWN your helpers: watch them with helpers_status, steer a live one with helper_send, collect with helper_result (it long-polls; calling it again is cheap), stop one with helper_cancel — in a claude chat they appear as mcp__synkora__*.
+- Helpers deliver in FILES: the moment one ends, a "[synkora] ajudantes:" block rides your next tool result naming it and its file (.synkora/helpers/<id>.md). Open the file — never ask a helper to paste its work again.
 - Before a large fleet, read list_seats and spread it across the accounts with the most limit left — accounts of the pinned model's CLI: switching CLI switches the model, and that is substituting, not spreading.
 - Helpers share THIS worktree: split the work by file boundaries, the way you would if you were running a team, and never hand the same file to two of them.
 - If these tools are not in your catalog, say so to the owner and do the work yourself — never fall back to a native subagent.`

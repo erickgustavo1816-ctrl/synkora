@@ -29,7 +29,7 @@ import test from 'node:test'
 import * as cards from '../.tmp/gui-helper-wake-test/guiHelperCards.js'
 import * as sessions from '../.tmp/gui-helper-wake-test/guiSessions.js'
 
-const { GuiHelperCardCorrelator, guiHelperWakeMessage } = cards
+const { GuiHelperCardCorrelator, GuiHelperInbox, guiHelperWakeMessage } = cards
 const { GuiSessionRegistry } = sessions
 
 /** Relógio de bancada: nada de espera real numa janela de coalescência de 3s. */
@@ -81,22 +81,28 @@ function helperRecord(patch = {}) {
   }
 }
 
-/** Correlacionador com relógio de bancada e espião de despertar. */
+/** Correlacionador com relógio de bancada e espião de despertar.
+ *
+ *  O CORREIO entra INJETADO (e não o singleton de produção): o pote é
+ *  compartilhado com as tools do MCP, e um pote global faria a pendência de um
+ *  teste vazar para o vizinho de mesmo paneId. */
 function harness(overrides = {}) {
   const emitted = []
   const wakes = []
   const timers = fakeTimers()
+  const inbox = new GuiHelperInbox()
   const correlator = new GuiHelperCardCorrelator({
     emit: (paneId, evt) => emitted.push({ paneId, evt }),
     turnActive: () => false,
     setTimer: timers.setTimer,
+    inbox,
     wake: (paneId, wake) => {
       wakes.push({ paneId, wake })
       return true
     },
     ...overrides
   })
-  return { correlator, emitted, wakes, timers }
+  return { correlator, emitted, wakes, timers, inbox }
 }
 
 /** Abre um lote com N ajudantes e devolve os registros vivos. */
@@ -335,11 +341,16 @@ function registryHarness(patch = {}) {
   const timers = fakeTimers()
   const records = []
   const sent = []
+  const inbox = new GuiHelperInbox()
   const state = { alive: true, turnActive: false }
   const gui = new GuiSessionRegistry({
     push: () => undefined,
     systemPromptFile: () => undefined,
     helperWakeTimer: timers.setTimer,
+    // Correio PRÓPRIO por harness: sem isto dois registros do mesmo paneId
+    // dividiriam o pote de produção e a pendência de um teste apareceria no
+    // aviso do outro.
+    helperInbox: inbox,
     record: (event, ids, detail) => records.push({ event, ids, detail }),
     ...patch
   })
@@ -364,7 +375,7 @@ function registryHarness(patch = {}) {
     }).ok,
     true
   )
-  return { gui, paneId, timers, records, sent, state }
+  return { gui, paneId, timers, records, sent, state, inbox }
 }
 
 test('o aviso chega ao modelo E fica VISÍVEL no fio do dono', () => {
@@ -421,6 +432,93 @@ test('turno vivo no chat segura a entrega; sessão morta a descarta', () => {
   dead.timers.tick()
   assert.equal(dead.sent.length, 0, 'ninguém para acordar')
   assert.equal(dead.timers.pending, 0, 'e o relógio para — nada de bater num pane morto para sempre')
+})
+
+// ————— o correio: o MESMO pote que o despertador (18/08, 5º teste do dono) —————
+//
+// Ordem dele: "cada ajudante que terminar, avisar o orquestrador que terminou e
+// entregar via MCP, pra não poluir o chat". O aviso passou a ter DOIS caminhos —
+// o despertador (conversa ociosa) e a carona no resultado da próxima tool
+// (mesmo dentro do turno). Os dois bebem do MESMO pote, então o dono nunca lê a
+// mesma novidade duas vezes nem fica sem ela.
+
+test('o aviso cita o ARQUIVO de cada entrega, que é o que o agente abre', () => {
+  const text = guiHelperWakeMessage(
+    [
+      {
+        helperId: 'h-1',
+        name: 'pesquisa',
+        model: 'opus[1m]',
+        ok: true,
+        resultPath: '.synkora/helpers/h-1.md'
+      },
+      { helperId: 'h-2', model: 'fable', ok: false, resultPath: '.synkora/helpers/h-2.md' }
+    ],
+    0
+  )
+  assert.match(text, /\.synkora\/helpers\/h-1\.md/u)
+  assert.match(text, /\.synkora\/helpers\/h-2\.md/u, 'a falha também tem registro em arquivo')
+  assert.ok(text.length < 900, `o aviso continua curto (${text.length} chars)`)
+})
+
+test('o encerramento fica no correio até alguém entregar', () => {
+  const { correlator, inbox, timers } = harness({ turnActive: () => true })
+  const paneId = 'gui-dev-abc12345'
+  const [record] = openBatch(correlator, paneId, [helperRecord()])
+  settle(correlator, record, 'done', { result: 'pronto', resultPath: '.synkora/helpers/h-1.md' })
+
+  assert.equal(inbox.count(paneId), 1, 'o pote é onde a novidade espera')
+  const [entry] = inbox.drain(paneId)
+  assert.equal(entry.helperId, 'h-1')
+  assert.equal(entry.resultPath, '.synkora/helpers/h-1.md')
+  assert.equal(entry.ok, true)
+
+  // Colhido pelo correio, o despertador não repete: ele bate, vê o pote vazio e
+  // se apaga.
+  timers.tick()
+  assert.equal(inbox.count(paneId), 0)
+  assert.equal(timers.pending, 0, 'relógio de aviso que já foi entregue não se re-arma')
+})
+
+test('o que o despertador entregou não sobra no correio', () => {
+  const { correlator, inbox, timers, wakes } = harness()
+  const paneId = 'gui-dev-abc12345'
+  const [record] = openBatch(correlator, paneId, [helperRecord()])
+  settle(correlator, record, 'done')
+  timers.tick()
+
+  assert.equal(wakes.length, 1)
+  assert.equal(inbox.count(paneId), 0, 'a mesma novidade viajaria de novo na próxima tool')
+})
+
+test('recusa transitória devolve a novidade AO POTE, na ordem certa', () => {
+  const { correlator, inbox, timers } = harness({ wake: () => false })
+  const paneId = 'gui-dev-abc12345'
+  const fleet = openBatch(correlator, paneId, [
+    helperRecord({ helperId: 'h-1' }),
+    helperRecord({ helperId: 'h-2' })
+  ])
+  settle(correlator, fleet[0], 'done')
+  timers.tick()
+  assert.equal(inbox.count(paneId), 1, 'recusado, o aviso volta para o pote')
+
+  settle(correlator, fleet[1], 'done')
+  assert.deepEqual(
+    inbox.drain(paneId).map((entry) => entry.helperId),
+    ['h-1', 'h-2'],
+    'o antigo volta NA FRENTE do que encerrou durante a tentativa'
+  )
+})
+
+test('pane esquecido leva o correio junto', () => {
+  const { correlator, inbox } = harness({ turnActive: () => true })
+  const paneId = 'gui-dev-abc12345'
+  const [record] = openBatch(correlator, paneId, [helperRecord()])
+  settle(correlator, record, 'done')
+  assert.equal(inbox.count(paneId), 1)
+
+  correlator.forgetPane(paneId)
+  assert.equal(inbox.count(paneId), 0, 'novidade de conversa desmontada é lixo, não memória')
 })
 
 test('fechar o chat com aviso pendente não entrega nada', () => {

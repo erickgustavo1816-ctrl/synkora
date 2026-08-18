@@ -15,7 +15,7 @@
 //       src/main/guiHelperCards.ts src/main/guiSessions.ts src/main/guiDelegationWiring.ts \
 //   && node --test scripts/test-gui-delegation-wiring.mjs
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -32,10 +32,13 @@ const {
   GUI_HELPER_CARD_ACTIVITY_MAX,
   GUI_HELPER_CARD_ACTIVITY_MS,
   GUI_HELPER_CARD_PREFIX,
+  GUI_HELPER_INBOX_TAG,
   GuiHelperCardCorrelator,
+  GuiHelperInbox,
   guiHelperActivityEvent,
   guiHelperCardId,
   guiHelperCardInput,
+  guiHelperInboxBlock,
   guiHelperSettledEvent,
   guiHelperSpawnedEvents,
   guiOrphanHelperCancellations,
@@ -48,17 +51,24 @@ const {
   spawnFingerprint
 } = sessions
 const {
+  GUI_HELPER_DELIVERY_DIR,
+  GUI_HELPER_PERSONA,
+  GUI_HELPER_RESULT_HEAD_CHARS,
   GuiHelperCatalogCache,
   buildGuiDelegationApi,
   claudeHelperArgs,
   codexHelperArgs,
+  guiHelperDeliveryDocument,
+  guiHelperDeliveryPath,
   guiHelperEventFor,
+  guiHelperResultText,
   guiHelperSpawnText,
   guiHelperStatusText,
   guiPinDeviationText,
   guiPinDeviations,
   planGuiHelperRequests,
-  resolveGuiHelperSeat
+  resolveGuiHelperSeat,
+  writeGuiHelperDelivery
 } = wiring
 const { GuiHelperEngine } = engineModule
 
@@ -750,11 +760,26 @@ function delegationApi(overrides = {}) {
       }
     },
     status: () => [],
+    liveCount: () => overrides.liveCount ?? 0,
     get: (helperId) => (helperId === 'h-meu' ? { delegatorPaneId: 'p1' } : { delegatorPaneId: 'outro' }),
-    result: async () => ({ ok: true, helperId: 'h-meu', state: 'done', pending: false, waitedMs: 0, result: 'x', snapshot: { helperId: 'h-meu', cli: 'claude', model: 'opus', seatId: 's', state: 'done', startedAt: 0, elapsedMs: 0, hasResult: true } }),
+    result: async (helperId) => {
+      // O irmão que encerra DURANTE a espera: o long-poll segue esperando o seu
+      // (contrato intacto) e quem conta a novidade é o correio, na volta.
+      overlap?.()
+      return {
+        ok: true,
+        helperId,
+        state: 'done',
+        pending: false,
+        waitedMs: 0,
+        result: 'x',
+        snapshot: { helperId, cli: 'claude', model: 'opus', seatId: 's', state: 'done', startedAt: 0, elapsedMs: 0, hasResult: true }
+      }
+    },
     send: () => ({ ok: true }),
     cancel: () => ({ ok: true })
   }
+  const overlap = overrides.duringResult
   const api = buildGuiDelegationApi({
     engine,
     delegator: (paneId) =>
@@ -764,6 +789,7 @@ function delegationApi(overrides = {}) {
     beginBatch: (paneId) => calls.begin.push(paneId),
     endBatch: (paneId) => calls.end.push(paneId),
     seats: () => [],
+    ...(overrides.inbox ? { inbox: overrides.inbox } : {}),
     now: () => 0
   })
   return { api, calls }
@@ -1245,4 +1271,437 @@ test('o aviso do pino convive com o do custo da frota — os dois chegam marcado
   )
   assert.match(text, /⚠ frota claude com efforts diferentes/u)
   assert.match(text, /⚠ o dono CARIMBOU: opus\[1m\]/u)
+})
+
+// ————— 10. A ENTREGA EM ARQUIVO (ordem do dono, 18/08 à noite) —————
+//
+// "todo ajudante sempre entrega em modelo de ARQUIVO" (dono, 5º teste ao vivo),
+// e a memória feedback-agente-saida-em-arquivo diz o preço de não fazer isso: um
+// payload inline gigante já queimou uma rodada de 35 minutos. A persona PEDE
+// (cinto) e o HARNESS ESCREVE (suspensório) — nenhuma entrega pode depender de o
+// ajudante ter obedecido.
+
+function tmpWorktree() {
+  return mkdtempSync(join(tmpdir(), 'synkora-helper-'))
+}
+
+/** Registro como o motor o publica no desfecho (agora com o cwd do worktree). */
+function deliveredRecord(cwd, patch = {}) {
+  return {
+    helperId: 'h-1',
+    delegatorPaneId: 'gui-dev-abc12345',
+    projectId: 'proj',
+    name: 'pesquisa',
+    cwd,
+    cli: 'claude',
+    model: 'opus[1m]',
+    effort: 'high',
+    seatId: 'seat-1',
+    seatName: 'Claude - Gmail',
+    prompt: 'levante os arquivos que tocam a fila',
+    state: 'done',
+    startedAt: 1_700_000_000_000,
+    settledAt: 1_700_000_120_000,
+    ...patch
+  }
+}
+
+test('a entrega pousa no arquivo canônico do worktree, com cabeçalho honesto', () => {
+  const cwd = tmpWorktree()
+  try {
+    const record = deliveredRecord(cwd)
+    const outcome = writeGuiHelperDelivery({ record, text: 'a fila mora em src/main/queue.ts' })
+
+    assert.equal(outcome.ok, true, outcome.error)
+    assert.equal(outcome.path, '.synkora/helpers/h-1.md', 'o caminho é RELATIVO ao worktree')
+    assert.equal(GUI_HELPER_DELIVERY_DIR, '.synkora/helpers')
+
+    const onDisk = readFileSync(join(cwd, '.synkora', 'helpers', 'h-1.md'), 'utf8')
+    assert.match(onDisk, /pesquisa/u, 'sem o apelido o dono não sabe de quem é o arquivo')
+    assert.match(onDisk, /opus\[1m\]/u)
+    assert.match(onDisk, /Claude - Gmail/u)
+    assert.match(onDisk, /h-1/u)
+    assert.match(onDisk, /concluí/u, 'o desfecho tem de estar no cabeçalho')
+    assert.match(onDisk, /2023-11-14T22:13:20\.000Z/u, 'quando começou')
+    assert.match(onDisk, /2023-11-14T22:15:20\.000Z/u, 'quando encerrou')
+    assert.match(onDisk, /a fila mora em src\/main\/queue\.ts/u, 'o corpo é a entrega inteira')
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('id com caractere proibido nunca vira caminho quebrado', () => {
+  assert.equal(guiHelperDeliveryPath('h-1'), '.synkora/helpers/h-1.md')
+  // `:` e `/` são ilegais em nome de arquivo no Windows — a mesma régua do
+  // writeClaudeMcpConfig (paneId vira nome de arquivo e o write derrubava o spawn).
+  assert.equal(guiHelperDeliveryPath('a/b:c'), '.synkora/helpers/a_b_c.md')
+  assert.equal(guiHelperDeliveryPath('../fora'), '.synkora/helpers/.._fora.md')
+})
+
+test('entrega GIGANTE vai inteira para o arquivo — o teto de 64KB é só do inline', () => {
+  const cwd = tmpWorktree()
+  try {
+    const changes = []
+    const engine = new GuiHelperEngine({
+      spawnClaude: (_request, emit) => {
+        emitter.emit = emit
+        return { send: () => undefined, dispose: () => undefined }
+      },
+      spawnCodex: () => ({ send: () => undefined, dispose: () => undefined }),
+      resolveSeat: () => ({ seatId: 'seat-1', configDir: 'c', name: 'Claude - Gmail' }),
+      deliver: (delivery) => writeGuiHelperDelivery(delivery),
+      newId: () => 'h-gigante',
+      onChange: (change) => changes.push(change)
+    })
+    const emitter = {}
+    const outcome = engine.spawn(
+      { paneId: 'p1', projectId: 'proj', cwd, cli: 'claude', model: 'opus', seatId: 'seat-1' },
+      [{ prompt: 'escreva muito' }]
+    )
+    assert.equal(outcome.receipts[0].ok, true, outcome.receipts[0].error)
+
+    const enorme = 'x'.repeat(200_000)
+    emitter.emit({ type: 'result', isError: false, text: enorme })
+
+    const record = engine.get('h-gigante')
+    assert.equal(record.state, 'done')
+    assert.equal(record.resultTruncated, true, 'o inline continua cortado no teto')
+    assert.equal(record.resultPath, '.synkora/helpers/h-gigante.md')
+    assert.equal(record.deliveryError, undefined)
+
+    const onDisk = readFileSync(join(cwd, '.synkora', 'helpers', 'h-gigante.md'), 'utf8')
+    assert.ok(onDisk.includes(enorme), 'o arquivo é onde NADA se perde')
+
+    // O card do anel e a fotografia citam o arquivo: o dono e o agente leem o
+    // mesmo endereço, venha ele da lateral ou de uma tool.
+    const settled = changes.find((change) => change.kind === 'settled')
+    assert.match(guiHelperSettledEvent(settled.record).text, /\.synkora\/helpers\/h-gigante\.md/u)
+    assert.match(guiHelperStatusText(engine.status('p1')), /\.synkora\/helpers\/h-gigante\.md/u)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('falha de disco NÃO engole a entrega: o texto volta inline com o motivo', () => {
+  const dir = tmpWorktree()
+  try {
+    // cwd apontando para um ARQUIVO: o mkdir do .synkora não tem como existir.
+    const arquivo = join(dir, 'nao-sou-pasta')
+    writeFileSync(arquivo, 'x', 'utf8')
+    const outcome = writeGuiHelperDelivery({
+      record: deliveredRecord(arquivo),
+      text: 'a entrega'
+    })
+    assert.equal(outcome.ok, false)
+    assert.ok(outcome.error.length > 0, 'a degradação nomeia a causa, nunca cala')
+
+    // E o motor carimba o erro no registro sem perder o texto.
+    const engine = new GuiHelperEngine({
+      spawnClaude: (_request, emit) => {
+        emitter.emit = emit
+        return { send: () => undefined, dispose: () => undefined }
+      },
+      spawnCodex: () => ({ send: () => undefined, dispose: () => undefined }),
+      resolveSeat: () => ({ seatId: 'seat-1', configDir: 'c' }),
+      deliver: () => {
+        throw new Error('disco cheio')
+      },
+      newId: () => 'h-sem-disco'
+    })
+    const emitter = {}
+    engine.spawn(
+      { paneId: 'p1', projectId: 'proj', cwd: arquivo, cli: 'claude', model: 'opus', seatId: 'seat-1' },
+      [{ prompt: 'trabalhe' }]
+    )
+    emitter.emit({ type: 'result', isError: false, text: 'ENTREGA VIVA' })
+    const record = engine.get('h-sem-disco')
+    assert.equal(record.result, 'ENTREGA VIVA', 'entrega nunca se perde por causa do disco')
+    assert.equal(record.resultPath, undefined)
+    assert.match(record.deliveryError, /disco cheio/u)
+
+    const text = guiHelperResultText({
+      ok: true,
+      helperId: 'h-sem-disco',
+      state: 'done',
+      pending: false,
+      waitedMs: 0,
+      result: 'ENTREGA VIVA',
+      deliveryError: record.deliveryError,
+      snapshot: {
+        helperId: 'h-sem-disco',
+        cli: 'claude',
+        model: 'opus',
+        seatId: 'seat-1',
+        state: 'done',
+        startedAt: 0,
+        elapsedMs: 0,
+        hasResult: true
+      }
+    })
+    assert.match(text, /ENTREGA VIVA/u, 'sem arquivo, o texto INTEIRO volta inline')
+    assert.match(text, /disco cheio/u, 'e o motivo viaja junto — degradação honesta')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('o helper_result entrega o CAMINHO primeiro e só um começo do texto', () => {
+  const enorme = 'y'.repeat(GUI_HELPER_RESULT_HEAD_CHARS * 3)
+  const view = {
+    ok: true,
+    helperId: 'h-1',
+    state: 'done',
+    pending: false,
+    waitedMs: 0,
+    result: enorme,
+    resultPath: '.synkora/helpers/h-1.md',
+    snapshot: {
+      helperId: 'h-1',
+      cli: 'claude',
+      model: 'opus',
+      seatId: 'seat-1',
+      state: 'done',
+      startedAt: 0,
+      elapsedMs: 0,
+      hasResult: true
+    }
+  }
+  const text = guiHelperResultText(view)
+  const caminho = text.indexOf('.synkora/helpers/h-1.md')
+  const corpo = text.indexOf('yyy')
+  assert.ok(caminho >= 0, 'o caminho tem de estar na resposta')
+  assert.ok(corpo > caminho, 'o CAMINHO vem primeiro — é ele que o agente abre')
+  assert.ok(
+    text.length < GUI_HELPER_RESULT_HEAD_CHARS + 800,
+    `a resposta despejou a entrega inteira (${text.length} chars)`
+  )
+  assert.match(text, /arquivo/u, 'a resposta diz que o resto está no arquivo')
+
+  // Entrega curta cabe inteira: o arquivo continua citado, sem prometer corte
+  // que não houve.
+  const curta = guiHelperResultText({ ...view, result: 'só isso' })
+  assert.match(curta, /só isso/u)
+  assert.match(curta, /\.synkora\/helpers\/h-1\.md/u)
+})
+
+test('ajudante que FALHOU também tem arquivo, e a resposta aponta para ele', () => {
+  const cwd = tmpWorktree()
+  try {
+    const record = deliveredRecord(cwd, {
+      helperId: 'h-2',
+      state: 'failed',
+      failure: 'limite da conta estourou',
+      name: undefined
+    })
+    const outcome = writeGuiHelperDelivery({ record, text: 'consegui ler metade dos arquivos' })
+    assert.equal(outcome.ok, true, outcome.error)
+    const onDisk = readFileSync(join(cwd, '.synkora', 'helpers', 'h-2.md'), 'utf8')
+    assert.match(onDisk, /limite da conta estourou/u, 'a causa da falha entra no arquivo')
+    assert.match(onDisk, /metade dos arquivos/u, 'e o trabalho parcial não se perde')
+
+    const text = guiHelperResultText({
+      ok: true,
+      helperId: 'h-2',
+      state: 'failed',
+      pending: false,
+      waitedMs: 0,
+      failure: 'limite da conta estourou',
+      resultPath: '.synkora/helpers/h-2.md',
+      snapshot: {
+        helperId: 'h-2',
+        cli: 'claude',
+        model: 'opus',
+        seatId: 'seat-1',
+        state: 'failed',
+        startedAt: 0,
+        elapsedMs: 0,
+        hasResult: false
+      }
+    })
+    assert.match(text, /limite da conta estourou/u)
+    assert.match(text, /\.synkora\/helpers\/h-2\.md/u)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('o documento da entrega é legível sozinho: cabeçalho + corpo, sem nada inventado', () => {
+  const doc = guiHelperDeliveryDocument(deliveredRecord('/w'), 'corpo da entrega')
+  assert.ok(doc.startsWith('#'), 'é markdown — a aba Arquivos e o dono leem isto')
+  assert.match(doc, /corpo da entrega/u)
+  // Ajudante que encerrou sem escrever nada não vira arquivo mentindo que houve
+  // entrega: o documento diz, com todas as letras, que não veio texto.
+  const vazio = guiHelperDeliveryDocument(deliveredRecord('/w', { state: 'failed', failure: 'caiu' }), '')
+  assert.match(vazio, /caiu/u)
+  assert.match(vazio, /sem texto/iu)
+})
+
+test('a PERSONA do ajudante manda entregar em ARQUIVO e resumir no final', () => {
+  assert.match(GUI_HELPER_PERSONA, /FILE/u)
+  assert.match(GUI_HELPER_PERSONA, /path/u)
+  assert.match(GUI_HELPER_PERSONA, /short/iu, 'a mensagem final é resumo, não despejo')
+  // O suspensório mecânico é citado na própria persona: o ajudante sabe que o
+  // harness guarda a mensagem final dele, então texto gigante ali é desperdício.
+  assert.match(GUI_HELPER_PERSONA, /\.synkora\/helpers\//u)
+})
+
+test('o motor de produção nasce COM a entrega em arquivo ligada', () => {
+  const src = source('src/main/guiDelegationWiring.ts')
+  assert.match(
+    src,
+    /deliver:\s*\(delivery\)\s*=>\s*writeGuiHelperDelivery\(delivery\)/u,
+    'sem esta linha o suspensório só existe no teste'
+  )
+})
+
+// ————— 11. O CORREIO DOS AJUDANTES (o encerramento que não espera turno) —————
+//
+// O BUG REAL (5º teste do dono, 18/08): dois ajudantes encerraram enquanto o
+// delegador estava DENTRO do turno, esperando um terceiro no long-poll. O
+// despertador segurou o aviso (nunca se interrompe um turno vivo) e o agente,
+// cego, disse ao dono "nenhum terminou" com a lateral mostrando o contrário.
+// Ordem dele: "cada ajudante que terminar, avisar o orquestrador que terminou e
+// entregar via MCP, pra não poluir o chat". A entrega então PEGA CARONA no
+// próximo resultado de tool — o mesmo padrão do correio F6 (CLAUDE.md F6.10).
+
+test('o encerramento pega carona no PRÓXIMO resultado de tool, uma vez só', async () => {
+  const inbox = new GuiHelperInbox()
+  const { api } = delegationApi({ inbox, liveCount: 3 })
+  inbox.post('p1', {
+    helperId: 'h-9',
+    name: 'schema',
+    model: 'gpt-5.6-luna',
+    ok: true,
+    resultPath: '.synkora/helpers/h-9.md'
+  })
+
+  const first = api.helpersStatus(delegatorId)
+  assert.ok(first.includes(GUI_HELPER_INBOX_TAG), 'o aviso não viajou no resultado da tool')
+  assert.match(first, /schema/u)
+  assert.match(first, /gpt-5\.6-luna/u)
+  assert.match(first, /h-9/u)
+  assert.match(first, /\.synkora\/helpers\/h-9\.md/u, 'o caminho é o que o agente abre')
+  assert.match(first, /3/u, 'quantos continuam trabalhando')
+
+  const second = api.helpersStatus(delegatorId)
+  assert.equal(
+    second.includes(GUI_HELPER_INBOX_TAG),
+    false,
+    'entregue uma vez, o aviso morre — repetir é poluir o contexto'
+  )
+})
+
+test('o correio viaja em TODA tool do catálogo, menos no eco do próprio ajudante', async () => {
+  const inbox = new GuiHelperInbox()
+  const { api } = delegationApi({ inbox })
+  const post = (helperId) =>
+    inbox.post('p1', { helperId, model: 'opus', ok: true, resultPath: `.synkora/helpers/${helperId}.md` })
+
+  post('h-a')
+  assert.ok((await api.delegateHelpers(delegatorId, [{ prompt: 'x' }])).includes(GUI_HELPER_INBOX_TAG))
+  post('h-b')
+  assert.ok((await api.listSeats(delegatorId)).includes(GUI_HELPER_INBOX_TAG))
+  post('h-c')
+  assert.ok(api.helperSend(delegatorId, 'h-meu', 'oi').includes(GUI_HELPER_INBOX_TAG))
+  post('h-d')
+  assert.ok(api.helperCancel(delegatorId, 'h-meu').includes(GUI_HELPER_INBOX_TAG))
+
+  // helper_result do PRÓPRIO ajudante não se anuncia a si mesmo (seria eco: o
+  // corpo da resposta JÁ é a entrega dele) — mas o irmão continua sendo contado.
+  post('h-meu')
+  post('h-irmao')
+  const text = await api.helperResult(delegatorId, 'h-meu')
+  const bloco = text.slice(text.indexOf(GUI_HELPER_INBOX_TAG))
+  assert.ok(text.includes(GUI_HELPER_INBOX_TAG), 'o irmão tem de ser anunciado')
+  assert.match(bloco, /h-irmao/u)
+  assert.equal(bloco.includes('h-meu'), false, 'o próprio ajudante lido nunca ecoa no correio')
+  // E a pendência dele foi CONSUMIDA: a leitura é a entrega.
+  assert.equal(api.helpersStatus(delegatorId).includes(GUI_HELPER_INBOX_TAG), false)
+})
+
+test('o irmão que encerrou DURANTE o long-poll aparece na volta', async () => {
+  const inbox = new GuiHelperInbox()
+  const { api } = delegationApi({
+    inbox,
+    duringResult: () =>
+      inbox.post('p1', {
+        helperId: 'h-irmao',
+        model: 'opus',
+        ok: true,
+        resultPath: '.synkora/helpers/h-irmao.md'
+      })
+  })
+  const text = await api.helperResult(delegatorId, 'h-meu', 45)
+  assert.match(text, /entrega do ajudante/u, 'o contrato do long-poll não muda: ele esperou o SEU')
+  assert.ok(text.includes(GUI_HELPER_INBOX_TAG), 'o agente ficaria cego de novo sem isto')
+  assert.match(text, /h-irmao/u)
+})
+
+test('o correio é POR PANE: um chat nunca lê o do outro', () => {
+  const inbox = new GuiHelperInbox()
+  const { api } = delegationApi({ inbox })
+  inbox.post('p2', { helperId: 'h-alheio', model: 'opus', ok: true })
+  assert.equal(api.helpersStatus(delegatorId).includes(GUI_HELPER_INBOX_TAG), false)
+  assert.equal(inbox.count('p2'), 1, 'a pendência do outro pane continua lá, intocada')
+  // Sem pendência nenhuma, a resposta da tool não ganha uma linha sequer.
+  assert.equal(api.helpersStatus(delegatorId), guiHelperStatusText([]))
+})
+
+test('correio e despertador são O MESMO pote: quem entrega primeiro consome', () => {
+  const inbox = new GuiHelperInbox()
+  const wakes = []
+  const armed = []
+  const correlator = new GuiHelperCardCorrelator({
+    emit: () => undefined,
+    turnActive: () => true,
+    inbox,
+    setTimer: (ms, fn) => {
+      const slot = { ms, fn, cancelled: false }
+      armed.push(slot)
+      return () => {
+        slot.cancelled = true
+      }
+    },
+    wake: (paneId, wake) => {
+      wakes.push({ paneId, wake })
+      return true
+    }
+  })
+  const { api } = delegationApi({ inbox })
+  const record = helperRecord({ delegatorPaneId: 'p1', resultPath: '.synkora/helpers/h-1.md' })
+  correlator.begin('p1')
+  correlator.change({ kind: 'spawned', record })
+  correlator.end('p1')
+  correlator.change({ kind: 'settled', record: { ...record, state: 'done', result: 'pronto' } })
+
+  // O turno está VIVO (o agente chamou uma tool): o despertador segura, e é o
+  // correio que entrega — na hora, sem interromper ninguém.
+  const text = api.helpersStatus(delegatorId)
+  assert.ok(text.includes(GUI_HELPER_INBOX_TAG))
+  assert.match(text, /h-1/u)
+
+  // E agora o despertador não tem mais o que dizer: a novidade já foi entregue.
+  for (const slot of armed.splice(0, armed.length)) if (!slot.cancelled) slot.fn()
+  assert.equal(wakes.length, 0, 'o dono receberia o MESMO aviso duas vezes')
+  assert.equal(armed.filter((slot) => !slot.cancelled).length, 0, 'e o relógio se apaga sozinho')
+})
+
+test('o bloco do correio é curto, nomeia cada ajudante e ensina o movimento', () => {
+  const bloco = guiHelperInboxBlock(
+    [
+      { helperId: 'h-1', name: 'pesquisa', model: 'opus[1m]', ok: true, resultPath: '.synkora/helpers/h-1.md' },
+      { helperId: 'h-2', model: 'fable', ok: false, resultPath: '.synkora/helpers/h-2.md' }
+    ],
+    { stillWorking: 2 }
+  )
+  assert.ok(bloco.startsWith(GUI_HELPER_INBOX_TAG), 'o dono e o agente sabem de quem é a voz')
+  assert.match(bloco, /pesquisa/u)
+  assert.match(bloco, /opus\[1m\]/u)
+  assert.match(bloco, /h-1/u)
+  assert.match(bloco, /h-2/u)
+  assert.match(bloco, /falh/u, 'falha também se conta')
+  assert.match(bloco, /\.synkora\/helpers\/h-1\.md/u)
+  assert.match(bloco, /2/u, 'quantos ainda trabalham')
+  assert.ok(bloco.length < 700, `o bloco viaja em TODA tool: ${bloco.length} chars é despejo`)
+  assert.equal(guiHelperInboxBlock([], {}), '', 'sem pendência, sem bloco')
 })

@@ -11,14 +11,18 @@
  * O que mora aqui:
  *  1. os dois ADAPTADORES (claude e codex), com as cercas do D5 nos args;
  *  2. `resolveSeat` e `modelSupportsEffort` sobre o catálogo REAL do CLI;
- *  3. a implementação das tools de delegação do `McpApi` — texto legível,
- *     sempre em PT-BR, com o recibo por ajudante.
+ *  3. a ENTREGA EM ARQUIVO (2026-08-18): o único ponto do caminho que toca
+ *     disco, e por isso o único que pode gravar `.synkora/helpers/<id>.md`;
+ *  4. a implementação das tools de delegação do `McpApi` — texto legível,
+ *     sempre em PT-BR, com o recibo por ajudante e o CORREIO de carona.
  *
  * SEM CADEIA (cerca dura do D1): o ajudante nasce SEM `--mcp-config`/
  * `mcp_servers.*`. Ele não enxerga o catálogo `gui-delegator` porque não tem
  * token nenhum — quem delega é o chat do dono, e frota que abre frota é o laço
  * que o backstop existe para conter.
  */
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { CLAUDE_NATIVE_AGENT_FENCE } from './guiDelegateMcp'
 import { CodexSession } from './codexSession'
 import { MaestroSession, type SessionEvent } from './maestroSession'
@@ -29,10 +33,13 @@ import {
   GuiHelperEngine,
   type GuiHelperCli,
   type GuiHelperDelegator,
+  type GuiHelperDelivery,
+  type GuiHelperDeliveryOutcome,
   type GuiHelperEvent,
   type GuiHelperLogEntry,
   type GuiHelperProcess,
   type GuiHelperReceipt,
+  type GuiHelperRecord,
   type GuiHelperRequest,
   type GuiHelperSeat,
   type GuiHelperSnapshot,
@@ -41,6 +48,7 @@ import {
   type GuiHelperResultOutcome,
   resolveHelperCli
 } from './guiHelperSessions'
+import { GuiHelperInbox, guiHelperInbox, guiHelperInboxBlock } from './guiHelperCards'
 import type { GuiDelegationDefaults } from './guiSessions'
 import type { McpHelperRequestInput } from './mcpServer'
 
@@ -63,15 +71,120 @@ export const GUI_HELPER_PERSONA = [
   'You have no tab, no terminal and no human on the other side.',
   '',
   'RULES:',
-  '- Do the slice of work you were given, end to end, and put the ANSWER in your FINAL message.',
-  '  That final text is the only thing your delegator receives.',
+  '- Do the slice of work you were given, end to end.',
+  '- ALWAYS DELIVER IN FILE MODE: the work product goes into a FILE inside this worktree (the file',
+  '  the task names, or .synkora/reports/<slug>.md), and your FINAL message is a SHORT summary —',
+  '  a handful of lines — that names that path. Never paste a long deliverable back as text.',
+  '- The harness saves your final message to .synkora/helpers/<yourId>.md no matter what, so a wall',
+  '  of text there is context your delegator pays for twice and reads once.',
   '- NEVER ask questions and never wait for approval: nobody can answer you. If something is',
   '  genuinely blocked, say what is blocked and why, in your final message, and stop.',
   '- NEVER open subagents of your own (no Task/Agent, no collab, no delegation of any kind).',
-  '- Long deliverables go to a FILE inside the worktree and your final message points to the path;',
-  '  do not paste tens of thousands of characters back.',
   '- Answer the delegator in Brazilian Portuguese (PT-BR).'
 ].join('\n')
+
+// ————— A ENTREGA EM ARQUIVO (ordem do dono, 2026-08-18 à noite) —————
+
+/**
+ * Onde a entrega de cada ajudante pousa, RELATIVO ao worktree do delegador.
+ *
+ * `.synkora/` já é git-invisível em qualquer produto (ensureSynkoraGitExcludes),
+ * então a entrega nunca suja a branch da missão nem entra num commit por
+ * distração — a mesma razão pela qual o transcript e a evidência de browser
+ * moram lá desde a era F6.
+ */
+export const GUI_HELPER_DELIVERY_DIR = '.synkora/helpers'
+
+/** Trecho da entrega que viaja INLINE no `helper_result`. O resto é o arquivo:
+ *  o começo existe para o delegador decidir se abre o arquivo agora, não para
+ *  substituí-lo. */
+export const GUI_HELPER_RESULT_HEAD_CHARS = 2_000
+
+const HELPER_OUTCOME_LABEL: Record<string, string> = {
+  done: 'concluído',
+  failed: 'falhou',
+  cancelled: 'cancelado'
+}
+
+/** O id vira NOME DE ARQUIVO: a mesma régua do `writeClaudeMcpConfig` (paneId
+ *  com `:` derrubava o spawn no Windows). Nada de caractere que o sistema de
+ *  arquivos recuse, e nada que escape da pasta. */
+export function guiHelperDeliveryPath(helperId: string): string {
+  const safe = helperId.replace(/[^A-Za-z0-9._-]/gu, '_').slice(0, 120) || 'ajudante'
+  return `${GUI_HELPER_DELIVERY_DIR}/${safe}.md`
+}
+
+function isoOrUnknown(at: number | undefined): string {
+  return typeof at === 'number' && Number.isFinite(at) ? new Date(at).toISOString() : '—'
+}
+
+/**
+ * O DOCUMENTO: cabeçalho + entrega. Ele é lido por três leitores diferentes — o
+ * agente delegador, o dono na aba Arquivos e o próprio Synkora numa rodada
+ * futura —, então diz de quem é, em que executor rodou, como terminou e quando.
+ * Sem isso, uma pasta com dez arquivos de uuid não conta nada a ninguém.
+ */
+export function guiHelperDeliveryDocument(record: GuiHelperRecord, text: string): string {
+  const outcome = HELPER_OUTCOME_LABEL[record.state] ?? record.state
+  const executor = [record.model, record.effort, record.seatName ?? record.seatId, record.cli]
+    .filter((part): part is string => Boolean(part))
+    .join(' · ')
+  const body = text.trim()
+  return [
+    `# ajudante ${record.name ? `${record.name} — ` : ''}${record.helperId}`,
+    '',
+    `- executor: ${executor}`,
+    `- desfecho: ${outcome}`,
+    `- começou: ${isoOrUnknown(record.startedAt)}`,
+    `- encerrou: ${isoOrUnknown(record.settledAt)}`,
+    ...(record.failure ? [`- motivo: ${record.failure}`] : []),
+    '',
+    '## briefing',
+    '',
+    record.prompt.trim() || '—',
+    '',
+    '## entrega',
+    '',
+    body || '_(o ajudante encerrou sem texto)_',
+    ''
+  ].join('\n')
+}
+
+/**
+ * GRAVA a entrega. É o SUSPENSÓRIO da ordem do dono ("todo ajudante sempre
+ * entrega em modelo de ARQUIVO"): a persona pede ao ajudante, isto acontece
+ * sempre — inclusive quando ele desobedece e despeja 200KB no texto final.
+ *
+ * Falha aqui NUNCA é fatal: o motor guarda o motivo e o texto continua voltando
+ * inline. Perder a entrega porque o disco recusou seria trocar um problema
+ * pequeno por um irreversível.
+ */
+export function writeGuiHelperDelivery(delivery: GuiHelperDelivery): GuiHelperDeliveryOutcome {
+  const { record } = delivery
+  const cwd = record.cwd?.trim()
+  if (!cwd) {
+    return { ok: false, error: 'o ajudante não tem worktree registrado — a entrega ficou só em memória' }
+  }
+  // O caminho publicado é RELATIVO e com barras normais: é o que o agente
+  // escreve num Read e o que o dono lê no card. O join do sistema só existe do
+  // lado do disco (lição da era F6: caminho absoluto com acento morria no
+  // PowerShell do gate).
+  const relative = guiHelperDeliveryPath(record.helperId)
+  const file = relative.slice(GUI_HELPER_DELIVERY_DIR.length + 1)
+  try {
+    const dir = join(cwd, '.synkora', 'helpers')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, file), guiHelperDeliveryDocument(record, delivery.text), 'utf-8')
+    return { ok: true, path: relative }
+  } catch (error) {
+    return { ok: false, error: `não deu para gravar ${relative}: ${helperErrorText(error)}` }
+  }
+}
+
+function helperErrorText(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message
+  return String(error)
+}
 
 /** Sem silêncio: um pedido de permissão numa sessão headless nunca é respondido. */
 const HELPER_PERMISSION_DEAD_END =
@@ -324,6 +437,10 @@ export function createGuiHelperEngine(wiring: GuiHelperEngineWiring): GuiHelperE
     spawnCodex: createCodexHelperAdapter(wiring),
     resolveSeat: (query) => resolveGuiHelperSeat(wiring.seats(), query),
     modelSupportsEffort: (query) => catalog.supportsEffort(query),
+    // A ENTREGA EM ARQUIVO é do motor de PRODUÇÃO, não uma opção do chamador: a
+    // ordem do dono ("todo ajudante sempre entrega em modelo de ARQUIVO") não
+    // pode depender de um índice se lembrar de ligá-la.
+    deliver: (delivery) => writeGuiHelperDelivery(delivery),
     onChange: wiring.onChange,
     log: wiring.log
   })
@@ -600,7 +717,10 @@ export function guiHelperStatusText(snapshots: readonly GuiHelperSnapshot[]): st
     const detail: string[] = [`${snapshot.state} há ${elapsedText(snapshot.elapsedMs)}`]
     if (snapshot.lastActivity) detail.push(`agora: ${snapshot.lastActivity.summary}`)
     if (snapshot.contextTokens) detail.push(`contexto ~${Math.round(snapshot.contextTokens / 1000)}k`)
-    if (snapshot.hasResult) detail.push('entrega pronta (helper_result)')
+    // O ARQUIVO é o endereço da entrega; o helper_result devolve o mesmo
+    // caminho e é o que sobra quando o disco recusou.
+    if (snapshot.resultPath) detail.push(`entrega: ${snapshot.resultPath}`)
+    else if (snapshot.hasResult) detail.push('entrega pronta (helper_result)')
     if (snapshot.failure) detail.push(snapshot.failure)
     return `- ${head}\n    ${meta.join(' · ')}\n    ${detail.join(' · ')}`
   })
@@ -608,6 +728,18 @@ export function guiHelperStatusText(snapshots: readonly GuiHelperSnapshot[]): st
   return `${snapshots.length} ajudante(s) neste chat · ${live.length} vivo(s):\n${lines.join('\n')}`
 }
 
+/**
+ * A RESPOSTA DO `helper_result` — CAMINHO PRIMEIRO, texto depois.
+ *
+ * Ordem do dono (2026-08-18): "todo ajudante sempre entrega em modelo de
+ * ARQUIVO". Então o que esta resposta faz é ENDEREÇAR: o arquivo abre a
+ * mensagem, um começo da entrega vem junto para o delegador decidir se abre
+ * agora, e o resto fica onde está. A memória feedback-agente-saida-em-arquivo é
+ * o porquê — um payload inline gigante já queimou uma rodada de 35 minutos.
+ *
+ * Sem arquivo (disco recusou) a resposta DEGRADA para o texto inteiro inline com
+ * o motivo colado: honesta, e nunca uma entrega perdida.
+ */
 export function guiHelperResultText(outcome: GuiHelperResultOutcome): string {
   if (!outcome.ok) return outcome.error
   if (outcome.pending) {
@@ -619,10 +751,29 @@ export function guiHelperResultText(outcome: GuiHelperResultOutcome): string {
       'ou siga com outra coisa: o ajudante não para porque você saiu.'
     )
   }
-  if (outcome.state === 'done') {
-    return `entrega do ajudante ${outcome.helperId}${outcome.truncated ? ' (cortada no teto)' : ''}:\n\n${outcome.result ?? ''}`
+  if (outcome.state !== 'done') {
+    const head = `o ajudante ${outcome.helperId} encerrou como ${outcome.state}: ${outcome.failure ?? 'sem motivo declarado'}`
+    return outcome.resultPath
+      ? `${head}\n\nO registro (com o que ele chegou a escrever) está em ${outcome.resultPath}.`
+      : head
   }
-  return `o ajudante ${outcome.helperId} encerrou como ${outcome.state}: ${outcome.failure ?? 'sem motivo declarado'}`
+  const full = outcome.result ?? ''
+  if (!outcome.resultPath) {
+    const why = outcome.deliveryError ? `\n[synkora] a entrega NÃO virou arquivo: ${outcome.deliveryError}` : ''
+    return `entrega do ajudante ${outcome.helperId}${outcome.truncated ? ' (cortada no teto)' : ''}:${why}\n\n${full}`
+  }
+  const cut = full.length > GUI_HELPER_RESULT_HEAD_CHARS
+  const head = cut ? `${full.slice(0, GUI_HELPER_RESULT_HEAD_CHARS)}…` : full
+  return [
+    `entrega do ajudante ${outcome.helperId}: o texto COMPLETO está no arquivo ${outcome.resultPath} — abra ele.`,
+    '',
+    cut ? 'começo da entrega:' : 'a entrega, inteira:',
+    '',
+    head,
+    ...(cut
+      ? ['', `[synkora] daqui em diante só no arquivo ${outcome.resultPath} — não peça o texto de novo ao ajudante.`]
+      : [])
+  ].join('\n')
 }
 
 function usageText(info: SeatUsageInfo | null | undefined, now: number): string {
@@ -672,6 +823,9 @@ export interface GuiDelegationApiDeps {
    *  (`createGuiHelperEngine` já o registrou) — passar um aqui é como a suíte
    *  observa a auditoria sem subir processo de CLI nenhum. */
   log?(entry: GuiHelperLogEntry): void
+  /** O CORREIO dos ajudantes. Ausente = o de produção, que é o MESMO pote em
+   *  que o correlacionador de cards posta os encerramentos. */
+  inbox?: GuiHelperInbox
   seats(): GuiDelegationSeat[]
   seatUsage?(seat: GuiDelegationSeat): Promise<SeatUsageInfo | null>
   now?(): number
@@ -726,6 +880,39 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
     }
   }
 
+  /**
+   * O CORREIO DE CARONA — a correção do 5º teste do dono (18/08).
+   *
+   * O caso real: dois ajudantes encerraram enquanto o delegador estava DENTRO do
+   * turno, esperando um terceiro no long-poll. O despertador segurou o aviso (e
+   * fez certo: turno vivo não se interrompe), e o agente — cego lá dentro —
+   * disse ao dono "nenhum terminou" com a lateral mostrando três rodando.
+   * Palavras dele: "cada ajudante que terminar, avisar o orquestrador que
+   * terminou e entregar via MCP, pra não poluir o chat".
+   *
+   * Então TODA resposta de tool deste catálogo carrega as novidades pendentes.
+   * É o padrão do correio F6 (o bloco `[synkora inbox]` que viajava nos
+   * resultados de tool, CLAUDE.md F6.10), agora no escopo da delegação — e no
+   * lugar certo: aqui, e não no transporte do `mcpServer`, que não sabe nada de
+   * ajudante e serve outros papéis.
+   *
+   * `except` existe para o `helper_result` não ecoar o ajudante que ele acabou
+   * de entregar: a leitura JÁ é a entrega daquele, e repeti-la faria o agente
+   * pensar que houve um segundo fim.
+   */
+  const inbox = deps.inbox ?? guiHelperInbox
+  const withInbox = (paneId: string, body: string, except?: string): string => {
+    const entries = inbox.drain(paneId, except)
+    if (entries.length === 0) return body
+    let stillWorking = 0
+    try {
+      stillWorking = deps.engine.liveCount(paneId)
+    } catch {
+      // Contar quem sobrou é informação, nunca pré-condição da entrega.
+    }
+    return `${body}\n\n${guiHelperInboxBlock(entries, { stillWorking })}`
+  }
+
   return {
     async delegateHelpers(id, helpers) {
       const refusal = guard(id)
@@ -777,10 +964,13 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
       }
       // Um recibo por pedido, na ordem (contrato do `spawn`): é o que deixa a
       // origem viajar por índice sem inventar um id de correlação novo.
-      return guiHelperSpawnText(
-        outcome.receipts,
-        [outcome.warning, guiPinDeviationText(pin, deviations)],
-        plans.map((plan) => plan.origins)
+      return withInbox(
+        id.paneId,
+        guiHelperSpawnText(
+          outcome.receipts,
+          [outcome.warning, guiPinDeviationText(pin, deviations)],
+          plans.map((plan) => plan.origins)
+        )
       )
     },
 
@@ -806,13 +996,13 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
           })
         )
       }
-      return guiHelperSeatsText(seats, usage, now())
+      return withInbox(id.paneId, guiHelperSeatsText(seats, usage, now()))
     },
 
     helpersStatus(id) {
       const refusal = guard(id)
       if (refusal) return refusal
-      return guiHelperStatusText(deps.engine.status(id.paneId))
+      return withInbox(id.paneId, guiHelperStatusText(deps.engine.status(id.paneId)))
     },
 
     async helperResult(id, helperId, waitSeconds) {
@@ -820,7 +1010,11 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
       if (refusal) return refusal
       const owned = helperOfPane(deps, id, helperId)
       if (!owned.ok) return owned.error
-      return guiHelperResultText(await deps.engine.result(helperId, waitSeconds))
+      // O CORREIO É COLHIDO DEPOIS DA ESPERA, de propósito: o long-poll segue
+      // esperando o ajudante PEDIDO (contrato intacto) e quem encerrou no meio
+      // do caminho é contado na volta — a cegueira do 5º teste morre aqui.
+      const body = guiHelperResultText(await deps.engine.result(helperId, waitSeconds))
+      return withInbox(id.paneId, body, helperId)
     },
 
     helperSend(id, helperId, text) {
@@ -829,9 +1023,10 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
       const owned = helperOfPane(deps, id, helperId)
       if (!owned.ok) return owned.error
       const sent = deps.engine.send(helperId, text)
-      return sent.ok
-        ? `mensagem entregue ao ajudante ${helperId} — ela entra no turno dele.`
-        : sent.error
+      return withInbox(
+        id.paneId,
+        sent.ok ? `mensagem entregue ao ajudante ${helperId} — ela entra no turno dele.` : sent.error
+      )
     },
 
     helperCancel(id, helperId) {
@@ -840,9 +1035,12 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
       const owned = helperOfPane(deps, id, helperId)
       if (!owned.ok) return owned.error
       const cancelled = deps.engine.cancel(helperId, 'cancelado pelo chat que o abriu')
-      return cancelled.ok
-        ? `ajudante ${helperId} cancelado — o que ele já escreveu no worktree continua lá.`
-        : cancelled.error
+      return withInbox(
+        id.paneId,
+        cancelled.ok
+          ? `ajudante ${helperId} cancelado — o que ele já escreveu no worktree continua lá.`
+          : cancelled.error
+      )
     }
   }
 }
