@@ -1,13 +1,21 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import type { FilePreviewResult } from '../../../preload/index'
+import type { FilePreviewResult, FileTreeRoot } from '../../../preload/index'
+import GuiFileContextMenu, { useFileContextMenu } from './GuiFileContextMenu'
+import type { FileContextTarget } from '../guiFileContextMenu'
 
 interface Props {
   path: string | null
   preview: FilePreviewResult | null
   loading: boolean
   onReload: () => void
+  /** RODADA 7 (C1): a raiz autorizada deste arquivo. Quem sabe dela é o HOST
+   *  (a aba Arquivos, o leitor rápido do trilho) — a bancada só a repassa ao
+   *  menu de contexto, que manda o caminho RELATIVO ao main. Sem as duas o
+   *  menu não abre: nunca se inventa raiz aqui dentro. */
+  projectId?: string
+  root?: FileTreeRoot
 }
 
 const SAFE_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
@@ -129,7 +137,14 @@ function StatusPreview({ result }: { result: Extract<FilePreviewResult, { ok: tr
   )
 }
 
-export default function FilePreviewPanel({ path, preview, loading, onReload }: Props): React.JSX.Element {
+export default function FilePreviewPanel({
+  path,
+  preview,
+  loading,
+  onReload,
+  projectId,
+  root
+}: Props): React.JSX.Element {
   const canRenderImage =
     preview?.ok === true &&
     preview.kind === 'image' &&
@@ -139,8 +154,26 @@ export default function FilePreviewPanel({ path, preview, loading, onReload }: P
   const fileName = pathParts.at(-1) ?? ''
   const parentPath = pathParts.slice(0, -1).join('/')
 
+  // ONDE ABRIR ESTE ARQUIVO (rodada 7, C1). O dono clicava num `.html` e ficava
+  // preso no código: a bancada segue sendo a leitura DEFAULT — "abrir no app" é
+  // recarregar esta folha —, e as outras duas saídas (programa padrão do
+  // sistema, mostrar na pasta) saem daqui pelo `files:openExternal`.
+  const openTarget: FileContextTarget | null =
+    projectId && root && path ? { projectId, root, path, current: true } : null
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null)
+  // "abrir no app" com o arquivo JÁ na bancada é reler esta folha — a única
+  // leitura honesta de "abrir aqui" quando aqui já é onde ele está.
+  const reopenHere = useCallback((): void => onReload(), [onReload])
+  const fileMenu = useFileContextMenu(reopenHere)
+
   return (
-    <section className="files-reader file-preview-panel" aria-label="Prévia do arquivo">
+    <section
+      className="files-reader file-preview-panel"
+      aria-label="Prévia do arquivo"
+      onContextMenu={(event) => {
+        if (openTarget) fileMenu.openFromPointer(event, openTarget)
+      }}
+    >
       {!path ? (
         <EmptyPreview />
       ) : (
@@ -157,6 +190,23 @@ export default function FilePreviewPanel({ path, preview, loading, onReload }: P
                 </span>
               )}
               <span className="file-preview-badge">somente leitura</span>
+              {openTarget && (
+                <button
+                  ref={menuButtonRef}
+                  type="button"
+                  className="file-preview-reload file-preview-open"
+                  aria-haspopup="menu"
+                  aria-expanded={Boolean(fileMenu.menu)}
+                  data-tip={
+                    'Onde abrir este arquivo: aqui na bancada, no programa padrão do '
+                    + 'sistema (.html vai para o navegador) ou mostrando na pasta.'
+                  }
+                  aria-label="Onde abrir este arquivo"
+                  onClick={() => fileMenu.openFromAnchor(menuButtonRef.current, openTarget)}
+                >
+                  ↗
+                </button>
+              )}
               <button
                 type="button"
                 className="file-preview-reload"
@@ -170,6 +220,11 @@ export default function FilePreviewPanel({ path, preview, loading, onReload }: P
               </button>
             </span>
           </header>
+          {/* Recusa do sistema (arquivo sumiu, sem programa padrão) fica NA
+              bancada: o gesto e a resposta no mesmo lugar. */}
+          {fileMenu.notice && (
+            <p className="gui-file-open-notice">// {fileMenu.notice}</p>
+          )}
           {loading ? (
             <div className="files-placeholder"><p>carregando prévia…</p></div>
           ) : preview == null ? (
@@ -199,6 +254,16 @@ export default function FilePreviewPanel({ path, preview, loading, onReload }: P
             />
           )}
         </>
+      )}
+      {fileMenu.menu && (
+        <GuiFileContextMenu
+          target={fileMenu.menu.target}
+          options={fileMenu.menu.options}
+          x={fileMenu.menu.x}
+          y={fileMenu.menu.y}
+          onChoose={fileMenu.choose}
+          onDismiss={fileMenu.dismiss}
+        />
       )}
     </section>
   )

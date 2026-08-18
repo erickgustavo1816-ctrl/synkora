@@ -551,6 +551,13 @@ export function installDevMock(): void {
           ? `# ${relativePath}\n\nConteúdo **mockado** do preview somente leitura.`
           : `const preview = true\nexport default preview\n`
       }),
+      // Abrir FORA do app depende do `shell` do Electron: no preview de browser
+      // não há programa padrão nem pasta para mostrar. Recusa honesta que nomeia
+      // a saída — nunca um "abriu" que não abriu nada (rodada 7, C1).
+      openExternal: async () => ({
+        ok: false as const,
+        error: 'abrir fora do app só dentro do Synkora — o preview de browser não tem shell'
+      }),
       tree: async () => ({
         ok: true,
         truncated: false,

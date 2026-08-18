@@ -38,6 +38,7 @@ import type { MainContext } from '../mainContext'
 import {
   listReadOnlyFileTree,
   readReadOnlyFilePreview,
+  resolveReadOnlyFile,
   type FileTreeRoot
 } from '../filePreview'
 
@@ -45,6 +46,18 @@ export interface FilesIpcExtras {
   /** Host ou canvas: ambos são renderers empacotados e autenticados. */
   assertAppRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
 }
+
+/** ABRIR FORA DO APP (rodada 7, C1) — `default` entrega o arquivo ao programa
+ *  padrão do sistema (.html cai no navegador, .png no visualizador); `reveal`
+ *  abre a pasta com ele selecionado. */
+export type FileExternalOpenMode = 'default' | 'reveal'
+
+/** FONTE ÚNICA do contrato: o preload importa este tipo daqui (nada de espelho
+ *  para desencontrar). O par no renderer é `FileOpenOutcome`
+ *  (src/renderer/src/guiFileContextMenu.ts), que normaliza esta resposta. */
+export type FileExternalOpenResult =
+  | { ok: true; action: 'external' | 'reveal' }
+  | { ok: false; error: string }
 
 export function registerFilesIpc(ctx: MainContext, extras: FilesIpcExtras): void {
   const {
@@ -280,6 +293,68 @@ export function registerFilesIpc(ctx: MainContext, extras: FilesIpcExtras): void
       const root = readOnlyRootPath(projectId, rawRoot)
       if (!root || typeof relativePath !== 'string') return null
       return readReadOnlyFilePreview(root.path, relativePath)
+    }
+  )
+
+  // ————— ABRIR ONDE O DONO QUISER (rodada 7, C1) —————
+  //
+  // O menu de contexto da entrega e da bancada de leitura dá três saídas: ler
+  // no app (que já existia, `files:preview`), mandar para o programa padrão do
+  // sistema e mostrar na pasta. As DUAS últimas passam por aqui.
+  //
+  // O caminho NUNCA vem cru do renderer: a raiz sai de um ID lógico pela mesma
+  // cerca do preview (`readOnlyRootPath` — projeto, ou missão VIVA com worktree
+  // próprio) e o arquivo passa pelo resolver físico de `filePreview`, que já
+  // recusa `..`, caminho absoluto e link/junction em qualquer componente. Sem
+  // isso, "abrir com o programa padrão" seria um `shell.openPath` arbitrário
+  // pedido pela janela.
+  //
+  // Browser embutido é a 4ª etapa do roadmap do dono — aqui o arquivo sai para
+  // o sistema e a responsabilidade acaba na borda do app.
+  ipcMain.handle(
+    'files:openExternal',
+    async (
+      event,
+      projectId: unknown,
+      rawRoot: unknown,
+      relativePath: unknown,
+      mode: unknown
+    ): Promise<FileExternalOpenResult> => {
+      extras.assertAppRendererSender(event)
+      const openMode: FileExternalOpenMode = mode === 'reveal' ? 'reveal' : 'default'
+      const action = openMode === 'reveal' ? 'open-reveal' : 'open-default'
+      // Escopo só para a auditoria (ids recortados, nunca caminho): a AUTORIDADE
+      // é a raiz resolvida logo abaixo, não este objeto.
+      const missionId = rawRoot && typeof rawRoot === 'object'
+        ? (rawRoot as { missionId?: unknown }).missionId
+        : undefined
+      const scope: FileActionScope = {
+        projectId: typeof projectId === 'string' ? projectId : '',
+        ...(typeof missionId === 'string' ? { missionId } : {})
+      }
+      const refuse = (error: string): FileExternalOpenResult => {
+        auditFileAction(action, scope, { ok: false })
+        return { ok: false, error }
+      }
+
+      const root = readOnlyRootPath(projectId, rawRoot)
+      if (!root) return refuse('a origem deste arquivo não está mais disponível')
+      if (typeof relativePath !== 'string') return refuse('caminho de arquivo inválido')
+      const file = resolveReadOnlyFile(root.path, relativePath)
+      if (!file) return refuse('arquivo não encontrado ou fora da pasta autorizada')
+
+      if (openMode === 'reveal') {
+        shell.showItemInFolder(file.absolutePath)
+        auditFileAction(action, scope, { ok: true })
+        return { ok: true, action: 'reveal' }
+      }
+      // O erro do shell carrega caminho ABSOLUTO do sistema — ele não atravessa
+      // para o renderer nem para a caixa-preta (a régua do domínio arquivos:
+      // nada de nome, caminho ou erro de filesystem).
+      const failure = await shell.openPath(file.absolutePath)
+      if (failure) return refuse('o sistema não conseguiu abrir este arquivo')
+      auditFileAction(action, scope, { ok: true })
+      return { ok: true, action: 'external' }
     }
   )
 

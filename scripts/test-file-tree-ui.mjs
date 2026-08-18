@@ -215,6 +215,29 @@ test('árvore densa: guias de indentação, dotfile discreto e movimento opciona
   assert.match(reduced, /animation:\s*none/u, 'a entrada das linhas respeita reduced-motion')
 })
 
+test('a bancada de leitura ganhou a saída para FORA do app (rodada 7, C1)', async () => {
+  const [viewer, view] = await Promise.all([
+    readFile(new URL('../src/renderer/src/components/FilePreviewPanel.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/renderer/src/components/FilesView.tsx', import.meta.url), 'utf8')
+  ])
+
+  // O dono clicava num .html e ficava preso no código: agora o botão direito
+  // (e um gatilho de teclado no cabeçalho) oferecem programa padrão e pasta.
+  assert.ok(viewer.includes('GuiFileContextMenu'), 'a bancada não monta o menu de contexto')
+  assert.ok(viewer.includes('onContextMenu'), 'botão direito não abre nada na bancada')
+  assert.ok(viewer.includes('aria-haspopup="menu"'), 'o menu ficaria só para o mouse')
+
+  // Quem sabe a RAIZ autorizada é a aba; sem ela o menu não teria como agir —
+  // e o caminho continua relativo, resolvido no main por ID.
+  assert.match(view, /<FilePreviewPanel[\s\S]{0,320}projectId=\{projectId\}/u)
+  assert.match(view, /<FilePreviewPanel[\s\S]{0,320}root=\{root\}/u)
+
+  // Abrir fora do app NÃO abre porta de escrita nesta superfície.
+  for (const mutation of ['files.trash', 'files.rename', 'files.createFile']) {
+    assert.equal(viewer.includes(mutation), false, `a bancada ganhou mutação: ${mutation}`)
+  }
+})
+
 test('o visual anterior não sobrevive como CSS morto', async () => {
   const css = await readFile(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
 

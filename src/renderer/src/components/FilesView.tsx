@@ -291,11 +291,16 @@ export default function FilesView({ projectId, missionId }: Props): React.JSX.El
           onChanged={handleTreeChange}
         />
       </aside>
+      {/* RODADA 7 (C1): a bancada precisa da RAIZ para o menu "onde abrir".
+          Quem sabe dela é a aba (o picker de origem acima) — a bancada nunca
+          inventa raiz, e o caminho continua relativo, resolvido no main. */}
       <FilePreviewPanel
         path={selectedPath}
         preview={preview}
         loading={loading}
         onReload={() => setRevision((value) => value + 1)}
+        projectId={projectId}
+        root={root}
       />
     </div>
   )

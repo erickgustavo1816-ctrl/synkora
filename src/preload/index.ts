@@ -37,6 +37,9 @@ import type {
   MissionShellSpecResult,
   MissionWorkspaceFilesResult
 } from '../main/ipc/missions'
+/** Abrir arquivo fora do app (rodada 7, C1) — contrato do MAIN importado direto:
+ *  a resposta do canal tem uma fonte só, sem espelho para desencontrar. */
+import type { FileExternalOpenMode, FileExternalOpenResult } from '../main/ipc/files'
 import type {
   MissionCommit,
   MissionWorkspaceFile,
@@ -338,6 +341,11 @@ export interface DocFile {
 
 /** Raiz autorizada pela main para a árvore/preview somente leitura. */
 export type { FilePreviewKind, FilePreviewResult, FileTreeEntry, FileTreeResult, FileTreeRoot }
+
+/** Abrir o arquivo FORA do app: programa padrão do sistema ou mostrar na pasta.
+ *  O renderer manda raiz por ID + caminho relativo; quem tem caminho físico é o
+ *  main, que resolve pelo mesmo resolver do preview antes de tocar no `shell`. */
+export type { FileExternalOpenMode, FileExternalOpenResult }
 
 export interface TerminalFileLink {
   start: number
@@ -1056,6 +1064,16 @@ const api = {
       relativePath: string
     ): Promise<FilePreviewResult | null> =>
       ipcRenderer.invoke('files:preview', projectId, root, relativePath),
+    /** Rodada 7 (C1): manda o arquivo para FORA do app — programa padrão do
+     *  sistema (`default`) ou pasta com ele selecionado (`reveal`). Mesma raiz
+     *  lógica do preview: o caminho absoluto nasce e morre no main. */
+    openExternal: (
+      projectId: string,
+      root: FileTreeRoot,
+      relativePath: string,
+      mode: FileExternalOpenMode
+    ): Promise<FileExternalOpenResult> =>
+      ipcRenderer.invoke('files:openExternal', projectId, root, relativePath, mode),
     tree: (scope: FileActionScope): Promise<FileTreeSnapshot> =>
       ipcRenderer.invoke('files:tree', scope),
     createFile: (

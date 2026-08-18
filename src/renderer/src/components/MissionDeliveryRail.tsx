@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { missionTypeOf, type GuiItem, type Mission } from '../store'
 import { missionWorkspace, type MissionWorkspaceSummary } from '../missionWorkspace'
 import { MISSION_STATUS_LABEL as STATUS_LABEL } from '../missionPresentation'
 import MissionCommitHistory from './MissionCommitHistory'
 import GuiSubagentSidebar from './GuiSubagentSidebar'
+import GuiFileContextMenu, { useFileContextMenu } from './GuiFileContextMenu'
+import GuiFileQuickReader from './GuiFileQuickReader'
+import { fileContextOptions, type FileContextTarget } from '../guiFileContextMenu'
+import type { FileTreeRoot } from '../../../preload/index'
 
 // TRILHO DE ENTREGA (Synkora 2.0, onda B; enriquecido na onda D) — a coluna da
 // DIREITA do mockup.
@@ -180,6 +184,22 @@ export default function MissionDeliveryRail({
   // anterior e mandaria o histórico re-ler uma leitura que ele já fez sozinho.
   const fingerprintRef = useRef<{ id: string; mark: string } | null>(null)
 
+  // ——— ABRIR ARQUIVO ONDE O DONO QUISER (rodada 7, C1) ———
+  //
+  // A lista de "ver arquivos" era texto morto: o dono lia o nome do `.html` que
+  // a missão produziu e não tinha saída nenhuma. Agora cada linha é alavanca —
+  // clique ABRE no app (leitor de papel, o mesmo da aba Arquivos) e o botão
+  // direito dá as outras duas saídas (programa padrão do sistema, mostrar na
+  // pasta). O caminho é sempre RELATIVO ao worktree: quem tem caminho físico é
+  // o main, que resolve a raiz pelo id da missão.
+  const railRoot = useMemo<FileTreeRoot>(
+    () => ({ kind: 'mission', missionId: mission.id }),
+    [mission.id]
+  )
+  const [reader, setReader] = useState<string | null>(null)
+  const openInApp = useCallback((target: FileContextTarget): void => setReader(target.path), [])
+  const fileMenu = useFileContextMenu(openInApp)
+
   const measure = useCallback(async (): Promise<void> => {
     // Planejamento nem pergunta: o motor responderia "esta missão não tem
     // worktree aberto", e essa recusa correta viraria um erro na tela.
@@ -237,6 +257,9 @@ export default function MissionDeliveryRail({
     setSummary(null)
     setDiffError(null)
     fingerprintRef.current = null
+    // Leitura aberta pertence à missão que a abriu: sobreviver à troca deixaria
+    // o dono lendo um arquivo de OUTRO worktree com o nome certo na moldura.
+    setReader(null)
   }, [mission.id])
 
   // (c) GATILHO DE SEMPRE: entrar na missão e cada sinal do Board (⇪,
@@ -265,6 +288,16 @@ export default function MissionDeliveryRail({
     document.addEventListener('visibilitychange', update)
     return () => document.removeEventListener('visibilitychange', update)
   }, [])
+
+  // O trilho continua MONTADO fora da aba (desmontar mataria as conversas), e
+  // leitura e menu são PORTAIS em `document.body`: sem esta porta eles ficariam
+  // pendurados por cima da tela que o dono abriu depois.
+  const dismissMenu = fileMenu.dismiss
+  useEffect(() => {
+    if (visible) return
+    setReader(null)
+    dismissMenu(false)
+  }, [visible, dismissMenu])
 
   // (b) POLL LENTO — só à vista, e devolvendo o intervalo ao sair de cena.
   useEffect(() => {
@@ -348,16 +381,62 @@ export default function MissionDeliveryRail({
           {files.length === 0 && <span className="dr-files-empty">nada mudou ainda</span>}
           {files.map((file) => {
             const st = fileStatus(file.status)
+            const target: FileContextTarget = {
+              projectId: mission.projectId,
+              root: railRoot,
+              path: file.path,
+              status: file.status
+            }
+            // Apagado nesta branch não tem o que abrir (nem pasta para mostrar):
+            // a linha continua legível, só não vira gesto. `aria-disabled` em vez
+            // de `disabled` porque botão desabilitado não emite hover — e a dica
+            // que EXPLICA o porquê morreria junto.
+            const openable = fileContextOptions(target).length > 0
             return (
-              <span key={file.path} className="dr-file" data-tip={`${st.label}: ${file.path}`}>
+              <button
+                key={file.path}
+                type="button"
+                className="dr-file"
+                aria-disabled={!openable}
+                data-tip={
+                  openable
+                    ? `${st.label}: ${file.path}\nclique lê aqui · botão direito abre fora do app`
+                    : `${st.label}: ${file.path}\nnão existe mais nesta branch — não há o que abrir`
+                }
+                onClick={() => {
+                  if (openable) setReader(file.path)
+                }}
+                onContextMenu={(event) => fileMenu.openFromPointer(event, target)}
+                onKeyDown={(event) => fileMenu.openFromKeyboard(event, target)}
+              >
                 <i className={`dr-file-status ${st.cls}`} aria-hidden="true">
                   {st.glyph}
                 </i>
                 <span className="dr-file-path">{file.path}</span>
-              </span>
+              </button>
             )
           })}
+          {/* A recusa do sistema mora ao pé da lista, onde o gesto aconteceu. */}
+          {fileMenu.notice && <span className="dr-file-notice">// {fileMenu.notice}</span>}
         </div>
+      )}
+      {fileMenu.menu && (
+        <GuiFileContextMenu
+          target={fileMenu.menu.target}
+          options={fileMenu.menu.options}
+          x={fileMenu.menu.x}
+          y={fileMenu.menu.y}
+          onChoose={fileMenu.choose}
+          onDismiss={fileMenu.dismiss}
+        />
+      )}
+      {reader && (
+        <GuiFileQuickReader
+          projectId={mission.projectId}
+          root={railRoot}
+          path={reader}
+          onClose={() => setReader(null)}
+        />
       )}
 
       {/* P24: fotografia visual do histórico próprio da missão. O main já

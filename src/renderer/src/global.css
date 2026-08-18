@@ -19510,3 +19510,160 @@ details.gui-error-line {
   color: var(--ink-2);
 }
 /* ————— fim do BLOCO NOVO da ficha interrompida ————— */
+
+/* ————— BLOCO NOVO: abrir arquivo onde o dono quiser (rodada 7, C1) —————
+   Achado 4 da validação ao vivo: clicar num `.html` da entrega prendia o dono
+   no preview de CÓDIGO do app, sem saída. Agora a linha de arquivo é ALAVANCA
+   (clique lê aqui) e o botão direito abre o menu com as outras duas saídas —
+   programa padrão do sistema e mostrar na pasta.
+
+   Duas decisões de linguagem:
+   · o menu REAPROVEITA `.file-context-menu` (a árvore de arquivos já é dona
+     desse desenho): existe UM menu de contexto no app, não dois parecidos —
+     aqui só entra o que é próprio desta superfície;
+   · nada se mexe. O que informa é forma e tom, como no resto do papel. */
+
+/* O item da entrega virou <button>: o reset é mínimo de propósito, porque a
+   régua de fonte/cor/elipse continua na regra original de `.dr-file`. */
+.dr-file {
+  width: 100%;
+  appearance: none;
+  padding: 1px 3px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dr-file:hover {
+  border-color: var(--line-strong);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ink);
+}
+
+.dr-file:focus-visible {
+  outline: none;
+  border-color: var(--ink);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ink);
+}
+
+/* Apagado nesta branch: continua legível (é informação do diff), só não é
+   gesto — e a dica no hover explica por quê, que é o motivo de não usar
+   `disabled` aqui. */
+.dr-file[aria-disabled='true'] {
+  cursor: default;
+  color: var(--ink-3);
+}
+
+.dr-file[aria-disabled='true']:hover {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-3);
+}
+
+/* Recusa do sistema ao pé da lista: onde o gesto aconteceu. */
+.dr-file-notice {
+  margin-top: 2px;
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: var(--err);
+  overflow-wrap: anywhere;
+}
+
+/* O menu precisa passar POR CIMA do leitor da entrega (que é overlay) — ele
+   nasce de dentro dele em metade dos casos. */
+.gui-file-context-menu {
+  z-index: 1300;
+}
+
+/* Gatilho de teclado do menu na bancada de leitura: mesma caixa do recarregar
+   (a fileira do cabeçalho é uma régua só), com o glifo que diz "sai do app". */
+.file-preview-open {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.file-preview-open[aria-expanded='true'] {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.gui-file-open-notice {
+  margin: 0;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--err);
+}
+
+/* ——— leitor rápido da entrega: a MESMA bancada da aba Arquivos, em overlay ———
+   Fica abaixo do modal de ação de arquivo (1250) e acima do resto do board. */
+.gui-file-reader-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1240;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(38, 32, 25, 0.36);
+}
+
+.gui-file-reader-sheet {
+  width: min(1080px, calc(100vw - 48px));
+  height: min(760px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 10px;
+  background: var(--paper-2);
+  box-shadow: 0 18px 46px rgba(38, 32, 25, 0.28);
+}
+
+.gui-file-reader-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 4px;
+}
+
+.gui-file-reader-title {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.gui-file-reader-close {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.gui-file-reader-close:hover,
+.gui-file-reader-close:focus-visible {
+  outline: none;
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* A folha precisa poder ENCOLHER dentro do flex para o corpo rolar sozinho. */
+.gui-file-reader-sheet .files-reader {
+  min-height: 0;
+}
+/* ————— fim do BLOCO NOVO de abrir arquivo onde o dono quiser ————— */
