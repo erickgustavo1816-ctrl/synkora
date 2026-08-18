@@ -16717,7 +16717,12 @@ details.gui-error-line {
    que a lateral de subagentes mora. Recolhida ela é uma linha apagada de 20px:
    o pino se mexe uma vez e se esquece, então cobrar uma coluna permanente do
    chat seria cobrar atenção todo dia. PAPEL, sempre: `--panel` é exclusivo do
-   TerminalPane. */
+   TerminalPane.
+
+   R7 §B2 (polish impeccable): a ficha do modelo virou DUAS LINHAS — nome digno
+   em cima, identificador de motor embaixo —, a escolha ligada passou a se
+   anunciar por FORMA (traço interno) antes de cor, e toda a tinta pequena subiu
+   de `--ink-3` (~3:1 sobre papel, reprovado a 10px) para `--ink-2` (~6,3:1). */
 
 .gui-deleg-defaults {
   display: flex;
@@ -16733,14 +16738,14 @@ details.gui-error-line {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 20px;
+  height: 22px;
   max-width: 100%;
   min-width: 0;
   padding: 0 7px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: var(--ink-3);
+  color: var(--ink-2);
   font: inherit;
   font-size: 10.5px;
   letter-spacing: 0.02em;
@@ -16751,7 +16756,7 @@ details.gui-error-line {
 .gui-deleg-tab.open {
   border-color: var(--gui-line);
   background: var(--gui-fill);
-  color: var(--ink-2);
+  color: var(--ink);
 }
 
 .gui-deleg-tab:focus-visible {
@@ -16775,12 +16780,12 @@ details.gui-error-line {
 
 .gui-deleg-panel {
   display: grid;
-  gap: 8px;
+  gap: 11px;
   width: 100%;
   min-width: 0;
-  max-height: min(280px, 46dvh);
+  max-height: min(320px, 46dvh);
   margin-top: 4px;
-  padding: 8px 10px;
+  padding: 9px 11px 10px;
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--gui-line-strong);
@@ -16792,30 +16797,44 @@ details.gui-error-line {
 
 .gui-deleg-note {
   margin: 0;
-  color: var(--ink-3);
+  color: var(--ink-2);
   font-size: 10px;
+  line-height: 1.45;
 }
 
+/* Dentro do campo, aperto; entre campos, folga (a grade do painel) — é o que
+   faz "modelo" e "effort" se lerem como duas decisões, não como uma lista. */
 .gui-deleg-field {
   display: grid;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
 }
 
 .gui-deleg-label {
-  color: var(--ink-3);
+  color: var(--ink-2);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
-.gui-deleg-list,
+.gui-deleg-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 .gui-deleg-group {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.gui-deleg-chips {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
+  align-items: stretch;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -16823,42 +16842,69 @@ details.gui-error-line {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--ink-3);
+  color: var(--ink-2);
   font-size: 10px;
+  letter-spacing: 0.04em;
 }
 
+/* A FICHA DO MODELO: título digno em cima, identificador de motor embaixo. A
+   borda esquerda é 1px como a de todo mundo; quem carrega a escolha é o traço
+   INTERNO, que cabe no respiro já reservado e não empurra o texto ao ligar. */
 .gui-deleg-item {
-  height: 22px;
-  max-width: 100%;
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 1px;
+  min-height: 30px;
+  max-width: min(100%, 15rem);
   min-width: 0;
-  padding: 0 8px;
-  overflow: hidden;
+  padding: 4px 9px;
   border: 1px solid var(--gui-line);
   border-radius: 5px;
   background: transparent;
   color: var(--ink-2);
   font: inherit;
-  font-size: 10.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gui-deleg-item-name {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
+}
+
+/* O id é METADADO: presente para quem procura, discreto para quem só escolhe.
+   `--ink-2` porque 10px de `--ink-3` sobre papel não passa no AA. */
+.gui-deleg-item-id {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 9.5px;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gui-deleg-item:hover:not(:disabled) {
   border-color: var(--gui-line-strong);
   background: var(--gui-fill);
-  color: var(--ink);
 }
 
-.gui-deleg-item.active {
+.gui-deleg-item[aria-pressed='true'] {
   border-color: color-mix(in srgb, var(--accent) 54%, var(--gui-line-strong));
   background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--ink);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .gui-deleg-item:disabled,
 .gui-deleg-clear:disabled {
-  opacity: 0.55;
+  opacity: 0.62;
   cursor: default;
 }
 
@@ -16869,8 +16915,23 @@ details.gui-error-line {
 }
 
 .gui-deleg-empty {
-  color: var(--ink-3);
+  color: var(--ink-2);
   font-size: 10px;
+}
+
+/* O pino que o catálogo não conhece: ele CONTINUA valendo, então fala em voz
+   normal — nem alarme vermelho, nem sussurro que some. */
+.gui-deleg-hint {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.gui-deleg-hint b {
+  color: var(--ink);
+  font-weight: 600;
 }
 
 .gui-deleg-foot {
@@ -16878,12 +16939,13 @@ details.gui-error-line {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  padding-top: 1px;
 }
 
 .gui-deleg-clear {
-  height: 22px;
+  min-height: 26px;
   flex: none;
-  padding: 0 9px;
+  padding: 0 10px;
   border: 1px solid var(--gui-line);
   border-radius: 5px;
   background: transparent;

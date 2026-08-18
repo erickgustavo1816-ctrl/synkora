@@ -5,6 +5,7 @@ import {
   formatGuiSubagentElapsed,
   guiSubagentElapsedMs,
   guiSubagentMetadataForTool,
+  guiSubagentModelName,
   guiSubagentSidebarEntries,
   isGuiSubagentToolEvent,
   normalizeGuiSubagentSidebar
@@ -95,7 +96,9 @@ test('normaliza subagentes concorrentes intercalados e preserva atividade atual'
 
   assert.deepEqual(entries.map((entry) => entry.toolUseId), ['parent-a'])
   assert.equal(entries[0].name, 'Luna Front')
-  assert.equal(entries[0].model, 'gpt-5.6-luna')
+  // O modelo chega CRU do protocolo e sai DIGNO na ficha (R7 §B2) — a régua
+  // vive em `guiSubagentModelName` e é provada na seção R7B, abaixo.
+  assert.equal(entries[0].model, 'GPT-5.6 LUNA')
   assert.equal(entries[0].task, 'investigue o fluxo A')
   assert.equal(entries[0].activity, 'Edit · arquivo que está sendo corrigido')
   assert.equal(entries[0].status, 'running')
@@ -476,13 +479,13 @@ test('C3 — lote abre uma ficha POR ajudante e o envelope não duplica', () => 
   )
 
   assert.equal(entries[0].name, 'revisor A')
-  assert.equal(entries[0].model, 'opus[1m]')
+  assert.equal(entries[0].model, 'OPUS 1M')
   assert.equal(entries[0].effort, 'max')
   assert.equal(entries[0].seat, 'Claude - Gmail')
   assert.equal(entries[0].cli, 'claude')
   assert.equal(entries[0].task, 'revise o módulo A')
   // Cross-CLI é cidadão de primeira classe: mesma ficha, outro carimbo.
-  assert.equal(entries[3].model, 'gpt-5.6-luna')
+  assert.equal(entries[3].model, 'GPT-5.6 LUNA')
   assert.equal(entries[3].effort, 'high')
   assert.equal(entries[3].seat, 'Codex - Hotmail')
   assert.equal(entries[3].cli, 'codex')
@@ -735,7 +738,7 @@ test('R6C — o ajudante INTERROMPIDO fica na lateral, com rótulo próprio', ()
   assert.equal(ficha.statusLabel, 'interrompido')
   // O dono precisa ver QUAL frota ele pode retomar — modelo, effort e conta
   // continuam na ficha exatamente como quando ela estava viva.
-  assert.equal(ficha.model, 'opus[1m]')
+  assert.equal(ficha.model, 'OPUS 1M')
   assert.equal(ficha.effort, 'max')
   assert.equal(ficha.seat, 'Claude - Gmail')
   assert.equal(ficha.cli, 'claude')
@@ -910,4 +913,169 @@ test('R6C — a ficha parada tem tom próprio no papel & painel, sem movimento n
     /\.gui-subagent-row\.interrupted \.gui-subagent-row-dot \{[^}]*background: transparent/u,
     'o ponto cheio é de quem está vivo'
   )
+})
+
+// ————— R7B — A LATERAL SÓ PROMOVE DELEGAÇÃO DE VERDADE (design R7 §B1) —————
+//
+// 2º print da validação ao vivo do dono: o long-poll do delegador claude
+// (`mcp__synkora__helper_result`) virou ficha fantasma "subagente · modelo não
+// informado". A causa era mecânica — TODA tool do catálogo de delegação leva
+// `helperId` no input, e `helperId` sozinho promovia o card.
+//
+// A promoção passa a ter três portas, e nenhuma delas é um campo de input:
+// nome `delegate` (o envelope), nome `helper:*` (o card sintetizado pelo
+// harness) e `type` de subagente nativo.
+
+test('R7B — tool do catálogo com helperId no input NUNCA vira ficha', () => {
+  // O caso LITERAL do print: o long-poll, com o input que ele realmente manda.
+  assert.equal(
+    guiSubagentMetadataForTool('mcp__synkora__helper_result', { helperId: 'h-1' }),
+    undefined,
+    'o long-poll do helper_result não é um subagente'
+  )
+
+  // A família inteira do catálogo, nas três formas de nome que chegam ao
+  // renderer, com o input mais tentador possível (helperId + model).
+  for (const name of [
+    'mcp__synkora__helper_result',
+    'mcp__synkora__helper_send',
+    'mcp__synkora__helper_resume',
+    'mcp__synkora__helper_cancel',
+    'mcp__synkora__helpers_status',
+    'helper_result',
+    'helper_cancel',
+    'synkora/helper_resume',
+    'synkora__helper_send'
+  ]) {
+    assert.equal(
+      guiSubagentMetadataForTool(name, {
+        helperId: 'h-1',
+        model: 'opus[1m]',
+        effort: 'max',
+        seat: 'Claude - Gmail'
+      }),
+      undefined,
+      `${name} é card comum de tool no fio, nunca ficha da lateral`
+    )
+  }
+
+  // E com o anel montado: o card do print não abre ficha nenhuma, nem sozinho
+  // nem ao lado da frota de verdade.
+  const longPoll = {
+    ...tool('30', 'mcp__synkora__helper_result', 'aguardando h-1'),
+    toolUseId: 'poll-1',
+    subagent: guiSubagentMetadataForTool('mcp__synkora__helper_result', { helperId: 'h-1' })
+  }
+  assert.deepEqual(guiSubagentSidebarEntries([longPoll]), [], 'ficha fantasma do print 2')
+  assert.deepEqual(
+    guiSubagentSidebarEntries([
+      delegateEnvelope('1', [HELPER_PROFILE]),
+      helperCard('10', 'h-1', HELPER_PROFILE, { result: launched('helper-task-1') }),
+      longPoll
+    ]).map((entry) => entry.toolUseId),
+    ['helper:h-1'],
+    'o ajudante de verdade fica; o long-poll dele não vira um irmão fantasma'
+  )
+
+  // As TRÊS portas que sobraram continuam abrindo — o card sintetizado (nas
+  // duas vidas), o envelope e o subagente nativo.
+  assert.ok(guiSubagentMetadataForTool('helper:h-1', { helperId: 'h-1', model: 'opus[1m]' }))
+  assert.ok(guiSubagentMetadataForTool('helper:h-1#vida2', { helperId: 'h-1', model: 'opus[1m]' }))
+  assert.ok(guiSubagentMetadataForTool('mcp__synkora__delegate', { helpers: [] }))
+  assert.ok(guiSubagentMetadataForTool('Ferramenta', { subagent_type: 'qa' }))
+})
+
+// R7B.2 — O NOME DIGNO DO MODELO (design R7 §B2: "a ficha da lateral também
+// ganha o nome bonito do modelo quando houver"). O id cru é vocabulário de
+// motor; a ficha é leitura de relance do dono.
+test('R7B — a ficha prefere o NOME BONITO do modelo, com o id cru de reserva', () => {
+  assert.equal(guiSubagentModelName('opus[1m]'), 'OPUS 1M')
+  assert.equal(guiSubagentModelName('claude-opus-4-8'), 'OPUS 4.8')
+  assert.equal(guiSubagentModelName('sonnet'), 'SONNET')
+  assert.equal(guiSubagentModelName('gpt-5.6-luna'), 'GPT-5.6 LUNA')
+  assert.equal(guiSubagentModelName('gpt-5.2-codex'), 'GPT-5.2 CODEX')
+
+  // Reserva HONESTA: id de família desconhecida sai como veio. Enfeitar o que
+  // não se reconhece é inventar identidade de motor.
+  assert.equal(guiSubagentModelName('mistral-nemo-2407'), 'mistral-nemo-2407')
+  assert.equal(guiSubagentModelName(''), '')
+
+  // GÊMEO DECLARADO de `prettyModel` (PaneChrome): as duas telas escrevem o
+  // MESMO nome para o mesmo modelo. O gêmeo não pode ser importado (as suítes
+  // carregam TS com type-stripping do node, que não resolve irmão sem extensão
+  // — e o PaneChrome é React), então a paridade é PROVADA aqui, executando a
+  // função do outro arquivo.
+  const chrome = readFileSync(
+    new URL('../src/renderer/src/components/PaneChrome.tsx', import.meta.url),
+    'utf8'
+  )
+  // CRLF: os fontes do repo são de Windows, e a chave de fechamento da função
+  // (a única na coluna 0) é o que delimita o corpo.
+  const corpo = chrome.match(
+    /export function prettyModel\(id: string\): string \{\r?\n([\s\S]*?)\r?\n\}/u
+  )?.[1]
+  assert.ok(corpo, 'o gêmeo `prettyModel` mudou de assinatura ou saiu do PaneChrome')
+  const composer = new Function('id', corpo)
+  for (const id of [
+    'opus[1m]',
+    'opus',
+    'claude-opus-4-8',
+    'claude-fable-5-20260401',
+    'sonnet',
+    'haiku',
+    'gpt-5.6-luna',
+    'gpt-5.2-codex',
+    'gpt-5.6-sol'
+  ]) {
+    assert.equal(
+      guiSubagentModelName(id),
+      composer(id),
+      `${id}: a lateral e o composer têm de escrever o mesmo nome`
+    )
+  }
+  // A ÚNICA divergência deliberada: fora das famílias conhecidas o composer
+  // caixa-alta o id, e a lateral prefere devolvê-lo intacto.
+  assert.equal(composer('mistral-nemo'), 'MISTRAL NEMO')
+  assert.equal(guiSubagentModelName('mistral-nemo'), 'mistral-nemo')
+})
+
+// R7B.3 — o nome bonito é da FICHA, não da metadata: o que o motor disse
+// continua guardado cru (é ele que o `helper_resume` e a depuração usam).
+test('R7B — a metadata guarda o id cru; quem embeleza é a ficha', () => {
+  const metadata = guiSubagentMetadataForTool('helper:h-7', {
+    helperId: 'h-7',
+    name: 'sonda',
+    model: 'claude-opus-4-8',
+    effort: 'max',
+    seat: 'Claude - Gmail',
+    cli: 'claude',
+    prompt: 'sonde'
+  })
+  assert.equal(metadata.model, 'claude-opus-4-8', 'a projeção do input não maquia o motor')
+
+  const [ficha] = guiSubagentSidebarEntries([
+    helperCard('40', 'h-7', {
+      helperId: 'h-7',
+      name: 'sonda',
+      model: 'claude-opus-4-8',
+      effort: 'max',
+      seat: 'Claude - Gmail',
+      cli: 'claude',
+      prompt: 'sonde'
+    })
+  ])
+  assert.equal(ficha.model, 'OPUS 4.8')
+  // Effort e conta continuam sendo palavra do motor — só o MODELO tem nome de
+  // catálogo para preferir.
+  assert.equal(ficha.effort, 'max')
+  assert.equal(ficha.seat, 'Claude - Gmail')
+  // E o silêncio continua sendo dito, nunca preenchido.
+  const [semModelo] = guiSubagentSidebarEntries([
+    {
+      ...tool('41', 'Task', 'sem modelo'),
+      toolUseId: 'nativo-1',
+      subagent: guiSubagentMetadataForTool('Task', { subagent_type: 'geral' })
+    }
+  ])
+  assert.equal(semModelo.model, 'modelo não informado')
 })

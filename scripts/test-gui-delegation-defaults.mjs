@@ -18,10 +18,12 @@ import test from 'node:test'
 import {
   guiDelegationEffortOptions,
   guiDelegationModelGroups,
+  guiDelegationModelLabelParts,
   guiDelegationModelOption,
   guiDelegationSummary,
   guiPaneDelegates
 } from '../src/renderer/src/guiDelegationDefaults.ts'
+import { guiModelShortName } from '../src/renderer/src/guiComposerPresentation.ts'
 import {
   GUI_MISSION_ROLES,
   guiMissionSystemPrompt,
@@ -29,6 +31,29 @@ import {
 } from '../src/main/guiMissionContracts.ts'
 
 const source = (relative) => readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8')
+
+/**
+ * O EMBELEZADOR DE ID do composer (`prettyModel`, em `PaneChrome.tsx`),
+ * executado a partir do fonte: ele mora num componente React, que não roda em
+ * node puro, mas é metade da fonte única de nome digno — e um teste que o
+ * imitasse provaria a imitação, não o app.
+ */
+function composerPrettyModel() {
+  const chrome = source('src/renderer/src/components/PaneChrome.tsx')
+  const body = chrome.match(
+    /export function prettyModel\(id: string\): string \{\r?\n([\s\S]*?)\r?\n\}/u
+  )?.[1]
+  assert.ok(body, 'o embelezador de id do composer saiu do PaneChrome')
+  return new Function('id', body)
+}
+
+/** A régua COMPLETA do seletor de modelo do composer: nome do catálogo
+ *  primeiro, embelezador do id quando o catálogo só repete o identificador. */
+function composerNamer() {
+  const prettyModel = composerPrettyModel()
+  return ({ id, displayName }) =>
+    guiModelShortName({ value: id, displayName, resolvedModel: id }, prettyModel(id))
+}
 
 /** Catálogos como o `catalog.ts` os devolve: o do claude costuma vir SEM
  *  `efforts` por modelo (fallback curado), o do codex traz nível por modelo. */
@@ -201,6 +226,176 @@ test('a abinha tem casa no CSS de papel do chat', () => {
   const block =
     css.match(/\.gui-deleg-defaults\s*\{[\s\S]*?\n\}/u)?.[0] ?? ''
   assert.doesNotMatch(block, /var\(--panel\)/u)
+})
+
+// ————— 3B. O PAINEL DIGNO (design R7 §B2) —————
+//
+// 5º achado da validação ao vivo: "Tá muito feio... Opus Rochetes um milhão".
+// O painel mostrava id CRU (`opus[1m]`, `gpt-5.6-sol`) onde o seletor de modelo
+// do composer mostra nome digno. A decisão: a MESMA fonte de nome dos dois
+// lados — o id cru vira metadado discreto, nunca título.
+
+test('R7B2 — o catálogo se parte em NOME e descrição, e o id nunca é o título', () => {
+  // `catalog.ts` escreve `${displayName} — ${description}`: o nome é a cabeça.
+  assert.deepEqual(guiDelegationModelLabelParts('opus[1m]', 'opus — equilíbrio (1M ctx)'), {
+    displayName: 'opus',
+    detail: 'equilíbrio (1M ctx)'
+  })
+  // Sem descrição (o `display_name` do codex) a cabeça é o rótulo inteiro.
+  assert.deepEqual(guiDelegationModelLabelParts('gpt-5.6-sol', 'GPT-5.6-Sol'), {
+    displayName: 'GPT-5.6-Sol',
+    detail: null
+  })
+  // Catálogo que só REPETE o id não tem nome humano nenhum a oferecer: a cabeça
+  // sai vazia para o embelezador do id assumir (o `prettyModel` do composer).
+  assert.deepEqual(guiDelegationModelLabelParts('opus[1m]', 'opus[1m]'), {
+    displayName: '',
+    detail: null
+  })
+  assert.deepEqual(guiDelegationModelLabelParts('opus[1m]', '  opus[1m]  '), {
+    displayName: '',
+    detail: null
+  })
+  // Mas a CAIXA é nome humano, não repetição: o `display_name` do codex difere
+  // do slug só por ela, e é essa palavra que o seletor do composer mostra.
+  assert.equal(
+    guiDelegationModelLabelParts('gpt-5.6-sol', 'GPT-5.6-Sol').displayName,
+    'GPT-5.6-Sol'
+  )
+  // E ter DESCRIÇÃO já prova que o catálogo escolheu um nome: `fable` coincidir
+  // com o alias não é motivo para jogar a palavra fora e virar `FABLE` do lado
+  // de `opus` — duas vozes na mesma lista é o feio que a rodada veio consertar.
+  assert.deepEqual(guiDelegationModelLabelParts('fable', 'fable — o mais capaz'), {
+    displayName: 'fable',
+    detail: 'o mais capaz'
+  })
+})
+
+test('R7B2 — o painel escreve o MESMO nome que o seletor do composer', () => {
+  const namer = composerNamer()
+  const groups = guiDelegationModelGroups(CATALOGS, namer)
+  const option = (id) => guiDelegationModelOption(groups, id)
+
+  // O que o dono viu feio, agora com nome: id cru só como metadado.
+  assert.equal(option('opus[1m]').name, 'opus')
+  assert.equal(option('opus[1m]').id, 'opus[1m]')
+  assert.equal(option('opus[1m]').detail, 'equilíbrio (1M ctx)')
+  assert.equal(option('gpt-5.6-sol').name, 'GPT-5.6-Sol')
+  assert.equal(option('gpt-5.6-sol').detail, null)
+  assert.equal(option('fable').name, 'fable')
+  // O rótulo CRU do catálogo continua inteiro na ficha (é ele que vira dica).
+  assert.equal(option('fable').label, 'fable — o mais capaz')
+
+  // Catálogo que só repete o id: o título é o nome BONITO do id, jamais o id.
+  const [cru] = guiDelegationModelGroups(
+    [{ cli: 'claude', models: [{ id: 'opus[1m]', label: 'opus[1m]' }], efforts: ['max'] }],
+    namer
+  )
+  assert.equal(cru.options[0].name, 'OPUS 1M')
+  assert.notEqual(cru.options[0].name, 'opus[1m]')
+
+  // Sem embelezador injetado a régua não inventa nada — é o painel que traz a
+  // fonte única do composer, e a metade pura só sabe o que o catálogo disse.
+  const semNome = guiDelegationModelGroups(CATALOGS)
+  assert.equal(guiDelegationModelOption(semNome, 'opus[1m]').name, 'opus')
+})
+
+test('R7B2 — a abinha recolhida mostra o nome digno, não o id', () => {
+  const groups = guiDelegationModelGroups(CATALOGS, composerNamer())
+  assert.equal(guiDelegationSummary({ model: 'opus[1m]' }, groups), 'opus')
+  assert.equal(guiDelegationSummary({ model: 'opus[1m]', effort: 'max' }, groups), 'opus · max')
+  assert.equal(
+    guiDelegationSummary({ model: 'gpt-5.6-sol', effort: 'high' }, groups),
+    'GPT-5.6-Sol · high'
+  )
+  // Pino que o catálogo carregado não conhece continua dito COMO FOI CARIMBADO:
+  // trocar por um nome inventado esconderia justamente o pino que precisa de
+  // atenção. E sem catálogo nenhum a verdade é a mesma.
+  assert.equal(guiDelegationSummary({ model: 'opus[1m]' }), 'opus[1m]')
+  assert.equal(guiDelegationSummary({ model: 'modelo-x' }, groups), 'modelo-x')
+  assert.equal(guiDelegationSummary({}, groups), 'herdado da conversa')
+  assert.equal(guiDelegationSummary({ effort: 'low' }, groups), 'modelo da conversa · low')
+})
+
+test('R7B2 — a superfície busca o nome na fonte única, e o id vira metadado', () => {
+  const panel = source('src/renderer/src/components/GuiDelegationDefaults.tsx')
+
+  // A FONTE ÚNICA: as duas metades da régua do composer, importadas, nunca
+  // reescritas aqui.
+  assert.match(panel, /import \{ guiModelShortName \} from '\.\.\/guiComposerPresentation'/u)
+  assert.match(panel, /import \{ prettyModel \} from '\.\/PaneChrome'/u)
+  assert.match(panel, /guiDelegationModelGroups\(catalogs, MODEL_NAMER\)/u)
+
+  // Título e metadado são elementos DIFERENTES: nome em cima, id embaixo.
+  const nome = panel.indexOf('className="gui-deleg-item-name">{option.name}')
+  const id = panel.indexOf('className="gui-deleg-item-id">{option.id}')
+  assert.ok(nome > 0, 'o título da ficha do modelo tem de ser o NOME')
+  assert.ok(id > 0, 'o id cru precisa de um papel próprio de metadado')
+  assert.ok(id > nome, 'o id nunca vem antes do nome: título em cima, motor embaixo')
+
+  // Escolha ligada é ESTADO, não só cor: o leitor de tela precisa ouvi-la.
+  assert.match(panel, /aria-pressed=/u)
+  // A dica é a do app (`data-tip`, via portal); o `title=` nativo é feio, lento
+  // e some no Windows — o Tooltip da casa existe justamente para substituí-lo.
+  assert.doesNotMatch(panel, /\stitle=\{/u)
+  assert.match(panel, /data-tip=/u)
+
+  // ESPERANDO ≠ VAZIO: enquanto os CLIs não respondem o painel diz que está
+  // consultando; só depois disso o silêncio vira ausência.
+  assert.match(panel, /consultando/u)
+  assert.match(panel, /nenhum CLI respondeu/u)
+
+  // O pino que o catálogo não conhece continua VISÍVEL como escolha ligada —
+  // um pino invisível é o estado mais enganoso possível deste painel.
+  assert.match(panel, /fora do catálogo/u)
+
+  // A abinha recolhida lê o resumo JÁ com o catálogo em mãos — e vai buscá-lo
+  // quando há pino, mesmo fechada: era a linha recolhida que escrevia
+  // `opus[1m]`, e sem catálogo não existe nome digno para carregar ali.
+  assert.match(panel, /guiDelegationSummary\(defaults, groups\)/u)
+  assert.match(
+    panel,
+    /open \|\| Boolean\(defaults\.model\)/u,
+    'com pino carimbado, a linha recolhida precisa do catálogo para nomeá-lo'
+  )
+
+  // EFFORT: o painel fala a mesma língua do seletor de esforço do composer —
+  // o nível cru e "padrão do modelo" para o default.
+  const pane = source('src/renderer/src/components/GuiPane.tsx')
+  assert.match(pane, /padrão do modelo/u)
+  assert.match(panel, /padrão do modelo/u)
+})
+
+test('R7B2 — o painel passa no AA do papel e diz a escolha por FORMA', () => {
+  const css = source('src/renderer/src/global.css')
+  const start = css.indexOf('ABINHA DO PADRÃO DOS AJUDANTES (D8)')
+  const end = css.indexOf('.gui-composer-surface {')
+  assert.ok(start > 0 && end > start, 'o bloco da abinha sumiu do CSS de papel')
+  const bloco = css.slice(start, end)
+
+  assert.match(bloco, /\.gui-deleg-item-name \{/u)
+  assert.match(bloco, /\.gui-deleg-item-id \{/u)
+
+  // `--ink-3` sobre papel dá ~3:1 — reprovado para texto de 10px, que é
+  // justamente o tamanho de tudo aqui. A tinta pequena do painel é `--ink-2`
+  // (~6,3:1). Não é gosto: é o piso de contraste.
+  assert.doesNotMatch(bloco, /var\(--ink-3\)/u)
+  assert.match(bloco, /var\(--ink-2\)/u)
+
+  // Diferença dita por FORMA antes de cor (régua da casa): a escolha ligada
+  // ganha um traço interno, não só um fundo tingido.
+  const ativo = bloco.match(/\.gui-deleg-item\[aria-pressed='true'\] \{[\s\S]*?\n\}/u)?.[0] ?? ''
+  assert.ok(ativo, 'a escolha ligada não tem casa própria no CSS')
+  assert.match(ativo, /box-shadow: inset/u)
+
+  // Alvo clicável de gente: 22px reprovava no mínimo de 24px.
+  const alvo = bloco.match(/\.gui-deleg-item \{[\s\S]*?\n\}/u)?.[0] ?? ''
+  const altura = Number(alvo.match(/min-height: (\d+)px/u)?.[1] ?? 0)
+  assert.ok(altura >= 28, `a ficha do modelo ficou pequena demais para o dedo (${altura}px)`)
+
+  // Papel, sempre — e nada de movimento novo nesta rodada.
+  assert.doesNotMatch(bloco, /var\(--panel\)/u)
+  assert.doesNotMatch(bloco, /animation:/u)
 })
 
 // ————— 4. A PERSONA —————

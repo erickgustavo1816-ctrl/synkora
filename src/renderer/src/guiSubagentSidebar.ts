@@ -18,8 +18,9 @@ export interface GuiSubagentMetadata {
   cli?: string
   /** Conta (seat) resolvida para o ajudante. */
   seat?: string
-  /** Identidade do ajudante no motor — o marcador EXPLÍCITO do card
-   *  sintetizado (ver o contrato do card de ajudante abaixo). */
+  /** Identidade do ajudante no MOTOR — a chave que `helper_resume`,
+   *  `helper_result` e a caixa-preta usam para falar deste ajudante. É só
+   *  dado: quem promove o card é o NOME (ver o contrato abaixo, e R7 §B1). */
   helperId?: string
   prompt?: string
   description?: string
@@ -94,11 +95,18 @@ const SERVER_QUALIFIED_TOOL_RE = /^[\w-]+(?:__|[/.])(.+)$/u
  *   input            { helperId, name?, model, effort?, seat?|seatName?, cli?,
  *                      prompt?|description? } → vira `GuiSubagentMetadata`
  *
- * O `helperId` no input é o marcador alternativo: um card com ele é promovido
- * mesmo que o nome mude. O ENVELOPE não vira ficha enquanto tiver ajudante
- * promovido pendurado (senão cinco ajudantes virariam seis fichas, com uma
- * delas sem modelo/effort/conta), mas continua visível na fresta entre a
- * chamada e o primeiro recibo — o `agentStatus: 'launched'` não é desfecho.
+ * QUEM PROMOVE É O NOME, NUNCA O INPUT (design R7 §B1). O `helperId` já foi
+ * marcador alternativo, e isso era um bug de fábrica: TODA tool do catálogo de
+ * delegação (`helper_result`, `helper_send`, `helper_resume`, `helper_cancel`)
+ * carrega `helperId` no input, então o long-poll do delegador nascia ficha
+ * fantasma na lateral — "subagente · modelo não informado", 2º print da
+ * validação ao vivo do dono. As irmãs do catálogo são o que sempre foram:
+ * cards comuns de tool no fio.
+ *
+ * O ENVELOPE não vira ficha enquanto tiver ajudante promovido pendurado (senão
+ * cinco ajudantes virariam seis fichas, com uma delas sem modelo/effort/conta),
+ * mas continua visível na fresta entre a chamada e o primeiro recibo — o
+ * `agentStatus: 'launched'` não é desfecho.
  */
 const HELPER_CARD_NAME_RE = /^helper:/iu
 
@@ -161,10 +169,12 @@ export function isGuiHelperCardName(name: string): boolean {
 
 /** Card que tem ficha PRÓPRIA na lateral por ser um ajudante do lote, e não
  *  mera atividade do envelope. Exige a projeção já normalizada: item sem
- *  metadata é replay antigo e continua seguindo a linhagem do pai. */
+ *  metadata é replay antigo e continua seguindo a linhagem do pai. O teste é o
+ *  NOME sintetizado pelo harness (`helper:<id>`, e `helper:<id>#vida<n>` na
+ *  retomada) — a chave `helperId` do input não promove nada desde a R7 §B1. */
 function isPromotedHelperCard(item: GuiToolItem): boolean {
   if (!item.toolUseId || !item.subagent) return false
-  return Boolean(item.subagent.helperId) || isGuiHelperCardName(item.name)
+  return isGuiHelperCardName(item.name)
 }
 
 function clean(value: unknown, max = MAX_FIELD): string | undefined {
@@ -208,13 +218,14 @@ export function guiSubagentMetadataForTool(
 
   // A relação parentToolUseId continua sendo a autoridade. Este teste só
   // permite mostrar a ficha enquanto o primeiro filho ainda não chegou.
-  // `helperId` entra como marcador porque é vocabulário NOSSO: ao contrário de
-  // `description`/`model`, nenhuma ferramenta comum carrega essa chave.
+  //
+  // Três portas, TODAS de NOME (design R7 §B1): o envelope (`delegate`), o card
+  // sintetizado do ajudante (`helper:*`) e o subagente nativo, que se declara
+  // pelo `type`. `helperId` no input não é porta nenhuma — ele viaja em toda
+  // irmã do catálogo (`helper_result` e companhia), e era por ele que o
+  // long-poll do delegador virava ficha fantasma na lateral.
   const looksLikeDelegation =
-    isGuiDelegationToolName(toolName) ||
-    isGuiHelperCardName(toolName) ||
-    Boolean(helperId) ||
-    Boolean(type)
+    isGuiDelegationToolName(toolName) || isGuiHelperCardName(toolName) || Boolean(type)
   if (!looksLikeDelegation) return undefined
   return {
     ...(name ? { name } : {}),
@@ -305,6 +316,49 @@ export function guiSubagentElapsedMs(
   const elapsed = Math.max(0, now - entry.at)
   memory.set(entry.toolUseId, elapsed)
   return elapsed
+}
+
+/**
+ * O NOME DIGNO DO MODELO (design R7 §B2: "a ficha da lateral também ganha o
+ * nome bonito do modelo quando houver").
+ *
+ * `opus[1m]` é vocabulário de MOTOR — a ficha é leitura de relance do dono, e
+ * o app inteiro já escreve `OPUS 1M` no chrome do pane e no seletor do
+ * composer. Duas telas nomeando o mesmo modelo de jeitos diferentes é a
+ * desarmonia que o dono lê como bug.
+ *
+ * GÊMEO DECLARADO de `prettyModel` (`components/PaneChrome.tsx`), duplicado de
+ * propósito e não importado: as suítes carregam este módulo com type-stripping
+ * do node, que não resolve import de irmão sem extensão — e o gêmeo mora num
+ * componente React, que não roda em node puro. Mudou lá, muda aqui junto: a
+ * suíte EXECUTA a função do outro arquivo e cobra as duas.
+ *
+ * A ÚNICA divergência é deliberada: fora das famílias conhecidas o gêmeo
+ * caixa-alta o identificador, e aqui ele volta INTACTO. Enfeitar um id que não
+ * se reconhece é inventar identidade de motor — e o dono lê a ficha para saber
+ * exatamente o que abriu.
+ */
+export function guiSubagentModelName(model: string): string {
+  const id = model.trim()
+  if (!id) return id
+  const oneM = /\[1m\]/iu.test(id) || /-1m$/iu.test(id)
+  const stem = id
+    .replace(/\[1m\]/iu, '')
+    .replace(/^claude-/iu, '')
+    .replace(/-\d{8}$/u, '') // sufixo de data dos ids completos
+  const claude = stem.match(/^(opus|sonnet|haiku|fable|mythos)[-.]?(\d+(?:[-.]\d+)*)?/iu)
+  if (claude) {
+    const family = claude[1].toUpperCase()
+    const version = claude[2] ? claude[2].replace(/-/gu, '.') : ''
+    return `${family}${version ? ` ${version}` : ''}${oneM ? ' 1M' : ''}`
+  }
+  const gpt = stem.match(/^gpt-?(\d+(?:\.\d+)*)?-?(.*)$/iu)
+  if (gpt) {
+    const version = gpt[1] ? `-${gpt[1]}` : ''
+    const rest = gpt[2] ? ` ${gpt[2].replace(/-/gu, ' ').toUpperCase()}` : ''
+    return `GPT${version}${rest}`.trim()
+  }
+  return id
 }
 
 function statusLabel(status: GuiSubagentSidebarTone): string {
@@ -432,7 +486,10 @@ export function guiSubagentSidebarEntries(
       toolUseId: parent.toolUseId as string,
       name,
       type,
-      model: metadata?.model ?? 'modelo não informado',
+      // O motor fala em id (`opus[1m]`); a ficha fala a língua do app
+      // (`OPUS 1M`). Quando a família não é conhecida o id volta INTACTO — a
+      // reserva honesta de `guiSubagentModelName`.
+      model: (metadata?.model ? guiSubagentModelName(metadata.model) : '') || 'modelo não informado',
       effort: metadata?.effort ?? null,
       seat: metadata?.seat ?? null,
       cli: metadata?.cli ?? null,

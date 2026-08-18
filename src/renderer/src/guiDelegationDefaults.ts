@@ -31,9 +31,73 @@ export interface GuiDelegationCatalog {
 export interface GuiDelegationModelOption {
   cli: GuiDelegationCli
   id: string
+  /** Rótulo CRU do catálogo (`${displayName} — ${descrição}`) — o texto inteiro,
+   *  preservado para a dica. */
   label: string
+  /** O TÍTULO: o nome do modelo na régua do seletor do composer. */
+  name: string
+  /** A descrição do catálogo, quando ela existe. */
+  detail: string | null
   /** Níveis já resolvidos. VAZIO = este modelo não aceita effort. */
   efforts: string[]
+}
+
+/**
+ * COMO O COMPOSER NOMEIA UM MODELO — injetado, nunca reimplementado aqui.
+ *
+ * O achado 5 do dono ("Tá muito feio... Opus Rochetes um milhão") é de FONTE:
+ * o painel escrevia o id cru onde o seletor do composer escreve nome digno. A
+ * régua digna é a do composer (`guiModelShortName` + `prettyModel`), e ela mora
+ * lá — uma no módulo de apresentação, outra num componente React.
+ *
+ * Ela chega por parâmetro porque este módulo é provado em node puro: as suítes
+ * carregam TS com type-stripping, que não resolve import de irmão sem extensão,
+ * e o embelezador de id vive num arquivo de React. Injetar mantém a fonte
+ * ÚNICA (o painel passa a função do composer) sem trazer React para cá.
+ */
+export type GuiDelegationModelNamer = (model: {
+  id: string
+  /** Nome humano do catálogo, JÁ sem a descrição. VAZIO = o catálogo só
+   *  repetiu o id, e quem nomeia é o embelezador de id do composer. */
+  displayName: string
+}) => string
+
+/** Sem embelezador injetado a régua não inventa: fica com o que o catálogo
+ *  disse. É o que mantém a metade pura provável sem simular o composer. */
+const CATALOG_NAMER: GuiDelegationModelNamer = ({ id, displayName }) => displayName || id
+
+/** `catalog.ts` escreve `${displayName} — ${descrição}` (travessão cercado de
+ *  espaço); o codex manda só o `display_name`, sem descrição nenhuma. */
+const CATALOG_LABEL_SPLIT = /^(.*?)\s+—\s+(.+)$/su
+
+/**
+ * Parte o rótulo do catálogo em NOME e DESCRIÇÃO.
+ *
+ * Rótulo que só repete o identificador não tem nome humano a oferecer: a cabeça
+ * sai VAZIA de propósito, para o embelezador de id assumir. Mostrar `opus[1m]`
+ * como título é exatamente o que o dono reprovou.
+ *
+ * "Só repete o id" é o rótulo que é NADA ALÉM do identificador — sem descrição
+ * e idêntico a ele. É assim, e só assim, que ele nasce: `catalog.ts` escreve
+ * `m.displayName ?? m.value` quando o CLI não descreve o modelo, e a régua
+ * acima cai no `id` quando não vem rótulo nenhum.
+ *
+ * As duas exigências têm dono. Sem a DESCRIÇÃO, `fable — o mais capaz` perderia
+ * o nome que o catálogo escolheu só porque ele coincide com o alias, e a lista
+ * misturaria duas vozes (`FABLE` ao lado de `opus`). Sem a comparação EXATA, o
+ * `GPT-5.6-Sol` do codex viraria repetição do slug — e ali a caixa É o nome
+ * humano, a mesma palavra que o seletor do composer mostra.
+ */
+export function guiDelegationModelLabelParts(
+  id: string,
+  label: string
+): { displayName: string; detail: string | null } {
+  const text = label.trim()
+  const parts = CATALOG_LABEL_SPLIT.exec(text)
+  const head = (parts?.[1] ?? text).trim()
+  const detail = parts?.[2]?.trim() || null
+  const isJustTheId = detail === null && head === id.trim()
+  return { displayName: isJustTheId ? '' : head, detail }
 }
 
 export interface GuiDelegationModelGroup {
@@ -64,7 +128,8 @@ function cleanList(values: readonly unknown[] | undefined): string[] {
  *   diferentes (o claude vai a `max`, o codex trabalha em outra faixa).
  */
 export function guiDelegationModelGroups(
-  catalogs: readonly GuiDelegationCatalog[]
+  catalogs: readonly GuiDelegationCatalog[],
+  namer: GuiDelegationModelNamer = CATALOG_NAMER
 ): GuiDelegationModelGroup[] {
   const groups: GuiDelegationModelGroup[] = []
   for (const catalog of catalogs) {
@@ -73,10 +138,16 @@ export function guiDelegationModelGroups(
     for (const model of catalog.models ?? []) {
       const id = typeof model.id === 'string' ? model.id.trim() : ''
       if (!id) continue
+      const label = typeof model.label === 'string' && model.label.trim() ? model.label.trim() : id
+      const { displayName, detail } = guiDelegationModelLabelParts(id, label)
       options.push({
         cli: catalog.cli,
         id,
-        label: typeof model.label === 'string' && model.label.trim() ? model.label.trim() : id,
+        label,
+        // O nome vem da régua do composer; o id só entra se ela devolver vazio,
+        // porque uma ficha sem título nenhum seria pior que o id cru.
+        name: namer({ id, displayName }).trim() || id,
+        detail,
         efforts: model.efforts === undefined ? fallback : cleanList(model.efforts)
       })
     }
@@ -112,13 +183,24 @@ export function guiDelegationEffortOptions(
   return guiDelegationModelOption(groups, model)?.efforts ?? []
 }
 
-/** O que a abinha recolhida mostra. Sem pino a verdade é "herdado da conversa";
- *  effort sozinho nunca pode parecer o nome de um modelo. */
-export function guiDelegationSummary(defaults: GuiDelegationDefaultsValue): string {
+/**
+ * O que a abinha recolhida mostra. Sem pino a verdade é "herdado da conversa";
+ * effort sozinho nunca pode parecer o nome de um modelo.
+ *
+ * Com o catálogo em mãos o modelo aparece pelo NOME (a mesma régua do painel
+ * aberto e do seletor do composer). Pino que o catálogo carregado não conhece
+ * continua dito COMO FOI CARIMBADO: trocá-lo por um nome inventado esconderia
+ * justamente o pino que precisa de atenção.
+ */
+export function guiDelegationSummary(
+  defaults: GuiDelegationDefaultsValue,
+  groups: readonly GuiDelegationModelGroup[] = []
+): string {
   const model = defaults.model?.trim()
   const effort = defaults.effort?.trim()
   if (!model && !effort) return 'herdado da conversa'
-  return [model || 'modelo da conversa', effort].filter(Boolean).join(' · ')
+  const name = model ? (guiDelegationModelOption(groups, model)?.name ?? model) : ''
+  return [name || 'modelo da conversa', effort].filter(Boolean).join(' · ')
 }
 
 /**

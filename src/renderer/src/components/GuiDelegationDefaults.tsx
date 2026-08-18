@@ -1,14 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 import { useStore, type Seat, type SeatCli } from '../store'
 import CliMark from './CliMark'
+import { prettyModel } from './PaneChrome'
 import { guiApi } from '../guiApi'
+import { guiModelShortName } from '../guiComposerPresentation'
 import {
   guiDelegationEffortOptions,
   guiDelegationModelGroups,
   guiDelegationModelOption,
   guiDelegationSummary,
   type GuiDelegationCatalog,
-  type GuiDelegationDefaultsValue
+  type GuiDelegationDefaultsValue,
+  type GuiDelegationModelNamer
 } from '../guiDelegationDefaults'
 
 // A ABINHA DO PADRÃO DOS AJUDANTES (D8 do design vinculante
@@ -28,11 +31,25 @@ import {
 // A montagem é do chat, mas o componente não depende dela: ele só precisa do
 // paneId e das contas. Quando o rail direito existir, ele muda de casa sem
 // mudar de código.
+//
+// R7 §B2 — "Tá muito feio... Opus Rochetes um milhão". O painel mostrava id CRU
+// onde o composer mostra nome digno. Agora o TÍTULO é o nome (mesma régua do
+// seletor do composer) e o id desce para metadado; a superfície inteira passou
+// pelo `polish` da skill impeccable (papel & painel, sem animação nova).
 
 const CLI_LABEL: Record<SeatCli, string> = {
   claude: 'claude',
   codex: 'codex'
 }
+
+/**
+ * A FONTE ÚNICA DO NOME DIGNO — as duas metades da régua do composer, do jeito
+ * que o seletor de modelo as usa: o nome que o catálogo escolheu primeiro, o
+ * embelezador do identificador quando ele não escolheu nenhum. Nada é
+ * reescrito aqui; se o composer mudar de voz, o painel muda junto.
+ */
+const MODEL_NAMER: GuiDelegationModelNamer = ({ id, displayName }) =>
+  guiModelShortName({ value: id, displayName, resolvedModel: id }, prettyModel(id))
 
 export default function GuiDelegationDefaults({
   paneId,
@@ -47,8 +64,13 @@ export default function GuiDelegationDefaults({
   const [defaults, setDefaults] = useState<GuiDelegationDefaultsValue>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** Os dois catálogos já RESPONDERAM (com lista ou com falha) nesta abertura.
+   *  É o que separa "esperando" de "não veio nada" — sem ele, o painel dava a
+   *  mesma frase para os dois, e a espera parecia defeito. */
+  const [catalogSettled, setCatalogSettled] = useState(false)
   const catalogByCli = useStore((s) => s.catalogByCli)
   const loadCatalog = useStore((s) => s.loadCatalog)
+  const panelId = useId()
 
   /** A conta que responde pelo catálogo daquele CLI: a logada vem primeiro
    *  (config dir com sessão é o que devolve a lista real da conta). O id vira
@@ -72,14 +94,29 @@ export default function GuiDelegationDefaults({
     }
   }, [paneId])
 
-  // Catálogo só quando a abinha ABRE: cada CLI pode custar um processo efêmero,
-  // e um chat que nunca delega não deve pagar por isso. O store cacheia por
-  // cli+conta, então reabrir não repete a consulta.
+  /** Catálogo quando a abinha ABRE — e também quando há PINO para nomear. A
+   *  linha recolhida é a superfície que o dono mais vê, e era ela que escrevia
+   *  `opus[1m]`: sem o catálogo não existe nome digno para carregar ali. Chat
+   *  sem pino e sem abrir continua não pagando processo nenhum. */
+  const needsCatalog = open || Boolean(defaults.model)
+
+  // O store cacheia por cli+conta e o main cacheia a consulta ao CLI, então
+  // reabrir não repete nada — e `allSettled` é o que deixa a recusa de um CLI
+  // ser uma RESPOSTA, não uma promessa solta virando rejeição sem dono.
   useEffect(() => {
-    if (!open) return
-    void loadCatalog('claude', claudeSeatId)
-    void loadCatalog('codex', codexSeatId)
-  }, [claudeSeatId, codexSeatId, loadCatalog, open])
+    if (!needsCatalog) return
+    let alive = true
+    setCatalogSettled(false)
+    void Promise.allSettled([
+      loadCatalog('claude', claudeSeatId),
+      loadCatalog('codex', codexSeatId)
+    ]).then(() => {
+      if (alive) setCatalogSettled(true)
+    })
+    return () => {
+      alive = false
+    }
+  }, [claudeSeatId, codexSeatId, loadCatalog, needsCatalog])
 
   const groups = useMemo(() => {
     const catalogs: GuiDelegationCatalog[] = []
@@ -90,7 +127,7 @@ export default function GuiDelegationDefaults({
       const catalog = catalogByCli[`${cli}:${seatId ?? ''}`]
       if (catalog) catalogs.push({ cli, models: catalog.models, efforts: catalog.efforts })
     }
-    return guiDelegationModelGroups(catalogs)
+    return guiDelegationModelGroups(catalogs, MODEL_NAMER)
   }, [catalogByCli, claudeSeatId, codexSeatId])
 
   const effortOptions = useMemo(
@@ -98,7 +135,11 @@ export default function GuiDelegationDefaults({
     [defaults.model, groups]
   )
   const pinnedOption = guiDelegationModelOption(groups, defaults.model)
-  const summary = guiDelegationSummary(defaults)
+  const summary = guiDelegationSummary(defaults, groups)
+  /** Pino que o catálogo carregado não conhece. Ele CONTINUA valendo no motor,
+   *  então escondê-lo seria o estado mais enganoso deste painel: o dono veria
+   *  "herdar da conversa" ligado enquanto um modelo está carimbado. */
+  const pinnedOutsideCatalog = Boolean(defaults.model) && !pinnedOption && groups.length > 0
 
   const apply = useCallback(
     async (patch: { model?: string | null; effort?: string | null }): Promise<void> => {
@@ -140,6 +181,7 @@ export default function GuiDelegationDefaults({
         type="button"
         className={`gui-deleg-tab${open ? ' open' : ''}`}
         aria-expanded={open}
+        aria-controls={panelId}
         aria-label={`Padrão dos ajudantes: ${summary}`}
         data-tip={
           'O modelo e o effort com que os ajudantes deste chat abrem quando o agente não pede outros.'
@@ -152,53 +194,97 @@ export default function GuiDelegationDefaults({
       </button>
 
       {open && (
-        <div className="gui-deleg-panel" role="group" aria-label="Padrão dos ajudantes">
+        <div
+          className="gui-deleg-panel"
+          id={panelId}
+          role="group"
+          aria-label="Padrão dos ajudantes"
+          aria-busy={busy || undefined}
+        >
           <p className="gui-deleg-note">
             vale quando o agente delega sem pedir modelo ou effort — o pedido dele sempre vence
           </p>
 
           <div className="gui-deleg-field">
-            <span className="gui-deleg-label">modelo</span>
-            <div className="gui-deleg-list">
-              <button
-                type="button"
-                className={`gui-deleg-item${defaults.model ? '' : ' active'}`}
-                disabled={busy}
-                onClick={() => chooseModel(null)}
-              >
-                herdar da conversa
-              </button>
+            <span className="gui-deleg-label" id={`${panelId}-modelo`}>
+              modelo
+            </span>
+            <div className="gui-deleg-list" role="group" aria-labelledby={`${panelId}-modelo`}>
+              <div className="gui-deleg-chips">
+                <button
+                  type="button"
+                  className="gui-deleg-item"
+                  aria-pressed={!defaults.model}
+                  disabled={busy}
+                  onClick={() => chooseModel(null)}
+                >
+                  <span className="gui-deleg-item-name">herdar da conversa</span>
+                </button>
+              </div>
+
               {groups.map((group) => (
                 <div className="gui-deleg-group" key={group.cli}>
                   <span className="gui-deleg-group-head">
                     <CliMark cli={group.cli} size={11} />
                     <span>{CLI_LABEL[group.cli]}</span>
                   </span>
-                  {group.options.map((option) => (
-                    <button
-                      key={`${group.cli}:${option.id}`}
-                      type="button"
-                      className={`gui-deleg-item${option.id === defaults.model ? ' active' : ''}`}
-                      disabled={busy}
-                      title={option.label}
-                      onClick={() => chooseModel(option.id)}
-                    >
-                      {option.id}
-                    </button>
-                  ))}
+                  <div className="gui-deleg-chips">
+                    {group.options.map((option) => (
+                      <button
+                        key={`${group.cli}:${option.id}`}
+                        type="button"
+                        className="gui-deleg-item"
+                        aria-pressed={option.id === defaults.model}
+                        // A dica é a do app (portal, tema painel): o `title=`
+                        // nativo é lento e some no Windows.
+                        data-tip={option.detail ?? undefined}
+                        // O nome falado é o que está NA TELA: repetir o id
+                        // quando ele é o próprio nome faria o leitor de tela
+                        // dizer "fable (fable)".
+                        aria-label={
+                          [
+                            option.id === option.name ? option.name : `${option.name} (${option.id})`,
+                            option.detail
+                          ]
+                            .filter(Boolean)
+                            .join(' — ')
+                        }
+                        disabled={busy}
+                        onClick={() => chooseModel(option.id)}
+                      >
+                        <span className="gui-deleg-item-name">{option.name}</span>
+                        {option.id !== option.name && (
+                          <span className="gui-deleg-item-id">{option.id}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ))}
+
+              {/* ESPERANDO ≠ VAZIO: enquanto os dois CLIs não respondem a lista
+                  está a caminho; depois disso, o silêncio é ausência mesmo. */}
               {groups.length === 0 && (
                 <span className="gui-deleg-empty">
-                  a lista de modelos chega quando os CLIs respondem
+                  {catalogSettled
+                    ? 'nenhum CLI respondeu com uma lista de modelos'
+                    : 'consultando os modelos dos CLIs…'}
                 </span>
+              )}
+
+              {pinnedOutsideCatalog && (
+                <p className="gui-deleg-hint" role="note">
+                  carimbado <b>{defaults.model}</b> — fora do catálogo carregado, e ainda valendo
+                </p>
               )}
             </div>
           </div>
 
           <div className="gui-deleg-field">
-            <span className="gui-deleg-label">effort</span>
-            <div className="gui-deleg-list">
+            <span className="gui-deleg-label" id={`${panelId}-effort`}>
+              effort
+            </span>
+            <div className="gui-deleg-list" role="group" aria-labelledby={`${panelId}-effort`}>
               {!defaults.model ? (
                 <span className="gui-deleg-empty">— escolha o modelo primeiro</span>
               ) : groups.length === 0 ? (
@@ -207,30 +293,35 @@ export default function GuiDelegationDefaults({
                 <span className="gui-deleg-empty">— os níveis chegam com o catálogo</span>
               ) : effortOptions.length === 0 ? (
                 <span className="gui-deleg-empty">
-                  — {pinnedOption ? `${pinnedOption.id} não aceita effort` : 'modelo fora do catálogo'}
+                  —{' '}
+                  {pinnedOption
+                    ? `${pinnedOption.name} não aceita effort`
+                    : 'modelo fora do catálogo'}
                 </span>
               ) : (
-                <>
+                <div className="gui-deleg-chips">
                   <button
                     type="button"
-                    className={`gui-deleg-item${defaults.effort ? '' : ' active'}`}
+                    className="gui-deleg-item"
+                    aria-pressed={!defaults.effort}
                     disabled={busy}
                     onClick={() => void apply({ effort: null })}
                   >
-                    padrão do modelo
+                    <span className="gui-deleg-item-name">padrão do modelo</span>
                   </button>
                   {effortOptions.map((level) => (
                     <button
                       key={level}
                       type="button"
-                      className={`gui-deleg-item${level === defaults.effort ? ' active' : ''}`}
+                      className="gui-deleg-item"
+                      aria-pressed={level === defaults.effort}
                       disabled={busy}
                       onClick={() => void apply({ effort: level })}
                     >
-                      {level}
+                      <span className="gui-deleg-item-name">{level}</span>
                     </button>
                   ))}
-                </>
+                </div>
               )}
             </div>
           </div>
