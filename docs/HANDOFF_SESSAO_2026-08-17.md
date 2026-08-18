@@ -86,9 +86,27 @@ stubs de interface do orquestrador para o paralelismo); 11 commits
 - CORREÇÃO DE FATO no codex 0.147: `subAgentActivity` nunca é emitido — o
   sinal real é `collabAgentToolCall`; o rastreio nativo foi religado por ele.
 
-PENDENTE DA ETAPA: validação visual do dono no app real (lateral com
-helpers, painel de defaults, toque do revisar, chat dev com as tools).
-PRÓXIMO DO ROADMAP: 3º RightDock → 4º browser embutido.
+RODADA DE VALIDAÇÃO AO VIVO (18/08, mesma tarde — o dono testou a frota de
+verdade e achou 5 bugs/pedidos; 6 commits e8f5862 + 2fe59cb..5cb29b6):
+1. Aprovação de tool MCP era teatro: codex em modo default pede aprovação de
+   CADA tool via mcpServer/elicitation/request (sondado 1:1; wave 2 rodou
+   com never e nunca viu) — nossa tool = aceita em silêncio, servidor
+   estranho = recusa com a forma certa; claude ganhou --allowedTools das 6.
+2. Agente abriu Luna com pino opus carimbado — o pino virou LEI na persona
+   (frota sem especificação = o pino, espalhar só no CLI dele) + advisory
+   auditado com receita no recibo (nunca recusa: ordem explícita do dono no
+   chat continua valendo — "2 no padrão e 1 Luna" funciona).
+3. Frota terminou e o chat ficou mudo — WAKE-ON-SETTLE: o app entrega
+   mensagem [synkora] visível que abre turno (coalescida 3s, nunca 2× pelo
+   mesmo helper, segura em turno vivo); de carona morreu o leak do
+   turnActive sem alive.
+4. Cronômetro de trabalho em cada ficha de subagente (1 relógio p/ lista).
+5. Rail direito em TEMPO REAL: atividade da conversa (eventRevision +
+   debounce 2,5s) + poll 15s só à vista + reloadToken; histórico só re-lê
+   com fingerprint novo (não fecha o commit expandido do dono).
+
+PENDENTE DA ETAPA: re-validação visual do dono (frota + cronômetro + rail
+vivo + wake no fim). PRÓXIMO DO ROADMAP: 3º RightDock → 4º browser embutido.
 
 ## ⚡ PRÓXIMA SESSÃO — COMEÇAR AQUI, NESTA ORDEM (SUPERADO pela sessão B acima; itens 2º-4º do roadmap seguem valendo)
 
