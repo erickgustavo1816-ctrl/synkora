@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { plansApi } from '../plansApi'
 import type { PlanItemView, PlanView } from '../planContract'
@@ -6,11 +6,16 @@ import {
   PLAN_STATUS_LABEL,
   planClipLine,
   planItemCanDiscard,
+  planItemCanStart,
+  planItemDependencies,
   planItemLink,
   planItemMissionGoal,
   planItemPresentation,
+  planItemStartBlock,
   planProgress,
   planTierLabel,
+  type PlanDependencySource,
+  type PlanItemDependency,
   type PlanLinkedMission
 } from '../planBoardPresentation'
 import { missionChatSummary } from '../guiMissionPanes'
@@ -77,6 +82,20 @@ function PlanDescription({ text }: { text: string }): React.JSX.Element {
   )
 }
 
+/**
+ * A tag diz o NOME curto; o resto da história é a dica. Ela nomeia POR QUE a
+ * dependência já não segura nada — concluída e descartada satisfazem pelo mesmo
+ * motivo, mas por caminhos opostos, e o dono precisa saber qual dos dois foi.
+ */
+function dependencyTip(dependency: PlanItemDependency): string {
+  const head = `${dependency.order}. ${dependency.title}`
+  if (dependency.status === 'concluida')
+    return `${head}\nconcluída — não segura mais esta missão\nclique para localizar no quadro`
+  if (dependency.status === 'descartada')
+    return `${head}\nsaiu do plano — não segura mais esta missão\nclique para localizar no quadro`
+  return `${head}\nprecisa estar concluída antes desta começar\nclique para localizar no quadro`
+}
+
 export default function PlanBoardView({
   projectId,
   plan,
@@ -121,6 +140,42 @@ export default function PlanBoardView({
     () => plan.items.slice().sort((a, b) => a.order - b.order),
     [plan.items]
   )
+
+  // O GRAFO (rodada 8): `dependsOn` guarda ids, e a tag mostra o NÚMERO + o
+  // estado (ajuste do dono: tag compacta — o título vive na dica). O número é o
+  // MESMO `pb-order` que a linha exibe (a lista ordenada), e o status é o
+  // EFETIVO (o main já o derivou da missão real ao montar a PlanView) — a tag
+  // dá check exatamente quando a missão dependida termina.
+  const itemsById = useMemo(
+    () =>
+      new Map<string, PlanDependencySource>(
+        items.map((entry, index) => [
+          entry.id,
+          { title: entry.title, order: index + 1, status: entry.status }
+        ])
+      ),
+    [items]
+  )
+
+  // CLIQUE NA TAG LOCALIZA A MISSÃO (ajuste do dono, rodada 8): o quadro rola
+  // até a linha dependida e ela pulsa uma vez — movimento como SINAL, apontando
+  // "é esta aqui". O timer é um só: clicar noutra tag move o holofote em vez de
+  // empilhar brilhos.
+  const [spotlight, setSpotlight] = useState<string | null>(null)
+  const spotlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const itemRows = useRef(new Map<string, HTMLLIElement | null>())
+  useEffect(
+    () => () => {
+      if (spotlightTimer.current) clearTimeout(spotlightTimer.current)
+    },
+    []
+  )
+  const locateItem = useCallback((id: string): void => {
+    itemRows.current.get(id)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    if (spotlightTimer.current) clearTimeout(spotlightTimer.current)
+    setSpotlight(id)
+    spotlightTimer.current = setTimeout(() => setSpotlight(null), 1600)
+  }, [])
 
   const links = useMemo(() => {
     const chats = new Map<string, ReturnType<typeof missionChatSummary>>()
@@ -294,18 +349,24 @@ export default function PlanBoardView({
             const state = planItemPresentation(item.status)
             const link = links.get(item.id) ?? { kind: 'none' as const }
             const tier = planTierLabel(item.tier)
-            const dependencies = item.dependsOn
-              .map((id) => plan.items.find((entry) => entry.id === id)?.title ?? id)
-              .filter(Boolean)
-            const tip = [
-              planClipLine(item.objective),
-              dependencies.length ? `depende de: ${dependencies.join(', ')}` : '',
-              item.docPath ? `brief: ${item.docPath}` : ''
-            ]
+            // As dependências saíram do tooltip e viraram TAGS visíveis — repetir
+            // a lista na dica seria dizer duas vezes a mesma coisa.
+            const dependencies = planItemDependencies(item, itemsById)
+            const blockedBy = planItemStartBlock(item, itemsById)
+            // LIVRE = planejada, sem missão ainda e sem nada pendente. É a
+            // resposta de relance a "o que dá para abrir em paralelo agora?".
+            const free = link.kind === 'none' && item.status === 'planejada' && !blockedBy
+            const tip = [planClipLine(item.objective), item.docPath ? `brief: ${item.docPath}` : '']
               .filter(Boolean)
               .join('\n')
             return (
-              <li key={item.id} className={`planboard-item ${state.cls}`}>
+              <li
+                key={item.id}
+                ref={(row) => {
+                  itemRows.current.set(item.id, row)
+                }}
+                className={`planboard-item ${state.cls}${spotlight === item.id ? ' pb-spotlit' : ''}`}
+              >
                 <span className="pb-glyph" aria-hidden="true">
                   {state.glyph}
                 </span>
@@ -314,6 +375,44 @@ export default function PlanBoardView({
                   <span className="pb-title">{item.title}</span>
                   {item.objective && (
                     <span className="pb-objective">{planClipLine(item.objective, 140)}</span>
+                  )}
+                  {/* O GRAFO NA LINHA (rodada 8). Uma palavra ABRE a fileira e é
+                      ela que se lê na varredura vertical: "livre" quando nada
+                      segura, "depende de" quando algo segura. Nunca as duas —
+                      quando a última dependência dá check, a palavra TROCA no
+                      mesmo lugar, e é essa troca que o dono vê acontecer. */}
+                  {(dependencies.length > 0 || free) && (
+                    <span className="pb-deps">
+                      {free ? (
+                        <span
+                          className="pb-free"
+                          data-tip="Nada segura esta missão: dá para começar agora, em paralelo com as outras livres."
+                        >
+                          livre
+                        </span>
+                      ) : (
+                        <span className="pb-deps-label">depende de</span>
+                      )}
+                      {/* TAG COMPACTA (ajuste do dono): ícone + NÚMERO — o
+                          triângulo aponta a dependência pendente, o check diz
+                          que ela já não segura nada; o título inteiro vive na
+                          dica. Clicar LOCALIZA a missão dependida no quadro. */}
+                      {dependencies.map((dependency) => (
+                        <button
+                          key={dependency.id}
+                          type="button"
+                          className={`pb-dep${dependency.satisfied ? ' ok' : ''}`}
+                          data-tip={dependencyTip(dependency)}
+                          aria-label={`depende de ${dependency.order}. ${dependency.title}${dependency.satisfied ? ' (concluída)' : ''} — localizar no quadro`}
+                          onClick={() => locateItem(dependency.id)}
+                        >
+                          <span className="pb-dep-icon" aria-hidden="true">
+                            {dependency.satisfied ? '✓' : '▸'}
+                          </span>
+                          <span className="pb-dep-num">{dependency.order}</span>
+                        </button>
+                      ))}
+                    </span>
                   )}
                 </span>
                 {tier && <span className="pb-tier">{tier}</span>}
@@ -372,17 +471,38 @@ export default function PlanBoardView({
                         </button>
                       ) : link.kind === 'missing' ? (
                         <span className="pb-note">missão removida</span>
-                      ) : item.status === 'descartada' ? (
+                      ) : !planItemCanStart(item.status) ? (
+                        /* CONCLUÍDA (por fora, sem missão vinculada — o caso
+                           real do Painel) e DESCARTADA: trabalho que já
+                           aconteceu ou saiu do plano não oferece "criar
+                           missão" — a mesma régua do excluir, um verbo só onde
+                           ainda há trabalho. */
                         <span className="pb-note">{state.label}</span>
                       ) : (
-                        <button
-                          className="btn ghost tiny pb-create"
-                          disabled={Boolean(pending)}
-                          data-tip="Abre a nova missão com o título e o objetivo deste item já preenchidos"
-                          onClick={() => setCreatingFor(item)}
+                        /* A TRAVA DO DONO SOBRE O PRÓPRIO PLANO (rodada 8):
+                           enquanto uma dependência estiver pendente, o verbo
+                           "começar" fica desabilitado e a dica NOMEIA quem está
+                           segurando — mais as duas saídas sancionadas (concluir
+                           a dependida ou tirá-la do plano). A dica mora no
+                           invólucro porque botão desabilitado não recebe
+                           mouseover no Chromium: pendurada nele, ela nunca
+                           apareceria justamente onde é necessária. */
+                        <span
+                          className={`pb-gate${blockedBy ? ' locked' : ''}`}
+                          data-tip={
+                            blockedBy
+                              ? `esperando: ${blockedBy.join(', ')}\ndestrava quando essas missões forem concluídas — ou quando você tirá-las do plano`
+                              : 'Abre a nova missão com o título e o objetivo deste item já preenchidos'
+                          }
                         >
-                          criar missão
-                        </button>
+                          <button
+                            className="btn ghost tiny pb-create"
+                            disabled={Boolean(pending) || Boolean(blockedBy)}
+                            onClick={() => setCreatingFor(item)}
+                          >
+                            criar missão
+                          </button>
+                        </span>
                       )}
                       {planItemCanDiscard(item.status) && (
                         <button

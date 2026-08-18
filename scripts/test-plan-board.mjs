@@ -104,6 +104,73 @@ test('o verbo EXCLUIR só existe onde ainda há trabalho a tirar do plano', asyn
   assert.equal(planItemCanDiscard('descartada'), false)
 })
 
+// ————— O GRAFO DE DEPENDÊNCIAS (rodada 8, 2026-08-19) —————
+//
+// Ordem do dono: "a missão que depender de outra vai ter uma tagzinha... quando
+// uma missão estiver completa, a tag dá check, e ele só vai deixar eu ABRIR essa
+// missão quando todas as tags tiverem check. Aí eu enxergo o que roda em
+// paralelo". O motor já guardava `dependsOn`; o que faltava era a LEITURA.
+
+test('dependência satisfeita é a concluída E a descartada; id fantasma não vira tag', async () => {
+  const { planItemDependencies, planItemStartBlock } = await presentation()
+
+  const byId = new Map([
+    ['a', { title: 'Fundação', order: 1, status: 'concluida' }],
+    ['b', { title: 'Fila', order: 2, status: 'descartada' }],
+    ['c', { title: 'Tela', order: 3, status: 'planejada' }],
+    ['d', { title: 'Motor', order: 4, status: 'em_andamento' }]
+  ])
+  // A ordem é a que o item DECLAROU; o id repetido é a mesma dependência, e o
+  // que não existe mais (item removido do plano) some sem deixar tag fantasma.
+  // O `order` (ajuste do dono, tag compacta) é o NÚMERO que a tag mostra — o
+  // título inteiro fica para a dica.
+  const alvo = item({ id: 'z', dependsOn: ['a', 'b', 'c', 'd', 'sumiu', 'a'] })
+  assert.deepEqual(planItemDependencies(alvo, byId), [
+    { id: 'a', title: 'Fundação', order: 1, status: 'concluida', satisfied: true },
+    { id: 'b', title: 'Fila', order: 2, status: 'descartada', satisfied: true },
+    { id: 'c', title: 'Tela', order: 3, status: 'planejada', satisfied: false },
+    { id: 'd', title: 'Motor', order: 4, status: 'em_andamento', satisfied: false }
+  ])
+
+  // A TRAVA nomeia as pendentes — trava muda é beco sem saída.
+  assert.deepEqual(planItemStartBlock(alvo, byId), ['Tela', 'Motor'])
+  // LIVRE, nos três caminhos: sem dependência, com todas satisfeitas, e com
+  // dependência que só existia num item já apagado do plano.
+  assert.equal(planItemStartBlock(item({ dependsOn: [] }), byId), null)
+  assert.equal(planItemStartBlock(item({ dependsOn: ['a', 'b'] }), byId), null)
+  assert.deepEqual(planItemDependencies(item({ dependsOn: ['sumiu'] }), byId), [])
+  assert.equal(planItemStartBlock(item({ dependsOn: ['sumiu'] }), byId), null)
+
+  // Item legado sem o campo no disco lê como item sem dependência.
+  assert.deepEqual(planItemDependencies({ id: 'x' }, byId), [])
+  assert.equal(planItemStartBlock({ id: 'x' }, byId), null)
+
+  // Tag sem nome seria uma tag fantasma de outro tipo.
+  const semTitulo = new Map([['x', { title: '   ', order: 9, status: 'planejada' }]])
+  assert.deepEqual(planItemStartBlock(item({ dependsOn: ['x'] }), semTitulo), ['missão sem título'])
+})
+
+test('excluir o item destrava quem dependia dele — a trava nunca vira beco', async () => {
+  const { planItemStartBlock } = await presentation()
+
+  // A MESMA filosofia da trava de release (src/main/planReleaseLock.ts): o que
+  // o dono descartou sai de TODAS as contas. Sem isto, excluir a dependência
+  // deixaria a missão dependente travada para sempre, sem rota de saída.
+  const alvo = item({ dependsOn: ['a'] })
+  assert.deepEqual(
+    planItemStartBlock(alvo, new Map([['a', { title: 'Fundação', status: 'planejada' }]])),
+    ['Fundação']
+  )
+  assert.equal(
+    planItemStartBlock(alvo, new Map([['a', { title: 'Fundação', status: 'descartada' }]])),
+    null
+  )
+  assert.equal(
+    planItemStartBlock(alvo, new Map([['a', { title: 'Fundação', status: 'concluida' }]])),
+    null
+  )
+})
+
 test('abas do mapa: rotas primeiro, mestre na frente dos livres, arquivado fora', async () => {
   const { mapTabs, resolveMapTab } = await presentation()
 
@@ -633,6 +700,48 @@ test('CONTRATO: excluir o item é gesto do DONO, confirmado na própria linha', 
   assert.match(css, /\.pb-confirm\s*\{/u)
 })
 
+test('CONTRATO: o quadro MOSTRA o grafo — tag por dependência, começar travado, livre à vista', async () => {
+  const board = await source('src/renderer/src/components/PlanBoardView.tsx')
+  const clean = withoutComments(board)
+  const css = await source('src/renderer/src/global.css')
+
+  // Quem decide é a RÉGUA PURA — nunca uma condição solta na tela (a mesma
+  // convenção do planItemCanDiscard).
+  assert.match(clean, /planItemDependencies\(/u, 'as tags não nascem da régua pura')
+  assert.match(clean, /planItemStartBlock\(/u, 'a trava não nasce da régua pura')
+
+  // UMA tag por dependência: 1, 2, 10 dependências = 1, 2, 10 tags. Nada de
+  // "+3" escondendo justamente o que segura a missão.
+  assert.match(clean, /dependencies\.map\(/u, 'as dependências não viram uma tag cada')
+  assert.match(clean, /pb-dep/u)
+  // O CHECK é o sinal (forma antes de cor).
+  assert.match(clean, /✓/u, 'a tag satisfeita perdeu o check')
+
+  // A TRAVA: o verbo "começar" do dono fica desabilitado e a dica NOMEIA as
+  // pendentes — trava muda é beco sem saída.
+  assert.match(clean, /disabled=\{[^}]*blockedBy/u, 'o começar não trava com dependência pendente')
+  assert.match(clean, /esperando: /u, 'a dica da trava não nomeia as pendentes')
+  assert.match(clean, /blockedBy\.join\(', '\)/u)
+
+  // O SINAL DE PARALELISMO: item planejado sem pendência diz que dá para
+  // começar agora — é ele que responde "o que abro em paralelo?".
+  assert.match(clean, /pb-free/u, 'sumiu a marca de livre')
+  assert.match(clean, />\s*livre\s*</u, 'a marca de livre não fala PT-BR na tela')
+
+  // NADA PULA DE POSIÇÃO: a ordem da lista continua sendo a do plano, nunca uma
+  // topológica que reorganizaria o quadro embaixo do dono.
+  assert.match(clean, /plan\.items\.slice\(\)\.sort\(\(a, b\) => a\.order - b\.order\)/u)
+
+  // A roupa existe e é a da casa: pastilha na coluna do texto, estado satisfeito
+  // com forma própria, e a marca de livre com regra própria.
+  for (const rule of ['\\.pb-deps', '\\.pb-dep', '\\.pb-dep\\.ok', '\\.pb-free']) {
+    assert.match(css, new RegExp(`${rule}\\s*[,{]`, 'u'), `sem a regra ${rule}`)
+  }
+  // Botão desabilitado não recebe mouseover no Chromium: a dica da trava mora
+  // no invólucro, senão ela nunca apareceria para o dono.
+  assert.match(clean, /pb-gate/u, 'a dica da trava está pendurada no botão desabilitado')
+})
+
 test('CONTRATO: criar missão a partir do item é gesto do DONO', async () => {
   const board = await source('src/renderer/src/components/PlanBoardView.tsx')
 
@@ -645,5 +754,44 @@ test('CONTRATO: criar missão a partir do item é gesto do DONO', async () => {
   assert.ok(
     !/missions\.create\(|createMission\(/u.test(withoutComments(board)),
     'a aba do plano não pode criar missão por fora do modal'
+  )
+})
+
+// ————— rodada 8, ajuste do dono: item CONCLUÍDO não oferece "criar missão" —————
+//
+// O caso real (Painel de Gestão): as missões 001-004 foram concluídas POR FORA
+// do Synkora (trabalho externo reconciliado) — item 'concluida' SEM missão
+// vinculada. O quadro só escondia o botão quando havia missão ou descarte, e o
+// item concluído caía no ramo do "criar missão": um verbo sem sentido sobre
+// trabalho que já aconteceu.
+
+test('começar só existe onde ainda há trabalho — a régua dos dois verbos é UMA', async () => {
+  const { planItemCanStart } = await presentation()
+  assert.equal(planItemCanStart('planejada'), true)
+  assert.equal(planItemCanStart('em_andamento'), true, 'reabrir chat de item em andamento é legítimo')
+  assert.equal(planItemCanStart('concluida'), false, 'trabalho feito não se recomeça')
+  assert.equal(planItemCanStart('descartada'), false)
+})
+
+test('o quadro consome a régua canStart — sem cópia no componente', async () => {
+  const board = await source('src/renderer/src/components/PlanBoardView.tsx')
+  assert.match(board, /planItemCanStart/u, 'o ramo do botão decide por régua nomeada, nunca inline')
+})
+
+// ————— tag compacta + holofote (ajustes do dono, mesma rodada) —————
+
+test('a tag é BOTÃO compacto (ícone + número) e o clique localiza a missão', async () => {
+  const board = await source('src/renderer/src/components/PlanBoardView.tsx')
+  assert.match(board, /pb-dep-num/u, 'o número é o corpo da tag — o título vive na dica')
+  assert.match(board, /'✓' : '▸'/u, 'check quando satisfeita; triângulo enquanto segura')
+  assert.match(board, /scrollIntoView/u, 'clicar na tag rola até a missão dependida')
+  assert.match(board, /pb-spotlit/u, 'e a linha ganha o holofote')
+
+  const css = await source('src/renderer/src/global.css')
+  assert.match(css, /\.planboard-item\.pb-spotlit/u)
+  assert.match(
+    css,
+    /prefers-reduced-motion[\s\S]{0,200}pb-spotlit/u,
+    'quem pediu menos movimento recebe o contorno parado, nunca o pulso'
   )
 })

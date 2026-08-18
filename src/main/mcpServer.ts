@@ -171,7 +171,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       'propose_plan',
       {
         description:
-          'APRESENTA um plano novo ao dono, como card dentro desta conversa. NUNCA cria nada: quem cria é o clique dele. Chame só depois que ele concordar com o recorte em palavras — e então ENCERRE o turno e espere. Silêncio não é consentimento. Cada item é UMA missão entregável; os campos espelham as seções que você já escreve em plano/NNN-slug.md.',
+          'APRESENTA um plano novo ao dono, como card dentro desta conversa. NUNCA cria nada: quem cria é o clique dele. Chame só depois que ele concordar com o recorte em palavras — e então ENCERRE o turno e espere. Silêncio não é consentimento. Cada item é UMA missão entregável; os campos espelham as seções que você já escreve em plano/NNN-slug.md. DECLARAR DEPENDÊNCIA É PARTE DO PLANEJAMENTO: a missão que precisa de outra PRONTA antes nomeia a key dela em dependsOn — no quadro do dono a tag ganha check quando a dependida conclui, e só então o começar dela destrava. As que ficam sem dependsOn são exatamente as que ele roda EM PARALELO.',
         inputSchema: {
           title: z.string().min(1).max(120).describe('nome do plano, em PT-BR'),
           description: z
@@ -207,7 +207,9 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                   .array(z.string().max(60))
                   .max(12)
                   .optional()
-                  .describe('keys de missões ANTERIORES desta mesma lista'),
+                  .describe(
+                    'keys de missões ANTERIORES desta mesma lista que precisam estar PRONTAS antes desta começar'
+                  ),
                 docPath: z
                   .string()
                   .max(240)
@@ -226,7 +228,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       'update_plan',
       {
         description:
-          'Edita um plano que JÁ existe — isto executa na hora (editar é reversível). Mande o updatedAt que veio do get_plan: se o plano mudou nesse meio-tempo, a alteração é recusada em vez de sobrescrever o que o dono viu. O estado "concluida" e o vínculo com a missão são derivados da missão real e não se escrevem aqui. A designação de plano mestre não passa por aqui — ela é um gesto do dono no mapa.',
+          'Edita um plano que JÁ existe — isto executa na hora (editar é reversível). Mande o updatedAt que veio do get_plan: se o plano mudou nesse meio-tempo, a alteração é recusada em vez de sobrescrever o que o dono viu. O estado "concluida" e o vínculo com a missão são derivados da missão real e não se escrevem aqui. A designação de plano mestre não passa por aqui — ela é um gesto do dono no mapa. MANTER O GRAFO EM DIA É PARTE DA EDIÇÃO: dependsOn é o que o quadro do dono lê para travar o começar de uma missão até a dependida concluir, e para mostrar o que sobra livre para rodar EM PARALELO.',
         inputSchema: {
           planId: z.string().min(1).max(120),
           expectedUpdatedAt: z
@@ -247,7 +249,13 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                 doneCriteria: z.array(z.string().max(400)).max(10).optional(),
                 tier: z.enum(['pequeno', 'medio', 'grande']).nullable().optional(),
                 context: z.string().max(2_000).nullable().optional(),
-                dependsOn: z.array(z.string().max(120)).max(12).optional(),
+                dependsOn: z
+                  .array(z.string().max(120))
+                  .max(12)
+                  .optional()
+                  .describe(
+                    'ids de itens DESTE plano que precisam estar PRONTOS antes deste começar — a lista mandada SUBSTITUI a anterior'
+                  ),
                 docPath: z.string().max(240).nullable().optional(),
                 status: z
                   .enum(['planejada', 'em_andamento', 'descartada'])
@@ -267,7 +275,12 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                 doneCriteria: z.array(z.string().max(400)).max(10),
                 tier: z.enum(['pequeno', 'medio', 'grande']).optional(),
                 context: z.string().max(2_000).optional(),
-                dependsOn: z.array(z.string().max(120)).max(12),
+                dependsOn: z
+                  .array(z.string().max(120))
+                  .max(12)
+                  .describe(
+                    'o que precisa estar PRONTO antes deste item começar: keys de itens novos desta mesma chamada ou ids de itens que já estão no plano'
+                  ),
                 docPath: z.string().max(240).optional()
               })
             )

@@ -538,7 +538,13 @@ test('o planejador PROPÕE o plano, não executa produto nem cria missão', () =
   // dono, e o planejador precisa saber que propor não é designar. As duas
   // linhas de absorção de documento legado viraram UMA no mesmo movimento —
   // o teto é para conter constituição, não para proibir regra nova.
-  assert.ok(contract.length < 3350, 'contrato virou constituição')
+  //
+  // E de 3350 para 3750 na rodada 8 (2026-08-19), pelo GRAFO: a linha magra que
+  // pedia "nomeie do que depende" virou a regra inteira do dependsOn — o que a
+  // tag mostra, quando ela dá check, o que a trava faz e por que o que fica sem
+  // dependência é o que o dono roda em paralelo. Ela ABSORVEU a linha antiga em
+  // vez de somar-se a ela, e o contrato mede 3661.
+  assert.ok(contract.length < 3750, 'contrato virou constituição')
   assert.match(contract, /"mestre" is a DESIGNATION the owner grants/u)
   assert.match(contract, /only his click designates or removes it/u)
   assert.match(contract, /PROJECT_PLAN\.md/u)
@@ -577,6 +583,31 @@ test('o planejador PROPÕE o plano, não executa produto nem cria missão', () =
   assert.match(contract, /ONE DELIVERABLE PER MISSION/)
   // aval explícito antes de escrever: ausência nunca é consentimento
   assert.match(contract, /silence is not consent/i)
+})
+
+/** A descrição que o CLI lê de uma tool do catálogo MCP (o texto, nunca o zod). */
+function toolDescription(source, tool) {
+  const at = source.indexOf(`'${tool}',`)
+  if (at < 0) return ''
+  return source.slice(at).match(/description:\s*\n?\s*'((?:[^'\\]|\\.)*)'/u)?.[1] ?? ''
+}
+
+test('declarar dependência é PARTE do planejamento — persona e as duas tools ensinam', () => {
+  // A queixa do dono (rodada 8): o agente PODE declarar dependsOn e quase nunca
+  // declara, então o quadro não tem grafo nenhum para mostrar. A regra passa a
+  // viver nos dois lugares que o agente lê: a persona e a descrição da tool.
+  const contract = guiPlanningSystemPrompt()
+  assert.match(contract, /dependsOn/u, 'a persona não nomeia o campo')
+  assert.match(contract, /finished/iu, 'a persona não diz o que é depender: estar PRONTA antes')
+  assert.match(contract, /parallel/iu, 'a persona não diz para que a dependência serve')
+
+  const mcp = readFileSync(new URL('../src/main/mcpServer.ts', import.meta.url), 'utf8')
+  for (const tool of ['propose_plan', 'update_plan']) {
+    const description = toolDescription(mcp, tool)
+    assert.ok(description.length > 100, `${tool} sem descrição`)
+    assert.match(description, /dependsOn/u, `${tool} não ensina a declarar dependência`)
+    assert.match(description, /paralelo/iu, `${tool} não diz para que ela serve`)
+  }
 })
 
 test('o planejador é diferente de todos os contratos de missão', () => {

@@ -78,6 +78,104 @@ export function planClipLine(text: string, max = 110): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line
 }
 
+// ————— o grafo de dependências (rodada 8) —————
+//
+// O motor já guardava `dependsOn` (ids de itens do MESMO plano) desde o começo,
+// e a tela nunca mostrou. A ordem do dono fechou o circuito: uma TAG por
+// dependência no card, o CHECK quando a dependida termina, e o verbo "começar"
+// travado até todas terem check — é assim que ele enxerga, de relance, o que
+// pode rodar EM PARALELO.
+
+/** A dependência já resolvida em nome, número e estado — o que a tag mostra. */
+export interface PlanItemDependency {
+  id: string
+  title: string
+  /** o NÚMERO da missão na lista do quadro (1-based) — é ele que a tag exibe
+   *  (ajuste do dono, rodada 8: tag compacta; o título inteiro vive na dica) */
+  order: number
+  status: PlanItemStatus
+  /** ela não segura mais nada */
+  satisfied: boolean
+}
+
+/** O mínimo que a régua lê de cada item do plano (o resto é irrelevante aqui). */
+export interface PlanDependencySource {
+  title: string
+  /** posição 1-based na MESMA ordenação que o quadro exibe (o `pb-order`) */
+  order: number
+  /** o EFETIVO, o mesmo que a ficha mostra (vem da missão vinculada) */
+  status: PlanItemStatus
+}
+
+/**
+ * SATISFEITA = concluída OU DESCARTADA. A segunda metade é a mesma filosofia da
+ * trava de release (`src/main/planReleaseLock.ts`): o que o dono descartou sai
+ * de todas as contas. Sem ela a trava viraria beco sem saída — o dono excluiria
+ * a dependência do plano e a missão dependente ficaria presa para sempre,
+ * esperando por trabalho que ele já decidiu não fazer.
+ */
+function dependencySatisfied(status: PlanItemStatus): boolean {
+  return status === 'concluida' || status === 'descartada'
+}
+
+/**
+ * As dependências deste item, NA ORDEM em que ele as declarou — uma entrada por
+ * dependência, sempre (1, 2 ou 10 tags para 1, 2 ou 10 dependências: esconder
+ * atrás de um "+3" seria esconder justamente o que segura a missão).
+ *
+ * Id repetido é a MESMA dependência e aparece uma vez só; id que não existe
+ * mais no plano (item apagado antes de o motor passar a filtrar) é ignorado em
+ * silêncio — tag fantasma seria pior que dependência nenhuma, porque travaria o
+ * botão por um item que o dono não consegue mais nem ver.
+ */
+export function planItemDependencies(
+  item: { dependsOn?: readonly string[] },
+  itemsById: ReadonlyMap<string, PlanDependencySource>
+): PlanItemDependency[] {
+  const out: PlanItemDependency[] = []
+  const seen = new Set<string>()
+  for (const id of item.dependsOn ?? []) {
+    if (seen.has(id)) continue
+    const target = itemsById.get(id)
+    if (!target) continue
+    seen.add(id)
+    out.push({
+      id,
+      title: target.title.trim() || 'missão sem título',
+      order: target.order,
+      status: target.status,
+      satisfied: dependencySatisfied(target.status)
+    })
+  }
+  return out
+}
+
+/**
+ * O verbo COMEÇAR, com a MESMA régua do excluir: os dois só existem onde ainda
+ * há trabalho. O caso real que fechou o furo (rodada 8, Painel de Gestão):
+ * itens concluídos POR FORA do Synkora não têm missão vinculada, e o quadro só
+ * escondia o botão quando havia missão ou descarte — "criar missão" sobre
+ * trabalho já feito é um verbo sem sentido.
+ */
+export function planItemCanStart(status: PlanItemStatus): boolean {
+  return status === 'planejada' || status === 'em_andamento'
+}
+
+/**
+ * A TRAVA do "começar": `null` quando o item está livre; senão os TÍTULOS do que
+ * ainda falta. A lista é a explicação da trava — botão travado que não nomeia o
+ * que está esperando é beco sem saída, e beco sem saída é bug.
+ */
+export function planItemStartBlock(
+  item: { dependsOn?: readonly string[] },
+  itemsById: ReadonlyMap<string, PlanDependencySource>
+): string[] | null {
+  const pending = planItemDependencies(item, itemsById)
+    .filter((dependency) => !dependency.satisfied)
+    .map((dependency) => dependency.title)
+  return pending.length ? pending : null
+}
+
 // ————— progresso —————
 
 export interface PlanProgress {

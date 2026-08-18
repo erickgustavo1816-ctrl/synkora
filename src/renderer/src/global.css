@@ -19449,6 +19449,141 @@ details.gui-error-line {
 }
 /* ————— fim do BLOCO NOVO dos verbos do item ————— */
 
+/* ————— O GRAFO DE DEPENDÊNCIAS NA LINHA DO ITEM (2026-08-19) — BLOCO NOVO —————
+   Ordem do dono: uma tag por dependência, check quando a dependida conclui, e o
+   "começar" travado até todas terem check — "aí eu enxergo o que roda em
+   paralelo". A fileira mora na COLUNA DO TEXTO (abaixo do objetivo) porque é
+   leitura, não ação: a célula de ações continua com os dois verbos e nada mais.
+   Nenhuma animação nova — o movimento aqui seria enfeite, e a troca de estado
+   já é visível por si. */
+.pb-deps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 6px;
+  margin-top: 3px;
+  min-width: 0;
+}
+
+/* A PALAVRA QUE ABRE A FILEIRA. As duas ocupam o mesmo lugar e nunca aparecem
+   juntas: é por esta coluna que a varredura vertical passa, e quando a última
+   dependência dá check a palavra TROCA aqui, no mesmo ponto. */
+.pb-deps-label,
+.pb-free {
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+/* "depende de" é a legenda da fileira; "livre" é a RESPOSTA. O que as separa é
+   o PESO — a tinta é a mesma nas duas, e com ela o piso de contraste do corpo
+   (o cinza claro reprovaria justamente no texto de 9,5px). */
+.pb-deps-label {
+  font-weight: 400;
+}
+
+.pb-free {
+  font-weight: 700;
+}
+
+/* TAG COMPACTA (ajuste do dono, rodada 8): ícone + NÚMERO, o título na dica.
+   Ela é um BOTÃO — clicar localiza a missão dependida no quadro — então o
+   reset de button entra aqui e o hover diz "sou clicável" pela borda. */
+.pb-dep {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-size: 9.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.pb-dep:hover,
+.pb-dep:focus-visible {
+  border-color: var(--ink-2);
+  color: var(--ink);
+}
+
+/* SATISFEITA: o CHECK é o sinal — apagada a cor, a tag continua dizendo o que
+   diz. A mistura é a mesma do glifo de item concluído, para o quadro inteiro
+   falar uma língua só; a borda apenas recua, porque essa aresta já não segura
+   nada. */
+.pb-dep.ok {
+  border-color: color-mix(in srgb, var(--ok) 34%, var(--line));
+}
+
+/* O ícone é o ESTADO: triângulo = ainda segura; check = já não segura. */
+.pb-dep-icon {
+  font-size: 8.5px;
+  line-height: 1;
+}
+
+.pb-dep.ok .pb-dep-icon {
+  color: color-mix(in srgb, var(--ok) 58%, var(--ink));
+}
+
+.pb-dep-num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+/* O HOLOFOTE (ajuste do dono): clicar na tag rola até a missão dependida e a
+   linha PULSA duas vezes — movimento como SINAL ("é esta aqui"), curto e sem
+   sobra. Quem pediu menos movimento recebe o contorno parado pelo mesmo tempo. */
+.planboard-item.pb-spotlit {
+  animation: pb-spotlight 0.7s ease-in-out 2;
+}
+
+@keyframes pb-spotlight {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 1px transparent;
+    background: transparent;
+  }
+  50% {
+    box-shadow: inset 0 0 0 2px var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .planboard-item.pb-spotlit {
+    animation: none;
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+}
+
+/* O invólucro da trava: existe para a dica ter onde morar (botão desabilitado
+   não recebe mouseover no Chromium) e não desenha nada por conta própria. */
+.pb-gate {
+  display: inline-flex;
+  min-width: 0;
+}
+
+/* TRAVA NÃO É "OCUPADO": ela dura enquanto a dependência durar, então o rótulo
+   tem que continuar LEGÍVEL — o esmaecido de 0,35 da casa (certo para o clique
+   que está em curso) apagaria o verbo por horas. Quem diz "travado" aqui é a
+   FORMA: a borda vira tracejada, e o texto fica no piso de contraste. */
+.pb-gate.locked .btn:disabled {
+  opacity: 1;
+  border-style: dashed;
+  color: var(--ink-2);
+}
+
+/* e o botão travado não se acende ao passar o mouse (o hover do fantasma
+   prometeria um clique que não existe) */
+.pb-gate.locked .btn:disabled:hover {
+  border-color: var(--line-strong);
+  color: var(--ink-2);
+}
+/* ————— fim do BLOCO NOVO do grafo de dependências ————— */
+
 /* ————— BLOCO NOVO: ficha de ajudante MCP na lateral (modelo · effort · conta) —————
    Três campos não cabem na linha de ~165px que sobra do trilho de entrega
    (~204px menos os respiros): espremer os três deixaria o nome da conta em
