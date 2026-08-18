@@ -635,6 +635,229 @@ export function isExpectedVersionWorktree(
   )
 }
 
+// ————— A BASE NUNCA FICA PARA TRÁS (rodada 7, adendo C2) —————
+//
+// CASO REAL (2026-08-18, projeto externo do dono): a main do projeto andou 50
+// commits POR FORA do Synkora e a branch da VERSÃO — a base de onde toda missão
+// nova é derivada — ficou parada no commit inicial. A missão nasceu num worktree
+// quase vazio, o agente (corretamente) mergeou a main, e a ENTREGA da missão
+// contabilizou o repositório inteiro: +50 mil linhas, 187 arquivos.
+//
+// A cura é ARITMÉTICA DE GIT, não julgamento: quando a base é ANCESTRAL da main,
+// avançar até ela é fast-forward — a única operação que, por definição, não pode
+// perder trabalho. Quando as duas DIVERGIRAM, ninguém decide sozinho: quem chama
+// emite advisory auditado e a missão nasce da base como está.
+
+export type VersionBaseSyncOutcome =
+  /** Não havia o que comparar (a base declarada JÁ é a branch principal). */
+  | 'skipped'
+  /** A base já contém a main — igual a ela ou À FRENTE (o estado NORMAL de uma
+   *  versão que vem recebendo missões e só sobe no release). Nada a fazer. */
+  | 'up-to-date'
+  /** A base era ancestral da main e foi avançada exatamente até ela. */
+  | 'fast-forwarded'
+  /** Cada lado tem commit que o outro não tem (ou nem ancestral comum existe). */
+  | 'diverged'
+  /** O avanço era possível mas o git recusou (worktree da versão com trabalho
+   *  não commitado, CAS perdido, arquivo travado) — obstáculo, não veredito. */
+  | 'blocked'
+  /** Git não pôde ser consultado / a branch não existe. NUNCA presumir avanço. */
+  | 'unavailable'
+
+export interface VersionBaseSyncResult {
+  outcome: VersionBaseSyncOutcome
+  baseBranch: string
+  /** Branch principal usada como alvo (a checada na raiz, se não vier dada). */
+  mainBranch?: string
+  /** SHAs COMPLETOS (quem exibe encurta) — de onde a base estava, para onde foi. */
+  fromSha?: string
+  toSha?: string
+  /** Commits que a base tinha a MENOS que a main… */
+  behind?: number
+  /** …e a MAIS que ela. */
+  ahead?: number
+  /** Pasta onde a branch da base está CHECADA, quando está. */
+  checkedOutIn?: string
+  /** Motivo legível quando o resultado não é o avanço limpo. */
+  detail?: string
+}
+
+/** SHA completo de uma branch LOCAL — `refs/heads/` explícito para que um nome
+ *  ambíguo (tag homônima) ou hostil jamais escolha o objeto por nós. */
+function localBranchSha(projectPath: string, branch: string): string | undefined {
+  try {
+    const sha = git(projectPath, [
+      'rev-parse',
+      '--verify',
+      '--end-of-options',
+      `refs/heads/${branch}^{commit}`
+    ])
+    return FULL_SHA.test(sha) ? sha : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** `true` = `ancestor` é alcançável de `descendant`. `undefined` = sem veredito
+ *  (git indisponível) — quem chama nunca deve tratar isso como prova. */
+function isAncestorCommit(
+  cwd: string,
+  ancestor: string,
+  descendant: string
+): boolean | undefined {
+  try {
+    gitRaw(cwd, ['merge-base', '--is-ancestor', ancestor, descendant])
+    return true
+  } catch (error) {
+    return (error as { status?: number }).status === 1 ? false : undefined
+  }
+}
+
+/** Onde uma branch está CHECADA neste repositório (raiz ou qualquer worktree),
+ *  perguntando ao próprio git em vez de confiar num caminho persistido. É esta
+ *  resposta que decide entre `merge --ff-only` (há arquivos para acompanhar o
+ *  ref) e `update-ref` com CAS (o ref está sozinho). */
+function checkedOutWorktreeDir(projectPath: string, branch: string): string | undefined {
+  if (!branch.trim()) return undefined
+  let out: string
+  try {
+    out = gitRaw(projectPath, ['worktree', 'list', '--porcelain'])
+  } catch {
+    return undefined
+  }
+  let dir: string | undefined
+  for (const line of out.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) dir = line.slice('worktree '.length).trim()
+    else if (line.startsWith('branch ') && line.slice('branch '.length).trim() === `refs/heads/${branch}`)
+      return dir
+  }
+  return undefined
+}
+
+/**
+ * Compara a base da versão com a branch principal e, SÓ quando o avanço é um
+ * fast-forward, o executa. Roda inteira dentro do gitWorker (nenhum git no main
+ * thread neste caminho) e nunca lança: todo tropeço vira um `outcome` legível.
+ *
+ * `mainBranchInput` ausente = a branch CHECADA NA RAIZ do projeto, que é
+ * exatamente o alvo que o release da versão usa (writeVersionReleaseIntent) —
+ * a mesma autoridade, para que "main" signifique a mesma coisa nos dois lugares.
+ */
+export function syncVersionBaseWithMain(
+  projectPath: string,
+  baseBranch: string,
+  mainBranchInput?: string
+): VersionBaseSyncResult {
+  const base = typeof baseBranch === 'string' ? baseBranch.trim() : ''
+  if (!base)
+    return { outcome: 'unavailable', baseBranch: base, detail: 'a versão não tem branch registrada' }
+  const main = mainBranchInput?.trim() || currentBranch(projectPath) || ''
+  if (!main)
+    return {
+      outcome: 'unavailable',
+      baseBranch: base,
+      detail: 'não consegui identificar a branch principal do projeto (HEAD solto?)'
+    }
+  if (main === base)
+    return { outcome: 'skipped', baseBranch: base, mainBranch: main, detail: 'a base da versão É a branch principal' }
+  const baseSha = localBranchSha(projectPath, base)
+  const mainSha = localBranchSha(projectPath, main)
+  if (!baseSha || !mainSha)
+    return {
+      outcome: 'unavailable',
+      baseBranch: base,
+      mainBranch: main,
+      detail: `não consegui resolver ${!baseSha ? base : main} neste repositório`
+    }
+  const common = { baseBranch: base, mainBranch: main, fromSha: baseSha, toSha: mainSha }
+  if (baseSha === mainSha)
+    return { ...common, outcome: 'up-to-date', ahead: 0, behind: 0 }
+  // Contagem simétrica ANTES de qualquer decisão: `main...base` com
+  // --left-right devolve "só na main" (o quanto a base está ATRÁS) e "só na
+  // base" (o quanto ela está À FRENTE). Vale inclusive sem ancestral comum.
+  let behind = 0
+  let ahead = 0
+  try {
+    const [left, right] = git(projectPath, [
+      'rev-list',
+      '--left-right',
+      '--count',
+      `${mainSha}...${baseSha}`
+    ]).split(/\s+/)
+    behind = Number.parseInt(left, 10) || 0
+    ahead = Number.parseInt(right, 10) || 0
+  } catch {
+    // sem contagem — o veredito abaixo não depende dela
+  }
+  // A MAIN dentro da base = versão À FRENTE: é o estado saudável de toda versão
+  // que já recebeu missão. Chamar isso de divergência seria alarme falso a cada
+  // missão criada, e a regra do adendo é o contrário: só falar quando há o que
+  // decidir.
+  if (isAncestorCommit(projectPath, mainSha, baseSha) === true)
+    return { ...common, outcome: 'up-to-date', ahead, behind: 0 }
+  const canFastForward = isAncestorCommit(projectPath, baseSha, mainSha)
+  if (canFastForward === undefined)
+    return { ...common, outcome: 'unavailable', ahead, behind, detail: 'o git não deu veredito de ancestralidade' }
+  if (canFastForward === false)
+    return {
+      ...common,
+      outcome: 'diverged',
+      ahead,
+      behind,
+      detail: ahead
+        ? `${ahead} commit(s) só na base e ${behind} só na ${main}`
+        : `sem ancestral comum entre ${base} e ${main}`
+    }
+  const holder = checkedOutWorktreeDir(projectPath, base)
+  if (holder) {
+    // A base está CHECADA (o caso real: a branch da versão mora no worktree
+    // dela). Mover só o ref deixaria os arquivos mentindo sobre o ref; o
+    // fast-forward tem de acontecer POR LÁ.
+    let dirty: string
+    try {
+      dirty = git(holder, ['status', '--porcelain', '--untracked-files=no'])
+    } catch (error) {
+      return { ...common, outcome: 'unavailable', ahead, behind, checkedOutIn: holder, detail: gitFailureText(error) }
+    }
+    if (dirty)
+      return {
+        ...common,
+        outcome: 'blocked',
+        ahead,
+        behind,
+        checkedOutIn: holder,
+        detail: 'o worktree da versão tem alterações NÃO COMMITADAS — preservei-as e não avancei a base'
+      }
+    try {
+      // --ff-only pelo SHA: nome de branch poderia ter andado entre a leitura e
+      // esta linha, e o único avanço sancionado é o que foi provado acima.
+      git(holder, ['merge', '--ff-only', mainSha])
+    } catch (error) {
+      return { ...common, outcome: 'blocked', ahead, behind, checkedOutIn: holder, detail: gitFailureText(error) }
+    }
+  } else {
+    try {
+      // Branch sem worktree: plumbing com COMPARE-AND-SWAP (o SHA velho é o
+      // terceiro argumento) — se qualquer outro processo moveu o ref no meio,
+      // o git recusa em vez de sobrescrever uma decisão alheia.
+      git(projectPath, ['update-ref', `refs/heads/${base}`, mainSha, baseSha])
+    } catch (error) {
+      return { ...common, outcome: 'blocked', ahead, behind, detail: gitFailureText(error) }
+    }
+  }
+  const landed = localBranchSha(projectPath, base)
+  if (landed !== mainSha)
+    return {
+      ...common,
+      outcome: 'blocked',
+      ahead,
+      behind,
+      checkedOutIn: holder,
+      detail: 'o avanço não pousou no ref — a base continua onde estava'
+    }
+  return { ...common, outcome: 'fast-forwarded', ahead: 0, behind, checkedOutIn: holder }
+}
+
 /**
  * Resolve o workspace de uma missão sem confundir repo quebrado com pasta sem
  * Git. Em projeto Git, somente o worktree canônico `mission/<id8>` é aceito.

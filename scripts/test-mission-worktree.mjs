@@ -28,7 +28,8 @@ import {
   missionWorkspaceReadout,
   removeWorktreeAndBranch,
   resolveMissionWorkspace,
-  resolveWorkspaceFilePath
+  resolveWorkspaceFilePath,
+  syncVersionBaseWithMain
 } from '../.tmp/mission-worktree-test/worktree.js'
 
 const git = (cwd, args) =>
@@ -796,4 +797,160 @@ test('patch de commit respeita o teto e não escreve no worktree', (t) => {
   assert.equal(patch.truncated, true)
   assert.ok((patch.diff ?? '').length <= 200_000)
   assert.equal(git(mission.dir, ['status', '--porcelain']), before)
+})
+
+// ————— A BASE NUNCA FICA PARA TRÁS (rodada 7, adendo C2) —————
+//
+// O incidente que estes testes prendem: a main de um projeto do dono andou 50
+// commits POR FORA do Synkora e a branch da VERSÃO — a base de toda missão nova
+// — ficou parada no commit inicial. A missão nasceu num worktree quase vazio, o
+// agente mergeou a main, e a ENTREGA contabilizou o repositório inteiro (+50k
+// linhas, 187 arquivos). `syncVersionBaseWithMain` é a cura: avança a base SÓ
+// quando isso é fast-forward (que, por definição, não pode perder trabalho) e
+// não move NADA em qualquer outro caso.
+
+/** Avança a branch principal com N commits "por fora do Synkora". */
+function advanceMainOutsideSynkora(root, count, prefix = 'fora') {
+  for (let index = 1; index <= count; index += 1) {
+    writeFileSync(join(root, `${prefix}-${index}.txt`), `trabalho externo ${index}\n`, 'utf8')
+    git(root, ['add', '-A'])
+    git(root, ['commit', '-m', `${prefix} ${index}`])
+  }
+  return git(root, ['rev-parse', 'HEAD'])
+}
+
+test('base ATRÁS e ancestral: a versão checada no worktree dela avança até a main', (t) => {
+  const root = initializeRepository(t, 'synkora-base-ff-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-base-ff-wt-')
+  const mainBranch = git(root, ['branch', '--show-current'])
+  const initial = git(root, ['rev-parse', 'HEAD'])
+  // A versão nasce no commit inicial — exatamente como no caso real.
+  const version = createVersionWorktree(root, worktrees, 'V1.0', 'versao-atrasada')
+  assert.ok(version)
+  assert.equal(git(root, ['rev-parse', `refs/heads/${version.branch}`]), initial)
+
+  const mainSha = advanceMainOutsideSynkora(root, 3)
+
+  const result = syncVersionBaseWithMain(root, version.branch)
+  assert.equal(result.outcome, 'fast-forwarded')
+  assert.equal(result.mainBranch, mainBranch)
+  assert.equal(result.behind, 3, 'o aviso precisa dizer QUANTO a base estava atrás')
+  assert.equal(result.ahead, 0)
+  assert.equal(result.fromSha, initial)
+  assert.equal(result.toSha, mainSha)
+  // O ref pousou…
+  assert.equal(git(root, ['rev-parse', `refs/heads/${version.branch}`]), mainSha)
+  // …e os ARQUIVOS do worktree da versão acompanharam (mover só o ref deixaria
+  // a árvore mentindo sobre o commit em que ela está).
+  assert.equal(git(version.dir, ['rev-parse', 'HEAD']), mainSha)
+  assert.equal(git(version.dir, ['branch', '--show-current']), version.branch)
+  assert.ok(existsSync(join(version.dir, 'fora-3.txt')), 'o trabalho externo tem de chegar na pasta da versão')
+  assert.equal(git(version.dir, ['status', '--porcelain']), '')
+
+  // E a missão derivada dessa base nasce COM o trabalho externo — o oposto do
+  // worktree quase vazio que produziu a entrega de +50 mil linhas.
+  const mission = createMissionWorktree(root, worktrees, 'depois-do-ff', version.branch)
+  assert.ok(mission)
+  assert.equal(git(mission.dir, ['rev-parse', 'HEAD']), mainSha)
+})
+
+test('base ATRÁS sem worktree: o ref anda por update-ref com compare-and-swap', (t) => {
+  const root = initializeRepository(t, 'synkora-base-ff-solta-')
+  const initial = git(root, ['rev-parse', 'HEAD'])
+  git(root, ['branch', 'version/solta'])
+  const mainSha = advanceMainOutsideSynkora(root, 2)
+
+  const result = syncVersionBaseWithMain(root, 'version/solta')
+  assert.equal(result.outcome, 'fast-forwarded')
+  assert.equal(result.behind, 2)
+  assert.equal(result.checkedOutIn, undefined, 'branch sem worktree não tem pasta para alinhar')
+  assert.equal(result.fromSha, initial)
+  assert.equal(git(root, ['rev-parse', 'refs/heads/version/solta']), mainSha)
+})
+
+test('base DIVERGIDA nunca é decidida sozinha: nada se move e os dois lados são contados', (t) => {
+  const root = initializeRepository(t, 'synkora-base-diverge-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-base-diverge-wt-')
+  const version = createVersionWorktree(root, worktrees, 'V2.0', 'versao-divergente')
+  assert.ok(version)
+  // A versão andou por conta própria…
+  writeFileSync(join(version.dir, 'da-versao.txt'), 'entrega da versão\n', 'utf8')
+  git(version.dir, ['add', '-A'])
+  git(version.dir, ['commit', '-m', 'trabalho da versão'])
+  const versionSha = git(version.dir, ['rev-parse', 'HEAD'])
+  // …e a main também, por outro caminho.
+  const mainSha = advanceMainOutsideSynkora(root, 2)
+
+  const result = syncVersionBaseWithMain(root, version.branch)
+  assert.equal(result.outcome, 'diverged')
+  assert.equal(result.ahead, 1, 'commits que só a base tem')
+  assert.equal(result.behind, 2, 'commits que só a main tem')
+  assert.match(result.detail ?? '', /só na base/)
+  // NADA se moveu: nem o ref, nem os arquivos.
+  assert.equal(git(root, ['rev-parse', `refs/heads/${version.branch}`]), versionSha)
+  assert.equal(git(version.dir, ['rev-parse', 'HEAD']), versionSha)
+  assert.equal(git(root, ['rev-parse', 'HEAD']), mainSha)
+})
+
+test('base À FRENTE da main é o estado SAUDÁVEL — nunca vira divergência', (t) => {
+  const root = initializeRepository(t, 'synkora-base-frente-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-base-frente-wt-')
+  const version = createVersionWorktree(root, worktrees, 'V3.0', 'versao-adiantada')
+  assert.ok(version)
+  writeFileSync(join(version.dir, 'missao-integrada.txt'), 'missão já integrada\n', 'utf8')
+  git(version.dir, ['add', '-A'])
+  git(version.dir, ['commit', '-m', 'missão integrada na versão'])
+  const versionSha = git(version.dir, ['rev-parse', 'HEAD'])
+
+  const result = syncVersionBaseWithMain(root, version.branch)
+  assert.equal(result.outcome, 'up-to-date', 'versão à frente é o normal: recebe missões e só sobe no release')
+  assert.equal(result.ahead, 1)
+  assert.equal(result.behind, 0)
+  assert.equal(git(root, ['rev-parse', `refs/heads/${version.branch}`]), versionSha)
+})
+
+test('base já na main não move nada, e a base que É a main é ignorada', (t) => {
+  const root = initializeRepository(t, 'synkora-base-igual-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-base-igual-wt-')
+  const mainBranch = git(root, ['branch', '--show-current'])
+  const version = createVersionWorktree(root, worktrees, 'V4.0', 'versao-em-dia')
+  assert.ok(version)
+  const head = git(root, ['rev-parse', 'HEAD'])
+
+  const emDia = syncVersionBaseWithMain(root, version.branch)
+  assert.equal(emDia.outcome, 'up-to-date')
+  assert.equal(emDia.ahead, 0)
+  assert.equal(emDia.behind, 0)
+  assert.equal(git(root, ['rev-parse', `refs/heads/${version.branch}`]), head)
+
+  // Projeto sem versão: a base declarada É a própria main — nada a comparar.
+  assert.equal(syncVersionBaseWithMain(root, mainBranch).outcome, 'skipped')
+})
+
+test('worktree da versão SUJO bloqueia o avanço e preserva a edição do dono', (t) => {
+  const root = initializeRepository(t, 'synkora-base-sujo-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-base-sujo-wt-')
+  const version = createVersionWorktree(root, worktrees, 'V5.0', 'versao-suja')
+  assert.ok(version)
+  const initial = git(root, ['rev-parse', 'HEAD'])
+  advanceMainOutsideSynkora(root, 1)
+  writeFileSync(join(version.dir, 'base.txt'), 'edição não commitada do dono\n', 'utf8')
+
+  const result = syncVersionBaseWithMain(root, version.branch)
+  assert.equal(result.outcome, 'blocked')
+  assert.match(result.detail ?? '', /NÃO COMMITADAS/)
+  assert.equal(git(root, ['rev-parse', `refs/heads/${version.branch}`]), initial, 'a base fica onde estava')
+  assert.equal(
+    readFileSync(join(version.dir, 'base.txt'), 'utf8'),
+    'edição não commitada do dono\n',
+    'sincronia nunca sobrescreve edição do dono'
+  )
+})
+
+test('branch inexistente vira veredito honesto, nunca avanço presumido', (t) => {
+  const root = initializeRepository(t, 'synkora-base-ausente-')
+  const result = syncVersionBaseWithMain(root, 'version/nunca-existiu')
+  assert.equal(result.outcome, 'unavailable')
+  assert.equal(result.baseBranch, 'version/nunca-existiu')
+  assert.equal(syncVersionBaseWithMain(root, '   ').outcome, 'unavailable')
 })

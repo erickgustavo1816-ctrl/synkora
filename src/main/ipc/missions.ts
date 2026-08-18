@@ -217,6 +217,13 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
    * interdita. O caminho de AGENTE (create_mission / start_project_mission em
    * mcpApi/missions.ts) conserva a regra antiga de propósito — lá o roadmap
    * continua sendo a autoridade sobre o que um agente pode abrir sozinho.
+   *
+   * A RESPOSTA VIROU PROMISE na rodada 7 (adendo C2): antes de derivar a
+   * branch/worktree da missão, o motor confere se a BASE da versão ficou para
+   * trás da branch principal e a avança quando isso é fast-forward (git pelo
+   * gitWorker, fora do main thread). O contrato do renderer não muda — `invoke`
+   * sempre devolveu Promise —, e a mecânica inteira mora em `createMissionImpl`
+   * para que TODO nascimento de missão passe por ela, não só este canal.
    */
   ipcMain.handle('missions:create', (_e, projectId: string, input: NewMission) =>
     createMissionImpl(projectId, { ...input, direct: input.direct ?? true }, 'user')

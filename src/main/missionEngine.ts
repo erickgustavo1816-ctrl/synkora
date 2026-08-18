@@ -39,7 +39,8 @@ import {
   isWorktreeClean,
   missionWorktreeDescriptor,
   removeWorktreeAndBranch,
-  resolveMissionWorkspace
+  resolveMissionWorkspace,
+  type VersionBaseSyncResult
 } from './worktree'
 import { type Mission, type NewMission } from './missions'
 import {
@@ -294,12 +295,137 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     return missions.get(mission.id)
   }
 
-  function createMissionImpl(
+  /**
+   * A BASE NUNCA FICA PARA TRÁS (rodada 7, adendo C2 — o caso das 50 mil linhas).
+   *
+   * Roda na CRIAÇÃO da missão, ANTES de a branch/worktree dela ser derivada da
+   * base. Se a branch da versão é ancestral da main e está atrás, o motor
+   * avança sozinho: fast-forward não pode perder trabalho, então não há decisão
+   * a delegar. Se DIVERGIU, o motor nunca escolhe por conta própria — a missão
+   * nasce da base como está e o dono recebe um advisory que nomeia as duas
+   * saídas sancionadas. Falha de git também não decide nada: a missão continua
+   * nascendo, com o tropeço auditado — problema de sincronia jamais impede o
+   * dono de trabalhar.
+   *
+   * Todo o git viaja pelo gitWorker (`gitOff`) — nada de subprocesso no main
+   * thread neste caminho, que é o caminho do clique de criar missão.
+   */
+  async function alignVersionBaseWithMain(
+    projectId: string,
+    versionId: string | undefined,
+    actor: string,
+    /** Só CORRELAÇÃO na caixa-preta: o aviso do hub fica no nível do PROJETO de
+     *  propósito — a base é do projeto, e carimbá-lo com a missão faria o
+     *  `purgeMissionEvents` apagar a história do repositório junto com ela. */
+    missionId?: string
+  ): Promise<VersionBaseSyncResult | undefined> {
+    if (!versionId) return undefined
+    const project = projects.get(projectId)
+    if (!project) return undefined
+    const version = backlog.getVersion(versionId)
+    if (!version || version.projectId !== projectId) return undefined
+    // Versão SEM isolamento ainda não tem base para atrasar: o worktree dela
+    // nasce do HEAD da main na primeira missão, já em dia. E o namespace
+    // `version/*` é a mesma cerca do isExpectedVersionWorktree — nome de branch
+    // arbitrário nunca é despachado para o git a partir de um registro.
+    if (!version.branch?.startsWith('version/') || !version.worktree) return undefined
+    let sync: VersionBaseSyncResult
+    try {
+      sync = await gitOff('syncVersionBaseWithMain', project.path, version.branch)
+    } catch (error) {
+      blackbox.record({
+        cat: 'git',
+        event: 'version-base-sync-failed',
+        actor,
+        ids: { projectId, ...(missionId ? { missionId } : {}) },
+        reason: `não consegui comparar a base ${version.branch} com a branch principal`,
+        detail: { versionId: version.id, versionName: version.name, baseBranch: version.branch },
+        err: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200)
+      })
+      return undefined
+    }
+    const short = (sha?: string): string => (sha ? sha.slice(0, 12) : '?')
+    const ids = { projectId, ...(missionId ? { missionId } : {}) }
+    const detail = {
+      versionId: version.id,
+      versionName: version.name,
+      baseBranch: sync.baseBranch,
+      mainBranch: sync.mainBranch,
+      ahead: sync.ahead,
+      behind: sync.behind,
+      checkedOut: Boolean(sync.checkedOutIn)
+    }
+    if (sync.outcome === 'fast-forwarded') {
+      blackbox.record({
+        cat: 'git',
+        event: 'version-base-fastforwarded',
+        actor,
+        ids,
+        prev: short(sync.fromSha),
+        next: short(sync.toSha),
+        reason: `a base ${sync.baseBranch} estava ${sync.behind ?? 0} commit(s) atrás da ${sync.mainBranch}`,
+        detail
+      })
+      hub.publish({
+        projectId,
+        kind: 'info',
+        text: `base da versão ${version.name} ADIANTADA até a ${sync.mainBranch} (${short(sync.fromSha)} → ${short(sync.toSha)}, ${sync.behind ?? 0} commit(s) que tinham entrado por fora do Synkora) — a missão nova já nasce em dia`,
+        actor: 'harness'
+      })
+      return sync
+    }
+    if (sync.outcome === 'diverged') {
+      blackbox.record({
+        cat: 'git',
+        event: 'version-base-diverged',
+        actor,
+        ids,
+        prev: short(sync.fromSha),
+        next: short(sync.toSha),
+        reason: sync.detail ?? 'a base da versão e a branch principal divergiram',
+        detail
+      })
+      hub.publish({
+        projectId,
+        kind: 'info',
+        text: `a base da versão ${version.name} (${sync.baseBranch}) DIVERGIU da ${sync.mainBranch}: ${sync.ahead ?? 0} commit(s) só na base e ${sync.behind ?? 0} só na principal. A missão nasce da base como está — para alinhar, integre pela FILA (⇪) ou acerte a branch da versão à mão; avanço automático só existe quando é fast-forward`,
+        actor: 'harness'
+      })
+      return sync
+    }
+    if (sync.outcome === 'blocked' || sync.outcome === 'unavailable') {
+      blackbox.record({
+        cat: 'git',
+        event: sync.outcome === 'blocked' ? 'version-base-sync-blocked' : 'version-base-sync-failed',
+        actor,
+        ids,
+        prev: short(sync.fromSha),
+        next: short(sync.toSha),
+        reason: sync.detail ?? 'não consegui avançar a base da versão',
+        detail
+      })
+      // 'unavailable' pode ser o projeto sem a branch ainda — auditar basta.
+      // 'blocked' tem obstáculo REMOVÍVEL pelo dono, então ele precisa ver.
+      if (sync.outcome === 'blocked')
+        hub.publish({
+          projectId,
+          kind: 'info',
+          text: `não adiantei a base da versão ${version.name} até a ${sync.mainBranch}: ${sync.detail ?? 'o git recusou'} — a missão nasce da base como está`,
+          actor: 'harness'
+        })
+      return sync
+    }
+    // 'up-to-date'/'skipped': silêncio de propósito — a base em dia é o caso
+    // comum de toda missão, e barulho de rotina esconde o aviso que importa.
+    return sync
+  }
+
+  async function createMissionImpl(
     projectId: string,
     input: NewMission,
     actor: string,
     reservedId?: string
-  ): Mission | null {
+  ): Promise<Mission | null> {
     const project = projects.get(projectId)
     if (!project || !input.title.trim()) return null
     const planning = missionTypeOf(input) === 'planejamento'
@@ -322,6 +448,13 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       { ...input, versionId, title: input.title.trim() },
       reservedId
     )
+    // C2 (rodada 7): a base é conferida AQUI, entre o registro da missão e a
+    // derivação do worktree dela. Antes seria cedo (a versão só é resolvida
+    // acima); depois seria tarde — `ensureMissionWorktree` já teria criado a
+    // branch da missão a partir da base atrasada, que é exatamente o incidente.
+    // A missão já está persistida: se o app cair no meio deste await, o
+    // worktree continua re-derivável pelo caminho de sempre.
+    if (versionId) await alignVersionBaseWithMain(projectId, versionId, actor, mission.id)
     // Missão de PLANEJAMENTO sai daqui sem branch por desenho (a cerca mora no
     // próprio ensureMissionWorktree) — nada a isolar quando o entregável é
     // plano/ na raiz.
@@ -1625,6 +1758,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     missionsWithIntegration,
     missionWorkspacePath,
     ensureMissionWorktree,
+    alignVersionBaseWithMain,
     createMissionImpl,
     ensureMissionVersion,
     stopMissionExecution,
