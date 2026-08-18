@@ -68,9 +68,14 @@ import {
   type GuiFileOpenResult
 } from '../guiFileResolver'
 import { ensureSynkoraGitExcludes } from '../worktree'
-import { rearmGuiPlannerMcp } from '../guiPlannerArm'
+import { rearmGuiPaneTools } from '../guiPlannerArm'
 import type { MainContext } from '../mainContext'
 import { GuiWorkspaceFileIndex, type GuiWorkspaceFilesResult } from '../guiWorkspaceFiles'
+
+/** Só o que o TEARDOWN precisa saber do motor de ajudantes sem aba. */
+export interface GuiHelperLifecycle {
+  cancelPane(paneId: string, reason?: string): number
+}
 
 export interface GuiIpcExtras {
   /** F3-c4: host OU view de panes — o canvas é quem monta o pane GUI. */
@@ -81,6 +86,9 @@ export interface GuiIpcExtras {
   systemPromptFile(name: string, content: string): string | undefined
   /** userData/gui-sessions.json — resume pós-boot. */
   storeFile: string
+  /** AJUDANTES SEM ABA (2026-08-18): o ciclo de vida deles é amarrado ao pane
+   *  delegador — o teardown do chat encerra a frota dele. */
+  helpers?: GuiHelperLifecycle
 }
 
 const BEHAVIORS: GuiPermBehavior[] = ['allow', 'allow-always', 'deny']
@@ -308,6 +316,12 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     // projeto e respawn. Assim nenhum marcador [pronto] sobrevive ao pane.
     onPaneDisposed: ({ paneId }) => {
       readyTitle.dropPane(paneId)
+      // AJUDANTE NÃO SOBREVIVE AO DELEGADOR (D1): fechar o chat, trocar o modo
+      // de permissão, `/clear` e o quit passam todos por aqui, e o motor mata a
+      // frota deste pane. Os cards ficam ABERTOS no anel de propósito — o sink
+      // desta geração já morreu — e o nascimento seguinte os fecha com o motivo
+      // (`guiOrphanHelperCancellations`, em guiSessions.create).
+      extras.helpers?.cancelPane(paneId, 'o chat do delegador encerrou')
       // FERRAMENTAS MORREM COM O PANE (2.0, onda D): o chat de planejamento é o
       // único com identidade MCP, e o token dele não pode sobreviver ao
       // processo — um pane novo no mesmo id ganha token novo. Para todo outro
@@ -322,8 +336,10 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
       ctx.cleanPaneMcpFile(paneId)
     },
     // O par do teardown acima: o main reescreve config + token para o processo
-    // que está nascendo, provando de novo que este pane é o planejador.
-    rearmPaneTools: (spawn) => rearmGuiPlannerMcp(ctx, spawn)
+    // que está nascendo, provando de novo QUAL kit este pane pode ter — o de
+    // planos (chat de planejamento) ou o de delegação (chat de missão dev). O
+    // roteador é fonte única em guiPlannerArm; aqui só se chama.
+    rearmPaneTools: (spawn) => rearmGuiPaneTools(ctx, spawn)
   })
   // Índice curto por cwd para basename/sufixo. A raiz nunca vem do renderer;
   // cada chamada abaixo a reencontra no registro vivo da conversa.

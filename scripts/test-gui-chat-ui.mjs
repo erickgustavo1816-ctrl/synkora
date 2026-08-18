@@ -1002,12 +1002,21 @@ test('quem revoga as ferramentas no teardown tem par que as re-materializa no sp
   // um vê o outro.
   assert.match(ipc, /onPaneDisposed: \(\{ paneId \}\) => \{/u)
   assert.match(ipc, /ctx\.cleanPaneMcpFile\(paneId\)/u)
+  // 2026-08-18: o gancho passou a ROTEAR (chat de planejamento → kit de planos;
+  // chat de missão dev → MCP de delegação dos ajudantes sem aba). O par
+  // teardown↔re-arme continua sendo o que esta cerca protege; só o nome do
+  // roteador mudou, e ele segue sendo fonte única em guiPlannerArm.
   assert.match(
     ipc,
-    /rearmPaneTools: \(spawn\) => rearmGuiPlannerMcp\(ctx, spawn\)/u,
+    /rearmPaneTools: \(spawn\) => rearmGuiPaneTools\(ctx, spawn\)/u,
     'o teardown ficou sem o par que rearma o pane no spawn seguinte'
   )
   const arm = readFileSync(new URL('../src/main/guiPlannerArm.ts', import.meta.url), 'utf8')
+  assert.match(
+    arm,
+    /export function rearmGuiPaneTools\(/u,
+    'o roteador do re-arme sumiu de guiPlannerArm'
+  )
   // A autoridade sobre quem tem ferramenta é do main, e ela é RE-PROVADA a
   // cada spawn: o `spawn.mcp` que chega do renderer é só o eco do que este
   // main entregou, nunca a permissão em si.

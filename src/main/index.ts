@@ -48,6 +48,7 @@ import { registerGuiIpc } from './ipc/gui'
 import { registerHistoryIpc } from './ipc/history'
 import { waitForGuiCliStable } from './guiCliLaunch'
 import type { GuiSessionRegistry } from './guiSessions'
+import { buildGuiDelegationApi, createGuiHelperEngine } from './guiDelegationWiring'
 import { isGuiMissionPaneId, isGuiPlanningPaneId } from './guiMissionContracts'
 import { initDesktopNotifications } from './desktopNotifications'
 import {
@@ -79,7 +80,7 @@ import { Hub, type PaneIdentity } from './hub'
 import {
   SettingsStore,
 } from './settings'
-import {} from './seatUsage'
+import { getSeatUsage } from './seatUsage'
 import {
   startMcpServer,
   type McpApi,
@@ -3341,6 +3342,61 @@ app.whenReady().then(async () => {
   // `propose_plan` apresenta e devolve — quem cria o plano é o clique do dono
   // no card (porteira mecânica, nunca persona). O `hub` entra porque é ele
   // quem autentica o bearer do pane no `startMcpServer`.
+  // AJUDANTES SEM ABA (2026-08-18 — design DESIGN_SUBAGENTES_SEM_ABA): o motor
+  // headless dos helpers e as tools que o chat de missão dev usa para comandá-los.
+  // O `guiSessions` é late-bound de propósito (o registro nasce lá no fim do
+  // whenReady): o motor só fala com ele quando um ajudante muda de estado, e aí
+  // ele já existe. Sem chat aberto, o card sintetizado simplesmente não nasce —
+  // o ajudante segue trabalhando e a entrega continua no helper_result.
+  const guiHelperEngine = createGuiHelperEngine({
+    seats: () =>
+      seats.list().map((seat) => ({
+        id: seat.id,
+        name: seat.name,
+        cli: seat.cli,
+        status: seat.status,
+        configDir: seat.configDir
+      })),
+    systemPromptFile: persistTrustedSystemPrompt,
+    prepareSeat: (seat, cli) => {
+      if (cli !== 'codex') return
+      const found = seats.get(seat.seatId)
+      if (found) seats.preseed(found)
+    },
+    onChange: (change) => guiSessions?.noteHelperChange(change),
+    log: (entry) =>
+      blackbox.record({
+        cat: 'pane',
+        event: entry.event,
+        actor: 'harness',
+        ids: { paneId: entry.paneId, ...(entry.helperId ? { taskId: entry.helperId } : {}) },
+        detail: entry.detail
+      })
+  })
+  // A VASSOURA DO WATCHDOG. O motor varre no começo de toda operação pública,
+  // então um chat que continua conversando derruba o zumbi sozinho. O relógio
+  // existe para o chat ABANDONADO: sem ninguém perguntando, um ajudante travado
+  // segura um processo de CLI até o quit — e o claude, com stdin aberto, não
+  // morre por conta própria (sonda probe-helper-matrix §2.5).
+  setInterval(() => guiHelperEngine.sweep(), 60_000).unref()
+  const guiDelegation = buildGuiDelegationApi({
+    engine: guiHelperEngine,
+    delegator: (paneId) => guiSessions?.delegatorFor(paneId),
+    beginBatch: (paneId) => guiSessions?.beginHelperBatch(paneId),
+    endBatch: (paneId) => guiSessions?.endHelperBatch(paneId),
+    seats: () =>
+      seats.list().map((seat) => ({
+        id: seat.id,
+        name: seat.name,
+        cli: seat.cli,
+        status: seat.status,
+        configDir: seat.configDir
+      })),
+    // O MESMO cache de 5 min do `limites ▾` do titlebar: o delegador lê a folga
+    // real das contas antes de espalhar uma frota, sem pagar processo por item.
+    seatUsage: (seat) => getSeatUsage(seat.id, seat.cli, seat.configDir)
+  })
+
   const mcpApi: McpApi = {
     ...buildPlansApi(ctx, {
       proposePlanToPane: (paneId, draft) =>
@@ -3349,6 +3405,13 @@ app.whenReady().then(async () => {
           error: 'o chat deste pane não está aberto'
         }
     }),
+    delegateHelpers: (id, helpers) => guiDelegation.delegateHelpers(id, helpers),
+    listSeats: (id) => guiDelegation.listSeats(id),
+    helpersStatus: (id) => guiDelegation.helpersStatus(id),
+    helperResult: (id, helperId, waitSeconds) =>
+      guiDelegation.helperResult(id, helperId, waitSeconds),
+    helperSend: (id, helperId, text) => guiDelegation.helperSend(id, helperId, text),
+    helperCancel: (id, helperId) => guiDelegation.helperCancel(id, helperId),
     hub
   }
 
@@ -3749,10 +3812,17 @@ app.whenReady().then(async () => {
         updateAll: updateAllClis
       }),
     systemPromptFile: persistTrustedSystemPrompt,
-    storeFile: join(app.getPath('userData'), 'gui-sessions.json')
+    storeFile: join(app.getPath('userData'), 'gui-sessions.json'),
+    helpers: guiHelperEngine
   })
   const guiSessionRegistry = guiSessions
-  app.once('will-quit', () => guiSessionRegistry.killAll())
+  app.once('will-quit', () => {
+    // A frota morre ANTES dos chats: cancelar primeiro dá ao motor a chance de
+    // descartar cada processo de CLI headless (o app-server do codex nunca
+    // encerra sozinho — sonda probe-helper-matrix §6).
+    guiHelperEngine.cancelAll('o app foi fechado')
+    guiSessionRegistry.killAll()
+  })
   // Cmd/Ctrl+K: só depois do registro GUI existir, porque o índice de
   // históricos liga sessionId aos panes/mission tabs que podem remontá-los.
   registerHistoryIpc(ctx, {

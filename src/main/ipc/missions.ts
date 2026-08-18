@@ -52,6 +52,7 @@ import {
   type GuiSessionRegistry
 } from '../guiSessions'
 import { armGuiPlannerMcp, type GuiPlannerMcpDeps } from '../guiPlannerMcp'
+import { armGuiDelegateMcp } from '../guiDelegateMcp'
 import { guiPlannerMcpDepsFor } from '../guiPlannerArm'
 import {} from '../orchestratorFlow'
 import {} from '../maestro'
@@ -485,23 +486,24 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       const resumeSessionId = resumeSessionIdFor(rememberedExecutor, seat.cli)
       const effectiveMode = permissionMode ?? remembered?.permissionMode
 
-      // FERRAMENTAS SÓ PARA O PLANEJADOR (2.0, onda D): é o único chat da era
-      // 2.0 com servidor MCP, e o catálogo dele é apenas o kit de planos. Todo
-      // chat de dev/reviewer/ajudante continua fechado por construção.
+      // UM KIT POR CHAT, NUNCA OS DOIS (D2). O chat de PLANEJAMENTO recebe o kit
+      // de planos; o chat de missão DEV (dev/reviewer/ajudante) recebe o kit de
+      // DELEGAÇÃO — a ordem do dono de 18/08: subagente nunca mais vira aba, e a
+      // única porta de delegação é o MCP, porque é ele que carimba modelo,
+      // effort e conta na lateral. `undefined` nos dois casos = servidor ainda
+      // subindo: o chat nasce conversando, sem ferramenta, e reabrir arma.
+      const mcpInput = {
+        paneId,
+        projectId: mission.projectId,
+        cwd,
+        cli: seat.cli,
+        missionId,
+        seatId: seat.id
+      }
       const mcp =
         route.missionType === 'planejamento'
-          ? armGuiPlannerMcp(
-              {
-                paneId,
-                projectId: mission.projectId,
-                cwd,
-                cli: seat.cli,
-                missionId,
-                seatId: seat.id
-              },
-              guiPlannerMcpDeps
-            )
-          : undefined
+          ? armGuiPlannerMcp(mcpInput, guiPlannerMcpDeps)
+          : armGuiDelegateMcp(mcpInput, guiPlannerMcpDeps)
 
       const spawn: GuiPaneSpawn = {
         paneId,
@@ -548,7 +550,8 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
           missionType: route.missionType,
           workspace: route.workspace,
           permissionMode: effectiveMode ?? 'default',
-          plannerTools: Boolean(mcp)
+          plannerTools: route.missionType === 'planejamento' && Boolean(mcp),
+          delegateTools: route.missionType !== 'planejamento' && Boolean(mcp)
         }
       })
       return { ok: true, spawn }

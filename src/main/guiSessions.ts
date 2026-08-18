@@ -35,6 +35,11 @@ import {
 import { validateGuiAttachmentReferences } from './guiAttachmentStorage'
 import { GuiAttachmentCapabilityStore } from './guiAttachmentCapabilities'
 import { isPlanDraft, type PlanDraft } from './planDraft'
+import {
+  GuiHelperCardCorrelator,
+  guiOrphanHelperCancellations
+} from './guiHelperCards'
+import type { GuiHelperChange, GuiHelperDelegator } from './guiHelperSessions'
 
 export const GUI_PROMPT_MAX_CHARS = 256 * 1024
 export const GUI_PROMPT_MAX_BYTES = 1024 * 1024
@@ -1255,10 +1260,19 @@ export class GuiSessionRegistry {
   /** A entrega enfileirada reaplica opcoes e envia sob uma unica trava. */
   private readonly queuedDeliveries = new Map<string, GuiQueuedDeliveryLock>()
   private readonly attachmentCapabilities: GuiAttachmentCapabilityStore
+  /** AJUDANTES SEM ABA (2026-08-18): a costura entre a chamada `delegate` que o
+   *  CLI publica no anel e a frota que o motor abriu — e o emissor dos cards
+   *  sintetizados. Publica SEMPRE pelo sink da sessão viva: card que nascesse
+   *  por fora não entraria no replay da remontagem. */
+  private readonly helperCards: GuiHelperCardCorrelator
 
   constructor(deps: GuiSessionDeps) {
     this.deps = deps
     this.attachmentCapabilities = deps.attachmentCapabilities ?? new GuiAttachmentCapabilityStore()
+    this.helperCards = new GuiHelperCardCorrelator({
+      emit: (paneId, evt) => this.panes.get(paneId)?.sink(evt),
+      turnActive: (paneId) => this.panes.get(paneId)?.session.turnActive === true
+    })
     const loaded = deps.storeFile
       ? loadJsonStore<GuiSessionsDoc>(deps.storeFile, emptyDoc, isDoc)
       : emptyDoc()
@@ -1405,10 +1419,16 @@ export class GuiSessionRegistry {
     let pendingAnonymousTools = 0
     let turnHasTool = false
 
-    const publish = (evt: SessionEvent): void => {
+    const publish = (raw: SessionEvent): void => {
       // Sessão substituída/encerrada: o sink da anterior morre calado — nunca
       // fala pelo pane novo nem re-suja o anel dele.
       if (!token.alive) return
+      // AJUDANTES SEM ABA: a chamada `delegate` entra na fila de envelopes, o
+      // resultado dela é segurado com `launched` enquanto a frota trabalha, e o
+      // `result` do turno carrega `continues` enquanto houver ajudante vivo (o
+      // MESMO degrau que o claude usa para as tarefas de fundo dele — sem ele o
+      // fim de turno cancelaria no renderer os cards de quem ainda trabalha).
+      const evt = this.helperCards.observe(spawn.paneId, raw)
       if (replayRing && evt.type === 'ready') replaySawReady = true
       // O backend conserva o input integral apenas no estado privado que
       // executa a tool. Replay e IPC recebem uma cópia orçada.
@@ -1560,6 +1580,18 @@ export class GuiSessionRegistry {
         model: spawn.model ?? null,
         effort: spawn.effort ?? null
       })
+      // AJUDANTE NÃO SOBREVIVE A ISTO (D1, MVP explícito). A fotografia que
+      // voltou do disco — ou o anel preservado de um respawn — pode ter card de
+      // ajudante ABERTO de um processo que não existe mais; mostrá-lo como
+      // "trabalhando" seria a lateral mentindo. O motor já cancelou a frota no
+      // teardown, mas ali o sink desta geração ainda não existia: o reparo
+      // honesto é aqui, no anel, uma vez por nascimento.
+      for (const cancellation of guiOrphanHelperCancellations(
+        replayRing.snapshot(),
+        current ? 'a conversa foi reaberta' : 'o app fechou'
+      )) {
+        sink(cancellation)
+      }
     }
 
     this.panes.set(spawn.paneId, {
@@ -2115,6 +2147,50 @@ export class GuiSessionRegistry {
     return { ok: true }
   }
 
+  // ————— AJUDANTES SEM ABA (2026-08-18) — a ponte com o guiHelperSessions —————
+
+  /**
+   * O CHAT que está delegando, como o motor de ajudantes precisa dele: o
+   * ajudante CLONA o delegador quando o pedido não diz o contrário, e a fonte
+   * do modelo/effort/conta é a CONVERSA VIVA (o dono pode ter trocado os três
+   * no cabeçalho depois do nascimento da missão). `undefined` = pane sem sessão
+   * aberta: a tool recusa em vez de adivinhar um executor.
+   */
+  delegatorFor(paneId: string): GuiHelperDelegator | undefined {
+    const entry = this.panes.get(paneId)
+    if (!entry) return undefined
+    const spawn = entry.spawn
+    return {
+      paneId,
+      projectId: spawn.projectId,
+      cwd: spawn.cwd,
+      cli: spawn.cli,
+      model: spawn.model ?? '',
+      ...(spawn.effort ? { effort: spawn.effort } : {}),
+      seatId: spawn.seatId ?? '',
+      ...(spawn.permissionMode ? { permissionMode: spawn.permissionMode } : {})
+    }
+  }
+
+  /**
+   * Abre a janela do LOTE e reclama o envelope (o card `delegate` que o CLI já
+   * publicou). Tem de envolver o `engine.spawn` inteiro: os avisos `spawned`
+   * chegam DENTRO dele, e é o lote aberto que diz a qual chamada eles pertencem.
+   */
+  beginHelperBatch(paneId: string): string | undefined {
+    if (!this.panes.has(paneId)) return undefined
+    return this.helperCards.begin(paneId)
+  }
+
+  endHelperBatch(paneId: string): void {
+    this.helperCards.end(paneId)
+  }
+
+  /** O motor falou (nasceu / mexeu / encerrou): vira card no anel do delegador. */
+  noteHelperChange(change: GuiHelperChange): void {
+    this.helperCards.change(change)
+  }
+
   interrupt(paneId: string): GuiResult {
     const entry = this.panes.get(paneId)
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
@@ -2253,7 +2329,19 @@ export class GuiSessionRegistry {
       const threadId = spawn.resumeSessionId?.startsWith('codex-thread:')
         ? spawn.resumeSessionId.slice('codex-thread:'.length)
         : spawn.resumeSessionId
-      return new CodexSession({ ...opts, resumeSessionId: threadId }, persona, sink)
+      return new CodexSession(
+        {
+          ...opts,
+          resumeSessionId: threadId,
+          // CERCA ANTI-SUBAGENTE-NATIVO por THREAD (D5/S2). Ela ACOMPANHA o
+          // cinto que já viaja nos args: os dois lados da mesma cerca nascem e
+          // morrem juntos, e a derivação é estável entre respawns porque o
+          // re-arme reproduz os MESMOS args (e eles já entram no fingerprint).
+          ...(guiSpawnSuppressesNativeAgents(spawn) ? { suppressNativeAgents: true } : {})
+        },
+        persona,
+        sink
+      )
     }
     // claude: persona ao nível de SISTEMA e por arquivo (teto de argv).
     const file = persona
@@ -2300,6 +2388,9 @@ export class GuiSessionRegistry {
     this.saveTranscript(paneId, entry.ring)
     this.panes.delete(paneId)
     entry.token.alive = false
+    // A correlação morre com a geração: o anel é a memória durável dos cards, e
+    // um envelope da conversa anterior nunca pode parear um lote da próxima.
+    this.helperCards.forgetPane(paneId)
     try {
       this.deps.onPaneDisposed?.({ paneId, projectId: entry.spawn.projectId, reason })
     } catch {
@@ -2558,6 +2649,37 @@ export function routeClaudeSlash(trimmed: string): GuiClaudeSlashRoute {
   }
   if (cmd === '/fast') return { kind: 'fast' }
   return { kind: 'raw' }
+}
+
+/**
+ * O CINTO da cerca anti-subagente-nativo do codex, como ele viaja na linha de
+ * comando do `app-server` (sonda probe-codex-fence §A.2: `-c` sem espaço, que
+ * é o único formato que sobrevive ao `shell: true` do Windows).
+ */
+export const CODEX_NATIVE_AGENT_FENCE_ARG = 'features.multi_agent=false'
+
+const CODEX_NATIVE_AGENT_FENCE_RE = /(^|\s)features\.multi_agent\s*=\s*false(\s|$)/u
+
+/**
+ * O SUSPENSÓRIO segue o CINTO: o thread nasce cercado (`suppressNativeAgents`)
+ * exatamente quando o processo nasceu cercado.
+ *
+ * Por que DERIVAR em vez de carregar um campo próprio no spawn: o `GuiPaneSpawn`
+ * atravessa o renderer e cada campo dele tem de ser repetido à mão em quatro
+ * listas (o espelho do guiApi, as props do GuiPane, os dois literais do spawnRef
+ * e o JSX do Board) — foi o silêncio dessas listas que deixou o planejador sem
+ * ferramenta por uma noite inteira. Derivar dos args que o próprio MCP de
+ * delegação já monta é estável entre respawns (o re-arme reproduz os mesmos
+ * args) e JÁ ENTRA NO FINGERPRINT, porque ele soma `spawn.mcp.args`.
+ *
+ * O acoplamento é declarado: quem montar os args da delegação do codex sem o
+ * `-c features.multi_agent=false` desliga as DUAS camadas ao mesmo tempo, nunca
+ * uma sem a outra — e o rastreio do spawn nativo (guiCodexAgents) continua vivo
+ * de propósito, para o dono ver o subagente em vez de ficar cego.
+ */
+export function guiSpawnSuppressesNativeAgents(spawn: GuiPaneSpawn): boolean {
+  if (spawn.cli !== 'codex') return false
+  return (spawn.mcp?.args ?? []).some((arg) => CODEX_NATIVE_AGENT_FENCE_RE.test(arg))
 }
 
 /** Identidade do spawn: o que só muda com processo novo. Exportada para teste
