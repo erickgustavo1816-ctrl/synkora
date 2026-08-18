@@ -538,6 +538,9 @@ export default function GuiPane({
   const queueGuiMessage = useStore((s) => s.queueGuiMessage)
   const discardGuiQueuedMessage = useStore((s) => s.discardGuiQueuedMessage)
   const retryGuiQueuedMessage = useStore((s) => s.retryGuiQueuedMessage)
+  const claimGuiQueuedMessage = useStore((s) => s.claimGuiQueuedMessage)
+  const acknowledgeGuiQueuedMessage = useStore((s) => s.acknowledgeGuiQueuedMessage)
+  const restoreGuiQueuedMessage = useStore((s) => s.restoreGuiQueuedMessage)
   const sendGuiMessage = useStore((s) => s.sendGuiMessage)
   const answerGuiPerm = useStore((s) => s.answerGuiPerm)
   const answerGuiQuestion = useStore((s) => s.answerGuiQuestion)
@@ -887,6 +890,35 @@ export default function GuiPane({
       turnOpen
     ]
   )
+
+  // PULA A FILA (ordem do dono, 18/08: "tem mensagem que eu não quero esperar
+  // ele terminar"): o bilhete sai AGORA, dentro do turno vivo — o caminho
+  // direto de envio steera nos dois CLIs (codex turn/steer, claude enfileira
+  // na própria stream), e o main não trava envio por turno. O protocolo é o
+  // MESMO do dispatcher (claim → envio → ack/restore): o "enviando…", o erro
+  // com "tentar novamente" e a lease anti-disputa vêm de graça.
+  const sendQueuedNow = useCallback(async () => {
+    const owner = `send-now-${globalThis.crypto.randomUUID()}`
+    const claimed = claimGuiQueuedMessage(paneId, owner)
+    if (!claimed) return
+    const ok = await sendGuiMessage(paneId, claimed.text, claimed.id, claimed.attachments)
+    if (ok) {
+      acknowledgeGuiQueuedMessage(paneId, claimed.id, owner)
+      return
+    }
+    restoreGuiQueuedMessage(
+      paneId,
+      claimed,
+      'não consegui entrar no turno — a ponte do chat recusou a mensagem',
+      owner
+    )
+  }, [
+    acknowledgeGuiQueuedMessage,
+    claimGuiQueuedMessage,
+    paneId,
+    restoreGuiQueuedMessage,
+    sendGuiMessage
+  ])
 
   // ————— autocomplete de comandos —————
   const slashQuery = useMemo(() => {
@@ -1726,6 +1758,8 @@ export default function GuiPane({
           }}
           onDelete={() => discardGuiQueuedMessage(paneId, queuedMessage.id)}
           onRetry={() => retryGuiQueuedMessage(paneId, queuedMessage.id)}
+          onSendNow={() => void sendQueuedNow()}
+          sendNowDisabled={!canSend}
         />
       )}
 

@@ -476,3 +476,34 @@ test('acoes da fila têm hover/foco contrastantes e disabled honesto durante o e
   // mesma — os três seletores adjacentes e o cursor honesto.
   assert.match(css, /\.gui-queued-message-actions \.term-btn\.ghost-dim:disabled,\r?\n\.gui-queued-message-actions \.term-btn\.ghost-dim:disabled:hover,\r?\n\.gui-queued-message-actions \.term-btn\.ghost-dim:disabled:focus-visible[\s\S]*cursor: not-allowed/u)
 })
+
+test('enviar agora: o dono pula a fila e a mensagem entra no turno vivo (ordem de 18/08)', () => {
+  const card = readFileSync(
+    new URL('../src/renderer/src/components/GuiQueuedMessageCard.tsx', import.meta.url),
+    'utf8'
+  )
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  // O card tem o TERCEIRO verbo, antes de editar/apagar, com estado honesto:
+  // some o clique enquanto uma entrega (desta ou do dispatcher) esta em voo.
+  assert.match(card, /onSendNow/u, 'o card nao recebe o verbo enviar agora')
+  assert.match(card, /enviar agora/u, 'o rotulo do verbo nao existe')
+  assert.match(
+    card,
+    /onSendNow[\s\S]{0,400}enviar agora|enviar agora[\s\S]{0,400}onSendNow/u,
+    'o rotulo nao esta ligado ao verbo'
+  )
+  // O GuiPane entrega pelo MESMO protocolo do dispatcher (claim -> envio ->
+  // ack/restore): "enviando..." e o erro com "tentar novamente" vem de graca,
+  // e a lease impede o dispatcher de disputar o mesmo bilhete.
+  assert.match(pane, /claimGuiQueuedMessage/u, 'o pulo de fila nao reclama o bilhete')
+  assert.match(
+    pane,
+    /sendGuiMessage\(paneId, claimed\.text, claimed\.id, claimed\.attachments\)/u,
+    'o pulo de fila nao usa o caminho direto de envio (que steera em turno vivo)'
+  )
+  assert.match(pane, /acknowledgeGuiQueuedMessage/u, 'sucesso nao da ACK no bilhete')
+  assert.match(pane, /restoreGuiQueuedMessage/u, 'falha nao devolve o bilhete com o motivo')
+})

@@ -8,6 +8,12 @@ interface GuiQueuedMessageCardProps {
   onEdit: () => void
   onDelete: () => void
   onRetry: () => void
+  /** PULA A FILA (ordem do dono, 18/08): entrega AGORA, dentro do turno vivo,
+   *  pelo caminho direto de envio — os dois CLIs aceitam steering. Ausente =
+   *  card sem o verbo (pane sem ponte não tem para onde pular). */
+  onSendNow?: () => void
+  /** ponte fora do ar (starting/dead): o verbo fica com a dica honesta. */
+  sendNowDisabled?: boolean
 }
 
 export default function GuiQueuedMessageCard({
@@ -15,7 +21,9 @@ export default function GuiQueuedMessageCard({
   optionsLabel,
   onEdit,
   onDelete,
-  onRetry
+  onRetry,
+  onSendNow,
+  sendNowDisabled
 }: GuiQueuedMessageCardProps) {
   const failed = Boolean(message.deliveryError)
   const sending = Boolean(message.deliveryInFlight)
@@ -46,6 +54,21 @@ export default function GuiQueuedMessageCard({
         {failed && !sending && (
           <button type="button" className="term-btn" onClick={onRetry}>
             tentar novamente
+          </button>
+        )}
+        {onSendNow && !failed && (
+          <button
+            type="button"
+            className="term-btn"
+            disabled={sending || sendNowDisabled}
+            data-tip={
+              sendNowDisabled
+                ? 'a ponte do chat está fora do ar — sem turno para entrar'
+                : 'entra no turno AGORA, sem esperar a resposta terminar'
+            }
+            onClick={onSendNow}
+          >
+            enviar agora
           </button>
         )}
         <button type="button" className="term-btn ghost-dim" disabled={sending} onClick={onEdit}>
