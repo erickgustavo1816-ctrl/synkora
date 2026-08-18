@@ -320,7 +320,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       'delegate',
       {
         description:
-          'Abre AJUDANTES para você: sessões headless que trabalham no MESMO worktree e devolvem o texto final. Este é o ÚNICO caminho de delegação deste chat — o subagente nativo do seu CLI está desligado aqui, porque só por este caminho o dono vê na lateral o modelo, o effort e a conta de cada ajudante. UMA chamada abre a frota INTEIRA (cinco ajudantes são um `delegate` com cinco itens, nunca cinco chamadas) e ela responde NA HORA com o recibo de cada um: a tool nunca bloqueia. Cross-CLI é normal e esperado — um chat claude abre gpt-*, um chat codex abre opus/fable. Depois de abrir, o comando é seu: helpers_status para ver, helper_result para ler, helper_send para dirigir, helper_cancel para encerrar.',
+          'Abre AJUDANTES para você: sessões headless que trabalham no MESMO worktree e devolvem o texto final. Este é o ÚNICO caminho de delegação deste chat — o subagente nativo do seu CLI está desligado aqui, porque só por este caminho o dono vê na lateral o modelo, o effort e a conta de cada ajudante. UMA chamada abre a frota INTEIRA (cinco ajudantes são um `delegate` com cinco itens, nunca cinco chamadas) e ela responde NA HORA com o recibo de cada um: a tool nunca bloqueia. Cross-CLI é normal e esperado — um chat claude abre gpt-*, um chat codex abre opus/fable. O PINO DO PAINEL É LEI: pedido do dono que não nomeia modelo nem effort abre TODOS os ajudantes no padrão que ele carimbou, e só um pedido explícito dele nesta conversa autoriza sair desse padrão. Depois de abrir, o comando é seu: helpers_status para ver, helper_result para ler, helper_send para dirigir, helper_cancel para encerrar.',
         inputSchema: {
           helpers: z
             .array(
@@ -337,14 +337,14 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                   .max(120)
                   .optional()
                   .describe(
-                    "id do modelo, como o dono o escreve (ex.: 'opus[1m]', 'gpt-5.6-luna'). É ELE que decide o CLI do ajudante. Ausente = o seu modelo"
+                    "id do modelo, como o dono o escreve (ex.: 'opus[1m]', 'gpt-5.6-luna'). É ELE que decide o CLI do ajudante. Ausente = o padrão carimbado pelo dono no painel (sem padrão, o seu modelo) — deixe ausente sempre que ele não tiver nomeado um modelo"
                   ),
                 effort: z
                   .string()
                   .max(40)
                   .optional()
                   .describe(
-                    'nível de raciocínio. Ausente = o seu, quando o CLI é o mesmo (escalas diferentes não se herdam entre CLIs). Numa frota grande, effort UNIFORME é materialmente mais barato: variar quebra o cache de prompt'
+                    'nível de raciocínio. Ausente = o padrão do painel do dono e, sem padrão, o seu — quando o CLI é o mesmo (escalas diferentes não se herdam entre CLIs). Numa frota grande, effort UNIFORME é materialmente mais barato: variar quebra o cache de prompt'
                   ),
                 seat: z
                   .string()

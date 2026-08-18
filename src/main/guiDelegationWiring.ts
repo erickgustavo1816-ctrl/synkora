@@ -38,7 +38,8 @@ import {
   type GuiHelperSnapshot,
   type GuiHelperSpawnRequest,
   type GuiHelperChange,
-  type GuiHelperResultOutcome
+  type GuiHelperResultOutcome,
+  resolveHelperCli
 } from './guiHelperSessions'
 import type { GuiDelegationDefaults } from './guiSessions'
 import type { McpHelperRequestInput } from './mcpServer'
@@ -304,11 +305,21 @@ export interface GuiHelperEngineWiring extends GuiHelperAdapterDeps {
   log(entry: GuiHelperLogEntry): void
 }
 
+/**
+ * O DIÁRIO DA DELEGAÇÃO É O DO MOTOR. Quem monta o motor já ligou `log` à
+ * caixa-preta, e a API precisa do MESMO destino para auditar o que o motor não
+ * enxerga: o desvio do PINO nasce na cadeia do D8, que mora aqui e não lá
+ * dentro. Reencontrá-lo pelo próprio motor evita pedir ao chamador uma segunda
+ * costura que ele já fez uma vez — e evita um diário que existe no teste e não
+ * existe no app.
+ */
+const engineJournals = new WeakMap<GuiHelperEngine, (entry: GuiHelperLogEntry) => void>()
+
 export function createGuiHelperEngine(wiring: GuiHelperEngineWiring): GuiHelperEngine {
   const catalog = new GuiHelperCatalogCache(
     (cli) => wiring.seats().find((seat) => seat.cli === cli && seat.status === 'logado')?.configDir
   )
-  return new GuiHelperEngine({
+  const engine = new GuiHelperEngine({
     spawnClaude: createClaudeHelperAdapter(wiring),
     spawnCodex: createCodexHelperAdapter(wiring),
     resolveSeat: (query) => resolveGuiHelperSeat(wiring.seats(), query),
@@ -316,6 +327,8 @@ export function createGuiHelperEngine(wiring: GuiHelperEngineWiring): GuiHelperE
     onChange: wiring.onChange,
     log: wiring.log
   })
+  engineJournals.set(engine, wiring.log)
+  return engine
 }
 
 // ————— A CADEIA DO PADRÃO (D8): explícito > painel do dono > clone —————
@@ -397,6 +410,117 @@ export function planGuiHelperRequests(
   })
 }
 
+// ————— O PINO É A PALAVRA DO DONO: o advisory auditado —————
+
+/**
+ * Um ajudante que abriu FORA do padrão carimbado, e o que ele levou no lugar.
+ * Só entra aqui quem o agente escreveu na chamada (origem `explicito`): valor
+ * herdado ou vindo do próprio painel nunca é desvio.
+ */
+export interface GuiPinDeviation {
+  helperId: string
+  name?: string
+  /** modelo que o agente escolheu por cima do pino (ausente = só o effort desviou) */
+  model?: string
+  effort?: string
+}
+
+/** Rótulo de modelo/effort é identificador de UI: espaço e caixa não contam. */
+function samePin(chosen: string | undefined, pinned: string): boolean {
+  return (chosen ?? '').trim().toLowerCase() === pinned.trim().toLowerCase()
+}
+
+/**
+ * O DESVIO DO PINO (2026-08-18, 2º teste ao vivo do dono).
+ *
+ * Caso real: painel carimbado em "opus[1m] · high", pedido "abre 5 subagentes"
+ * sem citar modelo, e o chat abriu 4 opus + 1 gpt-5.6-luna porque o `list_seats`
+ * mostrava folga numa conta codex. Palavras dele: "eu não especifiquei que eu
+ * queria luna — ele teria que abrir os cinco do padrão que eu mandei".
+ *
+ * A entrega NÃO é recusada: "abre 2 lunas" é ordem legítima do dono e chega à
+ * tool exatamente igual à invenção do agente — a camada mecânica não sabe quem
+ * falou (memória feedback-guardas-nao-capam-inteligencia). Então esta função é
+ * a metade CONTÁVEL da régua: ela nomeia quem saiu do padrão para o recibo
+ * cobrar e o diário registrar; a proibição mora na persona.
+ *
+ * O EFFORT só se compara DENTRO do CLI do pino: as escalas não se traduzem
+ * (claude vai a max, codex a xhigh) e o motor já derruba o herdado no cruzado —
+ * cobrar o nível do outro binário contra o pino seria inventar uma comparação.
+ * Quem atravessou o CLI já é desvio pelo MODELO, que é o que importa.
+ */
+export function guiPinDeviations(
+  plans: readonly GuiHelperRequestPlan[],
+  receipts: readonly GuiHelperReceipt[],
+  pin: GuiDelegationDefaults | undefined,
+  delegatorCli: GuiHelperCli
+): GuiPinDeviation[] {
+  const pinnedModel = asked(pin?.model)
+  const pinnedEffort = asked(pin?.effort)
+  if (!pinnedModel && !pinnedEffort) return []
+  // Sem modelo carimbado, o pino do effort pertence à escala da conversa: é o
+  // CLI em que o painel o ofereceu.
+  const pinnedCli = pinnedModel ? resolveHelperCli(pinnedModel) : delegatorCli
+  const deviations: GuiPinDeviation[] = []
+  plans.forEach((plan, index) => {
+    // Um recibo por pedido, na ordem (contrato do `spawn`). Ajudante que NÃO
+    // abriu não é desvio: não há o que cancelar nem o que reabrir.
+    const receipt = receipts[index]
+    if (!receipt?.ok) return
+    const model =
+      pinnedModel && plan.origins.model === 'explicito' && !samePin(plan.request.model, pinnedModel)
+        ? plan.request.model
+        : undefined
+    const effort =
+      pinnedEffort &&
+      plan.origins.effort === 'explicito' &&
+      receipt.cli === pinnedCli &&
+      !samePin(plan.request.effort, pinnedEffort)
+        ? plan.request.effort
+        : undefined
+    if (!model && !effort) return
+    deviations.push({
+      helperId: receipt.helperId,
+      ...(receipt.name ? { name: receipt.name } : {}),
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {})
+    })
+  })
+  return deviations
+}
+
+/**
+ * O aviso que viaja no recibo. Ele nomeia as TRÊS coisas sem as quais o agente
+ * não consegue agir: o padrão do dono, quem saiu dele e o movimento de desfazer.
+ * E deixa a porta legítima aberta — se o dono pediu aquilo ali, o certo é seguir
+ * e dizer isso na resposta, não cancelar trabalho bom.
+ */
+export function guiPinDeviationText(
+  pin: GuiDelegationDefaults | undefined,
+  deviations: readonly GuiPinDeviation[]
+): string | undefined {
+  if (deviations.length === 0) return undefined
+  const pinned = [asked(pin?.model), asked(pin?.effort)]
+    .filter((part): part is string => Boolean(part))
+    .join(' · ')
+  const list = deviations
+    .map((deviation) => {
+      const chose = [deviation.model, deviation.effort]
+        .filter((part): part is string => Boolean(part))
+        .join(' · ')
+      const who = deviation.name ? `${deviation.name} (${deviation.helperId})` : deviation.helperId
+      return `${who} abriu com ${chose}`
+    })
+    .join('; ')
+  return (
+    `O DONO CARIMBOU no painel deste chat: ${pinned}. Fora do padrão: ${list}. ` +
+    'Pedido dele SEM modelo/effort = o padrão do painel, para a frota INTEIRA — escolher outro por conta ' +
+    'própria (a conta com mais folga, um palpite de custo) é decidir no lugar dele. ' +
+    'Se ele não pediu esses valores AQUI, nesta conversa: cancele esses ajudantes com helper_cancel e ' +
+    'reabra no padrão. Se pediu, siga e diga na sua resposta que abriu fora do padrão a pedido dele.'
+  )
+}
+
 // ————— o texto que o delegador lê —————
 
 function stamped(
@@ -427,7 +551,11 @@ function receiptLine(receipt: GuiHelperReceipt, origins?: GuiHelperOrigins): str
 
 export function guiHelperSpawnText(
   receipts: readonly GuiHelperReceipt[],
-  warning?: string,
+  /** Avisos do lote, cada um com o próprio ⚠. São independentes — o custo da
+   *  frota (motor) e o desvio do pino (D8) podem cair na mesma chamada, e
+   *  costurá-los num parágrafo só faria o segundo passar por detalhe do
+   *  primeiro. String continua valendo: é como os chamadores antigos chamam. */
+  warning?: string | readonly (string | undefined)[],
   /** Uma entrada por recibo, NA MESMA ORDEM (o motor devolve um recibo por
    *  pedido, na ordem em que recebeu). Ausente = recibo sem carimbo de origem,
    *  que é o que os chamadores antigos continuam vendo. */
@@ -446,7 +574,11 @@ export function guiHelperSpawnText(
       ? '\n\nEles NÃO bloqueiam você: siga conversando. Acompanhe por helpers_status, ' +
         'colha com helper_result (long-poll), dirija com helper_send e desista com helper_cancel.'
       : ''
-  return `${head}:\n${body}${warning ? `\n\n⚠ ${warning}` : ''}${tail}`
+  const notes = (typeof warning === 'string' ? [warning] : (warning ?? []))
+    .filter((note): note is string => Boolean(note && note.trim()))
+    .map((note) => `\n\n⚠ ${note}`)
+    .join('')
+  return `${head}:\n${body}${notes}${tail}`
 }
 
 function elapsedText(ms: number): string {
@@ -536,6 +668,10 @@ export interface GuiDelegationApiDeps {
   /** O PINO DO DONO no painel deste chat (D8). Ausente/vazio = os ajudantes
    *  clonam a conversa, que é o comportamento da onda 1. */
   defaults?(paneId: string): GuiDelegationDefaults | undefined
+  /** Diário do desvio do pino. Ausente = o do MOTOR que veio em `engine`
+   *  (`createGuiHelperEngine` já o registrou) — passar um aqui é como a suíte
+   *  observa a auditoria sem subir processo de CLI nenhum. */
+  log?(entry: GuiHelperLogEntry): void
   seats(): GuiDelegationSeat[]
   seatUsage?(seat: GuiDelegationSeat): Promise<SeatUsageInfo | null>
   now?(): number
@@ -580,6 +716,15 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
   const now = deps.now ?? Date.now
   const guard = (id: GuiDelegationIdentity): string | null =>
     id.role === 'gui-delegator' ? null : NOT_A_DELEGATOR
+  // Diário indisponível ou quebrado nunca derruba uma entrega que já aconteceu:
+  // a mesma disciplina do `journal` do motor.
+  const journal = (entry: GuiHelperLogEntry): void => {
+    try {
+      ;(deps.log ?? engineJournals.get(deps.engine))?.(entry)
+    } catch {
+      /* auditoria é registro, não pré-condição */
+    }
+  }
 
   return {
     async delegateHelpers(id, helpers) {
@@ -593,7 +738,8 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
       // A CADEIA DO D8 mora AQUI, e não no motor: o motor recebe valores já
       // decididos (é o que o mantém puro e testável), e quem conhece o pino do
       // dono é a costura com o main.
-      const plans = planGuiHelperRequests(helpers, deps.defaults?.(id.paneId))
+      const pin = deps.defaults?.(id.paneId)
+      const plans = planGuiHelperRequests(helpers, pin)
       // A JANELA DO LOTE envolve o spawn INTEIRO: os avisos `spawned` chegam
       // dentro dele, e é o lote aberto que os liga à chamada `delegate` que o
       // CLI publicou. Sem o try/finally, uma exceção deixaria a janela aberta e
@@ -608,11 +754,32 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
       } finally {
         deps.endBatch(id.paneId)
       }
+      // O PINO É A PALAVRA DO DONO (2026-08-18): a frota já abriu — o desvio
+      // vira aviso com receita, nunca recusa, porque "abre 2 lunas" é ordem
+      // legítima e daqui não se distingue da invenção do agente.
+      const deviations = guiPinDeviations(plans, outcome.receipts, pin, delegator.cli)
+      if (deviations.length > 0) {
+        const pinnedModel = asked(pin?.model)
+        const pinnedEffort = asked(pin?.effort)
+        // A união de eventos do motor é dele: o desvio entra pelo evento de
+        // ADVERTÊNCIA DE LOTE que já existe, e `detail.kind` é o que separa os
+        // dois na caixa-preta.
+        journal({
+          event: 'helper-fleet-effort',
+          paneId: id.paneId,
+          detail: {
+            kind: 'pin-deviation',
+            ...(pinnedModel ? { pinnedModel } : {}),
+            ...(pinnedEffort ? { pinnedEffort } : {}),
+            helpers: deviations
+          }
+        })
+      }
       // Um recibo por pedido, na ordem (contrato do `spawn`): é o que deixa a
       // origem viajar por índice sem inventar um id de correlação novo.
       return guiHelperSpawnText(
         outcome.receipts,
-        outcome.warning,
+        [outcome.warning, guiPinDeviationText(pin, deviations)],
         plans.map((plan) => plan.origins)
       )
     },

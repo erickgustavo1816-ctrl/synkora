@@ -218,10 +218,13 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   assert.match(order, /side panel/iu)
   assert.match(order, /model/u)
   assert.match(order, /effort/u)
-  // O teto continua sendo contra CONSTITUIÇÃO — a régua nova cabe, discurso não.
-  assert.ok(order.length < 1400, `a ordem permanente virou constituição (${order.length})`)
+  // O teto continua sendo contra CONSTITUIÇÃO — a régua nova cabe, discurso
+  // não. Subiu 1400→1800 e 2600→3000 junto com o teto da suíte de contratos
+  // (rodada padrão-é-lei, 18/08: a seção ganhou a regra do pino do dono e
+  // mede 1752; os DOIS tetos andam juntos, sempre).
+  assert.ok(order.length < 1800, `a ordem permanente virou constituição (${order.length})`)
   for (const role of GUI_MISSION_ROLES) {
-    assert.ok(guiMissionSystemPrompt(role).length < 2600, `${role}: contrato virou constituição`)
+    assert.ok(guiMissionSystemPrompt(role).length < 3000, `${role}: contrato virou constituição`)
   }
   // O planejador não delega: ele nunca recebe a seção nem o pino.
   assert.doesNotMatch(guiPlanningSystemPrompt(), /STANDING ORDER FROM THE OWNER/u)

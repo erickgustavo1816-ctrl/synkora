@@ -55,6 +55,8 @@ const {
   guiHelperEventFor,
   guiHelperSpawnText,
   guiHelperStatusText,
+  guiPinDeviationText,
+  guiPinDeviations,
   planGuiHelperRequests,
   resolveGuiHelperSeat
 } = wiring
@@ -857,6 +859,7 @@ const PANEL_SEATS = [
  *  (o que o painel carimba tem de chegar ao `GuiHelperSpawnRequest`). */
 function panelApi(options = {}) {
   const spawned = []
+  const logged = []
   const adapter = (request) => {
     spawned.push(request)
     return { send: () => undefined, dispose: () => undefined }
@@ -884,9 +887,12 @@ function panelApi(options = {}) {
     endBatch: () => undefined,
     seats: () => PANEL_SEATS,
     ...(options.defaults ? { defaults: () => options.defaults } : {}),
+    // O MESMO diário do motor (o index liga os dois à caixa-preta): aqui ele é
+    // um coletor, para a suíte ler o desvio auditado sem subir processo nenhum.
+    log: (entry) => logged.push(entry),
     now: () => 0
   })
-  return { api, spawned }
+  return { api, spawned, logged }
 }
 
 test('a cadeia do delegate: pedido explícito vence o painel, que vence o clone', async () => {
@@ -1090,4 +1096,153 @@ test('a costura do painel existe dos dois lados do IPC', () => {
     /defaults: \(paneId\) => guiSessions\?\.delegationDefaults\(paneId\)/u,
     'a tool `delegate` tem de ler o painel do dono'
   )
+})
+
+// ————— 10. O PINO É A PALAVRA DO DONO (2026-08-18, 2º teste ao vivo) —————
+//
+// Caso real, com print: o dono carimbou "opus[1m] · high" no painel e pediu
+// "abre 5 subagentes", sem citar modelo. O chat leu list_seats, viu folga numa
+// conta codex e abriu 4 opus + 1 gpt-5.6-luna por conta própria. Palavras dele:
+// "eu não especifiquei que eu queria luna — ele teria que abrir os cinco do
+// padrão que eu mandei. Ele não tem que abrir da cabeça dele."
+//
+// A cerca NÃO pode ser dura: "abre 2 lunas" é ordem legítima do dono e chega à
+// tool exatamente como a invenção do agente (memória
+// feedback-guardas-nao-capam-inteligencia). Então é ADVISORY AUDITADO — a
+// entrega acontece, o desvio é nomeado no recibo com a receita de desfazer, e
+// o diário registra. A metade dura mora na persona (test:gui-mission-contracts).
+
+const PIN = Object.freeze({ model: 'opus[1m]', effort: 'high' })
+
+test('pino carimbado × modelo escolhido pelo agente: o recibo nomeia os dois e ensina a desfazer', async () => {
+  const { api, spawned } = panelApi({ defaults: PIN })
+  const text = await api.delegateHelpers(delegatorId, [
+    { prompt: 'a' },
+    { prompt: 'b' },
+    { prompt: 'c' },
+    { prompt: 'd' },
+    { prompt: 'e', model: 'gpt-5.6-luna', name: 'quinto' }
+  ])
+
+  // O que o dono mandou continua valendo para os quatro que não foram tocados.
+  assert.deepEqual(
+    spawned.slice(0, 4).map((request) => [request.model, request.effort]),
+    [
+      ['opus[1m]', 'high'],
+      ['opus[1m]', 'high'],
+      ['opus[1m]', 'high'],
+      ['opus[1m]', 'high']
+    ]
+  )
+  // O aviso nomeia o PINO e o ajudante que saiu dele — sem os dois, o agente
+  // não tem como saber o que desfazer.
+  assert.match(text, /opus\[1m\]/u, 'o aviso tem de citar o padrão do dono')
+  assert.match(text, /high/u)
+  assert.match(text, /quinto/u, 'o ajudante que desviou tem de ser nomeado')
+  assert.match(text, /gpt-5\.6-luna/u)
+  assert.match(text, /helper_cancel/u, 'aviso sem receita é reclamação')
+  assert.match(text, /CARIMBOU/u)
+  // ADVISORY, não recusa: os cinco abriram.
+  assert.equal(spawned.length, 5)
+  assert.match(text, /5 ajudantes abertos/u)
+})
+
+test('frota inteira no padrão do painel não recebe aviso nenhum', async () => {
+  const { api, spawned } = panelApi({ defaults: PIN })
+  const text = await api.delegateHelpers(delegatorId, [
+    { prompt: 'a' },
+    { prompt: 'b' },
+    { prompt: 'c' }
+  ])
+  assert.equal(spawned.every((request) => request.model === 'opus[1m]'), true)
+  assert.doesNotMatch(text, /CARIMBOU/u, 'frota obediente sendo repreendida é ruído puro')
+})
+
+test('pedido do dono IGUAL ao pino não é desvio (nem com outra grafia)', async () => {
+  const { api } = panelApi({ defaults: PIN })
+  const text = await api.delegateHelpers(delegatorId, [
+    { prompt: 'a', model: ' OPUS[1M] ', effort: 'HIGH' }
+  ])
+  assert.doesNotMatch(text, /CARIMBOU/u, 'carimbar o próprio padrão do dono não é desviar dele')
+  // e a origem continua sendo a que o agente escreveu — o recibo não mente
+  assert.match(text, /explícito/u)
+})
+
+test('sem pino no painel não existe desvio — a herança da conversa é a regra da onda 1', async () => {
+  const { api } = panelApi()
+  const text = await api.delegateHelpers(delegatorId, [
+    { prompt: 'a', model: 'gpt-5.6-luna' }
+  ])
+  assert.doesNotMatch(text, /CARIMBOU/u)
+})
+
+test('o desvio do pino entra no DIÁRIO com o padrão e os ajudantes', async () => {
+  const { api, logged } = panelApi({ defaults: PIN })
+  await api.delegateHelpers(delegatorId, [
+    { prompt: 'a' },
+    { prompt: 'b', model: 'gpt-5.6-luna', name: 'quinto' }
+  ])
+  const entry = logged.find((item) => item.detail?.kind === 'pin-deviation')
+  assert.ok(entry, 'o desvio tem de ser auditável — o dono lê a caixa-preta, não o chat')
+  assert.equal(entry.paneId, 'p1')
+  assert.equal(entry.detail.pinnedModel, 'opus[1m]')
+  assert.equal(entry.detail.pinnedEffort, 'high')
+  assert.deepEqual(
+    entry.detail.helpers.map((helper) => [helper.name, helper.model]),
+    [['quinto', 'gpt-5.6-luna']],
+    'só quem desviou entra no registro'
+  )
+  // Frota obediente não escreve linha nenhuma no diário.
+  const clean = panelApi({ defaults: PIN })
+  await clean.api.delegateHelpers(delegatorId, [{ prompt: 'a' }])
+  assert.equal(clean.logged.some((item) => item.detail?.kind === 'pin-deviation'), false)
+})
+
+test('effort fora do pino conta como desvio DENTRO do mesmo CLI, e nunca entre CLIs', () => {
+  const pin = { model: 'opus[1m]', effort: 'high' }
+  const receipts = [
+    { ok: true, helperId: 'h-1', cli: 'claude', model: 'opus[1m]', effort: 'low', seatId: 's' }
+  ]
+  const sameCli = guiPinDeviations(
+    planGuiHelperRequests([{ prompt: 'a', effort: 'low' }], pin),
+    receipts,
+    pin,
+    'claude'
+  )
+  assert.deepEqual(sameCli, [{ helperId: 'h-1', effort: 'low' }])
+  assert.match(guiPinDeviationText(pin, sameCli) ?? '', /low/u)
+
+  // CROSS-CLI: as escalas não se traduzem (claude vai a max, codex a xhigh), e
+  // o motor já derruba o herdado por isso. Cobrar o nível do outro binário
+  // contra o pino seria inventar uma comparação que não existe — o que desviou
+  // ali foi o MODELO, e é só isso que o aviso diz.
+  const crossed = guiPinDeviations(
+    planGuiHelperRequests([{ prompt: 'a', model: 'gpt-5.6-sol', effort: 'xhigh' }], pin),
+    [{ ok: true, helperId: 'h-2', cli: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh', seatId: 's' }],
+    pin,
+    'claude'
+  )
+  assert.deepEqual(crossed, [{ helperId: 'h-2', model: 'gpt-5.6-sol' }])
+
+  // Ajudante que nem abriu não vira desvio: não há o que cancelar.
+  assert.deepEqual(
+    guiPinDeviations(
+      planGuiHelperRequests([{ prompt: 'a', model: 'gpt-5.6-luna' }], pin),
+      [{ ok: false, error: 'sem conta logada' }],
+      pin,
+      'claude'
+    ),
+    []
+  )
+  assert.equal(guiPinDeviationText(pin, []), undefined, 'sem desvio, sem aviso')
+})
+
+test('o aviso do pino convive com o do custo da frota — os dois chegam marcados', () => {
+  const text = guiHelperSpawnText(
+    [{ ok: true, helperId: 'h-1', cli: 'claude', model: 'opus', seatId: 's' }],
+    ['frota claude com efforts diferentes', 'o dono CARIMBOU: opus[1m]'],
+    undefined
+  )
+  assert.match(text, /⚠ frota claude com efforts diferentes/u)
+  assert.match(text, /⚠ o dono CARIMBOU: opus\[1m\]/u)
 })

@@ -91,9 +91,12 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     assert.ok(contract.length > 200, `${role}: contrato vazio demais`)
     // O TETO subiu de 2400 para 2600 UMA vez, em 2026-08-18, para caber a ORDEM
     // PERMANENTE DA DELEGAÇÃO — a MESMA seção nos três papéis (ordem do dono:
-    // "todo chat que eu criar nunca mais abre subagente dele"). O teto continua
-    // sendo contra CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
-    assert.ok(contract.length < 2600, `${role}: contrato virou constituição`)
+    // "todo chat que eu criar nunca mais abre subagente dele"). E de 2600 para
+    // 3000 na MESMA data, no 2º teste ao vivo, para caber a régua do PINO ("ele
+    // teria que abrir os cinco do padrão que eu mandei"): duas linhas novas e a
+    // do list_seats reescrita. O teto continua sendo contra CONSTITUIÇÃO: régua
+    // nova do dono cabe, discurso não.
+    assert.ok(contract.length < 3000, `${role}: contrato virou constituição`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -143,9 +146,52 @@ test('a ordem da delegação viaja idêntica nos três papéis', () => {
       `${role}: a ordem não é a última palavra do contrato`
     )
   }
-  // tight de propósito: ela viaja em TODO spawn de chat de missão
+  // tight de propósito: ela viaja em TODO spawn de chat de missão. O teto subiu
+  // de 1400 para 1800 UMA vez (2026-08-18, 2º teste ao vivo) pela régua do PINO
+  // — a única coisa que entrou; discurso continua sem espaço aqui.
   assert.ok(sections[0].length > 600, 'a ordem ficou vaga demais')
-  assert.ok(sections[0].length < 1400, 'a ordem permanente virou constituição')
+  assert.ok(sections[0].length < 1800, 'a ordem permanente virou constituição')
+})
+
+// O PINO DO PAINEL É A PALAVRA DO DONO (2026-08-18, 2º teste ao vivo dele).
+// Caso real: ele carimbou "opus[1m] · high" no painel D8 e pediu "abre 5
+// subagentes", sem citar modelo nenhum. O chat consultou list_seats, viu folga
+// numa conta codex e abriu 4 opus + 1 gpt-5.6-luna por iniciativa própria.
+// Palavras dele: "eu não especifiquei que eu queria luna — ele teria que abrir
+// os cinco do padrão que eu mandei. Ele não tem que abrir da cabeça dele."
+//
+// A cerca aqui é PERSONA porque uma trava dura recusaria a ordem LEGÍTIMA dele
+// ("abre 2 lunas"), que a camada de tool não sabe distinguir da invenção do
+// agente (memória feedback-guardas-nao-capam-inteligencia). A metade mecânica é
+// o advisory auditado do `guiDelegationWiring`.
+
+test('o pino do painel é a PALAVRA DO DONO: sem pedido dele, a frota inteira abre nele', () => {
+  const section = delegationSection(guiMissionSystemPrompt('dev'))
+  assert.ok(section, 'sem a ordem permanente da delegação')
+  assert.match(section, /PIN IS HIS WORD/, 'o pino virou sugestão')
+  assert.match(section, /names no model or effort/i, 'sem a condição, a régua não se aplica a nada')
+  assert.match(section, /EVERY helper/, 'a frota INTEIRA abre no pino, não a maioria dela')
+})
+
+test('espalhar frota é por CONTA da MESMA CLI — trocar de CLI é trocar o modelo dele', () => {
+  const section = delegationSection(guiMissionSystemPrompt('dev'))
+  // list_seats continua sendo a leitura certa antes de uma frota grande; o que
+  // ela NÃO autoriza é atravessar o CLI do modelo carimbado.
+  assert.match(section, /list_seats/)
+  assert.match(section, /limit left/i)
+  assert.match(section, /accounts of the pinned model's CLI/)
+  assert.match(section, /substituting, not spreading/)
+})
+
+test('sair do pino tem DUAS saídas, e nenhuma delas é silenciosa', () => {
+  for (const role of GUI_MISSION_ROLES) {
+    const section = delegationSection(guiMissionSystemPrompt(role))
+    // (1) o dono nomeia outro modelo AQUI, na conversa; (2) não há conta logada
+    // daquele CLI. Fora disso, abrir outra coisa é decidir no lugar dele.
+    assert.match(section, /only when HE names another model/, `${role}: sem a saída do pedido dele`)
+    assert.match(section, /no seat of that CLI is logged/, `${role}: sem a saída da conta ausente`)
+    assert.match(section, /SAY it here/, `${role}: a saída virou substituição silenciosa`)
+  }
 })
 
 test('o subagente nativo é PROIBIDO pelos nomes que os binários usam', () => {

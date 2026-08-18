@@ -93,9 +93,24 @@ export function guiMissionRoleOf(paneId: string): GuiMissionRole | undefined {
  * MESMA ferramenta — cercar um remove os dois), e o codex 0.147 publica
  * `functions.collaboration.spawn_agent`.
  *
- * A linha do PINO DO DONO (D8) é a única coisa que a seção diz sobre PADRÃO:
- * ela existe porque um agente que não sabe do painel escreve `model` em toda
- * chamada "para não errar" — e assim atropela, sem saber, a escolha do dono.
+ * As DUAS LINHAS DO PINO (D8) são a única coisa que a seção diz sobre PADRÃO.
+ * A primeira versão dizia só "omita e o pino abre" — e o 2º teste ao vivo
+ * (2026-08-18) mostrou que isso não é régua: com "opus[1m] · high" carimbado, o
+ * dono pediu "abre 5 subagentes" sem citar modelo e o chat abriu 4 opus + 1
+ * gpt-5.6-luna, porque o list_seats mostrava folga numa conta codex. Palavras
+ * dele: "eu não especifiquei que eu queria luna — ele teria que abrir os cinco
+ * do padrão que eu mandei. Ele não tem que abrir da cabeça dele."
+ *
+ * Daí a forma atual: o pino é a PALAVRA do dono, espalhar frota é por CONTA
+ * dentro do CLI do modelo carimbado (trocar de CLI obriga a trocar de modelo, e
+ * é aí que o agente inventa), e as duas únicas saídas — ele nomear outro modelo
+ * aqui, ou não haver conta logada daquele CLI — são FALADAS na conversa.
+ *
+ * A cerca é PERSONA por escolha: "abre 2 lunas" é ordem legítima e chega à tool
+ * idêntica à invenção do agente (memória feedback-guardas-nao-capam-inteligencia
+ * — guarda dura só protege autoridade/verificabilidade). A metade mecânica é o
+ * advisory AUDITADO do `guiDelegationWiring`, que nomeia o desvio no recibo em
+ * vez de recusar a entrega.
  *
  * O chat de PLANEJAMENTO não recebe esta seção: ele não delega (D2).
  */
@@ -103,9 +118,10 @@ const DELEGATION_STANDING_ORDER = `DELEGATION — STANDING ORDER FROM THE OWNER:
 - Native subagents are RETIRED in this chat: never Task, never Agent, never the codex collab spawn_agent. They are fenced mechanically as well, so reaching for one only burns a turn.
 - EVERY helper is opened with the synkora MCP delegate tool: the only path where the owner sees each helper's model, effort, account and live activity in his sidebar. The native one shows him nothing.
 - ONE call opens the whole fleet: "abre 5 opus" is ONE delegate with 5 helpers, never 5 calls. Cross-CLI is first-class — a claude chat opens gpt-* helpers and a codex chat opens opus/fable ones.
-- The owner may PIN a default model/effort for helpers in the side panel: omit them and his pin opens, stamped in the receipt.
+- THE OWNER'S PIN IS HIS WORD. When his message names no model or effort, EVERY helper of that fleet opens on what he pinned in the side panel — exactly, all of them, stamped in the receipt.
+- You leave his pin only when HE names another model in this chat, or when no seat of that CLI is logged — and then you SAY it here. Quietly opening something else is inventing an order he never gave.
 - You OWN your helpers: watch them with helpers_status, steer a live one with helper_send, collect with helper_result (it long-polls; calling it again is cheap), stop one with helper_cancel — in a claude chat they appear as mcp__synkora__*.
-- Before a large fleet, read list_seats and spread the helpers across the accounts with the most limit left.
+- Before a large fleet, read list_seats and spread it across the accounts with the most limit left — accounts of the pinned model's CLI: switching CLI switches the model, and that is substituting, not spreading.
 - Helpers share THIS worktree: split the work by file boundaries, the way you would if you were running a team, and never hand the same file to two of them.
 - If these tools are not in your catalog, say so to the owner and do the work yourself — never fall back to a native subagent.`
 
