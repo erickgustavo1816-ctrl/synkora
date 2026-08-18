@@ -1553,6 +1553,52 @@ test('interrupção e encerramento cancelam os agentes antes do terminal', () =>
   assert.equal(session.claudeTasks.size, 0)
 })
 
+// R7-E — O CASO REAL (print do dono, 2026-08-18): ■ com ferramentas em voo, e o
+// claude devolve `is_error` com texto NENHUM. O motor SABE que a interrupção foi
+// pedida (o ■ passou por ele), então o desfecho é declarado — nunca "erro sem
+// detalhe".
+test('Claude: result depois do ■ do dono é interrupção declarada, não falha', () => {
+  const { session, events, line } = claudeAgentSession()
+  session.activeTurnGeneration = 7
+  session.pendingTurnGenerations = [7]
+  session.interruptGeneration = 7
+  session.interruptRequestId = 'req-int'
+  events.length = 0
+
+  line({ type: 'result', is_error: true })
+  const result = events.at(-1)
+  assert.equal(result.type, 'result')
+  assert.equal(result.interrupted, true, 'o evento DECLARA a interrupção')
+  assert.equal(result.isError, false, 'parada pedida pelo dono não é falha')
+  assert.equal(result.outcome, 'cancelled')
+  assert.equal(result.errorText, 'interrompido pelo dono')
+  assert.notEqual(result.errorText, 'erro sem detalhe')
+  assert.equal(result.continues, false)
+})
+
+test('Claude: turno que falha de verdade continua falhando com o texto do CLI', () => {
+  const semDetalhe = claudeAgentSession()
+  semDetalhe.session.activeTurnGeneration = 1
+  semDetalhe.session.pendingTurnGenerations = [1]
+  semDetalhe.events.length = 0
+  semDetalhe.line({ type: 'result', is_error: true })
+  const mudo = semDetalhe.events.at(-1)
+  assert.equal(mudo.interrupted, undefined, 'sem ■ do dono nada é declarado')
+  assert.equal(mudo.isError, true)
+  assert.equal(mudo.outcome, 'failed')
+  assert.equal(mudo.errorText, 'erro sem detalhe')
+
+  const comTexto = claudeAgentSession()
+  comTexto.session.activeTurnGeneration = 1
+  comTexto.session.pendingTurnGenerations = [1]
+  comTexto.events.length = 0
+  comTexto.line({ type: 'result', is_error: true, result: 'o turno explodiu' })
+  const falhou = comTexto.events.at(-1)
+  assert.equal(falhou.interrupted, undefined)
+  assert.equal(falhou.isError, true)
+  assert.equal(falhou.errorText, 'o turno explodiu')
+})
+
 test('ciclo de vida de subagente atravessa a hidratação sem afrouxar o contrato', () => {
   const launched = {
     type: 'tool-result',
@@ -2331,6 +2377,53 @@ test('Codex: interrupção e encerramento cancelam os sub-agentes antes do termi
     }
   ])
   assert.equal(session.codexAgents.size, 0)
+})
+
+// R7-E (mesmo contrato pelo caminho do turn/interrupt do Codex): o ■ do dono
+// passou pelo motor para ESTE turno, então o desfecho que chegar é aquela
+// interrupção — mesmo que o servidor rotule o turno como `failed`.
+test('Codex: turno abortado depois do ■ do dono é interrupção declarada', async () => {
+  const { session, events, note } = codexAgentSession()
+  session.interruptedTurnId = 'turn-root'
+  events.length = 0
+
+  note('turn/completed', {
+    threadId: 'thread-root',
+    turn: { status: 'failed', error: { message: 'turn aborted' } }
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  const result = events.at(-1)
+  assert.equal(result.type, 'result')
+  assert.equal(result.interrupted, true)
+  assert.equal(result.isError, false, 'parada pedida pelo dono não é falha')
+  assert.equal(result.outcome, 'cancelled')
+  assert.equal(result.errorText, 'interrompido pelo dono')
+  assert.equal(session.interruptedTurnId, null, 'a guarda da interrupção some com o turno')
+
+  // O ■ que chega ANTES do turno abrir fala a mesma língua: o early-return do
+  // startTurn (interruptedStartGeneration) também declara a interrupção.
+  const codex = readFileSync(new URL('../src/main/codexSession.ts', import.meta.url), 'utf8')
+  const preStart = codex.slice(
+    codex.indexOf('if (this.interruptedStartGeneration === pending.generation) {')
+  )
+  assert.ok(preStart, 'o early-return da interrupção pré-turno precisa existir')
+  assert.match(preStart.slice(0, 700), /interrupted: true/u)
+})
+
+test('Codex: turno que falha sem ■ do dono mantém a falha de hoje', async () => {
+  const { session, events, note } = codexAgentSession()
+  events.length = 0
+  note('turn/completed', {
+    threadId: 'thread-root',
+    turn: { status: 'failed', error: { message: 'boom' } }
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  const result = events.at(-1)
+  assert.equal(result.interrupted, undefined, 'sem ■ do dono nada é declarado')
+  assert.equal(result.isError, true)
+  assert.equal(result.outcome, 'failed')
+  assert.equal(result.errorText, 'boom')
+  assert.equal(session.turnId, null)
 })
 
 test('Codex: thread desconhecida continua descartada e a raiz não se registra como filha', () => {

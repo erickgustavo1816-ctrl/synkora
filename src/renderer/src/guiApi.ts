@@ -257,6 +257,12 @@ export type GuiSessionEvent =
       type: 'result'
       isError: boolean
       outcome?: 'completed' | 'failed' | 'cancelled'
+      /** R7-E: o ■ DO DONO passou pelo motor e ESTE terminal é aquela
+       *  interrupção — espelho declarado do union do main (maestroSession.ts).
+       *  O motor já normalizou `isError:false` + `outcome:'cancelled'`; aqui a
+       *  BANDEIRA ainda ganha do resto (o redutor a lê ANTES de `isError`), e
+       *  ausência = desfecho comum, lido exatamente como antes. */
+      interrupted?: boolean
       continues?: boolean
       errorText?: string
       resultText?: string

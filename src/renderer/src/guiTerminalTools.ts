@@ -6,6 +6,9 @@ type GuiTerminalEvent =
       type: 'result'
       isError: boolean
       outcome?: 'completed' | 'failed' | 'cancelled'
+      /** R7-E: o ■ do dono parou ESTE turno (espelho do union do main —
+       *  maestroSession.ts). A bandeira ganha de `isError`/`outcome`. */
+      interrupted?: boolean
       errorText?: string
     }
   | { type: 'fatal'; text: string }
@@ -66,6 +69,20 @@ function terminalToolResult(evt: GuiTerminalEvent): GuiTerminalToolResult {
           : 'a sessão encerrou sem entregar o resultado da ferramenta',
       isError: true,
       status: 'failed',
+      lineCount: 1,
+      truncated: false
+    }
+  }
+  // R7-E — O ■ DO DONO, ANTES DE TUDO. O turno parou porque ele mandou parar: a
+  // ferramenta em voo foi CANCELADA junto, e "falhou" seria mentira. A bandeira
+  // ganha de `isError`/`outcome` de propósito — a honestidade do card não pode
+  // depender de o CLI ter carimbado erro no terminal da parada (o claude
+  // carimba, e era isso que pintava o card vermelho no print do dono).
+  if (evt.type === 'result' && evt.interrupted === true) {
+    return {
+      text: 'interrompida pelo dono — o turno foi interrompido',
+      isError: false,
+      status: 'cancelled',
       lineCount: 1,
       truncated: false
     }

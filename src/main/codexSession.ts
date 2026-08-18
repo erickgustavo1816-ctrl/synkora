@@ -27,6 +27,9 @@ import {
   guiCodexAgentThreadId,
   type GuiCodexAgent
 } from './guiCodexAgents'
+// R7-E: a palavra do terminal interrompido é UMA nos dois motores — o dono lê a
+// mesma frase venha o chat do claude ou do codex.
+import { GUI_OWNER_INTERRUPT_LABEL } from './maestroSession'
 import type {
   CliCaps,
   MaestroSessionOpts,
@@ -1628,10 +1631,15 @@ export class CodexSession {
         }
         if (this.interruptedStartGeneration === pending.generation) {
           this.clearTurnStartGuard(pending.generation)
+          // R7-E: o ■ chegou ANTES de o turno abrir — nem por isso é um
+          // cancelamento anônimo. É a MESMA decisão do dono, declarada igual,
+          // para o fio dizer "turno interrompido" em vez de emudecer.
           this.emitTurnResult({
             type: 'result',
             isError: false,
-            outcome: 'cancelled'
+            outcome: 'cancelled',
+            interrupted: true,
+            errorText: GUI_OWNER_INTERRUPT_LABEL
           }, operationId)
           return
         }
@@ -1893,6 +1901,13 @@ export class CodexSession {
           | { status?: string; error?: { message?: string } }
           | undefined
         const outcome = guiCodexTurnOutcome(turn?.status)
+        // R7-E — o ■ DO DONO passou por este motor para ESTE turno
+        // (`turn/interrupt` com este turnId), então o desfecho que chega agora É
+        // aquela interrupção: interrompido não é falha, mesmo quando o servidor
+        // rotula o turno como `failed`. Medido ANTES do `clearInterruptGuard()`
+        // logo abaixo — é ele que apaga a guarda.
+        const interrupted =
+          this.interruptedTurnId !== null && this.interruptedTurnId === this.turnId
         this.cancelPendingInteractions()
         this.clearInterruptGuard()
         this.clearTurnErrorGuard()
@@ -1902,12 +1917,20 @@ export class CodexSession {
         // ninguém mais vai reportar por eles. Reter o terminal aqui prenderia a
         // conversa em "trabalhando" para sempre.
         if (outcome !== 'completed') this.cancelLiveCodexAgents()
-        const result: Extract<SessionEvent, { type: 'result' }> = {
-          type: 'result',
-          isError: outcome === 'failed',
-          outcome,
-          errorText: turn?.error?.message
-        }
+        const result: Extract<SessionEvent, { type: 'result' }> = interrupted
+          ? {
+              type: 'result',
+              isError: false,
+              outcome: 'cancelled',
+              interrupted: true,
+              errorText: GUI_OWNER_INTERRUPT_LABEL
+            }
+          : {
+              type: 'result',
+              isError: outcome === 'failed',
+              outcome,
+              errorText: turn?.error?.message
+            }
         // Respostas RPC resolvidas no mesmo chunk retomam em microtask. Só
         // depois delas sabemos se uma mensagem aceita precisa abrir outro turno.
         queueMicrotask(() => {

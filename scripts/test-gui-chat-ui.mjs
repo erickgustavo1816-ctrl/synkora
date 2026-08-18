@@ -2471,6 +2471,71 @@ test('C1 — result com continues não fecha ferramenta pendente nem inventa ór
   assert.equal(settled[0].result.provisional, true)
 })
 
+// R7-E — O CASO REAL (print do dono, 2026-08-18): ■ com ferramentas em voo, e o
+// fio respondia "! falhou · erro sem detalhe". O terminal que carrega a
+// interrupção declarada fecha o card como CANCELADA, com a palavra do dono.
+test('R7-E — turno interrompido cancela a ferramenta em voo e não pinta erro', () => {
+  const pending = { ...tool('pendente', 'Bash', 'npm test'), toolUseId: 'bash-1' }
+  const interrompido = closePendingGuiTools([pending], {
+    type: 'result',
+    isError: false,
+    outcome: 'cancelled',
+    interrupted: true,
+    errorText: 'interrompido pelo dono'
+  })
+  assert.equal(interrompido[0].result.status, 'cancelled')
+  assert.equal(interrompido[0].result.isError, false)
+  assert.equal(
+    interrompido[0].result.text,
+    'interrompida pelo dono — o turno foi interrompido'
+  )
+  assert.equal(interrompido[0].result.provisional, undefined, 'parada do dono é definitiva')
+  assert.equal(guiToolOutcomeView(interrompido[0].result).tone, 'cancel')
+  assert.equal(guiToolOutcomeView(interrompido[0].result).compactLabel, 'cancelada')
+  assert.equal(hasPendingGuiTools(interrompido), false)
+
+  // A BANDEIRA GANHA do resto: mesmo que um motor ainda carimbasse is_error
+  // (o claude carimba), o card do dono nunca vira vermelho.
+  const cinto = closePendingGuiTools([pending], {
+    type: 'result',
+    isError: true,
+    outcome: 'failed',
+    interrupted: true,
+    errorText: 'erro sem detalhe'
+  })
+  assert.equal(cinto[0].result.status, 'cancelled')
+  assert.equal(cinto[0].result.isError, false)
+  assert.equal(cinto[0].result.text, 'interrompida pelo dono — o turno foi interrompido')
+
+  // FALHA DE VERDADE (sem bandeira) continua exatamente como hoje.
+  const falhou = closePendingGuiTools([pending], {
+    type: 'result',
+    isError: true,
+    outcome: 'failed',
+    errorText: 'o turno explodiu'
+  })
+  assert.equal(falhou[0].result.status, 'failed')
+  assert.equal(falhou[0].result.isError, true)
+  assert.equal(falhou[0].result.text, 'o turno explodiu')
+  assert.equal(guiToolOutcomeView(falhou[0].result).tone, 'err')
+  assert.equal(pending.result, undefined, 'o estado de entrada continua cru')
+
+  // O REDUTOR: a bandeira é lida ANTES de qualquer ramo de erro, e o fio ganha
+  // NOTA neutra — nunca item de erro.
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  assert.match(store, /const ownerInterrupted = evt\.interrupted === true/u)
+  assert.match(
+    store,
+    /if \(ownerInterrupted\) \{[\s\S]{0,400}?kind: 'note',\s*\n\s*text: 'turno interrompido'/u
+  )
+  assert.match(
+    store,
+    /\} else if \(evt\.isError \|\| evt\.outcome === 'failed' \|\| orphanedTool\) \{/u,
+    'o ramo de erro passa a ser o ELSE da interrupção'
+  )
+  assert.doesNotMatch(store, /kind: 'error',\s*\n\s*text: 'turno interrompido'/u)
+})
+
 // C2 — filho nunca é fechado por conta própria e agente vivo não vira falha.
 test('C2 — terminal fecha a raiz e cascateia pela árvore, sem trocar o desfecho de hoje', () => {
   const launchedParent = {

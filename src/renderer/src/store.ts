@@ -1298,10 +1298,27 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
       // vivo). Reconciliar ferramenta pendente aqui carimbaria falha em trabalho
       // que ainda está acontecendo — e ainda inventaria um erro de órfão.
       const settlesTurn = !evt.continues
+      // R7-E — O ■ DO DONO NÃO É ERRO. A bandeira vem do motor, que sabe quem
+      // mandou parar, e é lida ANTES de qualquer ramo de erro: o card vermelho
+      // "falhou · erro sem detalhe" do print do dono (2026-08-18) nascia aqui,
+      // do result que o claude carimba `is_error` ao interromper.
+      const ownerInterrupted = evt.interrupted === true
       const orphanedTool =
         settlesTurn && hasPendingGuiTools(next.items) && evt.outcome !== 'cancelled'
       if (settlesTurn) next = { ...next, items: closePendingGuiTools(next.items, evt) }
-      if (evt.isError || evt.outcome === 'failed' || orphanedTool) {
+      if (ownerInterrupted) {
+        // NOTA NEUTRA, nunca item de erro: o fio precisa dizer por que o turno
+        // acabou no meio — o silêncio deixaria o dono sem explicação nenhuma.
+        next = {
+          ...next,
+          items: pushGuiItem(next.items, {
+            id: guiItemId(),
+            kind: 'note',
+            text: 'turno interrompido',
+            at: Date.now()
+          })
+        }
+      } else if (evt.isError || evt.outcome === 'failed' || orphanedTool) {
         next = {
           ...next,
           items: pushGuiItem(next.items, {

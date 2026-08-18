@@ -219,6 +219,16 @@ export const GUI_QUESTION_MAX_COUNT = 8
 export const GUI_QUESTION_OPTION_MAX_COUNT = 12
 export const GUI_PLAN_MAX_CHARS = 64 * 1024
 
+/**
+ * R7-E — a palavra HONESTA do terminal interrompido, nos DOIS motores (o Codex
+ * a importa daqui). Ela ocupa o lugar onde o claude não põe nada e o harness
+ * carimbava 'erro sem detalhe'. Quem pinta a tela não a usa (o fio tem a nota
+ * neutra e o card tem a palavra do dono): ela existe para todo consumidor que
+ * lê `errorText` cru — caixa-preta, diagnóstico, replay antigo — nunca ler uma
+ * falha onde houve uma decisão do dono.
+ */
+export const GUI_OWNER_INTERRUPT_LABEL = 'interrompido pelo dono'
+
 function boundedGuiText(value: unknown, cap: number): string | undefined {
   if (typeof value !== 'string') return undefined
   return value.length <= cap ? value : value.slice(0, Math.max(0, cap - 1)) + '…'
@@ -379,6 +389,17 @@ export type SessionEvent =
       type: 'result'
       isError: boolean
       outcome?: 'completed' | 'failed' | 'cancelled'
+      /**
+       * R7-E (2026-08-18) — INTERROMPIDO NÃO É "FALHOU ERRO SEM DETALHE".
+       * Presente (e só `true`) quando o ■ DO DONO passou por ESTE motor para
+       * ESTE turno: o terminal que chegou é aquela interrupção, não um desfecho
+       * qualquer. Campo ADITIVO (espelho declarado em guiApi.ts). Quando ele
+       * existe o motor já normalizou o resto — `isError: false`,
+       * `outcome: 'cancelled'`, `errorText` com a palavra honesta —, e a
+       * BANDEIRA ainda ganha do resto lá na frente: quem a lê decide antes de
+       * olhar `isError`. Ausente = desfecho comum, lido exatamente como antes.
+       */
+      interrupted?: true
       /** Outra mensagem já foi aceita pelo stream e continua trabalhando. */
       continues?: boolean
       errorText?: string
@@ -1437,10 +1458,15 @@ export class MaestroSession {
           // resume/fork pode mudar o id — o result é a palavra final do turno.
           this.emit({ type: 'session-id', sessionId: evt.session_id })
         }
-        const outcome = evt.is_error
-          ? 'failed'
-          : interrupted
-            ? 'cancelled'
+        // R7-E — a INTERRUPÇÃO GANHA do carimbo do CLI. O claude devolve o
+        // result da parada como `is_error` com texto NENHUM: sem esta ordem, o
+        // ■ do dono virava "falhou · erro sem detalhe" (print do dono,
+        // 2026-08-18). O motor sabe quem mandou parar; quem parou a pedido não
+        // falhou.
+        const outcome = interrupted
+          ? 'cancelled'
+          : evt.is_error
+            ? 'failed'
             : 'completed'
         // A medição vira a verdade do processo para este modelo: a partir daqui
         // o `init` que repete a cada turno anuncia ELA, não o piso curado.
@@ -1448,13 +1474,18 @@ export class MaestroSession {
         if (measuredWindow !== undefined) this.measuredWindow = measuredWindow
         this.emit({
           type: 'result',
-          isError: Boolean(evt.is_error),
+          isError: interrupted ? false : Boolean(evt.is_error),
           outcome,
+          ...(interrupted ? { interrupted: true as const } : {}),
           // O `result` raiz não diz UMA palavra sobre background (dump completo
           // verificado): agente vivo é o que impede este terminal de virar o
           // desfecho visual — e é isso que dá UM plim por turno lógico.
           continues: this.activeTurnGeneration !== null || this.claudeTasks.size > 0,
-          errorText: evt.is_error ? (evt.result ?? 'erro sem detalhe') : undefined,
+          errorText: interrupted
+            ? GUI_OWNER_INTERRUPT_LABEL
+            : evt.is_error
+              ? (evt.result ?? 'erro sem detalhe')
+              : undefined,
           resultText: typeof evt.result === 'string' && evt.result.trim() ? evt.result : undefined,
           contextTokens,
           // Janela REAL medida pelo CLI para o modelo desta conversa. Ausente
