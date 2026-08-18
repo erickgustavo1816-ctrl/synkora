@@ -53,6 +53,43 @@ commitados na master dele (`5e4dbec`); o retorno reconcilia o mapa carimbando
 PRÓXIMO: itens 2º (subagentes sem aba), 3º (RightDock) e 4º (browser) do
 roadmap abaixo — a parte 1 acabou.
 
+## ✅ SESSÃO C (18/08) — SUBAGENTES SEM ABA: a etapa 2º FECHOU
+
+Design vinculante em `.synkora/reports/DESIGN_SUBAGENTES_SEM_ABA_2026-08-18.md`
+(slots S1–S4 preenchidos por 3 sondas de binário real); 3 waves de
+implementação (8 agentes Opus max, fronteiras disjuntas na mesma árvore,
+stubs de interface do orquestrador para o paralelismo); 11 commits
+`b134e49..344028e`; gate raiz verde após CADA wave. O que existe agora:
+
+- MOTOR `guiHelperSessions.ts`: helpers headless nos DOIS CLIs (claude
+  fire-and-forget que morre sozinho; codex com kill pós-resultado),
+  long-poll de servidor 45/240s, steering, watchdog 30min, SEM quota (só
+  backstop anti-bug de 100), resultado 64KB idempotente.
+- MCP `gui-delegator` (padrão gui-planner): delegate / list_seats (limites
+  reais por conta) / helpers_status / helper_result / helper_send /
+  helper_cancel — controle TOTAL do delegador, ordem do dono. Cerca
+  anti-nativo mecânica: claude `--disallowedTools` de 13 nomes (sonda: cerca
+  estreita é desviada) + MCP_TOOL_TIMEOUT=300000; codex
+  `features.multi_agent=false` no spawn E por thread. Helper nunca herda o
+  MCP (sem cadeia, controle negativo testado).
+- LATERAL: 3ª fonte com modelo·effort·conta por ficha; lote de N = N fichas;
+  cards sintetizados no anel (correlacionador FIFO de envelopes + o degrau
+  `continues` que impede o fim de turno de cancelar quem trabalha).
+- PERSONA: ordem permanente do dono nos contratos dev/reviewer/helper
+  (nativo aposentado; frota numa chamada; cross-CLI; contas por folga).
+- RAIL: botão ✦ ajudante MORTO; 🧐 revisar = TOQUE no agente (mensagem do
+  dono via gui:send) com mandato estrito de code review
+  (`missionReviewNudge.ts`).
+- PAINEL D8 `GuiDelegationDefaults`: modelo+effort padrão dos delegados por
+  missão, persistido; cadeia explícito > painel > clone; ORIGEM carimbada no
+  recibo. (De carona: fix do `seat` da tool que nunca chegava ao motor.)
+- CORREÇÃO DE FATO no codex 0.147: `subAgentActivity` nunca é emitido — o
+  sinal real é `collabAgentToolCall`; o rastreio nativo foi religado por ele.
+
+PENDENTE DA ETAPA: validação visual do dono no app real (lateral com
+helpers, painel de defaults, toque do revisar, chat dev com as tools).
+PRÓXIMO DO ROADMAP: 3º RightDock → 4º browser embutido.
+
 ## ⚡ PRÓXIMA SESSÃO — COMEÇAR AQUI, NESTA ORDEM (SUPERADO pela sessão B acima; itens 2º-4º do roadmap seguem valendo)
 
 ### 0. RECUPERAR node_modules (bloqueia tudo; app do dono FECHADO antes)
