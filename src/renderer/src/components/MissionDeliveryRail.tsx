@@ -16,6 +16,14 @@ import GuiSubagentSidebar from './GuiSubagentSidebar'
 // arquivos) com um expansor "ver arquivos". A pergunta que o dono fazia antes
 // de todo ⇪ ("o que mudou aí?") tinha uma única resposta possível: abrir um
 // terminal e rodar git. Agora ela está na tela onde a decisão é tomada.
+//
+// ONDA W3 (2026-08-18, ordem do dono): as duas alavancas de AGENTE mudaram de
+// natureza. O botão ✦ ajudante MORREU — quem abre ajudante é o agente do chat,
+// pelo `delegate` do MCP, porque é o único caminho em que o dono vê modelo,
+// effort e conta na lateral; nenhum subagente vira aba. E o 🧐 revisar parou de
+// abrir conversa: ele dá um TOQUE no agente (mensagem do DONO no chat) pedindo
+// o ajudante de revisão. O trilho, portanto, não abre mais pane de conversa
+// nenhum — ele só fala com a conversa que já existe.
 
 // A palavra de estado mudou para `../missionPresentation` (2026-08-15): o
 // painel do projeto usa a mesma, e "integrada" aqui com "concluída" lá seriam
@@ -42,13 +50,13 @@ export default function MissionDeliveryRail({
   versionLabel,
   queueLabel,
   guiAvailable,
+  reviewReady,
   shellAvailable,
   testServerOpen,
   subagentItems = [],
   reloadToken,
   onIntegrate,
   onReview,
-  onHelper,
   onTerminal,
   onTestServer,
   onKillTestServer,
@@ -58,8 +66,12 @@ export default function MissionDeliveryRail({
   mission: Mission
   versionLabel?: string
   queueLabel?: string
-  /** ponte do chat viva? sem ela revisar/ajudante não têm o que abrir */
+  /** ponte do chat viva? sem ela o toque do 🧐 revisar não sai daqui */
   guiAvailable: boolean
+  /** a conversa do AGENTE está aberta e pronta para receber mensagem? o 🧐
+   *  revisar entra nela como uma fala do dono, então sem chat de pé não há
+   *  gesto — e o porquê vai na dica, nunca num clique que não faz nada. */
+  reviewReady: boolean
   /** ponte do `missions:shellSpec` viva? sem ela o terminal não tem o que abrir */
   shellAvailable: boolean
   /** já existe um pane de servidor de teste desta missão */
@@ -70,8 +82,8 @@ export default function MissionDeliveryRail({
    *  o diffstat re-mede sem o dono precisar clicar em nada */
   reloadToken?: number
   onIntegrate: () => void
+  /** dá o toque de revisão no chat do agente (nunca abre pane) */
   onReview: () => void
-  onHelper: () => void
   onTerminal: () => void
   onTestServer: () => void
   onKillTestServer: () => void
@@ -82,9 +94,9 @@ export default function MissionDeliveryRail({
   const integration = mission.integration
   const live = mission.status === 'ativa'
   // MISSÃO DE PLANEJAMENTO (2.0): sem branch, sem worktree e fora da fila —
-  // diff, revisor, ajudante, terminal e ⇪ não têm objeto aqui. O trilho dela é
-  // uma linha de natureza + a alavanca de encerrar; o entregável dela (plano/)
-  // já está no repo desde que a conversa escreveu.
+  // diff, revisão, terminal e ⇪ não têm objeto aqui. O trilho dela é uma linha
+  // de natureza + a alavanca de encerrar; o entregável dela (plano/) já está no
+  // repo desde que a conversa escreveu.
   const planning = missionTypeOf(mission) === 'planejamento'
 
   // ——— diff vivo da branch (onda D) ———
@@ -218,32 +230,27 @@ export default function MissionDeliveryRail({
 
       {live && !planning && (
         <>
-          {/* Revisor = conversa NOVA sobre o que a branch entregou. Nasce limpa
-              de propósito: quem revisa não pode herdar o contexto de quem
-              escreveu. Reabrir volta o foco para a rodada em andamento. */}
+          {/* REVISAR = um TOQUE no agente desta missão (ordem do dono, 18/08).
+              O clique não abre nada: ele manda no chat, como mensagem DO DONO,
+              o pedido de UM ajudante de revisão pelo `delegate` do MCP, com o
+              mandato estrito de code review (o texto é contrato e mora em
+              `missionReviewNudge`). A sessão do revisor continua nascendo LIMPA
+              — headless, sem herdar o contexto de quem escreveu o código —, só
+              que como ajudante na lateral, e não como mais uma aba: é assim que
+              modelo, effort e conta dele ficam visíveis. */}
           <button
             className="btn tiny dr-btn"
-            disabled={!guiAvailable}
+            disabled={!guiAvailable || !reviewReady}
             data-tip={
-              guiAvailable
-                ? 'Abre um revisor em conversa LIMPA sobre o diff desta branch (ele não herda o contexto do agente)'
-                : 'reinicie o app (npm run dev) para habilitar o chat da missão'
+              !guiAvailable
+                ? 'reinicie o app (npm run dev) para habilitar o chat da missão'
+                : !reviewReady
+                  ? 'a conversa do agente precisa estar aberta e pronta — o toque entra nela como uma mensagem sua'
+                  : 'Manda no chat do agente, como mensagem SUA, o pedido de UM ajudante de revisão pelo MCP: código limpo, bem escrito, refatoração — sem QA.\nEle roda na lateral, em sessão headless nova, e volta com os achados por gravidade.'
             }
             onClick={onReview}
           >
-            🧐 revisar · sessão limpa
-          </button>
-          <button
-            className="btn tiny dr-btn"
-            disabled={!guiAvailable}
-            data-tip={
-              guiAvailable
-                ? 'Abre mais um agente no MESMO worktree para trabalhar em paralelo'
-                : 'reinicie o app (npm run dev) para habilitar o chat da missão'
-            }
-            onClick={onHelper}
-          >
-            ✦ ajudante
+            🧐 revisar
           </button>
           {/* Terminal CRU no worktree (`missions:shellSpec`): shell de verdade,
               sem CLI, sem persona e sem MCP — para o dono rodar git, um script
@@ -331,7 +338,7 @@ export default function MissionDeliveryRail({
 
       {/* ARQUIVAR — a única alavanca que a missão de PLANEJAMENTO também tem
           (por isso este bloco é o único do trilho sem `!planning`: diff,
-          revisor, ajudante, terminal e ⇪ não têm objeto sem worktree).
+          revisão, terminal e ⇪ não têm objeto sem worktree).
           Ela se chamava "⊟ concluir planejamento" e o dono, procurando
           arquivar, leu o trilho inteiro sem achar o que procurava (2026-08-17):
           duas palavras para o MESMO ato — o clique sempre foi o mesmo

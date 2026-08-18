@@ -32,6 +32,9 @@ import {
 } from '../store'
 import type { GuiPaneSpawn, GuiPermissionMode } from '../guiApi'
 import { guiModelLabel } from '../guiComposerPresentation'
+import { canSendGuiMessage } from '../guiTransport'
+import { guiItemId } from '../guiItemIdentity'
+import { REVIEW_NUDGE_TEXT } from '../missionReviewNudge'
 import { missionGui, type MissionGuiRole } from '../missionGui'
 import { GuiRequestEpoch, withoutMissionGuiSlots } from '../guiRequestEpoch'
 import GuiSeatPick from './GuiSeatPick'
@@ -138,7 +141,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const missionGuiInFlight = useRef<Map<string, number>>(new Map())
   const missionGuiEpoch = useRef(new GuiRequestEpoch())
   const seatChangeInFlight = useRef(false)
+  // O 🧐 revisar é UM toque por clique: sem esta trava, dois cliques rápidos
+  // colocariam duas falas iguais do dono no fio (o envio é IPC, leva ms, mas o
+  // dedo é mais rápido que ele).
+  const reviewNudgeInFlight = useRef(false)
   const dropGuiPane = useStore((s) => s.dropGuiPane)
+  const sendGuiMessage = useStore((s) => s.sendGuiMessage)
   // PLANEJAMENTO (2.0): o estado da sessão avulsa saiu daqui. Planejar é uma
   // MISSÃO de tipo 'planejamento' — o chat dela nasce e vive nos mesmos
   // `missionGuiSlots` acima, sem caminho paralelo nenhum.
@@ -485,21 +493,29 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     for (const id of seenTermPanes.current) if (!live.has(id)) seenTermPanes.current.delete(id)
   }, [isActive, termPaneKey])
 
-  /** Abre (ou volta o foco para) uma conversa da missão direta. */
-  async function openMissionGuiRole(missionId: string, role: MissionGuiRole): Promise<void> {
+  /** Abre (ou volta o foco para) uma conversa da missão direta.
+   *
+   *  ONDA W3 (ordem do dono, 2026-08-18): o AJUDANTE saiu daqui. Ele não nasce
+   *  mais de clique nenhum — quem o abre é o agente do chat, pelo `delegate` do
+   *  MCP, e ele nunca vira aba. A cerca é o TIPO do parâmetro: pedir 'helper'
+   *  por este caminho virou erro de compilação, não de revisão. O papel segue
+   *  vivo no contrato do main (pane já aberto vive até fechar, e o dispose da
+   *  missão encerra todos), só o renderer é que parou de criá-los. */
+  async function openMissionGuiRole(
+    missionId: string,
+    role: Exclude<MissionGuiRole, 'helper'>
+  ): Promise<void> {
     const slots = missionGuiSlots[missionId] ?? []
-    // Agente e revisor são ÚNICOS por missão: clicar de novo volta o foco para
-    // a rodada em andamento. A sessão do revisor é limpa por NASCER limpa —
-    // recriar aqui jogaria fora a revisão que ele já estava escrevendo.
-    if (role !== 'helper') {
-      const existing = slots.find((s) => s.role === role)
-      if (existing) {
-        // Abrir uma conversa FOCA a pílula dela: se um terminal estava no ar,
-        // ele sai da frente (senão o clique no trilho parecia não fazer nada).
-        setMissionTerm((prev) => ({ ...prev, [missionId]: null }))
-        setMissionGuiActive((prev) => ({ ...prev, [missionId]: existing.spawn.paneId }))
-        return
-      }
+    // Todo papel que a UI ainda abre é ÚNICO por missão: clicar de novo volta o
+    // foco para a rodada em andamento, em vez de jogar fora o que já estava
+    // escrito naquela conversa.
+    const existing = slots.find((s) => s.role === role)
+    if (existing) {
+      // Abrir uma conversa FOCA a pílula dela: se um terminal estava no ar,
+      // ele sai da frente (senão o clique no trilho parecia não fazer nada).
+      setMissionTerm((prev) => ({ ...prev, [missionId]: null }))
+      setMissionGuiActive((prev) => ({ ...prev, [missionId]: existing.spawn.paneId }))
+      return
     }
     const key = `${missionId}:${role}`
     const epoch = missionGuiEpoch.current.capture(missionId)
@@ -689,6 +705,43 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const directSeat = directSlot
     ? seats.find((x) => x.configDir && x.configDir === directSlot.spawn.configDir)
     : undefined
+  // O 🧐 revisar fala com o chat do AGENTE — nunca com o slot que está em foco:
+  // é ele o dono dos ajudantes desta missão (quem delega pelo MCP é ele).
+  const devSlot = directSlots.find((s) => s.role === 'dev')
+  const devGui = devSlot ? guiPanes[devSlot.spawn.paneId] : undefined
+  // Mesma régua do composer: o transporte só existe depois do `ready`, e sessão
+  // morta/nascendo não recebe fala nenhuma. Agente OCUPADO recebe: os dois
+  // motores enfileiram/steeram por conta própria.
+  const reviewReady = Boolean(devGui && canSendGuiMessage(devGui.status, devGui.ready))
+
+  /** 🧐 REVISAR (ordem do dono, 2026-08-18): o botão parou de abrir pane de
+   *  revisor — ele DÁ UM TOQUE no agente da missão. O texto entra no fio como
+   *  mensagem do DONO, pelo mesmo caminho do composer (`gui.send`, pela ação do
+   *  store), e quem abre o ajudante de revisão é o agente, pelo `delegate` do
+   *  MCP: é o único caminho em que modelo, effort e conta aparecem na lateral.
+   *  O harness NUNCA spawna o revisor direto. */
+  async function nudgeReview(): Promise<void> {
+    const mission = selMission
+    const paneId = devSlot?.spawn.paneId
+    if (!mission || !paneId || !reviewReady || reviewNudgeInFlight.current) return
+    reviewNudgeInFlight.current = true
+    // O toque é VISÍVEL: a conversa do agente vem para a frente antes de a
+    // mensagem entrar (com um terminal no ar, o clique pareceria não fazer nada).
+    setMissionTerm((prev) => ({ ...prev, [mission.id]: null }))
+    setMissionGuiActive((prev) => ({ ...prev, [mission.id]: paneId }))
+    try {
+      // messageId PRÓPRIO, cunhado pelo `guiItemIdentity`: é ele que dá
+      // idempotência à entrega no main — uma repetição do MESMO envio nunca
+      // vira duas bolhas no fio.
+      const ok = await sendGuiMessage(paneId, REVIEW_NUDGE_TEXT, guiItemId())
+      if (!ok)
+        setMissionMsg(
+          'não deu para entregar o pedido de revisão no chat do agente — abra a conversa e tente de novo'
+        )
+    } finally {
+      reviewNudgeInFlight.current = false
+    }
+  }
   // TERMINAL EM FOCO (onda D): quando existe, é ele que o chrome descreve —
   // papel, marca, título e telemetria saem do PTY, não da conversa que ficou
   // montada atrás dele.
@@ -1202,13 +1255,13 @@ export default function Board({ projectId }: Props): React.JSX.Element {
             versionLabel={versionName(selMission.versionId)}
             queueLabel={integrationQueueLabel(selMission)}
             guiAvailable={missionGui.available()}
+            reviewReady={reviewReady}
             shellAvailable={missionShell.available()}
             subagentItems={directGui?.items ?? []}
             testServerOpen={panes.some((p) => p.testServer && p.missionId === selMission.id)}
             reloadToken={railReload}
             onIntegrate={() => void onIntegrate()}
-            onReview={() => void openMissionGuiRole(selMission.id, 'reviewer')}
-            onHelper={() => void openMissionGuiRole(selMission.id, 'helper')}
+            onReview={() => void nudgeReview()}
             onTerminal={() => void openMissionShell(selMission.id)}
             onTestServer={() => setTestServerOpen(true)}
             onKillTestServer={() => {

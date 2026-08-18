@@ -23,6 +23,28 @@ import {
 
 const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
 
+/** O CÓDIGO sem comentários: uma proibição se mede no que RENDERIZA, e o
+ *  comentário que explica a regra não pode reprovar o arquivo que a obedece. */
+const withoutComments = (src) =>
+  src.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/(^|[^:])\/\/.*$/gmu, '$1')
+
+/** Contrato do toque de revisão por import DINÂMICO (padrão do
+ *  test-plan-board): num código sem o módulo o arquivo ainda roda e cada
+ *  contrato de fonte reprova por conta própria. */
+const reviewNudge = () => import('../src/renderer/src/missionReviewNudge.ts')
+
+/** O bloco JSX de UM botão, achado pelo handler que ele chama. Recortar pelo
+ *  handler — e não por uma regex frouxa sobre o arquivo — mantém o teste preso
+ *  ao botão certo mesmo quando o trilho ganha vizinhos. */
+function buttonWith(src, handler) {
+  const at = src.indexOf(handler)
+  assert.ok(at > 0, `botão com ${handler} não encontrado`)
+  const start = src.lastIndexOf('<button', at)
+  const end = src.indexOf('</button>', at)
+  assert.ok(start >= 0 && end > at, `o bloco do botão ${handler} mudou de forma`)
+  return src.slice(start, end)
+}
+
 test('trilho limita largura pela fração disponível e preserva o centro', () => {
   assert.deepEqual(rightRailBounds(1000), { min: 176, max: 420 })
   assert.equal(clampRightRailWidth(100, 1000), 176)
@@ -559,4 +581,94 @@ test('janela do diff é dona do Esc, do foco e do próprio teto de render', asyn
     css.match(/\n\.cdv-overlay \{[\s\S]*?padding:\s*(\d+)px/u)?.[1]
   )
   assert.ok(overlayPad >= 36, 'a folga vertical precisa passar da titlebar de 36px')
+})
+
+// ————— AS ALAVANCAS DE AGENTE DO TRILHO (design D6, reescrito em 18/08) —————
+//
+// Ordem do dono: o botão ✦ AJUDANTE morre — quem abre ajudante é o AGENTE do
+// chat, pelo `delegate` do MCP, porque é o único caminho em que modelo, effort
+// e conta aparecem na lateral. E o 🧐 REVISAR para de abrir pane: ele dá um
+// TOQUE no chat principal, como mensagem do dono, com mandato ESTRITO de code
+// review. Estes quatro testes são a cerca dos dois gestos.
+
+test('o botão ✦ ajudante MORREU — nenhum gesto do trilho abre subagente', async () => {
+  const [rail, board] = await Promise.all([
+    source('src/renderer/src/components/MissionDeliveryRail.tsx'),
+    source('src/renderer/src/components/Board.tsx')
+  ])
+  const railCode = withoutComments(rail)
+  const boardCode = withoutComments(board)
+
+  assert.doesNotMatch(railCode, /✦ ajudante/u, 'o botão de ajudante voltou ao trilho')
+  assert.doesNotMatch(railCode, /onHelper/u, 'a prop do ajudante ficou pendurada no trilho')
+  assert.doesNotMatch(boardCode, /onHelper/u, 'o Board ainda passa a prop do ajudante')
+  // O papel PLURAL não nasce mais de clique nenhum: o caso especial dele saiu
+  // junto com o botão.
+  assert.doesNotMatch(boardCode, /openMissionGuiRole\([^)]*'helper'\)/u)
+  assert.doesNotMatch(boardCode, /role !== 'helper'/u)
+})
+
+test('🧐 revisar dá um TOQUE no chat do agente — nunca abre pane de revisor', async () => {
+  const board = await source('src/renderer/src/components/Board.tsx')
+  const code = withoutComments(board)
+
+  assert.doesNotMatch(
+    code,
+    /openMissionGuiRole\([^)]*'reviewer'\)/u,
+    'o revisar voltou a abrir um pane em vez de tocar o agente'
+  )
+  // O toque viaja pelo MESMO caminho do composer (`gui.send`, pela ação do
+  // store) e leva um messageId próprio de `guiItemIdentity` — é ele que dá
+  // idempotência à entrega no main.
+  assert.match(board, /from '\.\.\/missionReviewNudge'/u)
+  assert.match(board, /from '\.\.\/guiItemIdentity'/u)
+  assert.match(code, /sendGuiMessage\(\s*paneId,\s*REVIEW_NUDGE_TEXT,\s*guiItemId\(\)\s*\)/u)
+  // O destino é o chat do AGENTE, nunca o slot que está em foco.
+  assert.match(code, /directSlots\.find\(\(s\) => s\.role === 'dev'\)/u)
+  assert.match(code, /onReview=\{\(\) => void nudgeReview\(\)\}/u)
+  assert.match(code, /reviewReady=\{reviewReady\}/u)
+})
+
+test('o texto do toque carrega o mandato ESTRITO do dono', async () => {
+  const { REVIEW_NUDGE_TEXT } = await reviewNudge()
+
+  // Um parágrafo só: o toque entra no fio como uma fala do dono.
+  assert.doesNotMatch(REVIEW_NUDGE_TEXT, /\n/u)
+  assert.ok(
+    REVIEW_NUDGE_TEXT.length > 200 && REVIEW_NUDGE_TEXT.length < 1_400,
+    'o toque precisa caber numa fala, sem virar briefing'
+  )
+  // UM ajudante, pelo MCP — nunca subagente nativo, nunca uma frota.
+  assert.match(REVIEW_NUDGE_TEXT, /\bdelegate\b/u)
+  assert.match(REVIEW_NUDGE_TEXT, /UM ajudante/u)
+  // O mandato: limpeza, escrita e refatoração — e NADA de QA.
+  assert.match(REVIEW_NUDGE_TEXT, /limpo/u)
+  assert.match(REVIEW_NUDGE_TEXT, /bem escrito/u)
+  assert.match(REVIEW_NUDGE_TEXT, /refatora/u)
+  assert.match(REVIEW_NUDGE_TEXT, /nada de QA|sem QA/u)
+  // A régua velha do dono: reviewer NUNCA legisla capacidade nova.
+  assert.match(REVIEW_NUDGE_TEXT, /nunca prometeu/u)
+  assert.match(REVIEW_NUDGE_TEXT, /sugestão/u)
+  // Os padrões carimbados pelo dono valem quando o pedido não especifica.
+  assert.match(REVIEW_NUDGE_TEXT, /painel de delegação/u)
+  // A volta: `helper_result` + lista ordenada por gravidade.
+  assert.match(REVIEW_NUDGE_TEXT, /helper_result/u)
+  assert.match(REVIEW_NUDGE_TEXT, /gravidade/u)
+})
+
+test('o botão de revisar diz a verdade nova — e a trava do chat fora do ar fica', async () => {
+  const rail = withoutComments(await source('src/renderer/src/components/MissionDeliveryRail.tsx'))
+  const button = buttonWith(rail, 'onClick={onReview}')
+
+  assert.match(button, /🧐 revisar/u)
+  // "sessão limpa" descrevia um PANE de revisor que não existe mais.
+  assert.doesNotMatch(rail, /sessão limpa/u)
+  // A dica descreve o que o clique faz de verdade: pedir UM ajudante que roda
+  // na lateral, em sessão headless nova.
+  assert.match(button, /ajudante/u)
+  assert.match(button, /lateral/u)
+  assert.match(button, /headless/u)
+  // A trava continua: sem ponte OU sem chat pronto, o toque não sai.
+  assert.match(button, /disabled=\{!guiAvailable \|\| !reviewReady\}/u)
+  assert.match(rail, /reviewReady: boolean/u)
 })
