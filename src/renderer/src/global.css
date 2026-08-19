@@ -17037,12 +17037,17 @@ details.gui-error-line {
   border-color: color-mix(in srgb, var(--accent) 54%, var(--gui-line-strong));
 }
 
+/* Toda peça do rodapé tem célula nomeada: o `spacer` é a sobra, e quem cair
+   nele por auto-colocação estica na largura inteira. R13/A1: o ⚡ ganhou a
+   coluna `fast` (entre effort e send) justamente por isso — variante que
+   redefine colunas ou áreas carrega a coluna a mais, senão a fileira inteira
+   escorrega uma casa. */
 .gui-composer-inner {
   display: grid;
-  grid-template-columns: auto auto minmax(8px, 1fr) auto auto auto auto;
+  grid-template-columns: auto auto minmax(8px, 1fr) auto auto auto auto auto;
   grid-template-areas:
-    "input input input input input input input"
-    "attach mode spacer context model effort send";
+    "input input input input input input input input"
+    "attach mode spacer context model effort fast send";
   align-items: center;
   column-gap: 6px;
   row-gap: 6px;
@@ -17052,9 +17057,9 @@ details.gui-error-line {
 
 .gui-composer-inner:has(.gui-composer-attachments) {
   grid-template-areas:
-    "input input input input input input input"
-    "attachments attachments attachments attachments attachments attachments attachments"
-    "attach mode spacer context model effort send";
+    "input input input input input input input input"
+    "attachments attachments attachments attachments attachments attachments attachments attachments"
+    "attach mode spacer context model effort fast send";
 }
 
 .gui-composer-attach {
@@ -18125,7 +18130,7 @@ details.gui-error-line {
   }
 
   .gui-composer-inner {
-    grid-template-columns: auto auto minmax(4px, 1fr) auto auto auto auto;
+    grid-template-columns: auto auto minmax(4px, 1fr) auto auto auto auto auto;
     column-gap: 4px;
     padding: 7px;
   }
@@ -18145,18 +18150,20 @@ details.gui-error-line {
     display: none;
   }
 
+  /* Aqui o `model` some da fileira (a regra acima o esconde) — o `fast` FICA:
+     desligar o modo é decisão que não pode sumir com a largura do pane. */
   .gui-composer-inner {
-    grid-template-columns: auto auto minmax(4px, 1fr) auto auto auto;
+    grid-template-columns: auto auto minmax(4px, 1fr) auto auto auto auto;
     grid-template-areas:
-      "input input input input input input"
-      "attach mode spacer context effort send";
+      "input input input input input input input"
+      "attach mode spacer context effort fast send";
   }
 
   .gui-composer-inner:has(.gui-composer-attachments) {
     grid-template-areas:
-      "input input input input input input"
-      "attachments attachments attachments attachments attachments attachments"
-      "attach mode spacer context effort send";
+      "input input input input input input input"
+      "attachments attachments attachments attachments attachments attachments attachments"
+      "attach mode spacer context effort fast send";
   }
 }
 
@@ -19907,7 +19914,16 @@ details.gui-error-line {
    R12: sem o rótulo "fast" ao lado, o contorno é o ÚNICO sinal de ligado — e o
    hover genérico do .gui-mode-btn (mais específico que .gui-fast-btn.on) o
    apagava justamente com o ponteiro em cima. O estado aceso vence o hover; o
-   fundo do hover continua dando a resposta ao ponteiro. */
+   fundo do hover continua dando a resposta ao ponteiro.
+   R13/A2: caixa quadrada de 30px, o glifo no centro. A largura fixa é também o
+   que impede o `justify-self: stretch` de item de grade de esticar o botão. */
+.gui-fast-btn {
+  grid-area: fast;
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+}
+
 .gui-fast-btn.on,
 .gui-mode-btn.gui-fast-btn.on:hover:not(:disabled) {
   border-color: var(--accent);

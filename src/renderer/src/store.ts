@@ -305,6 +305,9 @@ export interface CatalogModel {
   label: string
   efforts?: string[]
   defaultEffort?: string
+  /** R13 — espelho de `src/main/catalog.ts` (via preload): a marca que o
+   *  painel D8 usa para só oferecer o ⚡ onde ele vale. */
+  supportsFastMode?: boolean
 }
 
 export interface Catalog {

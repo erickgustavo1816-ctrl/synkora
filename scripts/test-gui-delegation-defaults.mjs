@@ -2,16 +2,18 @@
 // `.synkora/reports/DESIGN_SUBAGENTES_SEM_ABA_2026-08-18.md`).
 //
 // Ordem do dono (18/08, tarde): "como padrão vai vir eles; caso eu queira
-// outros, aí eu falo". Esta suíte prova as três metades do painel:
+// outros, aí eu falo". Esta suíte prova as quatro metades do painel:
 //   1. a régua PURA (catálogo real dos DOIS CLIs, effort filtrado por modelo,
 //      resumo honesto quando nada está carimbado);
 //   2. o CONTRATO DE FONTE da superfície (a abinha nasce recolhida, fala PT-BR,
 //      está montada no chat e só aparece em chat que DELEGA);
-//   3. a linha da persona — o agente precisa saber que o pino do dono existe.
+//   3. a linha da persona — o agente precisa saber que o pino do dono existe;
+//   4. o CATÁLOGO que alimenta tudo isso (R13): a marca de fast que os dois
+//      CLIs publicam com nomes diferentes e o painel lê numa chave só.
 //
-// Como rodar (o package.json não foi tocado — a linha para registrar está no
-// relatório w3-panel.md):
-//   node --experimental-strip-types --test scripts/test-gui-delegation-defaults.mjs
+// Como rodar: `npm run test:gui-delegation-defaults` — SEMPRE pelo npm, porque
+// o script recompila `src/main/catalog.ts` em `.tmp/` antes do node (o `.mjs`
+// solto rodaria a compilação velha).
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -29,6 +31,14 @@ import {
   guiMissionSystemPrompt,
   guiPlanningSystemPrompt
 } from '../src/main/guiMissionContracts.ts'
+// O catálogo também é do MAIN, mas importa irmão sem extensão (`./winPath`), e
+// o type-stripping do node não resolve isso: por isso ele chega compilado.
+import {
+  CLAUDE_FALLBACK_MODELS,
+  CODEX_FALLBACK_MODELS,
+  claudeModelsFromHandshake,
+  codexModelsFromDebug
+} from '../.tmp/gui-delegation-defaults-test/catalog.js'
 
 const source = (relative) => readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8')
 
@@ -55,15 +65,60 @@ function composerNamer() {
     guiModelShortName({ value: id, displayName, resolvedModel: id }, prettyModel(id))
 }
 
+/** QUANDO O ⚡ APARECE (R13 §B3), executado a partir do fonte do painel — mesma
+ *  técnica do embelezador acima, e pelo mesmo motivo: a régua mora num
+ *  componente React, e um teste que a imitasse provaria a imitação. */
+function panelFastChipVisible() {
+  const panel = source('src/renderer/src/components/GuiDelegationDefaults.tsx')
+  const expression = panel.match(/const fastChipVisible = (.+)\r?\n/u)?.[1]
+  assert.ok(expression, 'a régua de visibilidade do ⚡ saiu do painel')
+  return new Function('defaults', 'pinnedOption', `return ${expression}`)
+}
+
+/**
+ * O `chooseModel` do painel (R13 §B4), executado a partir do fonte com as
+ * dependências injetadas: `apply` vira um coletor, e o teste lê os patches que
+ * o painel REALMENTE mandaria ao main.
+ */
+function panelChooseModel() {
+  const panel = source('src/renderer/src/components/GuiDelegationDefaults.tsx')
+  const body = panel.match(
+    /const chooseModel = useCallback\(\r?\n\s*\(model: string \| null\): void => \{\r?\n([\s\S]*?)\r?\n {4}\},/u
+  )?.[1]
+  assert.ok(body, 'o chooseModel saiu do painel')
+  const run = new Function(
+    'model',
+    'apply',
+    'defaults',
+    'groups',
+    'guiDelegationEffortOptions',
+    'guiDelegationModelOption',
+    body
+  )
+  return (defaults, groups, model) => {
+    const patches = []
+    run(
+      model,
+      (patch) => patches.push(patch),
+      defaults,
+      groups,
+      guiDelegationEffortOptions,
+      guiDelegationModelOption
+    )
+    return patches
+  }
+}
+
 /** Catálogos como o `catalog.ts` os devolve: o do claude costuma vir SEM
- *  `efforts` por modelo (fallback curado), o do codex traz nível por modelo. */
+ *  `efforts` por modelo (fallback curado), o do codex traz nível por modelo. O
+ *  `supportsFastMode` copia a sonda de 19/08 — só opus e sol têm o modo. */
 const CATALOGS = [
   {
     cli: 'claude',
     models: [
-      { id: 'fable', label: 'fable — o mais capaz' },
-      { id: 'opus[1m]', label: 'opus — equilíbrio (1M ctx)' },
-      { id: 'haiku', label: 'haiku — o mais rápido', efforts: [] }
+      { id: 'fable', label: 'fable — o mais capaz', supportsFastMode: false },
+      { id: 'opus[1m]', label: 'opus — equilíbrio (1M ctx)', supportsFastMode: true },
+      { id: 'haiku', label: 'haiku — o mais rápido', efforts: [], supportsFastMode: false }
     ],
     efforts: ['low', 'medium', 'high', 'xhigh', 'max']
   },
@@ -73,7 +128,8 @@ const CATALOGS = [
       {
         id: 'gpt-5.6-sol',
         label: 'GPT-5.6-Sol',
-        efforts: ['minimal', 'low', 'medium', 'high']
+        efforts: ['minimal', 'low', 'medium', 'high'],
+        supportsFastMode: true
       }
     ],
     efforts: ['minimal', 'low', 'medium', 'high']
@@ -423,15 +479,185 @@ test('R12 — o resumo da abinha carrega o ⚡ carimbado, com ou sem modelo', ()
   assert.equal(guiDelegationSummary({ model: 'opus[1m]' }, groups), 'opus')
 })
 
-test('R12 — o campo do fast usa as fichas que já existem (zero CSS novo)', () => {
+// ————— 3D. O ⚡ DO TAMANHO CERTO (design R13 §B) —————
+//
+// O dono reprovou a R12 com print: "parece um remendo... você criou um scroll
+// vertical pro padrão dos ajudantes; o Fast podia aparecer em algum lugar ali,
+// do lado do [herdar] da conversa. E tá aparecendo Fast pra modelo que não tem
+// — o Fable 5 não tem Fast, o Haiku não tem". O campo próprio morre, o chip
+// muda de casa e a visibilidade passa a vir do CATÁLOGO.
+
+test('R13 — o catálogo do claude carrega o fast que o handshake publica', () => {
+  // Captura real do handshake (`.tmp/probe-fast/claude-caps.jsonl`, 19/08): a
+  // marca vem POR MODELO, e não vem para todo mundo.
+  const models = claudeModelsFromHandshake([
+    { value: 'default', displayName: 'Padrão', supportsFastMode: true },
+    {
+      value: 'opus[1m]',
+      displayName: 'opus',
+      description: 'equilíbrio (1M ctx)',
+      supportsFastMode: true
+    },
+    { value: 'fable', displayName: 'fable', description: 'o mais capaz' },
+    { value: 'haiku', displayName: 'haiku', supportsEffort: false },
+    { displayName: 'sem id' }
+  ])
+  assert.deepEqual(
+    models.map((m) => [m.id, m.supportsFastMode]),
+    [
+      ['default', true],
+      ['opus[1m]', true],
+      ['fable', false],
+      ['haiku', false]
+    ],
+    'só a AFIRMAÇÃO do CLI liga o modo caro — campo ausente é não'
+  )
+  // O resto do parse continua de pé: rótulo com descrição, e a lista VAZIA de
+  // quem declara não aceitar effort.
+  assert.equal(models[1].label, 'opus — equilíbrio (1M ctx)')
+  assert.equal(models[0].label, 'Padrão')
+  assert.deepEqual(models[3].efforts, [])
+})
+
+test('R13 — o catálogo do codex deriva o fast do service tier `priority`', () => {
+  // Sonda de 19/08 no binário: `codex debug models` publica `service_tiers` por
+  // modelo, e o gpt-5.6-sol traz `[{id:'priority',name:'Fast'}]`.
+  const models = codexModelsFromDebug([
+    {
+      slug: 'gpt-5.6-sol',
+      display_name: 'GPT-5.6-Sol',
+      visibility: 'list',
+      default_reasoning_level: 'low',
+      supported_reasoning_levels: [{ effort: 'low' }, { effort: 'high' }],
+      service_tiers: [{ id: 'flex' }, { id: 'priority', name: 'Fast' }]
+    },
+    {
+      slug: 'gpt-5.6-mini',
+      display_name: 'Mini',
+      visibility: 'list',
+      service_tiers: [{ id: 'flex' }]
+    },
+    { slug: 'gpt-5-antigo', display_name: 'Antigo', visibility: 'list' },
+    { slug: 'escondido', visibility: 'hidden', service_tiers: [{ id: 'priority' }] }
+  ])
+  assert.deepEqual(
+    models.map((m) => [m.id, m.supportsFastMode]),
+    [
+      ['gpt-5.6-sol', true],
+      ['gpt-5.6-mini', false],
+      ['gpt-5-antigo', false]
+    ],
+    'sem o tier `priority` não existe fast — e modelo escondido nem entra na lista'
+  )
+  assert.deepEqual(models[0].efforts, ['low', 'high'])
+  assert.equal(models[0].defaultEffort, 'low')
+})
+
+test('R13 — os fallbacks NÃO ligam o modo caro', () => {
+  for (const model of [...CLAUDE_FALLBACK_MODELS, ...CODEX_FALLBACK_MODELS]) {
+    assert.equal(
+      model.supportsFastMode,
+      undefined,
+      `${model.id}: fallback é lista curada à mão, e chute não liga modo que gasta mais`
+    )
+  }
+  // E o silêncio do fallback vira `false` na ficha — nunca uma oferta.
+  const [claude] = guiDelegationModelGroups([
+    { cli: 'claude', models: CLAUDE_FALLBACK_MODELS, efforts: ['max'] }
+  ])
+  assert.ok(claude.options.every((option) => option.supportsFastMode === false))
+})
+
+test('R13 — a ficha do modelo carrega a marca de fast do catálogo', () => {
+  const groups = guiDelegationModelGroups(CATALOGS, composerNamer())
+  const option = (id) => guiDelegationModelOption(groups, id)
+  assert.equal(option('opus[1m]').supportsFastMode, true)
+  assert.equal(option('gpt-5.6-sol').supportsFastMode, true)
+  assert.equal(option('fable').supportsFastMode, false)
+  assert.equal(option('haiku').supportsFastMode, false)
+  // Catálogo que não fala do assunto responde `false`: o painel decide com uma
+  // resposta, nunca com um buraco.
+  const [mudo] = guiDelegationModelGroups([
+    { cli: 'claude', models: [{ id: 'opus[1m]', label: 'opus' }], efforts: ['max'] }
+  ])
+  assert.equal(mudo.options[0].supportsFastMode, false)
+})
+
+test('R13 — o ⚡ só aparece onde ele pode valer (e o pino ligado, sempre)', () => {
+  const visible = panelFastChipVisible()
+  assert.equal(visible({}, { supportsFastMode: true }), true, 'modelo com o modo oferece o modo')
+  assert.equal(
+    visible({}, { supportsFastMode: false }),
+    false,
+    'fable e haiku não têm fast: prometer ali era a queixa 3 do dono'
+  )
+  assert.equal(visible({}, undefined), false, 'sem pino de modelo não há o que prometer')
+  // Honestidade, espelho do `pinnedOutsideCatalog`: pino LIGADO nunca fica
+  // invisível — o dono não pode gastar mais limite sem ver por quê.
+  assert.equal(visible({ fast: true }, undefined), true)
+  assert.equal(visible({ fast: true }, { supportsFastMode: false }), true)
+  assert.equal(visible({ fast: false }, undefined), false)
+})
+
+test('R13 — trocar de modelo arrasta o ⚡ junto, como o effort', () => {
+  const choose = panelChooseModel()
+  const groups = guiDelegationModelGroups(CATALOGS, composerNamer())
+  const patch = (defaults, model, catalog = groups) => {
+    const patches = choose(defaults, catalog, model)
+    assert.equal(patches.length, 1, 'a escolha do modelo grava UM patch')
+    return patches[0]
+  }
+
+  // Modelo COM fast: o pino atravessa (campo ausente CONSERVA, regra do main).
+  const paraOpus = patch({ model: 'fable', fast: true }, 'opus[1m]')
+  assert.equal(paraOpus.model, 'opus[1m]')
+  assert.equal(paraOpus.fast, undefined)
+  // Modelo SEM fast: o pino cai no MESMO patch, como o effort não suportado.
+  const paraHaiku = patch({ model: 'opus[1m]', effort: 'max', fast: true }, 'haiku')
+  assert.equal(paraHaiku.model, 'haiku')
+  assert.equal(paraHaiku.effort, null)
+  assert.equal(paraHaiku.fast, null, 'fast valendo para modelo sem fast é promessa falsa')
+  // Cross-CLI com fast dos dois lados: nada cai.
+  const paraSol = patch({ model: 'opus[1m]', effort: 'high', fast: true }, 'gpt-5.6-sol')
+  assert.equal(paraSol.effort, 'high')
+  assert.equal(paraSol.fast, undefined)
+  // Limpar o modelo limpa os três — sem modelo não existe pino a defender.
+  const limpo = patch({ model: 'opus[1m]', effort: 'max', fast: true }, null)
+  assert.deepEqual(limpo, { model: null, effort: null, fast: null })
+  // CATÁLOGO VAZIO é ausência de notícia, não notícia de ausência: o pino fica.
+  const semCatalogo = patch({ model: 'opus[1m]', fast: true }, 'modelo-x', [])
+  assert.equal(semCatalogo.model, 'modelo-x')
+  assert.equal(semCatalogo.fast, undefined)
+  // Re-clicar o modelo já carimbado não grava nada (nem derruba o fast).
+  assert.deepEqual(choose({ model: 'opus[1m]', fast: true }, groups, 'opus[1m]'), [])
+})
+
+test('R13 — o ⚡ mora na fileira do modelo, e o campo da R12 morreu', () => {
   const panel = source('src/renderer/src/components/GuiDelegationDefaults.tsx')
   const css = source('src/renderer/src/global.css')
 
-  // Dois estados, nas MESMAS fichas do modelo e do effort.
+  // O campo próprio da R12 (rótulo + duas fichas + nota) era o que estourava o
+  // teto do painel (`max-height: min(320px, 46dvh)`) e criava o scroll.
+  assert.doesNotMatch(panel, />\s*desligado\s*</u, 'a ficha "desligado" era metade dele')
+  assert.doesNotMatch(panel, /\$\{panelId\}-fast/u, 'o rótulo do campo próprio saiu junto')
+
+  // O lugar que o dono apontou: MESMA fileira de "herdar da conversa", antes da
+  // lista de modelos. As âncoras são o TEXTO DA FICHA (`>rótulo<`) porque
+  // "herdar da conversa" também aparece em comentário — e comentário não é tela.
+  const herdar = panel.indexOf('>herdar da conversa<')
+  const chip = panel.indexOf('>⚡ fast<')
+  const lista = panel.indexOf('{groups.map((group) =>')
+  assert.ok(herdar > 0 && chip > herdar, 'o ⚡ vem depois de "herdar da conversa"')
+  assert.ok(chip < lista, 'e antes da lista de modelos: é a primeira fileira do campo')
+  assert.doesNotMatch(
+    panel.slice(herdar, chip),
+    /gui-deleg-chips/u,
+    'fileira nova entre os dois seria outra linha, e o scroll voltaria'
+  )
+
+  // Um clique alterna: ligado apaga, apagado liga.
+  assert.match(panel, /apply\(\{ fast: defaults\.fast === true \? null : true \}\)/u)
   assert.match(panel, /className="gui-deleg-item-name">⚡ fast</u)
-  assert.match(panel, />\s*desligado\s*</u)
-  assert.match(panel, /apply\(\{ fast: true \}\)/u)
-  assert.match(panel, /apply\(\{ fast: null \}\)/u)
   // Escolha ligada é ESTADO (o leitor de tela precisa ouvi-la), e o ⚡ é desenho.
   assert.match(panel, /aria-pressed=\{defaults\.fast === true\}/u)
   assert.match(panel, /aria-label="Modo fast[^"]*"/u)
@@ -441,7 +667,7 @@ test('R12 — o campo do fast usa as fichas que já existem (zero CSS novo)', ()
   assert.match(panel, /apply\(\{ model: null, effort: null, fast: null \}\)/u)
   assert.match(panel, /!defaults\.model && !defaults\.effort && !defaults\.fast/u)
 
-  // ZERO CSS NOVO: o campo nasce das classes que a abinha já tem.
+  // ZERO CSS NOVO: o chip nasce das classes que a abinha já tem.
   assert.doesNotMatch(css, /\.gui-deleg-fast/u)
   assert.doesNotMatch(panel, /className="gui-deleg-fast/u)
 })

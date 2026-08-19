@@ -490,6 +490,9 @@ export interface CatalogModel {
   label: string
   efforts?: string[]
   defaultEffort?: string
+  /** R13 — espelho de `src/main/catalog.ts`: catálogo real responde true/false;
+   *  fallback omite (silêncio nunca liga modo caro). */
+  supportsFastMode?: boolean
 }
 
 export interface Catalog {

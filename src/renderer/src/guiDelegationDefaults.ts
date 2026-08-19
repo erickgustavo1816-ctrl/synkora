@@ -26,7 +26,9 @@ export interface GuiDelegationDefaultsValue {
 /** Catálogo REAL de um CLI (`catalog.ts` → `window.synkora.catalog.get`). */
 export interface GuiDelegationCatalog {
   cli: GuiDelegationCli
-  models: { id: string; label: string; efforts?: string[] }[]
+  /** Espelho estreito de `CatalogModel`, em `src/main/catalog.ts`: campo que
+   *  não interessa à régua fica de fora, mas nenhum é renomeado no caminho. */
+  models: { id: string; label: string; efforts?: string[]; supportsFastMode?: boolean }[]
   /** Níveis do BINÁRIO — o fallback de quem não declara nível por modelo. */
   efforts: string[]
 }
@@ -43,6 +45,10 @@ export interface GuiDelegationModelOption {
   detail: string | null
   /** Níveis já resolvidos. VAZIO = este modelo não aceita effort. */
   efforts: string[]
+  /** O modelo aceita o modo fast (R13). Só a AFIRMAÇÃO do catálogo liga: o
+   *  silêncio — fallback curado, catálogo de CLI antigo — fica `false`, e o
+   *  painel não oferece por conta própria o modo que gasta mais limite. */
+  supportsFastMode: boolean
 }
 
 /**
@@ -129,6 +135,9 @@ function cleanList(values: readonly unknown[] | undefined): string[] {
  *   de 2026-08-18 §2.4: o flag é engolido sem aviso) e a abinha diz isso;
  * - NÃO declarada → os níveis daquele CLI, nunca os do outro: as escalas são
  *   diferentes (o claude vai a `max`, o codex trabalha em outra faixa).
+ *
+ * `supportsFastMode` atravessa como veio do catálogo, e só o `true` passa: modo
+ * que gasta mais limite não se liga por omissão.
  */
 export function guiDelegationModelGroups(
   catalogs: readonly GuiDelegationCatalog[],
@@ -151,7 +160,8 @@ export function guiDelegationModelGroups(
         // porque uma ficha sem título nenhum seria pior que o id cru.
         name: namer({ id, displayName }).trim() || id,
         detail,
-        efforts: model.efforts === undefined ? fallback : cleanList(model.efforts)
+        efforts: model.efforts === undefined ? fallback : cleanList(model.efforts),
+        supportsFastMode: model.supportsFastMode === true
       })
     }
     if (options.length > 0) groups.push({ cli: catalog.cli, options })

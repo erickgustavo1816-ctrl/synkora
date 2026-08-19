@@ -1955,11 +1955,11 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
   assert.match(css, /\.gui-mode-menu\s*\{[^}]*bottom: calc\(100% \+ 8px\)/su)
   assert.match(
     css,
-    /\.gui-composer-inner\s*\{[^}]*display: grid[^}]*"input input input input input input input"[^}]*"attach mode spacer context model effort send"/su
+    /\.gui-composer-inner\s*\{[^}]*display: grid[^}]*"input input input input input input input input"[^}]*"attach mode spacer context model effort fast send"/su
   )
   assert.match(
     css,
-    /\.gui-composer-inner:has\(\.gui-composer-attachments\)\s*\{[^}]*"attachments attachments attachments attachments attachments attachments attachments"/su
+    /\.gui-composer-inner:has\(\.gui-composer-attachments\)\s*\{[^}]*"attachments attachments attachments attachments attachments attachments attachments attachments"/su
   )
   assert.match(pane, /className="gui-input"[\s\S]*rows=\{1\}/u)
   assert.ok(
@@ -3499,4 +3499,111 @@ test('o ⚡ é interruptor: só o glifo, dica de uma linha e sucesso sem nota no
   // família (mais específico) o apagava com o ponteiro em cima.
   const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
   assert.match(css, /\.gui-mode-btn\.gui-fast-btn\.on:hover:not\(:disabled\)/u)
+})
+
+// ————— R13: o ⚡ do tamanho do ícone (queixa do dono: "tá parecendo um
+// remendo"). A causa era a CÉLULA, não o estilo: sem `grid-area` a
+// auto-colocação jogava o botão no spacer `minmax(_, 1fr)` e o esticava. —————
+
+/** Uma faixa `.gui-composer-inner { … }` por variante, na ordem da folha. */
+function composerGridBlocks(css) {
+  return [...css.matchAll(/\.gui-composer-inner[^{}]*\{([^}]*)\}/gu)].map((match) => match[1])
+}
+
+/** `minmax(8px, 1fr)` é UMA trilha: as vírgulas de dentro não contam. */
+function trackCount(value) {
+  return value
+    .replace(/\([^)]*\)/gu, '()')
+    .trim()
+    .split(/\s+/u)
+    .filter(Boolean).length
+}
+
+test('o ⚡ tem célula própria: toda variante da grade do composer conta a mesma coluna', () => {
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+  const blocks = composerGridBlocks(css)
+  assert.ok(
+    blocks.length >= 4,
+    'as variantes da grade não foram encontradas — o teste passaria sem olhar nada'
+  )
+
+  let footerRows = 0
+  // Variante que só redefine as colunas herda as áreas da última declarada na
+  // ordem da folha; é assim que a de 430px vive.
+  let cellsInEffect = 0
+  for (const [index, body] of blocks.entries()) {
+    const areas = /grid-template-areas:\s*([^;]+);/u.exec(body)
+    const columns = /grid-template-columns:\s*([^;]+);/u.exec(body)
+    const where = `variante #${index + 1} de .gui-composer-inner`
+
+    if (areas) {
+      const rows = (areas[1].match(/"([^"]*)"/gu) ?? []).map((row) =>
+        row.slice(1, -1).trim().split(/\s+/u).filter(Boolean)
+      )
+      assert.ok(rows.length > 0, `${where}: grid-template-areas sem nenhuma fileira`)
+      for (const row of rows) {
+        assert.equal(
+          row.length,
+          rows[0].length,
+          `${where}: fileiras de tamanhos diferentes desalinham a grade inteira`
+        )
+      }
+      const footer = rows.find((row) => row.includes('send'))
+      assert.ok(footer, `${where}: a fileira dos controles sumiu`)
+      assert.equal(
+        footer.filter((cell) => cell === 'fast').length,
+        1,
+        `${where}: o ⚡ precisa de UMA célula nomeada, senão cai no spacer e estica`
+      )
+      assert.deepEqual(
+        footer.slice(-3),
+        ['effort', 'fast', 'send'],
+        `${where}: o ⚡ mora entre o effort e o enviar`
+      )
+      footerRows += 1
+      cellsInEffect = rows[0].length
+    }
+
+    if (columns) {
+      assert.ok(cellsInEffect > 0, `${where}: colunas antes de qualquer área declarada`)
+      assert.equal(
+        trackCount(columns[1]),
+        cellsInEffect,
+        `${where}: colunas e áreas em desacordo — a fileira escorrega uma casa`
+      )
+    }
+  }
+  assert.ok(footerRows >= 3, 'as fileiras de controle (base, com anexos, pane estreito) sumiram')
+})
+
+test('o ⚡ é caixa de ícone: 30px, sem padding, glifo no centro', () => {
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+  const rule = /^\.gui-fast-btn\s*\{([^}]*)\}/mu.exec(css)
+  assert.ok(rule, 'sem regra própria o botão herda o padding da família e vira pílula')
+  assert.match(rule[1], /grid-area: fast;/u)
+  assert.match(rule[1], /width: 30px;/u, 'a largura fixa é o que barra o stretch da grade')
+  assert.match(rule[1], /padding: 0;/u)
+  assert.match(rule[1], /justify-content: center;/u)
+})
+
+test('o ⚡ aparece na conversa que roda no padrão da conta (o gate lê o modelo efetivo)', () => {
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(
+    pane,
+    /const effectiveModelOption =\s*selectedModelOption \?\? \(modelUsesDefault \? modelDefaultOption : undefined\)/u,
+    'sem pino de modelo a ficha que responde pelas capacidades é a do default'
+  )
+  assert.match(
+    pane,
+    /\{\(fastOn \|\| effectiveModelOption\?\.supportsFastMode === true\) && \(/u,
+    'o gate do botão precisa do modelo efetivo — e `fastOn` continua garantindo o desligar'
+  )
+  assert.doesNotMatch(
+    pane,
+    /fastOn \|\| selectedModelOption\?\.supportsFastMode/u,
+    'o gate antigo escondia o ⚡ em toda conversa sem pino de modelo'
+  )
 })

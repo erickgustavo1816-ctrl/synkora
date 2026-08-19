@@ -36,6 +36,12 @@ import {
 // onde o composer mostra nome digno. Agora o TÍTULO é o nome (mesma régua do
 // seletor do composer) e o id desce para metadado; a superfície inteira passou
 // pelo `polish` da skill impeccable (papel & painel, sem animação nova).
+//
+// R13 §B2-B4 — o campo próprio que a R12 deu ao fast estourou o teto do painel
+// (`max-height: min(320px, 46dvh)`) e criou scroll: "parece um remendo". Ele
+// morre e vira UM chip ⚡ na primeira fileira do modelo, ao lado de "herdar da
+// conversa" — o lugar que o dono apontou —, visível só quando o modelo
+// carimbado aceita o modo.
 
 const CLI_LABEL: Record<SeatCli, string> = {
   claude: 'claude',
@@ -140,6 +146,12 @@ export default function GuiDelegationDefaults({
    *  então escondê-lo seria o estado mais enganoso deste painel: o dono veria
    *  "herdar da conversa" ligado enquanto um modelo está carimbado. */
   const pinnedOutsideCatalog = Boolean(defaults.model) && !pinnedOption && groups.length > 0
+  /** O ⚡ só aparece onde ele PODE valer: com modelo carimbado e o catálogo
+   *  dizendo que aquele modelo aceita o modo (fable e haiku não aceitam —
+   *  oferecer ali seria prometer o que o motor não entrega). A exceção é a
+   *  mesma honestidade do `pinnedOutsideCatalog`: fast JÁ carimbado aparece
+   *  sempre, porque pino ligado e invisível é o pior estado do painel. */
+  const fastChipVisible = defaults.fast === true || pinnedOption?.supportsFastMode === true
 
   const apply = useCallback(
     async (patch: {
@@ -166,15 +178,21 @@ export default function GuiDelegationDefaults({
     (model: string | null): void => {
       // Limpar o modelo limpa o effort junto: sem modelo não existe escala para
       // filtrar o nível, e um effort órfão seria um pino que a própria abinha
-      // não sabe mais julgar.
+      // não sabe mais julgar. O ⚡ cai pelo mesmo motivo — ele é propriedade do
+      // modelo carimbado, não do painel.
       if (model === null) {
-        void apply({ model: null, effort: null })
+        void apply({ model: null, effort: null, fast: null })
         return
       }
       if (model === defaults.model) return
       const supported = guiDelegationEffortOptions(groups, model)
       const keep = defaults.effort && supported.includes(defaults.effort) ? defaults.effort : null
-      void apply({ model, effort: keep })
+      // O ⚡ atravessa a troca só quando o modelo NOVO aceita o modo. Catálogo
+      // vazio é ausência de notícia, não notícia de ausência: ali o pino fica de
+      // pé, e o campo ausente CONSERVA (regra do `setDelegationDefaults`).
+      const dropFast =
+        groups.length > 0 && guiDelegationModelOption(groups, model)?.supportsFastMode !== true
+      void apply({ model, effort: keep, fast: dropFast ? null : undefined })
     },
     [apply, defaults.effort, defaults.model, groups]
   )
@@ -225,6 +243,21 @@ export default function GuiDelegationDefaults({
                 >
                   <span className="gui-deleg-item-name">herdar da conversa</span>
                 </button>
+                {fastChipVisible && (
+                  <button
+                    type="button"
+                    className="gui-deleg-item"
+                    aria-pressed={defaults.fast === true}
+                    disabled={busy}
+                    data-tip="Abre todo ajudante em modo fast: mais rápido e gasta mais limite."
+                    // O ⚡ é desenho: o leitor de tela ouve a escolha e o preço,
+                    // nunca "raio fast".
+                    aria-label="Modo fast — gasta mais limite"
+                    onClick={() => void apply({ fast: defaults.fast === true ? null : true })}
+                  >
+                    <span className="gui-deleg-item-name">⚡ fast</span>
+                  </button>
+                )}
               </div>
 
               {groups.map((group) => (
@@ -328,45 +361,6 @@ export default function GuiDelegationDefaults({
                   ))}
                 </div>
               )}
-            </div>
-          </div>
-
-          {/* R12 — o ⚡ no painel (a queixa 2 do dono revoga o "fast nunca do
-              painel" da R11). Dois estados e nada mais: o pino não tem o
-              terceiro estado de modelo/effort, porque não existe "fast da
-              conversa" para herdar. */}
-          <div className="gui-deleg-field">
-            <span className="gui-deleg-label" id={`${panelId}-fast`}>
-              fast
-            </span>
-            <div className="gui-deleg-list" role="group" aria-labelledby={`${panelId}-fast`}>
-              <div className="gui-deleg-chips">
-                <button
-                  type="button"
-                  className="gui-deleg-item"
-                  aria-pressed={defaults.fast !== true}
-                  disabled={busy}
-                  onClick={() => void apply({ fast: null })}
-                >
-                  <span className="gui-deleg-item-name">desligado</span>
-                </button>
-                <button
-                  type="button"
-                  className="gui-deleg-item"
-                  aria-pressed={defaults.fast === true}
-                  disabled={busy}
-                  data-tip="Abre todo ajudante em modo fast: mais rápido e gasta mais limite."
-                  // O ⚡ é desenho: o leitor de tela ouve a escolha e o preço,
-                  // nunca "raio fast".
-                  aria-label="Modo fast — gasta mais limite"
-                  onClick={() => void apply({ fast: true })}
-                >
-                  <span className="gui-deleg-item-name">⚡ fast</span>
-                </button>
-              </div>
-              <p className="gui-deleg-note">
-                o ⚡ desta conversa não chega neles: ou vem daqui, ou o ajudante abre normal
-              </p>
             </div>
           </div>
 

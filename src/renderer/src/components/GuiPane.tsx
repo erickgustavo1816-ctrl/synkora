@@ -1397,6 +1397,10 @@ export default function GuiPane({
   const selectedModelOption = guiModelForSelection(modelOptions, selectedModelOverride)
   const modelUsesDefault =
     selectedModelOverride === undefined || guiModelIsDefault(selectedModelOption)
+  // Conversa no padrão da conta não tem opção escolhida: quem responde pelas
+  // capacidades do modelo ali é a ficha do próprio default.
+  const effectiveModelOption =
+    selectedModelOption ?? (modelUsesDefault ? modelDefaultOption : undefined)
   const modelDefaultIdentity = modelDefaultOption
     ? guiModelShortName(modelDefaultOption)
     : ''
@@ -2202,8 +2206,11 @@ export default function GuiPane({
                   R12/A1: INTERRUPTOR, não etiqueta — o botão é sempre só o
                   glifo (o rótulo que nascia ao ligar empurrava os vizinhos), e
                   o estado fala pelo contorno de `.gui-fast-btn.on` + o
-                  `aria-pressed`. R12/A2: a dica cabe em UMA linha. */}
-              {(fastOn || selectedModelOption?.supportsFastMode === true) && (
+                  `aria-pressed`. R12/A2: a dica cabe em UMA linha. R13/A3: o
+                  gate lê o modelo EFETIVO — olhar só a opção escolhida escondia
+                  o ⚡ em toda conversa no padrão da conta, mesmo com o default
+                  tendo fast. */}
+              {(fastOn || effectiveModelOption?.supportsFastMode === true) && (
                 <button
                   className={`gui-mode-btn gui-fast-btn${fastOn ? ' on' : ''}`}
                   disabled={spawnChangeLocked || busyMenu === 'fast'}

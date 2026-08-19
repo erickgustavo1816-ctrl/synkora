@@ -865,12 +865,19 @@ export function installDevMock(): void {
     },
     // O namespace `policies` (modelos por função) morreu na purga F6.
     catalog: {
+      // `supportsFastMode` espelha a sonda real (R13): só o opus e o sol têm o
+      // modo — é o que faz o ⚡ do painel de padrões aparecer para uns e sumir
+      // para outros aqui no browser, sem CLI nenhum instalado.
       get: async (cli: 'claude' | 'codex') =>
         cli === 'claude'
           ? {
               models: [
                 { id: 'fable', label: 'fable — o mais capaz' },
-                { id: 'opus[1m]', label: 'opus — equilíbrio do dia a dia (1M ctx)' },
+                {
+                  id: 'opus[1m]',
+                  label: 'opus — equilíbrio do dia a dia (1M ctx)',
+                  supportsFastMode: true
+                },
                 { id: 'sonnet', label: 'sonnet — eficiente para rotina' },
                 { id: 'haiku', label: 'haiku — o mais rápido' }
               ],
@@ -882,7 +889,8 @@ export function installDevMock(): void {
                   id: 'gpt-5.6-sol',
                   label: 'GPT-5.6-Sol',
                   efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
-                  defaultEffort: 'low'
+                  defaultEffort: 'low',
+                  supportsFastMode: true
                 }
               ],
               efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']
