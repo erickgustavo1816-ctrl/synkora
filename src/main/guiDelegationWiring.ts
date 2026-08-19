@@ -16,14 +16,25 @@
  *  4. a implementação das tools de delegação do `McpApi` — texto legível,
  *     sempre em PT-BR, com o recibo por ajudante e o CORREIO de carona.
  *
- * SEM CADEIA (cerca dura do D1): o ajudante nasce SEM `--mcp-config`/
- * `mcp_servers.*`. Ele não enxerga o catálogo `gui-delegator` porque não tem
- * token nenhum — quem delega é o chat do dono, e frota que abre frota é o laço
- * que o backstop existe para conter.
+ * SEM CADEIA (cerca dura do D1): o `GuiHelperSpawnRequest` continua SEM campo de
+ * ferramenta — o chamador não pede catálogo, não escolhe catálogo e não tem por
+ * onde passar um. Frota que abre frota segue impossível.
+ *
+ * O QUE MUDOU NA R14 (seção L3 do design `DESIGN_COPIA_E_LSP_R14_2026-08-19`):
+ * o MOTOR passou a armar, por ajudante, um kit MCP SÓ-LSP derivado do registro
+ * dele (id, projeto, delegador, worktree) — `guiHelperLspMcp.ts`. A cerca não
+ * afrouxou: o papel `ajudante` não tem `delegate` no servidor, o token nasce no
+ * spawn e MORRE no desfecho, e nada disso passa pelo pedido.
  */
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CLAUDE_NATIVE_AGENT_FENCE } from './guiDelegateMcp'
+import {
+  armGuiHelperLspMcp,
+  disarmGuiHelperLspMcp,
+  type GuiHelperLspDeps,
+  type GuiHelperLspKit
+} from './guiHelperLspMcp'
 import { CodexSession, type CodexSessionOpts } from './codexSession'
 import { MaestroSession, type MaestroSessionOpts, type SessionEvent } from './maestroSession'
 import { getCatalog } from './catalog'
@@ -100,6 +111,31 @@ export const GUI_HELPER_PERSONA = [
   '- NEVER open subagents of your own (no Task/Agent, no collab, no delegation of any kind).',
   '- Answer the delegator in Brazilian Portuguese (PT-BR).'
 ].join('\n')
+
+/**
+ * A LINHA DO LSP (R14, L3) — UMA, e só quando o kit existe de verdade.
+ *
+ * Ela não mora no array acima de propósito: o kit depende do servidor MCP estar
+ * no ar (`armGuiHelperLspMcp` devolve `undefined` com a porta em 0), e prometer
+ * quatro ferramentas a um ajudante que não as tem seria a persona mentindo — ele
+ * queimaria o turno chamando tool inexistente. A régua da casa é a mesma das
+ * descrições de tool: descrição que mente sobre o próprio limite é pior que
+ * ausente.
+ */
+export const GUI_HELPER_LSP_PERSONA_LINE =
+  '- LSP TOOLS ARE ON (lsp_diagnostics, lsp_definition, lsp_references, lsp_hover): ask the language ' +
+  'server for the EXACT file:line of an error, of a definition or of every caller BEFORE you edit — ' +
+  'grep guesses, the compiler knows.'
+
+/**
+ * A persona que ESTE ajudante recebe. `false` = a de sempre, palavra por
+ * palavra; `true` = ela mais a linha do LSP. Uma função porque a resposta muda
+ * por PROCESSO, não por build: o mesmo app arma o kit num ajudante e não arma no
+ * seguinte se o servidor caiu no meio.
+ */
+export function guiHelperPersonaFor(lspArmed: boolean): string {
+  return lspArmed ? `${GUI_HELPER_PERSONA}\n${GUI_HELPER_LSP_PERSONA_LINE}` : GUI_HELPER_PERSONA
+}
 
 // ————— A ENTREGA EM ARQUIVO (ordem do dono, 2026-08-18 à noite) —————
 
@@ -312,11 +348,99 @@ export function guiHelperEventFor(evt: SessionEvent): GuiHelperEvent | null {
 
 // ————— os adaptadores —————
 
+/**
+ * O DIÁRIO DO KIT LSP. Canal PRÓPRIO porque a união `GuiHelperLogEvent` é do
+ * MOTOR (guiHelperSessions.ts) e não conhece LSP — e o motor está fora desta
+ * onda. `paneId` é o do DELEGADOR (é por ele que o dono acha a conversa no
+ * diário) e `helperId` é a ficha; os dois juntos são a correlação da casa.
+ */
+export type GuiHelperLspJournalEvent =
+  /** O ajudante nasceu com as quatro tools e um bearer só dele. */
+  | 'helper-lsp-armed'
+  /** O bearer morreu com o processo (desfecho, cancelamento, interrupção). */
+  | 'helper-lsp-revoked'
+  /** Servidor fora do ar ou config recusada: ele nasceu SEM as tools. */
+  | 'helper-lsp-unavailable'
+
+export interface GuiHelperLspJournalEntry {
+  event: GuiHelperLspJournalEvent
+  /** Pane do DELEGADOR — a correlação com a conversa que abriu o ajudante. */
+  paneId: string
+  helperId: string
+  detail?: Record<string, unknown>
+}
+
 export interface GuiHelperAdapterDeps {
   /** Materializa a persona do claude em arquivo (teto de argv no Windows). */
   systemPromptFile(name: string, content: string): string | undefined
   /** Prepara o config dir do seat antes do spawn (sandbox do codex). */
   prepareSeat?(seat: GuiHelperSeat, cli: GuiHelperCli): void
+  /**
+   * O KIT SÓ-LSP por ajudante (R14/L3). AUSENTE = ajudante sem ferramenta
+   * nenhuma, exatamente como antes da R14 — é assim que as suítes rodam sem hub
+   * nem servidor. Note o que NÃO está aqui: nada que o CHAMADOR do `delegate`
+   * possa influenciar. O kit sai do registro do ajudante, e só.
+   */
+  lsp?: GuiHelperLspDeps
+  /** Caixa-preta do kit. Ausente = arma e revoga em silêncio (as suítes). */
+  journalLsp?(entry: GuiHelperLspJournalEntry): void
+}
+
+/**
+ * Arma o kit deste ajudante e registra o que aconteceu. `undefined` sem `deps.lsp`
+ * é o mundo pré-R14 (nada a dizer); `undefined` COM `deps.lsp` é notícia — o
+ * ajudante partiu cego e o diário tem de saber por quê.
+ *
+ * TODO campo sai do `request` — que é o REGISTRO do ajudante montado pelo motor.
+ * É esta função que faz a cerca do D1 continuar verdadeira depois da R14: não há
+ * argumento por onde um chamador de `delegate` influencie o kit.
+ *
+ * Exportada para a suíte: o adaptador real instancia processo de CLI, e o ciclo
+ * de vida do bearer tem de ser provável sem subir binário nenhum.
+ */
+export function armGuiHelperKit(
+  deps: GuiHelperAdapterDeps,
+  request: GuiHelperSpawnRequest
+): GuiHelperLspKit | undefined {
+  if (!deps.lsp) return undefined
+  const kit = armGuiHelperLspMcp(
+    {
+      helperId: request.helperId,
+      projectId: request.projectId,
+      delegatorPaneId: request.delegatorPaneId,
+      cwd: request.cwd,
+      cli: request.cli,
+      ...(request.seat.seatId ? { seatId: request.seat.seatId } : {})
+    },
+    deps.lsp
+  )
+  deps.journalLsp?.({
+    event: kit ? 'helper-lsp-armed' : 'helper-lsp-unavailable',
+    paneId: request.delegatorPaneId,
+    helperId: request.helperId,
+    detail: {
+      cli: request.cli,
+      root: request.cwd,
+      ...(kit ? { mcpPaneId: kit.paneId } : { reason: 'servidor MCP fora do ar ou config recusada' })
+    }
+  })
+  return kit
+}
+
+/** Revoga UMA vez, aconteça o que acontecer com o processo. */
+function disarmHelperLsp(
+  deps: GuiHelperAdapterDeps,
+  request: GuiHelperSpawnRequest,
+  kit: GuiHelperLspKit | undefined
+): void {
+  if (!kit || !deps.lsp) return
+  disarmGuiHelperLspMcp(kit, deps.lsp)
+  deps.journalLsp?.({
+    event: 'helper-lsp-revoked',
+    paneId: request.delegatorPaneId,
+    helperId: request.helperId,
+    detail: { mcpPaneId: kit.paneId }
+  })
 }
 
 /** Flags do helper CLAUDE. A cerca de 13 nomes vem do guiDelegateMcp — fonte
@@ -358,11 +482,21 @@ export function codexHelperThreadId(sessionId: string | undefined): string | und
  * aqui, onde a suíte a lê sem subir um processo de CLI. É o que torna o contrato
  * do R6.2 provável hoje, com o verbo `helper_resume` ainda na onda seguinte.
  *
- * NENHUM canal de ferramenta: ajudante não tem token nem config de MCP (D1).
+ * O KIT (R14/L3) entra pelo 3º parâmetro, e ele vem do ARMADOR, nunca do pedido:
+ * ausente = o ajudante de sempre, sem token e sem config de MCP.
+ *
+ * ORDEM NO FIO (armadilha do CLAUDE.md — "o claude monta o catálogo POR REQUEST
+ * e o prompt de argv sai ANTES do handshake MCP"): aqui ela NÃO morde, e a razão
+ * é estrutural. O `MaestroSession` sobe o claude em `-p --input-format
+ * stream-json` (maestroSession.ts): NENHUM prompt viaja no argv — o `--mcp-config`
+ * está na linha de comando, lido na partida do processo, e o briefing do ajudante
+ * só entra depois, como mensagem de usuário no stdin. A primeira requisição do
+ * ajudante é essa mensagem; o kit já estava lá quando o processo nasceu.
  */
 export function claudeHelperSessionOptions(
   request: GuiHelperSpawnRequest,
-  systemPromptFile?: string
+  systemPromptFile?: string,
+  kit?: GuiHelperLspKit
 ): MaestroSessionOpts {
   return {
     cwd: request.cwd,
@@ -376,12 +510,23 @@ export function claudeHelperSessionOptions(
     // RETOMAR A MESMA CONVERSA (R6.2): o `--resume` headless do claude. Ausente
     // em ajudante novo — retomar é sempre um pedido explícito.
     ...(request.resumeSessionId ? { resumeSessionId: request.resumeSessionId } : {}),
-    extraArgs: claudeHelperArgs()
+    // A CERCA PRIMEIRO, o kit depois: `--disallowedTools` e `--allowedTools`
+    // convivem no mesmo spawn (medido), e a ordem é a da leitura — o que o
+    // ajudante NÃO pode fazer é a primeira coisa dita.
+    extraArgs: [...claudeHelperArgs(), ...(kit?.args ?? [])],
+    ...(kit?.env ? { extraEnv: kit.env } : {})
   }
 }
 
-/** As opções do helper CODEX, com a cerca DUPLA do D5 e o thread já sem prefixo. */
-export function codexHelperSessionOptions(request: GuiHelperSpawnRequest): CodexSessionOpts {
+/** As opções do helper CODEX, com a cerca DUPLA do D5 e o thread já sem prefixo.
+ *  O kit (R14/L3) segue a mesma regra do claude: vem do armador, e sem ele nada
+ *  muda. No codex a ordem é garantida pelo protocolo — o `app-server` responde o
+ *  `initialize` (com os `mcp_servers` do argv já lidos) antes de qualquer
+ *  `thread/start`, então o briefing nunca chega antes do catálogo. */
+export function codexHelperSessionOptions(
+  request: GuiHelperSpawnRequest,
+  kit?: GuiHelperLspKit
+): CodexSessionOpts {
   const threadId = codexHelperThreadId(request.resumeSessionId)
   return {
     cwd: request.cwd,
@@ -394,28 +539,71 @@ export function codexHelperSessionOptions(request: GuiHelperSpawnRequest): Codex
     // thread/start — e o MESMO `base` do codexSession leva a cerca ao
     // thread/resume, então retomar não reabre a porta do subagente nativo.
     ...(threadId ? { resumeSessionId: threadId } : {}),
-    extraArgs: codexHelperArgs(),
+    extraArgs: [...codexHelperArgs(), ...(kit?.args ?? [])],
+    ...(kit?.env ? { extraEnv: kit.env } : {}),
     suppressNativeAgents: true
+  }
+}
+
+/**
+ * O DESCARTE COM REVOGAÇÃO — o único caminho de saída dos dois adaptadores.
+ *
+ * O motor chama `dispose()` em TODO desfecho (settle de done/failed/interrupted/
+ * cancelled, o discard do interrompido, a re-tentativa e o descarte imediato de
+ * um processo que já nasceu assentado), e por contrato ele pode chamar mais de
+ * uma vez. Então esta é a costura certa para o token morrer: uma passagem só,
+ * kill antes de revogar (bearer cortado embaixo de um pedido em voo devolveria
+ * 401 ao ajudante em vez de silêncio) e revogação garantida mesmo se o kill
+ * estourar.
+ */
+export function guiHelperKitDisposer(
+  deps: GuiHelperAdapterDeps,
+  request: GuiHelperSpawnRequest,
+  kit: GuiHelperLspKit | undefined,
+  kill: () => void
+): () => void {
+  let revoked = false
+  return () => {
+    try {
+      kill()
+    } finally {
+      if (!revoked) {
+        revoked = true
+        disarmHelperLsp(deps, request, kit)
+      }
+    }
   }
 }
 
 export function createClaudeHelperAdapter(deps: GuiHelperAdapterDeps) {
   return (request: GuiHelperSpawnRequest, emit: (event: GuiHelperEvent) => void): GuiHelperProcess => {
     deps.prepareSeat?.(request.seat, 'claude')
-    const file = deps.systemPromptFile(`helper-${request.helperId}.system.md`, GUI_HELPER_PERSONA)
-    const session = new MaestroSession(
-      claudeHelperSessionOptions(request, file),
-      (evt) => {
-        const translated = guiHelperEventFor(evt)
-        if (translated) emit(translated)
-      }
-    )
+    // O KIT ANTES DO PROCESSO: as flags dele entram no argv, e o argv é lido no
+    // nascimento — depois do spawn não há mais onde encaixar ferramenta.
+    const kit = armGuiHelperKit(deps, request)
+    const persona = guiHelperPersonaFor(kit !== undefined)
+    const file = deps.systemPromptFile(`helper-${request.helperId}.system.md`, persona)
+    let session: MaestroSession
+    try {
+      session = new MaestroSession(
+        claudeHelperSessionOptions(request, file, kit),
+        (evt) => {
+          const translated = guiHelperEventFor(evt)
+          if (translated) emit(translated)
+        }
+      )
+    } catch (error) {
+      // Processo que não nasceu nunca devolve `dispose` ao motor: sem esta
+      // revogação o bearer ficaria válido para sempre, sem dono.
+      disarmHelperLsp(deps, request, kit)
+      throw error
+    }
     // A persona por arquivo pode falhar (disco cheio, userData sumindo): o
     // contrato então viaja COLADO no pedido — nunca some em silêncio.
-    session.send(file ? request.prompt : `${GUI_HELPER_PERSONA}\n\n---\n\n${request.prompt}`)
+    session.send(file ? request.prompt : `${persona}\n\n---\n\n${request.prompt}`)
     return {
       send: (text) => session.send(text),
-      dispose: () => session.kill()
+      dispose: guiHelperKitDisposer(deps, request, kit, () => session.kill())
     }
   }
 }
@@ -423,20 +611,28 @@ export function createClaudeHelperAdapter(deps: GuiHelperAdapterDeps) {
 export function createCodexHelperAdapter(deps: GuiHelperAdapterDeps) {
   return (request: GuiHelperSpawnRequest, emit: (event: GuiHelperEvent) => void): GuiHelperProcess => {
     deps.prepareSeat?.(request.seat, 'codex')
-    const session = new CodexSession(
-      codexHelperSessionOptions(request),
-      GUI_HELPER_PERSONA,
-      (evt) => {
-        const translated = guiHelperEventFor(evt)
-        if (translated) emit(translated)
-      }
-    )
+    const kit = armGuiHelperKit(deps, request)
+    let session: CodexSession
+    try {
+      session = new CodexSession(
+        codexHelperSessionOptions(request, kit),
+        guiHelperPersonaFor(kit !== undefined),
+        (evt) => {
+          const translated = guiHelperEventFor(evt)
+          if (translated) emit(translated)
+        }
+      )
+    } catch (error) {
+      disarmHelperLsp(deps, request, kit)
+      throw error
+    }
     session.send(request.prompt)
     return {
       send: (text) => session.send(text),
       // O `app-server` do codex NUNCA encerra sozinho ao fim do turno (sonda
-      // probe-helper-matrix §6): o kill é obrigatório em todo desfecho.
-      dispose: () => session.kill()
+      // probe-helper-matrix §6): o kill é obrigatório em todo desfecho — e é
+      // nele que o bearer deste ajudante morre.
+      dispose: guiHelperKitDisposer(deps, request, kit, () => session.kill())
     }
   }
 }

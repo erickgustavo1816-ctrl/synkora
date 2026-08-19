@@ -35,13 +35,23 @@ import { startMcpServer } from '../.tmp/mcp-dual-era-test/mcpServer.js'
 
 const LEGACY_VERSION = '2025-11-25'
 const MODERN_VERSION = '2026-07-28'
-const PLANNER_TOOLS = Object.freeze([
+const PLAN_TOOLS = Object.freeze([
   'delete_plan',
   'get_plan',
   'list_plans',
   'propose_plan',
   'update_plan'
 ])
+/** R14: o kit de CÓDIGO entra no catálogo dos três chats. Ele aparece aqui
+ *  porque a propriedade medida neste arquivo é "as duas eras recebem o MESMO
+ *  catálogo" — e o catálogo cresceu. */
+const LSP_TOOLS = Object.freeze([
+  'lsp_definition',
+  'lsp_diagnostics',
+  'lsp_hover',
+  'lsp_references'
+])
+const PLANNER_TOOLS = Object.freeze([...PLAN_TOOLS, ...LSP_TOOLS].sort())
 
 const ERAS = Object.freeze([
   { era: 'legacy', mode: 'legacy', version: LEGACY_VERSION },

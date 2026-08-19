@@ -30,6 +30,17 @@ import {
 // A régua do PAPEL do pane (dev × reviewer × ajudante) é a mesma que o spawn
 // usa — a integração é do DEV, e ela sai do endereço, nunca de um palpite.
 import { guiMissionRoleOf } from './guiMissionContracts'
+// R14 — o kit de CÓDIGO (design DESIGN_COPIA_E_LSP_R14, seção L2). Mesma
+// doutrina do bloco acima: os TETOS que a descrição ensina ao agente saem do
+// módulo que os aplica, nunca de uma cópia à mão.
+import {
+  LSP_DIAGNOSTICS_FILES_MAX,
+  LSP_DIAGNOSTICS_ITEM_CAP,
+  LSP_LOCATIONS_ITEM_CAP,
+  lspExtensionsLabel,
+  type GuiLspToolkit
+} from './guiLspTools'
+import { LSP_DIAGNOSTICS_CEILING_MS } from './lsp/lspSession'
 
 const requireFromMain = createRequire(
   typeof __filename === 'string' ? __filename : join(process.cwd(), 'package.json')
@@ -40,11 +51,16 @@ const requireFromMain = createRequire(
 // identifica QUEM chama (a role, o projeto, a missão, o worktree) e as
 // ferramentas agem no contexto certo. HTTP em 127.0.0.1, porta aleatória.
 //
-// DOIS catálogos, cada um fechado no seu retorno antecipado (ver `buildServer`):
-// `gui-planner` recebe o kit de PLANOS e `gui-delegator` o kit de AJUDANTES.
-// Um pane tem UM dos dois, nunca os dois, e qualquer outra identidade recebe um
-// servidor VAZIO — nunca um erro. O antigo catálogo por papel (maestro/dev/
-// review/qa/ajudante) morreu com a era F6.
+// Catálogos fechados por retorno antecipado (ver `buildServer`): `gui-planner`
+// recebe o kit de PLANOS, `gui-delegator` o de AJUDANTES (+ integração, só no
+// chat de dev), `gui-release` o de RELEASE e `ajudante` SÓ o de código. Um pane
+// tem UM desses, nunca dois, e qualquer outra identidade recebe um servidor
+// VAZIO — nunca um erro. O antigo catálogo por papel (maestro/dev/review/qa)
+// morreu com a era F6.
+//
+// O kit de CÓDIGO (R14) é a única exceção à regra "um papel, um kit": os quatro
+// papéis acima o recebem, porque ler código não é autoridade sobre nada — e é
+// justamente por isso que ele pode ser o catálogo INTEIRO do ajudante.
 
 /** Implementada em index.ts — as tools delegam para o harness real. */
 export interface McpApi {
@@ -106,6 +122,21 @@ export interface McpApi {
   releaseStatus?: (id: PaneIdentity) => string
   /** Sobe a versão desta conversa para a main (o clique do dono é o mandato). */
   releaseRun?: (id: PaneIdentity) => Promise<string>
+
+  // ——— kit de CÓDIGO (R14, 2026-08-19 — os TRÊS chats e os AJUDANTES) ———
+  /**
+   * O produto do `buildGuiLspTools`: as quatro perguntas ao servidor de
+   * linguagem da raiz do pane. É o ÚNICO membro do `McpApi` que não é função —
+   * de propósito: o kit é o mesmo objeto para quatro papéis, e cada método já
+   * escreve a própria caixa-preta com a raiz junto (o proxy de instrumentação
+   * do index.ts só enxerga membros-função, e um evento de LSP sem a RAIZ não
+   * explicaria nada numa missão já integrada).
+   *
+   * Ausente = as tools continuam no catálogo e respondem com a receita. Tool
+   * que some do catálogo entre um boot e outro é o pior desfecho possível: o
+   * agente racionaliza a ausência em vez de ler o motivo.
+   */
+  lsp?: GuiLspToolkit
 }
 
 /** Um helper pedido no `delegate` (contrato D2; validação zod no catálogo). */
@@ -148,6 +179,103 @@ const INTEGRATION_ENGINE_OFF =
  *  release que não aconteceu. */
 const RELEASE_ENGINE_OFF =
   'o motor de release ainda não está ligado — reinicie o app para reabrir esta conversa com as ferramentas de release. NADA subiu para a main: não relate release nenhum ao dono.'
+
+/** Mesma doutrina para o kit de código (R14): a ausência do motor é RESULTADO
+ *  legível, e a frase mata a racionalização "olhei o código e está limpo". */
+const LSP_ENGINE_OFF =
+  'o motor de linguagem ainda não está ligado — reinicie o app para reabrir esta conversa com as ferramentas de código. NADA foi analisado: não conclua que o código está limpo.'
+
+/**
+ * O KIT DE CÓDIGO (R14, seção L2 do design). Ele é o único kit COMPARTILHADO
+ * entre papéis: os três chats (`gui-planner`, `gui-delegator`, `gui-release`) e
+ * o AJUDANTE recebem exatamente estas quatro tools, e o ajudante NÃO recebe
+ * mais nada — frota que abre frota continua impossível MECANICAMENTE, porque o
+ * early-return dele não registra `delegate` linha nenhuma.
+ *
+ * As descrições dizem, em voz alta e sem exceção: a BASE das posições (1-based
+ * nos dois sentidos), o CONFINAMENTO à raiz da conversa e os TETOS reais —
+ * descrição que mente sobre o próprio limite é pior que descrição ausente.
+ */
+function registerLspKit(server: McpServer, api: McpApi, identity: PaneIdentity): void {
+  const ceilingSeconds = Math.round(LSP_DIAGNOSTICS_CEILING_MS / 1000)
+
+  server.registerTool(
+    'lsp_diagnostics',
+    {
+      description: `Os PROBLEMAS que o servidor de linguagem enxerga no código desta conversa — os mesmos erros e avisos do typecheck, sem rodar build nenhum e sem esperar o gate. Chame DEPOIS de editar e ANTES de dizer que terminou. SEM \`files\`, o alvo são os arquivos MODIFICADOS da raiz desta conversa (o que você mexeu até agora); com \`files\`, os caminhos que você pedir. Cada problema sai numa linha \`arquivo:linha:coluna severidade código mensagem\`, com linha e coluna 1-BASED (a primeira linha é 1) e severidade em erro/aviso/info/dica. Tetos ditos em voz alta e sempre repetidos no recibo quando cortam: ${LSP_DIAGNOSTICS_ITEM_CAP} problemas e ${LSP_DIAGNOSTICS_FILES_MAX} arquivos por chamada, e ${ceilingSeconds}s de espera pelo servidor. Só entra o que o servidor fala (${lspExtensionsLabel()}) — o que sobrar é nomeado no recibo. O disco é RELIDO a cada chamada: salve o arquivo antes de perguntar.`,
+      inputSchema: {
+        files: z
+          .array(z.string().min(1).max(400))
+          .max(LSP_DIAGNOSTICS_FILES_MAX)
+          .optional()
+          .describe(
+            'caminhos de ARQUIVO relativos à raiz desta conversa (o worktree da missão). Caminho fora da raiz é recusado, e a recusa diz qual raiz vale. Ausente = os arquivos que você modificou'
+          )
+      }
+    },
+    async ({ files }) =>
+      api.lsp ? text(await api.lsp.diagnostics(identity, files)) : text(LSP_ENGINE_OFF)
+  )
+
+  server.registerTool(
+    'lsp_definition',
+    {
+      description:
+        'ONDE o símbolo desta posição foi DEFINIDO. É a pergunta que substitui a caçada por grep: uma resposta exata em vez de trinta ocorrências do mesmo nome. A resposta pode apontar para FORA da raiz (uma definição em node_modules ou num `lib.d.ts` é resposta legítima) e nesse caso o caminho vem absoluto.',
+      inputSchema: lspPositionSchema()
+    },
+    async ({ file, line, column }) =>
+      api.lsp ? text(await api.lsp.definition(identity, file, line, column)) : text(LSP_ENGINE_OFF)
+  )
+
+  server.registerTool(
+    'lsp_references',
+    {
+      description: `QUEM usa o símbolo desta posição, a declaração incluída. Chame ANTES de renomear ou mudar assinatura: é assim que você descobre o que vai quebrar, sem depender de o build reclamar depois. Teto de ${LSP_LOCATIONS_ITEM_CAP} posições por chamada, dito no recibo quando corta.`,
+      inputSchema: lspPositionSchema()
+    },
+    async ({ file, line, column }) =>
+      api.lsp ? text(await api.lsp.references(identity, file, line, column)) : text(LSP_ENGINE_OFF)
+  )
+
+  server.registerTool(
+    'lsp_hover',
+    {
+      description:
+        'O que o servidor SABE sobre esta posição: o tipo resolvido, a assinatura e a documentação do símbolo. Use para confirmar o tipo REAL antes de escrever contra ele — ler a declaração à mão em três arquivos é o caminho longo para a mesma resposta.',
+      inputSchema: lspPositionSchema()
+    },
+    async ({ file, line, column }) =>
+      api.lsp ? text(await api.lsp.hover(identity, file, line, column)) : text(LSP_ENGINE_OFF)
+  )
+}
+
+/** As três consultas pontuais compartilham a MESMA porta de entrada: um
+ *  arquivo dentro da raiz e uma posição 1-based. O `.min(1)` do schema é o que
+ *  faz a base ser mecânica e não um pedido educado na descrição. */
+function lspPositionSchema(): {
+  file: z.ZodString
+  line: z.ZodNumber
+  column: z.ZodNumber
+} {
+  return {
+    file: z
+      .string()
+      .min(1)
+      .max(400)
+      .describe(
+        'caminho do arquivo RELATIVO à raiz desta conversa (o worktree da missão). Fora da raiz é recusado, e a recusa nomeia a raiz que vale'
+      ),
+    line: z.number().int().min(1).describe('linha 1-BASED: a primeira linha do arquivo é 1'),
+    column: z
+      .number()
+      .int()
+      .min(1)
+      .describe(
+        'coluna 1-BASED: a primeira coluna é 1. Aponte para DENTRO do nome do símbolo, não para o espaço antes dele'
+      )
+  }
+}
 
 function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   // SEM cacheHints de tools/list (CHECK 14, 2026-08-07): o hint de cache da
@@ -345,6 +473,10 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
         text(api.deletePlan(identity, planId, expectedUpdatedAt))
     )
 
+    // O planejador também LÊ código (R14): o recorte de um plano nasce melhor
+    // quando quem o escreve consegue perguntar onde uma coisa é usada em vez de
+    // adivinhar o tamanho da mudança.
+    registerLspKit(server, api, identity)
     return finishCatalog()
   }
 
@@ -557,6 +689,10 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       )
     }
 
+    // R14 — o kit de CÓDIGO. Fica FORA do `if` do dev de propósito: reviewer e
+    // ajudante precisam achar o problema exato tanto quanto o dev; o que é do
+    // dev é a INTEGRAÇÃO, não a leitura.
+    registerLspKit(server, api, identity)
     return finishCatalog()
   }
 
@@ -581,13 +717,34 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       async () =>
         api.releaseRun ? text(await api.releaseRun(identity)) : text(RELEASE_ENGINE_OFF)
     )
+    // R14: a conversa que sobe a versão também lê código — um conflito
+    // resolvido às pressas na branch da versão é exatamente o momento de
+    // perguntar ao servidor de linguagem se ainda compila.
+    registerLspKit(server, api, identity)
+    return finishCatalog()
+  }
+
+  // ————— O AJUDANTE (R14, seção L2/L3 do design) — catálogo SÓ-LSP —————
+  //
+  // Até a R14 o ajudante nascia sem MCP nenhum, e a cerca do D1 era a AUSÊNCIA
+  // de token. Agora ele ganha um token próprio (emitido pelo MOTOR, nunca pelo
+  // chamador) com este papel — e a cerca deixa de ser ausência para virar
+  // CATÁLOGO: aqui dentro não existe `delegate`, não existe plano, não existe
+  // release e não existe integração. Frota que abre frota continua impossível
+  // MECANICAMENTE, e agora por uma linha que se pode ler.
+  //
+  // O papel é o `ajudante` que JÁ existe no union do hub.ts — a onda 1 falava
+  // num papel novo `gui-helper`, mas inventar um papel para dizer o que o
+  // existente já diz só duplicaria a régua.
+  if (identity.role === 'ajudante') {
+    registerLspKit(server, api, identity)
     return finishCatalog()
   }
 
   // Qualquer OUTRA identidade recebe este servidor com catálogo VAZIO — não
   // um erro: o pane continua conversando, sem ferramenta nenhuma. Era a
   // resposta honesta para um papel que não existe mais (a era F6 registrava
-  // aqui os catálogos de maestro/dev/review/qa/ajudante).
+  // aqui os catálogos de maestro/dev/review/qa).
   return finishCatalog()
 }
 

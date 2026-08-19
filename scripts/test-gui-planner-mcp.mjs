@@ -35,15 +35,28 @@ import { Hub } from '../.tmp/gui-planner-mcp-test/hub.js'
 import { armGuiPlannerMcp, GUI_PLANNER_TOKEN_ENV } from '../.tmp/gui-planner-mcp-test/guiPlannerMcp.js'
 import { startMcpServer } from '../.tmp/gui-planner-mcp-test/mcpServer.js'
 
-/** O catálogo INTEIRO do Synkora depois da limpa. Lista literal de propósito:
- *  ferramenta nova aqui é decisão de produto e tem que quebrar o teste. */
-const PLANNER_TOOLS = Object.freeze([
+/** O kit de PLANOS. Lista literal de propósito: ferramenta nova aqui é decisão
+ *  de produto e tem que quebrar o teste. */
+const PLAN_TOOLS = Object.freeze([
   'delete_plan',
   'get_plan',
   'list_plans',
   'propose_plan',
   'update_plan'
 ])
+
+/** O kit de CÓDIGO (R14): as quatro perguntas ao servidor de linguagem. É o
+ *  único kit COMPARTILHADO do app — os três chats e o ajudante o recebem —,
+ *  porque ler código não é autoridade sobre nada. */
+const LSP_TOOLS = Object.freeze([
+  'lsp_definition',
+  'lsp_diagnostics',
+  'lsp_hover',
+  'lsp_references'
+])
+
+/** O que o pane de PLANEJAMENTO enxerga hoje, inteiro. */
+const PLANNER_TOOLS = Object.freeze([...PLAN_TOOLS, ...LSP_TOOLS].sort())
 
 /** Hub REAL com as dependências mínimas que ele exige (o registro de
  *  identidade não usa nenhuma delas — é justamente o ponto).
@@ -237,7 +250,9 @@ test('QUALQUER outra identidade recebe um servidor VAZIO — não um erro', asyn
   const { url, served } = await serverIn(t, hub)
 
   // os papéis do catálogo legado, um a um: nenhum enxerga uma linha do kit.
-  for (const role of ['maestro', 'dev', 'review', 'qa', 'ajudante', 'livre']) {
+  // ('ajudante' saiu desta lista na R14 e ganhou o caso próprio abaixo — ele
+  // deixou de ser um papel morto e passou a ser o AJUDANTE de verdade.)
+  for (const role of ['maestro', 'dev', 'review', 'qa', 'livre']) {
     const token = `token-${role}`
     hub.registerPane(token, {
       paneId: `pane-${role}`,
@@ -257,9 +272,27 @@ test('QUALQUER outra identidade recebe um servidor VAZIO — não um erro', asyn
   // nenhuma dessas construções serviu ferramenta alguma.)
   assert.deepEqual(
     [...new Set(served.map((entry) => entry.paneId))].sort(),
-    ['pane-ajudante', 'pane-dev', 'pane-livre', 'pane-maestro', 'pane-qa', 'pane-review']
+    ['pane-dev', 'pane-livre', 'pane-maestro', 'pane-qa', 'pane-review']
   )
   for (const entry of served) assert.deepEqual(entry.tools, [])
+})
+
+test('R14: o AJUDANTE recebe o kit de CÓDIGO e nenhuma linha do kit de planos', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { url } = await serverIn(t, hub)
+  hub.registerPane('token-ajudante', {
+    paneId: 'gui-helper-abcd1234-1',
+    projectId: 'universo-1',
+    role: 'ajudante',
+    cwd: root
+  })
+  const tools = await toolNames(url, 'token-ajudante', 'ajudante')
+  assert.deepEqual(tools, LSP_TOOLS)
+  // A cerca do ajudante mudou de NATUREZA (era ausência de token, virou
+  // catálogo) mas não de tamanho: plano continua fora do alcance dele.
+  for (const forbidden of PLAN_TOOLS) {
+    assert.equal(tools.includes(forbidden), false, `o ajudante enxergou ${forbidden}`)
+  }
 })
 
 test('o planejador de um universo continua enxergando só o kit de planos', async (t) => {

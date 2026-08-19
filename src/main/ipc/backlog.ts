@@ -35,6 +35,9 @@ export interface BacklogIpcExtras {
     projectPath: string,
     version: Version
   ): version is Version & { branch: string; worktree: string }
+  /** R14: derruba a sessão LSP com `cwd` na raiz ANTES de remover o worktree
+   *  da versão — processo com cwd na pasta trava a remoção no Windows. */
+  invalidateLspRoot?(root: string): void
 }
 
 export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): void {
@@ -46,7 +49,8 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
   const {
     emitBacklogChanged,
     releaseVersionImpl,
-    versionIsolationIsValid
+    versionIsolationIsValid,
+    invalidateLspRoot
   } = extras
   ipcMain.handle('backlog:releaseVersion', (e, versionId: string) => {
     return releaseVersionImpl(versionId, 'user')
@@ -125,6 +129,7 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
       if (!expectedHead) {
         return `não excluí ${version.name}: não consegui provar o commit atual do worktree da versão`
       }
+      invalidateLspRoot?.(version.worktree)
       if (
         !removeWorktreeAndBranch(
           project.path,

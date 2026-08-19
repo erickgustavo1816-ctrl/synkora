@@ -91,6 +91,11 @@ import {
   type McpApi,
   type McpServerHandle
 } from './mcpServer'
+// R14 — o motor de linguagem (onda 1) e as tools que o expõem aos chats
+// (onda 2). O manager é o dono das sessões: uma por RAIZ, aberta sob demanda,
+// derrubada por ociosidade, por worktree removido e no quit.
+import { LspManager, tsServerLaunch } from './lsp/lspManager'
+import { buildGuiLspTools } from './guiLspTools'
 import { SynVoiceService } from './synVoice'
 import { WindowsTextInput } from './windowsTextInput'
 import { WindowsGlobalActivation } from './windowsGlobalActivation'
@@ -2965,6 +2970,10 @@ app.whenReady().then(async () => {
     }
     // Servidor de teste do dono no worktree da versão fecha antes do merge.
     if (version.worktree) closeTestServersUnder(version.worktree)
+    // Pelo mesmo motivo, o servidor de LINGUAGEM daquela raiz (R14): o
+    // worktree da versão some na limpeza, e um processo com `cwd` lá dentro
+    // trava a remoção no Windows.
+    if (version.worktree) lspManager.invalidate(version.worktree)
     // R-5 DA LIMPA F6: o gate de release do plano mestre saiu SEM substituto.
     // O que continua barrando uma publicação prematura são as travas reais —
     // fila de integração, worktree limpo, missão viva na versão e item de
@@ -3250,8 +3259,59 @@ app.whenReady().then(async () => {
     guiSessions?.note(paneId, text).ok === true
   const announceToGuiPane = (paneId: string, text: string): boolean =>
     guiSessions?.announce(paneId, text).ok === true
+  // R14 — O MOTOR DE LINGUAGEM. Uma sessão por RAIZ (o worktree da missão ou a
+  // raiz do projeto), aberta sob demanda pela primeira pergunta do chat. O
+  // lançador de produção resolve o `typescript-language-server` do app e o roda
+  // sobre o próprio binário do Electron em modo node: o dono não precisa ter
+  // node instalado, e nenhuma janela nasce.
+  //
+  // Pacote ausente NÃO derruba nada: o `tsServerLaunch` levanta um `LspError`
+  // com o comando que instala, e o recibo da tool mostra a frase ao agente.
+  const lspManager = new LspManager({
+    launcherFor: (root) => tsServerLaunch(root),
+    onProtocolError: (message) =>
+      blackbox.record({ cat: 'mcp', event: 'lsp-protocol', actor: 'harness', err: message })
+  })
+  const guiLspTools = buildGuiLspTools({
+    manager: lspManager,
+    // A MESMA fonte do trilho de diff do dono, e pelo mesmo caminho: o
+    // gitWorker. Git no main thread foi a causa raiz das travadas de 08-04, e
+    // uma tool de chat é exatamente o tipo de chamada que voltaria a pagá-las.
+    //
+    // Sem `baseBranch` o resumo diffa contra `HEAD`: o alvo são as mudanças NÃO
+    // COMMITADAS mais os arquivos novos — que é o que "o que eu mexi até agora"
+    // significa para quem está editando. Arquivo DELETADO sai da lista: pedir
+    // diagnóstico de um arquivo que não existe mais só produziria um "não
+    // existe" que o agente leria como problema de código.
+    changedFiles: async (root) => {
+      const summary = await gitOff('missionWorkspaceSummary', root)
+      return (summary?.files ?? [])
+        .filter((file) => file.status !== 'D')
+        .map((file) => file.path)
+    },
+    log: (entry) =>
+      blackbox.record({
+        cat: 'mcp',
+        event: entry.event,
+        actor: 'harness',
+        ids: {
+          paneId: entry.paneId,
+          ...(entry.projectId ? { projectId: entry.projectId } : {}),
+          ...(entry.missionId ? { missionId: entry.missionId } : {})
+        },
+        detail: { root: entry.root, ...entry.detail },
+        ...(entry.err ? { err: entry.err } : {})
+      })
+  })
   const killMissionGuiPanes = (missionId: string): void => {
     guiSessions?.killWhere((paneId) => isGuiMissionPaneId(paneId, missionId))
+    // O servidor de linguagem tem `cwd` DENTRO do worktree, igual aos chats:
+    // este ponto é chamado logo antes de toda remoção de worktree de missão (o
+    // merge da fila e o "excluir de vez"), e um processo segurando a pasta é o
+    // que trava a limpeza do git no Windows. Derrubar aqui é o par exato do
+    // kill dos panes — a próxima pergunta em outra raiz sobe um servidor novo.
+    const worktree = missions.get(missionId)?.worktree
+    if (worktree) lspManager.invalidate(worktree)
   }
   // Onda C: os chats do PROJETO (hoje só o de planejamento, `gui-plan-<id8>`)
   // rodam na RAIZ do universo — morrem quando essa raiz sai debaixo deles
@@ -3382,6 +3442,23 @@ app.whenReady().then(async () => {
       const found = seats.get(seat.seatId)
       if (found) seats.preseed(found)
     },
+    // R14 (L3) — O KIT SÓ-LSP DE CADA AJUDANTE. Quem arma é o MOTOR, com o que o
+    // REGISTRO do ajudante diz (worktree, projeto, delegador): a cerca do D1
+    // continua fechada porque o `delegate` não tem por onde pedir ferramenta. O
+    // bearer nasce no spawn e morre no desfecho (`guiHelperLspMcp`).
+    lsp: {
+      hub,
+      port: () => mcpPort,
+      configRoot: () => join(app.getPath('userData'), 'mcp')
+    },
+    journalLsp: (entry) =>
+      blackbox.record({
+        cat: 'pane',
+        event: entry.event,
+        actor: 'harness',
+        ids: { paneId: entry.paneId, taskId: entry.helperId },
+        detail: entry.detail
+      }),
     onChange: (change) => guiSessions?.noteHelperChange(change),
     log: (entry) =>
       blackbox.record({
@@ -3514,6 +3591,11 @@ app.whenReady().then(async () => {
       id.missionId
         ? missionEngine.runMissionIntegration(id.projectId, id.missionId)
         : 'esta conversa não está ligada a uma missão — nada foi mesclado.',
+    // R14 — o kit de CÓDIGO dos quatro papéis. Objeto, não função: cada método
+    // já escreve a própria caixa-preta com a RAIZ junto (ver o comentário do
+    // `McpApi.lsp`), então o proxy de instrumentação abaixo o deixa passar
+    // intacto de propósito.
+    lsp: guiLspTools,
     hub
   }
 
@@ -3940,6 +4022,11 @@ app.whenReady().then(async () => {
     // reabrir recebe o aviso com os dois verbos.
     guiHelperEngine.interruptAll('o app foi fechado')
     guiSessionRegistry.killAll()
+    // R14: os servidores de linguagem morrem junto com os chats. O
+    // `disposeAll` pede tchau pelo protocolo antes de matar — o
+    // typescript-language-server tem o tsserver como FILHO, e matar só o pai
+    // deixaria um órfão segurando o worktree.
+    lspManager.disposeAll()
   })
   // Cmd/Ctrl+K: só depois do registro GUI existir, porque o índice de
   // históricos liga sessionId aos panes/mission tabs que podem remontá-los.
@@ -3963,7 +4050,8 @@ app.whenReady().then(async () => {
   registerBacklogIpc(ctx, {
     emitBacklogChanged,
     releaseVersionImpl,
-    versionIsolationIsValid
+    versionIsolationIsValid,
+    invalidateLspRoot: (root) => lspManager.invalidate(root)
   })
   registerMaestroIpc(ctx, {
     engine: maestroEngine,

@@ -25,6 +25,7 @@ import { claudeMcpArgs, writeClaudeMcpConfig } from './mcpServer'
 import { GUI_PLANNER_TOKEN_ENV, guiPlannerCodexArgs } from './guiPlannerMcp'
 import type { GuiPlannerMcp, GuiPlannerMcpDeps } from './guiPlannerMcp'
 import { guiMissionRoleOf, missionTypeOf } from './guiMissionContracts'
+import { LSP_TOOL_NAMES } from './guiLspTools'
 
 /** A cerca anti-subagente-nativo do claude (sonda 2026-08-18: cerca de 1-2
  *  nomes NÃO basta — o modelo desvia por RemoteTrigger etc.; esta lista de 12
@@ -117,7 +118,7 @@ export function guiPaneToolKind(
 }
 
 /**
- * As ONZE ferramentas internas dos papéis que compartilham este arm
+ * As QUINZE ferramentas internas dos papéis que compartilham este arm
  * (`gui-delegator` e, desde a R10, `gui-release`), no nome que o claude usa
  * (`mcp__<servidor>__<tool>`; o servidor é `synkora`, escrito por
  * `writeClaudeMcpConfig`). Elas são PRÉ-SANCIONADAS: aprovar a ferramenta do
@@ -161,7 +162,13 @@ export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   // R10 — o chat de RELEASE. Mesma doutrina: o botão do dono abriu a conversa;
   // um card de permissão sobre a ferramenta do próprio gesto seria atrito puro.
   'mcp__synkora__release_status',
-  'mcp__synkora__release_run'
+  'mcp__synkora__release_run',
+  // R14 — o kit de CÓDIGO, derivado da fonte em vez de copiado: `lsp_*` é a
+  // única família que os QUATRO papéis compartilham, e uma lista escrita à mão
+  // aqui é exatamente como uma tool nova volta a levantar card de permissão no
+  // gesto que o dono acabou de pedir. Ler código não decide nada — pedir
+  // aprovação para isso seria atrito puro.
+  ...LSP_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`)
 ]
 
 /** Flags do claude: config por arquivo + strict + a cerca + a pré-sanção. */

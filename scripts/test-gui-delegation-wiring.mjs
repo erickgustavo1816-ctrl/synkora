@@ -27,6 +27,18 @@ import * as cards from '../.tmp/gui-delegation-wiring-test/guiHelperCards.js'
 import * as sessions from '../.tmp/gui-delegation-wiring-test/guiSessions.js'
 import * as wiring from '../.tmp/gui-delegation-wiring-test/guiDelegationWiring.js'
 import * as engineModule from '../.tmp/gui-delegation-wiring-test/guiHelperSessions.js'
+// R14 (L3): o REGISTRO de identidade de verdade (nada de hub dublê — quem
+// autentica o bearer do ajudante no servidor MCP é este) e a convenção de paneId
+// de missão, que o endereço do ajudante não pode imitar.
+import * as hubModule from '../.tmp/gui-delegation-wiring-test/hub.js'
+import * as contracts from '../.tmp/gui-delegation-wiring-test/guiMissionContracts.js'
+// O kit SÓ-LSP (módulo NOVO da R14) entra pela porta tolerante, no mesmo
+// espírito do namespace acima e um passo além: import estático de arquivo
+// AUSENTE derruba a suíte INTEIRA, e ela deixaria de discriminar. Sem o módulo,
+// caem só os testes do kit.
+const lspMcp = await import('../.tmp/gui-delegation-wiring-test/guiHelperLspMcp.js').catch(
+  () => ({})
+)
 
 const {
   GUI_HELPER_CARD_ACTIVITY_MAX,
@@ -54,9 +66,11 @@ const {
 const {
   GUI_HELPERS_STORE_FILE,
   GUI_HELPER_DELIVERY_DIR,
+  GUI_HELPER_LSP_PERSONA_LINE,
   GUI_HELPER_PERSONA,
   GUI_HELPER_RESULT_HEAD_CHARS,
   GuiHelperCatalogCache,
+  armGuiHelperKit,
   buildGuiDelegationApi,
   claudeHelperArgs,
   claudeHelperSessionOptions,
@@ -68,6 +82,8 @@ const {
   guiHelperDeliveryDocument,
   guiHelperDeliveryPath,
   guiHelperEventFor,
+  guiHelperKitDisposer,
+  guiHelperPersonaFor,
   guiHelperResultText,
   guiHelperSpawnText,
   guiHelperStatusText,
@@ -677,13 +693,20 @@ test('o helper claude nasce com a cerca de 13 nomes, importada da fonte única',
   assert.match(wiring, /CLAUDE_NATIVE_AGENT_FENCE\.join\(','\)/u)
 })
 
-test('o helper codex nasce com a cerca DUPLA e sem nenhuma ferramenta Synkora', () => {
+test('o helper codex nasce com a cerca DUPLA — e o kit dele nunca é o do DELEGADOR', () => {
   assert.deepEqual(codexHelperArgs(), ['-c', 'features.multi_agent=false'])
   const wiring = source('src/main/guiDelegationWiring.ts')
   assert.match(wiring, /suppressNativeAgents: true/u, 'falta o suspensório por thread')
-  // SEM CADEIA: nenhum adaptador monta config de MCP para o ajudante.
-  assert.doesNotMatch(wiring, /extraEnv:/u)
-  assert.doesNotMatch(wiring, /mcp_servers\.synkora/u)
+  // R14 (L3): a cerca do D1 mudou de FORMA, não de tamanho. O ajudante passou a
+  // receber um kit — e a metade que importa continua fechada: nenhum adaptador
+  // monta o kit de DELEGAÇÃO nem pré-sanciona uma ferramenta de frota. Ele não
+  // pode abrir ajudante nem que queira; até o catálogo do papel dele recusa.
+  assert.doesNotMatch(
+    wiring,
+    /armGuiDelegateMcp|guiDelegateClaudeArgs|guiDelegateCodexArgs/u,
+    'o adaptador do ajudante montou o kit do delegador — frota abrindo frota'
+  )
+  assert.doesNotMatch(wiring, /mcp__synkora__delegate/u, 'delegate pré-sancionado para o ajudante')
 })
 
 test('a conta: mesmo CLI clona o delegador, CLI cruzado cai na primeira LOGADA', () => {
@@ -2406,5 +2429,397 @@ test('R12 — o schema do delegate conta a verdade nova do fast', () => {
     bloco,
     /ausente = desligado/u,
     'a frase da R11 virou mentira quando o painel passou a carimbar'
+  )
+})
+
+// ————— R14 (L3): O KIT SÓ-LSP DO AJUDANTE —————
+//
+// Ordem do dono (19/08): "voltar com o LSP, tanto para agente quanto para
+// sub-agente". O ajudante deixou de nascer mudo — e a cerca do D1 NÃO afrouxou:
+// o `GuiHelperSpawnRequest` continua sem campo de ferramenta, o kit é DERIVADO
+// do registro dentro do adaptador, e o bearer de cada ajudante morre com o
+// processo dele.
+//
+// O que estes testes NÃO fazem: subir CLI. Os adaptadores reais instanciam
+// MaestroSession/CodexSession, então o ciclo de vida do bearer é provado nas
+// DUAS funções que eles usam (`armGuiHelperKit` e `guiHelperKitDisposer`),
+// plugadas no MOTOR de verdade — é ele quem funila os desfechos no `dispose`.
+
+/** Bancada do kit: hub REAL (é ele que autentica o bearer no servidor MCP),
+ *  userData/mcp num diretório temporário e o diário como coletor. */
+function lspBench(options = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'synkora-helper-mcp-'))
+  const hub = new hubModule.Hub({
+    projectPathOf: () => undefined,
+    ensureProjectRuntimeWritable: () => undefined,
+    onEvent: () => undefined
+  })
+  const journal = []
+  const deps = {
+    systemPromptFile: () => undefined,
+    lsp: {
+      hub,
+      port: () => (options.port === undefined ? 41234 : options.port),
+      configRoot: () => dir
+    },
+    journalLsp: (entry) => journal.push(entry)
+  }
+  return { dir, hub, deps, journal }
+}
+
+/** O pedido como o MOTOR o monta (nenhum campo aqui vem do chamador da tool). */
+function spawnRequest(patch = {}) {
+  return {
+    helperId: 'h-1',
+    projectId: 'proj-9',
+    delegatorPaneId: 'gui-dev-abc12345',
+    cwd: 'C:/work/mission',
+    cli: 'claude',
+    model: 'opus[1m]',
+    seat: { seatId: 'seat-1', configDir: 'C:/cfg/claude', name: 'Claude A' },
+    prompt: 'ache o erro exato',
+    ...patch
+  }
+}
+
+/** O delegador que abre a frota nos testes de ciclo de vida. */
+const lspDelegator = {
+  paneId: 'gui-dev-abc12345',
+  projectId: 'proj-9',
+  cwd: 'C:/work/mission',
+  cli: 'claude',
+  model: 'opus[1m]',
+  seatId: 'seat-1'
+}
+
+test('R14 — o ajudante claude nasce com o kit SÓ-LSP derivado do REGISTRO dele', () => {
+  const { hub, deps, journal } = lspBench({ port: 41234 })
+  const request = spawnRequest()
+  const kit = armGuiHelperKit(deps, request)
+  assert.ok(kit, 'o kit não foi armado')
+
+  // 1. A IDENTIDADE: papel do ajudante, raiz = o worktree DELE, delegador junto.
+  const identity = hub.identityByToken(kit.token)
+  assert.ok(identity, 'o bearer não autentica em lugar nenhum')
+  assert.equal(identity.role, 'ajudante', 'o papel é o que decide o catálogo do servidor')
+  assert.equal(identity.cwd, request.cwd, 'a raiz do LSP é o worktree do ajudante')
+  assert.equal(identity.projectId, 'proj-9')
+  assert.equal(identity.delegatorPaneId, request.delegatorPaneId)
+  assert.equal(identity.seatId, 'seat-1')
+  assert.equal(identity.paneId, lspMcp.guiHelperMcpPaneId('h-1'))
+  assert.notEqual(
+    identity.paneId,
+    request.delegatorPaneId,
+    'revogar o ajudante desarmaria o chat que o abriu'
+  )
+
+  // 2. AS FLAGS: config por arquivo, strict, e as QUATRO tools pré-sancionadas.
+  assert.deepEqual(kit.args.slice(0, 3), ['--mcp-config', kit.mcpFile, '--strict-mcp-config'])
+  const allowed = kit.args[kit.args.indexOf('--allowedTools') + 1].split(',')
+  assert.deepEqual(allowed, [...lspMcp.GUI_HELPER_LSP_CLAUDE_ALLOWED_TOOLS])
+  for (const tool of lspMcp.GUI_HELPER_LSP_TOOLS) {
+    assert.ok(allowed.includes(`mcp__synkora__${tool}`), `${tool} fora da pré-sanção`)
+  }
+  assert.equal(
+    allowed.some((name) => /delegate|helper_|plan|integration|release/u.test(name)),
+    false,
+    'frota que abre frota: o kit do ajudante vazou verbo de delegador'
+  )
+
+  // 3. O ARQUIVO que o claude lê no boot: porta certa e o bearer DESTE ajudante.
+  const config = JSON.parse(readFileSync(kit.mcpFile, 'utf8'))
+  assert.equal(config.mcpServers.synkora.url, 'http://127.0.0.1:41234/mcp')
+  assert.equal(config.mcpServers.synkora.headers.Authorization, `Bearer ${kit.token}`)
+
+  // 4. AS OPÇÕES DO SPAWN: a cerca primeiro, o kit depois, e nada de env.
+  const opts = claudeHelperSessionOptions(request, 'C:/prompts/h-1.system.md', kit)
+  assert.deepEqual(opts.extraArgs.slice(0, 2), claudeHelperArgs(), 'a cerca anti-nativo saiu')
+  assert.deepEqual(opts.extraArgs.slice(2), kit.args)
+  assert.equal('extraEnv' in opts, false, 'no claude o bearer mora no ARQUIVO, nunca no env')
+
+  // 5. O DIÁRIO com os dois ids de correlação e a raiz.
+  assert.deepEqual(journal.map((entry) => entry.event), ['helper-lsp-armed'])
+  assert.equal(journal[0].paneId, request.delegatorPaneId)
+  assert.equal(journal[0].helperId, 'h-1')
+  assert.equal(journal[0].detail.root, request.cwd)
+})
+
+test('R14 — o ajudante codex recebe o mesmo servidor pelo `-c`, com o bearer no env', () => {
+  const { hub, deps } = lspBench({ port: 5555 })
+  const request = spawnRequest({
+    helperId: 'h-2',
+    cli: 'codex',
+    model: 'gpt-5.6-sol',
+    seat: { seatId: 'seat-codex', configDir: 'C:/cfg/codex' }
+  })
+  const kit = armGuiHelperKit(deps, request)
+  assert.ok(kit)
+  assert.equal(kit.mcpFile, undefined, 'o codex não escreve config em disco')
+  assert.ok(kit.args.includes('mcp_servers.synkora.url=http://127.0.0.1:5555/mcp'))
+  assert.ok(kit.args.includes('mcp_servers.synkora.bearer_token_env_var=SYNKORA_TOKEN'))
+  // Valores CRUS: o `-c` viaja por `spawn(..., { shell: true })`, que não escapa
+  // nada — uma aspa aqui é comida pelo cmd.exe e o app-server trava no init.
+  for (const arg of kit.args) assert.equal(/["']/u.test(arg), false, arg)
+  assert.deepEqual(kit.env, { SYNKORA_TOKEN: kit.token })
+  assert.equal(hub.identityByToken(kit.token).role, 'ajudante')
+
+  const opts = codexHelperSessionOptions(request, kit)
+  assert.deepEqual(opts.extraArgs.slice(0, 2), codexHelperArgs(), 'o cinto do app-server saiu')
+  assert.deepEqual(opts.extraArgs.slice(2), kit.args)
+  assert.deepEqual(opts.extraEnv, { SYNKORA_TOKEN: kit.token })
+  assert.equal(opts.suppressNativeAgents, true, 'o kit comeu o suspensório da cerca')
+})
+
+test('R14 — o kit vem do REGISTRO: o pedido de spawn continua sem campo de ferramenta', () => {
+  // A CERCA É ESTRUTURAL, e é isto que a mantém verdadeira depois da R14: por
+  // mais que o ajudante tenha ganhado tools, não existe argumento por onde o
+  // chamador do `delegate` peça uma.
+  const engineSrc = source('src/main/guiHelperSessions.ts')
+  const start = engineSrc.indexOf('export interface GuiHelperSpawnRequest')
+  assert.ok(start > 0, 'o pedido de spawn mudou de casa')
+  const bloco = engineSrc.slice(start, engineSrc.indexOf('\n}', start))
+  for (const proibido of ['mcp', 'mcpConfig', 'extraArgs', 'extraEnv', 'allowedTools', 'tools', 'token']) {
+    assert.doesNotMatch(
+      bloco,
+      new RegExp(`^\\s*${proibido}\\??:`, 'mu'),
+      `o pedido de spawn ganhou o campo ${proibido} — a cadeia reabriu`
+    )
+  }
+
+  const wiringSrc = source('src/main/guiDelegationWiring.ts')
+  const arm = wiringSrc.slice(
+    wiringSrc.indexOf('export function armGuiHelperKit'),
+    wiringSrc.indexOf('/** Revoga UMA vez')
+  )
+  for (const campo of ['helperId', 'projectId', 'delegatorPaneId', 'cwd', 'cli']) {
+    assert.match(
+      arm,
+      new RegExp(`${campo}: request\\.${campo}`, 'u'),
+      `${campo} do kit deixou de sair do registro do ajudante`
+    )
+  }
+
+  // A ORDEM NO FIO: o kit é armado ANTES de o processo nascer (as flags entram
+  // no argv, que é lido na partida) e o briefing sai DEPOIS.
+  const claudeAdapter = wiringSrc.slice(
+    wiringSrc.indexOf('export function createClaudeHelperAdapter'),
+    wiringSrc.indexOf('export function createCodexHelperAdapter')
+  )
+  assert.ok(
+    claudeAdapter.indexOf('armGuiHelperKit') < claudeAdapter.indexOf('new MaestroSession'),
+    'o kit chegou depois do processo — as flags nunca entrariam no argv'
+  )
+  assert.ok(
+    claudeAdapter.indexOf('new MaestroSession') < claudeAdapter.indexOf('session.send'),
+    'o briefing saiu antes de o processo existir'
+  )
+  // A ARMADILHA DO CLAUDE.md ("o catálogo de tools é montado POR REQUEST e o
+  // prompt de argv sai ANTES do handshake MCP") não morde aqui, e a razão é
+  // estrutural: o ajudante recebe o briefing por STDIN em stream-json, não no
+  // argv. No dia em que este spawn voltar a carregar prompt na linha de comando,
+  // o primeiro turno nasceria sem tools — e este assert cai antes do dono ver.
+  const maestro = source('src/main/maestroSession.ts')
+  assert.match(
+    maestro,
+    /'-p',\s*\n\s*'--input-format',\s*\n\s*'stream-json'/u,
+    'o claude deixou de receber o prompt por stdin: o kit MCP perderia o 1º turno'
+  )
+})
+
+test('R14 — o endereço do ajudante no hub não se confunde com pane nenhum', () => {
+  const paneId = lspMcp.guiHelperMcpPaneId('9f2c1d0e-uuid')
+  assert.equal(/[:/\\]/u.test(paneId), false, 'o id vira NOME DE ARQUIVO da config do claude')
+  assert.equal(
+    contracts.guiMissionRoleOf(paneId),
+    undefined,
+    'o endereço do ajudante passou por pane de missão — o prefixo gui- é reservado'
+  )
+  assert.equal(paneId.startsWith(GUI_HELPER_CARD_PREFIX), false, 'colidiu com o id do CARD')
+
+  // Dois ajudantes NUNCA compartilham endereço nem bearer.
+  const { deps } = lspBench()
+  const a = armGuiHelperKit(deps, spawnRequest({ helperId: 'h-a' }))
+  const b = armGuiHelperKit(deps, spawnRequest({ helperId: 'h-b' }))
+  assert.notEqual(a.paneId, b.paneId)
+  assert.notEqual(a.token, b.token)
+})
+
+test('R14 — o bearer morre em TODO desfecho: entrega, descarte e interrupção', () => {
+  const bench = lspBench()
+  const emit = new Map()
+  const kits = new Map()
+  const killed = []
+  let seq = 0
+  const adapter = (request, publish) => {
+    // A MESMA costura dos adaptadores reais: armar antes, revogar no dispose.
+    const kit = armGuiHelperKit(bench.deps, request)
+    kits.set(request.helperId, kit)
+    emit.set(request.helperId, publish)
+    return {
+      send: () => undefined,
+      dispose: guiHelperKitDisposer(bench.deps, request, kit, () => killed.push(request.helperId))
+    }
+  }
+  const engine = new GuiHelperEngine({
+    spawnClaude: adapter,
+    spawnCodex: adapter,
+    resolveSeat: () => ({ seatId: 'seat-1', configDir: 'C:/cfg/claude', name: 'Claude A' }),
+    newId: () => `h-${(seq += 1)}`,
+    spawnIntervalMs: 0
+  })
+  const outcome = engine.spawn(lspDelegator, [{ prompt: 'a' }, { prompt: 'b' }, { prompt: 'c' }])
+  for (const receipt of outcome.receipts) assert.equal(receipt.ok, true, receipt.error)
+
+  // Os TRÊS nasceram armados, cada um com o seu.
+  for (const id of ['h-1', 'h-2', 'h-3']) {
+    const kit = kits.get(id)
+    assert.ok(kit, `${id} nasceu sem kit`)
+    assert.equal(bench.hub.identityByToken(kit.token).role, 'ajudante')
+    assert.equal(existsSync(kit.mcpFile), true, `${id}: a config do claude não foi escrita`)
+  }
+
+  // 1. ENTREGA (o desfecho normal do claude, que morre sozinho depois do result).
+  emit.get('h-1')({ type: 'result', isError: false, text: 'achei o erro' })
+  assert.equal(engine.get('h-1').state, 'done')
+  const feito = kits.get('h-1')
+  assert.equal(bench.hub.identityByToken(feito.token), undefined, 'o bearer do entregue sobreviveu')
+  assert.equal(bench.hub.identityByPane(feito.paneId), undefined)
+  assert.equal(existsSync(feito.mcpFile), false, 'a config ficou no disco depois do desfecho')
+
+  // 2. DESCARTE explícito do delegador.
+  assert.equal(engine.cancel('h-2', 'descartado pelo chat que o abriu').ok, true)
+  assert.equal(bench.hub.identityByToken(kits.get('h-2').token), undefined, 'cancelar não revogou')
+
+  // 3. INTERRUPÇÃO preservadora (o ■ do dono / o app fechando).
+  emit.get('h-3')({ type: 'session', sessionId: 'sess-3' })
+  assert.equal(engine.interruptAll('o app fechou'), 1)
+  assert.equal(engine.get('h-3').state, 'interrupted')
+  const parado = kits.get('h-3')
+  assert.equal(bench.hub.identityByToken(parado.token), undefined, 'interromper não revogou')
+  assert.equal(existsSync(parado.mcpFile), false)
+
+  assert.deepEqual([...killed].sort(), ['h-1', 'h-2', 'h-3'], 'algum processo não foi descartado')
+  assert.deepEqual(
+    bench.journal
+      .filter((entry) => entry.event === 'helper-lsp-revoked')
+      .map((entry) => entry.helperId)
+      .sort(),
+    ['h-1', 'h-2', 'h-3']
+  )
+})
+
+test('R14 — helper_resume RE-ARMA: bearer novo na volta, e o antigo não abre mais nada', () => {
+  const bench = lspBench()
+  const emit = new Map()
+  const vidas = []
+  let seq = 0
+  const adapter = (request, publish) => {
+    const kit = armGuiHelperKit(bench.deps, request)
+    vidas.push(kit)
+    emit.set(request.helperId, publish)
+    return {
+      send: () => undefined,
+      dispose: guiHelperKitDisposer(bench.deps, request, kit, () => undefined)
+    }
+  }
+  const engine = new GuiHelperEngine({
+    spawnClaude: adapter,
+    spawnCodex: adapter,
+    resolveSeat: () => ({ seatId: 'seat-1', configDir: 'C:/cfg/claude', name: 'Claude A' }),
+    newId: () => `h-${(seq += 1)}`,
+    spawnIntervalMs: 0
+  })
+  engine.spawn(lspDelegator, [{ prompt: 'a' }])
+  emit.get('h-1')({ type: 'session', sessionId: 'sess-1' })
+  engine.interruptAll('o app fechou')
+  assert.equal(vidas.length, 1)
+  assert.equal(bench.hub.identityByToken(vidas[0].token), undefined)
+
+  assert.equal(engine.resume('h-1').ok, true)
+  assert.equal(vidas.length, 2, 'a volta não passou pelo adaptador — nasceria sem ferramenta')
+  const volta = vidas[1]
+  assert.notEqual(volta.token, vidas[0].token, 'a segunda vida reusou o bearer da primeira')
+  assert.equal(volta.paneId, vidas[0].paneId, 'o endereço do ajudante é estável entre as vidas')
+  assert.equal(bench.hub.identityByToken(volta.token).role, 'ajudante')
+  assert.equal(existsSync(volta.mcpFile), true)
+  assert.equal(
+    bench.hub.identityByToken(vidas[0].token),
+    undefined,
+    'o bearer da vida anterior voltou a valer'
+  )
+})
+
+test('R14 — revogar é idempotente e acontece mesmo quando o kill estoura', () => {
+  const bench = lspBench()
+  const request = spawnRequest({ helperId: 'h-bomba' })
+  const kit = armGuiHelperKit(bench.deps, request)
+  let kills = 0
+  const dispose = guiHelperKitDisposer(bench.deps, request, kit, () => {
+    kills += 1
+    throw new Error('o processo já tinha morrido')
+  })
+  assert.throws(dispose, /já tinha morrido/u)
+  assert.equal(
+    bench.hub.identityByToken(kit.token),
+    undefined,
+    'o kill estourou e o bearer sobreviveu ao processo'
+  )
+  assert.equal(existsSync(kit.mcpFile), false)
+
+  // O motor descarta em mais de um caminho (settle, discard, re-tentativa): a
+  // segunda passagem não pode revogar de novo nem duplicar o diário.
+  assert.throws(dispose, /já tinha morrido/u)
+  assert.equal(kills, 2, 'o kill é do processo e continua sendo pedido')
+  assert.deepEqual(
+    bench.journal.map((entry) => entry.event),
+    ['helper-lsp-armed', 'helper-lsp-revoked']
+  )
+})
+
+test('R14 — servidor fora do ar: o ajudante nasce SEM tools, e o diário diz por quê', () => {
+  const bench = lspBench({ port: 0 })
+  const request = spawnRequest({ helperId: 'h-cego' })
+  const kit = armGuiHelperKit(bench.deps, request)
+  assert.equal(kit, undefined, 'apontar para porta morta é pior que nascer sem ferramenta')
+  assert.deepEqual(bench.journal.map((entry) => entry.event), ['helper-lsp-unavailable'])
+  assert.match(bench.journal[0].detail.reason, /servidor/u)
+
+  const opts = claudeHelperSessionOptions(request, 'C:/prompts/h.system.md', kit)
+  assert.deepEqual(opts.extraArgs, claudeHelperArgs(), 'sem kit o spawn é o de antes da R14')
+  assert.equal('extraEnv' in opts, false)
+  assert.deepEqual(codexHelperSessionOptions(request, kit).extraArgs, codexHelperArgs())
+
+  // E o descarte de um ajudante sem kit não inventa revogação nenhuma.
+  guiHelperKitDisposer(bench.deps, request, kit, () => undefined)()
+  assert.deepEqual(bench.journal.map((entry) => entry.event), ['helper-lsp-unavailable'])
+
+  // Sem deps de LSP (o mundo pré-R14, e as suítes) nada acontece e nada se diz.
+  assert.equal(armGuiHelperKit({ systemPromptFile: () => undefined }, request), undefined)
+})
+
+test('R14 — a linha do LSP entra UMA vez, e só no ajudante que tem as tools', () => {
+  const armada = guiHelperPersonaFor(true)
+  const muda = guiHelperPersonaFor(false)
+  assert.equal(muda, GUI_HELPER_PERSONA, 'sem kit a persona é a de sempre, palavra por palavra')
+  assert.doesNotMatch(muda, /lsp_/u, 'a persona prometeu ferramenta que este ajudante não tem')
+  assert.ok(armada.startsWith(GUI_HELPER_PERSONA), 'a linha nova reescreveu a persona')
+  assert.equal(
+    armada.split('\n').filter((line) => line.includes('lsp_diagnostics')).length,
+    1,
+    'a linha do LSP entrou mais de uma vez'
+  )
+  for (const tool of lspMcp.GUI_HELPER_LSP_TOOLS) {
+    assert.ok(armada.includes(tool), `${tool} não foi anunciado ao ajudante`)
+  }
+  // Ela diz PARA QUE serve — achar o lugar exato ANTES de mexer.
+  assert.match(GUI_HELPER_LSP_PERSONA_LINE, /BEFORE you edit/u)
+
+  // E os DOIS adaptadores usam a versão condicional: um deles com persona fixa
+  // seria o ajudante daquele CLI prometendo tool que não recebeu.
+  const wiringSrc = source('src/main/guiDelegationWiring.ts')
+  assert.equal(
+    (wiringSrc.match(/guiHelperPersonaFor\(kit !== undefined\)/gu) ?? []).length,
+    2,
+    'um dos CLIs ficou com a persona fixa'
   )
 })

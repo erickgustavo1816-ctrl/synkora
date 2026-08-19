@@ -10,19 +10,23 @@
  * Aqui a propriedade que dá nome ao arquivo é a CERCA EM TRÊS FAIXAS
  * (design DESIGN_SUBAGENTES_SEM_ABA_2026-08-18.md, D2 e D7):
  *
- *   gui-delegator → EXATAMENTE as 7 ferramentas de ajudante, e nenhum plano;
- *   gui-planner   → EXATAMENTE as 5 de plano, e nenhum ajudante;
- *   qualquer outro (inclusive quem parece ajudante) → catálogo VAZIO.
+ *   gui-delegator → as 7 ferramentas de ajudante, e nenhum plano;
+ *   gui-planner   → as 5 de plano, e nenhum ajudante;
+ *   qualquer outro papel morto da era F6 → catálogo VAZIO.
  *
  * A rodada 9 (2026-08-19) acrescentou uma faixa DENTRO da primeira: o chat de
  * DEV da missão recebe também as 2 do INTEGRADOR (`integration_status` e
  * `integration_run`), e o reviewer e o ajudante NÃO — mesmo com o mesmo papel de
  * MCP, o mesmo universo e a mesma missão. A cerca é o PAPEL DO ENDEREÇO.
  *
- * A terceira faixa é o CONTROLE NEGATIVO DO SEM-CADEIA: o ajudante nasce sem o
- * MCP de delegação, e se um dia um token de ajudante chegar ao servidor ele
- * precisa bater numa parede. Frota que abre frota é o laço que o backstop de
- * 100 do motor existe para conter — mas a cerca boa é esta, aqui, no catálogo.
+ * A R14 acrescentou o kit de CÓDIGO (`lsp_*`) aos DOIS lados — e, com ele, a
+ * quarta faixa: o papel `ajudante`, que até aqui recebia catálogo VAZIO, passa a
+ * receber esse kit E SÓ ELE. A cerca do sem-cadeia MUDOU DE NATUREZA (era
+ * ausência de token, virou catálogo) e continua do mesmo tamanho: um token de
+ * ajudante que chegue ao servidor NÃO enxerga `delegate` — frota que abre frota
+ * segue impossível, agora por uma linha que se pode ler. O caso próprio dela
+ * mora em `test:gui-lsp-tools`; o que este arquivo garante é que nada mais
+ * vazou junto.
  *
  * Tudo roda no código REAL: hub real, servidor HTTP real, cliente MCP real. O
  * único duplo é o `McpApi` (o harness do index.ts), porque é justamente o
@@ -52,9 +56,24 @@ import {
 } from '../.tmp/gui-delegate-mcp-test/guiDelegateMcp.js'
 import { startMcpServer } from '../.tmp/gui-delegate-mcp-test/mcpServer.js'
 
-/** O catálogo do delegador, literal. Ferramenta nova aqui é decisão de produto
+/**
+ * O kit de CÓDIGO (R14, seção L2 do design DESIGN_COPIA_E_LSP_R14): as quatro
+ * perguntas ao servidor de linguagem da raiz do pane. É o único kit
+ * COMPARTILHADO do app — os três chats E o ajudante o recebem —, e ele é
+ * exatamente o que torna o catálogo `ajudante` seguro: ler código não é
+ * autoridade sobre nada. A suíte dedicada é `test:gui-lsp-tools`; aqui ele
+ * aparece porque toda régua de catálogo abaixo passou a incluí-lo.
+ */
+const LSP_TOOLS = Object.freeze([
+  'lsp_definition',
+  'lsp_diagnostics',
+  'lsp_hover',
+  'lsp_references'
+])
+
+/** O kit de ajudantes, literal. Ferramenta nova aqui é decisão de produto
  *  e TEM de quebrar este teste — é o mesmo contrato do PLANNER_TOOLS. */
-const DELEGATOR_TOOLS = Object.freeze([
+const HELPER_TOOLS = Object.freeze([
   'delegate',
   'helper_cancel',
   'helper_result',
@@ -67,6 +86,9 @@ const DELEGATOR_TOOLS = Object.freeze([
   'helpers_status',
   'list_seats'
 ])
+
+/** O que um pane `gui-delegator` SEM missão de dev enxerga hoje, inteiro. */
+const DELEGATOR_TOOLS = Object.freeze([...HELPER_TOOLS, ...LSP_TOOLS].sort())
 
 /**
  * O KIT DO CHAT DE DEV (rodada 9): as sete de ajudante MAIS as duas do
@@ -83,13 +105,14 @@ const DEV_MISSION_TOOLS = Object.freeze([...DELEGATOR_TOOLS, ...INTEGRATION_TOOL
  *  claude é a UNIÃO dos dois papéis. */
 const RELEASE_TOOLS = Object.freeze(['release_run', 'release_status'])
 
-const PLANNER_TOOLS = Object.freeze([
+const PLAN_TOOLS = Object.freeze([
   'delete_plan',
   'get_plan',
   'list_plans',
   'propose_plan',
   'update_plan'
 ])
+const PLANNER_TOOLS = Object.freeze([...PLAN_TOOLS, ...LSP_TOOLS].sort())
 
 /** Hub REAL com o mínimo que ele exige (o registro de identidade não usa nada
  *  disso — é o ponto). Sem timer: o hub perdeu a fila de digitação em 08-17. */
@@ -259,7 +282,7 @@ function delegator(hub, root, port, paneId = 'gui-dev-abcd1234', missionId = 'mi
 
 // ————— 1. o catálogo do delegador, e só ele —————
 
-test('o arm registra a identidade gui-delegator e o chat de DEV serve as NOVE ferramentas', async (t) => {
+test('o arm registra a identidade gui-delegator e o chat de DEV serve as TREZE ferramentas', async (t) => {
   const { hub, root } = hubIn(t)
   const { url, served } = await serverIn(t, hub)
   const { mcp, token } = delegator(hub, root, 4242)
@@ -293,10 +316,12 @@ test('nenhum vazamento entre os dois kits: quem delega não planeja e quem plane
   const plannerTools = await toolNames(url, planner.remembered[0].token, 'kit-plan')
   assert.deepEqual(devTools, DEV_MISSION_TOOLS)
   assert.deepEqual(plannerTools, PLANNER_TOOLS, 'o kit de planos não pode mudar por causa desta onda')
-  for (const tool of PLANNER_TOOLS) {
+  // O vazamento se mede sobre os kits EXCLUSIVOS: o de código é compartilhado
+  // pelos dois desde a R14, e é o único que pode aparecer dos dois lados.
+  for (const tool of PLAN_TOOLS) {
     assert.equal(devTools.includes(tool), false, `o delegador enxergou ${tool}`)
   }
-  for (const tool of [...DELEGATOR_TOOLS, ...INTEGRATION_TOOLS]) {
+  for (const tool of [...HELPER_TOOLS, ...INTEGRATION_TOOLS]) {
     assert.equal(plannerTools.includes(tool), false, `o planejador enxergou ${tool}`)
   }
 })
@@ -380,14 +405,14 @@ test('sem o motor de integração ligado, as duas recusam dizendo que NADA foi m
   }
 })
 
-test('SEM CADEIA: identidade de ajudante (ou qualquer outra) recebe catálogo VAZIO', async (t) => {
+test('SEM CADEIA: identidade de ajudante NUNCA enxerga delegate — e as mortas, nada', async (t) => {
   const { hub, root } = hubIn(t)
   const { url, served } = await serverIn(t, hub)
 
-  // 'dev'/'ajudante' são os papéis com que um ajudante apareceria se um dia
-  // alguém lhe desse identidade. Nenhum deles pode enxergar `delegate`: é a
-  // cerca que impede frota abrindo frota (D1 do design).
-  for (const role of ['dev', 'ajudante', 'review', 'qa', 'maestro', 'livre']) {
+  // Os papéis mortos da era F6: catálogo VAZIO, um a um. ('ajudante' saiu
+  // desta lista na R14 — ele deixou de ser um papel morto e ganhou o caso
+  // abaixo, com o catálogo SÓ-LSP.)
+  for (const role of ['dev', 'review', 'qa', 'maestro', 'livre']) {
     const token = `token-${role}`
     hub.registerPane(token, {
       paneId: `pane-${role}`,
@@ -401,21 +426,25 @@ test('SEM CADEIA: identidade de ajudante (ou qualquer outra) recebe catálogo VA
       `a identidade ${role} não pode enxergar ferramenta nenhuma`
     )
   }
-  // O CONTROLE NEGATIVO DO ⇪ (rodada 9): um token de ajudante que chegasse ao
-  // servidor com o ENDEREÇO de um chat de dev continua batendo na parede do
-  // papel do MCP — as ferramentas de integração vivem dentro do
-  // `gui-delegator`, e nenhuma identidade de fora enxerga uma linha delas.
+  // O CONTROLE NEGATIVO DO ⇪ (rodada 9) + a cerca do D1 na forma nova: um token
+  // de ajudante que chegue ao servidor com o ENDEREÇO de um chat de dev recebe
+  // o kit de CÓDIGO e mais NADA. Integração vive dentro do `gui-delegator`;
+  // `delegate` também — e é isto que mantém frota-abrindo-frota impossível.
   hub.registerPane('token-ajudante-com-cara-de-dev', {
     paneId: 'gui-dev-abcdef01',
     projectId: 'universo-1',
     role: 'ajudante',
     cwd: root
   })
+  const disfarcado = await toolNames(url, 'token-ajudante-com-cara-de-dev', 'ajudante-disfarcado')
   assert.deepEqual(
-    await toolNames(url, 'token-ajudante-com-cara-de-dev', 'ajudante-disfarcado'),
-    [],
+    disfarcado,
+    LSP_TOOLS,
     'endereço de dev não dá autoridade a um papel que não é gui-delegator'
   )
+  for (const forbidden of [...HELPER_TOOLS, ...INTEGRATION_TOOLS, ...RELEASE_TOOLS, ...PLAN_TOOLS]) {
+    assert.equal(disfarcado.includes(forbidden), false, `o ajudante enxergou ${forbidden}`)
+  }
   for (const entry of served) {
     if (entry.paneId.startsWith('pane-')) assert.deepEqual(entry.tools, [])
   }
@@ -659,7 +688,7 @@ test('claude: config própria, strict, a CERCA de subagente nativo e o teto de t
   assert.deepEqual(Object.keys(config.mcpServers), ['synkora'], 'catálogo fechado: nenhum MCP extra')
 })
 
-test('claude: as ONZE ferramentas internas são pré-sancionadas, e a cerca continua de pé', async (t) => {
+test('claude: as QUINZE ferramentas internas são pré-sancionadas, e a cerca continua de pé', async (t) => {
   const { hub, root } = hubIn(t)
   const { mcp } = delegator(hub, root, 5151)
 
@@ -678,12 +707,15 @@ test('claude: as ONZE ferramentas internas são pré-sancionadas, e a cerca cont
 
   // O par com o catálogo REAL: tool nova no delegador sem entrar aqui volta a
   // pedir aprovação, e este teste é quem avisa. A régua é a UNIÃO dos catálogos
-  // dos papéis que compartilham este arm (dev + release, desde a R10):
+  // dos papéis que compartilham este arm (dev + release, desde a R10; o kit de
+  // código entra pelos dois desde a R14, e por isso a união é um Set):
   // pré-sancionar o que um pane não tem custa zero, e o contrário custa um
   // card de permissão no gesto do dono.
   assert.deepEqual(
     [...GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS].sort(),
-    [...DEV_MISSION_TOOLS, ...RELEASE_TOOLS].map((tool) => `mcp__synkora__${tool}`).sort()
+    [...new Set([...DEV_MISSION_TOOLS, ...RELEASE_TOOLS])]
+      .map((tool) => `mcp__synkora__${tool}`)
+      .sort()
   )
 
   // A pré-sanção é NARROW: nada nativo entra de carona, e ela nunca desfaz a
