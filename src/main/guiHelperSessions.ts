@@ -18,7 +18,7 @@
  * - não conhece `SeatStore`: a conta chega por `resolveSeat`, que é quem sabe
  *   quais estão logadas;
  * - não conhece electron, disco nem rede. É por isso que a máquina de estados, o
- *   backstop, o long-poll e o watchdog são provados em node puro
+ *   backstop, o long-poll e o AVISO de longa duração são provados em node puro
  *   (`test:gui-helper-sessions`) em vez de conferidos no olho com o app aberto.
  *
  * - não sabe ESCREVER a entrega: o arquivo canônico de cada ajudante nasce pelo
@@ -151,8 +151,33 @@ export const GUI_HELPER_WAIT_DEFAULT_SECONDS = 45
  *  §B.3): quem espera precisa de relógio próprio, nunca do cliente. */
 export const GUI_HELPER_WAIT_MAX_SECONDS = 240
 
-/** Ajudante vivo além disto é falha, não paciência. */
-export const GUI_HELPER_WATCHDOG_MS = 30 * 60 * 1000
+/**
+ * AVISO DE LONGA DURAÇÃO — NUNCA UMA MORTE (R19, 2026-08-19).
+ *
+ * Ordem do dono, com o caso na tela (o teto derrubou um ajudante de trabalho
+ * real aos 30 min): "o subagente pode ficar o tempo que for, não tem sentido
+ * derrubar depois de 30 minutos". O NÚMERO continua o mesmo; o VERBO mudou —
+ * aos 30 min o motor AVISA, uma vez por vida, e o ajudante segue trabalhando.
+ *
+ * A régua da casa diz a mesma coisa mecanicamente: guarda dura só protege
+ * autoridade/verificabilidade, e "deve ter travado" é JULGAMENTO — que vira
+ * advisory auditado, com as saídas sancionadas intactas (■ do dono,
+ * `helper_cancel`, fechar o app).
+ */
+export const GUI_HELPER_LONGRUN_NOTICE_MS = 30 * 60 * 1000
+
+/**
+ * O TEXTO DO ADVISORY, e ele NOMEIA AS SAÍDAS. Um aviso que só diz "está
+ * demorando" empurra quem lê a inventar uma saída (matar o processo por fora,
+ * abrir outro ajudante por cima); dizendo os dois verbos, a decisão continua
+ * sendo do dono e do delegador, que é de quem ela é. Os minutos saem do próprio
+ * teto — prosa com número fixo mente no dia em que alguém mexe na constante.
+ */
+export const GUI_HELPER_LONGRUN_ADVISORY =
+  `ajudante passou de ${Math.round(GUI_HELPER_LONGRUN_NOTICE_MS / 60_000)} min e SEGUE VIVO — ` +
+  'trabalhar muito não é falha, e o motor nunca derruba por relógio. Quem decide parar é o dono ' +
+  'ou o delegador: o ■ interrompe PRESERVANDO (helper_resume retoma de onde parou) e o ' +
+  'helper_cancel DESCARTA (registro e entrega vão fora).'
 
 /** A lateral mostra o RESUMO da última ferramenta; anunciar cada linha viraria
  *  enxurrada de card sintetizado no anel do delegador. */
@@ -341,6 +366,14 @@ export interface GuiHelperRecord {
    * o que impede a ficha de mentir que ele nasceu agora.
    */
   resumedAt?: number
+  /**
+   * Quando o AVISO de longa duração saiu (R19). Presente = já avisado — é este
+   * carimbo que faz o advisory sair UMA vez por vida em vez de a cada varredura
+   * (e a varredura roda no começo de toda operação pública). O `helper_resume` o
+   * apaga junto com o `startedAt`: a segunda vida re-arma o aviso, porque o
+   * processo é outro e o cronômetro conta do zero.
+   */
+  longRunNoticedAt?: number
 }
 
 // ————— o disco (R6.1) —————
@@ -447,6 +480,11 @@ export function sanitizeGuiHelperRecord(value: unknown): GuiHelperRecord | undef
   const permissionMode = optionalString(raw['permissionMode'])
   const fast = raw['fast'] === true
   const resumedAt = optionalNumber(raw['resumedAt'])
+  // Esta régua é ALVEJADA (só o que está escrito aqui volta do disco): campo que
+  // ninguém reconstrói some em silêncio no round-trip. O carimbo do advisory
+  // (R19) volta de propósito — ele é história honesta do ajudante, e sumir na
+  // travessia faria a ficha de um encerrado mentir que nunca passou dos 30 min.
+  const longRunNoticedAt = optionalNumber(raw['longRunNoticedAt'])
   return {
     helperId,
     delegatorPaneId,
@@ -473,7 +511,8 @@ export function sanitizeGuiHelperRecord(value: unknown): GuiHelperRecord | undef
     ...(sessionId ? { sessionId } : {}),
     ...(retriedAt !== undefined ? { retriedAt } : {}),
     ...(retryReason ? { retryReason } : {}),
-    ...(resumedAt !== undefined ? { resumedAt } : {})
+    ...(resumedAt !== undefined ? { resumedAt } : {}),
+    ...(longRunNoticedAt !== undefined ? { longRunNoticedAt } : {})
   }
 }
 
@@ -620,7 +659,13 @@ export type GuiHelperLogEvent =
   | 'helper-spawned'
   | 'helper-refused'
   | 'helper-settled'
-  | 'helper-watchdog'
+  /**
+   * ADVISORY AUDITADO (R19): o ajudante passou dos 30 min e SEGUE VIVO. Não é
+   * desfecho, não é queda e não precede nenhuma morte — o motor não derruba por
+   * relógio. Sai UMA vez por vida do ajudante, com o decorrido e as saídas
+   * sancionadas no texto.
+   */
+  | 'helper-longrun'
   | 'helper-fleet-effort'
   /** Uma re-tentativa automática de falha passageira (R6.4). */
   | 'helper-retry'
@@ -830,8 +875,10 @@ export function fleetEffortWarning(
  * re-tentativa manual do agente em outra conta tomou 529 também. Só entram aqui
  * assinaturas em que esperar RESOLVE — sobrecarga do lado de lá e limite de
  * requisições. Tudo o mais (conta sem crédito, binário fora do PATH, permissão,
- * watchdog, processo que morreu sem falar) é definitivo: re-tentar seria queimar
- * limite e esconder o problema do dono por mais 20 segundos.
+ * processo que morreu sem falar) é definitivo: re-tentar seria queimar limite e
+ * esconder o problema do dono por mais 20 segundos. A queda por TEMPO saiu desta
+ * lista porque saiu do motor (R19): nenhum ajudante é derrubado por relógio, e a
+ * assinatura antiga nunca mais nasce.
  *
  * As assinaturas são as do CLI, em inglês; os motivos que o PRÓPRIO motor
  * escreve são PT-BR e nunca casam aqui — o que é proposital, porque nenhum deles
@@ -1228,8 +1275,10 @@ export class GuiHelperEngine {
         live.waiters.push(waiter)
         cancelTimer = this.setTimer(seconds * 1000, finish)
       })
-      // O teto pode ter atravessado o watchdog: varrer antes de responder evita
-      // devolver "ainda trabalhando" sobre um ajudante que já devia estar morto.
+      // A espera pode ter atravessado o AVISO de longa duração (R19): varrer
+      // antes de responder deixa a auditoria em dia. O ESTADO não muda por
+      // relógio aqui — quem entrou vivo nesta espera sai vivo dela, e é isso que
+      // a resposta diz.
       this.sweep()
     }
     return { ok: true, ...this.view(live, this.now() - pollStartedAt) }
@@ -1306,10 +1355,12 @@ export class GuiHelperEngine {
     record.state = 'spawning'
     // O CRONÔMETRO RE-ARMA (R6.2): o dono conta o trabalho, não o tempo em que o
     // ajudante ficou parado. O `resumedAt` é o que impede a ficha de mentir que
-    // ele nasceu agora, e o watchdog volta a contar da volta — que é o certo,
-    // porque o processo é outro.
+    // ele nasceu agora, e o AVISO de longa duração (R19) volta a contar da volta
+    // — que é o certo, porque o processo é outro: a segunda vida tem direito aos
+    // seus trinta minutos antes de ser notada de novo.
     record.startedAt = at
     record.resumedAt = at
+    delete record.longRunNoticedAt
     record.seatId = seat.seatId
     if (seat.name) record.seatName = seat.name
     else delete record.seatName
@@ -1507,39 +1558,54 @@ export class GuiHelperEngine {
   }
 
   /**
-   * WATCHDOG. Roda no começo de toda operação pública (é assim que a fotografia
-   * nunca mostra zumbi) e também pode ser chamada por um relógio do wiring, para
-   * o ajudante esquecido cair mesmo que ninguém pergunte por ele.
+   * A VARREDURA. Roda no começo de toda operação pública e também por um relógio
+   * do wiring — o chat ABANDONADO também tem de ser auditado, mesmo sem ninguém
+   * perguntando por ele.
+   *
+   * O QUE MORREU AQUI (R19, ordem do dono de 2026-08-19 com o caso na tela: o
+   * teto derrubou um ajudante de trabalho real aos 30 min): NENHUM ajudante é
+   * assentado por relógio, nunca mais. Matar por tempo é JULGAMENTO — "deve ter
+   * travado" —, e pela régua da casa julgamento vira advisory auditado; guarda
+   * dura só protege autoridade e verificabilidade, e tempo não é nem uma nem
+   * outra. Zumbi de verdade (processo mudo que nunca mais fala) fica VISÍVEL: o
+   * cronômetro da lateral cresce e o `helpers_status` mostra o decorrido. A
+   * decisão de matar é do DONO ou do DELEGADOR, pelas saídas sancionadas, que
+   * continuam inteiras — ■ interrompe preservando (e o `helper_resume` retoma),
+   * `helper_cancel` descarta, fechar o app interrompe.
+   *
+   * O que sobrou de real: o AVISO de longa duração, uma vez por vida de cada
+   * ajudante. Devolve quem acabou de CRUZÁ-LO — nunca mais "quem morreu".
    */
   sweep(): GuiHelperRecord[] {
-    // Guarda de reentrância: `settle` chama observador externo, e um observador
-    // que consulte o motor de volta cairia aqui de novo.
+    // Guarda de reentrância: o diário é de fora, e um sink que consulte o motor
+    // de volta (qualquer operação pública varre) cairia aqui no meio do laço.
     if (this.sweeping) return []
     this.sweeping = true
     try {
-      // Uma varredura pode derrubar a frota inteira de uma vez: as gravações se
-      // juntam numa só, como no ■ e no quit.
-      return this.bulk(() => {
-        const now = this.now()
-        const reaped: GuiHelperRecord[] = []
-        for (const live of this.helpers.values()) {
-          if (isGuiHelperSettled(live.record.state)) continue
-          if (now - live.record.startedAt < GUI_HELPER_WATCHDOG_MS) continue
-          this.settle(live, 'failed', {
-            failure:
-              'watchdog: o ajudante passou de 30 min sem encerrar e foi derrubado — ' +
-              'o que ele escreveu no worktree continua lá'
-          })
-          this.journal({
-            event: 'helper-watchdog',
-            paneId: live.record.delegatorPaneId,
-            helperId: live.record.helperId,
-            detail: { elapsedMs: now - live.record.startedAt }
-          })
-          reaped.push({ ...live.record })
-        }
-        return reaped
-      })
+      const now = this.now()
+      const noticed: GuiHelperRecord[] = []
+      for (const live of this.helpers.values()) {
+        const record = live.record
+        if (isGuiHelperSettled(record.state)) continue
+        // O CARIMBO é o que faz o advisory ser UM, e não um por varredura: sem
+        // ele, um chat conversando despejaria o mesmo aviso a cada tool.
+        if (record.longRunNoticedAt !== undefined) continue
+        const elapsedMs = now - record.startedAt
+        if (elapsedMs < GUI_HELPER_LONGRUN_NOTICE_MS) continue
+        record.longRunNoticedAt = now
+        this.journal({
+          event: 'helper-longrun',
+          paneId: record.delegatorPaneId,
+          helperId: record.helperId,
+          detail: { elapsedMs, advisory: GUI_HELPER_LONGRUN_ADVISORY }
+        })
+        noticed.push({ ...record })
+      }
+      // O carimbo vai ao disco pela BATIDA, não na hora: ele não é desfecho, e
+      // uma frota inteira cruzando os 30 min no mesmo varrer não pode virar N
+      // reescritas síncronas do mesmo arquivo no main.
+      if (noticed.length > 0) this.persistSoon()
+      return noticed
     } finally {
       this.sweeping = false
     }

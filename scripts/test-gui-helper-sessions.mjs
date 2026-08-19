@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  GUI_HELPER_LONGRUN_ADVISORY,
+  GUI_HELPER_LONGRUN_NOTICE_MS,
   GUI_HELPER_PROMPT_MAX_CHARS,
   GUI_HELPER_RESULT_MAX_CHARS,
   GUI_HELPER_RESULT_TRUNCATION_NOTICE,
@@ -13,7 +15,6 @@ import {
   GUI_HELPER_TERMINAL_STATES,
   GUI_HELPER_WAIT_DEFAULT_SECONDS,
   GUI_HELPER_WAIT_MAX_SECONDS,
-  GUI_HELPER_WATCHDOG_MS,
   GuiHelperEngine,
   capGuiHelperResult,
   clampHelperWaitSeconds,
@@ -33,9 +34,9 @@ import {
 //
 // O motor é PURO por desenho: os dois CLIs entram por ADAPTADOR injetado, o
 // relógio e o temporizador também. É o que deixa a máquina de estados, o
-// backstop anti-runaway, o long-poll e o watchdog serem provados em node puro,
-// sem spawnar um único processo — nenhum destes fatos deveria depender de olhar
-// a lateral com o app aberto.
+// backstop anti-runaway, o long-poll e o AVISO de longa duração serem provados
+// em node puro, sem spawnar um único processo — nenhum destes fatos deveria
+// depender de olhar a lateral com o app aberto.
 //
 // Os fatos mecânicos citados aqui vêm das sondas de 2026-08-18 (probe-helper-matrix
 // §2.4/§2.6/§5, probe-claude-fence §4, probe-codex-fence §B.3), nunca de suposição.
@@ -548,52 +549,173 @@ test('prompt vazio ou absurdo é RECUSADO, nunca truncado', () => {
   assert.equal(engine.liveCount(), 0)
 })
 
-// ————— watchdog de 30 min —————
+// ————— R19: o ajudante NÃO tem teto de tempo —————
+//
+// Ordem do dono (2026-08-19, com o print do caso real: o teto derrubou um
+// ajudante no meio do trabalho): "o subagente pode ficar o tempo que for, não
+// tem sentido derrubar depois de 30 minutos". Pela régua da casa é o caso de
+// manual — guarda dura só protege autoridade/verificabilidade, e "deve ter
+// travado" é JULGAMENTO, que vira advisory auditado.
+//
+// Os três testes do watchdog-que-matava MORRERAM com a feature (o teto de 30
+// min, a vassoura que assentava e o long-poll que devolvia um morto). O que
+// entrou no lugar prova o contrário deles: quem trabalha muito segue vivo, o
+// aviso sai uma vez e é só aviso, e as SAÍDAS SANCIONADAS — que são a rede que
+// fica — continuam idênticas depois dos 30 min.
 
-test('o watchdog derruba o ajudante preso em 30 min, com motivo', () => {
-  const { engine, helperId, clock, spawn, logs } = oneHelper()
+test('aos 31 min o ajudante CONTINUA vivo e trabalhando — o teto de tempo morreu', () => {
+  const { engine, helperId, clock, spawn, changes } = oneHelper()
+  spawn.emit({ type: 'activity', summary: 'Read src/main/index.ts' })
 
-  clock.t += GUI_HELPER_WATCHDOG_MS - 1
-  assert.deepEqual(engine.sweep(), [])
-  assert.equal(engine.get(helperId).state, 'spawning')
+  clock.t += GUI_HELPER_LONGRUN_NOTICE_MS + 60_000
+
+  // TODA operação pública varre — e nenhuma delas pode assentar por relógio.
+  assert.equal(engine.get(helperId).state, 'working')
+  assert.equal(engine.status(DELEGATOR.paneId)[0].state, 'working')
+  assert.equal(engine.liveCount(DELEGATOR.paneId), 1, 'o motor derrubou um ajudante por relógio')
+  assert.equal(spawn.disposed, 0, 'o processo do ajudante foi morto pelo tempo')
+  assert.deepEqual(
+    changes.map((change) => change.kind),
+    ['spawned', 'activity'],
+    'o aviso de longa duração vazou como desfecho para a lateral'
+  )
+
+  // E ele ENTREGA depois disso, como qualquer outro: a hora extra não estragou
+  // nada — é exatamente o ajudante que o dono viu morrer.
+  spawn.emit({ type: 'result', isError: false, text: 'terminei, depois de uma hora' })
+  const record = engine.get(helperId)
+  assert.equal(record.state, 'done')
+  assert.equal(record.result, 'terminei, depois de uma hora')
+  assert.equal(record.failure, undefined)
+})
+
+test('o advisory de 30 min sai UMA vez, com o decorrido e as saídas na cara', () => {
+  // Este ajudante NUNCA falou (nem um evento): é o "zumbi" do desenho antigo.
+  // Ele continua vivo e VISÍVEL — o cronômetro cresce, e quem julga é o dono.
+  const { engine, helperId, clock, logs } = oneHelper()
+
+  clock.t += GUI_HELPER_LONGRUN_NOTICE_MS - 1
+  assert.deepEqual(engine.sweep(), [], 'o aviso saiu antes da hora')
 
   clock.t += 1
-  const reaped = engine.sweep()
   assert.deepEqual(
-    reaped.map((record) => record.helperId),
-    [helperId]
+    engine.sweep().map((record) => record.helperId),
+    [helperId],
+    'a varredura devolve quem CRUZOU o aviso'
   )
-  const record = engine.get(helperId)
-  assert.equal(record.state, 'failed')
-  assert.match(record.failure, /30 min/u)
-  assert.equal(spawn.disposed, 1, 'o watchdog deixou o processo vivo')
-  assert.ok(
-    logs.some((entry) => entry.event === 'helper-watchdog'),
-    'a queda por watchdog não deixou rastro no diário'
-  )
+
+  const avisos = logs.filter((entry) => entry.event === 'helper-longrun')
+  assert.equal(avisos.length, 1)
+  assert.equal(avisos[0].helperId, helperId)
+  assert.equal(avisos[0].paneId, DELEGATOR.paneId)
+  assert.equal(avisos[0].detail.elapsedMs, GUI_HELPER_LONGRUN_NOTICE_MS)
+  // O texto NOMEIA A RECEITA (regra da casa): aviso sem saída é beco.
+  assert.equal(avisos[0].detail.advisory, GUI_HELPER_LONGRUN_ADVISORY)
+  assert.match(GUI_HELPER_LONGRUN_ADVISORY, /segue vivo/iu)
+  assert.match(GUI_HELPER_LONGRUN_ADVISORY, /■/u)
+  assert.match(GUI_HELPER_LONGRUN_ADVISORY, /helper_resume/u)
+  assert.match(GUI_HELPER_LONGRUN_ADVISORY, /helper_cancel/u)
+
+  // UMA vez por vida: varrer de novo, e mais meia hora depois, não repete.
+  assert.deepEqual(engine.sweep(), [])
+  clock.t += GUI_HELPER_LONGRUN_NOTICE_MS
+  assert.deepEqual(engine.sweep(), [])
+  assert.equal(logs.filter((entry) => entry.event === 'helper-longrun').length, 1)
+  assert.equal(engine.get(helperId).state, 'spawning', 'o mudo de uma hora foi assentado')
 })
 
-test('toda operação pública passa a vassoura: status não mostra zumbi', () => {
-  const { engine, helperId, clock } = oneHelper()
-  clock.t += GUI_HELPER_WATCHDOG_MS
+test('o resume RE-ARMA o aviso: a segunda vida tem os seus trinta minutos', () => {
+  const { engine, clock, logs, spawns } = harness()
+  const helperId = engine.spawn(DELEGATOR, [{ prompt: 'trabalho longo' }]).receipts[0].helperId
+  spawns[0].emit({ type: 'session', sessionId: 'sess-longa' })
 
-  const [snapshot] = engine.status(DELEGATOR.paneId)
-  assert.equal(snapshot.state, 'failed')
-  assert.equal(engine.liveCount(DELEGATOR.paneId), 0)
-  assert.equal(engine.get(helperId).state, 'failed')
+  clock.t += GUI_HELPER_LONGRUN_NOTICE_MS
+  assert.equal(engine.sweep().length, 1)
+  assert.equal(engine.get(helperId).longRunNoticedAt, clock.t)
+
+  // O ■ do dono e a volta: o carimbo sai junto com o cronômetro (o `startedAt`
+  // já re-armava; o aviso anda com ele, senão a segunda vida nasceria avisada).
+  engine.interruptPane(DELEGATOR.paneId, 'o dono apertou o ■')
+  assert.deepEqual(engine.resume(helperId), { ok: true })
+  assert.equal(engine.get(helperId).longRunNoticedAt, undefined, 'a segunda vida nasceu avisada')
+
+  clock.t += GUI_HELPER_LONGRUN_NOTICE_MS - 1
+  assert.deepEqual(engine.sweep(), [], 'o aviso da volta contou o tempo da vida anterior')
+  clock.t += 1
+  assert.equal(engine.sweep().length, 1)
+  assert.equal(logs.filter((entry) => entry.event === 'helper-longrun').length, 2)
 })
 
-test('o long-poll não segura um ajudante já morto pelo watchdog', async () => {
-  const { engine, helperId, clock, timers } = oneHelper()
+test('a espera longa não vira morte: o long-poll devolve "ainda trabalhando"', async () => {
+  const { engine, helperId, clock, timers, logs } = oneHelper()
 
   const pending = engine.result(helperId, 240)
-  clock.t += GUI_HELPER_WATCHDOG_MS
+  clock.t += GUI_HELPER_LONGRUN_NOTICE_MS
   fireLastTimer(timers)
-  const outcome = await settledWithin(pending, 'watchdog durante a espera')
+  const outcome = await settledWithin(pending, 'a espera atravessou os 30 min')
 
   assert.equal(outcome.ok, true)
-  assert.equal(outcome.state, 'failed')
-  assert.equal(outcome.pending, false)
+  assert.equal(outcome.pending, true, 'o teto da espera encerrou um ajudante vivo')
+  assert.equal(outcome.state, 'spawning')
+  assert.equal(outcome.snapshot.elapsedMs, GUI_HELPER_LONGRUN_NOTICE_MS)
+  // A varredura do fim da espera deixou a AUDITORIA em dia — e só isso.
+  assert.equal(logs.filter((entry) => entry.event === 'helper-longrun').length, 1)
+  assert.equal(engine.get(helperId).state, 'spawning')
+})
+
+test('as saídas sancionadas seguem inteiras DEPOIS do aviso (■, descarte, boot)', () => {
+  // O ■ DO DONO: interrompe PRESERVANDO, e do interrompido se volta.
+  const parado = oneHelper()
+  parado.clock.t += GUI_HELPER_LONGRUN_NOTICE_MS + 5_000
+  assert.equal(parado.engine.interruptPane(DELEGATOR.paneId, 'o dono apertou o ■'), 1)
+  const interrompido = parado.engine.get(parado.helperId)
+  assert.equal(interrompido.state, 'interrupted')
+  assert.equal(isGuiHelperResumable(interrompido.state), true)
+  assert.equal(parado.spawn.disposed, 1, 'o ■ deixou o processo vivo')
+
+  // HELPER_CANCEL: descarte, mesmo depois de horas de trabalho.
+  const descartado = oneHelper()
+  descartado.clock.t += GUI_HELPER_LONGRUN_NOTICE_MS * 4
+  assert.deepEqual(descartado.engine.cancel(descartado.helperId, 'não quero mais'), { ok: true })
+  assert.equal(descartado.engine.get(descartado.helperId).state, 'cancelled')
+  assert.equal(descartado.spawn.disposed, 1)
+
+  // O APP FECHOU: o boot reencontra o de horas como INTERROMPIDO e retomável —
+  // nunca como "falhou por tempo", que é o que o teto deixava no disco.
+  const store = memoryStore()
+  const primeiro = harness({ store })
+  const vivo = primeiro.engine.spawn(DELEGATOR, [{ prompt: 'longo' }]).receipts[0].helperId
+  primeiro.spawns[0].emit({ type: 'session', sessionId: 'sess-boot' })
+  primeiro.clock.t += GUI_HELPER_LONGRUN_NOTICE_MS + 1
+  primeiro.engine.sweep()
+  assert.equal(primeiro.engine.interruptAll('o app foi fechado'), 1)
+
+  const segundo = harness({ store })
+  assert.equal(segundo.engine.get(vivo).state, 'interrupted')
+  assert.deepEqual(segundo.engine.resume(vivo), { ok: true })
+})
+
+test('o carimbo do aviso atravessa o disco — a régua alvejada o reconstrói', () => {
+  const store = memoryStore()
+  const { engine, clock, drain } = harness({ store })
+  const helperId = engine.spawn(DELEGATOR, [{ prompt: 'longo' }]).receipts[0].helperId
+
+  clock.t += GUI_HELPER_LONGRUN_NOTICE_MS
+  assert.equal(engine.sweep().length, 1)
+  const vivo = engine.get(helperId)
+  assert.equal(vivo.state, 'spawning', 'o aviso assentou o ajudante')
+  const carimbo = vivo.longRunNoticedAt
+  assert.equal(carimbo, vivo.startedAt + GUI_HELPER_LONGRUN_NOTICE_MS)
+
+  // O carimbo espera a BATIDA (não é desfecho) e atravessa o JSON inteiro.
+  drain()
+  const noDisco = JSON.parse(store.doc).find((record) => record.helperId === helperId)
+  assert.equal(noDisco.longRunNoticedAt, carimbo, 'o carimbo não chegou ao disco')
+  assert.equal(
+    sanitizeGuiHelperRecord(noDisco).longRunNoticedAt,
+    carimbo,
+    'a régua alvejada do boot comeu o carimbo na volta'
+  )
 })
 
 // ————— fotografia do pane —————
@@ -1308,7 +1430,9 @@ test('o matcher de falha transitória é CONSERVADOR', () => {
   for (const definitivo of [
     'o processo do CLI encerrou (código 1) sem entregar resultado',
     'limite da conta estourou — troque de seat',
-    'watchdog: o ajudante passou de 30 min sem encerrar',
+    // A queda por TEMPO saiu da lista porque saiu do motor (R19): nenhum
+    // ajudante é derrubado por relógio, e esta assinatura nunca mais nasce.
+    'o app fechou com o ajudante trabalhando — o processo morreu',
     'spawn ENOENT',
     'o ajudante parou pedindo permissão',
     'erro no arquivo 1529.ts',

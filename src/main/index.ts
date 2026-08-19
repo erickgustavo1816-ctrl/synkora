@@ -3246,7 +3246,7 @@ app.whenReady().then(async () => {
 
   // PANE LIFECYCLE → paneLifecycle.ts (fase 1, commit 7a). Armamento
   // (armPane/mcpPaneArgs), estado vivo, encerramento, servidor de teste do
-  // dono e o watchdog de helper nascem no engine; os aliases mantêm os call
+  // dono e o aviso de longa duração nascem no engine; os aliases mantêm os call
   // sites e os literais de extras dos outros engines textualmente intactos.
   // ORDEM OBRIGATÓRIA: paneLifecycle → mission → maestro → phase (o
   // phaseEngine desestrutura ctx.livePaneSpecs/ctx.closingPaneIds NA
@@ -3533,11 +3533,12 @@ app.whenReady().then(async () => {
         detail: entry.detail
       })
   })
-  // A VASSOURA DO WATCHDOG. O motor varre no começo de toda operação pública,
-  // então um chat que continua conversando derruba o zumbi sozinho. O relógio
-  // existe para o chat ABANDONADO: sem ninguém perguntando, um ajudante travado
-  // segura um processo de CLI até o quit — e o claude, com stdin aberto, não
-  // morre por conta própria (sonda probe-helper-matrix §2.5).
+  // A VASSOURA DA AUDITORIA (R19). O motor varre no começo de toda operação
+  // pública, então um chat que continua conversando audita sozinho. O relógio
+  // existe para o chat ABANDONADO: sem ninguém perguntando, o aviso de longa
+  // duração nunca sairia. Ele NÃO derruba ninguém — desde a R19 nenhum
+  // ajudante é assentado por relógio; quem decide parar é o dono (■) ou o
+  // delegador (helper_cancel).
   setInterval(() => guiHelperEngine.sweep(), 60_000).unref()
   const guiDelegation = buildGuiDelegationApi({
     engine: guiHelperEngine,

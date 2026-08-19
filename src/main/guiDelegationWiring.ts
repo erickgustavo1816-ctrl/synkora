@@ -335,7 +335,10 @@ export function guiHelperEventFor(evt: SessionEvent): GuiHelperEvent | null {
     case 'closed':
       return { type: 'closed', code: evt.code }
     // Sessão headless não tem quem responda: pedido de interação é BECO, e beco
-    // vira desfecho com receita em vez de meia hora pendurado no watchdog.
+    // vira desfecho com receita NA HORA. Desde a R19 isto é ainda mais vital:
+    // nenhum relógio derruba ajudante nenhum (o teto de 30 min virou aviso), e
+    // sem esta linha o pedido de permissão ficaria pendurado para sempre — até o
+    // dono reparar na lateral e apertar o ■.
     case 'permission':
       return { type: 'fatal', text: `${HELPER_PERMISSION_DEAD_END} (${evt.toolName})` }
     case 'question':
