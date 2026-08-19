@@ -529,6 +529,28 @@ export function guiLimitResultText(
   } — ${GUI_LIMIT_RECIPE}`
 }
 
+/**
+ * A QUEDA DO PROVEDOR fala PT-BR (pedido do dono, print 2026-08-19: "API
+ * Error: 500 Internal server error…" cru no card — "foi porque o Claude caiu;
+ * dá pra deixar mais bonitinho").
+ *
+ * A assinatura casada é o WRAPPER do próprio CLI (`API Error: 5xx…`) — o mesmo
+ * precedente SONDADO do matcher transitório dos ajudantes
+ * (`GUI_HELPER_TRANSIENT_SIGNATURES`, guiHelperSessions.ts): assinatura de
+ * protocolo do CLI, nunca heurística sobre as palavras do modelo. Só a família
+ * 5xx entra (erro do LADO DE LÁ, geralmente passageiro); 4xx é problema desta
+ * conta/pedido e vestir esconderia o motivo real. `undefined` = passa cru.
+ */
+export function guiProviderOutageText(raw: string | undefined): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  const wrapper = /^API Error:?\s*(5\d\d)\b/iu.exec(raw.trim())
+  if (!wrapper) return undefined
+  return (
+    `o provedor do Claude falhou do lado de LÁ (API ${wrapper[1]} — erro do servidor, ` +
+    'geralmente passageiro) · mande a mensagem de novo: a conversa continua daqui'
+  )
+}
+
 export type PermissionChoice = 'allow' | 'allow-always' | 'deny'
 
 interface PendingPermission {
@@ -1639,10 +1661,16 @@ export class MaestroSession {
           // R21.3 — UMA VOZ para o limite: com o bloqueio ARMADO (fato
           // estrutural do `rate_limit_event`, nunca as palavras do erro), o
           // card fala PT-BR com a receita em vez do inglês cru do CLI.
+          // A ORDEM é do mais específico ao cru: limite ARMADO (estado do
+          // protocolo) > queda do provedor (assinatura do wrapper do CLI,
+          // guiProviderOutageText) > a palavra crua do CLI.
           errorText: interrupted
             ? GUI_OWNER_INTERRUPT_LABEL
             : evt.is_error
-              ? (guiLimitResultText(this.rateLimitBlocked) ?? evt.result ?? 'erro sem detalhe')
+              ? (guiLimitResultText(this.rateLimitBlocked) ??
+                guiProviderOutageText(evt.result) ??
+                evt.result ??
+                'erro sem detalhe')
               : undefined,
           resultText: typeof evt.result === 'string' && evt.result.trim() ? evt.result : undefined,
           contextTokens,

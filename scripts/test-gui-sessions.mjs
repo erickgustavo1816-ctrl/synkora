@@ -5116,6 +5116,54 @@ test('Claude: bloqueio de verdade vira erro com receita e veste o result seguint
   assert.equal(result.resultText, ingles)
 })
 
+test('Claude: queda do provedor (5xx) fala PT-BR com a receita — e erro comum passa cru', async () => {
+  // Caso real do dono (print 2026-08-19): "API Error: 500 Internal server
+  // error. This is a server-side issue, usually temporary — try…" cru no card.
+  // A assinatura é o WRAPPER do próprio CLI ("API Error: 5xx"), o mesmo
+  // precedente sondado do matcher transitório dos ajudantes — nunca as
+  // palavras de conteúdo do modelo.
+  const motor = await import('../.tmp/gui-sessions-test/maestroSession.js')
+  assert.equal(
+    typeof motor.guiProviderOutageText,
+    'function',
+    'a voz da queda do provedor mora numa função pura exportada'
+  )
+
+  const { session, events, line } = claudeAgentSession()
+  session.activeTurnGeneration = 1
+  session.pendingTurnGenerations = [1]
+  const cru = 'API Error: 500 Internal server error. This is a server-side issue, usually temporary - try again shortly.'
+  line({ type: 'result', is_error: true, result: cru })
+  const result = events.at(-1)
+  assert.equal(result.type, 'result')
+  assert.equal(result.isError, true)
+  assert.match(result.errorText, /provedor do Claude falhou do lado de L[ÁA] \(API 500/u)
+  assert.match(result.errorText, /mande a mensagem de novo/u, 'a receita é obrigatória')
+  assert.doesNotMatch(result.errorText, /Internal server error/u, 'o inglês cru não é a voz da casa')
+  // A palavra final CRUA continua publicada — o redutor a compara com a última
+  // fala para matar a duplicata (R21.3, lado renderer).
+  assert.equal(result.resultText, cru)
+
+  // Erro que NÃO é assinatura do wrapper passa intacto: vestir erro comum
+  // esconderia o motivo real do dono.
+  const { session: s2, events: e2, line: l2 } = claudeAgentSession()
+  s2.activeTurnGeneration = 1
+  s2.pendingTurnGenerations = [1]
+  l2({ type: 'result', is_error: true, result: 'ENOENT: no such file or directory' })
+  assert.match(e2.at(-1).errorText, /ENOENT/u)
+
+  // O LIMITE armado VENCE a queda do provedor: mais específico fala primeiro.
+  const { session: s3, events: e3, line: l3 } = claudeAgentSession()
+  s3.activeTurnGeneration = 1
+  s3.pendingTurnGenerations = [1]
+  l3({
+    type: 'rate_limit_event',
+    rate_limit_info: { status: 'rejected', resetsAt: Math.floor(Date.now() / 1000) + 1_800 }
+  })
+  l3({ type: 'result', is_error: true, result: cru })
+  assert.match(e3.at(-1).errorText, /^o turno parou no limite do plano/u)
+})
+
 test('a tradução do limite tem fonte única e nenhuma heurística de conteúdo', () => {
   const source = readFileSync(new URL('../src/main/maestroSession.ts', import.meta.url), 'utf8')
   assert.match(
