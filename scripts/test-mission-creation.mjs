@@ -1110,10 +1110,14 @@ test('CONFLITO volta ao agente com a receita — e o ticket NUNCA vira blocked',
 
   assert.match(run, /PAROU/u)
   assert.match(run, /CONFLITO com o destino/u)
-  // O veredito do git chega inteiro: o arquivo E as linhas que ele imprimiu.
+  // O veredito do git chega como o git DESTA máquina o escreveu: o arquivo é
+  // garantido; as linhas informativas ("CONFLICT (content): …") são OPCIONAIS
+  // conforme a versão do git — amarrar o teste a elas quebrava em máquina cuja
+  // saída do merge-tree traz só os caminhos. O passthrough verbatim das linhas,
+  // quando existem, está preso na função PURA (test-gui-mission-contracts.mjs,
+  // "o veredito do merge-tree atravessa VERBATIM").
   assert.match(run, /CONFLITO, COMO O GIT REPORTOU:/u)
   assert.match(run, /· base\.txt/u)
-  assert.match(run, /CONFLICT \(content\)/u)
   assert.match(run, /integration_run de novo/u)
   assert.match(run, /decisão de produto/u)
   assert.equal(h.targetSha(), targetAntes, 'conflito não toca no destino')

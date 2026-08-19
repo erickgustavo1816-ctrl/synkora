@@ -780,6 +780,26 @@ test('a receita do conflito nomeia as duas branches e o movimento', () => {
   assert.match(text, /decisão de produto/u, 'o que se pergunta ao dono é produto, não git')
 })
 
+test('o veredito do merge-tree atravessa VERBATIM quando o git o entrega', () => {
+  // O `git merge-tree --name-only` imprime os caminhos e, DEPENDENDO DA
+  // VERSÃO, as linhas informativas ("CONFLICT (content): …"). A receita passa
+  // o bloco como veio — e este é o lugar DETERMINÍSTICO de prender isso: a
+  // função é pura, o git da máquina não opina (o teste de integração antigo
+  // amarrava-se à prosa opcional e quebrava conforme a versão do git).
+  const text = missionConflictRecipe({
+    missionTitle: 'Rail da fila',
+    detail: 'CONFLITO com o destino em: base.txt',
+    files: ['base.txt', 'CONFLICT (content): Merge conflict in base.txt']
+  })
+  assert.match(text, /CONFLITO, COMO O GIT REPORTOU:/u)
+  assert.match(text, /· base\.txt/u)
+  assert.match(text, /· CONFLICT \(content\): Merge conflict in base\.txt/u)
+  // Sem linhas do git, o cabeçalho nem aparece — a receita continua inteira.
+  const bare = missionConflictRecipe({ missionTitle: 'Rail da fila', detail: 'x' })
+  assert.equal(/COMO O GIT REPORTOU/u.test(bare), false)
+  assert.match(bare, /integration_run de novo/u)
+})
+
 test('a receita entrega o veredito do merge-tree como o git o escreveu — sem inventar contagem', () => {
   // MEDIDO no motor real (rodada 9): o `merge-tree --name-only` devolve os
   // arquivos conflitados E, logo depois, as linhas informativas do git; o leitor
