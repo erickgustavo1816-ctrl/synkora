@@ -19,20 +19,45 @@ import { freshWindowsPath } from './winPath'
 // task/<id>; aprovada nos dois gates, o main integra com merge --no-ff e limpa.
 // Projeto sem git (ou sem commit) cai no modo direto — executa no próprio dir.
 
+/** Sensor dos git SÍNCRONOS (diagnóstico das travadas de UI, 2026-08-19).
+ *  Gancho injetado — nunca import: este módulo compila sozinho nas suítes e
+ *  roda também no gitWorker (onde ninguém arma o gancho e ele fica no-op).
+ *  Quem arma é o index.ts, NO MAIN THREAD, despejando na caixa-preta — é lá
+ *  que cada spawn síncrono de git rouba tempo da UI. */
+let gitObserver: ((info: { ms: number; args: string[]; cwd: string }) => void) | null = null
+
+export function setGitObserver(
+  observer: ((info: { ms: number; args: string[]; cwd: string }) => void) | null
+): void {
+  gitObserver = observer
+}
+
 function gitRaw(cwd: string, args: string[], maxBuffer?: number): string {
-  return execFileSync('git', args, {
-    cwd,
-    encoding: 'utf-8',
-    env: { ...(process.env as Record<string, string>), PATH: freshWindowsPath() },
-    timeout: 60_000,
-    windowsHide: true,
-    // Padrão do Node é 1MB; quem lê DIFF de arquivo pede folga explícita —
-    // estourar o buffer vira ENOBUFS sem stdout aproveitável.
-    ...(maxBuffer ? { maxBuffer } : {}),
-    // stderr capturado (vai no erro), não despejado no console do app —
-    // hasGitCommit sonda projetos sem git e enchia o dev de "fatal:".
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
+  const startedAt = gitObserver ? Date.now() : 0
+  try {
+    return execFileSync('git', args, {
+      cwd,
+      encoding: 'utf-8',
+      env: { ...(process.env as Record<string, string>), PATH: freshWindowsPath() },
+      timeout: 60_000,
+      windowsHide: true,
+      // Padrão do Node é 1MB; quem lê DIFF de arquivo pede folga explícita —
+      // estourar o buffer vira ENOBUFS sem stdout aproveitável.
+      ...(maxBuffer ? { maxBuffer } : {}),
+      // stderr capturado (vai no erro), não despejado no console do app —
+      // hasGitCommit sonda projetos sem git e enchia o dev de "fatal:".
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } finally {
+    // No finally de propósito: git LENTO que FALHA também rouba a UI.
+    if (gitObserver) {
+      try {
+        gitObserver({ ms: Date.now() - startedAt, args, cwd })
+      } catch {
+        // sensor nunca derruba a operação real
+      }
+    }
+  }
 }
 
 function git(cwd: string, args: string[]): string {

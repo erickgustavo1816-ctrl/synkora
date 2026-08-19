@@ -24,7 +24,8 @@ import {
   isWorktreeClean,
   isExpectedVersionWorktree,
   pruneWorktrees,
-  removeWorktreeAndBranch
+  removeWorktreeAndBranch,
+  setGitObserver
 } from './worktree'
 import { MissionStore } from './missions'
 import { PlanStore } from './plans'
@@ -3306,6 +3307,40 @@ app.whenReady().then(async () => {
         ...(entry.err ? { err: entry.err } : {})
       })
   })
+  // ————— SENSORES DA TRAVADA (diagnóstico, 2026-08-19: "quando clico pra
+  // subir, o app trava muito"). Dois olhos na caixa-preta:
+  // 1. todo git SÍNCRONO no main que passar de 200ms (cada um desses é UI
+  //    congelada — o gancho fica no-op dentro do gitWorker);
+  // 2. o estol do próprio event loop do main (>400ms de deriva = alguém
+  //    segurou o thread, git ou não). Correlacionar os dois com os eventos de
+  //    integração conta a história inteira de um clique no ⇪.
+  setGitObserver(({ ms, args, cwd }) => {
+    if (ms < 200) return
+    blackbox.record({
+      cat: 'git',
+      event: 'git-sync-slow',
+      actor: 'harness',
+      detail: { ms, cmd: args.slice(0, 3).join(' '), cwd: cwd.slice(-70) }
+    })
+  })
+  {
+    const STALL_TICK_MS = 250
+    const STALL_REPORT_MS = 400
+    let lastTick = Date.now()
+    setInterval(() => {
+      const now = Date.now()
+      const stall = now - lastTick - STALL_TICK_MS
+      lastTick = now
+      if (stall >= STALL_REPORT_MS) {
+        blackbox.record({
+          cat: 'app',
+          event: 'main-thread-stall',
+          actor: 'harness',
+          detail: { ms: stall }
+        })
+      }
+    }, STALL_TICK_MS)
+  }
   const killMissionGuiPanes = (missionId: string): void => {
     guiSessions?.killWhere((paneId) => isGuiMissionPaneId(paneId, missionId))
     // O servidor de linguagem tem `cwd` DENTRO do worktree, igual aos chats:
