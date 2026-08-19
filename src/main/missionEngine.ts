@@ -9,10 +9,15 @@
  * getters do MainContext seguem textualmente intactos.
  *
  * Contratos que este módulo NÃO pode quebrar:
- * - startMissionIntegration devolve string SÍNCRONA (mensagem da tool MCP e
- *   do IPC) — virar Promise quebraria integrate_mission/queue_missions em
- *   silêncio. pendingIntegrationApproval: ausência NUNCA é consentimento —
- *   só actor 'user' enfileira (F6.9).
+ * - startMissionIntegration devolve `Promise<string>` desde a R17 (2026-08-19).
+ *   As FRASES de retorno continuam sendo o contrato e NENHUMA mudou; o que
+ *   mudou foi o THREAD — o caminho do ⇪ manda cada git pelo gitWorker
+ *   (`gitOff`) em vez de travar o main numa rajada de spawns. O único chamador
+ *   vivo é o `ipcMain.handle` de `missions:integrate` (o `invoke` do renderer
+ *   sempre devolveu Promise); as tools integrate_mission/queue_missions da era
+ *   F6 saíram na limpa — se alguma voltar, ela AGUARDA o retorno.
+ *   pendingIntegrationApproval: ausência NUNCA é consentimento — só actor
+ *   'user' enfileira (F6.9).
  * - completeMissionMerge é wrapper fino da Fase 0
  *   (mainStalls.wrap('completeMissionMerge', …)) — manter par wrapper→Inner
  *   e o rótulo idêntico, senão o ranking de stall perde a série.
@@ -198,6 +203,30 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     )
   }
 
+  /**
+   * ESPELHO ASSÍNCRONO de `missionWorkspacePath` (R17, 2026-08-19) — o par é
+   * declarado: MESMA pergunta, MESMA função (`resolveMissionWorkspace`), só que
+   * dentro do gitWorker. Ela sozinha vale ~6 spawns de git (hasGitCommit +
+   * isExpectedWorktree), e no caminho do ⇪ isso era main thread PARADO.
+   *
+   * O espelho síncrono FICA porque quem o chama são costuras síncronas fora
+   * desta fronteira (`proveMissionWorkspace` do ipc/missions, o
+   * `missionIntegrationStatus` do MCP e a reconciliação de BOOT — boot não é
+   * clique). Quem está num caminho async usa ESTE.
+   */
+  function missionWorkspacePathOffThread(
+    projectPath: string,
+    mission: Mission
+  ): Promise<string | undefined> {
+    return gitOff(
+      'resolveMissionWorkspace',
+      projectPath,
+      mission.id,
+      mission.branch,
+      mission.worktree
+    )
+  }
+
   /** Garante branch/worktree da missão — inicializando o GIT do projeto se
    *  preciso (sem git não há isolamento; decisão: o Synkora resolve sozinho e
    *  anuncia). Também promove missões antigas criadas sem branch. */
@@ -314,6 +343,53 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // zera para a próxima abertura nascer DENTRO do worktree da missão.
     maestro.update(orchKey(mission.projectId, mission.id), { tuiSessionId: undefined })
     return missions.get(mission.id)
+  }
+
+  /**
+   * O MESMO `ensureMissionWorktree` PARA O CAMINHO DO ⇪ (R17, 2026-08-19).
+   *
+   * Medida do dono com os sensores armados: o clique em subir travava o main
+   * em rajadas (809ms no estímulo, 1546ms no meio do run) SEM que nenhum git
+   * sozinho passasse de 200ms — no Windows cada spawn de git custa ~100-180ms
+   * (imposto do Defender) e a sequência SÍNCRONA nunca deixa o event loop
+   * respirar. Só a abertura desta função são ~8 spawns (hasGitCommit +
+   * excludes + isExpectedWorktree).
+   *
+   * TRANSPORTE, NÃO LÓGICA: as perguntas e a ORDEM delas são idênticas às do
+   * espelho síncrono acima — hasGitCommit → excludes → identidade da branch →
+   * worktree esperado. A ordem é parte do lacre: cada resposta decide a
+   * pergunta seguinte, e trocar a sequência (ou paralelizar com Promise.all)
+   * mudaria a decisão, não só o thread.
+   *
+   * O QUE NÃO É O ESTADO SAUDÁVEL cai no caminho COMPLETO síncrono de sempre —
+   * projeto sem commit (git init), registro legado a promover, worktree a criar
+   * ou reparar. É o mesmo padrão do `missionWorkspaceReadout` (worktree.ts):
+   * atalho para o caso comum, caminho inteiro e INTOCADO para o raro. Isso
+   * também é o que impede um SEGUNDO dono da verdade sobre criação de branch/
+   * worktree — a decisão perigosa continua existindo em um lugar só.
+   */
+  async function ensureMissionWorktreeOffThread(missionId: string): Promise<Mission | undefined> {
+    const mission = missions.get(missionId)
+    if (!mission) return undefined
+    if (mission.status === 'concluida' || mission.status === 'arquivada') return mission
+    if (missionTypeOf(mission) === 'planejamento') return mission
+    const project = projects.get(mission.projectId)
+    if (!project) return mission
+    if (await gitOff('hasGitCommit', project.path)) {
+      // Recusa do excludes (.synkora versionado) PROPAGA como sempre — o
+      // espelho síncrono também não a captura.
+      await gitOff('ensureSynkoraGitExcludes', project.path)
+      const expectedBranch = `mission/${mission.id.slice(0, 8)}`
+      if (mission.branch && mission.branch !== expectedBranch) return mission
+      if (
+        mission.branch &&
+        mission.worktree &&
+        (await gitOff('isExpectedWorktree', project.path, mission.worktree, mission.branch))
+      ) {
+        return mission
+      }
+    }
+    return ensureMissionWorktree(missionId)
   }
 
   /**
@@ -638,18 +714,30 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     versionId?: string
   }
 
-  function resolveMissionIntegrationTarget(
+  /**
+   * R17 (2026-08-19): ASSÍNCRONA porque o caminho do ⇪ passa por aqui — os
+   * git dela (currentBranch, gitLocalBranchExists, createVersionWorktree,
+   * isExpectedWorktree) viajam pelo gitWorker um a um, na MESMA ordem. Todos
+   * os chamadores já eram assíncronos (start/run/drain), então nenhuma costura
+   * síncrona precisou ser aberta para isso.
+   *
+   * RESÍDUO CONHECIDO: `versionIsolationIsValid` continua SÍNCRONO (~5 spawns)
+   * — ele é um type predicate (`version is …`) e mora no index como extra, e
+   * predicado não sobrevive a `async`. Fica para a rodada dele.
+   */
+  async function resolveMissionIntegrationTarget(
     project: { id: string; path: string },
     mission: Mission
-  ): MissionIntegrationTarget | undefined {
+  ): Promise<MissionIntegrationTarget | undefined> {
     const version = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
     if (mission.versionId && (!version || version.projectId !== mission.projectId)) return undefined
     if (!version) {
+      // Duas leituras de propósito (era assim antes e é fotografia, não cache).
       return {
         kind: 'base',
         dir: project.path,
-        branch: mission.baseBranch ?? currentBranch(project.path) ?? 'base',
-        label: mission.baseBranch ?? currentBranch(project.path) ?? 'base'
+        branch: mission.baseBranch ?? (await gitOff('currentBranch', project.path)) ?? 'base',
+        label: mission.baseBranch ?? (await gitOff('currentBranch', project.path)) ?? 'base'
       }
     }
     let dir = version.worktree
@@ -662,10 +750,13 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       // missão de 30/07 pronta para integrar com a V1.0 sem isolamento
       // (validação ao vivo, 02/08). Qualquer outro estado segue fail-closed.
       if (version.deliveries.length > 0) return undefined
-      if (gitLocalBranchExists(project.path, `version/${version.name}`) !== false) {
+      if (
+        (await gitOff('gitLocalBranchExists', project.path, `version/${version.name}`)) !== false
+      ) {
         return undefined
       }
-      const versionWt = createVersionWorktree(
+      const versionWt = await gitOff(
+        'createVersionWorktree',
         project.path,
         join(app.getPath('userData'), 'worktrees', project.id),
         version.name,
@@ -700,7 +791,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       !dir ||
       !branch ||
       !branch.startsWith('version/') ||
-      !isExpectedWorktree(project.path, dir, branch)
+      !(await gitOff('isExpectedWorktree', project.path, dir, branch))
     ) {
       return undefined
     }
@@ -888,7 +979,16 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     integrationDrainTimers.set(projectId, timer)
   }
 
-  function startMissionIntegration(missionId: string, actor: string): string {
+  /**
+   * O ⇪ DO DONO — assíncrona desde a R17 (2026-08-19) porque TODO git deste
+   * caminho passou a viajar pelo gitWorker (`gitOff`), um a um e na ordem
+   * exata de antes. Nenhuma porteira mudou de conteúdo nem de lugar: tipo,
+   * status, worktree provado, árvore limpa, lacre (heads), identidade do
+   * destino e FIFO continuam onde estavam, na mesma sequência — a ORDEM É
+   * PARTE DO LACRE (cada resposta decide a pergunta seguinte, e a fotografia
+   * lida em sequência é o que o ticket sela). O que mudou é só o thread.
+   */
+  async function startMissionIntegration(missionId: string, actor: string): Promise<string> {
     let mission = missions.get(missionId)
     if (!mission) return 'missão não encontrada'
     const project = projects.get(mission.projectId)
@@ -955,9 +1055,13 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // dono e o ⇪ é o aval. O que segue valendo (árvore limpa, heads, lacre,
     // FIFO, identidade do destino, precheck de conflito) está abaixo, e vale
     // igual para um registro pré-2.0 que ainda esteja ativo.
-    mission = ensureMissionWorktree(missionId) ?? mission
-    const gitProject = hasGitCommit(project.path)
-    const missionSource = missionWorkspacePath(project.path, mission)
+    // R17: as três leituras abaixo eram ~15 spawns de git SÍNCRONOS colados —
+    // a rajada que virava o estol de 809ms no instante do clique. Continuam na
+    // mesma ordem, sequenciais (a ORDEM é parte do lacre; `Promise.all` aqui
+    // seria mudar a lógica), só que dentro do gitWorker.
+    mission = (await ensureMissionWorktreeOffThread(missionId)) ?? mission
+    const gitProject = await gitOff('hasGitCommit', project.path)
+    const missionSource = await missionWorkspacePathOffThread(project.path, mission)
     if (!missionSource) {
       return integrateBlocked(
         'no-worktree',
@@ -975,7 +1079,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       // ia falhar). Árvore suja/head defasado voltam com a receita, sem
       // registrar intenção.
       if (gitProject) {
-        if (isWorktreeClean(missionSource) !== true)
+        if ((await gitOff('isWorktreeClean', missionSource)) !== true)
           return integrateBlocked(
             'agent-dirty-tree',
             'a missão NÃO está pronta para o aval do dono: a branch tem alterações não commitadas depois dos gates — enquadre a árvore (commit auditado ou limpeza) antes de pedir integração'
@@ -1031,20 +1135,22 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         'integração bloqueada: existe um journal anterior ainda não reconciliado. Reinicie o Synkora para a recuperação segura ou repare o marcador antes de tentar novamente.'
       )
     }
-    const target = resolveMissionIntegrationTarget(project, mission)
+    const target = await resolveMissionIntegrationTarget(project, mission)
     if (!target)
       return integrateBlocked(
         'target',
         'integração bloqueada: não consegui preparar a branch de destino; a missão foi preservada'
       )
-    if (isWorktreeClean(missionSource) !== true) {
+    if ((await gitOff('isWorktreeClean', missionSource)) !== true) {
       return integrateBlocked(
         'dirty-tree',
         'integração bloqueada: a branch da missão tem alterações não commitadas depois dos gates — peça ao orquestrador para enquadrar a árvore (commit auditado ou limpeza) e valide essa fotografia antes de entrar na fila'
       )
     }
-    const sourceHead = gitHead(missionSource)
-    const targetHead = gitHead(target.dir)
+    // O LACRE é fotografia LIDA EM SEQUÊNCIA: origem primeiro, destino depois,
+    // como sempre foi. Duas leituras seriais, nunca em paralelo.
+    const sourceHead = await gitOff('gitHead', missionSource)
+    const targetHead = await gitOff('gitHead', target.dir)
     if (!sourceHead || !targetHead)
       return integrateBlocked(
         'heads',
@@ -1064,7 +1170,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         : `fila pausada na posição #${existing.position}: ${existing.lastError ?? 'bloqueio operacional pendente'}`
     }
     if (existing?.state === 'sync_required') {
-      if (gitCommitReached(missionSource, targetHead) !== true) {
+      if ((await gitOff('gitCommitReached', missionSource, targetHead)) !== true) {
         return `a missão mantém a posição #${existing.position} na fila e ainda precisa concluir o card de sincronização com ${target.branch}`
       }
       integrationQueue.requeueAfterSync(missionId, {
@@ -1318,19 +1424,25 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       emitMissionsChanged(projectId)
       return 'esta missão está ARQUIVADA: retirei o ticket da fila e nada foi mesclado. Só o dono reativa a missão.'
     }
-    mission = ensureMissionWorktree(missionId) ?? mission
-    const missionSource = missionWorkspacePath(project.path, mission)
-    if (!hasGitCommit(project.path) || !mission.branch || !mission.worktree || !missionSource)
+    // R17: mesma rajada do ⇪, mesmo remédio — gitWorker, um a um, na ordem.
+    mission = (await ensureMissionWorktreeOffThread(missionId)) ?? mission
+    const missionSource = await missionWorkspacePathOffThread(project.path, mission)
+    if (
+      !(await gitOff('hasGitCommit', project.path)) ||
+      !mission.branch ||
+      !mission.worktree ||
+      !missionSource
+    )
       return stopped(
         'não consegui provar nem reanexar a branch/worktree isolada desta missão',
         'Confira que o worktree desta missão existe e está no lugar; se ele sumiu, avise o dono — reconstruir isolamento não é decisão sua.'
       )
-    if (isWorktreeClean(missionSource) !== true)
+    if ((await gitOff('isWorktreeClean', missionSource)) !== true)
       return stopped(
         'a branch da missão tem alterações não commitadas',
         'RECEITA: commite (ou limpe) o que está solto neste worktree e chame integration_run de novo.'
       )
-    const sourceHead = gitHead(missionSource)
+    const sourceHead = await gitOff('gitHead', missionSource)
     if (!sourceHead)
       return stopped('não consegui identificar o commit atual da branch desta missão')
 
@@ -1357,8 +1469,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       )
     }
 
-    const target = resolveMissionIntegrationTarget(project, mission)
-    const targetHead = target ? gitHead(target.dir) : undefined
+    const target = await resolveMissionIntegrationTarget(project, mission)
+    const targetHead = target ? await gitOff('gitHead', target.dir) : undefined
     if (!target || !targetHead)
       return stopped(
         'não consegui identificar ou preparar a branch de destino',
@@ -1380,7 +1492,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       )
 
     const targetMoved = ticket.validatedTargetHead !== targetHead
-    const targetIncluded = gitCommitReached(missionSource, targetHead) === true
+    const targetIncluded = (await gitOff('gitCommitReached', missionSource, targetHead)) === true
     if (targetMoved || !targetIncluded) {
       const pre = await gitOff(
         'missionMergePrecheck',
@@ -1556,7 +1668,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           return
         }
 
-        const target = resolveMissionIntegrationTarget(project, mission)
+        // R17: o `await` aqui é só o preço de o resolvedor ter virado assíncrono
+        // para o caminho do ⇪ — este dreno segue MORTO-CERCADO e síncrono no
+        // resto, como a referência viva que ele é.
+        const target = await resolveMissionIntegrationTarget(project, mission)
         const targetHead = target ? gitHead(target.dir) : undefined
         if (!target || !sourceHead || !targetHead) {
           integrationQueue.block(mission.id, {
@@ -1759,18 +1874,23 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     createdAt: string
   }
 
-  function writeMissionIntegrationIntent(
+  /** R17: o PONTO SEGURO do merge é gravado no caminho do ⇪ (único chamador:
+   *  `completeMissionMergeInner`), e as ~10 rajadas de git dele estavam no
+   *  main. Agora viajam pelo gitWorker na MESMA ordem — excludes, workspace,
+   *  head da origem, head e branch do destino —, e qualquer recusa continua
+   *  virando exceção que o chamador transforma em `failed` sem mesclar nada. */
+  async function writeMissionIntegrationIntent(
     projectPath: string,
     mission: Mission,
     targetDir: string
-  ): void {
-    ensureSynkoraGitExcludes(projectPath)
-    const sourceDir = missionWorkspacePath(projectPath, mission)
+  ): Promise<void> {
+    await gitOff('ensureSynkoraGitExcludes', projectPath)
+    const sourceDir = await missionWorkspacePathOffThread(projectPath, mission)
     if (!sourceDir || !mission.branch) throw new Error('worktree isolado da missão inválido')
-    const sourceHead = gitHead(sourceDir)
+    const sourceHead = await gitOff('gitHead', sourceDir)
     if (!sourceHead) throw new Error('não foi possível identificar o commit da missão')
-    const targetHead = gitHead(targetDir)
-    const targetBranch = currentBranch(targetDir)
+    const targetHead = await gitOff('gitHead', targetDir)
+    const targetBranch = await gitOff('currentBranch', targetDir)
     if (!targetHead || !targetBranch)
       throw new Error('não foi possível identificar a fotografia da branch de destino')
     const file = missionIntegrationIntentPath(projectPath, mission.id)
@@ -2147,13 +2267,16 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     const project = projects.get(projectId)
     if (!mission || !project)
       return { state: 'failed', detail: 'missão/projeto não encontrado' }
-    const missionSource = missionWorkspacePath(project.path, mission)
+    // R17: a rajada do MEIO do run (1546ms medidos) começa aqui — workspace,
+    // repo, identidade do destino e a fotografia pré-merge, todas em git
+    // síncrono colado. Mesma ordem, mesmo conteúdo, agora no gitWorker.
+    const missionSource = await missionWorkspacePathOffThread(project.path, mission)
     // Servidor de teste do dono — ou, no 2.0, o TERMINAL avulso da missão —
     // ainda rodando neste worktree seguraria arquivos durante o merge
     // (Windows). Os dois vivem no mesmo registro e caem aqui, antes de mesclar.
     if (mission.worktree) closeTestServersUnder(mission.worktree)
     if (
-      !hasGitCommit(project.path) ||
+      !(await gitOff('hasGitCommit', project.path)) ||
       !mission.branch ||
       !mission.worktree ||
       !missionSource
@@ -2184,16 +2307,18 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         resolve(target.dir).toLocaleLowerCase('en-US') !==
           resolve(project.path).toLocaleLowerCase('en-US')) ||
       (target.kind === 'version' &&
-        !isExpectedWorktree(project.path, target.dir, target.branch))
+        !(await gitOff('isExpectedWorktree', project.path, target.dir, target.branch)))
     ) {
       return {
         state: 'failed',
         detail: 'integração BLOQUEADA: o worktree de destino não corresponde ao destino validado'
       }
     }
-    const currentSourceHead = gitHead(missionSource)
-    const currentTargetHead = gitHead(target.dir)
-    const currentTargetBranch = currentBranch(target.dir)
+    // A FOTOGRAFIA do instante anterior ao merge: três leituras SERIAIS, na
+    // ordem de sempre (origem → head do destino → branch do destino).
+    const currentSourceHead = await gitOff('gitHead', missionSource)
+    const currentTargetHead = await gitOff('gitHead', target.dir)
+    const currentTargetBranch = await gitOff('currentBranch', target.dir)
     if (
       currentSourceHead !== expectedSourceHead ||
       currentTargetHead !== expectedTargetHead ||
@@ -2241,7 +2366,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       }
     }
     try {
-      writeMissionIntegrationIntent(project.path, mission, target.dir)
+      await writeMissionIntegrationIntent(project.path, mission, target.dir)
     } catch (error) {
       return {
         state: 'failed',

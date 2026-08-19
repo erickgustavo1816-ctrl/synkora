@@ -960,8 +960,14 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     }
   )
 
-  ipcMain.handle('missions:integrate', (e, missionId: string) => {
-    return startMissionIntegration(missionId, 'user')
+  // R17 (2026-08-19): o ⇪ virou ASSÍNCRONO — cada git dele viaja pelo
+  // gitWorker em vez de travar o main em rajada (809ms medidos no instante do
+  // clique). O `await` é explícito de propósito: o contrato do renderer não
+  // muda (invoke sempre devolveu Promise) e uma exceção continua chegando
+  // rejeitada do mesmo jeito, mas quem ler este canal precisa VER que a
+  // resposta agora é esperada, não devolvida na hora.
+  ipcMain.handle('missions:integrate', async (e, missionId: string) => {
+    return await startMissionIntegration(missionId, 'user')
   })
 
   // Excluir missão: só ARQUIVADA (fluxo: arquivar → excluir). Leva junto as

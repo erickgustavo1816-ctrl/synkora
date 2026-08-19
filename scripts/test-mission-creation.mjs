@@ -941,7 +941,7 @@ test('o ⇪ do dono ENTREGA a subida ao agente — e NADA mescla sozinho', async
   const pane = h.devPaneOf(mission)
   const targetAntes = h.targetSha()
 
-  const msg = h.engine.startMissionIntegration(mission.id, 'user')
+  const msg = await h.engine.startMissionIntegration(mission.id, 'user')
 
   // 1. O CORAÇÃO DA RODADA, e por isso a PRIMEIRA asserção: passada a janela do
   // dreno antigo (150ms de agrupamento + o merge), o destino NÃO andou e a
@@ -981,7 +981,7 @@ test('⇪ com o chat fechado não se perde: abrir a conversa re-estimula pelo TI
   const pane = h.devPaneOf(mission)
   // o dono clicou com a conversa FECHADA
   h.livePanes.delete(pane)
-  h.engine.startMissionIntegration(mission.id, 'user')
+  await h.engine.startMissionIntegration(mission.id, 'user')
   assert.equal(
     h.audited.find((event) => event.event === 'mission-integration-stimulus')?.detail.delivered,
     false,
@@ -1026,8 +1026,8 @@ test('quem não é a cabeça é recusado com a posição, quem falta e a ordem d
   const h = createIntegrationHarness(t)
   const first = await h.missionWithDelivery('Primeira entrega', 'a.txt', 'a\n')
   const second = await h.missionWithDelivery('Segunda entrega', 'b.txt', 'b\n')
-  h.engine.startMissionIntegration(first.id, 'user')
-  h.engine.startMissionIntegration(second.id, 'user')
+  await h.engine.startMissionIntegration(first.id, 'user')
+  await h.engine.startMissionIntegration(second.id, 'user')
 
   const status = h.engine.missionIntegrationStatus('proj-1', second.id)
   assert.match(status, /posição #2 de 2/u)
@@ -1049,7 +1049,7 @@ test('quem não é a cabeça é recusado com a posição, quem falta e a ordem d
 test('árvore suja é recusa COM receita, e o ticket continua na cabeça', async (t) => {
   const h = createIntegrationHarness(t)
   const mission = await h.missionWithDelivery('Rail da fila', 'rail.txt', 'entrega\n')
-  h.engine.startMissionIntegration(mission.id, 'user')
+  await h.engine.startMissionIntegration(mission.id, 'user')
   writeFileSync(join(mission.worktree, 'rail.txt'), 'mexido depois do aval\n', 'utf8')
 
   const status = h.engine.missionIntegrationStatus('proj-1', mission.id)
@@ -1070,8 +1070,8 @@ test('integration_run INTEGRA de verdade e a fila anda: o próximo agente é est
   const h = createIntegrationHarness(t)
   const first = await h.missionWithDelivery('Primeira entrega', 'a.txt', 'a\n')
   const second = await h.missionWithDelivery('Segunda entrega', 'b.txt', 'b\n')
-  h.engine.startMissionIntegration(first.id, 'user')
-  h.engine.startMissionIntegration(second.id, 'user')
+  await h.engine.startMissionIntegration(first.id, 'user')
+  await h.engine.startMissionIntegration(second.id, 'user')
   const sourceHead = gitCli(first.worktree, ['rev-parse', 'HEAD'])
 
   const run = await h.engine.runMissionIntegration('proj-1', first.id)
@@ -1101,7 +1101,7 @@ test('integration_run INTEGRA de verdade e a fila anda: o próximo agente é est
 test('CONFLITO volta ao agente com a receita — e o ticket NUNCA vira blocked', async (t) => {
   const h = createIntegrationHarness(t)
   const mission = await h.missionWithDelivery('Rail da fila', 'base.txt', 'lado da missao\n')
-  h.engine.startMissionIntegration(mission.id, 'user')
+  await h.engine.startMissionIntegration(mission.id, 'user')
   // o destino andou por fora, tocando o MESMO arquivo
   h.advanceTarget('lado da versao\n')
   const targetAntes = h.targetSha()
@@ -1136,7 +1136,7 @@ test('CONFLITO volta ao agente com a receita — e o ticket NUNCA vira blocked',
 test('resolver o conflito e rodar de novo INTEGRA — com o re-lacre auditado', async (t) => {
   const h = createIntegrationHarness(t)
   const mission = await h.missionWithDelivery('Rail da fila', 'base.txt', 'lado da missao\n')
-  h.engine.startMissionIntegration(mission.id, 'user')
+  await h.engine.startMissionIntegration(mission.id, 'user')
   const lacreOriginal = h.integrationQueue.getByMission(mission.id).sourceHead
   h.advanceTarget('lado da versao\n')
   await h.engine.runMissionIntegration('proj-1', mission.id)
@@ -1165,7 +1165,7 @@ test('resolver o conflito e rodar de novo INTEGRA — com o re-lacre auditado', 
 test('ticket congelado pela era da máquina é REABERTO pelo agente em vez de virar beco', async (t) => {
   const h = createIntegrationHarness(t)
   const mission = await h.missionWithDelivery('Rail da fila', 'rail.txt', 'entrega\n')
-  h.engine.startMissionIntegration(mission.id, 'user')
+  await h.engine.startMissionIntegration(mission.id, 'user')
   // exatamente o que a era anterior deixava no disco
   h.integrationQueue.block(mission.id, {
     code: 'merge_conflict',
@@ -1180,4 +1180,47 @@ test('ticket congelado pela era da máquina é REABERTO pelo agente em vez de vi
   const run = await h.engine.runMissionIntegration('proj-1', mission.id)
   assert.match(run, /INTEGRADA/u)
   assert.ok(h.audited.some((event) => event.event === 'mission-integration-reclaimed'))
+})
+
+// ————— R17 (2026-08-19): O ⇪ SOBE SEM TRAVAR O APP —————
+//
+// O dono mediu com os sensores armados: 809ms de main thread parado no instante
+// do clique, 1546ms no meio do run, e NENHUM git individual acima de 200ms. A
+// rajada de gits baratos e SÍNCRONOS é que virava o estol (no Windows cada
+// spawn custa ~100-180ms de imposto do Defender). A cura é TRANSPORTE: as
+// mesmas perguntas, na mesma ordem, dentro do gitWorker.
+//
+// Aqui a missão tem VERSÃO ISOLADA — o destino não é a base, é a branch da
+// versão —, então este é justamente o trecho que o teste da fila (destino base)
+// não cobre: a IDENTIDADE DO DESTINO também precisa viajar.
+
+test('R17: o ⇪ de uma missão com VERSÃO manda a rajada inteira para o gitWorker', async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Rail da fila', 'rail.txt', 'entrega\n')
+  // O nascimento da missão tem git próprio (base da versão, worktree); o que
+  // este teste mede é o CLIQUE, e só ele.
+  gitOffCalls.length = 0
+
+  const msg = await h.engine.startMissionIntegration(mission.id, 'user')
+
+  assert.match(msg, /fila de integração/u, msg)
+  assert.deepEqual(
+    gitOffCalls.map((call) => call.fn),
+    [
+      'hasGitCommit', //             ensureMissionWorktree: o repo tem commit?
+      'ensureSynkoraGitExcludes', // ensureMissionWorktree: .synkora invisível
+      'isExpectedWorktree', //       ensureMissionWorktree: worktree DESTA missão
+      'hasGitCommit', //             projeto git? (sem git não há merge)
+      'resolveMissionWorkspace', //  o worktree isolado, provado
+      'isExpectedWorktree', //       IDENTIDADE DO DESTINO: a branch da versão
+      'isWorktreeClean', //          a árvore da entrega está limpa
+      'gitHead', //                  lacre da ORIGEM
+      'gitHead' //                   fotografia do DESTINO
+    ],
+    'a rajada do ⇪ tem de viajar inteira, na ordem exata das porteiras'
+  )
+  // E o ticket nasceu igual: transporte não mexeu em nenhuma decisão.
+  const ticket = h.integrationQueue.getByMission(mission.id)
+  assert.equal(ticket.state, 'queued')
+  assert.equal(ticket.targetBranch, h.version.branch)
 })

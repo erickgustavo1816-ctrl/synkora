@@ -785,3 +785,167 @@ test('R16: os tetos da entrega cortam a lista, mas o TOTAL continua verdadeiro',
     undefined
   )
 })
+
+// ————— R17: O ⇪ SOBE SEM TRAVAR O APP (2026-08-19) —————
+//
+// Reprodução do dono com os sensores da caixa-preta armados: `main-thread-stall`
+// de 809ms no instante do clique e 1546ms no meio do run, enquanto
+// `git-sync-slow` (≥200ms individual) deu ZERO evento. O culpado não é um git
+// lento: é a RAJADA. No Windows cada spawn de git custa ~100-180ms (imposto do
+// Defender por processo) e uma sequência SÍNCRONA no main nunca deixa o event
+// loop respirar — dez chamadas baratas viram UM estol de segundos.
+//
+// A cura é TRANSPORTE, NÃO LÓGICA: as MESMAS perguntas, na MESMA ordem, dentro
+// do gitWorker. Estes testes seguram as duas metades disso — o seam observável
+// (a rajada aparece no `gitOff`, com a ordem intacta, porque fotografia lida em
+// sequência é parte do lacre) e o FONTE (o caminho do ⇪ não chama mais nenhuma
+// das funções síncronas direto, então a rajada não volta por descuido).
+
+const engineSource = readFileSync(
+  new URL('../src/main/missionEngine.ts', import.meta.url),
+  'utf8'
+).replace(/\r\n/gu, '\n')
+
+/** Corpo de uma função do closure do motor: da assinatura (`nome(`, com ou sem
+ *  `async` — a busca é pelo `function nome(`, que casa nas duas formas) até o
+ *  primeiro fecho NA INDENTAÇÃO DO CLOSURE (`\n  }`). Tudo que é corpo tem
+ *  indentação maior, então esse é o fim da função, não um bloco interno. */
+function engineBody(name) {
+  const start = engineSource.indexOf(`function ${name}(`)
+  assert.ok(start >= 0, `função não encontrada no motor: ${name}`)
+  const end = engineSource.indexOf('\n  }\n', start)
+  assert.ok(end > start, `fim do corpo não encontrado: ${name}`)
+  return engineSource.slice(start, end)
+}
+
+/** Chamada DIRETA de `nome(` — a string `'nome'` dentro de `gitOff('nome', …)`
+ *  não casa, que é exatamente a diferença entre main thread e gitWorker. */
+function directCall(name) {
+  return new RegExp(`(?<![\\w'])${name}\\(`, 'u')
+}
+
+/** As funções de git que a rajada do ⇪ usava. No caminho do ⇪ elas só podem
+ *  aparecer como ARGUMENTO do gitOff. */
+const SYNC_GIT_BURST = [
+  'gitHead',
+  'currentBranch',
+  'isWorktreeClean',
+  'hasGitCommit',
+  'isExpectedWorktree',
+  'gitCommitReached',
+  'gitLocalBranchExists',
+  'createVersionWorktree',
+  'ensureSynkoraGitExcludes',
+  'resolveMissionWorkspace',
+  'missionWorkspacePath'
+]
+
+test('R17: o caminho do ⇪ não tem NENHUM git síncrono no fonte', () => {
+  const path = {
+    startMissionIntegration: engineBody('startMissionIntegration'),
+    runHeadIntegration: engineBody('runHeadIntegration'),
+    completeMissionMergeInner: engineBody('completeMissionMergeInner'),
+    resolveMissionIntegrationTarget: engineBody('resolveMissionIntegrationTarget'),
+    writeMissionIntegrationIntent: engineBody('writeMissionIntegrationIntent'),
+    ensureMissionWorktreeOffThread: engineBody('ensureMissionWorktreeOffThread')
+  }
+  for (const [name, body] of Object.entries(path)) {
+    for (const fn of SYNC_GIT_BURST) {
+      assert.doesNotMatch(
+        body,
+        directCall(fn),
+        `${name} chama ${fn}() direto — isso é spawn de git no MAIN THREAD, e é a rajada que trava o app`
+      )
+    }
+  }
+  // O ⇪ também não entra no ensureMissionWorktree SÍNCRONO: o dele é o espelho
+  // assíncrono (que, esse sim, delega ao completo no caso raro).
+  for (const name of ['startMissionIntegration', 'runHeadIntegration']) {
+    assert.doesNotMatch(path[name], directCall('ensureMissionWorktree'), name)
+    assert.match(path[name], /ensureMissionWorktreeOffThread\(/u, name)
+    assert.match(path[name], /missionWorkspacePathOffThread\(/u, name)
+  }
+  // E o transporte existe de verdade: os nomes viajam como argumento do gitOff.
+  for (const fn of ['isWorktreeClean', 'gitHead', 'hasGitCommit']) {
+    assert.match(path.startMissionIntegration, new RegExp(`gitOff\\('${fn}'`, 'u'), fn)
+    assert.match(path.runHeadIntegration, new RegExp(`gitOff\\('${fn}'`, 'u'), fn)
+  }
+  assert.match(path.completeMissionMergeInner, /gitOff\('currentBranch'/u)
+  assert.match(path.writeMissionIntegrationIntent, /gitOff\('gitHead'/u)
+})
+
+test('R17: o atalho do ⇪ pergunta o MESMO, na MESMA ordem — e o raro volta ao caminho inteiro', () => {
+  const sync = engineBody('ensureMissionWorktree')
+  const off = engineBody('ensureMissionWorktreeOffThread')
+  // A ordem de abertura do espelho SÍNCRONO é a autoridade: repo com commit →
+  // excludes → worktree esperado. Cada resposta decide a pergunta seguinte.
+  const opening = [...sync.matchAll(/(?<![\w'])(hasGitCommit|ensureSynkoraGitExcludes|isExpectedWorktree)\(/gu)]
+    .map((match) => match[1])
+    .slice(0, 3)
+  const transported = [...off.matchAll(/gitOff\('([A-Za-z]+)'/gu)].map((match) => match[1])
+  assert.deepEqual(
+    transported,
+    opening,
+    'o espelho assíncrono precisa fazer as MESMAS perguntas, na MESMA ordem — mudar a sequência muda a decisão, não só o thread'
+  )
+  // E o que NÃO é o estado saudável (git init, promoção de registro legado,
+  // criação/reparo de worktree) continua num dono da verdade só.
+  assert.match(off, /return ensureMissionWorktree\(missionId\)/u)
+})
+
+test('R17: o ⇪ do dono manda a rajada inteira para o gitWorker, na ordem do lacre', async (t) => {
+  const harness = mergeHarness(t)
+  const msg = await harness.engine.startMissionIntegration(harness.missionId, 'user')
+  assert.match(msg, /fila de integração/u, msg)
+  // ORDEM E CONTEÚDO: a sequência abaixo é o lacre do ⇪ lido em fotografia —
+  // worktree provado, repo, workspace, árvore limpa, head da origem e head do
+  // destino. Nenhuma some, nenhuma troca de lugar; todas fora do main thread.
+  assert.deepEqual(gitOffCalls, [
+    'hasGitCommit', //             ensureMissionWorktree: o repo tem commit?
+    'ensureSynkoraGitExcludes', // ensureMissionWorktree: .synkora invisível
+    'isExpectedWorktree', //       ensureMissionWorktree: o worktree é o desta missão
+    'hasGitCommit', //             projeto git? (sem git não há merge)
+    'resolveMissionWorkspace', //  o worktree isolado, provado
+    'isWorktreeClean', //          a árvore da entrega está limpa
+    'gitHead', //                  lacre da ORIGEM
+    'gitHead' //                   fotografia do DESTINO
+  ])
+})
+
+test('R17: o integration_run também não spawna git no main — do começo ao merge', async (t) => {
+  const harness = mergeHarness(t)
+  const outcome = await harness.engine.runMissionIntegration(harness.projectId, harness.missionId)
+  assert.match(outcome, /INTEGRADA/u, outcome)
+  // O run repete as MESMAS conferências do ⇪ (a fila é serial: entre o clique e
+  // a vez dela o mundo pode ter mudado) e só então mescla.
+  assert.deepEqual(gitOffCalls.slice(0, 9), [
+    'hasGitCommit',
+    'ensureSynkoraGitExcludes',
+    'isExpectedWorktree',
+    'resolveMissionWorkspace',
+    'hasGitCommit',
+    'isWorktreeClean',
+    'gitHead', //          lacre da origem (re-lacre auditado se mudou)
+    'gitHead', //          head do destino
+    'gitCommitReached' //  o destino já está dentro da entrega?
+  ])
+  // E o fecho do merge — fotografia pré-merge, ponto seguro de recuperação e
+  // captura da entrega — segue o mesmo caminho, sempre ANTES do merge real.
+  const tail = gitOffCalls.slice(9)
+  assert.deepEqual(tail, [
+    'resolveMissionWorkspace', // completeMissionMerge: workspace de novo
+    'hasGitCommit',
+    'gitHead', //                 fotografia do instante anterior ao merge
+    'gitHead',
+    'currentBranch',
+    'missionMergePrecheck',
+    'ensureSynkoraGitExcludes', // writeMissionIntegrationIntent (ponto seguro)
+    'resolveMissionWorkspace',
+    'gitHead',
+    'gitHead',
+    'currentBranch',
+    'missionCommits', //          R16: a entrega é lida antes de o worktree sumir
+    'missionWorkspaceSummary',
+    'mergeTaskWorktree'
+  ])
+})
