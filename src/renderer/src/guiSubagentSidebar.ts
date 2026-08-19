@@ -13,6 +13,9 @@ export interface GuiSubagentMetadata {
    *  probe-helper-matrix §2.3: nenhum frame publica effort), então a lateral
    *  mostra o pedido — que é o que o dono escolheu. */
   effort?: string
+  /** R12 — o ajudante abriu em modo fast (mais rápido, gasta mais limite). É a
+   *  única escolha da ficha que CUSTA mais; ausente é desligado. */
+  fast?: boolean
   /** CLI que roda o ajudante. Cross-CLI é normal (chat claude abre `gpt-*`);
    *  a ficha não muda por causa disso, só o carimbo. */
   cli?: string
@@ -50,6 +53,9 @@ export interface GuiSubagentSidebarEntry {
    *  nunca informou nem um nem outro — é exatamente por isso que a ordem do
    *  dono manda toda delegação pelo MCP. */
   effort: string | null
+  /** R12 — ⚡ na ficha. Sem terceiro estado: ausente é desligado, e é por isso
+   *  que ele não segue o `null` dos vizinhos. */
+  fast?: boolean
   seat: string | null
   cli: string | null
   task: string
@@ -210,6 +216,9 @@ export function guiSubagentMetadataForTool(
   // `reasoningEffort` é como o wire do codex nomeia o mesmo campo no
   // `collabAgentToolCall` (sonda probe-codex-fence §C).
   const effort = stringField(input, 'effort', 'reasoning_effort', 'reasoningEffort')
+  // `true` LITERAL: o card do harness manda boolean, e um `"false"` de qualquer
+  // outra fonte não pode virar ⚡ na ficha.
+  const fast = input['fast'] === true
   const cli = stringField(input, 'cli')
   const seat = stringField(input, 'seat', 'seatName', 'seat_name')
   const helperId = stringField(input, 'helperId', 'helper_id')
@@ -232,6 +241,7 @@ export function guiSubagentMetadataForTool(
     ...(type ? { type } : {}),
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
+    ...(fast ? { fast: true } : {}),
     ...(cli ? { cli } : {}),
     ...(seat ? { seat } : {}),
     ...(helperId ? { helperId } : {}),
@@ -491,6 +501,7 @@ export function guiSubagentSidebarEntries(
       // reserva honesta de `guiSubagentModelName`.
       model: (metadata?.model ? guiSubagentModelName(metadata.model) : '') || 'modelo não informado',
       effort: metadata?.effort ?? null,
+      ...(metadata?.fast ? { fast: true } : {}),
       seat: metadata?.seat ?? null,
       cli: metadata?.cli ?? null,
       task: taskFor(parent),

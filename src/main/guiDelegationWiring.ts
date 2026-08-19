@@ -603,9 +603,18 @@ export function createGuiHelperEngine(wiring: GuiHelperEngineWiring): GuiHelperE
  */
 export type GuiDelegationOrigin = 'explicito' | 'painel' | 'herdado'
 
+/**
+ * O fast tem uma cadeia PRÓPRIA porque ele não herda: sem pedido e sem pino ele
+ * não fica "herdado da conversa", fica DESLIGADO. `explicito` cobre as duas
+ * palavras do agente — o `true` que liga e o `false` que desliga por cima do
+ * pino —, que é o que um desvio-do-pino futuro vai precisar enxergar.
+ */
+export type GuiFastOrigin = 'explicito' | 'painel' | 'desligado'
+
 export interface GuiHelperOrigins {
   model: GuiDelegationOrigin
   effort: GuiDelegationOrigin
+  fast: GuiFastOrigin
 }
 
 export interface GuiHelperRequestPlan {
@@ -640,6 +649,14 @@ function asked(value: unknown): string | undefined {
  * pelo CLI do modelo), então ele não pode cair na regra do cruzado, que existe
  * para a herança silenciosa da conversa.
  *
+ * O FAST (R12) entra na mesma cadeia com uma diferença: ele não tem degrau de
+ * herança. O que o agente escreveu vence — `true` liga, `false` DESLIGA mesmo
+ * com o painel carimbado —, depois o pino do dono, e o fundo é desligado. A
+ * R11 dizia "fast só explícito na tool, nunca do painel"; a queixa 2 do dono
+ * (19/08) REVOGOU essa metade: o painel passou a ser um pedido dele, e pedido
+ * do dono é exatamente o que autoriza o modo caro. O que continua valendo é o
+ * resto da lição do prompt-cache: fast NUNCA se herda da conversa.
+ *
  * Aqui também mora a tradução `seat` → `seatId`: a tool publica `seat` (é o que
  * o `list_seats` devolve) e o motor lê `seatId`.
  */
@@ -649,11 +666,16 @@ export function planGuiHelperRequests(
 ): GuiHelperRequestPlan[] {
   const pinnedModel = asked(defaults?.model)
   const pinnedEffort = asked(defaults?.effort)
+  const pinnedFast = defaults?.fast === true
   return helpers.map((helper) => {
     const model = asked(helper.model)
     const effort = asked(helper.effort)
     const chosenModel = model ?? pinnedModel
     const chosenEffort = effort ?? pinnedEffort
+    // Só `boolean` é palavra do agente: um `fast: 'sim'` do wire é ausência, e
+    // ausência devolve a decisão ao pino do dono.
+    const askedFast = typeof helper.fast === 'boolean' ? helper.fast : undefined
+    const chosenFast = askedFast ?? pinnedFast
     const seatId = asked(helper.seat)
     const name = asked(helper.name)
     return {
@@ -662,14 +684,13 @@ export function planGuiHelperRequests(
         ...(chosenModel ? { model: chosenModel } : {}),
         ...(chosenEffort ? { effort: chosenEffort } : {}),
         ...(seatId ? { seatId } : {}),
-        // R11: fast SÓ explícito na tool — nunca do painel nem herdado (a
-        // lição do prompt-cache torna fast acidental caro).
-        ...(helper.fast === true ? { fast: true } : {}),
+        ...(chosenFast ? { fast: true } : {}),
         ...(name ? { name } : {})
       },
       origins: {
         model: model ? 'explicito' : pinnedModel ? 'painel' : 'herdado',
-        effort: effort ? 'explicito' : pinnedEffort ? 'painel' : 'herdado'
+        effort: effort ? 'explicito' : pinnedEffort ? 'painel' : 'herdado',
+        fast: askedFast !== undefined ? 'explicito' : chosenFast ? 'painel' : 'desligado'
       }
     }
   })
@@ -713,6 +734,11 @@ function samePin(chosen: string | undefined, pinned: string): boolean {
  * (claude vai a max, codex a xhigh) e o motor já derruba o herdado no cruzado —
  * cobrar o nível do outro binário contra o pino seria inventar uma comparação.
  * Quem atravessou o CLI já é desvio pelo MODELO, que é o que importa.
+ *
+ * O FAST fica FORA desta conta na R12 (anotado como futuro): `origins.fast`
+ * já distingue o `false` explícito do agente do simples desligado, então o dia
+ * em que o desvio cobrar o ⚡ o sinal está aqui — hoje quem proíbe a invenção é
+ * a persona.
  */
 export function guiPinDeviations(
   plans: readonly GuiHelperRequestPlan[],

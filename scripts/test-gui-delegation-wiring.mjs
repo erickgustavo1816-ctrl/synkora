@@ -1081,6 +1081,28 @@ test('o padrão do painel persiste POR PANE e volta do disco', () => {
       model: 'fable',
       effort: 'low'
     })
+    // O ⚡ atravessa o respawn como os dois irmãos — e o próprio toggle de fast
+    // do composer É um respawn: sem isto, ligar o fast da conversa apagaria o
+    // pino da frota.
+    assert.deepEqual(first.gui.setDelegationDefaults(devSpawn.paneId, { fast: true }), {
+      ok: true,
+      model: 'fable',
+      effort: 'low',
+      fast: true
+    })
+    assert.equal(first.gui.create({ ...devSpawn, permissionMode: 'bypass' }).ok, true)
+    assert.equal(
+      first.gui.delegationDefaults(devSpawn.paneId).fast,
+      true,
+      'o respawn não pode apagar o ⚡ que o dono carimbou'
+    )
+    // Limpar DEPOIS do respawn também funciona — e devolve o teste ao fio dos
+    // dois irmãos, que segue abaixo exatamente como antes do ⚡.
+    assert.deepEqual(first.gui.setDelegationDefaults(devSpawn.paneId, { fast: null }), {
+      ok: true,
+      model: 'fable',
+      effort: 'low'
+    })
 
     const second = registryWith(storeFile)
     assert.deepEqual(second.gui.delegationDefaults(devSpawn.paneId), {
@@ -1112,7 +1134,10 @@ test('o painel recusa o que não é escolha, e o documento sujo não vira padrã
   const { gui } = registryWith()
   assert.equal(gui.create(devSpawn).ok, true)
   assert.equal(gui.setDelegationDefaults('pane-que-nao-existe', { model: 'fable' }).ok, false)
-  assert.match(gui.setDelegationDefaults(devSpawn.paneId, {}).error ?? '', /modelo ou o effort/u)
+  assert.match(
+    gui.setDelegationDefaults(devSpawn.paneId, {}).error ?? '',
+    /modelo, o effort ou o fast/u
+  )
   assert.equal(gui.setDelegationDefaults(devSpawn.paneId, { model: '   ' }).ok, false)
   assert.equal(gui.setDelegationDefaults(devSpawn.paneId, { model: 'x'.repeat(129) }).ok, false)
   assert.equal(gui.setDelegationDefaults(devSpawn.paneId, { effort: 7 }).ok, false)
@@ -2236,4 +2261,150 @@ test('fast explícito viaja do pedido ao processo — e ausente NUNCA se herda',
     'priority'
   )
   assert.equal(codexHelperSessionOptions({ ...base, cli: 'codex' }).serviceTier, undefined)
+})
+
+// ————— R12: o ⚡ VEM DO PAINEL (a queixa 2 do dono revoga "nunca do painel") —————
+//
+// Ordem de 19/08: "o fast não tá aparecendo quando eu tô escolhendo o padrão dos
+// ajudantes… pra eu chamar sempre ajudantes no fast". O que a R11 dizia — fast
+// só explícito na tool — vale para a HERANÇA (o ⚡ da conversa continua sem
+// atravessar), nunca para o carimbo do dono.
+
+test('R12 — o pino do fast carimba, limpa por `null` E por `false`, e volta do disco', () => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-fast-pin-'))
+  try {
+    const storeFile = join(root, 'gui-sessions.json')
+    const first = registryWith(storeFile)
+    assert.equal(first.gui.create(devSpawn).ok, true)
+    assert.deepEqual(
+      first.gui.setDelegationDefaults(devSpawn.paneId, { model: 'fable', effort: 'low' }),
+      { ok: true, model: 'fable', effort: 'low' }
+    )
+    // Um patch SÓ de fast é escolha inteira: recusá-lo como vazio deixaria o
+    // chip do painel sem efeito nenhum.
+    assert.deepEqual(first.gui.setDelegationDefaults(devSpawn.paneId, { fast: true }), {
+      ok: true,
+      model: 'fable',
+      effort: 'low',
+      fast: true
+    })
+
+    const second = registryWith(storeFile)
+    assert.deepEqual(second.gui.delegationDefaults(devSpawn.paneId), {
+      model: 'fable',
+      effort: 'low',
+      fast: true
+    })
+    // Desligar é `false` (o chip "desligado") tanto quanto `null` (o "limpar"),
+    // e nenhum dos dois encosta no modelo ou no effort.
+    assert.deepEqual(second.gui.setDelegationDefaults(devSpawn.paneId, { fast: false }), {
+      ok: true,
+      model: 'fable',
+      effort: 'low'
+    })
+    assert.deepEqual(second.gui.setDelegationDefaults(devSpawn.paneId, { fast: true }), {
+      ok: true,
+      model: 'fable',
+      effort: 'low',
+      fast: true
+    })
+    assert.deepEqual(second.gui.setDelegationDefaults(devSpawn.paneId, { fast: null }), {
+      ok: true,
+      model: 'fable',
+      effort: 'low'
+    })
+
+    // O que não é boolean nem `null` é RECUSADO — e recusa não grava metade.
+    assert.equal(second.gui.setDelegationDefaults(devSpawn.paneId, { fast: 'sim' }).ok, false)
+    assert.match(
+      second.gui.setDelegationDefaults(devSpawn.paneId, { fast: 1 }).error ?? '',
+      /fast/u
+    )
+    assert.deepEqual(second.gui.delegationDefaults(devSpawn.paneId), {
+      model: 'fable',
+      effort: 'low'
+    })
+    // O patch vazio nomeia as TRÊS escolhas: recusa que esconde a receita é bug.
+    assert.match(
+      second.gui.setDelegationDefaults(devSpawn.paneId, {}).error ?? '',
+      /modelo, o effort ou o fast/u
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('R12 — documento sujo não liga o ⚡ da frota inteira', () => {
+  const record = (patch) => ({ cli: 'claude', projectId: 'p', updatedAt: 'x', ...patch })
+  assert.deepEqual(guiDelegationDefaultsOf(record({ delegateFast: true })), { fast: true })
+  assert.deepEqual(guiDelegationDefaultsOf(record({ delegateFast: false })), {})
+  for (const sujo of ['sim', 'true', 1, {}, []]) {
+    assert.deepEqual(
+      guiDelegationDefaultsOf(record({ delegateFast: sujo })),
+      {},
+      `${JSON.stringify(sujo)} não pode virar um modo que gasta mais limite`
+    )
+  }
+  // E o pino do fast convive com os irmãos sem contaminá-los.
+  assert.deepEqual(
+    guiDelegationDefaultsOf(record({ delegateModel: ' fable ', delegateFast: true })),
+    { model: 'fable', fast: true }
+  )
+})
+
+test('R12 — a cadeia do fast: explícito vence, depois o painel, senão desligado', () => {
+  const [calado, negado, ligado] = planGuiHelperRequests(
+    [
+      { prompt: 'a' },
+      { prompt: 'b', fast: false },
+      { prompt: 'c', fast: true }
+    ],
+    { model: 'fable', fast: true }
+  )
+  assert.equal(calado.request.fast, true, 'pedido sem fast abre no padrão carimbado pelo dono')
+  assert.equal(calado.origins.fast, 'painel')
+  assert.equal(calado.request.model, 'fable', 'o fast não atrapalha a cadeia do modelo')
+  assert.equal(calado.origins.model, 'painel')
+  assert.equal(negado.request.fast, undefined, 'o `false` do agente desliga mesmo com o pino')
+  assert.equal(negado.origins.fast, 'explicito', 'quem falou foi o agente — e isso se conta')
+  assert.equal(ligado.request.fast, true)
+  assert.equal(ligado.origins.fast, 'explicito')
+
+  // Sem carimbo: só o pedido liga, e o silêncio continua DESLIGADO (a lição do
+  // prompt-cache que a R11 pagou continua inteira).
+  const semPino = planGuiHelperRequests(
+    [{ prompt: 'a' }, { prompt: 'b', fast: true }, { prompt: 'c', fast: 'sim' }],
+    { model: 'fable' }
+  )
+  assert.equal(semPino[0].request.fast, undefined)
+  assert.equal(semPino[0].origins.fast, 'desligado')
+  assert.equal(semPino[1].origins.fast, 'explicito')
+  // Só boolean é palavra do agente: o resto devolve a decisão ao pino.
+  assert.equal(semPino[2].request.fast, undefined)
+  assert.equal(semPino[2].origins.fast, 'desligado')
+})
+
+test('R12 — o card do ajudante fast leva o ⚡ para a lateral', () => {
+  assert.equal(
+    guiHelperCardInput(helperRecord()).fast,
+    undefined,
+    'ajudante normal não ganha o campo (a ficha mostraria um ⚡ mentiroso)'
+  )
+  assert.equal(guiHelperCardInput(helperRecord({ fast: true })).fast, true)
+  // O recibo de abertura já carimbava desde a R11 — os dois falam o mesmo.
+  assert.match(cards.guiHelperLaunchReceipt(helperRecord({ fast: true })), /⚡ fast/u)
+})
+
+test('R12 — o schema do delegate conta a verdade nova do fast', () => {
+  const mcp = source('src/main/mcpServer.ts')
+  const bloco = mcp.slice(mcp.indexOf('fast: z'), mcp.indexOf('seat: z'))
+  assert.ok(bloco.length > 200, 'o campo `fast` do delegate sumiu do schema')
+  assert.match(bloco, /GASTA MAIS LIMITE/u, 'o preço tem de ser dito em voz alta')
+  assert.match(bloco, /painel/u, 'o agente precisa saber que o ausente cai no painel do dono')
+  assert.match(bloco, /`false`/u, 'sem isso o agente não sabe como desligar por cima do pino')
+  assert.doesNotMatch(
+    bloco,
+    /ausente = desligado/u,
+    'a frase da R11 virou mentira quando o painel passou a carimbar'
+  )
 })

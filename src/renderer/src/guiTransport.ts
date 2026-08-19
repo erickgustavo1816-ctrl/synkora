@@ -51,11 +51,23 @@ export function guiBackendReadyStatus(current: GuiTransportStatus): GuiTransport
   return current === 'starting' ? 'idle' : current
 }
 
+/**
+ * A BARREIRA DO RESPAWN. `resumed` (carimbo do main: mesma conversa retomada)
+ * torna o marco QUIETO — R12/A4, ordem do dono: "cliquei, fica selecionado; não
+ * precisa mexer na UI inteira". `status: null` significa MANTER o status atual:
+ * a conversa não saiu do lugar, então nada pisca "abrindo". `ready` continua
+ * caindo até o `ready` novo (o envio segue barrado — a honestidade fica, o
+ * teatro sai). Pane MORTO é a exceção: ali o marco é o boundary de retry que
+ * `guiBackendReadyStatus` exige, e ressuscitar precisa do caminho antigo.
+ */
 export function guiSessionRestartState(
   currentReady: boolean,
-  boundarySawReady: boolean
-): { ready: boolean; status: GuiTransportStatus } {
+  boundarySawReady: boolean,
+  resumed = false,
+  currentStatus: GuiTransportStatus = 'starting'
+): { ready: boolean; status: GuiTransportStatus | null } {
   const ready = currentReady && boundarySawReady
+  if (resumed && currentStatus !== 'dead') return { ready, status: null }
   return { ready, status: ready ? 'idle' : 'starting' }
 }
 

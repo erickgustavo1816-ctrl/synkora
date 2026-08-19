@@ -405,7 +405,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                   .boolean()
                   .optional()
                   .describe(
-                    'modo FAST do ajudante (mais rápido, GASTA MAIS LIMITE). Só quando o DONO pedir — nunca por conta própria, e nunca herdado: ausente = desligado. No claude, fast troca o modelo para Opus 5 (comportamento do CLI); modelo sem fast abre normal e o recibo diz'
+                    'modo FAST do ajudante (mais rápido, GASTA MAIS LIMITE). Só quando o DONO pedir — nunca por conta própria. Ausente = o padrão do painel dele (⚡ quando ele carimbou lá; sem carimbo, desligado); `false` explícito DESLIGA mesmo com o painel ligado. Nunca herdado desta conversa: o seu fast não vira o dele. No claude, fast troca o modelo para Opus 5 (comportamento do CLI); modelo sem fast abre normal e o recibo diz'
                   ),
                 seat: z
                   .string()

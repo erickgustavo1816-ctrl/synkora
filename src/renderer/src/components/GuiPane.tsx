@@ -1135,22 +1135,25 @@ export default function GuiPane({
     async (
       which: 'mode' | 'model' | 'effort' | 'fast',
       patch: Partial<GuiPaneSpawn>,
-      okText: string
+      /** `null` = troca SEM nota no fio (R12/A3): quando o próprio botão fica
+       *  aceso, o estado dele já é o recibo. A FALHA nunca é silenciosa. */
+      okText: string | null
     ): Promise<void> => {
       setOpenMenu(null)
       if (spawnChangeLocked) return
       setBusyMenu(which)
       const res = await guiApi.create({ ...spawnRef.current, ...patch })
       setBusyMenu(null)
-      handleGuiLive(
-        paneId,
-        res.ok
-          ? { type: 'command-output', text: `${okText} — sessão retomada` }
-          : {
-              type: 'limit',
-              text: `não deu para aplicar a troca: ${res.error ?? 'motivo desconhecido'}`
-            }
-      )
+      if (res.ok) {
+        if (okText !== null) {
+          handleGuiLive(paneId, { type: 'command-output', text: `${okText} — sessão retomada` })
+        }
+        return
+      }
+      handleGuiLive(paneId, {
+        type: 'limit',
+        text: `não deu para aplicar a troca: ${res.error ?? 'motivo desconhecido'}`
+      })
     },
     [handleGuiLive, paneId, spawnChangeLocked]
   )
@@ -1189,16 +1192,14 @@ export default function GuiPane({
   // R11: o toggle ⚡. Fast é flag de spawn (o binário não troca em voo — a
   // sonda probe-fast provou), então o caminho é o MESMO do modo de permissão:
   // respawn com resume, a conversa continua de onde está.
+  // R12/A3: sucesso não escreve no fio — o botão aceso É o recibo; só a falha
+  // fala (item de erro dentro do `applySpawnChange`).
   const changeFast = useCallback(
     (next: boolean): void => {
       if (spawnChangeLocked || next === fastOn) return
       setFastOn(next)
       onFastMode?.(next)
-      void applySpawnChange(
-        'fast',
-        { fast: next || undefined },
-        next ? 'modo fast LIGADO ⚡' : 'modo fast desligado'
-      )
+      void applySpawnChange('fast', { fast: next || undefined }, null)
     },
     [applySpawnChange, fastOn, onFastMode, spawnChangeLocked]
   )
@@ -2197,7 +2198,11 @@ export default function GuiPane({
               {/* R11 — o TOGGLE ⚡ (ordem do dono): visível quando o modelo da
                   conversa tem fast (a chave é UMA nos dois CLIs) — e sempre que
                   já está ligado, senão desligar ficaria sem botão. Trocar é
-                  flag de spawn: respawn com resume, como o modo de permissão. */}
+                  flag de spawn: respawn com resume, como o modo de permissão.
+                  R12/A1: INTERRUPTOR, não etiqueta — o botão é sempre só o
+                  glifo (o rótulo que nascia ao ligar empurrava os vizinhos), e
+                  o estado fala pelo contorno de `.gui-fast-btn.on` + o
+                  `aria-pressed`. R12/A2: a dica cabe em UMA linha. */}
               {(fastOn || selectedModelOption?.supportsFastMode === true) && (
                 <button
                   className={`gui-mode-btn gui-fast-btn${fastOn ? ' on' : ''}`}
@@ -2205,16 +2210,15 @@ export default function GuiPane({
                   aria-pressed={fastOn}
                   data-tip={
                     fastOn
-                      ? 'Modo fast LIGADO (mais rápido, gasta mais limite). Clique para desligar — a conversa continua de onde está.'
+                      ? 'desligar o modo fast'
                       : cli === 'claude'
-                        ? 'Liga o modo fast (mais rápido, gasta mais limite). No claude, ligar troca o modelo para Opus 5 — comportamento do próprio CLI. A conversa continua de onde está.'
-                        : 'Liga o modo fast (service tier Fast: 1.5x, gasta mais limite). A conversa continua de onde está.'
+                        ? 'modo fast — gasta mais limite (vira Opus 5)'
+                        : 'modo fast — gasta mais limite'
                   }
                   aria-label={fastOn ? 'Desligar o modo fast' : 'Ligar o modo fast'}
                   onClick={() => changeFast(!fastOn)}
                 >
                   <span aria-hidden="true">⚡</span>
-                  {fastOn && <span className="gui-mode-text">fast</span>}
                 </button>
               )}
 

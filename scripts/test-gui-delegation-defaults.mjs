@@ -398,6 +398,54 @@ test('R7B2 — o painel passa no AA do papel e diz a escolha por FORMA', () => {
   assert.doesNotMatch(bloco, /animation:/u)
 })
 
+// ————— 3C. O ⚡ NO PAINEL (design R12 §B4) —————
+//
+// Queixa 2 do dono (19/08): "o fast não tá aparecendo quando eu tô escolhendo o
+// padrão dos ajudantes… pra eu chamar sempre ajudantes no fast". O pino ganha um
+// terceiro campo — e ele é o único que CUSTA mais, então nunca fica calado.
+
+test('R12 — o resumo da abinha carrega o ⚡ carimbado, com ou sem modelo', () => {
+  const groups = guiDelegationModelGroups(CATALOGS, composerNamer())
+  // Sem modelo e sem effort a herança continua sendo a verdade — mas ela não
+  // pode engolir a escolha que gasta mais limite.
+  assert.equal(guiDelegationSummary({ fast: true }), 'herdado da conversa · ⚡ fast')
+  assert.equal(guiDelegationSummary({ model: 'opus[1m]', fast: true }, groups), 'opus · ⚡ fast')
+  assert.equal(
+    guiDelegationSummary({ model: 'opus[1m]', effort: 'max', fast: true }, groups),
+    'opus · max · ⚡ fast'
+  )
+  assert.equal(
+    guiDelegationSummary({ effort: 'low', fast: true }, groups),
+    'modelo da conversa · low · ⚡ fast'
+  )
+  // Desligado é o fundo do mundo: só o que custa aparece.
+  assert.equal(guiDelegationSummary({ fast: false }), 'herdado da conversa')
+  assert.equal(guiDelegationSummary({ model: 'opus[1m]' }, groups), 'opus')
+})
+
+test('R12 — o campo do fast usa as fichas que já existem (zero CSS novo)', () => {
+  const panel = source('src/renderer/src/components/GuiDelegationDefaults.tsx')
+  const css = source('src/renderer/src/global.css')
+
+  // Dois estados, nas MESMAS fichas do modelo e do effort.
+  assert.match(panel, /className="gui-deleg-item-name">⚡ fast</u)
+  assert.match(panel, />\s*desligado\s*</u)
+  assert.match(panel, /apply\(\{ fast: true \}\)/u)
+  assert.match(panel, /apply\(\{ fast: null \}\)/u)
+  // Escolha ligada é ESTADO (o leitor de tela precisa ouvi-la), e o ⚡ é desenho.
+  assert.match(panel, /aria-pressed=\{defaults\.fast === true\}/u)
+  assert.match(panel, /aria-label="Modo fast[^"]*"/u)
+  // O preço mora na dica do app, não num alarme permanente na tela.
+  assert.match(panel, /data-tip="[^"]*gasta mais limite[^"]*"/u)
+  // "limpar" apaga o pino INTEIRO — e o botão morto conhece as três escolhas.
+  assert.match(panel, /apply\(\{ model: null, effort: null, fast: null \}\)/u)
+  assert.match(panel, /!defaults\.model && !defaults\.effort && !defaults\.fast/u)
+
+  // ZERO CSS NOVO: o campo nasce das classes que a abinha já tem.
+  assert.doesNotMatch(css, /\.gui-deleg-fast/u)
+  assert.doesNotMatch(panel, /className="gui-deleg-fast/u)
+})
+
 // ————— 4. A PERSONA —————
 
 test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão', () => {

@@ -142,7 +142,11 @@ export default function GuiDelegationDefaults({
   const pinnedOutsideCatalog = Boolean(defaults.model) && !pinnedOption && groups.length > 0
 
   const apply = useCallback(
-    async (patch: { model?: string | null; effort?: string | null }): Promise<void> => {
+    async (patch: {
+      model?: string | null
+      effort?: string | null
+      fast?: boolean | null
+    }): Promise<void> => {
       setBusy(true)
       setError(null)
       const result = await guiApi.setDelegationDefaults(paneId, patch)
@@ -153,7 +157,7 @@ export default function GuiDelegationDefaults({
       }
       // A fotografia CANÔNICA vem do main: o painel nunca fica mostrando uma
       // escolha que o disco recusou.
-      setDefaults({ model: result.model, effort: result.effort })
+      setDefaults({ model: result.model, effort: result.effort, fast: result.fast })
     },
     [paneId]
   )
@@ -184,7 +188,7 @@ export default function GuiDelegationDefaults({
         aria-controls={panelId}
         aria-label={`Padrão dos ajudantes: ${summary}`}
         data-tip={
-          'O modelo e o effort com que os ajudantes deste chat abrem quando o agente não pede outros.'
+          'O modelo, o effort e o fast com que os ajudantes deste chat abrem quando o agente não pede outros.'
         }
         onClick={() => setOpen((value) => !value)}
       >
@@ -202,7 +206,8 @@ export default function GuiDelegationDefaults({
           aria-busy={busy || undefined}
         >
           <p className="gui-deleg-note">
-            vale quando o agente delega sem pedir modelo ou effort — o pedido dele sempre vence
+            vale quando o agente delega sem pedir modelo, effort ou fast — o pedido dele sempre
+            vence
           </p>
 
           <div className="gui-deleg-field">
@@ -326,12 +331,51 @@ export default function GuiDelegationDefaults({
             </div>
           </div>
 
+          {/* R12 — o ⚡ no painel (a queixa 2 do dono revoga o "fast nunca do
+              painel" da R11). Dois estados e nada mais: o pino não tem o
+              terceiro estado de modelo/effort, porque não existe "fast da
+              conversa" para herdar. */}
+          <div className="gui-deleg-field">
+            <span className="gui-deleg-label" id={`${panelId}-fast`}>
+              fast
+            </span>
+            <div className="gui-deleg-list" role="group" aria-labelledby={`${panelId}-fast`}>
+              <div className="gui-deleg-chips">
+                <button
+                  type="button"
+                  className="gui-deleg-item"
+                  aria-pressed={defaults.fast !== true}
+                  disabled={busy}
+                  onClick={() => void apply({ fast: null })}
+                >
+                  <span className="gui-deleg-item-name">desligado</span>
+                </button>
+                <button
+                  type="button"
+                  className="gui-deleg-item"
+                  aria-pressed={defaults.fast === true}
+                  disabled={busy}
+                  data-tip="Abre todo ajudante em modo fast: mais rápido e gasta mais limite."
+                  // O ⚡ é desenho: o leitor de tela ouve a escolha e o preço,
+                  // nunca "raio fast".
+                  aria-label="Modo fast — gasta mais limite"
+                  onClick={() => void apply({ fast: true })}
+                >
+                  <span className="gui-deleg-item-name">⚡ fast</span>
+                </button>
+              </div>
+              <p className="gui-deleg-note">
+                o ⚡ desta conversa não chega neles: ou vem daqui, ou o ajudante abre normal
+              </p>
+            </div>
+          </div>
+
           <div className="gui-deleg-foot">
             <button
               type="button"
               className="gui-deleg-clear"
-              disabled={busy || (!defaults.model && !defaults.effort)}
-              onClick={() => void apply({ model: null, effort: null })}
+              disabled={busy || (!defaults.model && !defaults.effort && !defaults.fast)}
+              onClick={() => void apply({ model: null, effort: null, fast: null })}
             >
               limpar
             </button>

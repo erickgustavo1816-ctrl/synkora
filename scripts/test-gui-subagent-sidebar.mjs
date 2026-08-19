@@ -1079,3 +1079,61 @@ test('R7B — a metadata guarda o id cru; quem embeleza é a ficha', () => {
   ])
   assert.equal(semModelo.model, 'modelo não informado')
 })
+
+// ————— R12 §B5 — o ⚡ NA FICHA —————
+//
+// Ordem do dono (19/08): "…e quando o ajudante tem fast também". O recibo de
+// abertura já carimbava '⚡ fast'; a ficha, que é o que fica na tela enquanto a
+// frota trabalha, não sabia de nada.
+
+test('R12 — a ficha do ajudante fast carrega e mostra o ⚡', () => {
+  const metadata = guiSubagentMetadataForTool('helper:h-8', {
+    helperId: 'h-8',
+    name: 'sonda veloz',
+    model: 'opus[1m]',
+    effort: 'max',
+    fast: true,
+    seat: 'Claude - Gmail',
+    cli: 'claude',
+    prompt: 'corra'
+  })
+  assert.equal(metadata.fast, true)
+  // `true` LITERAL: string e número não acendem um modo que gasta mais limite.
+  for (const sujo of ['true', 'sim', 1, {}]) {
+    assert.equal(
+      guiSubagentMetadataForTool('helper:h-8', { helperId: 'h-8', model: 'x', fast: sujo }).fast,
+      undefined,
+      `${JSON.stringify(sujo)} não pode virar ⚡ na ficha`
+    )
+  }
+  assert.equal(
+    guiSubagentMetadataForTool('helper:h-8', { helperId: 'h-8', model: 'x' }).fast,
+    undefined
+  )
+
+  const [veloz] = guiSubagentSidebarEntries([
+    helperCard('50', 'h-8', {
+      name: 'sonda veloz',
+      model: 'opus[1m]',
+      effort: 'max',
+      fast: true,
+      seat: 'Claude - Gmail',
+      cli: 'claude',
+      prompt: 'corra'
+    })
+  ])
+  assert.equal(veloz.fast, true)
+  assert.equal(veloz.effort, 'max', 'o ⚡ entra ao lado do effort, nunca no lugar dele')
+  const [normal] = guiSubagentSidebarEntries([
+    helperCard('51', 'h-9', { model: 'opus[1m]', prompt: 'ande' })
+  ])
+  assert.equal(normal.fast, undefined, 'ajudante comum não ganha carimbo nenhum')
+
+  const source = readFileSync(
+    new URL('../src/renderer/src/components/GuiSubagentSidebar.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(source, /\{entry\.fast && <span>⚡ fast<\/span>\}/u)
+  // O leitor de tela ouve a palavra, não o desenho.
+  assert.match(source, /Fast: ligado/u)
+})

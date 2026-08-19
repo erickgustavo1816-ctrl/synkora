@@ -14,10 +14,13 @@
 
 export type GuiDelegationCli = 'claude' | 'codex'
 
-/** O pino do dono, como o main o guarda. Campo ausente = herdar da conversa. */
+/** O pino do dono, como o main o guarda (espelho de `GuiDelegationDefaults`,
+ *  em `src/main/guiSessions.ts`). Campo ausente = herdar da conversa — menos o
+ *  `fast`, que não herda nada: ausente ali é desligado. */
 export interface GuiDelegationDefaultsValue {
   model?: string
   effort?: string
+  fast?: boolean
 }
 
 /** Catálogo REAL de um CLI (`catalog.ts` → `window.synkora.catalog.get`). */
@@ -191,6 +194,10 @@ export function guiDelegationEffortOptions(
  * aberto e do seletor do composer). Pino que o catálogo carregado não conhece
  * continua dito COMO FOI CARIMBADO: trocá-lo por um nome inventado esconderia
  * justamente o pino que precisa de atenção.
+ *
+ * O ⚡ (R12) é a última parcela e nunca some sozinho: ele é a escolha que GASTA
+ * MAIS, então mesmo sem modelo e sem effort a linha o diz — "herdado da
+ * conversa · ⚡ fast" é o estado real, e "herdado da conversa" ali seria mentira.
  */
 export function guiDelegationSummary(
   defaults: GuiDelegationDefaultsValue,
@@ -198,9 +205,10 @@ export function guiDelegationSummary(
 ): string {
   const model = defaults.model?.trim()
   const effort = defaults.effort?.trim()
-  if (!model && !effort) return 'herdado da conversa'
+  const fast = defaults.fast === true ? '⚡ fast' : ''
+  if (!model && !effort) return ['herdado da conversa', fast].filter(Boolean).join(' · ')
   const name = model ? (guiDelegationModelOption(groups, model)?.name ?? model) : ''
-  return [name || 'modelo da conversa', effort].filter(Boolean).join(' · ')
+  return [name || 'modelo da conversa', effort, fast].filter(Boolean).join(' · ')
 }
 
 /**

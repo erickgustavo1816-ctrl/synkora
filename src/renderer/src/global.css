@@ -19903,8 +19903,13 @@ details.gui-error-line {
 /* ————— BLOCO NOVO: o toggle ⚡ fast do composer (R11) —————
    Mesma família dos botões de modo; LIGADO fala pelo acento — fast é a única
    escolha do composer que gasta mais limite, e o estado não pode passar
-   despercebido. */
-.gui-fast-btn.on {
+   despercebido.
+   R12: sem o rótulo "fast" ao lado, o contorno é o ÚNICO sinal de ligado — e o
+   hover genérico do .gui-mode-btn (mais específico que .gui-fast-btn.on) o
+   apagava justamente com o ponteiro em cima. O estado aceso vence o hover; o
+   fundo do hover continua dando a resposta ao ponteiro. */
+.gui-fast-btn.on,
+.gui-mode-btn.gui-fast-btn.on:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
 }

@@ -524,6 +524,9 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
     case 'session-restarted':
       return (
         typeof event['ready'] === 'boolean' &&
+        // R12: carimbo de "a mesma conversa continua". Ausente = fotografia
+        // gravada antes do contrato novo, hidratada como geração nova.
+        (event['resumed'] === undefined || typeof event['resumed'] === 'boolean') &&
         guiOptionalContextTokens(event['contextTokens']) &&
         guiOptionalContextWindow(event['contextWindow'])
       )
@@ -892,6 +895,13 @@ export interface GuiSessionRecord {
    */
   delegateModel?: string
   delegateEffort?: string
+  /**
+   * R12 — o ⚡ do painel (a queixa 2 do dono REVOGA o "fast só explícito na
+   * tool" da R11). Aqui o ausente não é "herdar": fast NUNCA se herda da
+   * conversa, então sem carimbo ele é DESLIGADO. Só `true` é gravado — limpar
+   * remove o campo, como nos irmãos.
+   */
+  delegateFast?: boolean
   /** Última fotografia canônica de contexto desta identidade de sessão. */
   contextTokens?: number | null
   contextWindow?: number | null
@@ -1003,17 +1013,22 @@ export function rememberedGuiExecutorValue(
 
 // ————— PADRÃO DOS AJUDANTES (D8) — o pino do dono, por pane —————
 
-/** O que o painel carimbou. Campo ausente = herdar da conversa. */
+/** O que o painel carimbou. Campo ausente = herdar da conversa — menos o
+ *  `fast`, que não tem herança: ausente ali é DESLIGADO. */
 export interface GuiDelegationDefaults {
   model?: string
   effort?: string
+  /** R12 — o dono carimbou ⚡ para a frota inteira. Só `true` existe. */
+  fast?: boolean
 }
 
 /** `null` LIMPA o campo; campo ausente CONSERVA o que já está gravado (mesma
- *  gramática do `GuiExecutorPatch`, para o renderer não precisar de duas). */
+ *  gramática do `GuiExecutorPatch`, para o renderer não precisar de duas).
+ *  No `fast`, `false` limpa junto com `null`: desligar é a mesma ordem. */
 export interface GuiDelegationDefaultsPatch {
   model?: string | null
   effort?: string | null
+  fast?: boolean | null
 }
 
 export type GuiDelegationDefaultsResult =
@@ -1055,7 +1070,14 @@ export function guiDelegationDefaultsOf(
       : undefined
   const model = clean(record?.delegateModel)
   const effort = clean(record?.delegateEffort)
-  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
+  // `true` LITERAL, nada de coerção: um `"sim"` ou `1` de documento sujo ligaria
+  // a frota inteira num modo que gasta mais limite sem o dono ter pedido.
+  const fast = record?.delegateFast === true
+  return {
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+    ...(fast ? { fast: true } : {})
+  }
 }
 
 /**
@@ -1496,14 +1518,25 @@ export class GuiSessionRegistry {
       if (problem) return { ok: false, error: problem }
       writes.push({ field, value: value.trim() })
     }
-    if (writes.length === 0) {
-      return { ok: false, error: 'diga o modelo ou o effort padrão dos ajudantes' }
+    // O fast anda FORA da lista dos irmãos: ele não é rótulo (não tem trim nem
+    // teto de tamanho) e desligar é `false` tanto quanto `null`.
+    let fastWrite: boolean | undefined
+    if (patch.fast !== undefined) {
+      if (patch.fast !== null && typeof patch.fast !== 'boolean') {
+        return { ok: false, error: 'fast do painel em formato inválido' }
+      }
+      fastWrite = patch.fast === true
+    }
+    if (writes.length === 0 && fastWrite === undefined) {
+      return { ok: false, error: 'diga o modelo, o effort ou o fast padrão dos ajudantes' }
     }
     const next: GuiSessionRecord = { ...base }
     for (const write of writes) {
       if (write.value === null) delete next[write.field]
       else next[write.field] = write.value
     }
+    if (fastWrite === true) next.delegateFast = true
+    else if (fastWrite === false) delete next.delegateFast
     next.updatedAt = new Date().toISOString()
     this.doc.panes[paneId] = next
     if (this.deps.storeFile) {
@@ -1520,7 +1553,13 @@ export class GuiSessionRegistry {
     this.deps.record?.(
       'gui-delegation-defaults',
       { paneId, projectId: next.projectId },
-      { model: applied.model ?? 'herdado', effort: applied.effort ?? 'herdado' }
+      {
+        model: applied.model ?? 'herdado',
+        effort: applied.effort ?? 'herdado',
+        // O fast é a única escolha daqui que GASTA MAIS: o diário responde
+        // "desde quando a frota abre em ⚡?" sem depender de memória.
+        fast: applied.fast ? 'ligado' : 'desligado'
+      }
     )
     return { ok: true, ...applied }
   }
@@ -1793,9 +1832,14 @@ export class GuiSessionRegistry {
       const replayContext = sameConversation
         ? guiContextSnapshotFromRecord(remembered) ?? guiContextSnapshotFromRing(replayRing)
         : undefined
+      // `resumed` é o MESMO sinal que deixa a fotografia atravessar: dito em
+      // voz alta, ele deixa a apresentação distinguir "a conversa continua" de
+      // "nasceu outra" — sem isso o renderer só via `ready: false` e tratava
+      // todo respawn como abertura (R12/A4).
       sink({
         type: 'session-restarted',
         ready: replaySawReady,
+        resumed: sameConversation,
         ...(replayContext ?? {})
       })
       // A geração nova substitui qualquer override sticky da conta/CLI
@@ -3049,6 +3093,7 @@ export class GuiSessionRegistry {
       ...(rememberedEffort !== undefined ? { effort: rememberedEffort } : {}),
       ...(delegation.model ? { delegateModel: delegation.model } : {}),
       ...(delegation.effort ? { delegateEffort: delegation.effort } : {}),
+      ...(delegation.fast ? { delegateFast: true } : {}),
       ...(rememberedContext
         ? {
             contextTokens: rememberedContext.contextTokens,

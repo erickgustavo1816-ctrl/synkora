@@ -834,24 +834,35 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
 
     case 'session-restarted':
       {
-        const restart = guiSessionRestartState(state.ready, evt.ready)
+        const restart = guiSessionRestartState(
+          state.ready,
+          evt.ready,
+          evt.resumed === true,
+          state.status
+        )
+        // QUIETO (R12/A4): a conversa é a mesma, então o chrome não se
+        // reapresenta — status, caps e a escolha de executor ficam de pé (o
+        // `executor-changed` que o main emite logo atrás continua sendo a
+        // verdade), e a fotografia ausente NÃO apaga o medidor de uma conversa
+        // que continua. Geração nova segue zerando tudo.
+        const quiet = restart.status === null
         return {
           ...state,
           ready: restart.ready,
-          caps: restart.ready ? state.caps : null,
-          executorModel: null,
-          effort: null,
-          executorKnown: false,
+          caps: quiet || restart.ready ? state.caps : null,
+          executorModel: quiet ? state.executorModel : null,
+          effort: quiet ? state.effort : null,
+          executorKnown: quiet ? state.executorKnown : false,
           // O main anexa a fotografia somente quando este restart retoma a
           // mesma identidade. Sem os campos, a geração é nova e a medição
           // antiga deve desaparecer; com eles, o contexto já usado volta
           // imediatamente antes do primeiro novo envio.
-          contextTokens: evt.contextTokens ?? null,
-          contextWindow: evt.contextWindow ?? null,
+          contextTokens: evt.contextTokens ?? (quiet ? state.contextTokens : null),
+          contextWindow: evt.contextWindow ?? (quiet ? state.contextWindow : null),
           activityText: null,
           sendBatch: null,
           error: null,
-          ...guiStatusPatch(state, restart.status)
+          ...(restart.status === null ? {} : guiStatusPatch(state, restart.status))
         }
       }
 

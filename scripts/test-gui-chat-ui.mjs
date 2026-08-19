@@ -2197,7 +2197,12 @@ test('modelo e effort usam troca viva, confirmada e sem status no transcript', (
   assert.doesNotMatch(executorBlock, /command-output/u)
   assert.match(main, /entry\.sink\(\{[\s\S]*?type: 'executor-changed'/u)
   assert.match(store, /case 'executor-changed':[\s\S]*?executorModel: evt\.model/u)
-  assert.match(store, /case 'session-restarted':[\s\S]*?executorKnown: false/u)
+  // Restart de geração NOVA continua zerando a escolha de executor; o
+  // retomado (R12) preserva — o `executor-changed` de trás segue mandando.
+  assert.match(
+    store,
+    /case 'session-restarted':[\s\S]*?executorKnown: quiet \? state\.executorKnown : false/u
+  )
   assert.match(board, /directGui\?\.executorKnown[\s\S]*?directGui\.executorModel/u)
   assert.match(
     pane,
@@ -3389,4 +3394,109 @@ test('o fast atravessa o contrato de spawn inteiro (espelho, literais, Board, fi
     /spawn\.fast \? 'fast' : ''/u,
     'fast fora do fingerprint = trocar não respawnaria'
   )
+})
+
+// ————— R12: o ⚡ vira INTERRUPTOR quieto (queixa do dono: "cliquei, fica
+// selecionado; não precisa mexer na UI inteira") —————
+
+test('restart retomado é quieto: o chrome não se reapresenta a cada clique no ⚡', () => {
+  // `status: null` = MANTER o que estava. É o que apaga o flash "abrindo" de
+  // um respawn que nem trocou de conversa.
+  assert.deepEqual(guiSessionRestartState(true, false, true, 'idle'), {
+    ready: false,
+    status: null
+  })
+  assert.deepEqual(guiSessionRestartState(true, true, true, 'working'), {
+    ready: true,
+    status: null
+  })
+  // Sem carimbo (geração nova, ou fotografia gravada antes do contrato) o
+  // caminho antigo continua inteiro.
+  assert.deepEqual(guiSessionRestartState(true, false, false, 'idle'), {
+    ready: false,
+    status: 'starting'
+  })
+  assert.deepEqual(guiSessionRestartState(true, false), { ready: false, status: 'starting' })
+  // Pane MORTO é a exceção: ali o marco é o boundary de retry que ressuscita o
+  // terminal — `guiBackendReadyStatus` recusa init/ready justamente por isso.
+  assert.deepEqual(guiSessionRestartState(true, false, true, 'dead'), {
+    ready: false,
+    status: 'starting'
+  })
+
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  const from = store.indexOf("case 'session-restarted':")
+  const to = store.indexOf("case 'conversation-cleared':", from)
+  assert.ok(from !== -1 && to > from, 'o caso do restart foi recortado')
+  const restart = store.slice(from, to)
+  assert.match(restart, /evt\.resumed === true/u, 'o redutor lê o carimbo do main')
+  assert.match(restart, /const quiet = restart\.status === null/u)
+  assert.match(restart, /caps: quiet \|\| restart\.ready \? state\.caps : null/u)
+  assert.match(restart, /executorModel: quiet \? state\.executorModel : null/u)
+  assert.match(restart, /effort: quiet \? state\.effort : null/u)
+  // Fotografia AUSENTE não apaga o medidor de uma conversa que continua.
+  assert.match(
+    restart,
+    /contextTokens: evt\.contextTokens \?\? \(quiet \? state\.contextTokens : null\)/u
+  )
+  assert.match(
+    restart,
+    /contextWindow: evt\.contextWindow \?\? \(quiet \? state\.contextWindow : null\)/u
+  )
+  assert.match(
+    restart,
+    /restart\.status === null \? \{\} : guiStatusPatch\(state, restart\.status\)/u,
+    'restart quieto não pode nem tocar no status/relógio da rodada'
+  )
+  // O envio segue barrado até o `ready` novo: a honestidade fica, o teatro sai.
+  assert.match(restart, /ready: restart\.ready/u)
+
+  // E o espelho do evento existe dos dois lados da ponte.
+  const sessions = readFileSync(new URL('../src/main/guiSessions.ts', import.meta.url), 'utf8')
+  const api = readFileSync(new URL('../src/renderer/src/guiApi.ts', import.meta.url), 'utf8')
+  assert.match(sessions, /type: 'session-restarted',\s*ready: replaySawReady,\s*resumed: sameConversation/u)
+  assert.match(api, /type: 'session-restarted'[\s\S]{0,320}?resumed\?: boolean/u)
+})
+
+test('o ⚡ é interruptor: só o glifo, dica de uma linha e sucesso sem nota no fio', () => {
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  const fastFrom = pane.indexOf('gui-mode-btn gui-fast-btn')
+  const fastTo = pane.indexOf('</button>', fastFrom)
+  assert.ok(fastFrom !== -1 && fastTo > fastFrom, 'o botão ⚡ foi recortado')
+  const fastBtn = pane.slice(fastFrom, fastTo)
+  // A1 — o rótulo "fast" nascia ao ligar e empurrava os vizinhos. Aceso agora
+  // é contorno + aria-pressed, e a largura não muda ao alternar.
+  assert.doesNotMatch(fastBtn, /gui-mode-text/u)
+  assert.match(fastBtn, /aria-pressed=\{fastOn\}/u)
+  // A2 — UMA linha; o parágrafo sobre o respawn saiu da dica.
+  assert.match(fastBtn, /'desligar o modo fast'/u)
+  assert.match(fastBtn, /'modo fast — gasta mais limite \(vira Opus 5\)'/u)
+  assert.match(fastBtn, /'modo fast — gasta mais limite'/u)
+  assert.doesNotMatch(fastBtn, /A conversa continua de onde está/u)
+
+  // A3 — sucesso silencioso (o botão aceso É o recibo); a FALHA continua
+  // falando, e o modo de permissão mantém a nota de sucesso dele.
+  const changeFast = pane.slice(pane.indexOf('const changeFast'), pane.indexOf('const changeMode'))
+  assert.match(changeFast, /applySpawnChange\('fast', \{ fast: next \|\| undefined \}, null\)/u)
+  assert.doesNotMatch(changeFast, /modo fast (?:LIGADO|desligado)/u)
+  const spawnChange = pane.slice(
+    pane.indexOf('const applySpawnChange'),
+    pane.indexOf('const applyExecutorChange')
+  )
+  assert.match(spawnChange, /okText: string \| null/u)
+  assert.match(spawnChange, /if \(okText !== null\)/u)
+  assert.match(spawnChange, /type: 'limit'/u, 'falha de troca nunca é silenciosa')
+  const changeMode = pane.slice(
+    pane.indexOf('const changeMode'),
+    pane.indexOf('const changeModel')
+  )
+  assert.match(changeMode, /`modo de permissão: \$\{PERM_MODE_LABEL\[next\]\}`/u)
+
+  // Sem rótulo, o contorno é o ÚNICO sinal de ligado — e o hover genérico da
+  // família (mais específico) o apagava com o ponteiro em cima.
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+  assert.match(css, /\.gui-mode-btn\.gui-fast-btn\.on:hover:not\(:disabled\)/u)
 })

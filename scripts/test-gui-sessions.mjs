@@ -258,6 +258,24 @@ test('hidratação aceita só eventos completos do contrato conhecido', () => {
   assert.equal(isGuiPersistedEvent({ type: 'delta', text: 7 }), false)
   assert.equal(isGuiPersistedEvent({ type: 'ready', caps: { commands: {}, models: [] } }), false)
   assert.equal(isGuiPersistedEvent({ type: 'inventado', text: 'não hidratar' }), false)
+
+  // R12: o carimbo do restart retomado atravessa o disco — e só como boolean.
+  assert.equal(isGuiPersistedEvent({ type: 'session-restarted', ready: true, resumed: true }), true)
+  assert.equal(
+    isGuiPersistedEvent({ type: 'session-restarted', ready: true, resumed: false }),
+    true
+  )
+  assert.equal(
+    isGuiPersistedEvent({ type: 'session-restarted', ready: true }),
+    true,
+    'fotografia gravada antes do contrato novo continua hidratando'
+  )
+  assert.equal(
+    isGuiPersistedEvent({ type: 'session-restarted', ready: true, resumed: 'sim' }),
+    false,
+    'carimbo torto nunca vira "a conversa continua" no redutor'
+  )
+  assert.equal(isGuiPersistedEvent({ type: 'session-restarted', resumed: true }), false)
 })
 
 test('documento limita globalmente panes e bytes, preservando a foto recém-salva', () => {
@@ -2719,6 +2737,7 @@ test('histórico visual persiste no fechamento e reabre sem duplicar eventos', (
     {
       type: 'session-restarted',
       ready: true,
+      resumed: true,
       contextTokens: 4_200,
       contextWindow: 200_000
     },
@@ -2938,7 +2957,7 @@ test('contexto não atravessa troca de identidade mesmo com transcript antigo', 
   const restarted = gui.state(paneId).events.find(({ evt }) => evt.type === 'session-restarted')
   assert.deepEqual(
     restarted?.evt,
-    { type: 'session-restarted', ready: false },
+    { type: 'session-restarted', ready: false, resumed: false },
     'sem resume da identidade persistida a foto antiga é descartada'
   )
   assert.equal(gui.remembered(paneId).contextTokens, undefined)
@@ -3488,7 +3507,8 @@ test('entrada morta preserva replay e o create abre um único processo novo', ()
   )
   assert.deepEqual(gui.state(spawn.paneId).events.at(-2).evt, {
     type: 'session-restarted',
-    ready: true
+    ready: true,
+    resumed: false
   })
   assert.deepEqual(gui.state(spawn.paneId).events.at(-1).evt, {
     type: 'executor-changed',
@@ -3496,6 +3516,47 @@ test('entrada morta preserva replay e o create abre um único processo novo', ()
     effort: null
   })
   assert.match(gui.state(spawn.paneId).events[0].evt.text, /falha transitória/u)
+})
+
+// R12/A4 — o carimbo que deixa o renderer distinguir "a conversa continua" de
+// "nasceu outra". O sinal já existia dentro do registro (`sameConversation`, o
+// mesmo que deixa a fotografia de contexto atravessar a barreira); sem dizê-lo
+// em voz alta, todo respawn — inclusive o clique no ⚡ — se lia como abertura.
+test('o restart carimba `resumed`: só a MESMA conversa retomada é quieta', () => {
+  const gui = registry()
+  const spawn = {
+    paneId: 'p-resumed',
+    projectId: 'proj-resumed',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp'
+  }
+  gui.spawnSession = (_input, sink) => {
+    sink({
+      type: 'init',
+      model: 'claude',
+      sessionId: 'sess-viva',
+      permissionMode: 'default',
+      toolCount: 0
+    })
+    sink({ type: 'ready', caps: { commands: [], models: [] } })
+    return { alive: true, kill: () => undefined }
+  }
+  assert.equal(gui.create(spawn).ok, true)
+  assert.equal(gui.remembered(spawn.paneId).sessionId, 'sess-viva')
+
+  // O CLIQUE NO ⚡: fast é flag de SPAWN, então o fingerprint muda e o pane
+  // respawna herdando a mesma conversa — é exatamente este o restart que não
+  // pode reapresentar o chat inteiro.
+  assert.equal(gui.create({ ...spawn, fast: true }).ok, true)
+  const quiet = gui.state(spawn.paneId).events.filter(({ evt }) => evt.type === 'session-restarted')
+  assert.equal(quiet.at(-1).evt.resumed, true)
+
+  // Ter resume não basta: identidade DIFERENTE é geração nova, e ali o
+  // renderer tem de reapresentar (caps, executor e medidor zerados).
+  assert.equal(gui.create({ ...spawn, fast: true, resumeSessionId: 'sess-de-outra' }).ok, true)
+  const fresh = gui.state(spawn.paneId).events.filter(({ evt }) => evt.type === 'session-restarted')
+  assert.equal(fresh.at(-1).evt.resumed, false)
 })
 
 test('registro publica alertas somente no sink vivo e nunca durante replay', () => {

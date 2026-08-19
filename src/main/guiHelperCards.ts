@@ -174,6 +174,9 @@ export function guiHelperCardInput(record: GuiHelperRecord): Record<string, unkn
     ...(record.name ? { name: record.name } : {}),
     model: record.model,
     ...(record.effort ? { effort: record.effort } : {}),
+    // R12: o ⚡ na FICHA da lateral — o recibo abaixo já o carimbava, mas o
+    // card é o que o dono vê enquanto a frota trabalha.
+    ...(record.fast ? { fast: true } : {}),
     seat: record.seatName ?? record.seatId,
     cli: record.cli,
     prompt: clip(record.prompt, GUI_HELPER_CARD_PROMPT_CHARS)

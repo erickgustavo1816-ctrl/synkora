@@ -292,6 +292,11 @@ export type SessionEvent =
   | {
       type: 'session-restarted'
       ready: boolean
+      /** R12: a geração nova retomou a MESMA conversa (`sameConversation` no
+       *  registro). Ausente/false = geração nova (troca de conta/CLI, sessão
+       *  nova). Quem apresenta usa o carimbo para não piscar "abrindo" numa
+       *  conversa que nunca saiu do lugar. */
+      resumed?: boolean
       /** Fotografia canônica já persistida para a mesma conversa. */
       contextTokens?: number | null
       contextWindow?: number | null

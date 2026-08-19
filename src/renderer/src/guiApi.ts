@@ -182,6 +182,9 @@ export type GuiSessionEvent =
   | {
       type: 'session-restarted'
       ready: boolean
+      /** R12: a geração nova retomou a MESMA conversa (espelho do union do
+       *  main, maestroSession.ts). Ausente/false = geração nova. */
+      resumed?: boolean
       contextTokens?: number | null
       contextWindow?: number | null
     }

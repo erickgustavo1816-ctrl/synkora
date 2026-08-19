@@ -9,10 +9,12 @@ import type { GuiItem } from '../store'
 
 /** A leitura de relance do dono: modelo, effort e conta na MESMA fileira. O
  *  nativo aposentado não informa effort nem conta — a etiqueta então some, em
- *  vez de mentir um valor. */
+ *  vez de mentir um valor. O fast é dito por extenso: o ⚡ da fileira é desenho,
+ *  e "raio" não é o que o dono precisa ouvir. */
 function metaLabel(entry: GuiSubagentSidebarEntry): string {
   const parts = [`Modelo: ${entry.model}`]
   if (entry.effort) parts.push(`Effort: ${entry.effort}`)
+  if (entry.fast) parts.push('Fast: ligado')
   if (entry.seat) parts.push(`Conta: ${entry.seat}`)
   return parts.join(' · ')
 }
@@ -85,6 +87,9 @@ function SubagentCard({
       <div className="gui-subagent-row-meta" aria-label={metaLabel(entry)}>
         <span>{entry.model}</span>
         {entry.effort && <span>{entry.effort}</span>}
+        {/* Ao lado do effort porque é a mesma pergunta — COMO ele foi aberto —,
+            e antes da conta, que responde ONDE. A fileira já quebra sozinha. */}
+        {entry.fast && <span>⚡ fast</span>}
         {entry.seat && <span>{entry.seat}</span>}
         {entry.type && <span>{entry.type}</span>}
       </div>
