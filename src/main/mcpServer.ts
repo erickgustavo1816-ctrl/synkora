@@ -113,6 +113,8 @@ export interface McpHelperRequestInput {
   prompt: string
   model?: string
   effort?: string
+  /** R11: modo fast do ajudante — só por pedido do dono, nunca herdado. */
+  fast?: boolean
   seat?: string
   name?: string
 }
@@ -398,6 +400,12 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                   .optional()
                   .describe(
                     'nível de raciocínio. Ausente = o padrão do painel do dono e, sem padrão, o seu — quando o CLI é o mesmo (escalas diferentes não se herdam entre CLIs). Numa frota grande, effort UNIFORME é materialmente mais barato: variar quebra o cache de prompt'
+                  ),
+                fast: z
+                  .boolean()
+                  .optional()
+                  .describe(
+                    'modo FAST do ajudante (mais rápido, GASTA MAIS LIMITE). Só quando o DONO pedir — nunca por conta própria, e nunca herdado: ausente = desligado. No claude, fast troca o modelo para Opus 5 (comportamento do CLI); modelo sem fast abre normal e o recibo diz'
                   ),
                 seat: z
                   .string()

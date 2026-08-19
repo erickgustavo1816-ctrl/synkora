@@ -2205,3 +2205,35 @@ test('o correio mistura honestamente quem terminou e quem ficou parado', () => {
   assert.match(bloco, /1 interrompido/u, 'o placar não pode contar parado como falha')
   assert.match(bloco, /helper_resume/u)
 })
+
+// ————— R11: FAST do ajudante — pinado no nascimento, nunca herdado —————
+
+test('fast explícito viaja do pedido ao processo — e ausente NUNCA se herda', () => {
+  const [comFast, semFast] = planGuiHelperRequests(
+    [
+      { prompt: 'a', fast: true },
+      { prompt: 'b' }
+    ],
+    undefined
+  )
+  assert.equal(comFast.request.fast, true)
+  assert.equal(semFast.request.fast, undefined, 'fast acidental é caro (prompt-cache) — ausente = off')
+
+  const base = {
+    helperId: 'h-f',
+    projectId: 'p',
+    delegatorPaneId: 'gui-dev-1',
+    cwd: 'C:/w',
+    model: 'opus[1m]',
+    seat: { seatId: 's1', configDir: 'C:/cfg' },
+    prompt: 'trabalhe'
+  }
+  // claude: opt-in de spawn; codex: service tier — AMBOS só com o pedido.
+  assert.equal(claudeHelperSessionOptions({ ...base, cli: 'claude', fast: true }).fastMode, true)
+  assert.equal(claudeHelperSessionOptions({ ...base, cli: 'claude' }).fastMode, undefined)
+  assert.equal(
+    codexHelperSessionOptions({ ...base, cli: 'codex', fast: true }).serviceTier,
+    'priority'
+  )
+  assert.equal(codexHelperSessionOptions({ ...base, cli: 'codex' }).serviceTier, undefined)
+})

@@ -3362,3 +3362,31 @@ test('a rodada fechada carimba o selo ⏱ — a régua é pura e o store a conso
   assert.match(store, /guiRoundClosed\(/u, 'o applyGuiEvent decide pelo módulo puro')
   assert.match(store, /guiRoundStampText\(/u, 'o texto do selo tem fonte única')
 })
+
+// ————— R11: o FAST é flag de spawn — as quatro listas e o fingerprint —————
+
+test('o fast atravessa o contrato de spawn inteiro (espelho, literais, Board, fingerprint)', () => {
+  const api = readFileSync(new URL('../src/renderer/src/guiApi.ts', import.meta.url), 'utf8')
+  assert.match(api, /fast\?: boolean/u, 'o espelho do spawn precisa do campo')
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.equal(
+    (pane.match(/fast: fastOn \|\| undefined/gu) ?? []).length,
+    2,
+    'os DOIS literais do spawn carregam o fast — um só deixaria o respawn voltar ao antigo'
+  )
+  assert.match(pane, /gui-fast-btn/u, 'o toggle ⚡ existe no composer')
+  const board = readFileSync(
+    new URL('../src/renderer/src/components/Board.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(board, /fast=\{slot\.spawn\.fast\}/u, 'o Board repassa a escolha ao pane')
+  const sessions = readFileSync(new URL('../src/main/guiSessions.ts', import.meta.url), 'utf8')
+  assert.match(
+    sessions,
+    /spawn\.fast \? 'fast' : ''/u,
+    'fast fora do fingerprint = trocar não respawnaria'
+  )
+})

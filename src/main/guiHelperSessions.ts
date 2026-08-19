@@ -248,6 +248,8 @@ export interface GuiHelperSpawnRequest {
   /** Worktree da missão: o ajudante trabalha ao lado do dev, no mesmo lugar. */
   cwd: string
   cli: GuiHelperCli
+  /** R11 — fast pinado no nascimento (claude: fastMode; codex: tier). */
+  fast?: boolean
   model: string
   /** Já passou pela régua do `helperEffortDecision`: ausente = não mandar flag. */
   effort?: string
@@ -303,6 +305,8 @@ export interface GuiHelperRecord {
    * permissão — beco, porque sessão headless não tem ninguém para responder.
    */
   permissionMode?: string
+  /** R11 — nasceu em modo FAST (pinado; nunca toggla em vida). O resume reusa. */
+  fast?: boolean
   state: GuiHelperState
   startedAt: number
   settledAt?: number
@@ -441,6 +445,7 @@ export function sanitizeGuiHelperRecord(value: unknown): GuiHelperRecord | undef
   const retriedAt = optionalNumber(raw['retriedAt'])
   const retryReason = optionalString(raw['retryReason'])
   const permissionMode = optionalString(raw['permissionMode'])
+  const fast = raw['fast'] === true
   const resumedAt = optionalNumber(raw['resumedAt'])
   return {
     helperId,
@@ -455,6 +460,7 @@ export function sanitizeGuiHelperRecord(value: unknown): GuiHelperRecord | undef
     ...(seatName ? { seatName } : {}),
     prompt: raw['prompt'],
     ...(permissionMode ? { permissionMode } : {}),
+    ...(fast ? { fast: true } : {}),
     state: state as GuiHelperState,
     startedAt,
     ...(settledAt !== undefined ? { settledAt } : {}),
@@ -543,6 +549,10 @@ export interface GuiHelperRequest {
   /** Ausente = o modelo do delegador. É ele que decide o CLI (ver resolveHelperCli). */
   model?: string
   effort?: string
+  /** R11 — modo FAST, pinado no NASCIMENTO (a lição do prompt-cache: togglar
+   *  fast quebra o cache; ajudante nasce e morre num modo só). Nunca herdado:
+   *  ausente = off. */
+  fast?: boolean
   /** Conta pedida explicitamente — o delegador escolhe onde gastar limite. */
   seatId?: string
   name?: string
@@ -1095,6 +1105,8 @@ export class GuiHelperEngine {
         // O modo do delegador é PINO de nascimento: é ele que o resume reusa,
         // inclusive depois de um boot em que o chat nem esteja aberto.
         ...(delegator.permissionMode ? { permissionMode: delegator.permissionMode } : {}),
+        // R11: fast NUNCA é herdado — só o pedido explícito (tool/painel) liga.
+        ...(request.fast === true ? { fast: true } : {}),
         state: 'spawning',
         startedAt: this.now()
       }
@@ -1110,6 +1122,7 @@ export class GuiHelperEngine {
           ...(effort.send ? { effort: effort.send } : {}),
           seat,
           prompt,
+          ...(request.fast === true ? { fast: true } : {}),
           ...(delegator.permissionMode ? { permissionMode: delegator.permissionMode } : {})
         },
         text: '',
@@ -1284,6 +1297,7 @@ export class GuiHelperEngine {
       cli: record.cli,
       model: record.model,
       ...(record.effort ? { effort: record.effort } : {}),
+      ...(record.fast === true ? { fast: true } : {}),
       seat,
       prompt: GUI_HELPER_RESUME_NUDGE,
       ...(record.permissionMode ? { permissionMode: record.permissionMode } : {}),

@@ -149,6 +149,10 @@ export function codexElicitationVerdict(p: Record<string, unknown>): CodexElicit
  *  missão e helper nascem cercados, o chat do planejador fica como está. */
 export interface CodexSessionOpts extends MaestroSessionOpts {
   suppressNativeAgents?: boolean
+  /** R11 — nasce com o service tier Fast ('priority') armado: vale no
+   *  thread/start E em todo turno (a sonda provou o eco no start e o carry
+   *  do turn/start). O /fast do chat continua alternando por cima. */
+  serviceTier?: 'priority'
 }
 
 interface RpcResponse {
@@ -439,6 +443,9 @@ export class CodexSession {
   private lastTokens: number | undefined
   private lastWindow: number | undefined
   // /fast: service tier "priority" (1.5x speed) aplicado como override por turno.
+  // R11: o spawn pode nascer com o tier armado (spawn.fast do chat / pino do
+  // ajudante) — atribuído no CONSTRUTOR (field initializer rodaria antes de
+  // `this.opts` existir); o /fast do chat alterna por cima.
   private fastTier = false
   private interruptTimer: NodeJS.Timeout | null = null
   private interruptedTurnId: string | null = null
@@ -468,6 +475,7 @@ export class CodexSession {
     this.opts = opts
     this.persona = persona
     this.emit = emit
+    this.fastTier = opts.serviceTier === 'priority'
 
     const env: Record<string, string> = {
       ...(process.env as Record<string, string>),
@@ -899,8 +907,28 @@ export class CodexSession {
     this.finishCommand(`objetivo definido: ${arg}`)
   }
 
+  /** O modelo ATUAL desta sessão lista o tier Fast? (sonda R11: tier em
+   *  modelo sem suporte é ENGOLIDO CALADO pelo app-server — eco null — então
+   *  afirmar "fast ativado" sem esta checagem é mentir para o dono). */
+  private modelSupportsFastTier(): boolean {
+    const wanted = (this.opts.model ?? '').trim()
+    const models = this.caps?.models ?? []
+    const current = wanted
+      ? models.find((m) => m.value === wanted || m.resolvedModel === wanted)
+      : models.find((m) => m.value.toLowerCase() === 'default')
+    return current?.supportsFastMode === true
+  }
+
   /** /fast REAL do codex: toggle do service tier "priority" (1.5x speed). */
   private async cmdFast(): Promise<void> {
+    // R11 — recusa HONESTA: modelo sem o tier não "ativa" nada (o app-server
+    // engoliria o tier em silêncio e o rótulo seria mentira).
+    if (!this.fastTier && !this.modelSupportsFastTier()) {
+      this.finishCommand(
+        'este modelo não tem o modo Fast (o catálogo do Codex não lista o service tier dele) — troque para um modelo com Fast antes de ligar'
+      )
+      return
+    }
     this.fastTier = !this.fastTier
     this.finishCommand(
       this.fastTier
@@ -1516,6 +1544,8 @@ export class CodexSession {
       description?: string
       hidden?: boolean
       supportedReasoningEfforts?: { reasoningEffort?: string }[]
+      /** R11 (sonda): [{id:'priority', name:'Fast', ...}] nos modelos com fast */
+      serviceTiers?: { id?: string }[]
     }[]
     const acc = account.result?.['account'] as
       | { email?: string; planType?: string }
@@ -1530,6 +1560,9 @@ export class CodexSession {
           displayName: m.displayName ?? (m.id as string),
           description: m.description,
           supportsEffort: (m.supportedReasoningEfforts ?? []).length > 0,
+          // R11 (sonda): fast no codex = service tier 'priority' por modelo.
+          // O NOME é o mesmo do claude de propósito — o renderer lê UMA chave.
+          supportsFastMode: (m.serviceTiers ?? []).some((tier) => tier?.id === 'priority'),
           supportedEffortLevels: (m.supportedReasoningEfforts ?? [])
             .map((e) => e.reasoningEffort)
             .filter((e): e is string => Boolean(e))

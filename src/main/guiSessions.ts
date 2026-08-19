@@ -74,6 +74,13 @@ export interface GuiPaneSpawn {
   /** Modo de permissão DESTA conversa (onda D — o seletor do composer).
    *  Ausente = 'default' (o padrão do binário). */
   permissionMode?: GuiPermissionMode
+  /** R11 — MODO FAST desta conversa (sonda probe-fast: claude = opt-in
+   *  --settings fastMode, que nasce LIGADO e troca o modelo para Opus 5;
+   *  codex = service tier 'priority'). É configuração de PROCESSO: trocar
+   *  respawna com resume (o caminho do permissionMode) e entra no
+   *  fingerprint. Ausente = off — fast nunca é herdado em silêncio (a lição
+   *  do prompt-cache: fast acidental é caro). */
+  fast?: boolean
   /** MCP do Synkora para ESTE pane (onda D): só a missão de PLANEJAMENTO o
    *  recebe — ver guiPlannerMcp.ts. Ausente = chat sem ferramenta nossa, que
    *  é o que todo pane GUI foi até aqui. Entra no fingerprint: armar/desarmar
@@ -2263,9 +2270,14 @@ export class GuiSessionRegistry {
     const route = routeClaudeSlash(trimmed)
     if (route.kind === 'raw') return false
     if (route.kind === 'fast') {
+      // R11: fast é flag de PROCESSO no claude (opt-in de spawn — sonda
+      // probe-fast) e o caminho canônico do chat é o toggle ⚡ do composer,
+      // que respawna com resume. A resposta nomeia a receita, nunca um beco.
       entry.sink({
         type: 'command-output',
-        text: 'o /fast do claude ainda não está disponível no chat — por enquanto use um pane de terminal'
+        text: entry.spawn.fast
+          ? 'o modo fast está LIGADO nesta conversa — desligue no botão ⚡ ao lado do seletor de modelo (a conversa continua de onde está)'
+          : 'para ligar o modo fast use o botão ⚡ ao lado do seletor de modelo — a conversa continua de onde está. Atenção: no claude, ligar troca o modelo para Opus 5 (comportamento do próprio CLI)'
       })
       entry.sink({ type: 'command-completed', isError: false, continues: entry.session.turnActive })
       return true
@@ -2769,6 +2781,12 @@ export class GuiSessionRegistry {
       ...permissions,
       // Ferramentas Synkora deste pane (só o planejamento tem — guiPlannerMcp).
       ...(spawn.mcp ? { extraArgs: spawn.mcp.args, extraEnv: spawn.mcp.env } : {}),
+      // R11 — FAST é configuração de PROCESSO nos dois CLIs (sonda probe-fast):
+      // claude nasce ON com o opt-in --settings fastMode (e ligar troca o
+      // modelo para Opus 5 — comportamento do binário); codex é o service tier
+      // 'priority' do thread/turn. Trocar = respawn com resume, o caminho do
+      // permissionMode — e é por isso que `fast` entra no fingerprint.
+      ...(spawn.fast ? (spawn.cli === 'codex' ? { serviceTier: 'priority' as const } : { fastMode: true }) : {}),
       // Chat aberto não morre por tédio (contrato do pane GUI).
       idleTimeoutMs: 0
     }
@@ -3152,6 +3170,9 @@ export function spawnFingerprint(spawn: GuiPaneSpawn): string {
     // (--permission-mode do claude, sandbox do thread/start do codex) e
     // nenhum dos dois binários troca isso na conversa em andamento.
     spawn.permissionMode ?? 'default',
+    // R11: fast é flag de processo nos dois CLIs — trocar exige respawn (e o
+    // cache-break do fastModeChanged é inerente, não um custo extra do respawn).
+    spawn.fast ? 'fast' : '',
     // As flags de MCP moram na linha de comando do processo: armar o servidor
     // numa conversa viva exige respawn (o resume preserva o contexto).
     (spawn.mcp?.args ?? []).join(' '),

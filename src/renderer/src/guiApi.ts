@@ -72,6 +72,10 @@ export interface GuiPaneSpawn {
    *  TODO(onda D, motor): o main é o dono canônico deste campo — quando ele
    *  publicar o tipo, esta cópia some junto com o resto do bloco. */
   permissionMode?: GuiPermissionMode
+  /** R11 — modo FAST desta conversa (espelho do main): flag de processo nos
+   *  dois CLIs; trocar respawna com resume (o caminho do permissionMode).
+   *  Claude: ligar troca o modelo para Opus 5 (comportamento do binário). */
+  fast?: boolean
   /** MCP do Synkora deste pane (onda D): só a missão de PLANEJAMENTO recebe —
    *  ver guiPlannerMcp.ts. O main é o dono canônico; aqui é espelho. Entra no
    *  fingerprint: armar/desarmar o servidor exige processo novo.
@@ -133,6 +137,9 @@ export interface GuiCliModel {
   displayName: string
   description?: string
   supportsEffort?: boolean
+  /** R11: o modelo aceita o modo fast (claude: supportsFastMode do bundle;
+   *  codex: service tier 'priority' — o main uniformiza na MESMA chave). */
+  supportsFastMode?: boolean
   supportedEffortLevels?: string[]
 }
 

@@ -184,6 +184,8 @@ export function guiHelperCardInput(record: GuiHelperRecord): Record<string, unkn
 export function guiHelperLaunchReceipt(record: GuiHelperRecord): string {
   const parts = [record.model]
   if (record.effort) parts.push(record.effort)
+  // R11: fast é a única escolha que GASTA MAIS — o recibo carimba sempre.
+  if (record.fast) parts.push('⚡ fast')
   parts.push(record.seatName ?? record.seatId)
   return `ajudante aberto · ${parts.join(' · ')}`
 }

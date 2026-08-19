@@ -19899,3 +19899,13 @@ details.gui-error-line {
   opacity: 0.75;
 }
 /* ————— fim do BLOCO NOVO do timer de rodada ————— */
+
+/* ————— BLOCO NOVO: o toggle ⚡ fast do composer (R11) —————
+   Mesma família dos botões de modo; LIGADO fala pelo acento — fast é a única
+   escolha do composer que gasta mais limite, e o estado não pode passar
+   despercebido. */
+.gui-fast-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* ————— fim do BLOCO NOVO do toggle fast ————— */

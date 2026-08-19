@@ -75,6 +75,9 @@ export interface CliModel {
   description?: string
   supportsEffort?: boolean
   supportedEffortLevels?: string[]
+  /** R11 (sonda probe-fast, 2026-08-18): o claude publica por modelo — só
+   *  Opus 5 hoje. Modelo sem a marca fica off em silêncio ao ligar fast. */
+  supportsFastMode?: boolean
 }
 
 export interface CliCaps {

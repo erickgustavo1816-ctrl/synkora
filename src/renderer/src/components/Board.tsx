@@ -590,6 +590,23 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     })
   }
 
+  /** R11: o toggle ⚡ fast do chat — o slot guarda a escolha, irmão exato do
+   *  setMissionSlotPermission (o fast também é flag de spawn). */
+  function setMissionSlotFast(missionId: string, paneId: string, fast: boolean): void {
+    setMissionGuiSlots((prev) => {
+      const cur = prev[missionId]
+      if (!cur) return prev
+      return {
+        ...prev,
+        [missionId]: cur.map((s) =>
+          s.spawn.paneId === paneId
+            ? { ...s, spawn: { ...s.spawn, fast: fast || undefined } }
+            : s
+        )
+      }
+    })
+  }
+
   /** Modelo/effort trocados NO CHAT: o slot guarda a escolha para a
    *  remontagem não voltar ao executor antigo (par do setMissionSlotPermission
    *  — o motor também grava do lado dele, por pane). */
@@ -1095,8 +1112,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                     resumeSessionId={slot.spawn.resumeSessionId}
                     firstPrompt={slot.spawn.firstPrompt}
                     permissionMode={slot.spawn.permissionMode}
+                    fast={slot.spawn.fast}
                     mcp={slot.spawn.mcp}
                     onPermissionMode={(pm) => setMissionSlotPermission(mid, slot.spawn.paneId, pm)}
+                    onFastMode={(on) => setMissionSlotFast(mid, slot.spawn.paneId, on)}
                     onExecutorChange={(patch) =>
                       setMissionSlotExecutor(mid, slot.spawn.paneId, patch)
                     }

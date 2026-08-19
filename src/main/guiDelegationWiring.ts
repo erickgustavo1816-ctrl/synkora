@@ -369,6 +369,8 @@ export function claudeHelperSessionOptions(
     configDir: request.seat.configDir || undefined,
     model: request.model,
     ...(request.effort ? { effort: request.effort } : {}),
+    // R11: fast pinado no NASCIMENTO (togglar quebra o prompt-cache).
+    ...(request.fast ? { fastMode: true } : {}),
     ...permissionProfileFor('claude', request.permissionMode),
     ...(systemPromptFile ? { systemPromptFile } : {}),
     // RETOMAR A MESMA CONVERSA (R6.2): o `--resume` headless do claude. Ausente
@@ -386,6 +388,7 @@ export function codexHelperSessionOptions(request: GuiHelperSpawnRequest): Codex
     configDir: request.seat.configDir || undefined,
     model: request.model,
     ...(request.effort ? { effort: request.effort } : {}),
+    ...(request.fast ? { serviceTier: 'priority' as const } : {}),
     ...permissionProfileFor('codex', request.permissionMode),
     // Cerca DUPLA do D5: cinto nos args do app-server, suspensório no
     // thread/start — e o MESMO `base` do codexSession leva a cerca ao
@@ -659,6 +662,9 @@ export function planGuiHelperRequests(
         ...(chosenModel ? { model: chosenModel } : {}),
         ...(chosenEffort ? { effort: chosenEffort } : {}),
         ...(seatId ? { seatId } : {}),
+        // R11: fast SÓ explícito na tool — nunca do painel nem herdado (a
+        // lição do prompt-cache torna fast acidental caro).
+        ...(helper.fast === true ? { fast: true } : {}),
         ...(name ? { name } : {})
       },
       origins: {

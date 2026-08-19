@@ -125,12 +125,17 @@ interface Props {
   firstPrompt?: string
   /** modo de permissão DESTA conversa (onda D) — ausente = 'default' */
   permissionMode?: GuiPermissionMode
+  /** R11: modo FAST desta conversa — flag de spawn como o permissionMode
+   *  (trocar respawna com resume). Ausente = off. */
+  fast?: boolean
   /** ferramentas Synkora deste pane (só a missão de planejamento recebe). O
    *  pane não as interpreta: leva o campo intacto de volta ao `gui:create`. */
   mcp?: GuiPaneSpawn['mcp']
   /** o dono da spec guarda a escolha: sem isto, remontar o slot voltaria ao
    *  modo antigo enquanto a sessão no main já está no novo. */
   onPermissionMode?: (mode: GuiPermissionMode) => void
+  /** R11: o dono da spec guarda a escolha do fast (par do onPermissionMode). */
+  onFastMode?: (fast: boolean) => void
   /** modelo/effort trocados no composer — mesma razão do modo acima. */
   onExecutorChange?: (patch: { model?: string; effort?: string }) => void
   /** contas disponíveis + a desta conversa: o cabeçalho troca a conta sem
@@ -514,8 +519,10 @@ export default function GuiPane({
   resumeSessionId,
   firstPrompt,
   permissionMode,
+  fast,
   mcp,
   onPermissionMode,
+  onFastMode,
   onExecutorChange,
   seats,
   seatId,
@@ -565,16 +572,22 @@ export default function GuiPane({
   // botões responderem na hora, semeados pela spec. O pai guarda a escolha na
   // spec dele — por isso os efeitos só re-semeiam quando a PROP muda.
   const [mode, setMode] = useState<GuiPermissionMode>(permissionMode ?? 'default')
+  // R11: o fast segue o padrão do mode — estado local semeado pela prop, o
+  // dono da spec guarda a escolha via onFastMode.
+  const [fastOn, setFastOn] = useState<boolean>(fast ?? false)
   const [openMenu, setOpenMenu] = useState<
     'attach' | 'mode' | 'model' | 'effort' | 'seat' | 'context' | null
   >(null)
-  const [busyMenu, setBusyMenu] = useState<'mode' | 'model' | 'effort' | null>(null)
+  const [busyMenu, setBusyMenu] = useState<'mode' | 'model' | 'effort' | 'fast' | null>(null)
   const [liveModel, setLiveModel] = useState<string | undefined>(model)
   const [liveEffort, setLiveEffort] = useState<string | undefined>(effort)
   const executorRequestRef = useRef(0)
   useEffect(() => {
     setMode(permissionMode ?? 'default')
   }, [permissionMode])
+  useEffect(() => {
+    setFastOn(fast ?? false)
+  }, [fast])
   useEffect(() => {
     setLiveModel(model)
   }, [model])
@@ -615,6 +628,7 @@ export default function GuiPane({
     resumeSessionId,
     firstPrompt,
     permissionMode: mode,
+    fast: fastOn || undefined,
     mcp
   })
 
@@ -631,6 +645,7 @@ export default function GuiPane({
     resumeSessionId,
     firstPrompt,
     permissionMode: mode,
+    fast: fastOn || undefined,
     mcp
   }
 
@@ -1118,7 +1133,7 @@ export default function GuiPane({
    *  respawn com resume. Modelo/effort usam o caminho vivo separado abaixo. */
   const applySpawnChange = useCallback(
     async (
-      which: 'mode' | 'model' | 'effort',
+      which: 'mode' | 'model' | 'effort' | 'fast',
       patch: Partial<GuiPaneSpawn>,
       okText: string
     ): Promise<void> => {
@@ -1169,6 +1184,23 @@ export default function GuiPane({
       onExecutorChange?.({ model: nextModel, effort: nextEffort })
     },
     [handleGuiLive, onExecutorChange, paneId, spawnChangeLocked]
+  )
+
+  // R11: o toggle ⚡. Fast é flag de spawn (o binário não troca em voo — a
+  // sonda probe-fast provou), então o caminho é o MESMO do modo de permissão:
+  // respawn com resume, a conversa continua de onde está.
+  const changeFast = useCallback(
+    (next: boolean): void => {
+      if (spawnChangeLocked || next === fastOn) return
+      setFastOn(next)
+      onFastMode?.(next)
+      void applySpawnChange(
+        'fast',
+        { fast: next || undefined },
+        next ? 'modo fast LIGADO ⚡' : 'modo fast desligado'
+      )
+    },
+    [applySpawnChange, fastOn, onFastMode, spawnChangeLocked]
   )
 
   const changeMode = useCallback(
@@ -2160,6 +2192,30 @@ export default function GuiPane({
                     </div>
                   )}
                 </div>
+              )}
+
+              {/* R11 — o TOGGLE ⚡ (ordem do dono): visível quando o modelo da
+                  conversa tem fast (a chave é UMA nos dois CLIs) — e sempre que
+                  já está ligado, senão desligar ficaria sem botão. Trocar é
+                  flag de spawn: respawn com resume, como o modo de permissão. */}
+              {(fastOn || selectedModelOption?.supportsFastMode === true) && (
+                <button
+                  className={`gui-mode-btn gui-fast-btn${fastOn ? ' on' : ''}`}
+                  disabled={spawnChangeLocked || busyMenu === 'fast'}
+                  aria-pressed={fastOn}
+                  data-tip={
+                    fastOn
+                      ? 'Modo fast LIGADO (mais rápido, gasta mais limite). Clique para desligar — a conversa continua de onde está.'
+                      : cli === 'claude'
+                        ? 'Liga o modo fast (mais rápido, gasta mais limite). No claude, ligar troca o modelo para Opus 5 — comportamento do próprio CLI. A conversa continua de onde está.'
+                        : 'Liga o modo fast (service tier Fast: 1.5x, gasta mais limite). A conversa continua de onde está.'
+                  }
+                  aria-label={fastOn ? 'Desligar o modo fast' : 'Ligar o modo fast'}
+                  onClick={() => changeFast(!fastOn)}
+                >
+                  <span aria-hidden="true">⚡</span>
+                  {fastOn && <span className="gui-mode-text">fast</span>}
+                </button>
               )}
 
               {/* UMA peça em dois estados: mesma caixa, mesmo lugar, mesma
