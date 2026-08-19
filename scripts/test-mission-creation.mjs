@@ -567,6 +567,12 @@ function createEngineOnRealRepository(t) {
           candidate.worktree &&
           worktreeApi.isExpectedVersionWorktree(path, candidate.worktree, candidate.branch)
       ),
+    // R18.3: o espelho assíncrono, com a MESMA régua — no index é a metade pura
+    // + `gitOff('isExpectedVersionWorktree', …)`; aqui, o mesmo pelo stub.
+    versionIsolationProbe: (path, candidate) =>
+      candidate.branch && candidate.worktree
+        ? gitAsyncStub.gitOff('isExpectedVersionWorktree', path, candidate.worktree, candidate.branch)
+        : Promise.resolve(false),
     emitBacklogChanged: () => {},
     sweepProjectFiles: () => 0,
     closeTestServersUnder: () => {},
@@ -874,6 +880,12 @@ function createIntegrationHarness(t) {
           candidate.worktree &&
           worktreeApi.isExpectedVersionWorktree(path, candidate.worktree, candidate.branch)
       ),
+    // R18.3: o mesmo isolamento pelo gitWorker — é ELE que o caminho assíncrono
+    // (resolução do destino, conferência de identidade no merge) passa a usar.
+    versionIsolationProbe: (path, candidate) =>
+      candidate.branch && candidate.worktree
+        ? gitAsyncStub.gitOff('isExpectedVersionWorktree', path, candidate.worktree, candidate.branch)
+        : Promise.resolve(false),
     emitBacklogChanged: () => {},
     sweepProjectFiles: () => 0,
     closeTestServersUnder: () => {},
@@ -1011,7 +1023,7 @@ test('sem ticket, integration_status e integration_run nomeiam o ⇪ do DONO', a
   const h = createIntegrationHarness(t)
   const mission = await h.missionWithDelivery('Rail da fila', 'rail.txt', 'entrega\n')
 
-  const status = h.engine.missionIntegrationStatus('proj-1', mission.id)
+  const status = await h.engine.missionIntegrationStatus('proj-1', mission.id)
   assert.match(status, /NÃO tem ticket na fila/u)
   assert.match(status, /Só o ⇪ do DONO/u)
   assert.match(status, /nunca se enfileira sozinho/u)
@@ -1029,7 +1041,7 @@ test('quem não é a cabeça é recusado com a posição, quem falta e a ordem d
   await h.engine.startMissionIntegration(first.id, 'user')
   await h.engine.startMissionIntegration(second.id, 'user')
 
-  const status = h.engine.missionIntegrationStatus('proj-1', second.id)
+  const status = await h.engine.missionIntegrationStatus('proj-1', second.id)
   assert.match(status, /posição #2 de 2/u)
   assert.match(status, /NA SUA FRENTE: "Primeira entrega" \(queued\)/u)
   assert.match(status, /ainda NÃO é a sua vez/u)
@@ -1052,7 +1064,7 @@ test('árvore suja é recusa COM receita, e o ticket continua na cabeça', async
   await h.engine.startMissionIntegration(mission.id, 'user')
   writeFileSync(join(mission.worktree, 'rail.txt'), 'mexido depois do aval\n', 'utf8')
 
-  const status = h.engine.missionIntegrationStatus('proj-1', mission.id)
+  const status = await h.engine.missionIntegrationStatus('proj-1', mission.id)
   assert.match(status, /ÁRVORE DA MISSÃO: SUJA/u)
   assert.match(status, /commite \(ou limpe\)/u)
 
@@ -1174,7 +1186,7 @@ test('ticket congelado pela era da máquina é REABERTO pelo agente em vez de vi
   })
 
   assert.match(
-    h.engine.missionIntegrationStatus('proj-1', mission.id),
+    await h.engine.missionIntegrationStatus('proj-1', mission.id),
     /congelado por uma era anterior/u
   )
   const run = await h.engine.runMissionIntegration('proj-1', mission.id)
@@ -1212,6 +1224,8 @@ test('R17: o ⇪ de uma missão com VERSÃO manda a rajada inteira para o gitWor
       'isExpectedWorktree', //       ensureMissionWorktree: worktree DESTA missão
       'hasGitCommit', //             projeto git? (sem git não há merge)
       'resolveMissionWorkspace', //  o worktree isolado, provado
+      'isExpectedVersionWorktree', // R18.3: o ISOLAMENTO da versão (era o
+      //                              predicado síncrono, ~5 spawns no main)
       'isExpectedWorktree', //       IDENTIDADE DO DESTINO: a branch da versão
       'isWorktreeClean', //          a árvore da entrega está limpa
       'gitHead', //                  lacre da ORIGEM
@@ -1224,3 +1238,32 @@ test('R17: o ⇪ de uma missão com VERSÃO manda a rajada inteira para o gitWor
   assert.equal(ticket.state, 'queued')
   assert.equal(ticket.targetBranch, h.version.branch)
 })
+
+// ————— R18 (2026-08-19): OS RESÍDUOS DO ESTOL —————
+
+test('R18: a resolução do destino pergunta o isolamento da versão pelo gitWorker', async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Rail da fila', 'rail.txt', 'entrega\n')
+  gitOffCalls.length = 0
+
+  await h.engine.startMissionIntegration(mission.id, 'user')
+
+  // O probe entra EXATAMENTE no lugar do predicado antigo: logo depois de
+  // provar o workspace da missão e logo ANTES da identidade do destino — a
+  // ordem é parte do lacre (cada resposta decide a pergunta seguinte).
+  const nomes = gitOffCalls.map((call) => call.fn)
+  const probe = nomes.indexOf('isExpectedVersionWorktree')
+  assert.ok(probe >= 0, `o isolamento da versão não viajou: ${nomes.join(' → ')}`)
+  assert.equal(nomes[probe - 1], 'resolveMissionWorkspace')
+  assert.equal(nomes[probe + 1], 'isExpectedWorktree')
+  // e ele é perguntado sobre o worktree/branch DA VERSÃO, não sobre a missão
+  assert.deepEqual(gitOffCalls[probe].args, [
+    h.projectPath,
+    h.version.worktree,
+    h.version.branch
+  ])
+})
+
+// (R18.4 — o twin no criar missão — foi entregue, MEDIDO e revertido no
+// review: missão recém-nascida nunca casa o atalho saudável e o caminho
+// síncrono rodava inteiro do mesmo jeito; o teste saiu junto com a linha.)

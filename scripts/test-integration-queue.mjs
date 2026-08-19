@@ -633,6 +633,10 @@ function mergeHarness(t) {
   const engine = createMissionEngine(ctx, {
     orchKey: (project, mission) => `${project}--${mission}`,
     versionIsolationIsValid: () => false,
+    // R18.3: o espelho assíncrono do mesmo isolamento (aqui a missão integra na
+    // BASE, então nenhum dos dois chega a ser perguntado — o par existe para a
+    // fronteira do motor ficar igual à do index).
+    versionIsolationProbe: async () => false,
     emitBacklogChanged: () => {},
     sweepProjectFiles: () => 0,
     closeTestServersUnder: () => {},
@@ -806,16 +810,22 @@ const engineSource = readFileSync(
   'utf8'
 ).replace(/\r\n/gu, '\n')
 
-/** Corpo de uma função do closure do motor: da assinatura (`nome(`, com ou sem
- *  `async` — a busca é pelo `function nome(`, que casa nas duas formas) até o
- *  primeiro fecho NA INDENTAÇÃO DO CLOSURE (`\n  }`). Tudo que é corpo tem
- *  indentação maior, então esse é o fim da função, não um bloco interno. */
-function engineBody(name) {
-  const start = engineSource.indexOf(`function ${name}(`)
-  assert.ok(start >= 0, `função não encontrada no motor: ${name}`)
-  const end = engineSource.indexOf('\n  }\n', start)
+/** Corpo de uma função do closure: da assinatura (`nome(`, com ou sem `async` —
+ *  a busca é pelo `function nome(`, que casa nas duas formas) até o primeiro
+ *  fecho NA INDENTAÇÃO DO CLOSURE (`\n  }`). Tudo que é corpo tem indentação
+ *  maior, então esse é o fim da função, não um bloco interno.
+ *  R18: a régua ganhou a fonte como parâmetro (o domínio VERSÃO mora no index),
+ *  e o `engineBody` continua sendo o atalho para o motor. */
+function bodyOf(source, name) {
+  const start = source.indexOf(`function ${name}(`)
+  assert.ok(start >= 0, `função não encontrada no fonte: ${name}`)
+  const end = source.indexOf('\n  }\n', start)
   assert.ok(end > start, `fim do corpo não encontrado: ${name}`)
-  return engineSource.slice(start, end)
+  return source.slice(start, end)
+}
+
+function engineBody(name) {
+  return bodyOf(engineSource, name)
 }
 
 /** Chamada DIRETA de `nome(` — a string `'nome'` dentro de `gitOff('nome', …)`
@@ -946,6 +956,183 @@ test('R17: o integration_run também não spawna git no main — do começo ao m
     'currentBranch',
     'missionCommits', //          R16: a entrega é lida antes de o worktree sumir
     'missionWorkspaceSummary',
-    'mergeTaskWorktree'
+    'mergeTaskWorktree',
+    // R18.2: e o FECHO, que até aqui era o último git SÍNCRONO do caminho —
+    // limpeza dos arquivos da missão e remoção do marcador de integração.
+    'ensureSynkoraGitExcludes', // cleanupMissionFilesOffThread
+    'ensureSynkoraGitExcludes' //  clearMissionIntegrationIntentOffThread
   ])
+})
+
+// ————— R18: OS RESÍDUOS DO ESTOL (2026-08-19) —————
+//
+// A R17 tirou a rajada do ⇪ do main thread e deixou QUATRO resíduos nomeados.
+// Estes testes seguram três deles: a tool que o agente mais chama
+// (`integration_status`, ~7 spawns por consulta — e a persona do release manda
+// lê-la ANTES de agir), o FECHO do merge (a parte GIT do estol de 411ms que o
+// dono mediu) e o isolamento da versão (~5 spawns por resolução de destino).
+//
+// A regra é a mesma da R17: TRANSPORTE, NÃO LÓGICA. Nenhuma pergunta muda de
+// conteúdo, de ordem ou de frase; o que muda é o thread. E onde a função é
+// COMPARTILHADA com a reconciliação de BOOT (que segue síncrona por desenho),
+// o espelho é PINADO contra o original — é o par que impede as duas metades de
+// divergirem no primeiro conserto aplicado de um lado só.
+
+test('R18: o integration_status manda a fotografia dele para o gitWorker, na ordem', async (t) => {
+  // O harness já deixa o ticket na fila — exatamente o que o ⇪ do dono deixa —
+  // e zera o `gitOffCalls` antes disso: o que sobra aqui é SÓ a consulta.
+  const harness = mergeHarness(t)
+
+  const status = await harness.engine.missionIntegrationStatus(
+    harness.projectId,
+    harness.missionId
+  )
+
+  // O TEXTO é o contrato e não mudou uma linha: cabeçalho, ticket, lacre,
+  // árvore e a RECEITA do próximo passo.
+  assert.match(status, /FILA DE INTEGRAÇÃO deste universo/u, status)
+  assert.match(status, /SEU TICKET: posição #1 de 1 · estado queued · você é a CABEÇA/u, status)
+  assert.match(status, /LACRE DA ENTREGA/u, status)
+  assert.match(status, /ÁRVORE DA MISSÃO: limpa/u, status)
+  assert.match(status, /PRÓXIMO PASSO: é a SUA VEZ: chame integration_run\./u, status)
+
+  // E cada git dela viajou, na ORDEM de leitura de sempre.
+  assert.deepEqual(
+    gitOffCalls,
+    [
+      'resolveMissionWorkspace', // o worktree isolado da missão, provado
+      'gitHead', //                lacre ATUAL da entrega
+      'isWorktreeClean', //        a árvore da missão
+      'gitHead' //                 head do DESTINO
+    ],
+    'a consulta mais frequente do agente não pode spawnar git no main thread'
+  )
+})
+
+test('R18: status, fecho e criação não têm git SÍNCRONO no fonte — e o BOOT continua tendo', () => {
+  const bodies = {
+    missionIntegrationStatus: engineBody('missionIntegrationStatus'),
+    cleanupMissionFilesOffThread: engineBody('cleanupMissionFilesOffThread'),
+    clearMissionIntegrationIntentOffThread: engineBody('clearMissionIntegrationIntentOffThread')
+  }
+  for (const [name, body] of Object.entries(bodies)) {
+    for (const fn of SYNC_GIT_BURST) {
+      assert.doesNotMatch(
+        body,
+        directCall(fn),
+        `${name} chama ${fn}() direto — isso é spawn de git no MAIN THREAD`
+      )
+    }
+  }
+  // O fecho do merge chama os ESPELHOS, nunca os originais compartilhados.
+  const closing = engineBody('completeMissionMergeInner')
+  assert.doesNotMatch(closing, directCall('cleanupMissionFiles'), 'o fecho do merge')
+  assert.doesNotMatch(closing, directCall('clearMissionIntegrationIntent'), 'o fecho do merge')
+  assert.match(closing, /await cleanupMissionFilesOffThread\(/u)
+  assert.match(closing, /await clearMissionIntegrationIntentOffThread\(/u)
+  // (O twin no CRIAR missão — R18.4 — foi revertido no review: sem ganho de
+  // main thread medido; ver r18-agent-report.md, nota honesta nº 2.)
+  // E o BOOT segue síncrono, palavra por palavra: boot não é clique.
+  const boot = engineBody('recoverMissionIntegrationIntents')
+  assert.match(boot, directCall('clearMissionIntegrationIntent'), 'a reconciliação de boot')
+  assert.match(boot, directCall('cleanupMissionFiles'), 'a reconciliação de boot')
+  assert.doesNotMatch(boot, /OffThread\(/u, 'boot não é clique: a reconciliação segue síncrona')
+})
+
+/** A sequência de OPERAÇÕES de um corpo, com o `gitOff('x', …)` achatado no
+ *  nome que ele transporta: é ISSO que o par espelho-vs-original precisa ter
+ *  idêntico — mesma pergunta, mesma ordem, thread diferente. */
+function operationSequence(body, names) {
+  const alternatives = names.join('|')
+  const pattern = new RegExp(`gitOff\\('(${alternatives})'|(?<![\\w'])(${alternatives})\\(`, 'gu')
+  return [...body.matchAll(pattern)].map((match) => match[1] ?? match[2])
+}
+
+test('R18: os espelhos do FECHO fazem o MESMO que os originais do BOOT, na mesma ordem', () => {
+  const clearOps = ['ensureSynkoraGitExcludes', 'unlinkSync', 'missionIntegrationIntentPath']
+  assert.deepEqual(
+    operationSequence(engineBody('clearMissionIntegrationIntentOffThread'), clearOps),
+    operationSequence(engineBody('clearMissionIntegrationIntent'), clearOps),
+    'o espelho do marcador precisa fazer as MESMAS ações, na MESMA ordem que o original do boot'
+  )
+  const cleanupOps = ['ensureSynkoraGitExcludes', 'cleanupMissionFilesAfterExcludes']
+  assert.deepEqual(
+    operationSequence(engineBody('cleanupMissionFilesOffThread'), cleanupOps),
+    operationSequence(engineBody('cleanupMissionFiles'), cleanupOps),
+    'o espelho da limpeza precisa perguntar o MESMO, na MESMA ordem que o original do boot'
+  )
+  // E o corpo de ARQUIVOS é função COMPARTILHADA: o que some da missão tem um
+  // dono da verdade só, senão os dois lados divergem no primeiro conserto.
+  assert.match(engineBody('cleanupMissionFilesAfterExcludes'), /unlinkSync\(/u)
+  for (const name of ['cleanupMissionFiles', 'cleanupMissionFilesOffThread']) {
+    assert.doesNotMatch(
+      engineBody(name),
+      /readdirSync\(/u,
+      `${name} duplicou o corpo de arquivos em vez de compartilhá-lo`
+    )
+  }
+})
+
+const indexSource = readFileSync(
+  new URL('../src/main/index.ts', import.meta.url),
+  'utf8'
+).replace(/\r\n/gu, '\n')
+
+test('R18: o isolamento da versão tem UM dono da verdade — predicado e probe da mesma pureza', () => {
+  // Os dois pontos ASSÍNCRONOS do motor perguntam pelo probe…
+  for (const name of ['resolveMissionIntegrationTarget', 'completeMissionMergeInner']) {
+    const body = engineBody(name)
+    assert.doesNotMatch(
+      body,
+      directCall('versionIsolationIsValid'),
+      `${name} ainda chama o predicado SÍNCRONO — são ~5 spawns de git no main thread`
+    )
+    assert.match(body, /await versionIsolationProbe\(/u, name)
+  }
+  // …e o PREDICADO fica onde o narrowing é necessário (caminho síncrono e boot).
+  assert.match(engineBody('ensureMissionWorktree'), directCall('versionIsolationIsValid'))
+  assert.match(engineBody('recoverMissionIntegrationIntents'), directCall('versionIsolationIsValid'))
+
+  // No index: a metade PURA é UMA função, e os dois lados nascem dela.
+  const probe = bodyOf(indexSource, 'versionIsolationProbe')
+  assert.match(probe, /versionIsolationIsNarrow\(version\)/u, 'o probe deriva a pureza, não a copia')
+  assert.match(probe, /gitOff\('isExpectedVersionWorktree'/u, 'o git do probe tem de viajar')
+  assert.doesNotMatch(probe, directCall('isExpectedVersionWorktree'))
+  const predicate = bodyOf(indexSource, 'versionIsolationIsValid')
+  assert.match(predicate, /versionIsolationIsNarrow\(version\)/u, 'o predicado deriva a MESMA pureza')
+  assert.match(
+    indexSource,
+    /version is Version & \{ branch: string; worktree: string \}/u,
+    'o narrowing dos chamadores síncronos (ipc/backlog) não pode sumir'
+  )
+  // E o probe entra nos extras do motor, ao lado do predicado.
+  const wiring = indexSource.slice(indexSource.indexOf('createMissionEngine(ctx, {'))
+  assert.match(
+    wiring.slice(0, 400),
+    /versionIsolationProbe/u,
+    'o motor só enxerga o probe se ele for fiado nos extras'
+  )
+})
+
+test('R18: o FECHO do merge (limpeza + marcador) também roda no gitWorker', async (t) => {
+  const harness = mergeHarness(t)
+  const outcome = await harness.engine.runMissionIntegration(harness.projectId, harness.missionId)
+  assert.match(outcome, /INTEGRADA/u, outcome)
+
+  // Depois do merge real vem o fecho: limpeza dos arquivos operacionais da
+  // missão e remoção do marcador de integração. Os dois perguntam
+  // `ensureSynkoraGitExcludes` (2 spawns cada) — e era isso, colado no main,
+  // que sobrava do caminho da integração depois da R17.
+  const closing = gitOffCalls.slice(gitOffCalls.indexOf('mergeTaskWorktree') + 1)
+  assert.deepEqual(
+    closing,
+    ['ensureSynkoraGitExcludes', 'ensureSynkoraGitExcludes'],
+    `o fecho ainda tem git no main thread: ${gitOffCalls.join(' → ')}`
+  )
+  // E o fecho FEZ o que promete: o marcador não sobrevive à integração.
+  assert.equal(
+    existsSync(join(harness.projectPath, '.synkora', 'integrations', `${harness.missionId}.intent`)),
+    false,
+    'o marcador de integração tem de sumir no fecho'
+  )
 })

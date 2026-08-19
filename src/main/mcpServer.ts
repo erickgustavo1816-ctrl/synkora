@@ -110,8 +110,9 @@ export interface McpApi {
   // O ⇪ do dono deixou de drenar e passou a ESTIMULAR: a fila virou coordenação
   // e o executor é o agente. Estes dois métodos são cascas finas sobre o
   // missionEngine — nenhuma decisão de integração mora aqui.
-  /** Fotografia da fila do PROJETO pelos olhos desta missão + a receita. */
-  integrationStatus?: (id: PaneIdentity) => string
+  /** Fotografia da fila do PROJETO pelos olhos desta missão + a receita.
+   *  R18.1: Promise porque o git dela viaja pelo gitWorker (o texto é o mesmo). */
+  integrationStatus?: (id: PaneIdentity) => Promise<string>
   /** Executa a integração DESTA missão (só com ticket do dono, só na cabeça). */
   integrationRun?: (id: PaneIdentity) => Promise<string>
 
@@ -690,9 +691,9 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
           description:
             'A FOTOGRAFIA da fila de integração deste universo pelos olhos DESTA missão: sua posição, o estado do seu ticket, o lacre da entrega, quem está na sua frente, a branch de destino e a RECEITA do próximo passo. Barata de chamar — use sempre que não tiver certeza do que fazer. Quem cria o ticket é o ⇪ do DONO, nunca você: sem ticket, esta ferramenta diz exatamente isso.'
         },
-        () =>
+        async () =>
           api.integrationStatus
-            ? text(api.integrationStatus(identity))
+            ? text(await api.integrationStatus(identity))
             : text(INTEGRATION_ENGINE_OFF)
       )
 

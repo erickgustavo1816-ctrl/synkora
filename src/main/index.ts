@@ -2724,16 +2724,41 @@ app.whenReady().then(async () => {
     })
   }
 
+  /**
+   * A metade PURA do isolamento (registro completo + exclusivo), sem nenhum
+   * git. Ela existe para o predicado síncrono e o probe assíncrono da R18.3
+   * nascerem do MESMO lugar — narrowing copiado à mão viraria uma segunda
+   * verdade sobre a identidade da versão, e divergiria no primeiro conserto.
+   */
+  function versionIsolationIsNarrow(
+    version: Version
+  ): version is Version & { branch: string; worktree: string } {
+    return Boolean(version.branch && version.worktree && versionIsolationIsUnique(version))
+  }
+
   function versionIsolationIsValid(
     projectPath: string,
     version: Version
   ): version is Version & { branch: string; worktree: string } {
-    return Boolean(
-      version.branch &&
-        version.worktree &&
-        versionIsolationIsUnique(version) &&
-        isExpectedVersionWorktree(projectPath, version.worktree, version.branch)
+    return (
+      versionIsolationIsNarrow(version) &&
+      isExpectedVersionWorktree(projectPath, version.worktree, version.branch)
     )
+  }
+
+  /**
+   * R18.3 — o MESMO isolamento para quem já está em caminho assíncrono: a
+   * metade pura acima e, no lugar exato onde o predicado spawnava git, um
+   * `gitOff`. TRANSPORTE, NÃO LÓGICA: mesma ordem (pureza primeiro, git
+   * depois, curto-circuito idêntico) e mesma resposta.
+   *
+   * O predicado FICA para os chamadores síncronos legítimos (ipc/backlog, o
+   * `ensureMissionWorktree` completo e a reconciliação de BOOT): type predicate
+   * não sobrevive a `async`, e ninguém pode perder o narrowing por causa disto.
+   */
+  async function versionIsolationProbe(projectPath: string, version: Version): Promise<boolean> {
+    if (!versionIsolationIsNarrow(version)) return false
+    return gitOff('isExpectedVersionWorktree', projectPath, version.worktree, version.branch)
   }
 
 
@@ -3367,6 +3392,7 @@ app.whenReady().then(async () => {
   const missionEngine = createMissionEngine(ctx, {
     orchKey,
     versionIsolationIsValid,
+    versionIsolationProbe,
     emitBacklogChanged,
     sweepProjectFiles,
     closeTestServersUnder,
@@ -3621,7 +3647,9 @@ app.whenReady().then(async () => {
     // R9 — O AGENTE É O INTEGRADOR. Cascas FINAS: a identidade do pane (que o
     // bearer autenticou) diz o universo e a missão, e o motor faz o resto. A
     // missão vem do TOKEN, nunca de um argumento — um chat não integra outro.
-    integrationStatus: (id) =>
+    // R18.1: a casca aguarda — o motor mandou os ~7 gits desta fotografia para
+    // o gitWorker e o handler MCP da tool sempre foi assíncrono.
+    integrationStatus: async (id) =>
       id.missionId
         ? missionEngine.missionIntegrationStatus(id.projectId, id.missionId)
         : 'esta conversa não está ligada a uma missão — não há fila de integração a consultar.',

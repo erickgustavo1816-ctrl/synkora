@@ -18,6 +18,11 @@
  *   F6 saíram na limpa — se alguma voltar, ela AGUARDA o retorno.
  *   pendingIntegrationApproval: ausência NUNCA é consentimento — só actor
  *   'user' enfileira (F6.9).
+ * - missionIntegrationStatus devolve `Promise<string>` desde a R18 (2026-08-19)
+ *   pelo MESMO motivo: a tool `integration_status` é barata de chamar e o
+ *   agente a chama o tempo todo, mas os ~7 spawns dela travavam o main a cada
+ *   consulta. O TEXTO (linhas, ordem, receita) não mudou uma vírgula; o
+ *   chamador (`mcpApi.integrationStatus`, cujo handler MCP já era async) AGUARDA.
  * - completeMissionMerge é wrapper fino da Fase 0
  *   (mainStalls.wrap('completeMissionMerge', …)) — manter par wrapper→Inner
  *   e o rótulo idêntico, senão o ranking de stall perde a série.
@@ -95,6 +100,19 @@ export interface MissionEngineExtras {
     projectPath: string,
     version: Version
   ): version is Version & { branch: string; worktree: string }
+  /**
+   * ESPELHO ASSÍNCRONO do predicado acima (R18.3, 2026-08-19) — MESMA pergunta,
+   * dentro do gitWorker. Os dois nascem da MESMA metade pura no index
+   * (`versionIsolationIsNarrow`): não existe segunda verdade escrita à mão.
+   *
+   * O predicado (`version is …`) FICA porque type predicate não sobrevive a
+   * `async` e os chamadores síncronos legítimos (ipc/backlog, o
+   * `ensureMissionWorktree` completo, a reconciliação de BOOT) dependem do
+   * narrowing dele. Quem já está em caminho assíncrono usa ESTE e não perde
+   * nada: nos dois usos do motor o `branch`/`worktree` estreitado não era
+   * consumido depois da checagem.
+   */
+  versionIsolationProbe(projectPath: string, version: Version): Promise<boolean>
   /** Domínio backlog. */
   emitBacklogChanged(projectId: string): void
   /** Vassoura genérica do .synkora. */
@@ -136,6 +154,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   const {
     orchKey,
     versionIsolationIsValid,
+    versionIsolationProbe,
     emitBacklogChanged,
     sweepProjectFiles,
     closeTestServersUnder,
@@ -210,9 +229,9 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
    * isExpectedWorktree), e no caminho do ⇪ isso era main thread PARADO.
    *
    * O espelho síncrono FICA porque quem o chama são costuras síncronas fora
-   * desta fronteira (`proveMissionWorkspace` do ipc/missions, o
-   * `missionIntegrationStatus` do MCP e a reconciliação de BOOT — boot não é
-   * clique). Quem está num caminho async usa ESTE.
+   * desta fronteira (`proveMissionWorkspace` do ipc/missions) e a reconciliação
+   * de BOOT — boot não é clique. Quem está num caminho async usa ESTE (o
+   * `missionIntegrationStatus` do MCP entrou nessa lista na R18.1).
    */
   function missionWorkspacePathOffThread(
     projectPath: string,
@@ -555,6 +574,11 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // Missão de PLANEJAMENTO sai daqui sem branch por desenho (a cerca mora no
     // próprio ensureMissionWorktree) — nada a isolar quando o entregável é
     // plano/ na raiz.
+    // R18: o twin assíncrono foi TENTADO aqui e REVERTIDO no review — missão
+    // recém-nascida nunca casa o atalho do estado saudável (não tem branch),
+    // então o caminho síncrono completo rodava inteiro do mesmo jeito e o
+    // clique só ganhava ~0,2-0,4s de parede em idas ao worker sem tirar nada
+    // do main. Medição no relatório r18-agent-report.md (nota honesta nº 2).
     ensureMissionWorktree(mission.id)
     const fresh = missions.get(mission.id) ?? mission
     const naturezaNota =
@@ -676,14 +700,11 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   // Missão integrada: os arquivos operacionais dela (transcripts das tarefas,
   // runs/verdicts, PLAN) morrem na hora — o gate acabou de validar o trabalho;
   // a história consolidada vive no CONTEXT.md e nas entregas da versão.
-  function cleanupMissionFiles(projectId: string, missionId: string): void {
-    const project = projects.get(projectId)
-    if (!project) return
-    try {
-      ensureSynkoraGitExcludes(project.path)
-    } catch {
-      return
-    }
+
+  /** O QUE some, sem nenhum git: um dono só da verdade para os dois caminhos
+   *  (o fecho do merge e a reconciliação de BOOT). Quem decide o excludes é o
+   *  chamador, no thread dele. */
+  function cleanupMissionFilesAfterExcludes(projectPath: string, missionId: string): void {
     const short = missionId.slice(0, 8)
     const zap = (full: string): void => {
       try {
@@ -692,7 +713,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         // best-effort
       }
     }
-    const runsDir = join(project.path, '.synkora', 'runs')
+    const runsDir = join(projectPath, '.synkora', 'runs')
     try {
       for (const ent of readdirSync(runsDir)) {
         if (ent.startsWith(`mission-${short}`)) zap(join(runsDir, ent))
@@ -700,7 +721,42 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     } catch {
       // sem runs
     }
-    zap(join(project.path, '.synkora', 'missions', `${short}.PLAN.md`))
+    zap(join(projectPath, '.synkora', 'missions', `${short}.PLAN.md`))
+  }
+
+  function cleanupMissionFiles(projectId: string, missionId: string): void {
+    const project = projects.get(projectId)
+    if (!project) return
+    try {
+      ensureSynkoraGitExcludes(project.path)
+    } catch {
+      return
+    }
+    cleanupMissionFilesAfterExcludes(project.path, missionId)
+  }
+
+  /**
+   * ESPELHO ASSÍNCRONO de `cleanupMissionFiles` (R18.2, 2026-08-19) — o par é
+   * declarado: MESMA pergunta ao git (`ensureSynkoraGitExcludes`), MESMA recusa
+   * silenciosa (excludes que lança = não mexe em arquivo nenhum) e o MESMO
+   * corpo de arquivos, que é função compartilhada acima — nunca uma cópia.
+   *
+   * O espelho síncrono FICA porque quem o chama é a reconciliação de BOOT
+   * (`recoverMissionIntegrationIntents`), síncrona por desenho: boot não é
+   * clique. Quem está no FECHO do merge (async) usa ESTE.
+   */
+  async function cleanupMissionFilesOffThread(
+    projectId: string,
+    missionId: string
+  ): Promise<void> {
+    const project = projects.get(projectId)
+    if (!project) return
+    try {
+      await gitOff('ensureSynkoraGitExcludes', project.path)
+    } catch {
+      return
+    }
+    cleanupMissionFilesAfterExcludes(project.path, missionId)
   }
 
   const integrationDrainTimers = new Map<string, NodeJS.Timeout>()
@@ -721,9 +777,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
    * os chamadores já eram assíncronos (start/run/drain), então nenhuma costura
    * síncrona precisou ser aberta para isso.
    *
-   * RESÍDUO CONHECIDO: `versionIsolationIsValid` continua SÍNCRONO (~5 spawns)
-   * — ele é um type predicate (`version is …`) e mora no index como extra, e
-   * predicado não sobrevive a `async`. Fica para a rodada dele.
+   * R18.3 fechou o resíduo que a R17 deixou nomeado aqui: o isolamento da
+   * versão (~5 spawns, o caso comum desta função) deixou de ser perguntado pelo
+   * type predicate síncrono e passou a viajar pelo `versionIsolationProbe` —
+   * mesma pergunta, mesmo lugar, dentro do gitWorker.
    */
   async function resolveMissionIntegrationTarget(
     project: { id: string; path: string },
@@ -782,9 +839,12 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       })
       dir = versionWt.dir
       branch = versionWt.branch
-    } else if (!versionIsolationIsValid(project.path, version)) {
+    } else if (!(await versionIsolationProbe(project.path, version))) {
       // A integração só usa a branch de versão criada na abertura da missão;
       // reconstruir um destino aqui poderia esconder histórico perdido.
+      // R18.3: MESMA pergunta, agora no gitWorker. O narrowing do predicado não
+      // fazia falta aqui — `dir`/`branch` já foram lidos acima e a conferência
+      // logo abaixo (`!dir || !branch || …`) é quem os prova.
       return undefined
     }
     if (
@@ -1232,8 +1292,18 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
    * missão: posição, estado, lacre, quem está na frente, o destino e a RECEITA
    * do próximo passo. Sem ticket, ela diz a verdade que protege a porteira: só
    * o ⇪ do dono cria um.
+   *
+   * R18.1 (2026-08-19): ASSÍNCRONA. A persona do release manda ler esta tool
+   * ANTES de agir, então ela é a consulta mais frequente do agente — e cada
+   * consulta eram ~7 spawns de git SÍNCRONOS colados (a mesma rajada leve que
+   * a R17 tirou do ⇪). TRANSPORTE, NÃO LÓGICA: as MESMAS quatro leituras, na
+   * MESMA ordem (workspace → head da origem → árvore limpa → head do destino),
+   * agora no gitWorker; nenhuma linha do texto de saída mudou.
    */
-  function missionIntegrationStatus(projectId: string, missionId: string): string {
+  async function missionIntegrationStatus(
+    projectId: string,
+    missionId: string
+  ): Promise<string> {
     const mission = missions.get(missionId)
     const project = projects.get(projectId)
     if (!mission || !project || mission.projectId !== projectId)
@@ -1252,11 +1322,11 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         'Se a entrega está pronta, DIGA isso a ele aqui no chat e espere: ausência de resposta nunca é consentimento.'
       ].join('\n')
     }
-    const missionSource = missionWorkspacePath(project.path, mission)
-    const sourceHead = missionSource ? gitHead(missionSource) : undefined
-    const clean = missionSource ? isWorktreeClean(missionSource) : undefined
+    const missionSource = await missionWorkspacePathOffThread(project.path, mission)
+    const sourceHead = missionSource ? await gitOff('gitHead', missionSource) : undefined
+    const clean = missionSource ? await gitOff('isWorktreeClean', missionSource) : undefined
     const sealMoved = Boolean(ticket.sourceHead && sourceHead && sourceHead !== ticket.sourceHead)
-    const targetHead = ticket.targetDir ? gitHead(ticket.targetDir) : undefined
+    const targetHead = ticket.targetDir ? await gitOff('gitHead', ticket.targetDir) : undefined
     const ahead = missionsAheadOf(ticket)
     const lines = [
       header,
@@ -1928,6 +1998,29 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     }
   }
 
+  /**
+   * ESPELHO ASSÍNCRONO de `clearMissionIntegrationIntent` (R18.2, 2026-08-19) —
+   * o par é declarado: as MESMAS duas ações, na MESMA ordem (excludes → apagar
+   * o marcador), debaixo do MESMO `try` que engole tudo (o marcador que nunca
+   * existiu não é erro). Se o excludes recusar, o unlink não acontece — igual
+   * ao original, porque os dois moram no mesmo bloco.
+   *
+   * O espelho síncrono FICA porque quem o chama é a reconciliação de BOOT
+   * (quatro chamadas em `recoverMissionIntegrationIntents`), síncrona por
+   * desenho. Quem está no FECHO do merge (async) usa ESTE.
+   */
+  async function clearMissionIntegrationIntentOffThread(
+    projectPath: string,
+    missionId: string
+  ): Promise<void> {
+    try {
+      await gitOff('ensureSynkoraGitExcludes', projectPath)
+      unlinkSync(missionIntegrationIntentPath(projectPath, missionId))
+    } catch {
+      // nunca iniciou ou já foi reconciliada
+    }
+  }
+
   // ————— R16: A ENTREGA DA MISSÃO ATRAVESSA (design de 2026-08-19) —————
   //
   // O que a missão construiu só é legível ENQUANTO branch e worktree existem —
@@ -2291,11 +2384,14 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // aqui: renomear uma versão entre as duas etapas não pode mandar o merge
     // para uma segunda branch vazia.
     const version = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
+    // R18.3: o probe entra no lugar exato do predicado, dentro do MESMO curto-
+    // circuito — ele só é perguntado quando a versão existe e é deste projeto,
+    // como sempre foi, e a identidade do id continua sendo a última conferência.
     if (
       target.kind === 'version' &&
       (!version ||
         version.projectId !== mission.projectId ||
-        !versionIsolationIsValid(project.path, version) ||
+        !(await versionIsolationProbe(project.path, version)) ||
         target.versionId !== version.id)
     )
       return {
@@ -2434,7 +2530,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       // limpeza + vassoura geral de sempre (transcripts/PLAN/helpers órfãos).
       if (reconciled.ok) {
         hub.purgeMissionEvents(projectId, missionId)
-        cleanupMissionFiles(projectId, missionId)
+        // R18.2: o FECHO também para de segurar o main — o git desta limpeza
+        // (e o do `clear` lá embaixo) viaja pelo gitWorker. O resto do fecho
+        // continua onde estava, na mesma ordem.
+        await cleanupMissionFilesOffThread(projectId, missionId)
         sweepProjectFiles(projectId)
       }
       hub.publish({
@@ -2481,13 +2580,13 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       }
       emitMissionsChanged(projectId)
       syncBoard(projectId)
-      if (reconciled.ok) clearMissionIntegrationIntent(project.path, missionId)
+      if (reconciled.ok) await clearMissionIntegrationIntentOffThread(project.path, missionId)
       return {
         state: 'completed',
         detail: `missão "${mission.title}" INTEGRADA na ${mergeTarget} (${mergeDetail})`
       }
     }
-    if (!res.committed) clearMissionIntegrationIntent(project.path, missionId)
+    if (!res.committed) await clearMissionIntegrationIntentOffThread(project.path, missionId)
     missions.update(missionId, { status: 'ativa' })
     hub.publish({
       projectId,
