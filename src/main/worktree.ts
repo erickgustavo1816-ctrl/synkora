@@ -1785,9 +1785,13 @@ export function missionMergePrecheck(
     // contrato do merge-tree: exit 1 = CONFLITO (1ª linha = OID, depois os
     // arquivos conflitados); outros códigos = sem veredito (git velho etc.)
     if (err.status === 1) {
-      const conflictFiles = (err.stdout ?? '')
-        .split('\n')
-        .slice(1)
+      // Formato do `merge-tree --write-tree` em conflito: OID, depois os
+      // ARQUIVOS até a primeira linha em branco, e daí em diante mensagens
+      // informativas ("CONFLICT (content): …"). Cortar na linha em branco é o
+      // que impede a prosa de inflar a contagem estruturada (achado R9).
+      const body = (err.stdout ?? '').split('\n').slice(1)
+      const blank = body.findIndex((line) => !line.trim())
+      const conflictFiles = (blank === -1 ? body : body.slice(0, blank))
         .map((l) => l.trim())
         .filter(Boolean)
       const files = conflictFiles.slice(0, 6).join(', ')
