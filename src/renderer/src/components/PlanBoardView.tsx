@@ -543,6 +543,13 @@ export default function PlanBoardView({
             )
             if (!result.ok) setMessage(result.error)
             onChanged()
+            // A TELA VAI ATRÁS DA MISSÃO (ordem do dono, 19/08): criar do
+            // quadro leva DIRETO ao chat recém-nascido — que abre MUDO, como
+            // sempre (o agente só fala depois da primeira mensagem dele). O
+            // Backlog e o Board já faziam isso; o quadro era o único que
+            // deixava o dono para trás.
+            setMissionTab(projectId, mission.id)
+            setUniverseTab(projectId, 'board')
           }}
         />
       )}

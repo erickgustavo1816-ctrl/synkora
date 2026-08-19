@@ -795,3 +795,13 @@ test('a tag é BOTÃO compacto (ícone + número) e o clique localiza a missão'
     'quem pediu menos movimento recebe o contorno parado, nunca o pulso'
   )
 })
+
+test('criar missão do quadro LEVA o dono ao chat — a tela vai atrás da missão', async () => {
+  // Ordem do dono (19/08): "quando eu clicar em criar missão... vai ir direto
+  // pra esse chat". O Backlog e o Board já navegavam; o quadro do plano criava
+  // e deixava o dono parado olhando a lista.
+  const board = await source('src/renderer/src/components/PlanBoardView.tsx')
+  const created = board.slice(board.indexOf('onCreated={async (mission)'))
+  assert.match(created, /setMissionTab\(projectId, mission\.id\)/u, 'sem selecionar a aba da missão')
+  assert.match(created, /setUniverseTab\(projectId, 'board'\)/u, 'sem trocar para a tela do board')
+})
