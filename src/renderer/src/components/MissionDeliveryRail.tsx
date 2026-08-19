@@ -2,6 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { missionTypeOf, type GuiItem, type Mission } from '../store'
 import { missionWorkspace, type MissionWorkspaceSummary } from '../missionWorkspace'
 import { MISSION_STATUS_LABEL as STATUS_LABEL } from '../missionPresentation'
+import {
+  agentHasTheBall,
+  agentIsResolving,
+  integrationQueueNote,
+  integrationShortLine,
+  integrationStateWord,
+  type IntegrationQueueRow
+} from '../integrationQueuePresentation'
 import MissionCommitHistory from './MissionCommitHistory'
 import GuiSubagentSidebar from './GuiSubagentSidebar'
 import GuiFileContextMenu, { useFileContextMenu } from './GuiFileContextMenu'
@@ -94,6 +102,7 @@ export default function MissionDeliveryRail({
   mission,
   versionLabel,
   queueLabel,
+  queueRows = [],
   guiAvailable,
   reviewReady,
   shellAvailable,
@@ -113,6 +122,10 @@ export default function MissionDeliveryRail({
   mission: Mission
   versionLabel?: string
   queueLabel?: string
+  /** A ORDEM REAL da fila de integração do projeto, já resolvida pelo Board
+   *  (rodada 9). É ela que ocupou o lugar do véu "essa missão tá sendo
+   *  integrada": o dono lê quem está na frente sem nada travar a tela. */
+  queueRows?: readonly IntegrationQueueRow[]
   /** ponte do chat viva? sem ela o toque do 🧐 revisar não sai daqui */
   guiAvailable: boolean
   /** a conversa do AGENTE está aberta e pronta para receber mensagem? o 🧐
@@ -558,19 +571,59 @@ export default function MissionDeliveryRail({
           data-tip={integration.lastError ?? queueLabel}
           onClick={onIntegrate}
         >
+          {/* Cabeça da fila NÃO diz mais "⇪ fila #1" (rodada 9): ali a bola já
+              é do AGENTE — ou ele está subindo a branch, ou resolvendo o
+              conflito —, e o dono acompanha isso no fio, não numa janela. */}
           {integration.state === 'blocked'
             ? integration.owner === 'orchestrator'
               ? '⚠ reparo pendente'
               : '⚠ decisão pendente'
             : integration.state === 'sync_required'
               ? '↻ retomar fila'
-              : `⇪ fila #${integration.position}`}
+              : agentHasTheBall(integration)
+                ? integrationStateWord(integration)
+                : `⇪ ${integrationShortLine(integration)}`}
         </button>
       )}
       {/* Nota de fila/conflito logo abaixo do ⇪ — é ali que a pergunta nasce. */}
       {!planning && queueLabel && <span className="dr-queue">{queueLabel}</span>}
       {!planning && integration?.lastError && (
         <span className="dr-conflict">⚠ {integration.lastError}</span>
+      )}
+
+      {/* A FILA DA <versão> — a ORDEM REAL (rodada 9, 2026-08-19).
+          O véu que travava o board no "integrando" morreu; quem conta o que
+          está acontecendo é esta lista, e o TRABALHO em si aparece no fio da
+          conversa do agente. Cada linha diz a posição, de quem é e em que pé
+          está — cabeça de fila com erro se lê como o AGENTE resolvendo, nunca
+          como um "integrando" congelado. Nenhuma animação nova: o único
+          movimento é o `tb-status-pulse` que o app já usa para "trabalhando". */}
+      {!planning && queueRows.length > 0 && (
+        <div className="dr-queue-list">
+          <span className="dr-queue-head">fila da {versionLabel ?? 'versão'}</span>
+          {queueRows.map((row) => {
+            const stuck = row.ticket.state === 'blocked'
+            const working = !stuck && (row.ticket.state === 'merging' || agentHasTheBall(row.ticket))
+            const alarmed = stuck || agentIsResolving(row.ticket)
+            return (
+              <span
+                key={row.missionId}
+                className={`dr-queue-row${row.mine ? ' mine' : ''}`}
+                data-tip={`${row.title}\n${integrationQueueNote(row.ticket)}`}
+              >
+                <i
+                  className={`dr-queue-dot${working ? ' working' : ''}${stuck ? ' stuck' : ''}`}
+                  aria-hidden="true"
+                />
+                <b className="dr-queue-pos">#{row.position}</b>
+                <span className="dr-queue-title">{row.title}</span>
+                <span className={`dr-queue-state${alarmed ? ' warn' : ''}`}>
+                  {integrationStateWord(row.ticket)}
+                </span>
+              </span>
+            )
+          })}
+        </div>
       )}
 
       {/* ARQUIVAR — a única alavanca que a missão de PLANEJAMENTO também tem

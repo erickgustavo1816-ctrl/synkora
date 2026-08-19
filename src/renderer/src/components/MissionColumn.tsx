@@ -1,5 +1,6 @@
 import { missionTypeOf, type Mission } from '../store'
 import { badgeFor, dotClass } from '../missionPresentation'
+import { integrationQueueBadge } from '../integrationQueuePresentation'
 
 // COLUNA DE MISSÕES (Synkora 2.0, onda B) — o mockup aprovado pelo dono: as
 // missões saem da fila de abas no topo e viram CARDS na coluna da ESQUERDA,
@@ -75,7 +76,11 @@ export default function MissionColumn({
           // mostrar "⎇ sem branch (repo novo)" ali seria descrever uma falta
           // que não existe. No lugar entra o ✎, que diz a natureza dela.
           const planning = missionTypeOf(mission) === 'planejamento'
-          const badge = badgeFor(entry)
+          // O SELO: a fila fala primeiro só onde ela sabe mais (rodada 9) — na
+          // CABEÇA, onde a bola é do agente e "fila #1" seria uma meia-verdade;
+          // no resto, o vocabulário de sempre. Quem espera o DONO vence os dois
+          // (o `integrationQueueBadge` devolve null e cede a vez).
+          const badge = integrationQueueBadge(entry) ?? badgeFor(entry)
           const meta = [entry.seatName, entry.model].filter(Boolean).join(' · ')
           return (
             <button

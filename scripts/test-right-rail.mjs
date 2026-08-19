@@ -33,6 +33,10 @@ const withoutComments = (src) =>
  *  contrato de fonte reprova por conta própria. */
 const reviewNudge = () => import('../src/renderer/src/missionReviewNudge.ts')
 
+/** Vocabulário da fila de integração (rodada 9) pela MESMA porta dinâmica: o
+ *  arquivo inteiro continua rodando quando só este módulo falta. */
+const queueVocabulary = () => import('../src/renderer/src/integrationQueuePresentation.ts')
+
 /** O bloco JSX de UM botão, achado pelo handler que ele chama. Recortar pelo
  *  handler — e não por uma regex frouxa sobre o arquivo — mantém o teste preso
  *  ao botão certo mesmo quando o trilho ganha vizinhos. */
@@ -814,4 +818,124 @@ test('re-medir não PISCA: o número fica na tela e o histórico só re-lê quan
   assert.match(railCode, /function workspaceFingerprint\(/u)
   assert.match(railCode, /setHistoryBump\(\(n\) => n \+ 1\)/u)
   assert.match(railCode, /reloadToken=\{\(reloadToken \?\? 0\) \+ historyBump\}/u)
+})
+
+// ————————————————————————————————————————————————————————————————————————
+// RODADA 9 (2026-08-19) — O AGENTE É O INTEGRADOR, e o dono VÊ.
+//
+// Ordem do dono, verbatim: "NÃO pode aparecer modal 'essa missão tá sendo
+// integrada': eu preciso VER o que ele tá fazendo no chat." O ⇪ deixou de ser
+// um comando executado atrás de um véu — ele AVISA o agente. O que a tela deve,
+// então, é ESTADO: onde a missão está na fila e o que está acontecendo com ela
+// agora. E cabeça de fila com erro é o AGENTE resolvendo, nunca um "integrando"
+// congelado.
+// ————————————————————————————————————————————————————————————————————————
+
+test('a fila fala do AGENTE: cabeça com erro é conflito em resolução, nunca "integrando"', async () => {
+  const {
+    agentHasTheBall,
+    agentIsResolving,
+    integrationQueueBadge,
+    integrationQueueNote,
+    integrationShortLine,
+    integrationStateWord
+  } = await queueVocabulary()
+
+  const head = { state: 'queued', position: 1, total: 3 }
+  const conflict = { state: 'queued', position: 1, total: 3, lastError: 'CONFLITO em src/a.ts' }
+  const waiting = { state: 'queued', position: 2, total: 3 }
+  const merging = { state: 'merging', position: 1, total: 3 }
+  const repair = { state: 'blocked', position: 1, total: 2, owner: 'orchestrator' }
+
+  assert.equal(agentHasTheBall(head), true)
+  assert.equal(agentHasTheBall(waiting), false)
+  assert.equal(agentHasTheBall(merging), false, 'merging é a máquina, não a vez do agente')
+  assert.equal(agentIsResolving(conflict), true)
+  assert.equal(agentIsResolving(head), false)
+
+  // A cabeça com erro NUNCA se lê como máquina trabalhando: o dono precisa
+  // saber que quem está com a mão nela é o AGENTE.
+  assert.match(integrationStateWord(conflict), /conflito/u)
+  assert.doesNotMatch(integrationStateWord(conflict), /integrando/u)
+  assert.match(integrationQueueNote(conflict), /agente/u)
+  assert.match(integrationStateWord(head), /agente/u)
+  assert.equal(integrationStateWord(merging), 'integrando')
+  assert.match(integrationStateWord(waiting), /fila/u)
+  assert.match(integrationStateWord(repair), /reparo/u)
+
+  // A linha curta do mapa carrega a ordem quando ela é a notícia.
+  assert.equal(integrationShortLine(waiting), 'fila #2/3')
+  assert.equal(integrationShortLine(conflict), integrationStateWord(conflict))
+
+  // O selo da coluna só existe onde o vocabulário de sempre não alcança...
+  assert.equal(integrationQueueBadge({ mission: { integration: waiting } }), null)
+  assert.equal(integrationQueueBadge({ mission: {} }), null)
+  assert.equal(integrationQueueBadge({ mission: { integration: conflict } }).kind, 'err')
+  assert.match(integrationQueueBadge({ mission: { integration: head } }).glyph, /agente/u)
+  // ...e quem espera o DONO vence a fila (esse sinal não é dela).
+  assert.equal(
+    integrationQueueBadge({ mission: { integration: conflict }, pulse: 'o agente perguntou' }),
+    null
+  )
+  assert.equal(
+    integrationQueueBadge({ mission: { integration: head, pendingIntegrationApproval: true } }),
+    null
+  )
+})
+
+test('a FILA DA versão é a ORDEM REAL, com a missão do dono marcada', async () => {
+  const { integrationQueueRows } = await queueVocabulary()
+
+  const rows = integrationQueueRows(
+    [
+      { id: 'm3', title: 'terceira', integration: { state: 'queued', position: 3, total: 3 } },
+      { id: 'm1', title: 'primeira', integration: { state: 'merging', position: 1, total: 3 } },
+      { id: 'fora', title: 'sem ticket' },
+      { id: 'm2', title: 'segunda', integration: { state: 'queued', position: 2, total: 3 } }
+    ],
+    'm2'
+  )
+
+  assert.deepEqual(
+    rows.map((row) => row.missionId),
+    ['m1', 'm2', 'm3'],
+    'a lista tem de sair na ordem REAL da fila, não na ordem do store'
+  )
+  assert.deepEqual(rows.map((row) => row.mine), [false, true, false])
+  assert.deepEqual(rows.map((row) => row.title), ['primeira', 'segunda', 'terceira'])
+  assert.equal(rows.length, 3, 'missão sem ticket não entra na fila')
+  assert.equal(integrationQueueRows([]).length, 0)
+})
+
+test('o ⇪ do trilho vira ESTADO: a fila é desenhada e nenhuma janela interrompe', async () => {
+  const [rail, css, mapa] = await Promise.all([
+    source('src/renderer/src/components/MissionDeliveryRail.tsx'),
+    source('src/renderer/src/global.css'),
+    source('src/renderer/src/components/MissionRouteBoard.tsx')
+  ])
+  const railCode = withoutComments(rail)
+
+  // A ORDEM REAL mora no trilho, debaixo do ⇪ que a produziu.
+  assert.match(railCode, /queueRows/u, 'o trilho não recebe a ordem da fila')
+  assert.match(railCode, /className="dr-queue-list"/u, 'a FILA DA versão não é desenhada')
+  assert.match(railCode, /dr-queue-pos/u, 'a posição de cada missão sumiu da lista')
+  assert.match(railCode, /dr-queue-state/u, 'a lista não diz o estado de cada uma')
+  assert.match(railCode, /integrationStateWord\(/u)
+  assert.match(railCode, /integrationQueueNote\(/u)
+  assert.match(railCode, /row\.mine/u, 'a missão do dono precisa se achar na fila')
+
+  // Nenhum gesto do trilho abre diálogo/overlay — o ⇪ é o mais tentado deles.
+  assert.doesNotMatch(railCode, /window\.(confirm|alert)\(/u)
+  assert.doesNotMatch(railCode, /integrating-overlay|integrating-card/u)
+
+  // O MOVIMENTO é o que o app JÁ tem: a fila não inventa animação nova.
+  assert.match(
+    css,
+    /\.dr-queue-dot\.working\s*\{[^}]*animation: tb-status-pulse/su,
+    'o pulso de "trabalhando" tem de reusar o keyframe da casa'
+  )
+  assert.match(css, /\.dr-queue-list\s*\{/u, 'a fila do trilho não tem roupa')
+
+  // O mapa lê o MESMO vocabulário — a mesma missão não pode ter duas verdades.
+  assert.match(mapa, /integrationShortLine/u, 'o quadro de rotas ficou com dialeto próprio')
 })

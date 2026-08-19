@@ -1337,21 +1337,9 @@ select {
   cursor: default;
 }
 
-.spinner {
-  display: inline-block;
-  box-sizing: border-box;
-  /* flex none + aspect-ratio: sem isso o flex do titlebar esticava/encolhia o
-     anel e ele virava uma elipse */
-  flex: none;
-  width: 11px;
-  height: 11px;
-  aspect-ratio: 1;
-  border: 2px solid rgba(239, 232, 214, 0.25);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 700ms linear infinite;
-  margin-left: 8px;
-}
+/* `.spinner` saiu na rodada 9 (2026-08-19) junto com o único consumidor que
+   lhe restava — o cartão do véu "integrando". O `@keyframes spin` FICA: outras
+   superfícies ainda giram por ele. */
 
 .ctx-meter.ok b {
   color: var(--ok);
@@ -2602,7 +2590,7 @@ select {
    total. row-reverse: o maestro é o 1º filho no DOM (panes nunca desmontam)
    mas renderiza na direita. */
 .board-main {
-  position: relative; /* âncora do overlay de integração */
+  position: relative;
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -2612,39 +2600,11 @@ select {
   gap: 12px;
 }
 
-/* Missão na operação atômica de merge (cabeça da fila): aba congelada para não
-   mudar o board nem enviar comandos ao orquestrador enquanto o Git trabalha. */
-.integrating-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 40;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(239, 233, 220, 0.72);
-  backdrop-filter: blur(2px);
-}
-
-.integrating-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  max-width: 420px;
-  text-align: center;
-  border: 1.5px solid var(--ink);
-  border-radius: 10px;
-  background: var(--paper);
-  padding: 22px 26px;
-  font-size: 12px;
-  color: var(--ink-2);
-  box-shadow: 0 12px 40px rgba(30, 26, 18, 0.18);
-}
-
-.integrating-card b {
-  color: var(--ink);
-  font-size: 13px;
-}
+/* O VÉU DO "INTEGRANDO" (`.integrating-overlay`/`.integrating-card`) MORREU na
+   rodada 9 (2026-08-19): ele congelava o board inteiro enquanto o Git
+   trabalhava, e na era em que o AGENTE é o integrador o dono precisa é VER a
+   subida acontecendo no fio da conversa. O estado foi para onde pertence — o
+   selo do card na coluna e a FILA DA <versão> no trilho (`.dr-queue-list`). */
 
 .board-content {
   flex: 1;
@@ -6488,6 +6448,101 @@ body.pane-docking .pane-bar.draggable {
   font-size: 10px;
   line-height: 1.4;
   color: var(--accent-deep);
+}
+
+/* A FILA DA <versão> no trilho (rodada 9, 2026-08-19): a ORDEM REAL no lugar
+   do véu que travava o board. Papel e painel — quadro claro sobre o papel,
+   linhas curtas, e o ÚNICO movimento é o `tb-status-pulse` que o app já usa
+   para dizer "trabalhando" (nenhuma animação nova entra por aqui). */
+.dr-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.dr-queue-head {
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.dr-queue-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+/* a missão que o dono está olhando se acha na fila sem precisar procurar */
+.dr-queue-row.mine {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.dr-queue-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+.dr-queue-dot.working {
+  background: var(--accent);
+  animation: tb-status-pulse 1.1s ease-in-out infinite;
+}
+
+.dr-queue-dot.stuck {
+  background: var(--err);
+}
+
+.dr-queue-pos {
+  flex: none;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+}
+
+.dr-queue-row.mine .dr-queue-pos {
+  color: var(--accent-deep);
+}
+
+.dr-queue-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dr-queue-state {
+  flex: none;
+  font-size: 9px;
+  font-style: italic;
+  color: var(--ink-3);
+}
+
+/* conflito/bloqueio não sussurra: é o que o dono precisa enxergar de longe */
+.dr-queue-state.warn {
+  font-style: normal;
+  font-weight: 700;
+  color: var(--err);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dr-queue-dot.working {
+    animation-duration: 1.8s;
+  }
 }
 
 .dr-btn {

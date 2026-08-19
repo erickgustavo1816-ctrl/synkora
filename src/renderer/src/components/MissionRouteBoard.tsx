@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useStore, type Mission, type Version } from '../store'
 import { missionChatSummary, missionChatLabel, type MissionChatSummary } from '../guiMissionPanes'
+import { integrationShortLine } from '../integrationQueuePresentation'
 
 // ————————————————————————————————————————————————————————————————————————
 // QUADRO DE ROTAS — a aba MAPA do mockup aprovado (docs/MOCKUP_WORKSPACE.md).
@@ -57,13 +58,10 @@ function noteOf(mission: Mission, chat: MissionChatSummary): string {
   if (mission.pendingIntegrationApproval) return 'esperando seu ⇪'
   if (mission.status === 'concluida') return 'integrada'
   if (mission.status === 'integrando') return 'mesclando agora'
-  const q = mission.integration
-  if (q) {
-    if (q.state === 'blocked')
-      return q.owner === 'orchestrator' ? 'reparo pendente' : 'decisão pendente'
-    if (q.state === 'sync_required') return 'precisa sincronizar'
-    return `fila #${q.position}/${q.total}`
-  }
+  // O VOCABULÁRIO da fila é um só (rodada 9): a mesma missão não pode se ler
+  // "fila #1" aqui e "com o agente" no trilho. A régua nova entra de graça —
+  // cabeça com erro vira conflito EM RESOLUÇÃO, nunca uma fila parada.
+  if (mission.integration) return integrationShortLine(mission.integration)
   return missionChatLabel(chat)
 }
 

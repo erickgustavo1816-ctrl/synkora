@@ -35,6 +35,10 @@ import { guiModelLabel } from '../guiComposerPresentation'
 import { canSendGuiMessage } from '../guiTransport'
 import { guiItemId } from '../guiItemIdentity'
 import { REVIEW_NUDGE_TEXT } from '../missionReviewNudge'
+import {
+  integrationQueueNote,
+  integrationQueueRows
+} from '../integrationQueuePresentation'
 import { missionGui, type MissionGuiRole } from '../missionGui'
 import { GuiRequestEpoch, withoutMissionGuiSlots } from '../guiRequestEpoch'
 import GuiSeatPick from './GuiSeatPick'
@@ -68,16 +72,20 @@ const MISSION_GUI_ROLE_LABEL: Record<MissionGuiRole, string> = {
 // e o estado do turno é o próprio chat (cursor de streaming). Do PaneChrome
 // só sobrou `prettyModel`, que embeleza o id do modelo na linha fina.
 
+// O VOCABULÁRIO da fila mudou de casa na rodada 9 (2026-08-19): as frases
+// moram em `integrationQueuePresentation`, junto da régua nova ("cabeça com
+// erro é o AGENTE resolvendo, não fila travada"), porque o trilho, a coluna e
+// o quadro de rotas precisam das MESMAS palavras. Aqui fica só a ponte.
 function integrationQueueLabel(mission: Mission): string | undefined {
-  const integration = mission.integration
-  if (!integration) return undefined
-  if (integration.state === 'merging') return 'integrando agora'
-  if (integration.state === 'blocked')
-    return integration.owner === 'orchestrator'
-      ? 'fila pausada — reparo seguro do destino pendente'
-      : 'fila pausada — decisão pendente'
-  if (integration.state === 'sync_required') return 'sincronizando antes de integrar'
-  return `fila de integração #${integration.position} de ${integration.total}`
+  return mission.integration ? integrationQueueNote(mission.integration) : undefined
+}
+
+/** A FOTOGRAFIA da fila para esta missão — `undefined` quando ela não tem
+ *  ticket. É a régua do eco do ⇪ (ver `onIntegrate`): estado+posição são
+ *  exatamente o que a tela passa a contar sozinha depois do clique. */
+function ticketMark(mission?: Mission): string | undefined {
+  const ticket = mission?.integration
+  return ticket ? `${ticket.state}#${ticket.position}` : undefined
 }
 
 // O PIPELINE F6 morava daqui até o começo do componente: rótulos de perfil e
@@ -683,10 +691,26 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     if (m && m.status !== 'ativa' && m.status !== 'integrando') setMissionTab(projectId, null)
   }, [isActive, missionTab, missions, projectId, setMissionTab])
 
-  // avisos ficam até o usuário fechar no × (decisão do usuário)
+  // ⇪ — O CLIQUE NÃO INTERROMPE (rodada 9, ordem do dono: "NÃO pode aparecer
+  // modal 'essa missão tá sendo integrada': eu preciso VER o que ele tá fazendo
+  // no chat"). O gesto avisa o AGENTE, e o que ele produz vira ESTADO: a
+  // posição/estado no trilho e no card da coluna, e o trabalho dele no fio.
+  //
+  // A frase que o motor devolve só sobe para a faixa quando a FOTOGRAFIA da
+  // fila NÃO mudou — aí ela é uma RECUSA (planejamento, missão arquivada,
+  // árvore suja, fila pausada, sync pendente) e o dono precisa lê-la. Ticket
+  // novo ou re-armado já está escrito na tela: repetir seria eco.
+  // Avisos ficam até o usuário fechar no × (decisão do usuário).
   async function onIntegrate(): Promise<void> {
     if (!selMission) return
-    setMissionMsg(await integrateMission(selMission.id))
+    const missionId = selMission.id
+    const before = ticketMark(selMission)
+    const msg = await integrateMission(missionId)
+    // A missão FRESCA: o `integrateMission` do store recarrega a lista antes de
+    // devolver, então a fotografia de agora já está no store — a do closure é a
+    // de antes do clique, e é justamente ela que serve de comparação.
+    const after = ticketMark(useStore.getState().missions.find((m) => m.id === missionId))
+    setMissionMsg(after && after !== before ? null : msg)
     // o ⇪ mexe na branch: o diffstat do trilho re-mede sozinho (onda D)
     setRailReload((n) => n + 1)
   }
@@ -940,6 +964,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // A missão 2.0 não tem card: o board dela é a conversa no centro e o trilho
   // de entrega ao lado — quem decide se o ⇪ libera é o MissionDeliveryRail.
 
+  // A FILA DA VERSÃO como ORDEM REAL (rodada 9): quem substituiu o véu do
+  // "integrando" é esta lista no trilho. Sai das PRÓPRIAS missões — cada uma
+  // carrega o ticket dela desde o main —, então não há canal novo, leitura
+  // extra nem um segundo estado para divergir do card da coluna.
+  const integrationRows = integrationQueueRows(projectMissions, selMission?.id)
+
   // Linhas da coluna da esquerda: o Board resolve tudo (conta, modelo, versão,
   // progresso, pulso) e a coluna só desenha.
   const missionColumnEntries: MissionColumnEntry[] = liveMissions.map((m) => {
@@ -999,20 +1029,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           remontaria os TerminalPane e mataria os PTYs.
           TODOS os panes ficam montados (display:none fora da aba). */}
       <div className={`board-main${stageMode ? ' stage-mode' : ''}`}>
-      {/* Só a cabeça da fila fica bloqueada durante os poucos instantes em que
-          o Git altera a branch de destino. Não existe reviewer extra aqui. */}
-      {selMission?.status === 'integrando' && (
-        <div className="integrating-overlay">
-          <div className="integrating-card">
-            <span className="spinner" />
-            <b>⇪ integrando "{selMission.title}"…</b>
-            <span>
-              chegou a vez desta missão na fila; o Synkora está juntando a branch dela ao
-              destino. A próxima posição só começa depois que esta terminar.
-            </span>
-          </div>
-        </div>
-      )}
+      {/* O VÉU DO "INTEGRANDO" MORREU (rodada 9, 2026-08-19). Ele cobria o
+          board inteiro enquanto o Git trabalhava — e na era em que o AGENTE é
+          o integrador isso é exatamente o contrário do que o dono pediu: ele
+          precisa VER o agente subir a branch (e resolver conflito) no fio da
+          conversa. O que sobrou do estado está onde ele pertence: o selo do
+          card na coluna e a FILA DA <versão> no trilho de entrega. */}
       {/* O PALCO: em modo 2.0 a caixa é PAPEL (o chat não é terminal); em
           missão legada ela segue sendo a janela escura de sempre, porque lá
           dentro roda um TUI de verdade. Só a CLASSE muda — trocar a caixa
@@ -1268,6 +1290,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
             mission={selMission}
             versionLabel={versionName(selMission.versionId)}
             queueLabel={integrationQueueLabel(selMission)}
+            queueRows={integrationRows}
             guiAvailable={missionGui.available()}
             reviewReady={reviewReady}
             shellAvailable={missionShell.available()}
