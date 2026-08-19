@@ -42,6 +42,7 @@ import {
   type GuiHelperInterruptedInput,
   type GuiHelperWake
 } from './guiHelperCards'
+import { GuiOwnerMailbox, guiOwnerMailFlushText, guiOwnerMailbox } from './guiOwnerMail'
 import type {
   GuiHelperChange,
   GuiHelperDelegator,
@@ -1365,6 +1366,24 @@ export interface GuiSessionDeps {
    * global entre dois registros do mesmo paneId.
    */
   helperInbox?: GuiHelperInbox
+  /**
+   * O POTE DO DONO (R22) — o outro pote, com a outra carga: a fala do dono que
+   * chegou com o turno ABERTO e vai de carona no próximo resultado de tool.
+   * Ausente = o de produção (`guiOwnerMailbox`), o MESMO que as tools de
+   * delegação drenam.
+   */
+  ownerMail?: GuiOwnerMailbox
+  /**
+   * ESTE PANE DELEGA? (R22.1 — a autoridade da ROTA.)
+   *
+   * Quem sabe a resposta é o main (o registro de identidade do servidor MCP diz
+   * o papel de cada pane), nunca este módulo — ele não conhece hub, token nem
+   * electron, e é isso que mantém a suíte em node puro. AUSENTE = nenhum pane
+   * delega, e todo envio segue o caminho de sempre: é assim que as suítes rodam
+   * e é assim que o pane NÃO-delegador continua se comportando, palavra por
+   * palavra, depois desta rodada.
+   */
+  delegatorPane?(paneId: string): boolean
 }
 
 /**
@@ -1378,6 +1397,16 @@ export interface GuiSessionHelperControls {
   interruptPane(paneId: string, reason?: string): number
   /** Fotografia dos ajudantes do pane — é dela que sai a lista de parados. */
   status(paneId: string): GuiHelperSnapshot[]
+  /**
+   * O DESPERTAR POR PANE (R22.3): chegou fala do dono no pote, então as esperas
+   * de long-poll da frota deste pane resolvem AGORA — a carona sai em segundos
+   * em vez de esperar os até 240s do `helper_result`. Não muda estado nenhum.
+   *
+   * Opcional porque este registro nunca dependeu do motor para funcionar
+   * (`attachHelpers` pode nem ter acontecido): ausente = a carona ainda sai, só
+   * que no próximo resultado de tool que o agente pedir.
+   */
+  wakePane?(paneId: string): number
 }
 
 /**
@@ -1418,6 +1447,10 @@ export class GuiSessionRegistry {
    *  sintetizados. Publica SEMPRE pelo sink da sessão viva: card que nascesse
    *  por fora não entraria no replay da remontagem. */
   private readonly helperCards: GuiHelperCardCorrelator
+  /** O POTE DO DONO (R22): a fala que chegou com o turno aberto num pane
+   *  delegador espera aqui pela carona no próximo resultado de tool — e, se o
+   *  turno fechar com ele cheio, o fecho a entrega pelo caminho de sempre. */
+  private readonly ownerMail: GuiOwnerMailbox
   /** O motor dos ajudantes, amarrado depois do nascimento (ver `attachHelpers`).
    *  Ausente = registro sem frota: o ■ para só o turno. */
   private helpers?: GuiSessionHelperControls
@@ -1428,6 +1461,7 @@ export class GuiSessionRegistry {
   constructor(deps: GuiSessionDeps) {
     this.deps = deps
     this.attachmentCapabilities = deps.attachmentCapabilities ?? new GuiAttachmentCapabilityStore()
+    this.ownerMail = deps.ownerMail ?? guiOwnerMailbox
     this.helperCards = new GuiHelperCardCorrelator({
       emit: (paneId, evt) => this.panes.get(paneId)?.sink(evt),
       // SESSÃO MORTA NÃO TEM TURNO. Sem o `alive`, um processo que caiu com
@@ -1752,6 +1786,24 @@ export class GuiSessionRegistry {
           toolName: 'AskUserQuestion',
           kind: 'question'
         })
+      // O RECONCILIADOR DO FECHO (R22.4): o turno acabou com fala do dono ainda
+      // no pote (ele não chamou mais tool nenhuma) — a mensagem sai agora, pelo
+      // caminho de sempre. Em MICROTASK de propósito: o terminal deste turno
+      // atravessa o anel, o push e os alertas inteiro antes de um turno novo
+      // nascer por cima — a mesma disciplina do `flushPendingTerminal`.
+      //
+      // O ■ DO DONO cai aqui também, e de propósito: o que o pote guarda são as
+      // PALAVRAS DELE, não uma novidade do app (essa, a do despertador, o ■
+      // descarta — R6.3). Segurar a própria ordem do dono depois que a UI já a
+      // mostrou entregue seria perdê-la em silêncio; o motivo no diário
+      // distingue os dois fechos para quem for ler isto depois.
+      if (visibleEvt.type === 'result' && this.ownerMail.has(spawn.paneId)) {
+        const reason = visibleEvt.interrupted === true ? 'fecho-por-interrupcao' : 'fecho-de-turno'
+        queueMicrotask(() => {
+          if (!token.alive) return
+          this.flushOwnerMail(spawn.paneId, reason)
+        })
+      }
     }
 
     const flushPendingTerminal = (): void => {
@@ -1913,6 +1965,14 @@ export class GuiSessionRegistry {
         // Fila indisponível nunca pode impedir a conversa de abrir.
       }
     }
+    // A FALA DO DONO QUE FICOU NO POTE (R22.4, a outra metade do reconciliador).
+    // Duas travessias a trouxeram até aqui: o RESPAWN (troca de modo, `/clear`,
+    // ⚡) mata o turno sem nunca fechá-lo, e o BOOT devolve do disco o que o app
+    // não conseguiu entregar antes de morrer. Nos dois casos o processo novo
+    // nasce sem turno, então este é o primeiro instante em que a entrega cabe —
+    // e ela não é "turno nascendo aqui": é a mensagem do dono, que ele mandou,
+    // finalmente chegando.
+    this.flushOwnerMail(spawn.paneId, current ? 'respawn' : 'abertura')
     // NENHUM TURNO NASCE AQUI. O chat abre calado e espera o dono.
     return { ok: true }
   }
@@ -2046,6 +2106,25 @@ export class GuiSessionRegistry {
       this.routeSlash(entry, trimmed)
     )
       return { ok: true }
+    // A ROTA DO POTE (R22.1), com DUAS cercas — e as duas antes de o briefing
+    // ser consumido.
+    //
+    // SLASH CRU (`/compact`, `/status`, uma skill do CLI) chega aqui porque o
+    // roteador acima o deixou passar: é COMANDO, e comando tem de ser EXECUTADO
+    // pelo binário. Citá-lo dentro de um resultado de tool viraria texto SOBRE
+    // um comando, e o dono nunca veria o efeito que pediu.
+    //
+    // BRIEFING PENDENTE: o contrato da missão é PROMPT, não citação — e um
+    // despejo desse tamanho no meio do turno é caro. Turno aberto com briefing
+    // pendente é caso de canto (ele só existe antes da primeira fala do dono), e
+    // segue pelo caminho de sempre.
+    if (
+      !trimmed.startsWith('/') &&
+      !entry.pendingBriefing &&
+      this.postOwnerMail(paneId, entry, messageId, prompt)
+    ) {
+      return { ok: true }
+    }
     // AQUI, e não antes: o `/clear` e os slash roteados voltam acima sem
     // alcançar o modelo — soltar o briefing neles seria queimá-lo num comando
     // que o agente nunca vê.
@@ -2055,6 +2134,100 @@ export class GuiSessionRegistry {
     // codex faz steer) — o motor não tem fila própria.
     entry.session.send(briefing ? guiBriefedPrompt(briefing, prompt) : prompt)
     return { ok: true }
+  }
+
+  /**
+   * A ROTA (R22.1) — a fala do dono no meio do turno-fortaleza vai pro POTE.
+   *
+   * O caso do print (19/08): o delegador esperando a frota num `helper_result`,
+   * o dono manda mensagem com "enviar agora", a bolha VOCÊ aparece — e o agente
+   * não lê, porque mensagem empurrada pro stdin no meio de um turno fica na fila
+   * INTERNA do CLI até o turno fechar (pós-R19, potencialmente horas).
+   *
+   * Então, com TRÊS coisas verdadeiras ao mesmo tempo — turno ABERTO, sessão
+   * viva e pane DELEGADOR —, a entrega troca de canal: o texto entra no pote e
+   * viaja de carona no próximo resultado de tool da delegação
+   * (`guiDelegationWiring.withInbox`), que é o único caminho que alcança o modelo
+   * DENTRO do turno. A bolha no fio já saiu lá em cima, e continua saindo:
+   * apresentação não é entrega.
+   *
+   * CARONA OU STDIN, NUNCA OS DOIS: `true` aqui significa que o `send` NÃO fala
+   * com o CLI — mandar também pelo stdin faria o modelo ler a mesma ordem duas
+   * vezes (agora na carona, de novo quando o CLI liberasse a fila), que é o
+   * espelho do bug que esta rodada mata.
+   *
+   * `false` = nada mudou e o chamador segue pelo caminho de sempre: pane que não
+   * delega, turno fechado, sessão morta, mensagem grande demais para viajar num
+   * resultado de tool ou pote cheio. Nenhum desses é beco — todos caem no envio
+   * de hoje, que entrega no fecho do turno.
+   */
+  private postOwnerMail(
+    paneId: string,
+    entry: GuiPaneEntry,
+    messageId: string,
+    text: string
+  ): boolean {
+    if (!entry.session.alive || !entry.session.turnActive) return false
+    if (this.deps.delegatorPane?.(paneId) !== true) return false
+    if (!this.ownerMail.post(paneId, { messageId, text, at: Date.now() })) return false
+    this.deps.record?.(
+      'gui-owner-mail-posted',
+      { paneId, projectId: entry.spawn.projectId },
+      { messageId, chars: text.length, pending: this.ownerMail.count(paneId) }
+    )
+    // R22.3 — o long-poll da frota resolve AGORA. Sem isto a fala do dono
+    // esperaria o teto do `helper_result` (até 240s) para pegar carona.
+    try {
+      this.helpers?.wakePane?.(paneId)
+    } catch {
+      // Despertar é aceleração, nunca pré-condição: a carona sai no próximo
+      // resultado de tool de qualquer jeito.
+    }
+    return true
+  }
+
+  /**
+   * O RECONCILIADOR (R22.4) — nenhum passo depende de entrega única.
+   *
+   * A carona é a entrega rápida, mas ela só existe se o agente chamar mais
+   * alguma tool. Se o turno FECHAR com o pote cheio (ele respondeu ao dono e
+   * parou, ou o ■ derrubou o turno), o fecho entrega pelo caminho de sempre: a
+   * fala do dono vai ao CLI como a mensagem de usuário que sempre foi, sem
+   * bolha nova (a bolha saiu no envio) e sem embrulho de harness.
+   *
+   * Roda também no NASCIMENTO do pane, e é isso que fecha os dois buracos
+   * sondados: o respawn (troca de modo, `/clear`, ⚡) mata o turno sem nunca
+   * fechá-lo, e o boot devolve do disco o que o app não entregou antes de morrer.
+   *
+   * Recusa transitória NUNCA consome: o pote é devolvido inteiro, na ordem, e o
+   * próximo fecho (ou a próxima abertura) tenta de novo.
+   */
+  private flushOwnerMail(paneId: string, reason: string): void {
+    if (!this.ownerMail.has(paneId)) return
+    const entry = this.panes.get(paneId)
+    if (!entry || !entry.session.alive) return
+    // Turno ainda vivo = a carona ainda pode acontecer, e ela é melhor: chega ao
+    // modelo AGORA, sem esperar o fim.
+    if (entry.session.turnActive) return
+    // A mensagem da fila saindo e a troca de executor em voo seguram o envio
+    // pelo MESMO motivo do despertador (`paneBusyReason`).
+    if (this.paneBusyReason(paneId, entry)) return
+    const entries = this.ownerMail.drain(paneId)
+    if (entries.length === 0) return
+    const text = guiOwnerMailFlushText(entries)
+    // Pote só com brancos é impossível pela porta do `post` — e, se algum dia
+    // for, some aqui em vez de abrir um turno com nada dentro.
+    if (!text.trim()) return
+    const sent = this.deliverBackstage(paneId, text, 'mensagem do dono')
+    if (!sent.ok) {
+      this.ownerMail.restore(paneId, entries)
+      return
+    }
+    this.deps.record?.(
+      'gui-owner-mail-flushed',
+      { paneId, projectId: entry.spawn.projectId },
+      { messages: entries.length, chars: text.length, reason }
+    )
   }
 
   /**

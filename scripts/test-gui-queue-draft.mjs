@@ -507,3 +507,22 @@ test('enviar agora: o dono pula a fila e a mensagem entra no turno vivo (ordem d
   assert.match(pane, /acknowledgeGuiQueuedMessage/u, 'sucesso nao da ACK no bilhete')
   assert.match(pane, /restoreGuiQueuedMessage/u, 'falha nao devolve o bilhete com o motivo')
 })
+
+// R22.5 — a fila diz a VERDADE NOVA. O print de 19/08: num chat com ajudantes o
+// turno e uma request longa, e o CLI segura tudo que chega no stdin ate ela
+// acabar (potencialmente horas, pos-R19). Desde a R22 a mensagem passa a viajar
+// de carona no proximo resultado de ferramenta — e o card tem de contar isso,
+// senao o dono clica "enviar agora" achando que o agente le na hora, que era
+// exatamente a mentira do estado anterior.
+test('R22.5 — o card do "enviar agora" conta a carona no resultado de ferramenta', () => {
+  const card = readFileSync(
+    new URL('../src/renderer/src/components/GuiQueuedMessageCard.tsx', import.meta.url),
+    'utf8'
+  )
+  const tip = card.slice(card.indexOf('sendNowDisabled'), card.indexOf('enviar agora'))
+  assert.match(tip, /carona/u, 'o card nao explica a carona')
+  assert.match(tip, /resultado de ferramenta/u, 'o card nao diz por onde a mensagem viaja')
+  assert.match(tip, /no meio do turno/u, 'o card nao diz que o agente le DENTRO do turno')
+  // A ponte fora do ar continua com a dica honesta: ali nao ha turno nenhum.
+  assert.match(card, /a ponte do chat[\s\S]{0,20}fora do ar/u)
+})

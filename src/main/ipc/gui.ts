@@ -72,6 +72,11 @@ import {
   type GuiFileResolveReason
 } from '../guiFileResolver'
 import { ensureSynkoraGitExcludes } from '../worktree'
+import {
+  GUI_OWNER_MAIL_STORE_FILE,
+  createGuiOwnerMailStore,
+  guiOwnerMailbox
+} from '../guiOwnerMail'
 import { rearmGuiPaneTools } from '../guiPlannerArm'
 import type { MainContext } from '../mainContext'
 import { GuiWorkspaceFileIndex, type GuiWorkspaceFilesResult } from '../guiWorkspaceFiles'
@@ -276,6 +281,14 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
   const attachmentCapabilities = new GuiAttachmentCapabilityStore(
     join(dirname(extras.storeFile), 'gui-attachment-capabilities.json')
   )
+  // O DISCO DO POTE DO DONO (R22.4): a fala que chegou no meio do turno e ainda
+  // não foi entregue sobrevive ao fechamento do app — a MESMA régua da frota
+  // (gui-helpers.json). O pote de produção nasce no import (quando `userData`
+  // ainda não existe), então o arquivo entra aqui, ao lado do das conversas, e a
+  // fotografia é lida na hora: o nascimento de cada pane flusha o que sobrou.
+  guiOwnerMailbox.attachStore(
+    createGuiOwnerMailStore(join(dirname(extras.storeFile), GUI_OWNER_MAIL_STORE_FILE))
+  )
   const visibility = new GuiPaneVisibilityRegistry()
   const readyTitle = new GuiWindowReadyController({
     setTitle: (title) => {
@@ -359,7 +372,13 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     // que está nascendo, provando de novo QUAL kit este pane pode ter — o de
     // planos (chat de planejamento) ou o de delegação (chat de missão dev). O
     // roteador é fonte única em guiPlannerArm; aqui só se chama.
-    rearmPaneTools: (spawn) => rearmGuiPaneTools(ctx, spawn)
+    rearmPaneTools: (spawn) => rearmGuiPaneTools(ctx, spawn),
+    // R22.1 — QUEM DELEGA (a autoridade da rota do pote do dono). A resposta é
+    // a MESMA que o servidor MCP usa para decidir o catálogo do pane: o papel
+    // registrado no hub quando as ferramentas foram armadas. Nada de segunda
+    // régua — um pane que o servidor não reconhece como delegador nunca vira
+    // delegador aqui, e a mensagem dele segue pelo caminho de sempre.
+    delegatorPane: (paneId) => ctx.hub.identityByPane(paneId)?.role === 'gui-delegator'
   })
   // Índice curto por cwd para basename/sufixo. A raiz nunca vem do renderer;
   // cada chamada abaixo a reencontra no registro vivo da conversa.

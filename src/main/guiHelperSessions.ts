@@ -676,6 +676,13 @@ export type GuiHelperLogEvent =
   /** O boot reencontrou um ajudante vivo da sessão anterior e o marcou como
    *  interrompido — o rastro de que o app fechou por cima de trabalho. */
   | 'helper-restored'
+  /**
+   * R22.2 — O RECIBO DA CARONA: a mensagem do dono saiu do pote e foi anexada a
+   * um resultado de tool da delegação. É o carimbo de ENTREGA (paneId, quantas
+   * mensagens e o tamanho que viajou); sem ele, "o app entregou?" seria uma
+   * pergunta sem resposta mecânica — exatamente o buraco do print de 19/08.
+   */
+  | 'owner-mail-ride'
 
 export interface GuiHelperLogEntry {
   event: GuiHelperLogEvent
@@ -1282,6 +1289,33 @@ export class GuiHelperEngine {
       this.sweep()
     }
     return { ok: true, ...this.view(live, this.now() - pollStartedAt) }
+  }
+
+  /**
+   * O DESPERTAR POR PANE (R22.3) — o long-poll acorda porque o DONO falou.
+   *
+   * O `settle` já acorda os waiters do ajudante que encerrou; este é o outro
+   * motivo legítimo de interromper a espera: chegou mensagem do dono no pote
+   * (`guiOwnerMail`), e ela viaja de carona no PRÓXIMO resultado de tool. Sem
+   * isto, um `helper_result` com 240s de espera seguraria a fala dele por até
+   * quatro minutos — com a frota inteira andando no rumo errado.
+   *
+   * O que ele NÃO faz: mudar estado. Ninguém encerra, ninguém falha — o waiter
+   * resolve e o `result` responde "ainda trabalhando" com a fotografia de
+   * sempre; a novidade viaja no bloco que a costura anexa. Por isso também não
+   * varre: o próprio `result` varre antes de responder.
+   *
+   * Devolve quantas ESPERAS foram acordadas (0 = ninguém estava esperando, que é
+   * o caso comum e não é notícia).
+   */
+  wakePane(paneId: string): number {
+    let woken = 0
+    for (const live of this.pick(paneId)) {
+      if (live.waiters.length === 0) continue
+      woken += live.waiters.length
+      for (const waiter of live.waiters.splice(0)) waiter()
+    }
+    return woken
   }
 
   /** Steering: dirige o ajudante VIVO, como se fosse um subagente nativo. */

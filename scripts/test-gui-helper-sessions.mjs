@@ -482,6 +482,57 @@ test('esperar zero devolve a fotografia na hora, sem armar temporizador', async 
   assert.equal(timers.length, 0)
 })
 
+// ————— R22.3: o long-poll também acorda quando o DONO fala —————
+//
+// Caso real (print de 19/08): o delegador num laço de `helper_result` esperando
+// a frota, o dono manda mensagem com "enviar agora" e o agente não lê. A fala
+// dele passa a ir para o pote (`guiOwnerMail`) e a viajar de carona no próximo
+// resultado de tool — mas, sem um despertar por PANE, "o próximo resultado" só
+// chegaria quando o teto de 240s estourasse. Este é o degrau que faz a carona
+// sair em segundos.
+
+test('R22.3 — o despertar por PANE resolve o long-poll na hora, sem mudar estado', async () => {
+  const { engine, helperId, timers, spawn } = oneHelper()
+  spawn.emit({ type: 'activity', summary: 'Grep src/main' })
+  assert.equal(
+    typeof engine.wakePane,
+    'function',
+    'o motor não tem o despertar por pane (R22.3) — a fala do dono esperaria o teto do long-poll'
+  )
+
+  const pending = engine.result(helperId, 240)
+  assert.equal(timers.length, 1, 'o long-poll não armou o teto do motor')
+
+  // Chegou fala do dono no pote deste pane: quem espera acorda AGORA.
+  assert.equal(engine.wakePane(DELEGATOR.paneId), 1, 'nenhuma espera foi acordada')
+  const outcome = await settledWithin(pending, 'despertar por mensagem do dono')
+
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.pending, true, 'acordar não pode inventar desfecho')
+  assert.equal(outcome.state, 'working', 'o ajudante continua trabalhando')
+  assert.equal(outcome.failure, undefined)
+  assert.equal(timers[0].cancelled, true, 'o temporizador do teto ficou pendurado')
+  // Idempotente e barato: sem ninguém esperando, o despertar não faz nada.
+  assert.equal(engine.wakePane(DELEGATOR.paneId), 0)
+})
+
+test('R22.3 — o despertar é POR PANE: a espera do chat vizinho não é tocada', async () => {
+  const { engine, spawns } = harness()
+  const meu = engine.spawn(DELEGATOR, [{ prompt: 'fatia deste chat' }]).receipts[0]
+  const vizinho = engine.spawn(OTHER_DELEGATOR, [{ prompt: 'fatia do outro chat' }]).receipts[0]
+  assert.equal(meu.ok, true)
+  assert.equal(vizinho.ok, true)
+
+  const esperaVizinha = engine.result(vizinho.helperId, 240)
+  assert.equal(engine.wakePane(DELEGATOR.paneId), 0, 'acordou a espera de outro chat')
+
+  // A espera vizinha continua de pé: só o desfecho dela a resolve.
+  spawns[1].emit({ type: 'result', isError: false, text: 'entrega do vizinho' })
+  const outcome = await settledWithin(esperaVizinha, 'desfecho do vizinho')
+  assert.equal(outcome.pending, false)
+  assert.equal(outcome.state, 'done')
+})
+
 test('ajudante desconhecido recusa com o id na mensagem', async () => {
   const { engine } = harness()
   const outcome = await engine.result('helper-fantasma')

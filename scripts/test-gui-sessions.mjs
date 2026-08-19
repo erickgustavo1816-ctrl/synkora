@@ -94,6 +94,11 @@ import {
 } from '../.tmp/gui-sessions-test/guiAttachmentStorage.js'
 import { GuiAttachmentCapabilityStore } from '../.tmp/gui-sessions-test/guiAttachmentCapabilities.js'
 import { closePendingGuiTools } from '../src/renderer/src/guiTerminalTools.ts'
+// O POTE DO DONO (módulo NOVO da R22) entra pela porta TOLERANTE: import
+// estático de arquivo ausente derrubaria a suíte inteira, e ela deixaria de
+// discriminar. Sem o módulo, caem só os testes da rota — e caem dizendo o que
+// falta.
+const ownerMailModule = await import('../.tmp/gui-sessions-test/guiOwnerMail.js').catch(() => ({}))
 
 test('permissão permanente mostra e grava apenas a regra Bash estreita', () => {
   assert.equal(
@@ -5191,4 +5196,262 @@ test('a tradução do limite tem fonte única e nenhuma heurística de conteúdo
     'o ramo antigo tratava allowed_warning como esgotado'
   )
   assert.doesNotMatch(limitCase, /type: 'limit'/u, 'o texto do limite tem fonte única')
+})
+
+// ————— R22: A MENSAGEM DO DONO FURA O TURNO-FORTALEZA —————
+//
+// Queixa do dono com print (19/08): o delegador estava num laço de
+// `helper_result` esperando três ajudantes; ele mandou mensagem com "enviar
+// agora", a bolha VOCÊ apareceu no fio — e o agente NÃO leu. Mensagem empurrada
+// pro stdin no meio de um turno fica na fila INTERNA do CLI até o turno fechar,
+// e pós-R19 isso é potencialmente horas. O único canal que alcança o modelo
+// DENTRO do turno é o resultado de tool, e a casa já anda nele (o correio dos
+// ajudantes). Estes testes provam a ROTA (a decisão é do MAIN) e o
+// RECONCILIADOR (nenhum passo depende de entrega única).
+
+const R22_PANE = 'gui-dev-r22'
+
+/**
+ * Bancada da rota: um pane DELEGADOR com sessão controlável (turno aberto ou
+ * fechado à mão) e o pote INJETADO — nenhuma bancada pode dividir o pote global
+ * do processo com outra.
+ */
+function ownerMailBench(over = {}) {
+  assert.ok(
+    ownerMailModule.GuiOwnerMailbox,
+    'o módulo do pote do dono (guiOwnerMail) não existe — sem ele a fala do dono não tem onde esperar (R22.1)'
+  )
+  const ownerMail = over.ownerMail ?? new ownerMailModule.GuiOwnerMailbox()
+  const journal = []
+  const woken = []
+  const sent = []
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    record: (event, ids, detail) => journal.push({ event, ...ids, detail }),
+    ownerMail,
+    // A AUTORIDADE DA ROTA é do main: aqui, o duplo do registro de identidade.
+    delegatorPane: (paneId) => (over.delegator ?? true) && paneId === R22_PANE
+  })
+  const session = {
+    alive: true,
+    turnActive: false,
+    send: (text) => sent.push(text),
+    kill: () => {
+      session.alive = false
+    }
+  }
+  let emit = () => undefined
+  gui.spawnSession = (_input, sink) => {
+    emit = sink
+    sink({ type: 'ready', caps: { commands: [], models: [] } })
+    return session
+  }
+  gui.attachHelpers({
+    interruptPane: () => 0,
+    status: () => [],
+    wakePane: (paneId) => {
+      woken.push(paneId)
+      return 1
+    }
+  })
+  const spawn = {
+    paneId: R22_PANE,
+    projectId: 'proj-r22',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/w',
+    ...(over.spawn ?? {})
+  }
+  assert.equal(gui.create(spawn).ok, true)
+  return {
+    gui,
+    ownerMail,
+    session,
+    sent,
+    woken,
+    journal,
+    spawn,
+    emit: (evt) => emit(evt),
+    bubbles: () =>
+      gui
+        .state(spawn.paneId)
+        .events.filter(({ evt }) => evt.type === 'user-message')
+        .map(({ evt }) => evt.id)
+  }
+}
+
+/** O microtask do reconciliador do fecho, drenado. */
+const settleTicks = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+test('R22.1 — turno ABERTO em pane delegador: a fala do dono vai pro POTE, nunca pro stdin', () => {
+  const bench = ownerMailBench()
+
+  // Turno fechado: caminho de sempre, palavra por palavra.
+  assert.equal(bench.gui.send(R22_PANE, 'abre 3 ajudantes', 'msg-1').ok, true)
+  assert.deepEqual(bench.sent, ['abre 3 ajudantes'])
+
+  // O TURNO-FORTALEZA: a frota trabalha e o turno não fecha.
+  bench.session.turnActive = true
+  assert.equal(bench.gui.send(R22_PANE, 'para tudo: o schema mudou', 'msg-2').ok, true)
+
+  assert.deepEqual(
+    bench.sent,
+    ['abre 3 ajudantes'],
+    'a fala do dono NÃO pode ir pro stdin: ela ficaria na fila interna do CLI até o turno fechar'
+  )
+  assert.equal(bench.ownerMail.count(R22_PANE), 1, 'a fala do dono não entrou no pote')
+  assert.equal(bench.ownerMail.peek(R22_PANE)[0].text, 'para tudo: o schema mudou')
+
+  // A BOLHA VOCÊ CONTINUA NO FIO: apresentação não é entrega.
+  assert.deepEqual(bench.bubbles(), ['msg-1', 'msg-2'])
+
+  // R22.3 — o long-poll da frota deste pane acorda AGORA (a carona sai em
+  // segundos, em vez de esperar os até 240s do helper_result).
+  assert.deepEqual(bench.woken, [R22_PANE])
+
+  // E o desvio de canal tem RECIBO.
+  const posted = bench.journal.find((entry) => entry.event === 'gui-owner-mail-posted')
+  assert.ok(posted, 'a rota não deixou recibo na caixa-preta')
+  assert.equal(posted.paneId, R22_PANE)
+  assert.equal(posted.detail.messageId, 'msg-2')
+})
+
+test('R22 — pane que NÃO delega mantém o comportamento de hoje, inteiro', () => {
+  const bench = ownerMailBench({ delegator: false })
+  bench.session.turnActive = true
+  assert.equal(bench.gui.send(R22_PANE, 'segue com isto também', 'msg-1').ok, true)
+  assert.deepEqual(
+    bench.sent,
+    ['segue com isto também'],
+    'chat sem frota não tem turno-fortaleza: o envio continua indo direto ao CLI'
+  )
+  assert.equal(bench.ownerMail.count(R22_PANE), 0)
+  assert.deepEqual(bench.woken, [], 'sem pote não há por que acordar long-poll nenhum')
+})
+
+test('R22.4 — o turno que FECHA com o pote cheio entrega pelo caminho de sempre', async () => {
+  const bench = ownerMailBench()
+  bench.session.turnActive = true
+  assert.equal(bench.gui.send(R22_PANE, 'inverte a ordem das fatias', 'msg-1').ok, true)
+  assert.deepEqual(bench.sent, [])
+
+  // O agente não chamou mais tool nenhuma: não houve carona, e o turno acaba.
+  bench.session.turnActive = false
+  bench.emit({ type: 'result', isError: false, outcome: 'completed' })
+  await settleTicks()
+
+  assert.deepEqual(
+    bench.sent,
+    ['inverte a ordem das fatias'],
+    'o fecho tem de entregar o pote — a fala do dono nunca se perde'
+  )
+  assert.equal(bench.ownerMail.count(R22_PANE), 0)
+  // SEM BOLHA NOVA: a bolha saiu no envio, e o fecho é entrega, não fala.
+  assert.deepEqual(bench.bubbles(), ['msg-1'])
+  const flushed = bench.journal.find((entry) => entry.event === 'gui-owner-mail-flushed')
+  assert.ok(flushed, 'o fecho não deixou recibo')
+  assert.equal(flushed.detail.messages, 1)
+  assert.equal(flushed.detail.reason, 'fecho-de-turno')
+})
+
+test('R22.4 — turno ainda VIVO no terminal do sub-resultado não consome o pote', async () => {
+  const bench = ownerMailBench()
+  bench.session.turnActive = true
+  assert.equal(bench.gui.send(R22_PANE, 'olha isto agora', 'msg-1').ok, true)
+
+  // `result` com o turno ainda ativo (a frota segura o turno lógico): a carona
+  // ainda pode acontecer, e ela é melhor — chega ao modelo sem esperar o fim.
+  bench.emit({ type: 'result', isError: false, continues: true })
+  await settleTicks()
+  assert.deepEqual(bench.sent, [])
+  assert.equal(bench.ownerMail.count(R22_PANE), 1, 'o pote foi consumido cedo demais')
+})
+
+test('R22.4 — o pote atravessa o BOOT: o que não saiu volta do disco e sai na abertura', () => {
+  assert.ok(
+    ownerMailModule.createGuiOwnerMailStore,
+    'o pote do dono não tem disco — um app que fecha engoliria a fala dele (R22.4)'
+  )
+  const dir = mkdtempSync(join(tmpdir(), 'synkora-owner-mail-'))
+  const file = join(dir, ownerMailModule.GUI_OWNER_MAIL_STORE_FILE)
+  try {
+    const antes = new ownerMailModule.GuiOwnerMailbox()
+    antes.attachStore(ownerMailModule.createGuiOwnerMailStore(file))
+    assert.equal(
+      antes.post(R22_PANE, {
+        messageId: 'msg-1',
+        text: 'quando voltar, começa por isto',
+        at: Date.now()
+      }),
+      true
+    )
+
+    // BOOT NOVO: pote novo, o MESMO arquivo.
+    const depois = new ownerMailModule.GuiOwnerMailbox()
+    depois.attachStore(ownerMailModule.createGuiOwnerMailStore(file))
+    assert.equal(depois.count(R22_PANE), 1, 'a fala do dono não sobreviveu ao fechamento do app')
+
+    const bench = ownerMailBench({ ownerMail: depois })
+    assert.deepEqual(
+      bench.sent,
+      ['quando voltar, começa por isto'],
+      'a abertura do pane tem de entregar o que ficou no pote'
+    )
+    assert.equal(depois.count(R22_PANE), 0)
+    assert.equal(
+      ownerMailModule.createGuiOwnerMailStore(file).load().length,
+      0,
+      'entregue, a fala tem de sair do disco também'
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('R22.4 — o ■ do dono não engole a fala DELE: o fecho da interrupção entrega', async () => {
+  const bench = ownerMailBench()
+  bench.session.turnActive = true
+  assert.equal(bench.gui.send(R22_PANE, 'para tudo e volta pro plano antigo', 'msg-1').ok, true)
+  assert.deepEqual(bench.sent, [], 'com o turno aberto a fala do dono espera no pote')
+
+  // O ■ derruba o turno: o CLI devolve o terminal carimbado de interrompido.
+  bench.session.turnActive = false
+  bench.emit({ type: 'result', isError: false, outcome: 'cancelled', interrupted: true })
+  await settleTicks()
+
+  assert.deepEqual(
+    bench.sent,
+    ['para tudo e volta pro plano antigo'],
+    'o que o pote guarda são as PALAVRAS do dono — segurá-las seria perdê-las em silêncio'
+  )
+  const flushed = bench.journal.find((entry) => entry.event === 'gui-owner-mail-flushed')
+  assert.equal(
+    flushed.detail.reason,
+    'fecho-por-interrupcao',
+    'o diário tem de distinguir o fecho normal do fecho pelo ■'
+  )
+})
+
+test('R22 — slash CRU no meio do turno continua indo ao binário: comando se executa', () => {
+  const bench = ownerMailBench()
+  bench.session.turnActive = true
+  // `/compact` é `raw` no roteador do claude: ele atravessa o registro e é o
+  // BINÁRIO que o executa. Guardá-lo no pote viraria texto sobre um comando —
+  // o dono veria a bolha e nada aconteceria.
+  assert.equal(bench.gui.send(R22_PANE, '/compact', 'msg-1').ok, true)
+  assert.deepEqual(bench.sent, ['/compact'])
+  assert.equal(bench.ownerMail.count(R22_PANE), 0, 'comando do dono nunca vira citação')
+})
+
+test('R22 — briefing pendente nunca vira citação: ele segue pelo caminho de PROMPT', () => {
+  const bench = ownerMailBench({ spawn: { firstPrompt: 'CONTRATO DA MISSÃO' } })
+  bench.session.turnActive = true
+  assert.equal(bench.gui.send(R22_PANE, 'primeira fala', 'msg-1').ok, true)
+  assert.equal(
+    bench.ownerMail.count(R22_PANE),
+    0,
+    'o briefing da missão não pode viajar dentro de um resultado de tool'
+  )
+  assert.deepEqual(bench.sent, [guiBriefedPrompt('CONTRATO DA MISSÃO', 'primeira fala')])
 })

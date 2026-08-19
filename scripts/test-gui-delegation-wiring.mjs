@@ -39,6 +39,11 @@ import * as contracts from '../.tmp/gui-delegation-wiring-test/guiMissionContrac
 const lspMcp = await import('../.tmp/gui-delegation-wiring-test/guiHelperLspMcp.js').catch(
   () => ({})
 )
+// O POTE DO DONO (módulo NOVO da R22) pela mesma porta tolerante: sem ele, caem
+// só os testes da carona — e caem dizendo o que falta.
+const ownerMailModule = await import('../.tmp/gui-delegation-wiring-test/guiOwnerMail.js').catch(
+  () => ({})
+)
 
 const {
   GUI_HELPER_CARD_ACTIVITY_MAX,
@@ -821,6 +826,11 @@ function delegationApi(overrides = {}) {
     endBatch: (paneId) => calls.end.push(paneId),
     seats: () => [],
     ...(overrides.inbox ? { inbox: overrides.inbox } : {}),
+    // R22 — O POTE DO DONO entra pela MESMA porta do correio dos ajudantes: uma
+    // instância por bancada, senão duas suítes do mesmo paneId dividiriam o pote
+    // global do processo.
+    ...(overrides.ownerMail ? { ownerMail: overrides.ownerMail } : {}),
+    ...(overrides.log ? { log: overrides.log } : {}),
     now: () => 0
   })
   return { api, calls }
@@ -1726,6 +1736,101 @@ test('o correio é POR PANE: um chat nunca lê o do outro', () => {
   assert.equal(inbox.count('p2'), 1, 'a pendência do outro pane continua lá, intocada')
   // Sem pendência nenhuma, a resposta da tool não ganha uma linha sequer.
   assert.equal(api.helpersStatus(delegatorId), guiHelperStatusText([]))
+})
+
+// ————— R22.2: a FALA DO DONO pega a MESMA carona —————
+//
+// O print de 19/08: o delegador num laço de `helper_result` esperando três
+// ajudantes; o dono manda mensagem com "enviar agora", a bolha VOCÊ aparece no
+// fio — e o agente NÃO lê. Mensagem empurrada pro stdin no meio do turno fica na
+// fila INTERNA do CLI até o turno fechar, e pós-R19 isso é potencialmente horas.
+// O único canal que alcança o modelo DENTRO do turno é o resultado de tool — o
+// mesmo em que o correio dos ajudantes já anda desde 18/08.
+
+/** O pote do dono desta bancada. Sem o módulo, a falha nomeia o que falta. */
+function ownerMailbox() {
+  assert.ok(
+    ownerMailModule.GuiOwnerMailbox,
+    'o módulo do pote do dono (guiOwnerMail) não existe — sem ele a fala do dono não tem onde esperar (R22.1)'
+  )
+  return new ownerMailModule.GuiOwnerMailbox()
+}
+
+test('R22.2 — a mensagem do dono viaja no PRÓXIMO resultado de tool, uma vez só', async () => {
+  const ownerMail = ownerMailbox()
+  const logged = []
+  const { api } = delegationApi({ ownerMail, log: (entry) => logged.push(entry) })
+  ownerMail.post('p1', { messageId: 'msg-7', text: 'para tudo: o schema mudou', at: 0 })
+
+  // O CENTRO DO PRINT: o delegador está dentro do turno, num `helper_result`, e
+  // é ESSA resposta que carrega a fala do dono até o modelo.
+  const text = await api.helperResult(delegatorId, 'h-meu', 45)
+  assert.ok(
+    text.includes(ownerMailModule.GUI_OWNER_MAIL_TAG),
+    'a fala do dono não viajou no resultado da tool — o agente segue cego dentro do turno'
+  )
+  assert.match(text, /para tudo: o schema mudou/u, 'a mensagem não chegou verbatim')
+  assert.match(text, /no meio do turno/u, 'o agente precisa saber que isto não é turno novo')
+  assert.match(text, /AJUSTE O RUMO AGORA/u, 'sem o movimento, ele guarda a ordem para depois')
+
+  // Drenar É a entrega, e a entrega tem RECIBO na caixa-preta.
+  assert.equal(ownerMail.count('p1'), 0, 'a fala tem de sair do pote ao ser entregue')
+  const receipt = logged.find((entry) => entry.event === 'owner-mail-ride')
+  assert.ok(receipt, 'a carona não deixou recibo')
+  assert.equal(receipt.paneId, 'p1')
+  assert.equal(receipt.detail.messages, 1)
+  assert.ok(receipt.detail.chars > 0, 'o recibo tem de dizer o tamanho que viajou')
+
+  // Entregue uma vez, morre: repetir faria o agente achar que o dono falou de novo.
+  assert.equal(
+    api.helpersStatus(delegatorId).includes(ownerMailModule.GUI_OWNER_MAIL_TAG),
+    false,
+    'a mesma fala não pode viajar duas vezes'
+  )
+})
+
+test('R22.2 — a carona vale em TODA tool da delegação, e o dono vem por ÚLTIMO', async () => {
+  const ownerMail = ownerMailbox()
+  const inbox = new GuiHelperInbox()
+  const { api } = delegationApi({ ownerMail, inbox, liveCount: 2 })
+
+  ownerMail.post('p1', { messageId: 'm-1', text: 'inverte a ordem das fatias', at: 0 })
+  const status = api.helpersStatus(delegatorId)
+  assert.ok(status.includes(ownerMailModule.GUI_OWNER_MAIL_TAG))
+
+  ownerMail.post('p1', { messageId: 'm-2', text: 'e usa a conta do hotmail', at: 0 })
+  assert.ok(
+    (await api.listSeats(delegatorId)).includes(ownerMailModule.GUI_OWNER_MAIL_TAG),
+    'list_seats também é resultado de tool'
+  )
+
+  ownerMail.post('p1', { messageId: 'm-3', text: 'segura o resto', at: 0 })
+  assert.ok(api.helperSend(delegatorId, 'h-meu', 'oi').includes(ownerMailModule.GUI_OWNER_MAIL_TAG))
+
+  // NOVIDADE DOS AJUDANTES + FALA DO DONO na mesma resposta: relatório primeiro,
+  // ORDEM por último — é a última coisa que o modelo lê antes de decidir.
+  ownerMail.post('p1', { messageId: 'm-4', text: 'cancela o terceiro', at: 0 })
+  inbox.post('p1', {
+    helperId: 'h-9',
+    model: 'opus',
+    ok: true,
+    resultPath: '.synkora/helpers/h-9.md'
+  })
+  const both = await api.delegateHelpers(delegatorId, [{ prompt: 'x' }])
+  assert.ok(both.includes(GUI_HELPER_INBOX_TAG), 'o correio dos ajudantes sumiu')
+  assert.ok(both.includes(ownerMailModule.GUI_OWNER_MAIL_TAG))
+  assert.ok(
+    both.indexOf(ownerMailModule.GUI_OWNER_MAIL_TAG) > both.indexOf(GUI_HELPER_INBOX_TAG),
+    'a fala do dono tem de vir DEPOIS do relatório da frota'
+  )
+})
+
+test('R22.2 — o pote do dono é POR PANE: um chat nunca lê a fala mandada ao outro', () => {
+  const ownerMail = ownerMailbox()
+  const { api } = delegationApi({ ownerMail })
+  ownerMail.post('p2', { messageId: 'm-alheia', text: 'isto é do outro chat', at: 0 })
+  assert.equal(api.helpersStatus(delegatorId).includes(ownerMailModule.GUI_OWNER_MAIL_TAG), false)
+  assert.equal(ownerMail.count('p2'), 1, 'a fala do outro pane continua lá, intocada')
 })
 
 test('correio e despertador são O MESMO pote: quem entrega primeiro consome', () => {

@@ -66,6 +66,7 @@ import {
   resolveHelperCli
 } from './guiHelperSessions'
 import { GuiHelperInbox, guiHelperInbox, guiHelperInboxBlock } from './guiHelperCards'
+import { GuiOwnerMailbox, guiOwnerMailBlock, guiOwnerMailbox } from './guiOwnerMail'
 import type { GuiDelegationDefaults } from './guiSessions'
 import type { McpHelperRequestInput } from './mcpServer'
 
@@ -1237,6 +1238,11 @@ export interface GuiDelegationApiDeps {
   /** O CORREIO dos ajudantes. Ausente = o de produção, que é o MESMO pote em
    *  que o correlacionador de cards posta os encerramentos. */
   inbox?: GuiHelperInbox
+  /** O POTE DO DONO (R22). Ausente = o de produção (`guiOwnerMailbox`), que é o
+   *  MESMO em que a rota de envio (`guiSessions.send`) guarda a fala do dono
+   *  quando ela chega com o turno aberto. A injeção existe para a suíte não
+   *  dividir um pote global entre duas bancadas do mesmo paneId. */
+  ownerMail?: GuiOwnerMailbox
   seats(): GuiDelegationSeat[]
   seatUsage?(seat: GuiDelegationSeat): Promise<SeatUsageInfo | null>
   now?(): number
@@ -1313,16 +1319,45 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
    * pensar que houve um segundo fim.
    */
   const inbox = deps.inbox ?? guiHelperInbox
+  const ownerMail = deps.ownerMail ?? guiOwnerMailbox
+
+  /**
+   * A CARONA DO DONO (R22.2) — a MESMA costura, com a outra carga.
+   *
+   * O caso do print (19/08): o delegador em laço de `helper_result` e a fala do
+   * dono presa na fila interna do CLI até o turno fechar (horas, pós-R19). Como
+   * o único canal que alcança o modelo no meio do turno é o resultado de tool,
+   * a fala dele viaja aqui — no fim do bloco, que é o último lugar que o modelo
+   * lê antes de decidir o próximo passo.
+   *
+   * Drenar É a entrega, então drenar É o recibo: o diário carimba paneId e
+   * tamanho. Se um dia a resposta se perder no transporte, é este carimbo que
+   * distingue "o app não entregou" de "o agente ignorou".
+   */
+  const withOwnerMail = (paneId: string, body: string): string => {
+    const mail = ownerMail.drain(paneId)
+    if (mail.length === 0) return body
+    const block = guiOwnerMailBlock(mail)
+    journal({
+      event: 'owner-mail-ride',
+      paneId,
+      detail: { messages: mail.length, chars: block.length }
+    })
+    return `${body}\n\n${block}`
+  }
+
   const withInbox = (paneId: string, body: string, except?: string): string => {
     const entries = inbox.drain(paneId, except)
-    if (entries.length === 0) return body
+    if (entries.length === 0) return withOwnerMail(paneId, body)
     let stillWorking = 0
     try {
       stillWorking = deps.engine.liveCount(paneId)
     } catch {
       // Contar quem sobrou é informação, nunca pré-condição da entrega.
     }
-    return `${body}\n\n${guiHelperInboxBlock(entries, { stillWorking })}`
+    // O DONO POR ÚLTIMO, sempre: a novidade dos ajudantes é relatório, a fala
+    // dele é ordem — e ordem se lê depois do relatório, nunca antes.
+    return withOwnerMail(paneId, `${body}\n\n${guiHelperInboxBlock(entries, { stillWorking })}`)
   }
 
   return {
