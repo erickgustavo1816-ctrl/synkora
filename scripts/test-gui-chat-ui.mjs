@@ -2132,10 +2132,12 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
   assert.match(slashMenu, /<div id=\{id\} className="gui-slash-menu" role="listbox"/u)
   assert.match(slashMenu, /id=\{`\$\{id\}-option-\$\{i\}`\}/u)
   assert.match(slashMenu, /tabIndex=\{-1\}/u)
+  // R21.2 — o TURNO SAIU daqui (ver o teste dedicado abaixo): trocar de conta
+  // no meio do turno é a fuga do rate limit. Guarda de voo e anexo ficam.
   assert.ok(
-    (pane.match(/disabled=\{seatChanging \|\| busyMenu !== null \|\| attaching \|\| turnOpen\}/gu) ?? [])
-      .length >= 2,
-    'seat não pode substituir o pane durante troca de executor/anexo/turno'
+    (pane.match(/disabled=\{seatChanging \|\| busyMenu !== null \|\| attaching\}/gu) ?? []).length >=
+      2,
+    'seat não pode substituir o pane durante troca de executor/anexo'
   )
   assert.match(
     pane,
@@ -3774,4 +3776,149 @@ test('o fio é superfície de texto — e os controles dentro dele ficam fora da
     cssDeclares(rules, 'body', 'user-select: none'),
     'a virada é do fio; soltar a seleção no app inteiro seria outra decisão'
   )
+})
+
+// ————— R21.2 — A TROCA DE CONTA NUNCA É BECO (print do dono, 2026-08-19) —————
+//
+// "não consigo trocar o site [a conta]: mouse em cima vira uma bolinha rodando
+// eternamente." Eram DOIS becos somados: o `turnOpen` desabilitando o botão em
+// todo turno longo e o `cursor: wait` do `:disabled` prometendo um fim que não
+// vinha. O main (`missions:setChatSeat`) nunca teve guarda de ocupação: ele
+// transplanta a conversa e mata as sessões vivas — quem trancava era o
+// renderer.
+
+test('trocar a conta no meio do turno é legítimo — e o :disabled não promete fim', () => {
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  // O botão E cada item do menu de conta continuam clicáveis com turno aberto.
+  assert.ok(
+    (pane.match(/disabled=\{seatChanging \|\| busyMenu !== null \|\| attaching\}/gu) ?? []).length >=
+      2,
+    'botão e itens do menu de conta perderam o turno das condições'
+  )
+  assert.doesNotMatch(
+    pane,
+    /disabled=\{seatChanging \|\| busyMenu !== null \|\| attaching \|\| turnOpen\}/u,
+    'turno aberto não pode mais desabilitar a troca de conta'
+  )
+
+  // O tip diz a VERDADE NOVA no meio do turno (o main mata a sessão e retoma a
+  // MESMA conversa quando o CLI é o mesmo).
+  assert.match(pane, /const seatTip = turnOpen/u, 'o tip é derivado do turno')
+  assert.match(
+    pane,
+    /Trocar interrompe o turno atual e retoma a MESMA conversa na conta nova \(mesmo CLI\)\./u
+  )
+  assert.match(pane, /Conta desta conversa\. Trocar mantém a conversa quando o CLI é o mesmo\./u)
+  assert.match(pane, /data-tip=\{seatTip\}/u)
+
+  // Cursor de espera é PROMESSA DE FIM; desabilitado é ESTADO. A opacidade
+  // continua dizendo "não aceita clique agora".
+  const disabledRule = css.match(/\.gui-head-seat-btn:disabled\s*\{[^}]*\}/su)?.[0] ?? ''
+  assert.match(disabledRule, /opacity: 0\.62/u)
+  assert.match(disabledRule, /cursor: default/u)
+  assert.doesNotMatch(disabledRule, /cursor: wait/u, 'a bolinha eterna morre no :disabled')
+
+  // E o único ocupado REAL da troca continua narrado por rótulo, não por cursor.
+  assert.match(pane, /seatChanging \? 'trocando conta…'/u)
+})
+
+// ————— R21.3 — UMA VOZ para o limite: a duplicata morre —————
+//
+// 2º print: "You've hit your session limit · resets 8:20pm" DUAS vezes no mesmo
+// fio — linha de fala E card "falhou" —, em inglês cru. O card ganhou a voz da
+// casa (com a receita) no motor; aqui morre a repetição.
+
+test('a fala repetida do erro sai do fio e só o card com a receita fica', async () => {
+  const { guiResultEchoesSpeech } = await import('../src/renderer/src/guiActivity.ts')
+
+  const said = "You've hit your session limit · resets 8:20pm"
+  assert.equal(guiResultEchoesSpeech(said, said), true)
+  // Igualdade ESTRUTURAL: espaço em volta não conta; texto diferente não bate.
+  assert.equal(guiResultEchoesSpeech(' mesma frase \n', 'mesma frase'), true)
+  assert.equal(guiResultEchoesSpeech('a resposta do turno', said), false)
+  assert.equal(guiResultEchoesSpeech(undefined, said), false)
+  assert.equal(guiResultEchoesSpeech(said, undefined), false)
+  assert.equal(guiResultEchoesSpeech('   ', '   '), false, 'fala vazia não duplica nada')
+
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  const resultBranch = store.slice(
+    store.indexOf("case 'result': {"),
+    store.indexOf("case 'command-completed': {")
+  )
+  assert.match(
+    resultBranch,
+    /guiResultEchoesSpeech\(spoken\.text, evt\.resultText\)/u,
+    'a comparação é com a PALAVRA FINAL do CLI, não com o texto já vestido'
+  )
+  assert.match(
+    resultBranch,
+    /spoken\?\.kind === 'assistant'/u,
+    'só a última FALA pode ser a duplicata'
+  )
+  assert.match(
+    resultBranch,
+    /pushGuiItem\(echoed \? next\.items\.slice\(0, -1\) : next\.items/u,
+    'só o card fica — é ele que carrega a receita'
+  )
+})
+
+// ————— R21.4 — RODADA FANTASMA NÃO GANHA SELO —————
+//
+// Ainda no 2º print: `⏱ rodada: 0:00` carimbado em cima de results ENCADEADOS
+// (o session-limit caindo instantâneo sobre o rejected). O selo de 0:00 é ruído
+// que engana — "não colocou quanto tempo dura a rodada".
+
+test('a rodada fantasma dos results encadeados não carimba; a de verdade carimba cheio', async () => {
+  const { GUI_ROUND_MIN_ELAPSED_MS, guiRoundClosed, guiRoundEarnsStamp, guiRoundStampText, trackGuiRoundWork } =
+    await import('../src/renderer/src/guiActivity.ts')
+
+  // A SEQUÊNCIA DO PRINT, reproduzida evento a evento.
+  // (1) A rodada de VERDADE: abre na mensagem do dono, trabalha, roda minutos.
+  const realOpen = transitionGuiStartedAt(null, 'working', 100_000)
+  let worked = trackGuiRoundWork(null, realOpen, false, true)
+  assert.equal(worked, false, 'a rodada NASCE sem trabalho — o evento que a abriu não conta')
+  worked = trackGuiRoundWork(realOpen, realOpen, worked, true) // fala do agente
+  assert.equal(worked, true)
+  worked = trackGuiRoundWork(realOpen, realOpen, worked, false) // espera pelo dono não apaga
+  assert.equal(worked, true)
+  const realClose = transitionGuiStartedAt(realOpen, 'idle', 352_000) // result rejeitado
+  assert.equal(guiRoundClosed(realOpen, realClose, 'idle'), true)
+  assert.equal(
+    guiRoundEarnsStamp(352_000 - realOpen, worked),
+    true,
+    'O VERMELHO CENTRAL: a rodada dos minutos continua carimbando'
+  )
+  assert.match(guiRoundStampText(352_000 - realOpen), /^⏱ rodada: 4:12$/u)
+  worked = trackGuiRoundWork(realOpen, realClose, worked, true)
+  assert.equal(worked, false, 'fechou: o trabalho zera para a próxima rodada')
+
+  // (2) A rodada FANTASMA: a fala do limite re-arma o relógio e o result
+  // encadeado cai instantâneo em cima — nada foi produzido no meio.
+  const ghostOpen = transitionGuiStartedAt(realClose, 'working', 352_010)
+  worked = trackGuiRoundWork(realClose, ghostOpen, worked, true)
+  assert.equal(ghostOpen, 352_010)
+  assert.equal(worked, false)
+  const ghostClose = transitionGuiStartedAt(ghostOpen, 'idle', 352_040)
+  assert.equal(guiRoundClosed(ghostOpen, ghostClose, 'idle'), true, 'a rodada fecha…')
+  assert.equal(
+    guiRoundEarnsStamp(352_040 - ghostOpen, worked),
+    false,
+    '…mas 30ms sem trabalho nenhum não ganha selo'
+  )
+
+  // O piso: rodada sem item novo mas com tempo mensurável ainda é rodada.
+  assert.equal(guiRoundEarnsStamp(GUI_ROUND_MIN_ELAPSED_MS, false), true)
+  assert.equal(guiRoundEarnsStamp(GUI_ROUND_MIN_ELAPSED_MS - 1, false), false)
+  assert.equal(guiRoundEarnsStamp(0, true), true, 'trabalhou é rodada, mesmo curta')
+
+  // E o store consome as réguas nomeadas — nunca uma cópia inline.
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  assert.match(store, /guiRoundEarnsStamp\(/u, 'o applyGuiEvent decide o selo pelo módulo puro')
+  assert.match(store, /trackGuiRoundWork\(/u, 'o trabalho da rodada tem fonte única')
+  assert.match(store, /roundWorked: boolean/u, 'o trabalho da rodada é estado do pane')
 })

@@ -423,6 +423,112 @@ export type SessionEvent =
   | { type: 'fatal'; text: string }
   | { type: 'closed'; code: number | null }
 
+// ————— O LIMITE FALA A VERDADE (R21, print do dono 2026-08-19) —————
+//
+// Queixa dele, com a correção ao vivo: "tá avisando toda hora que o limite
+// acabou… não acabou, porque ele tá rodando ainda — deve ser um aviso de que
+// tá ACABANDO e a gente tá entendendo que ACABOU. Tem que ter essa distinção".
+// O `status` do `rate_limit_event` é o campo ESTRUTURAL que separa os dois:
+// `allowed_warning` é AVISADO-E-AINDA-PERMITIDO (no print as edições seguem
+// passando ✓ depois de cada card) e só os outros status não-allowed param de
+// verdade. Nada aqui lê PALAVRA de texto nenhum — a régua da casa proíbe
+// heurística de conteúdo; o gatilho é sempre o campo do protocolo.
+
+export interface GuiRateLimitInfo {
+  status?: string
+  resetsAt?: number
+}
+
+/** A RECEITA, em UMA voz (R21.3): o beco sem saída é bug de primeira classe,
+ *  então toda fala do limite termina dizendo o que destrava — e que trocar não
+ *  custa a conversa (o `missions:setChatSeat` transplanta e retoma). */
+export const GUI_LIMIT_RECIPE =
+  'troque a conta no cabeçalho do chat: a conversa continua na conta nova'
+
+/** Só o STATUS diz se parou. `allowed` e `allowed_warning` continuam passando;
+ *  pintá-los de bloqueio é exatamente a mentira que o dono viu. */
+export function guiRateLimitBlocks(status: string | undefined): boolean {
+  return Boolean(status) && status !== 'allowed' && status !== 'allowed_warning'
+}
+
+function guiLimitClock(resetsAt: number | undefined): string {
+  return resetsAt ? new Date(resetsAt * 1000).toLocaleTimeString('pt-BR') : ''
+}
+
+/** Chave de ESTADO do limite: o CLI emite o evento a CADA request, e repetir o
+ *  mesmo carimbo a cada lote foi o "avisando toda hora". Um carimbo por
+ *  mudança — mudou o status ou o horário, é estado novo e fala de novo. */
+function guiRateLimitKey(status: string, resetsAt: number | undefined): string {
+  return `${status}|${resetsAt ?? ''}`
+}
+
+export interface GuiRateLimitTranslation {
+  /** Evento a publicar; ausente = nada mudou (ou o limite passou). */
+  event?: SessionEvent
+  /** Estado já ANUNCIADO, para o chamador guardar e devolver no próximo. */
+  key: string | null
+}
+
+/**
+ * A tradução `rate_limit_event → SessionEvent`, PURA (o teste prova
+ * comportamento sem processo nenhum): aviso vira NOTA e o turno segue;
+ * bloqueio de verdade vira ERRO com a receita; o mesmo estado não re-emite.
+ */
+export function translateGuiRateLimit(
+  info: GuiRateLimitInfo | undefined,
+  lastKey: string | null
+): GuiRateLimitTranslation {
+  const status = info?.status
+  // Evento sem status não é fato: não fala e não mexe no que já foi dito.
+  if (!status) return { key: lastKey }
+  // Liberado de novo: esquece o carimbo para o próximo aviso poder falar.
+  if (status === 'allowed') return { key: null }
+  const key = guiRateLimitKey(status, info?.resetsAt)
+  if (key === lastKey) return { key }
+  const clock = guiLimitClock(info?.resetsAt)
+  if (!guiRateLimitBlocks(status)) {
+    return {
+      key,
+      event: {
+        type: 'command-output',
+        text: `aviso: o limite do plano está se APROXIMANDO (${status}) — nada parou${
+          clock ? ` · renova ${clock}` : ''
+        }`
+      }
+    }
+  }
+  return {
+    key,
+    event: {
+      type: 'limit',
+      text: `rate limit do plano atingido (${status})${
+        clock ? ` · libera ${clock}` : ''
+      } — ${GUI_LIMIT_RECIPE}`
+    }
+  }
+}
+
+/**
+ * UMA VOZ PARA O LIMITE (R21.3, 2º print do dono): quando o motor JÁ sabe que
+ * a janela está bloqueada, o card do result fala PT-BR com a receita no lugar
+ * do inglês cru do CLI ("You've hit your session limit"). O gatilho é o ESTADO
+ * armado pelo `rate_limit_event` — jamais as palavras do erro.
+ * `undefined` = não vestir (deixa o texto do CLI passar intacto), inclusive
+ * quando a janela anunciada JÁ venceu: dizer "limite" depois do horário de
+ * liberação seria mentir na direção oposta.
+ */
+export function guiLimitResultText(
+  blocked: GuiRateLimitInfo | null,
+  now = Date.now()
+): string | undefined {
+  if (!blocked?.status) return undefined
+  if (blocked.resetsAt && blocked.resetsAt * 1000 <= now) return undefined
+  const clock = guiLimitClock(blocked.resetsAt)
+  return `o turno parou no limite do plano (${blocked.status})${
+    clock ? ` · libera ${clock}` : ''
+  } — ${GUI_LIMIT_RECIPE}`
+}
+
 export type PermissionChoice = 'allow' | 'allow-always' | 'deny'
 
 interface PendingPermission {
@@ -662,6 +768,12 @@ export class MaestroSession {
    *  chamada nenhuma (comando local) não republique a medição do turno anterior
    *  como se fosse dele. */
   private turnContextTokens: number | undefined = undefined
+  /** Último estado de limite JÁ anunciado (R21.1) — a dedução da repetição
+   *  mora aqui: o CLI reemite o evento a cada request. */
+  private rateLimitKey: string | null = null
+  /** Limite que está BLOQUEANDO agora (R21.3). `null` = nada armado: o erro do
+   *  result passa com o texto do próprio CLI. */
+  private rateLimitBlocked: GuiRateLimitInfo | null = null
 
   /**
    * RÉGUA ÚNICA DA JANELA deste processo. A medição do CLI manda
@@ -1463,12 +1575,16 @@ export class MaestroSession {
 
       case 'rate_limit_event': {
         const info = evt.rate_limit_info
-        if (info && info.status && info.status !== 'allowed') {
-          const resets = info.resetsAt
-            ? ` · libera ${new Date(info.resetsAt * 1000).toLocaleTimeString('pt-BR')}`
-            : ''
-          this.emit({ type: 'limit', text: `rate limit do plano atingido (${info.status})${resets}` })
+        // A DISTINÇÃO (R21.1): a tradução inteira mora na função pura; aqui só
+        // fica a memória de estado (o que já foi anunciado e o que bloqueia).
+        const translated = translateGuiRateLimit(info, this.rateLimitKey)
+        this.rateLimitKey = translated.key
+        if (info?.status) {
+          this.rateLimitBlocked = guiRateLimitBlocks(info.status)
+            ? { status: info.status, resetsAt: info.resetsAt }
+            : null
         }
+        if (translated.event) this.emit(translated.event)
         break
       }
 
@@ -1520,10 +1636,13 @@ export class MaestroSession {
           // verificado): agente vivo é o que impede este terminal de virar o
           // desfecho visual — e é isso que dá UM plim por turno lógico.
           continues: this.activeTurnGeneration !== null || this.claudeTasks.size > 0,
+          // R21.3 — UMA VOZ para o limite: com o bloqueio ARMADO (fato
+          // estrutural do `rate_limit_event`, nunca as palavras do erro), o
+          // card fala PT-BR com a receita em vez do inglês cru do CLI.
           errorText: interrupted
             ? GUI_OWNER_INTERRUPT_LABEL
             : evt.is_error
-              ? (evt.result ?? 'erro sem detalhe')
+              ? (guiLimitResultText(this.rateLimitBlocked) ?? evt.result ?? 'erro sem detalhe')
               : undefined,
           resultText: typeof evt.result === 'string' && evt.result.trim() ? evt.result : undefined,
           contextTokens,

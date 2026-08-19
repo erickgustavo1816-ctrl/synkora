@@ -860,6 +860,15 @@ export default function GuiPane({
   const opening = gui.status === 'starting' || !gui.ready
   const working = gui.status === 'working'
   const turnOpen = working || gui.status === 'waiting-you'
+  // A TROCA DE CONTA NUNCA É BECO (R21.2, queixa do dono: "não consigo trocar
+  // a conta; o mouse vira uma bolinha rodando eternamente"). Trocar no meio do
+  // turno é LEGÍTIMO — é a fuga do rate limit —, e o main já aguenta: o
+  // `missions:setChatSeat` não tem guarda de ocupação nenhuma (sondado), ele
+  // transplanta a conversa e MATA as sessões vivas. Só o renderer trancava.
+  // O tip diz a verdade nova em vez de esconder o botão atrás do turno.
+  const seatTip = turnOpen
+    ? 'Trocar interrompe o turno atual e retoma a MESMA conversa na conta nova (mesmo CLI).'
+    : 'Conta desta conversa. Trocar mantém a conversa quando o CLI é o mesmo.'
   const spawnChangeLocked =
     dead || turnOpen || attaching || Boolean(busyMenu) || Boolean(gui.queued)
   const canSend = canSendGuiMessage(gui.status, gui.ready)
@@ -1513,10 +1522,10 @@ export default function GuiPane({
             <span className="gui-menu-host gui-head-seat">
               <button
                 className={`gui-head-seat-btn${openMenu === 'seat' ? ' open' : ''}`}
-                disabled={seatChanging || busyMenu !== null || attaching || turnOpen}
+                disabled={seatChanging || busyMenu !== null || attaching}
                 aria-haspopup="menu"
                 aria-expanded={openMenu === 'seat'}
-                data-tip={'Conta desta conversa. Trocar mantém a conversa quando o CLI é o mesmo.'}
+                data-tip={seatTip}
                 onClick={() => setOpenMenu((v) => (v === 'seat' ? null : 'seat'))}
               >
                 <span className="ghs-name">
@@ -1536,7 +1545,7 @@ export default function GuiPane({
                     <button
                       key={option.id}
                       className={`gui-menu-item${option.id === seatId ? ' active' : ''}`}
-                      disabled={seatChanging || busyMenu !== null || attaching || turnOpen}
+                      disabled={seatChanging || busyMenu !== null || attaching}
                       role="menuitem"
                       onClick={() => {
                         setOpenMenu(null)

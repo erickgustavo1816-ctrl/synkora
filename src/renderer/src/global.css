@@ -14226,7 +14226,11 @@ body.progress-overlay-page #root {
 
 .gui-head-seat-btn:disabled {
   opacity: 0.62;
-  cursor: wait;
+  /* R21.2 — cursor de espera é PROMESSA DE FIM, e desabilitado é ESTADO: a
+     "bolinha rodando eternamente" do print do dono nascia deste `wait`. A
+     opacidade já diz que o botão não aceita clique agora, e o motivo real
+     (trocando conta…) vira RÓTULO no próprio botão. */
+  cursor: default;
 }
 
 .gui-seat-error {

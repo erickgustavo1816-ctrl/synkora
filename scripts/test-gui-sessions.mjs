@@ -1208,6 +1208,9 @@ function claudeAgentSession() {
   session.interruptGeneration = null
   session.interruptRequestId = null
   session.interruptTimer = null
+  // Memória do limite (R21): estado já anunciado + o que bloqueia agora.
+  session.rateLimitKey = null
+  session.rateLimitBlocked = null
   return {
     session,
     events,
@@ -4953,4 +4956,191 @@ test('a proposta feita no MEIO da fala sobrevive ao result e volta do disco', (t
     ownerPlanDraftFixture,
     'depois do respawn o clique do dono ainda encontra o rascunho autoritativo'
   )
+})
+
+// ————— R21.1/R21.3 — O LIMITE FALA A VERDADE (print do dono, 2026-08-19) —————
+//
+// "tá avisando toda hora que o limite acabou" + a correção dele ao vivo: "não
+// acabou, porque ele tá rodando ainda — deve ser um aviso de que tá ACABANDO e
+// a gente tá entendendo que ACABOU. Tem que ter essa distinção." O `status` do
+// `rate_limit_event` é a distinção; nada aqui lê palavra de texto nenhum.
+
+const limitRules = () => import('../.tmp/gui-sessions-test/maestroSession.js')
+
+test('aviso de aproximação é NOTA e o esgotado é ERRO com a receita', async () => {
+  const { GUI_LIMIT_RECIPE, guiRateLimitBlocks, translateGuiRateLimit } = await limitRules()
+  const resetsAt = 1_800_000_000
+
+  // allowed_warning = AVISADO-E-AINDA-PERMITIDO (no print as edições seguem
+  // passando ✓ depois de cada card): NOTA, jamais card de erro.
+  const warned = translateGuiRateLimit({ status: 'allowed_warning', resetsAt }, null)
+  assert.equal(warned.event.type, 'command-output')
+  assert.match(warned.event.text, /APROXIMANDO \(allowed_warning\)/u)
+  assert.match(warned.event.text, /nada parou/u)
+  assert.match(warned.event.text, /renova \d{2}:\d{2}:\d{2}/u)
+  assert.doesNotMatch(warned.event.text, /atingido/u)
+
+  // Bloqueio de verdade continua ERRO — e agora nomeia a RECEITA: existe outra
+  // conta e a troca preserva a conversa (beco sem saída é bug de 1ª classe).
+  const blocked = translateGuiRateLimit({ status: 'rejected', resetsAt }, null)
+  assert.equal(blocked.event.type, 'limit')
+  assert.match(blocked.event.text, /^rate limit do plano atingido \(rejected\)/u)
+  assert.match(blocked.event.text, /libera \d{2}:\d{2}:\d{2}/u)
+  assert.ok(blocked.event.text.endsWith(GUI_LIMIT_RECIPE), 'o card termina na receita')
+
+  // Sem horário anunciado a frase não inventa relógio nenhum.
+  const noClock = translateGuiRateLimit({ status: 'rejected' }, null)
+  assert.doesNotMatch(noClock.event.text, /libera/u)
+  assert.ok(noClock.event.text.endsWith(GUI_LIMIT_RECIPE))
+
+  // A régua é o CAMPO do protocolo — nunca as palavras de um texto.
+  assert.equal(guiRateLimitBlocks('allowed'), false)
+  assert.equal(guiRateLimitBlocks('allowed_warning'), false)
+  assert.equal(guiRateLimitBlocks('rejected'), true)
+  assert.equal(guiRateLimitBlocks(undefined), false)
+})
+
+test('o mesmo estado de limite não re-emite; status/horário novos falam de novo', async () => {
+  const { translateGuiRateLimit } = await limitRules()
+  const resetsAt = 1_800_000_000
+  const first = translateGuiRateLimit({ status: 'allowed_warning', resetsAt }, null)
+  assert.ok(first.event, 'o primeiro carimbo do estado fala')
+
+  // O CLI reemite o evento a CADA request — era ISSO que virava "avisando toda
+  // hora" no fio do dono. Um carimbo por MUDANÇA de estado.
+  const again = translateGuiRateLimit({ status: 'allowed_warning', resetsAt }, first.key)
+  assert.equal(again.event, undefined)
+  assert.equal(again.key, first.key)
+
+  // Mudou o HORÁRIO: estado novo, fala de novo.
+  const later = translateGuiRateLimit(
+    { status: 'allowed_warning', resetsAt: resetsAt + 3_600 },
+    first.key
+  )
+  assert.equal(later.event?.type, 'command-output')
+
+  // Mudou o STATUS: o aviso virou bloqueio e o fio PRECISA saber.
+  const worse = translateGuiRateLimit({ status: 'rejected', resetsAt }, first.key)
+  assert.equal(worse.event?.type, 'limit')
+
+  // Liberado de novo: silêncio, e o carimbo é esquecido — o próximo aviso fala.
+  const freed = translateGuiRateLimit({ status: 'allowed', resetsAt }, worse.key)
+  assert.equal(freed.event, undefined)
+  assert.equal(freed.key, null)
+  assert.ok(translateGuiRateLimit({ status: 'allowed_warning', resetsAt }, freed.key).event)
+
+  // Evento sem status não é fato: não fala e não apaga o que já foi dito.
+  const noise = translateGuiRateLimit(undefined, worse.key)
+  assert.equal(noise.event, undefined)
+  assert.equal(noise.key, worse.key)
+})
+
+test('a voz da casa veste o erro do result só com o limite ARMADO', async () => {
+  const { GUI_LIMIT_RECIPE, guiLimitResultText } = await limitRules()
+  const now = Date.UTC(2026, 7, 19, 23, 0)
+  const resetsAt = Math.floor(now / 1000) + 1_200
+
+  // 2º print do dono: o card falava o inglês cru do CLI.
+  const dressed = guiLimitResultText({ status: 'rejected', resetsAt }, now)
+  assert.match(dressed, /^o turno parou no limite do plano \(rejected\)/u)
+  assert.match(dressed, /libera \d{2}:\d{2}:\d{2}/u)
+  assert.ok(dressed.endsWith(GUI_LIMIT_RECIPE))
+
+  // Sem estado armado o texto do próprio CLI passa intacto...
+  assert.equal(guiLimitResultText(null, now), undefined)
+  assert.equal(guiLimitResultText({ resetsAt }, now), undefined)
+  // ...e a janela VENCIDA desarma: vestir um erro novo com a voz do limite
+  // seria mentir na direção oposta.
+  assert.equal(
+    guiLimitResultText({ status: 'rejected', resetsAt: Math.floor(now / 1000) - 1 }, now),
+    undefined
+  )
+  // Bloqueio sem horário anunciado continua vestindo (não há prova de expiro).
+  assert.match(guiLimitResultText({ status: 'session_limit' }, now), /session_limit/u)
+})
+
+test('Claude: o aviso de aproximação não para o turno e não se repete a cada lote', () => {
+  const { events, line } = claudeAgentSession()
+  const resetsAt = Math.floor(Date.now() / 1000) + 3_600
+
+  line({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed_warning', resetsAt } })
+  const aviso = events.at(-1)
+  assert.equal(aviso.type, 'command-output', 'aviso é NOTA — o card de erro dizia que ACABOU')
+  assert.match(aviso.text, /APROXIMANDO/u)
+
+  // O CLI reemite o evento a cada request: o fio não recebe mais nada.
+  events.length = 0
+  for (let i = 0; i < 3; i += 1) {
+    line({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed_warning', resetsAt } })
+  }
+  assert.deepEqual(events, [], 'um carimbo por mudança de estado')
+
+  // E o turno que falha por OUTRO motivo continua com o texto do CLI: aviso
+  // não é bloqueio, então nada é vestido.
+  const outro = claudeAgentSession()
+  outro.session.activeTurnGeneration = 1
+  outro.session.pendingTurnGenerations = [1]
+  outro.line({
+    type: 'rate_limit_event',
+    rate_limit_info: { status: 'allowed_warning', resetsAt }
+  })
+  outro.events.length = 0
+  outro.line({ type: 'result', is_error: true, result: 'o turno explodiu' })
+  assert.equal(outro.events.at(-1).errorText, 'o turno explodiu')
+})
+
+test('Claude: bloqueio de verdade vira erro com receita e veste o result seguinte', () => {
+  const { session, events, line } = claudeAgentSession()
+  session.activeTurnGeneration = 1
+  session.pendingTurnGenerations = [1]
+  const resetsAt = Math.floor(Date.now() / 1000) + 1_800
+  const ingles = 'You have hit your session limit - resets 8:20pm'
+
+  line({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt } })
+  const card = events.at(-1)
+  assert.equal(card.type, 'limit')
+  assert.match(card.text, /atingido \(rejected\)/u)
+  assert.match(card.text, /troque a conta no cabeçalho do chat/u)
+
+  // O result que cai em cima fala PT-BR com a receita, no lugar do inglês cru.
+  events.length = 0
+  line({ type: 'result', is_error: true, result: ingles })
+  const result = events.at(-1)
+  assert.equal(result.type, 'result')
+  assert.equal(result.isError, true)
+  assert.match(result.errorText, /^o turno parou no limite do plano \(rejected\)/u)
+  assert.match(result.errorText, /a conversa continua na conta nova/u)
+  assert.doesNotMatch(result.errorText, /session limit/u, 'o inglês cru não é a voz da casa')
+  // A palavra final do CLI continua publicada intacta — é ela que o redutor
+  // compara com a última fala para matar a duplicata (R21.3, lado renderer).
+  assert.equal(result.resultText, ingles)
+})
+
+test('a tradução do limite tem fonte única e nenhuma heurística de conteúdo', () => {
+  const source = readFileSync(new URL('../src/main/maestroSession.ts', import.meta.url), 'utf8')
+  assert.match(
+    source,
+    /translateGuiRateLimit\(info, this\.rateLimitKey\)/u,
+    'a tradução do rate_limit_event mora na função pura'
+  )
+  assert.match(
+    source,
+    /guiLimitResultText\(this\.rateLimitBlocked\)/u,
+    'o result publica a voz da casa a partir do estado armado'
+  )
+  // Sinal ESTRUTURAL: o gatilho é o estado do protocolo, nunca uma varredura
+  // nas PALAVRAS do erro do CLI (heurística de conteúdo é proibida na casa).
+  assert.doesNotMatch(source, /evt\.result[^\n]*\.(?:includes|match|search)\(/u)
+  // E o ramo do evento não monta texto na mão: era ele que jogava TODO status
+  // não-allowed — o aviso inclusive — dentro do card de erro.
+  const limitCase = source.slice(
+    source.indexOf("case 'rate_limit_event': {"),
+    source.indexOf("case 'result': {")
+  )
+  assert.doesNotMatch(
+    limitCase,
+    /info\.status !== 'allowed'/u,
+    'o ramo antigo tratava allowed_warning como esgotado'
+  )
+  assert.doesNotMatch(limitCase, /type: 'limit'/u, 'o texto do limite tem fonte única')
 })

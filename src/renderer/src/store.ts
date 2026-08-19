@@ -16,7 +16,14 @@ import type {
 } from '../../preload/index'
 import { applyDeptHueVars, DEPT_HUES_LS_KEY, loadDeptHues } from './departments'
 import { versionPortrait } from './projectLanding'
-import { guiRoundClosed, guiRoundStampText, transitionGuiStartedAt } from './guiActivity'
+import {
+  guiResultEchoesSpeech,
+  guiRoundClosed,
+  guiRoundEarnsStamp,
+  guiRoundStampText,
+  trackGuiRoundWork,
+  transitionGuiStartedAt
+} from './guiActivity'
 import { claimGuiItemId, guiItemId } from './guiItemIdentity'
 import {
   countGuiOutputLines,
@@ -484,6 +491,9 @@ export interface GuiPaneState {
   status: GuiPaneStatus
   /** relógio do turno; sobrevive a waiting-you e zera em idle/dead */
   startedAt: number | null
+  /** a rodada em curso PRODUZIU alguma coisa (item novo depois que ela abriu)
+   *  — o que separa a rodada de verdade da fantasma na hora do selo (R21.4) */
+  roundWorked: boolean
   /** atividade factual (ex.: ferramenta real); vence o verbo cosmético */
   activityText: string | null
   sessionId: string | null
@@ -542,6 +552,7 @@ export const EMPTY_GUI_PANE: GuiPaneState = {
   caps: null,
   status: 'starting',
   startedAt: null,
+  roundWorked: false,
   activityText: null,
   sessionId: null,
   model: null,
@@ -1333,9 +1344,21 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           })
         }
       } else if (evt.isError || evt.outcome === 'failed' || orphanedTool) {
+        // A DUPLICATA MORRE (R21.3): num erro de verdade o CLI diz a MESMA
+        // frase duas vezes — como fala do stream e como palavra final do turno
+        // (`resultText`, que é a fonte do card). Quando a última fala é
+        // idêntica a ela, fica só o CARD: é ele que carrega a voz da casa e a
+        // receita. Lado escolhido pelo raio de efeito: soltar o item já
+        // fechado do fim da lista não mexe em id, fila nem status de ninguém.
+        // Comparação estrutural de igualdade — o conteúdo nunca é lido.
+        const spoken = next.items[next.items.length - 1]
+        const echoed =
+          (evt.isError || evt.outcome === 'failed') &&
+          spoken?.kind === 'assistant' &&
+          guiResultEchoesSpeech(spoken.text, evt.resultText)
         next = {
           ...next,
-          items: pushGuiItem(next.items, {
+          items: pushGuiItem(echoed ? next.items.slice(0, -1) : next.items, {
             id: guiItemId(),
             kind: 'error',
             text:
@@ -1495,7 +1518,17 @@ export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPan
   // rodada concluída e não ganha carimbo. Trade-off aceito e conhecido: o
   // selo é item derivado, não renasce no replay pós-boot (mesma classe das
   // notas de turno interrompido).
-  if (guiRoundClosed(state.startedAt, next.startedAt, next.status)) {
+  //
+  // R21.4 — e SÓ carimba a rodada que trabalhou: `results` encadeados abrem e
+  // fecham uma rodada de 0s (o segundo chega instantâneo), e o `0:00` daquela
+  // rodada fantasma era ruído que enganava. O trabalho lido é o de ANTES deste
+  // evento: o card do próprio fecho não promove fantasma a rodada.
+  const appendedItem =
+    next.items[next.items.length - 1]?.id !== state.items[state.items.length - 1]?.id
+  if (
+    guiRoundClosed(state.startedAt, next.startedAt, next.status) &&
+    guiRoundEarnsStamp(Date.now() - (state.startedAt ?? 0), state.roundWorked)
+  ) {
     next = {
       ...next,
       items: pushGuiItem(next.items, {
@@ -1506,7 +1539,16 @@ export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPan
       })
     }
   }
-  return { ...next, eventRevision: state.eventRevision + 1 }
+  return {
+    ...next,
+    roundWorked: trackGuiRoundWork(
+      state.startedAt,
+      next.startedAt,
+      state.roundWorked,
+      appendedItem
+    ),
+    eventRevision: state.eventRevision + 1
+  }
 }
 
 export interface Pane {
