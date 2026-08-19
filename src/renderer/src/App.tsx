@@ -53,6 +53,14 @@ export default function App(): React.JSX.Element {
           useStore.getState().addPane(projectId, kind as PaneKind, opts as PaneOptions)
         )
       : () => undefined
+    // ...e MORRE pelo mesmo canal (R11 — o bug da aba eterna: o main ecoava o
+    // fecho e ninguém ouvia; a aba do teste ficava na tela com o processo já
+    // morto). O optional chaining cobre preload antigo em janela viva.
+    const offCloseById = window.synkora.panes.onCloseById
+      ? window.synkora.panes.onCloseById((projectId, paneId) =>
+          useStore.getState().closePane(projectId, paneId)
+        )
+      : () => undefined
     const offStats = window.synkora.pty.onStats(setPaneStats)
     const offEffort = window.synkora.pty.onEffort
       ? window.synkora.pty.onEffort(useStore.getState().setPaneEffort)
@@ -85,6 +93,7 @@ export default function App(): React.JSX.Element {
       offFilesNav()
       offSettings()
       offOpenFree()
+      offCloseById()
       offProgressTarget()
       offProjectFlow()
       offSeats()

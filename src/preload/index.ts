@@ -787,6 +787,20 @@ const api = {
      *  ecoa panes:closeById para as duas views. */
     requestClose: (projectId: string, paneId: string): void =>
       ipcRenderer.send('panes:requestClose', projectId, paneId),
+    /**
+     * O OUVINTE do eco acima (R11, 19/08 — o bug da ABA ETERNA): o main sempre
+     * ecoou `panes:closeById` ao matar um pane (derrubar teste, integração
+     * fechando o worktree, missão arquivada), mas o listener do renderer
+     * morreu junto com a aba PANES da onda D — a aba do terminal ficava na
+     * tela para sempre, com o processo já morto. Quem ouve é o App, que
+     * despacha ao `closePane` do store.
+     */
+    onCloseById: (cb: (projectId: string, paneId: string) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, projectId: string, paneId: string): void =>
+        cb(projectId, paneId)
+      ipcRenderer.on('panes:closeById', listener)
+      return () => ipcRenderer.removeListener('panes:closeById', listener)
+    },
     /** Servidor de teste do dono: pane shell no worktree da missão/versão com
      *  o script de runtime já digitado (o usuário escolhe a porta). */
     testServerSpec: (

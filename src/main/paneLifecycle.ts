@@ -244,6 +244,10 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
   /** Encerra um pane pelo id mesmo quando o registro do Hub ja se perdeu. */
   function terminatePaneNow(projectId: string, paneId: string): void {
     pendingPtyPreparations.delete(paneId)
+    // R11: o registro do servidor de teste morre no fecho MANUAL também — com
+    // ou sem PTY vivo (o exit natural deixava o registro órfão; inofensivo
+    // para o mapa de portas, mas sujeira que mente sobre o que existe).
+    testServerPanes.delete(paneId)
     const hadPty = ptys.has(paneId)
     unregisterPane(paneId)
     livePaneSpecs.delete(paneId)

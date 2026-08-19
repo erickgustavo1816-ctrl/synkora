@@ -3299,3 +3299,34 @@ test('o eco do ⇪ vira ESTADO — só a RECUSA sobe para a faixa', () => {
   assert.match(board, /integrationQueueRows\(/u)
   assert.match(board, /from '\.\.\/integrationQueuePresentation'/u)
 })
+
+// ————— O BUG DA ABA ETERNA (19/08, teste ao vivo do dono) —————
+//
+// "Eu tava clicando em derrubar teste, clicando em fechar a aba e não fechava
+// de jeito nenhum." O main matava o processo e ECOAVA panes:closeById — mas
+// NINGUÉM no renderer assinava o evento (o listener morreu com a aba PANES da
+// onda D). O pane ficava na lista para sempre: aba eterna, botão de derrubar
+// eterno, clique visualmente morto.
+
+test('o eco panes:closeById tem OUVINTE: preload expõe e o App fecha o pane', () => {
+  const preload = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8')
+  assert.match(preload, /'panes:closeById'/u, 'o preload tem de assinar o eco do main')
+  assert.match(preload, /onCloseById/u, 'a assinatura precisa de nome na bridge')
+  const app = readFileSync(new URL('../src/renderer/src/App.tsx', import.meta.url), 'utf8')
+  assert.match(app, /onCloseById/u, 'o App tem de ouvir o eco')
+  assert.match(
+    app.slice(app.indexOf('onCloseById')),
+    /closePane\(/u,
+    'o eco tem de terminar no closePane — é ele que tira o pane da lista'
+  )
+})
+
+test('derrubar teste com o PTY já morto ainda LIMPA o registro do servidor', () => {
+  const lifecycle = readFileSync(new URL('../src/main/paneLifecycle.ts', import.meta.url), 'utf8')
+  const terminate = lifecycle.slice(lifecycle.indexOf('function terminatePaneNow'))
+  assert.match(
+    terminate.slice(0, 600),
+    /testServerPanes\.delete\(paneId\)/u,
+    'o registro do test server tem de morrer no fecho manual, com ou sem PTY vivo'
+  )
+})

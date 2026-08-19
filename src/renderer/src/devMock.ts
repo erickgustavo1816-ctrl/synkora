@@ -768,7 +768,9 @@ export function installDevMock(): void {
           openFreeCb = null
         }
       },
-      requestClose: () => undefined
+      requestClose: () => undefined,
+      // R11: o preview não tem main para ecoar fecho — ouvinte inerte.
+      onCloseById: () => () => undefined
     },
     // O namespace `maestro` (chat do PM + ask_user) morreu na purga F6.
     perf: {
