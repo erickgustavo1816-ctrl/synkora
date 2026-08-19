@@ -456,6 +456,23 @@ test('o ajudante espera a fatia antes de tocar em arquivo', () => {
   assert.match(prompt, /wait for the specific slice/i)
 })
 
+// R15 — O WORKTREE NASCE MOBILIADO: o briefing tem que dizer a verdade nova, ou
+// o dev repete a rodada perdida diagnosticando "faltou instalar".
+
+test('o briefing do dev anuncia o node_modules compartilhado por junction', () => {
+  const prompt = guiMissionFirstPrompt('dev', {
+    title: 'Tela de créditos',
+    branch: 'mission/7e31d314'
+  })
+  // condicional: projeto que não é node não recebe promessa falsa
+  assert.match(prompt, /When the project has node_modules at its root/u)
+  assert.match(prompt, /born sharing it through a junction/u)
+  // a rodada perdida que originou a frase
+  assert.match(prompt, /never diagnose a missing install before checking/u)
+  // e a consequência do compartilhamento: instalar aqui mexe no store do projeto
+  assert.match(prompt, /NEW dependency installed here lands in the project's shared store/u)
+})
+
 // ————— O ⇪ DO DONO TE FAZ O INTEGRADOR (rodada 9, 2026-08-19 — design I4) —————
 //
 // Palavras dele: "quando eu clico em subir, o certo é avisar o agente — 'tá

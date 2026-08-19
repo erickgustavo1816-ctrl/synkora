@@ -3,10 +3,15 @@ import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  realpathSync,
   rmSync,
+  rmdirSync,
+  unlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -953,4 +958,226 @@ test('branch inexistente vira veredito honesto, nunca avanço presumido', (t) =>
   assert.equal(result.outcome, 'unavailable')
   assert.equal(result.baseBranch, 'version/nunca-existiu')
   assert.equal(syncVersionBaseWithMain(root, '   ').outcome, 'unavailable')
+})
+
+// ————— R15: O WORKTREE NASCE MOBILIADO (junction de node_modules) —————
+//
+// A CRIAÇÃO era a metade que faltava: a remoção já é à prova de junction desde
+// o incidente 02/08 (neutralizeReparsePoints desarma o LINK antes de qualquer
+// deleção recursiva). Tudo aqui roda em DISCO REAL do Windows — junction de
+// verdade, nada mocado — e a limpeza destes testes JAMAIS deleta recursivamente
+// através de um link vivo: é exatamente a lição que a feature encoda.
+
+const PLANTED = 'marca do store do projeto\n'
+
+/** Desarma todo link DENTRO da árvore (remove só o LINK, nunca o alvo) antes de
+ *  qualquer deleção recursiva — a mesma receita de neutralizeReparsePoints. */
+function disarmLinks(root) {
+  const stack = [root]
+  while (stack.length > 0) {
+    const dir = stack.pop()
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name)
+      if (entry.isSymbolicLink()) {
+        try {
+          rmdirSync(full)
+        } catch {
+          try {
+            unlinkSync(full)
+          } catch {
+            /* nada a fazer: o teste já terminou */
+          }
+        }
+        continue
+      }
+      if (entry.isDirectory()) stack.push(full)
+    }
+  }
+}
+
+function cleanupTree(dir) {
+  disarmLinks(dir)
+  rmSync(dir, { recursive: true, force: true })
+}
+
+/** Projeto NODE de verdade: repo com node_modules ignorado e um store real na
+ *  raiz, com pacote plantado que prova de que LADO o link resolve. */
+function initializeNodeProject(t, prefix, { store = true, ignore = true } = {}) {
+  const root = mkdtempSync(join(tmpdir(), prefix))
+  t.after(() => cleanupTree(root))
+  git(root, ['init'])
+  git(root, ['config', 'user.name', 'Synkora Test'])
+  git(root, ['config', 'user.email', 'synkora-test@example.invalid'])
+  // `ignore: false` é o projeto REAL sem a linha no .gitignore — o caso da
+  // cinta do check-ignore (mobiliar ali deixaria o worktree eternamente sujo).
+  if (ignore) writeFileSync(join(root, '.gitignore'), 'node_modules/\n', 'utf8')
+  writeFileSync(join(root, 'base.txt'), 'base\n', 'utf8')
+  git(root, ['add', ...(ignore ? ['.gitignore'] : []), 'base.txt'])
+  git(root, ['commit', '-m', 'base'])
+  if (store) plantStore(root)
+  return root
+}
+
+function plantStore(root) {
+  mkdirSync(join(root, 'node_modules', 'pacote-plantado'), { recursive: true })
+  writeFileSync(join(root, 'node_modules', 'pacote-plantado', 'index.js'), PLANTED, 'utf8')
+}
+
+/** Pasta de worktrees cuja limpeza DESARMA os links (a helper genérica apaga
+ *  recursivamente e não pode receber junction viva). */
+function initializeLinkSafeWorktrees(t, prefix) {
+  const directory = mkdtempSync(join(tmpdir(), prefix))
+  t.after(() => cleanupTree(directory))
+  return directory
+}
+
+/** Mobília provada: é LINK (não cópia) e resolve NO store do projeto. */
+function assertFurnished(root, worktreeDir) {
+  const link = join(worktreeDir, 'node_modules')
+  assert.equal(lstatSync(link).isSymbolicLink(), true, 'node_modules do worktree não é link')
+  assert.equal(
+    readFileSync(join(link, 'pacote-plantado', 'index.js'), 'utf8'),
+    PLANTED,
+    'o link não resolve no store do projeto'
+  )
+  assert.equal(realpathSync(link), realpathSync(join(root, 'node_modules')))
+}
+
+test('missão nasce mobiliada: node_modules é junction que resolve no store do projeto', (t) => {
+  const root = initializeNodeProject(t, 'synkora-mobiliado-missao-')
+  const worktrees = initializeLinkSafeWorktrees(t, 'synkora-mobiliado-missao-wt-')
+
+  const mission = createMissionWorktree(root, worktrees, 'mobiliado-missao')
+  assert.ok(mission)
+  assertFurnished(root, mission.dir)
+  // mobília não entra no diff da missão: o worktree continua limpo
+  assert.equal(git(mission.dir, ['status', '--porcelain']), '')
+})
+
+test('versão nasce mobiliada pela mesma receita da missão', (t) => {
+  const root = initializeNodeProject(t, 'synkora-mobiliado-versao-')
+  const worktrees = initializeLinkSafeWorktrees(t, 'synkora-mobiliado-versao-wt-')
+
+  const version = createVersionWorktree(root, worktrees, 'v1.2', 'v12')
+  assert.ok(version)
+  assertFurnished(root, version.dir)
+  assert.equal(git(version.dir, ['status', '--porcelain']), '')
+})
+
+test('projeto sem node_modules na raiz não ganha link nem erro', (t) => {
+  const root = initializeNodeProject(t, 'synkora-sem-store-', { store: false })
+  const worktrees = initializeLinkSafeWorktrees(t, 'synkora-sem-store-wt-')
+
+  const mission = createMissionWorktree(root, worktrees, 'sem-store')
+  // criação segue viva: mobília ausente nunca derruba o worktree
+  assert.ok(mission)
+  assert.equal(isExpectedWorktree(root, mission.dir, mission.branch), true)
+  assert.equal(existsSync(join(mission.dir, 'node_modules')), false)
+  assert.equal(git(mission.dir, ['status', '--porcelain']), '')
+})
+
+test('worktree pré-R15 ganha a mobília na remontagem', (t) => {
+  const root = initializeNodeProject(t, 'synkora-remontagem-')
+  const worktrees = initializeLinkSafeWorktrees(t, 'synkora-remontagem-wt-')
+
+  const first = createMissionWorktree(root, worktrees, 'remontagem')
+  assert.ok(first)
+  // volta ao estado pré-R15: rmdir tira só o LINK, jamais o alvo
+  rmdirSync(join(first.dir, 'node_modules'))
+  assert.equal(existsSync(join(first.dir, 'node_modules')), false)
+  assert.equal(
+    readFileSync(join(root, 'node_modules', 'pacote-plantado', 'index.js'), 'utf8'),
+    PLANTED,
+    'derrubar o link tocou o store do projeto'
+  )
+
+  const again = createMissionWorktree(root, worktrees, 'remontagem')
+  assert.deepEqual(again, first, 'a remontagem tem que devolver o MESMO par dir/branch')
+  assertFurnished(root, first.dir)
+})
+
+test('node_modules materializado no worktree nunca é sobrescrito pela mobília', (t) => {
+  const root = initializeNodeProject(t, 'synkora-materializado-')
+  const worktrees = initializeLinkSafeWorktrees(t, 'synkora-materializado-wt-')
+
+  const mission = createMissionWorktree(root, worktrees, 'materializado')
+  assert.ok(mission)
+  rmdirSync(join(mission.dir, 'node_modules'))
+  // npm install de agente DENTRO do worktree: pasta real, não link
+  const local = join(mission.dir, 'node_modules', 'pacote-local')
+  mkdirSync(local, { recursive: true })
+  writeFileSync(join(local, 'index.js'), 'instalado no worktree\n', 'utf8')
+
+  const again = createMissionWorktree(root, worktrees, 'materializado')
+  assert.deepEqual(again, mission)
+  assert.equal(
+    lstatSync(join(mission.dir, 'node_modules')).isSymbolicLink(),
+    false,
+    'a mobília trocou uma instalação real por um link'
+  )
+  assert.equal(readFileSync(join(local, 'index.js'), 'utf8'), 'instalado no worktree\n')
+  assert.equal(existsSync(join(mission.dir, 'node_modules', 'pacote-plantado')), false)
+})
+
+test('contrato do ensure: linked, already, no-source e falha legível em vez de exceção', async (t) => {
+  const { ensureNodeModulesLink } = await import('../.tmp/mission-worktree-test/nodeModulesLink.js')
+  const root = initializeNodeProject(t, 'synkora-ensure-contrato-', { store: false })
+  const worktrees = initializeLinkSafeWorktrees(t, 'synkora-ensure-contrato-wt-')
+  const mission = createMissionWorktree(root, worktrees, 'ensure-contrato')
+  assert.ok(mission)
+
+  assert.equal(ensureNodeModulesLink(root, mission.dir), 'no-source')
+  assert.equal(existsSync(join(mission.dir, 'node_modules')), false)
+
+  // o dono instala no projeto: a próxima passada mobilia
+  plantStore(root)
+  assert.equal(ensureNodeModulesLink(root, mission.dir), 'linked')
+  assertFurnished(root, mission.dir)
+  assert.equal(ensureNodeModulesLink(root, mission.dir), 'already', 'link existente foi refeito')
+
+  // falha vira valor legível, nunca exceção — criar worktree não morre por mobília
+  const missing = ensureNodeModulesLink(root, join(worktrees, 'worktree-que-nao-existe'))
+  assert.equal(typeof missing, 'object')
+  assert.ok(missing.error.length > 0)
+  // caminho vazio jamais resolve contra o cwd do app
+  assert.equal(typeof ensureNodeModulesLink('', mission.dir), 'object')
+  assert.equal(typeof ensureNodeModulesLink(root, '  '), 'object')
+})
+
+test('node_modules NÃO ignorado no git: a mobília recusa em vez de sujar o worktree para sempre', async (t) => {
+  const { ensureNodeModulesLink } = await import('../.tmp/mission-worktree-test/nodeModulesLink.js')
+  const root = initializeNodeProject(t, 'synkora-sem-ignore-', { ignore: false })
+  const worktrees = initializeLinkSafeWorktrees(t, 'synkora-sem-ignore-wt-')
+  const mission = createMissionWorktree(root, worktrees, 'sem-ignore')
+  assert.ok(mission)
+
+  // Sem a cinta, a junction viraria milhares de untracked e `isWorktreeClean`
+  // diria "sujo" PARA SEMPRE — o ⇪ da missão passaria a ser recusado no gate.
+  assert.equal(ensureNodeModulesLink(root, mission.dir), 'not-ignored')
+  assert.equal(existsSync(join(mission.dir, 'node_modules')), false, 'a mobília entrou mesmo sem ignore')
+  assert.equal(git(mission.dir, ['status', '--porcelain']), '', 'o worktree nasceu sujo')
+})
+
+test('SEGURO da remoção: worktree mobiliado sai inteiro e o store do projeto sobrevive', (t) => {
+  const root = initializeNodeProject(t, 'synkora-seguro-remocao-')
+  const worktrees = initializeLinkSafeWorktrees(t, 'synkora-seguro-remocao-wt-')
+
+  const mission = createMissionWorktree(root, worktrees, 'seguro-remocao')
+  assert.ok(mission)
+  assertFurnished(root, mission.dir)
+
+  assert.equal(removeWorktreeAndBranch(root, mission.dir, mission.branch), true)
+  assert.equal(existsSync(mission.dir), false)
+  // o alvo do link segue INTACTO: a deleção não atravessou a junction
+  assert.equal(
+    readFileSync(join(root, 'node_modules', 'pacote-plantado', 'index.js'), 'utf8'),
+    PLANTED,
+    'a remoção atravessou a junction e esvaziou o store do projeto'
+  )
 })

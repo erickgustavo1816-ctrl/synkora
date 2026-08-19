@@ -287,9 +287,13 @@ You are a helper on this mission and you share the worktree with the developer. 
 
 ${OWNER_MESSAGE_SEAM}`
   }
+  // R15 — o worktree nasce MOBILIADO (junction de node_modules para o store do
+  // projeto). Sem esta frase o dev queima a primeira rodada diagnosticando
+  // "faltou instalar". Fraseado CONDICIONAL: o briefing é estático e não pode
+  // mentir para projeto que não é node.
   return `${head}
 
-This worktree${mission.branch ? ` (branch ${mission.branch})` : ''} is yours for this mission. Your VERY FIRST output — before any tool call — is a 2-3 line note in PT-BR restating the goal as you understood it. Then study what already exists here; if the work is large, post a mini-plan of at most 5 lines and wait for the owner's go before implementing.
+This worktree${mission.branch ? ` (branch ${mission.branch})` : ''} is yours for this mission. Your VERY FIRST output — before any tool call — is a 2-3 line note in PT-BR restating the goal as you understood it. Then study what already exists here; if the work is large, post a mini-plan of at most 5 lines and wait for the owner's go before implementing. When the project has node_modules at its root, this worktree is born sharing it through a junction — typecheck and tests work immediately, so never diagnose a missing install before checking, and a NEW dependency installed here lands in the project's shared store.
 
 ${OWNER_MESSAGE_SEAM}`
 }

@@ -12,6 +12,7 @@ import {
   type Dirent
 } from 'fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
+import { ensureNodeModulesLink } from './nodeModulesLink'
 import { freshWindowsPath } from './winPath'
 
 // Worktree por tarefa (F3): cada execução roda em worktrees/<task> numa branch
@@ -1414,8 +1415,13 @@ export function createMissionWorktree(
 ): TaskWorktree | null {
   const { dir, branch } = missionWorktreeDescriptor(baseDir, missionId)
   try {
-    if (existsSync(dir))
-      return isExpectedWorktree(projectPath, dir, branch) ? { dir, branch } : null
+    if (existsSync(dir)) {
+      if (!isExpectedWorktree(projectPath, dir, branch)) return null
+      // REMONTAGEM: worktree criado antes da R15 ganha a mobília aqui — é o
+      // único momento em que passamos por ele de novo.
+      ensureNodeModulesLink(projectPath, dir)
+      return { dir, branch }
+    }
     mkdirSync(dirname(dir), { recursive: true })
     try {
       const args = ['worktree', 'add', '-b', branch, dir]
@@ -1425,7 +1431,12 @@ export function createMissionWorktree(
       git(projectPath, ['worktree', 'prune'])
       git(projectPath, ['worktree', 'add', dir, branch])
     }
-    return isExpectedWorktree(projectPath, dir, branch) ? { dir, branch } : null
+    if (!isExpectedWorktree(projectPath, dir, branch)) return null
+    // O worktree nasce MOBILIADO: junction de node_modules para o store do
+    // projeto (nodeModulesLink.ts). Falha de mobília não derruba a criação —
+    // o retorno do ensure é diagnóstico, nunca condição.
+    ensureNodeModulesLink(projectPath, dir)
+    return { dir, branch }
   } catch {
     return null
   }
@@ -1452,8 +1463,12 @@ export function createVersionWorktree(
   const branch = `version/${identity}`
   const dir = join(baseDir, `version-${identity}`)
   try {
-    if (existsSync(dir))
-      return isExpectedWorktree(projectPath, dir, branch) ? { dir, branch } : null
+    if (existsSync(dir)) {
+      if (!isExpectedWorktree(projectPath, dir, branch)) return null
+      // Mesma remontagem da missão: versão aberta antes da R15 se mobilia aqui.
+      ensureNodeModulesLink(projectPath, dir)
+      return { dir, branch }
+    }
     mkdirSync(dirname(dir), { recursive: true })
     try {
       git(projectPath, ['worktree', 'add', '-b', branch, dir])
@@ -1461,7 +1476,9 @@ export function createVersionWorktree(
       git(projectPath, ['worktree', 'prune'])
       git(projectPath, ['worktree', 'add', dir, branch])
     }
-    return isExpectedWorktree(projectPath, dir, branch) ? { dir, branch } : null
+    if (!isExpectedWorktree(projectPath, dir, branch)) return null
+    ensureNodeModulesLink(projectPath, dir)
+    return { dir, branch }
   } catch {
     return null
   }

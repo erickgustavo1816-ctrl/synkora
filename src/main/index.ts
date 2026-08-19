@@ -2566,12 +2566,15 @@ app.whenReady().then(async () => {
   // Bypass de permissões é o PADRÃO (fluxo reto, como no overclock);
   // o toggle 🛡 religa as aprovações por projeto.
 
-  /** Worktree recém-criado NÃO tem node_modules — a verificação conjunta caía
-   *  em paridade de ambiente quebrado (armadilha prevista no handoff; caso
-   *  real 2026-08-04: typecheck/test/lint reprovaram a M01 PRONTA e o card
-   *  voltou ao dev por falta de bootstrap). Roda `npm ci` UMA vez, somente
-   *  quando o manifesto pede e o lockfile existe; falha vira evento — a
-   *  verificação segue e acusa com contexto, nunca em silêncio. */
+  /** Desde a R15 o worktree de projeto node nasce MOBILIADO (junction de
+   *  node_modules — nodeModulesLink.ts) e este bootstrap vira no-op no caso
+   *  comum; ele FICA para os casos em que a mobília não veio (projeto sem a
+   *  linha no .gitignore, store ausente na raiz). A lição original: worktree
+   *  sem node_modules caía em paridade de ambiente quebrado (caso real
+   *  2026-08-04: typecheck/test/lint reprovaram a M01 PRONTA e o card voltou
+   *  ao dev por falta de bootstrap). Roda `npm ci` UMA vez, somente quando o
+   *  manifesto pede e o lockfile existe; falha vira evento — a verificação
+   *  segue e acusa com contexto, nunca em silêncio. */
   // CHECK 1 (2026-08-07): até 4 npm ci CONCORRENTES (baselines da onda + devs
   // restaurando lockfile) saturavam o disco e as congeladas da UI coincidiam
   // com essas janelas. UM bootstrap por vez — segundos de fila custam menos
