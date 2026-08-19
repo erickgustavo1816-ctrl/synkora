@@ -663,6 +663,19 @@ export class MaestroSession {
    *  como se fosse dele. */
   private turnContextTokens: number | undefined = undefined
 
+  /**
+   * RÉGUA ÚNICA DA JANELA deste processo. A medição do CLI manda
+   * (`claudeReportedContextWindow` no `result`, memorizada em `measuredWindow`);
+   * o piso curado só cobre o intervalo até o primeiro `result` deste modelo.
+   *
+   * O `init` e o `context-usage` ao vivo (R20.1) leem DAQUI de propósito: com
+   * uma régua só, a janela anunciada no meio do turno e a do fecho do turno não
+   * têm como contar histórias diferentes.
+   */
+  private contextWindowNow(): number {
+    return this.measuredWindow ?? claudeCuratedContextWindow(this.initModel ?? '')
+  }
+
   constructor(opts: MaestroSessionOpts, emit: (evt: SessionEvent) => void) {
     this.opts = opts
     this.emit = emit
@@ -1210,8 +1223,9 @@ export class MaestroSession {
             toolCount: evt.tools?.length ?? 0,
             // PISO só enquanto não há medição. Depois do primeiro `result`
             // deste modelo a janela REAL manda — o init repete a cada turno, e
-            // reanunciar o piso apagaria a medição a cada volta.
-            contextWindow: this.measuredWindow ?? claudeCuratedContextWindow(model)
+            // reanunciar o piso apagaria a medição a cada volta. A régua é a
+            // MESMA do evento vivo (`contextWindowNow`).
+            contextWindow: this.contextWindowNow()
           })
           break
         }
@@ -1264,7 +1278,24 @@ export class MaestroSession {
         // somá-la aqui inflaria a janela da conversa do dono.
         if (!parentToolUseId) {
           const measured = claudeMessageContextTokens(evt.message?.usage)
-          if (measured !== undefined) this.turnContextTokens = measured
+          if (measured !== undefined) {
+            this.turnContextTokens = measured
+            // R20.1 — PARIDADE COM O CODEX: a medição é publicada NO INSTANTE em
+            // que nasce, não retida até o `result`. O codex já faz exatamente
+            // isto a cada `thread/tokenUsage/updated` (uma chamada de API = um
+            // evento); segurar a do claude até o fecho congelava o medidor por
+            // todo um turno longo — a queixa do dono. Sem throttle: é a mesma
+            // classe de frequência do codex e o anel guarda `context-usage`
+            // como STICKY (só a última fica, o transcript não incha).
+            // A JANELA sai da régua única (`contextWindowNow`), a mesma que o
+            // `result` alimenta com `claudeReportedContextWindow`: evento vivo e
+            // fecho do turno nunca anunciam janelas diferentes.
+            this.emit({
+              type: 'context-usage',
+              contextTokens: measured,
+              contextWindow: this.contextWindowNow()
+            })
+          }
         }
         for (const block of content) {
           if (block.type === 'text' && block.text && !parentToolUseId) {

@@ -4115,6 +4115,140 @@ test('a medição não vaza de um turno para o outro', () => {
   assert.equal(events.find((event) => event.type === 'result').contextTokens, undefined)
 })
 
+// ————— R20.1: o medidor anda DURANTE o turno (paridade com o codex) —————
+//
+// Queixa do dono (2026-08-19): "o contexto não tá atualizando no ao vivo
+// conforme o chat vai correndo — igual acontece no Claude Code e no Codex".
+// A medição certa JÁ nascia a cada mensagem assistant (bloco acima), mas ficava
+// RETIDA no campo privado até o `result`: num turno de minutos com ferramentas
+// o medidor congelava a conversa inteira. O codex publica `context-usage` a
+// cada chamada de API (`thread/tokenUsage/updated`) — o claude passa a publicar
+// na MESMA hora em que a medição nasce.
+
+test('cada chamada de API publica context-usage NA HORA, sem esperar o result', () => {
+  const { session, events, line } = claudeAgentSession()
+  line({ type: 'system', subtype: 'init', session_id: 's-ctx', model: 'claude-fable-5' })
+  events.length = 0
+
+  // As TRÊS chamadas reais do turno do dono (mesmo fixture do JSONL acima).
+  claudeApiCall(line, { cacheRead: 174_276, cacheCreate: 335, out: 1_217 })
+  claudeApiCall(line, { cacheRead: 174_611, cacheCreate: 1_335, out: 256 })
+  claudeApiCall(line, { cacheRead: 175_946, cacheCreate: 387, out: 334 })
+
+  const live = events.filter((event) => event.type === 'context-usage')
+  assert.deepEqual(
+    live.map((event) => event.contextTokens),
+    [175_830, 176_204, 176_669],
+    'o medidor acompanha o turno em vez de congelar até o fecho'
+  )
+  // Nunca o agregado (as três somadas dão 528.703, que não é ocupação de janela).
+  assert.deepEqual(
+    live.map((event) => event.contextWindow),
+    [1_000_000, 1_000_000, 1_000_000]
+  )
+
+  // E o `result` continua carregando a fotografia final, exatamente como antes.
+  claudeTurnResult(session, line, {
+    usage: {
+      input_tokens: 6,
+      cache_creation_input_tokens: 2_057,
+      cache_read_input_tokens: 524_833,
+      output_tokens: 1_807
+    }
+  })
+  assert.equal(events.find((event) => event.type === 'result').contextTokens, 176_669)
+})
+
+test('mensagem de subagente não publica medição ao vivo', () => {
+  const { events, line } = claudeAgentSession()
+  const liveTokens = () =>
+    events.filter((event) => event.type === 'context-usage').map((event) => event.contextTokens)
+  line({ type: 'system', subtype: 'init', session_id: 's-ctx', model: 'claude-fable-5' })
+  events.length = 0
+
+  claudeApiCall(line, { cacheRead: 120_000, cacheCreate: 500, out: 300 })
+  assert.deepEqual(liveTokens(), [120_802], 'a chamada do dono publica na hora')
+
+  // O subagente tem contexto PRÓPRIO: publicá-lo faria o medidor do dono saltar
+  // para a janela de outra conversa no meio do turno.
+  claudeApiCall(line, { cacheRead: 900_000, cacheCreate: 0, out: 10, parentToolUseId: 'toolu_x' })
+  assert.deepEqual(liveTokens(), [120_802], 'o ajudante não mexe no medidor do dono')
+})
+
+test('mensagem sintética de comando local não publica medição ao vivo', () => {
+  const { events, line } = claudeAgentSession()
+  const liveTokens = () =>
+    events.filter((event) => event.type === 'context-usage').map((event) => event.contextTokens)
+  line({ type: 'system', subtype: 'init', session_id: 's-ctx', model: 'claude-fable-5' })
+  events.length = 0
+
+  claudeApiCall(line, { cacheRead: 175_946, cacheCreate: 387, out: 334 })
+  assert.deepEqual(liveTokens(), [176_669])
+
+  // /usage e /context respondem com `usage` todo zerado: zero NÃO é medição, e
+  // no redutor o `context-usage` é atribuição direta — publicá-lo APAGARIA o
+  // medidor bom no meio do turno.
+  line({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: {
+      role: 'assistant',
+      usage: {
+        input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        output_tokens: 0
+      },
+      content: [{ type: 'text', text: 'Current session: 48% used' }]
+    }
+  })
+  assert.deepEqual(liveTokens(), [176_669], 'medição ausente não vira publicação de zero')
+})
+
+test('a janela do evento vivo é a MESMA fonte do result — uma régua só', () => {
+  const { session, events, line } = claudeAgentSession()
+  const liveWindow = () =>
+    events.filter((event) => event.type === 'context-usage').at(-1).contextWindow
+
+  // Modelo que a tabela curada não conhece: enquanto o CLI não mediu vale o
+  // piso — e é EXATAMENTE o que o init acabou de anunciar (nunca duas janelas
+  // diferentes na mesma tela).
+  line({ type: 'system', subtype: 'init', session_id: 's-ctx', model: 'modelo-novo' })
+  const initWindow = events.find((event) => event.type === 'init').contextWindow
+  assert.equal(initWindow, 200_000)
+  claudeApiCall(line, { cacheRead: 10_000, cacheCreate: 0, out: 100 })
+  assert.equal(liveWindow(), initWindow)
+
+  // O CLI mede 1M no `result`: a próxima medição viva já anuncia a janela nova.
+  claudeTurnResult(session, line, {
+    usage: { input_tokens: 1 },
+    modelUsage: { 'modelo-novo': { contextWindow: 1_000_000 } }
+  })
+  assert.equal(events.find((event) => event.type === 'result').contextWindow, 1_000_000)
+  events.length = 0
+  claudeApiCall(line, { cacheRead: 20_000, cacheCreate: 0, out: 100 })
+  assert.equal(liveWindow(), 1_000_000, 'o evento vivo bebe da medição do result')
+
+  // PINO ESTRUTURAL: a régua mora num lugar só e os DOIS emissores bebem dela —
+  // divergir exigiria apagar a régua, não apenas editar uma linha distraído.
+  const source = readFileSync(new URL('../src/main/maestroSession.ts', import.meta.url), 'utf8')
+  assert.equal(
+    source.match(/measuredWindow \?\? claudeCuratedContextWindow/gu)?.length,
+    1,
+    'a janela é resolvida num ponto único do motor'
+  )
+  const liveEmit = source.slice(source.lastIndexOf("type: 'context-usage',"), -1)
+  assert.match(liveEmit.slice(0, 300), /contextWindow: this\.contextWindowNow\(\)/u)
+  const initEmit = source.slice(source.lastIndexOf("type: 'init',"), -1)
+  assert.match(initEmit.slice(0, 700), /contextWindow: this\.contextWindowNow\(\)/u)
+  // E a régua continua alimentada pela medição autoritativa do `result`.
+  assert.match(
+    source,
+    /const measuredWindow = claudeReportedContextWindow\(evt\.modelUsage, this\.initModel\)/u
+  )
+  assert.match(source, /if \(measuredWindow !== undefined\) this\.measuredWindow = measuredWindow/u)
+})
+
 test('custo é o acumulado do processo e só entra quando é positivo', () => {
   assert.equal(claudeSessionCostUsd(9.650348), 9.650348)
   assert.equal(claudeSessionCostUsd(0.000_42), 0.000_42)
