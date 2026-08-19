@@ -37,7 +37,7 @@ import {
 } from '../guiSlashAutocomplete'
 import { syncInputOverlayScroll } from '../guiFileMentions'
 import { useGuiFileMentions } from '../useGuiFileMentions'
-import { isGuiFinalAssistantMessage } from '../guiMessageCopyPresentation'
+import { guiCopyableAssistantId } from '../guiMessageCopyPresentation'
 import { guiThinkingPresentation } from '../guiThinkingPresentation'
 import { guiBackgroundWorkPresentation } from '../guiBackgroundWorkPresentation'
 import {
@@ -1304,31 +1304,28 @@ export default function GuiPane({
   }, [openMenu])
 
   const renderItems = useMemo(() => guiThreadRenderItems(visibleItems), [visibleItems])
-  const copyableAssistantId = useMemo(() => {
-    const lastItem = gui.items.at(-1)
-    if (lastItem?.kind !== 'assistant') return null
-    return isGuiFinalAssistantMessage({
-      items: gui.items,
-      assistantId: lastItem.id,
-      status: gui.status,
-      stream: gui.stream,
-      thinking: gui.thinking,
-      awaitingInteraction: Boolean(
-        gui.perm || gui.question || gui.planReview || gui.interactionSubmitting
-      )
-    })
-      ? lastItem.id
-      : null
-  }, [
-    gui.interactionSubmitting,
-    gui.items,
-    gui.perm,
-    gui.planReview,
-    gui.question,
-    gui.status,
-    gui.stream,
-    gui.thinking
-  ])
+  const copyableAssistantId = useMemo(
+    () =>
+      guiCopyableAssistantId({
+        items: gui.items,
+        status: gui.status,
+        stream: gui.stream,
+        thinking: gui.thinking,
+        awaitingInteraction: Boolean(
+          gui.perm || gui.question || gui.planReview || gui.interactionSubmitting
+        )
+      }),
+    [
+      gui.interactionSubmitting,
+      gui.items,
+      gui.perm,
+      gui.planReview,
+      gui.question,
+      gui.status,
+      gui.stream,
+      gui.thinking
+    ]
+  )
   const activityRunning = gui.status === 'working' && gui.startedAt !== null
   // O TIMER DE RODADA VIVO (R11): o dono lê há quanto tempo a rodada roda —
   // inclusive esperando resposta dele (waiting-you preserva o startedAt, e a

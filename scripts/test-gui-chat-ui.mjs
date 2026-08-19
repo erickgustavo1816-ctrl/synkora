@@ -3607,3 +3607,171 @@ test('o ⚡ aparece na conversa que roda no padrão da conta (o gate lê o model
     'o gate antigo escondia o ⚡ em toda conversa sem pino de modelo'
   )
 })
+
+// ————— R14: a CÓPIA volta (ordens do dono: "devolve o botão de copiar na
+// mensagem final — agora só fica o tempo" e "seleciono, dou Ctrl+C e não
+// funciona") —————
+//
+// O selo ⏱ da R11 é um item `kind:'note'` empurrado DEPOIS da resposta
+// (store.ts) e a régua da cópia exigia que a própria fala fosse o último item
+// do fio: com o selo atrás, o botão nunca mais apareceu. E o fio inteiro era
+// `user-select: none` (política global do app), então o arrasto que começava
+// fora de uma ilha de texto não pintava nada para o Ctrl+C levar.
+
+/** A fala revelada que fecha o turno, na forma que o store guarda. */
+const R14_FINAL_ASSISTANT = {
+  id: 'assistant-final',
+  kind: 'assistant',
+  text: 'Resposta final',
+  at: 2,
+  live: false,
+  animateFrom: 14
+}
+
+test('o selo da rodada é pós-escrito: a régua da cópia pula as notas do fim', async () => {
+  const { guiRoundStampText } = await import('../src/renderer/src/guiActivity.ts')
+  // A forma EXATA que o applyGuiEvent empurra ao fechar a rodada (R11).
+  const stamp = { id: 'note-stamp', kind: 'note', text: guiRoundStampText(252_000), at: 3 }
+  assert.match(stamp.text, /^⏱ rodada: /u, 'o selo mudou de forma — a régua precisa segui-lo')
+  const base = {
+    assistantId: R14_FINAL_ASSISTANT.id,
+    status: 'idle',
+    stream: '',
+    thinking: false,
+    awaitingInteraction: false
+  }
+
+  assert.equal(
+    isGuiFinalAssistantMessage({
+      ...base,
+      items: [{ id: 'user-1', kind: 'user', text: 'Pergunta', at: 1 }, R14_FINAL_ASSISTANT, stamp]
+    }),
+    true,
+    'o turno fechou na fala; o selo veio depois e não pode esconder a cópia'
+  )
+  assert.equal(
+    isGuiFinalAssistantMessage({
+      ...base,
+      items: [
+        R14_FINAL_ASSISTANT,
+        stamp,
+        { id: 'note-mode', kind: 'note', text: 'modo de permissão: aceitar edições', at: 4 }
+      ]
+    }),
+    true,
+    'recibo pós-turno é da mesma classe do selo — nenhuma nota move o controle'
+  )
+  assert.equal(
+    isGuiFinalAssistantMessage({ ...base, items: [stamp] }),
+    false,
+    'fio só de notas não inventa fechamento nenhum'
+  )
+})
+
+test('o chamador pergunta pela régua: quem fecha o turno é a última fala NÃO-nota', async () => {
+  const { guiCopyableAssistantId } = await import(
+    '../src/renderer/src/guiMessageCopyPresentation.ts'
+  )
+  assert.equal(
+    typeof guiCopyableAssistantId,
+    'function',
+    'achar o fechamento é parte da régua: procurar o fim cru no componente era o bug'
+  )
+  const stamp = { id: 'note-stamp', kind: 'note', text: '⏱ rodada: 4:12', at: 3 }
+  const closed = {
+    items: [
+      { id: 'user-1', kind: 'user', text: 'Pergunta', at: 1 },
+      R14_FINAL_ASSISTANT,
+      stamp
+    ],
+    status: 'idle',
+    stream: '',
+    thinking: false,
+    awaitingInteraction: false
+  }
+
+  assert.equal(guiCopyableAssistantId(closed), R14_FINAL_ASSISTANT.id)
+  // O turno vivo continua sem cópia — a régua não afrouxou, só parou de se
+  // perder no pós-escrito.
+  assert.equal(guiCopyableAssistantId({ ...closed, status: 'working' }), null)
+  assert.equal(guiCopyableAssistantId({ ...closed, stream: 'ainda escrevendo' }), null)
+  assert.equal(guiCopyableAssistantId({ ...closed, thinking: true }), null)
+  assert.equal(guiCopyableAssistantId({ ...closed, awaitingInteraction: true }), null)
+  assert.equal(
+    guiCopyableAssistantId({
+      ...closed,
+      items: [{ ...R14_FINAL_ASSISTANT, live: true, animateFrom: 0 }, stamp]
+    }),
+    null,
+    'revelação incompleta ainda não é fechamento'
+  )
+  assert.equal(
+    guiCopyableAssistantId({
+      ...closed,
+      items: [
+        R14_FINAL_ASSISTANT,
+        { id: 'tool-1', kind: 'tool', name: 'Read', summary: 'src/a.ts', at: 4 },
+        stamp
+      ]
+    }),
+    null,
+    'com ferramenta depois da fala, quem fecha o fio não é ela'
+  )
+
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(pane, /guiCopyableAssistantId\(\{/u, 'o componente consome a régua nomeada')
+  assert.doesNotMatch(
+    pane,
+    /const lastItem = gui\.items\.at\(-1\)/u,
+    'o guarda antigo do componente escondia a cópia sempre que o selo entrava atrás'
+  )
+})
+
+/** A folha como regras { selectors, body } — comentários fora do seletor. */
+function cssRules(css) {
+  return [...css.matchAll(/([^{}]*)\{([^{}]*)\}/gu)].map((match) => ({
+    selectors: match[1]
+      .replace(/\/\*[\s\S]*?\*\//gu, ' ')
+      .split(',')
+      .map((one) => one.trim().replace(/\s+/gu, ' '))
+      .filter(Boolean),
+    body: match[2]
+  }))
+}
+
+/** true quando ALGUMA regra do seletor pedido declara aquilo (o grupo pode
+ *  ser reagrupado sem quebrar o teste; o que vale é a política em vigor). */
+function cssDeclares(rules, selector, declaration) {
+  return rules.some(
+    (rule) => rule.selectors.includes(selector) && rule.body.includes(declaration)
+  )
+}
+
+test('o fio é superfície de texto — e os controles dentro dele ficam fora da seleção', () => {
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+  const rules = cssRules(css)
+  assert.ok(rules.length > 100, 'a folha não foi lida como regras — o teste passaria sem olhar nada')
+
+  assert.ok(
+    cssDeclares(rules, '.gui-thread', 'user-select: text'),
+    'sem isto o arrasto que começa num vão ancora em `none` e o Ctrl+C copia o nada'
+  )
+  for (const control of ['.gui-thread button', '.gui-thread summary']) {
+    assert.ok(
+      cssDeclares(rules, control, 'user-select: none'),
+      `${control} precisa voltar a none — clicar num controle não pode pintar o rótulo`
+    )
+  }
+  assert.ok(
+    cssDeclares(rules, ".gui-thread [aria-hidden='true']", 'user-select: none'),
+    'decoração (glifo, chevron, cursor do fluxo, calha do diff) não entra na cópia'
+  )
+  // A política do resto do app não muda: o desktop segue não-selecionável.
+  assert.ok(
+    cssDeclares(rules, 'body', 'user-select: none'),
+    'a virada é do fio; soltar a seleção no app inteiro seria outra decisão'
+  )
+})

@@ -14408,6 +14408,30 @@ body.progress-overlay-page #root {
   max-width: var(--gui-column);
   margin: 0 auto;
   padding: 0 18px;
+  /* O FIO É SUPERFÍCIE DE TEXTO (R14, queixa do dono: "seleciono, dou Ctrl+C e
+     não funciona"). O app é `user-select: none` global (cara de desktop) e
+     aqui isso deixava ilhas soltas: o arrasto que começava num vão ou numa
+     moldura ancorava em `none` e não pintava nada. A conversa inteira — falas,
+     saídas de tool, notas — se seleciona contínua. Nenhuma outra superfície do
+     app muda de política. */
+  user-select: text;
+}
+
+/* Clicar num controle não é selecionar: os botões e as linhas-resumo que abrem
+   card (`<summary>` de tool, comando, diff, erro e injeção) ficam fora da
+   seleção — senão o clique pinta o próprio rótulo e o arrasto que termina em
+   cima ainda abre o card. */
+.gui-thread button,
+.gui-thread summary {
+  user-select: none;
+}
+
+/* Decoração não é conteúdo: glifo, chevron, cursor do fluxo e a calha do diff
+   já se declaram `aria-hidden`, e o Ctrl+C não deve levá-los junto. É a mesma
+   decisão que a numeração do diff (`.gui-diff-number`) já tomava sozinha,
+   agora valendo para o fio por SINAL ESTRUTURAL, não por lista de glifos. */
+.gui-thread [aria-hidden='true'] {
+  user-select: none;
 }
 
 /* A janela começa no fim do transcript. Este controle fica no topo lógico do
