@@ -859,10 +859,17 @@ test('o aviso de custo da frota chega junto do recibo', () => {
 test('chat de missão DEV arma o MCP de delegação; o planejador segue no kit de planos', () => {
   const missions = source('src/main/ipc/missions.ts')
   assert.match(missions, /import \{ armGuiDelegateMcp \} from '\.\.\/guiDelegateMcp'/u)
+  // R10: o release COMPARTILHA o arm do delegador com papel próprio — continua
+  // sendo um kit por chat (o papel do token decide o catálogo no servidor).
   assert.match(
     missions,
-    /route\.missionType === 'planejamento'\s*\?\s*armGuiPlannerMcp\(mcpInput, guiPlannerMcpDeps\)\s*:\s*armGuiDelegateMcp\(mcpInput, guiPlannerMcpDeps\)/u,
+    /route\.missionType === 'planejamento'\s*\?\s*armGuiPlannerMcp\(mcpInput, guiPlannerMcpDeps\)\s*:\s*armGuiDelegateMcp\(/u,
     'um kit por chat, nunca os dois'
+  )
+  assert.match(
+    missions,
+    /route\.missionType === 'release' \? 'gui-release' : 'gui-delegator'/u,
+    'o papel do token roteia o catálogo do release'
   )
   assert.match(missions, /delegateTools:/u, 'o diário tem de distinguir os dois kits')
 })

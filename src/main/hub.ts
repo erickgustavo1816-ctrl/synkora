@@ -39,6 +39,9 @@ export type HubPaneRole =
   // aba, 2026-08-18): mesma natureza do gui-planner — autentica e escopa,
   // nunca recebe injeção.
   | 'gui-delegator'
+  // Chat de RELEASE da versão (R10, 2026-08-19): mesma natureza — autentica e
+  // escopa o catálogo release_status/release_run, nunca recebe injeção.
+  | 'gui-release'
   | 'ajudante'
   | 'livre'
   | 'gui-planner'

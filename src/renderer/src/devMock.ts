@@ -468,6 +468,7 @@ export function installDevMock(): void {
       listVersions: async () => [],
       createVersion: async () => ({ ok: false, error: 'preview: sem backlog no browser' }),
       removeVersion: async () => 'mock: versão removida',
+      releaseChat: async () => ({ ok: false as const, error: 'preview: sem release no browser' }),
       releaseVersion: async () => 'mock: sem git no preview',
       listItems: async () => [],
       updateItem: async () => null,

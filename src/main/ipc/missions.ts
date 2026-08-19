@@ -33,6 +33,7 @@ import type { Project } from '../projects'
 import {
   GUI_MISSION_ROLES,
   guiMissionFirstPrompt,
+  guiReleaseFirstPrompt,
   guiMissionPaneId,
   guiSeatNeedsExecutorReset,
   guiPlanningFirstPrompt,
@@ -259,6 +260,19 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       return { ok: false, error: 'a missão está integrando agora — o worktree some no merge' }
     if (missionTypeOf(mission) === 'planejamento')
       return { ok: true, mission, project, cwd: project.path, workspace: 'project-root' }
+    // RELEASE (R10): a conversa mora no worktree da VERSÃO — a branch dela já
+    // está checada lá, e é ela que o release_run vai subir para a main.
+    if (missionTypeOf(mission) === 'release') {
+      const version = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
+      if (!version || version.projectId !== mission.projectId)
+        return { ok: false, error: 'a versão desta missão de release não existe mais' }
+      if (!version.worktree)
+        return {
+          ok: false,
+          error: 'a versão ainda não tem worktree próprio — crie uma missão nela primeiro'
+        }
+      return { ok: true, mission, project, cwd: version.worktree, workspace: 'version-worktree' }
+    }
     const withWorktree = ensureMissionWorktree(missionId) ?? mission
     const cwd = missionWorkspacePath(project.path, withWorktree)
     if (!cwd)
@@ -510,7 +524,12 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       const mcp =
         route.missionType === 'planejamento'
           ? armGuiPlannerMcp(mcpInput, guiPlannerMcpDeps)
-          : armGuiDelegateMcp(mcpInput, guiPlannerMcpDeps)
+          : armGuiDelegateMcp(
+              mcpInput,
+              guiPlannerMcpDeps,
+              // R10: o chat de release ganha o catálogo próprio (release_*).
+              route.missionType === 'release' ? 'gui-release' : 'gui-delegator'
+            )
 
       const spawn: GuiPaneSpawn = {
         paneId,
@@ -536,7 +555,16 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
           ? undefined
           : route.missionType === 'planejamento'
             ? planningMissionFirstPrompt(mission, project)
-            : guiMissionFirstPrompt(role, {
+            : route.missionType === 'release'
+              ? guiReleaseFirstPrompt({
+                  versionName:
+                    (mission.versionId ? backlog.getVersion(mission.versionId)?.name : undefined) ??
+                    mission.title,
+                  versionBranch: mission.versionId
+                    ? backlog.getVersion(mission.versionId)?.branch
+                    : undefined
+                })
+              : guiMissionFirstPrompt(role, {
                 title: mission.title,
                 goal: mission.goal,
                 scope: mission.scope,

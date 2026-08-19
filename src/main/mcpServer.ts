@@ -98,6 +98,14 @@ export interface McpApi {
   integrationStatus?: (id: PaneIdentity) => string
   /** Executa a integração DESTA missão (só com ticket do dono, só na cabeça). */
   integrationRun?: (id: PaneIdentity) => Promise<string>
+
+  // ——— kit do RELEASE (R10, 2026-08-19 — role 'gui-release') ———
+  // O botão "subir pra main" da versão abre a conversa; estas cascas finas
+  // falam com o releaseChat/index — a mecânica do release mora lá.
+  /** A fotografia do release: trava do plano, fila, branches, receita. */
+  releaseStatus?: (id: PaneIdentity) => string
+  /** Sobe a versão desta conversa para a main (o clique do dono é o mandato). */
+  releaseRun?: (id: PaneIdentity) => Promise<string>
 }
 
 /** Um helper pedido no `delegate` (contrato D2; validação zod no catálogo). */
@@ -133,6 +141,11 @@ const DELEGATION_ENGINE_OFF =
  *  uma entrega que não aconteceu. */
 const INTEGRATION_ENGINE_OFF =
   'o motor de integração ainda não está ligado — reinicie o app para reabrir esta conversa com as ferramentas de integração. NADA foi mesclado e a fila não mudou: não relate integração nenhuma ao dono.'
+
+/** Mesma doutrina para o release (R10): nunca deixar o agente racionalizar um
+ *  release que não aconteceu. */
+const RELEASE_ENGINE_OFF =
+  'o motor de release ainda não está ligado — reinicie o app para reabrir esta conversa com as ferramentas de release. NADA subiu para a main: não relate release nenhum ao dono.'
 
 function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   // SEM cacheHints de tools/list (CHECK 14, 2026-08-07): o hint de cache da
@@ -536,6 +549,30 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       )
     }
 
+    return finishCatalog()
+  }
+
+  // R10 — O CHAT DE RELEASE (role 'gui-release'): a conversa que o botão
+  // "subir pra main" da VERSÃO abre. Catálogo mínimo de propósito — subir a
+  // versão É o show inteiro; delegação e integração de missão não moram aqui.
+  if (identity.role === 'gui-release') {
+    server.registerTool(
+      'release_status',
+      {
+        description:
+          'A FOTOGRAFIA do release desta versão: a trava do plano mestre (e quem a segura), a fila de integração do universo (missão subindo ainda vem antes), as branches (versão × main) com os heads, e a RECEITA do próximo passo. Leia SEMPRE antes de agir — e sempre que uma tentativa recusar.'
+      },
+      () => (api.releaseStatus ? text(api.releaseStatus(identity)) : text(RELEASE_ENGINE_OFF))
+    )
+    server.registerTool(
+      'release_run',
+      {
+        description:
+          'SOBE a versão desta conversa para a branch principal do projeto — o release inteiro numa chamada (re-confere a trava do plano, recusa com missão ainda na fila, mescla a branch da versão na main, carimba a versão como atual e avisa as outras missões de que a base andou). Toda recusa NOMEIA o que falta e a receita. O desfecho volta para você: conte ao dono em uma ou duas linhas. O clique dele no botão é o seu mandato — vale para ESTA versão, uma subida por gesto.'
+      },
+      async () =>
+        api.releaseRun ? text(await api.releaseRun(identity)) : text(RELEASE_ENGINE_OFF)
+    )
     return finishCatalog()
   }
 

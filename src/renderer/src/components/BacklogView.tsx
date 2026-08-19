@@ -451,12 +451,22 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
     setMissionDraft({ title, goal, items: picked })
   }
 
-  // SUBIR a versão: merge da branch version/<nome> na main (main process).
+  // SUBIR a versão (R10): o clique deixou de rodar a máquina — ele abre (ou
+  // reencontra) o CHAT DE RELEASE da versão e leva o dono direto para lá. O
+  // chat nasce MUDO (o agente só fala depois da primeira mensagem dele, com
+  // conta/modelo/effort já escolhidos) e quem sobe é o agente, pelas
+  // ferramentas release_status/release_run — o clique é o mandato.
   async function releaseVersion(v: Version): Promise<void> {
-    if (!window.synkora.backlog) return
-    // aviso fica até o × (decisão do usuário)
-    setReleaseMsg(await window.synkora.backlog.releaseVersion(v.id))
+    if (!window.synkora.backlog?.releaseChat) return
+    const result = await window.synkora.backlog.releaseChat(v.id)
+    if (!result.ok) {
+      // aviso fica até o × (decisão do usuário)
+      setReleaseMsg(result.error)
+      return
+    }
     await refresh()
+    setMissionTab(projectId, result.missionId)
+    setUniverseTab(projectId, 'board')
   }
 
   // versão ATUAL na main = a lançada mais recente

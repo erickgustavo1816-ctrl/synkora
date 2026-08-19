@@ -1045,6 +1045,12 @@ const api = {
       ipcRenderer.invoke('backlog:removeVersion', projectId, id),
     releaseVersion: (id: string): Promise<string> =>
       ipcRenderer.invoke('backlog:releaseVersion', id),
+    /** R10: o botão "subir pra main" abre (ou reencontra) a MISSÃO DE RELEASE
+     *  da versão — quem sobe é o agente do chat; o clique é o mandato. */
+    releaseChat: (
+      id: string
+    ): Promise<{ ok: true; missionId: string } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('backlog:releaseChat', id),
     listItems: (projectId: string): Promise<BacklogItem[]> =>
       ipcRenderer.invoke('backlog:listItems', projectId),
     updateItem: (

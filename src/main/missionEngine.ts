@@ -50,7 +50,8 @@ import {
   missionIntegrationNote,
   missionIntegrationStimulus,
   missionTypeOf,
-  MISSION_PLANNING_NOT_QUEUEABLE
+  MISSION_PLANNING_NOT_QUEUEABLE,
+  MISSION_RELEASE_NOT_QUEUEABLE
 } from './guiMissionContracts'
 import { notifyDesktop } from './desktopNotifications'
 import { type IntegrationQueueTicketView } from './integrationQueue'
@@ -916,6 +917,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // integração que nunca houve): tipo é o fato mais fundamental da missão.
     if (missionTypeOf(mission) === 'planejamento')
       return integrateBlocked('planning-mission', MISSION_PLANNING_NOT_QUEUEABLE)
+    // R10: a missão de RELEASE também é a porta errada — ela sobe a VERSÃO
+    // pelas próprias ferramentas; a fila só mescla branch de missão.
+    if (missionTypeOf(mission) === 'release')
+      return integrateBlocked('release-mission', MISSION_RELEASE_NOT_QUEUEABLE)
     if (mission.status === 'arquivada')
       return 'a missão está ARQUIVADA — reative-a antes de pedir integração'
     if (mission.status === 'integrando') {

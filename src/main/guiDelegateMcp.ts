@@ -99,7 +99,7 @@ export interface GuiDelegateMcpInput {
  * endereço que não é de missão (`gui-plan-<projeto>`, um shell) não ganha kit
  * nenhum por estar perto de uma missão.
  */
-export type GuiPaneToolKind = 'planner' | 'delegator' | 'none'
+export type GuiPaneToolKind = 'planner' | 'delegator' | 'release' | 'none'
 
 export function guiPaneToolKind(
   paneId: string,
@@ -109,11 +109,16 @@ export function guiPaneToolKind(
   // O tipo da MISSÃO decide, não o papel do pane: o planejamento roda num pane
   // `gui-dev-<id8>` (papel dev, missão de planejamento) e é planejador. Missão
   // legada sem carimbo é 'dev' por definição — nada no disco muda de natureza.
-  return missionTypeOf(mission) === 'planejamento' ? 'planner' : 'delegator'
+  if (missionTypeOf(mission) === 'planejamento') return 'planner'
+  // R10: a missão de RELEASE tem catálogo próprio (release_status/release_run)
+  // — ela nunca delega nem integra missão; a subida da versão é o show inteiro.
+  if (missionTypeOf(mission) === 'release') return 'release'
+  return 'delegator'
 }
 
 /**
- * As NOVE ferramentas internas do `gui-delegator`, no nome que o claude usa
+ * As ONZE ferramentas internas dos papéis que compartilham este arm
+ * (`gui-delegator` e, desde a R10, `gui-release`), no nome que o claude usa
  * (`mcp__<servidor>__<tool>`; o servidor é `synkora`, escrito por
  * `writeClaudeMcpConfig`). Elas são PRÉ-SANCIONADAS: aprovar a ferramenta do
  * próprio app não é decisão do dono, é encanamento — a mesma doutrina que faz
@@ -152,7 +157,11 @@ export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   // card de permissão para ele aprovar a ferramenta que ele mesmo acabou de
   // acionar com o clique.
   'mcp__synkora__integration_status',
-  'mcp__synkora__integration_run'
+  'mcp__synkora__integration_run',
+  // R10 — o chat de RELEASE. Mesma doutrina: o botão do dono abriu a conversa;
+  // um card de permissão sobre a ferramenta do próprio gesto seria atrito puro.
+  'mcp__synkora__release_status',
+  'mcp__synkora__release_run'
 ]
 
 /** Flags do claude: config por arquivo + strict + a cerca + a pré-sanção. */
@@ -194,19 +203,22 @@ export function guiDelegateCodexArgs(port: number): string[] {
  */
 export function armGuiDelegateMcp(
   input: GuiDelegateMcpInput,
-  deps: GuiPlannerMcpDeps
+  deps: GuiPlannerMcpDeps,
+  /** R10: a missão de RELEASE arma o MESMO encanamento com catálogo próprio —
+   *  o papel do token decide o early-return do servidor. */
+  role: 'gui-delegator' | 'gui-release' = 'gui-delegator'
 ): GuiPlannerMcp | undefined {
   const port = deps.port()
   if (port === 0) return undefined
   const previous = deps.tokenOf(input.paneId)
   const live = previous ? deps.hub.identityByToken(previous) : undefined
   const reusable =
-    previous && live?.paneId === input.paneId && live.role === 'gui-delegator' ? previous : undefined
+    previous && live?.paneId === input.paneId && live.role === role ? previous : undefined
   const token = reusable ?? randomUUID()
   deps.hub.registerPane(token, {
     paneId: input.paneId,
     projectId: input.projectId,
-    role: 'gui-delegator',
+    role,
     cwd: input.cwd,
     ...(input.seatId ? { seatId: input.seatId } : {}),
     ...(input.missionId ? { missionId: input.missionId } : {})

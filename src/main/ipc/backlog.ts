@@ -11,6 +11,7 @@
 import { ipcMain } from 'electron'
 import { ensureSynkoraGitExcludes, gitHead, removeWorktreeAndBranch } from '../worktree'
 import { type BacklogItemType, type Version } from '../backlog'
+import { ensureReleaseMission } from '../releaseChat'
 import type { MainContext } from '../mainContext'
 
 /**
@@ -50,6 +51,32 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
   ipcMain.handle('backlog:releaseVersion', (e, versionId: string) => {
     return releaseVersionImpl(versionId, 'user')
   })
+
+  // R10 (2026-08-19): o botão "subir pra main" deixou de rodar a máquina — ele
+  // abre (ou reencontra) a MISSÃO DE RELEASE da versão, e a tela do dono vai
+  // direto para o chat dela. Quem sobe é o AGENTE, pelas ferramentas
+  // release_status/release_run; o clique é o mandato.
+  ipcMain.handle(
+    'backlog:releaseChat',
+    (_e, versionId: string): { ok: true; missionId: string } | { ok: false; error: string } => {
+      const version = backlog.getVersion(versionId)
+      if (!version) return { ok: false, error: 'esta versão não existe mais' }
+      const result = ensureReleaseMission({
+        version,
+        missions: missions.list(version.projectId),
+        create: (input) =>
+          missions.create(version.projectId, {
+            title: input.title,
+            goal: input.goal,
+            versionId: input.versionId,
+            missionType: input.missionType,
+            direct: true
+          }) ?? null
+      })
+      if (result.ok) emitBacklogChanged(version.projectId)
+      return result.ok ? { ok: true, missionId: result.missionId } : result
+    }
+  )
 
   ipcMain.handle('backlog:listVersions', (_e, projectId: string) =>
     backlog.listVersions(projectId)

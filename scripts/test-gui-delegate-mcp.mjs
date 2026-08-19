@@ -78,6 +78,11 @@ const DELEGATOR_TOOLS = Object.freeze([
 const INTEGRATION_TOOLS = Object.freeze(['integration_run', 'integration_status'])
 const DEV_MISSION_TOOLS = Object.freeze([...DELEGATOR_TOOLS, ...INTEGRATION_TOOLS].sort())
 
+/** O KIT DO CHAT DE RELEASE (R10): a conversa que sobe a VERSÃO. O papel
+ *  `gui-release` compartilha o MESMO arm do delegador, então a pré-sanção do
+ *  claude é a UNIÃO dos dois papéis. */
+const RELEASE_TOOLS = Object.freeze(['release_run', 'release_status'])
+
 const PLANNER_TOOLS = Object.freeze([
   'delete_plan',
   'get_plan',
@@ -654,7 +659,7 @@ test('claude: config própria, strict, a CERCA de subagente nativo e o teto de t
   assert.deepEqual(Object.keys(config.mcpServers), ['synkora'], 'catálogo fechado: nenhum MCP extra')
 })
 
-test('claude: as NOVE ferramentas internas são pré-sancionadas, e a cerca continua de pé', async (t) => {
+test('claude: as ONZE ferramentas internas são pré-sancionadas, e a cerca continua de pé', async (t) => {
   const { hub, root } = hubIn(t)
   const { mcp } = delegator(hub, root, 5151)
 
@@ -673,11 +678,12 @@ test('claude: as NOVE ferramentas internas são pré-sancionadas, e a cerca cont
 
   // O par com o catálogo REAL: tool nova no delegador sem entrar aqui volta a
   // pedir aprovação, e este teste é quem avisa. A régua é a UNIÃO dos catálogos
-  // possíveis (o chat de dev, que é o maior): pré-sancionar o que um pane não
-  // tem custa zero, e o contrário custa um card de permissão no gesto do dono.
+  // dos papéis que compartilham este arm (dev + release, desde a R10):
+  // pré-sancionar o que um pane não tem custa zero, e o contrário custa um
+  // card de permissão no gesto do dono.
   assert.deepEqual(
     [...GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS].sort(),
-    DEV_MISSION_TOOLS.map((tool) => `mcp__synkora__${tool}`).sort()
+    [...DEV_MISSION_TOOLS, ...RELEASE_TOOLS].map((tool) => `mcp__synkora__${tool}`).sort()
   )
 
   // A pré-sanção é NARROW: nada nativo entra de carona, e ela nunca desfaz a

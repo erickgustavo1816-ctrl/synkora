@@ -391,7 +391,7 @@ ${OWNER_MESSAGE_SEAM} He has already told you where to start, so do not open wit
 // Missão legada não tem o carimbo — e ausência é 'dev' por definição, então
 // nada do que já está no disco muda de natureza.
 
-export type MissionType = 'dev' | 'planejamento'
+export type MissionType = 'dev' | 'planejamento' | 'release'
 
 export const MISSION_TYPES: readonly MissionType[] = ['dev', 'planejamento']
 
@@ -402,11 +402,18 @@ export function isMissionType(value: unknown): value is MissionType {
 /** Tipo EFETIVO da missão: ausente/desconhecido cai em 'dev' (nunca lança e
  *  nunca inventa uma natureza que o dono não escolheu). */
 export function missionTypeOf(mission: { missionType?: string } | undefined): MissionType {
-  return mission?.missionType === 'planejamento' ? 'planejamento' : 'dev'
+  if (mission?.missionType === 'planejamento') return 'planejamento'
+  // R10 (2026-08-19): a missão de RELEASE — a conversa que sobe a versão para
+  // a main, aberta pelo botão da versão. Qualquer outro valor (legado, typo)
+  // continua degradando para 'dev', que é a natureza inofensiva.
+  if (mission?.missionType === 'release') return 'release'
+  return 'dev'
 }
 
-/** Onde o chat da missão nasce: worktree isolado × raiz do projeto. */
-export type GuiMissionWorkspace = 'worktree' | 'project-root'
+/** Onde o chat da missão nasce: worktree isolado da missão × raiz do projeto ×
+ *  worktree DA VERSÃO (R10 — o release opera a branch da versão no lugar em
+ *  que ela já está checada). */
+export type GuiMissionWorkspace = 'worktree' | 'project-root' | 'version-worktree'
 
 export type GuiMissionRoute =
   | {
@@ -438,6 +445,24 @@ export function routeGuiMissionPane(
       systemPrompt: guiMissionSystemPrompt(role)
     }
   }
+  // RELEASE (R10) também é UMA conversa: ela opera a subida da versão para a
+  // main no worktree da própria versão — não tem diff de missão para revisar
+  // nem fatia para repartir.
+  if (missionType === 'release') {
+    if (role !== 'dev') {
+      return {
+        ok: false,
+        error:
+          'missão de release tem uma conversa só — ela sobe a versão para a main e não abre revisor nem ajudante'
+      }
+    }
+    return {
+      ok: true,
+      missionType,
+      workspace: 'version-worktree',
+      systemPrompt: guiReleaseSystemPrompt()
+    }
+  }
   // Planejamento é UMA conversa: não existe diff para revisar nem fatia para
   // repartir com ajudante — o entregável é plano/, escrito por quem conversa.
   if (role !== 'dev') {
@@ -456,12 +481,60 @@ export function routeGuiMissionPane(
 }
 
 /**
+ * O CONTRATO DO CHAT DE RELEASE (R10, 2026-08-19 — desenho aprovado pelo dono).
+ *
+ * Ele nasce do botão "subir pra main" da VERSÃO: a tela leva o dono direto para
+ * cá, o chat abre MUDO (contrato de sempre — o briefing pendente sai colado na
+ * primeira mensagem dele, depois de conta/modelo/effort escolhidos) e o agente
+ * opera o release pelas DUAS ferramentas — nunca por git manual na main. Em
+ * inglês como todo prompt de agente; a conversa com o dono é PT-BR.
+ */
+export function guiReleaseSystemPrompt(): string {
+  return `You are the RELEASE OPERATOR of one project version inside Synkora, the owner's ADE. Your workspace IS the version's worktree (its branch is checked out here). You speak with the OWNER in Brazilian Portuguese (PT-BR), always.
+
+THE JOB: the owner pressed the version's "subir pra main" button. You take the version's branch up to the project's main branch — through the tools, conversationally, with him watching.
+
+RULES:
+- TWO tools run this show (in a claude chat they appear as mcp__synkora__*): release_status (the photo: plan lock, mission queue, branches/heads, the next step) and release_run (executes the release mechanics). ALWAYS read release_status before acting.
+- NEVER touch the main branch with manual git (no merge/push/checkout of main by hand). Your shell is for reading, building and testing INSIDE this worktree; the release itself only happens through release_run.
+- The PLAN LOCK is the owner's own protection: while the master plan has pending missions of this version, release_run refuses and NAMES them. Do not fight the lock — tell the owner what it said ("ou eu excluo ou eu faço", his words).
+- Mission integrations PENDING in the queue come first: a version cannot go up while a mission of it is still climbing. The status names who; wait or talk to the owner.
+- Errors are YOURS to resolve: read the refusal (every one carries the recipe), fix what is fixable here (a dirty worktree, a failing test), and ask the OWNER in the chat only when it is a product decision. Report the outcome in one or two lines when it lands.
+- You never enqueue or release anything the owner did not ask: this conversation EXISTS because he pressed the button — that press is your mandate, and it covers THIS version only.`
+}
+
+/**
  * A PORTA ERRADA: missão de planejamento não tem branch para mesclar, então o
  * ⇪ não se aplica a ela. Mensagem única — o motor da fila e o teste leem a
  * MESMA string, e o dono lê uma frase que explica em vez de acusar.
  */
 export const MISSION_PLANNING_NOT_QUEUEABLE =
   'missão de planejamento não entra na fila — ela escreve o plano/ e conclui'
+
+/** A MESMA porta errada para o release (R10): a conversa de release OPERA a
+ *  subida da versão pelas ferramentas dela — não existe branch de missão para
+ *  a fila mesclar. */
+export const MISSION_RELEASE_NOT_QUEUEABLE =
+  'missão de release não entra na fila — ela sobe a VERSÃO para a main pelas próprias ferramentas (release_run)'
+
+/**
+ * O BRIEFING do chat de release (R10) — fica PENDENTE no motor e sai colado na
+ * PRIMEIRA mensagem do dono (o contrato do chat mudo: ele escolhe conta/modelo/
+ * effort antes de qualquer turno). Curto: a persona já carrega as regras; aqui
+ * só o que esta conversa não teria como saber.
+ */
+export function guiReleaseFirstPrompt(input: {
+  versionName: string
+  versionBranch?: string
+}): string {
+  return [
+    `[synkora] The owner pressed "subir pra main" for version ${input.versionName}` +
+      (input.versionBranch ? ` (branch ${input.versionBranch})` : '') +
+      ' — that press is your mandate for THIS version.',
+    'Start with release_status, tell the owner what it says in one or two PT-BR lines, and proceed: if the photo is clear, release_run; if something holds it, name it and the exit.',
+    "The owner's message follows below."
+  ].join('\n')
+}
 
 /**
  * Guarda do resume (2.0): conversa gravada só vale no MESMO CLI. Sessão do

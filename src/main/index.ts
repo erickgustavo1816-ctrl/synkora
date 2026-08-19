@@ -29,6 +29,7 @@ import {
 import { MissionStore } from './missions'
 import { PlanStore } from './plans'
 import { activeMasterPlan, planReleaseLock } from './planReleaseLock'
+import { releaseStatusText, runReleaseForChat } from './releaseChat'
 import { IntegrationQueueStore } from './integrationQueue'
 import type { MainContext } from './mainContext'
 import {} from './cliSessionTransplant'
@@ -3434,6 +3435,74 @@ app.whenReady().then(async () => {
     helperSend: (id, helperId, text) => guiDelegation.helperSend(id, helperId, text),
     helperCancel: (id, helperId) => guiDelegation.helperCancel(id, helperId),
     helperResume: (id, helperId) => guiDelegation.helperResume(id, helperId),
+    // R10 — o CHAT DE RELEASE. Cascas finas: a identidade (bearer) diz a
+    // missão; a missão diz a versão; a fotografia lê as MESMAS réguas do
+    // releaseVersionImpl sem executá-lo, e o run é o próprio impl com o
+    // sinal estrutural de sucesso (status 'lancada') concluindo a missão.
+    releaseStatus: (id) => {
+      const mission = id.missionId ? missions.get(id.missionId) : undefined
+      const version = mission?.versionId ? backlog.getVersion(mission.versionId) : undefined
+      const project = version ? projects.get(version.projectId) : undefined
+      if (!mission || !version || !project)
+        return 'esta conversa não está ligada a uma versão — não há release a consultar.'
+      const pendingMissions = missions
+        .list(version.projectId)
+        .filter(
+          (candidate) =>
+            candidate.versionId === version.id &&
+            candidate.id !== mission.id &&
+            candidate.status !== 'concluida' &&
+            candidate.status !== 'arquivada'
+        )
+        .map((candidate) => ({ title: candidate.title, status: candidate.status }))
+      const planLock = planReleaseLock({
+        versionId: version.id,
+        versionName: version.name,
+        plan: activeMasterPlan(plans.list(version.projectId)),
+        missions: missions.list(version.projectId).map((candidate) => ({
+          id: candidate.id,
+          title: candidate.title,
+          status: candidate.status,
+          ...(candidate.versionId ? { versionId: candidate.versionId } : {})
+        }))
+      })
+      return releaseStatusText({
+        version,
+        mainBranch: currentBranch(project.path) ?? undefined,
+        versionHead: version.worktree ? gitHead(version.worktree) : undefined,
+        mainHead: gitHead(project.path),
+        pendingMissions,
+        openBacklogItems: backlog
+          .listItems(version.projectId)
+          .filter((item) => item.versionId === version.id && item.status !== 'feito')
+          .map((item) => ({ title: item.title })),
+        planLockMessage: planLock ? planLock.message : null,
+        integrationPending: integrationQueue.listPending(version.projectId).map((ticket) => ({
+          title: missions.get(ticket.missionId)?.title ?? ticket.missionId,
+          state: ticket.state
+        })),
+        releaseIntentPending: existsSync(versionReleaseIntentPath(project.path, version.id))
+      })
+    },
+    releaseRun: async (id) => {
+      const mission = id.missionId ? missions.get(id.missionId) : undefined
+      const version = mission?.versionId ? backlog.getVersion(mission.versionId) : undefined
+      if (!mission || !version)
+        return 'esta conversa não está ligada a uma versão — nada subiu para a main.'
+      return runReleaseForChat(
+        {
+          run: (versionId, actor) => releaseVersionImpl(versionId, actor),
+          versionAfter: (versionId) => backlog.getVersion(versionId),
+          concludeMission: (missionId) => {
+            missions.update(missionId, { status: 'concluida' })
+            emitBacklogChanged(version.projectId)
+            syncBoard(version.projectId)
+          }
+        },
+        version.id,
+        mission.id
+      )
+    },
     // R9 — O AGENTE É O INTEGRADOR. Cascas FINAS: a identidade do pane (que o
     // bearer autenticou) diz o universo e a missão, e o motor faz o resto. A
     // missão vem do TOKEN, nunca de um argumento — um chat não integra outro.

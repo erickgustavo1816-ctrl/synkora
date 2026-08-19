@@ -136,9 +136,9 @@ export class MissionStore {
       // Carimbo de nascimento: `update` não lista `direct` no Pick, então
       // ninguém converte missão legada em 2.0 (nem o contrário) depois.
       direct: input.direct ? true : undefined,
-      // Mesma regra para a NATUREZA: só 'planejamento' é persistido; 'dev' é a
-      // ausência do campo (é o que toda missão do disco já é hoje).
-      missionType: missionTypeOf(input) === 'planejamento' ? 'planejamento' : undefined,
+      // Mesma regra para a NATUREZA: só 'planejamento' e 'release' (R10) são
+      // persistidos; 'dev' é a ausência do campo (o que todo disco já é hoje).
+      missionType: missionTypeOf(input) === 'dev' ? undefined : missionTypeOf(input),
       status: 'ativa',
       createdAt: now,
       updatedAt: now
