@@ -9,11 +9,11 @@ import { LspSession, type LspLaunch } from './lspSession'
  * projeto) = um servidor de linguagem vivo. Abre sob demanda, derruba por
  * ociosidade e some quando o worktree some.
  *
- * O LANÇADOR é injetável de propósito: em produção `tsServerLaunch(root)`
- * resolve o `typescript-language-server` do app e o executa com o próprio
- * Electron em modo node; nos testes entra um servidor FALSO em node puro que
- * fala o protocolo de verdade — o motor nunca depende de binário externo para
- * ser provado.
+ * O LANÇADOR é injetável de propósito: em produção `tsServerLaunch(root)` sobe
+ * a ESCADA (typescript nativo do projeto → typescript clássico do projeto →
+ * typescript do app) descrita na própria função; nos testes entra um servidor
+ * FALSO em node puro que fala o protocolo de verdade — o motor nunca depende de
+ * binário externo para ser provado, e cada degrau da escada tem gancho próprio.
  *
  * Nada aqui resolve pacote no import: pacote que falta é RESPOSTA falada (com
  * o comando que instala), nunca um app que não sobe.
@@ -200,42 +200,109 @@ export class LspManager {
 }
 
 /** Ganchos do lançador de produção. Existem para o teste provar a FORMA do
- *  lançamento sem ter o pacote do servidor instalado. */
+ *  lançamento e CADA DEGRAU da escada sem ter pacote nenhum instalado. */
 export interface TsServerLaunchDeps {
-  /** A pasta do pacote `typescript-language-server`; `null` = não instalado. */
+  /** A pasta do pacote `typescript-language-server`; `null` = não instalado.
+   *  Só o degrau CLÁSSICO precisa dele. */
   serverPackageDir?: () => string | null
-  /** O `tsserver.js` do WORKSPACE; `null` = o workspace não tem typescript. */
-  workspaceTsServer?: (root: string) => string | null
-  /** Quem executa o servidor (default: o próprio binário do app em modo node). */
+  /** A pasta do pacote `typescript` DO WORKSPACE; `null` = o projeto não tem o
+   *  seu próprio (cai no degrau do app). */
+  workspaceTypescriptDir?: (root: string) => string | null
+  /** A pasta do pacote `typescript` DO APP — o último degrau. */
+  appTypescriptDir?: () => string | null
+  /** O `lib/tsserver.js` daquele pacote typescript; `null` = não é da linha
+   *  clássica (5.x), então é a NATIVA. */
+  classicTsServer?: (typescriptDir: string) => string | null
+  /** O executável nativo daquele pacote typescript (espelho de
+   *  `typescript/lib/getExePath.js`); `null` = o pacote de plataforma não está
+   *  no disco. */
+  nativeExe?: (typescriptDir: string) => string | null
+  /** Quem executa o servidor CLÁSSICO (default: o binário do app em modo node).
+   *  O nativo é exe: não passa por aqui. */
   execPath?: string
+  /** Plataforma/arquitetura da resolução nativa (default: as do processo).
+   *  Injetáveis para o teste provar o nome do pacote de plataforma e o sufixo
+   *  `.exe` sem depender da máquina onde o gate roda. */
+  platform?: NodeJS.Platform
+  arch?: string
 }
 
 /**
- * O lançamento de produção da onda 1: `typescript-language-server` sobre o
- * `process.execPath` com `ELECTRON_RUN_AS_NODE=1` — o app não depende de ter
- * node instalado na máquina do dono, e o servidor não abre janela.
+ * A ESCADA DO LANÇADOR (R14.1, medida no binário real em 19/08). O degrau sai
+ * do que está NO DISCO, nunca de palpite de versão:
  *
- * Quando o WORKSPACE tem o seu próprio `typescript`, o handshake aponta para
- * ele: o diagnóstico sai na versão do PROJETO, não na do Synkora. Sem
- * typescript no workspace, o servidor cai no que ele mesmo embarca.
+ * (a) o workspace tem typescript da linha NATIVA (7.x — `lib` sem
+ *     `tsserver.js`, com `getExePath.js`) → o COMPILADOR DO PROJETO serve o LSP
+ *     ele mesmo: `<exe> --lsp --stdio`. Sem `ELECTRON_RUN_AS_NODE` — é
+ *     executável nativo, não script de node; passar a variável seria mentira
+ *     inofensiva hoje e confusão amanhã.
+ * (b) o workspace tem typescript CLÁSSICO (`lib/tsserver.js` existe) → o
+ *     caminho da onda 1, intacto: `typescript-language-server` sobre o binário
+ *     do app em modo node, com `initializationOptions.tsserver.path` apontando
+ *     o tsserver DO PROJETO (o diagnóstico sai na versão do projeto).
+ * (c) o workspace não tem typescript nenhum → o typescript DO APP, pela MESMA
+ *     decisão (a)/(b) — hoje ele é 7.0.2, nativo.
+ *
+ * Toda falha nomeia a receita E O LUGAR: `npm install` na raiz do projeto é
+ * conserto diferente de `npm install` na pasta do Synkora.
  */
 export function tsServerLaunch(root: string, deps: TsServerLaunchDeps = {}): LspLaunch {
-  const packageDir = (deps.serverPackageDir ?? resolveServerPackageDir)()
-  if (!packageDir) {
+  const workspaceDir = (deps.workspaceTypescriptDir ?? workspaceTypescriptDirOf)(root)
+  if (workspaceDir) return launchForTypescript(root, workspaceDir, 'workspace', deps)
+
+  const appDir = (deps.appTypescriptDir ?? appTypescriptDirOf)()
+  if (!appDir) {
     throw new LspError(
-      'o servidor de linguagem "typescript-language-server" não está instalado — rode `npm install` na pasta do Synkora (a dependência já está no package.json) e reabra o chat'
+      `nem ${root} nem o Synkora têm o pacote \`typescript\` instalado — rode \`npm install\` na pasta do Synkora (a dependência já está no package.json) e, se o projeto tiver o seu próprio typescript, rode também na raiz dele; depois reabra o chat`
     )
   }
-  const entry = serverEntryOf(packageDir)
-  const tsserver = (deps.workspaceTsServer ?? workspaceTsServerOf)(root)
+  return launchForTypescript(root, appDir, 'app', deps)
+}
+
+/** Um degrau da escada: dado UM pacote typescript, clássico ou nativo, como o
+ *  servidor daquela raiz nasce. `origin` só existe para a recusa dizer ONDE
+ *  rodar o `npm install` — receita sem endereço é meia receita. */
+function launchForTypescript(
+  root: string,
+  typescriptDir: string,
+  origin: 'workspace' | 'app',
+  deps: TsServerLaunchDeps
+): LspLaunch {
+  const where = origin === 'workspace' ? `na raiz do projeto (${root})` : 'na pasta do Synkora'
+
+  // Clássico primeiro: é um `existsSync` só, e quem tem `tsserver.js` não tem
+  // pacote de plataforma para resolver.
+  const tsserver = (deps.classicTsServer ?? classicTsServerOf)(typescriptDir)
+  if (tsserver) {
+    const packageDir = (deps.serverPackageDir ?? resolveServerPackageDir)()
+    if (!packageDir) {
+      throw new LspError(
+        'o servidor de linguagem "typescript-language-server" não está instalado — rode `npm install` na pasta do Synkora (a dependência já está no package.json) e reabra o chat'
+      )
+    }
+    return {
+      command: deps.execPath ?? process.execPath,
+      args: [serverEntryOf(packageDir), '--stdio'],
+      // ELECTRON_RUN_AS_NODE faz o binário do app virar um node comum; sem ele o
+      // "servidor" abriria uma janela do Electron.
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+      cwd: root,
+      initializationOptions: { tsserver: { path: tsserver } }
+    }
+  }
+
+  const exe = (deps.nativeExe ?? ((dir: string) => nativeExeOf(dir, deps)))(typescriptDir)
+  if (!exe) {
+    throw new LspError(
+      `o typescript de ${typescriptDir} não é da linha clássica (não tem \`lib/tsserver.js\`) e o executável nativo dele não foi encontrado no disco — rode \`npm install\` ${where} para trazer o pacote de plataforma \`@typescript/${platformPackageOf(typescriptDir, deps)}\` e reabra o chat`
+    )
+  }
   return {
-    command: deps.execPath ?? process.execPath,
-    args: [entry, '--stdio'],
-    // ELECTRON_RUN_AS_NODE faz o binário do app virar um node comum; sem ele o
-    // "servidor" abriria uma janela do Electron.
-    env: { ELECTRON_RUN_AS_NODE: '1' },
-    cwd: root,
-    initializationOptions: tsserver ? { tsserver: { path: tsserver } } : undefined
+    command: exe,
+    // O compilador nativo VIRA servidor de linguagem com estas duas bandeiras
+    // (sondadas no binário: o initialize responde `diagnosticProvider`).
+    args: ['--lsp', '--stdio'],
+    cwd: root
   }
 }
 
@@ -278,19 +345,132 @@ function resolveServerPackageDir(): string | null {
   } catch {
     // segue para a busca manual
   }
-  let dir = typeof __dirname === 'string' ? __dirname : process.cwd()
+  return climbForPackage(
+    typeof __dirname === 'string' ? __dirname : process.cwd(),
+    'typescript-language-server'
+  )
+}
+
+/** O pacote `typescript` do PROJETO. Existir é o que importa aqui; qual das
+ *  duas linhas ele é, quem decide é `launchForTypescript`. */
+function workspaceTypescriptDirOf(root: string): string | null {
+  const candidate = join(root, 'node_modules', 'typescript')
+  return existsSync(join(candidate, 'package.json')) ? candidate : null
+}
+
+/** O pacote `typescript` DO APP. Mesma resolução preguiçosa do servidor
+ *  clássico: primeiro o resolvedor de módulos (enxerga dentro do asar), depois
+ *  a subida manual da árvore de `node_modules`. */
+function appTypescriptDirOf(): string | null {
+  try {
+    const requireFromHere = createRequire(
+      typeof __filename === 'string' ? __filename : join(process.cwd(), 'package.json')
+    )
+    return dirname(requireFromHere.resolve('typescript/package.json'))
+  } catch {
+    // segue para a busca manual
+  }
+  return climbForPackage(typeof __dirname === 'string' ? __dirname : process.cwd(), 'typescript')
+}
+
+/** A marca da linha CLÁSSICA (5.x): o `tsserver.js` em pessoa. A linha nativa
+ *  (7.x) tem `lib/getExePath.js` no lugar dele. */
+function classicTsServerOf(typescriptDir: string): string | null {
+  const candidate = join(typescriptDir, 'lib', 'tsserver.js')
+  return existsSync(candidate) ? candidate : null
+}
+
+/**
+ * O executável do typescript NATIVO — espelho fiel de
+ * `typescript/lib/getExePath.js` (ler aquele arquivo é a documentação desta
+ * função; ele é a fonte, isto é a cópia declarada):
+ *
+ * - o nome do exe é a ÚNICA chave de `bin` do pacote (`tsc` quando o pacote é
+ *   `typescript`, `tsgo` nos pacotes de preview) — NÃO o caminho que ela aponta;
+ * - o exe mora em `@typescript/<base>-<plataforma>-<arch>/lib/`, e esse pacote é
+ *   dependência DO pacote typescript: resolve-se A PARTIR dele, nunca do app
+ *   (o typescript do projeto tem o pacote de plataforma DELE);
+ * - no Windows entra o sufixo `.exe` e, passando de 248 caracteres, o prefixo
+ *   `\\?\` de caminho longo — sem ele o spawn falha em worktree fundo.
+ *
+ * Não existir é RESPOSTA (`null`), não exceção: quem recusa, com a receita, é
+ * `launchForTypescript`.
+ */
+function nativeExeOf(typescriptDir: string, deps: TsServerLaunchDeps): string | null {
+  const platform = deps.platform ?? process.platform
+  const identity = typescriptIdentityOf(typescriptDir)
+  if (!identity) return null
+
+  const platformDir = platformPackageDirOf(
+    typescriptDir,
+    `${identity.base}-${platform}-${deps.arch ?? process.arch}`
+  )
+  if (!platformDir) return null
+
+  let exe = join(
+    platformDir,
+    'lib',
+    platform === 'win32' ? `${identity.binName}.exe` : identity.binName
+  )
+  if (platform === 'win32' && exe.length >= 248) exe = `\\\\?\\${exe}`
+  return existsSync(exe) ? exe : null
+}
+
+/** Quem o pacote diz ser: o `base` (nome sem escopo, que batiza o pacote de
+ *  plataforma) e o `binName` (a CHAVE de `bin`, que batiza o executável).
+ *  `null` = nem package.json legível tem — não é pacote typescript nenhum. */
+function typescriptIdentityOf(typescriptDir: string): { base: string; binName: string } | null {
+  let manifest: { name?: unknown; bin?: unknown }
+  try {
+    manifest = JSON.parse(readFileSync(join(typescriptDir, 'package.json'), 'utf-8')) as {
+      name?: unknown
+      bin?: unknown
+    }
+  } catch {
+    return null
+  }
+  const name = typeof manifest.name === 'string' ? manifest.name : 'typescript'
+  const base = name.startsWith('@') ? (name.split('/')[1] ?? name) : name
+  const declared =
+    manifest.bin && typeof manifest.bin === 'object'
+      ? Object.keys(manifest.bin as Record<string, unknown>)[0]
+      : undefined
+  return { base, binName: declared ?? (base === 'typescript' ? 'tsc' : 'tsgo') }
+}
+
+/** O nome do pacote de plataforma, para a RECUSA poder dizer o que falta com o
+ *  nome CERTO (o pacote de preview procura `native-preview-…`, não
+ *  `typescript-…`). */
+function platformPackageOf(typescriptDir: string, deps: TsServerLaunchDeps): string {
+  const base = typescriptIdentityOf(typescriptDir)?.base ?? 'typescript'
+  return `${base}-${deps.platform ?? process.platform}-${deps.arch ?? process.arch}`
+}
+
+/** A pasta do `@typescript/<platformPackage>`, resolvida A PARTIR do pacote
+ *  typescript dono dele (é assim que o getExePath faz: `import.meta.resolve` de
+ *  dentro do próprio `lib/`). */
+function platformPackageDirOf(typescriptDir: string, platformPackage: string): string | null {
+  const specifier = `@typescript/${platformPackage}/package.json`
+  try {
+    const requireFromTypescript = createRequire(join(typescriptDir, 'lib', 'getExePath.js'))
+    return dirname(requireFromTypescript.resolve(specifier))
+  } catch {
+    // segue para a busca manual (o `exports` do pacote pode barrar, e no asar o
+    // resolvedor às vezes não enxerga)
+  }
+  return climbForPackage(typescriptDir, `@typescript/${platformPackage}`)
+}
+
+/** Sobe a árvore de `node_modules` procurando um pacote pelo nome. */
+function climbForPackage(from: string, packageName: string): string | null {
+  let dir = from
   for (;;) {
-    const candidate = join(dir, 'node_modules', 'typescript-language-server')
+    const candidate = join(dir, 'node_modules', ...packageName.split('/'))
     if (existsSync(join(candidate, 'package.json'))) return candidate
     const parent = dirname(dir)
     if (parent === dir) return null
     dir = parent
   }
-}
-
-function workspaceTsServerOf(root: string): string | null {
-  const candidate = join(root, 'node_modules', 'typescript', 'lib', 'tsserver.js')
-  return existsSync(candidate) ? candidate : null
 }
 
 /** Windows não distingue maiúscula de minúscula em caminho: `C:\a` e `c:\A`

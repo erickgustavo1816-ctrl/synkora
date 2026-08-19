@@ -23,19 +23,43 @@ import { LspError, LspRpc, LSP_REQUEST_TIMEOUT_MS } from './lspRpc'
  * 4. **Sem watch de disco (onda 1).** Cada chamada RELÊ o arquivo do disco e
  *    sincroniza o documento com o servidor. Simples e honesto: o que o
  *    diagnóstico enxerga é o que está gravado neste instante.
+ * 5. **Quem manda no diagnóstico é o SERVIDOR** (R14.1). O modo sai do
+ *    RESULTADO do `initialize`, nunca de palpite — ver `LspDiagnosticsMode`.
  *
- * O tsserver publica diagnóstico em RAJADAS (a passada sintática vem quase
- * instantânea e quase sempre vazia; a semântica vem depois). Por isso
- * `diagnostics` espera a poeira baixar: quieto `settleMs` desde a última
- * rajada, com teto duro em `ceilingMs` para o servidor que nunca cala.
+ * O tsserver clássico (5.x) publica diagnóstico em RAJADAS (a passada sintática
+ * vem quase instantânea e quase sempre vazia; a semântica vem depois). Por isso
+ * o modo PUSH espera a poeira baixar: quieto `settleMs` desde a última rajada,
+ * com teto duro em `ceilingMs` para o servidor que nunca cala.
+ *
+ * O TypeScript NATIVO (7.x, `tsc.exe --lsp --stdio`) é o oposto — sondado no
+ * binário real em 19/08: anuncia `diagnosticProvider` no initialize e NÃO
+ * publica NADA (janela de 5s sobre arquivo quebrado, zero `publishDiagnostics`);
+ * quem pergunta é o cliente, por `textDocument/diagnostic`, arquivo a arquivo.
+ * Esperar rajada dele seria esperar para sempre e devolver "nenhum problema"
+ * mentiroso — o pior resultado possível.
  */
 
-/** Quieto por este tanto desde a última rajada = a poeira baixou. */
+/** Quieto por este tanto desde a última rajada = a poeira baixou. Só o modo
+ *  PUSH tem janela: no PULL a resposta é determinística e chega quando chega. */
 export const LSP_DIAGNOSTICS_SETTLE_MS = 450
 
 /** Teto duro da espera por diagnóstico: servidor que nunca cala não trava o
- *  chat, entrega o que já publicou. */
+ *  chat, entrega o que já publicou. Só vale no modo PUSH. */
 export const LSP_DIAGNOSTICS_CEILING_MS = 15_000
+
+/**
+ * De onde vem o diagnóstico desta sessão — decidido pelo RESULTADO do
+ * `initialize`, nunca pela versão do pacote ou por palpite:
+ *
+ * - `push`: o servidor publica `textDocument/publishDiagnostics` sozinho e o
+ *   motor espera a poeira baixar (`settleMs`/`ceilingMs`). É o tsserver
+ *   clássico via `typescript-language-server`.
+ * - `pull`: o servidor ANUNCIOU `diagnosticProvider` no initialize — é
+ *   pull-only. O motor pergunta `textDocument/diagnostic` por arquivo; sem
+ *   janela, sem teto de assentamento, sem adivinhação. É o TypeScript nativo
+ *   7.x (`tsc.exe --lsp --stdio`).
+ */
+export type LspDiagnosticsMode = 'push' | 'pull'
 
 export type LspSeverity = 'error' | 'warning' | 'information' | 'hint'
 
@@ -101,6 +125,9 @@ export interface LspSessionOpts {
   onExit?: (info: { code: number | null; signal: string | null; stderr: string }) => void
 }
 
+/** Os dois tetos valem SÓ no modo `push` (no `pull` não existe janela para
+ *  ajustar): passar qualquer um deles numa sessão pull não muda nada, e isso é
+ *  dito aqui para ninguém debugar um número que o motor nem lê. */
 export interface LspDiagnosticsOpts {
   settleMs?: number
   ceilingMs?: number
@@ -123,9 +150,25 @@ interface WireDiagnostic {
   message: string
 }
 
+/** `DocumentDiagnosticReport` do protocolo (3.17). `kind: 'full'` traz `items`;
+ *  `kind: 'unchanged'` NÃO tem `items` — só o `resultId`. */
+interface WireDiagnosticReport {
+  kind?: string
+  items?: WireDiagnostic[]
+}
+
 interface OpenDocument {
   uri: string
   version: number
+}
+
+/** Um alvo já lido do disco e já SINCRONIZADO com o servidor: a uri é a que o
+ *  `didOpen`/`didChange` usou, e é por ela que o pull pergunta. */
+interface SyncedTarget {
+  abs: string
+  rel: string
+  key: string
+  uri: string
 }
 
 /** Uma consulta pontual já checada e sincronizada: o alvo dentro da raiz e a
@@ -175,6 +218,9 @@ export class LspSession {
   private stderrTail = ''
   private death: string | null = null
   private disposed = false
+  /** Push até o servidor dizer o contrário no `initialize` — servidor mudo
+   *  sobre `diagnosticProvider` é servidor da linha clássica. */
+  private mode: LspDiagnosticsMode = 'push'
 
   constructor(opts: LspSessionOpts) {
     this.root = resolve(opts.root)
@@ -236,10 +282,19 @@ export class LspSession {
     return !this.disposed && this.death === null
   }
 
+  /** De onde o diagnóstico vem NESTA sessão. Só vale depois do `ready()`: antes
+   *  do handshake ninguém sabe o que o servidor é, e o padrão é `push`. */
+  get diagnosticsMode(): LspDiagnosticsMode {
+    return this.mode
+  }
+
   /**
    * Os problemas dos arquivos pedidos, já em 1-BASED e ordenados por
    * arquivo/linha/coluna. Arquivo inexistente entra na lista como problema
    * (com a receita), nunca como exceção; caminho fora da raiz é recusa.
+   *
+   * A SAÍDA é a mesma nos dois modos (`push` e `pull`) — quem chama nunca sabe
+   * nem precisa saber qual servidor está do outro lado.
    */
   async diagnostics(files: string[], opts?: LspDiagnosticsOpts): Promise<LspDiagnostic[]> {
     await this.ensureUsable()
@@ -263,6 +318,19 @@ export class LspSession {
     }
     if (targets.length === 0) return answers
 
+    if (this.mode === 'pull') {
+      // PULL: nada de janela nem de teto de assentamento — o servidor só fala
+      // quando perguntado, então esperar seria esperar por nada.
+      const synced: SyncedTarget[] = targets.map((target) => ({
+        abs: target.abs,
+        rel: target.rel,
+        key: target.key,
+        uri: this.syncDocument(target, target.text)
+      }))
+      answers.push(...(await this.pull(synced)))
+      return answers.sort(compareDiagnostics)
+    }
+
     // A escuta arma ANTES do didOpen/didChange: rajada que chega entre a
     // sincronização e a espera seria rajada perdida, e a espera inteira
     // pagaria o teto duro à toa.
@@ -276,11 +344,7 @@ export class LspSession {
     if (this.death) throw new LspError(this.death)
 
     for (const target of targets) answers.push(...(this.published.get(target.key) ?? []))
-    return answers.sort(
-      (a, b) =>
-        a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column ||
-        a.message.localeCompare(b.message)
-    )
+    return answers.sort(compareDiagnostics)
   }
 
   /** Onde o símbolo desta posição (1-BASED) foi definido. Lista vazia com
@@ -350,7 +414,7 @@ export class LspSession {
   // ————— internos —————
 
   private async handshake(): Promise<void> {
-    await this.rpc.request(
+    const result = await this.rpc.request<unknown>(
       'initialize',
       {
         processId: process.pid,
@@ -371,6 +435,12 @@ export class LspSession {
               didSave: false
             },
             publishDiagnostics: { relatedInformation: false, versionSupport: false },
+            // O cliente sabe PERGUNTAR diagnóstico (`textDocument/diagnostic`).
+            // Honesto até no que nega: sem registro dinâmico (o motor não
+            // processa `client/registerCapability`, só responde educado) e sem
+            // `relatedDocumentSupport` — a onda 1 responde pelos arquivos
+            // PEDIDOS, não pelos que o servidor puxar junto.
+            diagnostic: { dynamicRegistration: false, relatedDocumentSupport: false },
             definition: { dynamicRegistration: false, linkSupport: false },
             references: { dynamicRegistration: false },
             hover: { dynamicRegistration: false, contentFormat: ['plaintext', 'markdown'] }
@@ -385,6 +455,10 @@ export class LspSession {
       },
       { timeoutMs: this.requestTimeoutMs }
     )
+    // O RESULTADO do initialize é que decide o modo: `diagnosticProvider`
+    // anunciado = servidor pull-only (o `tsc.exe --lsp` nativo). Ler isto aqui
+    // — e não a versão do pacote — é o que faz o motor servir os dois mundos.
+    this.mode = announcesPullDiagnostics(result) ? 'pull' : 'push'
     this.rpc.notify('initialized', {})
   }
 
@@ -503,8 +577,12 @@ export class LspSession {
     }
   }
 
-  private problem(rel: string, message: string): LspDiagnostic {
-    return { file: toPosix(rel), line: 1, column: 1, severity: 'error', code: 'arquivo', message }
+  /** Um problema DO MOTOR (não do código): o `code` diz de qual natureza —
+   *  `arquivo` para o que não abre, `diagnóstico` para a pergunta que o servidor
+   *  não respondeu. A linha/coluna 1:1 é convenção: o problema é do arquivo
+   *  inteiro. */
+  private problem(rel: string, message: string, code = 'arquivo'): LspDiagnostic {
+    return { file: toPosix(rel), line: 1, column: 1, severity: 'error', code, message }
   }
 
   /** Sincroniza o documento com o servidor a partir do DISCO. Primeira vez é
@@ -533,30 +611,69 @@ export class LspSession {
     return uri
   }
 
+  /**
+   * PULL: pergunta `textDocument/diagnostic` arquivo a arquivo. Um pedido por
+   * arquivo, em ORDEM — o servidor nativo anuncia `interFileDependencies: true`
+   * (ele monta UM programa e responde do mesmo), então perguntar em sequência
+   * mantém a resposta determinística e o diário legível. O único relógio aqui é
+   * o teto POR PEDIDO do `LspRpc`: não há janela de assentamento para pagar.
+   */
+  private async pull(targets: SyncedTarget[]): Promise<LspDiagnostic[]> {
+    const found: LspDiagnostic[] = []
+    for (const target of targets) {
+      // Morte do servidor é MORTE, não problema do arquivo: a frase (com a
+      // receita) é a mesma do modo push, e o gerente tira a sessão do cache.
+      if (this.death) throw new LspError(this.death)
+      try {
+        const report = await this.rpc.request<unknown>('textDocument/diagnostic', {
+          textDocument: { uri: target.uri }
+        })
+        found.push(...this.toDiagnostics(this.displayPath(target.abs), reportItemsOf(report)))
+      } catch (e) {
+        if (this.death) throw new LspError(this.death)
+        // Recusa/teto de UM arquivo não apaga os outros: vira problema na lista
+        // (com a receita), do mesmo jeito que arquivo inexistente vira.
+        found.push(
+          this.problem(
+            target.rel,
+            `o servidor de linguagem não entregou o diagnóstico de "${target.rel}" (${
+              e instanceof Error ? e.message : String(e)
+            }) — chame de novo: a próxima chamada pergunta outra vez, e o que veio dos outros arquivos já está nesta lista`,
+            'diagnóstico'
+          )
+        )
+      }
+    }
+    return found
+  }
+
   private collect(params: unknown): void {
     const payload = params as { uri?: string; diagnostics?: WireDiagnostic[] } | undefined
     if (!payload || typeof payload.uri !== 'string') return
     const abs = uriToPath(payload.uri)
     const key = pathKey(abs)
-    const file = this.displayPath(abs)
-    this.published.set(
-      key,
-      (payload.diagnostics ?? []).map((diagnostic) => {
-        const entry: LspDiagnostic = {
-          file,
-          // O fio conta de ZERO; a saída desta API conta de UM.
-          line: diagnostic.range.start.line + 1,
-          column: diagnostic.range.start.character + 1,
-          severity: SEVERITY_BY_CODE[diagnostic.severity ?? 1] ?? 'error',
-          message: diagnostic.message
-        }
-        if (diagnostic.code !== undefined && diagnostic.code !== null) {
-          entry.code = String(diagnostic.code)
-        }
-        return entry
-      })
-    )
+    this.published.set(key, this.toDiagnostics(this.displayPath(abs), payload.diagnostics ?? []))
     for (const watcher of [...this.settleWatchers]) watcher(key)
+  }
+
+  /** O ÚNICO tradutor do fio para `LspDiagnostic`. Push e pull passam por aqui
+   *  de propósito: dois tradutores seriam dois `+1` para manter em dia, e o dia
+   *  em que divergissem o recibo apontaria a linha errada em um dos modos. */
+  private toDiagnostics(file: string, wire: WireDiagnostic[]): LspDiagnostic[] {
+    return wire.map((diagnostic) => {
+      const entry: LspDiagnostic = {
+        file,
+        // O fio conta de ZERO; a saída desta API conta de UM.
+        line: diagnostic.range.start.line + 1,
+        column: diagnostic.range.start.character + 1,
+        severity: SEVERITY_BY_CODE[diagnostic.severity ?? 1] ?? 'error',
+        message: diagnostic.message
+      }
+      if (diagnostic.code !== undefined && diagnostic.code !== null) {
+        entry.code = String(diagnostic.code)
+      }
+      return entry
+    })
   }
 
   /** A poeira baixou: `settleMs` de silêncio desde a última rajada, teto duro
@@ -612,6 +729,49 @@ export class LspSession {
     if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return toPosix(abs)
     return toPosix(rel)
   }
+}
+
+/**
+ * O servidor anunciou `diagnosticProvider` nas capabilities do `initialize`?
+ * O protocolo manda um OBJETO (`DiagnosticOptions` — o nativo devolve
+ * `{identifier:'typescript', interFileDependencies:true, workspaceDiagnostics:false}`),
+ * mas `true` também é aceito: servidor real já mentiu forma antes, e o que
+ * importa é a PROMESSA de responder `textDocument/diagnostic`. Ausente,
+ * `null` ou `false` = servidor da linha push.
+ */
+function announcesPullDiagnostics(result: unknown): boolean {
+  const provider = (result as { capabilities?: { diagnosticProvider?: unknown } } | null | undefined)
+    ?.capabilities?.diagnosticProvider
+  if (provider === true) return true
+  return typeof provider === 'object' && provider !== null
+}
+
+/**
+ * Os itens de um `DocumentDiagnosticReport`. Duas regras que valem ouro:
+ *
+ * - `kind: 'unchanged'` NÃO tem `items` — significa "igual ao `resultId` que
+ *   você já tem". Como este motor NUNCA manda `previousResultId` (relê o disco
+ *   a cada chamada, sem cache), `unchanged` só pode significar SEM PROBLEMAS
+ *   para aquele arquivo: lista vazia, e não uma espera por algo que não vem.
+ * - `relatedDocuments` (problemas de OUTROS arquivos que este puxou junto) é
+ *   ignorado de propósito na onda 1: a lista sai dos arquivos PEDIDOS, e um
+ *   recibo com arquivo que ninguém perguntou confundiria mais do que ajudaria.
+ */
+function reportItemsOf(result: unknown): WireDiagnostic[] {
+  const report = result as WireDiagnosticReport | null | undefined
+  if (!report || !Array.isArray(report.items)) return []
+  return report.items
+}
+
+/** A ordem do recibo: arquivo, linha, coluna, mensagem. Uma só, para os dois
+ *  modos — lista que muda de ordem conforme o servidor não serve para diff. */
+function compareDiagnostics(a: LspDiagnostic, b: LspDiagnostic): number {
+  return (
+    a.file.localeCompare(b.file) ||
+    a.line - b.line ||
+    a.column - b.column ||
+    a.message.localeCompare(b.message)
+  )
 }
 
 /** `MarkedString | MarkedString[] | MarkupContent` — os três formatos de hover

@@ -26,8 +26,23 @@
  *        references         → [linha, caractere] e [linha+10, caractere+1]
  *        hover              → texto "sym@<linha>:<caractere>" (do FIO)
  *
+ * O MODO PULL (R14.1) — o retrato do typescript NATIVO (7.x, `tsc.exe --lsp`),
+ * sondado no binário real: ele anuncia `diagnosticProvider` no initialize e NÃO
+ * publica `publishDiagnostics` nunca; quem pergunta é o cliente, por
+ * `textDocument/diagnostic`, e a resposta é `{kind:'full', items}`. Com
+ * `--pull` o dublê vira exatamente isso: mesma convenção `@@` no conteúdo (para
+ * o teste afirmar POSIÇÃO EXATA nos dois modos), zero push.
+ *
  * Bandeiras (todas para provar um comportamento do motor, nenhuma decorativa):
  *   --log <arquivo>        diário JSONL do que chegou (ordem do handshake)
+ *   --pull                 anuncia diagnosticProvider e NÃO publica nada; só
+ *                          responde textDocument/diagnostic
+ *   --pull-unchanged       no modo pull responde `kind:'unchanged'` (sem
+ *                          `items`) — "nada mudou" tem que virar "sem problemas"
+ *   --pull-error           no modo pull RECUSA o textDocument/diagnostic (o
+ *                          motor tem que responder nomeando a receita)
+ *   --pull-related         no modo pull anexa `relatedDocuments` de um arquivo
+ *                          que NINGUÉM pediu (a onda 1 ignora de propósito)
  *   --bursts <n>           rajadas de publishDiagnostics por sincronização; as
  *                          n-1 primeiras vêm VAZIAS (é o que o tsserver faz:
  *                          passada sintática antes da semântica)
@@ -60,6 +75,10 @@ const LOG = option('log', null)
 const BURSTS = Number(option('bursts', '2'))
 const BURST_GAP = Number(option('burst-gap', '25'))
 const NEVER_SETTLE = flag('never-settle')
+const PULL = flag('pull')
+const PULL_UNCHANGED = flag('pull-unchanged')
+const PULL_ERROR = flag('pull-error')
+const PULL_RELATED = flag('pull-related')
 const DIE_ON = option('die-on', null)
 const GARBAGE = flag('garbage')
 const SPLIT_WRITES = flag('split-writes')
@@ -196,6 +215,8 @@ function dispatch(message) {
     case 'textDocument/didClose':
       documents.delete(message.params.textDocument.uri)
       return
+    case 'textDocument/diagnostic':
+      return onPullDiagnostic(message)
     case 'textDocument/definition':
       return respond(message.id, definitionAt(message.params))
     case 'textDocument/references':
@@ -223,20 +244,77 @@ function onInitialize(message) {
   const uri = message.params?.rootUri
   if (typeof uri === 'string') rootPath = fileURLToPath(uri)
   log({ event: 'initializationOptions', value: message.params?.initializationOptions ?? null })
+  // O que o CLIENTE prometeu. Fica no diário para a suíte provar as capabilities
+  // declaradas (o motor não as expõe por outro lugar, e não deveria).
+  log({ event: 'clientCapabilities', value: message.params?.capabilities ?? null })
   if (GARBAGE) {
     // Sem `Content-Length` e com fim de cabeçalho: o parser do motor tem que
     // largar este bloco e re-sincronizar no quadro seguinte.
     process.stdout.write('ruído inicial do servidor\r\nlixo: sim\r\n\r\n')
   }
+  const capabilities = {
+    textDocumentSync: 1,
+    definitionProvider: true,
+    referencesProvider: true,
+    hoverProvider: true
+  }
+  if (PULL) {
+    // O anúncio EXATO do binário nativo (medido em 19/08).
+    capabilities.diagnosticProvider = {
+      identifier: 'typescript',
+      interFileDependencies: true,
+      workspaceDiagnostics: false
+    }
+  }
   respond(message.id, {
-    capabilities: {
-      textDocumentSync: 1,
-      definitionProvider: true,
-      referencesProvider: true,
-      hoverProvider: true
-    },
+    capabilities,
     serverInfo: { name: 'fake-lsp-server', version: '1.0.0' }
   })
+}
+
+/** A resposta do modo PULL. Fora do modo pull o dublê NÃO trata este método (o
+ *  -32601 do `default` é a resposta certa: quem não anunciou não responde). */
+function onPullDiagnostic(message) {
+  if (!PULL) {
+    return writeFrame({
+      jsonrpc: '2.0',
+      id: message.id,
+      error: { code: -32601, message: 'o dublê não trata "textDocument/diagnostic" sem --pull' }
+    })
+  }
+  if (PULL_ERROR) {
+    return writeFrame({
+      jsonrpc: '2.0',
+      id: message.id,
+      error: { code: -32803, message: 'o programa ainda está sendo montado' }
+    })
+  }
+  if (PULL_UNCHANGED) {
+    // `unchanged` NÃO tem `items` — é o "nada mudou desde o resultId anterior".
+    return respond(message.id, { kind: 'unchanged', resultId: 'r1' })
+  }
+  const report = {
+    kind: 'full',
+    resultId: 'r1',
+    items: diagnosticsOf(message.params.textDocument.uri)
+  }
+  if (PULL_RELATED) {
+    // Problema de arquivo que NINGUÉM pediu: o motor da onda 1 ignora.
+    report.relatedDocuments = {
+      [pathToFileURL(join(rootPath, 'src', 'vizinho.ts')).href]: {
+        kind: 'full',
+        items: [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } },
+            severity: 1,
+            code: 9999,
+            message: 'problema de arquivo que ninguém pediu'
+          }
+        ]
+      }
+    }
+  }
+  respond(message.id, report)
 }
 
 // ————— diagnóstico derivado do conteúdo —————
@@ -261,6 +339,9 @@ function diagnosticsOf(uri) {
 }
 
 function publishBursts(uri) {
+  // Servidor PULL não publica NADA — nem uma rajada vazia. É a sonda do binário
+  // nativo: 5s de janela sobre arquivo quebrado, zero publishDiagnostics.
+  if (PULL) return
   clearTimeout(bursting.get(uri))
   const real = diagnosticsOf(uri)
   let burst = 0

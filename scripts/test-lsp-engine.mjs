@@ -13,9 +13,18 @@
  *   UM. O dublê responde com ARITMÉTICA sobre a posição que recebeu (ver o
  *   roteiro em `fake-lsp-server.mjs`), então cada asserção fixa NÚMEROS
  *   EXATOS: um `+1` a menos em qualquer sentido quebra a suíte na hora.
- * - **A janela de assentamento.** O dublê publica em rajadas como o tsserver
- *   (a primeira vazia, a real depois). Sem espera, `diagnostics` devolveria a
- *   rajada VAZIA — que é o pior resultado possível: "nenhum problema" mentiroso.
+ * - **A janela de assentamento (modo PUSH).** O dublê publica em rajadas como o
+ *   tsserver (a primeira vazia, a real depois). Sem espera, `diagnostics`
+ *   devolveria a rajada VAZIA — o pior resultado possível: "nenhum problema"
+ *   mentiroso.
+ * - **O modo PULL (R14.1).** O typescript NATIVO (7.x) anuncia
+ *   `diagnosticProvider` e não publica NADA: quem pergunta é o cliente. Com
+ *   `--pull` o dublê vira esse servidor, e os testes prendem as duas coisas que
+ *   importam — os MESMOS números do push (a conversão 0→1 é uma só) e NENHUMA
+ *   janela paga (a janela é medida com um `settleMs` absurdo de propósito).
+ * - **A escada do lançador (R14.1).** Nativo do projeto → clássico do projeto →
+ *   typescript do app, cada degrau provado com pacote de mentira NO DISCO e
+ *   cada recusa nomeando o comando E o lugar de rodá-lo.
  * - **As recusas.** Caminho fora da raiz, arquivo que não existe, servidor que
  *   morre no meio: cada mensagem tem que nomear a RECEITA. Beco sem saída é bug.
  * - **O gerente.** Cache por raiz, ociosidade (relógio INJETADO — o teste não
@@ -366,6 +375,136 @@ test('re-chamar RELÊ o disco: o motor não guarda cópia velha do arquivo', asy
   ])
 })
 
+// ————— 3b. o modo PULL: o servidor que só fala quando perguntado —————
+
+/** Os MESMOS números que o teste do push afirma. É de propósito: a conversão
+ *  0→1 e a forma do `LspDiagnostic` são UMA só para os dois modos — se um dia
+ *  divergirem, um destes dois testes cai. */
+const PROBLEMAS_DO_FIXTURE = [
+  {
+    file: 'src/a.ts',
+    line: 3,
+    column: 3,
+    severity: 'error',
+    code: '2304',
+    message: 'nome nao encontrado'
+  },
+  { file: 'src/a.ts', line: 5, column: 4, severity: 'warning', message: 'cuidado com a ação' }
+]
+
+test('PULL: o motor PERGUNTA o diagnóstico, com os MESMOS números do push', async (t) => {
+  const lab = labIn(t)
+  const log = lab.logFile()
+  // Janela e teto ABSURDOS de propósito: no modo pull não existe janela para
+  // pagar, então o relógio abaixo denuncia qualquer espera herdada do push.
+  const session = lab.session(['--pull', '--log', log], { settleMs: 4000, ceilingMs: 9000 })
+  await session.ready()
+  assert.equal(session.diagnosticsMode, 'pull', 'o anúncio de diagnosticProvider decide o modo')
+
+  const comecou = Date.now()
+  const found = await session.diagnostics(['src/a.ts'])
+  const levou = Date.now() - comecou
+  assert.ok(levou < 1500, `o pull pagou janela de assentamento: ${levou}ms (settleMs era 4000)`)
+  assert.deepEqual(found, PROBLEMAS_DO_FIXTURE)
+
+  const metodos = readLog(log)
+    .filter((entry) => entry.method)
+    .map((entry) => entry.method)
+  assert.ok(
+    metodos.includes('textDocument/diagnostic'),
+    `ninguém perguntou o diagnóstico; chegaram: ${JSON.stringify(metodos)}`
+  )
+  assert.ok(
+    metodos.indexOf('textDocument/diagnostic') > metodos.indexOf('textDocument/didOpen'),
+    'a pergunta só vale depois do arquivo sincronizado'
+  )
+})
+
+test('PULL: uma pergunta POR ARQUIVO, e o arquivo limpo volta sem problema', async (t) => {
+  const lab = labIn(t)
+  const log = lab.logFile()
+  const session = lab.session(['--pull', '--log', log], { settleMs: 4000 })
+  const found = await session.diagnostics(['src/limpo.ts', 'src/a.ts'])
+  assert.deepEqual(found, PROBLEMAS_DO_FIXTURE, 'o arquivo limpo não inventa problema')
+  const perguntas = readLog(log).filter((entry) => entry.method === 'textDocument/diagnostic')
+  assert.equal(perguntas.length, 2, 'dois arquivos pedidos = duas perguntas')
+})
+
+test('PULL: `unchanged` (sem items) é "sem problemas", não espera eterna', async (t) => {
+  const lab = labIn(t)
+  const session = lab.session(['--pull', '--pull-unchanged'], { settleMs: 4000, ceilingMs: 9000 })
+  const comecou = Date.now()
+  assert.deepEqual(await session.diagnostics(['src/a.ts']), [])
+  assert.ok(Date.now() - comecou < 1500, 'resposta limpa não pode custar espera nenhuma')
+})
+
+test('PULL: `relatedDocuments` de arquivo que ninguém pediu é ignorado', async (t) => {
+  const lab = labIn(t)
+  const session = lab.session(['--pull', '--pull-related'], { settleMs: 4000 })
+  const found = await session.diagnostics(['src/a.ts'])
+  assert.deepEqual(found, PROBLEMAS_DO_FIXTURE)
+  assert.ok(
+    !found.some((entry) => /vizinho/.test(entry.file) || entry.code === '9999'),
+    `a onda 1 responde pelos arquivos PEDIDOS: ${JSON.stringify(found)}`
+  )
+})
+
+test('PULL: recusa do servidor vira PROBLEMA que nomeia a receita', async (t) => {
+  const lab = labIn(t)
+  const session = lab.session(['--pull', '--pull-error'], { settleMs: 4000 })
+  const found = await session.diagnostics(['src/a.ts', 'src/limpo.ts'])
+  assert.equal(found.length, 2, 'cada arquivo pedido tem que voltar com resposta')
+  for (const entry of found) {
+    assert.equal(entry.severity, 'error')
+    assert.equal(entry.code, 'diagnóstico')
+    assert.equal(entry.line, 1)
+    assert.equal(entry.column, 1)
+    assert.match(entry.message, /não entregou o diagnóstico/)
+    assert.match(entry.message, /o programa ainda está sendo montado/)
+    assert.match(entry.message, /chame de novo/)
+    assert.ok(entry.message.includes(entry.file), 'a recusa diz de QUAL arquivo ela fala')
+  }
+})
+
+test('PULL: servidor que morre no meio é MORTE, não problema de arquivo', async (t) => {
+  const lab = labIn(t)
+  const session = lab.session(['--pull', '--die-on', 'textDocument/diagnostic'], { settleMs: 4000 })
+  await assert.rejects(session.diagnostics(['src/a.ts']), (e) => {
+    assert.equal(e.name, 'LspError')
+    assert.match(e.message, /encerrou \(código 9/)
+    assert.match(e.message, /a próxima chamada sobe um servidor novo/)
+    return true
+  })
+  assert.equal(session.alive, false)
+})
+
+test('sem anúncio de diagnosticProvider o modo continua PUSH (a onda 1 intacta)', async (t) => {
+  const lab = labIn(t)
+  const log = lab.logFile()
+  const session = lab.session(['--log', log], { settleMs: 100 })
+  await session.ready()
+  assert.equal(session.diagnosticsMode, 'push')
+  assert.equal((await session.diagnostics(['src/a.ts'])).length, 2)
+  assert.ok(
+    !readLog(log).some((entry) => entry.method === 'textDocument/diagnostic'),
+    'servidor que publica sozinho não pode receber pergunta que ele não anunciou'
+  )
+})
+
+test('o cliente DECLARA textDocument.diagnostic no handshake', async (t) => {
+  const lab = labIn(t)
+  const log = lab.logFile()
+  const session = lab.session(['--log', log])
+  await session.ready()
+  const anotado = readLog(log).find((entry) => entry.event === 'clientCapabilities')
+  assert.ok(anotado, 'o dublê tinha que ter anotado as capabilities do cliente')
+  assert.deepEqual(
+    anotado.value.textDocument.diagnostic,
+    { dynamicRegistration: false, relatedDocumentSupport: false },
+    'declarar é prometer: o motor sabe perguntar, e NÃO sabe registro dinâmico'
+  )
+})
+
 // ————— 4. as recusas: cada uma nomeia a receita —————
 
 test('caminho fora da raiz é RECUSA que nomeia a raiz que vale', async (t) => {
@@ -632,55 +771,270 @@ test('lançador que recusa (pacote faltando) não deixa sessão fantasma no cach
   assert.deepEqual(manager.openRoots(), [])
 })
 
-// ————— 7. o lançador de produção, com a resolução MASCARADA —————
+// ————— 7. o lançador de produção: A ESCADA, com a resolução MASCARADA —————
 
-function pacoteFalso(t, bin) {
-  const dir = mkdtempSync(join(tmpdir(), 'synkora-tsls-'))
-  writeFileSync(
-    join(dir, 'package.json'),
-    JSON.stringify({ name: 'typescript-language-server', version: '5.0.0', bin }),
-    'utf-8'
-  )
+/**
+ * A escada do R14.1 tem três degraus e cada um nasce de um FATO NO DISCO:
+ * (a) typescript NATIVO no workspace → `<exe> --lsp --stdio`, sem
+ * ELECTRON_RUN_AS_NODE (é exe, não script de node); (b) typescript CLÁSSICO no
+ * workspace → o caminho da onda 1, intacto; (c) sem typescript no workspace →
+ * o typescript DO APP, pela mesma decisão.
+ *
+ * Os pacotes destes testes são de MENTIRA mas moram no DISCO DE VERDADE: a
+ * resolução do exe (espelho de `typescript/lib/getExePath.js`) só está provada
+ * se a árvore `node_modules/@typescript/<base>-<plataforma>-<arch>/lib/<bin>` for
+ * percorrida para valer. Nenhum binário real entra na suíte.
+ */
+
+function pastaTemporaria(t, prefixo) {
+  const dir = mkdtempSync(join(tmpdir(), prefixo))
   t.after(() => {
     try {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
     } catch {
-      /* idem */
+      /* pasta temporária presa no Windows não reprova o motor */
     }
   })
   return dir
 }
 
-test('tsServerLaunch: Electron em modo node, --stdio e o typescript do WORKSPACE', (t) => {
-  const pacote = pacoteFalso(t, { 'typescript-language-server': './lib/cli.mjs' })
+function pacoteFalso(t, bin) {
+  const dir = pastaTemporaria(t, 'synkora-tsls-')
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({ name: 'typescript-language-server', version: '5.0.0', bin }),
+    'utf-8'
+  )
+  return dir
+}
+
+/** Um pacote `typescript` da linha CLÁSSICA: o que o define é o `tsserver.js`. */
+function typescriptClassico(t) {
+  const dir = pastaTemporaria(t, 'synkora-ts5-')
+  mkdirSync(join(dir, 'lib'), { recursive: true })
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({ name: 'typescript', version: '5.9.3', bin: { tsc: './bin/tsc' } }),
+    'utf-8'
+  )
+  writeFileSync(join(dir, 'lib', 'tsserver.js'), '// o tsserver clássico\n', 'utf-8')
+  return dir
+}
+
+/**
+ * Um pacote `typescript` da linha NATIVA: `lib` SEM `tsserver.js`, com
+ * `getExePath.js`, e o pacote de plataforma pendurado nele. O teste diz
+ * LITERALMENTE qual pasta de plataforma e qual nome de arquivo existem — nada
+ * é recalculado pela mesma regra do código, senão o teste provaria a si mesmo.
+ */
+function typescriptNativo(t, { name = 'typescript', bin = { tsc: './bin/tsc' }, platformPackage, exeName, semExe = false } = {}) {
+  const dir = pastaTemporaria(t, 'synkora-ts7-')
+  mkdirSync(join(dir, 'lib'), { recursive: true })
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: '7.0.2', bin }), 'utf-8')
+  writeFileSync(join(dir, 'lib', 'getExePath.js'), '// a fonte que este motor espelha\n', 'utf-8')
+  if (semExe) return { dir, exe: null }
+  const platformDir = join(dir, 'node_modules', '@typescript', platformPackage)
+  mkdirSync(join(platformDir, 'lib'), { recursive: true })
+  writeFileSync(
+    join(platformDir, 'package.json'),
+    JSON.stringify({ name: `@typescript/${platformPackage}`, version: '7.0.2' }),
+    'utf-8'
+  )
+  const exe = join(platformDir, 'lib', exeName)
+  writeFileSync(exe, 'MZ', 'utf-8')
+  return { dir, exe }
+}
+
+const NESTA_MAQUINA = {
+  platformPackage: `typescript-${process.platform}-${process.arch}`,
+  exeName: process.platform === 'win32' ? 'tsc.exe' : 'tsc'
+}
+
+test('escada (a): workspace com typescript NATIVO serve o LSP com o exe DO PROJETO', (t) => {
+  const nativo = typescriptNativo(t, NESTA_MAQUINA)
   const launch = tsServerLaunch('C:/missoes/wt-1', {
+    workspaceTypescriptDir: () => nativo.dir,
+    // Se a escada pulasse o degrau nativo, ela cairia AQUI e o teste veria o
+    // caminho clássico — por isso o gancho do servidor clássico existe e aponta
+    // para um pacote válido.
+    serverPackageDir: () => pacoteFalso(t, { 'typescript-language-server': './lib/cli.mjs' }),
+    execPath: 'C:/apps/Synkora.exe'
+  })
+  assert.equal(launch.command, nativo.exe)
+  assert.deepEqual(launch.args, ['--lsp', '--stdio'])
+  assert.equal(launch.cwd, 'C:/missoes/wt-1')
+  assert.equal(
+    launch.env,
+    undefined,
+    'exe NATIVO não leva ELECTRON_RUN_AS_NODE — a variável só faz sentido para script de node'
+  )
+  assert.equal(
+    launch.initializationOptions,
+    undefined,
+    'o compilador do projeto É o servidor: não há tsserver.path para apontar'
+  )
+})
+
+test('escada (a): o pacote de plataforma sai de platform+arch, e o `.exe` só no Windows', (t) => {
+  const nativo = typescriptNativo(t, {
+    platformPackage: 'typescript-linux-arm64',
+    exeName: 'tsc'
+  })
+  const launch = tsServerLaunch('/missoes/wt-linux', {
+    workspaceTypescriptDir: () => nativo.dir,
+    platform: 'linux',
+    arch: 'arm64'
+  })
+  assert.equal(launch.command, nativo.exe)
+  assert.deepEqual(launch.args, ['--lsp', '--stdio'])
+})
+
+test('escada (a): o nome do exe sai da CHAVE de `bin`, não do caminho dela', (t) => {
+  // Espelho fiel do getExePath: pacote escopado `@x/native-preview` procura
+  // `@typescript/native-preview-<plat>-<arch>` e o exe se chama como a chave.
+  const nativo = typescriptNativo(t, {
+    name: '@typescript/native-preview',
+    bin: { tsgo: './bin/nada-a-ver.js' },
+    platformPackage: 'native-preview-win32-x64',
+    exeName: 'tsgo.exe'
+  })
+  const launch = tsServerLaunch('C:/missoes/wt-preview', {
+    workspaceTypescriptDir: () => nativo.dir,
+    platform: 'win32',
+    arch: 'x64'
+  })
+  assert.equal(launch.command, nativo.exe)
+})
+
+test('escada (b): workspace com typescript CLÁSSICO mantém o caminho da onda 1', (t) => {
+  const pacote = pacoteFalso(t, { 'typescript-language-server': './lib/cli.mjs' })
+  const classico = typescriptClassico(t)
+  const launch = tsServerLaunch('C:/missoes/wt-2', {
+    workspaceTypescriptDir: () => classico,
     serverPackageDir: () => pacote,
-    workspaceTsServer: () => 'C:/missoes/wt-1/node_modules/typescript/lib/tsserver.js',
     execPath: 'C:/apps/Synkora.exe'
   })
   assert.equal(launch.command, 'C:/apps/Synkora.exe')
   assert.deepEqual(launch.args, [join(pacote, 'lib', 'cli.mjs'), '--stdio'])
   assert.equal(launch.env.ELECTRON_RUN_AS_NODE, '1')
-  assert.equal(launch.cwd, 'C:/missoes/wt-1')
+  assert.equal(launch.cwd, 'C:/missoes/wt-2')
   assert.deepEqual(launch.initializationOptions, {
-    tsserver: { path: 'C:/missoes/wt-1/node_modules/typescript/lib/tsserver.js' }
+    tsserver: { path: join(classico, 'lib', 'tsserver.js') }
   })
 })
 
-test('sem typescript no workspace o servidor usa o que ele embarca', (t) => {
+test('escada (c): sem typescript no workspace, o LSP é o typescript DO APP', (t) => {
+  const nativo = typescriptNativo(t, NESTA_MAQUINA)
+  const launch = tsServerLaunch('C:/missoes/wt-3', {
+    workspaceTypescriptDir: () => null,
+    appTypescriptDir: () => nativo.dir,
+    execPath: 'C:/apps/Synkora.exe'
+  })
+  assert.equal(launch.command, nativo.exe)
+  assert.deepEqual(launch.args, ['--lsp', '--stdio'])
+  assert.equal(launch.cwd, 'C:/missoes/wt-3', 'o servidor do app roda NA RAIZ da missão')
+  assert.equal(launch.env, undefined)
+})
+
+test('escada (c): app com typescript CLÁSSICO cai no caminho da onda 1 também', (t) => {
   const pacote = pacoteFalso(t, './lib/cli.mjs')
-  const launch = tsServerLaunch('C:/missoes/wt-2', {
+  const classico = typescriptClassico(t)
+  const launch = tsServerLaunch('C:/missoes/wt-4', {
+    workspaceTypescriptDir: () => null,
+    appTypescriptDir: () => classico,
     serverPackageDir: () => pacote,
-    workspaceTsServer: () => null,
     execPath: 'C:/apps/Synkora.exe'
   })
   assert.deepEqual(launch.args, [join(pacote, 'lib', 'cli.mjs'), '--stdio'])
-  assert.equal(launch.initializationOptions, undefined)
+  assert.deepEqual(launch.initializationOptions, {
+    tsserver: { path: join(classico, 'lib', 'tsserver.js') }
+  })
 })
 
-test('pacote do servidor ausente vira frase que NOMEIA o comando que instala', () => {
+test('degrau nativo QUEBRADO nomeia o pacote que falta e ONDE instalar', (t) => {
+  const nativo = typescriptNativo(t, { semExe: true })
   assert.throws(
-    () => tsServerLaunch('C:/missoes/wt-3', { serverPackageDir: () => null }),
+    () =>
+      tsServerLaunch('C:/missoes/wt-5', {
+        workspaceTypescriptDir: () => nativo.dir,
+        platform: 'win32',
+        arch: 'x64'
+      }),
+    (e) => {
+      assert.equal(e.name, 'LspError')
+      assert.match(e.message, /@typescript\/typescript-win32-x64/)
+      assert.match(e.message, /npm install/)
+      assert.match(e.message, /na raiz do projeto \(C:\/missoes\/wt-5\)/)
+      assert.match(e.message, /reabra o chat/)
+      return true
+    }
+  )
+})
+
+test('a recusa nomeia o pacote de plataforma CERTO, até no pacote de preview', (t) => {
+  const nativo = typescriptNativo(t, {
+    name: '@typescript/native-preview',
+    bin: { tsgo: './bin/tsgo' },
+    semExe: true
+  })
+  assert.throws(
+    () =>
+      tsServerLaunch('C:/missoes/wt-preview-quebrado', {
+        workspaceTypescriptDir: () => nativo.dir,
+        platform: 'win32',
+        arch: 'x64'
+      }),
+    (e) => {
+      assert.match(e.message, /@typescript\/native-preview-win32-x64/)
+      return true
+    }
+  )
+})
+
+test('degrau do APP quebrado manda instalar na pasta do Synkora, não no projeto', (t) => {
+  const nativo = typescriptNativo(t, { semExe: true })
+  assert.throws(
+    () =>
+      tsServerLaunch('C:/missoes/wt-6', {
+        workspaceTypescriptDir: () => null,
+        appTypescriptDir: () => nativo.dir
+      }),
+    (e) => {
+      assert.match(e.message, /na pasta do Synkora/)
+      assert.ok(
+        !/na raiz do projeto/.test(e.message),
+        `a receita tem que apontar UM lugar só: ${e.message}`
+      )
+      return true
+    }
+  )
+})
+
+test('sem typescript em lugar nenhum a recusa nomeia os DOIS lugares', () => {
+  assert.throws(
+    () =>
+      tsServerLaunch('C:/missoes/wt-7', {
+        workspaceTypescriptDir: () => null,
+        appTypescriptDir: () => null
+      }),
+    (e) => {
+      assert.equal(e.name, 'LspError')
+      assert.match(e.message, /C:\/missoes\/wt-7/)
+      assert.match(e.message, /Synkora/)
+      assert.match(e.message, /npm install/)
+      return true
+    }
+  )
+})
+
+test('degrau clássico sem typescript-language-server nomeia o comando que instala', (t) => {
+  const classico = typescriptClassico(t)
+  assert.throws(
+    () =>
+      tsServerLaunch('C:/missoes/wt-8', {
+        workspaceTypescriptDir: () => classico,
+        serverPackageDir: () => null
+      }),
     (e) => {
       assert.equal(e.name, 'LspError')
       assert.match(e.message, /typescript-language-server/)
@@ -691,11 +1045,19 @@ test('pacote do servidor ausente vira frase que NOMEIA o comando que instala', (
   )
 })
 
-test('pacote sem executável declarado também nomeia a receita', (t) => {
+test('pacote do servidor sem executável declarado também nomeia a receita', (t) => {
+  const classico = typescriptClassico(t)
   const pacote = pacoteFalso(t, undefined)
-  assert.throws(() => tsServerLaunch('C:/missoes/wt-4', { serverPackageDir: () => pacote }), (e) => {
-    assert.match(e.message, /não declara executável/)
-    assert.match(e.message, /npm install typescript-language-server/)
-    return true
-  })
+  assert.throws(
+    () =>
+      tsServerLaunch('C:/missoes/wt-9', {
+        workspaceTypescriptDir: () => classico,
+        serverPackageDir: () => pacote
+      }),
+    (e) => {
+      assert.match(e.message, /não declara executável/)
+      assert.match(e.message, /npm install typescript-language-server/)
+      return true
+    }
+  )
 })
