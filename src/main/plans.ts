@@ -204,6 +204,47 @@ export function effectivePlanItemStatus(
   return 'em_andamento'
 }
 
+/**
+ * R16 — DE QUEM ESTA MISSÃO DEPENDE, pelo grafo que o planejador declarou.
+ *
+ * Nenhum campo de vínculo novo foi preciso: item com `missionId` desta missão
+ * → `dependsOn` → itens dependidos → a missão de cada um. Quem resolve o
+ * ESTADO de cada missão dependida é o chamador (aqui não há MissionStore, e é
+ * isso que mantém este módulo em node puro).
+ *
+ * Recortes deliberados: item 'descartada' fica de fora (o dono tirou aquele
+ * trabalho do plano, então ele não é mais dependência de ninguém); dependência
+ * sem missão criada também (não existe entrega para contar); e a lista sai
+ * DEDUPLICADA por missão, porque dois planos podem apontar para a mesma.
+ */
+export interface PlanMissionDependency {
+  /** título do item dependido — o nome que o dono deu àquela fatia */
+  itemTitle: string
+  /** missão que aquele item virou */
+  missionId: string
+}
+
+export function planDependenciesOfMission(
+  plans: readonly Plan[],
+  missionId: string
+): PlanMissionDependency[] {
+  if (!missionId) return []
+  const out: PlanMissionDependency[] = []
+  const seen = new Set<string>([missionId])
+  for (const plan of plans) {
+    const item = plan.items.find((candidate) => candidate.missionId === missionId)
+    if (!item) continue
+    for (const dependencyId of item.dependsOn.slice(0, PLAN_ITEM_DEPENDS_MAX)) {
+      const dependency = plan.items.find((candidate) => candidate.id === dependencyId)
+      if (!dependency?.missionId || dependency.status === 'descartada') continue
+      if (seen.has(dependency.missionId)) continue
+      seen.add(dependency.missionId)
+      out.push({ itemTitle: dependency.title, missionId: dependency.missionId })
+    }
+  }
+  return out
+}
+
 export function planView(plan: Plan, missions: readonly PlanMissionSnapshot[]): PlanView {
   const byId = new Map(missions.map((mission) => [mission.id, mission]))
   const items = plan.items.map((item): PlanItemView => {

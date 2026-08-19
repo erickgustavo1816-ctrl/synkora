@@ -42,9 +42,11 @@ import {
   missionTypeOf,
   resumeSessionIdFor,
   routeGuiMissionPane,
+  type GuiMissionDependencyDelivery,
   type GuiMissionRole,
   type GuiMissionWorkspace
 } from '../guiMissionContracts'
+import { planDependenciesOfMission } from '../plans'
 import {
   isGuiPermissionMode,
   rememberedGuiExecutorValue,
@@ -155,6 +157,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     projects,
     seats,
     missions,
+    plans,
     backlog,
     maestro,
     integrationQueue,
@@ -302,6 +305,53 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       roadmapExists: existsSync(join(project.path, 'plano', 'roadmap.md')),
       focus: [mission.title, mission.goal?.trim()].filter(Boolean).join('\n')
     })
+  }
+
+  /** A 1ª linha ÚTIL do goal de uma missão dependida. O goal nascido do quadro
+   *  traz várias seções (objetivo, contexto, critérios): no briefing de quem
+   *  depende dela só cabe o "o quê", em uma frase. */
+  const DEPENDENCY_GOAL_LINE_MAX = 200
+  function missionGoalFirstLine(goal?: string): string | undefined {
+    const line = (goal ?? '')
+      .split(/\r?\n/)
+      .map((candidate) => candidate.trim())
+      .find((candidate) => candidate.length > 0)
+    if (!line) return undefined
+    return line.length <= DEPENDENCY_GOAL_LINE_MAX
+      ? line
+      : `${line.slice(0, DEPENDENCY_GOAL_LINE_MAX - 1)}…`
+  }
+
+  /**
+   * R16 — O QUE AS DEPENDÊNCIAS DESTA MISSÃO JÁ ENTREGARAM.
+   *
+   * O grafo vem do plano (`planDependenciesOfMission`, puro e testado); aqui só
+   * se resolve a MISSÃO de cada dependência e se filtra pelas CONCLUÍDAS — é a
+   * única coisa que este handler tem e o módulo de planos não.
+   *
+   * Dependência concluída SEM `delivery` continua na lista, nomeada: o
+   * contrato do briefing tem uma linha honesta para ela. Omitir seria devolver
+   * o dev exatamente ao estudo do zero que esta rodada existe para matar.
+   *
+   * `undefined` (e nunca lista vazia) quando não há nada: é assim que o
+   * briefing sai byte a byte idêntico ao de antes da rodada.
+   */
+  function dependencyDeliveriesOf(mission: Mission): GuiMissionDependencyDelivery[] | undefined {
+    const dependencies = planDependenciesOfMission(plans.list(mission.projectId), mission.id)
+    if (dependencies.length === 0) return undefined
+    const delivered: GuiMissionDependencyDelivery[] = []
+    for (const dependency of dependencies) {
+      const done = missions.get(dependency.missionId)
+      if (!done || done.projectId !== mission.projectId || done.status !== 'concluida') continue
+      const goalFirstLine = missionGoalFirstLine(done.goal)
+      delivered.push({
+        itemTitle: dependency.itemTitle,
+        missionTitle: done.title,
+        ...(done.delivery ? { delivery: done.delivery } : {}),
+        ...(goalFirstLine ? { goalFirstLine } : {})
+      })
+    }
+    return delivered.length > 0 ? delivered : undefined
   }
 
   /**
@@ -531,6 +581,16 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
               route.missionType === 'release' ? 'gui-release' : 'gui-delegator'
             )
 
+      // R16: só o DEV de uma missão de dev recebe o bloco das dependências — é
+      // ele quem vai estudar o produto antes de implementar (o reviewer julga o
+      // diff, o ajudante recebe uma fatia pronta). Sem plano, sem dependência ou
+      // com a dependida ainda em pé, o campo nem existe e o briefing é o de
+      // sempre, byte a byte.
+      const dependencyDeliveries =
+        route.missionType === 'dev' && role === 'dev'
+          ? dependencyDeliveriesOf(mission)
+          : undefined
+
       const spawn: GuiPaneSpawn = {
         paneId,
         projectId: mission.projectId,
@@ -569,7 +629,8 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
                 goal: mission.goal,
                 scope: mission.scope,
                 branch: mission.branch,
-                baseBranch: mission.baseBranch
+                baseBranch: mission.baseBranch,
+                ...(dependencyDeliveries ? { dependencyDeliveries } : {})
               })
       }
       blackbox.record({

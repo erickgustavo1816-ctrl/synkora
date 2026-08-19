@@ -9,6 +9,7 @@ import {
   PLAN_STALE_ERROR,
   PlanStore,
   effectivePlanItemStatus,
+  planDependenciesOfMission,
   planView
 } from '../.tmp/plans-test/plans.js'
 import {
@@ -567,4 +568,95 @@ test('designação: nenhum patch move o `kind` — só o gesto do dono', (t) => 
   assert.equal(patched.ok, true)
   assert.equal(patched.plan.title, 'Outro')
   assert.equal(patched.plan.kind, 'livre')
+})
+
+// ————— R16: O GRAFO DIZ DE QUEM A MISSÃO DEPENDE (2026-08-19) —————
+//
+// O briefing do dev precisa saber o que as dependências JÁ entregaram, e o
+// vínculo já existia inteiro: item com missionId desta missão → dependsOn →
+// item dependido → a missão dele. Nenhum campo novo; o que faltava era a
+// leitura. Ela mora aqui, pura, porque é contrato — o ipc só resolve o ESTADO
+// de cada missão dependida em cima do que sai daqui.
+
+test('as dependências de uma missão saem do plano, com o título do item dependido', (t) => {
+  const { store } = storeIn(t, 'deps-lookup')
+  const created = store.create(
+    'p1',
+    draftOf([
+      { title: 'Store da fila', objective: 'guardar os tickets' },
+      { title: 'Botão de subir', objective: 'o gesto do dono' },
+      {
+        title: 'Tela da fila',
+        objective: 'mostrar a fila',
+        dependsOn: ['store-da-fila', 'botao-de-subir']
+      }
+    ]),
+    { manual: true }
+  )
+  const [store_, botao, tela] = created.plan.items
+  store.linkMission(created.plan.id, store_.id, 'm-store')
+  store.linkMission(created.plan.id, botao.id, 'm-botao')
+  store.linkMission(created.plan.id, tela.id, 'm-tela')
+
+  assert.deepEqual(planDependenciesOfMission(store.list('p1'), 'm-tela'), [
+    { itemTitle: 'Store da fila', missionId: 'm-store' },
+    { itemTitle: 'Botão de subir', missionId: 'm-botao' }
+  ])
+  // quem não depende de ninguém (o que o dono roda em paralelo) sai vazio
+  assert.deepEqual(planDependenciesOfMission(store.list('p1'), 'm-store'), [])
+  // missão que não está em plano nenhum, e id vazio, nunca inventam grafo
+  assert.deepEqual(planDependenciesOfMission(store.list('p1'), 'm-avulsa'), [])
+  assert.deepEqual(planDependenciesOfMission(store.list('p1'), ''), [])
+})
+
+test('dependência sem missão criada ou DESCARTADA fica fora do grafo', (t) => {
+  const { store } = storeIn(t, 'deps-recortes')
+  const created = store.create(
+    'p1',
+    draftOf([
+      { title: 'Ainda no papel', objective: 'sem missão' },
+      { title: 'Fora do plano', objective: 'o dono descartou' },
+      { title: 'Entregue', objective: 'essa vale' },
+      {
+        title: 'Depende de todas',
+        objective: 'a que abre o chat',
+        dependsOn: ['ainda-no-papel', 'fora-do-plano', 'entregue']
+      }
+    ]),
+    { manual: true }
+  )
+  const [, descartada, entregue, dependente] = created.plan.items
+  store.linkMission(created.plan.id, descartada.id, 'm-descartada')
+  store.linkMission(created.plan.id, entregue.id, 'm-entregue')
+  store.linkMission(created.plan.id, dependente.id, 'm-dependente')
+  store.update(created.plan.id, { items: [{ id: descartada.id, status: 'descartada' }] })
+
+  // item sem missão não tem entrega para contar; item descartado saiu do plano
+  assert.deepEqual(planDependenciesOfMission(store.list('p1'), 'm-dependente'), [
+    { itemTitle: 'Entregue', missionId: 'm-entregue' }
+  ])
+})
+
+test('a mesma missão dependida em dois planos aparece UMA vez', (t) => {
+  const { store } = storeIn(t, 'deps-dedupe')
+  for (const label of ['um', 'dois']) {
+    const created = store.create(
+      'p1',
+      draftOf(
+        [
+          { title: 'Store da fila', objective: 'guardar' },
+          { title: 'Tela da fila', objective: 'mostrar', dependsOn: ['store-da-fila'] }
+        ],
+        { title: `Plano ${label}` }
+      ),
+      { manual: true }
+    )
+    const [dependida, dependente] = created.plan.items
+    store.linkMission(created.plan.id, dependida.id, 'm-store')
+    store.linkMission(created.plan.id, dependente.id, 'm-tela')
+  }
+
+  assert.deepEqual(planDependenciesOfMission(store.list('p1'), 'm-tela'), [
+    { itemTitle: 'Store da fila', missionId: 'm-store' }
+  ])
 })

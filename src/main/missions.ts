@@ -13,6 +13,85 @@ import { missionTypeOf, type MissionType } from './guiMissionContracts'
 
 export type MissionStatus = 'ativa' | 'integrando' | 'concluida' | 'arquivada'
 
+/**
+ * A ENTREGA DA MISSÃO, EM FATO DE GIT (R16 — design
+ * `.synkora/reports/DESIGN_CONHECIMENTO_ATRAVESSA_R16_2026-08-19.md`).
+ *
+ * A conversa da missão morre com o chat dela, então o dev da missão SEGUINTE
+ * re-derivava do zero o que a dependência acabou de construir. Isto é o que
+ * atravessa: assuntos de commit e arquivos tocados, lidos NA CONCLUSÃO —
+ * enquanto branch e worktree ainda existem — e durável no JSON.
+ *
+ * NADA DE PROSA GERADA de propósito: a entrega é o FATO do git, não uma
+ * opinião do harness sobre ele. Ausente é estado legítimo (missão pré-R16,
+ * projeto sem git, captura que falhou) e o briefing degrada dizendo a verdade.
+ */
+export interface MissionDelivery {
+  capturedAt: string
+  /** assuntos de commit, mais novos primeiro (teto: COMMITS_CAP) */
+  commits: string[]
+  /** arquivos tocados, relativos à raiz do repo (teto: FILES_CAP) */
+  files: string[]
+  /** SÓ quando um teto cortou: os totais REAIS, para o briefing nunca fazer a
+   *  lista curta passar por entrega inteira. */
+  truncated?: { commits: number; files: number }
+}
+
+export const MISSION_DELIVERY_COMMITS_CAP = 20
+export const MISSION_DELIVERY_FILES_CAP = 40
+/** Uma linha só não pode inflar o briefing do dev: assunto de commit gigante
+ *  (ou caminho absurdo) entra cortado, com reticência visível. */
+const MISSION_DELIVERY_LINE_MAX = 160
+
+function deliveryLine(value: string): string {
+  return value.length <= MISSION_DELIVERY_LINE_MAX
+    ? value
+    : `${value.slice(0, MISSION_DELIVERY_LINE_MAX - 1)}…`
+}
+
+/**
+ * A entrega a partir do que o git contou. PURA de propósito: os tetos e a
+ * honestidade dos totais são regra de contrato (o briefing os imprime), e
+ * regra de contrato se prova sem subir Electron nem repositório.
+ *
+ * `undefined` = não há o que registrar (missão sem commit e sem arquivo) —
+ * inventar uma entrega vazia faria o briefing anunciar conhecimento que não
+ * existe.
+ */
+export function missionDeliveryFrom(input: {
+  capturedAt: string
+  /** assuntos, mais novos primeiro */
+  commits: readonly string[]
+  files: readonly string[]
+  /** total REAL de commits, quando quem leu já veio com teto próprio */
+  totalCommits?: number
+}): MissionDelivery | undefined {
+  const commits = input.commits.map((subject) => subject.trim()).filter(Boolean)
+  const files: string[] = []
+  const seen = new Set<string>()
+  for (const raw of input.files) {
+    const file = raw.trim()
+    if (!file || seen.has(file)) continue
+    seen.add(file)
+    files.push(file)
+  }
+  if (commits.length === 0 && files.length === 0) return undefined
+  const totalCommits = Math.max(commits.length, Math.trunc(input.totalCommits ?? 0))
+  const kept = {
+    commits: commits.slice(0, MISSION_DELIVERY_COMMITS_CAP).map(deliveryLine),
+    files: files.slice(0, MISSION_DELIVERY_FILES_CAP).map(deliveryLine)
+  }
+  const truncated =
+    totalCommits > kept.commits.length || files.length > kept.files.length
+      ? { commits: totalCommits, files: files.length }
+      : undefined
+  return {
+    capturedAt: input.capturedAt,
+    ...kept,
+    ...(truncated ? { truncated } : {})
+  }
+}
+
 export interface Mission {
   id: string
   projectId: string
@@ -63,6 +142,10 @@ export interface Mission {
   /** Momento real da conclusão. `updatedAt` pode mudar depois por manutenção
    *  e não deve fazer uma missão antiga parecer recém-concluída no radar. */
   completedAt?: string
+  /** R16 — o que esta missão ENTREGOU, capturado na conclusão (ver
+   *  MissionDelivery). Ausente em missão antiga, em projeto sem git e quando a
+   *  leitura falhou: quem lê nunca pode tratar ausência como "não entregou". */
+  delivery?: MissionDelivery
   createdAt: string
   updatedAt: string
 }
@@ -228,6 +311,10 @@ export class MissionStore {
         | 'worktree'
         | 'baseBranch'
         | 'pendingIntegrationApproval'
+        // R16: a entrega entra pelo MESMO gesto que conclui a missão — o
+        // `update` que zera branch/worktree. Duas escritas deixariam uma
+        // janela em que a missão está concluída e a entrega ainda não pousou.
+        | 'delivery'
       >
     >
   ): Mission | undefined {

@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import Module, { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -506,4 +509,279 @@ test('bloqueio OPERACIONAL continua fora do alcance do agente: o merge já está
   // e um ticket que nem está congelado não tem o que reabrir
   enqueue(store, 'p2', 'm2', T0)
   assert.throws(() => store.reclaimForAgent('m2'), hasCode('invalid_transition'))
+})
+
+// ————— R16: A ENTREGA É CAPTURADA ANTES DE O WORKTREE MORRER (2026-08-19) —————
+//
+// O dono cronometrou ~10 minutos de dev re-derivando o que a missão-dependência
+// acabou de construir. A cura só existe se a ENTREGA da dependência ficar
+// gravada, e a única janela para lê-la é ANTES do merge: o `mergeTaskWorktree`
+// remove worktree e branch na limpeza dele, e o `missions.update` da conclusão
+// zera os dois campos no mesmo gesto. Depois disso não há de onde ler.
+//
+// MECÂNICA: o motor REAL roda contra um repositório de verdade — o mesmo
+// arranjo do test-mission-creation (fecho compilado para CJS por `tsc --noCheck`
+// + `electron` e `gitAsync` trocados por stubs no `Module._load`). A fila é o
+// STORE REAL importado no topo deste arquivo e o registro é o MissionStore
+// REAL: o que se prova é o que ficou PERSISTIDO.
+
+const gitCli = (cwd, args) =>
+  execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true }).trim()
+
+const userData = mkdtempSync(join(tmpdir(), 'synkora-r16-userdata-'))
+process.on('exit', () => rmSync(userData, { recursive: true, force: true }))
+
+const electronStub = {
+  app: {
+    getPath: () => userData,
+    isPackaged: false,
+    getName: () => 'synkora',
+    getVersion: () => '0.0.0-test',
+    on: () => electronStub.app,
+    once: () => electronStub.app,
+    off: () => electronStub.app,
+    whenReady: () => Promise.resolve()
+  },
+  ipcMain: { handle: () => {}, on: () => {}, removeHandler: () => {} },
+  shell: { openExternal: () => {} },
+  dialog: {},
+  BrowserWindow: class {},
+  Notification: class {
+    static isSupported() {
+      return false
+    }
+    on() {}
+    show() {}
+  },
+  clipboard: {},
+  nativeImage: {},
+  net: {},
+  safeStorage: { isEncryptionAvailable: () => false }
+}
+
+/** Ordem observável das chamadas de git do motor — é ela que prova o SEAM. */
+const gitOffCalls = []
+/** Operações que o git "não consegue" fazer na rodada (falha de captura). */
+const failingGitOps = new Set()
+const gitAsyncStub = {
+  GIT_CHECKPOINT_MARKER: '__SYNKORA_GIT_CHECKPOINT__',
+  gitOff: async (fn, ...args) => {
+    gitOffCalls.push(fn)
+    if (failingGitOps.has(fn)) throw new Error(`git indisponivel para ${fn}`)
+    return worktreeApi[fn](...args)
+  },
+  gitOffWithCheckpoint: async () => {
+    throw new Error('o merge da fila não usa checkpoint neste caminho')
+  }
+}
+
+const requireCompiled = createRequire(import.meta.url)
+const COMPILED = join(import.meta.dirname, '..', '.tmp', 'integration-queue-test')
+const loadModule = Module._load
+Module._load = function (request, parent, isMain) {
+  if (request === 'electron') return electronStub
+  if (/(^|[\\/])gitAsync(\.js)?$/.test(request)) return gitAsyncStub
+  return loadModule.call(this, request, parent, isMain)
+}
+const { createMissionEngine } = requireCompiled(join(COMPILED, 'missionEngine.js'))
+const {
+  MISSION_DELIVERY_COMMITS_CAP,
+  MISSION_DELIVERY_FILES_CAP,
+  MissionStore,
+  missionDeliveryFrom
+} = requireCompiled(join(COMPILED, 'missions.js'))
+const worktreeApi = requireCompiled(join(COMPILED, 'worktree.js'))
+
+/** Motor real + repositório real + missão com worktree isolado e uma entrega. */
+function mergeHarness(t) {
+  const projectId = randomUUID()
+  const projectPath = mkdtempSync(join(tmpdir(), 'synkora-r16-repo-'))
+  gitCli(projectPath, ['init'])
+  gitCli(projectPath, ['config', 'user.name', 'Synkora Test'])
+  gitCli(projectPath, ['config', 'user.email', 'synkora-test@example.invalid'])
+  writeFileSync(join(projectPath, 'base.txt'), 'base\n', 'utf8')
+  gitCli(projectPath, ['add', '-A'])
+  gitCli(projectPath, ['commit', '-m', 'commit inicial'])
+  const mainBranch = gitCli(projectPath, ['branch', '--show-current'])
+
+  const missions = new MissionStore()
+  const { store: queue } = temporaryStore(t)
+  const audited = []
+  const ctx = {
+    projects: { get: (id) => (id === projectId ? { id: projectId, path: projectPath } : undefined) },
+    missions,
+    backlog: {
+      getVersion: () => undefined,
+      completeMissionItems: () => 0,
+      addDelivery: () => true,
+      setVersionBranch: () => {},
+      listVersions: () => []
+    },
+    integrationQueue: queue,
+    maestro: { get: () => ({}), update: () => {} },
+    ptys: { kill: () => {}, has: () => false },
+    blackbox: { record: (event) => audited.push(event) },
+    // O wrapper de stall é fino de propósito (contrato do missionEngine).
+    mainStalls: { wrap: (_label, _id, run) => run() },
+    hub: { publish: () => {}, purgeMissionEvents: () => {}, panesOf: () => [] },
+    pushAll: () => {},
+    syncBoard: () => {},
+    scheduleProgressSnapshot: () => {},
+    orchPaneId: (project, mission) => `${project}--${mission}`,
+    unregisterPane: () => {}
+  }
+  const engine = createMissionEngine(ctx, {
+    orchKey: (project, mission) => `${project}--${mission}`,
+    versionIsolationIsValid: () => false,
+    emitBacklogChanged: () => {},
+    sweepProjectFiles: () => 0,
+    closeTestServersUnder: () => {},
+    deliverToGuiPane: () => false,
+    noteInGuiPane: () => false,
+    announceToGuiPane: () => false,
+    killMissionGuiPanes: () => {}
+  })
+
+  const mission = missions.create(projectId, {
+    title: 'Fila: o store',
+    goal: 'Guardar os tickets por universo',
+    direct: true
+  })
+  const withWorktree = engine.ensureMissionWorktree(mission.id)
+  assert.ok(withWorktree?.worktree && withWorktree.branch, 'a missão precisa de worktree isolado')
+  gitCli(withWorktree.worktree, ['config', 'user.name', 'Synkora Test'])
+  gitCli(withWorktree.worktree, ['config', 'user.email', 'synkora-test@example.invalid'])
+  writeFileSync(join(withWorktree.worktree, 'fila.ts'), 'export const fila = []\n', 'utf8')
+  gitCli(withWorktree.worktree, ['add', '-A'])
+  gitCli(withWorktree.worktree, ['commit', '-m', 'feat(queue): o ticket nasce com a fotografia'])
+
+  gitOffCalls.length = 0
+  failingGitOps.clear()
+  t.after(() => {
+    failingGitOps.clear()
+    rmSync(join(userData, 'worktrees', projectId), { recursive: true, force: true })
+    rmSync(projectPath, { recursive: true, force: true })
+  })
+
+  queue.enqueue({
+    projectId,
+    missionId: mission.id,
+    requestedBy: 'user',
+    targetKind: 'base',
+    requestedAt: T0,
+    sourceHead: gitCli(withWorktree.worktree, ['rev-parse', 'HEAD']),
+    validatedTargetHead: gitCli(projectPath, ['rev-parse', 'HEAD']),
+    targetBranch: mainBranch,
+    targetDir: projectPath
+  })
+
+  return {
+    engine,
+    projectId,
+    projectPath,
+    missions,
+    missionId: mission.id,
+    worktree: withWorktree.worktree,
+    audited
+  }
+}
+
+test('R16: o merge real GRAVA a entrega da missão — lida antes de o worktree sumir', async (t) => {
+  const harness = mergeHarness(t)
+  const outcome = await harness.engine.runMissionIntegration(harness.projectId, harness.missionId)
+  assert.match(outcome, /INTEGRADA/u, outcome)
+
+  const stored = harness.missions.get(harness.missionId)
+  assert.equal(stored.status, 'concluida')
+  // O MESMO gesto que zerou branch/worktree gravou a entrega: se a captura
+  // viesse depois, não haveria worktree de onde ler (a asserção abaixo prova
+  // que ele não existe mais no disco).
+  assert.equal(stored.branch, undefined)
+  assert.equal(stored.worktree, undefined)
+  assert.equal(existsSync(harness.worktree), false, 'o worktree tem de morrer no merge')
+  assert.ok(stored.delivery, 'a missão concluiu SEM entrega registrada')
+  assert.deepEqual(stored.delivery.commits, ['feat(queue): o ticket nasce com a fotografia'])
+  assert.deepEqual(stored.delivery.files, ['fila.ts'])
+  assert.equal(stored.delivery.truncated, undefined, 'nada foi cortado nesta entrega')
+  assert.match(stored.delivery.capturedAt, /^\d{4}-\d{2}-\d{2}T/u)
+
+  // ORDEM, e não só resultado: o git da captura roda ANTES do merge.
+  assert.ok(
+    gitOffCalls.indexOf('missionCommits') >= 0 &&
+      gitOffCalls.indexOf('missionCommits') < gitOffCalls.indexOf('mergeTaskWorktree'),
+    `ordem inesperada das chamadas de git: ${gitOffCalls.join(' → ')}`
+  )
+  assert.ok(
+    gitOffCalls.indexOf('missionWorkspaceSummary') < gitOffCalls.indexOf('mergeTaskWorktree')
+  )
+
+  // e o disco é a autoridade: outra instância do store lê a mesma entrega
+  assert.deepEqual(new MissionStore().get(harness.missionId).delivery, stored.delivery)
+
+  const captured = harness.audited.find((event) => event.event === 'mission-delivery-captured')
+  assert.ok(captured, 'captura boa tem de virar evento de caixa-preta')
+  assert.equal(captured.ids.missionId, harness.missionId)
+  assert.equal(captured.detail.commits, 1)
+  assert.equal(captured.detail.files, 1)
+})
+
+test('R16: falha na captura NÃO segura a conclusão — a missão integra sem entrega', async (t) => {
+  const harness = mergeHarness(t)
+  failingGitOps.add('missionCommits')
+  failingGitOps.add('missionWorkspaceSummary')
+
+  const outcome = await harness.engine.runMissionIntegration(harness.projectId, harness.missionId)
+  assert.match(outcome, /INTEGRADA/u, outcome)
+
+  const stored = harness.missions.get(harness.missionId)
+  assert.equal(stored.status, 'concluida', 'a entrega é bônus de conhecimento, nunca pré-condição')
+  assert.equal(stored.delivery, undefined, 'sem leitura não se inventa entrega')
+  const failed = harness.audited.find((event) => event.event === 'mission-delivery-capture-failed')
+  assert.ok(failed, 'a captura que falhou tem de deixar rastro na caixa-preta')
+  assert.equal(failed.ids.missionId, harness.missionId)
+  assert.match(failed.err, /git indisponivel/u)
+})
+
+test('R16: os tetos da entrega cortam a lista, mas o TOTAL continua verdadeiro', () => {
+  // A entrega é o que o briefing do dev imprime: lista curta é aceitável,
+  // lista curta se passando por entrega inteira não — o dev estudaria pela
+  // metade acreditando ter visto tudo.
+  const grande = missionDeliveryFrom({
+    capturedAt: '2026-08-19T10:00:00.000Z',
+    commits: Array.from({ length: 61 }, (_, i) => `feat: passo ${i + 1}`),
+    files: Array.from({ length: 118 }, (_, i) => `src/arquivo-${i + 1}.ts`),
+    totalCommits: 61
+  })
+  assert.equal(grande.commits.length, MISSION_DELIVERY_COMMITS_CAP)
+  assert.equal(grande.files.length, MISSION_DELIVERY_FILES_CAP)
+  assert.deepEqual(grande.truncated, { commits: 61, files: 118 })
+  // os mais NOVOS primeiro: o corte mantém a cabeça da lista que o git deu
+  assert.equal(grande.commits[0], 'feat: passo 1')
+
+  // `ahead` é a autoridade sobre o total quando o leitor já veio com teto
+  // próprio (missionCommits para em 50): o total nunca encolhe para o que coube.
+  const lidoComTeto = missionDeliveryFrom({
+    capturedAt: '2026-08-19T10:00:00.000Z',
+    commits: Array.from({ length: 50 }, (_, i) => `feat: passo ${i + 1}`),
+    files: ['a.ts'],
+    totalCommits: 137
+  })
+  assert.equal(lidoComTeto.truncated.commits, 137)
+  assert.equal(lidoComTeto.truncated.files, 1)
+
+  // nada cortado = sem `truncated` (o briefing não imprime "N de N")
+  const pequena = missionDeliveryFrom({
+    capturedAt: '2026-08-19T10:00:00.000Z',
+    commits: ['feat: uma coisa só', '   '],
+    files: ['a.ts', 'a.ts', '  ']
+  })
+  assert.deepEqual(pequena.commits, ['feat: uma coisa só'])
+  assert.deepEqual(pequena.files, ['a.ts'], 'arquivo repetido conta uma vez')
+  assert.equal(pequena.truncated, undefined)
+
+  // sem commit e sem arquivo NÃO existe entrega: ausência é a resposta honesta
+  assert.equal(
+    missionDeliveryFrom({ capturedAt: '2026-08-19T10:00:00.000Z', commits: [], files: [] }),
+    undefined
+  )
 })

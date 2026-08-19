@@ -277,6 +277,21 @@ function lspPositionSchema(): {
   }
 }
 
+/**
+ * R16 — O `context` DE CADA ITEM É O MAPA DA FATIA (design de 2026-08-19).
+ *
+ * FONTE ÚNICA das três aparições do campo (propose_plan.items,
+ * update_plan.items e update_plan.addItems): o agente lê a MESMA regra
+ * onde quer que escreva, e o teste a prende num lugar só.
+ *
+ * O porquê está dito ao agente de propósito: este texto viaja VERBATIM para o
+ * `goal` da missão (planItemMissionGoal) e de lá para o briefing do dev. Item
+ * sem mapa condena o dev a re-derivar o repositório que o planejador acabou de
+ * estudar — os 10 minutos de estudo que esta rodada existe para matar.
+ */
+const PLAN_ITEM_CONTEXT_DESCRIBE =
+  'seção Contexto — o MAPA DA FATIA: arquivos/módulos que importam, o que JÁ existe neles, o que será criado e onde NÃO mexer quando isso desenha a fronteira. Ele viaja VERBATIM para o briefing do dev desta missão: item sem mapa obriga o dev a re-derivar sozinho o repositório que você acabou de estudar.'
+
 function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   // SEM cacheHints de tools/list (CHECK 14, 2026-08-07): o hint de cache da
   // spec 2026-07-28 estava anunciado sem nenhum cliente validado usando — e
@@ -364,7 +379,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                   .optional()
                   .describe('seção Critério de pronto: binário e observável, nunca "ficou bom"'),
                 tier: z.enum(['pequeno', 'medio', 'grande']).optional().describe('seção Tier'),
-                context: z.string().max(2_000).optional().describe('seção Contexto'),
+                context: z.string().max(2_000).optional().describe(PLAN_ITEM_CONTEXT_DESCRIBE),
                 dependsOn: z
                   .array(z.string().max(60))
                   .max(12)
@@ -410,7 +425,12 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                 outOfScope: z.string().max(2_000).nullable().optional(),
                 doneCriteria: z.array(z.string().max(400)).max(10).optional(),
                 tier: z.enum(['pequeno', 'medio', 'grande']).nullable().optional(),
-                context: z.string().max(2_000).nullable().optional(),
+                context: z
+                  .string()
+                  .max(2_000)
+                  .nullable()
+                  .optional()
+                  .describe(PLAN_ITEM_CONTEXT_DESCRIBE),
                 dependsOn: z
                   .array(z.string().max(120))
                   .max(12)
@@ -436,7 +456,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
                 outOfScope: z.string().max(2_000).optional(),
                 doneCriteria: z.array(z.string().max(400)).max(10),
                 tier: z.enum(['pequeno', 'medio', 'grande']).optional(),
-                context: z.string().max(2_000).optional(),
+                context: z.string().max(2_000).optional().describe(PLAN_ITEM_CONTEXT_DESCRIBE),
                 dependsOn: z
                   .array(z.string().max(120))
                   .max(12)

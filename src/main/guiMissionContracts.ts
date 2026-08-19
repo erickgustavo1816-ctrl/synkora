@@ -21,8 +21,10 @@
  * permanente em projeto sem missão legada viva.
  *
  * Módulo PURO (nada de electron/fs/git): é o que deixa a convenção testável
- * sem subir o app.
+ * sem subir o app. O único import é de TIPO (apagado na compilação e pelo
+ * strip-types do node), então a pureza continua de pé.
  */
+import type { MissionDelivery } from './missions'
 
 export type GuiMissionRole = 'dev' | 'reviewer' | 'helper'
 
@@ -236,6 +238,30 @@ export function guiMissionSystemPrompt(role: GuiMissionRole): string {
   return DEV_CONTRACT
 }
 
+/**
+ * O QUE UMA DEPENDÊNCIA JÁ ENTREGOU (R16 — design de 2026-08-19).
+ *
+ * ESPELHO DECLARADO: o par é `Mission.delivery` (missions.ts), capturado na
+ * conclusão daquela missão. Só o TIPO viaja para cá — o módulo continua puro
+ * (nada de electron/fs/git), que é o que deixa o contrato testável sem app.
+ *
+ * A montagem é do CHAMADOR (`ipc/missions.ts`, que tem planos + missões na
+ * mão): item do plano desta missão → `dependsOn` → itens com missão
+ * CONCLUÍDA. Aqui só mora a FORMA e o texto que o dev lê.
+ */
+export interface GuiMissionDependencyDelivery {
+  /** título do item do plano de que esta missão depende */
+  itemTitle: string
+  /** título da missão que entregou aquele item */
+  missionTitle: string
+  /** AUSENTE = concluída sem entrega registrada (missão pré-R16, captura que
+   *  falhou, projeto sem git). A linha degradada diz a verdade; a dependência
+   *  NUNCA é omitida — omitir é justamente mandar o dev re-estudar tudo. */
+  delivery?: MissionDelivery
+  /** 1ª linha do goal daquela missão: o "o quê" em uma frase. */
+  goalFirstLine?: string
+}
+
 export interface GuiMissionBriefing {
   title: string
   goal?: string
@@ -244,6 +270,66 @@ export interface GuiMissionBriefing {
   branch?: string
   /** branch de onde a missão nasceu (base do diff do reviewer). */
   baseBranch?: string
+  /** R16: o que as dependências desta missão já entregaram NESTE worktree.
+   *  Ausente/vazio = briefing idêntico ao de sempre (missão sem plano, sem
+   *  dependência, ou dependência ainda não concluída). */
+  dependencyDeliveries?: readonly GuiMissionDependencyDelivery[]
+}
+
+/** Cabeçalho do bloco — o teste o lê daqui, nunca de uma cópia. */
+export const DEPENDENCY_DELIVERIES_HEADER =
+  'WHAT YOUR DEPENDENCIES ALREADY DELIVERED IN THIS WORKTREE:'
+
+/**
+ * O bloco que faz o conhecimento atravessar. Ele é curto de propósito: os
+ * tetos da própria entrega (20 commits / 40 arquivos) mantêm cada dependência
+ * em ~24 linhas, e quando um teto cortou o texto diz os totais REAIS — uma
+ * lista curta passando por entrega inteira mandaria o dev estudar pela metade.
+ */
+function dependencyDeliveriesBlock(
+  entries: readonly GuiMissionDependencyDelivery[]
+): string | undefined {
+  const lines: string[] = []
+  for (const entry of entries) {
+    const itemTitle = entry.itemTitle.trim() || entry.missionTitle.trim()
+    lines.push(
+      `- "${itemTitle}" — mission "${entry.missionTitle.trim()}", already concluded and merged into this branch.`
+    )
+    const goal = entry.goalFirstLine?.trim()
+    if (goal) lines.push(`  goal: ${goal}`)
+    const delivery = entry.delivery
+    if (!delivery || (delivery.commits.length === 0 && delivery.files.length === 0)) {
+      // A VERDADE, nomeada: entrega existe, resumo não. O dev sabe onde
+      // procurar em vez de concluir que a dependência não fez nada.
+      lines.push(
+        "  No delivery summary was recorded for it — its commits are already in this branch's history (git log)."
+      )
+      continue
+    }
+    if (delivery.commits.length > 0) {
+      const total = delivery.truncated?.commits ?? delivery.commits.length
+      lines.push(
+        total > delivery.commits.length
+          ? `  commits (${delivery.commits.length} of ${total}):`
+          : '  commits:'
+      )
+      for (const subject of delivery.commits) lines.push(`    · ${subject}`)
+    }
+    if (delivery.files.length > 0) {
+      const total = delivery.truncated?.files ?? delivery.files.length
+      const label =
+        total > delivery.files.length
+          ? `  files touched (${delivery.files.length} of ${total})`
+          : '  files touched'
+      lines.push(`${label}: ${delivery.files.join(', ')}`)
+    }
+  }
+  if (lines.length === 0) return undefined
+  return [
+    DEPENDENCY_DELIVERIES_HEADER,
+    ...lines,
+    'START YOUR STUDY THERE: that code is already here and it is what you are building on. Confirm what you need with `git log` and targeted reading of those files, instead of rediscovering the repository from scratch.'
+  ].join('\n')
 }
 
 /** Costura do briefing (o pane nasce MUDO): o agente recebe este texto colado
@@ -287,11 +373,18 @@ You are a helper on this mission and you share the worktree with the developer. 
 
 ${OWNER_MESSAGE_SEAM}`
   }
+  // R16 — o bloco das DEPENDÊNCIAS vem logo depois do GOAL, antes das
+  // instruções do worktree: é conhecimento sobre o produto, e o dev tem de
+  // lê-lo antes de decidir por onde estudar. Sem dependência concluída o
+  // briefing sai byte a byte igual ao de antes desta rodada.
+  const dependencies = mission.dependencyDeliveries?.length
+    ? dependencyDeliveriesBlock(mission.dependencyDeliveries)
+    : undefined
   // R15 — o worktree nasce MOBILIADO (junction de node_modules para o store do
   // projeto). Sem esta frase o dev queima a primeira rodada diagnosticando
   // "faltou instalar". Fraseado CONDICIONAL: o briefing é estático e não pode
   // mentir para projeto que não é node.
-  return `${head}
+  return `${head}${dependencies ? `\n\n${dependencies}` : ''}
 
 This worktree${mission.branch ? ` (branch ${mission.branch})` : ''} is yours for this mission. Your VERY FIRST output — before any tool call — is a 2-3 line note in PT-BR restating the goal as you understood it. Then study what already exists here; if the work is large, post a mini-plan of at most 5 lines and wait for the owner's go before implementing. When the project has node_modules at its root, this worktree is born sharing it through a junction — typecheck and tests work immediately, so never diagnose a missing install before checking, and a NEW dependency installed here lands in the project's shared store.
 
@@ -329,7 +422,8 @@ const PLANNING_CONTRACT = `You are the PLANNING ARCHITECT of this project inside
 - Each item of the draft is ONE mission and carries the same sections you would write in prose: objective / outOfScope / doneCriteria / tier / context.
 - "doneCriteria" is binary and observable — something the owner can check with his own eyes, never "ficou bom".
 - "tier" is the size of the work in one word (pequeno / medio / grande).
-- "context" points at the files, screens and decisions that already exist and matter for that mission.
+- "context" is the MAP OF THE SLICE, and it is the most valuable thing you write: the files, modules and screens that matter, what ALREADY exists inside them, and what will be created. Say where NOT to touch whenever that is what draws the boundary.
+- Write that map knowing it travels VERBATIM into the briefing of that mission's developer: the repository you have just studied is knowledge he does not have, and whatever you leave out he pays for by re-deriving it from zero.
 - ALSO write the long-form brief of each mission at plano/NNN-slug.md (NNN = 001, 002, … in execution order) and put that path in docPath. The draft is the structure; the markdown is the depth — one is not a substitute for the other.
 - Every mission file has exactly these sections, with these names, in this order: Objetivo / Fora de escopo / Critério de pronto / Tier / Contexto.
 - To read what is already planned use list_plans and get_plan; to change an existing plan use update_plan (it executes directly, so send the updatedAt you just read); delete_plan archives a plan and is reversible.

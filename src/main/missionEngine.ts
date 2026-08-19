@@ -37,12 +37,21 @@ import {
   initGitRepo,
   isExpectedWorktree,
   isWorktreeClean,
+  missionCommits,
+  missionWorkspaceSummary,
   missionWorktreeDescriptor,
   removeWorktreeAndBranch,
   resolveMissionWorkspace,
+  type MissionCommit,
+  type MissionWorkspaceSummary,
   type VersionBaseSyncResult
 } from './worktree'
-import { type Mission, type NewMission } from './missions'
+import {
+  missionDeliveryFrom,
+  type Mission,
+  type MissionDelivery,
+  type NewMission
+} from './missions'
 import {
   guiMissionPaneId,
   guiMissionRoleOf,
@@ -991,6 +1000,9 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     }
     if (!gitProject) {
       // sem git não há merge: concluir é só marcar.
+      // R16: e não há entrega a capturar — sem commits, o `goal` é tudo o que
+      // existe. `delivery` fica AUSENTE e o briefing de quem depender desta
+      // missão diz isso com todas as letras, em vez de inventar um resumo.
       missions.update(missionId, { status: 'concluida', pendingIntegrationApproval: false })
       reconcileConcludedMission(
         mission.projectId,
@@ -1796,6 +1808,91 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     }
   }
 
+  // ————— R16: A ENTREGA DA MISSÃO ATRAVESSA (design de 2026-08-19) —————
+  //
+  // O que a missão construiu só é legível ENQUANTO branch e worktree existem —
+  // a limpeza do merge leva os dois embora no mesmo gesto. Por isso a leitura
+  // acontece antes, e o registro pousa junto com a conclusão. Falha de leitura
+  // NUNCA segura a conclusão: a entrega é um bônus de conhecimento, não uma
+  // pré-condição do merge (missão sem entrega registrada degrada honesta no
+  // briefing de quem depende dela, e é isso que o contrato promete).
+
+  /** Traduz a leitura do git na entrega + carimba a caixa-preta. Sem git aqui
+   *  de propósito: quem lê é o chamador, no estilo do caminho dele. */
+  function missionDeliveryOf(
+    mission: Pick<Mission, 'id' | 'projectId'>,
+    commits: MissionCommit[] | undefined,
+    summary: MissionWorkspaceSummary | undefined
+  ): MissionDelivery | undefined {
+    const delivery = missionDeliveryFrom({
+      capturedAt: new Date().toISOString(),
+      commits: (commits ?? []).map((commit) => commit.subject),
+      files: (summary?.files ?? []).map((file) => file.path),
+      // `ahead` é o total REAL de commits (rev-list --count), enquanto a lista
+      // de commits já vem com o teto do próprio leitor.
+      totalCommits: summary?.ahead
+    })
+    if (delivery)
+      blackbox.record({
+        cat: 'merge',
+        event: 'mission-delivery-captured',
+        actor: 'harness',
+        ids: { projectId: mission.projectId, missionId: mission.id },
+        detail: {
+          commits: delivery.commits.length,
+          files: delivery.files.length,
+          truncated: Boolean(delivery.truncated)
+        }
+      })
+    return delivery
+  }
+
+  function noteMissionDeliveryFailure(
+    mission: Pick<Mission, 'id' | 'projectId'>,
+    error: unknown
+  ): undefined {
+    blackbox.record({
+      cat: 'merge',
+      event: 'mission-delivery-capture-failed',
+      actor: 'harness',
+      ids: { projectId: mission.projectId, missionId: mission.id },
+      err: (error instanceof Error ? error.message : String(error)).slice(0, 400)
+    })
+    return undefined
+  }
+
+  /** O fecho do MERGE: git fora do main thread, como todo o resto deste caminho. */
+  async function captureMissionDelivery(
+    mission: Mission,
+    workspace: string
+  ): Promise<MissionDelivery | undefined> {
+    try {
+      const commits = await gitOff('missionCommits', workspace, mission.baseBranch)
+      const summary = await gitOff('missionWorkspaceSummary', workspace, mission.baseBranch)
+      return missionDeliveryOf(mission, commits, summary)
+    } catch (error) {
+      return noteMissionDeliveryFailure(mission, error)
+    }
+  }
+
+  /** O fecho do BOOT: a reconciliação inteira é síncrona (o git dela também),
+   *  e são poucas missões com marcador pendente. Worktree já removido devolve
+   *  `undefined` sozinho — é a ausência honesta que o design previu. */
+  function captureMissionDeliveryOnBoot(
+    mission: Mission,
+    workspace: string
+  ): MissionDelivery | undefined {
+    try {
+      return missionDeliveryOf(
+        mission,
+        missionCommits(workspace, mission.baseBranch),
+        missionWorkspaceSummary(workspace, mission.baseBranch)
+      )
+    } catch (error) {
+      return noteMissionDeliveryFailure(mission, error)
+    }
+  }
+
   function recoverMissionIntegrationIntents(projectId: string): void {
     const project = projects.get(projectId)
     if (!project) return
@@ -1956,6 +2053,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           join(app.getPath('userData'), 'worktrees', projectId),
           missionId
         )
+        // R16 — ÚLTIMA janela para ler a entrega: a linha abaixo remove
+        // worktree e branch. Se o app caiu depois da limpeza, a leitura devolve
+        // ausência e a missão conclui sem entrega registrada (a verdade).
+        const delivery = captureMissionDeliveryOnBoot(mission, cleanupSource.dir)
         if (
           !removeWorktreeAndBranch(
             project.path,
@@ -1982,7 +2083,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         missions.update(missionId, {
           status: 'concluida',
           branch: undefined,
-          worktree: undefined
+          worktree: undefined,
+          ...(delivery ? { delivery } : {})
         })
         const reconciled = reconcileConcludedMission(
           projectId,
@@ -2146,6 +2248,12 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         detail: `integração BLOQUEADA: não consegui gravar o ponto seguro de recuperação (${error instanceof Error ? error.message : String(error)}) — nenhuma mudança foi mesclada`
       }
     }
+    // R16 — A ENTREGA É LIDA AQUI, e não lá embaixo: o `mergeTaskWorktree`
+    // remove worktree e branch na limpeza dele, então depois do merge não
+    // existe mais de onde ler. A fotografia fica na mão e só pousa no registro
+    // se o merge pousar (merge falho não deixa entrega de missão que continua
+    // viva). O precheck acima já provou origem limpa neste mesmo `sourceHead`.
+    const delivery = await captureMissionDelivery(mission, missionSource)
     // merge VAI acontecer: agora sim o orquestrador aposenta — fecha o pane
     // ANTES do merge real (o worktree some na limpeza; um processo com cwd
     // nele travaria a remoção). Na missão 2.0 quem tem cwd lá dentro são os
@@ -2185,7 +2293,12 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         : `${res.detail}; destino alinhado, mas a limpeza da origem ficou pendente`
       : res.detail
     if (mergeOk) {
-      missions.update(missionId, { status: 'concluida', branch: undefined, worktree: undefined })
+      missions.update(missionId, {
+        status: 'concluida',
+        branch: undefined,
+        worktree: undefined,
+        ...(delivery ? { delivery } : {})
+      })
       const reconciled = reconcileConcludedMission(
         projectId,
         missionId,

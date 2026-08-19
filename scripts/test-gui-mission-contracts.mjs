@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
+  DEPENDENCY_DELIVERIES_HEADER,
   GUI_MISSION_ROLES,
   MISSION_PLANNING_NOT_QUEUEABLE,
   MISSION_TYPES,
@@ -473,6 +474,152 @@ test('o briefing do dev anuncia o node_modules compartilhado por junction', () =
   assert.match(prompt, /NEW dependency installed here lands in the project's shared store/u)
 })
 
+// ————— R16: O CONHECIMENTO DA DEPENDÊNCIA ATRAVESSA (2026-08-19) —————
+//
+// O dono cronometrou ~10 minutos de dev re-derivando o que o pipeline JÁ sabia
+// duas vezes. Metade da cura mora aqui: o que a missão-dependência entregou
+// (fato de git, capturado na conclusão dela) viaja no briefing de quem depende.
+// A régua é dura nos dois sentidos — a dependência NUNCA some do briefing, e
+// briefing sem dependência tem de sair idêntico ao de antes da rodada.
+
+const BASE_DEV_BRIEFING = {
+  title: 'Fila de integração',
+  goal: 'Enfileirar as missões prontas',
+  branch: 'mission/7e31d314',
+  baseBranch: 'version/v1.2'
+}
+
+const DELIVERY = {
+  capturedAt: '2026-08-19T10:00:00.000Z',
+  commits: ['feat(queue): o ticket nasce com a fotografia', 'test(queue): FIFO por universo'],
+  files: ['src/main/integrationQueue.ts', 'src/renderer/src/components/Board.tsx']
+}
+
+/** As linhas do bloco de UMA dependência (sem cabeçalho nem fecho). */
+function dependencyBlockLines(prompt) {
+  const lines = prompt.split('\n')
+  const at = lines.indexOf(DEPENDENCY_DELIVERIES_HEADER)
+  if (at < 0) return []
+  const rest = lines.slice(at + 1)
+  const end = rest.findIndex((line) => line.startsWith('START YOUR STUDY THERE'))
+  return end < 0 ? rest : rest.slice(0, end)
+}
+
+test('o briefing do dev conta o que a dependência JÁ entregou neste worktree', () => {
+  const prompt = guiMissionFirstPrompt('dev', {
+    ...BASE_DEV_BRIEFING,
+    dependencyDeliveries: [
+      {
+        itemTitle: 'Store da fila',
+        missionTitle: 'Fila: o store',
+        goalFirstLine: 'Guardar os tickets por universo',
+        delivery: DELIVERY
+      }
+    ]
+  })
+  assert.ok(prompt.includes(DEPENDENCY_DELIVERIES_HEADER), 'sumiu o bloco das dependências')
+  // o GOAL continua vindo antes: o bloco é contexto do produto, não o contrato
+  assert.ok(
+    prompt.indexOf('GOAL:') < prompt.indexOf(DEPENDENCY_DELIVERIES_HEADER),
+    'o bloco tem de vir DEPOIS do goal'
+  )
+  // quem entregou (item do plano + missão) e o que ela era
+  assert.match(prompt, /"Store da fila" — mission "Fila: o store"/u)
+  assert.match(prompt, /goal: Guardar os tickets por universo/u)
+  // os FATOS do git: assuntos de commit e arquivos tocados
+  for (const subject of DELIVERY.commits) assert.ok(prompt.includes(subject), subject)
+  for (const file of DELIVERY.files) assert.ok(prompt.includes(file), file)
+  // e a instrução que muda o comportamento: comece o estudo AQUI
+  assert.match(prompt, /START YOUR STUDY THERE/u)
+  assert.match(prompt, /git log/u)
+  assert.match(prompt, /instead of rediscovering the repository from scratch/u)
+})
+
+test('entrega cortada pelo teto diz o TOTAL real em vez de fingir lista inteira', () => {
+  const prompt = guiMissionFirstPrompt('dev', {
+    ...BASE_DEV_BRIEFING,
+    dependencyDeliveries: [
+      {
+        itemTitle: 'Store da fila',
+        missionTitle: 'Fila: o store',
+        delivery: { ...DELIVERY, truncated: { commits: 34, files: 52 } }
+      }
+    ]
+  })
+  assert.match(prompt, /commits \(2 of 34\):/u)
+  assert.match(prompt, /files touched \(2 of 52\):/u)
+})
+
+test('dependência concluída SEM entrega registrada é nomeada com a verdade, nunca omitida', () => {
+  // Pré-R16, captura que falhou, projeto sem git: a entrega existe, o resumo
+  // não. Omitir a dependência devolveria o dev ao estudo do zero — o bug.
+  const prompt = guiMissionFirstPrompt('dev', {
+    ...BASE_DEV_BRIEFING,
+    dependencyDeliveries: [
+      { itemTitle: 'Store da fila', missionTitle: 'Fila: o store' },
+      { itemTitle: 'Botão ⇪', missionTitle: 'Fila: o gesto', delivery: DELIVERY }
+    ]
+  })
+  assert.match(prompt, /"Store da fila" — mission "Fila: o store"/u)
+  assert.match(prompt, /No delivery summary was recorded for it/u)
+  assert.match(prompt, /commits are already in this branch's history \(git log\)/u)
+  // e a dependência COM entrega continua completa no mesmo bloco
+  assert.match(prompt, /"Botão ⇪" — mission "Fila: o gesto"/u)
+  assert.ok(prompt.includes(DELIVERY.files[0]))
+})
+
+test('o bloco de UMA dependência cabe em 30 linhas, mesmo no teto da entrega', () => {
+  // O briefing é o único turno que o pane recebe: entrega grande não pode
+  // empurrar a instrução do dono para fora do campo de visão do modelo.
+  const prompt = guiMissionFirstPrompt('dev', {
+    ...BASE_DEV_BRIEFING,
+    dependencyDeliveries: [
+      {
+        itemTitle: 'Store da fila',
+        missionTitle: 'Fila: o store',
+        goalFirstLine: 'Guardar os tickets por universo',
+        delivery: {
+          capturedAt: DELIVERY.capturedAt,
+          commits: Array.from({ length: 20 }, (_, i) => `feat(queue): passo ${i + 1}`),
+          files: Array.from({ length: 40 }, (_, i) => `src/main/arquivo-${i + 1}.ts`),
+          truncated: { commits: 61, files: 118 }
+        }
+      }
+    ]
+  })
+  const lines = dependencyBlockLines(prompt)
+  assert.ok(lines.length > 0, 'o bloco não foi encontrado')
+  assert.ok(lines.length < 30, `bloco com ${lines.length} linhas — grande demais para um briefing`)
+  // os arquivos cabem numa linha só; os commits é que ocupam a lista
+  assert.equal(lines.filter((line) => line.startsWith('  files touched')).length, 1)
+})
+
+test('sem dependência o briefing do dev sai IDÊNTICO ao de antes da rodada', () => {
+  const semCampo = guiMissionFirstPrompt('dev', { ...BASE_DEV_BRIEFING })
+  assert.equal(semCampo.includes(DEPENDENCY_DELIVERIES_HEADER), false)
+  // campo presente e VAZIO é a mesma coisa que campo ausente (o ipc devolve
+  // undefined, mas nenhum chamador pode fabricar um bloco vazio por engano)
+  assert.equal(
+    guiMissionFirstPrompt('dev', { ...BASE_DEV_BRIEFING, dependencyDeliveries: [] }),
+    semCampo
+  )
+})
+
+test('o bloco é do DEV: reviewer e ajudante nunca o recebem', () => {
+  const dependencyDeliveries = [
+    { itemTitle: 'Store da fila', missionTitle: 'Fila: o store', delivery: DELIVERY }
+  ]
+  for (const role of ['reviewer', 'helper']) {
+    const withDependencies = guiMissionFirstPrompt(role, {
+      ...BASE_DEV_BRIEFING,
+      dependencyDeliveries
+    })
+    assert.equal(withDependencies.includes(DEPENDENCY_DELIVERIES_HEADER), false, role)
+    // e o texto deles não muda nem um byte por causa do campo
+    assert.equal(withDependencies, guiMissionFirstPrompt(role, { ...BASE_DEV_BRIEFING }), role)
+  }
+})
+
 // ————— O ⇪ DO DONO TE FAZ O INTEGRADOR (rodada 9, 2026-08-19 — design I4) —————
 //
 // Palavras dele: "quando eu clico em subir, o certo é avisar o agente — 'tá
@@ -736,7 +883,13 @@ test('o planejador PROPÕE o plano, não executa produto nem cria missão', () =
   // tag mostra, quando ela dá check, o que a trava faz e por que o que fica sem
   // dependência é o que o dono roda em paralelo. Ela ABSORVEU a linha antiga em
   // vez de somar-se a ela, e o contrato mede 3661.
-  assert.ok(contract.length < 3750, 'contrato virou constituição')
+  //
+  // E de 3750 para 4200 na R16 (mesma data), pelo MAPA DA FATIA: a linha que
+  // pedia "aponte os arquivos que já existem" virou a ordem inteira do
+  // `context` — o que existe, o que será criado, onde não mexer — mais a razão
+  // (ele viaja verbatim para o briefing do dev). Absorveu a antiga, como o
+  // grafo fez, e o contrato mede 4036.
+  assert.ok(contract.length < 4200, 'contrato virou constituição')
   assert.match(contract, /"mestre" is a DESIGNATION the owner grants/u)
   assert.match(contract, /only his click designates or removes it/u)
   assert.match(contract, /PROJECT_PLAN\.md/u)
@@ -800,6 +953,44 @@ test('declarar dependência é PARTE do planejamento — persona e as duas tools
     assert.match(description, /dependsOn/u, `${tool} não ensina a declarar dependência`)
     assert.match(description, /paralelo/iu, `${tool} não diz para que ela serve`)
   }
+})
+
+/** As descrições do campo `context` nas tools de plano, lidas da FONTE. */
+function contextFieldDescribes(source) {
+  return [...source.matchAll(/context:\s*z[\s\S]{0,200}?\.describe\(\s*([A-Za-z_$][\w$]*|'[^']*')/gu)].map(
+    (match) => match[1]
+  )
+}
+
+test('o `context` de cada item é o MAPA DA FATIA — persona e as tools de plano ensinam (R16)', () => {
+  // O veredito dos 10 minutos: o planejador ESTUDA o repo para escrever o item
+  // e esse estudo morre com o chat de planejamento. O `context` é o único campo
+  // que atravessa (planItemMissionGoal o copia VERBATIM para o goal da missão),
+  // então é nele que o mapa tem de ser exigido — nos dois lugares que o agente lê.
+  const contract = guiPlanningSystemPrompt()
+  assert.match(contract, /MAP OF THE SLICE/u, 'a persona não pede o mapa da fatia')
+  assert.match(contract, /ALREADY exists/u, 'a persona não pede o que JÁ existe nos arquivos')
+  assert.match(contract, /will be created/u, 'a persona não pede o que será criado')
+  assert.match(contract, /where NOT to touch/u, 'a persona não pede a fronteira')
+  // e o PORQUÊ, que é o que faz o agente escrever de verdade
+  assert.match(contract, /VERBATIM into the briefing/u, 'a persona não diz para onde o texto viaja')
+  assert.match(contract, /re-deriving it from zero/iu, 'a persona não diz o custo de omitir')
+
+  const mcp = readFileSync(new URL('../src/main/mcpServer.ts', import.meta.url), 'utf8')
+  const describes = contextFieldDescribes(mcp)
+  assert.ok(describes.length >= 3, `o campo context aparece descrito ${describes.length}x — esperava as 3 aparições (propose_plan.items, update_plan.items, update_plan.addItems)`)
+  // FONTE ÚNICA: as três apontam para a MESMA constante — descrição divergente
+  // por tool ensinaria uma regra diferente conforme onde o agente escreve.
+  assert.equal(new Set(describes).size, 1, `as três descrições divergiram: ${describes.join(' | ')}`)
+  const [name] = describes
+  assert.match(name, /^[A-Za-z_$][\w$]*$/u, 'as três descrições precisam sair de uma constante única')
+  const describe = new RegExp(`const ${name}\\s*=\\s*\\n?\\s*'([^']*)'`, 'u').exec(mcp)?.[1]
+  assert.ok(describe && describe.length > 100, 'a descrição do context sumiu ou ficou magra demais')
+  assert.match(describe, /MAPA DA FATIA/u, 'a tool não ensina o mapa')
+  assert.match(describe, /JÁ existe/u)
+  assert.match(describe, /será criado/u)
+  assert.match(describe, /NÃO mexer/u)
+  assert.match(describe, /briefing do dev/u, 'a tool não diz que o texto viaja para o dev')
 })
 
 test('o planejador é diferente de todos os contratos de missão', () => {
