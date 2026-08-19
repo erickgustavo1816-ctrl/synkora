@@ -14,6 +14,11 @@
  *   gui-planner   → EXATAMENTE as 5 de plano, e nenhum ajudante;
  *   qualquer outro (inclusive quem parece ajudante) → catálogo VAZIO.
  *
+ * A rodada 9 (2026-08-19) acrescentou uma faixa DENTRO da primeira: o chat de
+ * DEV da missão recebe também as 2 do INTEGRADOR (`integration_status` e
+ * `integration_run`), e o reviewer e o ajudante NÃO — mesmo com o mesmo papel de
+ * MCP, o mesmo universo e a mesma missão. A cerca é o PAPEL DO ENDEREÇO.
+ *
  * A terceira faixa é o CONTROLE NEGATIVO DO SEM-CADEIA: o ajudante nasce sem o
  * MCP de delegação, e se um dia um token de ajudante chegar ao servidor ele
  * precisa bater numa parede. Frota que abre frota é o laço que o backstop de
@@ -62,6 +67,16 @@ const DELEGATOR_TOOLS = Object.freeze([
   'helpers_status',
   'list_seats'
 ])
+
+/**
+ * O KIT DO CHAT DE DEV (rodada 9): as sete de ajudante MAIS as duas do
+ * INTEGRADOR. É a terceira faixa da cerca, e a mais fina delas — as duas
+ * ferramentas nascem dentro do `gui-delegator` E do papel `dev`, porque o
+ * reviewer lê diff e o ajudante faz uma fatia: nenhum dos dois responde ao dono
+ * pela entrega, e um merge de missão não pode ter dois donos no mesmo worktree.
+ */
+const INTEGRATION_TOOLS = Object.freeze(['integration_run', 'integration_status'])
+const DEV_MISSION_TOOLS = Object.freeze([...DELEGATOR_TOOLS, ...INTEGRATION_TOOLS].sort())
 
 const PLANNER_TOOLS = Object.freeze([
   'delete_plan',
@@ -150,6 +165,24 @@ async function serverIn(t, hub, { engine = true } = {}) {
         helperResume: (id, helperId) => {
           calls.push({ tool: 'helper_resume', paneId: id.paneId, helperId })
           return 'ajudante retomado'
+        },
+        integrationStatus: (id) => {
+          calls.push({
+            tool: 'integration_status',
+            paneId: id.paneId,
+            projectId: id.projectId,
+            missionId: id.missionId
+          })
+          return 'a fila do universo'
+        },
+        integrationRun: async (id) => {
+          calls.push({
+            tool: 'integration_run',
+            paneId: id.paneId,
+            projectId: id.projectId,
+            missionId: id.missionId
+          })
+          return 'INTEGRADA'
         }
       }
     : {}
@@ -203,7 +236,7 @@ function textOf(result) {
 }
 
 /** Arma um delegador e devolve o token pronto para falar com o servidor. */
-function delegator(hub, root, port, paneId = 'gui-dev-abcd1234') {
+function delegator(hub, root, port, paneId = 'gui-dev-abcd1234', missionId = 'missao-dev-1') {
   const armed = armDeps(hub, root, port)
   const mcp = armGuiDelegateMcp(
     {
@@ -211,7 +244,7 @@ function delegator(hub, root, port, paneId = 'gui-dev-abcd1234') {
       projectId: 'universo-1',
       cwd: root,
       cli: 'claude',
-      missionId: 'missao-dev-1',
+      ...(missionId ? { missionId } : {}),
       seatId: 'seat-a'
     },
     armed.deps
@@ -221,7 +254,7 @@ function delegator(hub, root, port, paneId = 'gui-dev-abcd1234') {
 
 // ————— 1. o catálogo do delegador, e só ele —————
 
-test('o arm registra a identidade gui-delegator e o servidor serve as SETE ferramentas', async (t) => {
+test('o arm registra a identidade gui-delegator e o chat de DEV serve as NOVE ferramentas', async (t) => {
   const { hub, root } = hubIn(t)
   const { url, served } = await serverIn(t, hub)
   const { mcp, token } = delegator(hub, root, 4242)
@@ -234,10 +267,10 @@ test('o arm registra a identidade gui-delegator e o servidor serve as SETE ferra
   assert.equal(identity?.missionId, 'missao-dev-1')
   assert.equal(identity?.seatId, 'seat-a')
 
-  assert.deepEqual(await toolNames(url, token, 'delegador'), DELEGATOR_TOOLS)
+  assert.deepEqual(await toolNames(url, token, 'delegador'), DEV_MISSION_TOOLS)
   const receipt = served.find((entry) => entry.paneId === 'gui-dev-abcd1234')
   assert.equal(receipt?.role, 'gui-delegator')
-  assert.deepEqual([...receipt.tools].sort(), DELEGATOR_TOOLS)
+  assert.deepEqual([...receipt.tools].sort(), DEV_MISSION_TOOLS)
 })
 
 test('nenhum vazamento entre os dois kits: quem delega não planeja e quem planeja não delega', async (t) => {
@@ -253,13 +286,92 @@ test('nenhum vazamento entre os dois kits: quem delega não planeja e quem plane
 
   const devTools = await toolNames(url, dev.token, 'kit-dev')
   const plannerTools = await toolNames(url, planner.remembered[0].token, 'kit-plan')
-  assert.deepEqual(devTools, DELEGATOR_TOOLS)
+  assert.deepEqual(devTools, DEV_MISSION_TOOLS)
   assert.deepEqual(plannerTools, PLANNER_TOOLS, 'o kit de planos não pode mudar por causa desta onda')
   for (const tool of PLANNER_TOOLS) {
     assert.equal(devTools.includes(tool), false, `o delegador enxergou ${tool}`)
   }
-  for (const tool of DELEGATOR_TOOLS) {
+  for (const tool of [...DELEGATOR_TOOLS, ...INTEGRATION_TOOLS]) {
     assert.equal(plannerTools.includes(tool), false, `o planejador enxergou ${tool}`)
+  }
+})
+
+// ————— 1b. a terceira faixa: o INTEGRADOR é do DEV (rodada 9) —————
+
+test('reviewer e ajudante delegam, mas NUNCA integram: as duas ferramentas são do dev', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { url, served } = await serverIn(t, hub)
+
+  const dev = delegator(hub, root, 4242, 'gui-dev-77777777', 'missao-77')
+  const reviewer = delegator(hub, root, 4242, 'gui-reviewer-77777777', 'missao-77')
+  const helper = delegator(hub, root, 4242, 'gui-helper-77777777-3', 'missao-77')
+
+  assert.deepEqual(await toolNames(url, dev.token, 'papel-dev'), DEV_MISSION_TOOLS)
+  // O MESMO universo, a MESMA missão, o MESMO papel de MCP — e ainda assim as
+  // duas ferramentas não aparecem: a cerca é o PAPEL do endereço, não o token.
+  assert.deepEqual(await toolNames(url, reviewer.token, 'papel-rev'), DELEGATOR_TOOLS)
+  assert.deepEqual(await toolNames(url, helper.token, 'papel-hlp'), DELEGATOR_TOOLS)
+  for (const entry of served) {
+    if (entry.paneId.startsWith('gui-dev-')) continue
+    for (const tool of INTEGRATION_TOOLS) {
+      assert.equal(entry.tools.includes(tool), false, `${entry.paneId} enxergou ${tool}`)
+    }
+  }
+})
+
+test('endereço de dev SEM missão não integra nada: a integração precisa de um sujeito', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { url } = await serverIn(t, hub)
+  // Pane órfão (missão apagada) que ainda parece um chat de dev. Ele continua
+  // delegando — mas não pode integrar uma missão que o token não nomeia.
+  const orphan = delegator(hub, root, 4242, 'gui-dev-0f0f0f0f', null)
+  assert.equal(hub.identityByToken(orphan.token)?.missionId, undefined)
+  assert.deepEqual(await toolNames(url, orphan.token, 'orfao'), DELEGATOR_TOOLS)
+})
+
+test('as duas ferramentas chegam ao motor com a identidade DESTE pane (a missão vem do token)', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { url, calls } = await serverIn(t, hub)
+  const { token } = delegator(hub, root, 4242)
+  const client = await connect(t, url, token, 'integracao')
+
+  assert.equal(
+    textOf(await client.callTool({ name: 'integration_status', arguments: {} })),
+    'a fila do universo'
+  )
+  assert.equal(
+    textOf(await client.callTool({ name: 'integration_run', arguments: {} })),
+    'INTEGRADA'
+  )
+  assert.deepEqual(calls, [
+    {
+      tool: 'integration_status',
+      paneId: 'gui-dev-abcd1234',
+      projectId: 'universo-1',
+      missionId: 'missao-dev-1'
+    },
+    {
+      tool: 'integration_run',
+      paneId: 'gui-dev-abcd1234',
+      projectId: 'universo-1',
+      missionId: 'missao-dev-1'
+    }
+  ])
+})
+
+test('sem o motor de integração ligado, as duas recusam dizendo que NADA foi mesclado', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { url } = await serverIn(t, hub, { engine: false })
+  const { token } = delegator(hub, root, 4242)
+  const client = await connect(t, url, token, 'integracao-desligada')
+
+  assert.deepEqual(await toolNames(url, token, 'integracao-lista'), DEV_MISSION_TOOLS)
+  for (const name of INTEGRATION_TOOLS) {
+    const result = await client.callTool({ name, arguments: {} })
+    assert.notEqual(result.isError, true, `${name} devia responder texto, nunca erro de protocolo`)
+    // A frase precisa MATAR a racionalização "integrei e falhou": um agente que
+    // contasse isso ao dono estaria relatando uma entrega que não aconteceu.
+    assert.match(textOf(result), /NADA foi mesclado/u)
   }
 })
 
@@ -284,6 +396,21 @@ test('SEM CADEIA: identidade de ajudante (ou qualquer outra) recebe catálogo VA
       `a identidade ${role} não pode enxergar ferramenta nenhuma`
     )
   }
+  // O CONTROLE NEGATIVO DO ⇪ (rodada 9): um token de ajudante que chegasse ao
+  // servidor com o ENDEREÇO de um chat de dev continua batendo na parede do
+  // papel do MCP — as ferramentas de integração vivem dentro do
+  // `gui-delegator`, e nenhuma identidade de fora enxerga uma linha delas.
+  hub.registerPane('token-ajudante-com-cara-de-dev', {
+    paneId: 'gui-dev-abcdef01',
+    projectId: 'universo-1',
+    role: 'ajudante',
+    cwd: root
+  })
+  assert.deepEqual(
+    await toolNames(url, 'token-ajudante-com-cara-de-dev', 'ajudante-disfarcado'),
+    [],
+    'endereço de dev não dá autoridade a um papel que não é gui-delegator'
+  )
   for (const entry of served) {
     if (entry.paneId.startsWith('pane-')) assert.deepEqual(entry.tools, [])
   }
@@ -457,13 +584,13 @@ test('helper_result carrega o waitSeconds pedido e o schema grampeia o teto de 2
   assert.equal(quebrado.isError, true, 'espera fracionária não existe')
 })
 
-test('sem o motor ligado, as SETE respondem com recusa LEGÍVEL — nunca erro de protocolo', async (t) => {
+test('sem o motor ligado, as ferramentas de ajudante respondem com recusa LEGÍVEL — nunca erro de protocolo', async (t) => {
   const { hub, root } = hubIn(t)
   const { url } = await serverIn(t, hub, { engine: false })
   const { token } = delegator(hub, root, 4242)
   const client = await connect(t, url, token, 'motor-desligado')
 
-  assert.deepEqual(await toolNames(url, token, 'motor-desligado-lista'), DELEGATOR_TOOLS)
+  assert.deepEqual(await toolNames(url, token, 'motor-desligado-lista'), DEV_MISSION_TOOLS)
 
   const chamadas = [
     ['delegate', { helpers: [{ prompt: 'faça algo' }] }],
@@ -527,7 +654,7 @@ test('claude: config própria, strict, a CERCA de subagente nativo e o teto de t
   assert.deepEqual(Object.keys(config.mcpServers), ['synkora'], 'catálogo fechado: nenhum MCP extra')
 })
 
-test('claude: as SETE ferramentas internas são pré-sancionadas, e a cerca continua de pé', async (t) => {
+test('claude: as NOVE ferramentas internas são pré-sancionadas, e a cerca continua de pé', async (t) => {
   const { hub, root } = hubIn(t)
   const { mcp } = delegator(hub, root, 5151)
 
@@ -545,10 +672,12 @@ test('claude: as SETE ferramentas internas são pré-sancionadas, e a cerca cont
   assert.equal(mcp.args[allowAt + 1], GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS.join(','))
 
   // O par com o catálogo REAL: tool nova no delegador sem entrar aqui volta a
-  // pedir aprovação, e este teste é quem avisa.
+  // pedir aprovação, e este teste é quem avisa. A régua é a UNIÃO dos catálogos
+  // possíveis (o chat de dev, que é o maior): pré-sancionar o que um pane não
+  // tem custa zero, e o contrário custa um card de permissão no gesto do dono.
   assert.deepEqual(
     [...GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS].sort(),
-    DELEGATOR_TOOLS.map((tool) => `mcp__synkora__${tool}`).sort()
+    DEV_MISSION_TOOLS.map((tool) => `mcp__synkora__${tool}`).sort()
   )
 
   // A pré-sanção é NARROW: nada nativo entra de carona, e ela nunca desfaz a
@@ -638,7 +767,7 @@ test('o teardown do pane REVOGA o token do delegador', async (t) => {
   const { hub, root } = hubIn(t)
   const { url } = await serverIn(t, hub)
   const { token } = delegator(hub, root, 4242, 'gui-dev-99999999')
-  assert.deepEqual(await toolNames(url, token, 'antes-do-teardown'), DELEGATOR_TOOLS)
+  assert.deepEqual(await toolNames(url, token, 'antes-do-teardown'), DEV_MISSION_TOOLS)
 
   const dropped = hub.unregisterPane('gui-dev-99999999')
   assert.equal(dropped?.role, 'gui-delegator')

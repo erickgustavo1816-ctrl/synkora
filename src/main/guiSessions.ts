@@ -1351,6 +1351,16 @@ export interface GuiSessionHelperControls {
   status(paneId: string): GuiHelperSnapshot[]
 }
 
+/**
+ * O QUE O REGISTRO PRECISA DO MOTOR DE MISSÕES (rodada 9). Uma coisa só, e de
+ * mão única: avisar que a conversa de um pane ABRIU, para o motor re-derivar do
+ * TICKET um ⇪ que ficou esperando. Nada é persistido aqui — o ticket na fila já
+ * é o registro durável, e este aviso é só o momento de re-executá-lo.
+ */
+export interface GuiSessionIntegrationControls {
+  paneOpened(paneId: string, projectId: string): void
+}
+
 /** O motivo que o dono vê no card e na ficha quando ele mesmo aperta o ■. */
 export const GUI_HELPER_OWNER_INTERRUPTION =
   'o dono interrompeu esta conversa — o trabalho dele ficou guardado e dá para retomar'
@@ -1382,6 +1392,9 @@ export class GuiSessionRegistry {
   /** O motor dos ajudantes, amarrado depois do nascimento (ver `attachHelpers`).
    *  Ausente = registro sem frota: o ■ para só o turno. */
   private helpers?: GuiSessionHelperControls
+  /** O motor de missões (ver `attachIntegration`). Ausente = registro sem fila:
+   *  abrir uma conversa não re-estimula ⇪ nenhum. */
+  private integration?: GuiSessionIntegrationControls
 
   constructor(deps: GuiSessionDeps) {
     this.deps = deps
@@ -1838,6 +1851,17 @@ export class GuiSessionRegistry {
     // dela, e o aviso com os dois verbos entra no correio. `current` presente é
     // respawn (modo, /clear, remontagem): mesma conversa, nada a anunciar.
     if (!current) this.announceInterruptedHelpers(spawn.paneId, spawn.projectId)
+    // O ⇪ QUE FICOU ESPERANDO (rodada 9), pela mesma porta e pelo mesmo motivo:
+    // o dono pode ter clicado com este chat fechado (ou o app reiniciou depois
+    // do clique). O motor confere a fila e re-estimula quem tem ticket em
+    // espera. Nada depende de entrega única — o ticket é o registro durável.
+    if (!current) {
+      try {
+        this.integration?.paneOpened(spawn.paneId, spawn.projectId)
+      } catch {
+        // Fila indisponível nunca pode impedir a conversa de abrir.
+      }
+    }
     // NENHUM TURNO NASCE AQUI. O chat abre calado e espera o dono.
     return { ok: true }
   }
@@ -2002,6 +2026,33 @@ export class GuiSessionRegistry {
    */
   announce(paneId: string, text: string): GuiResult {
     return this.deliverBackstage(paneId, text, 'recibo')
+  }
+
+  /**
+   * UMA NOTA NO FIO — o PAR VISUAL do `announce` (rodada 9, o ⇪ do dono).
+   *
+   * O `announce` fala com o MODELO e não deixa rastro na tela; esta fala com o
+   * DONO e não chega ao modelo. Os dois juntos são o gesto inteiro: ele vê a
+   * linha ("⇪ subir para … — entregue ao agente") e o agente recebe a ordem.
+   * Misturar as duas superfícies é exatamente o que já fez o app aparecer
+   * falando na voz dele, com prefixo de máquina e uuid cru no meio.
+   *
+   * Sai pelo MESMO sink da sessão (`command-output`, que o redutor do renderer
+   * transforma em `note`): publicar por fora deixaria a linha ausente do replay
+   * da remontagem, e o dono reabriria a conversa sem o rastro do gesto. Ela não
+   * abre turno nenhum e não pede par de `command-completed` — o redutor a
+   * empurra como item e segue.
+   */
+  note(paneId: string, text: string): GuiResult {
+    const entry = this.panes.get(paneId)
+    if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
+    if (!entry.session.alive) return { ok: false, error: 'a sessão deste pane encerrou' }
+    // Sem `allowEmpty`: uma nota em branco é ruído no fio do dono, e ruído de
+    // máquina é justamente o que esconde a linha que importa.
+    const problem = guiPromptProblem(text, 'nota')
+    if (problem) return { ok: false, error: problem }
+    entry.sink({ type: 'command-output', text })
+    return { ok: true }
   }
 
   /**
@@ -2460,6 +2511,19 @@ export class GuiSessionRegistry {
    */
   attachHelpers(controls: GuiSessionHelperControls): void {
     this.helpers = controls
+  }
+
+  /**
+   * A OUTRA ARESTA DE VOLTA (rodada 9): o motor de missões precisa saber quando
+   * uma conversa ABRE de verdade, para re-derivar do ticket um ⇪ que ficou
+   * esperando (o dono clicou com o chat fechado, ou o app foi reiniciado).
+   *
+   * Amarrado depois do nascimento pelo mesmo motivo do `attachHelpers`: este
+   * módulo nunca importa fila, git nem Electron — é o que mantém a suíte de
+   * sessões rodando em node puro.
+   */
+  attachIntegration(controls: GuiSessionIntegrationControls): void {
+    this.integration = controls
   }
 
   /**

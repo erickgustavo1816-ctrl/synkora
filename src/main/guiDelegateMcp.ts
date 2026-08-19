@@ -113,11 +113,18 @@ export function guiPaneToolKind(
 }
 
 /**
- * As SETE ferramentas internas do `gui-delegator`, no nome que o claude usa
+ * As NOVE ferramentas internas do `gui-delegator`, no nome que o claude usa
  * (`mcp__<servidor>__<tool>`; o servidor é `synkora`, escrito por
  * `writeClaudeMcpConfig`). Elas são PRÉ-SANCIONADAS: aprovar a ferramenta do
  * próprio app não é decisão do dono, é encanamento — a mesma doutrina que faz
  * o `CodexSession` aceitar em silêncio a elicitation de aprovação do codex.
+ *
+ * A lista é a UNIÃO dos catálogos possíveis de um pane `gui-delegator`, e isso
+ * é deliberado: o chat de DEV recebe as sete de ajudante MAIS as duas de
+ * integração (R9), enquanto reviewer e ajudante recebem só as sete. Anunciar
+ * aqui uma ferramenta que aquele pane não tem custa ZERO (`--allowedTools` não
+ * cria catálogo, só pré-aprova nomes), e o contrário custaria caro: um card de
+ * permissão para o dono no exato gesto que ele acabou de pedir.
  *
  * MEDIDO no claude 2.1.234 (sonda 2026-08-18, `scratchpad/probe-elicit/claude`):
  * sem esta flag, `permissionMode: 'default'` levanta `can_use_tool` para
@@ -140,7 +147,12 @@ export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   // ajudante parado levantaria card de permissão para o dono — justamente no
   // gesto que ele acabou de pedir.
   'mcp__synkora__helper_resume',
-  'mcp__synkora__helper_cancel'
+  'mcp__synkora__helper_cancel',
+  // R9 — o AGENTE é o integrador. Sem a pré-sanção, o ⇪ do dono levantaria um
+  // card de permissão para ele aprovar a ferramenta que ele mesmo acabou de
+  // acionar com o clique.
+  'mcp__synkora__integration_status',
+  'mcp__synkora__integration_run'
 ]
 
 /** Flags do claude: config por arquivo + strict + a cerca + a pré-sanção. */

@@ -18,6 +18,8 @@ import {
   isGuiPlanningPaneId,
   isMissionType,
   missionConflictRecipe,
+  missionIntegrationNote,
+  missionIntegrationStimulus,
   missionShortId,
   planApprovedReceipt,
   missionTypeOf,
@@ -103,9 +105,12 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // de parar/retomar/descartar — o dev mede 3636. E de 3700 para 4200 na
     // rodada 7 (2026-08-18, validação ao vivo — achado 3), pelas duas linhas do
     // INSUMO ("o arquivo não tem que ficar lá, a não ser que seja uma
-    // implementação"): o dev mede 4110. O teto continua sendo contra
-    // CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
-    assert.ok(contract.length < 4200, `${role}: contrato virou constituição`)
+    // implementação"): o dev mede 4110. E de 4200 para 5600 na rodada 9
+    // (2026-08-19), pela seção do INTEGRADOR — que só o DEV recebe ("quando eu
+    // clico em subir, o certo é avisar o agente e o AGENTE sobe; qualquer erro,
+    // ELE arruma"): o dev mede 5462, o reviewer 4022 e o ajudante 3511. O teto
+    // continua sendo contra CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
+    assert.ok(contract.length < 5600, `${role}: contrato virou constituição`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -451,6 +456,143 @@ test('o ajudante espera a fatia antes de tocar em arquivo', () => {
   assert.match(prompt, /wait for the specific slice/i)
 })
 
+// ————— O ⇪ DO DONO TE FAZ O INTEGRADOR (rodada 9, 2026-08-19 — design I4) —————
+//
+// Palavras dele: "quando eu clico em subir, o certo é avisar o agente — 'tá
+// pronto pra subir' — e o AGENTE sobe. Ele vê via MCP se tem alguém na fila na
+// frente dele; se é o próximo, ELE integra. Qualquer erro, ELE arruma."
+//
+// A seção é do DEV e só dele: reviewer e ajudante não recebem `integration_*` no
+// catálogo do MCP (cerca no `mcpServer`), então prometer o verbo a eles seria
+// mandá-los procurar uma ferramenta que não existe.
+
+const INTEGRATOR_HEADER = 'INTEGRATION — WHEN THE OWNER CLICKS ⇪, YOU ARE THE INTEGRATOR:'
+
+/** A seção do integrador, lida da FONTE, sem a ordem da delegação colada. */
+function integratorSection(contract) {
+  const at = contract.indexOf(INTEGRATOR_HEADER)
+  if (at < 0) return undefined
+  const end = contract.indexOf(DELEGATION_HEADER)
+  return end > at ? contract.slice(at, end) : contract.slice(at)
+}
+
+test('só o DEV vira integrador: reviewer, ajudante e planejador nunca recebem a seção', () => {
+  assert.ok(integratorSection(guiMissionSystemPrompt('dev')), 'o dev perdeu a seção do ⇪')
+  for (const role of ['reviewer', 'helper']) {
+    assert.equal(
+      integratorSection(guiMissionSystemPrompt(role)),
+      undefined,
+      `${role} recebeu um verbo que o catálogo dele não tem`
+    )
+  }
+  assert.equal(integratorSection(guiPlanningSystemPrompt()), undefined)
+})
+
+test('a seção do integrador ensina o ciclo inteiro: status → run na cabeça → erro é SEU → contar', () => {
+  const section = integratorSection(guiMissionSystemPrompt('dev'))
+  // ler a fila antes de agir
+  assert.match(section, /integration_status/u)
+  // integrar SÓ na cabeça, e com a ferramenta (nunca git manual no destino)
+  assert.match(section, /HEAD of the queue, call integration_run/u)
+  // não é a vez: não fica em laço — o app avisa
+  assert.match(section, /NOT the head yet/u)
+  // o erro é dele, e ele resolve NO worktree da missão
+  assert.match(section, /ANY error is YOURS to fix, in THIS worktree/u)
+  assert.match(section, /call integration_run again/u)
+  // ao dono se pergunta PRODUTO, não git
+  assert.match(section, /PRODUCT decisions/u)
+  // e o desfecho volta pra ele, no chat
+  assert.match(section, /TELL HIM what happened/u)
+})
+
+test('o agente NUNCA pede nem simula o ⇪: o clique é a porteira do dono', () => {
+  const section = integratorSection(guiMissionSystemPrompt('dev'))
+  assert.match(section, /NEVER ask for, simulate or claim an automatic ⇪/u)
+  assert.match(section, /The click is his/u)
+  assert.match(section, /silence is not consent/u)
+})
+
+test('a ordem da delegação continua FECHANDO o contrato — a do integrador vem antes', () => {
+  const contract = guiMissionSystemPrompt('dev')
+  assert.ok(
+    contract.indexOf(INTEGRATOR_HEADER) < contract.indexOf(DELEGATION_HEADER),
+    'a ordem permanente da delegação tem de ser a última palavra'
+  )
+  assert.ok(contract.endsWith(delegationSection(guiMissionSystemPrompt('helper'))))
+  // e a seção do integrador é curta como as outras: régua, não constituição
+  const section = integratorSection(contract)
+  assert.ok(section.length > 400, 'a seção ficou vaga demais')
+  assert.ok(section.length < 2000, 'a seção do integrador virou constituição')
+})
+
+// AS DUAS SUPERFÍCIES DO ⇪. A nota é do DONO (uma linha no fio); o estímulo é do
+// MODELO (bastidores, sem bolha de "VOCÊ"). Misturá-las é o que já fez o app
+// aparecer falando na voz dele.
+
+test('a NOTA do ⇪ é uma linha: o gesto, o destino e a posição', () => {
+  const note = missionIntegrationNote({
+    targetLabel: 'version/v1.2',
+    position: 2,
+    total: 3
+  })
+  assert.match(note, /^⇪ subir para version\/v1\.2 — entregue ao agente/u)
+  assert.match(note, /#2 de 3/u)
+  assert.equal(note.includes('\n'), false, 'nota é UMA linha no fio')
+})
+
+test('a NOTA da reabertura não conta o clique como novo — ela diz que ele ESPERA', () => {
+  const note = missionIntegrationNote({
+    targetLabel: 'main',
+    position: 1,
+    total: 1,
+    reopened: true
+  })
+  assert.match(note, /⇪ pendente para main/u)
+  assert.equal(/entregue ao agente/u.test(note), false)
+})
+
+test('o ESTÍMULO da cabeça manda rodar; o de quem está atrás manda esperar e diz quem falta', () => {
+  const head = missionIntegrationStimulus({
+    missionTitle: 'Rail da fila',
+    targetLabel: 'version/v1.2',
+    position: 1,
+    total: 2,
+    isHead: true
+  })
+  assert.match(head, /VOCÊ é o integrador/u)
+  assert.match(head, /Rail da fila/u)
+  assert.match(head, /CABEÇA da fila: chame integration_run agora/u)
+  assert.match(head, /CONTE a ele/u, 'o desfecho volta para o dono no chat')
+
+  const behind = missionIntegrationStimulus({
+    missionTitle: 'Segunda entrega',
+    targetLabel: 'version/v1.2',
+    position: 2,
+    total: 2,
+    isHead: false,
+    ahead: ['"Rail da fila" (queued)']
+  })
+  assert.match(behind, /#2 de 2/u)
+  assert.match(behind, /Ainda NÃO é a sua vez/u)
+  assert.match(behind, /"Rail da fila" \(queued\)/u)
+  assert.match(behind, /Não chame integration_run/u)
+  assert.match(behind, /o app te avisa aqui quando a vez chegar/u)
+})
+
+test('o estímulo da REABERTURA diz que o ⇪ ainda espera, em vez de inventar um clique novo', () => {
+  const again = missionIntegrationStimulus({
+    missionTitle: 'Rail da fila',
+    targetLabel: 'main',
+    position: 1,
+    total: 1,
+    isHead: true,
+    reopened: true
+  })
+  assert.match(again, /reabriu e o ⇪ do dono[\s\S]*AINDA ESPERA/u)
+  assert.equal(/o dono clicou ⇪/u.test(again), false)
+  assert.match(again, /integration_run agora/u, 'a receita continua sendo a mesma')
+})
+
 // RECEITA DO CONFLITO: em 2.0 o bloqueio volta para quem escreveu, não para um
 // orquestrador que não existe.
 
@@ -464,7 +606,40 @@ test('a receita do conflito nomeia as duas branches e o movimento', () => {
   assert.match(text, /Tela de créditos/)
   assert.match(text, /conflito em src\/a\.ts, src\/b\.ts/)
   assert.match(text, /traga version\/v1\.2 para dentro de mission\/7e31d314/)
-  assert.match(text, /commite e avise o dono/)
+  // RODADA 9: o fecho deixou de mandar esperar um segundo clique do dono. O
+  // ticket fica na cabeça da fila e quem retoma é o próprio agente — a frase
+  // antiga apontava para um gesto que o app não pede mais (beco sem saída).
+  assert.match(text, /integration_run de novo/u)
+  assert.match(text, /MESMA posição/u)
+  assert.match(text, /re-lacre[\s\S]*autom[áa]tico e auditado/u)
+  assert.equal(/aprovar de novo/u.test(text), false, 'a receita não pode pedir um segundo ⇪')
+  assert.match(text, /decisão de produto/u, 'o que se pergunta ao dono é produto, não git')
+})
+
+test('a receita entrega o veredito do merge-tree como o git o escreveu — sem inventar contagem', () => {
+  // MEDIDO no motor real (rodada 9): o `merge-tree --name-only` devolve os
+  // arquivos conflitados E, logo depois, as linhas informativas do git; o leitor
+  // do worktree entrega as duas seções juntas. Chamar isso de "2 arquivos"
+  // seria um número falso, e separar por adivinhação seria heurística sobre
+  // conteúdo. O bloco vai como veio, nomeado pelo que ele é.
+  const text = missionConflictRecipe({
+    missionTitle: 'Rail da fila',
+    detail: 'conflito real',
+    targetBranch: 'version/v1.2',
+    sourceBranch: 'mission/7e31d314',
+    files: ['src/main/index.ts', 'Auto-merging src/main/index.ts']
+  })
+  assert.match(text, /CONFLITO, COMO O GIT REPORTOU:/u)
+  assert.match(text, /· src\/main\/index\.ts/u)
+  assert.match(text, /· Auto-merging src\/main\/index\.ts/u)
+  assert.equal(/\(2\)/u.test(text), false, 'a receita não pode contar o que não sabe contar')
+  // sem veredito, nenhum cabeçalho órfão aparece
+  assert.equal(
+    /CONFLITO, COMO O GIT REPORTOU/u.test(
+      missionConflictRecipe({ missionTitle: 'M', detail: 'd', files: [] })
+    ),
+    false
+  )
 })
 
 test('sem branch conhecida a receita ainda é legível', () => {

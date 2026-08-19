@@ -846,3 +846,133 @@ test('descartar um interrompido re-escreve o card, e não acorda ninguém', () =
   assert.equal(inbox.count(paneId), 0, 'descarte nunca acorda o delegador')
   timers.tick()
 })
+
+// ————— RODADA 9 (2026-08-19): AS DUAS SUPERFÍCIES DO ⇪ —————
+//
+// O despertador da rodada 7 provou que estímulo do app NUNCA pode virar bolha do
+// dono. A rodada 9 usa o mesmo caminho para o ⇪ — e acrescenta o par que faltava:
+// uma NOTA, que é o contrário exato do estímulo. Ela aparece no fio (é o dono que
+// lê) e não chega ao modelo; o `announce` chega ao modelo e não aparece. Um sem o
+// outro seria ou um clique sem rastro na tela, ou o app falando na voz dele.
+
+test('a NOTA aparece no fio e NÃO abre turno nem fala com o modelo', () => {
+  const { gui, paneId, sent } = registryHarness()
+
+  assert.equal(gui.note(paneId, '⇪ subir para version/v1.2 — entregue ao agente').ok, true)
+
+  const events = gui.state(paneId).events.map(({ evt }) => evt)
+  const note = events.find((evt) => evt.type === 'command-output')
+  assert.ok(note, 'a nota precisa entrar no anel — senão some da remontagem')
+  assert.equal(note.text, '⇪ subir para version/v1.2 — entregue ao agente')
+  assert.equal(
+    events.some((evt) => evt.type === 'user-message'),
+    false,
+    'nota do app não pode nascer como bolha do dono'
+  )
+  assert.equal(sent.length, 0, 'a nota é MUDA para o modelo — quem fala com ele é o announce')
+  assert.equal(
+    events.filter((evt) => evt.type === 'turn-started').length,
+    0,
+    'anotar um gesto não é começar um turno'
+  )
+})
+
+test('a NOTA recusa com honestidade quando não há conversa viva', () => {
+  const { gui, paneId, state } = registryHarness()
+  assert.equal(gui.note('gui-dev-00000000', 'ninguém em casa').ok, false)
+  state.alive = false
+  const dead = gui.note(paneId, 'a sessão morreu')
+  assert.equal(dead.ok, false)
+  assert.match(dead.error, /encerrou/u)
+})
+
+test('a nota vazia é recusada antes de sujar o fio', () => {
+  const { gui, paneId } = registryHarness()
+  assert.equal(gui.note(paneId, '   ').ok, false)
+  assert.equal(
+    gui.state(paneId).events.some(({ evt }) => evt.type === 'command-output'),
+    false
+  )
+})
+
+// O ⇪ QUE FICOU ESPERANDO. O dono pode clicar com o chat fechado (ou o app
+// reinicia depois do clique): nada se persiste a mais — o TICKET já é durável —,
+// e abrir a conversa é o momento de re-executar o estímulo. Mesma porta e mesma
+// disciplina do despertador de boot dos ajudantes: só em ABERTURA de verdade.
+
+test('abrir a conversa avisa o motor de missões — uma vez, e nunca num respawn', () => {
+  const opened = []
+  const timers = fakeTimers()
+  const state = { alive: true, turnActive: false }
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    helperWakeTimer: timers.setTimer,
+    helperInbox: new GuiHelperInbox()
+  })
+  gui.spawnSession = () => ({
+    get alive() {
+      return state.alive
+    },
+    get turnActive() {
+      return state.turnActive
+    },
+    send: () => undefined,
+    interrupt: () => true,
+    kill: () => undefined
+  })
+  gui.attachIntegration({
+    paneOpened: (paneId, projectId) => opened.push({ paneId, projectId })
+  })
+  const spawn = {
+    paneId: 'gui-dev-abc12345',
+    projectId: 'proj',
+    cli: 'claude',
+    configDir: 'seat-1',
+    cwd: '/tmp'
+  }
+
+  assert.equal(gui.create(spawn).ok, true)
+  assert.deepEqual(opened, [{ paneId: 'gui-dev-abc12345', projectId: 'proj' }])
+
+  // remontagem da MESMA conversa (troca de aba): nada a re-estimular
+  assert.equal(gui.create(spawn).ok, true)
+  assert.equal(opened.length, 1)
+
+  // respawn por troca de modo: é a MESMA conversa, e repetir o aviso aqui seria
+  // o app cutucando o dono a cada clique dele no painel
+  assert.equal(gui.create({ ...spawn, permissionMode: 'plan' }).ok, true)
+  assert.equal(opened.length, 1, 'respawn não é abertura')
+})
+
+test('motor de missões que explode nunca impede a conversa de abrir', () => {
+  const timers = fakeTimers()
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    helperWakeTimer: timers.setTimer,
+    helperInbox: new GuiHelperInbox()
+  })
+  gui.spawnSession = () => ({
+    alive: true,
+    turnActive: false,
+    send: () => undefined,
+    interrupt: () => true,
+    kill: () => undefined
+  })
+  gui.attachIntegration({
+    paneOpened: () => {
+      throw new Error('a fila caiu')
+    }
+  })
+  assert.equal(
+    gui.create({
+      paneId: 'gui-dev-abc12345',
+      projectId: 'proj',
+      cli: 'claude',
+      configDir: 'seat-1',
+      cwd: '/tmp'
+    }).ok,
+    true
+  )
+})

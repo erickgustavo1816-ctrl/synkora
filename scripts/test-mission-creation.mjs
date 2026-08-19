@@ -92,6 +92,14 @@ const loadModule = Module._load
 Module._load = function (request, parent, isMain) {
   if (request === 'electron') return electronStub
   if (/(^|[\\/])gitAsync(\.js)?$/.test(request)) return gitAsyncStub
+  // O STORE DA FILA É O REAL, e este desvio de UMA linha é o que torna isso
+  // possível: `integrationQueue.ts` importa `./jsonStore.ts` COM extensão (o
+  // strip-types do node exige), e o `tsc` copia o especificador verbatim para o
+  // CJS — o require cairia num arquivo que não existe em .tmp. Trocar a fila
+  // por um duplo aqui deixaria a decisão de integração sendo provada contra uma
+  // fila de mentira; é exatamente o que este arquivo não pode fazer.
+  if (/jsonStore\.ts$/.test(request))
+    return loadModule.call(this, join(COMPILED, 'jsonStore.js'), parent, isMain)
   return loadModule.call(this, request, parent, isMain)
 }
 
@@ -742,4 +750,430 @@ test('falha de git na sincronia é auditada e JAMAIS impede o dono de criar a mi
   const audit = harness.audited.find((event) => event.event === 'version-base-sync-failed')
   assert.ok(audit, 'a falha fica auditada')
   assert.match(audit.err ?? '', /git worker/u)
+})
+
+// ————— RODADA 9 (2026-08-19): O ⇪ ENTREGA, O AGENTE INTEGRA —————
+//
+// Ordem do dono, verbatim: "quando eu clico em subir, o certo é avisar o agente
+// — 'tá pronto pra subir' — e o AGENTE sobe. Ele vê via MCP se tem alguém na
+// fila na frente dele; se é o próximo, ELE integra. Qualquer erro, ELE arruma."
+//
+// Até aqui o ⇪ enfileirava e o DRENO mesclava sozinho num timer de 150ms; o
+// agente só ouvia falar quando dava conflito. Estes testes rodam o motor REAL
+// contra repositórios de verdade e provam a inversão inteira: o clique estimula
+// (nota no fio + texto pelos bastidores), NADA mescla sozinho, e o merge só
+// acontece quando `integration_run` é chamado — pela missão que é a cabeça.
+
+const { IntegrationQueueStore } = require(join(COMPILED, 'integrationQueue.js'))
+const { guiMissionPaneId } = require(join(COMPILED, 'guiMissionContracts.js'))
+
+/**
+ * Motor REAL + fila REAL sobre um repositório de verdade com versão isolada.
+ * As únicas coisas dubladas são as bordas que não são git nem fila: o registro
+ * de missões, o backlog e as DUAS superfícies do chat (a nota que o dono lê e o
+ * estímulo que o modelo recebe) — que aqui viram espiões, porque são
+ * justamente o que esta rodada inventou.
+ */
+function createIntegrationHarness(t) {
+  const projectPath = mkdtempSync(join(tmpdir(), 'synkora-r9-'))
+  const worktreesRoot = join(userData, 'worktrees', 'proj-1')
+  const queueFile = join(mkdtempSync(join(tmpdir(), 'synkora-r9-queue-')), 'queue.json')
+  t.after(() => rmSync(projectPath, { recursive: true, force: true }))
+  gitCli(projectPath, ['init'])
+  gitCli(projectPath, ['config', 'user.name', 'Synkora Test'])
+  gitCli(projectPath, ['config', 'user.email', 'synkora-test@example.invalid'])
+  writeFileSync(join(projectPath, 'base.txt'), 'base\n', 'utf8')
+  gitCli(projectPath, ['add', '-A'])
+  gitCli(projectPath, ['commit', '-m', 'commit inicial'])
+
+  const isolation = worktreeApi.createVersionWorktree(
+    projectPath,
+    worktreesRoot,
+    'V1.0',
+    `ver${randomUUID().slice(0, 8)}`
+  )
+  assert.ok(isolation, 'a versão precisa nascer isolada')
+  const version = {
+    id: isolation.branch.replace('version/', 'id-'),
+    projectId: 'proj-1',
+    name: 'V1.0',
+    status: 'aberta',
+    deliveries: [],
+    branch: isolation.branch,
+    worktree: isolation.dir,
+    createdAt: '2026-08-19T00:00:00.000Z',
+    updatedAt: '2026-08-19T00:00:00.000Z'
+  }
+
+  const missionsStore = new Map()
+  const published = []
+  const audited = []
+  const notes = []
+  const stimuli = []
+  /** Panes com CONVERSA VIVA. Fora deste conjunto, entregar devolve false — é o
+   *  estado real de um chat fechado, e o que força o caminho re-derivável. */
+  const livePanes = new Set()
+  const integrationQueue = new IntegrationQueueStore(queueFile)
+  const ctx = {
+    projects: { get: (id) => (id === 'proj-1' ? { id: 'proj-1', path: projectPath } : undefined) },
+    missions: {
+      create: (projectId, input, reservedId) => {
+        const mission = {
+          id: reservedId ?? randomUUID(),
+          projectId,
+          status: 'ativa',
+          ...input,
+          createdAt: '2026-08-19T12:00:00.000Z',
+          updatedAt: '2026-08-19T12:00:00.000Z'
+        }
+        missionsStore.set(mission.id, mission)
+        return mission
+      },
+      get: (id) => missionsStore.get(id),
+      list: (projectId) =>
+        [...missionsStore.values()].filter((mission) => mission.projectId === projectId),
+      update: (id, patch) => {
+        const current = missionsStore.get(id)
+        if (!current) return undefined
+        const next = { ...current, ...patch }
+        missionsStore.set(id, next)
+        return next
+      }
+    },
+    backlog: {
+      missionVersionChoices: () => ({ versions: [version], defaultVersionId: version.id }),
+      getVersion: (id) => (id === version.id ? version : undefined),
+      ensureDefaultVersion: () => version,
+      setVersionBranch: () => {},
+      completeMissionItems: () => 0,
+      addDelivery: (versionId, missionId, title) => {
+        version.deliveries.push({ missionId, title })
+        return true
+      }
+    },
+    tasks: {},
+    integrationQueue,
+    maestro: { update: () => {} },
+    ptys: { kill: () => {}, has: () => false },
+    blackbox: { record: (event) => audited.push(event) },
+    // O wrapper de stall da Fase 0 é fino de propósito; aqui ele é a identidade.
+    mainStalls: { wrap: (_label, _key, run) => run(), begin: () => () => {} },
+    hub: { publish: (event) => published.push(event), purgeMissionEvents: () => {} },
+    pushAll: () => {},
+    syncBoard: () => {},
+    scheduleProgressSnapshot: () => {},
+    orchPaneId: (projectId, missionId) => `${projectId}--${missionId}`,
+    unregisterPane: () => {},
+    livePaneSpecs: new Map()
+  }
+  const engine = createMissionEngine(ctx, {
+    orchKey: (projectId, missionId) => `${projectId}--${missionId}`,
+    versionIsolationIsValid: (path, candidate) =>
+      Boolean(
+        candidate.branch &&
+          candidate.worktree &&
+          worktreeApi.isExpectedVersionWorktree(path, candidate.worktree, candidate.branch)
+      ),
+    emitBacklogChanged: () => {},
+    sweepProjectFiles: () => 0,
+    closeTestServersUnder: () => {},
+    deliverToGuiPane: () => false,
+    noteInGuiPane: (paneId, text) => {
+      notes.push({ paneId, text })
+      return livePanes.has(paneId)
+    },
+    announceToGuiPane: (paneId, text) => {
+      stimuli.push({ paneId, text })
+      return livePanes.has(paneId)
+    },
+    killMissionGuiPanes: () => {}
+  })
+
+  gitOffCalls.length = 0
+  gitOffOverride = null
+  gitOffProbe = null
+  t.after(() => {
+    gitOffOverride = null
+    gitOffProbe = null
+  })
+
+  /** Cria a missão de verdade (worktree isolado) e commita uma entrega nela. */
+  const missionWithDelivery = async (title, file, content) => {
+    const mission = await engine.createMissionImpl('proj-1', { title, direct: true }, 'user')
+    assert.ok(mission?.worktree, `${title}: a missão precisa de worktree isolado`)
+    livePanes.add(guiMissionPaneId('dev', mission.id))
+    writeFileSync(join(mission.worktree, file), content, 'utf8')
+    gitCli(mission.worktree, ['add', '-A'])
+    gitCli(mission.worktree, ['commit', '-m', `entrega de ${title}`])
+    return missionsStore.get(mission.id)
+  }
+
+  return {
+    engine,
+    projectPath,
+    version,
+    integrationQueue,
+    published,
+    audited,
+    notes,
+    stimuli,
+    livePanes,
+    missionWithDelivery,
+    devPaneOf: (mission) => guiMissionPaneId('dev', mission.id),
+    missionOf: (id) => missionsStore.get(id),
+    targetSha: () => gitCli(projectPath, ['rev-parse', `refs/heads/${version.branch}`]),
+    /** A versão anda por fora, como outra missão integrando antes desta. */
+    advanceTarget: (content) => {
+      writeFileSync(join(version.worktree, 'base.txt'), content, 'utf8')
+      gitCli(version.worktree, ['add', '-A'])
+      gitCli(version.worktree, ['commit', '-m', 'trabalho na versão'])
+      return gitCli(version.worktree, ['rev-parse', 'HEAD'])
+    },
+    notesOf: (paneId) => notes.filter((note) => note.paneId === paneId).map((note) => note.text),
+    stimuliOf: (paneId) =>
+      stimuli.filter((entry) => entry.paneId === paneId).map((entry) => entry.text)
+  }
+}
+
+test('o ⇪ do dono ENTREGA a subida ao agente — e NADA mescla sozinho', async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Rail da fila', 'rail.txt', 'entrega\n')
+  const pane = h.devPaneOf(mission)
+  const targetAntes = h.targetSha()
+
+  const msg = h.engine.startMissionIntegration(mission.id, 'user')
+
+  // 1. O CORAÇÃO DA RODADA, e por isso a PRIMEIRA asserção: passada a janela do
+  // dreno antigo (150ms de agrupamento + o merge), o destino NÃO andou e a
+  // missão continua ativa. Antes desta rodada a máquina já teria mesclado aqui,
+  // sem o agente saber de nada — foi exatamente isso que o vermelho mostrou.
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  assert.equal(h.targetSha(), targetAntes, 'nada pode ser mesclado sem o agente')
+  assert.equal(h.missionOf(mission.id).status, 'ativa')
+
+  // 2. a porteira do dono continua criando o ticket, como sempre
+  const ticket = h.integrationQueue.getByMission(mission.id)
+  assert.ok(ticket, 'o ⇪ do dono continua sendo quem cria o ticket')
+  assert.equal(ticket.state, 'queued')
+  assert.equal(ticket.isHead, true)
+  assert.match(msg, /ENTREGUE ao agente/u, 'a resposta do clique nomeia quem vai subir')
+
+  // 3. a NOTA que o dono lê no fio
+  assert.equal(h.notesOf(pane).length, 1)
+  assert.match(h.notesOf(pane)[0], /^⇪ subir para .* — entregue ao agente/u)
+
+  // 4. o ESTÍMULO que o modelo recebe pelos bastidores
+  assert.equal(h.stimuliOf(pane).length, 1)
+  assert.match(h.stimuliOf(pane)[0], /VOCÊ é o integrador/u)
+  assert.match(h.stimuliOf(pane)[0], /integration_run/u)
+
+  // 5. e o rastro na caixa-preta
+  const audit = h.audited.find((event) => event.event === 'mission-integration-stimulus')
+  assert.ok(audit, 'o estímulo é evento de caixa-preta')
+  assert.equal(audit.detail.origin, 'user-gesture')
+  assert.equal(audit.detail.delivered, true)
+  assert.equal(audit.detail.head, true)
+})
+
+test('⇪ com o chat fechado não se perde: abrir a conversa re-estimula pelo TICKET', async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Rail da fila', 'rail.txt', 'entrega\n')
+  const pane = h.devPaneOf(mission)
+  // o dono clicou com a conversa FECHADA
+  h.livePanes.delete(pane)
+  h.engine.startMissionIntegration(mission.id, 'user')
+  assert.equal(
+    h.audited.find((event) => event.event === 'mission-integration-stimulus')?.detail.delivered,
+    false,
+    'sem sessão viva o estímulo não chega — e isso tem de ficar no diário'
+  )
+
+  // a conversa abre: o motor re-deriva do ticket, sem nada persistido a mais
+  h.livePanes.add(pane)
+  h.engine.restimulateIntegrationOnOpen(pane, 'proj-1')
+  assert.equal(h.stimuliOf(pane).length, 2)
+  assert.match(h.stimuliOf(pane)[1], /AINDA ESPERA/u)
+  assert.match(h.notesOf(pane)[1], /⇪ pendente para/u)
+  const reopened = h.audited.filter(
+    (event) => event.event === 'mission-integration-stimulus' && event.detail.origin === 'pane-open'
+  )
+  assert.equal(reopened.length, 1)
+  assert.equal(reopened[0].detail.delivered, true)
+
+  // e nenhum vizinho é acordado por engano
+  h.engine.restimulateIntegrationOnOpen(guiMissionPaneId('dev', randomUUID()), 'proj-1')
+  h.engine.restimulateIntegrationOnOpen(guiMissionPaneId('reviewer', mission.id), 'proj-1')
+  assert.equal(h.stimuliOf(pane).length, 2, 'o reviewer da mesma missão não é o integrador')
+  assert.equal(h.stimuli.length, 2)
+})
+
+test('sem ticket, integration_status e integration_run nomeiam o ⇪ do DONO', async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Rail da fila', 'rail.txt', 'entrega\n')
+
+  const status = h.engine.missionIntegrationStatus('proj-1', mission.id)
+  assert.match(status, /NÃO tem ticket na fila/u)
+  assert.match(status, /Só o ⇪ do DONO/u)
+  assert.match(status, /nunca se enfileira sozinho/u)
+
+  const run = await h.engine.runMissionIntegration('proj-1', mission.id)
+  assert.match(run, /NÃO está na fila/u)
+  assert.match(run, /Só o ⇪ do DONO cria o ticket/u)
+  assert.equal(h.integrationQueue.getByMission(mission.id), undefined, 'a tool não enfileira nada')
+})
+
+test('quem não é a cabeça é recusado com a posição, quem falta e a ordem de esperar', async (t) => {
+  const h = createIntegrationHarness(t)
+  const first = await h.missionWithDelivery('Primeira entrega', 'a.txt', 'a\n')
+  const second = await h.missionWithDelivery('Segunda entrega', 'b.txt', 'b\n')
+  h.engine.startMissionIntegration(first.id, 'user')
+  h.engine.startMissionIntegration(second.id, 'user')
+
+  const status = h.engine.missionIntegrationStatus('proj-1', second.id)
+  assert.match(status, /posição #2 de 2/u)
+  assert.match(status, /NA SUA FRENTE: "Primeira entrega" \(queued\)/u)
+  assert.match(status, /ainda NÃO é a sua vez/u)
+
+  const targetAntes = h.targetSha()
+  const run = await h.engine.runMissionIntegration('proj-1', second.id)
+  assert.match(run, /ainda NÃO é a vez/u)
+  assert.match(run, /#2 de 2/u)
+  assert.match(run, /Primeira entrega/u)
+  assert.equal(h.targetSha(), targetAntes, 'furar a fila jamais mescla')
+  assert.equal(h.integrationQueue.getByMission(second.id)?.state, 'queued')
+
+  // e o estímulo que o segundo recebeu já dizia isso
+  assert.match(h.stimuliOf(h.devPaneOf(second))[0], /Ainda NÃO é a sua vez/u)
+})
+
+test('árvore suja é recusa COM receita, e o ticket continua na cabeça', async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Rail da fila', 'rail.txt', 'entrega\n')
+  h.engine.startMissionIntegration(mission.id, 'user')
+  writeFileSync(join(mission.worktree, 'rail.txt'), 'mexido depois do aval\n', 'utf8')
+
+  const status = h.engine.missionIntegrationStatus('proj-1', mission.id)
+  assert.match(status, /ÁRVORE DA MISSÃO: SUJA/u)
+  assert.match(status, /commite \(ou limpe\)/u)
+
+  const run = await h.engine.runMissionIntegration('proj-1', mission.id)
+  assert.match(run, /NÃO rodou/u)
+  assert.match(run, /alterações não commitadas/u)
+  assert.match(run, /RECEITA: commite/u)
+  const ticket = h.integrationQueue.getByMission(mission.id)
+  assert.equal(ticket.state, 'queued', 'recusa não pode congelar o ticket')
+  assert.equal(ticket.isHead, true)
+  assert.ok(ticket.lastError)
+})
+
+test('integration_run INTEGRA de verdade e a fila anda: o próximo agente é estimulado', async (t) => {
+  const h = createIntegrationHarness(t)
+  const first = await h.missionWithDelivery('Primeira entrega', 'a.txt', 'a\n')
+  const second = await h.missionWithDelivery('Segunda entrega', 'b.txt', 'b\n')
+  h.engine.startMissionIntegration(first.id, 'user')
+  h.engine.startMissionIntegration(second.id, 'user')
+  const sourceHead = gitCli(first.worktree, ['rev-parse', 'HEAD'])
+
+  const run = await h.engine.runMissionIntegration('proj-1', first.id)
+
+  assert.match(run, /INTEGRADA/u)
+  assert.match(run, new RegExp(sourceHead.slice(0, 12), 'u'), 'o desfecho carrega os shas')
+  assert.match(run, /CONTE AO DONO/u)
+  // o merge é REAL: o arquivo da missão está na branch da versão
+  assert.equal(existsSync(join(h.version.worktree, 'a.txt')), true)
+  assert.equal(h.missionOf(first.id).status, 'concluida')
+  assert.equal(h.integrationQueue.getByMission(first.id), undefined, 'o ticket saiu da fila')
+
+  // A FILA ANDOU: o segundo vira cabeça e é estimulado pelo MESMO canal do ⇪
+  const nextTicket = h.integrationQueue.getByMission(second.id)
+  assert.equal(nextTicket.position, 1)
+  assert.equal(nextTicket.isHead, true)
+  const secondPane = h.devPaneOf(second)
+  assert.equal(h.stimuliOf(secondPane).length, 2, 'o próximo da fila precisa saber que chegou a vez')
+  assert.match(h.stimuliOf(secondPane)[1], /CABEÇA da fila: chame integration_run agora/u)
+  const avanco = h.audited.filter(
+    (event) =>
+      event.event === 'mission-integration-stimulus' && event.detail.origin === 'queue-advance'
+  )
+  assert.equal(avanco.length, 1)
+})
+
+test('CONFLITO volta ao agente com a receita — e o ticket NUNCA vira blocked', async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Rail da fila', 'base.txt', 'lado da missao\n')
+  h.engine.startMissionIntegration(mission.id, 'user')
+  // o destino andou por fora, tocando o MESMO arquivo
+  h.advanceTarget('lado da versao\n')
+  const targetAntes = h.targetSha()
+
+  const run = await h.engine.runMissionIntegration('proj-1', mission.id)
+
+  assert.match(run, /PAROU/u)
+  assert.match(run, /CONFLITO com o destino/u)
+  // O veredito do git chega inteiro: o arquivo E as linhas que ele imprimiu.
+  assert.match(run, /CONFLITO, COMO O GIT REPORTOU:/u)
+  assert.match(run, /· base\.txt/u)
+  assert.match(run, /CONFLICT \(content\)/u)
+  assert.match(run, /integration_run de novo/u)
+  assert.match(run, /decisão de produto/u)
+  assert.equal(h.targetSha(), targetAntes, 'conflito não toca no destino')
+
+  // O CONTRATO DA RODADA: o ticket fica na CABEÇA com o motivo — nada de card
+  // parado esperando decisão de máquina.
+  const ticket = h.integrationQueue.getByMission(mission.id)
+  assert.equal(ticket.state, 'queued')
+  assert.equal(ticket.isHead, true)
+  assert.equal(ticket.block, undefined)
+  assert.match(ticket.lastError, /CONFLITO/u)
+  assert.equal(h.missionOf(mission.id).status, 'ativa')
+  assert.ok(h.audited.some((event) => event.event === 'mission-integration-conflict'))
+})
+
+test('resolver o conflito e rodar de novo INTEGRA — com o re-lacre auditado', async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Rail da fila', 'base.txt', 'lado da missao\n')
+  h.engine.startMissionIntegration(mission.id, 'user')
+  const lacreOriginal = h.integrationQueue.getByMission(mission.id).sourceHead
+  h.advanceTarget('lado da versao\n')
+  await h.engine.runMissionIntegration('proj-1', mission.id)
+
+  // O AGENTE RESOLVE, no worktree DELE, exatamente como a receita manda.
+  gitCli(mission.worktree, ['merge', '-X', 'ours', '--no-edit', h.version.branch])
+  const lacreNovo = gitCli(mission.worktree, ['rev-parse', 'HEAD'])
+  assert.notEqual(lacreNovo, lacreOriginal, 'resolver conflito MUDA o commit da entrega')
+
+  const run = await h.engine.runMissionIntegration('proj-1', mission.id)
+  assert.match(run, /INTEGRADA/u)
+  assert.equal(h.missionOf(mission.id).status, 'concluida')
+
+  // O ⇪ autorizou a INTENÇÃO, não um sha: o lacre acompanhou, e o par
+  // velho→novo virou evento + nota no fio (transparência, não segunda porteira).
+  const reseal = h.audited.find((event) => event.event === 'mission-integration-resealed')
+  assert.ok(reseal, 'o re-lacre precisa ser auditado')
+  assert.equal(reseal.prev, lacreOriginal.slice(0, 12))
+  assert.equal(reseal.next, lacreNovo.slice(0, 12))
+  assert.ok(
+    h.notesOf(h.devPaneOf(mission)).some((note) => /re-lacrado/u.test(note)),
+    'o dono lê o re-lacre no fio'
+  )
+})
+
+test('ticket congelado pela era da máquina é REABERTO pelo agente em vez de virar beco', async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Rail da fila', 'rail.txt', 'entrega\n')
+  h.engine.startMissionIntegration(mission.id, 'user')
+  // exatamente o que a era anterior deixava no disco
+  h.integrationQueue.block(mission.id, {
+    code: 'merge_conflict',
+    owner: 'maestro',
+    detail: 'a estratégia precisava do Maestro'
+  })
+
+  assert.match(
+    h.engine.missionIntegrationStatus('proj-1', mission.id),
+    /congelado por uma era anterior/u
+  )
+  const run = await h.engine.runMissionIntegration('proj-1', mission.id)
+  assert.match(run, /INTEGRADA/u)
+  assert.ok(h.audited.some((event) => event.event === 'mission-integration-reclaimed'))
 })

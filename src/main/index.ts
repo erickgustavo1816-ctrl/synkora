@@ -3241,6 +3241,14 @@ app.whenReady().then(async () => {
   let guiSessions: GuiSessionRegistry | undefined
   const deliverToGuiPane = (paneId: string, text: string): boolean =>
     guiSessions?.send(paneId, text).ok === true
+  // R9 — as DUAS superfícies do ⇪, e elas não se misturam: a NOTA é o que o
+  // dono lê de relance no fio; o ESTÍMULO é o texto que chega ao modelo pelos
+  // bastidores (o caminho do recibo de plano). `false` = sem sessão viva, e a
+  // reabertura do chat re-deriva o gesto a partir do ticket.
+  const noteInGuiPane = (paneId: string, text: string): boolean =>
+    guiSessions?.note(paneId, text).ok === true
+  const announceToGuiPane = (paneId: string, text: string): boolean =>
+    guiSessions?.announce(paneId, text).ok === true
   const killMissionGuiPanes = (missionId: string): void => {
     guiSessions?.killWhere((paneId) => isGuiMissionPaneId(paneId, missionId))
   }
@@ -3264,6 +3272,8 @@ app.whenReady().then(async () => {
     sweepProjectFiles,
     closeTestServersUnder,
     deliverToGuiPane,
+    noteInGuiPane,
+    announceToGuiPane,
     killMissionGuiPanes
   })
   const {
@@ -3274,6 +3284,7 @@ app.whenReady().then(async () => {
     reconcileConcludedMission,
     scheduleIntegrationDrain,
     recoverMissionIntegrationIntents,
+    restimulateIntegrationOnOpen,
   } = missionEngine
 
   // MAESTRO → maestroEngine.ts (fase 1, commit 6b). Sessão de fundo do PM,
@@ -3423,6 +3434,17 @@ app.whenReady().then(async () => {
     helperSend: (id, helperId, text) => guiDelegation.helperSend(id, helperId, text),
     helperCancel: (id, helperId) => guiDelegation.helperCancel(id, helperId),
     helperResume: (id, helperId) => guiDelegation.helperResume(id, helperId),
+    // R9 — O AGENTE É O INTEGRADOR. Cascas FINAS: a identidade do pane (que o
+    // bearer autenticou) diz o universo e a missão, e o motor faz o resto. A
+    // missão vem do TOKEN, nunca de um argumento — um chat não integra outro.
+    integrationStatus: (id) =>
+      id.missionId
+        ? missionEngine.missionIntegrationStatus(id.projectId, id.missionId)
+        : 'esta conversa não está ligada a uma missão — não há fila de integração a consultar.',
+    integrationRun: async (id) =>
+      id.missionId
+        ? missionEngine.runMissionIntegration(id.projectId, id.missionId)
+        : 'esta conversa não está ligada a uma missão — nada foi mesclado.',
     hub
   }
 
@@ -3703,7 +3725,11 @@ app.whenReady().then(async () => {
       // stall de boot (~1,9s aos 3s com culprits vazio no 1º boot medido).
       const endSweep = mainStalls.begin('boot:project-sweep', p.id.slice(0, 8))
       sweepProjectFiles(p.id, { preserveInterruptedHelpers: true })
-      if (integrationQueue.head(p.id)?.state === 'queued') scheduleIntegrationDrain(p.id)
+      // R9: isto DEIXOU de drenar. O boot reconcilia a cabeça (missão apagada,
+      // já concluída ou arquivada sai da fila) e ESTIMULA o agente de quem
+      // ficou esperando. Com o chat ainda fechado o estímulo não chega — e não
+      // precisa: abrir a conversa o re-deriva do próprio ticket.
+      if (integrationQueue.head(p.id)) scheduleIntegrationDrain(p.id)
       syncBoard(p.id)
       endSweep()
     }
@@ -3832,6 +3858,11 @@ app.whenReady().then(async () => {
   // o ■ do dono e o despertador de boot precisam perguntar. Uma linha, e é ela
   // que torna a interrupção ATÔMICA (turno + frota + avisos pendentes).
   guiSessionRegistry.attachHelpers(guiHelperEngine)
+  // A MESMA aresta de volta para a FILA (R9): quando um chat de missão abre de
+  // verdade (boot, reabrir a aba), o motor confere se existe um ⇪ do dono
+  // esperando por ele e re-estimula. O clique com o chat fechado deixa de se
+  // perder sem que nada novo precise ser persistido — o ticket já é durável.
+  guiSessionRegistry.attachIntegration({ paneOpened: restimulateIntegrationOnOpen })
   app.once('will-quit', () => {
     // A frota para ANTES dos chats: é o motor que descarta cada processo de CLI
     // headless (o app-server do codex nunca encerra sozinho — sonda

@@ -163,6 +163,39 @@ const DELEGATION_STANDING_ORDER = `DELEGATION — STANDING ORDER FROM THE OWNER:
 - Helpers share THIS worktree: split the work by file boundaries, the way you would if you were running a team, and never hand the same file to two of them.
 - If these tools are not in your catalog, say so to the owner and do the work yourself — never fall back to a native subagent.`
 
+/**
+ * O ⇪ DO DONO TE FAZ O INTEGRADOR (rodada 9, 2026-08-19 — design I4).
+ *
+ * Palavras dele, verbatim: "quando eu clico em subir, o certo é avisar o agente
+ * — 'tá pronto pra subir' — e o AGENTE sobe. Ele vê via MCP se tem alguém na
+ * fila na frente dele; se é o próximo, ELE integra. Qualquer erro, ELE arruma —
+ * pode ter pergunta pra mim."
+ *
+ * Antes desta rodada o ⇪ enfileirava e a MÁQUINA mesclava; o agente só ouvia
+ * falar quando dava conflito. Agora a fila é COORDENAÇÃO (FIFO por universo) e o
+ * executor é quem escreveu o código — com tudo visível no fio, que é o que o
+ * dono pediu ("eu preciso VER o que ele tá fazendo no chat").
+ *
+ * SÓ NO DEV, e isso é contrato: reviewer e ajudante não recebem `integration_*`
+ * no catálogo, então prometer o verbo a eles seria mandá-los procurar uma
+ * ferramenta que não existe. A cerca mecânica dessa promessa mora no
+ * `mcpServer` (as duas tools nascem dentro do `role === 'gui-delegator'` E do
+ * papel `dev`).
+ *
+ * A linha do AUTO-⇪ é a que protege a porteira de 2026-08-07: pedir/simular o
+ * clique não é atalho, é fabricar o aval do dono. Ele continua sendo a única
+ * mão que cria ticket.
+ */
+const MISSION_INTEGRATOR_ORDER = `INTEGRATION — WHEN THE OWNER CLICKS ⇪, YOU ARE THE INTEGRATOR:
+- His ⇪ puts this mission in the universe's integration queue (FIFO, one merge at a time) and hands the job to YOU. The app tells you here, in this chat, the moment it happens.
+- Read integration_status first: it shows your position, who is ahead, the target branch and the exact next step. It is cheap — call it whenever you are unsure.
+- When you are the HEAD of the queue, call integration_run. That single tool does the whole merge (snapshot checks, conflict precheck, merge, queue advance) and always tells you how it ended.
+- NOT the head yet? Do nothing and go back to what you were doing. The app stimulates you here when your turn arrives; polling the queue burns turns for nothing.
+- ANY error is YOURS to fix, in THIS worktree: bring the target branch in, resolve, run the checks that cover what changed, commit, and call integration_run again. Your ticket keeps the same position and the app re-seals the snapshot for you, audited.
+- Ask the owner only about PRODUCT decisions (which side of a conflict is the right behaviour). Mechanics are your job — never hand him a git recipe to type.
+- Then TELL HIM what happened: integrated (with the shas), or stopped and why. He is watching this thread, not a machine log.
+- NEVER ask for, simulate or claim an automatic ⇪. The click is his, always: it is the only gesture that creates a ticket. If you believe the work is ready, say so here and wait — silence is not consent.`
+
 const DEV_CONTRACT = `You are the DEVELOPER of this mission inside Synkora.
 - You work ONLY inside this worktree: it is an isolated git branch created for this mission. Never touch another repository or the owner's main checkout.
 - Before any large piece of work, post a MINI-PLAN of at most 5 lines and WAIT for the owner's approval. A small, obvious edit does not need one — just do it.
@@ -170,9 +203,10 @@ const DEV_CONTRACT = `You are the DEVELOPER of this mission inside Synkora.
 - Commit as you go, with clear messages in English. Never end a round with a dirty branch.
 - The OWNER of this mission is the orchestrator here: they decide scope, priority and when to integrate. Ask them instead of inventing requirements.
 - When a round ends, close with 3-5 lines: what changed, what you verified, what is still open.
-- If the integration hits a conflict, the app tells you here: bring the target branch into this one, resolve, test, commit, and tell the owner.
 - Anything the owner should see (a report, a decision record) goes in the repo, never only in this chat.
 - Always answer in PT-BR. Code, identifiers and commit messages stay in English.
+
+${MISSION_INTEGRATOR_ORDER}
 
 ${DELEGATION_STANDING_ORDER}`
 
@@ -481,18 +515,103 @@ export function planApprovedReceipt(input: { title: string; items: number }): st
  * Receita do conflito de integração ENTREGUE NA CONVERSA do dev (2.0: não há
  * orquestrador para triar — quem resolve é quem escreveu). `detail` já vem da
  * fila com os arquivos/causa; a receita diz o movimento.
+ *
+ * RODADA 9: o fecho mudou de "espere o dono aprovar de novo" para "chame
+ * integration_run de novo". Não é cosmética — o ticket agora FICA na cabeça da
+ * fila com o motivo em `lastError`, e o re-lacre da fotografia é automático e
+ * auditado. A frase antiga mandava o agente esperar um segundo clique que o app
+ * não pede mais, e esperar um gesto que nunca vem é um beco sem saída.
  */
 export function missionConflictRecipe(input: {
   missionTitle: string
   detail: string
   targetBranch?: string
   sourceBranch?: string
+  /**
+   * O VEREDITO DO MERGE-TREE, linha a linha, como o git o escreveu.
+   *
+   * Ele NÃO é uma lista limpa de caminhos: o `git merge-tree --name-only`
+   * imprime os arquivos conflitados e, em seguida, as linhas informativas
+   * ("Auto-merging x", "CONFLICT (content): …"), e o leitor do worktree entrega
+   * as duas seções juntas. Contá-las como "N arquivos" seria inventar um
+   * número; separá-las por adivinhação seria heurística sobre conteúdo. Então o
+   * bloco vai como veio, nomeado pelo que ele é — e o agente, que fala git,
+   * lê ali exatamente o que precisa.
+   */
+  files?: readonly string[]
 }): string {
   const target = input.targetBranch?.trim() || 'a branch de destino'
   const source = input.sourceBranch?.trim() || 'a branch desta missão'
+  const files = (input.files ?? []).map((file) => file.trim()).filter((file) => file.length > 0)
   return [
     `[synkora] a integração de "${input.missionTitle}" PAROU: ${input.detail}`,
+    ...(files.length > 0
+      ? ['', 'CONFLITO, COMO O GIT REPORTOU:', ...files.slice(0, 20).map((file) => `· ${file}`)]
+      : []),
     '',
-    `RECEITA: traga ${target} para dentro de ${source} no seu worktree, resolva os conflitos, rode os testes que cobrem o que mudou, commite e avise o dono — a fila retoma na mesma posição quando ele aprovar de novo.`
+    `RECEITA: traga ${target} para dentro de ${source} no SEU worktree, resolva os conflitos, rode os testes que cobrem o que mudou e COMMITE. Depois chame integration_run de novo — seu ticket continua na MESMA posição (cabeça da fila) e o re-lacre da fotografia é automático e auditado.`,
+    'Conte ao dono o que você fez; pergunte a ele apenas o que for decisão de produto (qual lado do conflito é o comportamento certo).'
   ].join('\n')
+}
+
+// ————— O ⇪ DO DONO ESTIMULA O AGENTE (rodada 9, 2026-08-19 — design I1) —————
+//
+// Duas superfícies, e elas são diferentes de propósito:
+//
+//  · a NOTA é para o DONO — uma linha no fio, âncora visual do gesto que ele
+//    acabou de fazer (o clique deixava rastro só no board até aqui);
+//  · o ESTÍMULO é para o MODELO — texto pelos bastidores (`announce`), sem
+//    bolha de "VOCÊ": app não fala na voz do dono.
+//
+// As duas nascem AQUI, puras, porque são contrato: o motor as usa e a suíte de
+// contratos as prende sem subir Electron, git nem fila.
+
+/** A linha do ⇪ no fio do dev. `reopened` = a conversa reabriu com o ticket
+ *  ainda esperando — o gesto é o mesmo, mas contá-lo como novo seria mentira. */
+export function missionIntegrationNote(input: {
+  targetLabel: string
+  position: number
+  total: number
+  reopened?: boolean
+}): string {
+  const where = `#${input.position} de ${input.total}`
+  return input.reopened
+    ? `⇪ pendente para ${input.targetLabel} — na fila em ${where}; o integrador é o agente desta missão`
+    : `⇪ subir para ${input.targetLabel} — entregue ao agente (fila ${where})`
+}
+
+/** O texto que faz o agente virar INTEGRADOR. Mesmo canal no clique, no avanço
+ *  da fila e na reabertura do chat — um só fato, contado uma vez por entrega. */
+export function missionIntegrationStimulus(input: {
+  missionTitle: string
+  targetLabel: string
+  position: number
+  total: number
+  isHead: boolean
+  /** Quem está na frente, já formatado ("título (estado)"). */
+  ahead?: readonly string[]
+  reopened?: boolean
+}): string {
+  const opening = input.reopened
+    ? `[synkora] esta conversa reabriu e o ⇪ do dono em "${input.missionTitle}" AINDA ESPERA: você é o integrador desta missão.`
+    : `[synkora] o dono clicou ⇪ em "${input.missionTitle}": VOCÊ é o integrador desta missão.`
+  const lines = [
+    opening,
+    `Destino: ${input.targetLabel}. Sua posição na fila do universo: #${input.position} de ${input.total} (FIFO, um merge por vez).`
+  ]
+  if (input.isHead) {
+    lines.push(
+      'Você é a CABEÇA da fila: chame integration_run agora. Ele faz o merge inteiro e sempre te devolve o desfecho.'
+    )
+  } else {
+    const ahead = (input.ahead ?? []).filter((entry) => entry.trim().length > 0)
+    lines.push(
+      `Ainda NÃO é a sua vez${ahead.length > 0 ? ` — na sua frente: ${ahead.join(' · ')}` : ''}. Não chame integration_run; volte ao que estava fazendo, o app te avisa aqui quando a vez chegar.`
+    )
+  }
+  lines.push(
+    'Use integration_status quando quiser a foto da fila e o próximo passo. Se der erro ou conflito, a correção é SUA neste worktree — resolva, commite e rode de novo; pergunte ao dono só o que for decisão de produto.',
+    'Quando terminar (integrado ou parado), CONTE a ele aqui o que aconteceu.'
+  )
+  return lines.join('\n')
 }

@@ -386,3 +386,124 @@ test('only an operational target-repair block can be rearmed automatically', (t)
   assert.equal(store.getByMission('m1')?.state, 'blocked')
   assert.equal(store.getByMission('m1')?.block?.owner, 'maestro')
 })
+
+// ————— RODADA 9 (2026-08-19): a fila é COORDENAÇÃO, o agente é o EXECUTOR —————
+//
+// Ordem do dono: "quando eu clico em subir, o certo é avisar o agente e o AGENTE
+// sobe. Qualquer erro, ELE arruma." Os três verbos abaixo são o que o store
+// precisou ganhar para isso: o LACRE acompanha a mão de quem resolve o conflito,
+// a tentativa falha NÃO congela o ticket, e o que a era da máquina congelou tem
+// uma saída sancionada. Sem eles a única transição disponível era `block`, que é
+// exatamente o card parado que o dono não quer mais ver.
+
+test('re-lacre: o commit da entrega muda e o ticket segue na MESMA posição', (t) => {
+  const { file, store } = temporaryStore(t)
+  const first = store.enqueue({
+    projectId: 'p1',
+    missionId: 'm1',
+    requestedBy: 'user',
+    targetKind: 'base',
+    requestedAt: T0,
+    sourceHead: 'a'.repeat(40),
+    validatedTargetHead: 'b'.repeat(40),
+    targetBranch: 'main',
+    targetDir: 'C:\projeto'
+  })
+  enqueue(store, 'p1', 'm2', T1)
+
+  const resealed = store.reseal('m1', { sourceHead: 'c'.repeat(40) })
+  assert.equal(resealed.id, first.id, 'o re-lacre nunca cria outro ticket')
+  assert.equal(resealed.sequence, first.sequence, 'e nunca fura a FIFO')
+  assert.equal(resealed.position, 1)
+  assert.equal(resealed.sourceHead, 'c'.repeat(40))
+  // O resto da fotografia fica onde estava: re-lacrar é sobre a ENTREGA.
+  assert.equal(resealed.validatedTargetHead, 'b'.repeat(40))
+  assert.equal(resealed.targetBranch, 'main')
+  // e sobrevive ao disco: o lacre novo é o que o próximo boot vai conferir
+  const reopened = new IntegrationQueueStore(file)
+  assert.equal(reopened.getByMission('m1')?.sourceHead, 'c'.repeat(40))
+  assert.equal(reopened.getByMission('m1')?.position, 1)
+  assert.equal(reopened.getByMission('m2')?.position, 2)
+})
+
+test('re-lacre só existe sobre um ticket EM ESPERA — nunca debaixo de um merge', (t) => {
+  const { store } = temporaryStore(t)
+  enqueue(store, 'p1', 'm1', T0)
+  store.beginNext('p1', T1)
+
+  assert.throws(() => store.reseal('m1', { sourceHead: 'd'.repeat(40) }), hasCode('invalid_transition'))
+  assert.throws(() => store.reseal('m-inexistente', { sourceHead: 'd'.repeat(40) }), hasCode('ticket_not_found'))
+  assert.equal(store.getByMission('m1')?.state, 'merging')
+})
+
+test('tentativa falha do agente NÃO congela: volta para a cabeça com o motivo', (t) => {
+  const { store } = temporaryStore(t)
+  enqueue(store, 'p1', 'm1', T0)
+  enqueue(store, 'p1', 'm2', T1)
+  store.beginNext('p1', T2)
+
+  const back = store.noteAttemptFailure('m1', 'conflito em src/main/index.ts')
+  // O ESTADO É O CONTRATO: `blocked` era o card parado esperando a máquina.
+  assert.equal(back.state, 'queued')
+  assert.equal(back.block, undefined, 'nenhum bloqueio de máquina nasce aqui')
+  assert.equal(back.isHead, true, 'quem falhou continua sendo a vez de quem falhou')
+  assert.equal(back.position, 1)
+  assert.equal(back.lastError, 'conflito em src/main/index.ts')
+  assert.equal(back.startedAt, undefined)
+  // a tentativa CONTOU (o attempts do beginMerge não é apagado)
+  assert.equal(back.attempts, 1)
+  // e a fila volta a aceitar a mesma missão, sem passar por ninguém
+  assert.equal(store.beginNext('p1', T3)?.missionId, 'm1')
+})
+
+test('tentativa falha exige motivo e um ticket que esteja de fato tentando', (t) => {
+  const { store } = temporaryStore(t)
+  enqueue(store, 'p1', 'm1', T0)
+  assert.throws(() => store.noteAttemptFailure('m1', '   '), hasCode('invalid_input'))
+  store.beginNext('p1', T1)
+  store.requireTargetRepair('m1', 'o destino precisa de reparo', T2)
+  assert.throws(() => store.noteAttemptFailure('m1', 'tentei de novo'), hasCode('invalid_transition'))
+})
+
+test('o congelado da era da máquina tem saída: o agente reabre na MESMA posição', (t) => {
+  const { store } = temporaryStore(t)
+  const first = enqueue(store, 'p1', 'm1', T0)
+  enqueue(store, 'p1', 'm2', T1)
+  store.beginNext('p1', T2)
+  store.block('m1', {
+    code: 'merge_conflict',
+    owner: 'maestro',
+    detail: 'a estratégia precisava do Maestro',
+    at: T3
+  })
+
+  const reclaimed = store.reclaimForAgent('m1')
+  assert.equal(reclaimed.id, first.id)
+  assert.equal(reclaimed.sequence, first.sequence)
+  assert.equal(reclaimed.state, 'queued')
+  assert.equal(reclaimed.position, 1)
+  assert.equal(reclaimed.block, undefined)
+  assert.equal(reclaimed.resolution, undefined)
+  // o motivo NÃO se apaga: é o que o agente lê para saber o que resolver
+  assert.equal(reclaimed.lastError, 'a estratégia precisava do Maestro')
+
+  // sync_required de estratégia (o card do Maestro) tem a mesma saída
+  const { store: other } = temporaryStore(t)
+  enqueue(other, 'p2', 'mx', T0)
+  other.requireSync('mx', { code: 'sync', owner: 'maestro', detail: 'sincronize com o destino', at: T1 })
+  assert.equal(other.reclaimForAgent('mx').state, 'queued')
+})
+
+test('bloqueio OPERACIONAL continua fora do alcance do agente: o merge já está gravado', (t) => {
+  const { store } = temporaryStore(t)
+  enqueue(store, 'p1', 'm1', T0)
+  store.beginNext('p1', T1)
+  store.requireTargetRepair('m1', 'o destino aguarda reparo seguro', T2)
+
+  assert.throws(() => store.reclaimForAgent('m1'), hasCode('invalid_transition'))
+  assert.equal(store.getByMission('m1')?.state, 'blocked')
+  assert.equal(store.getByMission('m1')?.block?.owner, 'orchestrator')
+  // e um ticket que nem está congelado não tem o que reabrir
+  enqueue(store, 'p2', 'm2', T0)
+  assert.throws(() => store.reclaimForAgent('m2'), hasCode('invalid_transition'))
+})

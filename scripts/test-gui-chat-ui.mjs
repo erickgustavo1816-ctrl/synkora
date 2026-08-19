@@ -3237,3 +3237,65 @@ test('no replay de boot o AJUDANTE vira interrompido; o subagente nativo, cancel
   assert.match(settled[0].result.text, /helper_resume/u, 'o card ensina o verbo da volta')
   assert.equal(settled[1].result.status, 'cancelled', 'o nativo morreu com a sessão, como sempre')
 })
+
+// ————————————————————————————————————————————————————————————————————————
+// RODADA 9 (2026-08-19) — o ⇪ AVISA o agente; o dono assiste, nunca é travado.
+// Ordem do dono, verbatim: "NÃO pode aparecer modal 'essa missão tá sendo
+// integrada': eu preciso VER o que ele tá fazendo no chat."
+// ————————————————————————————————————————————————————————————————————————
+
+test('o ⇪ não levanta janela nenhuma: o véu do "integrando" morreu', () => {
+  const board = readFileSync(
+    new URL('../src/renderer/src/components/Board.tsx', import.meta.url),
+    'utf8'
+  )
+  // Uma proibição se mede no que RENDERIZA: o comentário que registra a morte
+  // do véu não pode reprovar o arquivo que a obedece.
+  const css = readFileSync(
+    new URL('../src/renderer/src/global.css', import.meta.url),
+    'utf8'
+  ).replace(/\/\*[\s\S]*?\*\//gu, '')
+
+  // O véu que cobria o board inteiro enquanto o Git trabalhava saiu do JSX...
+  assert.doesNotMatch(board, /className="integrating-/u, 'o véu do "integrando" voltou ao board')
+  assert.doesNotMatch(board, /className="spinner"/u, 'o anel do véu voltou ao board')
+  // ...e do CSS junto: regra órfã é convite para o modal renascer.
+  assert.doesNotMatch(css, /\.integrating-overlay/u, 'a regra do véu ficou no CSS')
+  assert.doesNotMatch(css, /\.integrating-card/u, 'a regra do cartão ficou no CSS')
+  assert.doesNotMatch(css, /^\.spinner\s*\{/mu, 'a regra órfã do anel ficou no CSS')
+  // Diálogo nativo já é proibido na casa — o ⇪ é onde a tentação mora.
+  assert.doesNotMatch(board, /window\.(confirm|alert)\(/u)
+
+  // A RECUSA continua legível, no padrão NÃO-modal da casa: a faixa que o dono
+  // fecha no × (planejamento, missão arquivada, árvore suja, fila pausada).
+  assert.match(board, /className="mission-msg"/u, 'a faixa de aviso do board sumiu')
+  assert.match(board, /className="mission-msg-close"/u)
+})
+
+test('o eco do ⇪ vira ESTADO — só a RECUSA sobe para a faixa', () => {
+  const board = readFileSync(
+    new URL('../src/renderer/src/components/Board.tsx', import.meta.url),
+    'utf8'
+  )
+
+  const start = board.indexOf('async function onIntegrate')
+  const end = board.indexOf('const isDirect =', start)
+  assert.ok(start > 0 && end > start, 'o gesto do ⇪ mudou de forma')
+  const body = board.slice(start, end)
+
+  // A régua é a FOTOGRAFIA da fila: mudou = o ⇪ atravessou e a tela já conta a
+  // história (posição e estado no trilho e no card da coluna); igual = o motor
+  // devolveu uma RECUSA, e essa o dono precisa ler.
+  assert.match(body, /ticketMark\(/u, 'o clique precisa comparar a fotografia da fila')
+  assert.match(body, /useStore\.getState\(\)\.missions/u, 'a comparação lê a missão FRESCA')
+  assert.match(
+    body,
+    /setMissionMsg\(\s*after && after !== before \? null : msg\s*\)/u,
+    'recusa engolida é bug: só o ticket que ANDOU cala a faixa'
+  )
+
+  // A ordem real da fila desce para o trilho — é ela que substitui o modal.
+  assert.match(board, /queueRows=\{integrationRows\}/u, 'o trilho não recebe a ordem da fila')
+  assert.match(board, /integrationQueueRows\(/u)
+  assert.match(board, /from '\.\.\/integrationQueuePresentation'/u)
+})

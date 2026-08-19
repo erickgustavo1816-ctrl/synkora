@@ -423,10 +423,13 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   // parar/retomar/descartar: a seção media 2448 e o contrato do dev, 3636. E
   // 2500→3000 / 3700→4200 na rodada 7 (validação ao vivo, achado 3: "o arquivo
   // não tem que ficar lá, a não ser que seja uma implementação"), pelas duas
-  // linhas do INSUMO: a seção mede 2922 e o contrato do dev, 4110.
+  // linhas do INSUMO: a seção mede 2922 e o contrato do dev, 4110. Na rodada 9
+  // (2026-08-19) só o teto do CONTRATO subiu, 4200→5600: a ordem permanente
+  // ficou intocada (2922) e quem cresceu foi o DEV, que ganhou a seção do
+  // INTEGRADOR — "quando eu clico em subir, o AGENTE sobe" —, medindo 5462.
   assert.ok(order.length < 3000, `a ordem permanente virou constituição (${order.length})`)
   for (const role of GUI_MISSION_ROLES) {
-    assert.ok(guiMissionSystemPrompt(role).length < 4200, `${role}: contrato virou constituição`)
+    assert.ok(guiMissionSystemPrompt(role).length < 5600, `${role}: contrato virou constituição`)
   }
   // O planejador não delega: ele nunca recebe a seção nem o pino.
   assert.doesNotMatch(guiPlanningSystemPrompt(), /STANDING ORDER FROM THE OWNER/u)

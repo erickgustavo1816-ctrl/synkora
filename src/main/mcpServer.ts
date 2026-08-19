@@ -27,6 +27,9 @@ import {
   GUI_HELPER_WAIT_DEFAULT_SECONDS,
   GUI_HELPER_WAIT_MAX_SECONDS
 } from './guiHelperSessions'
+// A régua do PAPEL do pane (dev × reviewer × ajudante) é a mesma que o spawn
+// usa — a integração é do DEV, e ela sai do endereço, nunca de um palpite.
+import { guiMissionRoleOf } from './guiMissionContracts'
 
 const requireFromMain = createRequire(
   typeof __filename === 'string' ? __filename : join(process.cwd(), 'package.json')
@@ -86,6 +89,15 @@ export interface McpApi {
   helperCancel?: (id: PaneIdentity, helperId: string) => string
   /** RETOMAR (R6.2): o interrompido volta à MESMA conversa, de onde parou. */
   helperResume?: (id: PaneIdentity, helperId: string) => string
+
+  // ——— kit do INTEGRADOR (rodada 9, 2026-08-19 — só o chat DEV da missão) ———
+  // O ⇪ do dono deixou de drenar e passou a ESTIMULAR: a fila virou coordenação
+  // e o executor é o agente. Estes dois métodos são cascas finas sobre o
+  // missionEngine — nenhuma decisão de integração mora aqui.
+  /** Fotografia da fila do PROJETO pelos olhos desta missão + a receita. */
+  integrationStatus?: (id: PaneIdentity) => string
+  /** Executa a integração DESTA missão (só com ticket do dono, só na cabeça). */
+  integrationRun?: (id: PaneIdentity) => Promise<string>
 }
 
 /** Um helper pedido no `delegate` (contrato D2; validação zod no catálogo). */
@@ -114,6 +126,13 @@ const HELPER_SEND_MAX_CHARS = 16 * 1024
  */
 const DELEGATION_ENGINE_OFF =
   'o motor de delegação ainda não está ligado — reinicie o app para reabrir esta conversa com as ferramentas de ajudante. NADA foi aberto: não relate ajudante nenhum ao dono.'
+
+/** O par da recusa acima para o kit do INTEGRADOR (R9). Mesma doutrina: é
+ *  RESULTADO, não erro de protocolo, e diz em letras maiúsculas que nada foi
+ *  mesclado — um agente que racionalizasse "integrei e falhou" contaria ao dono
+ *  uma entrega que não aconteceu. */
+const INTEGRATION_ENGINE_OFF =
+  'o motor de integração ainda não está ligado — reinicie o app para reabrir esta conversa com as ferramentas de integração. NADA foi mesclado e a fila não mudou: não relate integração nenhuma ao dono.'
 
 function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   // SEM cacheHints de tools/list (CHECK 14, 2026-08-07): o hint de cache da
@@ -478,6 +497,44 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       ({ helperId }) =>
         api.helperCancel ? text(api.helperCancel(identity, helperId)) : text(DELEGATION_ENGINE_OFF)
     )
+
+    // ————— O AGENTE É O INTEGRADOR (rodada 9, 2026-08-19 — design I2) —————
+    //
+    // Ordem do dono: "quando eu clico em subir, o certo é avisar o agente e o
+    // AGENTE sobe. Ele vê via MCP se tem alguém na fila na frente dele; se é o
+    // próximo, ELE integra. Qualquer erro, ELE arruma."
+    //
+    // SÓ O CHAT DE DEV. É uma cerca de mesma natureza que as de cima, e o
+    // motivo é concreto: reviewer lê diff e ajudante faz uma fatia — nenhum dos
+    // dois é quem responde ao dono pela entrega, e o merge de uma missão não
+    // pode ter dois donos dentro do mesmo worktree. Um pane sem `missionId`
+    // (endereço órfão de missão apagada) também fica de fora: a integração
+    // precisa de um SUJEITO, e um endereço parecido não é um.
+    if (guiMissionRoleOf(identity.paneId) === 'dev' && identity.missionId) {
+      server.registerTool(
+        'integration_status',
+        {
+          description:
+            'A FOTOGRAFIA da fila de integração deste universo pelos olhos DESTA missão: sua posição, o estado do seu ticket, o lacre da entrega, quem está na sua frente, a branch de destino e a RECEITA do próximo passo. Barata de chamar — use sempre que não tiver certeza do que fazer. Quem cria o ticket é o ⇪ do DONO, nunca você: sem ticket, esta ferramenta diz exatamente isso.'
+        },
+        () =>
+          api.integrationStatus
+            ? text(api.integrationStatus(identity))
+            : text(INTEGRATION_ENGINE_OFF)
+      )
+
+      server.registerTool(
+        'integration_run',
+        {
+          description:
+            'INTEGRA esta missão no destino dela — o merge inteiro numa chamada (confere a fotografia aprovada e a árvore limpa, valida a identidade do destino, faz o precheck de conflito, mescla, conclui a missão e faz a fila andar). Só roda quando o ⇪ do dono já criou o ticket E esta missão é a CABEÇA da fila; fora disso a recusa te diz a posição, quem está na frente e o que falta. O desfecho SEMPRE volta para você: integrada (com os shas), conflito (com os arquivos e o movimento de resolução no SEU worktree) ou o erro honesto. Conflito não congela nada: o ticket continua na cabeça da fila, você resolve aqui, commita e chama de novo — o re-lacre da fotografia é automático e auditado. Depois, conte o desfecho ao dono no chat.'
+        },
+        async () =>
+          api.integrationRun
+            ? text(await api.integrationRun(identity))
+            : text(INTEGRATION_ENGINE_OFF)
+      )
+    }
 
     return finishCatalog()
   }

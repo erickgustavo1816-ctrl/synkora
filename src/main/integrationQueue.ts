@@ -542,6 +542,106 @@ export class IntegrationQueueStore {
     return this.view(ticket)
   }
 
+  /**
+   * RE-LACRE (R9, 2026-08-19) — o AGENTE é o integrador.
+   *
+   * Resolver um conflito acontece DENTRO do worktree da missão, e isso muda o
+   * commit da entrega. O ⇪ do dono autorizou a INTENÇÃO de subir aquela missão,
+   * não um sha específico (palavras dele: "qualquer erro que der, ele que
+   * arruma"), então o lacre acompanha a mão do agente e a TRANSPARÊNCIA ocupa o
+   * lugar de uma segunda porteira: quem chama audita o par velho→novo
+   * (`mission-integration-resealed`) e escreve a nota no fio que o dono lê.
+   *
+   * Só sobre um ticket EM ESPERA: um merge em andamento jamais troca a
+   * fotografia debaixo de si mesmo.
+   */
+  reseal(
+    missionId: string,
+    snapshot: {
+      sourceHead?: string
+      validatedTargetHead?: string
+      targetBranch?: string
+      targetDir?: string
+    }
+  ): IntegrationQueueTicketView {
+    const ticket = this.requireTicket(missionId)
+    if (ticket.state !== 'queued')
+      throw new IntegrationQueueError(
+        'invalid_transition',
+        `A missão ${missionId} está em ${ticket.state} e não pode ser relacrada.`
+      )
+    if (
+      !optionalString(snapshot.sourceHead) ||
+      !optionalString(snapshot.validatedTargetHead) ||
+      !optionalString(snapshot.targetBranch) ||
+      !optionalString(snapshot.targetDir)
+    )
+      throw new IntegrationQueueError('invalid_input', 'Fotografia inválida para o re-lacre.')
+    if (snapshot.sourceHead !== undefined) ticket.sourceHead = snapshot.sourceHead
+    if (snapshot.validatedTargetHead !== undefined)
+      ticket.validatedTargetHead = snapshot.validatedTargetHead
+    if (snapshot.targetBranch !== undefined) ticket.targetBranch = snapshot.targetBranch
+    if (snapshot.targetDir !== undefined) ticket.targetDir = snapshot.targetDir
+    this.persist()
+    return this.view(ticket)
+  }
+
+  /**
+   * A TENTATIVA DO AGENTE FALHOU (R9). O ticket NÃO congela em `blocked`
+   * esperando uma decisão de máquina: ele volta para a espera, na MESMA
+   * posição e na cabeça, carregando o motivo. Quem resolve é o agente — ele
+   * está com a conversa do dono aberta —, e o dono vê o trabalho acontecendo no
+   * fio em vez de um card parado.
+   */
+  noteAttemptFailure(missionId: string, detail: string): IntegrationQueueTicketView {
+    const ticket = this.requireTicket(missionId)
+    if (!nonEmptyString(detail))
+      throw new IntegrationQueueError('invalid_input', 'O motivo da falha está vazio.')
+    if (ticket.state !== 'queued' && ticket.state !== 'merging')
+      throw new IntegrationQueueError(
+        'invalid_transition',
+        `A missão ${missionId} está em ${ticket.state}, não numa tentativa de integração.`
+      )
+    ticket.state = 'queued'
+    ticket.startedAt = undefined
+    ticket.lastError = detail.trim()
+    this.persist()
+    return this.view(ticket)
+  }
+
+  /**
+   * A ERA DO AGENTE REABRE O QUE A ERA DA MÁQUINA CONGELOU (R9).
+   *
+   * `blocked`/`sync_required` de dono `maestro` eram esperas por uma decisão de
+   * estratégia que HOJE é do agente da missão. Deixá-los parados seria um beco
+   * sem saída — um ticket que nenhuma ferramenta viva consegue destravar. O
+   * motivo fica preservado em `lastError`, e o ticket não fura fila nenhuma:
+   * volta para a MESMA sequência.
+   *
+   * Bloqueio OPERACIONAL (`orchestrator`, reparo de destino) continua fora do
+   * alcance dele de propósito: ali o merge JÁ está gravado no Git e uma segunda
+   * tentativa seria perigosa — aquele estado espera reparo, não decisão.
+   */
+  reclaimForAgent(missionId: string): IntegrationQueueTicketView {
+    const ticket = this.requireTicket(missionId)
+    if (ticket.state !== 'blocked' && ticket.state !== 'sync_required')
+      throw new IntegrationQueueError(
+        'invalid_transition',
+        `A missão ${missionId} está em ${ticket.state} — não há congelamento a reabrir.`
+      )
+    if (ticket.block?.owner !== 'maestro')
+      throw new IntegrationQueueError(
+        'invalid_transition',
+        'Este bloqueio é operacional: o merge já está gravado e só o reparo do destino o resolve.'
+      )
+    ticket.state = 'queued'
+    ticket.startedAt = undefined
+    ticket.block = undefined
+    ticket.resolution = undefined
+    this.persist()
+    return this.view(ticket)
+  }
+
   /** Merge confirmado: remove a cabeça e faz as posições seguintes avançarem. */
   complete(missionId: string): boolean {
     const ticket = this.ticketByMission(missionId)

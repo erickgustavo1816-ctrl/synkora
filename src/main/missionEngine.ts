@@ -45,7 +45,10 @@ import {
 import { type Mission, type NewMission } from './missions'
 import {
   guiMissionPaneId,
+  guiMissionRoleOf,
   missionConflictRecipe,
+  missionIntegrationNote,
+  missionIntegrationStimulus,
   missionTypeOf,
   MISSION_PLANNING_NOT_QUEUEABLE
 } from './guiMissionContracts'
@@ -86,6 +89,12 @@ export interface MissionEngineExtras {
   /** 2.0: entrega texto na CONVERSA do pane GUI (false = sem sessão viva).
    *  Late-bound no index — o registro do gui nasce depois deste engine. */
   deliverToGuiPane(paneId: string, text: string): boolean
+  /** R9: NOTA visível no fio do pane — o que o DONO lê de relance. Nunca vira
+   *  bolha de "VOCÊ": é o app anotando o gesto, não o dono falando. */
+  noteInGuiPane(paneId: string, text: string): boolean
+  /** R9: estímulo pelos BASTIDORES ao modelo do pane (o caminho do `announce`).
+   *  false = sem sessão viva; a reabertura do chat re-deriva do ticket. */
+  announceToGuiPane(paneId: string, text: string): boolean
   /** 2.0: encerra dev/reviewer/ajudantes GUI da missão (o worktree some). */
   killMissionGuiPanes(missionId: string): void
 }
@@ -116,6 +125,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     sweepProjectFiles,
     closeTestServersUnder,
     deliverToGuiPane,
+    noteInGuiPane,
+    announceToGuiPane,
     killMissionGuiPanes
   } = extras
 
@@ -700,13 +711,169 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     }
   }
 
+  // ————— RODADA 9 (2026-08-19): A FILA É COORDENAÇÃO, O AGENTE É O EXECUTOR —————
+  //
+  // Ordem do dono, verbatim: "quando eu clico em subir, o certo é avisar o
+  // agente — 'tá pronto pra subir' — e o AGENTE sobe. Ele vê via MCP se tem
+  // alguém na fila na frente dele; se é o próximo, ELE integra. Qualquer erro,
+  // ELE arruma. NÃO pode aparecer modal 'essa missão tá sendo integrada': eu
+  // preciso VER o que ele tá fazendo no chat."
+  //
+  // O que NÃO mudou (as cercas de autoridade/verificabilidade continuam duras):
+  // só o ⇪ do dono cria ticket, a FIFO por projeto continua sendo a ordem, o
+  // merge é a MESMA mecânica provada (precheck + completeMissionMerge via
+  // gitWorker) e a árvore limpa/identidade do destino seguem conferidas.
+  // O que mudou é QUEM aperta o gatilho: `integration_run`, chamado pelo agente.
+
+  /** O chat de DEV da missão — o único endereço que recebe o ⇪ (o reviewer e os
+   *  ajudantes nem enxergam as ferramentas de integração no catálogo). */
+  function missionDevPaneId(missionId: string): string {
+    return guiMissionPaneId('dev', missionId)
+  }
+
+  /** Quem está na FRENTE deste ticket, em texto que o agente lê sem decifrar. */
+  function missionsAheadOf(ticket: IntegrationQueueTicketView): string[] {
+    return integrationQueue
+      .listPending(ticket.projectId)
+      .filter((candidate) => candidate.sequence < ticket.sequence)
+      .map(
+        (candidate) =>
+          `"${missions.get(candidate.missionId)?.title ?? candidate.missionId}" (${candidate.state})`
+      )
+  }
+
+  /**
+   * O ESTÍMULO DO ⇪ (I1): nota VISÍVEL no fio + texto ao MODELO pelos
+   * bastidores. Nada aqui depende de entrega única — o TICKET é o registro
+   * durável, e `restimulateIntegrationOnOpen` re-deriva o estímulo quando a
+   * conversa abrir. Pane fechado no clique não perde o gesto: ele o recebe ao
+   * reabrir.
+   */
+  function stimulateMissionIntegrator(
+    mission: Mission,
+    origin: 'user-gesture' | 'queue-advance' | 'pane-open'
+  ): void {
+    const ticket = integrationQueue.getByMission(mission.id)
+    if (!ticket || ticket.state !== 'queued') return
+    const paneId = missionDevPaneId(mission.id)
+    const targetLabel = ticket.targetBranch ?? 'o destino da missão'
+    const reopened = origin === 'pane-open'
+    const noted = noteInGuiPane(
+      paneId,
+      missionIntegrationNote({
+        targetLabel,
+        position: ticket.position,
+        total: ticket.total,
+        reopened
+      })
+    )
+    const delivered = announceToGuiPane(
+      paneId,
+      missionIntegrationStimulus({
+        missionTitle: mission.title,
+        targetLabel,
+        position: ticket.position,
+        total: ticket.total,
+        isHead: ticket.isHead,
+        ahead: missionsAheadOf(ticket),
+        reopened
+      })
+    )
+    blackbox.record({
+      cat: 'queue',
+      event: 'mission-integration-stimulus',
+      actor: 'harness',
+      ids: { projectId: mission.projectId, missionId: mission.id, paneId },
+      detail: {
+        origin,
+        position: ticket.position,
+        total: ticket.total,
+        head: ticket.isHead,
+        noted,
+        delivered
+      },
+      reason: delivered
+        ? 'o agente da missão recebeu o ⇪ e é o integrador'
+        : 'conversa do dev fechada — o ticket segue na fila e a reabertura re-estimula'
+    })
+  }
+
+  /**
+   * A CONVERSA DO DEV ABRIU (I1, cauda): se existe ⇪ pendente para esta missão,
+   * o estímulo é re-derivado do ticket. É a metade "re-derivável" da regra da
+   * casa — nenhum passo depende de uma entrega única, e aqui não há nada a
+   * persistir porque o ticket JÁ é o registro durável.
+   *
+   * A entrega sai NA HORA, e é seguro: o `announce` do codex AGUARDA a thread
+   * nascer (`ensureThread`) e o do claude escreve numa stdin que o CLI só drena
+   * depois do próprio init — diferente do prompt em ARGV, que é o caso conhecido
+   * de sair antes do handshake MCP. E, mesmo que uma entrega se perca, nada
+   * quebra: a nota fica no fio para o dono e o ticket continua na fila para o
+   * agente reencontrar com integration_status.
+   */
+  function restimulateIntegrationOnOpen(paneId: string, projectId: string): void {
+    if (guiMissionRoleOf(paneId) !== 'dev') return
+    const ticket = integrationQueue
+      .listPending(projectId)
+      .find((candidate) => missionDevPaneId(candidate.missionId) === paneId)
+    if (!ticket || ticket.state !== 'queued') return
+    const mission = missions.get(ticket.missionId)
+    if (!mission || mission.projectId !== projectId) return
+    stimulateMissionIntegrator(mission, 'pane-open')
+  }
+
+  /**
+   * A FILA ANDOU: retira da cabeça o que não pode mais integrar (missão
+   * apagada, já concluída, arquivada) e ESTIMULA o agente da nova cabeça.
+   * NUNCA mescla — desde a rodada 9 o único caminho do merge é o
+   * `integration_run` chamado pelo agente.
+   */
+  function advanceIntegrationQueue(projectId: string): void {
+    // Uma execução em voo já cuida do próprio avanço no fim (ver runMission-
+    // Integration): entrar aqui no meio dela estimularia a cabeça que está
+    // exatamente sendo mesclada.
+    if (integrationDraining.has(projectId)) return
+    let changed = false
+    while (true) {
+      const ticket = integrationQueue.head(projectId)
+      if (!ticket) break
+      const mission = missions.get(ticket.missionId)
+      if (!mission || mission.projectId !== projectId || mission.status === 'concluida') {
+        integrationQueue.cancel(ticket.missionId)
+        changed = true
+        continue
+      }
+      if (mission.status === 'arquivada') {
+        integrationQueue.cancel(mission.id)
+        changed = true
+        hub.publish({
+          projectId,
+          kind: 'info',
+          text: `retirei "${mission.title}" da fila porque a missão foi arquivada; nenhuma outra missão foi alterada`,
+          actor: 'harness'
+        })
+        continue
+      }
+      stimulateMissionIntegrator(mission, 'queue-advance')
+      break
+    }
+    if (changed) {
+      emitMissionsChanged(projectId)
+      syncBoard(projectId)
+    }
+  }
+
+  /**
+   * A fila mudou de forma (ticket novo, cancelamento, merge concluído). O nome
+   * é o de sempre porque os call sites são os de sempre; o CORPO é que deixou
+   * de drenar. A janela de 150ms continua agrupando: quando vários gestos caem
+   * juntos, todos ganham posição antes de qualquer estímulo sair.
+   */
   function scheduleIntegrationDrain(projectId: string): void {
     if (integrationDrainTimers.has(projectId) || integrationDraining.has(projectId)) return
-    // Pequena janela de agrupamento: quando o Maestro autoriza várias missões,
-    // todas recebem uma posição antes de a primeira operação Git começar.
     const timer = setTimeout(() => {
       integrationDrainTimers.delete(projectId)
-      void drainIntegrationQueue(projectId)
+      advanceIntegrationQueue(projectId)
     }, 150)
     integrationDrainTimers.set(projectId, timer)
   }
@@ -913,12 +1080,387 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     const queued = integrationQueue.getByMission(missionId)
     emitMissionsChanged(mission.projectId)
     syncBoard(mission.projectId)
-    scheduleIntegrationDrain(mission.projectId)
+    // RODADA 9: aqui morava o `scheduleIntegrationDrain` — o clique enfileirava
+    // e a MÁQUINA mesclava sozinha. Agora o gesto ESTIMULA o agente da missão,
+    // que enxerga a fila pelo MCP e integra quando for a cabeça. Todas as
+    // porteiras acima (tipo, status, worktree, árvore limpa, heads, lacre,
+    // destino) continuam exatamente onde estavam: o que mudou é só quem aperta
+    // o gatilho depois delas.
+    if (queued) stimulateMissionIntegrator(mission, 'user-gesture')
     return queued
-      ? `missão "${mission.title}" na fila de integração: posição #${queued.position} de ${queued.total}. O desenvolvimento das outras missões continua em paralelo; os merges acontecem um por vez.`
+      ? `missão "${mission.title}" na fila de integração: posição #${queued.position} de ${queued.total}. O ⇪ foi ENTREGUE ao agente desta missão, que integra quando chegar a vez dela — acompanhe no chat. O desenvolvimento das outras missões continua em paralelo; os merges acontecem um por vez.`
       : 'missão colocada na fila de integração'
   }
 
+  // ————— AS DUAS FERRAMENTAS DO AGENTE INTEGRADOR (I2) —————
+  //
+  // Elas moram no motor, e não no `mcpApi`, porque são a MESMA mecânica que a
+  // fila sempre teve — só que embrulhada num verbo que o agente pode chamar. O
+  // catálogo (`mcpServer`) é uma casca fina: nenhuma decisão de integração pode
+  // existir em dois lugares.
+
+  /** Um `<sha>` legível, ou o buraco nomeado. */
+  function shortSha(sha: string | undefined): string {
+    return sha ? sha.slice(0, 12) : '(desconhecido)'
+  }
+
+  /**
+   * `integration_status` — a FOTOGRAFIA da fila do projeto pelos olhos desta
+   * missão: posição, estado, lacre, quem está na frente, o destino e a RECEITA
+   * do próximo passo. Sem ticket, ela diz a verdade que protege a porteira: só
+   * o ⇪ do dono cria um.
+   */
+  function missionIntegrationStatus(projectId: string, missionId: string): string {
+    const mission = missions.get(missionId)
+    const project = projects.get(projectId)
+    if (!mission || !project || mission.projectId !== projectId)
+      return 'não encontrei esta missão neste universo — nada a informar sobre a fila.'
+    const lane = integrationQueue.listPending(projectId)
+    const header =
+      lane.length === 0
+        ? 'FILA DE INTEGRAÇÃO deste universo: vazia.'
+        : `FILA DE INTEGRAÇÃO deste universo: ${lane.length} missão(ões) esperando, uma por vez.`
+    const ticket = lane.find((candidate) => candidate.missionId === missionId)
+    if (!ticket) {
+      return [
+        header,
+        `A missão "${mission.title}" NÃO tem ticket na fila.`,
+        'Só o ⇪ do DONO (o botão de subir da missão, no quadro dele) cria um — você nunca se enfileira sozinho e não existe ferramenta que peça o clique por você.',
+        'Se a entrega está pronta, DIGA isso a ele aqui no chat e espere: ausência de resposta nunca é consentimento.'
+      ].join('\n')
+    }
+    const missionSource = missionWorkspacePath(project.path, mission)
+    const sourceHead = missionSource ? gitHead(missionSource) : undefined
+    const clean = missionSource ? isWorktreeClean(missionSource) : undefined
+    const sealMoved = Boolean(ticket.sourceHead && sourceHead && sourceHead !== ticket.sourceHead)
+    const targetHead = ticket.targetDir ? gitHead(ticket.targetDir) : undefined
+    const ahead = missionsAheadOf(ticket)
+    const lines = [
+      header,
+      `SEU TICKET: posição #${ticket.position} de ${ticket.total} · estado ${ticket.state}${ticket.isHead ? ' · você é a CABEÇA' : ''}`,
+      `DESTINO: ${ticket.targetBranch ?? '(não registrado)'} · head atual ${shortSha(targetHead)} · head lacrado no ⇪ ${shortSha(ticket.validatedTargetHead)}`,
+      `LACRE DA ENTREGA: ${shortSha(ticket.sourceHead)} · a branch da missão está em ${shortSha(sourceHead)}${sealMoved ? ' — MUDOU depois do ⇪ (o integration_run re-lacra e audita o par)' : ''}`,
+      `ÁRVORE DA MISSÃO: ${clean === true ? 'limpa' : clean === false ? 'SUJA (há alterações não commitadas)' : 'não foi possível conferir'}`
+    ]
+    if (ticket.lastError) lines.push(`ÚLTIMA TENTATIVA: ${ticket.lastError}`)
+    lines.push(
+      ahead.length > 0 ? `NA SUA FRENTE: ${ahead.join(' · ')}` : 'NA SUA FRENTE: ninguém.'
+    )
+    lines.push(`PRÓXIMO PASSO: ${missionIntegrationNextStep(ticket, clean)}`)
+    return lines.join('\n')
+  }
+
+  /** A RECEITA — uma frase, sempre acionável. Recusa sem receita é beco. */
+  function missionIntegrationNextStep(
+    ticket: IntegrationQueueTicketView,
+    clean: boolean | undefined
+  ): string {
+    if (ticket.state === 'merging')
+      return 'uma integração desta missão está acontecendo AGORA. Espere o desfecho — ele volta para você.'
+    if (ticket.state === 'blocked' && ticket.block?.owner === 'orchestrator')
+      return `o merge já está gravado no Git e o destino aguarda REPARO da máquina (${ticket.block.detail}). Não repita a integração: avise o dono para fechar o processo que segura os arquivos e reiniciar o Synkora.`
+    if (ticket.state === 'blocked' || ticket.state === 'sync_required')
+      return 'este ticket ficou congelado por uma era anterior do app, em que a máquina decidia. Chame integration_run: ele reabre o ticket na MESMA posição e segue com a integração.'
+    if (!ticket.isHead)
+      return 'ainda NÃO é a sua vez. Não chame integration_run; volte ao trabalho — o app te avisa neste chat quando a vez chegar.'
+    if (clean === false)
+      return 'a árvore da missão está suja: commite (ou limpe) o que sobrou no worktree e então chame integration_run.'
+    return 'é a SUA VEZ: chame integration_run.'
+  }
+
+  /**
+   * `integration_run` — a MECÂNICA DO DRENO para o ticket DESTA missão, e nada
+   * além dele. Todas as recusas nomeiam a receita; o desfecho SEMPRE volta ao
+   * agente (sucesso com shas, conflito com arquivos + movimento, ou erro
+   * honesto). O ticket nunca congela num `blocked` de máquina esperando alguém:
+   * ele volta para a cabeça da fila com o motivo, e quem resolve é o agente.
+   */
+  async function runMissionIntegration(projectId: string, missionId: string): Promise<string> {
+    const project = projects.get(projectId)
+    const found = missions.get(missionId)
+    if (!found || !project || found.projectId !== projectId)
+      return 'não encontrei esta missão neste universo — nada foi integrado.'
+    if (integrationDraining.has(projectId))
+      return 'já existe uma integração em andamento neste universo agora. Espere o desfecho e chame integration_status; a fila é serial de propósito.'
+    const opening = integrationQueue.getByMission(missionId)
+    if (!opening)
+      return [
+        `a missão "${found.title}" NÃO está na fila: não há integração a rodar.`,
+        'Só o ⇪ do DONO cria o ticket — você nunca se enfileira sozinho. Se a entrega está pronta, diga a ele aqui no chat e espere o clique dele.'
+      ].join(' ')
+    if (opening.state === 'blocked' && opening.block?.owner === 'orchestrator')
+      return `o merge desta missão JÁ está gravado no Git e o destino aguarda reparo (${opening.block.detail}). Repetir a integração aqui seria perigoso: avise o dono para fechar o processo que segura os arquivos e reiniciar o Synkora.`
+    if (opening.state === 'blocked' || opening.state === 'sync_required') {
+      // Ticket congelado pela era em que a MÁQUINA decidia a estratégia. A
+      // decisão passou a ser do agente; deixá-lo parado seria um beco sem saída.
+      try {
+        integrationQueue.reclaimForAgent(missionId)
+      } catch (error) {
+        return `este ticket está num estado que a integração pelo agente não reabre (${opening.state}): ${error instanceof Error ? error.message : String(error)}. Conte ao dono o que você leu aqui em vez de tentar de novo.`
+      }
+      blackbox.record({
+        cat: 'queue',
+        event: 'mission-integration-reclaimed',
+        actor: 'harness',
+        ids: { projectId, missionId },
+        prev: opening.state,
+        next: 'queued',
+        reason: `o agente reabriu um ticket congelado: ${(opening.block?.detail ?? '').slice(0, 200)}`
+      })
+    }
+    const ticket = integrationQueue.getByMission(missionId)
+    if (!ticket) return 'o ticket desta missão saiu da fila enquanto eu o lia — chame integration_status.'
+    if (!ticket.isHead) {
+      const ahead = missionsAheadOf(ticket)
+      return [
+        `ainda NÃO é a vez desta missão: você está em #${ticket.position} de ${ticket.total} na fila do universo.`,
+        ahead.length > 0 ? `Na sua frente: ${ahead.join(' · ')}.` : '',
+        'A fila é FIFO e serial. Não insista aqui: volte ao trabalho — o app te avisa neste chat quando a vez chegar.'
+      ]
+        .filter(Boolean)
+        .join(' ')
+    }
+
+    integrationDraining.add(projectId)
+    try {
+      return await runHeadIntegration(project, missionId, ticket)
+    } catch (error) {
+      // Uma exceção NÃO pode virar erro de protocolo na tool: o agente
+      // racionalizaria "integrei e explodiu" e contaria ao dono uma entrega que
+      // talvez não tenha acontecido. Aqui ela vira desfecho legível, e o ticket
+      // sai do 'merging' para a espera — senão só um reinício o destravaria.
+      const detail = error instanceof Error ? error.message : String(error)
+      blackbox.record({
+        cat: 'queue',
+        event: 'mission-integration-run-threw',
+        actor: 'harness',
+        ids: { projectId, missionId },
+        err: detail.slice(0, 400)
+      })
+      try {
+        integrationQueue.noteAttemptFailure(missionId, detail)
+      } catch {
+        // Ticket já saiu da fila (o merge pode ter fechado antes do erro).
+      }
+      if (missions.get(missionId)?.status === 'integrando')
+        missions.update(missionId, { status: 'ativa' })
+      emitMissionsChanged(projectId)
+      syncBoard(projectId)
+      return [
+        `a integração parou com um ERRO inesperado: ${detail}`,
+        'Confira o estado com integration_status antes de tentar de novo — e, se o Git já registrou algo, conte ao dono o que você viu em vez de repetir o merge às cegas.'
+      ].join('\n')
+    } finally {
+      // Ticket que SAIU da fila (integrado, cancelado) = a fila andou. O
+      // PRÓXIMO agente é estimulado pelo MESMO canal do ⇪ (I2). Sem próximo,
+      // silêncio. A leitura vem antes do `delete` porque `advanceIntegration-
+      // Queue` recusa entrar enquanto a trava estiver de pé.
+      const moved = integrationQueue.getByMission(missionId) === undefined
+      integrationDraining.delete(projectId)
+      if (moved) advanceIntegrationQueue(projectId)
+    }
+  }
+
+  async function runHeadIntegration(
+    project: { id: string; path: string },
+    missionId: string,
+    ticket: IntegrationQueueTicketView
+  ): Promise<string> {
+    const projectId = project.id
+    const paneId = missionDevPaneId(missionId)
+    const stopped = (detail: string, recipe?: string): string => {
+      integrationQueue.noteAttemptFailure(missionId, detail)
+      if (missions.get(missionId)?.status === 'integrando')
+        missions.update(missionId, { status: 'ativa' })
+      emitMissionsChanged(projectId)
+      syncBoard(projectId)
+      blackbox.record({
+        cat: 'queue',
+        event: 'mission-integration-run-stopped',
+        actor: 'harness',
+        ids: { projectId, missionId, paneId },
+        reason: detail.slice(0, 400)
+      })
+      return [
+        `a integração NÃO rodou: ${detail}`,
+        'Seu ticket continua na CABEÇA da fila (nada foi mesclado).',
+        recipe ?? 'Resolva no worktree desta missão e chame integration_run de novo.'
+      ].join('\n')
+    }
+
+    let mission = missions.get(missionId)
+    if (!mission) return 'a missão sumiu do registro no meio da integração — nada foi mesclado.'
+    if (mission.status === 'concluida') {
+      integrationQueue.cancel(missionId)
+      reconcileConcludedMission(projectId, missionId, `Missão integrada: ${mission.title}.`)
+      emitMissionsChanged(projectId)
+      return 'esta missão JÁ está integrada: retirei o ticket da fila e reconciliei os registros. Conte ao dono que não havia nada pendente.'
+    }
+    if (mission.status === 'arquivada') {
+      integrationQueue.cancel(missionId)
+      emitMissionsChanged(projectId)
+      return 'esta missão está ARQUIVADA: retirei o ticket da fila e nada foi mesclado. Só o dono reativa a missão.'
+    }
+    mission = ensureMissionWorktree(missionId) ?? mission
+    const missionSource = missionWorkspacePath(project.path, mission)
+    if (!hasGitCommit(project.path) || !mission.branch || !mission.worktree || !missionSource)
+      return stopped(
+        'não consegui provar nem reanexar a branch/worktree isolada desta missão',
+        'Confira que o worktree desta missão existe e está no lugar; se ele sumiu, avise o dono — reconstruir isolamento não é decisão sua.'
+      )
+    if (isWorktreeClean(missionSource) !== true)
+      return stopped(
+        'a branch da missão tem alterações não commitadas',
+        'RECEITA: commite (ou limpe) o que está solto neste worktree e chame integration_run de novo.'
+      )
+    const sourceHead = gitHead(missionSource)
+    if (!sourceHead)
+      return stopped('não consegui identificar o commit atual da branch desta missão')
+
+    // RE-LACRE AUDITADO (I2): resolver conflito muda o head da missão, e o ⇪ do
+    // dono autorizou a INTENÇÃO de subir, não um sha. Em vez de uma segunda
+    // porteira (que exigiria um clique novo a cada rodada de conflito), o lacre
+    // acompanha e o par velho→novo vira evento + nota no fio que ele lê.
+    if (ticket.sourceHead !== sourceHead) {
+      integrationQueue.reseal(missionId, { sourceHead })
+      blackbox.record({
+        cat: 'queue',
+        event: 'mission-integration-resealed',
+        actor: 'harness',
+        ids: { projectId, missionId, paneId },
+        prev: shortSha(ticket.sourceHead),
+        next: shortSha(sourceHead),
+        reason: ticket.lastError
+          ? `a entrega avançou depois de uma tentativa: ${ticket.lastError.slice(0, 200)}`
+          : 'a entrega avançou depois do ⇪ do dono'
+      })
+      noteInGuiPane(
+        paneId,
+        `⇪ re-lacrado: a entrega avançou ${shortSha(ticket.sourceHead)} → ${shortSha(sourceHead)} depois do aval do dono`
+      )
+    }
+
+    const target = resolveMissionIntegrationTarget(project, mission)
+    const targetHead = target ? gitHead(target.dir) : undefined
+    if (!target || !targetHead)
+      return stopped(
+        'não consegui identificar ou preparar a branch de destino',
+        'Isto é estado do universo, não do seu código: conte ao dono o que apareceu aqui.'
+      )
+    const sameTargetDir =
+      !ticket.targetDir ||
+      resolve(ticket.targetDir).toLocaleLowerCase('en-US') ===
+        resolve(target.dir).toLocaleLowerCase('en-US')
+    if (
+      ticket.targetKind !== target.kind ||
+      (ticket.versionId ?? undefined) !== (target.versionId ?? undefined) ||
+      (ticket.targetBranch !== undefined && ticket.targetBranch !== target.branch) ||
+      !sameTargetDir
+    )
+      return stopped(
+        `o destino mudou desde o ⇪: esperado ${ticket.targetBranch ?? ticket.targetKind} em ${ticket.targetDir ?? '(caminho legado)'}, encontrado ${target.branch} em ${target.dir}`,
+        'O destino é decisão do dono (versão/base da missão): conte a ele o que mudou e espere. Não escolha outro destino sozinho.'
+      )
+
+    const targetMoved = ticket.validatedTargetHead !== targetHead
+    const targetIncluded = gitCommitReached(missionSource, targetHead) === true
+    if (targetMoved || !targetIncluded) {
+      const pre = await gitOff(
+        'missionMergePrecheck',
+        project.path,
+        { dir: missionSource, branch: mission.branch },
+        `mission: ${mission.title}`,
+        target.dir,
+        sourceHead
+      )
+      if (!pre.ok) {
+        integrationQueue.noteAttemptFailure(missionId, pre.detail)
+        if (missions.get(missionId)?.status === 'integrando')
+          missions.update(missionId, { status: 'ativa' })
+        emitMissionsChanged(projectId)
+        syncBoard(projectId)
+        blackbox.record({
+          cat: 'queue',
+          event: 'mission-integration-conflict',
+          actor: 'harness',
+          ids: { projectId, missionId, paneId },
+          reason: pre.detail.slice(0, 400),
+          detail: { files: pre.conflictFiles?.length ?? 0 }
+        })
+        // O ticket fica na CABEÇA, com o motivo. Nada de `blocked`: o dono quer
+        // ver o agente trabalhando, não um card esperando decisão de máquina.
+        return missionConflictRecipe({
+          missionTitle: mission.title,
+          detail: pre.detail,
+          targetBranch: target.branch,
+          sourceBranch: mission.branch,
+          files: pre.conflictFiles
+        })
+      }
+      // Destino que ANDOU não vira card de sincronização: o precheck acima
+      // acabou de provar que a mescla é limpa contra o destino ATUAL.
+    }
+
+    integrationQueue.beginMerge(missionId)
+    missions.update(missionId, { status: 'integrando' })
+    emitMissionsChanged(projectId)
+    syncBoard(projectId)
+    const result = await completeMissionMerge(
+      projectId,
+      missionId,
+      target,
+      targetHead,
+      sourceHead
+    )
+    const after = missions.get(missionId)
+    if (after?.status === 'concluida') {
+      integrationQueue.complete(missionId)
+      emitMissionsChanged(projectId)
+      syncBoard(projectId)
+      blackbox.record({
+        cat: 'merge',
+        event: 'mission-integration-run-completed',
+        actor: 'harness',
+        ids: { projectId, missionId, paneId },
+        prev: shortSha(targetHead),
+        evidence: `origem ${shortSha(sourceHead)} → ${target.branch}`
+      })
+      return [
+        `INTEGRADA: "${mission.title}" entrou em ${target.branch}.`,
+        `Origem ${shortSha(sourceHead)} sobre o destino ${shortSha(targetHead)} · ${result.detail}`,
+        'O worktree e a branch desta missão foram removidos pela finalização — não tente commitar mais nada aqui.',
+        'CONTE AO DONO o desfecho, em uma ou duas linhas.'
+      ].join('\n')
+    }
+    missions.update(missionId, { status: 'ativa' })
+    if (result.state === 'repair_pending') {
+      // Merge JÁ gravado no Git: repetir é perigoso, e isto não é decisão de
+      // estratégia — é reparo de arquivos travados no destino. É o único estado
+      // que continua sendo da máquina.
+      integrationQueue.requireTargetRepair(missionId, result.detail)
+      emitMissionsChanged(projectId)
+      syncBoard(projectId)
+      return [
+        `o merge de "${mission.title}" JÁ FOI GRAVADO no Git, mas os arquivos do destino aguardam reparo seguro: ${result.detail}`,
+        'NÃO repita a integração. Conte ao dono: ele precisa fechar o processo que está segurando os arquivos do destino e reiniciar o Synkora, que reconcilia sozinho no boot.'
+      ].join('\n')
+    }
+    return stopped(
+      result.detail,
+      `RECEITA: traga ${target.branch} para dentro de ${mission.branch} no seu worktree, resolva o que aparecer, rode os testes que cobrem o que mudou, commite e chame integration_run de novo.`
+    )
+  }
+
+  /**
+   * O DRENO DA ERA DA MÁQUINA — MORTO-CERCADO na rodada 9 (2026-08-19).
+   *
+   * Nada mais o chama: o ⇪ estimula o agente e `runMissionIntegration` é o
+   * único caminho do merge. Ele fica INTACTO nesta rodada de propósito — é a
+   * referência viva da mecânica que o `integration_run` embrulha (mesmas
+   * checagens de fotografia, mesma identidade de destino, mesmo precheck) e a
+   * rede de segurança de leitura para um estado `merging` legado que chegue de
+   * um app anterior. A remoção total é rodada de higiene, não desta.
+   */
   async function drainIntegrationQueue(projectId: string): Promise<void> {
     if (integrationDraining.has(projectId)) return
     integrationDraining.add(projectId)
@@ -1768,6 +2310,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     resolveMissionIntegrationTarget,
     scheduleIntegrationDrain,
     startMissionIntegration,
+    // ——— rodada 9: o AGENTE é o integrador (as duas tools + o re-estímulo) ———
+    missionIntegrationStatus,
+    runMissionIntegration,
+    restimulateIntegrationOnOpen,
     // ——— recuperação (chamada pelo boot) ———
     recoverMissionIntegrationIntents,
     // ——— tick do poller de 3s ———
