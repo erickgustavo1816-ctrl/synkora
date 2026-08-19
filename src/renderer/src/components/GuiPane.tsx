@@ -7,6 +7,7 @@ import {
   type GuiPendingPerm,
   type Seat
 } from '../store'
+import { formatGuiElapsed } from '../guiActivity'
 import { prettyModel } from './PaneChrome'
 import CliMark from './CliMark'
 import GuiMarkdown from './GuiMarkdown'
@@ -1296,6 +1297,22 @@ export default function GuiPane({
     gui.thinking
   ])
   const activityRunning = gui.status === 'working' && gui.startedAt !== null
+  // O TIMER DE RODADA VIVO (R11): o dono lê há quanto tempo a rodada roda —
+  // inclusive esperando resposta dele (waiting-you preserva o startedAt, e a
+  // espera é parte da rodada). Tique de 1s só enquanto o relógio está armado;
+  // fora disso o intervalo nem existe.
+  const roundArmed = !readOnly && gui.startedAt !== null
+  const [roundNow, setRoundNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!roundArmed) return
+    setRoundNow(Date.now())
+    const timer = setInterval(() => setRoundNow(Date.now()), 1_000)
+    return () => clearInterval(timer)
+  }, [roundArmed])
+  const roundElapsed =
+    roundArmed && gui.startedAt !== null
+      ? formatGuiElapsed(Math.max(0, roundNow - gui.startedAt))
+      : null
   const thinkingPresentation = useMemo(
     () =>
       guiThinkingPresentation({
@@ -1515,6 +1532,15 @@ export default function GuiPane({
             <span className={`gui-head-status ${gui.status}`}>
               <i className="ghs-dot" aria-hidden="true" />
               {headStatus}
+              {/* R11: o relógio da rodada mora COLADO no estado — "trabalhando
+                  · 4:12" é a resposta de relance a "há quanto tempo?". Fora da
+                  região viva de leitor de tela pelo mesmo motivo do cronômetro
+                  da lateral: narrar o relógio a cada segundo é tortura. */}
+              {roundElapsed && (
+                <span className="gui-head-round" aria-hidden="true">
+                  · {roundElapsed}
+                </span>
+              )}
             </span>
           )}
         </div>

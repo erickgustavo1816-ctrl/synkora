@@ -3330,3 +3330,35 @@ test('derrubar teste com o PTY já morto ainda LIMPA o registro do servidor', ()
     'o registro do test server tem de morrer no fecho manual, com ou sem PTY vivo'
   )
 })
+
+// ————— O TIMER DE RODADA (R11, ordem do dono) —————
+//
+// "Da primeira mensagem que eu mandei até ele me entregar o resultado final...
+// sempre no final de cada rodada eu quero o timer em algum lugar." A régua do
+// início/fim JÁ era a do `startedAt` (arma no working, PRESERVA esperando o
+// dono, zera no idle) — o selo nasce na transição que zera.
+
+test('a rodada fechada carimba o selo ⏱ — a régua é pura e o store a consome', async () => {
+  const { guiRoundClosed, guiRoundStampText, transitionGuiStartedAt } = await import(
+    '../src/renderer/src/guiActivity.ts'
+  )
+  // A régua do início/fim JÁ era a do startedAt: arma no working, PRESERVA
+  // esperando o dono (a espera é parte da rodada), zera no idle.
+  const armed = transitionGuiStartedAt(null, 'working', 1_000)
+  assert.equal(armed, 1_000)
+  assert.equal(transitionGuiStartedAt(armed, 'waiting-you', 5_000), 1_000)
+  assert.equal(transitionGuiStartedAt(armed, 'idle', 9_000), null)
+
+  // O selo nasce EXATAMENTE na transição que zera para idle — nunca em morte
+  // de sessão (dead não é rodada concluída) nem em turno que continua.
+  assert.equal(guiRoundClosed(1_000, null, 'idle'), true)
+  assert.equal(guiRoundClosed(1_000, 1_000, 'working'), false)
+  assert.equal(guiRoundClosed(1_000, null, 'dead'), false)
+  assert.equal(guiRoundClosed(null, null, 'idle'), false)
+  assert.match(guiRoundStampText(252_000), /^⏱ rodada: 4:12$/u)
+
+  // E o store consome a régua nomeada — nunca uma cópia inline.
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  assert.match(store, /guiRoundClosed\(/u, 'o applyGuiEvent decide pelo módulo puro')
+  assert.match(store, /guiRoundStampText\(/u, 'o texto do selo tem fonte única')
+})

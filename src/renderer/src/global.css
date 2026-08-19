@@ -19889,3 +19889,13 @@ details.gui-error-line {
   border-bottom: none;
 }
 /* ————— fim do BLOCO NOVO de abrir arquivo onde o dono quiser ————— */
+
+/* ————— BLOCO NOVO: o timer de rodada no cabeçalho (R11) —————
+   O relógio mora colado no estado ("trabalhando · 4:12") — mesma tinta do
+   status, número tabular para não dançar a cada segundo. Sem animação: o
+   movimento aqui É o número andando. */
+.gui-head-round {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+/* ————— fim do BLOCO NOVO do timer de rodada ————— */

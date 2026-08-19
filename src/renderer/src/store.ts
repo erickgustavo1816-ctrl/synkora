@@ -16,7 +16,7 @@ import type {
 } from '../../preload/index'
 import { applyDeptHueVars, DEPT_HUES_LS_KEY, loadDeptHues } from './departments'
 import { versionPortrait } from './projectLanding'
-import { transitionGuiStartedAt } from './guiActivity'
+import { guiRoundClosed, guiRoundStampText, transitionGuiStartedAt } from './guiActivity'
 import { claimGuiItemId, guiItemId } from './guiItemIdentity'
 import {
   countGuiOutputLines,
@@ -1471,8 +1471,27 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
  * envio/interrupção guardam essa revisão e não podem rebaixar um turno novo.
  */
 export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState {
-  const next = reduceGuiEvent(state, evt)
+  let next = reduceGuiEvent(state, evt)
   if (next === state) return state
+  // O TIMER DE RODADA (R11, ordem do dono): a régua do início/fim já era a do
+  // `startedAt` — arma no working, PRESERVA esperando o dono (a espera é parte
+  // da rodada), zera no fecho LÓGICO (o mesmo instante do plim; um result que
+  // `continues` não zera, então subagente em background conta). O selo nasce
+  // exatamente na transição que zera para 'idle' — morte de sessão não é
+  // rodada concluída e não ganha carimbo. Trade-off aceito e conhecido: o
+  // selo é item derivado, não renasce no replay pós-boot (mesma classe das
+  // notas de turno interrompido).
+  if (guiRoundClosed(state.startedAt, next.startedAt, next.status)) {
+    next = {
+      ...next,
+      items: pushGuiItem(next.items, {
+        id: guiItemId(),
+        kind: 'note',
+        text: guiRoundStampText(Date.now() - (state.startedAt ?? 0)),
+        at: Date.now()
+      })
+    }
+  }
   return { ...next, eventRevision: state.eventRevision + 1 }
 }
 
