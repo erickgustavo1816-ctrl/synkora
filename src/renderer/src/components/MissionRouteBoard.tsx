@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useStore, type Mission, type Version } from '../store'
 import { missionChatSummary, missionChatLabel, type MissionChatSummary } from '../guiMissionPanes'
+import { isReleaseMissionRecord } from '../missionCardAccess'
 import { integrationShortLine } from '../integrationQueuePresentation'
 
 // ————————————————————————————————————————————————————————————————————————
@@ -103,7 +104,16 @@ export default function MissionRouteBoard({
   }, [projectId, refresh])
 
   const mine = useMemo(
-    () => missions.filter((m) => m.projectId === projectId && m.status !== 'arquivada'),
+    () =>
+      missions.filter(
+        (m) =>
+          m.projectId === projectId &&
+          m.status !== 'arquivada' &&
+          // R27 — o registro de release não é missão de superfície: no quadro
+          // de rota ele aparecia como card RODANDO e inflava o "N/M
+          // integradas" da versão (o 8/9 que o dono viu).
+          !isReleaseMissionRecord(m)
+      ),
     [missions, projectId]
   )
 

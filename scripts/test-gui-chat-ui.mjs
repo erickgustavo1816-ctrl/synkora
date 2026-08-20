@@ -4191,3 +4191,20 @@ test('R27 — o retrato do projeto não conta o registro do release', () => {
   assert.match(stats.slice(0, 900), /versionPortrait\(versions, surface\)/u)
   assert.match(stats.slice(0, 1200), /missoesAtivas: surface\.filter/u)
 })
+
+// R27 (conserto pós-estreia, parte 2): o QUADRO DE ROTA ainda mostrava o
+// registro do release como card RODANDO e o contava no "N/M integradas" — o
+// 8/9 que o dono viu no mapa. A mesma régua, na fonte da grade.
+test('R27 — o quadro de rota não conta nem mostra o registro do release', () => {
+  const route = readFileSync(
+    new URL('../src/renderer/src/components/MissionRouteBoard.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(route, /isReleaseMissionRecord/u, 'a régua única chega ao quadro de rota')
+  const mine = route.slice(route.indexOf('const mine = useMemo'))
+  assert.match(
+    mine.slice(0, 600),
+    /!isReleaseMissionRecord\(m\)/u,
+    'a grade parte só de missões de superfície'
+  )
+})
