@@ -670,7 +670,6 @@ export default function GuiPane({
   const [slashIndex, setSlashIndex] = useState(0)
   const [slashCursor, setSlashCursor] = useState(() => draft.length)
   const [slashDismissal, setSlashDismissal] = useState<SlashDismissal | null>(null)
-  const [inputScroll, setInputScroll] = useState({ top: 0, left: 0 })
   const logRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -843,7 +842,6 @@ export default function GuiPane({
     ta.style.height = 'auto'
     ta.style.height = `${Math.min(300, ta.scrollHeight)}px`
     if (mentionOverlayRef.current) syncInputOverlayScroll(ta, mentionOverlayRef.current)
-    setInputScroll({ top: ta.scrollTop, left: ta.scrollLeft })
   }, [draft])
 
   // Apos a mudanca controlada do texto, posiciona o cursor antes da pintura.
@@ -1909,13 +1907,7 @@ export default function GuiPane({
           >
             <div className="gui-composer-inner">
               {draft && (
-                <GuiMentionOverlay
-                  ref={mentionOverlayRef}
-                  text={draft}
-                  files={fileMentions.files}
-                  scrollTop={inputScroll.top}
-                  scrollLeft={inputScroll.left}
-                />
+                <GuiMentionOverlay ref={mentionOverlayRef} text={draft} files={fileMentions.files} />
               )}
               <textarea
                 ref={inputRef}
@@ -1923,6 +1915,7 @@ export default function GuiPane({
                 data-mentions={draft ? 'active' : undefined}
                 rows={1}
                 maxLength={GUI_PROMPT_MAX_CHARS}
+                spellCheck={false}
                 value={draft}
                 aria-label="Mensagem para esta conversa"
                 role="combobox"
@@ -1953,7 +1946,6 @@ export default function GuiPane({
                 }}
                 onScroll={(e) => {
                   const input = e.currentTarget
-                  setInputScroll({ top: input.scrollTop, left: input.scrollLeft })
                   if (mentionOverlayRef.current) syncInputOverlayScroll(input, mentionOverlayRef.current)
                 }}
                 onPaste={(event) => {

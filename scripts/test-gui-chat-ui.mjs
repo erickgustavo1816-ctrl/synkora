@@ -347,12 +347,14 @@ test('menções @arquivo filtram, escapam, selecionam sem enviar e cacheiam a á
     renderMentionOverlayMarkup('<raw> @src/ui/App.tsx', ['src/ui/App.tsx']),
     /&lt;raw&gt;.*gui-mention-token/u
   )
+  // O espelho é SÓ o scroll do box clipado — transladar a caixa era o bug do
+  // paste de 2026-08-20 (overlay pintado por cima do fio).
   const overlay = { scrollTop: 0, scrollLeft: 0, style: { transform: '' } }
   syncInputOverlayScroll({ scrollTop: 18, scrollLeft: 4 }, overlay)
   assert.deepEqual(overlay, {
     scrollTop: 18,
     scrollLeft: 4,
-    style: { transform: 'translate(-4px, -18px)' }
+    style: { transform: '' }
   })
 
   const root = join(tmpdir(), `synkora-p5-${Date.now()}-${Math.random().toString(16).slice(2)}`)
@@ -4000,4 +4002,37 @@ test('a rodada fantasma dos results encadeados não carimba; a de verdade carimb
   assert.match(store, /guiRoundEarnsStamp\(/u, 'o applyGuiEvent decide o selo pelo módulo puro')
   assert.match(store, /trackGuiRoundWork\(/u, 'o trabalho da rodada tem fonte única')
   assert.match(store, /roundWorked: boolean/u, 'o trabalho da rodada é estado do pane')
+})
+
+// BUG DO PASTE (vídeo do dono, 2026-08-20 11:55): colar um erro de terminal no
+// composer "explodia tudo" — o transform na PRÓPRIA caixa do overlay de menções
+// empurrava a camada clipada para CIMA do fio sempre que o textarea tinha
+// scroll interno (paste grande no teto de 300px), pintando o texto colado por
+// cima da conversa; e o texto transparente do modo menções ficava INVISÍVEL no
+// composer — só as ondinhas do corretor apareciam. A caixa NUNCA se move: o
+// espelho do scroll é o scrollTop/scrollLeft do próprio box clipado.
+test('paste grande não desloca o overlay de menções: a caixa fica, o conteúdo rola', () => {
+  const overlay = { scrollTop: 0, scrollLeft: 0, style: { transform: '' } }
+  syncInputOverlayScroll({ scrollTop: 480, scrollLeft: 0 }, overlay)
+  assert.equal(overlay.scrollTop, 480, 'o conteúdo rola pelo scroll do box')
+  assert.equal(overlay.scrollLeft, 0)
+  assert.equal(overlay.style.transform, '', 'a caixa clipada NUNCA sai do lugar')
+
+  const overlaySource = readFileSync(
+    new URL('../src/renderer/src/components/GuiMentionOverlay.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.doesNotMatch(
+    overlaySource,
+    /translate\(/u,
+    'nenhum transform posicional no componente do overlay'
+  )
+
+  // Terminal colado não é redação: o corretor não rabisca o composer (os
+  // outros inputs do app já desligam o spellcheck; o chat recebe código).
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(pane, /spellCheck=\{false\}/u, 'composer sem corretor ortográfico')
 })

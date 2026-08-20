@@ -204,12 +204,15 @@ export function renderMentionOverlayMarkup(
     .join('')
 }
 
-/** Mantém o texto pintado no mesmo deslocamento do textarea com scroll interno. */
+/** Mantém o texto pintado no mesmo deslocamento do textarea com scroll interno.
+ *  O box clipado (overflow: hidden) aceita scroll programático — o espelho é
+ *  SÓ esse scroll. Transladar a própria caixa (o bug do paste de 2026-08-20)
+ *  empurrava o overlay para cima do fio sempre que o textarea rolava por
+ *  dentro, e o texto transparente do modo menções ficava invisível. */
 export function syncInputOverlayScroll(
   input: Pick<HTMLTextAreaElement, 'scrollTop' | 'scrollLeft'>,
-  overlay: Pick<HTMLDivElement, 'style' | 'scrollTop' | 'scrollLeft'>
+  overlay: Pick<HTMLDivElement, 'scrollTop' | 'scrollLeft'>
 ): void {
   overlay.scrollTop = input.scrollTop
   overlay.scrollLeft = input.scrollLeft
-  overlay.style.transform = `translate(${-input.scrollLeft}px, ${-input.scrollTop}px)`
 }
