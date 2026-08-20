@@ -393,6 +393,105 @@ test('clear zera o replay', () => {
   assert.deepEqual(ring.snapshot(), [])
 })
 
+// R24.1 — A PODA FALA. O anel descarta os mais antigos desde 2026-08-15 e até
+// aqui fazia isso em SILÊNCIO: o fio remontado nascia cortado sem uma linha
+// dizendo que houve mais antes (queixa do dono: "subo, subo, e acaba").
+
+test('R24.1 — o anel conta o que a poda descartou e o contador atravessa a hidratação', () => {
+  const ring = new GuiEventRing(3)
+  for (const text of ['a', 'b', 'c', 'd', 'e']) ring.push({ type: 'command-output', text })
+  assert.equal(ring.size, 3)
+  assert.equal(ring.evictedCount, 2, 'a poda deixou de ser muda')
+
+  ring.clear()
+  assert.equal(ring.evictedCount, 0, 'trocar de conversa não deixa a poda antiga falar pela nova')
+
+  const hydrated = new GuiEventRing(GUI_RING_CAP, GUI_RING_BYTE_CAP, 40, 7)
+  assert.equal(hydrated.evictedCount, 7, 'a fotografia do disco devolve o que já tinha saído')
+  hydrated.push({ type: 'text', text: 'depois do boot' })
+  assert.equal(hydrated.evictedCount, 7, 'push sem poda nunca inventa evicção')
+})
+
+test('R24.1 — a poda avisa uma vez ao vivo, sobrevive ao disco e abre o replay', () => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-ring-pruned-'))
+  const storeFile = join(root, 'gui-sessions.json')
+  const spawn = {
+    paneId: 'p-pruned',
+    projectId: 'proj',
+    cli: 'claude',
+    configDir: 'c',
+    cwd: '/tmp',
+    permissionMode: 'default'
+  }
+  const caps = { commands: [], models: [] }
+  const pushed = []
+  let sink = null
+  const makeRegistry = () => {
+    const gui = new GuiSessionRegistry({
+      push: (payload) => pushed.push(payload),
+      systemPromptFile: () => undefined,
+      storeFile
+    })
+    gui.spawnSession = (_spawn, emit) => {
+      sink = emit
+      emit({
+        type: 'init',
+        model: 'default',
+        sessionId: 'pruned-session',
+        permissionMode: 'default',
+        toolCount: 0
+      })
+      emit({ type: 'ready', caps })
+      return {
+        alive: true,
+        turnActive: false,
+        caps,
+        waitCaps: async () => caps,
+        setExecutor: async () => true,
+        send: () => undefined,
+        kill: () => undefined
+      }
+    }
+    return gui
+  }
+
+  try {
+    const first = makeRegistry()
+    assert.equal(first.create(spawn).ok, true)
+    // `thinking` não é checkpoint de transcript: enche o anel sem gravar disco
+    // a cada passo (e sem virar um delta compactado, que nunca poda).
+    for (let index = 0; index < GUI_RING_CAP + 20; index += 1) {
+      sink({ type: 'thinking', text: `passo ${index}` })
+    }
+    sink({ type: 'text', text: 'a fala mais nova' })
+
+    const notices = pushed.filter((payload) => payload?.evt?.type === 'history-pruned')
+    assert.equal(notices.length, 1, 'a primeira poda avisa UMA vez — sem relógio novo')
+    assert.equal(notices[0].paneId, spawn.paneId)
+    assert.ok(notices[0].evt.evicted > 0)
+
+    first.kill(spawn.paneId)
+    const persisted = JSON.parse(readFileSync(storeFile, 'utf8'))
+    const evicted = persisted.transcripts[spawn.paneId].evicted
+    assert.ok(Number.isSafeInteger(evicted) && evicted > 0, 'o contador sobrevive ao disco')
+
+    const reopened = makeRegistry()
+    const replay = reopened.state(spawn.paneId)
+    assert.equal(replay.exists, true)
+    assert.deepEqual(
+      replay.events[0].evt,
+      { type: 'history-pruned', evicted },
+      'a remontagem abre dizendo que o começo saiu da tela'
+    )
+    assert.equal(
+      replay.events.filter((event) => event.evt?.type === 'history-pruned').length,
+      1
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 // Guardas do registro que NÃO spawnam processo: spawn inválido é recusado com
 // texto de UI em PT-BR, e pane sem sessão nunca finge estar vivo.
 

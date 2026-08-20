@@ -6,9 +6,12 @@ import type { MainContext } from '../mainContext'
 import type { GuiSessionRegistry } from '../guiSessions'
 import {
   guiMissionPaneId,
-  guiPlanningPaneId
+  guiPlanningPaneId,
+  isGuiMissionPaneId,
+  isGuiPlanningPaneId
 } from '../guiMissionContracts'
 import {
+  historySessionIdOf,
   loadLocalHistoryTranscript,
   localHistoryLocatorIsSafe,
   searchLocalHistory,
@@ -17,8 +20,14 @@ import {
   type HistoryWorkspaceScope,
   type LocalHistoryLocator
 } from '../historySearch'
+import {
+  loadLocalHistorySessionPage,
+  locateHistorySessionFile
+} from '../historySessionReader'
 import type {
   HistoryLoadResult,
+  HistoryPageRequest,
+  HistoryPaneLoadResult,
   HistorySearchInput,
   HistorySearchResult
 } from '../../shared/commandPalette'
@@ -48,15 +57,85 @@ function addBinding(
   input: HistorySessionBinding
 ): void {
   if (!input.sessionId || input.sessionId.length > 512) return
-  const previous = bindings.get(input.sessionId)
+  // O ÍNDICE FALA A LÍNGUA DO DISCO. O pane do codex guarda
+  // `codex-thread:<uuid>` e o transcript só tem o uuid: sem este corte, todo
+  // hit de codex saía sem paneId, sem rótulo e sem `canMount` — e a
+  // reavaliação do `history:load` também nunca casava (bug latente achado na
+  // investigação da R24). A rede do outro lado mora em `bindingMap`
+  // (historySearch.ts), que normaliza de novo o que chegar de fora.
+  const sessionId = historySessionIdOf(input.sessionId)
+  if (!sessionId) return
+  const binding = { ...input, sessionId }
+  const previous = bindings.get(sessionId)
   if (
     !previous ||
-    (!previous.paneId && input.paneId) ||
-    (!previous.missionId && input.missionId) ||
-    (!previous.canMount && input.canMount)
+    (!previous.paneId && binding.paneId) ||
+    (!previous.missionId && binding.missionId) ||
+    (!previous.canMount && binding.canMount)
   ) {
-    bindings.set(input.sessionId, input)
+    bindings.set(sessionId, binding)
   }
+}
+
+/**
+ * As pastas de trabalho candidatas DESTE pane. É o que o localizador do claude
+ * precisa (o caminho do transcript é o slug do cwd), e ele vale também para
+ * pane sem sessão viva — a fotografia do disco não guarda cwd, mas o endereço
+ * do pane diz de qual missão/universo ele é.
+ */
+function paneWorkspaceCwds(ctx: MainContext, paneId: string): string[] {
+  const cwds = new Set<string>()
+  for (const project of ctx.projects.list()) {
+    if (isGuiPlanningPaneId(paneId, project.id)) cwds.add(project.path)
+    for (const mission of ctx.missions.list(project.id)) {
+      if (!isGuiMissionPaneId(paneId, mission.id)) continue
+      const worktree = mission.worktree?.trim()
+      // O worktree é o caso comum; a raiz entra porque missão de release/
+      // planejamento roda no próprio projeto (routeGuiMissionPane).
+      if (worktree) cwds.add(worktree)
+      cwds.add(project.path)
+    }
+  }
+  return [...cwds]
+}
+
+/** Config dirs onde ESTA conversa pode estar: o seat do pane vivo primeiro, e
+ *  depois as outras contas do mesmo CLI (a conversa pode ter nascido em outra
+ *  antes de uma troca de seat). */
+function paneConfigDirs(ctx: MainContext, cli: 'claude' | 'codex', live?: string): string[] {
+  const dirs: string[] = []
+  const seen = new Set<string>()
+  const add = (dir: string | undefined): void => {
+    const value = dir?.trim()
+    if (!value) return
+    const key = resolve(value).toLowerCase()
+    if (seen.has(key)) return
+    seen.add(key)
+    dirs.push(value)
+  }
+  add(live)
+  for (const seat of ctx.seats.list()) {
+    if (seat.cli !== cli) continue
+    add(ctx.seats.configDirOf(seat))
+  }
+  return dirs
+}
+
+function paneLoadFailure(paneId: string, error: string): HistoryPaneLoadResult {
+  return { ok: false, paneId, error }
+}
+
+function historyPageRequest(value: unknown): HistoryPageRequest | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'object' || Array.isArray(value)) return undefined
+  const page = value as HistoryPageRequest
+  const offset = (input: unknown): boolean =>
+    input === undefined || (typeof input === 'number' && Number.isSafeInteger(input) && input >= 0)
+  if (!offset(page.before) || !offset(page.after)) return undefined
+  if (page.before === undefined && page.after === undefined) return undefined
+  // Uma direção por clique: pedir as duas pontas de uma vez é payload torto.
+  if (page.before !== undefined && page.after !== undefined) return undefined
+  return page.before !== undefined ? { before: page.before } : { after: page.after as number }
 }
 
 function uniqueRoots(ctx: MainContext): HistoryProviderRoot[] {
@@ -368,6 +447,66 @@ export function registerHistoryIpc(ctx: MainContext, deps: HistoryIpcDeps): void
         ...(selection.paneId ? { paneId: selection.paneId } : {}),
         canMount
       }
+    }
+  )
+
+  /**
+   * A CONVERSA COMPLETA DESTE PANE (R24.2). Não há busca aqui: o registro sabe
+   * qual conversa é (provider + sessionId) e o disco tem o arquivo. A leitura
+   * é EFÊMERA e passa pelas mesmas portas do `history:load` — contenção
+   * revalidada, extrator fechado, redação e tetos por página. Nada é indexado
+   * em background: só acontece no clique do dono.
+   */
+  ipcMain.handle(
+    'history:loadForPane',
+    async (event, paneId: unknown, page: unknown): Promise<HistoryPaneLoadResult> => {
+      deps.assertAppRendererSender(event)
+      if (typeof paneId !== 'string' || !paneId || paneId.length > 256) {
+        return paneLoadFailure('', 'pane sem identificador válido')
+      }
+      const request = page === undefined || page === null ? undefined : historyPageRequest(page)
+      if (page !== undefined && page !== null && !request) {
+        return paneLoadFailure(paneId, 'faixa de leitura inválida — reabra a conversa completa')
+      }
+      const remembered = deps.guiSessions.remembered(paneId)
+      const live = deps.guiSessions.transcriptSourceOf(paneId)
+      const cli = live?.cli ?? remembered?.cli
+      if (!cli) {
+        return paneLoadFailure(
+          paneId,
+          'este chat ainda não tem conversa gravada — mande uma mensagem e tente de novo'
+        )
+      }
+      const sessionId = remembered?.sessionId?.trim()
+      if (!sessionId) {
+        return paneLoadFailure(
+          paneId,
+          'esta conversa ainda não recebeu um id do CLI — mande uma mensagem e tente de novo'
+        )
+      }
+      const cwds = [...(live?.cwd ? [live.cwd] : []), ...paneWorkspaceCwds(ctx, paneId)]
+      const session = await locateHistorySessionFile({
+        provider: cli,
+        sessionId,
+        configDirs: paneConfigDirs(ctx, cli, live?.configDir),
+        cwds
+      })
+      if (!session) {
+        return paneLoadFailure(
+          paneId,
+          `não achei o transcript desta conversa em nenhuma conta ${cli} deste app — se ela nasceu em outra conta, cadastre/entre nela em Ajustes › Minhas contas e tente de novo`
+        )
+      }
+      if (!(await localHistoryLocatorIsSafe(session))) {
+        return paneLoadFailure(
+          paneId,
+          'o arquivo dessa conversa não está mais num local permitido'
+        )
+      }
+      const result = await loadLocalHistorySessionPage(session, {
+        ...(request ? { page: request } : {})
+      })
+      return { ...result, paneId }
     }
   )
 }

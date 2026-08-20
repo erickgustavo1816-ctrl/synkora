@@ -72,6 +72,36 @@ export interface HistoryLoadResult {
 }
 
 /**
+ * A CONVERSA COMPLETA DE UM PANE (R24.2/R24.3). A paleta chega ao transcript
+ * por um hit de busca; este contrato é o caminho inverso — o pane pede a
+ * própria conversa e a lê por PÁGINAS, porque o anel de eventos poda por
+ * espaço e o começo do fio some da tela.
+ *
+ * A faixa é pedida por CURSOR, que é o offset de byte da linha no JSONL:
+ * `before` = a página que termina naquele cursor; `after` = a que começa
+ * depois dele. Ausentes = a página do COMEÇO da conversa.
+ */
+export interface HistoryPageRequest {
+  before?: number
+  after?: number
+}
+
+export interface HistoryPaneLoadResult {
+  ok: boolean
+  paneId: string
+  provider?: HistoryProvider
+  sessionId?: string
+  messages?: HistoryTranscriptMessage[]
+  targetMessageId?: string
+  targetCursor?: number
+  truncated?: boolean
+  /** Sobrou arquivo fora desta página (arma "carregar mais antigas/novas"). */
+  hasMoreBefore?: boolean
+  hasMoreAfter?: boolean
+  error?: string
+}
+
+/**
  * O renderer da WebContentsView não alcança o shell do host. Ele envia apenas
  * este alvo pequeno e validável; o host refaz a navegação com seu próprio
  * store e, para histórico, carrega o texto sanitizado de volta no main.

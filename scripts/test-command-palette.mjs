@@ -6,10 +6,15 @@ import test from 'node:test'
 import {
   extractVisibleHistoryMessage,
   historyLocatorFingerprint,
+  historySessionIdOf,
   loadLocalHistoryTranscript,
   localHistoryLocatorIsSafe,
   searchLocalHistory
 } from '../.tmp/command-palette-test/main/historySearch.js'
+import {
+  loadLocalHistorySessionPage,
+  locateHistorySessionFile
+} from '../.tmp/command-palette-test/main/historySessionReader.js'
 
 const disposable = new Set()
 
@@ -153,6 +158,154 @@ async function fixture() {
     ]
   }
 }
+
+/** Conversa longa de um pane só: é nela que a paginação por bytes se prova. */
+async function longClaudeFixture(count = 12) {
+  const root = await mkdtemp(join(tmpdir(), 'synkora-history-page-'))
+  disposable.add(root)
+  const cwd = join(root, 'workspace', 'universo-longo')
+  const configDir = join(root, 'claude-config')
+  const sessionId = '44444444-4444-4444-8444-444444444444'
+  const dir = join(configDir, 'projects', claudeSlug(cwd))
+  await Promise.all([mkdir(cwd, { recursive: true }), mkdir(dir, { recursive: true })])
+  const file = join(dir, `${sessionId}.jsonl`)
+  const lines = []
+  for (let index = 0; index < count; index += 1) {
+    lines.push(
+      line({
+        type: 'user',
+        uuid: `fala-${index}`,
+        timestamp: '2026-08-20T10:00:00.000Z',
+        message: { role: 'user', content: [{ type: 'text', text: `fala numero ${index}` }] }
+      })
+    )
+  }
+  await writeFile(file, `${lines.join('\n')}\n`, 'utf8')
+  return { root, cwd, configDir, sessionId, file, count }
+}
+
+test('R24.2 — localizador por sessão: claude direto, codex pelo nome, prefixo cortado', async () => {
+  const data = await fixture()
+
+  const claude = await locateHistorySessionFile({
+    provider: 'claude',
+    sessionId: data.claudeSessionId,
+    configDirs: [data.claudeConfig, data.codexConfig],
+    cwds: [data.cwd]
+  })
+  assert.equal(claude?.file, data.claudeFile)
+  assert.equal(claude?.configDir, data.claudeConfig)
+  assert.equal(claude?.sessionId, data.claudeSessionId)
+
+  // O pane do codex guarda `codex-thread:<uuid>`; no disco só existe o uuid.
+  assert.equal(historySessionIdOf(`codex-thread:${data.codexSessionId}`), data.codexSessionId)
+  const codex = await locateHistorySessionFile({
+    provider: 'codex',
+    sessionId: `codex-thread:${data.codexSessionId}`,
+    configDirs: [data.codexConfig]
+  })
+  assert.equal(codex?.file, data.codexFile)
+  assert.equal(codex?.sessionId, data.codexSessionId)
+
+  assert.equal(
+    await locateHistorySessionFile({
+      provider: 'claude',
+      sessionId: '55555555-5555-4555-8555-555555555555',
+      configDirs: [data.claudeConfig],
+      cwds: [data.cwd]
+    }),
+    undefined,
+    'conversa que não existe recusa em vez de adivinhar arquivo'
+  )
+  assert.equal(
+    await locateHistorySessionFile({
+      provider: 'claude',
+      sessionId: '../../escapando',
+      configDirs: [data.claudeConfig],
+      cwds: [data.cwd]
+    }),
+    undefined,
+    'id fora da forma conhecida nunca vira caminho'
+  )
+})
+
+test('R24.3 — a conversa completa abre no COMEÇO e pagina por faixa de bytes', async () => {
+  const data = await longClaudeFixture(12)
+  const session = await locateHistorySessionFile({
+    provider: 'claude',
+    sessionId: data.sessionId,
+    configDirs: [data.configDir],
+    cwds: [data.cwd]
+  })
+  assert.ok(session)
+
+  const limits = { maxTranscriptMessages: 4 }
+  const first = await loadLocalHistorySessionPage(session, { limits })
+  assert.equal(first.ok, true)
+  assert.deepEqual(
+    first.messages?.map((message) => message.text),
+    ['fala numero 0', 'fala numero 1', 'fala numero 2', 'fala numero 3']
+  )
+  assert.equal(first.targetMessageId, first.messages?.[0].id)
+  assert.equal(first.hasMoreBefore, false, 'a âncora é o COMEÇO: não há nada antes')
+  assert.equal(first.hasMoreAfter, true)
+
+  const next = await loadLocalHistorySessionPage(session, {
+    limits,
+    page: { after: first.messages?.at(-1).cursor }
+  })
+  assert.equal(next.ok, true)
+  assert.equal(next.messages?.[0].text, 'fala numero 4')
+  assert.equal(next.hasMoreBefore, true)
+  assert.equal(next.hasMoreAfter, true)
+
+  const previous = await loadLocalHistorySessionPage(session, {
+    limits,
+    page: { before: next.messages?.[0].cursor }
+  })
+  assert.equal(previous.ok, true)
+  assert.equal(previous.messages?.at(-1).text, 'fala numero 3')
+  assert.equal(previous.hasMoreAfter, true)
+
+  // A janela de BYTES é real: teto pequeno lê o começo do arquivo e diz que há
+  // mais adiante — é o que salva o rollout de 6 MB do codex.
+  const clipped = await loadLocalHistorySessionPage(session, {
+    limits: { maxBytesPerFile: 420 }
+  })
+  assert.equal(clipped.ok, true)
+  assert.equal(clipped.messages?.[0].text, 'fala numero 0')
+  assert.ok((clipped.messages?.length ?? 0) < data.count)
+  assert.equal(clipped.hasMoreAfter, true)
+  assert.equal(clipped.truncated, true)
+
+  const tail = await loadLocalHistorySessionPage(session, { anchor: 'last' })
+  assert.equal(tail.messages?.at(-1).text, `fala numero ${data.count - 1}`)
+  assert.equal(tail.hasMoreAfter, false)
+})
+
+test('R24 (carona) — binding de codex com prefixo casa o transcript sem prefixo', async () => {
+  const data = await fixture()
+  const bound = await searchLocalHistory({
+    query: 'orquídea prateada',
+    roots: [{ provider: 'codex', configDir: data.codexConfig }],
+    // Sem workspace nenhum: só o BINDING pode provar de quem é o rollout.
+    workspaces: [],
+    sessionBindings: [
+      {
+        sessionId: `codex-thread:${data.codexSessionId}`,
+        projectId: 'project-synthetic',
+        missionId: 'mission-synthetic',
+        paneId: 'gui-dev-mission',
+        label: 'Missão sintética',
+        canMount: true
+      }
+    ]
+  })
+  assert.equal(bound.hits.length, 1)
+  assert.equal(bound.hits[0].paneId, 'gui-dev-mission')
+  assert.equal(bound.hits[0].missionId, 'mission-synthetic')
+  assert.equal(bound.hits[0].canMount, true)
+})
 
 test('busca Claude e Codex tolera JSONL parcial e conserva alvo estável', async () => {
   const data = await fixture()
@@ -468,4 +621,23 @@ test('contrato UI instala o atalho numa root só e valida o alvo antes de navega
   assert.match(css, /operação única `harden`/u)
   assert.match(css, /prefers-reduced-motion: reduce/u)
   assert.match(css, /forced-colors: active/u)
+})
+
+test('R24.2 — a rota por pane atravessa main e preload, e o índice normaliza o codex', async () => {
+  const root = new URL('..', import.meta.url)
+  const [ipc, preload] = await Promise.all(
+    ['src/main/ipc/history.ts', 'src/preload/index.ts'].map((path) =>
+      readFile(new URL(path, root), 'utf8')
+    )
+  )
+
+  // A rota nova reusa a MESMA porteira de segurança do `history:load`.
+  assert.match(ipc, /ipcMain\.handle\(\s*'history:loadForPane'/u)
+  assert.match(ipc, /localHistoryLocatorIsSafe/u)
+  assert.match(ipc, /locateHistorySessionFile/u)
+  assert.match(ipc, /loadLocalHistorySessionPage/u)
+  // Carona: o índice de bindings guarda o id CRU, sem o prefixo do codex —
+  // sem isto o hit de codex nunca ganha paneId/canMount (bug latente de 2026-08-20).
+  assert.match(ipc, /historySessionIdOf\(input\.sessionId\)/u)
+  assert.match(preload, /ipcRenderer\.invoke\('history:loadForPane', paneId, page\)/u)
 })

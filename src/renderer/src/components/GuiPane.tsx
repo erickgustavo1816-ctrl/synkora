@@ -47,6 +47,7 @@ import {
 } from '../guiToolPresentation'
 import { nestGuiSubagentTools } from '../guiSubagentPresentation'
 import { normalizeGuiSubagentSidebar } from '../guiSubagentSidebar'
+import { guiHistoryPageRequest, guiPrunedNoticeText } from '../guiHistoryReader'
 import {
   noteGuiPaneInteraction,
   registerGuiEscapeTarget
@@ -562,6 +563,8 @@ export default function GuiPane({
     s.guiHistoryTarget?.paneId === paneId ? s.guiHistoryTarget : null
   )
   const clearGuiHistoryTarget = useStore((s) => s.clearGuiHistoryTarget)
+  const showGuiHistoryTarget = useStore((s) => s.showGuiHistoryTarget)
+  const appendGuiHistoryPage = useStore((s) => s.appendGuiHistoryPage)
 
   useEffect(() => {
     // Fotografia congelada não tem sessão do outro lado: anunciar visibilidade
@@ -693,11 +696,111 @@ export default function GuiPane({
     onPinnedChange: setPinned
   })
   const historySelectedRef = useRef<HTMLDivElement>(null)
+  const historyThreadRef = useRef<HTMLDivElement>(null)
+  // R24 — o LEITOR da conversa completa: abrir (linha do topo) e paginar
+  // (faixa de bytes). Estado local de propósito: é gesto, não fio.
+  const [historyOpening, setHistoryOpening] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [historyPaging, setHistoryPaging] = useState<'before' | 'after' | null>(null)
+  const [historyPageNote, setHistoryPageNote] = useState<string | null>(null)
+  /** Altura da lista ANTES da página anterior entrar — sem ela, prepender
+   *  falas empurra o texto que o dono está lendo para fora da vista. */
+  const historyPrependHeightRef = useRef<number | null>(null)
 
   useLayoutEffect(() => {
     if (!historyTarget) return
     historySelectedRef.current?.scrollIntoView({ block: 'center' })
   }, [historyTarget?.targetCursor, historyTarget?.targetMessageId])
+
+  useLayoutEffect(() => {
+    const previousHeight = historyPrependHeightRef.current
+    historyPrependHeightRef.current = null
+    const thread = historyThreadRef.current
+    if (previousHeight === null || !thread) return
+    // Prepend não é navegação: a fala que estava sob os olhos continua ali.
+    thread.scrollTop += thread.scrollHeight - previousHeight
+  }, [historyTarget?.messages])
+
+  const openFullHistory = useCallback(async (): Promise<void> => {
+    const reader = window.synkora?.history?.loadForPane
+    if (!reader) {
+      setHistoryError('esta janela não tem a ponte de histórico — reabra o Synkora')
+      return
+    }
+    setHistoryOpening(true)
+    setHistoryError(null)
+    // Leitura nova não herda a compensação de scroll de uma página anterior.
+    historyPrependHeightRef.current = null
+    try {
+      const result = await reader(paneId)
+      if (!result.ok || !result.provider || !result.sessionId || !result.messages) {
+        setHistoryError(result.error ?? 'não consegui abrir a conversa completa agora')
+        return
+      }
+      setHistoryPageNote(null)
+      showGuiHistoryTarget({
+        paneId,
+        sessionId: result.sessionId,
+        provider: result.provider,
+        messages: result.messages,
+        targetMessageId: result.targetMessageId ?? '',
+        targetCursor: result.targetCursor ?? 0,
+        truncated: result.truncated === true,
+        hasMoreBefore: result.hasMoreBefore === true,
+        hasMoreAfter: result.hasMoreAfter === true
+      })
+    } catch {
+      setHistoryError('não consegui abrir a conversa completa agora')
+    } finally {
+      setHistoryOpening(false)
+    }
+  }, [paneId, showGuiHistoryTarget])
+
+  const loadHistoryPage = useCallback(
+    async (direction: 'before' | 'after'): Promise<void> => {
+      if (historyPaging) return
+      const reader = window.synkora?.history?.loadForPane
+      const request = historyTarget
+        ? guiHistoryPageRequest(historyTarget.messages, direction)
+        : null
+      if (!reader || !request) {
+        setHistoryPageNote('não consegui carregar esse trecho agora — reabra a conversa completa')
+        return
+      }
+      setHistoryPaging(direction)
+      setHistoryPageNote(null)
+      try {
+        const result = await reader(paneId, request)
+        if (!result.ok || !result.messages) {
+          setHistoryPageNote(result.error ?? 'não consegui carregar esse trecho agora')
+          return
+        }
+        if (result.messages.length === 0) {
+          // Faixa só de ferramenta: o botão continua e o clique seguinte anda
+          // mais um pedaço — o dono nunca fica sem próximo passo.
+          setHistoryPageNote(
+            direction === 'before'
+              ? 'esse trecho não tinha falas — clique de novo para continuar subindo'
+              : 'esse trecho não tinha falas — clique de novo para continuar descendo'
+          )
+        }
+        if (direction === 'before') {
+          historyPrependHeightRef.current = historyThreadRef.current?.scrollHeight ?? null
+        }
+        appendGuiHistoryPage(paneId, {
+          direction,
+          messages: result.messages,
+          hasMore:
+            direction === 'before' ? result.hasMoreBefore === true : result.hasMoreAfter === true
+        })
+      } catch {
+        setHistoryPageNote('não consegui carregar esse trecho agora')
+      } finally {
+        setHistoryPaging(null)
+      }
+    },
+    [appendGuiHistoryPage, historyPaging, historyTarget, paneId]
+  )
 
   useEffect(() => {
     const update = (): void => setDocumentVisible(document.visibilityState === 'visible')
@@ -1636,6 +1739,33 @@ export default function GuiPane({
       <div className="gui-stage">
         <div className="gui-log" ref={logRef} onScroll={onTranscriptScroll}>
           <div className="gui-thread">
+            {/* R24.1 — A PODA FALA. O anel do main guarda uma janela do fio;
+                quando ela estoura, o começo da conversa sai da tela. A linha
+                diz isso onde a dor acontece (o topo) e traz a receita junto:
+                o transcript local do CLI ainda tem a conversa inteira. Vale
+                também na fotografia congelada — ler não ressuscita nada. */}
+            {gui.prunedEvents > 0 && (
+              <div className="gui-thread-pruned-slot">
+                <button
+                  type="button"
+                  className="gui-thread-pruned"
+                  onClick={() => void openFullHistory()}
+                  disabled={historyOpening || Boolean(historyTarget)}
+                  aria-label={`${guiPrunedNoticeText(gui.prunedEvents)} — ver conversa completa`}
+                >
+                  <span className="gtp-truth">{guiPrunedNoticeText(gui.prunedEvents)}</span>
+                  <span className="gtp-action">
+                    {historyOpening ? 'abrindo…' : 'ver conversa completa'}
+                  </span>
+                </button>
+                {historyError && (
+                  <p className="gui-thread-pruned-error" role="status">
+                    {historyError}
+                  </p>
+                )}
+              </div>
+            )}
+
             {hasMoreBefore && (
               <button
                 type="button"
@@ -1814,12 +1944,31 @@ export default function GuiPane({
                 voltar à conversa atual
               </button>
             </header>
-            {historyTarget.truncated && (
+            {/* Corte SEM saída continua avisando; corte COM saída (R24.3) fala
+                pelos próprios botões de página, que dizem o que fazer. */}
+            {historyTarget.truncated &&
+              !historyTarget.hasMoreBefore &&
+              !historyTarget.hasMoreAfter && (
+                <p className="gui-history-limited" role="status">
+                  Trecho parcial: o histórico ultrapassou o limite seguro de leitura.
+                </p>
+              )}
+            {historyPageNote && (
               <p className="gui-history-limited" role="status">
-                Trecho parcial: o histórico ultrapassou o limite seguro de leitura.
+                {historyPageNote}
               </p>
             )}
-            <div className="gui-history-thread">
+            <div className="gui-history-thread" ref={historyThreadRef}>
+              {historyTarget.hasMoreBefore && (
+                <button
+                  type="button"
+                  className="gui-history-page"
+                  onClick={() => void loadHistoryPage('before')}
+                  disabled={historyPaging !== null}
+                >
+                  {historyPaging === 'before' ? 'carregando…' : 'carregar mais antigas'}
+                </button>
+              )}
               {historyTarget.messages.map((message) => {
                 const selected =
                   message.id === historyTarget.targetMessageId &&
@@ -1837,6 +1986,16 @@ export default function GuiPane({
                   </div>
                 )
               })}
+              {historyTarget.hasMoreAfter && (
+                <button
+                  type="button"
+                  className="gui-history-page"
+                  onClick={() => void loadHistoryPage('after')}
+                  disabled={historyPaging !== null}
+                >
+                  {historyPaging === 'after' ? 'carregando…' : 'carregar mais novas'}
+                </button>
+              )}
             </div>
           </section>
         )}

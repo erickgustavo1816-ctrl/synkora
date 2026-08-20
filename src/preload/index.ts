@@ -64,6 +64,8 @@ import type {
 } from '../main/fileActions'
 import type {
   HistoryLoadResult,
+  HistoryPageRequest,
+  HistoryPaneLoadResult,
   HistorySearchInput,
   HistorySearchHit,
   HistorySearchResult,
@@ -122,6 +124,8 @@ export type { GuiWorkspaceFilesResult }
 export type { FileActionResult, FileActionScope, FileActionTreeEntry, FileTreeSnapshot }
 export type {
   HistoryLoadResult,
+  HistoryPageRequest,
+  HistoryPaneLoadResult,
   HistorySearchInput,
   HistorySearchHit,
   HistorySearchResult,
@@ -832,7 +836,12 @@ const api = {
       ipcRenderer.invoke('history:search', input),
     cancel: (requestId: string): void => ipcRenderer.send('history:cancel', requestId),
     load: (selectionId: string): Promise<HistoryLoadResult> =>
-      ipcRenderer.invoke('history:load', selectionId)
+      ipcRenderer.invoke('history:load', selectionId),
+    /** A CONVERSA COMPLETA DESTE PANE (R24.2): sem busca e sem seleção opaca —
+     *  o main resolve o arquivo pelo registro do pane. `page` ausente = a
+     *  página do COMEÇO, que é o pedaço que o anel perdeu. */
+    loadForPane: (paneId: string, page?: HistoryPageRequest): Promise<HistoryPaneLoadResult> =>
+      ipcRenderer.invoke('history:loadForPane', paneId, page)
   },
   /** PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md): o chat que
    *  substitui o xterm. O motor é MaestroSession/CodexSession por pane, no

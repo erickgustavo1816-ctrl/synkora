@@ -14438,6 +14438,83 @@ body.progress-overlay-page #root {
   user-select: none;
 }
 
+/* ---- R24.1: a poda fala ----
+   O anel do main guarda uma janela do fio; quando ela estoura, o começo da
+   conversa sai da tela. Esta linha é a VERDADE dita onde a dor acontece, e a
+   forma diz o que ela é: não é pílula (o "carregar todas" logo abaixo é), é
+   uma NOTA DE MARGEM — régua fina em cima, largura inteira, tipografia
+   apagada. Acento só no gesto, nunca em repouso. */
+.gui-thread-pruned-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gui-thread-pruned {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  width: 100%;
+  padding: 2px 2px 8px;
+  border: 0;
+  /* A régua embaixo é a CICATRIZ do corte: acima dela não há mais nada, e a
+     conversa que sobrou começa logo abaixo. */
+  border-bottom: 1px solid var(--gui-line);
+  background: none;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color 160ms ease-out,
+    border-color 160ms ease-out;
+}
+
+.gui-thread-pruned .gtp-action {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.gui-thread-pruned:hover:not(:disabled),
+.gui-thread-pruned:focus-visible {
+  border-bottom-color: var(--accent);
+  color: var(--ink);
+}
+
+.gui-thread-pruned:hover:not(:disabled) .gtp-action,
+.gui-thread-pruned:focus-visible .gtp-action {
+  color: var(--accent-deep);
+}
+
+.gui-thread-pruned:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.gui-thread-pruned:disabled {
+  color: var(--ink-3);
+  cursor: default;
+}
+
+.gui-thread-pruned:disabled .gtp-action {
+  color: var(--ink-3);
+  text-decoration: none;
+}
+
+.gui-thread-pruned-error {
+  margin: 0 0 2px;
+  padding: 6px 9px;
+  border-left: 2px solid var(--err);
+  background: color-mix(in srgb, var(--err) 7%, transparent);
+  color: var(--ink-2);
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
 /* A janela começa no fim do transcript. Este controle fica no topo lógico do
    fio e some quando a memória inteira já foi aberta. */
 .gui-transcript-load-all {
@@ -18596,6 +18673,38 @@ details.gui-error-line {
   padding: 12px 18px 20px;
 }
 
+/* R24.3 — PÁGINA POR FAIXA DE BYTES: os cabos da leitura, um em cada ponta da
+   lista. Mesma forma do "carregar todas" do fio vivo (pílula centrada) porque
+   é o mesmo gesto — trazer mais conversa —, só que num transcript de arquivo. */
+.gui-history-page {
+  align-self: center;
+  flex: none;
+  padding: 5px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.gui-history-page:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-deep);
+}
+
+.gui-history-page:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.gui-history-page:disabled {
+  color: var(--ink-3);
+  cursor: default;
+}
+
 @media (max-width: 520px), (max-height: 560px) {
   .command-palette-backdrop {
     padding: 8px;
@@ -18629,6 +18738,12 @@ details.gui-error-line {
   .command-palette {
     animation: none;
   }
+
+  /* O único movimento da linha-verdade é o realce do gesto: sem ele, a cor
+     troca na hora — o SINAL continua, a transição some. */
+  .gui-thread-pruned {
+    transition: none;
+  }
 }
 
 @media (forced-colors: active) {
@@ -18643,6 +18758,14 @@ details.gui-error-line {
   .command-palette-preview-message.selected,
   .gui-history-message.selected {
     box-shadow: inset 3px 0 Highlight;
+  }
+
+  /* Em alto contraste a cor não distingue nada: o sublinhado do gesto e a
+     régua da nota são o que sobra, e os dois são forma. */
+  .gui-thread-pruned:hover:not(:disabled),
+  .gui-thread-pruned:focus-visible,
+  .gui-history-page:hover:not(:disabled) {
+    border-color: Highlight;
   }
 }
 

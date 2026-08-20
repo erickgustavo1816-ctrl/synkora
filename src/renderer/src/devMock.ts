@@ -793,6 +793,13 @@ export function installDevMock(): void {
         ok: false,
         selectionId,
         error: 'o preview do navegador não tem históricos locais'
+      }),
+      // R24.2: a recusa nomeia a receita mesmo no mock — o preview não tem
+      // disco de CLI para ler, e dizer isso é melhor que um overlay vazio.
+      loadForPane: async (paneId) => ({
+        ok: false,
+        paneId,
+        error: 'o preview do navegador não tem históricos locais — abra a conversa no app'
       })
     },
     // Pane GUI (docs/GUI_PANE_CONTRACT.md): no preview de browser não há CLI —

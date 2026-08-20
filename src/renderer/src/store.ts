@@ -25,6 +25,7 @@ import {
   transitionGuiStartedAt
 } from './guiActivity'
 import { claimGuiItemId, guiItemId } from './guiItemIdentity'
+import { guiPrunedEvicted, mergeGuiHistoryPage } from './guiHistoryReader'
 import {
   countGuiOutputLines,
   denyLatestPendingGuiTool,
@@ -528,10 +529,14 @@ export interface GuiPaneState {
   /** `gui:create` já foi pedido para este pane nesta janela */
   spawned: boolean
   queued: GuiQueuedMessage | null
+  /** R24.1 — eventos que a poda do anel descartou nesta conversa. `0` = o fio
+   *  começa onde a conversa começou; `> 0` arma a linha-verdade do topo. */
+  prunedEvents: number
 }
 
-/** Transcript local, já sanitizado no main, aberto pela paleta sobre o pane
- * GUI correspondente. É uma leitura efêmera: nunca substitui o fio vivo. */
+/** Transcript local, já sanitizado no main, aberto pela paleta — ou pelo
+ * próprio pane (R24.2) — sobre o pane GUI correspondente. É uma leitura
+ * efêmera: nunca substitui o fio vivo. */
 export interface GuiHistoryTarget {
   paneId: string
   sessionId: string
@@ -540,6 +545,11 @@ export interface GuiHistoryTarget {
   targetMessageId: string
   targetCursor: number
   truncated: boolean
+  /** R24.3 — ficou conversa fora desta página. Só o alvo aberto PELO PANE os
+   *  define: o alvo da paleta pode ser de outra conversa, e paginar a partir
+   *  dele leria o transcript errado. Ausente = sem paginação nesta leitura. */
+  hasMoreBefore?: boolean
+  hasMoreAfter?: boolean
 }
 
 export const EMPTY_GUI_PANE: GuiPaneState = {
@@ -574,7 +584,8 @@ export const EMPTY_GUI_PANE: GuiPaneState = {
   exitCode: null,
   turnHadText: false,
   spawned: false,
-  queued: null
+  queued: null,
+  prunedEvents: 0
 }
 
 function safeGuiItemAttachments(value: unknown): GuiAttachmentDescriptor[] | undefined {
@@ -843,6 +854,16 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
 
     case 'session-id':
       return { ...state, sessionId: evt.sessionId }
+
+    case 'history-pruned': {
+      // R24.1 — o anel do main descartou os eventos mais antigos: o fio na
+      // tela começa DEPOIS do começo da conversa. Só cresce (o replay traz a
+      // contagem afinada; o aviso ao vivo, a primeira notícia) e só o
+      // `conversation-cleared` zera, porque ali a conversa é outra.
+      const evicted = guiPrunedEvicted(evt)
+      if (evicted === null || evicted <= state.prunedEvents) return state
+      return { ...state, prunedEvents: evicted }
+    }
 
     case 'executor-changed':
       return {
@@ -1753,6 +1774,17 @@ interface SynkoraState {
   guiHistoryTarget: GuiHistoryTarget | null
   showGuiHistoryTarget: (target: GuiHistoryTarget) => void
   clearGuiHistoryTarget: (paneId?: string) => void
+  /** R24.3 — a página que acabou de chegar entra na leitura aberta (dedupe por
+   *  id+cursor). Só a ponta pedida atualiza seu "tem mais": a página anterior
+   *  não sabe nada sobre o que existe DEPOIS do que já está na tela. */
+  appendGuiHistoryPage: (
+    paneId: string,
+    page: {
+      direction: 'before' | 'after'
+      messages: HistoryTranscriptMessage[]
+      hasMore: boolean
+    }
+  ) => void
   /** evento vivo do canal `gui:live` (payload cru — o redutor valida) */
   handleGuiLive: (paneId: string, evt: unknown) => void
   /** remontagem: refaz o estado do zero a partir do ring buffer do main */
@@ -2177,6 +2209,22 @@ export const useStore = create<SynkoraState>((set, get) => ({
         ? {}
         : { guiHistoryTarget: null }
     ),
+  appendGuiHistoryPage: (paneId, page) =>
+    set((state) => {
+      const target = state.guiHistoryTarget
+      // Leitura trocada no meio da viagem (o dono fechou ou abriu outra): a
+      // página chega tarde e não ressuscita nada.
+      if (!target || target.paneId !== paneId) return {}
+      return {
+        guiHistoryTarget: {
+          ...target,
+          messages: mergeGuiHistoryPage(target.messages, page.messages),
+          ...(page.direction === 'before'
+            ? { hasMoreBefore: page.hasMore }
+            : { hasMoreAfter: page.hasMore })
+        }
+      }
+    }),
 
   handleGuiLive: (paneId, raw) =>
     set((s) => {

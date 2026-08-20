@@ -674,6 +674,26 @@ function guiTranscriptCheckpoint(evt: SessionEvent): boolean {
 }
 
 /**
+ * A PODA FALA (R24.1) — ESPELHO DECLARADO main↔renderer.
+ *
+ * O par deste evento mora em `src/renderer/src/guiApi.ts` (união
+ * `GuiSessionEvent`, kind `history-pruned`) e o redutor em `store.ts`. Ele NÃO
+ * é um `SessionEvent` de backend: nasce aqui, no registro, e nunca entra no
+ * anel — senão a fotografia persistida guardaria a notícia e o replay a
+ * duplicaria. Quem o publica é `state()` (na remontagem) e `publish()` (uma
+ * vez, na primeira poda ao vivo).
+ */
+export interface GuiHistoryPrunedEvent {
+  type: 'history-pruned'
+  /** Quantos eventos o anel já descartou nesta conversa. Sempre > 0. */
+  evicted: number
+}
+
+export function guiHistoryPrunedEvent(evicted: number): GuiHistoryPrunedEvent {
+  return { type: 'history-pruned', evicted }
+}
+
+/**
  * Buffer circular por pane. O renderer remonta (troca de aba, reload da view)
  * e pede `gui:state` — sem isto a conversa nasceria vazia com a sessão viva.
  * Dois tetos independentes protegem o replay: contagem e bytes serializados.
@@ -692,17 +712,24 @@ export class GuiEventRing {
   private stickyBytes = 0
   private interactionBytes = 0
   private nextSeq = 0
+  /** R24.1 — quantos eventos a poda já descartou NESTA conversa. O anel
+   *  degradava em silêncio desde 2026-08-15: o fio remontado nascia cortado e
+   *  nada dizia que houve mais antes. */
+  private evicted = 0
   private readonly cap: number
   private readonly byteCap: number
 
   constructor(
     cap: number = GUI_RING_CAP,
     byteCap: number = GUI_RING_BYTE_CAP,
-    initialCursor = 0
+    initialCursor = 0,
+    initialEvicted = 0
   ) {
     this.cap = cap > 0 ? cap : GUI_RING_CAP
     this.byteCap = byteCap > 0 ? byteCap : GUI_RING_BYTE_CAP
     this.nextSeq = Number.isSafeInteger(initialCursor) && initialCursor > 0 ? initialCursor : 0
+    this.evicted =
+      Number.isSafeInteger(initialEvicted) && initialEvicted > 0 ? initialEvicted : 0
   }
 
   push(evt: unknown): number {
@@ -786,12 +813,21 @@ export class GuiEventRing {
         this.bytes + this.stickyBytes + this.interactionBytes > this.byteCap)
     ) {
       const removed = this.items.shift()
-      if (removed) this.bytes -= removed.size
+      if (removed) {
+        this.bytes -= removed.size
+        this.evicted += 1
+      }
     }
   }
 
   get size(): number {
     return this.items.length + this.sticky.size + this.interactions.size
+  }
+
+  /** Total descartado pela poda na vida desta conversa. `0` = o fio na tela
+   *  começa onde a conversa começou. */
+  get evictedCount(): number {
+    return this.evicted
   }
 
   snapshot(): unknown[] {
@@ -846,6 +882,9 @@ export class GuiEventRing {
     this.bytes = 0
     this.stickyBytes = 0
     this.interactionBytes = 0
+    // A conversa é OUTRA (é isso que o /clear significa): a poda da anterior
+    // não pode continuar dizendo que o começo desta saiu da tela.
+    this.evicted = 0
     if (!preserveCursor) this.nextSeq = 0
   }
 }
@@ -1114,6 +1153,10 @@ export interface GuiPersistedTranscript {
   events: unknown[]
   cursor: number
   updatedAt: string
+  /** R24.1 — eventos que a poda descartou antes desta fotografia. Ausente =
+   *  gravado antes do contrato novo (ou nada foi descartado): o fio remontado
+   *  não afirma nada, que é a verdade que ele tem. */
+  evicted?: number
 }
 
 interface GuiSessionsDoc {
@@ -1171,10 +1214,20 @@ function sanitizeGuiTranscripts(value: unknown): {
       continue
     }
     if (events.length !== record['events'].length) changed = true
+    // O teto de hidratação também é poda: o que ele corta aqui soma ao que o
+    // anel já tinha descartado, senão o fio voltaria do disco dizendo que
+    // começa no começo.
+    const persistedEvicted = record['evicted']
+    const evicted =
+      (Number.isSafeInteger(persistedEvicted) && (persistedEvicted as number) > 0
+        ? (persistedEvicted as number)
+        : 0) +
+      (record['events'].length - events.length)
     transcripts[paneId] = {
       events,
       cursor: record['cursor'] as number,
-      updatedAt: record['updatedAt']
+      updatedAt: record['updatedAt'],
+      ...(evicted > 0 ? { evicted } : {})
     }
   }
   return { transcripts, changed }
@@ -1647,6 +1700,20 @@ export class GuiSessionRegistry {
     return this.panes.get(paneId)?.spawn.projectId
   }
 
+  /**
+   * ONDE O CLI GRAVA O TRANSCRIPT DESTE PANE VIVO (R24.2). O leitor da conversa
+   * completa precisa do par cwd+configDir junto: o caminho do arquivo do claude
+   * é o slug do cwd DENTRO do config dir do seat, então ler um sem o outro
+   * acharia o arquivo de outra conta. undefined = pane sem sessão viva — quem
+   * chama cai no registro persistido em vez de adivinhar.
+   */
+  transcriptSourceOf(
+    paneId: string
+  ): { cli: 'claude' | 'codex'; cwd: string; configDir: string } | undefined {
+    const spawn = this.panes.get(paneId)?.spawn
+    return spawn ? { cli: spawn.cli, cwd: spawn.cwd, configDir: spawn.configDir } : undefined
+  }
+
   create(input: GuiPaneSpawn, queuedToken?: symbol): GuiResult {
     if (!input.paneId) return { ok: false, error: 'pane sem identificador' }
     const queuedLock = this.queuedDeliveries.get(input.paneId)
@@ -1710,6 +1777,9 @@ export class GuiSessionRegistry {
     // antes de a entrada existir no Map).
     const token = { alive: true }
     let replaySawReady = false
+    // R24.1 — o anel pode já vir podado (respawn/hidratação): ali a verdade
+    // chega pelo replay do `state`, não por um aviso ao vivo repetido.
+    let evictionAnnounced = ring.evictedCount
     const alertSequencer = new GuiAlertSequencer()
     let terminalFlushQueued = false
     let pendingTerminal: SessionEvent[] = []
@@ -1738,6 +1808,19 @@ export class GuiSessionRegistry {
       // Assim o histórico é durável sem escrever disco por token/tool-start.
       if (guiTranscriptCheckpoint(visibleEvt)) this.saveTranscript(spawn.paneId, ring)
       this.deps.push({ paneId: spawn.paneId, seq, evt: visibleEvt })
+      // A PRIMEIRA PODA DESTA CONVERSA (R24.1). Uma notícia só: o que a linha
+      // do topo precisa é a VERDADE "há mais antes", e o número exato volta
+      // afinado no próximo replay. O `seq` é o do anel (posterior ao evento
+      // que causou a poda), então a notícia nunca é descartada como atrasada
+      // pela janela de buffer da remontagem.
+      if (ring.evictedCount > 0 && evictionAnnounced === 0) {
+        evictionAnnounced = ring.evictedCount
+        this.deps.push({
+          paneId: spawn.paneId,
+          seq: ring.cursor,
+          evt: guiHistoryPrunedEvent(ring.evictedCount)
+        })
+      }
       const alertKind = alertSequencer.accept(visibleEvt, seq)
       if (alertKind) {
         this.deps.onChatAlert?.({
@@ -2944,24 +3027,23 @@ export class GuiSessionRegistry {
     return forgotten
   }
 
-  /** Replay da remontagem: o que o pane perdeu enquanto estava desmontado. */
+  /**
+   * Replay da remontagem: o que o pane perdeu enquanto estava desmontado.
+   *
+   * R24.1 — quando a poda já comeu o começo, o replay ABRE dizendo isso. O
+   * evento sintético vai com `seq: 0` de propósito: ele é anterior a tudo, não
+   * é terminal (não entra em recibo de apresentação) e nunca ocupa um seq real.
+   */
   state(paneId: string): GuiStatePayload {
-    const entry = this.panes.get(paneId)
-    if (!entry) {
-      const ring = this.restoreTranscript(paneId)
-      if (!ring) return { events: [], cursor: 0, exists: false, alive: false }
-      return {
-        events: ring.sequencedSnapshot(),
-        cursor: ring.cursor,
-        exists: true,
-        alive: false
-      }
-    }
+    const ring = this.panes.get(paneId)?.ring ?? this.restoreTranscript(paneId)
+    if (!ring) return { events: [], cursor: 0, exists: false, alive: false }
+    const pruned: GuiSequencedEvent[] =
+      ring.evictedCount > 0 ? [{ seq: 0, evt: guiHistoryPrunedEvent(ring.evictedCount) }] : []
     return {
-      events: entry.ring.sequencedSnapshot(),
-      cursor: entry.ring.cursor,
+      events: [...pruned, ...ring.sequencedSnapshot()],
+      cursor: ring.cursor,
       exists: true,
-      alive: entry.session.alive
+      alive: this.panes.get(paneId)?.session.alive ?? false
     }
   }
 
@@ -3104,7 +3186,15 @@ export class GuiSessionRegistry {
     // permite recolocar a janela no mesmo intervalo e manter o próximo evento
     // estritamente posterior para quem já está ouvindo o pane.
     const initialCursor = Math.max(0, transcript.cursor - events.length)
-    const ring = new GuiEventRing(GUI_RING_CAP, GUI_RING_BYTE_CAP, initialCursor)
+    // Só o que a PODA levou entra na conta (o descarte por contrato, logo
+    // acima, tira eventos de qualquer posição — dizer que "o começo saiu da
+    // tela" por causa dele seria inventar uma verdade que não é a mesma).
+    const ring = new GuiEventRing(
+      GUI_RING_CAP,
+      GUI_RING_BYTE_CAP,
+      initialCursor,
+      transcript.evicted ?? 0
+    )
     for (const event of events) ring.push(event)
     return ring.size > 0 ? ring : null
   }
@@ -3118,7 +3208,8 @@ export class GuiSessionRegistry {
     transcripts[paneId] = {
       events: ring.snapshot(),
       cursor: ring.cursor,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      ...(ring.evictedCount > 0 ? { evicted: ring.evictedCount } : {})
     }
     pruneGuiTranscripts(transcripts, paneId)
     if (!this.deps.storeFile) {

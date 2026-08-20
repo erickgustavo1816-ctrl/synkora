@@ -283,6 +283,11 @@ export type GuiSessionEvent =
     }
   | { type: 'fatal'; text: string }
   | { type: 'closed'; code: number | null }
+  /** R24.1 — A PODA FALA. Evento SINTÉTICO do registro (espelho declarado:
+   *  `GuiHistoryPrunedEvent` em src/main/guiSessions.ts), nunca do CLI: o anel
+   *  do pane descartou os eventos mais antigos e o fio na tela começa DEPOIS do
+   *  começo da conversa. Chega no replay da remontagem e uma vez ao vivo. */
+  | { type: 'history-pruned'; evicted: number }
 
 // ————— leitura defensiva do rascunho de plano —————
 //

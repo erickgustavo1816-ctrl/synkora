@@ -77,6 +77,12 @@ import {
 } from '../src/renderer/src/guiToolPresentation.ts'
 import { nestGuiSubagentTools } from '../src/renderer/src/guiSubagentPresentation.ts'
 import { normalizeGuiSubagentSidebar } from '../src/renderer/src/guiSubagentSidebar.ts'
+import {
+  guiHistoryPageRequest,
+  guiPrunedEvicted,
+  guiPrunedNoticeText,
+  mergeGuiHistoryPage
+} from '../src/renderer/src/guiHistoryReader.ts'
 import { guiBackgroundWorkPresentation } from '../src/renderer/src/guiBackgroundWorkPresentation.ts'
 import { asGuiEvent } from '../src/renderer/src/guiApi.ts'
 import {
@@ -4035,4 +4041,72 @@ test('paste grande não desloca o overlay de menções: a caixa fica, o conteúd
     'utf8'
   )
   assert.match(pane, /spellCheck=\{false\}/u, 'composer sem corretor ortográfico')
+})
+
+// R24 — HISTÓRICO COMPLETO. O anel do pane poda por espaço e o fio remontado
+// nascia cortado em silêncio ("subo, subo, e acaba"). A linha-verdade do topo
+// diz que houve mais antes e abre o LEITOR pelo mesmo GuiHistoryTarget da
+// paleta; a leitura pagina por faixa de bytes, sem tocar nos tetos do anel.
+test('R24.1 — a linha-verdade do topo só existe com poda e nomeia a receita', () => {
+  assert.equal(guiPrunedEvicted({ type: 'history-pruned', evicted: 12 }), 12)
+  assert.equal(guiPrunedEvicted({ type: 'history-pruned', evicted: 0 }), null)
+  assert.equal(guiPrunedEvicted({ type: 'history-pruned', evicted: -3 }), null)
+  assert.equal(guiPrunedEvicted({ type: 'history-pruned', evicted: '12' }), null)
+  assert.equal(guiPrunedEvicted({ type: 'history-pruned' }), null)
+  assert.equal(guiPrunedEvicted({ type: 'text', text: 'oi' }), null)
+
+  assert.match(guiPrunedNoticeText(12), /começo desta conversa saiu da tela/u)
+  assert.match(guiPrunedNoticeText(12), /12 eventos antigos/u)
+  assert.match(guiPrunedNoticeText(1), /1 evento antigo/u, 'singular não vira "1 eventos"')
+
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  const mirror = readFileSync(new URL('../src/renderer/src/guiApi.ts', import.meta.url), 'utf8')
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  // Espelho declarado main↔renderer do evento sintético.
+  assert.match(mirror, /type: 'history-pruned'; evicted: number/u)
+  assert.match(store, /prunedEvents: number/u)
+  assert.match(store, /prunedEvents: 0/u, 'o pane vazio nasce sem poda')
+  assert.match(store, /case 'history-pruned':/u)
+  // A linha aparece SÓ com poda — e o pane somente-leitura também a mostra.
+  assert.match(pane, /gui\.prunedEvents > 0 &&/u)
+  assert.match(pane, /guiPrunedNoticeText\(gui\.prunedEvents\)/u)
+  assert.match(pane, /ver conversa completa/u)
+  assert.match(css, /\.gui-thread-pruned\b/u)
+})
+
+test('R24.3 — a paginação junta páginas sem duplicar e pede a faixa pelo cursor', () => {
+  const page = (id, cursor, text) => ({ id, cursor, role: 'user', text })
+  const current = [page('b', 200, 'b'), page('c', 300, 'c')]
+  const older = [page('a', 100, 'a'), page('b', 200, 'b')]
+  assert.deepEqual(
+    mergeGuiHistoryPage(current, older).map((message) => message.id),
+    ['a', 'b', 'c'],
+    'dedupe por id+cursor e ordem pelo cursor (offset de byte da linha)'
+  )
+  // Mesma id em cursor diferente é outra linha do arquivo: as duas ficam.
+  assert.equal(mergeGuiHistoryPage(current, [page('c', 350, 'c bis')]).length, 3)
+  assert.equal(mergeGuiHistoryPage([], []).length, 0)
+
+  assert.deepEqual(guiHistoryPageRequest(current, 'before'), { before: 200 })
+  assert.deepEqual(guiHistoryPageRequest(current, 'after'), { after: 300 })
+  assert.equal(guiHistoryPageRequest([], 'before'), null, 'sem fala não há faixa a pedir')
+
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  const preload = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8')
+  assert.match(preload, /loadForPane:/u)
+  assert.match(store, /appendGuiHistoryPage:/u)
+  assert.match(store, /hasMoreBefore\?: boolean/u)
+  // O leitor abre pelo MESMO alvo da paleta — nenhum overlay novo.
+  assert.match(pane, /showGuiHistoryTarget\(/u)
+  assert.match(pane, /carregar mais antigas/u)
+  assert.match(pane, /carregar mais novas/u)
 })

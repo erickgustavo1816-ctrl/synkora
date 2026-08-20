@@ -65,13 +65,35 @@ export const HISTORY_SEARCH_LIMITS: Readonly<HistorySearchLimits> = {
 
 export type HistoryLimitReason = 'arquivos' | 'bytes' | 'tempo' | 'resultados'
 
-export interface LocalHistoryLocator {
+/**
+ * O ARQUIVO de uma conversa, sem âncora nenhuma. É o que o leitor por pane
+ * (R24.2 — historySessionReader.ts) resolve a partir de provider+sessionId; o
+ * locator da paleta é este endereço MAIS a fala exata que o hit apontou.
+ */
+export interface HistorySessionFile {
   file: string
   configDir: string
   provider: HistoryProvider
   sessionId: string
+}
+
+export interface LocalHistoryLocator extends HistorySessionFile {
   messageId: string
   cursor: number
+}
+
+const CODEX_THREAD_PREFIX = 'codex-thread:'
+
+/**
+ * O id como o DISCO o conhece: o pane do codex guarda `codex-thread:<uuid>` (a
+ * convenção da casa, que distingue thread de sessão do claude no mesmo campo),
+ * e o rollout no disco só tem o uuid. Precedente exato do mesmo corte:
+ * `codexHelperThreadId` (guiDelegationWiring.ts) e `spawnSession`
+ * (guiSessions.ts). Sem ele, um binding de codex NUNCA casa com o transcript.
+ */
+export function historySessionIdOf(sessionId: string): string {
+  const clean = sessionId.trim()
+  return clean.startsWith(CODEX_THREAD_PREFIX) ? clean.slice(CODEX_THREAD_PREFIX.length) : clean
 }
 
 export interface LocalHistoryMatch {
@@ -116,6 +138,10 @@ export interface LocalHistoryTranscriptResult {
   targetMessageId?: string
   targetCursor?: number
   truncated?: boolean
+  /** R24.3 — ficou fala FORA desta página (bytes antes/depois da janela lida
+   *  ou falas cortadas pelos tetos). É o que arma "carregar mais antigas/novas". */
+  hasMoreBefore?: boolean
+  hasMoreAfter?: boolean
   error?: string
 }
 
@@ -128,7 +154,9 @@ interface Candidate {
   sessionId?: string
 }
 
-interface ParsedMessage {
+/** @internal Fala visível ANTES de virar contrato de IPC (guarda o cursor de
+ *  byte). Compartilhado com historySessionReader.ts. */
+export interface ParsedMessage {
   id: string
   cursor: number
   role: HistoryMessageRole
@@ -136,12 +164,31 @@ interface ParsedMessage {
   at?: string
 }
 
-interface ReadJsonlResult {
+/** @internal Compartilhado com historySessionReader.ts. */
+export interface ReadJsonlResult {
   lines: Array<{ value: unknown; cursor: number }>
   truncated: boolean
+  /** Faixa REALMENTE lida do arquivo e o tamanho dele — a paginação por bytes
+   *  (R24.3) pergunta daqui se sobrou arquivo antes/depois da janela. */
+  start: number
+  end: number
+  size: number
 }
 
-interface SearchBudget {
+/**
+ * Faixa de bytes pedida ao `readJsonl`. Ausente = o rabo do arquivo, que é o
+ * comportamento histórico da busca. `prefer` decide qual ponta sobrevive
+ * quando a faixa é maior que o teto por arquivo: 'head' para a página que
+ * COMEÇA num cursor, 'tail' para a que TERMINA nele.
+ */
+export interface HistoryByteRange {
+  from?: number
+  to?: number
+  prefer?: 'head' | 'tail'
+}
+
+/** @internal Orçamento compartilhado com historySessionReader.ts. */
+export interface SearchBudget {
   limits: HistorySearchLimits
   deadline: number
   signal?: AbortSignal
@@ -151,7 +198,8 @@ interface SearchBudget {
   softTruncated: boolean
 }
 
-function limitsOf(input?: Partial<HistorySearchLimits>): HistorySearchLimits {
+/** @internal Compartilhado com historySessionReader.ts. */
+export function limitsOf(input?: Partial<HistorySearchLimits>): HistorySearchLimits {
   const positive = (value: number | undefined, fallback: number): number =>
     Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : fallback
   return {
@@ -182,6 +230,12 @@ function budgetStopped(budget: SearchBudget): boolean {
   return Boolean(budget.limitReason)
 }
 
+/** Offset de byte vindo de fora (cursor de uma fala) nunca escapa do arquivo. */
+function clampOffset(value: number, size: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0) return 0
+  return Math.min(value, size)
+}
+
 function normalizedPath(value: string): string {
   return resolve(value).replace(/[\\/]+/g, '/').replace(/\/$/u, '').toLowerCase()
 }
@@ -192,7 +246,9 @@ function pathContains(root: string, child: string): boolean {
   return value === base || value.startsWith(`${base}/`)
 }
 
-function claudeSlug(cwd: string): string {
+/** @internal Compartilhado com historySessionReader.ts (o caminho DIRETO do
+ *  transcript do claude: `<configDir>/projects/<slug(cwd)>/<sessionId>.jsonl`). */
+export function claudeSlug(cwd: string): string {
   return cwd.replace(/[^A-Za-z0-9]/g, '-')
 }
 
@@ -213,7 +269,10 @@ function boundedStringOf(value: unknown, maxLength = 512): string | undefined {
 
 const PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u
 
-function safeProviderId(value: unknown): string | undefined {
+/** @internal Compartilhado com historySessionReader.ts — id que vira NOME DE
+ *  ARQUIVO nunca pode conter caminho (a regex não aceita `/`, `\` nem começar
+ *  com ponto). */
+export function safeProviderId(value: unknown): string | undefined {
   const text = boundedStringOf(value, 160)
   if (!text || !PROVIDER_ID_RE.test(text)) return undefined
   return redactSensitiveText(text) === text ? text : undefined
@@ -337,7 +396,10 @@ function snippetFor(text: string, normalizedQuery: string): string {
   return `${start > 0 ? '…' : ''}${oneLine.slice(start, end)}${end < oneLine.length ? '…' : ''}`
 }
 
-async function safeRegularFile(path: string): Promise<{ size: number; mtime: number } | null> {
+/** @internal Compartilhado com historySessionReader.ts. */
+export async function safeRegularFile(
+  path: string
+): Promise<{ size: number; mtime: number } | null> {
   try {
     const stat = await fs.lstat(path)
     if (!stat.isFile() || stat.isSymbolicLink()) return null
@@ -347,7 +409,8 @@ async function safeRegularFile(path: string): Promise<{ size: number; mtime: num
   }
 }
 
-async function safeDirectoryEntries(
+/** @internal Compartilhado com historySessionReader.ts. */
+export async function safeDirectoryEntries(
   path: string,
   budget: SearchBudget,
   maxEntries = 2_048
@@ -427,7 +490,13 @@ async function discoverClaudeCandidates(
   }
 }
 
-async function codexDateDirectories(root: string, budget: SearchBudget): Promise<string[]> {
+/** @internal Compartilhado com historySessionReader.ts (varredura BOUNDED por
+ *  data — é o único caminho até um rollout do codex, que não tem caminho
+ *  determinístico como o do claude). */
+export async function codexDateDirectories(
+  root: string,
+  budget: SearchBudget
+): Promise<string[]> {
   const result: string[] = []
   const years = (await safeDirectoryEntries(join(root, 'sessions'), budget, 128))
     .filter((entry) => entry.isDirectory() && /^\d{4}$/u.test(entry.name))
@@ -512,10 +581,12 @@ function parseJsonLine(buffer: Buffer): unknown | undefined {
   }
 }
 
-async function readJsonl(
+/** @internal Compartilhado com historySessionReader.ts. */
+export async function readJsonl(
   file: string,
   budget: SearchBudget,
-  countFile = true
+  countFile = true,
+  range?: HistoryByteRange
 ): Promise<ReadJsonlResult | null> {
   if (budgetStopped(budget)) return null
   if (countFile) {
@@ -532,9 +603,17 @@ async function readJsonl(
     budget.limitReason ??= 'bytes'
     return null
   }
-  const length = Math.min(stat.size, budget.limits.maxBytesPerFile, remaining)
-  if (length <= 0) return { lines: [], truncated: stat.size > 0 }
-  const start = Math.max(0, stat.size - length)
+  // A FAIXA (R24.3). Sem `range` isto é exatamente o rabo de sempre: a busca
+  // continua lendo os últimos bytes do arquivo inteiro.
+  const rangeEnd = clampOffset(range?.to ?? stat.size, stat.size)
+  const rangeStart = Math.min(clampOffset(range?.from ?? 0, stat.size), rangeEnd)
+  const span = rangeEnd - rangeStart
+  const length = Math.min(span, budget.limits.maxBytesPerFile, remaining)
+  if (length <= 0) {
+    return { lines: [], truncated: stat.size > 0, start: rangeStart, end: rangeStart, size: stat.size }
+  }
+  const start = range?.prefer === 'head' ? rangeStart : rangeEnd - length
+  const end = start + length
   let handle: import('fs/promises').FileHandle | undefined
   try {
     handle = await fs.open(file, 'r')
@@ -546,7 +625,9 @@ async function readJsonl(
     let base = start
     if (start > 0) {
       const firstNewline = view.indexOf(0x0a)
-      if (firstNewline < 0) return { lines: [], truncated: true }
+      if (firstNewline < 0) {
+        return { lines: [], truncated: true, start, end, size: stat.size }
+      }
       view = view.subarray(firstNewline + 1)
       base += firstNewline + 1
     }
@@ -566,7 +647,7 @@ async function readJsonl(
     if (stat.size > length && budget.scannedBytes >= budget.limits.maxBytes) {
       budget.limitReason ??= 'bytes'
     }
-    return { lines, truncated: start > 0 }
+    return { lines, truncated: start > 0 || end < stat.size, start, end, size: stat.size }
   } catch {
     return null
   } finally {
@@ -634,7 +715,8 @@ function codexMeta(lines: readonly { value: unknown }[]): {
   return { subagent: false }
 }
 
-function sessionIdFromCodexFilename(file: string): string | undefined {
+/** @internal Compartilhado com historySessionReader.ts. */
+export function sessionIdFromCodexFilename(file: string): string | undefined {
   return basename(file).match(
     /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/iu
   )?.[1]
@@ -707,12 +789,74 @@ function bindingMap(values: readonly HistorySessionBinding[]): Map<string, Histo
   const result = new Map<string, HistorySessionBinding>()
   for (const value of values) {
     if (!value.sessionId) continue
-    const current = result.get(value.sessionId)
+    // O índice compara com o id que o TRANSCRIPT tem (o uuid cru): um binding
+    // de codex chega como `codex-thread:<uuid>` e, sem este corte, nunca casa
+    // — o hit sai sem pane, sem rótulo e sem `canMount`. O ponto de origem
+    // (ipc/history.ts, `addBinding`) já normaliza; aqui é a rede do módulo.
+    const sessionId = historySessionIdOf(value.sessionId)
+    if (!sessionId) continue
+    const current = result.get(sessionId)
     if (!current || (!current.paneId && value.paneId) || (!current.missionId && value.missionId)) {
-      result.set(value.sessionId, value)
+      result.set(sessionId, { ...value, sessionId })
     }
   }
   return result
+}
+
+/**
+ * Linhas cruas → falas visíveis, já redigidas e deduplicadas. É a ÚNICA porta
+ * entre o JSONL e qualquer coisa que cruze IPC (busca, leitor da paleta e
+ * leitor por pane).
+ *
+ * @internal Compartilhado com historySessionReader.ts.
+ */
+export function visibleHistoryMessages(
+  provider: HistoryProvider,
+  lines: readonly { value: unknown; cursor: number }[],
+  limits: HistorySearchLimits,
+  preferred?: { id: string; cursor: number }
+): ParsedMessage[] {
+  return dedupeMessages(
+    lines
+      .map(({ value, cursor }) =>
+        extractVisibleHistoryMessage(provider, value, cursor, limits.maxMessageChars)
+      )
+      .filter((message): message is ParsedMessage => Boolean(message)),
+    preferred
+  )
+}
+
+/** @internal Fala já pronta para o IPC. Compartilhado com historySessionReader.ts. */
+export function historyTranscriptMessage(message: ParsedMessage): HistoryTranscriptMessage {
+  return {
+    id: message.id,
+    cursor: message.cursor,
+    role: message.role,
+    text: message.text,
+    ...(message.at ? { at: message.at } : {})
+  }
+}
+
+/**
+ * O teto de TEXTO da página. `fromEnd` decide de que ponta ele corta: a página
+ * ancorada no FIM precisa preservar as últimas falas, a do começo as primeiras.
+ *
+ * @internal Compartilhado com historySessionReader.ts.
+ */
+export function historyVisibleWindow(
+  window: readonly ParsedMessage[],
+  limits: HistorySearchLimits,
+  fromEnd = false
+): ParsedMessage[] {
+  const ordered = fromEnd ? [...window].reverse() : window
+  const visible: ParsedMessage[] = []
+  let chars = 0
+  for (const message of ordered) {
+    if (chars + message.text.length > limits.maxTranscriptChars && visible.length > 0) break
+    visible.push(message)
+    chars += message.text.length
+  }
+  return fromEnd ? visible.reverse() : visible
 }
 
 export async function searchLocalHistory(
@@ -777,13 +921,7 @@ export async function searchLocalHistory(
     }
     if (!sessionId) continue
     const binding = bindingFor(sessionId, scope, bindings)
-    const parsed = dedupeMessages(
-      read.lines
-        .map(({ value, cursor }) =>
-          extractVisibleHistoryMessage(candidate.provider, value, cursor, limits.maxMessageChars)
-        )
-        .filter((message): message is ParsedMessage => Boolean(message))
-    )
+    const parsed = visibleHistoryMessages(candidate.provider, read.lines, limits)
     for (const message of parsed) {
       if (budgetStopped(budget)) break
       if (!normalizedSearchText(message.text).includes(normalizedQuery)) continue
@@ -826,8 +964,10 @@ export async function searchLocalHistory(
   }
 }
 
-/** Revalidação de contenção usada pelo IPC antes de honrar um selectionId. */
-export async function localHistoryLocatorIsSafe(locator: LocalHistoryLocator): Promise<boolean> {
+/** Revalidação de contenção usada pelo IPC antes de honrar um selectionId — e
+ *  também antes de abrir o transcript do próprio pane (R24.2): a régua de
+ *  contenção é UMA só, e ela só olha arquivo + config dir. */
+export async function localHistoryLocatorIsSafe(locator: HistorySessionFile): Promise<boolean> {
   try {
     const [root, file, stat] = await Promise.all([
       fs.realpath(locator.configDir),
@@ -861,15 +1001,11 @@ export async function loadLocalHistoryTranscript(
   if (!read || options.signal?.aborted) {
     return { ok: false, error: 'não consegui carregar essa conversa antiga agora' }
   }
-  const messages = dedupeMessages(
-    read.lines
-      .map(({ value, cursor }) =>
-        extractVisibleHistoryMessage(locator.provider, value, cursor, limits.maxMessageChars)
-      )
-      .filter((message): message is ParsedMessage => Boolean(message)),
-    { id: locator.messageId, cursor: locator.cursor }
-  )
-  let targetIndex = messages.findIndex(
+  const messages = visibleHistoryMessages(locator.provider, read.lines, limits, {
+    id: locator.messageId,
+    cursor: locator.cursor
+  })
+  const targetIndex = messages.findIndex(
     (message) => message.id === locator.messageId && message.cursor === locator.cursor
   )
   if (targetIndex < 0) {
@@ -882,29 +1018,11 @@ export async function loadLocalHistoryTranscript(
   const half = Math.floor(limits.maxTranscriptMessages / 2)
   const start = Math.max(0, Math.min(targetIndex - half, messages.length - limits.maxTranscriptMessages))
   const window = messages.slice(start, start + limits.maxTranscriptMessages)
-  let chars = 0
-  const visible: HistoryTranscriptMessage[] = []
-  for (const message of window) {
-    if (chars + message.text.length > limits.maxTranscriptChars && visible.length > 0) break
-    visible.push({
-      id: message.id,
-      cursor: message.cursor,
-      role: message.role,
-      text: message.text,
-      ...(message.at ? { at: message.at } : {})
-    })
-    chars += message.text.length
-  }
+  const visible = historyVisibleWindow(window, limits).map(historyTranscriptMessage)
   const target = messages[targetIndex]
   if (!visible.some((message) => message.id === target.id && message.cursor === target.cursor)) {
     // O teto textual nunca pode cortar justamente o alvo prometido.
-    visible.push({
-      id: target.id,
-      cursor: target.cursor,
-      role: target.role,
-      text: target.text,
-      ...(target.at ? { at: target.at } : {})
-    })
+    visible.push(historyTranscriptMessage(target))
     visible.sort((a, b) => a.cursor - b.cursor)
   }
   return {
@@ -915,7 +1033,12 @@ export async function loadLocalHistoryTranscript(
     targetMessageId: target.id,
     targetCursor: target.cursor,
     truncated:
-      read.truncated || start > 0 || start + window.length < messages.length || visible.length < window.length
+      read.truncated || start > 0 || start + window.length < messages.length || visible.length < window.length,
+    hasMoreBefore: read.start > 0 || start > 0,
+    hasMoreAfter:
+      read.end < read.size ||
+      start + window.length < messages.length ||
+      visible.length < window.length
   }
 }
 
