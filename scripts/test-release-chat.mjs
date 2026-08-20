@@ -213,3 +213,30 @@ test('o spec: missão release mora no worktree da versão', async () => {
   assert.match(ipc, /workspace: 'version-worktree'/u)
   assert.match(ipc, /guiReleaseFirstPrompt/u, 'o briefing pendente é o do release')
 })
+
+// O RELEASE SE AUTO-BLOQUEAVA (incidente do dono, 2026-08-20): a missão
+// "Subir X para a main" é o REGISTRO do próprio release — mas a régua de
+// pendências do releaseVersionImpl contava toda missão ativa da versão,
+// inclusive ela. O release_status (que a exclui por id) dizia "tudo livre" e
+// o release_run recusava por causa da própria missão do botão: deadlock com
+// duas réguas divergentes. A régua vira UMA: missão de RELEASE nunca é
+// pendência de release, por TIPO (cobre também uma release órfã antiga).
+test('a missão de release nunca bloqueia o próprio release — nas DUAS réguas', async () => {
+  const index = await source('src/main/index.ts')
+
+  const impl = index.slice(index.indexOf('async function releaseVersionImpl'))
+  const pending = impl.slice(0, impl.indexOf('NADA pendente sobe junto'))
+  assert.match(
+    pending,
+    /missionTypeOf\(m\) !== 'release'/u,
+    'a régua da máquina exclui o registro do release'
+  )
+
+  const status = index.slice(index.indexOf('releaseStatus: (id) =>'))
+  const statusPending = status.slice(0, status.indexOf('planReleaseLock({'))
+  assert.match(
+    statusPending,
+    /missionTypeOf\(candidate\) !== 'release'/u,
+    'a fotografia lê a MESMA régua, por tipo'
+  )
+})

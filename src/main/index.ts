@@ -55,7 +55,7 @@ import {
   buildGuiDelegationApi,
   createGuiHelperEngine
 } from './guiDelegationWiring'
-import { isGuiMissionPaneId, isGuiPlanningPaneId } from './guiMissionContracts'
+import { isGuiMissionPaneId, isGuiPlanningPaneId, missionTypeOf } from './guiMissionContracts'
 import { initDesktopNotifications } from './desktopNotifications'
 import {
   WINDOWS_TOAST_ACTIVATOR_CLSID,
@@ -3030,7 +3030,16 @@ app.whenReady().then(async () => {
       return `não subi a versão ${version.name}: o worktree dela tem alterações não commitadas. Finalize e valide esse conteúdo antes do release; o journal nunca cria commits escondidos.`
     const pending = missions
       .list(version.projectId)
-      .filter((m) => m.versionId === versionId && (m.status === 'ativa' || m.status === 'integrando'))
+      // Missão de RELEASE é o REGISTRO da própria subida, nunca pendência:
+      // contá-la fazia o release_run recusar por causa da missão do próprio
+      // botão (deadlock de 2026-08-20), enquanto o release_status a excluía
+      // e dizia "tudo livre". A régua é UMA, por tipo.
+      .filter(
+        (m) =>
+          m.versionId === versionId &&
+          missionTypeOf(m) !== 'release' &&
+          (m.status === 'ativa' || m.status === 'integrando')
+      )
     if (pending.length > 0)
       return `a versão ${version.name} ainda tem ${pending.length} missão(ões) em andamento: ${pending
         .map((m) => `"${m.title}"`)
@@ -3589,10 +3598,13 @@ app.whenReady().then(async () => {
         return 'esta conversa não está ligada a uma versão — não há release a consultar.'
       const pendingMissions = missions
         .list(version.projectId)
+        // A MESMA régua do releaseVersionImpl: release não é pendência de
+        // release — por TIPO (cobre também uma release órfã antiga), não só
+        // a missão desta conversa.
         .filter(
           (candidate) =>
             candidate.versionId === version.id &&
-            candidate.id !== mission.id &&
+            missionTypeOf(candidate) !== 'release' &&
             candidate.status !== 'concluida' &&
             candidate.status !== 'arquivada'
         )
