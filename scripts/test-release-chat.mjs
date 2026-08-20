@@ -300,3 +300,39 @@ test('R27 — o chat do release mora na pasta do projeto e o briefing declara o 
   assert.match(prompt, /C:\/proj-prod/u, 'o briefing nomeia a pasta da prod')
   assert.match(prompt, /C:\/wt-v1/u, 'o briefing nomeia onde a versão mora')
 })
+
+// R28 — O RELEASE EMPURRA O REMOTO (incidente do dono, 2026-08-20): uma
+// missão configurou o GitHub do projeto e o subir versão o IGNOROU — a master
+// local ficou 51 commits à frente do origin. Quando o projeto tem remoto, o
+// clique em subir versão É a demanda do push (a doutrina sob-demanda segue
+// valendo para todo o resto); falha de push nunca desfaz o release local e
+// volta nomeada, com a receita.
+test('R28 — a subida empurra o origin, e o status mostra o remoto', async () => {
+  const wt = await source('src/main/worktree.ts')
+  const push = wt.slice(wt.indexOf('export function pushBranchToRemote'))
+  assert.ok(push.length > 30, 'a primitiva existe no worktree (vira verbo do gitOff)')
+  assert.match(push.slice(0, 900), /gitNetwork\(/u, 'push usa o runner de REDE, com credencial e timeout')
+  assert.doesNotMatch(push.slice(0, 900), /--force/u, 'nunca com força')
+
+  const index = await source('src/main/index.ts')
+  const impl = index.slice(index.indexOf('async function releaseVersionImpl'))
+  const implBody = impl.slice(0, impl.indexOf('function sweepProjectFiles'))
+  assert.match(implBody, /pushBranchToRemote/u, 'o push entra no caminho do sucesso')
+  assert.match(implBody, /git push origin/u, 'a falha de push ensina o comando')
+
+  const status = releaseStatusText({
+    version: version(),
+    mainBranch: 'master',
+    versionHead: 'a'.repeat(40),
+    mainHead: 'b'.repeat(40),
+    pendingMissions: [],
+    openBacklogItems: [],
+    planLockMessage: null,
+    integrationPending: [],
+    releaseIntentPending: false,
+    remote: { url: 'https://github.com/x/y.git', ahead: 51 }
+  })
+  assert.match(status, /REMOTE: origin https:\/\/github\.com\/x\/y\.git/u)
+  assert.match(status, /51 commit/u)
+  assert.match(status, /o push acompanha a subida/u)
+})

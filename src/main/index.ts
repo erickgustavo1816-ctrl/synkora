@@ -1,4 +1,4 @@
-import {
+﻿import {
   app,
   BrowserWindow,
   crashReporter,
@@ -24,6 +24,7 @@ import {
   isWorktreeClean,
   isExpectedVersionWorktree,
   pruneWorktrees,
+  remoteAheadOf,
   removeWorktreeAndBranch,
   setGitObserver
 } from './worktree'
@@ -3148,10 +3149,24 @@ app.whenReady().then(async () => {
     backlog.markVersionReleased(versionId)
     emitBacklogChanged(version.projectId)
     syncBoard(version.projectId)
+    // R28 — O REMOTO ACOMPANHA A SUBIDA: projeto com origin configurado tem o
+    // clique em subir versão como A demanda do push (uma missão configurou o
+    // GitHub e o release o ignorava — o dono ficou com o remoto na versão
+    // antiga). Falha de push NUNCA desfaz o release local: ela volta nomeada,
+    // com o comando que resolve na mão.
+    const targetBranch = releaseIntent.targetBranch ?? currentBranch(project.path) ?? 'main'
+    const remote = await gitOff('remoteAheadOf', project.path, targetBranch)
+    let pushLine = ''
+    if (remote) {
+      const pushed = await gitOff('pushBranchToRemote', project.path, targetBranch)
+      pushLine = pushed.ok
+        ? ` · GitHub atualizado (${targetBranch} → origin)`
+        : ` · ATENÇÃO: o push para o origin FALHOU (${pushed.error}) — o release local está completo; rode git push origin ${targetBranch} na pasta do projeto quando o acesso voltar`
+    }
     hub.publish({
       projectId: version.projectId,
       kind: 'merge',
-      text: `versão ${version.name} SUBIU para a ${currentBranch(project.path) ?? 'main'} (${releaseDetail}) — agora é a versão ATUAL do app`,
+      text: `versão ${version.name} SUBIU para a ${currentBranch(project.path) ?? 'main'} (${releaseDetail}) — agora é a versão ATUAL do app${pushLine}`,
       actor
     })
     // a base avançou: missões ativas das OUTRAS versões precisam de sync
@@ -3166,7 +3181,7 @@ app.whenReady().then(async () => {
       })
     }
     clearVersionReleaseIntent(project.path, versionId)
-    return `versão ${version.name} subiu para a main (${releaseDetail}) — é a versão atual`
+    return `versão ${version.name} subiu para a main (${releaseDetail}) — é a versão atual${pushLine}`
   }
 
 
@@ -3635,11 +3650,23 @@ app.whenReady().then(async () => {
           ...(candidate.versionId ? { versionId: candidate.versionId } : {})
         }))
       })
+      const statusMainBranch = currentBranch(project.path) ?? undefined
+      // R28 — leitura LOCAL do origin (get-url + rev-list): mesma classe leve
+      // dos gits síncronos que esta fotografia já faz; nenhuma rede sai daqui.
+      const statusRemote = remoteAheadOf(project.path, statusMainBranch ?? 'main')
       return releaseStatusText({
         version,
-        mainBranch: currentBranch(project.path) ?? undefined,
+        mainBranch: statusMainBranch,
         versionHead: version.worktree ? gitHead(version.worktree) : undefined,
         mainHead: gitHead(project.path),
+        ...(statusRemote
+          ? {
+              remote: {
+                url: statusRemote.url,
+                ...(statusRemote.ahead !== undefined ? { ahead: statusRemote.ahead } : {})
+              }
+            }
+          : {}),
         pendingMissions,
         openBacklogItems: backlog
           .listItems(version.projectId)

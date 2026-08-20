@@ -468,6 +468,62 @@ export function attachGitRemote(projectPath: string, url: string): GitRemoteSetu
   }
 }
 
+/**
+ * R28 — O RELEASE EMPURRA O REMOTO (ordem do dono, 2026-08-20: uma missão
+ * configurou o GitHub do projeto e o subir versão o ignorou; quando há remoto,
+ * o clique em subir versão É a demanda do push — a doutrina sob-demanda segue
+ * valendo para todo o resto). Fast-forward só: o release acabou de avançar a
+ * base local; recusa do remoto volta como texto honesto, nunca vira força.
+ */
+export function pushBranchToRemote(
+  projectPath: string,
+  branch: string
+): { ok: true; detail: string } | { ok: false; error: string } {
+  let remote = ''
+  try {
+    remote = git(projectPath, ['remote', 'get-url', 'origin'])
+  } catch {
+    return { ok: false, error: 'o projeto não tem remoto origin configurado' }
+  }
+  if (!remote) return { ok: false, error: 'o projeto não tem remoto origin configurado' }
+  try {
+    gitNetwork(projectPath, ['push', 'origin', branch])
+    return { ok: true, detail: `origin atualizado (${branch})` }
+  } catch (error) {
+    return { ok: false, error: gitFailureText(error) }
+  }
+}
+
+/**
+ * O remoto do projeto e o quanto a branch local está à frente dele — a
+ * fotografia do release_status. Leitura LOCAL (o ref origin/<branch> do
+ * último fetch/push): nenhuma rede sai daqui. `undefined` = sem remoto;
+ * `ahead: undefined` = o remoto nunca foi buscado (sem tracking ref).
+ */
+export function remoteAheadOf(
+  projectPath: string,
+  branch: string
+): { url: string; ahead: number | undefined } | undefined {
+  let url = ''
+  try {
+    url = git(projectPath, ['remote', 'get-url', 'origin'])
+  } catch {
+    return undefined
+  }
+  if (!url) return undefined
+  let ahead: number | undefined
+  try {
+    const count = Number.parseInt(
+      git(projectPath, ['rev-list', '--count', `origin/${branch}..${branch}`]),
+      10
+    )
+    ahead = Number.isSafeInteger(count) && count >= 0 ? count : undefined
+  } catch {
+    ahead = undefined
+  }
+  return { url, ahead }
+}
+
 /** Pasta do projeto movida/renomeada: o `.git` de cada worktree
  *  (userData/worktrees) aponta para o caminho ANTIGO do repo — `git worktree
  *  repair` rodado do repo no caminho novo reescreve os ponteiros dos dois

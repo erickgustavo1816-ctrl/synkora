@@ -106,6 +106,9 @@ export interface ReleaseStatusInput {
   integrationPending: readonly { title: string; state: string }[]
   /** journal de release de uma tentativa anterior ainda no disco. */
   releaseIntentPending: boolean
+  /** R28 — o remoto do projeto (origin) e o quanto a base local está à frente
+   *  dele. Ausente = projeto sem remoto: a linha nem existe. */
+  remote?: { url: string; ahead?: number }
 }
 
 function shortSha(sha: string | undefined): string {
@@ -152,6 +155,17 @@ export function releaseStatusText(input: ReleaseStatusInput): string {
       : 'BACKLOG ABERTO NA VERSÃO: nenhum.'
   )
   lines.push(input.planLockMessage ? `TRAVA DO PLANO: ${input.planLockMessage}` : 'TRAVA DO PLANO: destravada.')
+  // R28 — o remoto entra na fotografia: o dono configurou um GitHub e o
+  // release o ignorava. O push acompanha a subida; aqui só se diz a verdade.
+  if (input.remote) {
+    const ahead =
+      input.remote.ahead === undefined
+        ? 'distância desconhecida (remoto nunca buscado)'
+        : input.remote.ahead === 0
+          ? 'em dia com a base local'
+          : `base local ${input.remote.ahead} commit(s) à frente`
+    lines.push(`REMOTE: origin ${input.remote.url} · ${ahead} — o push acompanha a subida.`)
+  }
   if (input.releaseIntentPending)
     lines.push('ATENÇÃO: existe um journal de release pendente de uma tentativa anterior.')
   lines.push(`PRÓXIMO PASSO: ${releaseNextStep(input)}`)
