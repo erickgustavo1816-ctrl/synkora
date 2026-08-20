@@ -240,3 +240,26 @@ test('a missão de release nunca bloqueia o próprio release — nas DUAS régua
     'a fotografia lê a MESMA régua, por tipo'
   )
 })
+
+// O QUARTO ELO DA MESMA CORRENTE (2026-08-20, noite): a subida da V1.0 chegou
+// à main, mas a limpeza falhou no meio (o chat do release mora DENTRO do
+// worktree da versão e segura o diretório no Windows) e o desfecho ficou para
+// a reconciliação do boot — que marcava a versão como lançada e limpava o
+// worktree, mas NÃO concluía a missão de release: o board mostrava o release
+// eternamente "rodando". O sinal estrutural é UM: versão provada na base ⇒ o
+// REGISTRO (a missão de release) se conclui — no caminho feliz E no boot.
+test('a reconciliação de boot conclui a missão de release junto com a versão', async () => {
+  const index = await source('src/main/index.ts')
+  const recover = index.slice(index.indexOf('function recoverVersionReleaseIntents'))
+  const block = recover.slice(0, recover.indexOf('async function releaseVersionImpl'))
+  assert.match(
+    block,
+    /missionTypeOf\(m\) === 'release'/u,
+    'a reconciliação encontra o registro da subida'
+  )
+  assert.match(
+    block,
+    /missions\.update\(m\.id, \{ status: 'concluida' \}\)/u,
+    'e o conclui pelo MESMO sinal estrutural do caminho feliz'
+  )
+})

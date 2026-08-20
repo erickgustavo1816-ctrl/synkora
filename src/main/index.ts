@@ -2971,6 +2971,21 @@ app.whenReady().then(async () => {
       if (version.status !== 'lancada') {
         backlog.markVersionReleased(versionId)
       }
+      // O REGISTRO acompanha o fato (o MESMO sinal estrutural do caminho feliz
+      // do runReleaseForChat): com a versão provada na base, a missão de
+      // release não tem mais o que operar. Sem isto, uma subida reconciliada
+      // por boot deixava o release eternamente "rodando" no board (incidente
+      // de 2026-08-20 — a limpeza falha porque o chat do release mora DENTRO
+      // do worktree da versão e segura o diretório no Windows).
+      for (const m of missions.list(projectId)) {
+        if (
+          m.versionId === versionId &&
+          missionTypeOf(m) === 'release' &&
+          (m.status === 'ativa' || m.status === 'integrando')
+        ) {
+          missions.update(m.id, { status: 'concluida' })
+        }
+      }
       emitBacklogChanged(projectId)
       syncBoard(projectId)
       clearVersionReleaseIntent(project.path, versionId)
