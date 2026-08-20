@@ -16,6 +16,7 @@ import type {
 } from '../../preload/index'
 import { applyDeptHueVars, DEPT_HUES_LS_KEY, loadDeptHues } from './departments'
 import { versionPortrait } from './projectLanding'
+import { isReleaseMissionRecord } from './missionCardAccess'
 import {
   guiResultEchoesSpeech,
   guiRoundClosed,
@@ -2112,12 +2113,15 @@ export const useStore = create<SynkoraState>((set, get) => ({
     // MAIN. Aqui fica só a leitura do disco — quando a régua morava neste
     // corpo, o chip de identidade elegia a aberta mais antiga e o dono lia
     // "◈ V1.0" com os números de outra linha ao lado.
-    const { versoes, versaoNaMain } = versionPortrait(versions, missions)
+    // R27 — o registro de release não é missão de superfície: fora do retrato
+    // e do ✦ de ativas (o cabeçalho chegou a contar a própria subida).
+    const surface = missions.filter((m) => !isReleaseMissionRecord(m))
+    const { versoes, versaoNaMain } = versionPortrait(versions, surface)
     set((s) => ({
       homeStats: {
         ...s.homeStats,
         [projectId]: {
-          missoesAtivas: missions.filter(
+          missoesAtivas: surface.filter(
             (m) => m.status === 'ativa' || m.status === 'integrando'
           ).length,
           versoes,

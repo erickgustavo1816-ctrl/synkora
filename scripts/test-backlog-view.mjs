@@ -383,3 +383,16 @@ test('R27 — a aba Versões diz onde mora dev e prod, e release não é missão
   assert.match(src, /mora em:/u, 'a versão diz o endereço do dev')
   assert.match(src, /dev → prod/u, 'o ⇪ diz o que a subida é')
 })
+
+// R27 (conserto pós-estreia): a versão LANÇADA dizia "✓ 8/9" com 8 entregas
+// reais — a nona missão criada era o próprio registro da subida. O contador
+// de criadas consome a MESMA régua das listas.
+test('R27 — o contador da versão lançada não conta o registro do release', async () => {
+  const src = await source('src/renderer/src/components/BacklogView.tsx')
+  const created = src.slice(src.indexOf('const created = Math.max('))
+  assert.match(
+    created.slice(0, 400),
+    /m\.versionId === v\.id && !isReleaseMissionRecord\(m\)/u,
+    'criadas = missões de superfície, nunca a própria subida'
+  )
+})

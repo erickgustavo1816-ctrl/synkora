@@ -4176,3 +4176,18 @@ test('R27 — o board não lista o registro de release e o trilho vira release',
   const railGate = board.indexOf('selIsRelease')
   assert.ok(railGate > 0, 'o trilho de missão é condicionado ao registro não ser release')
 })
+
+// R27 (conserto pós-estreia): o ✦ de ativas do cabeçalho e o retrato por
+// versão contavam o registro do release como missão. O retrato recebe SÓ
+// missões de superfície — a régua é a mesma das listas, aplicada na fonte.
+test('R27 — o retrato do projeto não conta o registro do release', () => {
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  const stats = store.slice(store.indexOf('loadHomeStats: async'))
+  assert.match(
+    stats.slice(0, 900),
+    /surface = missions\.filter\(\(m\) => !isReleaseMissionRecord\(m\)\)/u,
+    'a régua entra na fonte do retrato'
+  )
+  assert.match(stats.slice(0, 900), /versionPortrait\(versions, surface\)/u)
+  assert.match(stats.slice(0, 1200), /missoesAtivas: surface\.filter/u)
+})

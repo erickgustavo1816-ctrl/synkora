@@ -696,7 +696,10 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
             // MISSÕES ela entregou (enviadas/criadas; excluída some da conta)
             const sent = v.deliveries.length
             const created = Math.max(
-              missions.filter((m) => m.versionId === v.id).length,
+              // R27 — o registro de release não é missão CRIADA da versão:
+              // contá-lo fazia a lançada dizer "✓ 8/9" com 8 entregas reais
+              // (o nono era a própria subida — o bug que o dono viu).
+              missions.filter((m) => m.versionId === v.id && !isReleaseMissionRecord(m)).length,
               sent
             )
             return (
