@@ -77,7 +77,9 @@ com .bak) em userData — sem SQLite de propósito (evita build nativo).
 
 ## Comandos
 
-- `npm run dev` — roda o app (HMR no renderer; mudança em main/preload relança).
+- `npm run dev` — roda o app (HMR SÓ no renderer; mudança em main/preload NÃO
+  relança sozinha — provado 2026-08-20: derrubar e resubir o `npm run dev` é
+  obrigatório para main/preload novos chegarem ao app).
 - `npm run typecheck` — main/preload (tsconfig.node.json) + renderer (web).
 - `npm run test:gui-system` — o GATE RAIZ: typecheck + ~26 suítes node puras.
 - `npm run build` / `npm run dist` — produção (asarUnpack do node-pty é vital).
