@@ -495,6 +495,25 @@ export function pushBranchToRemote(
 }
 
 /**
+ * R28.1 — a faixa de commits tocou um ARQUIVO? É o que deixa o desfecho do
+ * release avisar "o package.json mudou — npm install na pasta" (o loop das 4
+ * versões de 2026-08-20: merge leva o manifesto, mas nunca instala nada).
+ * `undefined` = não deu para provar (a resposta honesta, nunca um palpite).
+ */
+export function commitRangeTouchesFile(
+  cwd: string,
+  fromSha: string,
+  toSha: string,
+  file: string
+): boolean | undefined {
+  try {
+    return git(cwd, ['diff', '--name-only', `${fromSha}..${toSha}`, '--', file]).length > 0
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * O remoto do projeto e o quanto a branch local está à frente dele — a
  * fotografia do release_status. Leitura LOCAL (o ref origin/<branch> do
  * último fetch/push): nenhuma rede sai daqui. `undefined` = sem remoto;

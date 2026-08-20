@@ -3163,6 +3163,23 @@ app.whenReady().then(async () => {
         ? ` · GitHub atualizado (${targetBranch} → origin)`
         : ` · ATENÇÃO: o push para o origin FALHOU (${pushed.error}) — o release local está completo; rode git push origin ${targetBranch} na pasta do projeto quando o acesso voltar`
     }
+    // R28.1 — merge leva o package.json, mas NUNCA instala nada: sem este
+    // aviso o dono buildava na pasta com node_modules velho, o gate do
+    // produto barrava, e o agente re-consertava no worktree um problema que
+    // só existia na main (o loop das 4 versões de 2026-08-20).
+    const manifestChanged =
+      releaseIntent.targetHead !== undefined
+        ? await gitOff(
+            'commitRangeTouchesFile',
+            project.path,
+            releaseIntent.targetHead,
+            'HEAD',
+            'package.json'
+          )
+        : undefined
+    if (manifestChanged === true) {
+      pushLine += ` · as DEPENDÊNCIAS mudaram nesta subida: rode npm install na pasta do projeto antes do próximo build/instalador`
+    }
     hub.publish({
       projectId: version.projectId,
       kind: 'merge',

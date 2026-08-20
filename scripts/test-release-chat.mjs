@@ -336,3 +336,26 @@ test('R28 — a subida empurra o origin, e o status mostra o remoto', async () =
   assert.match(status, /51 commit/u)
   assert.match(status, /o push acompanha a subida/u)
 })
+
+// R28.1 — O LOOP DAS 4 VERSÕES (2026-08-20, noite): uma missão adicionou
+// electron-updater ao package.json; o merge levou o manifesto à main, mas
+// merge NÃO instala dependência — o node_modules da pasta do dono ficou
+// velho, o gate do produto barrou o npm run dist, e o agente "consertava" no
+// worktree (onde o install rodava) um problema que só existia na main. O
+// desfecho da subida agora AVISA quando o package.json mudou, com a receita.
+test('R28.1 — a subida avisa quando o package.json mudou: npm install na pasta', async () => {
+  const wt = await source('src/main/worktree.ts')
+  const probe = wt.slice(wt.indexOf('export function commitRangeTouchesFile'))
+  assert.ok(probe.length > 30, 'a primitiva existe no worktree (vira verbo do gitOff)')
+  assert.match(probe.slice(0, 700), /diff/u)
+
+  const index = await source('src/main/index.ts')
+  const impl = index.slice(index.indexOf('async function releaseVersionImpl'))
+  const implBody = impl.slice(0, impl.indexOf('function sweepProjectFiles'))
+  assert.match(implBody, /commitRangeTouchesFile/u, 'o desfecho olha o manifesto')
+  assert.match(
+    implBody,
+    /npm install na pasta do projeto/u,
+    'a receita nomeia o comando e a PASTA onde vale'
+  )
+})
