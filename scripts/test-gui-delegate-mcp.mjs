@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /**
  * A VOLTA COMPLETA DA IDENTIDADE DO CHAT QUE DELEGA (`gui-delegator`).
  *
@@ -861,4 +861,33 @@ test('o re-arme por spawn roteia pelo tipo da missão e audita a recusa do deleg
   assert.ok(delegateArm.length > 0, 'o rearme do delegador sumiu do arquivo')
   assert.match(delegateArm, /if \(!file \|\| !existsSync\(file\)\) return refuse\('config-file-missing'\)/u)
   assert.match(delegateArm, /ctx\.mcpPort === 0/u)
+})
+
+// O CHAT DE RELEASE NASCIA SEM AS FERRAMENTAS (incidente do dono, 2026-08-20,
+// caixa-preta 22:00:27: arm-refused not-a-planner + gui-pane-tools-unarmed): o
+// roteador do re-arme só conhecia DOIS destinos — kind delegator ia ao arm da
+// delegação e todo o resto caía no braço do planejador, que recusa quem não é
+// planejamento. A missão release (kind que a régua JÁ devolvia desde a R10)
+// nascia desarmada em TODO spawn, e o agente ficava travado sem
+// release_status/release_run — travado com razão: git manual na main é
+// proibido. O gancho de re-arme (R14) nasceu depois do papel release (R10) e
+// nunca o aprendeu.
+test('o re-arme conhece o release: kind release arma o MCP com o papel gui-release', () => {
+  const arm = readFileSync(new URL('../src/main/guiPlannerArm.ts', import.meta.url), 'utf8')
+
+  const router = arm.slice(arm.indexOf('export function rearmGuiPaneTools'))
+  const routerBody = router.slice(0, router.indexOf('export function rearmGuiDelegateMcp'))
+  assert.match(routerBody, /'release'/u, 'o roteador conhece o terceiro papel')
+
+  const delegateArm = arm.slice(arm.indexOf('export function rearmGuiDelegateMcp'))
+  assert.match(
+    delegateArm,
+    /kind === 'release' \? \('gui-release' as const\) : \('gui-delegator' as const\)/u,
+    'o papel do token é derivado do tipo da missão'
+  )
+  assert.match(
+    delegateArm,
+    /guiPlannerMcpDepsFor\(ctx\),\s*\n\s*role/u,
+    'o papel derivado chega ao armGuiDelegateMcp'
+  )
 })

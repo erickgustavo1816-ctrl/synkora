@@ -110,7 +110,12 @@ export function rearmGuiPaneTools(
   spawn: GuiPaneSpawn
 ): GuiPlannerMcp | undefined {
   const mission = missionOfPane(ctx, spawn.projectId, spawn.paneId)
-  return guiPaneToolKind(spawn.paneId, mission) === 'delegator'
+  const kind = guiPaneToolKind(spawn.paneId, mission)
+  // O release usa o MESMO arm da delegação com o papel próprio (R10). Cair no
+  // braço do planejador o deixava DESARMADO em todo spawn (incidente de
+  // 2026-08-20): o gancho de re-arme nasceu na R14 e nunca tinha aprendido o
+  // terceiro papel.
+  return kind === 'delegator' || kind === 'release'
     ? rearmGuiDelegateMcp(ctx, spawn)
     : rearmGuiPlannerMcp(ctx, spawn)
 }
@@ -139,8 +144,12 @@ export function rearmGuiDelegateMcp(
   if (ctx.mcpPort === 0) return refuse('server-down')
 
   const mission = missionOfPane(ctx, spawn.projectId, spawn.paneId)
-  if (!mission || guiPaneToolKind(spawn.paneId, mission) !== 'delegator')
+  const kind = guiPaneToolKind(spawn.paneId, mission)
+  if (!mission || (kind !== 'delegator' && kind !== 'release'))
     return refuse('not-a-dev-mission')
+  // O papel do token decide o early-return do catálogo no servidor: release
+  // ganha release_status/release_run; dev ganha o kit da delegação.
+  const role = kind === 'release' ? ('gui-release' as const) : ('gui-delegator' as const)
 
   let armed: GuiPlannerMcp | undefined
   try {
@@ -156,7 +165,8 @@ export function rearmGuiDelegateMcp(
         // (é ela que resolve a conta do ajudante quando o pedido não diz).
         ...(spawn.seatId ? { seatId: spawn.seatId } : {})
       },
-      guiPlannerMcpDepsFor(ctx)
+      guiPlannerMcpDepsFor(ctx),
+      role
     )
   } catch {
     // Disco cheio, permissão negada, userData somindo: o motivo bruto pode
