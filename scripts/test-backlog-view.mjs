@@ -334,3 +334,33 @@ test('a linha inerte para de se oferecer ao mouse', async () => {
   // e a linha VIVA continua respondendo
   assert.match(ruleBody(css, '.vs-mission:hover'), /background:\s*var\(--paper-2\)/u)
 })
+
+// O CLIQUE QUE NÃO FAZIA NADA (incidente do dono, 2026-08-20): "subir versão"
+// criava a missão de release no MAIN, mas o renderer nunca recarregava a lista
+// de missões — o setMissionTab apontava para uma missão que o Board não
+// conhecia, selMission caía em undefined e o board renderizava idêntico ao de
+// antes. E o fluxo tinha DOIS becos mudos: o guard da ponte retornava sem
+// mensagem, e o await sem try/catch morria como unhandled rejection.
+test('subir versão carrega a missão nova ANTES de navegar, e nenhum caminho é mudo', async () => {
+  const src = await source('src/renderer/src/components/BacklogView.tsx')
+  const start = src.indexOf('async function releaseVersion')
+  assert.ok(start > 0, 'o fluxo de release existe')
+  const end = src.indexOf('// versão ATUAL na main', start)
+  assert.ok(end > start, 'o recorte do releaseVersion fecha')
+  const region = src.slice(start, end)
+
+  // A missão de release NASCE no main durante o clique: sem recarregar a
+  // lista, o Board não a conhece e a navegação vira "nada aconteceu".
+  const load = region.indexOf('loadMissions(projectId)')
+  const tab = region.indexOf('setMissionTab(projectId,')
+  assert.ok(load > 0, 'o clique recarrega as missões do renderer')
+  assert.ok(tab > load, 'a navegação só acontece DEPOIS de a missão existir na lista')
+
+  // Beco sem saída é bug: toda falha fala com receita.
+  assert.match(region, /catch/u, 'rejeição do IPC não morre muda')
+  assert.doesNotMatch(
+    region,
+    /releaseChat\) return\b/u,
+    'ponte sem a rota avisa em vez de retornar mudo'
+  )
+})

@@ -292,6 +292,7 @@ interface Props {
 
 export default function BacklogView({ projectId }: Props): React.JSX.Element {
   const missions = useStore((s) => s.missions)
+  const loadMissions = useStore((s) => s.loadMissions)
   const setMissionTab = useStore((s) => s.setMissionTab)
   const setUniverseTab = useStore((s) => s.setUniverseTab)
   const projPanes = useStore((s) => s.panesByProject[projectId])
@@ -457,16 +458,30 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   // conta/modelo/effort já escolhidos) e quem sobe é o agente, pelas
   // ferramentas release_status/release_run — o clique é o mandato.
   async function releaseVersion(v: Version): Promise<void> {
-    if (!window.synkora.backlog?.releaseChat) return
-    const result = await window.synkora.backlog.releaseChat(v.id)
-    if (!result.ok) {
-      // aviso fica até o × (decisão do usuário)
-      setReleaseMsg(result.error)
+    if (!window.synkora.backlog?.releaseChat) {
+      // Beco sem saída é bug: ponte sem a rota fala a receita, nunca some.
+      setReleaseMsg('reinicie o Synkora (npm run dev) para abrir o chat de release')
       return
     }
-    await refresh()
-    setMissionTab(projectId, result.missionId)
-    setUniverseTab(projectId, 'board')
+    try {
+      const result = await window.synkora.backlog.releaseChat(v.id)
+      if (!result.ok) {
+        // aviso fica até o × (decisão do usuário)
+        setReleaseMsg(result.error)
+        return
+      }
+      // A missão de release acabou de NASCER no main. Sem recarregar a lista,
+      // o Board não a conhece: setMissionTab apontaria para uma missão
+      // desconhecida, selMission cairia em undefined e o board renderizaria
+      // idêntico ao de antes — o "cliquei e não aconteceu nada" do incidente
+      // de 2026-08-20. A missão primeiro; a navegação depois.
+      await loadMissions(projectId)
+      await refresh()
+      setMissionTab(projectId, result.missionId)
+      setUniverseTab(projectId, 'board')
+    } catch {
+      setReleaseMsg('não consegui abrir o chat de release agora — tente de novo')
+    }
   }
 
   // versão ATUAL na main = a lançada mais recente
