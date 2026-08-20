@@ -260,7 +260,24 @@ export type GuiSessionEvent =
   | { type: 'session-id'; sessionId: string }
   | { type: 'ready'; caps: GuiCliCaps }
   | { type: 'command-output'; text: string }
-  | { type: 'context-usage'; contextTokens: number | null; contextWindow: number | null }
+  | {
+      type: 'context-usage'
+      contextTokens: number | null
+      contextWindow: number | null
+      /**
+       * R25.1 — O ODÔMETRO DA CONVERSA (espelho declarado do union do main,
+       * maestroSession.ts): quantas chamadas de API esta conversa já fez e
+       * quanto elas pesaram na cota. Quem soma é o MAIN — o renderer remonta a
+       * cada troca de aba e não teria como acumular nada.
+       *
+       * A PARCELA de cada chamada (`call`, no union do main) NÃO atravessa este
+       * espelho de propósito: ela é transporte motor→registro, e o registro a
+       * troca pelo total antes de publicar. Ausentes = conversa sem medição de
+       * custo ainda; o redutor conserva o que já tinha em vez de zerar.
+       */
+      convCalls?: number
+      convWeightTokens?: number
+    }
   | { type: 'command-completed'; isError: boolean; continues: boolean; errorText?: string }
   | { type: 'limit'; text: string }
   | {

@@ -729,6 +729,10 @@ export function installDevMock(): void {
         ],
         lines: []
       }),
+      // R25.2 — no preview não existe poller, então o cache está SEMPRE frio:
+      // `null` é a resposta honesta, e o painel do chat some com a linha da
+      // cota em vez de mostrar um número inventado.
+      usagePeek: async () => null,
       onChanged: () => () => undefined
     },
     // O namespace `tasks` (espelho do pipeline de cards) morreu na purga F6

@@ -20,6 +20,10 @@
  * REAIS da sonda, em vez de conferida no olho dentro do `switch` da sessão.
  */
 
+// Import de TIPO (apagado na compilação e pelo strip-types do node): é o que
+// mantém este módulo sem dependência de runtime — a suíte roda o `.ts` cru.
+import type { GuiApiCallParcels } from './guiConversationOdometer'
+
 export interface CodexContextReading {
   contextTokens?: number
   contextWindow?: number
@@ -48,5 +52,40 @@ export function codexContextFromTokenUsage(tokenUsage: unknown): CodexContextRea
   return {
     contextTokens: codexContextTokenCount(last?.['totalTokens']),
     contextWindow: codexContextWindow(usage?.['modelContextWindow'])
+  }
+}
+
+/**
+ * AS PARCELAS DAQUELA MESMA CHAMADA (R25.1) — o que o odômetro da conversa
+ * soma. NENHUMA claim nova de protocolo: os campos abaixo já estavam nos 8
+ * frames crus da sonda de 2026-08-17 (fixture de test-codex-token-usage), e a
+ * fonte continua sendo `last`, o request. Repartir `total` contaria a thread
+ * inteira a cada evento — o mesmo bug que produziu os 404.325 tokens.
+ *
+ * SEMÂNTICA DO PROTOCOLO, verificada frame a frame na fixture:
+ * `last.inputTokens` é o input INTEIRO (`input + output === total` fecha em
+ * 100% dos frames) e `cachedInputTokens`/`cacheWriteInputTokens` são recortes
+ * DENTRO dele. O claude já reporta o input fresco separado, então a
+ * normalização acontece aqui: fresco = input − lido − escrito.
+ *
+ * `undefined` quando a repartição não veio (frame só com `totalTokens`): sem
+ * ela o contexto ainda é mensurável, mas o CUSTO não — e publicar zero em cada
+ * parcela faria o odômetro contar uma chamada de graça.
+ */
+export function codexCallParcelsFromTokenUsage(tokenUsage: unknown): GuiApiCallParcels | undefined {
+  const last = asRecord(asRecord(tokenUsage)?.['last'])
+  const input = codexContextTokenCount(last?.['inputTokens'])
+  // Sem input não houve chamada de verdade — mesma régua do claude, onde um
+  // `usage` zerado é a assinatura da mensagem sintética de comando local.
+  if (input === undefined || input === 0) return undefined
+  const cacheRead = codexContextTokenCount(last?.['cachedInputTokens']) ?? 0
+  const cacheWrite = codexContextTokenCount(last?.['cacheWriteInputTokens']) ?? 0
+  return {
+    // Frame incoerente (cache maior que o input) nunca vira parcela negativa: o
+    // fresco satura em zero e o resto do frame continua sendo contado.
+    inputTokens: Math.max(0, input - cacheRead - cacheWrite),
+    cacheWriteTokens: cacheWrite,
+    cacheReadTokens: cacheRead,
+    outputTokens: codexContextTokenCount(last?.['outputTokens']) ?? 0
   }
 }

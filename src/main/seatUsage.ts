@@ -42,6 +42,25 @@ const cache = new Map<string, SeatUsageInfo>()
 const pending = new Map<string, Promise<SeatUsageInfo | null>>()
 const CACHE_MS = 5 * 60_000
 
+/**
+ * O QUE O CACHE JÁ TEM — E NADA MAIS (R25.2).
+ *
+ * O chat da missão passou a mostrar a cota do SEU seat, e a cerca dessa rodada
+ * é dura: NENHUMA coleta nova por causa disso. Cada coleta abre um processo
+ * efêmero do CLI (o /usage do claude é comando local, mas ainda é um processo),
+ * e um app com vários chats abertos multiplicaria isso por pane.
+ *
+ * Por isso este é o ÚNICO ponto de leitura sem coleta: ele lê o mesmo `cache`
+ * que o `getSeatUsage` alimenta (hover do SeatRail, titlebar e o `list_seats`
+ * da delegação) e devolve `null` quando ninguém colheu ainda. SEM TTL de
+ * propósito: a leitura envelhece e quem apresenta DIZ a idade — esconder um
+ * número velho só faria o medidor piscar, e uso de cota só cresce, então a
+ * leitura antiga é piso honesto, nunca exagero.
+ */
+export function peekSeatUsage(seatId: string): SeatUsageInfo | null {
+  return cache.get(seatId) ?? null
+}
+
 export function getSeatUsage(
   seatId: string,
   cli: 'claude' | 'codex',

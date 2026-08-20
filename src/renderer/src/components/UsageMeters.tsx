@@ -1,4 +1,5 @@
 import type { SeatUsage, UsageMeter } from '../../../preload/index'
+import { guiMeterTone } from '../guiCostSignals'
 
 // ————————————————————————————————————————————————————————————————————————
 // LIMITES DE USO — apresentação compartilhada (titlebar e hover do SeatRail).
@@ -10,7 +11,10 @@ import type { SeatUsage, UsageMeter } from '../../../preload/index'
 // ————————————————————————————————————————————————————————————————————————
 
 function Meter({ m, index }: { m: UsageMeter; index: number }): React.JSX.Element {
-  const tone = m.severity >= 0.85 ? 'hot' : m.severity >= 0.6 ? 'warm' : 'cool'
+  // A régua de severidade mora em `guiCostSignals` desde a R25: o painel de
+  // contexto do chat lê a MESMA, e duas cópias do mesmo limiar já deixaram
+  // duas telas discordando sobre o mesmo seat.
+  const tone = guiMeterTone(m.severity)
   return (
     <div className="usage-meter" style={{ animationDelay: `${index * 55}ms` }}>
       <div className="meter-top">

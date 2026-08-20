@@ -44,6 +44,14 @@ import {
 } from '../.tmp/gui-sessions-test/maestroSession.js'
 import { CodexSession } from '../.tmp/gui-sessions-test/codexSession.js'
 import {
+  GUI_HEAVY_CONTEXT_TOKENS,
+  guiAddApiCall,
+  guiConversationWeightTokens,
+  guiHeavyContextMilestone,
+  guiHeavyConversationNote,
+  isGuiConversationUsage
+} from '../.tmp/gui-sessions-test/guiConversationOdometer.js'
+import {
   GUI_PLANNER_TOKEN_ENV,
   armGuiPlannerMcp,
   guiPlannerCodexArgs
@@ -5760,4 +5768,515 @@ test('R22 — briefing pendente nunca vira citação: ele segue pelo caminho de 
     'o briefing da missão não pode viajar dentro de um resultado de tool'
   )
   assert.deepEqual(bench.sent, [guiBriefedPrompt('CONTRATO DA MISSÃO', 'primeira fala')])
+})
+
+// ————— R25 — COTA VISÍVEL (odômetro da conversa) —————
+//
+// Auditoria de 2026-08-20: a conversa velha da missão 53889719 fez 139 chamadas
+// re-lendo ~192k CADA — ~70% da janela de 5h do seat — enquanto o app mostrava
+// só a ocupação da janela (7%). A física não estava escondida: faltava medidor.
+// Estas suítes prendem o medidor no MAIN (o renderer remonta; o acumulado não
+// pode morrer com ele) e a nota com RECEITA quando a conversa fica pesada.
+
+/** Registro de teste com um backend que só devolve o sink. */
+function odometerBench({ record, paneId = 'gui-dev-odo1234', spawn = {} } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-gui-odometer-'))
+  const sinks = []
+  const spawns = []
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile: join(root, 'gui-sessions.json'),
+    ...(record ? { record } : {})
+  })
+  gui.spawnSession = (input, sink) => {
+    spawns.push({ ...input })
+    sinks.push(sink)
+    sink({
+      type: 'init',
+      model: 'claude',
+      sessionId: 'sess-1',
+      permissionMode: 'default',
+      toolCount: 0,
+      contextWindow: 1_000_000
+    })
+    sink({ type: 'ready', caps: { commands: [], models: [] } })
+    return {
+      alive: true,
+      turnActive: false,
+      waitCaps: async () => ({ commands: [], models: [] }),
+      send: () => undefined,
+      kill: () => undefined
+    }
+  }
+  const base = {
+    paneId,
+    projectId: 'proj-odometer',
+    cli: 'claude',
+    configDir: 'seat-a',
+    cwd: root,
+    ...spawn
+  }
+  assert.equal(gui.create(base).ok, true)
+  return {
+    gui,
+    root,
+    paneId,
+    base,
+    spawns,
+    sink: (evt) => sinks.at(-1)(evt),
+    /** Uma chamada de API, com as parcelas que o motor passa a carregar. */
+    apiCall: ({ input = 3, cacheWrite = 0, cacheRead = 0, output = 0 }) =>
+      sinks.at(-1)({
+        type: 'context-usage',
+        contextTokens: input + cacheWrite + cacheRead + output,
+        contextWindow: 1_000_000,
+        call: {
+          inputTokens: input,
+          cacheWriteTokens: cacheWrite,
+          cacheReadTokens: cacheRead,
+          outputTokens: output
+        }
+      }),
+    lastContext: () =>
+      gui
+        .state(paneId)
+        .events.map(({ evt }) => evt)
+        .filter((evt) => evt.type === 'context-usage')
+        .at(-1),
+    notes: () =>
+      gui
+        .state(paneId)
+        .events.map(({ evt }) => evt)
+        .filter((evt) => evt.type === 'command-output')
+        .map((evt) => evt.text)
+  }
+}
+
+test('R25.1 — o motor do claude carrega as PARCELAS de cada chamada de API', () => {
+  const { events, line } = claudeAgentSession()
+  line({ type: 'system', subtype: 'init', session_id: 's-ctx', model: 'claude-fable-5' })
+  events.length = 0
+
+  claudeApiCall(line, { cacheRead: 174_276, cacheCreate: 335, out: 1_217 })
+
+  const usage = events.find((event) => event.type === 'context-usage')
+  // A ocupação da janela (o que o R20 já media) continua igual…
+  assert.equal(usage.contextTokens, 175_830)
+  // …e agora a mesma fotografia carrega o que aquela chamada CUSTOU. Sem isto o
+  // main não tem como somar nada: `message.usage` morre dentro do motor.
+  assert.deepEqual(usage.call, {
+    inputTokens: 2,
+    cacheWriteTokens: 335,
+    cacheReadTokens: 174_276,
+    outputTokens: 1_217
+  })
+
+  // E a mesma cerca de sempre continua valendo: `usage` todo zerado é a
+  // assinatura da mensagem SINTÉTICA (/usage, /context) — nem medida, nem
+  // parcela, senão o odômetro contaria uma chamada de API que não existiu.
+  events.length = 0
+  line({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: {
+      role: 'assistant',
+      usage: {
+        input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        output_tokens: 0
+      },
+      content: [{ type: 'text', text: 'Current session: 48% used' }]
+    }
+  })
+  assert.equal(
+    events.some((event) => event.type === 'context-usage'),
+    false,
+    'comando local não é chamada de API — nem medida, nem parcela'
+  )
+})
+
+test('R25.1 — o codex carrega as parcelas do `last` (nunca do acumulado)', () => {
+  const session = Object.create(CodexSession.prototype)
+  const events = []
+  session.emit = (event) => events.push(event)
+  session.turnId = 'turn-1'
+
+  // Frame REAL da sonda de 2026-08-17 (codex app-server 0.147.0): o `last` traz
+  // input/cached/cacheWrite/output — as mesmas quatro parcelas do claude.
+  const frame = {
+    tokenUsage: {
+      total: {
+        totalTokens: 37_535,
+        inputTokens: 37_298,
+        cachedInputTokens: 23_808,
+        outputTokens: 237
+      },
+      last: {
+        totalTokens: 18_831,
+        inputTokens: 18_734,
+        cachedInputTokens: 18_304,
+        cacheWriteInputTokens: 0,
+        outputTokens: 97,
+        reasoningOutputTokens: 0
+      },
+      modelContextWindow: 258_400
+    }
+  }
+  session.handleNotification('thread/tokenUsage/updated', frame)
+  assert.equal(events[0].contextTokens, 18_831)
+  assert.deepEqual(events[0].call, {
+    inputTokens: 430,
+    cacheWriteTokens: 0,
+    cacheReadTokens: 18_304,
+    outputTokens: 97
+  })
+
+  // O `thread/resume` REEMITE a mesma fotografia antes de qualquer request novo
+  // (frame 7 da sonda, idêntico ao 6): sem turno vivo ela volta como MEDIDA — o
+  // medidor do pane retomado acende na hora — e nunca como GASTO.
+  events.length = 0
+  session.turnId = null
+  session.handleNotification('thread/tokenUsage/updated', frame)
+  assert.equal(events[0].contextTokens, 18_831, 'a régua do contexto volta no resume')
+  assert.equal(
+    Object.hasOwn(events[0], 'call'),
+    false,
+    'replay de retomada não pode cobrar uma chamada que não aconteceu'
+  )
+})
+
+test('R25.1 — o MAIN acumula por conversa e o acumulado viaja no context-usage', (t) => {
+  const bench = odometerBench()
+  t.after(() => rmSync(bench.root, { recursive: true, force: true }))
+
+  // Nascimento: escreve o cache do prompt-base inteiro (a conta que o dono viu).
+  bench.apiCall({ input: 1_200, cacheWrite: 30_000, cacheRead: 0, output: 400 })
+  bench.apiCall({ input: 40, cacheWrite: 900, cacheRead: 31_200, output: 250 })
+
+  // peso = cw×1,25 + cr×0,1 + input×1 + out×5 (aproximação de COTA, não preço)
+  const peso = 30_900 * 1.25 + 31_200 * 0.1 + 1_240 + 650 * 5
+  const last = bench.lastContext()
+  assert.equal(last.convCalls, 2, 'o odômetro conta CHAMADAS, não turnos')
+  assert.equal(last.convWeightTokens, Math.round(peso))
+  assert.equal(
+    Object.hasOwn(last, 'call'),
+    false,
+    'a parcela é transporte motor→main; ao renderer vai o TOTAL'
+  )
+
+  // O documento é a memória: remontar o renderer não pode zerar o odômetro.
+  assert.deepEqual(bench.gui.remembered(bench.paneId).conversationUsage, {
+    apiCalls: 2,
+    cacheWriteTokens: 30_900,
+    cacheReadTokens: 31_200,
+    inputTokens: 1_240,
+    outputTokens: 650
+  })
+})
+
+test('R25.1 — respawn com resume CONTINUA o acumulado; /clear ZERA', (t) => {
+  const bench = odometerBench()
+  t.after(() => rmSync(bench.root, { recursive: true, force: true }))
+
+  bench.apiCall({ input: 100, cacheWrite: 20_000, cacheRead: 0, output: 300 })
+  assert.equal(bench.gui.remembered(bench.paneId).conversationUsage.apiCalls, 1)
+
+  // Trocar o modo de permissão respawna com resume: a MESMA conversa continua,
+  // e o cache que o processo novo re-escreve é justamente o custo que o dono
+  // precisa ver somado — não um contador zerado fingindo conversa nova.
+  assert.equal(bench.gui.create({ ...bench.base, permissionMode: 'plan' }).ok, true)
+  assert.equal(bench.spawns.length, 2)
+  bench.apiCall({ input: 50, cacheWrite: 20_500, cacheRead: 0, output: 120 })
+  const continued = bench.gui.remembered(bench.paneId).conversationUsage
+  assert.equal(continued.apiCalls, 2, 'respawn-com-resume não é conversa nova')
+  assert.equal(continued.cacheWriteTokens, 40_500)
+
+  // /clear é troca deliberada de conversa: o odômetro nasce de novo com ela.
+  assert.equal(bench.gui.send(bench.paneId, '/clear', 'msg-clear').ok, true)
+  assert.equal(bench.gui.remembered(bench.paneId).conversationUsage, undefined)
+  assert.equal(
+    bench.gui.state(bench.paneId).events.some(({ evt }) => evt.type === 'context-usage'),
+    false,
+    'o fio zerado não pode replayar o odômetro da conversa anterior'
+  )
+})
+
+test('R25.1 — compactar NÃO zera o odômetro: o gasto já aconteceu', (t) => {
+  const bench = odometerBench()
+  t.after(() => rmSync(bench.root, { recursive: true, force: true }))
+
+  bench.apiCall({ input: 100, cacheWrite: 40_000, cacheRead: 120_000, output: 800 })
+  // `thread/compacted` do codex invalida a fotografia (context-usage nulo). A
+  // janela encolheu; a cota gasta continua gasta.
+  bench.sink({ type: 'context-usage', contextTokens: null, contextWindow: null })
+  assert.equal(bench.gui.remembered(bench.paneId).conversationUsage.apiCalls, 1)
+  assert.equal(bench.lastContext().convCalls, 1, 'a fotografia sem medida ainda carrega o total')
+})
+
+test('R25.3 — conversa pesada ganha UMA nota por marco, com a receita real', async (t) => {
+  const journal = []
+  const bench = odometerBench({
+    record: (event, ids, detail) => journal.push({ event, ids, detail })
+  })
+  t.after(() => rmSync(bench.root, { recursive: true, force: true }))
+
+  bench.apiCall({ input: 10, cacheWrite: 1_000, cacheRead: 140_000, output: 100 })
+  await settleTicks()
+  assert.deepEqual(bench.notes(), [], 'abaixo do limiar o app não fala nada')
+
+  bench.apiCall({ input: 10, cacheWrite: 1_000, cacheRead: 158_000, output: 100 })
+  await settleTicks()
+  const first = bench.notes()
+  assert.equal(first.length, 1, 'o marco fala UMA vez')
+  assert.match(first[0], /re-lê ~159k/u, 'a nota diz o número medido, não um adjetivo')
+  // TODA nota nomeia a RECEITA (regra da casa): as três saídas REAIS de hoje —
+  // fechar a missão (a entrega vira briefing, R16), /compact (régua de slash da
+  // casa, vai cru ao binário) e seguir ciente.
+  assert.match(first[0], /\/compact/u)
+  assert.match(first[0], /missão/u)
+  assert.match(first[0], /ciente do custo/u)
+
+  bench.apiCall({ input: 10, cacheWrite: 1_000, cacheRead: 170_000, output: 100 })
+  await settleTicks()
+  assert.equal(bench.notes().length, 1, 'crescer dentro do MESMO marco não repete a nota')
+
+  bench.apiCall({ input: 10, cacheWrite: 1_000, cacheRead: 305_000, output: 100 })
+  await settleTicks()
+  assert.equal(bench.notes().length, 2, 'o marco seguinte (300k) fala de novo')
+
+  const audited = journal.filter((entry) => entry.event === 'gui-heavy-conversation')
+  assert.equal(audited.length, 2, 'todo advisory é AUDITADO na caixa-preta')
+  assert.equal(audited[0].ids.paneId, bench.paneId)
+  assert.equal(audited[0].detail.milestone, 150_000)
+  assert.equal(audited[1].detail.milestone, 300_000)
+})
+
+test('R25.3 — a nota é ADVISORY: nada bloqueia, o envio segue livre', async (t) => {
+  const bench = odometerBench()
+  t.after(() => rmSync(bench.root, { recursive: true, force: true }))
+  bench.apiCall({ input: 10, cacheWrite: 1_000, cacheRead: 400_000, output: 100 })
+  await settleTicks()
+  assert.equal(bench.notes().length, 1)
+  assert.equal(
+    bench.gui.send(bench.paneId, 'segue assim mesmo', 'msg-heavy').ok,
+    true,
+    'custo é JULGAMENTO: advisory auditado, nunca guarda dura'
+  )
+})
+
+test('R25.1 — o odômetro atravessa o disco e volta no replay', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-gui-odometer-disk-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const storeFile = join(root, 'gui-sessions.json')
+  const paneId = 'gui-dev-ododisk'
+  writeFileSync(
+    storeFile,
+    JSON.stringify({
+      panes: {
+        [paneId]: {
+          sessionId: 'sess-disk',
+          cli: 'claude',
+          projectId: 'proj-odometer',
+          updatedAt: new Date().toISOString(),
+          permissionMode: 'default',
+          contextTokens: 190_000,
+          contextWindow: 1_000_000,
+          contextSessionId: 'sess-disk',
+          conversationUsage: {
+            apiCalls: 139,
+            cacheWriteTokens: 285_000,
+            cacheReadTokens: 26_700_000,
+            inputTokens: 4_000,
+            outputTokens: 114_000
+          },
+          heavyContextMilestone: 150_000
+        }
+      },
+      transcripts: {
+        [paneId]: {
+          events: [
+            {
+              type: 'context-usage',
+              contextTokens: 190_000,
+              contextWindow: 1_000_000,
+              convCalls: 139,
+              convWeightTokens: 3_599_250
+            }
+          ],
+          cursor: 1,
+          updatedAt: new Date().toISOString()
+        }
+      }
+    }),
+    'utf8'
+  )
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile
+  })
+  const replayed = gui
+    .state(paneId)
+    .events.map(({ evt }) => evt)
+    .find((evt) => evt.type === 'context-usage')
+  assert.equal(replayed.convCalls, 139, 'a última fotografia carrega o total: replay de graça')
+  assert.equal(replayed.convWeightTokens, 3_599_250)
+
+  let live
+  gui.spawnSession = (_input, sink) => {
+    live = sink
+    sink({
+      type: 'init',
+      model: 'claude',
+      sessionId: 'sess-disk',
+      permissionMode: 'default',
+      toolCount: 0,
+      contextWindow: 1_000_000
+    })
+    return { alive: true, turnActive: false, send: () => undefined, kill: () => undefined }
+  }
+  assert.equal(
+    gui.create({
+      paneId,
+      projectId: 'proj-odometer',
+      cli: 'claude',
+      configDir: 'seat-a',
+      cwd: root,
+      resumeSessionId: 'sess-disk'
+    }).ok,
+    true
+  )
+  // O restart do app re-escreve o cache do contexto inteiro (custo estrutural
+  // medido na auditoria): a chamada seguinte SOMA na mesma conversa.
+  live({
+    type: 'context-usage',
+    contextTokens: 191_000,
+    contextWindow: 1_000_000,
+    call: {
+      inputTokens: 10,
+      cacheWriteTokens: 190_000,
+      cacheReadTokens: 0,
+      outputTokens: 300
+    }
+  })
+  await settleTicks()
+  const kept = gui.remembered(paneId).conversationUsage
+  assert.equal(kept.apiCalls, 140, 'reabrir o app continua a MESMA conversa')
+  assert.equal(kept.cacheWriteTokens, 475_000)
+  // E o marco já anunciado não volta a falar depois de um restart.
+  assert.equal(gui.remembered(paneId).heavyContextMilestone, 150_000)
+  assert.equal(
+    gui
+      .state(paneId)
+      .events.some(({ evt }) => evt.type === 'command-output'),
+    false,
+    'marco já anunciado atravessa o disco: o app não repete a nota a cada restart'
+  )
+})
+
+test('R25.1 — hidratação valida o odômetro persistido', () => {
+  assert.equal(
+    isGuiPersistedEvent({
+      type: 'context-usage',
+      contextTokens: 190_000,
+      contextWindow: 1_000_000,
+      convCalls: 139,
+      convWeightTokens: 3_599_250
+    }),
+    true
+  )
+  assert.equal(
+    isGuiPersistedEvent({
+      type: 'context-usage',
+      contextTokens: 1,
+      contextWindow: 2,
+      convCalls: 'muitas'
+    }),
+    false,
+    'documento adulterado não injeta odômetro inventado'
+  )
+  assert.equal(
+    isGuiPersistedEvent({
+      type: 'context-usage',
+      contextTokens: 1,
+      contextWindow: 2,
+      convWeightTokens: -5
+    }),
+    false
+  )
+})
+
+// ————— R25.1 — O PESO, EM MÓDULO PURO —————
+//
+// A constante é APROXIMAÇÃO de COTA, não preço: com assinatura o CLI não
+// reporta dinheiro nenhum. Os multiplicadores saem da auditoria de 2026-08-20
+// (peso ≈ cw×1,25 + cr×0,1 + input×1 + out×5), que reproduziu 81% da janela de
+// 5h a partir dos transcripts reais dos seats.
+
+test('R25.1 — o peso da conversa é a soma ponderada das parcelas', () => {
+  const usage = guiAddApiCall(undefined, {
+    inputTokens: 1_200,
+    cacheWriteTokens: 30_000,
+    cacheReadTokens: 0,
+    outputTokens: 400
+  })
+  assert.deepEqual(usage, {
+    apiCalls: 1,
+    cacheWriteTokens: 30_000,
+    cacheReadTokens: 0,
+    inputTokens: 1_200,
+    outputTokens: 400
+  })
+  assert.equal(guiConversationWeightTokens(usage), Math.round(30_000 * 1.25 + 1_200 + 400 * 5))
+
+  // A conversa medida na auditoria (missão 53889719, janela das 5h).
+  const auditada = {
+    apiCalls: 139,
+    cacheWriteTokens: 285_000,
+    cacheReadTokens: 26_700_000,
+    inputTokens: 0,
+    outputTokens: 114_000
+  }
+  const peso = guiConversationWeightTokens(auditada)
+  assert.equal(peso, 3_596_250)
+  // ~3,3M no relatório (arredondado) — a mesma ordem de grandeza, e ~70% de uma
+  // janela de ~4,7M. É este número que o app passa a mostrar.
+  assert.ok(peso > 3_000_000 && peso < 4_000_000)
+
+  assert.equal(guiConversationWeightTokens(undefined), 0)
+})
+
+test('R25.1 — parcela suja nunca vira gasto inventado', () => {
+  const base = { inputTokens: 10, cacheWriteTokens: 20, cacheReadTokens: 30, outputTokens: 40 }
+  const usage = guiAddApiCall(undefined, base)
+  for (const ruim of [undefined, null, 42, 'parcelas', { inputTokens: 'x' }, { inputTokens: -1 }]) {
+    assert.deepEqual(guiAddApiCall(usage, ruim), usage, `parcela inválida: ${String(ruim)}`)
+  }
+  // Documento adulterado não vira ponto de partida do acumulado.
+  assert.equal(isGuiConversationUsage(usage), true)
+  assert.equal(isGuiConversationUsage({ ...usage, apiCalls: -3 }), false)
+  assert.equal(isGuiConversationUsage({ ...usage, inputTokens: 1.5 }), false)
+  assert.equal(isGuiConversationUsage({ apiCalls: 1 }), false)
+  assert.equal(isGuiConversationUsage(null), false)
+})
+
+test('R25.3 — o marco é de 150k e a nota nomeia as receitas REAIS', () => {
+  assert.equal(GUI_HEAVY_CONTEXT_TOKENS, 150_000)
+  assert.equal(guiHeavyContextMilestone(149_999), null)
+  assert.equal(guiHeavyContextMilestone(150_000), 150_000)
+  assert.equal(guiHeavyContextMilestone(299_999), 150_000)
+  assert.equal(guiHeavyContextMilestone(326_000), 300_000)
+  assert.equal(guiHeavyContextMilestone(null), null)
+  assert.equal(guiHeavyContextMilestone(Number.NaN), null)
+
+  const note = guiHeavyConversationNote(192_400)
+  assert.match(note, /~192k/u)
+  // As três saídas de hoje, todas EXECUTÁVEIS pelo dono neste chat.
+  assert.match(note, /\/compact/u)
+  assert.match(note, /missão/u)
+  assert.match(note, /ciente do custo/u)
+  // Advisory nunca fala em dinheiro nem em proibição.
+  assert.doesNotMatch(note, /\$|R\$|proibid|não pode/iu)
 })

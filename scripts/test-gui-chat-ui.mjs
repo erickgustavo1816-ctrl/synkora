@@ -3560,11 +3560,15 @@ test('o ⚡ é interruptor: só o glifo, dica de uma linha e sucesso sem nota no
   // é contorno + aria-pressed, e a largura não muda ao alternar.
   assert.doesNotMatch(fastBtn, /gui-mode-text/u)
   assert.match(fastBtn, /aria-pressed=\{fastOn\}/u)
-  // A2 — UMA linha; o parágrafo sobre o respawn saiu da dica.
-  assert.match(fastBtn, /'desligar o modo fast'/u)
-  assert.match(fastBtn, /'modo fast — gasta mais limite \(vira Opus 5\)'/u)
-  assert.match(fastBtn, /'modo fast — gasta mais limite'/u)
-  assert.doesNotMatch(fastBtn, /A conversa continua de onde está/u)
+  // A2 — UMA linha; o parágrafo sobre o respawn saiu da dica. Desde a R25 a
+  // dica é COMPOSTA num const (o ⚡ não tem menu onde pendurar a nota da troca
+  // cara), então o texto se lê lá — e o botão continua sem prosa nenhuma.
+  assert.match(fastBtn, /data-tip=\{fastTip\}/u)
+  const fastTip = pane.slice(pane.indexOf('const fastBaseTip'), pane.indexOf('const queuedMessage'))
+  assert.match(fastTip, /'desligar o modo fast'/u)
+  assert.match(fastTip, /'modo fast — gasta mais limite \(vira Opus 5\)'/u)
+  assert.match(fastTip, /'modo fast — gasta mais limite'/u)
+  assert.doesNotMatch(fastTip, /A conversa continua de onde está/u)
 
   // A3 — sucesso silencioso (o botão aceso É o recibo); a FALHA continua
   // falando, e o modo de permissão mantém a nota de sucesso dele.
@@ -4109,4 +4113,44 @@ test('R24.3 — a paginação junta páginas sem duplicar e pede a faixa pelo cu
   assert.match(pane, /showGuiHistoryTarget\(/u)
   assert.match(pane, /carregar mais antigas/u)
   assert.match(pane, /carregar mais novas/u)
+})
+
+// ————— R25.1 — O ODÔMETRO ATRAVESSA O ESPELHO (main → renderer) —————
+//
+// O acumulado é do MAIN de propósito (o renderer remonta a cada troca de aba).
+// Aqui fica preso o contrato do outro lado: o evento sticky de context-usage
+// carrega o total, o redutor o guarda, e nem a remontagem nem uma fotografia
+// sem odômetro (motor sem parcelas) apagam o que já foi medido.
+
+test('R25.1 — o espelho do context-usage carrega o odômetro da conversa', () => {
+  const guiApi = readFileSync(new URL('../src/renderer/src/guiApi.ts', import.meta.url), 'utf8')
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+
+  // ESPELHO DECLARADO do union do main (maestroSession.ts).
+  assert.match(guiApi, /convCalls\?: number/u)
+  assert.match(guiApi, /convWeightTokens\?: number/u)
+  // A PARCELA de cada chamada é transporte motor→main e não atravessa o IPC:
+  // ao renderer vai o TOTAL, que é o que a tela mostra.
+  assert.doesNotMatch(guiApi, /inputTokens\?: number/u)
+
+  assert.match(store, /convCalls: number \| null/u)
+  assert.match(store, /convWeightTokens: number \| null/u)
+  const empty = store.slice(store.indexOf('export const EMPTY_GUI_PANE'))
+  assert.match(empty.slice(0, 1200), /convCalls: null/u)
+  assert.match(empty.slice(0, 1200), /convWeightTokens: null/u)
+
+  // O redutor NUNCA anda para trás: fotografia sem odômetro (o `null/null` da
+  // compactação, um motor sem parcelas) conserva o total já contado.
+  const reducer = store.slice(store.indexOf("case 'context-usage':"))
+  assert.match(reducer.slice(0, 700), /convCalls: evt\.convCalls \?\? state\.convCalls/u)
+  assert.match(
+    reducer.slice(0, 700),
+    /convWeightTokens: evt\.convWeightTokens \?\? state\.convWeightTokens/u
+  )
+
+  // Geração NOVA (restart sem a fotografia da mesma conversa) zera junto com o
+  // medidor — odômetro de outra conversa na tela seria mentira.
+  const restart = store.slice(store.indexOf("case 'session-restarted':"))
+  assert.match(restart.slice(0, 2600), /convCalls: quiet \? state\.convCalls : null/u)
+  assert.match(restart.slice(0, 2600), /convWeightTokens: quiet \? state\.convWeightTokens : null/u)
 })

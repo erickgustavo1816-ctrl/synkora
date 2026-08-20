@@ -43,6 +43,14 @@ import {
   type GuiHelperWake
 } from './guiHelperCards'
 import { GuiOwnerMailbox, guiOwnerMailFlushText, guiOwnerMailbox } from './guiOwnerMail'
+import {
+  guiAddApiCall,
+  guiConversationWeightTokens,
+  guiHeavyContextMilestone,
+  guiHeavyConversationNote,
+  isGuiConversationUsage,
+  type GuiConversationUsage
+} from './guiConversationOdometer'
 import type {
   GuiHelperChange,
   GuiHelperDelegator,
@@ -412,6 +420,12 @@ function guiOptionalContextWindow(value: unknown): boolean {
   return value === undefined || guiNullableContextWindow(value)
 }
 
+/** R25.1 — o odômetro que viaja no `context-usage`. Documento adulterado nunca
+ *  injeta um total inventado no medidor do dono. */
+function guiOptionalOdometerCount(value: unknown): boolean {
+  return value === undefined || (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
+}
+
 function guiPersistedCaps(value: unknown): boolean {
   const caps = guiPlainRecord(value)
   if (!caps || !Array.isArray(caps['commands']) || !Array.isArray(caps['models'])) return false
@@ -618,7 +632,9 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
     case 'context-usage':
       return (
         guiNullableContextTokens(event['contextTokens']) &&
-        guiNullableContextWindow(event['contextWindow'])
+        guiNullableContextWindow(event['contextWindow']) &&
+        guiOptionalOdometerCount(event['convCalls']) &&
+        guiOptionalOdometerCount(event['convWeightTokens'])
       )
     case 'result':
       return (
@@ -946,6 +962,21 @@ export interface GuiSessionRecord {
   contextTokens?: number | null
   contextWindow?: number | null
   contextSessionId?: string
+  /**
+   * R25.1 — O ODÔMETRO DA CONVERSA (chamadas + parcelas somadas). Vive no
+   * DOCUMENTO, e não no renderer, por dois motivos: o renderer remonta a cada
+   * troca de aba, e o motor morre a cada respawn. Ele viaja pela MESMA régua da
+   * fotografia de contexto — continua no respawn-com-resume (mesma conversa) e
+   * sai junto com o resume no `/clear`/troca de identidade.
+   */
+  conversationUsage?: GuiConversationUsage
+  /**
+   * R25.3a — o último MARCO de conversa pesada já anunciado no fio. Persistido
+   * porque o aviso é UM por marco: sem o carimbo, todo restart do app repetiria
+   * a mesma nota. Ele DESCE quando o contexto desce (compactação), e é isso que
+   * re-arma o aviso para uma conversa que voltou a engordar.
+   */
+  heavyContextMilestone?: number
   /** Recibos duráveis das entregas da fila. O TTL é maior que a validade do
    * envelope, então um ACK perdido nunca volta a executar após replay/evicção. */
   queuedDeliveryReceipts?: Array<{ id: string; deliveredAt: string }>
@@ -1130,6 +1161,10 @@ export function guiSessionWithoutResume(record: GuiSessionRecord): GuiSessionRec
   delete next.contextTokens
   delete next.contextWindow
   delete next.contextSessionId
+  // R25.1 — o odômetro é DA CONVERSA: sem endereço de resume não existe mais a
+  // conversa que ele media, e o marco já anunciado se re-arma com ela.
+  delete next.conversationUsage
+  delete next.heavyContextMilestone
   return next
 }
 
@@ -1798,10 +1833,17 @@ export class GuiSessionRegistry {
       // fim de turno cancelaria no renderer os cards de quem ainda trabalha).
       const evt = this.helperCards.observe(spawn.paneId, raw)
       if (replayRing && evt.type === 'ready') replaySawReady = true
+      // R25.1 — O ODÔMETRO ANDA AQUI, no caminho por onde TUDO passa: a parcela
+      // da chamada é somada, persistida e trocada pelo TOTAL antes de o evento
+      // entrar no anel. Como `context-usage` é sticky, a última fotografia
+      // carrega o acumulado e o replay o entrega de graça.
+      const metered =
+        evt.type === 'context-usage' ? this.meterConversation(spawn, evt) : undefined
       // O backend conserva o input integral apenas no estado privado que
       // executa a tool. Replay e IPC recebem uma cópia orçada.
-      const visibleEvt: SessionEvent =
+      const budgeted: SessionEvent =
         evt.type === 'tool' ? { ...evt, input: limitGuiToolInput(evt.input) } : evt
+      const visibleEvt: SessionEvent = metered?.event ?? budgeted
       const seq = ring.push(visibleEvt)
       // Eventos intermediários ficam no anel; o próximo ponto legível captura
       // o snapshot inteiro, e dispose captura inclusive um stream parcial.
@@ -1838,8 +1880,10 @@ export class GuiSessionRegistry {
             previous.sessionId !== visibleEvt.sessionId
           ) {
             // Resume/fork mudou a identidade: números da sessão anterior não
-            // podem aparecer como se fossem da geração nova.
+            // podem aparecer como se fossem da geração nova. O odômetro sai
+            // pela MESMA porta — ele mede a conversa, e ela acabou de trocar.
             this.rememberContextUsage(spawn.paneId, undefined)
+            this.forgetConversationUsage(spawn.paneId)
           }
           this.remember(spawn, visibleEvt.sessionId)
         }
@@ -1885,6 +1929,18 @@ export class GuiSessionRegistry {
         queueMicrotask(() => {
           if (!token.alive) return
           this.flushOwnerMail(spawn.paneId, reason)
+        })
+      }
+      // R25.3a — A NOTA DA CONVERSA PESADA, uma por marco. Sai pelo MESMO sink
+      // (`command-output` vira nota no redutor), então ela é durável e volta no
+      // replay; e em MICROTASK, DEPOIS de a medição que a disparou já ter
+      // atravessado o anel e o IPC. É ADVISORY: nada bloqueia, nada de relógio
+      // novo, e a receita vem escrita nela.
+      if (metered?.note) {
+        const note = metered.note
+        queueMicrotask(() => {
+          if (!token.alive) return
+          publish({ type: 'command-output', text: note })
         })
       }
     }
@@ -3252,6 +3308,111 @@ export class GuiSessionRegistry {
     }
   }
 
+  /**
+   * O ODÔMETRO DA CONVERSA (R25.1) — soma a parcela desta chamada, persiste o
+   * acumulado e devolve o evento JÁ carimbado com o total.
+   *
+   * Três decisões que valem como contrato:
+   * - A parcela (`call`) é transporte motor→registro e NÃO segue para o anel:
+   *   ao renderer viaja o TOTAL. Assim o fio persistido não engorda com a
+   *   repartição de cada chamada, e há um lugar só que sabe somar.
+   * - Medição SEM parcela (compactação do codex, motor sem repartição) ainda
+   *   recebe o carimbo do total que já existe: a fotografia sticky é a única
+   *   que o replay entrega, e ela não pode voltar do disco sem odômetro.
+   * - Falha de disco não derruba nada: o acumulado em memória (o documento)
+   *   continua correto e o próximo checkpoint tenta persistir de novo.
+   */
+  private meterConversation(
+    spawn: GuiPaneSpawn,
+    event: Extract<SessionEvent, { type: 'context-usage' }>
+  ): { event: SessionEvent; note?: string } {
+    const { call, ...visible } = event
+    const previous = this.doc.panes[spawn.paneId]
+    // Sem record (a conversa ainda não foi anunciada) não há onde somar: o
+    // evento segue exatamente como o motor o emitiu, sem odômetro inventado.
+    if (!previous) return { event: visible }
+
+    const stored = isGuiConversationUsage(previous.conversationUsage)
+      ? previous.conversationUsage
+      : undefined
+    const usage = call ? guiAddApiCall(stored, call) : stored
+
+    // R25.3a — O MARCO SEGUE O CONTEXTO: sobe anunciando (cruzou 150k, 300k…)
+    // e desce CALADO quando o contexto cai. É essa descida que re-arma o aviso
+    // — depois de um `/compact` a conversa ficou barata de novo, e voltar a
+    // engordar merece ouvir a receita outra vez.
+    const stamped =
+      typeof previous.heavyContextMilestone === 'number' &&
+      Number.isSafeInteger(previous.heavyContextMilestone)
+        ? previous.heavyContextMilestone
+        : undefined
+    const milestone = guiHeavyContextMilestone(visible.contextTokens)
+    const announce = milestone !== null && (stamped === undefined || milestone > stamped)
+    const nextStamp = milestone ?? undefined
+
+    if (usage !== stored || nextStamp !== stamped) {
+      const next: GuiSessionRecord = { ...previous, updatedAt: new Date().toISOString() }
+      if (usage) next.conversationUsage = usage
+      else delete next.conversationUsage
+      if (nextStamp === undefined) delete next.heavyContextMilestone
+      else next.heavyContextMilestone = nextStamp
+      this.doc.panes[spawn.paneId] = next
+      if (this.deps.storeFile) {
+        try {
+          persistJsonStore(this.deps.storeFile, this.doc)
+        } catch {
+          // O odômetro vivo continua correto em memória.
+        }
+      }
+    }
+
+    if (announce && milestone !== null) {
+      this.deps.record?.(
+        'gui-heavy-conversation',
+        { paneId: spawn.paneId, projectId: spawn.projectId },
+        {
+          milestone,
+          contextTokens: visible.contextTokens,
+          apiCalls: usage?.apiCalls ?? 0,
+          weightTokens: guiConversationWeightTokens(usage)
+        }
+      )
+    }
+
+    return {
+      event: {
+        ...visible,
+        ...(usage
+          ? {
+              convCalls: usage.apiCalls,
+              convWeightTokens: guiConversationWeightTokens(usage)
+            }
+          : {})
+      },
+      ...(announce && typeof visible.contextTokens === 'number'
+        ? { note: guiHeavyConversationNote(visible.contextTokens) }
+        : {})
+    }
+  }
+
+  /** O odômetro morre com a CONVERSA (troca de identidade do resume). O
+   *  `/clear` passa por `guiSessionWithoutResume`, que apaga os mesmos campos. */
+  private forgetConversationUsage(paneId: string): void {
+    const previous = this.doc.panes[paneId]
+    if (!previous || (!previous.conversationUsage && previous.heavyContextMilestone === undefined))
+      return
+    const next = { ...previous, updatedAt: new Date().toISOString() }
+    delete next.conversationUsage
+    delete next.heavyContextMilestone
+    this.doc.panes[paneId] = next
+    if (!this.deps.storeFile) return
+    try {
+      persistJsonStore(this.deps.storeFile, this.doc)
+    } catch {
+      // Estado vivo já está correto; o próximo checkpoint persiste.
+    }
+  }
+
   /** Persiste somente a fotografia canônica do contexto vivo. Não aceita
    * valores de outro pane/generation e remove a foto quando o backend
    * explicitamente invalida a medição (compactação/clear). */
@@ -3316,9 +3477,23 @@ export class GuiSessionRegistry {
     const nextSession = sessionId || kept
     const sameIdentity = previous?.cli === spawn.cli && previous.projectId === spawn.projectId
     const queuedDeliveryReceipts = validQueuedDeliveryReceipts(previous)
-    const rememberedContext =
+    // R25.1 — O ODÔMETRO ATRAVESSA PELA MESMA PORTA DA FOTOGRAFIA. Este método
+    // REESCREVE o record inteiro e todo respawn passa por aqui: sem esta
+    // travessia, trocar o modo de permissão (ou qualquer respawn-com-resume)
+    // zeraria o acumulado de uma conversa que nunca saiu do lugar — e o custo
+    // do respawn é justamente o que o dono precisa ver SOMADO.
+    const sameConversation =
       sameIdentity && Boolean(previous?.sessionId) && previous?.sessionId === nextSession
-        ? guiContextSnapshotFromRecord(previous)
+    const rememberedContext = sameConversation ? guiContextSnapshotFromRecord(previous) : undefined
+    const rememberedUsage =
+      sameConversation && isGuiConversationUsage(previous?.conversationUsage)
+        ? previous.conversationUsage
+        : undefined
+    const rememberedMilestone =
+      sameConversation &&
+      typeof previous?.heavyContextMilestone === 'number' &&
+      Number.isSafeInteger(previous.heavyContextMilestone)
+        ? previous.heavyContextMilestone
         : undefined
     const rememberedModel = executor
       ? executor.model
@@ -3366,6 +3541,10 @@ export class GuiSessionRegistry {
               ? { contextSessionId: previous?.contextSessionId ?? nextSession }
               : {})
           }
+        : {}),
+      ...(rememberedUsage ? { conversationUsage: rememberedUsage } : {}),
+      ...(rememberedMilestone !== undefined
+        ? { heavyContextMilestone: rememberedMilestone }
         : {}),
       ...(queuedDeliveryReceipts.length > 0 ? { queuedDeliveryReceipts } : {})
     }

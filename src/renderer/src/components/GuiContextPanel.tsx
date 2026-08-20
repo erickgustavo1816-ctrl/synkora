@@ -1,10 +1,16 @@
 import { useEffect, useId, useLayoutEffect, useRef } from 'react'
 import type { GuiContextPanelPresentation } from '../guiContextPanel'
+import type { GuiOdometerPresentation, GuiSeatQuotaPresentation } from '../guiCostSignals'
 
 interface Props {
   usage: GuiContextPanelPresentation | null
   /** Rótulo compacto do botão (por exemplo, `26% contexto`). */
   label: string
+  /** R25.1 — o que esta conversa já custou de cota. `null` = o main ainda não
+   *  contou nada, e a linha simplesmente não existe. */
+  odometer?: GuiOdometerPresentation | null
+  /** R25.2 — a cota REAL do seat desta conversa, do cache do poller. */
+  seat?: GuiSeatQuotaPresentation | null
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Mantém o grid do composer dono do posicionamento do indicador. */
@@ -17,10 +23,17 @@ interface Props {
  * O painel é um popover de leitura: foco entra no diálogo ao abrir, Esc fecha
  * e devolve o foco ao gatilho. Não há ação escondida nem comando CLI paralelo;
  * os números são somente a última fotografia canônica do store.
+ *
+ * R25 — ele passa a responder DUAS perguntas, e não uma: "quanto ainda cabe"
+ * (a janela) e "quanto isto já custou" (o odômetro da conversa + a cota do
+ * seat). São réguas diferentes e por isso ficam em GRUPOS separados na mesma
+ * lista, com um fio entre eles — mesma forma, mesma grade, sem card novo.
  */
 export default function GuiContextPanel({
   usage,
   label,
+  odometer = null,
+  seat = null,
   open,
   onOpenChange,
   className
@@ -135,7 +148,30 @@ export default function GuiContextPanel({
                 <dd>{usage.costLabel}</dd>
               </div>
             )}
+            {/* R25 — a segunda régua: o que a conversa JÁ CUSTOU de cota. Fio
+                acima porque é outra classe de informação, como a nota de
+                escopo — os números acima descrevem a janela, estes o gasto.
+                E a FORMA muda junto: aqui o rótulo fica ACIMA do valor. Não é
+                enfeite — estes valores são frases curtas ("139 chamadas · ~3.6
+                mi tokens-peso"), e espremê-los na coluna direita das linhas de
+                cima os quebraria em duas linhas tortas a cada medição. */}
+            {odometer && (
+              <div className="gui-context-cost gui-context-group">
+                <dt>esta conversa</dt>
+                <dd className={`gui-context-signal ${odometer.tone}`}>{odometer.valueLabel}</dd>
+              </div>
+            )}
+            {seat && (
+              <div className={`gui-context-cost${odometer ? '' : ' gui-context-group'}`}>
+                <dt>
+                  conta · {seat.label}
+                  {seat.ageLabel && <i className="gui-context-age">{seat.ageLabel}</i>}
+                </dt>
+                <dd className={`gui-context-signal ${seat.tone}`}>{seat.valueLabel}</dd>
+              </div>
+            )}
           </dl>
+          {odometer && <p className="gui-context-physics">{odometer.hint}</p>}
           <p className="gui-context-scope">{usage.scopeNote}</p>
         </div>
       )}

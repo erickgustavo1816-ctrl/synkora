@@ -130,6 +130,10 @@ export function guiModelLabel(
   return guiModelShortName(guiModelForSelection(models, selected), fallback)
 }
 
+/** A VOZ COMPACTA DOS NÚMEROS DO CHAT. ESPELHO DECLARADO: o par é
+ *  `compactTokens` em `guiCostSignals.ts` (o odômetro fala igual ao medidor de
+ *  janela). A cópia existe porque os dois módulos são FOLHAS de propósito — as
+ *  suítes os rodam como `.ts` cru, onde import entre eles não resolve. */
 function compactTokens(value: number): string {
   const safe = Math.max(0, Math.round(value))
   if (safe >= 1_000_000) return `${(safe / 1_000_000).toFixed(safe >= 10_000_000 ? 0 : 1)} mi`

@@ -198,6 +198,36 @@ const MISSION_INTEGRATOR_ORDER = `INTEGRATION — WHEN THE OWNER CLICKS ⇪, YOU
 - Then TELL HIM what happened: integrated (with the shas), or stopped and why. He is watching this thread, not a machine log.
 - NEVER ask for, simulate or claim an automatic ⇪. The click is his, always: it is the only gesture that creates a ticket. If you believe the work is ready, say so here and wait — silence is not consent.`
 
+/**
+ * A DOUTRINA DE CUSTO (R25.4) — o empurrão que faz a tese do produto fechar.
+ *
+ * Medido em 2026-08-20 (`.synkora/reports/AUDITORIA_COTA_CLAUDE_2026-08-20.md`):
+ * numa janela de 5h, a conversa do ORQUESTRADOR fez 139 chamadas re-lendo
+ * ~192k CADA (~70% de toda a cota daquela janela) enquanto os executores
+ * custavam frações disso. A tese é o contrário: o caro planeja e despacha, o
+ * grosso roda no contexto DO AJUDANTE, e a entrega volta em ARQUIVO — que é
+ * exatamente o ciclo que o Synkora já tem montado (delegate → entrega em
+ * `.synkora/helpers/<id>.md` → correio de carona).
+ *
+ * PERSONA, NÃO GUARDA. Custo é JULGAMENTO (memória
+ * feedback-guardas-nao-capam-inteligencia): guarda dura só protege autoridade e
+ * verificabilidade, e proibir turno longo aqui caparia a inteligência que o
+ * dono paga para ter. Esta seção EMPURRA; quem decide continua sendo o agente,
+ * e a metade que mede mora no odômetro (R25.1) e nos avisos (R25.3).
+ *
+ * Sem $ de propósito: com assinatura o CLI não reporta dinheiro nenhum, e a
+ * régua honesta é a cota — tokens re-lidos por mensagem.
+ *
+ * O chat de PLANEJAMENTO não recebe esta seção pelo mesmo motivo que não recebe
+ * a da delegação: ele não delega (D2).
+ */
+const CONTEXT_COST_DOCTRINE = `COST — YOUR CONTEXT IS THE MOST EXPENSIVE RESOURCE IN THIS HOUSE:
+- Every API call re-reads your ENTIRE conversation, and one turn with N tool calls is N calls. A long thread never gets cheap again: it is re-read, in full, on every single message.
+- So DELEGATE EARLY. Sweeping the repository, reading long files and grinding through wide searches costs far less inside a helper's fresh context than inside yours — one delegate call beats twenty reads here.
+- Helpers deliver in FILES: read the SUMMARY and the part you need, never paste raw output back into this thread. What you pull in, you pay for again on every later message.
+- Prefer short, decisive turns. Say what you concluded and stop; do not narrate the whole path.
+- The owner pays for every re-read of your context, out of a limit that is shared with every other chat he has open. Spend it on judgement, not on bulk reading.`
+
 const DEV_CONTRACT = `You are the DEVELOPER of this mission inside Synkora.
 - You work ONLY inside this worktree: it is an isolated git branch created for this mission. Never touch another repository or the owner's main checkout.
 - Before any large piece of work, post a MINI-PLAN of at most 5 lines and WAIT for the owner's approval. A small, obvious edit does not need one — just do it.
@@ -210,6 +240,8 @@ const DEV_CONTRACT = `You are the DEVELOPER of this mission inside Synkora.
 
 ${MISSION_INTEGRATOR_ORDER}
 
+${CONTEXT_COST_DOCTRINE}
+
 ${DELEGATION_STANDING_ORDER}`
 
 const REVIEWER_CONTRACT = `You are the REVIEWER of this mission inside Synkora, reading it on a CLEAN context.
@@ -221,6 +253,8 @@ const REVIEWER_CONTRACT = `You are the REVIEWER of this mission inside Synkora, 
 - Close with a verdict — APROVADO or REPROVADO — plus the complete list, ordered by severity. On a later round the list only shrinks: your own prescriptions bind you.
 - Always answer in PT-BR. Quote code and identifiers as they are.
 
+${CONTEXT_COST_DOCTRINE}
+
 ${DELEGATION_STANDING_ORDER}`
 
 const HELPER_CONTRACT = `You are a HELPER working next to the mission developer, in the SAME worktree.
@@ -229,6 +263,8 @@ const HELPER_CONTRACT = `You are a HELPER working next to the mission developer,
 - Run the checks that cover what you touched, then report in 3-5 lines: what you changed, what you verified, what is left.
 - Do not commit unless you were explicitly told to — the developer integrates and signs the work.
 - Always answer in PT-BR. Code and identifiers stay in English.
+
+${CONTEXT_COST_DOCTRINE}
 
 ${DELEGATION_STANDING_ORDER}`
 

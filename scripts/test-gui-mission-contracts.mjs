@@ -109,9 +109,13 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // implementação"): o dev mede 4110. E de 4200 para 5600 na rodada 9
     // (2026-08-19), pela seção do INTEGRADOR — que só o DEV recebe ("quando eu
     // clico em subir, o certo é avisar o agente e o AGENTE sobe; qualquer erro,
-    // ELE arruma"): o dev mede 5462, o reviewer 4022 e o ajudante 3511. O teto
-    // continua sendo contra CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
-    assert.ok(contract.length < 5600, `${role}: contrato virou constituição`)
+    // ELE arruma"): o dev mede 5462, o reviewer 4022 e o ajudante 3511. E de
+    // 5600 para 6500 na R25 (2026-08-20), pela DOUTRINA DE CUSTO — a auditoria
+    // mediu o orquestrador re-lendo ~192k por chamada, 139 vezes numa janela de
+    // 5h, e a persona é a metade que o modelo lê do empurrão para delegar cedo:
+    // o dev mede 6352, o reviewer 4912 e o ajudante 4401. O teto continua sendo
+    // contra CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
+    assert.ok(contract.length < 6500, `${role}: contrato virou constituição`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -632,12 +636,17 @@ test('o bloco é do DEV: reviewer e ajudante nunca o recebem', () => {
 
 const INTEGRATOR_HEADER = 'INTEGRATION — WHEN THE OWNER CLICKS ⇪, YOU ARE THE INTEGRATOR:'
 
-/** A seção do integrador, lida da FONTE, sem a ordem da delegação colada. */
+/** A seção do integrador, lida da FONTE, sem as seções vizinhas coladas. A
+ *  fronteira de baixo é a PRÓXIMA seção que existir — desde a R25 a doutrina de
+ *  custo entra entre ela e a ordem permanente da delegação. */
 function integratorSection(contract) {
   const at = contract.indexOf(INTEGRATOR_HEADER)
   if (at < 0) return undefined
-  const end = contract.indexOf(DELEGATION_HEADER)
-  return end > at ? contract.slice(at, end) : contract.slice(at)
+  const end = [COST_HEADER, DELEGATION_HEADER]
+    .map((header) => contract.indexOf(header))
+    .filter((index) => index > at)
+    .sort((a, b) => a - b)[0]
+  return end === undefined ? contract.slice(at) : contract.slice(at, end)
 }
 
 test('só o DEV vira integrador: reviewer, ajudante e planejador nunca recebem a seção', () => {
@@ -1166,4 +1175,71 @@ test('troca de seat só reseta modelo e effort quando atravessa CLI', () => {
     true,
     'seat gravado mas removido falha fechado'
   )
+})
+
+// ————— R25.4 — A DOUTRINA DE CUSTO NA PERSONA (o empurrão para o barato) —————
+//
+// Auditoria de 2026-08-20: o orquestrador gastou MAIS que os executores porque
+// a conversa DELE acumula contexto gigante (139 chamadas re-lendo ~192k). A
+// tese do produto é o contrário: ele planeja e despacha, e o trabalho pesado
+// roda no contexto DO AJUDANTE. Isto aqui é PERSONA (texto), não guarda: o
+// agente continua livre — custo é julgamento, e julgamento vira advisory.
+
+const COST_HEADER = 'COST — YOUR CONTEXT IS THE MOST EXPENSIVE RESOURCE IN THIS HOUSE:'
+
+/** A seção de custo, lida da FONTE (o teste nunca guarda uma cópia dela). */
+function costSection(contract) {
+  const at = contract.indexOf(COST_HEADER)
+  if (at < 0) return undefined
+  const end = contract.indexOf(DELEGATION_HEADER)
+  return end > at ? contract.slice(at, end).trim() : contract.slice(at).trim()
+}
+
+test('R25.4 — a doutrina de custo viaja idêntica nos papéis que delegam', () => {
+  const sections = GUI_MISSION_ROLES.map((role) => {
+    const section = costSection(guiMissionSystemPrompt(role))
+    assert.ok(section, `${role}: sem a doutrina de custo`)
+    return section
+  })
+  for (const section of sections) assert.equal(section, sections[0], 'fonte única, como a delegação')
+
+  const section = sections[0]
+  // O QUE ELA TEM DE DIZER, e por quê (cada linha responde a um número medido):
+  // cada chamada re-lê o contexto inteiro…
+  assert.match(section, /every.*(call|message)[\s\S]*re-?read|re-?reads the whole/iu)
+  // …então despachar cedo é mais barato que ler/varrer você mesmo…
+  assert.match(section, /delegate/u)
+  // …a entrega chega em ARQUIVO e o resumo basta (o bruto é o caro)…
+  assert.match(section, /file/iu)
+  assert.match(section, /summary/iu)
+  // …e o DONO paga cada re-leitura (a frase que fecha a régua).
+  assert.match(section, /owner pays/iu)
+
+  // Curta como as irmãs: régua, não constituição.
+  assert.ok(section.length > 300, 'a doutrina ficou vaga demais')
+  assert.ok(section.length < 1400, 'a doutrina virou constituição')
+})
+
+test('R25.4 — a doutrina vem ANTES da delegação e não desloca a última palavra', () => {
+  for (const role of GUI_MISSION_ROLES) {
+    const contract = guiMissionSystemPrompt(role)
+    const cost = contract.indexOf(COST_HEADER)
+    assert.ok(cost >= 0, `${role}: sem a doutrina de custo`)
+    assert.ok(
+      cost < contract.indexOf(DELEGATION_HEADER),
+      `${role}: a ordem permanente da delegação continua sendo a última palavra`
+    )
+  }
+  // O planejador não delega (D2) — e é a delegação que a doutrina governa.
+  assert.equal(costSection(guiPlanningSystemPrompt()), undefined)
+})
+
+test('R25.4 — a doutrina é PERSONA, nunca guarda: nenhum verbo de bloqueio', () => {
+  const section = costSection(guiMissionSystemPrompt('dev'))
+  // Custo é JULGAMENTO (memória feedback-guardas-nao-capam-inteligencia): a
+  // persona empurra, o agente decide. Proibir turno longo aqui seria capar a
+  // inteligência que o dono paga para ter.
+  assert.doesNotMatch(section, /you are not allowed|forbidden|you must not read/iu)
+  // E ela não fala em DINHEIRO: com assinatura o CLI não reporta custo em $.
+  assert.doesNotMatch(section, /\$|dollar|usd/iu)
 })

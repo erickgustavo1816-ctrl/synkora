@@ -23,7 +23,7 @@ import { ensureSynkoraGitExcludes } from '../worktree'
 import { getCatalog } from '../catalog'
 import { getCliStatus, updateAllClis, type CliStatus } from '../cliUpdate'
 import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'fs'
-import { getSeatUsage } from '../seatUsage'
+import { getSeatUsage, peekSeatUsage } from '../seatUsage'
 import { diagnosticsConsentDetail, exportDiagnostics } from '../diagnostics'
 import type { MainContext } from '../mainContext'
 
@@ -102,6 +102,16 @@ export function registerMiscIpc(ctx: MainContext, extras: MiscIpcExtras): void {
     if (!seat) return null
     seats.preseed(seat)
     return getSeatUsage(seat.id, seat.cli, seats.configDirOf(seat))
+  })
+
+  // R25.2 — a MESMA leitura, sem coletar: o chat da missão mostra a cota do seu
+  // seat consumindo só o que o cache acima já tem. Um pane nunca abre processo
+  // de CLI por causa de um medidor (a cerca da rodada), então aqui não há
+  // preseed nem coletor: cache quente responde, cache frio devolve `null` e a
+  // UI simplesmente não mostra a linha.
+  ipcMain.handle('seats:usagePeek', (_e, id: string) => {
+    const seat = seats.get(id)
+    return seat ? peekSeatUsage(seat.id) : null
   })
 
   // CAIXA-PRETA: exportar o pacote de diagnóstico completo (diário + estado

@@ -763,6 +763,11 @@ const api = {
     remove: (id: string): Promise<void> => ipcRenderer.invoke('seats:remove', id),
     usage: (id: string): Promise<SeatUsage | null> =>
       ipcRenderer.invoke('seats:usage', id),
+    /** R25.2 — SÓ o que o cache do main já tem, NUNCA uma coleta: é assim que o
+     *  chat mostra a cota do seat dele sem abrir um processo de CLI por pane.
+     *  `null` = ninguém colheu ainda, e a UI simplesmente não mostra a linha. */
+    usagePeek: (id: string): Promise<SeatUsage | null> =>
+      ipcRenderer.invoke('seats:usagePeek', id),
     onChanged: (cb: () => void): (() => void) => {
       const listener = (): void => cb()
       ipcRenderer.on('seats:changed', listener)

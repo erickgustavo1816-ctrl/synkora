@@ -30,6 +30,9 @@ import {
   resolveChatPermissionSuggestions
 } from './chatPermissions'
 import type { PlanDraft } from './planDraft'
+// R25.1 — o odômetro da conversa: o motor CARREGA as parcelas de cada chamada;
+// quem soma e persiste é o registro de sessões (o renderer remonta).
+import { guiApiCallParcels, type GuiApiCallParcels } from './guiConversationOdometer'
 
 // Sessão PERSISTENTE do Maestro: um processo `claude` vivo em stream-json
 // bidirecional — o mesmo motor do TUI, rodando como "painel de fundo".
@@ -155,6 +158,35 @@ export function claudeMessageContextTokens(
   // assinatura da mensagem sintética (aviso de limite, saída de comando local).
   if (prompt === 0) return undefined
   return prompt + part(usage.output_tokens)
+}
+
+/**
+ * AS PARCELAS DAQUELA MESMA CHAMADA (R25.1) — o que o odômetro da conversa
+ * soma. O `message.usage` do claude já vem repartido do jeito que o peso pede
+ * (input FRESCO separado de cache escrito e cache lido), então aqui não há
+ * conta nenhuma: só a leitura defensiva e a MESMA cerca do medidor de contexto
+ * — `usage` inteiramente zerado é mensagem sintética, e contá-la anunciaria uma
+ * chamada de API que nunca saiu da máquina.
+ */
+export function claudeMessageCallParcels(
+  usage:
+    | {
+        input_tokens?: number
+        output_tokens?: number
+        cache_creation_input_tokens?: number
+        cache_read_input_tokens?: number
+      }
+    | undefined
+): GuiApiCallParcels | undefined {
+  if (!usage) return undefined
+  const part = (value: unknown): number =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+  return guiApiCallParcels({
+    inputTokens: part(usage.input_tokens),
+    cacheWriteTokens: part(usage.cache_creation_input_tokens),
+    cacheReadTokens: part(usage.cache_read_input_tokens),
+    outputTokens: part(usage.output_tokens)
+  })
 }
 
 /**
@@ -394,7 +426,28 @@ export type SessionEvent =
   | { type: 'ready'; caps: CliCaps }
   | { type: 'command-output'; text: string }
   /** Medição canônica do contexto vivo; `null` significa que o backend não a informou. */
-  | { type: 'context-usage'; contextTokens: number | null; contextWindow: number | null }
+  | {
+      type: 'context-usage'
+      contextTokens: number | null
+      contextWindow: number | null
+      /**
+       * R25.1 — AS PARCELAS DESTA CHAMADA DE API. Transporte MOTOR → REGISTRO e
+       * nada mais: o registro as soma no odômetro da conversa e as REMOVE do
+       * evento antes de publicar (ao renderer viaja o TOTAL, não a parcela).
+       * Ausente = medição sem repartição confiável — o contexto continua válido
+       * e o odômetro simplesmente não anda.
+       */
+      call?: GuiApiCallParcels
+      /**
+       * R25.1 — O ODÔMETRO DA CONVERSA, carimbado pelo REGISTRO no publish (o
+       * motor nunca os preenche: ele morre a cada respawn e não teria como
+       * somar através dele). Como `context-usage` é STICKY no anel, a ÚLTIMA
+       * fotografia carrega o total — replay e remontagem entregam o odômetro de
+       * graça. Espelho declarado em `src/renderer/src/guiApi.ts`.
+       */
+      convCalls?: number
+      convWeightTokens?: number
+    }
   | { type: 'command-completed'; isError: boolean; continues: boolean; errorText?: string }
   | { type: 'limit'; text: string }
   | {
@@ -1433,10 +1486,15 @@ export class MaestroSession {
             // A JANELA sai da régua única (`contextWindowNow`), a mesma que o
             // `result` alimenta com `claudeReportedContextWindow`: evento vivo e
             // fecho do turno nunca anunciam janelas diferentes.
+            // R25.1 — a MESMA fotografia carrega o que a chamada custou. As
+            // parcelas nascem do MESMO `message.usage` que mede o contexto:
+            // uma leitura, duas réguas (ocupação da janela e gasto de cota).
+            const parcels = claudeMessageCallParcels(evt.message?.usage)
             this.emit({
               type: 'context-usage',
               contextTokens: measured,
-              contextWindow: this.contextWindowNow()
+              contextWindow: this.contextWindowNow(),
+              ...(parcels ? { call: parcels } : {})
             })
           }
         }

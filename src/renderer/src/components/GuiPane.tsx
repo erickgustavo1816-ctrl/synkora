@@ -78,7 +78,7 @@ import {
 } from '../guiApi'
 import { useGuiDraft } from '../useGuiDraft'
 import { useGuiComposerAttachments } from '../useGuiComposerAttachments'
-import type { GuiAttachmentDescriptor } from '../../../preload'
+import type { GuiAttachmentDescriptor, SeatUsage } from '../../../preload'
 import {
   guiContextUsagePresentation,
   guiModelForSelection,
@@ -87,6 +87,11 @@ import {
   guiModelShortName
 } from '../guiComposerPresentation'
 import { guiContextPanelPresentation } from '../guiContextPanel'
+import {
+  guiExpensiveSwitchNote,
+  guiOdometerPresentation,
+  guiSeatQuotaPresentation
+} from '../guiCostSignals'
 import {
   GUI_COMPOSER_ATTACHMENT_MAX_FILES,
   GUI_COMPOSER_ATTACHMENT_MAX_TOTAL_BYTES,
@@ -611,6 +616,33 @@ export default function GuiPane({
     },
     []
   )
+
+  // R25.2 — A COTA DO SEAT DESTA CONVERSA, sem NENHUMA chamada nova. `usagePeek`
+  // lê só o cache que o poller do main já mantém (hover do SeatRail, titlebar,
+  // list_seats da delegação): cache frio devolve `null` e a linha não aparece.
+  // SEM RELÓGIO NOVO de propósito — a leitura acontece quando a conversa muda
+  // de estado (abrir, começar e terminar um turno), que é quando o dono olha.
+  const [seatQuota, setSeatQuota] = useState<SeatUsage | null>(null)
+  useEffect(() => {
+    // Ponte antiga degrada INERTE (janela dev/HMR: renderer novo sobre um
+    // preload que ainda não expõe `usagePeek`) — chamar `undefined` aqui
+    // derrubaria o pane inteiro em vez de só esconder a linha da cota.
+    const peek: ((id: string) => Promise<SeatUsage | null>) | undefined =
+      window.synkora.seats.usagePeek
+    if (!seatId || typeof peek !== 'function') {
+      setSeatQuota(null)
+      return
+    }
+    let alive = true
+    void peek(seatId)
+      .then((info) => {
+        if (alive) setSeatQuota(info)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [seatId, gui.status])
 
   // A spec do spawn muda no MÁXIMO junto com o pane; guardá-la em ref evita
   // que uma prop nova re-dispare o efeito de montagem (que reabriria sessão).
@@ -1579,6 +1611,19 @@ export default function GuiPane({
     gui.contextWindow,
     gui.costUsd
   )
+  // R25 — as duas leituras de COTA que o painel ganhou, e a nota que os menus
+  // de troca passam a mostrar. Todas derivadas: nenhuma pede nada a ninguém.
+  const odometer = guiOdometerPresentation(gui.convCalls, gui.convWeightTokens, gui.contextTokens)
+  const seatQuotaPanel = guiSeatQuotaPresentation(seatQuota, Date.now())
+  const switchNote = guiExpensiveSwitchNote(gui.contextTokens)
+  // O ⚡ é INTERRUPTOR e não tem menu onde pendurar a nota da troca cara: ela
+  // entra na dica dele. O botão segue clicável — advisory, nunca guarda.
+  const fastBaseTip = fastOn
+    ? 'desligar o modo fast'
+    : cli === 'claude'
+      ? 'modo fast — gasta mais limite (vira Opus 5)'
+      : 'modo fast — gasta mais limite'
+  const fastTip = switchNote ? `${fastBaseTip} · ${switchNote}` : fastBaseTip
   const queuedMessage = gui.queued
   const queuedOptionsLabel = queuedMessage
     ? [
@@ -2293,6 +2338,8 @@ export default function GuiPane({
                   className="gui-composer-context"
                   usage={contextPanel}
                   label={contextUsage.label}
+                  odometer={odometer}
+                  seat={seatQuotaPanel}
                   open={openMenu === 'context'}
                   onOpenChange={(nextOpen) => setOpenMenu(nextOpen ? 'context' : null)}
                 />
@@ -2342,6 +2389,11 @@ export default function GuiPane({
                         a lista de modelos chega quando o CLI termina de abrir
                       </span>
                     )}
+                    {/* R25.3b — ADVISORY, nunca guarda: modelo/effort/⚡ entram
+                        na chave do prompt-cache, então trocar numa conversa
+                        grande re-escreve o contexto inteiro. O número aparece
+                        antes do clique; o clique segue livre. */}
+                    {switchNote && <span className="gui-menu-foot gui-menu-cost">{switchNote}</span>}
                   </div>
                 )}
               </div>
@@ -2387,6 +2439,9 @@ export default function GuiPane({
                           <b>{option}</b>
                         </button>
                       ))}
+                      {switchNote && (
+                        <span className="gui-menu-foot gui-menu-cost">{switchNote}</span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2408,13 +2463,7 @@ export default function GuiPane({
                   className={`gui-mode-btn gui-fast-btn${fastOn ? ' on' : ''}`}
                   disabled={spawnChangeLocked || busyMenu === 'fast'}
                   aria-pressed={fastOn}
-                  data-tip={
-                    fastOn
-                      ? 'desligar o modo fast'
-                      : cli === 'claude'
-                        ? 'modo fast — gasta mais limite (vira Opus 5)'
-                        : 'modo fast — gasta mais limite'
-                  }
+                  data-tip={fastTip}
                   aria-label={fastOn ? 'Desligar o modo fast' : 'Ligar o modo fast'}
                   onClick={() => changeFast(!fastOn)}
                 >

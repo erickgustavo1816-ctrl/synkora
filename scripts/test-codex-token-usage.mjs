@@ -14,7 +14,10 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { codexContextFromTokenUsage } from '../src/main/codexTokenUsage.ts'
+import {
+  codexCallParcelsFromTokenUsage,
+  codexContextFromTokenUsage
+} from '../src/main/codexTokenUsage.ts'
 
 const FRAMES = [
   {
@@ -181,4 +184,70 @@ test('contrato da fonte: o handler usa o módulo puro e não lê o acumulado', (
   for (const proibido of ['total.totalTokens', 'total?.totalTokens', "total']?.['totalTokens"]) {
     assert.ok(!source.includes(proibido), `leitura proibida reintroduzida: ${proibido}`)
   }
+})
+
+// ————— R25.1 — AS PARCELAS DE CADA CHAMADA (o que o odômetro soma) —————
+//
+// SONDA, não claim nova: os mesmos 8 frames reais acima já traziam
+// `inputTokens` / `cachedInputTokens` / `cacheWriteInputTokens` / `outputTokens`
+// dentro do `last`. A régua do contexto continua sendo `last.totalTokens`; o
+// odômetro da conversa (R25) precisa da REPARTIÇÃO, porque cache lido custa
+// ~0,1× e output ~5× — somar tudo como "tokens" mentiria sobre a cota.
+//
+// `inputTokens` do codex é o input INTEIRO (a identidade abaixo prova frame a
+// frame: input + output = total), então a parcela FRESCA é o que sobra depois
+// de tirar cache lido e cache escrito.
+
+test('cada frame real reparte o `last` em fresco / cache escrito / cache lido / saída', () => {
+  const parcels = FRAMES.map((frame) => codexCallParcelsFromTokenUsage(frame))
+
+  assert.deepEqual(parcels[0], {
+    inputTokens: 13_060,
+    cacheWriteTokens: 0,
+    cacheReadTokens: 5_504,
+    outputTokens: 140
+  })
+  assert.deepEqual(parcels[1], {
+    inputTokens: 430,
+    cacheWriteTokens: 0,
+    cacheReadTokens: 18_304,
+    outputTokens: 97
+  })
+
+  for (const [i, frame] of FRAMES.entries()) {
+    const parcel = parcels[i]
+    // A identidade do protocolo: input + output = total do REQUEST.
+    assert.equal(frame.last.inputTokens + frame.last.outputTokens, frame.last.totalTokens, `frame ${i + 1}`)
+    // E a repartição não inventa nem perde token nenhum.
+    assert.equal(
+      parcel.inputTokens + parcel.cacheWriteTokens + parcel.cacheReadTokens + parcel.outputTokens,
+      frame.last.totalTokens,
+      `frame ${i + 1}`
+    )
+    // NUNCA o acumulado: repartir `total` contaria a thread inteira a cada
+    // evento. O frame 1 coincide (primeiro request: total == last), como já
+    // acontece na régua do contexto — do 2 em diante a leitura antiga mentiria.
+    if (frame.last.totalTokens !== frame.total.totalTokens) {
+      assert.notEqual(parcel.cacheReadTokens, frame.total.cachedInputTokens, `frame ${i + 1}`)
+    }
+  }
+})
+
+test('sem repartição confiável não há parcela — e nunca um chute', () => {
+  // O `last` mínimo (só totalTokens) ainda mede CONTEXTO, mas não diz o custo:
+  // publicar zero em cada parcela faria o odômetro contar chamada de graça.
+  assert.equal(
+    codexCallParcelsFromTokenUsage({ last: { totalTokens: 24_784 }, modelContextWindow: WINDOW }),
+    undefined
+  )
+  assert.equal(codexCallParcelsFromTokenUsage({ total: { inputTokens: 100 } }), undefined)
+  for (const vazio of [undefined, null, 'tokenUsage', 42, {}, { last: null }]) {
+    assert.equal(codexCallParcelsFromTokenUsage(vazio), undefined)
+  }
+  // Frame incoerente (cache maior que o input) não vira parcela negativa.
+  const incoerente = codexCallParcelsFromTokenUsage({
+    last: { totalTokens: 100, inputTokens: 100, cachedInputTokens: 400, outputTokens: 0 }
+  })
+  assert.equal(incoerente.inputTokens, 0)
+  assert.equal(incoerente.cacheReadTokens, 400)
 })

@@ -13,7 +13,7 @@ import {
   shouldArmGuiTurnWatchdog
 } from './guiTurnQueue'
 import { limitGuiToolInput } from './guiToolInput'
-import { codexContextFromTokenUsage } from './codexTokenUsage'
+import { codexCallParcelsFromTokenUsage, codexContextFromTokenUsage } from './codexTokenUsage'
 import { terminateGuiProcessTree } from './guiProcessTree'
 import {
   guiCodexErrorWillRetry,
@@ -1936,10 +1936,23 @@ export class CodexSession {
         const { contextTokens, contextWindow } = codexContextFromTokenUsage(p['tokenUsage'])
         this.lastTokens = contextTokens
         this.lastWindow = contextWindow
+        // R25.1 — e a MESMA fotografia carrega o que a chamada CUSTOU: a
+        // repartição do `last` (fresco / cache escrito / cache lido / saída),
+        // sondada nos frames reais e provada em `codexTokenUsage.ts`.
+        //
+        // SÓ COM TURNO VIVO, e isto é estrutural: o `thread/resume` REEMITE a
+        // fotografia do último request antes de qualquer chamada nova (frame 7
+        // da sonda de 17/08, idêntico ao 6). Como MEDIDA ela vale — é o que faz
+        // o medidor voltar na hora da retomada —, mas como GASTO ela não
+        // existe: somá-la cobraria do odômetro uma chamada que não aconteceu.
+        // O `turnId` só vive entre `turn/started` e `turn/completed`, então
+        // ausência dele aqui é exatamente "isto não é um request deste turno".
+        const parcels = this.turnId ? codexCallParcelsFromTokenUsage(p['tokenUsage']) : undefined
         this.emit({
           type: 'context-usage',
           contextTokens: contextTokens ?? null,
-          contextWindow: contextWindow ?? null
+          contextWindow: contextWindow ?? null,
+          ...(parcels ? { call: parcels } : {})
         })
         break
       }

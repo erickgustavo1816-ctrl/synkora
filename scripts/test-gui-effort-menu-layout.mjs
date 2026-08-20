@@ -16,7 +16,12 @@ test('seletor de effort usa conteúdo intrínseco e respeita pane/viewport', () 
   assert.ok(effortMenu, 'o menu de effort precisa ter uma geometria própria')
   assert.match(effortMenu, /role="menu"/u)
   assert.match(effortMenu, /aria-label="Níveis de esforço"/u)
-  assert.doesNotMatch(effortMenu, /<span\b/u, 'as opções curtas não renderizam descrição vazia')
+  // As OPÇÕES continuam sendo só `<b>`: descrição vazia por opção foi o que
+  // esticava o popover. O rodapé de custo (R25.3b) fica fora deste recorte de
+  // propósito — ele é nota do MENU, não descrição de item.
+  const footAt = effortMenu.indexOf('{switchNote &&')
+  const effortItems = footAt < 0 ? effortMenu : effortMenu.slice(0, footAt)
+  assert.doesNotMatch(effortItems, /<span\b/u, 'as opções curtas não renderizam descrição vazia')
 
   assert.match(menuRule, /width: max-content;/u)
   assert.match(menuRule, /min-width: 0;/u)

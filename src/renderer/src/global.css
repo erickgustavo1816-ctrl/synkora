@@ -17325,6 +17325,59 @@ details.gui-error-line {
   text-align: right;
 }
 
+/* R25 — A SEGUNDA RÉGUA (o que já foi GASTO) começa aqui. Fio acima pelo mesmo
+   motivo da nota de escopo: é outra classe de informação, e o dono precisa ver
+   de relance que estas linhas não falam da janela. */
+.gui-context-metrics .gui-context-group {
+  margin-top: 3px;
+  padding-top: 8px;
+  border-top: 1px solid var(--gui-line);
+}
+
+/* E a FORMA acompanha: rótulo ACIMA do valor. Os valores de cota são frases
+   curtas ("139 chamadas · ~3.6 mi tokens-peso"), e a coluna direita das linhas
+   da janela — feita para "18%" e "200.000 tokens" — as quebraria em duas linhas
+   tortas a cada medição nova. */
+.gui-context-metrics > .gui-context-cost {
+  display: block;
+}
+
+.gui-context-cost dd {
+  margin-top: 2px;
+  text-align: left;
+}
+
+/* O valor é o que muda de tom — a MESMA régua de severidade dos medidores do
+   titlebar, com as cores do PAPEL (as de lá são para o painel escuro). `cool`
+   não pinta nada: sinal só existe quando há o que sinalizar. */
+.gui-context-signal.warm {
+  color: var(--accent);
+}
+
+.gui-context-signal.hot {
+  color: var(--err);
+}
+
+/* A idade da leitura de cota, colada ao rótulo — mesma forma do `.meter-win`
+   dos medidores: qualificador pequeno, nunca uma linha própria. */
+.gui-context-age {
+  margin-left: 6px;
+  color: var(--ink-3);
+  font-size: 9.5px;
+  font-style: normal;
+}
+
+/* A FÍSICA em uma frase. Mesma voz da nota de escopo (é a mesma classe de
+   informação: o que os números querem dizer), sem fio próprio — ela pertence
+   ao grupo do odômetro logo acima. */
+.gui-context-physics {
+  margin: 7px 0 0;
+  color: var(--ink-2);
+  font-size: 10px;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
 /* O ESCOPO dos números. Fio separando porque é outra classe de informação —
    os valores descrevem a conversa inteira, não a última pergunta.
    `--ink-2` e não `--ink-3`: isto é uma FRASE para ler, e o tom dos rótulos dá
@@ -17923,6 +17976,15 @@ details.gui-error-line {
   font-size: 10px;
   line-height: 1.45;
   color: var(--ink-3);
+}
+
+/* R25.3b — a nota da troca cara. Ela é ADVISORY, e a forma diz isso: mesmo pé
+   de menu das outras notas, só que legível (--ink-2 dá 6,32:1 sobre o papel;
+   --ink-3 fica abaixo do piso de texto corrido) e com o número em tabular. Sem
+   cor de alarme: quem decide é o dono, e o clique acima continua livre. */
+.gui-menu-cost {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
 }
 
 .gui-input {

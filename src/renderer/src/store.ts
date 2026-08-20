@@ -509,6 +509,14 @@ export interface GuiPaneState {
   contextTokens: number | null
   contextWindow: number | null
   costUsd: number | null
+  /**
+   * R25.1 — O ODÔMETRO DA CONVERSA, como o main o acumulou: chamadas de API e
+   * peso aproximado de cota. Espelho declarado de `GuiSessionEvent`
+   * (guiApi.ts) — chega de carona na fotografia sticky de `context-usage`,
+   * então a remontagem o recebe no replay sem pedir nada a ninguém.
+   */
+  convCalls: number | null
+  convWeightTokens: number | null
   /** handshake concluído (evento `ready` com as caps reais do CLI) */
   ready: boolean
   /** versão monotônica dos eventos reais do backend; operações assíncronas
@@ -577,6 +585,8 @@ export const EMPTY_GUI_PANE: GuiPaneState = {
   contextTokens: null,
   contextWindow: null,
   costUsd: null,
+  convCalls: null,
+  convWeightTokens: null,
   ready: false,
   eventRevision: 0,
   sendBatch: null,
@@ -849,7 +859,12 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
       return {
         ...state,
         contextTokens: evt.contextTokens,
-        contextWindow: evt.contextWindow
+        contextWindow: evt.contextWindow,
+        // R25.1 — o ODÔMETRO é a outra régua e não segue a primeira: gasto não
+        // se desfaz. Uma fotografia sem medição (a compactação zera os dois
+        // números acima) conserva o total que o main já contou.
+        convCalls: evt.convCalls ?? state.convCalls,
+        convWeightTokens: evt.convWeightTokens ?? state.convWeightTokens
       }
 
     case 'session-id':
@@ -900,6 +915,11 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           // imediatamente antes do primeiro novo envio.
           contextTokens: evt.contextTokens ?? (quiet ? state.contextTokens : null),
           contextWindow: evt.contextWindow ?? (quiet ? state.contextWindow : null),
+          // R25.1 — o odômetro acompanha: conversa que CONTINUA (respawn com
+          // resume) conserva o acumulado que o main persistiu; geração NOVA
+          // zera, porque odômetro de outra conversa na tela seria mentira.
+          convCalls: quiet ? state.convCalls : null,
+          convWeightTokens: quiet ? state.convWeightTokens : null,
           activityText: null,
           sendBatch: null,
           error: null,
