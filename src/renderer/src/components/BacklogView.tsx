@@ -11,7 +11,7 @@ import ArchivedMissionChat from './ArchivedMissionChat'
 import NewMissionModal from './NewMissionModal'
 import Select from './Select'
 import { TestServerModal } from './TestServerModal'
-import { MISSION_CARD_TIP, missionCardAccess } from '../missionCardAccess'
+import { MISSION_CARD_TIP, isReleaseMissionRecord, missionCardAccess } from '../missionCardAccess'
 import { allowsOwnVersionNumber, versionSuggestions } from '../versionChoice'
 
 const MISSION_ICON: Record<MissionStatus, string> = {
@@ -71,6 +71,9 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
   const all = missions
     .filter(
       (m) =>
+        // R27 — o registro de release não é missão de superfície: a subida
+        // aparece como estado da VERSÃO ("lançada em…"), nunca nesta lista.
+        !isReleaseMissionRecord(m) &&
         (fStatus === 'todas' || m.status === fStatus) &&
         (fVersion === 'todas' ||
           (fVersion === 'sem' ? !m.versionId : m.versionId === fVersion))
@@ -302,6 +305,10 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   // só garantimos a primeira leitura quando o dono entra direto na aba.
   const stats = useStore((s) => s.homeStats[projectId])
   const loadHomeStats = useStore((s) => s.loadHomeStats)
+  // R27.3 — o endereço da PROD no cabeçalho da aba: a pasta do projeto é a
+  // main, e ela só muda quando uma versão sobe. (`find` por id devolve a
+  // referência do item — estável enquanto a lista não muda.)
+  const projectPath = useStore((s) => s.projects.find((p) => p.id === projectId)?.path)
 
   const [versions, setVersions] = useState<Version[]>([])
   const [items, setItems] = useState<BacklogItem[]>([])
@@ -494,7 +501,14 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   // "missões desta versão" era a mesma informação duas vezes (feedback do
   // usuário). Aqui ficam só as vivas/arquivadas.
   const versionMissions = version
-    ? missions.filter((m) => m.versionId === version.id && m.status !== 'concluida')
+    ? missions.filter(
+        (m) =>
+          m.versionId === version.id &&
+          m.status !== 'concluida' &&
+          // R27 — a subida não é "missão desta versão": ela é a própria versão
+          // subindo (o ⇪ reabre o chat dela).
+          !isReleaseMissionRecord(m)
+      )
     : []
   // Versão LANÇADA já está na main: histórico read-only — sem add, sem mover,
   // sem excluir, sem virar missão (decisão do usuário).
@@ -537,6 +551,14 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
           <span className="vs-indev">em desenvolvimento: {inDev.map((v) => v.name).join(' · ')}</span>
         )}
       </div>
+
+      {/* R27.3 — o MAPA dev→prod na tela (a confusão que fez o dono rodar o
+          build na pasta errada morre aqui): a pasta do projeto é a PROD. */}
+      {projectPath && (
+        <div className="vs-prod-line" title={projectPath}>
+          prod: {projectPath} · branch main — só muda quando uma versão sobe
+        </div>
+      )}
 
       {/* RETRATO POR VERSÃO — mudou de casa (ordem do dono, 2026-08-15): ele
           ocupava a página ✦ geral inteira ("uma página inteira para aquilo não
@@ -799,6 +821,12 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
                 ⎇ {version.branch}
               </span>
             )}
+            {/* R27.3 — onde o DEV desta versão mora de verdade no disco. */}
+            {version.worktree && (
+              <span className="vs-home-line" title={version.worktree}>
+                mora em: {version.worktree}
+              </span>
+            )}
             {versionMissions.length > 0 && (
               <div className="vs-block">
                 <span className="vs-block-title">missões desta versão</span>
@@ -1044,8 +1072,9 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
               Subir a versão <b>{confirmRelease.name}</b> para a main?
             </p>
             <p className="confirm-sub">
-              Merge da branch {confirmRelease.branch ?? '—'} na base: tudo que as missões desta
-              versão entregaram passa a valer no app. Ela vira a versão ATUAL.
+              dev → prod: merge da branch {confirmRelease.branch ?? '—'} na main — a pasta do
+              projeto passa a conter tudo que as missões desta versão entregaram. Ela vira a
+              versão ATUAL.
             </p>
             <div className="task-modal-actions">
               <button className="btn ghost" onClick={() => setConfirmRelease(null)}>

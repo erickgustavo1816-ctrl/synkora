@@ -579,9 +579,10 @@ export function routeGuiMissionPane(
       systemPrompt: guiMissionSystemPrompt(role)
     }
   }
-  // RELEASE (R10) também é UMA conversa: ela opera a subida da versão para a
-  // main no worktree da própria versão — não tem diff de missão para revisar
-  // nem fatia para repartir.
+  // RELEASE também é UMA conversa — e desde a R27 ela opera na PASTA DO
+  // PROJETO (a prod que a subida altera). Morar no worktree da versão era o
+  // autoconflito terminal da estreia de 2026-08-20: o chat segurava, no
+  // Windows, o diretório que o próprio release precisa apagar na limpeza.
   if (missionType === 'release') {
     if (role !== 'dev') {
       return {
@@ -593,7 +594,7 @@ export function routeGuiMissionPane(
     return {
       ok: true,
       missionType,
-      workspace: 'version-worktree',
+      workspace: 'project-root',
       systemPrompt: guiReleaseSystemPrompt()
     }
   }
@@ -660,11 +661,23 @@ export const MISSION_RELEASE_NOT_QUEUEABLE =
 export function guiReleaseFirstPrompt(input: {
   versionName: string
   versionBranch?: string
+  /** R27 — o MAPA dev→prod: o chat do release opera a PASTA DO PROJETO. */
+  projectPath?: string
+  versionWorktree?: string
 }): string {
   return [
     `[synkora] The owner pressed "subir pra main" for version ${input.versionName}` +
       (input.versionBranch ? ` (branch ${input.versionBranch})` : '') +
       ' — that press is your mandate for THIS version.',
+    // R27 — THE MAP. The owner once ran a build in the wrong folder because no
+    // instruction ever named the folder it applied to. Addresses are spoken.
+    ...(input.projectPath
+      ? [
+          `THE MAP: you operate in the PROJECT FOLDER ${input.projectPath} (branch main — the prod; it only changes when this release lands).` +
+            (input.versionWorktree ? ` The version lives in ${input.versionWorktree}.` : ''),
+          'The ascent happens ONLY through release_status/release_run — manual git on the main is forbidden. Every instruction you hand the owner must NAME the folder it applies to.'
+        ]
+      : []),
     'Start with release_status, tell the owner what it says in one or two PT-BR lines, and proceed: if the photo is clear, release_run; if something holds it, name it and the exit.',
     "The owner's message follows below."
   ].join('\n')

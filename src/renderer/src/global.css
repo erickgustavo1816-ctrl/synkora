@@ -8928,6 +8928,63 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink-2);
 }
 
+/* R27.3 — o MAPA dev→prod na aba Versões: linha de margem discreta (forma
+   antes de cor), no padrão das notas da casa. */
+.vs-prod-line {
+  margin: 6px 2px 0;
+  font-size: 10.5px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vs-home-line {
+  font-size: 10.5px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* R27 — o trilho PRÓPRIO do release no board: quem ele é e o que faz, nada de
+   fila/arquivar. Papel, mono, uppercase só no título (padrão dos painéis). */
+.release-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+}
+
+.release-rail-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.release-rail-version {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.release-rail-flow {
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.release-rail-note {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
 /* RETRATO POR VERSÃO (2026-08-15): veio da página ✦ geral, que o dono aposentou
    ("uma página inteira para aquilo não faz sentido"). Faixa compacta no topo da
    aba, uma versão por CARD. */

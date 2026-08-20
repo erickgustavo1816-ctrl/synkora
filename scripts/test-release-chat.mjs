@@ -160,11 +160,13 @@ test('sucesso (lancada) conclui a missão e avisa que o chão se foi; fracasso n
 
 // ————— os contratos da missão de release —————
 
-test('a rota: uma conversa só, no worktree da VERSÃO, com a persona do release', () => {
+// R27: a conversa saiu do worktree da versão (que ela segurava no Windows —
+// o diretório que a própria subida apaga) para a PASTA DO PROJETO.
+test('a rota: uma conversa só, na pasta do PROJETO, com a persona do release', () => {
   assert.equal(missionTypeOf({ missionType: 'release' }), 'release')
   const route = routeGuiMissionPane({ missionType: 'release' }, 'dev')
   assert.equal(route.ok, true)
-  assert.equal(route.workspace, 'version-worktree')
+  assert.equal(route.workspace, 'project-root')
   assert.match(route.systemPrompt, /release_run/u)
   assert.match(route.systemPrompt, /PT-BR/u)
   assert.match(route.systemPrompt, /NEVER touch the main branch with manual git/u)
@@ -208,9 +210,15 @@ test('o botão navega: subir-pra-main leva o dono DIRETO ao chat de release', as
   assert.match(handler, /setUniverseTab\(projectId, 'board'\)/u)
 })
 
-test('o spec: missão release mora no worktree da versão', async () => {
+// R27: o spec do release mora na pasta do projeto (a prod que ele opera).
+test('o spec: missão release mora na pasta do projeto', async () => {
   const ipc = await source('src/main/ipc/missions.ts')
-  assert.match(ipc, /workspace: 'version-worktree'/u)
+  const releaseProve = ipc.slice(
+    ipc.indexOf("missionTypeOf(mission) === 'release'"),
+    ipc.indexOf('const withWorktree')
+  )
+  assert.match(releaseProve, /cwd: project\.path/u)
+  assert.doesNotMatch(releaseProve, /workspace: 'version-worktree'/u)
   assert.match(ipc, /guiReleaseFirstPrompt/u, 'o briefing pendente é o do release')
 })
 
@@ -262,4 +270,33 @@ test('a reconciliação de boot conclui a missão de release junto com a versão
     /missions\.update\(m\.id, \{ status: 'concluida' \}\)/u,
     'e o conclui pelo MESMO sinal estrutural do caminho feliz'
   )
+})
+
+// R27 — RELEASE É RELEASE (ordem verbatim do dono, 2026-08-20). Nesta fatia:
+// o chat do release passa a morar na PASTA DO PROJETO (a prod que ele opera) —
+// morava DENTRO do worktree da versão e segurava, no Windows, o diretório que
+// a própria subida precisa apagar (o autoconflito terminal da estreia) — e o
+// primeiro prompt declara o MAPA dev→prod (a confusão que fez o dono rodar o
+// build na pasta errada).
+test('R27 — o chat do release mora na pasta do projeto e o briefing declara o mapa', async () => {
+  const missionsIpc = await source('src/main/ipc/missions.ts')
+  const releaseProve = missionsIpc.slice(
+    missionsIpc.indexOf("missionTypeOf(mission) === 'release'"),
+    missionsIpc.indexOf('const withWorktree')
+  )
+  assert.match(
+    releaseProve,
+    /cwd: project\.path/u,
+    'o chat do release opera a prod — nunca o worktree que a subida apaga'
+  )
+  assert.match(releaseProve, /workspace: 'project-root'/u)
+
+  const prompt = guiReleaseFirstPrompt({
+    versionName: 'V1.0',
+    versionBranch: 'version/painel-1.0',
+    projectPath: 'C:/proj-prod',
+    versionWorktree: 'C:/wt-v1'
+  })
+  assert.match(prompt, /C:\/proj-prod/u, 'o briefing nomeia a pasta da prod')
+  assert.match(prompt, /C:\/wt-v1/u, 'o briefing nomeia onde a versão mora')
 })

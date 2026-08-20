@@ -4154,3 +4154,25 @@ test('R25.1 — o espelho do context-usage carrega o odômetro da conversa', () 
   assert.match(restart.slice(0, 2600), /convCalls: quiet \? state\.convCalls : null/u)
   assert.match(restart.slice(0, 2600), /convWeightTokens: quiet \? state\.convWeightTokens : null/u)
 })
+
+// R27 — RELEASE É RELEASE no host das conversas: o Board continua hospedando o
+// pane (desmontar mataria a conversa — o Board é o host vivo por design), mas
+// o registro de release SOME das superfícies de missão (coluna, retrato) e o
+// trilho de missão (fila/arquivar/entrega — os botões sem nexo do incidente)
+// dá lugar ao cabeçalho próprio do release.
+test('R27 — o board não lista o registro de release e o trilho vira release', () => {
+  const board = readFileSync(
+    new URL('../src/renderer/src/components/Board.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(board, /isReleaseMissionRecord/u, 'a régua única chega ao board')
+  assert.match(
+    board,
+    /surfaceMissions = liveMissions\.filter\(\(m\) => !isReleaseMissionRecord\(m\)\)/u,
+    'a coluna e o retrato listam só missões de superfície'
+  )
+  assert.match(board, /release-rail/u, 'o release tem trilho próprio')
+  assert.match(board, /dev → main/u)
+  const railGate = board.indexOf('selIsRelease')
+  assert.ok(railGate > 0, 'o trilho de missão é condicionado ao registro não ser release')
+})

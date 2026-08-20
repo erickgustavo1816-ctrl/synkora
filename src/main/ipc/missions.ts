@@ -263,8 +263,11 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       return { ok: false, error: 'a missão está integrando agora — o worktree some no merge' }
     if (missionTypeOf(mission) === 'planejamento')
       return { ok: true, mission, project, cwd: project.path, workspace: 'project-root' }
-    // RELEASE (R10): a conversa mora no worktree da VERSÃO — a branch dela já
-    // está checada lá, e é ela que o release_run vai subir para a main.
+    // RELEASE (R27): a conversa opera na PASTA DO PROJETO — a prod que a
+    // subida altera. Morar no worktree da versão era o autoconflito terminal
+    // da estreia (2026-08-20): o chat segurava, no Windows, o diretório que o
+    // próprio release precisa apagar na limpeza. As recusas de versão sem
+    // branch/worktree ficam — sem elas não há o que subir.
     if (missionTypeOf(mission) === 'release') {
       const version = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
       if (!version || version.projectId !== mission.projectId)
@@ -274,7 +277,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
           ok: false,
           error: 'a versão ainda não tem worktree próprio — crie uma missão nela primeiro'
         }
-      return { ok: true, mission, project, cwd: version.worktree, workspace: 'version-worktree' }
+      return { ok: true, mission, project, cwd: project.path, workspace: 'project-root' }
     }
     const withWorktree = ensureMissionWorktree(missionId) ?? mission
     const cwd = missionWorkspacePath(project.path, withWorktree)
@@ -622,6 +625,13 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
                     mission.title,
                   versionBranch: mission.versionId
                     ? backlog.getVersion(mission.versionId)?.branch
+                    : undefined,
+                  // R27 — o MAPA dev→prod: o chat opera a pasta do projeto e o
+                  // briefing nomeia os dois endereços (a confusão que fez o
+                  // dono rodar build na pasta errada morre aqui).
+                  projectPath: project.path,
+                  versionWorktree: mission.versionId
+                    ? backlog.getVersion(mission.versionId)?.worktree
                     : undefined
                 })
               : guiMissionFirstPrompt(role, {

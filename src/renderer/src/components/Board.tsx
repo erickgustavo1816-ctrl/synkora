@@ -32,6 +32,7 @@ import {
 } from '../store'
 import type { GuiPaneSpawn, GuiPermissionMode } from '../guiApi'
 import { guiModelLabel } from '../guiComposerPresentation'
+import { isReleaseMissionRecord } from '../missionCardAccess'
 import { canSendGuiMessage } from '../guiTransport'
 import { guiItemId } from '../guiItemIdentity'
 import { REVIEW_NUDGE_TEXT } from '../missionReviewNudge'
@@ -369,7 +370,13 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const liveMissions = projectMissions.filter(
     (m) => m.status === 'ativa' || m.status === 'integrando'
   )
+  // R27 — RELEASE É RELEASE: o registro que carrega a conversa da subida fica
+  // FORA de toda superfície de missão (coluna, retrato). O Board continua
+  // sendo o HOST do pane dele (desmontar mataria a conversa), então
+  // `selMission`/slots seguem enxergando o registro — só as listas o escondem.
+  const surfaceMissions = liveMissions.filter((m) => !isReleaseMissionRecord(m))
   const selMission = missionTab ? liveMissions.find((m) => m.id === missionTab) : undefined
+  const selIsRelease = Boolean(selMission && isReleaseMissionRecord(selMission))
 
   // O PULSO DAS ABAS saiu inteiro na purga F6 (2026-08-17): a heurística do
   // "?" lia panes TUI que não existem mais, e o canal ask_user morreu com o
@@ -988,8 +995,9 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const integrationRows = integrationQueueRows(projectMissions, selMission?.id)
 
   // Linhas da coluna da esquerda: o Board resolve tudo (conta, modelo, versão,
-  // progresso, pulso) e a coluna só desenha.
-  const missionColumnEntries: MissionColumnEntry[] = liveMissions.map((m) => {
+  // progresso, pulso) e a coluna só desenha. R27: só missões de SUPERFÍCIE —
+  // o registro de release não é card (a aba Versões é a dona do gesto dele).
+  const missionColumnEntries: MissionColumnEntry[] = surfaceMissions.map((m) => {
     const slots = missionGuiSlots[m.id] ?? []
     // A conta/modelo que aparecem no card são os da CONVERSA aberta (o que o
     // dono está de fato gastando ali); sem conversa, a conta carimbada na
@@ -1280,7 +1288,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
             />
           ) : (
             <ProjectDashboard
-              missions={projectMissions}
+              missions={projectMissions.filter((m) => !isReleaseMissionRecord(m))}
               entries={missionColumnEntries}
               versoes={homeStats?.versoes}
               versaoNaMain={homeStats?.versaoNaMain}
@@ -1300,7 +1308,22 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           O Board é a autoridade do "à vista" — ele fica MONTADO fora da aba e
           fora do projeto ativo (desmontar mataria as conversas e os PTYs), então
           só ele sabe se o trilho está mesmo na tela do dono. */}
-      {isDirect && selMission && (
+      {/* R27 — RELEASE É RELEASE: o trilho de missão (entrega/fila/arquivar —
+          os botões sem nexo do incidente de 2026-08-20) não pertence à subida.
+          O release tem o trilho PRÓPRIO, mínimo: quem ele é e o que faz. */}
+      {selMission && selIsRelease && (
+        <section className="release-rail" aria-label="Release da versão">
+          <div className="release-rail-head">release</div>
+          <div className="release-rail-version">◇ {versionName(selMission.versionId)}</div>
+          <div className="release-rail-flow">dev → main</div>
+          <p className="release-rail-note">
+            quem sobe é o agente (release_run) — acompanhe no chat. a aba VERSÕES
+            reabre esta conversa pelo ⇪.
+          </p>
+        </section>
+      )}
+
+      {isDirect && selMission && !selIsRelease && (
         <GuiPanelErrorBoundary
           paneId={`mission-delivery:${selMission.id}`}
           label="o trilho de entrega"

@@ -191,3 +191,18 @@ test('a aba Versões classifica o clique e avisa que excluir apaga a conversa', 
   assert.match(source, /A conversa desta missão será apagada junto/u)
   assert.doesNotMatch(source, /window\.(confirm|alert)/u)
 })
+
+// R27 — o registro interno da subida NUNCA é missão de superfície: não vira
+// card, não vira aba, não conta em retrato nenhum. A régua mora AQUI, no
+// módulo puro da classificação, e as telas a consomem em vez de reescrevê-la.
+test('R27 — o registro de release não é missão de superfície', async () => {
+  const access = await import('../src/renderer/src/missionCardAccess.ts')
+  assert.equal(
+    typeof access.isReleaseMissionRecord,
+    'function',
+    'a régua existe e mora na classificação'
+  )
+  assert.equal(access.isReleaseMissionRecord({ missionType: 'release' }), true)
+  assert.equal(access.isReleaseMissionRecord({ missionType: 'dev' }), false)
+  assert.equal(access.isReleaseMissionRecord({}), false)
+})

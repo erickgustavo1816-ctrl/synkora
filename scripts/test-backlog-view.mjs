@@ -196,7 +196,12 @@ test('a regra não foi copiada: as DUAS superfícies montam o mesmo viewer', asy
 
   // nenhuma reimplementação da classificação nesta tela
   assert.doesNotMatch(view, /status !== 'arquivada' \?/u)
-  assert.match(view, /import \{ MISSION_CARD_TIP, missionCardAccess \} from '\.\.\/missionCardAccess'/u)
+  // R27: a régua do release entrou no MESMO import — a classificação continua
+  // vindo de um lugar só.
+  assert.match(
+    view,
+    /import \{ MISSION_CARD_TIP, isReleaseMissionRecord, missionCardAccess \} from '\.\.\/missionCardAccess'/u
+  )
 })
 
 /* ---------- 3. o número da versão que o DONO escreve ---------- */
@@ -363,4 +368,18 @@ test('subir versão carrega a missão nova ANTES de navegar, e nenhum caminho é
     /releaseChat\) return\b/u,
     'ponte sem a rota avisa em vez de retornar mudo'
   )
+})
+
+// R27 — a aba Versões é a DONA do gesto de subir e a tela que diz onde cada
+// coisa mora: prod (a pasta do projeto, branch main) no cabeçalho, o endereço
+// do dev por versão, e o ⇪ dizendo com todas as letras que é dev → prod. E o
+// registro de release nunca aparece na lista de missões — a régua vem da
+// classificação (missionCardAccess), nunca é reescrita aqui.
+test('R27 — a aba Versões diz onde mora dev e prod, e release não é missão de lista', async () => {
+  const src = await source('src/renderer/src/components/BacklogView.tsx')
+  assert.match(src, /isReleaseMissionRecord/u, 'a régua única chega à aba')
+  assert.match(src, /vs-prod-line/u, 'o cabeçalho nomeia a prod')
+  assert.match(src, /branch main/u)
+  assert.match(src, /mora em:/u, 'a versão diz o endereço do dev')
+  assert.match(src, /dev → prod/u, 'o ⇪ diz o que a subida é')
 })

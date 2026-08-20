@@ -30,6 +30,17 @@ export interface MissionCardAccessInput {
  */
 export type MissionCardAccess = 'live' | 'frozen-chat' | 'inert'
 
+/**
+ * R27 — RELEASE É RELEASE (ordem do dono, 2026-08-20). O registro interno que
+ * carrega a conversa da subida NUNCA é missão de superfície: não vira card,
+ * não vira aba, não entra em retrato nem contagem. A superfície dele é a aba
+ * Versões (o ⇪ abre/reabre o chat) e o trilho próprio de release no board.
+ * A régua mora AQUI, no módulo puro, e as telas a consomem — nunca reescrevem.
+ */
+export function isReleaseMissionRecord(mission: { missionType?: string }): boolean {
+  return mission.missionType === 'release'
+}
+
 export function missionCardAccess(mission: MissionCardAccessInput): MissionCardAccess {
   if (mission.status === 'ativa' || mission.status === 'integrando') return 'live'
   // 'concluida' entra junto com 'arquivada' por ter EXATAMENTE a mesma
