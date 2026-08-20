@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef } from 'react'
+import FileMarkdownContent from './FileMarkdownContent'
 import type { GuiFileOpenResult } from '../guiApi'
 import {
   isChatFileTarget,
@@ -180,6 +181,11 @@ export default function GuiFileOpenPanel({
         <div className="gui-file-preview-body">
           {preview.kind === 'image' ? (
             <img src={preview.content} alt={`Preview de ${preview.name}`} />
+          ) : preview.kind === 'markdown' ? (
+            // R26 — .md abre BONITO no chat: o mesmo renderizador da aba
+            // Arquivos (um pipeline só), e o corpo quebra linha em vez de
+            // ganhar rolagem lateral.
+            <FileMarkdownContent content={preview.content} />
           ) : (
             <pre tabIndex={0}><code>{preview.content}</code></pre>
           )}

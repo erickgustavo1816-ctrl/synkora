@@ -15130,6 +15130,15 @@ body.progress-overlay-page #root {
   font: inherit;
 }
 
+/* R26 — markdown renderizado no card do chat: o corpo quebra linha (nenhuma
+   rolagem lateral na folha); tabela e bloco de código largos rolam DENTRO de
+   si, como na aba Arquivos (o .md-view já cuida disso). O padding substitui o
+   que o <pre> cru trazia. */
+.gui-file-preview-body .file-markdown {
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+}
+
 .gui-file-preview-body img {
   display: block;
   max-width: 100%;

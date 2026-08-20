@@ -97,7 +97,11 @@ interface ResolvedFile extends PreparedRoot {
   stats: Stats
 }
 
-const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkdn'])
+/** A régua do que É markdown. ESPELHO DECLARADO com o preview do chat
+ *  (`guiFileResolver.GUI_MARKDOWN_PREVIEW_EXTENSIONS`): os dois módulos são
+ *  folha (as suítes rodam o .ts cru, sem import de runtime entre eles), então
+ *  a lista é cópia declarada — e o lacre é o deepEqual do test:gui-file-open. */
+export const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkdn'])
 const CODE_EXTENSIONS = new Set([
   '.c',
   '.cc',

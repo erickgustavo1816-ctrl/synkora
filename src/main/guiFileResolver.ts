@@ -159,6 +159,13 @@ const TEXT_PREVIEW_BASENAMES = new Set([
   'vagrantfile'
 ])
 
+/** R26 — o que o CHAT renderiza como markdown. ESPELHO DECLARADO da régua da
+ *  aba Arquivos (`filePreview.MARKDOWN_EXTENSIONS`): este módulo é folha (a
+ *  suíte roda o .ts cru), então a lista é cópia declarada — e o lacre é o
+ *  deepEqual do test:gui-file-open. `.mdx` fica FORA de propósito: a aba
+ *  Arquivos também o trata como código, e paridade é o contrato. */
+export const GUI_MARKDOWN_PREVIEW_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkdn'])
+
 const IMAGE_PREVIEW_MIME = new Map([
   ['.avif', 'image/avif'],
   ['.bmp', 'image/bmp'],
@@ -194,7 +201,9 @@ export interface GuiFileChoice {
 export interface GuiFilePreview {
   path: string
   name: string
-  kind: 'text' | 'image'
+  /** `markdown` é texto que o painel do chat renderiza como a aba Arquivos
+   *  (R26); a leitura e os tetos são os MESMOS do `text`. */
+  kind: 'text' | 'markdown' | 'image'
   /** Texto UTF-8 ou data URL de imagem criada pelo main. */
   content: string
   mimeType?: string
@@ -502,8 +511,12 @@ export function prepareGuiFileOpen(file: GuiResolvedFile): GuiPreparedFileOpen {
   }
 
   const lowerName = current.name.toLocaleLowerCase('en-US')
+  // R26 — as variantes de markdown (.markdown/.mdown/.mkdn) entram pela régua
+  // própria: só .md morava na lista de texto, e as irmãs caíam no "sem preview".
   const textPreview =
-    TEXT_PREVIEW_EXTENSIONS.has(extension) || TEXT_PREVIEW_BASENAMES.has(lowerName)
+    TEXT_PREVIEW_EXTENSIONS.has(extension) ||
+    GUI_MARKDOWN_PREVIEW_EXTENSIONS.has(extension) ||
+    TEXT_PREVIEW_BASENAMES.has(lowerName)
   if (!textPreview || size > GUI_FILE_PREVIEW_TEXT_MAX_BYTES) {
     return {
       ok: true,
@@ -532,7 +545,7 @@ export function prepareGuiFileOpen(file: GuiResolvedFile): GuiPreparedFileOpen {
       preview: {
         path: current.path,
         name: current.name,
-        kind: 'text',
+        kind: GUI_MARKDOWN_PREVIEW_EXTENSIONS.has(extension) ? 'markdown' : 'text',
         content,
         size,
         mtime

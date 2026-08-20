@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useRef } from 'react'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
 import type { FilePreviewResult, FileTreeRoot } from '../../../preload/index'
+import FileMarkdownContent from './FileMarkdownContent'
 import GuiFileContextMenu, { useFileContextMenu } from './GuiFileContextMenu'
 import type { FileContextTarget } from '../guiFileContextMenu'
 
@@ -36,14 +35,6 @@ function formatWhen(mtime: number): string {
     dateStyle: 'short',
     timeStyle: 'short'
   })
-}
-
-function MarkdownContent({ content }: { content: string }): React.JSX.Element {
-  const html = useMemo(() => {
-    const raw = marked.parse(content, { async: false, gfm: true, breaks: false })
-    return DOMPurify.sanitize(String(raw), { USE_PROFILES: { html: true } })
-  }, [content])
-  return <article className="md-view file-markdown" dangerouslySetInnerHTML={{ __html: html }} />
 }
 
 type CodeTokenKind = 'plain' | 'comment' | 'string' | 'keyword' | 'number' | 'literal'
@@ -232,7 +223,7 @@ export default function FilePreviewPanel({
           ) : !preview.ok ? (
             <div className="files-placeholder file-preview-status"><p>{preview.error}</p></div>
           ) : preview.kind === 'markdown' ? (
-            <MarkdownContent content={preview.content} />
+            <FileMarkdownContent content={preview.content} />
           ) : preview.kind === 'code' ? (
             <CodeContent content={preview.content} path={preview.path} />
           ) : preview.kind === 'text' ? (

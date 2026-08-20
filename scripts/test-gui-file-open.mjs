@@ -329,3 +329,68 @@ test('nome ambíguo recusa a saída externa; a escolha do painel a destrava', ()
   assert.equal(forged.ok, false)
   if (!forged.ok) assert.equal(forged.reason, 'invalid')
 })
+
+// R26 — O .MD DO CHAT ABRE BONITO (pedido do dono, 2026-08-20): o preview que
+// ele clica no fio renderiza markdown como a aba ARQUIVOS — mesma régua de
+// extensões (espelho pinado entre os dois módulos-folha), mesmo conversor
+// (marked + DOMPurify, extraído para UM componente compartilhado) e sem
+// scroll lateral. No código velho tudo que não era imagem saía como texto cru
+// num <pre> de rolagem horizontal.
+test('R26 — preview de .md do chat sai como markdown, na régua da aba Arquivos', async () => {
+  // `nota.md` tem homônimo de propósito (o teste da ambiguidade); aqui o alvo
+  // é um caminho relativo EXPLÍCITO e único, como o clique num link do fio.
+  writeFileSync(join(cwd, 'src', 'roteiro.md'), '# roteiro\n')
+  const resolver = new GuiFileResolver()
+  const nota = resolver.resolve(cwd, 'src/roteiro.md')
+  assert.equal(nota.ok, true)
+  if (!nota.ok) return
+  const prepared = prepareGuiFileOpen(nota.file)
+  assert.equal(prepared.ok, true)
+  if (!prepared.ok || prepared.action !== 'preview') return
+  assert.equal(prepared.preview.kind, 'markdown', 'o chat sabe que .md é markdown')
+  assert.equal(prepared.preview.content, '# roteiro\n', 'o corpo continua o texto íntegro')
+
+  // A variante .markdown segue a mesma régua; código continua text.
+  writeFileSync(join(cwd, 'guia.markdown'), '# guia\n')
+  const guia = new GuiFileResolver().resolve(cwd, 'guia.markdown')
+  assert.equal(guia.ok, true)
+  if (!guia.ok) return
+  const guiaPrepared = prepareGuiFileOpen(guia.file)
+  assert.equal(guiaPrepared.ok && guiaPrepared.action === 'preview' && guiaPrepared.preview.kind, 'markdown')
+  const code = new GuiFileResolver().resolve(cwd, 'src/app.ts')
+  assert.equal(code.ok, true)
+  if (!code.ok) return
+  const codePrepared = prepareGuiFileOpen(code.file)
+  assert.equal(codePrepared.ok && codePrepared.action === 'preview' && codePrepared.preview.kind, 'text')
+
+  // RÉGUA ÚNICA por espelho PINADO: os dois módulos são folha (a suíte roda o
+  // .ts cru), então a régua é uma cópia declarada — e este assert é o lacre.
+  const filePreview = await import('../src/main/filePreview.ts')
+  const chatResolver = await import('../src/main/guiFileResolver.ts')
+  assert.ok(filePreview.MARKDOWN_EXTENSIONS, 'a régua da aba Arquivos é exportada')
+  assert.ok(chatResolver.GUI_MARKDOWN_PREVIEW_EXTENSIONS, 'a régua do chat existe')
+  assert.deepEqual(
+    [...chatResolver.GUI_MARKDOWN_PREVIEW_EXTENSIONS].sort(),
+    [...filePreview.MARKDOWN_EXTENSIONS].sort(),
+    'chat e aba Arquivos decidem markdown pela MESMA lista'
+  )
+
+  // O RENDERIZADOR é um só, compartilhado pelos dois painéis.
+  const sharedPath = resolve('src/renderer/src/components/FileMarkdownContent.tsx')
+  const shared = readFileSync(sharedPath, 'utf8')
+  assert.match(shared, /marked\.parse/u)
+  assert.match(shared, /DOMPurify\.sanitize/u)
+  assert.match(shared, /md-view file-markdown/u)
+  const chatPanel = readFileSync(resolve('src/renderer/src/components/GuiFileOpenPanel.tsx'), 'utf8')
+  const filesPanel = readFileSync(resolve('src/renderer/src/components/FilePreviewPanel.tsx'), 'utf8')
+  assert.match(chatPanel, /from '\.\/FileMarkdownContent'/u)
+  assert.match(filesPanel, /from '\.\/FileMarkdownContent'/u)
+  assert.match(chatPanel, /preview\.kind === 'markdown'/u)
+  assert.match(chatPanel, /<FileMarkdownContent content=\{preview\.content\} \/>/u)
+  assert.doesNotMatch(filesPanel, /marked\.parse/u, 'nenhum segundo pipeline de markdown')
+
+  // Sem scroll lateral: o corpo markdown do card tem estilo próprio (wrap),
+  // em vez de herdar o pre de largura max-content.
+  const css = readFileSync(resolve('src/renderer/src/global.css'), 'utf8')
+  assert.match(css, /\.gui-file-preview-body \.file-markdown/u)
+})
