@@ -2002,6 +2002,94 @@ test('interrupt repetido do Codex é idempotente no mesmo turno', () => {
   session.clearInterruptGuard()
 })
 
+// R23.1 — O ■ DO DONO SEMPRE VENCE, também no Codex. Mesmo contrato do Claude:
+// estourado o timeout de confirmação (o MESMO de 10s que já existia), o
+// processo CAI e a nota no fio diz a RECEITA.
+test('R23.1 — Codex que não confirma a interrupção é derrubado com a receita no fio', () => {
+  const events = []
+  let killed = 0
+  const session = Object.create(CodexSession.prototype)
+  session.killed = false
+  session.closed = false
+  session.child = { exitCode: null, signalCode: null }
+  session.threadId = 'thread-1'
+  session.turnId = 'turn-1'
+  session.interruptedTurnId = null
+  session.interruptTimer = null
+  session.emit = (event) => events.push(event)
+  session.kill = () => {
+    killed += 1
+    session.killed = true
+  }
+  let requests = 0
+  session.request = async () => {
+    requests += 1
+    return {}
+  }
+
+  let fire
+  let delay
+  const originalSetTimeout = globalThis.setTimeout
+  globalThis.setTimeout = (callback, ms) => {
+    fire = callback
+    delay = ms
+    return 1
+  }
+  try {
+    assert.equal(session.interrupt(), true)
+  } finally {
+    globalThis.setTimeout = originalSetTimeout
+  }
+  assert.equal(requests, 1, 'o turn/interrupt saiu uma vez')
+  assert.equal(delay, 10_000, 'o gatilho é o timeout de confirmação de sempre — nenhum relógio novo')
+  assert.equal(killed, 0, 'antes do estouro ninguém cai')
+
+  fire()
+
+  assert.equal(killed, 1, 'turno que não prova ter parado leva o processo junto')
+  assert.equal(session.turnId, null, 'o turno não fica aberto depois da queda')
+  assert.equal(session.interruptedTurnId, null, 'a guarda sai junto')
+  const note = events.at(-1)
+  assert.equal(note.type, 'fatal')
+  assert.match(note.text, /não confirmou a interrupção em 10s e foi derrubado/u)
+  assert.match(note.text, /enviar reabre a MESMA conversa/u, 'a nota nomeia a receita')
+})
+
+// A guarda que o dono paga: o steer que falha zera `turnId` SEM limpar a guarda
+// da interrupção (o caminho da mensagem que fura o turno, R22). No código velho
+// o estouro achava o turno trocado e saía em SILÊNCIO — o processo encravado
+// ficava de pé, e o ■ do dono virava pedido de licença.
+test('R23.1 — turno perdido no meio não veta o ■ do Codex: a queda acontece igual', () => {
+  const events = []
+  let killed = 0
+  const session = Object.create(CodexSession.prototype)
+  session.killed = false
+  session.closed = false
+  session.child = { exitCode: null, signalCode: null }
+  session.threadId = 'thread-1'
+  session.turnId = null
+  session.interruptedTurnId = 'turn-1'
+  session.interruptTimer = null
+  session.emit = (event) => events.push(event)
+  session.kill = () => {
+    killed += 1
+    session.killed = true
+  }
+
+  session.failInterrupt('turn-1', 'não deu para interromper o turno: sem resposta')
+
+  assert.equal(killed, 1, 'processo travado não veta a autoridade do dono')
+  assert.equal(session.interruptedTurnId, null, 'a guarda sai junto')
+  const note = events.at(-1)
+  assert.equal(note.type, 'fatal')
+  assert.match(note.text, /não deu para interromper o turno: sem resposta/u)
+  assert.match(
+    note.text,
+    /enviar reabre a MESMA conversa/u,
+    'toda queda por interrupção ensina a voltar'
+  )
+})
+
 test('Codex repassa somente o contexto vivo, nunca o acumulado da sessão', () => {
   const session = Object.create(CodexSession.prototype)
   const events = []
@@ -2592,6 +2680,125 @@ test('interrupt repetido do Claude reutiliza a mesma solicitação do turno', ()
   assert.equal(requests, 1)
   assert.equal(session.interruptRequestId, requestId)
   session.clearInterruptGuard()
+})
+
+// R23.1 — O ■ DO DONO SEMPRE VENCE (incidente do dono, 2026-08-19 23:16): o CLI
+// encravou com o turno aberto e DOIS ■ ficaram sem confirmação. Estourado o
+// timeout de confirmação — o MESMO de 10s que já existia, NENHUM relógio novo —
+// o processo encravado CAI e a nota no fio diz a RECEITA. O ACK (R7-E) segue
+// exatamente como era: sem queda e sem nota.
+test('R23.1 — Claude que não confirma a interrupção é derrubado com a receita no fio', () => {
+  const armed = () => {
+    const session = Object.create(MaestroSession.prototype)
+    session.opts = { cwd: '/tmp' }
+    session.killed = false
+    session.closed = false
+    session.child = { exitCode: null, signalCode: null }
+    session.claudeTasks = new GuiClaudeTaskRegistry()
+    session.activeTurnGeneration = 5
+    session.pendingTurnGenerations = [5]
+    session.interruptGeneration = null
+    session.interruptRequestId = null
+    session.interruptTimer = null
+    return session
+  }
+
+  const events = []
+  let killed = 0
+  const writes = []
+  const session = armed()
+  session.emit = (event) => events.push(event)
+  session.kill = () => {
+    killed += 1
+    session.killed = true
+  }
+  session.write = (obj) => writes.push(obj)
+
+  let fire
+  let delay
+  const originalSetTimeout = globalThis.setTimeout
+  globalThis.setTimeout = (callback, ms) => {
+    fire = callback
+    delay = ms
+    return 1
+  }
+  try {
+    assert.equal(session.interrupt(), true)
+  } finally {
+    globalThis.setTimeout = originalSetTimeout
+  }
+  assert.equal(writes.at(-1).request.subtype, 'interrupt')
+  assert.equal(delay, 10_000, 'o gatilho é o timeout de confirmação de sempre — nenhum relógio novo')
+  assert.equal(killed, 0, 'antes do estouro ninguém cai')
+
+  fire()
+
+  assert.equal(killed, 1, 'processo travado não veta a autoridade do dono: ele CAI')
+  assert.equal(session.activeTurnGeneration, null, 'o turno não fica aberto depois da queda')
+  assert.equal(session.interruptGeneration, null, 'a guarda sai junto')
+  const note = events.at(-1)
+  assert.equal(note.type, 'fatal')
+  assert.match(note.text, /não confirmou a interrupção em 10s e foi derrubado/u)
+  assert.match(note.text, /enviar reabre a MESMA conversa/u, 'a nota nomeia a receita')
+
+  // R7-E INTACTO: com o ACK do Claude nada cai e nada é escrito no fio.
+  const confirmedEvents = []
+  let confirmedKills = 0
+  const confirmed = armed()
+  confirmed.emit = (event) => confirmedEvents.push(event)
+  confirmed.kill = () => {
+    confirmedKills += 1
+  }
+  confirmed.write = () => undefined
+  confirmed.interruptGeneration = 5
+  confirmed.interruptRequestId = 'req-ack'
+  confirmed.handleLine(
+    JSON.stringify({
+      type: 'control_response',
+      response: { request_id: 'req-ack', subtype: 'success' }
+    })
+  )
+  assert.equal(confirmedKills, 0, 'interrupção confirmada não derruba processo nenhum')
+  assert.deepEqual(confirmedEvents, [], 'confirmada não escreve nota nenhuma')
+  assert.equal(confirmed.activeTurnGeneration, 5, 'o turno segue até o result do CLI')
+})
+
+// A autoridade é estrutural: mesmo com o turno perdido no meio (estado que
+// hoje nenhum caminho do claude produz sozinho — o par REAL mora no steer
+// falho do codex), a queda acontece. No código velho o estouro achava o turno
+// trocado e saía em SILÊNCIO — o processo encravado ficava de pé.
+test('R23.1 — turno perdido no meio não veta o ■ do Claude: a queda acontece igual', () => {
+  const events = []
+  let killed = 0
+  const session = Object.create(MaestroSession.prototype)
+  session.opts = { cwd: '/tmp' }
+  session.killed = false
+  session.closed = false
+  session.child = { exitCode: null, signalCode: null }
+  session.claudeTasks = new GuiClaudeTaskRegistry()
+  session.activeTurnGeneration = null
+  session.pendingTurnGenerations = []
+  session.interruptGeneration = 5
+  session.interruptRequestId = 'req-5'
+  session.interruptTimer = null
+  session.emit = (event) => events.push(event)
+  session.kill = () => {
+    killed += 1
+    session.killed = true
+  }
+
+  session.failInterrupt(5, 'o Claude recusou a interrupção')
+
+  assert.equal(killed, 1, 'processo travado não veta a autoridade do dono')
+  assert.equal(session.interruptGeneration, null, 'a guarda sai junto')
+  const note = events.at(-1)
+  assert.equal(note.type, 'fatal')
+  assert.match(note.text, /o Claude recusou a interrupção/u)
+  assert.match(
+    note.text,
+    /enviar reabre a MESMA conversa/u,
+    'toda queda por interrupção ensina a voltar'
+  )
 })
 
 test('pane sem sessão responde honesto em vez de fingir', () => {

@@ -517,6 +517,11 @@ export interface GuiPaneState {
    *  que nenhuma das mensagens conseguiu iniciar. */
   sendBatch: GuiSendBatch | null
   error: string | null
+  /** Código com que o processo desta conversa saiu (R23.2). É o que deixa o
+   *  composer do pane morto dizer a VERDADE — "a sessão morreu (código 1)" — em
+   *  vez de um beco sem saída. `null` = morte sem código provado (a nota não
+   *  inventa número) ou conversa viva. */
+  exitCode: number | null
   /** já houve mensagem do assistente NESTE turno — sem isso o `resultText`
    *  (que só existe para comandos locais) duplicaria a resposta */
   turnHadText: boolean
@@ -566,6 +571,7 @@ export const EMPTY_GUI_PANE: GuiPaneState = {
   eventRevision: 0,
   sendBatch: null,
   error: null,
+  exitCode: null,
   turnHadText: false,
   spawned: false,
   queued: null
@@ -876,6 +882,9 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           activityText: null,
           sendBatch: null,
           error: null,
+          // A geração nova não herda a morte da anterior: o código do processo
+          // que caiu morre com ele (R23.2).
+          exitCode: null,
           ...(restart.status === null ? {} : guiStatusPatch(state, restart.status))
         }
       }
@@ -1469,6 +1478,9 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
         ),
         thinking: false,
         error: evt.text,
+        // Morte anunciada SEM código provado: o `closed` que vem atrás carimba
+        // o número quando existe, e até lá o composer não inventa nenhum.
+        exitCode: null,
         activityText: null,
         ...guiStatusPatch(base, 'dead')
       }
@@ -1492,6 +1504,8 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           base.interactionSubmitting
         ),
         thinking: false,
+        // R23.2 — o número que o composer do pane morto vai dizer em voz alta.
+        exitCode: evt.code,
         activityText: null,
         ...guiStatusPatch(base, 'dead')
       }
@@ -1776,7 +1790,13 @@ interface SynkoraState {
     paneId: string,
     text: string,
     messageId?: string,
-    attachments?: readonly GuiAttachmentDescriptor[]
+    attachments?: readonly GuiAttachmentDescriptor[],
+    /** R23.2 — a mensagem vem logo atrás de um respawn-com-resume que o main
+     *  ACABOU de aceitar (pane morto que renasceu no envio). A guarda de
+     *  transporte aqui é UX — o `dead`/`starting` do renderer ainda pode estar
+     *  no ar, e a autoridade é do main: `gui.send` recusa honesto se a sessão
+     *  não tiver nascido, e a recusa cai no caminho de falha de sempre. */
+    revived?: boolean
   ) => Promise<boolean>
   answerGuiPerm: (
     projectId: string,
@@ -2421,7 +2441,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
     })
   },
 
-  sendGuiMessage: async (paneId, text, messageId, attachmentInput = []) => {
+  sendGuiMessage: async (paneId, text, messageId, attachmentInput = [], revived = false) => {
     const message = text.trim()
     const attachments = safeGuiItemAttachments(attachmentInput) ?? []
     if (attachmentInput.length !== attachments.length) return false
@@ -2429,7 +2449,9 @@ export const useStore = create<SynkoraState>((set, get) => ({
     const before = get().guiPanes[paneId]
     // O composer pode receber texto enquanto abre, mas o transporte só existe
     // depois do `ready`. Enviar antes dele criava um falso "pane morto".
-    if (!before || !canSendGuiMessage(before.status, before.ready)) return false
+    // `revived` é a exceção da R23.2: o respawn-com-resume acabou de ser aceito
+    // pelo main e é ELE a autoridade sobre a sessão nova.
+    if (!before || !(revived || canSendGuiMessage(before.status, before.ready))) return false
     // O id do bilhete da fila sobrevive ao restart no localStorage (e pode ter
     // sido gravado por uma versão antiga do app). Ele só vale quando ainda está
     // livre no fio hidratado: repetido, viraria chave duplicada aqui e id já
@@ -2442,7 +2464,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
     const sentAt = Date.now()
     set((s) => {
       const prev = s.guiPanes[paneId]
-      if (!prev || !canSendGuiMessage(prev.status, prev.ready)) return {}
+      if (!prev || !(revived || canSendGuiMessage(prev.status, prev.ready))) return {}
       const startedTurn = prev.status !== 'working'
       return {
         guiPanes: {

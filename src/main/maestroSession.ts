@@ -11,6 +11,10 @@ import {
 import { limitGuiToolInput } from './guiToolInput'
 import { terminateGuiProcessTree } from './guiProcessTree'
 import {
+  GUI_INTERRUPT_ESCALATION_NOTE,
+  withGuiInterruptRecipe
+} from './guiInterruptEscalation'
+import {
   guiClaudeTaskId,
   GuiClaudeTaskRegistry,
   type GuiClaudeTask
@@ -1040,8 +1044,11 @@ export class MaestroSession {
     const requestId = randomUUID()
     this.interruptGeneration = generation
     this.interruptRequestId = requestId
+    // R23.1 — ESCALADA: sem confirmação neste prazo o processo CAI (o
+    // `failInterrupt` abaixo derruba pelo kill de sempre) e a nota diz a
+    // receita. O gatilho é este timeout de sempre; nenhum relógio novo.
     this.interruptTimer = setTimeout(() => {
-      this.failInterrupt(generation, 'o Claude não confirmou a interrupção')
+      this.failInterrupt(generation, GUI_INTERRUPT_ESCALATION_NOTE)
     }, INTERRUPT_CONFIRM_TIMEOUT)
     this.write({
       type: 'control_request',
@@ -1309,16 +1316,18 @@ export class MaestroSession {
     this.interruptRequestId = null
   }
 
+  /** R23.1 — a interrupção que NÃO se provou derruba o processo. A guarda olha
+   *  só para a própria tentativa (`interruptGeneration`): a autoridade do dono
+   *  é ESTRUTURAL — nenhum estado de turno a veta. Hoje todo caminho deste
+   *  motor que zera o turno também limpa esta guarda; o contrato reduzido é
+   *  paridade com o codex, onde o steer que falha zera o turno com a guarda
+   *  ainda armada. A queda é o kill de sempre, e a nota nomeia a receita
+   *  (nenhum motivo de queda por ■ fica mudo sobre como voltar). */
   private failInterrupt(generation: number, message: string): void {
-    if (
-      !this.alive ||
-      this.activeTurnGeneration !== generation ||
-      this.interruptGeneration !== generation
-    )
-      return
+    if (!this.alive || this.interruptGeneration !== generation) return
     this.clearInterruptGuard()
-    this.activeTurnGeneration = null
-    this.emit({ type: 'fatal', text: message })
+    if (this.activeTurnGeneration === generation) this.activeTurnGeneration = null
+    this.emit({ type: 'fatal', text: withGuiInterruptRecipe(message) })
     this.kill()
   }
 

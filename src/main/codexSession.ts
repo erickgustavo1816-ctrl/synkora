@@ -30,6 +30,12 @@ import {
 // R7-E: a palavra do terminal interrompido é UMA nos dois motores — o dono lê a
 // mesma frase venha o chat do claude ou do codex.
 import { GUI_OWNER_INTERRUPT_LABEL } from './maestroSession'
+// R23.1: e a escalada do ■ também — o mesmo contrato, a mesma nota, a mesma
+// receita nos dois CLIs (o par mora em guiInterruptEscalation).
+import {
+  GUI_INTERRUPT_ESCALATION_NOTE,
+  withGuiInterruptRecipe
+} from './guiInterruptEscalation'
 import type {
   CliCaps,
   MaestroSessionOpts,
@@ -613,8 +619,11 @@ export class CodexSession {
       if (this.interruptedTurnId === interruptedTurnId && this.interruptTimer) return true
       this.clearInterruptGuard()
       this.interruptedTurnId = interruptedTurnId
+      // R23.1 — ESCALADA: sem confirmação neste prazo o processo CAI (o
+      // `failInterrupt` abaixo derruba pelo kill de sempre) e a nota diz a
+      // receita. O gatilho é este timeout de sempre; nenhum relógio novo.
       this.interruptTimer = setTimeout(() => {
-        this.failInterrupt(interruptedTurnId, 'o Codex não confirmou a interrupção')
+        this.failInterrupt(interruptedTurnId, GUI_INTERRUPT_ESCALATION_NOTE)
       }, INTERRUPT_CONFIRM_TIMEOUT)
       void this.request('turn/interrupt', {
         threadId: this.threadId,
@@ -1522,11 +1531,16 @@ export class CodexSession {
     }, TURN_ERROR_CONFIRM_TIMEOUT)
   }
 
+  /** R23.1 — a guarda olha só para a PRÓPRIA tentativa (`interruptedTurnId`).
+   *  Um turno que se perdeu no meio — o steer que falha zera `turnId` sem
+   *  limpar esta guarda — NÃO pode vetar a autoridade do dono e deixar o CLI
+   *  encravado de pé. A nota nomeia a receita: nenhum motivo de queda por ■
+   *  fica mudo sobre como voltar. */
   private failInterrupt(turnId: string, message: string): void {
-    if (!this.alive || this.turnId !== turnId || this.interruptedTurnId !== turnId) return
+    if (!this.alive || this.interruptedTurnId !== turnId) return
     this.clearInterruptGuard()
-    this.turnId = null
-    this.emit({ type: 'fatal', text: message })
+    if (this.turnId === turnId) this.turnId = null
+    this.emit({ type: 'fatal', text: withGuiInterruptRecipe(message) })
     // Se não foi possível provar que o turno parou, encerra o processo:
     // deixar uma tool seguir sem controle seria pior do que perder o resume vivo.
     this.kill()

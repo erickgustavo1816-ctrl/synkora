@@ -108,13 +108,16 @@ import {
 } from '../src/renderer/src/guiToolOutcome.ts'
 import {
   beginGuiSendBatch,
+  canComposeGuiMessage,
   canSendGuiMessage,
   guiBackendReadyStatus,
   guiCommandCompletionStatus,
+  guiDeadComposerPlaceholder,
   guiSessionRestartState,
   guiTransportFailureStatus,
   isGuiTurnActive,
   isSameGuiTurn,
+  needsGuiReviveBeforeSend,
   shouldApplyGuiBufferedEvent,
   shouldCreateGuiSession,
   settleGuiActionFailure,
@@ -1246,6 +1249,77 @@ test('composer espera ready e interrupção atrasada não rebaixa turno novo', (
   assert.equal(isSameGuiTurn({ ...captured, startedAt: 2_000 }, captured), false)
 })
 
+// R23.2 — PANE MORTO RENASCE NO ENVIO. O composer não tranca mais: o
+// placeholder diz a verdade com a receita e ENVIAR é o gesto que reabre a MESMA
+// conversa. `canSendGuiMessage` continua sendo "dá para enviar AGORA" (é dela
+// que o 🧐 do Board depende); quem manda no composer é a pergunta nova.
+test('R23.2 — composer do pane morto continua vivo e diz a receita', () => {
+  assert.equal(canSendGuiMessage('dead', true), false, 'o transporte morto segue morto')
+  assert.equal(canComposeGuiMessage('dead', true), true, 'mas o dono pode escrever e enviar')
+  assert.equal(canComposeGuiMessage('starting', true), false, 'abrindo continua barrado')
+  assert.equal(canComposeGuiMessage('idle', false), false)
+  assert.equal(canComposeGuiMessage('idle', true), true)
+  assert.equal(canComposeGuiMessage('working', true), true)
+
+  assert.equal(needsGuiReviveBeforeSend('dead'), true)
+  assert.equal(needsGuiReviveBeforeSend('idle'), false)
+  assert.equal(needsGuiReviveBeforeSend('starting'), false)
+  assert.equal(needsGuiReviveBeforeSend('working'), false)
+  assert.equal(needsGuiReviveBeforeSend('waiting-you'), false)
+
+  assert.equal(
+    guiDeadComposerPlaceholder(1),
+    'a sessão morreu (código 1) — enviar reabre a MESMA conversa'
+  )
+  assert.equal(
+    guiDeadComposerPlaceholder(null),
+    'a sessão morreu — enviar reabre a MESMA conversa',
+    'sem código provado a nota não inventa número'
+  )
+})
+
+// O gesto inteiro: submeter num pane morto dispara o respawn-com-resume que JÁ
+// existe (o mesmo `guiApi.create` da troca de modo/⚡ — R11/R12, retomada
+// QUIETA) e só então a mensagem sai. Nada de botão novo, e revive que falha NÃO
+// engole a mensagem: o `false` devolve o rascunho e o motivo entra no fio.
+test('R23.2 — enviar no pane morto reabre a conversa e só então manda a mensagem', () => {
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+
+  // O composer não tranca mais no morto, e o placeholder é a verdade com receita.
+  assert.doesNotMatch(pane, /disabled=\{dead\}/u, 'o textarea do pane morto não tranca')
+  assert.doesNotMatch(pane, /feche o pane e abra outro/u, 'o beco sem saída saiu do placeholder')
+  assert.match(pane, /guiDeadComposerPlaceholder\(gui\.exitCode\)/u)
+  assert.match(pane, /const canCompose = canComposeGuiMessage\(gui\.status, gui\.ready\)/u)
+  assert.match(pane, /const canSubmit =\s*canCompose &&/u)
+
+  // O recorte do envio: revive ANTES, mensagem DEPOIS, falha devolvendo false.
+  const from = pane.indexOf('const send = useCallback')
+  const to = pane.indexOf('const sendQueuedNow = useCallback', from)
+  assert.ok(from !== -1 && to > from, 'o envio do composer foi recortado')
+  const send = pane.slice(from, to)
+  assert.match(send, /needsGuiReviveBeforeSend\(gui\.status\)/u)
+  assert.match(send, /await guiApi\.create\(spawnRef\.current\)/u)
+  assert.match(send, /if \(!revived\.ok\)[\s\S]{0,400}?return false/u)
+  // Reabrir NUNCA troca de assento por baixo: sem conta, o envio recusa com a
+  // receita em vez de cair na conta padrão do CLI.
+  assert.match(send, /if \(!spawnRef\.current\.configDir\)[\s\S]{0,400}?return false/u)
+  assert.match(send, /escolha uma conta no cabeçalho e envie de novo/u)
+  assert.match(send, /sendGuiMessage\(paneId, message, undefined, attachments, true\)/u)
+  assert.match(send, /reabrir a conversa/u, 'a falha do renascimento fala, com receita')
+
+  // O código da morte vira ESTADO: sem ele o placeholder não teria o que dizer.
+  assert.match(store, /exitCode: number \| null/u)
+  assert.match(store, /exitCode: evt\.code/u)
+  // E o envio do renascimento atravessa a guarda de transporte — o main é a
+  // autoridade e recusa honesto se a sessão não tiver nascido.
+  assert.match(store, /revived \|\| canSendGuiMessage\(before\.status, before\.ready\)/u)
+  assert.match(store, /revived \|\| canSendGuiMessage\(prev\.status, prev\.ready\)/u)
+})
+
 test('Codex fecha todas as famílias de tool e não pinta falha como sucesso', () => {
   for (const type of ['commandExecution', 'fileChange', 'webSearch', 'mcpToolCall']) {
     assert.equal(isGuiCodexToolType(type), true)
@@ -1783,7 +1857,8 @@ test('interrupção sem confirmação e troca durante turno falham fechadas', ()
   )
   assert.match(codex, /INTERRUPT_CONFIRM_TIMEOUT/u)
   assert.match(codex, /this\.failInterrupt\(interruptedTurnId/u)
-  assert.match(codex, /this\.emit\(\{ type: 'fatal', text: message \}\)/u)
+  // R23.1 — a queda por interrupção sai SEMPRE com a receita colada.
+  assert.match(codex, /text: withGuiInterruptRecipe\(message\)/u)
   assert.match(codex, /RPC_TIMEOUT/u)
   assert.match(codex, /private pendingTurnStart: PendingTurnStart \| null/u)
   assert.match(codex, /this\.interruptedStartGeneration = generation/u)
@@ -1798,8 +1873,10 @@ test('interrupção sem confirmação e troca durante turno falham fechadas', ()
     /this\.interruptGeneration === generation[\s\S]*this\.interruptRequestId !== null[\s\S]*this\.interruptTimer !== null[\s\S]*return true/u
   )
   assert.match(claude, /resp\.request_id === this\.interruptRequestId/u)
-  assert.match(claude, /this\.failInterrupt\(generation, 'o Claude não confirmou a interrupção'\)/u)
-  assert.match(claude, /this\.emit\(\{ type: 'fatal', text: message \}\)/u)
+  // R23.1 — o estouro do timeout de confirmação DERRUBA o processo, e os dois
+  // motores falam a MESMA nota (o par mora em guiInterruptEscalation).
+  assert.match(claude, /this\.failInterrupt\(generation, GUI_INTERRUPT_ESCALATION_NOTE\)/u)
+  assert.match(claude, /text: withGuiInterruptRecipe\(message\)/u)
   assert.match(claude, /this\.interruptGeneration === generation[\s\S]*this\.clearInterruptGuard\(\)/u)
   assert.match(
     pane,
@@ -2206,9 +2283,11 @@ test('modelo e effort usam troca viva, confirmada e sem status no transcript', (
     /case 'session-restarted':[\s\S]*?executorKnown: quiet \? state\.executorKnown : false/u
   )
   assert.match(board, /directGui\?\.executorKnown[\s\S]*?directGui\.executorModel/u)
+  // R23.2 — o portão do composer é `canCompose` (o morto escreve e envia); as
+  // outras cercas de voo continuam exatamente as mesmas.
   assert.match(
     pane,
-    /const canSubmit =[\s\S]*canSend && busyMenu === null && !attaching && !submitPending/u
+    /const canSubmit =[\s\S]*canCompose && busyMenu === null && !attaching && !submitPending/u
   )
   assert.match(pane, /return sendGuiMessage\(paneId, message, undefined, attachments\)/u)
   assert.match(

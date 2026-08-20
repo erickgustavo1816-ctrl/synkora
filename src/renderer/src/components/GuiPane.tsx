@@ -52,8 +52,11 @@ import {
   registerGuiEscapeTarget
 } from '../guiEscape'
 import {
+  canComposeGuiMessage,
   canSendGuiMessage,
+  guiDeadComposerPlaceholder,
   isGuiTurnActive,
+  needsGuiReviveBeforeSend,
   shouldApplyGuiBufferedEvent,
   shouldCreateGuiSession
 } from '../guiTransport'
@@ -872,8 +875,13 @@ export default function GuiPane({
   const spawnChangeLocked =
     dead || turnOpen || attaching || Boolean(busyMenu) || Boolean(gui.queued)
   const canSend = canSendGuiMessage(gui.status, gui.ready)
+  // R23.2 — O COMPOSER NÃO TRANCA NO PANE MORTO. `canSend` continua sendo "o
+  // transporte está aberto AGORA?" (é ela que o botão da fila usa); quem manda
+  // no composer é `canCompose`, porque no morto ENVIAR é o gesto que reabre a
+  // MESMA conversa.
+  const canCompose = canComposeGuiMessage(gui.status, gui.ready)
   const canSubmit =
-    canSend && busyMenu === null && !attaching && !submitPending && gui.queued === null
+    canCompose && busyMenu === null && !attaching && !submitPending && gui.queued === null
   // A PROPOSTA DE PLANO não bloqueia o CLI, então ela chega no MEIO da fala —
   // e mostrá-la ali atropelava a resposta em curso (o dono viu o card "bugar e
   // sumir"). Decisão dele: o agente termina de falar, e SÓ ENTÃO o card
@@ -892,6 +900,33 @@ export default function GuiPane({
       if ((!message && attachments.length === 0) || !canSubmit) return false
       pinnedRef.current = true
       setPinned(true)
+      // R23.2 — PANE MORTO RENASCE NO ENVIO (ordem do dono depois do incidente
+      // de 2026-08-19: o composer travou e a única fuga era trocar de conta).
+      // NADA de botão novo: enviar É o gesto. O respawn é o MESMO da troca de
+      // modo/⚡ (R11/R12 — `guiApi.create` com o spawnRef atual, que o main
+      // resolve para a MESMA conversa pelo `inheritedResumeSessionId`, e a
+      // retomada é QUIETA). A falha NÃO engole a mensagem: `false` devolve o
+      // rascunho ao composer e o motivo entra no fio com a receita.
+      if (needsGuiReviveBeforeSend(gui.status)) {
+        // A MESMA cerca da montagem: sem conta, reabrir cairia na conta padrão
+        // do CLI — troca silenciosa de assento, nunca.
+        if (!spawnRef.current.configDir) {
+          handleGuiLive(paneId, {
+            type: 'limit',
+            text: 'este pane não tem conta (config dir) definida — escolha uma conta no cabeçalho e envie de novo'
+          })
+          return false
+        }
+        const revived = await guiApi.create(spawnRef.current)
+        if (!revived.ok) {
+          handleGuiLive(paneId, {
+            type: 'limit',
+            text: `não deu para reabrir a conversa: ${revived.error ?? 'motivo desconhecido'} — sua mensagem ficou no composer; tente enviar de novo`
+          })
+          return false
+        }
+        return sendGuiMessage(paneId, message, undefined, attachments, true)
+      }
       if (turnOpen) {
         return Boolean(
           queueGuiMessage(paneId, message, {
@@ -906,6 +941,8 @@ export default function GuiPane({
     [
       canSubmit,
       attachments,
+      gui.status,
+      handleGuiLive,
       liveEffort,
       liveModel,
       mode,
@@ -1887,7 +1924,6 @@ export default function GuiPane({
                 rows={1}
                 maxLength={GUI_PROMPT_MAX_CHARS}
                 value={draft}
-                disabled={dead}
                 aria-label="Mensagem para esta conversa"
                 role="combobox"
                 aria-autocomplete="list"
@@ -1903,7 +1939,7 @@ export default function GuiPane({
                 }
                 placeholder={
                   dead
-                    ? 'sessão encerrada — feche o pane e abra outro'
+                    ? guiDeadComposerPlaceholder(gui.exitCode)
                     : opening
                       ? 'a conversa está abrindo — você já pode escrever'
                       : 'dirija o dev — / abre os comandos'

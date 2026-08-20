@@ -16,6 +16,32 @@ export function canSendGuiMessage(status: GuiTransportStatus, ready: boolean): b
 }
 
 /**
+ * R23.2 — PANE MORTO RENASCE NO ENVIO (design da R23; incidente do dono de
+ * 2026-08-19: "não consegui enviar mais nada", e a única fuga era trocar de
+ * conta). `canSendGuiMessage` continua respondendo "o transporte está aberto
+ * AGORA?" — é dela que o 🧐 do Board depende. Esta aqui responde outra
+ * pergunta, a do COMPOSER: "o dono pode escrever e mandar?". No pane morto a
+ * resposta é SIM, porque enviar É o gesto que reabre a MESMA conversa
+ * (`needsGuiReviveBeforeSend`). `starting` segue barrado: ali a sessão já está
+ * nascendo e não há nada a ressuscitar.
+ */
+export function canComposeGuiMessage(status: GuiTransportStatus, ready: boolean): boolean {
+  return status === 'dead' || canSendGuiMessage(status, ready)
+}
+
+/** O envio precisa reabrir a sessão ANTES de mandar a mensagem? */
+export function needsGuiReviveBeforeSend(status: GuiTransportStatus): boolean {
+  return status === 'dead'
+}
+
+/** A verdade do composer morto, com a receita colada. Sem código provado a
+ *  frase não inventa número — honestidade antes de completude. */
+export function guiDeadComposerPlaceholder(exitCode: number | null): string {
+  const cause = exitCode === null ? 'a sessão morreu' : `a sessão morreu (código ${exitCode})`
+  return `${cause} — enviar reabre a MESMA conversa`
+}
+
+/**
  * TURNO VIVO: o agente ainda está escrevendo. `working` cobre o turno e o
  * stream aberto cobre a janela em que os deltas já chegam antes de o status
  * assentar. É a cerca que segura o card da PROPOSTA DE PLANO até a fala
