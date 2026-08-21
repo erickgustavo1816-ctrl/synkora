@@ -359,3 +359,76 @@ test('R28.1 — a subida avisa quando o package.json mudou: npm install na pasta
     'a receita nomeia o comando e a PASTA onde vale'
   )
 })
+
+// R29 — O RELEASE ENTREGA A CAIXA (ordem do dono, 2026-08-21): a V1.0.4 do
+// Painel subiu pelo release (merge+push) e o "verificar atualização" continuou
+// quebrado — o que o updater lê é a RELEASE PUBLICADA do GitHub (instalador +
+// latest.yml), não a main. Produto que declara pipeline (script `release` no
+// package.json — sinal estrutural, nunca heurística) tem subida em dois atos:
+// o harness alinha o version (commit na main, antes do push — git na main é
+// do harness) e o agente publica a caixa na pasta do projeto.
+
+test('R29 — a fotografia declara a PUBLICAÇÃO: pipeline, versões, ausência honesta', () => {
+  const base = {
+    version: version(),
+    mainBranch: 'main',
+    versionHead: 'a'.repeat(40),
+    mainHead: 'b'.repeat(40),
+    pendingMissions: [],
+    openBacklogItems: [],
+    planLockMessage: null,
+    integrationPending: [],
+    releaseIntentPending: false
+  }
+  const withBox = releaseStatusText({
+    ...base,
+    publish: { hasReleaseScript: true, manifestVersion: '1.0.3', expectedVersion: '1.0.4' }
+  })
+  assert.match(withBox, /PUBLICAÇÃO:/u)
+  assert.match(withBox, /npm run release/u, 'a linha nomeia a RECEITA')
+  assert.match(withBox, /1\.0\.3 → 1\.0\.4/u, 'o alinhamento da subida é anunciado antes')
+  const aligned = releaseStatusText({
+    ...base,
+    publish: { hasReleaseScript: true, manifestVersion: '1.0.4', expectedVersion: '1.0.4' }
+  })
+  assert.match(aligned, /em dia/u)
+  const codeOnly = releaseStatusText({ ...base, publish: { hasReleaseScript: false } })
+  assert.match(codeOnly, /PUBLICAÇÃO: sem pipeline declarado/u, 'sem script = subida só de código, dito em voz alta')
+  assert.doesNotMatch(codeOnly, /npm run release/u)
+  assert.doesNotMatch(releaseStatusText(base), /PUBLICAÇÃO/u, 'sem manifesto, a linha nem existe')
+})
+
+test('R29 — a persona mora na pasta do projeto e conhece THE BOX', () => {
+  const prompt = guiReleaseSystemPrompt()
+  assert.doesNotMatch(
+    prompt,
+    /workspace IS the version's worktree/u,
+    'a mentira de carona da R27: o workspace é a prod desde então'
+  )
+  assert.match(prompt, /PROJECT FOLDER/u)
+  assert.match(prompt, /THE BOX/u, 'a regra da caixa existe e tem nome')
+  assert.match(prompt, /release_status|PUBLICAÇÃO/u)
+})
+
+test('R29 — o impl alinha o version pelo worker e o desfecho entrega a receita da caixa', async () => {
+  const wt = await source('src/main/worktree.ts')
+  const commit = wt.slice(wt.indexOf('export function commitProjectFiles'))
+  assert.ok(commit.length > 30, 'a primitiva de commit existe no worktree (vira verbo do gitOff)')
+  assert.doesNotMatch(commit.slice(0, 900), /gitNetwork\(/u, 'commit é LOCAL — rede só no push')
+
+  const index = await source('src/main/index.ts')
+  const impl = index.slice(index.indexOf('async function releaseVersionImpl'))
+  const implBody = impl.slice(0, impl.indexOf('function sweepProjectFiles'))
+  assert.match(implBody, /commitProjectFiles/u, 'o bump commita pelo worker')
+  assert.match(implBody, /releaseOutcomeFragments/u, 'o desfecho consulta o módulo puro de publicação')
+  const bumpAt = implBody.indexOf('commitProjectFiles')
+  const pushAt = implBody.indexOf('pushBranchToRemote')
+  assert.ok(bumpAt > 0 && pushAt > bumpAt, 'o bump vem ANTES do push — o commit viaja junto')
+
+  const status = index.slice(index.indexOf('releaseStatus: (id) =>'))
+  assert.match(
+    status.slice(0, status.indexOf('releaseRun:')),
+    /probeManifestPublish/u,
+    'a fotografia sonda o manifesto do produto'
+  )
+})

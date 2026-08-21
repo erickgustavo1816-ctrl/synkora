@@ -32,6 +32,14 @@ import { MissionStore } from './missions'
 import { PlanStore } from './plans'
 import { activeMasterPlan, planReleaseLock } from './planReleaseLock'
 import { releaseStatusText, runReleaseForChat } from './releaseChat'
+import {
+  bumpLockVersion,
+  bumpManifestVersion,
+  probeManifestPublish,
+  releaseOutcomeFragments,
+  semverFromVersionName,
+  type ReleaseBumpOutcome
+} from './releasePublish'
 import { IntegrationQueueStore } from './integrationQueue'
 import type { MainContext } from './mainContext'
 import {} from './cliSessionTransplant'
@@ -3149,6 +3157,66 @@ app.whenReady().then(async () => {
     backlog.markVersionReleased(versionId)
     emitBacklogChanged(version.projectId)
     syncBoard(version.projectId)
+    // R29 — O RELEASE ENTREGA A CAIXA (ordem do dono, 2026-08-21): produto que
+    // declara pipeline de publicação (script `release` no package.json — sinal
+    // estrutural, nunca heurística) tem subida em dois atos. O ato do HARNESS
+    // é este: alinhar o `version` do manifesto ao nome da versão AQUI, depois
+    // do merge e ANTES do push (o commit viaja no mesmo push; git na main é do
+    // harness, nunca do agente). O ato do AGENTE sai como receita no desfecho.
+    // Nada neste bloco derruba um release feito: falha vira frase advisory.
+    let publishSignalForOutcome: { hasReleaseScript: boolean; bump: ReleaseBumpOutcome | null } = {
+      hasReleaseScript: false,
+      bump: null
+    }
+    try {
+      const manifestPath = join(project.path, 'package.json')
+      if (existsSync(manifestPath)) {
+        const manifestRaw = readFileSync(manifestPath, 'utf8')
+        const probe = probeManifestPublish(manifestRaw)
+        if (probe) {
+          const expected = semverFromVersionName(version.name)
+          let bump: ReleaseBumpOutcome
+          if (!expected) bump = { kind: 'name-not-semver', name: version.name }
+          else if (probe.version === null) bump = { kind: 'manifest-opaque' }
+          else if (probe.version === expected) bump = { kind: 'aligned', version: expected }
+          else {
+            const bumpedManifest = bumpManifestVersion(manifestRaw, expected)
+            if (!bumpedManifest) bump = { kind: 'manifest-opaque' }
+            else {
+              writeFileSync(manifestPath, bumpedManifest)
+              const bumpFiles = ['package.json']
+              const lockPath = join(project.path, 'package-lock.json')
+              if (existsSync(lockPath)) {
+                const bumpedLock = bumpLockVersion(readFileSync(lockPath, 'utf8'), expected)
+                if (bumpedLock) {
+                  writeFileSync(lockPath, bumpedLock)
+                  bumpFiles.push('package-lock.json')
+                }
+              }
+              const committed = await gitOff(
+                'commitProjectFiles',
+                project.path,
+                bumpFiles,
+                `release: ${version.name} (version ${expected})`
+              )
+              bump = committed.ok
+                ? { kind: 'committed', version: expected }
+                : { kind: 'commit-failed', version: expected, error: committed.error }
+            }
+          }
+          publishSignalForOutcome = { hasReleaseScript: probe.hasReleaseScript, bump }
+        }
+      }
+    } catch (error) {
+      publishSignalForOutcome = {
+        hasReleaseScript: false,
+        bump: {
+          kind: 'commit-failed',
+          version: version.name,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      }
+    }
     // R28 — O REMOTO ACOMPANHA A SUBIDA: projeto com origin configurado tem o
     // clique em subir versão como A demanda do push (uma missão configurou o
     // GitHub e o release o ignorava — o dono ficou com o remoto na versão
@@ -3179,6 +3247,11 @@ app.whenReady().then(async () => {
         : undefined
     if (manifestChanged === true) {
       pushLine += ` · as DEPENDÊNCIAS mudaram nesta subida: rode npm install na pasta do projeto antes do próximo build/instalador`
+    }
+    // R29 — o desfecho conta o ato do harness (bump) e entrega a receita do
+    // ato do agente (a publicação da caixa). Frases no módulo puro.
+    for (const fragment of releaseOutcomeFragments(publishSignalForOutcome)) {
+      pushLine += ` · ${fragment}`
     }
     hub.publish({
       projectId: version.projectId,
@@ -3671,6 +3744,28 @@ app.whenReady().then(async () => {
       // R28 — leitura LOCAL do origin (get-url + rev-list): mesma classe leve
       // dos gits síncronos que esta fotografia já faz; nenhuma rede sai daqui.
       const statusRemote = remoteAheadOf(project.path, statusMainBranch ?? 'main')
+      // R29 — a sonda de publicação: o agente sabe ANTES do release_run se a
+      // subida termina no push ou na caixa. Leitura local de um arquivo
+      // pequeno — mesma classe leve do resto da fotografia.
+      let statusPublish:
+        | { hasReleaseScript: boolean; manifestVersion?: string; expectedVersion?: string }
+        | undefined
+      try {
+        const statusManifestPath = join(project.path, 'package.json')
+        if (existsSync(statusManifestPath)) {
+          const probe = probeManifestPublish(readFileSync(statusManifestPath, 'utf8'))
+          if (probe) {
+            const expected = semverFromVersionName(version.name)
+            statusPublish = {
+              hasReleaseScript: probe.hasReleaseScript,
+              ...(probe.version ? { manifestVersion: probe.version } : {}),
+              ...(expected ? { expectedVersion: expected } : {})
+            }
+          }
+        }
+      } catch {
+        statusPublish = undefined
+      }
       return releaseStatusText({
         version,
         mainBranch: statusMainBranch,
@@ -3684,6 +3779,7 @@ app.whenReady().then(async () => {
               }
             }
           : {}),
+        ...(statusPublish ? { publish: statusPublish } : {}),
         pendingMissions,
         openBacklogItems: backlog
           .listItems(version.projectId)

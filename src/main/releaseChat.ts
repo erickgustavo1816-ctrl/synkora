@@ -14,6 +14,8 @@
 
 // @ts-expect-error Node strip-types exige a extensão; o bundler também a aceita.
 import { missionTypeOf } from './guiMissionContracts.ts'
+// @ts-expect-error Node strip-types exige a extensão; o bundler também a aceita.
+import { releasePublishStatusLine, type ReleasePublishSignal } from './releasePublish.ts'
 
 /** O mínimo de VERSÃO que este módulo lê (espelho do backlog.Version). */
 export interface ReleaseChatVersion {
@@ -109,6 +111,9 @@ export interface ReleaseStatusInput {
   /** R28 — o remoto do projeto (origin) e o quanto a base local está à frente
    *  dele. Ausente = projeto sem remoto: a linha nem existe. */
   remote?: { url: string; ahead?: number }
+  /** R29 — a sonda de publicação do produto (script `release` + versões).
+   *  Ausente = projeto sem package.json: a linha nem existe. */
+  publish?: ReleasePublishSignal
 }
 
 function shortSha(sha: string | undefined): string {
@@ -166,6 +171,10 @@ export function releaseStatusText(input: ReleaseStatusInput): string {
           : `base local ${input.remote.ahead} commit(s) à frente`
     lines.push(`REMOTE: origin ${input.remote.url} · ${ahead} — o push acompanha a subida.`)
   }
+  // R29 — a caixa entra na fotografia: o agente sabe ANTES do release_run se
+  // a subida termina no push (só código) ou na publicação (pipeline
+  // declarado). A frase mora no módulo de publicação, provada em node puro.
+  if (input.publish) lines.push(releasePublishStatusLine(input.publish))
   if (input.releaseIntentPending)
     lines.push('ATENÇÃO: existe um journal de release pendente de uma tentativa anterior.')
   lines.push(`PRÓXIMO PASSO: ${releaseNextStep(input)}`)

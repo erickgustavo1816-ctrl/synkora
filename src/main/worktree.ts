@@ -514,6 +514,28 @@ export function commitRangeTouchesFile(
 }
 
 /**
+ * R29 — o commit do ALINHAMENTO DE VERSÃO do release (o bump do package.json
+ * que precisa viajar no push da subida). Local e cirúrgico: `add` + `commit`
+ * SÓ dos caminhos pedidos — a pasta do produto pode ter sujeira alheia (o
+ * data/ do backup automático do Painel, por exemplo) que NUNCA pega carona
+ * num commit do harness. Rede não sai daqui; o push da R28 é quem viaja.
+ */
+export function commitProjectFiles(
+  projectPath: string,
+  files: string[],
+  message: string
+): { ok: true; sha: string } | { ok: false; error: string } {
+  if (files.length === 0) return { ok: false, error: 'nenhum arquivo para commitar' }
+  try {
+    git(projectPath, ['add', '--', ...files])
+    git(projectPath, ['commit', '-m', message, '--', ...files])
+    return { ok: true, sha: git(projectPath, ['rev-parse', '--short=12', 'HEAD']) }
+  } catch (error) {
+    return { ok: false, error: gitFailureText(error) }
+  }
+}
+
+/**
  * O remoto do projeto e o quanto a branch local está à frente dele — a
  * fotografia do release_status. Leitura LOCAL (o ref origin/<branch> do
  * último fetch/push): nenhuma rede sai daqui. `undefined` = sem remoto;
