@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "backlog": {
+      "command": "node",
+      "args": ["scripts/backlog-mcp.mjs"]
+    }
+  }
+}

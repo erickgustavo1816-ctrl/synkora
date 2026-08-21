@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "updatedAt": "2026-08-21T20:54:17.611Z",
+  "lanes": {
+    "agora": [
+      {
+        "id": "skills-2-0-build",
+        "title": "Skills 2.0 — o build",
+        "badge": "planejamento fechado hoje",
+        "desc": "Grill com o dono concluído: 7 ADRs + glossário; kit final de 16 skills (uma por ocasião, impeccable como única lei); as duas da casa já escritas (código-limpo e investigação). Falta construir: store semeado, sync no spawn pro worktree, tela completa de gestão, instalar-por-URL pinado, personas com lei + cardápio, e a PODA das ~400.",
+        "refs": [
+          "docs/adr/0001–0007",
+          "CONTEXT.md",
+          "skills novas na lib"
+        ]
+      }
+    ],
+    "fila": [
+      {
+        "id": "rightdock",
+        "title": "RightDock — o lado direito do app",
+        "desc": "\"Ainda tá meio ruim\" (dito de novo em 21/08). 3º item do plano original do dono; redesenhar o dock direito do workspace.",
+        "refs": []
+      },
+      {
+        "id": "browser-embutido",
+        "title": "Browser embutido",
+        "desc": "4º item do plano do dono: navegador dentro do Synkora pro ciclo de teste visual sem sair do app.",
+        "refs": []
+      },
+      {
+        "id": "restart-pendente",
+        "title": "Restart do app (quando o dono liberar)",
+        "desc": "Esperam o próximo npm run dev: R29 (release entende o produto e publica a caixa), a metade main da R30 (motor para de gravar entrega de release) e a fala imediata do correio do dono.",
+        "refs": [
+          "d0aa8af",
+          "d33b8b0",
+          "1ee9f4c"
+        ]
+      }
+    ],
+    "candidatas": [
+      {
+        "id": "selo-entregue",
+        "title": "Selo \"entregue ao agente\" na bolha do dono",
+        "desc": "Confirmação visual de que a mensagem furou o turno (a carona já deixa recibo na caixa-preta).",
+        "refs": []
+      },
+      {
+        "id": "persona-build-de-prova",
+        "title": "Persona \"build de prova\"",
+        "desc": "Missão que mexe em instalador/build oferece o dist de prova sozinha antes do ⇪.",
+        "refs": []
+      },
+      {
+        "id": "r27-fase-2",
+        "title": "R27 fase 2 — release como entidade própria",
+        "desc": "Release no dado (não só régua de missão) + painel embutido na aba Versões.",
+        "refs": []
+      },
+      {
+        "id": "updater-skills",
+        "title": "Updater completo da biblioteca de skills",
+        "desc": "Check diário + badge ⟳ + re-download pinado (design F6 documentado no SKILLS.md).",
+        "refs": []
+      },
+      {
+        "id": "varredura-obsoletos",
+        "title": "Varredura de obsoletos no GitHub",
+        "desc": "\"Ver o que é obsoleto e remover\" — citada e adiada pelo dono em 21/08.",
+        "refs": []
+      }
+    ],
+    "dividas": [
+      {
+        "id": "history-search-gigante",
+        "title": "historySearch.ts a 1051 linhas (receita no r24-report §6.1) · GuiPane.tsx ~2500 (extrair GuiHistoryOverlay)"
+      },
+      {
+        "id": "modulos-gigantes",
+        "title": "guiHelperSessions ~1990 · missionEngine ~1778 — rodada própria de divisão"
+      },
+      {
+        "id": "worktrees-orfas",
+        "title": "3 worktrees órfãs em .claude/worktrees/agent-* (patch guardado no scratchpad)"
+      },
+      {
+        "id": "tokens-contraste",
+        "title": "Tokens irmãos reprovam contraste sobre papel: --ok 2,87 · --accent 2,81 · --warn 1,89"
+      },
+      {
+        "id": "painel-merge-main",
+        "title": "Painel de Gestão: missão aberta precisa mergear a main pra ganhar o dev isolado (42024ee)"
+      }
+    ],
+    "feito": [
+      {
+        "id": "backlog-mcp",
+        "title": "Backlog vivo publicado + MCP do backlog (fonte JSON, render, verbos por tool)",
+        "refs": [
+          "scripts/backlog.mjs",
+          "scripts/backlog-mcp.mjs",
+          ".mcp.json"
+        ],
+        "day": "21/08 — quinta"
+      },
+      {
+        "id": "skills-2-0-planejada",
+        "title": "Skills 2.0 planejada em grill-with-docs: 7 ADRs + glossário + kit de 16 + duas skills da casa escritas",
+        "refs": [
+          "docs/adr/",
+          "CONTEXT.md"
+        ],
+        "day": "21/08 — quinta"
+      },
+      {
+        "id": "r29-release-caixa",
+        "title": "R29 — o release entende o produto e ENTREGA A CAIXA (sonda scripts.release, bump do harness, receita ao agente) — validada ao vivo: a V1.0.5 subiu com bump automático",
+        "refs": [
+          "d0aa8af"
+        ],
+        "day": "21/08 — quinta"
+      },
+      {
+        "id": "painel-v104-publicada",
+        "title": "Painel v1.0.4 publicada no GitHub (updater destravado); npm run release do produto consertado (EINVAL silencioso); draft v0.1.0 apagado",
+        "refs": [
+          "8b9d0fe",
+          "release v1.0.4"
+        ],
+        "day": "21/08 — quinta"
+      },
+      {
+        "id": "painel-dev-isolado",
+        "title": "Painel: dev isolado do app instalado — userData -dev antes da trava de instância única",
+        "refs": [
+          "42024ee"
+        ],
+        "day": "21/08 — quinta"
+      },
+      {
+        "id": "r30-tres-vazamentos",
+        "title": "R30 — chips de versão vestem ink; entrega do release fora de \"o que já subiu\"; card do release na coluna (o chat não some mais)",
+        "refs": [
+          "d33b8b0"
+        ],
+        "day": "21/08 — quinta"
+      },
+      {
+        "id": "caret-composer",
+        "title": "Caret do composer alinhado (2 atos): política de quebra unificada + sentinela da última linha — provado por medição 130×130",
+        "refs": [
+          "96da3a0",
+          "545a180"
+        ],
+        "day": "21/08 — quinta"
+      },
+      {
+        "id": "owner-mail-fala",
+        "title": "Mensagem do dono no meio da espera de ajudante agora exige FALA imediata do agente (entrega já era 0–25s — provado no bbwatch)",
+        "refs": [
+          "1ee9f4c"
+        ],
+        "day": "21/08 — quinta"
+      },
+      {
+        "id": "r23-r28-handoff",
+        "title": "R23–R28.1 (20/08): ■ que manda, histórico completo, odômetro, release vira release, push do remoto — docs/HANDOFF_SESSAO_2026-08-20.md",
+        "refs": [],
+        "day": "Antes — ver handoffs"
+      }
+    ]
+  },
+  "journal": []
+}

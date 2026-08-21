@@ -14,96 +14,39 @@
     --mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "Courier New", monospace;
   }
   * { box-sizing: border-box; }
-  body {
-    background: var(--paper);
-    color: var(--ink);
-    font-family: var(--mono);
-    font-size: 14px;
-    line-height: 1.55;
-    margin: 0;
-    padding: 28px 20px 64px;
-  }
+  body { background: var(--paper); color: var(--ink); font-family: var(--mono); font-size: 14px; line-height: 1.55; margin: 0; padding: 28px 20px 64px; }
   .wrap { max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 26px; }
-
-  header.masthead {
-    background: var(--panel);
-    color: var(--panel-ink);
-    border-radius: 10px;
-    padding: 18px 22px;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 8px 18px;
-  }
+  header.masthead { background: var(--panel); color: var(--panel-ink); border-radius: 10px; padding: 18px 22px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 18px; }
   .masthead h1 { font-size: 18px; margin: 0; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; }
   .masthead .stamp { color: #b8b09c; font-size: 12px; }
-  .masthead .how {
-    flex-basis: 100%;
-    color: #b8b09c;
-    font-size: 12px;
-    border-top: 1px dashed #57534a;
-    margin-top: 6px;
-    padding-top: 8px;
-  }
+  .masthead .how { flex-basis: 100%; color: #b8b09c; font-size: 12px; border-top: 1px dashed #57534a; margin-top: 6px; padding-top: 8px; }
   .masthead .how b { color: var(--panel-ink); font-weight: 700; }
-
   section { display: flex; flex-direction: column; gap: 10px; }
-  h2 {
-    font-size: 12px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    margin: 0;
-    color: var(--ink-2);
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-  }
+  h2 { font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; margin: 0; color: var(--ink-2); display: flex; align-items: baseline; gap: 10px; }
   h2 .count { color: var(--ink-3); letter-spacing: normal; }
   h2::after { content: ""; flex: 1; border-bottom: 1px solid var(--line); transform: translateY(-4px); }
-
-  .item {
-    background: var(--card);
-    border: 1.5px solid var(--ink);
-    border-radius: 9px;
-    padding: 12px 16px;
-    display: grid;
-    grid-template-columns: 26px 1fr;
-    gap: 4px 10px;
-  }
+  .item { background: var(--card); border: 1.5px solid var(--ink); border-radius: 9px; padding: 12px 16px; display: grid; grid-template-columns: 26px 1fr; gap: 4px 10px; }
   .item .glyph { font-weight: 700; text-align: center; }
   .item .title { font-weight: 700; }
   .item .desc { grid-column: 2; color: var(--ink-2); font-size: 13px; }
   .item .refs { grid-column: 2; color: var(--ink-3); font-size: 11.5px; letter-spacing: 0.03em; }
   .item .refs code { background: var(--paper); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
-
   .now { border-color: var(--accent); border-width: 2px; }
   .now .glyph { color: var(--accent); }
-  .now .badge {
-    justify-self: start; grid-column: 2;
-    background: var(--accent); color: var(--paper);
-    font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
-    border-radius: 4px; padding: 1px 8px; margin-bottom: 2px;
-  }
+  .now .badge { justify-self: start; grid-column: 2; background: var(--accent); color: var(--paper); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; border-radius: 4px; padding: 1px 8px; margin-bottom: 2px; }
   .queue .glyph { color: var(--ink-2); }
   .maybe { border-style: dashed; border-width: 1.5px; border-color: var(--ink-2); background: transparent; }
   .maybe .glyph, .maybe .title { color: var(--ink-2); font-weight: 400; }
   .debt { border-style: dashed; border-color: var(--line); background: transparent; padding: 8px 16px; }
   .debt .glyph { color: var(--ink-3); }
   .debt .title { font-weight: 400; color: var(--ink-2); font-size: 13px; }
-
   details.done-wrap { border-top: 1px solid var(--line); padding-top: 12px; }
-  details.done-wrap summary {
-    cursor: pointer; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-2);
-    list-style: none; display: flex; gap: 10px; align-items: baseline;
-  }
+  details.done-wrap summary { cursor: pointer; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-2); list-style: none; display: flex; gap: 10px; align-items: baseline; }
   details.done-wrap summary::before { content: "▸"; }
   details.done-wrap[open] summary::before { content: "▾"; }
   details.done-wrap summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   .done-list { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
-  .done {
-    display: grid; grid-template-columns: 26px 1fr; gap: 2px 10px;
-    padding: 7px 12px; border-left: 3px solid var(--ok); background: var(--card); border-radius: 0 7px 7px 0;
-  }
+  .done { display: grid; grid-template-columns: 26px 1fr; gap: 2px 10px; padding: 7px 12px; border-left: 3px solid var(--ok); background: var(--card); border-radius: 0 7px 7px 0; }
   .done .glyph { color: var(--ok); font-weight: 700; text-align: center; }
   .done .title { font-size: 13px; }
   .done .refs { grid-column: 2; color: var(--ink-3); font-size: 11.5px; }
@@ -114,10 +57,10 @@
 <div class="wrap">
   <header class="masthead">
     <h1>✦ Backlog Synkora</h1>
-    <span class="stamp">atualizado 2026-08-21 · pelo orquestrador</span>
+    <span class="stamp">atualizado 21/08 · pelo orquestrador</span>
     <p class="how"><b>Como funciona:</b> este é o mapa vivo da obra — eu re-publico neste MESMO link a cada
     entrega. Quer mudar prioridade ou adicionar item? Comente aqui na página ou me diga no chat.
-    O fonte mora em <b>docs/backlog-synkora.html</b> no repo.</p>
+    Fonte da verdade: <b>docs/backlog-synkora.json</b> (MCP + CLI em scripts/backlog*.mjs).</p>
   </header>
 
   <section>
@@ -126,11 +69,8 @@
       <span class="glyph">●</span>
       <span class="title">Skills 2.0 — o build</span>
       <span class="badge">planejamento fechado hoje</span>
-      <span class="desc">Grill com o dono concluído: 7 ADRs + glossário; kit final de 16 skills (uma por
-      ocasião, impeccable como única lei); as duas da casa já escritas (código-limpo e investigação).
-      Falta construir: store semeado, sync no spawn pro worktree, tela completa de gestão,
-      instalar-por-URL pinado, personas com lei + cardápio, e a PODA das ~400.</span>
-      <span class="refs">refs: <code>docs/adr/0001–0007</code> · <code>CONTEXT.md</code> · skills novas na lib</span>
+      <span class="desc">Grill com o dono concluído: 7 ADRs + glossário; kit final de 16 skills (uma por ocasião, impeccable como única lei); as duas da casa já escritas (código-limpo e investigação). Falta construir: store semeado, sync no spawn pro worktree, tela completa de gestão, instalar-por-URL pinado, personas com lei + cardápio, e a PODA das ~400.</span>
+      <span class="refs">refs: <code>docs/adr/0001–0007</code> · <code>CONTEXT.md</code> · <code>skills novas na lib</code></span>
     </div>
   </section>
 
@@ -139,20 +79,17 @@
     <div class="item queue">
       <span class="glyph">1</span>
       <span class="title">RightDock — o lado direito do app</span>
-      <span class="desc">"Ainda tá meio ruim" (dito de novo em 21/08). 3º item do plano original do dono;
-      redesenhar o dock direito do workspace.</span>
+      <span class="desc">&quot;Ainda tá meio ruim&quot; (dito de novo em 21/08). 3º item do plano original do dono; redesenhar o dock direito do workspace.</span>
     </div>
     <div class="item queue">
       <span class="glyph">2</span>
       <span class="title">Browser embutido</span>
-      <span class="desc">4º item do plano do dono: navegador dentro do Synkora pro ciclo de teste visual
-      sem sair do app.</span>
+      <span class="desc">4º item do plano do dono: navegador dentro do Synkora pro ciclo de teste visual sem sair do app.</span>
     </div>
     <div class="item queue">
       <span class="glyph">⟳</span>
       <span class="title">Restart do app (quando o dono liberar)</span>
-      <span class="desc">Esperam o próximo npm run dev: R29 (release entende o produto e publica a caixa),
-      a metade main da R30 (motor para de gravar entrega de release) e a fala imediata do correio do dono.</span>
+      <span class="desc">Esperam o próximo npm run dev: R29 (release entende o produto e publica a caixa), a metade main da R30 (motor para de gravar entrega de release) e a fala imediata do correio do dono.</span>
       <span class="refs">refs: <code>d0aa8af</code> · <code>d33b8b0</code> · <code>1ee9f4c</code></span>
     </div>
   </section>
@@ -161,12 +98,12 @@
     <h2>Candidatas <span class="count">— nomeadas, sem urgência</span></h2>
     <div class="item maybe">
       <span class="glyph">◇</span>
-      <span class="title">Selo "entregue ao agente" na bolha do dono</span>
+      <span class="title">Selo &quot;entregue ao agente&quot; na bolha do dono</span>
       <span class="desc">Confirmação visual de que a mensagem furou o turno (a carona já deixa recibo na caixa-preta).</span>
     </div>
     <div class="item maybe">
       <span class="glyph">◇</span>
-      <span class="title">Persona "build de prova"</span>
+      <span class="title">Persona &quot;build de prova&quot;</span>
       <span class="desc">Missão que mexe em instalador/build oferece o dist de prova sozinha antes do ⇪.</span>
     </div>
     <div class="item maybe">
@@ -182,28 +119,44 @@
     <div class="item maybe">
       <span class="glyph">◇</span>
       <span class="title">Varredura de obsoletos no GitHub</span>
-      <span class="desc">"Ver o que é obsoleto e remover" — citada e adiada pelo dono em 21/08.</span>
+      <span class="desc">&quot;Ver o que é obsoleto e remover&quot; — citada e adiada pelo dono em 21/08.</span>
     </div>
   </section>
 
   <section>
     <h2>Dívidas de higiene <span class="count">— pagar quando doer</span></h2>
-    <div class="item debt"><span class="glyph">⊟</span><span class="title">historySearch.ts a 1051 linhas (receita no r24-report §6.1) · GuiPane.tsx ~2500 (extrair GuiHistoryOverlay)</span></div>
-    <div class="item debt"><span class="glyph">⊟</span><span class="title">guiHelperSessions ~1990 · missionEngine ~1778 — rodada própria de divisão</span></div>
-    <div class="item debt"><span class="glyph">⊟</span><span class="title">3 worktrees órfãs em .claude/worktrees/agent-* (patch guardado no scratchpad)</span></div>
-    <div class="item debt"><span class="glyph">⊟</span><span class="title">Tokens irmãos reprovam contraste sobre papel: --ok 2,87 · --accent 2,81 · --warn 1,89</span></div>
-    <div class="item debt"><span class="glyph">⊟</span><span class="title">Painel de Gestão: missão aberta precisa mergear a main pra ganhar o dev isolado (42024ee)</span></div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">historySearch.ts a 1051 linhas (receita no r24-report §6.1) · GuiPane.tsx ~2500 (extrair GuiHistoryOverlay)</span>
+    </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">guiHelperSessions ~1990 · missionEngine ~1778 — rodada própria de divisão</span>
+    </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">3 worktrees órfãs em .claude/worktrees/agent-* (patch guardado no scratchpad)</span>
+    </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">Tokens irmãos reprovam contraste sobre papel: --ok 2,87 · --accent 2,81 · --warn 1,89</span>
+    </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">Painel de Gestão: missão aberta precisa mergear a main pra ganhar o dev isolado (42024ee)</span>
+    </div>
   </section>
 
   <details class="done-wrap" open>
-    <summary>Feito recente <span class="count">— 21/08, o dia inteiro</span></summary>
+    <summary>Feito recente <span class="count">— com commits</span></summary>
     <div class="done-list">
       <p class="done-day">21/08 — quinta</p>
+      <div class="done"><span class="glyph">✓</span><span class="title">Backlog vivo publicado + MCP do backlog (fonte JSON, render, verbos por tool)</span><span class="refs"><code>scripts/backlog.mjs</code> · <code>scripts/backlog-mcp.mjs</code> · <code>.mcp.json</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">Skills 2.0 planejada em grill-with-docs: 7 ADRs + glossário + kit de 16 + duas skills da casa escritas</span><span class="refs"><code>docs/adr/</code> · <code>CONTEXT.md</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">R29 — o release entende o produto e ENTREGA A CAIXA (sonda scripts.release, bump do harness, receita ao agente) — validada ao vivo: a V1.0.5 subiu com bump automático</span><span class="refs"><code>d0aa8af</code></span></div>
-      <div class="done"><span class="glyph">✓</span><span class="title">Painel v1.0.4 publicada no GitHub (updater destravado); npm run release do produto consertado (EINVAL silencioso); draft v0.1.0 apagado</span><span class="refs"><code>8b9d0fe</code> · release v1.0.4</span></div>
+      <div class="done"><span class="glyph">✓</span><span class="title">Painel v1.0.4 publicada no GitHub (updater destravado); npm run release do produto consertado (EINVAL silencioso); draft v0.1.0 apagado</span><span class="refs"><code>8b9d0fe</code> · <code>release v1.0.4</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">Painel: dev isolado do app instalado — userData -dev antes da trava de instância única</span><span class="refs"><code>42024ee</code></span></div>
-      <div class="done"><span class="glyph">✓</span><span class="title">R30 — chips de versão vestem ink; entrega do release fora de "o que já subiu"; card do release na coluna (o chat não some mais)</span><span class="refs"><code>d33b8b0</code></span></div>
+      <div class="done"><span class="glyph">✓</span><span class="title">R30 — chips de versão vestem ink; entrega do release fora de &quot;o que já subiu&quot;; card do release na coluna (o chat não some mais)</span><span class="refs"><code>d33b8b0</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">Caret do composer alinhado (2 atos): política de quebra unificada + sentinela da última linha — provado por medição 130×130</span><span class="refs"><code>96da3a0</code> · <code>545a180</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">Mensagem do dono no meio da espera de ajudante agora exige FALA imediata do agente (entrega já era 0–25s — provado no bbwatch)</span><span class="refs"><code>1ee9f4c</code></span></div>
       <p class="done-day">Antes — ver handoffs</p>
