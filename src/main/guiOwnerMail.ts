@@ -295,10 +295,17 @@ export function guiOwnerMailBlock(entries: readonly GuiOwnerMailEntry[]): string
     entries.length === 1
       ? quoted(entries[0]?.text ?? '')
       : entries.map((entry, index) => `${index + 1}. ${quoted(entry.text)}`).join('\n')
+  // "Responda na sua próxima fala" era brecha (caso do dono, 2026-08-21): a
+  // entrega chegava em segundos — a caixa-preta provou 0-25s — mas o modelo
+  // lia, ajustava e voltava a ESPERAR sem falar, e a "próxima fala" só vinha
+  // quando o ajudante acabava. Para o dono, agente mudo = mensagem perdida.
+  // A ordem agora nomeia o momento: a fala vem ANTES de qualquer outra tool.
   const tail =
     'Leia e AJUSTE O RUMO AGORA — isto não é um turno novo, é o dono falando DENTRO deste. ' +
-    'Se o que ele pede muda o trabalho da frota, dirija (helper_send), descarte (helper_cancel) ou ' +
-    'abra outros (delegate) antes de seguir, e responda a ele na sua próxima fala.'
+    'FALE COM ELE JÁ, antes de qualquer outra tool (inclusive antes de voltar a esperar ajudante): ' +
+    'uma ou duas linhas dizendo o que você entendeu e o que muda — até você falar, a tela dele fica ' +
+    'parada e ele conclui que a mensagem se perdeu. Depois aja: se o pedido muda o trabalho da frota, ' +
+    'dirija (helper_send), descarte (helper_cancel) ou abra outros (delegate) antes de seguir.'
   return [head, body, tail].join('\n')
 }
 

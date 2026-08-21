@@ -1772,6 +1772,21 @@ test('R22.2 — a mensagem do dono viaja no PRÓXIMO resultado de tool, uma vez 
   assert.match(text, /para tudo: o schema mudou/u, 'a mensagem não chegou verbatim')
   assert.match(text, /no meio do turno/u, 'o agente precisa saber que isto não é turno novo')
   assert.match(text, /AJUSTE O RUMO AGORA/u, 'sem o movimento, ele guarda a ordem para depois')
+  // O SILÊNCIO ATÉ O FIM DA ESPERA (caso do dono, 2026-08-21): a caixa-preta
+  // provou entrega em 0-25s, e o dono via o agente "parado" mesmo assim — o
+  // modelo lia, ajustava e voltava a esperar SEM FALAR, e "responda na próxima
+  // fala" só acontecia quando o ajudante acabava. O bloco agora exige a fala
+  // ANTES de qualquer outra tool: pro dono, agente mudo = mensagem perdida.
+  assert.match(
+    text,
+    /FALE COM ELE JÁ/u,
+    'o bloco tem de exigir fala imediata — não "na próxima fala", que pode demorar minutos'
+  )
+  assert.match(
+    text,
+    /antes de qualquer outra tool/u,
+    'a ordem nomeia o momento: falar vem ANTES de voltar a esperar'
+  )
 
   // Drenar É a entrega, e a entrega tem RECIBO na caixa-preta.
   assert.equal(ownerMail.count('p1'), 0, 'a fala tem de sair do pote ao ser entregue')
