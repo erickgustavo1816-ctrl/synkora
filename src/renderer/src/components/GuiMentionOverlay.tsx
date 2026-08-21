@@ -28,6 +28,13 @@ const GuiMentionOverlay = forwardRef<HTMLDivElement, Props>(function GuiMentionO
           <span key={`${index}-${part.text}`}>{part.text}</span>
         )
       )}
+      {/* A SENTINELA da última linha (bug do caret colado, 2026-08-21): um div
+          pre-wrap NÃO renderiza a linha vazia depois do \n final — o textarea
+          renderiza, e é nela que o caret mora depois de um Shift+Enter no fim.
+          Sem isto o conteúdo pintado fica uma linha mais curto, o espelho de
+          scroll trava no teto menor e o texto pintado desliza uma linha. O
+          espaço de largura zero materializa a linha sem ocupar nenhum pixel. */}
+      {'\u200b'}
     </div>
   )
 })

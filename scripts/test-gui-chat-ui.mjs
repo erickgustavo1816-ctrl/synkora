@@ -4230,3 +4230,22 @@ test('composer e overlay de menções quebram linha com a MESMA política', () =
   assert.doesNotMatch(overlay, /overflow-wrap: anywhere/u, 'anywhere diverge do textarea e desloca o texto pintado')
   assert.match(input, /overflow-wrap: break-word/u, 'o lado do textarea declara a mesma política (espelho declarado)')
 })
+
+// O CARET COLADO NA PALAVRA (bug do dono, 2026-08-21, segundo ato): Shift+Enter
+// no FIM do rascunho cria a linha em que o caret mora — mas um div pre-wrap
+// NÃO renderiza a linha vazia depois do \n final (o textarea renderiza). O
+// conteúdo pintado fica uma linha mais curto, o espelho de scroll trava no
+// teto menor e o texto pintado fica uma linha atrás do real. A sentinela de
+// largura zero no fim materializa a última linha — o truque padrão
+// de todo espelho de textarea.
+test('o overlay de menções materializa a última linha com a sentinela', () => {
+  const overlay = readFileSync(
+    new URL('../src/renderer/src/components/GuiMentionOverlay.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(
+    overlay,
+    /\{'\\u200b'\}/u,
+    'a sentinela de largura zero existe no fim do conteúdo pintado - ESCAPADA (caractere invisível cru em fonte é a armadilha do r24 §7)'
+  )
+})
