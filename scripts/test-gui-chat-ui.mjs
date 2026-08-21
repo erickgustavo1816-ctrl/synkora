@@ -4208,3 +4208,25 @@ test('R27 — o quadro de rota não conta nem mostra o registro do release', () 
     'a grade parte só de missões de superfície'
   )
 })
+
+// O CARET NUMA LINHA, A EDIÇÃO NA OUTRA (bug do dono, 2026-08-21, em vídeo):
+// com menção ativa o textarea fica transparente e quem pinta o texto é o
+// overlay — mas o overlay quebrava linha com `overflow-wrap: anywhere`
+// enquanto o textarea usa o padrão de textarea (`break-word`). Palavra longa
+// ("image.png") quebrava NO MEIO no overlay e inteira no textarea: dali para
+// baixo o texto pintado ficava UMA linha fora do texto real — clique na linha
+// que se vê, edição na linha de baixo. A política de quebra é UMA, declarada
+// nos DOIS lados do espelho.
+test('composer e overlay de menções quebram linha com a MESMA política', () => {
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+  const ruleOf = (selector) => {
+    const start = css.indexOf(`\n${selector} {`)
+    assert.notEqual(start, -1, `regra ${selector} sumiu do global.css`)
+    return css.slice(start, css.indexOf('}', start))
+  }
+  const overlay = ruleOf('.gui-mention-overlay')
+  const input = ruleOf('.gui-input')
+  assert.match(overlay, /overflow-wrap: break-word/u, 'o overlay quebra como textarea quebra')
+  assert.doesNotMatch(overlay, /overflow-wrap: anywhere/u, 'anywhere diverge do textarea e desloca o texto pintado')
+  assert.match(input, /overflow-wrap: break-word/u, 'o lado do textarea declara a mesma política (espelho declarado)')
+})

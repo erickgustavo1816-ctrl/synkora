@@ -18085,6 +18085,9 @@ details.gui-error-line {
   overflow-y: auto;
   scrollbar-width: none;
   user-select: text;
+  /* Explícito, apesar de ser o padrão de textarea: é o PAR da política de
+     quebra do .gui-mention-overlay — os dois lados do espelho declarados. */
+  overflow-wrap: break-word;
 }
 
 /* O textarea continua dono da edição; esta camada só replica a tipografia e
@@ -18102,7 +18105,12 @@ details.gui-error-line {
   font-size: 13px;
   line-height: 1.55;
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  /* A MESMA política de quebra do textarea (o par declarado em .gui-input) —
+     `anywhere` quebrava "image.png" no MEIO enquanto o textarea levava a
+     palavra inteira pra baixo: dali em diante o texto pintado ficava UMA
+     linha fora do texto real, e o dono clicava numa linha e editava na outra
+     (bug em vídeo, 2026-08-21). */
+  overflow-wrap: break-word;
   pointer-events: none;
   user-select: none;
   z-index: 0;
