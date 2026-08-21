@@ -677,7 +677,11 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       const hadDelivery = Boolean(
         version?.deliveries.some((delivery) => delivery.missionId === missionId)
       )
-      if (mission.versionId) {
+      // R30 — a missão de RELEASE é o registro da PRÓPRIA subida: gravá-la
+      // como entrega punha "Subir X para a main" em "o que já subiu nesta
+      // versão" (vazamento pego pelo dono em 2026-08-21). A régua é por TIPO,
+      // a mesma das outras superfícies da R27.
+      if (mission.versionId && missionTypeOf(mission) !== 'release') {
         const delivered = backlog.addDelivery(mission.versionId, mission.id, mission.title)
         if (!delivered) return { ok: false, doneItems }
       }

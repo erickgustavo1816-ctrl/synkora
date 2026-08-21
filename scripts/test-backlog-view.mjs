@@ -24,7 +24,9 @@ const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8'
  * não resolve FALHA ALTO.
  */
 const REGION_START = 'versionMissions.map('
-const REGION_END = 'version.deliveries.length > 0'
+// R30: a lista de entregas passou a ser a FILTRADA (a entrega da própria
+// subida degrada inerte) — o marcador da fronteira acompanha o nome.
+const REGION_END = 'versionDeliveries.length > 0'
 
 function versionMissionsRegion(src) {
   const start = src.indexOf(REGION_START)

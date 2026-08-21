@@ -371,9 +371,14 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     (m) => m.status === 'ativa' || m.status === 'integrando'
   )
   // R27 — RELEASE É RELEASE: o registro que carrega a conversa da subida fica
-  // FORA de toda superfície de missão (coluna, retrato). O Board continua
+  // FORA de toda superfície de missão (retrato, contadores). O Board continua
   // sendo o HOST do pane dele (desmontar mataria a conversa), então
   // `selMission`/slots seguem enxergando o registro — só as listas o escondem.
+  // R30 — mas o release VIVO precisa de ENDEREÇO: sem entrada na coluna, um
+  // clique em geral perdia o caminho de volta ao chat da subida (bug do dono,
+  // 2026-08-21 — "o chat tá invisível"). Vivo, ele entra PRIMEIRO na coluna,
+  // com cara de release; concluiu, some — retrato e contadores seguem sem ele.
+  const releaseMissions = liveMissions.filter((m) => isReleaseMissionRecord(m))
   const surfaceMissions = liveMissions.filter((m) => !isReleaseMissionRecord(m))
   const selMission = missionTab ? liveMissions.find((m) => m.id === missionTab) : undefined
   const selIsRelease = Boolean(selMission && isReleaseMissionRecord(selMission))
@@ -995,9 +1000,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const integrationRows = integrationQueueRows(projectMissions, selMission?.id)
 
   // Linhas da coluna da esquerda: o Board resolve tudo (conta, modelo, versão,
-  // progresso, pulso) e a coluna só desenha. R27: só missões de SUPERFÍCIE —
-  // o registro de release não é card (a aba Versões é a dona do gesto dele).
-  const missionColumnEntries: MissionColumnEntry[] = surfaceMissions.map((m) => {
+  // progresso, pulso) e a coluna só desenha. R30: o release VIVO entra
+  // PRIMEIRO (embaixo de geral) — é a versão inteira subindo; a coluna o
+  // veste de release (não é missão). Concluiu, sai da lista com a régua viva.
+  const missionColumnEntries: MissionColumnEntry[] = [...releaseMissions, ...surfaceMissions].map((m) => {
     const slots = missionGuiSlots[m.id] ?? []
     // A conta/modelo que aparecem no card são os da CONVERSA aberta (o que o
     // dono está de fato gastando ali); sem conversa, a conta carimbada na

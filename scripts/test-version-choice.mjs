@@ -238,3 +238,19 @@ test('o picker herda a roupa do modal sem herdar a caixa alta do rótulo', async
   assert.ok(opts, 'a fileira de sugestões do modal não tem regra')
   assert.match(opts[1], /flex-wrap:\s*wrap/u)
 })
+
+/* ---------- 5. a seleção do chip SE VÊ (bug do dono, 2026-08-21) ---------- */
+
+// O clique nos chips sempre funcionou — a tela é que não contava: chip
+// escolhido e não-escolhido diferiam por um fio de borda, e o hover pintava
+// qualquer chip de escuro, mascarando o resto ("quando eu clico não acontece
+// nada"). O escolhido veste ink — forma+preenchimento, como o toggle
+// missão/planejamento logo acima do picker.
+test('o chip escolhido da primeira versão veste ink — a seleção se vê', async () => {
+  const css = await source('src/renderer/src/global.css')
+  const start = css.indexOf(".mission-first-version-opts .btn[aria-pressed='true']")
+  assert.notEqual(start, -1, 'a regra da seleção existe no global.css')
+  const block = css.slice(start, css.indexOf('}', start))
+  assert.match(block, /background:\s*var\(--ink\)/u, 'o fundo do escolhido é ink')
+  assert.match(block, /color:\s*var\(--paper\)/u, 'o texto do escolhido é papel')
+})

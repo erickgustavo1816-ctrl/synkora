@@ -179,13 +179,19 @@ export type MissionStatus = 'ativa' | 'integrando' | 'concluida' | 'arquivada'
  *  - 'dev'          = a missão de sempre (branch/worktree isolados, ⇪ na fila);
  *  - 'planejamento' = UMA conversa na RAIZ do projeto que escreve `plano/`.
  *  Decidida no NASCIMENTO e nunca depois; missão legada não tem o carimbo. */
-export type MissionType = 'dev' | 'planejamento'
+export type MissionType = 'dev' | 'planejamento' | 'release'
 
 /** Tipo EFETIVO da missão: ausente/desconhecido é 'dev' por definição — nada
  *  do que já está no disco muda de natureza (mesma régua do `missionTypeOf`
  *  do main, para os dois lados lerem a mesma missão do mesmo jeito). */
 export function missionTypeOf(mission?: { missionType?: MissionType } | null): MissionType {
-  return mission?.missionType === 'planejamento' ? 'planejamento' : 'dev'
+  // R30: o espelho estava PARADO na era pré-R10 (sem 'release') — o main já
+  // conhecia os três tipos e o renderer lia a subida como 'dev'. A régua de
+  // "é o registro do release?" continua sendo isReleaseMissionRecord
+  // (missionCardAccess) — aqui só o tipo efetivo, igual ao main.
+  if (mission?.missionType === 'planejamento') return 'planejamento'
+  if (mission?.missionType === 'release') return 'release'
+  return 'dev'
 }
 
 export interface MissionIntegrationQueueView {
@@ -248,8 +254,10 @@ export interface NewMissionInput {
   /** missão 2.0: sem orquestrador, chat GUI no worktree (onda B) */
   direct?: boolean
   /** 2.0: 'planejamento' cria a missão que escreve `plano/` em vez de código;
-   *  omitido = 'dev'. Só o NASCIMENTO decide (o main carimba e nunca revisita). */
-  missionType?: MissionType
+   *  omitido = 'dev'. Só o NASCIMENTO decide (o main carimba e nunca revisita).
+   *  R30: 'release' fica FORA de propósito — o registro da subida nasce no
+   *  main (ensureReleaseMission), nunca pelo modal. */
+  missionType?: Exclude<MissionType, 'release'>
 }
 
 // Backlog de produto: versões como escopo de planejamento + itens desejados.

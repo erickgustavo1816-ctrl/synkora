@@ -5118,6 +5118,17 @@ body.pane-docking .pane-bar.draggable {
   color: var(--panel-ink);
 }
 
+/* R30 — o card do RELEASE na coluna: entrada de navegação enquanto a subida
+   vive. Tracejado = não é missão (forma antes de cor); o ativo fecha o traço
+   ao vestir o painel, como qualquer card selecionado. */
+.mission-card.release-card {
+  border-style: dashed;
+}
+
+.mission-card.release-card.active {
+  border-style: solid;
+}
+
 .mc-head {
   display: flex;
   align-items: center;
@@ -19719,6 +19730,17 @@ details.gui-error-line {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+/* A SELEÇÃO SE VÊ (bug do dono, 2026-08-21: "quando eu clico não acontece
+   nada" — o clique funcionava, a tela é que não contava: ghost e não-ghost
+   diferiam por um fio de borda, e o hover pintava qualquer chip de escuro,
+   mascarando o resto). O escolhido veste ink — forma+preenchimento, o mesmo
+   idioma do toggle missão/planejamento logo acima. */
+.mission-first-version-opts .btn[aria-pressed='true'] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
 }
 
 .mission-first-version-input {

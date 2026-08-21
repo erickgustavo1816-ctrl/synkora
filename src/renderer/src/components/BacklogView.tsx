@@ -500,6 +500,18 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   // Missão CONCLUÍDA já aparece em "o que já subiu" (delivery) — repeti-la em
   // "missões desta versão" era a mesma informação duas vezes (feedback do
   // usuário). Aqui ficam só as vivas/arquivadas.
+  // R30 — a entrega da PRÓPRIA subida não é "o que já subiu nesta versão": o
+  // main parou de gravá-la (reconciliador, por TIPO) e o dado já gravado
+  // degrada inerte aqui — o registro do release existe justamente para a
+  // régua achar (lookup estrutural por missionId, nunca por título).
+  const releaseMissionIds = new Set(
+    missions.filter((m) => isReleaseMissionRecord(m)).map((m) => m.id)
+  )
+  const versionDeliveries = version
+    ? version.deliveries.filter(
+        (delivery) => !delivery.missionId || !releaseMissionIds.has(delivery.missionId)
+      )
+    : []
   const versionMissions = version
     ? missions.filter(
         (m) =>
@@ -814,7 +826,7 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
         </div>
 
         {/* raio-x da versão: branch, missões dela e o que já subiu */}
-        {version && (version.branch || versionMissions.length > 0 || version.deliveries.length > 0) && (
+        {version && (version.branch || versionMissions.length > 0 || versionDeliveries.length > 0) && (
           <div className="vs-detail">
             {version.branch && (
               <span
@@ -872,10 +884,10 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
                 })}
               </div>
             )}
-            {version.deliveries.length > 0 && (
+            {versionDeliveries.length > 0 && (
               <div className="vs-block">
                 <span className="vs-block-title">o que já subiu nesta versão</span>
-                {version.deliveries.map((d) => (
+                {versionDeliveries.map((d) => (
                   <div key={d.id} className="vs-delivery">
                     ▣ {d.title}
                     <span className="vs-delivery-date">

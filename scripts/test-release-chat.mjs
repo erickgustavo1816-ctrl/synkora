@@ -410,6 +410,57 @@ test('R29 — a persona mora na pasta do projeto e conhece THE BOX', () => {
   assert.match(prompt, /release_status|PUBLICAÇÃO/u)
 })
 
+// R30 — VALIDAÇÃO DO DONO (2026-08-21): dois vazamentos da R27, pegos ao vivo.
+// (a) a entrega da PRÓPRIA subida aparecia em "o que já subiu nesta versão" —
+//     o reconciliador de missão concluída registrava o registro do release
+//     como delivery da versão. Régua por TIPO nas duas pontas: o main para de
+//     gravar; a tela esconde o dado já gravado (degrada inerte).
+// (b) o chat do release ficava INVISÍVEL: sem entrada na coluna, um clique em
+//     geral perdia o caminho de volta. Enquanto o release está VIVO ele tem
+//     entrada própria na coluna (embaixo de geral, com cara de release);
+//     concluiu, some — o retrato e os contadores continuam sem ele.
+
+test('R30 — a entrega da subida não entra no pote de deliveries (duas pontas)', async () => {
+  const engine = await source('src/main/missionEngine.ts')
+  const reconcile = engine.slice(engine.indexOf('function reconcileConcludedMission'))
+  assert.match(
+    reconcile.slice(0, 2600),
+    /missionTypeOf\(mission\) !== 'release'/u,
+    'o main não grava a subida como entrega da versão'
+  )
+  const view = await source('src/renderer/src/components/BacklogView.tsx')
+  assert.match(
+    view,
+    /releaseMissionIds/u,
+    'a tela esconde a entrega já gravada (dado velho degrada inerte)'
+  )
+})
+
+test('R30 — o release VIVO tem entrada na coluna; o retrato segue sem ele', async () => {
+  const board = await source('src/renderer/src/components/Board.tsx')
+  assert.match(
+    board,
+    /\[\.\.\.releaseMissions, \.\.\.surfaceMissions\]/u,
+    'a coluna lista o release primeiro, embaixo de geral'
+  )
+  assert.match(
+    board,
+    /missions=\{projectMissions\.filter\(\(m\) => !isReleaseMissionRecord\(m\)\)\}/u,
+    'o retrato do projeto continua sem o registro'
+  )
+  const column = await source('src/renderer/src/components/MissionColumn.tsx')
+  assert.match(
+    column,
+    /isReleaseMissionRecord\(mission\)/u,
+    'a coluna consome a régua DECLARADA (missionCardAccess), nunca a reescreve'
+  )
+  assert.match(
+    column,
+    /sobe a versão para a main/u,
+    'o card diz a natureza dele — não é missão'
+  )
+})
+
 test('R29 — o impl alinha o version pelo worker e o desfecho entrega a receita da caixa', async () => {
   const wt = await source('src/main/worktree.ts')
   const commit = wt.slice(wt.indexOf('export function commitProjectFiles'))

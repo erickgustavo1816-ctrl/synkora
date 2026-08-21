@@ -1,4 +1,5 @@
 import { missionTypeOf, type Mission } from '../store'
+import { isReleaseMissionRecord } from '../missionCardAccess'
 import { badgeFor, dotClass } from '../missionPresentation'
 import { integrationQueueBadge } from '../integrationQueuePresentation'
 
@@ -76,6 +77,12 @@ export default function MissionColumn({
           // mostrar "⎇ sem branch (repo novo)" ali seria descrever uma falta
           // que não existe. No lugar entra o ✎, que diz a natureza dela.
           const planning = missionTypeOf(mission) === 'planejamento'
+          // R30 — o card do RELEASE: entrada de navegação enquanto a subida
+          // vive (sem ela, clicar em geral perdia o chat — bug do dono,
+          // 2026-08-21). Não é missão: a borda tracejada e a linha de baixo
+          // dizem a natureza; concluiu, o Board o tira da lista. A régua é a
+          // DECLARADA (missionCardAccess) — a tela consome, nunca reescreve.
+          const release = isReleaseMissionRecord(mission)
           // O SELO: a fila fala primeiro só onde ela sabe mais (rodada 9) — na
           // CABEÇA, onde a bola é do agente e "fila #1" seria uma meia-verdade;
           // no resto, o vocabulário de sempre. Quem espera o DONO vence os dois
@@ -85,15 +92,19 @@ export default function MissionColumn({
           return (
             <button
               key={mission.id}
-              className={`mission-card${selectedId === mission.id ? ' active' : ''}${
-                mission.status === 'integrando' ? ' integrating' : ''
-              }${entry.pulse || mission.pendingIntegrationApproval ? ' asking' : ''}`}
+              className={`mission-card${release ? ' release-card' : ''}${
+                selectedId === mission.id ? ' active' : ''
+              }${mission.status === 'integrando' ? ' integrating' : ''}${
+                entry.pulse || mission.pendingIntegrationApproval ? ' asking' : ''
+              }`}
               data-tip={
-                entry.pulse
-                  ? `❓ O AGENTE PERGUNTOU A VOCÊ:\n${entry.pulse}`
-                  : mission.pendingIntegrationApproval
-                    ? `⇪ INTEGRAÇÃO AGUARDA SEU AVAL:\no agente pediu para integrar "${mission.title}" — abra a missão e confirme no trilho (nada mergeia sem você)`
-                    : [mission.title, entry.queueLabel].filter(Boolean).join('\n')
+                release
+                  ? 'O chat da subida: quem sobe é o agente (release_run). Concluiu, o card sai — a aba VERSÕES reabre a conversa pelo ⇪.'
+                  : entry.pulse
+                    ? `❓ O AGENTE PERGUNTOU A VOCÊ:\n${entry.pulse}`
+                    : mission.pendingIntegrationApproval
+                      ? `⇪ INTEGRAÇÃO AGUARDA SEU AVAL:\no agente pediu para integrar "${mission.title}" — abra a missão e confirme no trilho (nada mergeia sem você)`
+                      : [mission.title, entry.queueLabel].filter(Boolean).join('\n')
               }
               onClick={() => onSelect(mission.id)}
             >
@@ -116,6 +127,8 @@ export default function MissionColumn({
                   Planejamento não tem worktree — leva o ✎ no lugar. */}
               {planning ? (
                 <span className="mc-branch mc-planning">✎ planejamento · escreve plano/</span>
+              ) : release ? (
+                <span className="mc-branch mc-planning">◇ release · sobe a versão para a main</span>
               ) : (
                 <span className="mc-branch">⎇ {mission.branch ?? 'sem branch (repo novo)'}</span>
               )}
