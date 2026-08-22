@@ -1314,4 +1314,36 @@ test('a lista da frota rola com a barra retrô da casa — nunca a thin nativa',
     /scrollbar-width/u,
     'thin/none aqui mata a barra retrô no Chromium — foi o bug do dono'
   )
+  // E a CALHA (segundo pedido do dono, mesmo dia): a ficha colada na barra é
+  // o mesmo defeito que o histórico tinha — o respiro é parte do scroll.
+  const gutter = Number(lista.match(/padding-right:\s*(\d+)px/u)?.[1])
+  assert.ok(gutter >= 8, `o respiro até a barra precisa existir (veio ${gutter}px)`)
+})
+
+test('a ficha fecha dos DOIS lados — a borda direita espelha a esquerda por UMA fonte', () => {
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  // Com a calha do scroll, a ficha aberta à direita parecia CORTADA ("parece
+  // que tá vazando" — dono, 22/08). A caixa fecha com a barra espelhada, e as
+  // DUAS bordas bebem da MESMA custom property: um estado novo que pintasse
+  // só a esquerda deixaria o card metade de uma cor, metade de outra.
+  const row = css.match(/\n\.gui-subagent-row \{([\s\S]*?)\n\}/u)?.[1] ?? ''
+  assert.match(row, /--row-edge:/u, 'a cor da moldura tem UMA fonte')
+  assert.match(row, /border-left: 2px solid var\(--row-edge\)/u)
+  assert.match(row, /border-right: 2px solid var\(--row-edge\)/u)
+
+  // Os estados trocam SÓ a fonte — nunca uma borda de cada vez.
+  for (const [estado, cor] of [
+    ['running', '--accent'],
+    ['completed', '--ok']
+  ]) {
+    const regra = css.match(new RegExp(`\\.gui-subagent-row\\.${estado} \\{[^}]*\\}`, 'u'))?.[0] ?? ''
+    assert.match(regra, new RegExp(`--row-edge: var\\(${cor}\\)`, 'u'), `${estado} pinta pela fonte única`)
+    assert.doesNotMatch(regra, /border-left-color/u, `${estado} não pode pintar um lado só`)
+  }
+
+  // O interrompido continua tracejado — agora nos DOIS lados.
+  const parada = css.match(/\.gui-subagent-row\.interrupted \{[^}]*\}/u)?.[0] ?? ''
+  assert.match(parada, /border-left-style: dashed/u)
+  assert.match(parada, /border-right-style: dashed/u, 'o traço da pausa fecha a caixa também')
 })

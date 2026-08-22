@@ -5749,14 +5749,23 @@ body.pane-docking .pane-bar.draggable {
      ::-webkit-scrollbar no Chromium — a lista rolava com a barra nativa,
      invisível de tão magra (bug que o dono viu na FROTA). Sem ela, a barra
      retrô global de 10px da casa assume, a mesma do TRABALHO (.dr-files). */
+  /* a CALHA entre a ficha e a barra — o mesmo respiro do histórico
+     ("tá bem colado também", segundo pedido do dono no mesmo dia) */
+  padding-right: 10px;
 }
 
 .gui-subagent-row {
   display: grid;
   gap: 3px;
   min-width: 0;
-  padding: 8px 3px 8px 10px;
-  border-left: 2px solid var(--line-strong);
+  padding: 8px 6px 8px 10px;
+  /* A MOLDURA bebe de UMA fonte: com a calha do scroll, a ficha aberta à
+     direita parecia cortada ("parece que tá vazando" — dono, 22/08). A borda
+     direita espelha a esquerda pela mesma custom property — estado novo que
+     pintasse um lado só deixaria o card de duas cores. */
+  --row-edge: var(--line-strong);
+  border-left: 2px solid var(--row-edge);
+  border-right: 2px solid var(--row-edge);
   border-bottom: 1px solid var(--line);
   color: var(--ink-2);
 }
@@ -5766,17 +5775,17 @@ body.pane-docking .pane-bar.draggable {
 }
 
 .gui-subagent-row.running {
-  border-left-color: var(--accent);
+  --row-edge: var(--accent);
 }
 
 .gui-subagent-row.completed {
-  border-left-color: var(--ok);
+  --row-edge: var(--ok);
 }
 
 .gui-subagent-row.failed,
 .gui-subagent-row.denied,
 .gui-subagent-row.cancelled {
-  border-left-color: var(--err);
+  --row-edge: var(--err);
 }
 
 .gui-subagent-row-head {
@@ -20390,7 +20399,8 @@ details.gui-error-line {
    de animação nova: o que se mexe na lateral é o que está trabalhando. */
 .gui-subagent-row.interrupted {
   border-left-style: dashed;
-  border-left-color: var(--ink-3);
+  border-right-style: dashed;
+  --row-edge: var(--ink-3);
 }
 
 .gui-subagent-row.interrupted .gui-subagent-row-dot {
