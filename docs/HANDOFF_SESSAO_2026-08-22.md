@@ -31,7 +31,38 @@ correio de fala imediata). O que veio DEPOIS do restart espera o próximo.
   `Startup\synkora-backlog.vbs` (oculto). Mexida dele = diário `by:dono`.
 - DOUTRINA: toda entrega move item pro feito (MCP) e republica o artifact.
 
-## RIGHTDOCK — COMPLETO (Ondas A e B entregues; commit da B: `35d3b17`)
+## ⚠ RIGHTDOCK — a Onda B foi REPROVADA no restart e CONSERTADA em 3 commits
+
+A entrega da Onda B (`35d3b17`) quebrou na tela real ("parabéns, você
+conseguiu fazer um trabalho de merda"): o dock renderizou esmagado (a regra
+`.dr-btn{width:100%}` da era em coluna vs a fileira nova — ninguém tinha
+OLHADO a tela desde a Onda A) e a troca da página ✦ geral pelo DockGeneral
+nunca foi o combinado. Conserto por 2×2 agentes Opus max em paralelo:
+
+- `3e75d39` (rodada 1): ✦ geral RESTAURADO verbatim de 7242e95 (a demolição
+  do 35d3b17 está REVOGADA; ReleaseRail e a IPC ficam) + dock desesmagado
+  (fileira, ⇪ ink/paper, chip com tabela-verdade árvore-limpa/↑N/silêncio,
+  histórico sem título duplicado, base com ellipsis).
+- `53e4d63`: mockup de aprovação `docs/mockups/rightdock-2.html` — o dono
+  escolheu a V1 e mandou: ícone de PAINEL no recolher, fora o ▷ terminal
+  comum, fidelidade estrita ("tem que ficar parecido com o mockup").
+- `aacba25` (rodada 2): header V1 duas linhas (estado só-notícia; "em
+  andamento" nunca renderiza), recolher = ícone de painel na linha 1,
+  entrega composta (.dr-row/.dr-fine), clique no arquivo ABRE O DOCUMENTO
+  no leitor (± abre o diff na janela larga .cdv; inline e duplo clique
+  mortos), ▷ removido (missionShell.ts do renderer apagado; canal main
+  dormente), ✕ da frota (R27F3: ownerDismiss→cancel único, canal
+  `gui:dismissHelper`, ✕ só em interrompida com helperId, buraco
+  pós-restart do correlacionador consertado NA FONTE com cerca vermelha —
+  afetava também o helper_cancel do agente).
+
+LIÇÃO GRAVADA (memória feedback-entrega-visual-olhar-tela): entrega visual
+só se declara pronta depois de VER a tela (harness estático com o
+global.css real, 176/204/340px); mockup de prancheta ≠ layout de página;
+demolir superfície aprovada só com ordem literal. PENDENTE: validação
+visual do dono na tela + restart para o ✕ da frota (metade main).
+
+## RIGHTDOCK — o histórico da entrega original (Ondas A e B; B = `35d3b17`)
 
 - Mockup APROVADO VERBATIM = contrato: `docs/mockups/rightdock.html`
   (artifact https://claude.ai/code/artifact/da63cf5d-efd9-4c19-b445-87307b087200).

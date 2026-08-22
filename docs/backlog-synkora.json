@@ -1,18 +1,18 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-22T19:58:26.333Z",
+  "updatedAt": "2026-08-22T21:05:18.138Z",
   "lanes": {
     "agora": [
       {
         "id": "rightdock",
         "title": "RightDock — o lado direito do app",
-        "desc": "O restart revelou a Onda B ERRADA (reprovação do dono, 22/08 noite): a página ✦ geral tinha sido trocada pelo retrato compacto — ela VOLTA a ser o ProjectDashboard (combinado era mexer só no lado direito) — e o dock da missão está bugado (⇪ esmagado pelo .dr-btn width:100% da era em coluna; histórico duplicado; chip ↑0; base com uuid cru). Conserto delegado a 2 frentes Opus effort max em paralelo; ReleaseRail e IPC projectReleases ficam. Plano: .synkora/reports/PLANO_CONSERTO_RIGHTDOCK_2026-08-22.md.",
+        "desc": "Conserto pós-reprovação COMMITADO em 2 rodadas: (1) ✦ geral restaurado verbatim + dock desesmagado (3e75d39); (2) header V1 do mockup rightdock-2 aprovado (duas linhas, estado só-notícia, ícone de painel no recolher), entrega composta, clique no arquivo ABRE o documento (± abre o diff na janela larga; inline morto), ▷ terminal comum removido, ✕ descarta ficha interrompida da frota (canal gui:dismissHelper + buraco pós-restart do correlacionador consertado na fonte). Dock chega por HMR; o ✕ precisa do próximo restart. Falta: validação visual do dono.",
         "refs": [
-          "docs/mockups/rightdock.html",
-          "35d3b17",
+          "docs/mockups/rightdock-2.html",
+          "3e75d39",
           ".synkora/reports/PLANO_CONSERTO_RIGHTDOCK_2026-08-22.md"
         ],
-        "badge": "reprovado no restart — conserto em curso"
+        "badge": "rodada 2 no ar — valida na tela"
       }
     ],
     "fila": [
@@ -320,6 +320,12 @@
     },
     {
       "at": "2026-08-22T19:58:26.333Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "rightdock"
+    },
+    {
+      "at": "2026-08-22T21:05:18.138Z",
       "by": "orquestrador",
       "action": "update",
       "id": "rightdock"
