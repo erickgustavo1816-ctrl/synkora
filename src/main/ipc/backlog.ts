@@ -42,6 +42,9 @@ export interface BacklogIpcExtras {
   /** R27F2 — o RETRATO das subidas de uma versão (entidade releasesStore),
    *  injetado pelo index: a aba Versões só LÊ. */
   listVersionReleases(versionId: string): ReleaseRecord[]
+  /** RIGHTDOCK Onda B — as subidas do PROJETO (mais recente primeiro): o
+   *  trilho do release mostra a última como contexto da próxima. */
+  listProjectReleases(projectId: string): ReleaseRecord[]
 }
 
 export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): void {
@@ -55,7 +58,8 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
     releaseVersionImpl,
     versionIsolationIsValid,
     invalidateLspRoot,
-    listVersionReleases
+    listVersionReleases,
+    listProjectReleases
   } = extras
   ipcMain.handle('backlog:releaseVersion', (e, versionId: string) => {
     return releaseVersionImpl(versionId, 'user')
@@ -66,6 +70,13 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
   ipcMain.handle('backlog:versionReleases', (_e, versionId: string): ReleaseRecord[] => {
     if (typeof versionId !== 'string' || !versionId) return []
     return listVersionReleases(versionId)
+  })
+
+  // RIGHTDOCK Onda B — o retrato POR PROJETO: a "última subida" do trilho do
+  // release (mesma entidade, recorte por projectId; read-only como o irmão).
+  ipcMain.handle('backlog:projectReleases', (_e, projectId: string): ReleaseRecord[] => {
+    if (typeof projectId !== 'string' || !projectId) return []
+    return listProjectReleases(projectId)
   })
 
   // R10 (2026-08-19): o botão "subir pra main" deixou de rodar a máquina — ele

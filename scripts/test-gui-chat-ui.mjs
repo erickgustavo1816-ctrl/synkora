@@ -4171,8 +4171,15 @@ test('R27 — o board não lista o registro de release e o trilho vira release',
     /surfaceMissions = liveMissions\.filter\(\(m\) => !isReleaseMissionRecord\(m\)\)/u,
     'a coluna e o retrato listam só missões de superfície'
   )
-  assert.match(board, /release-rail/u, 'o release tem trilho próprio')
-  assert.match(board, /dev → main/u)
+  // Onda B do RIGHTDOCK (2026-08-22): o trilho próprio virou componente
+  // (`ReleaseRail`, vestindo a moldura do dock) — o mapa "dev → main" mudou de
+  // casa junto, mas continua sendo a fala do trilho do release.
+  assert.match(board, /<ReleaseRail/u, 'o release tem trilho próprio')
+  const releaseRail = readFileSync(
+    new URL('../src/renderer/src/components/ReleaseRail.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(releaseRail, /dev → main/u)
   const railGate = board.indexOf('selIsRelease')
   assert.ok(railGate > 0, 'o trilho de missão é condicionado ao registro não ser release')
 })

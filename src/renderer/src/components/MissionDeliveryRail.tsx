@@ -483,7 +483,7 @@ export default function MissionDeliveryRail({
                     ? 'reinicie o app (npm run dev) para habilitar o chat da missão'
                     : !reviewReady
                       ? 'a conversa do agente precisa estar aberta e pronta — o toque entra nela como uma mensagem sua'
-                      : 'Revisar: manda no chat do agente, como mensagem SUA, o pedido de UM ajudante de revisão pelo MCP — código limpo, sem QA. Ele roda na lateral e volta com os achados.'
+                      : 'Revisar: manda no chat do agente, como mensagem SUA, o pedido de UM ajudante de revisão pelo MCP — código limpo, sem QA. Ele roda na lateral, numa sessão headless nova, e volta com os achados.'
                 }
                 onClick={onReview}
               >

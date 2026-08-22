@@ -1110,6 +1110,10 @@ const api = {
     /** R27F2 — o retrato das subidas da versão (mais recente primeiro). */
     versionReleases: (id: string): Promise<VersionReleaseRecord[]> =>
       ipcRenderer.invoke('backlog:versionReleases', id),
+    /** RIGHTDOCK Onda B — as subidas do PROJETO (mais recente primeiro): a
+     *  "última subida" do trilho do release. */
+    projectReleases: (projectId: string): Promise<VersionReleaseRecord[]> =>
+      ipcRenderer.invoke('backlog:projectReleases', projectId),
     listItems: (projectId: string): Promise<BacklogItem[]> =>
       ipcRenderer.invoke('backlog:listItems', projectId),
     updateItem: (

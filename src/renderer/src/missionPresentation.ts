@@ -3,8 +3,8 @@ import type { Mission } from './store'
 // COMO UMA MISSÃO SE APRESENTA — a fonte ÚNICA do dot, do selo e da palavra de
 // estado (2026-08-15).
 //
-// Estas três regras nasceram dentro do `MissionColumn`, e o painel do projeto
-// (`ProjectDashboard`) precisa exatamente delas: a mesma missão não pode ter
+// Estas três regras nasceram dentro do `MissionColumn`, e o retrato do ✦
+// geral (`DockGeneral`) precisa exatamente delas: a mesma missão não pode ter
 // dot verde numa coluna e âmbar na outra. Copiar seria garantir a divergência
 // na primeira mudança, então elas saíram para cá.
 //

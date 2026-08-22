@@ -4336,7 +4336,8 @@ app.whenReady().then(async () => {
     releaseVersionImpl,
     versionIsolationIsValid,
     invalidateLspRoot: (root) => lspManager.invalidate(root),
-    listVersionReleases: (versionId) => releases.listForVersion(versionId)
+    listVersionReleases: (versionId) => releases.listForVersion(versionId),
+    listProjectReleases: (projectId) => releases.list(projectId)
   })
   registerMaestroIpc(ctx, {
     engine: maestroEngine,

@@ -424,3 +424,26 @@ test('R27F2 — a versão lançada mostra o retrato da subida (entidade → tela
   assert.match(view, /vs-release/u, 'o bloco do release renderiza com classe própria')
   assert.match(view, /retrato da subida|subiu em/iu, 'o bloco fala a língua do dono')
 })
+
+// RIGHTDOCK ONDA B (2026-08-22) — o retrato POR PROJETO: o trilho do release
+// mostra a ÚLTIMA subida do projeto (contexto na hora de subir de novo).
+// Mesma entidade da Onda 2, recortada por projectId — o store já tinha o
+// método `list(projectId)`; o que nasce aqui é só o canal até a tela.
+test('RIGHTDOCK B — a última subida do PROJETO tem canal, fio, ponte e espelho', async () => {
+  const ipc = await source('src/main/ipc/backlog.ts')
+  assert.match(ipc, /backlog:projectReleases/u, 'o canal IPC por projeto existe')
+  assert.match(ipc, /listProjectReleases/u, 'o leitor é injetado pelo index (extras)')
+
+  const index = await source('src/main/index.ts')
+  assert.match(
+    index,
+    /listProjectReleases: \(projectId\) => releases\.list\(projectId\)/u,
+    'o index liga o leitor ao store da entidade'
+  )
+
+  const preload = await source('src/preload/index.ts')
+  assert.match(preload, /projectReleases/u, 'a ponte window.synkora expõe o retrato por projeto')
+
+  const mock = await source('src/renderer/src/devMock.ts')
+  assert.match(mock, /projectReleases/u, 'o devMock espelha a ponte nova')
+})

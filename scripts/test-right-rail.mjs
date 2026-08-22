@@ -987,3 +987,111 @@ test('RIGHTDOCK — trabalho: ± por arquivo e o diff inline num clique', async 
   const rail = await source('src/renderer/src/components/MissionDeliveryRail.tsx')
   assert.match(rail, /onDoubleClick/u, 'duplo clique abre o arquivo; o clique simples vira o diff')
 })
+
+// ————— RIGHTDOCK ONDA B (2026-08-22) — geral e release vestem a moldura —————
+//
+// O mockup aprovado tem TRÊS estados na MESMA moldura. A Onda A recompôs a
+// missão; esta onda veste os outros dois: o ✦ geral vira retrato COMPACTO
+// (`DockGeneral`, no lugar do painel largo) e o trilho do release ganha a
+// seção "última subida" lendo a entidade R27F2 por projeto
+// (`backlog:projectReleases`). Nenhum dado inventado: os retratos leem o
+// releasesStore, e a linha compacta NUNCA afirma além do que o registro prova.
+
+const releasePresentation = () => import('../src/renderer/src/releaseRailPresentation.ts')
+
+/** Um registro de subida como o releasesStore o grava (espelho do fixture da
+ *  aba Versões: mesma entidade, recorte por projeto). */
+const releaseRecord = (over = {}) => ({
+  id: 'r1',
+  projectId: 'p1',
+  versionId: 'v1',
+  versionName: 'V1.0.5',
+  at: '2026-08-21T17:15:00.000Z',
+  actor: 'agente',
+  mergeDetail: 'merge --no-ff limpo',
+  push: { attempted: true, ok: true },
+  publishRequired: false,
+  outcome: 'subiu redonda; push ok.',
+  ...over
+})
+
+test('RIGHTDOCK B — a linha do retrato fala a verdade do dado, nunca além dele', async () => {
+  const { releasePortraitLine, releasePushWord } = await releasePresentation()
+
+  // O push tem TRÊS desfechos reais — e "sem remoto" não pode virar silêncio
+  // nem virar falha: o projeto sem GitHub sobe local de propósito.
+  assert.equal(releasePushWord({ attempted: true, ok: true }), 'push ok')
+  assert.equal(releasePushWord({ attempted: true, ok: false }), 'push falhou')
+  assert.equal(releasePushWord({ attempted: false }), 'sem remoto')
+
+  // A linha inteira: ⇪ nome · dia/hora · push. A hora é a LOCAL da máquina do
+  // dono (mesma régua do toLocaleString da aba Versões) — o teste prende a
+  // FORMA, não o fuso.
+  assert.match(
+    releasePortraitLine(releaseRecord()),
+    /^⇧ V1\.0\.5 · \d{2}\/\d{2} \d{2}:\d{2} · push ok$/u
+  )
+
+  // `publishRequired` declara que o produto TEM pipeline de caixa — o registro
+  // não prova publicação. A linha diz a receita, nunca "caixa publicada".
+  const comCaixa = releasePortraitLine(releaseRecord({ publishRequired: true }))
+  assert.match(comCaixa, /· caixa \(npm run release\)$/u)
+  assert.doesNotMatch(comCaixa, /caixa publicada/u)
+
+  // Bump que FALHOU é notícia; bump que alinhou é redundante com o nome.
+  assert.match(
+    releasePortraitLine(releaseRecord({ bump: { version: '1.0.5', committed: false } })),
+    /manifesto não alinhado/u
+  )
+  assert.doesNotMatch(
+    releasePortraitLine(releaseRecord({ bump: { version: '1.0.5', committed: true } })),
+    /manifesto/u
+  )
+
+  // Data ilegível não vira "Invalid Date" na tela: a linha sai sem o pedaço.
+  assert.equal(releasePortraitLine(releaseRecord({ at: 'ontem' })), '⇧ V1.0.5 · push ok')
+})
+
+test('RIGHTDOCK B — o release veste a moldura: dock-head + a subida + última subida', async () => {
+  const rail = await source('src/renderer/src/components/ReleaseRail.tsx')
+  assert.match(rail, /dock-head/u, 'a moldura diz onde o dono está')
+  assert.match(rail, /DockSection/u, 'as seções são o primitivo da casa')
+  assert.match(rail, /title="a subida"/u)
+  assert.match(rail, /title="última subida"/u)
+  assert.match(rail, /release_run/u, 'a nota continua nomeando a RECEITA da subida')
+  assert.match(rail, /releasePortraitLine/u, 'a linha compacta vem do módulo puro')
+  // A metade main chega SÓ no restart: sem a ponte, a seção degrada com a
+  // receita em vez de virar beco mudo — e sem subida nenhuma ela nem nasce.
+  assert.match(rail, /projectReleases/u)
+  assert.match(rail, /reinicie o app/u)
+  // Re-derivável: o retrato assina o backlog:changed do projeto (o fecho do
+  // release re-pinta sem gesto novo do dono).
+  assert.match(rail, /onChanged/u)
+
+  const board = await source('src/renderer/src/components/Board.tsx')
+  assert.match(board, /<ReleaseRail/u, 'o Board consome o componente novo')
+  assert.doesNotMatch(
+    board,
+    /release-rail-head/u,
+    'o cabeçalho cru da R27 saiu — a moldura agora é o dock'
+  )
+})
+
+test('RIGHTDOCK B — o ✦ geral é o retrato compacto na moldura, não o card gigante', async () => {
+  const general = await source('src/renderer/src/components/DockGeneral.tsx')
+  assert.match(general, /dock-head/u, 'a moldura diz onde o dono está')
+  assert.match(general, /DockSection/u)
+  assert.match(general, /title="agora"/u)
+  assert.match(general, /title="últimas entregas"/u)
+  // "N esperando você" é o pulso REAL, pela régua única da casa — e o clique
+  // leva à missão (nota do mockup).
+  assert.match(general, /waitingOnOwner/u)
+  assert.match(general, /onOpenMission/u)
+  // As contas vêm do módulo puro de sempre: nada se recalcula no JSX.
+  assert.match(general, /liveMissions/u)
+  assert.match(general, /recentConcluded/u)
+  assert.match(general, /versionInDev/u)
+
+  const css = await source('src/renderer/src/global.css')
+  assert.match(css, /\.dock-general\s*\{/u, 'o dock compacto tem roupa própria')
+})
