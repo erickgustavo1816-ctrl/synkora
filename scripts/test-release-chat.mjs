@@ -384,6 +384,33 @@ test('R27F2 — o fecho do release e a reconciliação empurram missions:changed
   )
 })
 
+// R27F2 ONDA 4 — A VARREDURA DE BECOS (2026-08-22): nenhuma ponta do ciclo
+// termina sem desfecho visível ou receita, e nenhum fecho depende de UM push
+// entregue (doutrina: durável com recibo OU re-derivável por reconciliador).
+
+test('R27F2 — a leitura de missões CURA o registro de release atrasado', async () => {
+  const engine = await source('src/main/missionEngine.ts')
+  const read = engine.slice(engine.indexOf('function missionsWithIntegration'))
+  const block = read.slice(0, read.indexOf('\n  /**'))
+  assert.match(block, /missionTypeOf\(mission\) [!=]== 'release'/u, 'a régua é por TIPO, como nas outras superfícies')
+  assert.match(block, /'lancada'/u, 'o gatilho é o fato provado: versão já lançada')
+  assert.match(block, /concluida/u, 'o registro atrasado conclui na própria leitura')
+  assert.match(block, /emitMissionsChanged/u, 'curou → avisa as outras telas; nada curado → silêncio (converge)')
+})
+
+test('R27F2 — toda recusa do motor de release carrega a receita', async () => {
+  const index = await source('src/main/index.ts')
+  const impl = index.slice(index.indexOf('async function releaseVersionImpl'))
+  const implBody = impl.slice(0, impl.indexOf('function sweepProjectFiles'))
+  // As receitas, uma por trava — regressão em qualquer uma vira beco de agente.
+  assert.match(implBody, /deixe a fila terminar/u, 'fila de integração ensina a espera')
+  assert.match(implBody, /integre \(ou arquive\)/u, 'missão pendente ensina os dois verbos')
+  assert.match(implBody, /faça \(vire missão\) ou exclua/u, 'backlog aberto ensina os dois verbos')
+  assert.match(implBody, /reinicie o Synkora para reconciliá-lo/u, 'journal pendente ensina o boot seguro')
+  assert.match(implBody, /Repare a identidade/u, 'isolamento inválido ensina o reparo')
+  assert.match(implBody, /Finalize e valide/u, 'worktree sujo ensina o fecho')
+})
+
 // R29 — O RELEASE ENTREGA A CAIXA (ordem do dono, 2026-08-21): a V1.0.4 do
 // Painel subiu pelo release (merge+push) e o "verificar atualização" continuou
 // quebrado — o que o updater lê é a RELEASE PUBLICADA do GitHub (instalador +

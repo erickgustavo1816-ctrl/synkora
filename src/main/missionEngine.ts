@@ -197,6 +197,32 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   function missionsWithIntegration(projectId: string): Array<
     Mission & { integration?: ReturnType<typeof integrationQueueView> }
   > {
+    // R27F2 Onda 4 — reconciliação VIVA no caminho de leitura: nenhum fecho
+    // depende de UM push entregue (doutrina da casa). Missão de RELEASE ainda
+    // ativa com a versão JÁ lançada é registro atrasado — conclui AQUI, com
+    // recibo na caixa-preta, e a lista sai curada. Converge: curou, a
+    // condição some; nada curado, silêncio (sem loop de push).
+    let healed = 0
+    for (const mission of missions.list(projectId)) {
+      if (
+        missionTypeOf(mission) !== 'release' ||
+        (mission.status !== 'ativa' && mission.status !== 'integrando') ||
+        !mission.versionId
+      )
+        continue
+      const version = backlog.getVersion(mission.versionId)
+      if (version?.status !== 'lancada') continue
+      missions.update(mission.id, { status: 'concluida' })
+      healed++
+      blackbox.record({
+        cat: 'recovery',
+        event: 'release-record-healed',
+        actor: 'harness',
+        ids: { projectId, missionId: mission.id },
+        reason: 'versão já lançada — registro de release concluído na leitura (reconciliação viva)'
+      })
+    }
+    if (healed > 0) emitMissionsChanged(projectId)
     const byMission = new Map(
       integrationQueue
         .listPending(projectId)
