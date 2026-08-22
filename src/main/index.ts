@@ -40,6 +40,7 @@ import {
   semverFromVersionName,
   type ReleaseBumpOutcome
 } from './releasePublish'
+import { ReleasesStore, type ReleaseRecordBump, type ReleaseRecordPush } from './releasesStore'
 import { IntegrationQueueStore } from './integrationQueue'
 import type { MainContext } from './mainContext'
 import {} from './cliSessionTransplant'
@@ -2307,6 +2308,9 @@ app.whenReady().then(async () => {
   const integrationQueue = new IntegrationQueueStore(
     join(app.getPath('userData'), 'integration-queue.json')
   )
+  // R27F2 — o RETRATO das subidas (entidade por release, no sucesso). A aba
+  // Versões lê daqui; o fato continua sendo version.status no backlog.
+  const releases = new ReleasesStore(join(app.getPath('userData'), 'releases.json'))
   const backlog = new BacklogStore()
   const maestro = new MaestroStore()
   const settings = new SettingsStore()
@@ -3229,8 +3233,13 @@ app.whenReady().then(async () => {
     const targetBranch = releaseIntent.targetBranch ?? currentBranch(project.path) ?? 'main'
     const remote = await gitOff('remoteAheadOf', project.path, targetBranch)
     let pushLine = ''
+    // R27F2 — o push como FATO para a entidade da subida (não só como frase).
+    let releasePush: ReleaseRecordPush = { attempted: false }
     if (remote) {
       const pushed = await gitOff('pushBranchToRemote', project.path, targetBranch)
+      releasePush = pushed.ok
+        ? { attempted: true, ok: true }
+        : { attempted: true, ok: false, error: pushed.error }
       pushLine = pushed.ok
         ? ` · GitHub atualizado (${targetBranch} → origin)`
         : ` · ATENÇÃO: o push para o origin FALHOU (${pushed.error}) — o release local está completo; rode git push origin ${targetBranch} na pasta do projeto quando o acesso voltar`
@@ -3275,7 +3284,38 @@ app.whenReady().then(async () => {
       })
     }
     clearVersionReleaseIntent(project.path, versionId)
-    return `versão ${version.name} subiu para a main (${releaseDetail}) — é a versão atual${pushLine}`
+    const releaseOutcome = `versão ${version.name} subiu para a main (${releaseDetail}) — é a versão atual${pushLine}`
+    // R27F2 Onda 2 — o RETRATO da subida vira DADO (a entidade que a aba
+    // Versões e a auditoria leem: quando, quem, merge, push, bump, caixa).
+    // Nasce DEPOIS do fato provado e nunca o derruba: retrato falho é perda
+    // de foto, não de release.
+    try {
+      const bump = publishSignalForOutcome.bump
+      const releaseBump: ReleaseRecordBump | undefined =
+        bump?.kind === 'committed'
+          ? { version: bump.version, committed: true }
+          : bump?.kind === 'commit-failed'
+            ? { version: bump.version, committed: false }
+            : undefined
+      const releaseMission = missions
+        .list(version.projectId)
+        .find((m) => m.versionId === versionId && missionTypeOf(m) === 'release')
+      releases.append({
+        projectId: version.projectId,
+        versionId,
+        versionName: version.name,
+        ...(releaseMission ? { missionId: releaseMission.id } : {}),
+        actor,
+        mergeDetail: releaseDetail,
+        push: releasePush,
+        ...(releaseBump ? { bump: releaseBump } : {}),
+        publishRequired: publishSignalForOutcome.hasReleaseScript,
+        outcome: releaseOutcome
+      })
+    } catch {
+      // sem retrato — o hub e o backlog seguem contando o fato.
+    }
+    return releaseOutcome
   }
 
 
