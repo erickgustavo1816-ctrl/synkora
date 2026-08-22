@@ -130,6 +130,11 @@
       <span class="glyph">⊟</span>
       <span class="title">Painel de Gestão: missão aberta precisa mergear a main pra ganhar o dev isolado (42024ee)</span>
     </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">Gate raiz não roda as suítes do rail: 3 quebras da Onda A atravessaram invisíveis</span>
+      <span class="desc">test-right-rail, test-project-landing e test-backlog-view moram no test:domain — o test:gui-system (o gate raiz da casa) não as roda, e 3 marcadores quebrados pela Onda A do RightDock só apareceram na Onda B (provado em worktree do HEAD; curados em 35d3b17). Decidir: mover as suítes de GUI do domain pro gui-system, ou rodar npm test completo como gate de commit.</span>
+    </div>
   </section>
 
   <details class="done-wrap" open>

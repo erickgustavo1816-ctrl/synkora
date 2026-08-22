@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-22T19:48:40.711Z",
+  "updatedAt": "2026-08-22T19:50:59.610Z",
   "lanes": {
     "agora": [],
     "fila": [
@@ -68,6 +68,11 @@
       {
         "id": "painel-merge-main",
         "title": "Painel de Gestão: missão aberta precisa mergear a main pra ganhar o dev isolado (42024ee)"
+      },
+      {
+        "id": "gate-raiz-nao-roda-as-suites-do-rail-3-quebras-d",
+        "title": "Gate raiz não roda as suítes do rail: 3 quebras da Onda A atravessaram invisíveis",
+        "desc": "test-right-rail, test-project-landing e test-backlog-view moram no test:domain — o test:gui-system (o gate raiz da casa) não as roda, e 3 marcadores quebrados pela Onda A do RightDock só apareceram na Onda B (provado em worktree do HEAD; curados em 35d3b17). Decidir: mover as suítes de GUI do domain pro gui-system, ou rodar npm test completo como gate de commit."
       }
     ],
     "feito": [
@@ -298,6 +303,13 @@
       "action": "move",
       "id": "rightdock",
       "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-22T19:50:59.610Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "gate-raiz-nao-roda-as-suites-do-rail-3-quebras-d",
+      "detail": "→ dividas"
     }
   ]
 }
