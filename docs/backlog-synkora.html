@@ -57,7 +57,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>✦ Backlog Synkora</h1>
-    <span class="stamp">atualizado 21/08 · pelo orquestrador</span>
+    <span class="stamp">atualizado 22/08 · pelo orquestrador</span>
     <p class="how"><b>Como funciona:</b> este é o mapa vivo da obra — eu re-publico neste MESMO link a cada
     entrega. Quer mudar prioridade ou adicionar item? Comente aqui na página ou me diga no chat.
     Fonte da verdade: <b>docs/backlog-synkora.json</b> (MCP + CLI em scripts/backlog*.mjs).</p>
@@ -67,10 +67,10 @@
     <h2>Agora <span class="count">— em curso</span></h2>
     <div class="item now">
       <span class="glyph">●</span>
-      <span class="title">Skills 2.0 — o build</span>
-      <span class="badge">planejamento fechado hoje</span>
-      <span class="desc">Grill com o dono concluído: 7 ADRs + glossário; kit final de 16 skills (uma por ocasião, impeccable como única lei); as duas da casa já escritas (código-limpo e investigação). Falta construir: store semeado, sync no spawn pro worktree, tela completa de gestão, instalar-por-URL pinado, personas com lei + cardápio, e a PODA das ~400.</span>
-      <span class="refs">refs: <code>docs/adr/0001–0007</code> · <code>CONTEXT.md</code> · <code>skills novas na lib</code></span>
+      <span class="title">RightDock — o lado direito do app</span>
+      <span class="badge">mockup no ar — aguardando teu aval</span>
+      <span class="desc">Brief fechado no grill: repensar do ZERO — o dock vira o RAIO-X da missão (ENTREGA enxuta · TRABALHO = arquivos alterados ao vivo com diff · FROTA = fichas dos ajudantes com casa fixa), ✦ geral e release na mesma moldura. Mockup publicado (o contrato); código só depois do aval do dono.</span>
+      <span class="refs">refs: <code>docs/mockups/rightdock.html</code> · <code>estudo: ResizableRightRail · MissionDeliveryRail · GuiSubagentSidebar</code></span>
     </div>
   </section>
 
@@ -78,19 +78,15 @@
     <h2>Fila <span class="count">— ordem do dono</span></h2>
     <div class="item queue">
       <span class="glyph">1</span>
-      <span class="title">RightDock — o lado direito do app</span>
-      <span class="desc">&quot;Ainda tá meio ruim&quot; (dito de novo em 21/08). 3º item do plano original do dono; redesenhar o dock direito do workspace.</span>
+      <span class="title">Skills 2.0 — o build</span>
+      <span class="badge">planejamento fechado hoje</span>
+      <span class="desc">Grill com o dono concluído: 7 ADRs + glossário; kit final de 16 skills (uma por ocasião, impeccable como única lei); as duas da casa já escritas (código-limpo e investigação). Falta construir: store semeado, sync no spawn pro worktree, tela completa de gestão, instalar-por-URL pinado, personas com lei + cardápio, e a PODA das ~400.</span>
+      <span class="refs">refs: <code>docs/adr/0001–0007</code> · <code>CONTEXT.md</code> · <code>skills novas na lib</code></span>
     </div>
     <div class="item queue">
       <span class="glyph">2</span>
       <span class="title">Browser embutido</span>
       <span class="desc">4º item do plano do dono: navegador dentro do Synkora pro ciclo de teste visual sem sair do app.</span>
-    </div>
-    <div class="item queue">
-      <span class="glyph">⟳</span>
-      <span class="title">Restart do app (quando o dono liberar)</span>
-      <span class="desc">Esperam o próximo npm run dev: R29 (release entende o produto e publica a caixa), a metade main da R30 (motor para de gravar entrega de release) e a fala imediata do correio do dono.</span>
-      <span class="refs">refs: <code>d0aa8af</code> · <code>d33b8b0</code> · <code>1ee9f4c</code></span>
     </div>
   </section>
 
@@ -105,11 +101,6 @@
       <span class="glyph">◇</span>
       <span class="title">Persona &quot;build de prova&quot;</span>
       <span class="desc">Missão que mexe em instalador/build oferece o dist de prova sozinha antes do ⇪.</span>
-    </div>
-    <div class="item maybe">
-      <span class="glyph">◇</span>
-      <span class="title">R27 fase 2 — release como entidade própria</span>
-      <span class="desc">Release no dado (não só régua de missão) + painel embutido na aba Versões.</span>
     </div>
     <div class="item maybe">
       <span class="glyph">◇</span>
@@ -150,6 +141,8 @@
   <details class="done-wrap" open>
     <summary>Feito recente <span class="count">— com commits</span></summary>
     <div class="done-list">
+      <p class="done-day">22/08 — sábado</p>
+      <div class="done"><span class="glyph">✓</span><span class="title">R27 fase 2 — a release REDONDA</span><span class="refs"><code>releaseChat.ts</code> · <code>runReleaseForChat</code> · <code>docs/HANDOFF_SESSAO_2026-08-20.md §R27</code></span></div>
       <p class="done-day">21/08 — quinta</p>
       <div class="done"><span class="glyph">✓</span><span class="title">Backlog vivo publicado + MCP do backlog (fonte JSON, render, verbos por tool)</span><span class="refs"><code>scripts/backlog.mjs</code> · <code>scripts/backlog-mcp.mjs</code> · <code>.mcp.json</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">Skills 2.0 planejada em grill-with-docs: 7 ADRs + glossário + kit de 16 + duas skills da casa escritas</span><span class="refs"><code>docs/adr/</code> · <code>CONTEXT.md</code></span></div>
@@ -161,6 +154,8 @@
       <div class="done"><span class="glyph">✓</span><span class="title">Mensagem do dono no meio da espera de ajudante agora exige FALA imediata do agente (entrega já era 0–25s — provado no bbwatch)</span><span class="refs"><code>1ee9f4c</code></span></div>
       <p class="done-day">Antes — ver handoffs</p>
       <div class="done"><span class="glyph">✓</span><span class="title">R23–R28.1 (20/08): ■ que manda, histórico completo, odômetro, release vira release, push do remoto — docs/HANDOFF_SESSAO_2026-08-20.md</span></div>
+      <p class="done-day">22/08 — sábado</p>
+      <div class="done"><span class="glyph">✓</span><span class="title">Restart do app (quando o dono liberar)</span><span class="refs"><code>d0aa8af</code> · <code>d33b8b0</code> · <code>1ee9f4c</code> · <code>1b2320a</code> · <code>55d8f2b</code> · <code>9833a31</code> · <code>4481c44</code></span></div>
     </div>
   </details>
 </div>

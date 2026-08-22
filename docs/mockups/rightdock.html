@@ -1,0 +1,230 @@
+<title>Mockup RightDock</title>
+<style>
+  :root {
+    --paper: #efe9dc; --card: #f6f1e6; --panel: #26241f; --panel-ink: #efe9dc;
+    --ink: #26241f; --ink-2: #57534a; --ink-3: #857f70;
+    --accent: #d96c3f; --ok: #3e9b5f; --err: #b54036; --line: #c9c2b0;
+    --ok-dark: #7dc794; --err-dark: #e0917e;
+    --front: hsl(21 60% 45%); --back: hsl(210 45% 45%); --qa: hsl(145 40% 40%);
+    --mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--paper); color: var(--ink); font-family: var(--mono);
+    font-size: 13px; line-height: 1.5; margin: 0; padding: 28px 22px 70px; }
+  .wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+  header.mast { background: var(--panel); color: var(--panel-ink); border-radius: 10px; padding: 16px 22px; }
+  header.mast h1 { margin: 0; font-size: 17px; letter-spacing: .14em; text-transform: uppercase; }
+  header.mast p { margin: 8px 0 0; color: #b8b09c; font-size: 12px; max-width: 72ch; }
+  header.mast b { color: var(--panel-ink); }
+
+  .states { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
+  .state { display: flex; flex-direction: column; gap: 10px; }
+  .state > h2 { margin: 0; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-2); }
+  .notes { max-width: 340px; font-size: 11.5px; color: var(--ink-2); display: flex; flex-direction: column; gap: 6px; }
+  .notes p { margin: 0; padding-left: 14px; position: relative; }
+  .notes p::before { content: "▸"; position: absolute; left: 0; color: var(--accent); }
+
+  /* ————— O DOCK ————— */
+  .dock { width: 340px; background: var(--card); border: 1.5px solid var(--ink);
+    border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
+  .dock-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    border-bottom: 1px solid var(--line); color: var(--ink-3); font-size: 10px;
+    letter-spacing: .14em; text-transform: uppercase; }
+  .dock-head .grip { margin-left: auto; letter-spacing: 0; color: var(--line); }
+
+  .sec { border-bottom: 1px solid var(--line); }
+  .sec:last-child { border-bottom: 0; }
+  .sec-head { display: flex; align-items: baseline; gap: 8px; padding: 9px 12px 7px;
+    font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-2);
+    cursor: pointer; user-select: none; }
+  .sec-head .tog { color: var(--ink-3); }
+  .sec-head .sum { margin-left: auto; letter-spacing: .02em; color: var(--ink-3); font-size: 10.5px; text-transform: none; }
+  .sec-body { padding: 2px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+
+  /* entrega */
+  .row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .branch { font-size: 11.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--ink-2);
+    border-radius: 4px; padding: 0 6px; color: var(--ink-2); white-space: nowrap; }
+  .chip.ok { border-color: var(--ok); color: var(--ok); }
+  .btn { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    border: 1.5px solid var(--ink); border-radius: 7px; background: transparent; color: var(--ink);
+    padding: 5px 10px; cursor: pointer; }
+  .btn.primary { background: var(--ink); color: var(--paper); flex: 1; }
+  .btn.icon { padding: 5px 8px; letter-spacing: 0; }
+  .acts { display: flex; gap: 6px; }
+
+  /* trabalho */
+  .file { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 4px 6px;
+    border-radius: 6px; cursor: pointer; }
+  .file:hover { background: var(--paper); }
+  .file .name { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file .delta { font-size: 10.5px; white-space: nowrap; }
+  .file .delta .add { color: var(--ok); }
+  .file .delta .del { color: var(--err); }
+  .file.open { background: var(--paper); }
+  .diff { grid-column: 1 / -1; background: var(--panel); border-radius: 7px; padding: 8px 10px;
+    font-size: 10.5px; line-height: 1.55; color: #b8b09c; overflow-x: auto; }
+  .diff .a { color: var(--ok-dark); }
+  .diff .d { color: var(--err-dark); }
+
+  /* frota */
+  .helper { border: 1px dashed var(--ink-2); border-radius: 8px; padding: 7px 10px;
+    display: grid; grid-template-columns: 1fr auto; gap: 1px 8px; }
+  .helper .hname { font-size: 12px; font-weight: 700; }
+  .helper .hmeta { grid-column: 1 / -1; font-size: 10.5px; color: var(--ink-3); }
+  .helper .hstate { font-size: 10.5px; color: var(--ink-2); white-space: nowrap; }
+  .helper.done { border-style: solid; border-color: var(--ok); }
+  .helper.done .hstate { color: var(--ok); }
+  .hue-front .hname::before { content: "● "; color: var(--front); }
+  .hue-back .hname::before { content: "● "; color: var(--back); }
+
+  /* geral / release */
+  .stat { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+  .stat b { font-size: 16px; }
+  .mini { font-size: 11px; color: var(--ink-2); }
+  .rel-flow { font-size: 12px; color: var(--ink-2); }
+  .rel-portrait { border-left: 3px solid var(--ok); padding-left: 9px; font-size: 11px; color: var(--ink-2); }
+
+  .footer-note { font-size: 11.5px; color: var(--ink-3); border-top: 1px dashed var(--line); padding-top: 12px; max-width: 84ch; }
+</style>
+
+<div class="wrap">
+  <header class="mast">
+    <h1>Mockup — RightDock</h1>
+    <p><b>O contrato:</b> o lado direito vira o RAIO-X DA MISSÃO — mesma forma sempre, três
+    seções recolhíveis (ENTREGA · TRABALHO · FROTA); os estados ✦ geral e release vestem a
+    mesma moldura trocando só o miolo. Aprova, risca ou manda mudar — código só depois do teu aval.</p>
+  </header>
+
+  <div class="states">
+    <!-- ————— ESTADO MISSÃO (o herói) ————— -->
+    <div class="state">
+      <h2>Missão — o raio-X</h2>
+      <div class="dock">
+        <div class="dock-head">missão · tela de checkout <span class="grip">⋮⋮</span></div>
+
+        <div class="sec">
+          <div class="sec-head"><span class="tog">▾</span> entrega <span class="sum">fila vazia</span></div>
+          <div class="sec-body">
+            <div class="row">
+              <span class="branch">⎇ mission/48b330e9</span>
+              <span class="chip ok">árvore limpa</span>
+            </div>
+            <div class="acts">
+              <button class="btn primary">⇪ integrar</button>
+              <button class="btn icon" title="revisar">🧐</button>
+              <button class="btn icon" title="terminal">›_</button>
+              <button class="btn icon" title="testar">▶</button>
+              <button class="btn icon" title="arquivar">⊟</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-head"><span class="tog">▾</span> trabalho <span class="sum">7 arquivos · +214 −38</span></div>
+          <div class="sec-body">
+            <div class="file open">
+              <span class="name">src/screens/CheckoutScreen.tsx</span>
+              <span class="delta"><span class="add">+96</span> <span class="del">−12</span></span>
+              <div class="diff">@@ 44,6 @@
+<span class="d">−  const total = items.reduce(sum)</span>
+<span class="a">+  const total = useMemo(() => items.reduce(sum), [items])</span>
+<span class="a">+  const canPay = total > 0 && !submitting</span></div>
+            </div>
+            <div class="file">
+              <span class="name">src/shared/ipc.ts</span>
+              <span class="delta"><span class="add">+18</span> <span class="del">−2</span></span>
+            </div>
+            <div class="file">
+              <span class="name">tests/checkout.test.ts</span>
+              <span class="delta"><span class="add">+64</span></span>
+            </div>
+            <span class="mini">clique abre o diff aqui · duplo clique abre o arquivo no chat</span>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-head"><span class="tog">▾</span> frota <span class="sum">1 trabalhando · 1 entregue</span></div>
+          <div class="sec-body">
+            <div class="helper hue-front">
+              <span class="hname">estilos-do-resumo</span>
+              <span class="hstate">trabalhando · 4:12</span>
+              <span class="hmeta">claude · opus · high · conta-2</span>
+            </div>
+            <div class="helper done hue-back">
+              <span class="hname">valida-cupom</span>
+              <span class="hstate">✓ entregou</span>
+              <span class="hmeta">codex · gpt-5.6-sol · xhigh · .synkora/helpers/d04b….md</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <p>Mesma moldura sempre: cabeçalho diz ONDE você está; ⋮⋮ é o pega de largura de hoje (fica).</p>
+        <p>ENTREGA enxuta: branch + estado da árvore + o ⇪ primário; o resto vira ícone com dica.</p>
+        <p>TRABALHO é a novidade: os arquivos da missão AO VIVO (a régua já existe no main — mesma
+        fonte do delivery). Diff inline no padrão term-window.</p>
+        <p>FROTA sai de dentro do chat pra cá: ficha viva tracejada, entregue fecha o traço em ok.
+        Matiz do departamento no ponto do nome (forma antes de cor).</p>
+        <p>Toda seção recolhe; o resumo à direita do título continua contando a verdade recolhida.</p>
+      </div>
+    </div>
+
+    <!-- ————— ESTADO GERAL ————— -->
+    <div class="state">
+      <h2>✦ Geral — o retrato</h2>
+      <div class="dock">
+        <div class="dock-head">✦ geral · painel de gestão <span class="grip">⋮⋮</span></div>
+        <div class="sec">
+          <div class="sec-head"><span class="tog">▾</span> agora</div>
+          <div class="sec-body">
+            <div class="stat"><b>2</b> missões vivas <span class="mini">· 1 esperando você</span></div>
+            <div class="stat"><b>V1.0.6</b> <span class="mini">em desenvolvimento · V1.0.5 na main</span></div>
+          </div>
+        </div>
+        <div class="sec">
+          <div class="sec-head"><span class="tog">▾</span> últimas entregas</div>
+          <div class="sec-body">
+            <span class="mini">▣ Excluir empresa · ontem</span>
+            <span class="mini">▣ Tela de perfil · 20/08</span>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <p>O retrato de hoje, na moldura nova — sem card gigante: dois números que importam e o rastro.</p>
+        <p>"1 esperando você" é o pulso real (pergunta/permissão pendente) — clique leva à missão.</p>
+      </div>
+    </div>
+
+    <!-- ————— ESTADO RELEASE ————— -->
+    <div class="state">
+      <h2>Release — o trilho mínimo</h2>
+      <div class="dock">
+        <div class="dock-head">release · V1.0.6 <span class="grip">⋮⋮</span></div>
+        <div class="sec">
+          <div class="sec-head"><span class="tog">▾</span> a subida</div>
+          <div class="sec-body">
+            <div class="rel-flow">◇ V1.0.6 · dev → main</div>
+            <span class="mini">quem sobe é o agente (release_run) — acompanhe no chat</span>
+          </div>
+        </div>
+        <div class="sec">
+          <div class="sec-head"><span class="tog">▾</span> última subida</div>
+          <div class="sec-body">
+            <div class="rel-portrait">⇧ V1.0.5 · 21/08 17:15 · push ok · caixa publicada</div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <p>O trilho do release herda a moldura e ganha o RETRATO da subida anterior (a entidade
+        da R27F2) — contexto na hora de subir de novo.</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="footer-note">O que NÃO muda: o rail continua redimensionável com a mesma mecânica
+  persistida; o chat continua PAPEL no centro; nenhum dado novo é inventado — TRABALHO lê o git
+  da missão (fonte do delivery), FROTA lê as fichas que já existem, retratos leem o releasesStore.
+  Estados de hover/foco/vazio seguem a régua da casa na implementação (mockup é composição).</p>
+</div>

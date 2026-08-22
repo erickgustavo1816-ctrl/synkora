@@ -1,8 +1,20 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-21T20:54:17.611Z",
+  "updatedAt": "2026-08-22T19:09:00.292Z",
   "lanes": {
     "agora": [
+      {
+        "id": "rightdock",
+        "title": "RightDock — o lado direito do app",
+        "desc": "Brief fechado no grill: repensar do ZERO — o dock vira o RAIO-X da missão (ENTREGA enxuta · TRABALHO = arquivos alterados ao vivo com diff · FROTA = fichas dos ajudantes com casa fixa), ✦ geral e release na mesma moldura. Mockup publicado (o contrato); código só depois do aval do dono.",
+        "refs": [
+          "docs/mockups/rightdock.html",
+          "estudo: ResizableRightRail · MissionDeliveryRail · GuiSubagentSidebar"
+        ],
+        "badge": "mockup no ar — aguardando teu aval"
+      }
+    ],
+    "fila": [
       {
         "id": "skills-2-0-build",
         "title": "Skills 2.0 — o build",
@@ -13,30 +25,12 @@
           "CONTEXT.md",
           "skills novas na lib"
         ]
-      }
-    ],
-    "fila": [
-      {
-        "id": "rightdock",
-        "title": "RightDock — o lado direito do app",
-        "desc": "\"Ainda tá meio ruim\" (dito de novo em 21/08). 3º item do plano original do dono; redesenhar o dock direito do workspace.",
-        "refs": []
       },
       {
         "id": "browser-embutido",
         "title": "Browser embutido",
         "desc": "4º item do plano do dono: navegador dentro do Synkora pro ciclo de teste visual sem sair do app.",
         "refs": []
-      },
-      {
-        "id": "restart-pendente",
-        "title": "Restart do app (quando o dono liberar)",
-        "desc": "Esperam o próximo npm run dev: R29 (release entende o produto e publica a caixa), a metade main da R30 (motor para de gravar entrega de release) e a fala imediata do correio do dono.",
-        "refs": [
-          "d0aa8af",
-          "d33b8b0",
-          "1ee9f4c"
-        ]
       }
     ],
     "candidatas": [
@@ -50,12 +44,6 @@
         "id": "persona-build-de-prova",
         "title": "Persona \"build de prova\"",
         "desc": "Missão que mexe em instalador/build oferece o dist de prova sozinha antes do ⇪.",
-        "refs": []
-      },
-      {
-        "id": "r27-fase-2",
-        "title": "R27 fase 2 — release como entidade própria",
-        "desc": "Release no dado (não só régua de missão) + painel embutido na aba Versões.",
         "refs": []
       },
       {
@@ -94,6 +82,18 @@
       }
     ],
     "feito": [
+      {
+        "id": "r27-fase-2",
+        "title": "R27 fase 2 — a release REDONDA",
+        "desc": "Estudo ponta a ponta + design em 4 ondas (.synkora/reports). FEITAS: Onda 1 (fecho avisa a tela — o bug da aba eterna morre no restart), Onda 2 (release como ENTIDADE no dado — releasesStore, uma linha por subida com merge/push/bump/caixa), Onda 3 (retrato da subida na aba Versões, read-only). FALTA: Onda 4 — varredura de becos (toda recusa com receita presa por teste; decisão do pane pós-fecho; reconciliação viva além do push).",
+        "refs": [
+          "releaseChat.ts",
+          "runReleaseForChat",
+          "docs/HANDOFF_SESSAO_2026-08-20.md §R27"
+        ],
+        "badge": "ondas 1-3 entregues — falta a 4",
+        "day": "22/08 — sábado"
+      },
       {
         "id": "backlog-mcp",
         "title": "Backlog vivo publicado + MCP do backlog (fonte JSON, render, verbos por tool)",
@@ -168,8 +168,116 @@
         "title": "R23–R28.1 (20/08): ■ que manda, histórico completo, odômetro, release vira release, push do remoto — docs/HANDOFF_SESSAO_2026-08-20.md",
         "refs": [],
         "day": "Antes — ver handoffs"
+      },
+      {
+        "id": "restart-pendente",
+        "title": "Restart do app (quando o dono liberar)",
+        "desc": "Esperam o próximo npm run dev: R29 (release publica a caixa), metade main da R30, fala imediata do correio do dono e a R27F2 inteira (fecho vivo da release, entidade da subida, retrato na aba Versões, cura na leitura). Um restart traz tudo.",
+        "refs": [
+          "d0aa8af",
+          "d33b8b0",
+          "1ee9f4c",
+          "1b2320a",
+          "55d8f2b",
+          "9833a31",
+          "4481c44"
+        ],
+        "day": "22/08 — sábado"
       }
     ]
   },
-  "journal": []
+  "journal": [
+    {
+      "at": "2026-08-21T20:55:38.559Z",
+      "by": "dono",
+      "action": "move",
+      "id": "skills-2-0-build",
+      "detail": "→ agora"
+    },
+    {
+      "at": "2026-08-22T18:13:20.920Z",
+      "by": "dono",
+      "action": "VAMOS FAZER",
+      "id": "r27-fase-2",
+      "detail": "→ fila"
+    },
+    {
+      "at": "2026-08-22T18:13:23.979Z",
+      "by": "dono",
+      "action": "move",
+      "id": "r27-fase-2",
+      "detail": "→ agora"
+    },
+    {
+      "at": "2026-08-22T18:15:22.986Z",
+      "by": "orquestrador",
+      "action": "move",
+      "id": "r27-fase-2",
+      "detail": "→ agora"
+    },
+    {
+      "at": "2026-08-22T18:15:28.544Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "r27-fase-2"
+    },
+    {
+      "at": "2026-08-22T18:15:30.172Z",
+      "by": "orquestrador",
+      "action": "remove",
+      "id": "bug-missao-de-release-nao-fecha-ao-vivo-ao-subir"
+    },
+    {
+      "at": "2026-08-22T18:15:32.176Z",
+      "by": "orquestrador",
+      "action": "move",
+      "id": "skills-2-0-build",
+      "detail": "→ fila"
+    },
+    {
+      "at": "2026-08-22T18:21:19.075Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "r27-fase-2"
+    },
+    {
+      "at": "2026-08-22T18:30:06.283Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "r27-fase-2"
+    },
+    {
+      "at": "2026-08-22T18:33:24.659Z",
+      "by": "orquestrador",
+      "action": "move",
+      "id": "r27-fase-2",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-22T18:33:33.711Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "restart-pendente"
+    },
+    {
+      "at": "2026-08-22T19:03:34.256Z",
+      "by": "dono",
+      "action": "move",
+      "id": "restart-pendente",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-22T19:03:44.848Z",
+      "by": "dono",
+      "action": "move",
+      "id": "rightdock",
+      "detail": "→ agora"
+    },
+    {
+      "at": "2026-08-22T19:09:00.292Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "rightdock"
+    }
+  ]
 }
