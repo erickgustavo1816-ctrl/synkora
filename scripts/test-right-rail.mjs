@@ -1086,6 +1086,25 @@ test('RIGHTDOCK B — o release veste a moldura: dock-head + a subida + última 
 // Onda B do RIGHTDOCK ficou sendo SÓ o ReleaseRail (acima) — o ✦ geral é
 // prendido pelo test-project-landing, como sempre foi.
 
+test('conflito avisa UMA vez, na língua do dono — a receita técnica mora na dica', async () => {
+  const rail = await source('src/renderer/src/components/MissionDeliveryRail.tsx')
+  const code = withoutComments(rail)
+
+  // Pedido do dono (22/08, print do conflito ao vivo): a nota da fila já diz
+  // "conflito na subida — o agente está resolvendo…"; a SEGUNDA linha (o
+  // lastError cru do motor, com "merge da base" e lista de arquivos) era o
+  // mesmo fato em dialeto técnico, empilhado. Ela não renderiza mais.
+  assert.doesNotMatch(code, /dr-conflict/u, 'o aviso técnico duplicado voltou à entrega')
+  // …mas NÃO virou beco: o detalhe continua a um hover, na dica do próprio ⇪
+  // (e o AGENTE segue recebendo a receita pelo canal dele, não pela tela).
+  assert.match(code, /data-tip=\{integration\.lastError \?\? queueLabel\}/u)
+  // A nota da fila — o aviso que FICA — continua de pé.
+  assert.match(code, /className="dr-queue"/u)
+
+  const css = await source('src/renderer/src/global.css')
+  assert.doesNotMatch(css, /^\.dr-conflict\s*\{/mu, 'a regra órfã sai junto')
+})
+
 test('RIGHTDOCK — o HISTÓRICO rola dentro da seção, com a barra retrô da casa', async () => {
   const css = await source('src/renderer/src/global.css')
 

@@ -619,8 +619,12 @@ export default function MissionDeliveryRail({
           )}
 
           {/* Nota de fila/conflito logo abaixo do ⇪ — é ali que a pergunta nasce. */}
+          {/* UMA nota só (pedido do dono, 22/08): a linha do `lastError` cru
+              do motor ("merge da base", lista de arquivos) repetia o conflito
+              em dialeto técnico logo abaixo desta — o detalhe continua a um
+              hover, na dica do ⇪, e o AGENTE recebe a receita pelo canal
+              dele, nunca pela tela do dono. */}
           {queueLabel && <span className="dr-queue">{queueLabel}</span>}
-          {integration?.lastError && <span className="dr-conflict">⚠ {integration.lastError}</span>}
 
           {/* A FILA DA <versão> — a ORDEM REAL (rodada 9). Cada linha diz a
               posição, de quem é e em que pé está. */}

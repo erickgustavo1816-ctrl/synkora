@@ -5888,12 +5888,9 @@ body.pane-docking .pane-bar.draggable {
   background: var(--line);
 }
 
-/* conflito/erro da fila mora colado no botão que o produziu */
-.dr-conflict {
-  font-size: 10px;
-  line-height: 1.4;
-  color: var(--err);
-}
+/* A linha `.dr-conflict` (o lastError cru sob a nota da fila) morreu em
+   22/08 por ordem do dono: era o mesmo conflito dito duas vezes, a segunda em
+   dialeto técnico — o detalhe vive na dica do ⇪. */
 
 .dr-head {
   display: flex;
