@@ -7,9 +7,8 @@
 // para aquilo não faz sentido").
 //
 // ESTE ARQUIVO É SÓ O CONVITE — o universo com ZERO missões. Assim que existe
-// uma missão (de qualquer status) o Board troca esta tela pelo `DockGeneral`
-// (o retrato compacto do RIGHTDOCK): quem já tem história merece o retrato,
-// não o convite.
+// uma missão (de qualquer status) o Board troca esta tela pelo
+// `ProjectDashboard`: quem já tem história merece o painel, não o convite.
 //
 // A FOTO DO UNIVERSO SAIU DAQUI (2026-08-15, mesma ordem): o rodapé de
 // identidade morreu e a troca passou a viver nos DOIS avatares que já mostram

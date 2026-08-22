@@ -309,12 +309,17 @@ export default function MissionCommitHistory({
   )
   const closeViewer = useCallback((): void => setViewer(null), [])
 
+  // O cabeçalho próprio (título + "somente leitura · N commits") saiu em
+  // 2026-08-22: esta superfície mora DENTRO da DockSection "histórico", que já
+  // dá o título e a contagem — o dono lia o mesmo título duas vezes,
+  // empilhado. A promessa de leitura pura não morreu com ele: ela é a dica da
+  // própria superfície, discreta e sempre a um hover de distância.
   return (
-    <section className="mh-history" aria-label="Histórico visual da missão">
-      <div className="mh-history-head">
-        <span className="mh-history-title">histórico da missão</span>
-        <span className="mh-history-caption">somente leitura · {commits.length} commits</span>
-      </div>
+    <section
+      className="mh-history"
+      aria-label="Histórico visual da missão"
+      data-tip="Esta superfície é somente leitura: nada aqui escreve no worktree — ela só mostra o que a branch já registrou"
+    >
       {busy && <span className="mh-history-note">lendo commits…</span>}
       {error && <span className="mh-history-error">// {error}</span>}
       {!busy && !error && commits.length === 0 && (

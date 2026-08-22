@@ -27,11 +27,32 @@ export function projectLanding(missions: readonly Mission[]): ProjectLanding {
   return missions.length === 0 ? 'invite' : 'dashboard'
 }
 
-// `projectKpis` vivia aqui (os quatro tiles do painel largo). O painel morreu
-// na Onda B do RIGHTDOCK (2026-08-22, mockup aprovado): o retrato compacto
-// conta vivas com `liveMissions` e a espera com a régua única
-// (`waitingOnOwner` do missionPresentation) — um placar de quatro números sem
-// tela é debt, não proteção.
+export interface ProjectKpis {
+  /** missões vivas: 'ativa' + 'integrando' */
+  emAndamento: number
+  /** missões que já entraram na linha de destino */
+  integradas: number
+  /** na fila serial ⇪ ou esperando o aval do dono para entrar nela */
+  naFila: number
+  arquivadas: number
+}
+
+/**
+ * O placar do universo. `naFila` conta o mesmo que o chip da barra: ticket na
+ * fila serial, merge em curso, ou o ⇪ parado esperando o clique do dono (a
+ * porteira é mecânica — pedido de agente nunca mergeia sozinho).
+ */
+export function projectKpis(missions: readonly Mission[]): ProjectKpis {
+  const vivas = missions.filter((m) => m.status === 'ativa' || m.status === 'integrando')
+  return {
+    emAndamento: vivas.length,
+    integradas: missions.filter((m) => m.status === 'concluida').length,
+    naFila: vivas.filter(
+      (m) => Boolean(m.integration) || m.status === 'integrando' || Boolean(m.pendingIntegrationApproval)
+    ).length,
+    arquivadas: missions.filter((m) => m.status === 'arquivada').length
+  }
+}
 
 /** Missões vivas, mais recente primeiro — as linhas do topo do painel. */
 export function liveMissions(missions: readonly Mission[]): Mission[] {
@@ -76,12 +97,76 @@ export function formatDay(iso?: string): string | null {
   return at.toLocaleDateString('pt-BR')
 }
 
+/**
+ * A data da linha, com o VERBO certo: integrada mostra quando integrou (e só
+ * quando o carimbo existe); qualquer outra mostra quando nasceu. Sem data
+ * legível a linha simplesmente não fala de tempo.
+ */
+export function missionDayLabel(mission: Mission): string | null {
+  if (mission.status === 'concluida') {
+    const done = formatDay(mission.completedAt)
+    return done ? `integrada em ${done}` : null
+  }
+  const born = formatDay(mission.createdAt)
+  return born ? `criada em ${born}` : null
+}
+
 // `showsTaskCount` vivia aqui: guardava o `▣ feitas/total` para ele nunca
 // aparecer como 0/0. Os CARDS morreram na purga F6 (2026-08-17) — o contador
 // saiu inteiro, e um guarda de algo que não existe mais é debt, não proteção.
-// `missionDayLabel` e `missionTimeline` (a data com verbo e a cronologia do
-// painel largo) morreram com ele na Onda B do RIGHTDOCK (2026-08-22): o
-// retrato compacto data as entregas com `formatDay` sobre o carimbo real.
+
+/* ---------- ATIVIDADE RECENTE (2026-08-17) ----------
+
+   A cronologia do universo, montada SÓ com os dois carimbos que existem de
+   verdade: `createdAt` (a missão nasceu) e `completedAt` (ela integrou). Não
+   há evento de "arquivada" nem de "última atividade" porque não há carimbo
+   para eles — `updatedAt` se move em qualquer mutação de store e chamá-lo de
+   atividade seria a mentira que este módulo existe para não contar. */
+
+export type MissionEventKind = 'criada' | 'integrada'
+
+export interface MissionEvent {
+  missionId: string
+  title: string
+  kind: MissionEventKind
+  /** ISO do carimbo real do evento */
+  at: string
+  /** dd/mm/aaaa já formatado */
+  day: string
+}
+
+/** Teto da faixa: ela é um relance da cronologia, não o histórico (esse é a
+ *  aba Versões). */
+export const RECENT_ACTIVITY_CAP = 6
+
+export function missionTimeline(
+  missions: readonly Mission[],
+  cap: number = RECENT_ACTIVITY_CAP
+): MissionEvent[] {
+  const events: MissionEvent[] = []
+  for (const mission of missions) {
+    const born = formatDay(mission.createdAt)
+    if (born && mission.createdAt)
+      events.push({
+        missionId: mission.id,
+        title: mission.title,
+        kind: 'criada',
+        at: mission.createdAt,
+        day: born
+      })
+    if (mission.status !== 'concluida') continue
+    const done = formatDay(mission.completedAt)
+    if (done && mission.completedAt)
+      events.push({
+        missionId: mission.id,
+        title: mission.title,
+        kind: 'integrada',
+        at: mission.completedAt,
+        day: done
+      })
+  }
+  return events.sort((a, b) => timeOf(b.at) - timeOf(a.at)).slice(0, Math.max(0, cap))
+}
 
 /* ---------- ATRIBUIÇÃO DE VERSÃO (ordem do dono, 2026-08-17) ----------
 
@@ -162,16 +247,4 @@ export function versionPortrait(
   })
 
   return { versoes, ...(lancadas[0] ? { versaoNaMain: lancadas[0].name } : {}) }
-}
-
-/**
- * RIGHTDOCK Onda B — a linha em CONSTRUÇÃO ("V1.0.6 em desenvolvimento" do
- * mockup): a versão aberta CORRENTE, que no retrato é a primeira não-lançada
- * (o `versionPortrait` já ordena as abertas da mais antiga para a mais nova —
- * a mesma régua do `ensureDefaultVersion`). É a resposta de "onde o trabalho
- * de agora integra", NUNCA a identidade — essa continua sendo `versaoNaMain`,
- * e sem nenhuma aberta o helper cala em vez de apontar uma lançada.
- */
-export function versionInDev(versoes?: readonly VersionStats[]): string | undefined {
-  return versoes?.find((v) => !v.lancada)?.name
 }

@@ -988,14 +988,14 @@ test('RIGHTDOCK — trabalho: ± por arquivo e o diff inline num clique', async 
   assert.match(rail, /onDoubleClick/u, 'duplo clique abre o arquivo; o clique simples vira o diff')
 })
 
-// ————— RIGHTDOCK ONDA B (2026-08-22) — geral e release vestem a moldura —————
+// ————— RIGHTDOCK ONDA B (2026-08-22) — o release veste a moldura —————
 //
-// O mockup aprovado tem TRÊS estados na MESMA moldura. A Onda A recompôs a
-// missão; esta onda veste os outros dois: o ✦ geral vira retrato COMPACTO
-// (`DockGeneral`, no lugar do painel largo) e o trilho do release ganha a
-// seção "última subida" lendo a entidade R27F2 por projeto
-// (`backlog:projectReleases`). Nenhum dado inventado: os retratos leem o
-// releasesStore, e a linha compacta NUNCA afirma além do que o registro prova.
+// A Onda A recompôs a missão; esta onda vestiu o RELEASE: a seção "última
+// subida" lê a entidade R27F2 por projeto (`backlog:projectReleases`). O
+// terceiro estado do mockup (retrato compacto no ✦ geral) foi ENTREGUE e
+// REPROVADO pelo dono na mesma noite — o ProjectDashboard voltou (lápide no
+// fim do arquivo). Nenhum dado inventado: os retratos leem o releasesStore,
+// e a linha compacta NUNCA afirma além do que o registro prova.
 
 const releasePresentation = () => import('../src/renderer/src/releaseRailPresentation.ts')
 
@@ -1077,21 +1077,188 @@ test('RIGHTDOCK B — o release veste a moldura: dock-head + a subida + última 
   )
 })
 
-test('RIGHTDOCK B — o ✦ geral é o retrato compacto na moldura, não o card gigante', async () => {
-  const general = await source('src/renderer/src/components/DockGeneral.tsx')
-  assert.match(general, /dock-head/u, 'a moldura diz onde o dono está')
-  assert.match(general, /DockSection/u)
-  assert.match(general, /title="agora"/u)
-  assert.match(general, /title="últimas entregas"/u)
-  // "N esperando você" é o pulso REAL, pela régua única da casa — e o clique
-  // leva à missão (nota do mockup).
-  assert.match(general, /waitingOnOwner/u)
-  assert.match(general, /onOpenMission/u)
-  // As contas vêm do módulo puro de sempre: nada se recalcula no JSX.
-  assert.match(general, /liveMissions/u)
-  assert.match(general, /recentConcluded/u)
-  assert.match(general, /versionInDev/u)
+// O teste do "DockGeneral" (retrato compacto no ✦ geral) morreu em 22/08 à
+// noite: o dono REPROVOU a troca da página geral ("tava ótima e você mexeu —
+// o combinado era mexer só na parte direita"). O ProjectDashboard voltou; a
+// Onda B do RIGHTDOCK ficou sendo SÓ o ReleaseRail (acima) — o ✦ geral é
+// prendido pelo test-project-landing, como sempre foi.
 
+// ————— O CONSERTO DO DOCK (2026-08-22, noite — o dono viu ao vivo) —————
+//
+// No restart a fileira de ações apareceu ESMAGADA: `.dr-btn { width: 100% }`,
+// relíquia do trilho em COLUNA, dava basis 100% a cada ícone dentro da fileira
+// `.dock-acts`; o ⇪ (basis 0, sem encolher) sobrava com ~30px e virava uma
+// COLUNA DE LETRAS. Com ele vieram três ruídos que a onda A entregou sem
+// nunca olhar a tela: o ⇪ de contorno accent no lugar da tinta cheia do
+// mockup, o chip "↑0 À FRENTE" que não dizia nada e o cabeçalho do histórico
+// repetindo o título que a própria seção já dá.
+//
+// As cinco cercas abaixo são o conserto — todas reprovavam no código que o
+// dono viu na tela.
+
+/** O CORPO de uma regra CSS, recortado pelo seletor EXATO. Cerca de CSS escrita
+ *  com `[\s\S]*?` sobre o arquivo inteiro acha a declaração de QUALQUER regra
+ *  vizinha e aprova o que devia reprovar. */
+function cssRule(css, selector) {
+  const head = `\n${selector} {`
+  const at = css.indexOf(head)
+  assert.ok(at >= 0, `a regra ${selector} precisa existir`)
+  const body = css.slice(at + head.length)
+  const end = body.indexOf('\n}')
+  assert.ok(end > 0, `a regra ${selector} não fecha`)
+  return body.slice(0, end)
+}
+
+/** O corpo de uma função de MÓDULO, recortado pelo nome: a tabela-verdade fica
+ *  presa à função que a implementa, nunca a uma varredura do arquivo. */
+function functionIn(src, name) {
+  const at = src.indexOf(`function ${name}(`)
+  assert.ok(at > 0, `a função ${name} precisa existir`)
+  const end = src.indexOf('\n}', at)
+  assert.ok(end > at, `a função ${name} não fecha`)
+  return src.slice(at, end)
+}
+
+/** O abre-tag de um elemento do JSX, achado pela classe que ele veste. */
+function tagWith(src, needle, tail = 200) {
+  const at = src.indexOf(needle)
+  assert.ok(at > 0, `${needle} não foi encontrado`)
+  const start = src.lastIndexOf('<', at)
+  assert.ok(start >= 0, `${needle} precisa morar dentro de uma tag`)
+  return src.slice(start, at + tail)
+}
+
+test('CONSERTO — a fileira de ações desfaz a largura do trilho em COLUNA', async () => {
   const css = await source('src/renderer/src/global.css')
-  assert.match(css, /\.dock-general\s*\{/u, 'o dock compacto tem roupa própria')
+
+  // A regra BASE fica de pé: os botões EMPILHADOS do planejamento (concluir,
+  // arquivar, reativar) continuam ocupando a linha inteira.
+  assert.match(
+    cssRule(css, '.dr-btn'),
+    /width:\s*100%/u,
+    'os botões em coluna do planejamento perderam a largura'
+  )
+
+  // ...e a FILEIRA a desfaz: o ícone abraça o glifo, o primário estica.
+  assert.match(
+    cssRule(css, '.dock-acts .dr-btn'),
+    /width:\s*auto/u,
+    'dentro da fileira o botão herda 100% e esmaga o ⇪ — o bug que o dono viu'
+  )
+  assert.match(cssRule(css, '.dock-acts .btn.dock-primary'), /flex:\s*1/u)
+  // Trilho estreito (176px é o piso) não cospe ícone para fora da moldura.
+  assert.match(cssRule(css, '.dock-acts'), /flex-wrap:\s*wrap/u)
+})
+
+test('CONSERTO — o ⇪ primário veste a tinta cheia do mockup aprovado', async () => {
+  const [css, mockup] = await Promise.all([
+    source('src/renderer/src/global.css'),
+    source('docs/mockups/rightdock.html')
+  ])
+
+  // O contrato lido do PRÓPRIO mockup — ele é a lei da composição.
+  const contract = mockup.match(/\.btn\.primary \{([^}]*)\}/u)?.[1]
+  assert.ok(contract, 'o mockup precisa continuar declarando o botão primário')
+  assert.match(contract, /background:\s*var\(--ink\)/u)
+  assert.match(contract, /color:\s*var\(--paper\)/u)
+
+  const primary = cssRule(css, '.dock-acts .btn.dock-primary')
+  assert.match(primary, /background:\s*var\(--ink\)/u, 'o ⇪ segue de contorno, não de tinta cheia')
+  assert.match(primary, /color:\s*var\(--paper\)/u)
+  // Tinta cheia precisa de hover PRÓPRIO: o `.btn:hover` da casa pinta ink em
+  // cima de ink e o gesto não teria retorno nenhum.
+  assert.match(css, /\.dock-acts \.btn\.dock-primary:hover/u)
+  // O contorno accent do trilho antigo não sobrevive ao lado do novo.
+  assert.doesNotMatch(css, /\.dr-integrate\s*\{/u)
+
+  // A porteira mecânica continua GRITANDO no vocabulário da casa: anel no
+  // acento pulsando com o `perm-pulse` que o app já usa.
+  const pending = cssRule(css, '.dock-acts .btn.dock-primary.approve-pending')
+  assert.match(pending, /var\(--accent\)/u)
+  assert.match(pending, /animation:\s*perm-pulse/u)
+
+  // Desabilitado NÃO é rótulo apagado: ali o texto é ESTADO (a fila, o agente
+  // com a bola) e o dono precisa conseguir lê-lo.
+  const off = cssRule(css, '.dock-acts .btn.dock-primary:disabled')
+  assert.match(off, /color:\s*var\(--ink-2\)/u)
+  assert.match(off, /background:\s*transparent/u)
+})
+
+test('CONSERTO — o chip da entrega só fala quando tem o que dizer', async () => {
+  const [rail, css] = await Promise.all([
+    source('src/renderer/src/components/MissionDeliveryRail.tsx'),
+    source('src/renderer/src/global.css')
+  ])
+  const railCode = withoutComments(rail)
+
+  // O bug: o chip nascia com QUALQUER resumo, e o dono leu "↑0 À FRENTE" —
+  // uma linha que não informava nada.
+  assert.doesNotMatch(
+    railCode,
+    /↑\{summary\.ahead\}/u,
+    'o chip incondicional voltou: com ahead=0 ele é ruído puro'
+  )
+
+  // A tabela-verdade mora numa função PURA, legível de uma vez só.
+  const chip = functionIn(rail, 'deliveryChip')
+  assert.match(chip, /ahead > 0/u, 'commit à frente ⇒ o placar')
+  assert.match(chip, /à frente/u)
+  assert.match(chip, /files\.length === 0/u, 'nada à frente e nada mexido ⇒ árvore limpa')
+  assert.match(chip, /árvore limpa/u, 'o ok do mockup sumiu da tabela')
+  assert.match(chip, /dock-chip ok/u)
+  // O terceiro ramo é o SILÊNCIO: mexida sem commit já aparece em TRABALHO.
+  assert.match(
+    chip,
+    /files\.length === 0[\s\S]*?return null/u,
+    'mexida sem commit tem de sair SEM chip'
+  )
+
+  // ...e o JSX não decide nada por fora dela.
+  assert.match(railCode, /deliveryChip\(summary/u)
+
+  // O ok do mockup tem roupa própria (`.chip.ok` = borda e texto no --ok).
+  assert.match(cssRule(css, '.dock-chip.ok'), /color:\s*var\(--ok\)/u)
+})
+
+test('CONSERTO — o histórico não repete o título que a seção já deu', async () => {
+  const [history, rail, css] = await Promise.all([
+    source('src/renderer/src/components/MissionCommitHistory.tsx'),
+    source('src/renderer/src/components/MissionDeliveryRail.tsx'),
+    source('src/renderer/src/global.css')
+  ])
+
+  // A DockSection "histórico" já traz título E contagem; o cabeçalho interno
+  // desenhava os dois de novo, uma linha abaixo.
+  assert.match(rail, /title="histórico"/u, 'a seção continua sendo a dona do título')
+  assert.doesNotMatch(history, /histórico da missão/u, 'o título duplicado voltou')
+  assert.doesNotMatch(history, /mh-history-head|mh-history-title/u)
+  assert.doesNotMatch(css, /\.mh-history-title\s*\{/u, 'a roupa do cabeçalho morto ficou pendurada')
+  assert.doesNotMatch(css, /\.mh-history-head\s*\{/u)
+
+  // A PROMESSA fica dita NA superfície (dica discreta), nunca vira letra morta.
+  assert.ok(
+    /data-tip="[^"]*somente leitura[^"]*"/u.test(history),
+    'a promessa de "somente leitura" precisa continuar dita aqui'
+  )
+  // ...e o gesto que abre a janela larga segue existindo.
+  assert.match(history, /⤢ abrir diff/u)
+})
+
+test('CONSERTO — a base com UUID corta na moldura e guarda o valor inteiro na dica', async () => {
+  const [rail, css] = await Promise.all([
+    source('src/renderer/src/components/MissionDeliveryRail.tsx'),
+    source('src/renderer/src/global.css')
+  ])
+
+  // `base: version/5e846dd0-…-0b1e9eb12357` não cabe num trilho de 176px.
+  const base = cssRule(css, '.dr-base')
+  assert.match(base, /min-width:\s*0/u)
+  assert.match(base, /overflow:\s*hidden/u)
+  assert.match(base, /text-overflow:\s*ellipsis/u)
+  assert.match(base, /white-space:\s*nowrap/u)
+
+  // Cortar sem ESCONDER: o valor inteiro vai para a dica.
+  const span = tagWith(rail, 'className="dr-base"')
+  assert.match(span, /data-tip=/u, 'a base cortada precisa dizer o valor inteiro na dica')
+  assert.match(span, /mission\.baseBranch/u)
 })

@@ -59,6 +59,40 @@ function fileStatus(status: string): { glyph: string; label: string; cls: string
   return FILE_STATUS[status] ?? { glyph: '·', label: status, cls: 'mod' }
 }
 
+/** O CHIP da ENTREGA — conserto de 2026-08-22, com o dono lendo "↑0 À FRENTE"
+ *  na tela: o chip nascia com QUALQUER resumo e passava metade da vida sem
+ *  dizer nada. A tabela-verdade, agora, é uma só:
+ *
+ *   · commit à frente da base ⇒ o placar `↑N à frente` (o chip neutro);
+ *   · nada à frente e worktree sem mexida ⇒ "árvore limpa", o ok do mockup —
+ *     é a única forma de o dono saber que a missão ainda não produziu nada;
+ *   · nada à frente MAS com arquivo mexido ⇒ SILÊNCIO: a mudança já aparece
+ *     inteira na seção TRABALHO, e repetir aqui contaria a mesma verdade duas
+ *     vezes (foi o que encheu a linha de ruído).
+ */
+function deliveryChip(
+  summary: MissionWorkspaceSummary | null,
+  baseBranch?: string
+): { cls: string; label: string; tip: string } | null {
+  if (!summary) return null
+  const base = baseBranch ?? 'a base'
+  if (summary.ahead > 0) {
+    return {
+      cls: 'dock-chip',
+      label: `↑${summary.ahead} à frente`,
+      tip: `${summary.ahead} ${summary.ahead === 1 ? 'commit' : 'commits'} desta branch à frente de ${base}`
+    }
+  }
+  if (summary.files.length === 0) {
+    return {
+      cls: 'dock-chip ok',
+      label: 'árvore limpa',
+      tip: `Nada commitado à frente de ${base} e nenhum arquivo mexido no worktree`
+    }
+  }
+  return null
+}
+
 // ————— O TRILHO MEDE SOZINHO (onda W4, 2026-08-18 — bug ao vivo do dono) —————
 //
 // Ele viu um commit nascer e um arquivo aparecer, e o trilho seguiu dizendo
@@ -386,6 +420,7 @@ export default function MissionDeliveryRail({
   // RIGHTDOCK — o resumo da ENTREGA continua contando a verdade recolhido:
   // fila/estado quando existem, "fila vazia" quando não.
   const entregaSummary = queueLabel ?? (integration ? integrationStateWord(integration) : 'fila vazia')
+  const chip = deliveryChip(summary, mission.baseBranch)
 
   return (
     <div className="delivery-rail dock">
@@ -417,18 +452,21 @@ export default function MissionDeliveryRail({
             <span className="dr-branch" data-tip={`Worktree da missão: ${mission.worktree ?? '—'}`}>
               ⎇ {mission.branch ?? 'sem branch'}
             </span>
-            {summary && (
-              <span
-                className="dock-chip"
-                data-tip={`${summary.ahead} ${summary.ahead === 1 ? 'commit' : 'commits'} desta branch à frente de ${mission.baseBranch ?? 'base'}`}
-              >
-                ↑{summary.ahead} à frente
+            {chip && (
+              <span className={chip.cls} data-tip={chip.tip}>
+                {chip.label}
               </span>
             )}
           </div>
           {(mission.baseBranch || versionLabel) && (
             <div className="dr-facts dr-facts-sub">
-              {mission.baseBranch && <span className="dr-base">base: {mission.baseBranch}</span>}
+              {/* A base costuma ser `version/<uuid>`: a linha corta na moldura
+                  (CSS) e o valor inteiro fica a um hover de distância. */}
+              {mission.baseBranch && (
+                <span className="dr-base" data-tip={`base completa: ${mission.baseBranch}`}>
+                  base: {mission.baseBranch}
+                </span>
+              )}
               {versionLabel && <span className="dr-version">◈ {versionLabel}</span>}
             </div>
           )}
@@ -440,7 +478,7 @@ export default function MissionDeliveryRail({
             <div className="dock-acts">
               {!integration && (
                 <button
-                  className={`btn tiny dr-btn dr-integrate dock-primary${
+                  className={`btn tiny dr-btn dock-primary${
                     mission.pendingIntegrationApproval ? ' approve-pending' : ''
                   }`}
                   data-tip={
@@ -457,7 +495,7 @@ export default function MissionDeliveryRail({
               )}
               {integration && (
                 <button
-                  className="btn tiny dr-btn dr-integrate dock-primary"
+                  className="btn tiny dr-btn dock-primary"
                   disabled={integration.state !== 'sync_required'}
                   data-tip={integration.lastError ?? queueLabel}
                   onClick={onIntegrate}
