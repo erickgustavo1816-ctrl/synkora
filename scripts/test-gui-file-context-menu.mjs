@@ -221,7 +221,9 @@ test('o trilho de entrega ganhou o menu sem perder a lista de sempre', async () 
   const rail = await source('src/renderer/src/components/MissionDeliveryRail.tsx')
   assert.ok(rail.includes('GuiFileContextMenu'), 'o trilho não monta o menu')
   assert.ok(rail.includes('onContextMenu'), 'botão direito não abre nada no trilho')
-  assert.ok(rail.includes('className="dr-file"'), 'a lista de arquivos da entrega sumiu')
+  // RIGHTDOCK (2026-08-22): a classe ganhou o estado ` open` do diff inline —
+  // a lista continua a mesma, com o mesmo menu e o mesmo leitor.
+  assert.ok(rail.includes('className={`dr-file'), 'a lista de arquivos da entrega sumiu')
   assert.ok(rail.includes('dr-file-status'), 'o glifo de status do git sumiu')
   // Abrir no app é o clique de sempre — o leitor é o MESMO da aba Arquivos.
   assert.ok(rail.includes('GuiFileQuickReader'))

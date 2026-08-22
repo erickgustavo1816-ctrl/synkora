@@ -5310,6 +5310,195 @@ body.pane-docking .pane-bar.draggable {
   padding: 10px;
 }
 
+/* ————— RIGHTDOCK (2026-08-22, mockup aprovado = contrato) ————— */
+/* A moldura: cabeçalho que diz onde o dono está + seções recolhíveis com
+   resumo. O trilho vira dock sem trocar de dono: mesmas classes dr-* por
+   dentro, mesma mecânica de largura por fora. */
+.delivery-rail.dock {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.dock-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.dock-head-kind {
+  font-weight: 700;
+}
+
+.dock-head-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
+}
+
+.dock-grip {
+  margin-left: auto;
+  letter-spacing: 0;
+  color: var(--line);
+}
+
+.dock-sec {
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+}
+
+.dock-sec:last-of-type {
+  border-bottom: 0;
+}
+
+.dock-sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-family: var(--mono);
+  padding: 9px 12px 7px;
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  cursor: pointer;
+  text-align: left;
+}
+
+.dock-sec-head:hover,
+.dock-sec-head:focus-visible {
+  color: var(--ink);
+  outline: none;
+}
+
+.dock-sec-tog {
+  color: var(--ink-3);
+}
+
+.dock-sec-sum {
+  margin-left: auto;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--ink-3);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dock-sec-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 12px 12px;
+  min-width: 0;
+}
+
+.dock-acts {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.dock-acts .dock-primary {
+  flex: 1;
+  min-width: 0;
+}
+
+.dock-icon {
+  letter-spacing: 0;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.dock-chip {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--ink-2);
+  border-radius: 4px;
+  padding: 0 6px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.dr-facts-sub {
+  font-size: 10.5px;
+}
+
+.dr-file-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dr-file.open {
+  background: var(--paper);
+  border-color: var(--line);
+}
+
+.dr-file-delta {
+  margin-left: auto;
+  display: flex;
+  gap: 5px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.dr-file-delta .add {
+  color: var(--ok);
+}
+
+.dr-file-delta .del {
+  color: var(--err);
+}
+
+/* O diff inline no idioma term-window: painel escuro, uma linha por span,
+   adição/remoção nos tons AA sobre o escuro (par dos tokens de papel). */
+.dr-inline-diff {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-radius: 7px;
+  padding: 8px 10px;
+  margin: 3px 0 5px;
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: #b8b09c;
+  overflow-x: auto;
+}
+
+.dr-inline-diff .dl {
+  white-space: pre;
+}
+
+.dr-inline-diff .dl.a {
+  color: #7dc794;
+}
+
+.dr-inline-diff .dl.d {
+  color: #e0917e;
+}
+
+.dr-inline-trunc {
+  color: #857f70;
+  font-style: italic;
+}
+
 /* A lateral factual do chat fica DENTRO do trilho de entrega existente. Ela
    não cria uma segunda coluna nem replica o transcript: só resume a linhagem
    explícita dos subagentes presentes na conversa ativa. */

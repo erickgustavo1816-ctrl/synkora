@@ -1044,6 +1044,10 @@ export interface MissionWorkspaceFile {
   path: string
   /** A(dicionado) · M(odificado) · D(eletado) · R(enomeado) · '?' (ainda fora do git). */
   status: string
+  /** ± do numstat, POR arquivo (RIGHTDOCK). Ausente = binário ou fora do git
+   *  — a linha aparece sem número, nunca com número inventado. */
+  insertions?: number
+  deletions?: number
 }
 
 export interface MissionWorkspaceSummary {
@@ -1105,13 +1109,24 @@ export function missionWorkspaceSummary(
   let deletions = 0
   const files: MissionWorkspaceFile[] = []
   const seen = new Set<string>()
+  // RIGHTDOCK: o numstat que já era lido fica POR ARQUIVO (antes os números
+  // eram somados e jogados fora) — é o ±N −M de cada linha da seção TRABALHO.
+  const perFile = new Map<string, { insertions: number; deletions: number }>()
   try {
     for (const line of git(worktreeDir, ['diff', '--numstat', from]).split(/\r?\n/)) {
       const parts = line.split('\t')
       if (parts.length < 3) continue
       // '-' nas duas colunas = binário: entra na lista, fora da soma.
-      insertions += Number.parseInt(parts[0], 10) || 0
-      deletions += Number.parseInt(parts[1], 10) || 0
+      const fileInsertions = Number.parseInt(parts[0], 10) || 0
+      const fileDeletions = Number.parseInt(parts[1], 10) || 0
+      insertions += fileInsertions
+      deletions += fileDeletions
+      // Rename no numstat vem como `velho => novo` (às vezes com chaves no
+      // meio): o que importa é o DESTINO, o mesmo path do name-status.
+      const rawPath = parts.slice(2).join('\t')
+      const arrow = rawPath.lastIndexOf(' => ')
+      const path = (arrow >= 0 ? rawPath.slice(arrow + 4) : rawPath).replace(/[{}]/gu, '')
+      perFile.set(path, { insertions: fileInsertions, deletions: fileDeletions })
     }
   } catch {
     // sem base utilizável — a lista abaixo ainda vale
@@ -1124,7 +1139,8 @@ export function missionWorkspaceSummary(
       const path = parts[parts.length - 1]
       if (seen.has(path)) continue
       seen.add(path)
-      files.push({ path, status: parts[0].charAt(0) })
+      const numbers = perFile.get(path)
+      files.push({ path, status: parts[0].charAt(0), ...(numbers ?? {}) })
     }
   } catch {
     // idem

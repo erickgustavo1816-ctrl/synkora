@@ -1064,6 +1064,13 @@ const api = {
      *  repara worktree, então pode ser chamada com frequência pelo trilho. */
     workspaceFiles: (missionId: string): Promise<MissionWorkspaceFilesResult> =>
       ipcRenderer.invoke('missions:workspaceFiles', missionId),
+    /** RIGHTDOCK: o diff de UM arquivo do trabalho da missão, recortado no
+     *  teto do motor — o clique na linha abre isto inline. */
+    workspaceFileDiff: (
+      missionId: string,
+      filePath: string
+    ): Promise<{ ok: boolean; diff?: string; truncated?: boolean; error?: string }> =>
+      ipcRenderer.invoke('missions:workspaceFileDiff', missionId, filePath),
     /** SYNKORA 2.0: os COMMITS que esta missão adicionou sobre a base, mais
      *  novos primeiro (teto 50). Mesma leitura pura do workspaceFiles — é a
      *  lista por trás do "N commits à frente" que o trilho já mostra. */

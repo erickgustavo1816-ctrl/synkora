@@ -664,7 +664,10 @@ test('o botão de revisar diz a verdade nova — e a trava do chat fora do ar fi
   const rail = withoutComments(await source('src/renderer/src/components/MissionDeliveryRail.tsx'))
   const button = buttonWith(rail, 'onClick={onReview}')
 
-  assert.match(button, /🧐 revisar/u)
+  // RIGHTDOCK: o rótulo virou ÍCONE na fileira de ações; a VERDADE inteira
+  // mudou de lugar (para a dica), nunca de conteúdo.
+  assert.match(button, /🧐/u)
+  assert.match(button, /Revisar/u)
   // "sessão limpa" descrevia um PANE de revisor que não existe mais.
   assert.doesNotMatch(rail, /sessão limpa/u)
   // A dica descreve o que o clique faz de verdade: pedir UM ajudante que roda
@@ -808,9 +811,10 @@ test('re-medir não PISCA: o número fica na tela e o histórico só re-lê quan
     'a medida nova nunca apaga a fotografia boa que já está na tela'
   )
   // Falha passageira do git no poll não derruba o placar: ela desce para a
-  // própria linha, abaixo dos números.
+  // própria linha, marcada como STALE quando já há número na tela (RIGHTDOCK:
+  // a mesma verdade, na forma da seção TRABALHO).
   assert.match(rail, /dr-diff-stale/u)
-  assert.match(rail, /\{summary && diffError &&/u)
+  assert.match(rail, /dr-diff-error\$\{summary \? ' dr-diff-stale'/u)
 
   // O HISTÓRICO anda pelos MESMOS gatilhos — mas só quando a fotografia da
   // branch MUDA: sem esse portão o poll de 15s fecharia o commit expandido do
@@ -938,4 +942,48 @@ test('o ⇪ do trilho vira ESTADO: a fila é desenhada e nenhuma janela interrom
 
   // O mapa lê o MESMO vocabulário — a mesma missão não pode ter duas verdades.
   assert.match(mapa, /integrationShortLine/u, 'o quadro de rotas ficou com dialeto próprio')
+})
+
+// ————— RIGHTDOCK (2026-08-22) — o mockup aprovado é o contrato —————
+//
+// O dono aprovou verbatim docs/mockups/rightdock.html: o lado direito vira o
+// RAIO-X DA MISSÃO — moldura única (cabeçalho "missão · título" + grip), três
+// seções recolhíveis (ENTREGA · TRABALHO · FROTA) com resumo à direita do
+// título; geral e release vestem a mesma moldura. Nada de maquinário novo:
+// medidas vivas, fila, história e lateral são os de sempre, recompostos.
+
+test('RIGHTDOCK — a moldura: dock-head + três seções com resumo', async () => {
+  const rail = await source('src/renderer/src/components/MissionDeliveryRail.tsx')
+  assert.match(rail, /DockSection/u, 'o primitivo de seção recolhível existe e o trilho o consome')
+  assert.match(rail, /dock-head/u, 'o cabeçalho da moldura diz onde o dono está')
+  assert.match(rail, /title="entrega"|title=\{?'entrega'/u, 'a seção ENTREGA existe')
+  assert.match(rail, /title="trabalho"|title=\{?'trabalho'/u, 'a seção TRABALHO existe')
+  assert.match(rail, /title="frota"|title=\{?'frota'/u, 'a seção FROTA existe')
+
+  const section = await source('src/renderer/src/components/DockSection.tsx')
+  assert.match(section, /aria-expanded/u, 'recolher é botão de verdade, com estado acessível')
+  assert.match(section, /localStorage/u, 'o colapso persiste — o dock lembra como o dono o deixou')
+
+  const css = await source('src/renderer/src/global.css')
+  assert.match(css, /\.dock-head \{/u)
+  assert.match(css, /\.dock-sec-head \{/u)
+})
+
+test('RIGHTDOCK — trabalho: ± por arquivo e o diff inline num clique', async () => {
+  const wt = await source('src/main/worktree.ts')
+  const summary = wt.slice(wt.indexOf('export function missionWorkspaceSummary'))
+  assert.match(
+    summary.slice(0, 2600),
+    /insertions: .*deletions: /su,
+    'o numstat que já era lido agora fica POR ARQUIVO (antes era jogado fora)'
+  )
+
+  const ipc = await source('src/main/ipc/missions.ts')
+  assert.match(ipc, /missions:workspaceFileDiff/u, 'o diff por arquivo ganhou canal')
+
+  const bridgeSrc = await source('src/renderer/src/missionWorkspace.ts')
+  assert.match(bridgeSrc, /fileDiff/u, 'a ponte tipada expõe o diff por arquivo')
+
+  const rail = await source('src/renderer/src/components/MissionDeliveryRail.tsx')
+  assert.match(rail, /onDoubleClick/u, 'duplo clique abre o arquivo; o clique simples vira o diff')
 })

@@ -23,6 +23,18 @@ export type MissionFileStatus = 'A' | 'M' | 'D' | 'R' | 'C' | 'U' | '?' | string
 export interface MissionWorkspaceFile {
   path: string
   status: MissionFileStatus
+  /** ± do numstat POR arquivo (RIGHTDOCK). Ausente = binário/fora do git —
+   *  a linha aparece sem número, nunca com número inventado. */
+  insertions?: number
+  deletions?: number
+}
+
+/** Resposta do `missions:workspaceFileDiff` — o diff inline da linha clicada. */
+export interface MissionWorkspaceFileDiffResult {
+  ok: boolean
+  diff?: string
+  truncated?: boolean
+  error?: string
 }
 
 export interface MissionWorkspaceSummary {
@@ -41,6 +53,10 @@ export interface MissionWorkspaceResult {
 
 interface MissionWorkspaceBridge {
   workspaceFiles: (missionId: string) => Promise<MissionWorkspaceResult>
+  workspaceFileDiff: (
+    missionId: string,
+    filePath: string
+  ) => Promise<MissionWorkspaceFileDiffResult>
 }
 
 function bridge(): Partial<MissionWorkspaceBridge> | undefined {
@@ -68,7 +84,12 @@ function normalize(raw: unknown): MissionWorkspaceResult {
       files: Array.isArray(s.files)
         ? s.files
             .filter((f): f is MissionWorkspaceFile => Boolean(f) && typeof f.path === 'string')
-            .map((f) => ({ path: f.path, status: typeof f.status === 'string' ? f.status : '?' }))
+            .map((f) => ({
+              path: f.path,
+              status: typeof f.status === 'string' ? f.status : '?',
+              ...(Number.isFinite(f.insertions) ? { insertions: f.insertions } : {}),
+              ...(Number.isFinite(f.deletions) ? { deletions: f.deletions } : {})
+            }))
         : []
     }
   }
@@ -86,6 +107,18 @@ export const missionWorkspace = {
     if (typeof api?.workspaceFiles !== 'function') return { ok: false, error: NO_BRIDGE }
     try {
       return normalize(await api.workspaceFiles(missionId))
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  },
+
+  /** RIGHTDOCK — o diff inline de um arquivo. Ponte ausente (janela pré-
+   *  restart) responde com a MESMA receita do resto do módulo. */
+  async fileDiff(missionId: string, filePath: string): Promise<MissionWorkspaceFileDiffResult> {
+    const api = bridge()
+    if (typeof api?.workspaceFileDiff !== 'function') return { ok: false, error: NO_BRIDGE }
+    try {
+      return await api.workspaceFileDiff(missionId, filePath)
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }

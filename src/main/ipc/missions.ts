@@ -381,6 +381,29 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   )
 
   /**
+   * DIFF DE UM ARQUIVO do trilho (RIGHTDOCK, 2026-08-22): o clique na linha da
+   * seção TRABALHO abre o diff INLINE — o motor (`missionWorkspaceFileDiff`,
+   * com teto e a mesma base honesta do cabeçalho) já existia; isto é só o
+   * canal. Mesmo contrato de leitura do workspaceFiles: nunca cria worktree.
+   */
+  ipcMain.handle(
+    'missions:workspaceFileDiff',
+    async (
+      _e,
+      missionId: string,
+      filePath: string
+    ): Promise<{ ok: boolean; diff?: string; truncated?: boolean; error?: string }> => {
+      const mission = missions.get(missionId)
+      if (!mission) return { ok: false, error: 'missão não encontrada' }
+      if (typeof filePath !== 'string' || !filePath || filePath.length > 1024)
+        return { ok: false, error: 'caminho inválido' }
+      if (!mission.worktree || !existsSync(mission.worktree))
+        return { ok: false, error: 'esta missão não tem worktree aberto' }
+      return gitOff('missionWorkspaceFileDiff', mission.worktree, filePath, mission.baseBranch)
+    }
+  )
+
+  /**
    * COMMITS DA MISSÃO — o histórico que o trilho mostra ao lado do diff vivo:
    * o que esta branch adicionou sobre a base, mais novos primeiro. Irmão do
    * workspaceFiles em tudo (leitura pura, nunca cria worktree, todo o git pelo
