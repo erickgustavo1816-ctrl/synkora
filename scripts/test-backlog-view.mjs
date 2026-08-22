@@ -398,3 +398,29 @@ test('R27 — o contador da versão lançada não conta o registro do release', 
     'criadas = missões de superfície, nunca a própria subida'
   )
 })
+
+// R27F2 ONDA 3 — O BLOCO DO RELEASE NA ABA VERSÕES (2026-08-22): versão
+// LANÇADA ganha o retrato da subida (a entidade da Onda 2) — quando subiu,
+// quem operou, merge, push e caixa — read-only, com o ⇪ existente seguindo
+// como o caminho de reabrir a conversa. A aba SÓ LÊ; o host do pane continua
+// sendo o Board (decisão R27 mantida).
+test('R27F2 — a versão lançada mostra o retrato da subida (entidade → tela)', async () => {
+  const ipc = await source('src/main/ipc/backlog.ts')
+  assert.match(ipc, /backlog:versionReleases/u, 'o canal IPC do retrato existe')
+  assert.match(ipc, /listVersionReleases/u, 'o leitor é injetado pelo index (extras)')
+
+  const index = await source('src/main/index.ts')
+  assert.match(
+    index,
+    /listVersionReleases: \(versionId\) => releases\.listForVersion\(versionId\)/u,
+    'o index liga o leitor ao store da entidade'
+  )
+
+  const preload = await source('src/preload/index.ts')
+  assert.match(preload, /versionReleases/u, 'a ponte window.synkora expõe o retrato')
+
+  const view = await source('src/renderer/src/components/BacklogView.tsx')
+  assert.match(view, /versionReleases/u, 'a aba Versões busca o retrato')
+  assert.match(view, /vs-release/u, 'o bloco do release renderiza com classe própria')
+  assert.match(view, /retrato da subida|subiu em/iu, 'o bloco fala a língua do dono')
+})

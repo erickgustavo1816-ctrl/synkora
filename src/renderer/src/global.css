@@ -9176,6 +9176,28 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink);
 }
 
+/* R27F2 — o RETRATO DA SUBIDA na versão lançada: a mesma língua do histórico
+   (borda esquerda ok = subiu), forma antes de cor. Falha de push/bump aparece
+   como TEXTO nomeado na linha de detalhe — sem alarme colorido: o fato
+   (versão na main) é sucesso; o detalhe diz o que ficou por fazer. */
+.vs-release {
+  border-left: 3px solid var(--ok);
+  padding-left: 10px;
+}
+
+.vs-release-line {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.vs-release-detail {
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
 .vs-delivery-date {
   font-size: 10px;
   color: var(--ink-3);

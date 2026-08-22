@@ -12,6 +12,7 @@ import { ipcMain } from 'electron'
 import { ensureSynkoraGitExcludes, gitHead, removeWorktreeAndBranch } from '../worktree'
 import { type BacklogItemType, type Version } from '../backlog'
 import { ensureReleaseMission } from '../releaseChat'
+import type { ReleaseRecord } from '../releasesStore'
 import type { MainContext } from '../mainContext'
 
 /**
@@ -38,6 +39,9 @@ export interface BacklogIpcExtras {
   /** R14: derruba a sessão LSP com `cwd` na raiz ANTES de remover o worktree
    *  da versão — processo com cwd na pasta trava a remoção no Windows. */
   invalidateLspRoot?(root: string): void
+  /** R27F2 — o RETRATO das subidas de uma versão (entidade releasesStore),
+   *  injetado pelo index: a aba Versões só LÊ. */
+  listVersionReleases(versionId: string): ReleaseRecord[]
 }
 
 export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): void {
@@ -50,10 +54,18 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
     emitBacklogChanged,
     releaseVersionImpl,
     versionIsolationIsValid,
-    invalidateLspRoot
+    invalidateLspRoot,
+    listVersionReleases
   } = extras
   ipcMain.handle('backlog:releaseVersion', (e, versionId: string) => {
     return releaseVersionImpl(versionId, 'user')
+  })
+
+  // R27F2 — o retrato da subida para a aba Versões (read-only; a entidade
+  // nasce no sucesso do releaseVersionImpl e mora no releasesStore).
+  ipcMain.handle('backlog:versionReleases', (_e, versionId: string): ReleaseRecord[] => {
+    if (typeof versionId !== 'string' || !versionId) return []
+    return listVersionReleases(versionId)
   })
 
   // R10 (2026-08-19): o botão "subir pra main" deixou de rodar a máquina — ele

@@ -5,7 +5,8 @@ import {
   type BacklogItemType,
   type Mission,
   type MissionStatus,
-  type Version
+  type Version,
+  type VersionReleaseRecord
 } from '../store'
 import ArchivedMissionChat from './ArchivedMissionChat'
 import NewMissionModal from './NewMissionModal'
@@ -334,6 +335,8 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   const closeChatViewer = useCallback(() => setChatViewer(null), [])
   // sub-abas da tela: versões (release) | missões (ecossistema completo)
   const [view, setView] = useState<'versoes' | 'missoes'>('versoes')
+  // R27F2 — o retrato da subida da versão selecionada (entidade do main).
+  const [versionReleases, setVersionReleases] = useState<VersionReleaseRecord[]>([])
 
   const bridgeOk = Boolean(window.synkora.backlog)
 
@@ -384,6 +387,30 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   }
 
   const version = selVersion ? versions.find((v) => v.id === selVersion) : undefined
+
+  // R27F2 — busca o retrato quando a versão selecionada é LANÇADA. O
+  // `versions` nas deps re-dispara no backlog:changed do fecho do release —
+  // a subida acabou de acontecer e o retrato aparece sem gesto novo.
+  const versionId = version?.id
+  const versionLaunched = version?.status === 'lancada'
+  useEffect(() => {
+    const reader = window.synkora.backlog?.versionReleases
+    if (!versionId || !versionLaunched || !reader) {
+      setVersionReleases([])
+      return
+    }
+    let current = true
+    reader(versionId)
+      .then((list) => {
+        if (current) setVersionReleases(list)
+      })
+      .catch(() => {
+        if (current) setVersionReleases([])
+      })
+    return () => {
+      current = false
+    }
+  }, [versionId, versionLaunched, versions])
   const shown = items.filter((i) => i.versionId === selVersion)
   const counts = (vid: string): { done: number; total: number } => {
     const list = items.filter((i) => i.versionId === vid)
@@ -897,6 +924,33 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* R27F2 — O RETRATO DA SUBIDA (entidade releasesStore, via
+            backlog:versionReleases): a versão lançada conta quando subiu, quem
+            operou, merge, push e caixa — read-only; o ⇪ segue sendo o caminho
+            de reabrir a conversa. Versão lançada ANTES da entidade existir não
+            tem retrato: o bloco simplesmente não nasce (dado velho, inerte). */}
+        {launched && versionReleases.length > 0 && (
+          <div className="vs-block vs-release">
+            <span className="vs-block-title">retrato da subida</span>
+            {versionReleases.map((rec) => (
+              <div key={rec.id} className="vs-release-line">
+                ⇧ subiu em {new Date(rec.at).toLocaleString('pt-BR')} · por {rec.actor} ·{' '}
+                {rec.mergeDetail}
+                <span className="vs-release-detail">
+                  {rec.push.attempted
+                    ? rec.push.ok
+                      ? 'push: GitHub atualizado'
+                      : `push FALHOU: ${rec.push.error ?? 'motivo desconhecido'}`
+                    : 'sem remoto configurado'}
+                  {rec.bump &&
+                    ` · version ${rec.bump.version}${rec.bump.committed ? '' : ' (alinhamento FALHOU)'}`}
+                  {rec.publishRequired && ' · produto publica caixa (npm run release)'}
+                </span>
+              </div>
+            ))}
           </div>
         )}
 

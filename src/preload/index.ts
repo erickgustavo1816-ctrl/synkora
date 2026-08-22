@@ -313,6 +313,24 @@ export interface Version {
   updatedAt: string
 }
 
+/** Espelho de `ReleaseRecord` (main/releasesStore — o par declarado): o
+ *  RETRATO de uma subida que a aba Versões lê (R27F2). Nasce no sucesso do
+ *  release; a aba só consome. */
+export interface VersionReleaseRecord {
+  id: string
+  projectId: string
+  versionId: string
+  versionName: string
+  missionId?: string
+  at: string
+  actor: string
+  mergeDetail: string
+  push: { attempted: boolean; ok?: boolean; error?: string }
+  bump?: { version: string; committed: boolean }
+  publishRequired: boolean
+  outcome: string
+}
+
 /** Espelho de `CreateVersionResult` (main/ipc/backlog): criar versão devolve a
  *  versão OU o motivo da recusa — a lateral aceita um número digitado pelo
  *  dono, e recusa muda ali é um clique que não produz nada e não se explica. */
@@ -1082,6 +1100,9 @@ const api = {
       id: string
     ): Promise<{ ok: true; missionId: string } | { ok: false; error: string }> =>
       ipcRenderer.invoke('backlog:releaseChat', id),
+    /** R27F2 — o retrato das subidas da versão (mais recente primeiro). */
+    versionReleases: (id: string): Promise<VersionReleaseRecord[]> =>
+      ipcRenderer.invoke('backlog:versionReleases', id),
     listItems: (projectId: string): Promise<BacklogItem[]> =>
       ipcRenderer.invoke('backlog:listItems', projectId),
     updateItem: (

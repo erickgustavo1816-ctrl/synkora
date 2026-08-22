@@ -291,6 +291,24 @@ export interface Version {
   updatedAt: string
 }
 
+/** R27F2 — espelho de `ReleaseRecord` (main/releasesStore, via preload
+ *  `VersionReleaseRecord` — o par declarado): o RETRATO de uma subida que a
+ *  aba Versões lê. Nasce no sucesso do release; o renderer só consome. */
+export interface VersionReleaseRecord {
+  id: string
+  projectId: string
+  versionId: string
+  versionName: string
+  missionId?: string
+  at: string
+  actor: string
+  mergeDetail: string
+  push: { attempted: boolean; ok?: boolean; error?: string }
+  bump?: { version: string; committed: boolean }
+  publishRequired: boolean
+  outcome: string
+}
+
 export interface BacklogItem {
   id: string
   projectId: string
