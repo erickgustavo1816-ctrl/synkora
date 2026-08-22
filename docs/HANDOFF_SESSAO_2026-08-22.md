@@ -12,10 +12,11 @@ correio de fala imediata). O que veio DEPOIS do restart espera o próximo.
    primeira vez).
 2. O próximo restart do app traz: **R27F2 completa** (fecho vivo do release,
    entidade da subida, retrato na aba Versões, cura na leitura — commits
-   `1b2320a`·`55d8f2b`·`9833a31`·`4481c44`) e a metade MAIN do RightDock
-   Onda A (± por arquivo no numstat, IPC `missions:workspaceFileDiff`). A
-   metade renderer da Onda A entra por HMR e degrada com receita ("reinicie…")
-   até lá.
+   `1b2320a`·`55d8f2b`·`9833a31`·`4481c44`), a metade MAIN do RightDock
+   Onda A (± por arquivo no numstat, IPC `missions:workspaceFileDiff`) e a da
+   Onda B (IPC `backlog:projectReleases` + ponte `backlog.projectReleases` no
+   preload — commit `35d3b17`). As metades renderer entram por HMR e degradam
+   com receita ("reinicie…") até lá.
 
 ## O SISTEMA DO BACKLOG (nasceu em 21/08 — o mapa vivo)
 
@@ -30,7 +31,7 @@ correio de fala imediata). O que veio DEPOIS do restart espera o próximo.
   `Startup\synkora-backlog.vbs` (oculto). Mexida dele = diário `by:dono`.
 - DOUTRINA: toda entrega move item pro feito (MCP) e republica o artifact.
 
-## RIGHTDOCK — Onda A ENTREGUE; Onda B é o PRÓXIMO trabalho
+## RIGHTDOCK — COMPLETO (Ondas A e B entregues; commit da B: `35d3b17`)
 
 - Mockup APROVADO VERBATIM = contrato: `docs/mockups/rightdock.html`
   (artifact https://claude.ai/code/artifact/da63cf5d-efd9-4c19-b445-87307b087200).
@@ -42,16 +43,26 @@ correio de fala imediata). O que veio DEPOIS do restart espera o próximo.
   as MESMAS guardas/dicas; ± por arquivo (numstat que era jogado fora);
   clique = DIFF INLINE (IPC nova) e duplo clique = leitor; W4 (medida viva)
   intacta. Planejamento tem moldura própria com rodapé concluir/arquivar.
-- **Onda B (NÃO iniciada — ordem do dono: não subir nesta sessão)**:
-  (1) `DockGeneral` — retrato compacto do ✦ geral no rail (missões vivas +
-  "N esperando você" + versão em dev/na main + últimas entregas), substitui o
-  ProjectDashboard NO RAIL (convite ProjectGeneral fica p/ universo vazio;
-  decidir destino do componente/testes do dashboard);
-  (2) release-rail veste a moldura + seção "última subida" — precisa da IPC
-  `backlog:projectReleases(projectId)` → `releases.list(projectId)` (o store
-  R27F2 já tem o método) + preload + espelho.
-  Testes vermelhos primeiro; suítes que prendem o rail: test-right-rail,
-  test-gui-file-context-menu (marcadores atualizados na Onda A).
+- **Onda B (feita nesta sessão)**:
+  (1) `DockGeneral.tsx` — retrato compacto do ✦ geral na moldura (AGORA:
+  vivas + "N esperando você" pela régua única `waitingOnOwner`, clique abre a
+  missão; versão em dev pelo helper puro NOVO `versionInDev` + versão na
+  main · ÚLTIMAS ENTREGAS: `recentConcluded` datado por `completedAt`). O
+  painel largo foi DEMOLIDO (decisão registrada): ProjectDashboard,
+  MissionDashboardRow, CSS `.pd-*` e os helpers órfãos (projectKpis,
+  missionTimeline, missionDayLabel); a leitura de planos do Board morreu
+  junto (relance de planos = aba Mapa). Convite ProjectGeneral fica.
+  (2) `ReleaseRail.tsx` — o release veste a moldura (dock-head "release ·
+  V…" + "a subida" + "última subida" lendo `backlog:projectReleases` →
+  `releases.list(projectId)`; linha compacta em `releaseRailPresentation.ts`
+  — NUNCA afirma além do registro: `publishRequired` declara pipeline, a
+  linha diz a receita, não "caixa publicada"; sem ponte = receita de
+  restart; sem subida = seção nem nasce).
+  Testes: vermelho provado antes do verde (test-right-rail +
+  test-project-landing reescrito p/ o retrato + test-backlog-view); 3
+  marcadores PRÉ-QUEBRADOS da Onda A curados (provado em worktree do HEAD:
+  dica do 🧐 sem "headless", guardas do arquivar do planejamento, "dev →
+  main" preso ao Board no test-gui-chat-ui). Gate raiz VERDE.
 
 ## AS OUTRAS FRENTES DESTA SESSÃO (tudo commitado, gate verde)
 
@@ -90,5 +101,6 @@ correio de fala imediata). O que veio DEPOIS do restart espera o próximo.
 
 ## Estado do push
 
-`nivel5-fase1` está ~40 commits à frente do origin (push sob demanda — o dono
-decide quando empurrar).
+`nivel5-fase1` está ~42 commits à frente do origin (push sob demanda — o dono
+decide quando empurrar). Roadmap: RightDock COMPLETO → Skills 2.0 build (fila
+#1) → browser embutido.
