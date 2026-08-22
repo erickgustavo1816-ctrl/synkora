@@ -1297,3 +1297,21 @@ test('R27F3 — a superfície do ✕ segue o mockup aprovado (ghost, ink-3, err 
   // Foco visível é régua da casa — o anel de 2px do papel.
   assert.match(css, /\.gui-subagent-row-dismiss:focus-visible \{[^}]*outline: 2px solid/u)
 })
+
+test('a lista da frota rola com a barra retrô da casa — nunca a thin nativa', () => {
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  // Pedido do dono (22/08): scroll "bonitinho" também na FROTA. A lista JÁ
+  // rolava (max-height + overflow), mas `scrollbar-width: thin` SUPRIME o
+  // ::-webkit-scrollbar customizado no Chromium — a barra retrô de 10px da
+  // casa nunca aparecia ali. A propriedade sai; a barra global assume.
+  const lista = css.match(/\n\.gui-subagent-sidebar-list \{([\s\S]*?)\n\}/u)?.[1]
+  assert.ok(lista, 'a regra da lista da frota precisa existir')
+  assert.match(lista, /max-height/u, 'o teto que faz a lista rolar fica')
+  assert.match(lista, /overflow/u)
+  assert.doesNotMatch(
+    lista,
+    /scrollbar-width/u,
+    'thin/none aqui mata a barra retrô no Chromium — foi o bug do dono'
+  )
+})

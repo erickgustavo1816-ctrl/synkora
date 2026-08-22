@@ -1086,6 +1086,26 @@ test('RIGHTDOCK B — o release veste a moldura: dock-head + a subida + última 
 // Onda B do RIGHTDOCK ficou sendo SÓ o ReleaseRail (acima) — o ✦ geral é
 // prendido pelo test-project-landing, como sempre foi.
 
+test('RIGHTDOCK — o HISTÓRICO rola dentro da seção, com a barra retrô da casa', async () => {
+  const css = await source('src/renderer/src/global.css')
+
+  // Pedido do dono (22/08, print de 11 commits sem barra): as listas do dock
+  // têm TETO e rolam por dentro — como o TRABALHO (.dr-files) já faz. O scroll
+  // mora no SHELL do grafo: o SVG das arestas é filho absoluto dele, então as
+  // linhas rolam JUNTO com os commits e o desenho nunca desalinha.
+  const shell = css.match(/\n\.mh-graph-shell \{([\s\S]*?)\n\}/u)?.[1]
+  assert.ok(shell, 'a regra do shell do grafo precisa existir')
+  assert.match(shell, /max-height:\s*\d+px/u, 'sem teto o histórico cresce infinito')
+  assert.match(shell, /overflow-y:\s*auto/u, 'o excesso rola por dentro da seção')
+  // `scrollbar-width` (thin/none) SUPRIME a barra ::-webkit-scrollbar no
+  // Chromium — foi exatamente o que escondeu a barra da frota. Aqui, nunca.
+  assert.doesNotMatch(shell, /scrollbar-width/u, 'a barra retrô da casa é a barra')
+  // E a CALHA fica: o dono viu o card do commit COLADO na barra ("tá muito
+  // colado") — o respiro entre conteúdo e barra é parte do pedido.
+  const gutter = Number(shell.match(/padding-right:\s*(\d+)px/u)?.[1])
+  assert.ok(gutter >= 8, `o respiro até a barra precisa existir (veio ${gutter}px)`)
+})
+
 // ————— O CONSERTO DO DOCK (2026-08-22, noite — o dono viu ao vivo) —————
 //
 // No restart a fileira de ações apareceu ESMAGADA: `.dr-btn { width: 100% }`,

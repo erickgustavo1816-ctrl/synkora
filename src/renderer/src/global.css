@@ -5745,7 +5745,10 @@ body.pane-docking .pane-bar.draggable {
   min-width: 0;
   max-height: 38vh;
   overflow: auto;
-  scrollbar-width: thin;
+  /* A propriedade `thin` do Firefox morava aqui e SUPRIMIA a barra
+     ::-webkit-scrollbar no Chromium — a lista rolava com a barra nativa,
+     invisível de tão magra (bug que o dono viu na FROTA). Sem ela, a barra
+     retrô global de 10px da casa assume, a mesma do TRABALHO (.dr-files). */
 }
 
 .gui-subagent-row {
@@ -6048,9 +6051,22 @@ body.pane-docking .pane-bar.draggable {
   line-height: 1.35;
 }
 
+/* O HISTÓRICO rola POR DENTRO da seção (pedido do dono, 22/08: 11 commits sem
+   barra empurravam o dock inteiro). O scroll mora no SHELL de propósito: o SVG
+   das arestas é filho ABSOLUTO dele, então grafo e commits rolam juntos e o
+   desenho nunca desalinha. A barra é a retrô global de 10px — nada de
+   `scrollbar-width` aqui: thin/none suprime o ::-webkit-scrollbar no Chromium
+   (foi o que escondeu a barra da frota). Teto na régua do .dr-files: ~4 linhas
+   de commit (min-height 74px) à vista. */
 .mh-graph-shell {
   position: relative;
   min-width: 0;
+  max-height: 300px;
+  overflow-y: auto;
+  /* a CALHA entre o card do commit e a barra (pedido do dono: "tá muito
+     colado" — o respiro igual ao do TRABALHO, onde o padding das linhas
+     afasta o conteúdo da barra) */
+  padding-right: 10px;
 }
 
 .mh-edges {
