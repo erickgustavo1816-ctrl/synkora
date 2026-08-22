@@ -1,17 +1,17 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-22T19:09:00.292Z",
+  "updatedAt": "2026-08-22T19:23:59.378Z",
   "lanes": {
     "agora": [
       {
         "id": "rightdock",
         "title": "RightDock — o lado direito do app",
-        "desc": "Brief fechado no grill: repensar do ZERO — o dock vira o RAIO-X da missão (ENTREGA enxuta · TRABALHO = arquivos alterados ao vivo com diff · FROTA = fichas dos ajudantes com casa fixa), ✦ geral e release na mesma moldura. Mockup publicado (o contrato); código só depois do aval do dono.",
+        "desc": "Mockup aprovado verbatim = contrato (artifact da63cf5d). ONDA A FEITA: moldura DockSection + trilho recomposto (ENTREGA com ⇪ primário e ícones · TRABALHO com ± por arquivo e diff inline · HISTÓRICO · FROTA), W4 intacta; metade main espera restart. ONDA B PENDENTE: DockGeneral (retrato compacto no ✦ geral) + release-rail na moldura com \"última subida\" (IPC backlog:projectReleases). Receita completa no HANDOFF_SESSAO_2026-08-22 e no DESIGN_RIGHTDOCK.",
         "refs": [
           "docs/mockups/rightdock.html",
           "estudo: ResizableRightRail · MissionDeliveryRail · GuiSubagentSidebar"
         ],
-        "badge": "mockup no ar — aguardando teu aval"
+        "badge": "onda A entregue — onda B é o próximo trabalho"
       }
     ],
     "fila": [
@@ -275,6 +275,12 @@
     },
     {
       "at": "2026-08-22T19:09:00.292Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "rightdock"
+    },
+    {
+      "at": "2026-08-22T19:23:59.378Z",
       "by": "orquestrador",
       "action": "update",
       "id": "rightdock"
