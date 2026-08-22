@@ -2996,6 +2996,10 @@ app.whenReady().then(async () => {
         }
       }
       emitBacklogChanged(projectId)
+      // R27F2 — a reconciliação também AVISA A TELA (mesma régua do fecho
+      // vivo): no boot o push cai no vazio, inofensivo; rodando com o app
+      // aberto, é ele que tira o card concluído da coluna sem restart.
+      pushAll('missions:changed', projectId)
       syncBoard(projectId)
       clearVersionReleaseIntent(project.path, versionId)
       hub.publish({
@@ -3805,6 +3809,12 @@ app.whenReady().then(async () => {
           concludeMission: (missionId) => {
             missions.update(missionId, { status: 'concluida' })
             emitBacklogChanged(version.projectId)
+            // R27F2 — o fecho AVISA A TELA (bug do dono, 2026-08-22): a tela
+            // só recarrega missões por este push, e sem ele a aba do release
+            // ficava aberta até o restart (emitBacklogChanged é VERSÕES;
+            // syncBoard escreve ARQUIVO). Régua: todo mutador de missão fora
+            // do missionEngine empurra missions:changed.
+            pushAll('missions:changed', version.projectId)
             syncBoard(version.projectId)
           }
         },

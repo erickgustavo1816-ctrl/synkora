@@ -360,6 +360,30 @@ test('R28.1 — a subida avisa quando o package.json mudou: npm install na pasta
   )
 })
 
+// R27F2 ONDA 1 — O FECHO AVISA A TELA (bug do dono, 2026-08-22): a missão de
+// release concluía no DISCO e a aba ficava aberta até o restart. A tela só
+// recarrega missões pelo push `missions:changed` — e o caminho do release
+// (fecho do release_run e reconciliação release↔versão) mudava missão sem
+// empurrá-lo (emitBacklogChanged é VERSÕES; syncBoard é ARQUIVO). Régua nova:
+// todo mutador de missão fora do missionEngine empurra missions:changed.
+test('R27F2 — o fecho do release e a reconciliação empurram missions:changed', async () => {
+  const index = await source('src/main/index.ts')
+
+  const conclude = index.slice(index.indexOf('concludeMission: (missionId) =>'))
+  assert.match(
+    conclude.slice(0, 900),
+    /missions:changed/u,
+    'o fecho vivo do release_run avisa a tela — sem isso a aba fica até o restart'
+  )
+
+  const reconcile = index.slice(index.indexOf("missionTypeOf(m) === 'release' &&"))
+  assert.match(
+    reconcile.slice(0, 900),
+    /missions:changed/u,
+    'a reconciliação release↔versão avisa a tela pela MESMA régua'
+  )
+})
+
 // R29 — O RELEASE ENTREGA A CAIXA (ordem do dono, 2026-08-21): a V1.0.4 do
 // Painel subiu pelo release (merge+push) e o "verificar atualização" continuou
 // quebrado — o que o updater lê é a RELEASE PUBLICADA do GitHub (instalador +
