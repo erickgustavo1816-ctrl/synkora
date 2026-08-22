@@ -1,0 +1,212 @@
+<title>Mockup RightDock 2</title>
+<style>
+  :root {
+    --paper: #efe9dc; --card: #f6f1e6; --panel: #26241f; --panel-ink: #efe9dc;
+    --ink: #26241f; --ink-2: #57534a; --ink-3: #857f70;
+    --accent: #d96c3f; --ok: #3e9b5f; --err: #b54036; --warn: #b8860b; --line: #c9c2b0;
+    --mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--paper); color: var(--ink); font-family: var(--mono);
+    font-size: 13px; line-height: 1.5; margin: 0; padding: 28px 22px 70px; }
+  .wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+  header.mast { background: var(--panel); color: var(--panel-ink); border-radius: 10px; padding: 16px 22px; }
+  header.mast h1 { margin: 0; font-size: 17px; letter-spacing: .14em; text-transform: uppercase; }
+  header.mast p { margin: 8px 0 0; color: #b8b09c; font-size: 12px; max-width: 76ch; }
+  header.mast b { color: var(--panel-ink); }
+
+  .states { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
+  .state { display: flex; flex-direction: column; gap: 10px; }
+  .state > h2 { margin: 0; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-2); }
+  .state > h2 .pick { color: var(--accent); letter-spacing: .04em; text-transform: none; }
+  .notes { max-width: 340px; font-size: 11.5px; color: var(--ink-2); display: flex; flex-direction: column; gap: 6px; }
+  .notes p { margin: 0; padding-left: 14px; position: relative; }
+  .notes p::before { content: "▸"; position: absolute; left: 0; color: var(--accent); }
+
+  .dock { width: 340px; background: var(--card); border: 1.5px solid var(--ink);
+    border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
+
+  /* ————— HEADER V1: duas linhas (kind + controles / o TÍTULO inteiro) ————— */
+  .head2 { display: flex; flex-direction: column; gap: 1px; padding: 8px 12px 9px;
+    border-bottom: 1px solid var(--line); }
+  .head2 .l1 { display: flex; align-items: center; gap: 8px; font-size: 10px;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+  .head2 .l1 .stateword { letter-spacing: .04em; color: var(--accent); margin-left: 2px; }
+  .head2 .l1 .grip { margin-left: auto; letter-spacing: 0; color: var(--line); }
+  .head2 .l1 .collapse { border: 0; background: none; color: var(--ink-3); font-family: var(--mono);
+    font-size: 11px; padding: 0 2px; cursor: pointer; }
+  .head2 .l1 .collapse:hover { color: var(--ink); }
+  .head2 .title { font-size: 12.5px; font-weight: 700; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ————— HEADER V2: uma linha ————— */
+  .head1 { display: flex; align-items: center; gap: 7px; padding: 9px 12px;
+    border-bottom: 1px solid var(--line); min-width: 0; }
+  .head1 .kind { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); flex: none; }
+  .head1 .title { font-size: 12px; font-weight: 700; min-width: 0; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .head1 .grip { margin-left: auto; color: var(--line); flex: none; }
+  .head1 .collapse { border: 0; background: none; color: var(--ink-3); font-family: var(--mono);
+    font-size: 11px; padding: 0 2px; cursor: pointer; flex: none; }
+
+  .sec { border-bottom: 1px solid var(--line); }
+  .sec:last-child { border-bottom: 0; }
+  .sec-head { display: flex; align-items: baseline; gap: 8px; padding: 9px 12px 7px;
+    font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-2); }
+  .sec-head .sum { margin-left: auto; letter-spacing: .02em; color: var(--ink-3); font-size: 10.5px; text-transform: none; }
+  .sec-body { padding: 2px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+
+  /* entrega composta: branch e chip na MESMA linha; linha fina embaixo */
+  .row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .branch { font-size: 11.5px; color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip { margin-left: auto; flex: none; font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+    border: 1px solid var(--ok); border-radius: 4px; padding: 0 6px; color: var(--ok); white-space: nowrap; }
+  .fine { display: flex; gap: 8px; min-width: 0; font-size: 10.5px; color: var(--ink-3); }
+  .fine .base { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fine .ver { flex: none; }
+  .acts { display: flex; gap: 6px; }
+  .btn { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    border: 1.5px solid var(--ink); border-radius: 7px; background: transparent; color: var(--ink);
+    padding: 5px 10px; cursor: pointer; }
+  .btn.primary { background: var(--ink); color: var(--paper); flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .btn.icon { padding: 5px 8px; letter-spacing: 0; flex: none; }
+
+  /* trabalho: a linha é LEITURA; o placar é a porta do diff */
+  .file { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+  .file:hover { background: var(--paper); }
+  .file .name { font-size: 11.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file .delta { margin-left: auto; flex: none; font-size: 10.5px; border-radius: 4px; padding: 0 4px; }
+  .file .delta:hover { background: var(--card); outline: 1px solid var(--line); }
+  .file .delta .add { color: var(--ok); }
+  .file .delta .del { color: var(--err); }
+  .mini { font-size: 11px; color: var(--ink-2); }
+
+  /* frota: ficha interrompida com a SAÍDA no canto */
+  .helper { border: 1px dashed var(--ink-2); border-radius: 8px; padding: 7px 10px;
+    display: grid; grid-template-columns: 1fr auto auto; gap: 1px 8px; }
+  .helper .hname { font-size: 12px; font-weight: 700; }
+  .helper .hmeta { grid-column: 1 / -1; font-size: 10.5px; color: var(--ink-3); }
+  .helper .hstate { font-size: 10.5px; color: var(--ink-2); white-space: nowrap; }
+  .helper .dismiss { border: 0; background: none; color: var(--ink-3); font-family: var(--mono);
+    font-size: 11px; padding: 0 2px; cursor: pointer; align-self: start; }
+  .helper .dismiss:hover { color: var(--err); }
+  .hue-back .hname::before { content: "● "; color: hsl(210 45% 45%); }
+
+  .footer-note { font-size: 11.5px; color: var(--ink-3); border-top: 1px dashed var(--line); padding-top: 12px; max-width: 84ch; }
+</style>
+
+<div class="wrap">
+  <header class="mast">
+    <h1>Mockup — RightDock 2</h1>
+    <p><b>A rodada do teu feedback de hoje:</b> o header refeito (duas variações — escolhe uma),
+    a ENTREGA composta sem sobra à direita, o ✕ que tira a ficha interrompida da frota, e o
+    clique no arquivo repensado — <b>clicar num documento passa a ABRIR o documento</b>; o diff
+    mora no placar ±. Aprova, risca ou manda mudar.</p>
+  </header>
+
+  <div class="states">
+    <!-- ————— V1: header em duas linhas (recomendada) ————— -->
+    <div class="state">
+      <h2>Header V1 — duas linhas <span class="pick">← recomendada</span></h2>
+      <div class="dock">
+        <div class="head2">
+          <div class="l1">missão <span class="grip">⋮⋮</span><button class="collapse" title="recolher">›</button></div>
+          <div class="title">Auditoria de bugs no código</div>
+        </div>
+        <div class="sec">
+          <div class="sec-head">▾ entrega <span class="sum">fila vazia</span></div>
+          <div class="sec-body">
+            <div class="row">
+              <span class="branch">⎇ mission/92b751d7</span>
+              <span class="chip">árvore limpa</span>
+            </div>
+            <div class="fine">
+              <span class="base">base: version/5e846dd0…12357</span>
+              <span class="ver">◈ 0.1.1</span>
+            </div>
+            <div class="acts">
+              <button class="btn primary">⇪ fila da 0.1.1</button>
+              <button class="btn icon">🧐</button>
+              <button class="btn icon">▷</button>
+              <button class="btn icon">▶</button>
+              <button class="btn icon">⊟</button>
+            </div>
+          </div>
+        </div>
+        <div class="sec">
+          <div class="sec-head">▾ trabalho <span class="sum">1 arquivo · +1612</span></div>
+          <div class="sec-body">
+            <div class="file">
+              <span class="name">docs/bug-audit.md</span>
+              <span class="delta"><span class="add">+1612</span></span>
+            </div>
+            <span class="mini">clique na LINHA lê o arquivo · clique no ±placar abre o diff em janela larga · botão direito: fora do app</span>
+          </div>
+        </div>
+        <div class="sec">
+          <div class="sec-head">▾ frota <span class="sum">1 trabalhando · 2 encerradas</span></div>
+          <div class="sec-body">
+            <div class="helper hue-back">
+              <span class="hname">hunt-main</span>
+              <span class="hstate">interrompido</span>
+              <button class="dismiss" title="descartar">✕</button>
+              <span class="hmeta">GPT-5.6 SOL · xhigh · ⚡ fast · Codex — Hotmail</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <p>Linha 1 é só forma: o TIPO (missão/planejamento/release), o pega ⋮⋮ e o › de recolher
+        — o › entra NA linha, ghost, em vez de flutuar por cima do texto.</p>
+        <p>Linha 2 é o TÍTULO inteiro, peso 700, com reticências + dica quando não couber.</p>
+        <p>"EM ANDAMENTO" some do header: é o estado padrão e já está dito pela coluna e pela
+        entrega. Só estado-NOTÍCIA aparece, como palavra colorida na linha 1: <b>integrando
+        agora</b> (laranja) · <b>integrada</b> (verde) · <b>arquivada</b> (cinza). Nunca chip
+        com borda — era ele que quebrava em duas linhas.</p>
+        <p>ENTREGA: branch à esquerda, chip à direita NA MESMA linha (morreu a sobra); a linha
+        fina junta base (reticências no meio, valor inteiro na dica) e ◈ versão.</p>
+        <p>FROTA: ficha interrompida (e encerrada) ganha ✕ no canto — descarta a ficha de vez
+        (o mesmo descarte do helper_cancel: a entrega parcial vai junto; a dica avisa).</p>
+        <p>TRABALHO: o quadradinho preto de diff inline MORREU. Clique na linha = LER o
+        documento no leitor de papel (o gesto que você fez); o diff abre pelo ±placar, na
+        janela larga e legível do histórico.</p>
+      </div>
+    </div>
+
+    <!-- ————— V2: header em uma linha ————— -->
+    <div class="state">
+      <h2>Header V2 — uma linha</h2>
+      <div class="dock">
+        <div class="head1">
+          <span class="kind">missão</span>
+          <span class="title">· Auditoria de bugs no código</span>
+          <span class="grip">⋮⋮</span>
+          <button class="collapse" title="recolher">›</button>
+        </div>
+        <div class="sec">
+          <div class="sec-head">▾ entrega <span class="sum">fila vazia</span></div>
+          <div class="sec-body">
+            <div class="row">
+              <span class="branch">⎇ mission/92b751d7</span>
+              <span class="chip">árvore limpa</span>
+            </div>
+            <div class="fine">
+              <span class="base">base: version/5e846dd0…12357</span>
+              <span class="ver">◈ 0.1.1</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <p>Mais baixa, mas o título disputa a linha com os controles — num título longo sobra
+        menos leitura. Se preferir esta, o resto (entrega/frota/trabalho) é idêntico à V1.</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="footer-note">O que NÃO muda: moldura, seções recolhíveis com resumo, medidas vivas,
+  guardas e dicas dos botões, menu de botão direito, W4. O ✕ da frota é gesto NOVO do dono
+  (hoje só o agente cancela via MCP) — vira canal mecânico teu, como manda a régua da casa.
+  Estados de hover/foco/vazio seguem a régua na implementação.</p>
+</div>

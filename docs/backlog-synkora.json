@@ -1,8 +1,20 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-22T19:50:59.610Z",
+  "updatedAt": "2026-08-22T19:58:26.333Z",
   "lanes": {
-    "agora": [],
+    "agora": [
+      {
+        "id": "rightdock",
+        "title": "RightDock — o lado direito do app",
+        "desc": "O restart revelou a Onda B ERRADA (reprovação do dono, 22/08 noite): a página ✦ geral tinha sido trocada pelo retrato compacto — ela VOLTA a ser o ProjectDashboard (combinado era mexer só no lado direito) — e o dock da missão está bugado (⇪ esmagado pelo .dr-btn width:100% da era em coluna; histórico duplicado; chip ↑0; base com uuid cru). Conserto delegado a 2 frentes Opus effort max em paralelo; ReleaseRail e IPC projectReleases ficam. Plano: .synkora/reports/PLANO_CONSERTO_RIGHTDOCK_2026-08-22.md.",
+        "refs": [
+          "docs/mockups/rightdock.html",
+          "35d3b17",
+          ".synkora/reports/PLANO_CONSERTO_RIGHTDOCK_2026-08-22.md"
+        ],
+        "badge": "reprovado no restart — conserto em curso"
+      }
+    ],
     "fila": [
       {
         "id": "skills-2-0-build",
@@ -76,18 +88,6 @@
       }
     ],
     "feito": [
-      {
-        "id": "rightdock",
-        "title": "RightDock — o lado direito do app",
-        "desc": "COMPLETO (Ondas A+B, mockup aprovado verbatim = contrato). A: moldura DockSection + trilho da missão recomposto (ENTREGA · TRABALHO com ± por arquivo e diff inline · HISTÓRICO · FROTA). B (35d3b17): DockGeneral — retrato compacto no ✦ geral (vivas + \"N esperando você\" + versão em dev/na main + últimas entregas; painel largo demolido) + release-rail na moldura com \"última subida\" (IPC backlog:projectReleases). Metade main (IPC nova) espera o próximo restart; renderer degrada com receita até lá.",
-        "refs": [
-          "docs/mockups/rightdock.html",
-          "35d3b17",
-          ".synkora/reports/DESIGN_RIGHTDOCK_2026-08-22.md"
-        ],
-        "badge": "onda A entregue — onda B é o próximo trabalho",
-        "day": "22/08 — sábado"
-      },
       {
         "id": "r27-fase-2",
         "title": "R27 fase 2 — a release REDONDA",
@@ -310,6 +310,19 @@
       "action": "add",
       "id": "gate-raiz-nao-roda-as-suites-do-rail-3-quebras-d",
       "detail": "→ dividas"
+    },
+    {
+      "at": "2026-08-22T19:58:08.181Z",
+      "by": "orquestrador",
+      "action": "move",
+      "id": "rightdock",
+      "detail": "→ agora"
+    },
+    {
+      "at": "2026-08-22T19:58:26.333Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "rightdock"
     }
   ]
 }
