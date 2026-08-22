@@ -1314,36 +1314,55 @@ test('a lista da frota rola com a barra retrô da casa — nunca a thin nativa',
     /scrollbar-width/u,
     'thin/none aqui mata a barra retrô no Chromium — foi o bug do dono'
   )
-  // E a CALHA (segundo pedido do dono, mesmo dia): a ficha colada na barra é
-  // o mesmo defeito que o histórico tinha — o respiro é parte do scroll.
-  const gutter = Number(lista.match(/padding-right:\s*(\d+)px/u)?.[1])
-  assert.ok(gutter >= 8, `o respiro até a barra precisa existir (veio ${gutter}px)`)
+  // A CALHA é CONDICIONAL (terceiro ajuste do dono, mesmo dia): sem barra o
+  // card fica SIMÉTRICO na seção (nada de vão morto à direita); a barra
+  // nascendo, o respiro direito encolhe um pouco para acomodá-la. CSS não
+  // sabe se a barra nasceu — a régua vem da medida viva do componente.
+  assert.doesNotMatch(
+    lista,
+    /padding-right/u,
+    'calha fixa de novo: sem scroll ela vira vão morto e o card fica torto'
+  )
+  const calha = css.match(/\.gui-subagent-sidebar-list\.has-scroll \{[^}]*\}/u)?.[0] ?? ''
+  assert.ok(calha, 'a calha condicional precisa existir')
+  const gutter = Number(calha.match(/padding-right:\s*(\d+)px/u)?.[1])
+  assert.ok(gutter >= 2 && gutter <= 8, `o respiro com barra é PEQUENO (veio ${gutter}px)`)
+
+  const componente = readFileSync(
+    new URL('../src/renderer/src/components/GuiSubagentSidebar.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(componente, /scrollHeight > .*clientHeight/u, 'a régua da calha é a medida real')
+  assert.match(componente, /has-scroll/u, 'a classe da calha nasce da medida')
+  assert.match(componente, /ResizeObserver/u, 'a janela mudando re-mede sozinha')
 })
 
-test('a ficha fecha dos DOIS lados — a borda direita espelha a esquerda por UMA fonte', () => {
+test('a ficha fecha à direita com a linha FINA e NEUTRA — o sinal de estado é só a esquerda', () => {
   const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
 
-  // Com a calha do scroll, a ficha aberta à direita parecia CORTADA ("parece
-  // que tá vazando" — dono, 22/08). A caixa fecha com a barra espelhada, e as
-  // DUAS bordas bebem da MESMA custom property: um estado novo que pintasse
-  // só a esquerda deixaria o card metade de uma cor, metade de outra.
+  // Ajuste do dono (22/08, terceira volta): a borda direita espelhada em 2px
+  // de cor de estado "chapou" — o fecho da caixa é a MESMA linha fina e
+  // neutra do topo e da base (1px --line); a barra COLORIDA continua sendo
+  // exclusiva da esquerda, onde ela é o sinal.
   const row = css.match(/\n\.gui-subagent-row \{([\s\S]*?)\n\}/u)?.[1] ?? ''
-  assert.match(row, /--row-edge:/u, 'a cor da moldura tem UMA fonte')
+  assert.match(row, /--row-edge:/u, 'a cor do sinal da esquerda segue com fonte única')
   assert.match(row, /border-left: 2px solid var\(--row-edge\)/u)
-  assert.match(row, /border-right: 2px solid var\(--row-edge\)/u)
+  assert.match(row, /border-right: 1px solid var\(--line\)/u, 'o fecho é fino e neutro')
+  assert.doesNotMatch(row, /border-right: 2px/u, 'a moldura gorda espelhada foi reprovada')
 
-  // Os estados trocam SÓ a fonte — nunca uma borda de cada vez.
+  // Os estados trocam SÓ a fonte do sinal — nunca o fecho neutro.
   for (const [estado, cor] of [
     ['running', '--accent'],
     ['completed', '--ok']
   ]) {
     const regra = css.match(new RegExp(`\\.gui-subagent-row\\.${estado} \\{[^}]*\\}`, 'u'))?.[0] ?? ''
     assert.match(regra, new RegExp(`--row-edge: var\\(${cor}\\)`, 'u'), `${estado} pinta pela fonte única`)
-    assert.doesNotMatch(regra, /border-left-color/u, `${estado} não pode pintar um lado só`)
+    assert.doesNotMatch(regra, /border-right/u, `${estado} não encosta no fecho neutro`)
   }
 
-  // O interrompido continua tracejado — agora nos DOIS lados.
+  // O tracejado da pausa é do SINAL (esquerda); o fecho neutro fica sólido
+  // como as linhas de cima e de baixo.
   const parada = css.match(/\.gui-subagent-row\.interrupted \{[^}]*\}/u)?.[0] ?? ''
   assert.match(parada, /border-left-style: dashed/u)
-  assert.match(parada, /border-right-style: dashed/u, 'o traço da pausa fecha a caixa também')
+  assert.doesNotMatch(parada, /border-right-style/u, 'o fecho neutro não traceja')
 })

@@ -179,6 +179,23 @@ export default function GuiSubagentSidebar({
       else setNotice(outcome.error)
     })
   }
+  // A CALHA da barra é CONDICIONAL (ajuste do dono, 22/08): sem scroll o card
+  // fica SIMÉTRICO na seção; a barra nascendo, o respiro direito encolhe um
+  // pouco para acomodá-la. CSS não sabe se a barra nasceu — quem sabe é a
+  // MEDIDA: o ResizeObserver cobre a janela mudando de tamanho, e a re-medida
+  // por contagem cobre ficha entrando/saindo com a lista já travada no teto
+  // (aí o tamanho do elemento não muda e o observer não dispara).
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const [scrolls, setScrolls] = useState(false)
+  useEffect(() => {
+    const el = listRef.current
+    if (!el) return
+    const measure = (): void => setScrolls(el.scrollHeight > el.clientHeight + 1)
+    measure()
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+    observer?.observe(el)
+    return () => observer?.disconnect()
+  }, [entries.length])
   // Antes do retorno vazio: a regra dos hooks não admite chamada condicional —
   // quem desliga o timer é o `active`, não o early return.
   const now = useGuiSubagentClock(entries.some((entry) => entry.status === 'running'))
@@ -216,7 +233,7 @@ export default function GuiSubagentSidebar({
           {entries.length}
         </span>
       </header>
-      <div className="gui-subagent-sidebar-list">
+      <div className={`gui-subagent-sidebar-list${scrolls ? ' has-scroll' : ''}`} ref={listRef}>
         {entries.map((entry) => (
           <SubagentCard
             key={entry.id}

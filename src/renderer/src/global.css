@@ -5749,9 +5749,14 @@ body.pane-docking .pane-bar.draggable {
      ::-webkit-scrollbar no Chromium — a lista rolava com a barra nativa,
      invisível de tão magra (bug que o dono viu na FROTA). Sem ela, a barra
      retrô global de 10px da casa assume, a mesma do TRABALHO (.dr-files). */
-  /* a CALHA entre a ficha e a barra — o mesmo respiro do histórico
-     ("tá bem colado também", segundo pedido do dono no mesmo dia) */
-  padding-right: 10px;
+}
+
+/* A CALHA é CONDICIONAL (terceira volta do dono no mesmo dia): fixa, ela
+   virava vão morto sem scroll e o card ficava assimétrico na seção. A classe
+   nasce da MEDIDA no componente (scrollHeight vs clientHeight) — com a barra
+   na tela, o card cede um respiro pequeno; sem ela, simetria total. */
+.gui-subagent-sidebar-list.has-scroll {
+  padding-right: 4px;
 }
 
 .gui-subagent-row {
@@ -5759,13 +5764,14 @@ body.pane-docking .pane-bar.draggable {
   gap: 3px;
   min-width: 0;
   padding: 8px 6px 8px 10px;
-  /* A MOLDURA bebe de UMA fonte: com a calha do scroll, a ficha aberta à
-     direita parecia cortada ("parece que tá vazando" — dono, 22/08). A borda
-     direita espelha a esquerda pela mesma custom property — estado novo que
-     pintasse um lado só deixaria o card de duas cores. */
+  /* O SINAL de estado é a barra da ESQUERDA (2px, fonte única --row-edge); o
+     FECHO da direita é a mesma linha fina e neutra do topo e da base — a
+     moldura gorda espelhada foi reprovada pelo dono ("tinha que ser fino
+     igual o de cima e o de baixo, e a mesma cor"). O fecho existe para o
+     card não parecer vazando na calha do scroll. */
   --row-edge: var(--line-strong);
   border-left: 2px solid var(--row-edge);
-  border-right: 2px solid var(--row-edge);
+  border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   color: var(--ink-2);
 }
@@ -20399,7 +20405,6 @@ details.gui-error-line {
    de animação nova: o que se mexe na lateral é o que está trabalhando. */
 .gui-subagent-row.interrupted {
   border-left-style: dashed;
-  border-right-style: dashed;
   --row-edge: var(--ink-3);
 }
 
