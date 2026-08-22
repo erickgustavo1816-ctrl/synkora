@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  GUI_SUBAGENT_DISMISS_TIP,
+  dismissGuiSubagentHelper,
   formatGuiSubagentElapsed,
+  guiSubagentDismissable,
   guiSubagentElapsedMs,
   guiSubagentSidebarEntries,
   type GuiSubagentSidebarEntry
@@ -45,12 +48,18 @@ function useGuiSubagentClock(active: boolean): number {
 
 function SubagentCard({
   entry,
-  elapsedMs
+  elapsedMs,
+  dismissing,
+  onDismiss
 }: {
   entry: GuiSubagentSidebarEntry
   /** `null` = não há tempo trabalhado a mostrar nesta montagem (ficha que já
    *  voltou parada do anel) — a ficha então simplesmente não desenha relógio. */
   elapsedMs: number | null
+  /** O descarte desta ficha está em voo: o botão para de aceitar clique (dois
+   *  ✕ no mesmo ajudante fariam o segundo voltar como "já não existe"). */
+  dismissing: boolean
+  onDismiss: () => void
 }): React.JSX.Element {
   // O zero do cronômetro é o carimbo FACTUAL do tool call, nunca a hora em que
   // a ficha apareceu na tela: replay de transcript e re-render não zeram nada.
@@ -83,6 +92,22 @@ function SubagentCard({
         <span className="gui-subagent-row-status" role="status" aria-live="polite">
           {entry.statusLabel}
         </span>
+        {/* O ✕ DA FROTA (R27F3): ele nasce da REGRA, nunca de um estado escrito
+            à mão aqui — ficha parada COM ajudante no motor. No canto da fileira
+            do topo, como no mockup aprovado: ghost em ink-3, vermelho no hover,
+            e a dica que diz o preço inteiro do clique. */}
+        {guiSubagentDismissable(entry) && (
+          <button
+            type="button"
+            className="gui-subagent-row-dismiss"
+            data-tip={GUI_SUBAGENT_DISMISS_TIP}
+            aria-label={`Descartar o ajudante ${entry.name}`}
+            disabled={dismissing}
+            onClick={onDismiss}
+          >
+            ✕
+          </button>
+        )}
       </header>
       <div className="gui-subagent-row-meta" aria-label={metaLabel(entry)}>
         <span>{entry.model}</span>
@@ -122,7 +147,38 @@ export default function GuiSubagentSidebar({
 }): React.JSX.Element | null {
   // A normalização varre a lista inteira do pane; o trilho renderiza a cada
   // delta da conversa, então ela só roda quando os itens realmente mudam.
-  const entries = useMemo(() => guiSubagentSidebarEntries(items), [items])
+  const derived = useMemo(() => guiSubagentSidebarEntries(items), [items])
+  /**
+   * FICHAS QUE O MOTOR JÁ CONFIRMOU DESCARTADAS (R27F3).
+   *
+   * O descarte de verdade acontece no motor, e o caminho normal devolve a
+   * verdade pelo fio: o `settled` do ajudante reescreve o card no anel e a ficha
+   * sai daqui por conta própria. Este conjunto cobre o card que o anel trouxe de
+   * uma geração ANTERIOR do app — o correlacionador nasce vazio com o processo e
+   * não tem mais como reescrever aquele card —, e por isso ele só recebe id
+   * DEPOIS de um `ok` do motor. Nada aqui esconde ficha: quem some já foi jogado
+   * fora do outro lado, e uma ficha que o motor recusa continua na tela com o
+   * motivo escrito.
+   */
+  const [dismissed, setDismissed] = useState<readonly string[]>([])
+  const [dismissing, setDismissing] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const entries = useMemo(
+    () => derived.filter((entry) => !dismissed.includes(entry.toolUseId)),
+    [derived, dismissed]
+  )
+  const dismiss = (entry: GuiSubagentSidebarEntry): void => {
+    if (!entry.helperId || dismissing) return
+    setDismissing(entry.toolUseId)
+    setNotice(null)
+    void dismissGuiSubagentHelper(entry.helperId).then((outcome) => {
+      setDismissing(null)
+      if (outcome.ok) setDismissed((current) => [...current, entry.toolUseId])
+      // Recusa do motor (ficha viva, entrega pronta) e falta de ponte viram
+      // TEXTO ao pé da lista, onde o gesto aconteceu — nunca um clique mudo.
+      else setNotice(outcome.error)
+    })
+  }
   // Antes do retorno vazio: a regra dos hooks não admite chamada condicional —
   // quem desliga o timer é o `active`, não o early return.
   const now = useGuiSubagentClock(entries.some((entry) => entry.status === 'running'))
@@ -133,7 +189,18 @@ export default function GuiSubagentSidebar({
   const clockRef = useRef<Map<string, number> | null>(null)
   if (!clockRef.current) clockRef.current = new Map()
   const clock = clockRef.current
-  if (entries.length === 0) return null
+  if (entries.length === 0) {
+    // SEÇÃO VAZIA NÃO EXISTE NESTE DOCK. Quando o card ainda está no anel (a
+    // ficha veio de uma geração anterior do app e ninguém mais reescreve aquele
+    // card), quem conta a frota lá fora ainda a conta — então o corpo da seção
+    // diz o que aconteceu, em vez de ficar em branco sob um cabeçalho. Com o
+    // anel em dia o card some sozinho e a seção inteira fecha, como sempre.
+    return derived.length > 0 ? (
+      <p className="gui-subagent-note quiet" role="status">
+        // ficha descartada
+      </p>
+    ) : null
+  }
   return (
     <aside className="gui-subagent-sidebar" aria-label="Subagentes desta conversa">
       <header className="gui-subagent-sidebar-head">
@@ -155,9 +222,18 @@ export default function GuiSubagentSidebar({
             key={entry.id}
             entry={entry}
             elapsedMs={guiSubagentElapsedMs(entry, now, clock)}
+            dismissing={dismissing === entry.toolUseId}
+            onDismiss={() => dismiss(entry)}
           />
         ))}
       </div>
+      {/* A recusa mora ao pé da lista, onde o gesto aconteceu — a mesma régua
+          da linha de arquivo do trilho (`.dr-file-notice`). */}
+      {notice && (
+        <p className="gui-subagent-note" role="status">
+          // {notice}
+        </p>
+      )}
     </aside>
   )
 }

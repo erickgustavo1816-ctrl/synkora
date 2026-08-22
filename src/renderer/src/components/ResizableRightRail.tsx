@@ -317,8 +317,20 @@ export default function ResizableRightRail({
             data-tip={preference.collapsed ? `Mostrar ${label}` : `Ocultar ${label}`}
             onClick={toggleCollapsed}
           >
+            {/* RODADA 2 DO DOCK (2026-08-22): o chevron dizia uma DIREÇÃO; este
+                ícone diz o PAINEL — a moldura da tela com a divisória interna,
+                no idioma que o dono já conhece do "toggle panel" do VS Code. E
+                o estado é FORMA antes de cor: a fatia da direita está PINTADA
+                enquanto o trilho está aberto e fica OCA quando ele fecha. */}
             <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d={preference.collapsed ? 'm10 3.75-4 4.25 4 4.25' : 'm6 3.75 4 4.25-4 4.25'} />
+              <rect x="1.75" y="3" width="12.5" height="10" rx="1.6" />
+              <path d="M10 3v10" />
+              {!preference.collapsed && (
+                <path
+                  className="right-rail-toggle-pane"
+                  d="M10 3h2.65a1.6 1.6 0 0 1 1.6 1.6v6.8a1.6 1.6 0 0 1-1.6 1.6H10z"
+                />
+              )}
             </svg>
           </button>
         </>

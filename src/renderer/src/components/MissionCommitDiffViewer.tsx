@@ -176,14 +176,25 @@ function FileSection({
  * A janela em si. Ela é DONA do Esc enquanto está de pé (`role="dialog"` +
  * `.overlay` são exatamente o que o `guiEscape` procura antes de mandar o Esc
  * para o chat), devolve o foco a quem a abriu e nunca deixa o Tab escapar.
+ *
+ * DUAS MOLDURAS, UMA JANELA (rodada 2 do dock, 2026-08-22): o miolo — índice,
+ * teto de render, cores, `@@` — é o mesmo para tudo que é patch. Só o RETRATO
+ * do cabeçalho muda: um COMMIT tem assunto, sha, autor e data; um ARQUIVO do
+ * worktree tem caminho e natureza da mudança. Quem lê o patch é sempre quem
+ * chama (esta superfície nunca toca em ponte nenhuma: ela desenha).
  */
 export default function MissionCommitDiffViewer({
   commit,
+  file,
   summary,
   focusPath,
   onClose
 }: {
-  commit: MissionCommit
+  /** VARIANTE COMMIT (histórico da missão): o retrato do commit no cabeçalho. */
+  commit?: MissionCommit
+  /** VARIANTE ARQUIVO (±placar do TRABALHO): o caminho é o título, e a `note`
+   *  é a natureza da mudança ("alterado", "novo"…). Um dos dois sempre vem. */
+  file?: { path: string; note?: string }
   summary: CommitDiffSummary
   /** Arquivo que o clique no trilho pediu: abre e rola até ele. */
   focusPath?: string
@@ -295,11 +306,22 @@ export default function MissionCommitDiffViewer({
             <i />
           </span>
           <span className="cdv-heading">
-            <strong id={titleId}>{commit.subject || '(sem assunto)'}</strong>
+            <strong id={titleId}>
+              {commit ? commit.subject || '(sem assunto)' : (file?.path ?? '(sem arquivo)')}
+            </strong>
             <span className="cdv-meta">
-              <code data-tip={`SHA completo: ${commit.sha}`}>{commit.sha.slice(0, 12)}</code>
-              <span>{commit.author || 'autor do Git'}</span>
-              <time dateTime={commit.at}>{formatFullDate(commit.at)}</time>
+              {commit ? (
+                <>
+                  <code data-tip={`SHA completo: ${commit.sha}`}>{commit.sha.slice(0, 12)}</code>
+                  <span>{commit.author || 'autor do Git'}</span>
+                  <time dateTime={commit.at}>{formatFullDate(commit.at)}</time>
+                </>
+              ) : (
+                <>
+                  {file?.note && <span>{file.note}</span>}
+                  <span>diff da branch desta missão contra a base</span>
+                </>
+              )}
               <span className="cdv-readonly">somente leitura</span>
             </span>
           </span>

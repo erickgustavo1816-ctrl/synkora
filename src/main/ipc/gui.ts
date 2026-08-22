@@ -64,6 +64,7 @@ import { dirname, join } from 'node:path'
 import { guiMissionRoleOf, missionShortId, planApprovedReceipt } from '../guiMissionContracts'
 import { notifyDesktop } from '../desktopNotifications'
 import { GuiPaneVisibilityRegistry, GuiWindowReadyController } from '../guiWindowReady'
+import type { GuiHelperOwnerDismissResult } from '../guiHelperSessions'
 import type { GuiAlertPayload, GuiNoticeKind } from '../guiNotices'
 import {
   GuiFileResolver,
@@ -81,9 +82,17 @@ import { rearmGuiPaneTools } from '../guiPlannerArm'
 import type { MainContext } from '../mainContext'
 import { GuiWorkspaceFileIndex, type GuiWorkspaceFilesResult } from '../guiWorkspaceFiles'
 
-/** Só o que o TEARDOWN precisa saber do motor de ajudantes sem aba. */
+/** Só o que o TEARDOWN — e agora o ✕ do dono — precisam saber do motor de
+ *  ajudantes sem aba. */
 export interface GuiHelperLifecycle {
   cancelPane(paneId: string, reason?: string): number
+  /**
+   * O ✕ DA FROTA (R27F3): o descarte de UM ajudante parado, pedido pelo dono na
+   * ficha da lateral. Opcional porque esta costura tem de continuar montando com
+   * um motor mínimo (as bancadas passam só o `cancelPane`) — ausente, o canal
+   * recusa com receita em vez de fingir que descartou.
+   */
+  ownerDismiss?(helperId: string): GuiHelperOwnerDismissResult
 }
 
 export interface GuiIpcExtras {
@@ -474,6 +483,47 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
       return registry.setDelegationDefaults(paneId, patch)
     }
   )
+
+  /**
+   * O ✕ DA FROTA (R27F3) — o canal MECÂNICO do dono para descartar um ajudante
+   * INTERROMPIDO, do mockup aprovado (docs/mockups/rightdock-2.html, FROTA).
+   *
+   * Ele desemboca no MESMO descarte do `helper_cancel` do agente (o motor decide
+   * tudo em `ownerDismiss`, que chama o `cancel` de sempre): duas metades da
+   * mesma decisão nunca podem divergir com o tempo. Aqui só há a costura —
+   * validar o que veio do renderer, chamar e carimbar o gesto na caixa-preta.
+   *
+   * SEM paneId de propósito: o `helperId` é a identidade completa do ajudante no
+   * motor, e a cerca por pane do MCP existe para um AGENTE não alcançar a frota
+   * de outro chat. O dono é o orquestrador — a ficha que ele clica está na tela
+   * dele, e o remetente já foi provado acima.
+   */
+  ipcMain.handle('gui:dismissHelper', (e, helperId: unknown): GuiHelperOwnerDismissResult => {
+    extras.assertAppRendererSender(e)
+    if (typeof helperId !== 'string' || !helperId || helperId.length > 256) {
+      return { ok: false, error: 'ficha sem identificador de ajudante' }
+    }
+    const helpers = extras.helpers
+    // A metade do MAIN só chega no restart seguinte (e uma janela sem motor de
+    // ajudantes existe nas bancadas): recusa com RECEITA, nunca um clique mudo.
+    if (!helpers?.ownerDismiss) {
+      return {
+        ok: false,
+        error: 'reinicie o app (npm run dev) para descartar ajudante daqui — esta janela ainda não tem o motor da frota'
+      }
+    }
+    const outcome = helpers.ownerDismiss(helperId)
+    // O gesto do dono é `cat: 'user'` — intervenção manual, e é assim que uma
+    // sessão futura distingue este descarte do `helper_cancel` do agente.
+    blackbox.record({
+      cat: 'user',
+      event: 'gui-helper-owner-dismiss',
+      actor: 'user',
+      ids: { taskId: helperId },
+      detail: outcome.ok ? { state: outcome.state } : { err: outcome.error }
+    })
+    return outcome
+  })
 
   ipcMain.handle(
     'gui:send',

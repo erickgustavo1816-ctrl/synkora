@@ -620,6 +620,22 @@ export interface GuiHelperSpawnOutcome {
 
 export type GuiHelperCommandResult = { ok: true } | { ok: false; error: string }
 
+/**
+ * O ✕ DA FROTA — o desfecho do gesto do DONO (R27F3, mockup rightdock-2).
+ *
+ * Duas maneiras de dar certo, e a diferença importa para quem chamou: `discarded`
+ * = o motor acabou de jogar fora (registro + entrega); `gone` = já não havia nada
+ * para jogar fora — ficha fantasma de um ajudante que o motor não conhece mais
+ * (app reiniciado, registro envelhecido, descarte que já tinha acontecido).
+ *
+ * As duas autorizam a lateral a tirar a linha da tela; só a primeira apagou
+ * alguma coisa. Um `ok:false` seria um beco sem saída para a segunda — o dono
+ * ficaria com uma ficha que ele não tem como remover.
+ */
+export type GuiHelperOwnerDismissResult =
+  | { ok: true; state: 'discarded' | 'gone' }
+  | { ok: false; error: string }
+
 export interface GuiHelperResultView {
   helperId: string
   state: GuiHelperState
@@ -1458,6 +1474,38 @@ export class GuiHelperEngine {
     return { ok: true }
   }
 
+  /**
+   * O ✕ DA FROTA (R27F3) — ordem literal do dono, 2026-08-22: "quando o
+   * subagente deu interrompido, eu quero algum X pra eu tirar dali, porque eu já
+   * entendi". Até aqui só o AGENTE descartava (`helper_cancel` pelo MCP); este é
+   * o canal MECÂNICO do dono para a mesma decisão.
+   *
+   * Ele NÃO é um segundo descarte: o trabalho é feito pelo `cancel` acima, o
+   * mesmo do agente — o que muda é a CERCA, porque o gesto é outro. Um clique
+   * numa ficha só pode jogar fora quem já parou:
+   *
+   * · TRABALHANDO não se descarta por aqui. O ✕ do dono nasce na ficha PARADA, e
+   *   uma ficha viva na tela é sempre o botão errado — quem para a frota viva é o
+   *   ■ da conversa, que interrompe PRESERVANDO. A recusa nomeia esse caminho;
+   * · quem já ENTREGOU também não: apagar a entrega é apagar o produto do
+   *   trabalho (a mesma régua do `cancel`, dita na voz do dono);
+   * · ajudante que o motor NÃO CONHECE mais devolve `gone` em vez de erro. O
+   *   card mora no anel da conversa e sobrevive ao processo: depois de um
+   *   restart (ou de um descarte que já aconteceu) a ficha na tela é história, e
+   *   recusá-la deixaria o dono preso a uma linha que ele não tem como tirar.
+   */
+  ownerDismiss(helperId: string): GuiHelperOwnerDismissResult {
+    this.sweep()
+    const live = this.helpers.get(helperId)
+    if (!live) return { ok: true, state: 'gone' }
+    const state = live.record.state
+    // Já descartado é o MESMO destino que o dono está pedindo: idempotente.
+    if (state === 'cancelled') return { ok: true, state: 'gone' }
+    if (!isGuiHelperResumable(state)) return { ok: false, error: ownerDismissRefusal(state) }
+    const outcome = this.cancel(helperId, GUI_HELPER_OWNER_DISMISS_REASON)
+    return outcome.ok ? { ok: true, state: 'discarded' } : outcome
+  }
+
   /** Dispose do pane delegador: os ajudantes dele morrem junto. Os REGISTROS
    *  ficam — a lateral continua mostrando o desfecho de cada card. */
   cancelPane(paneId: string, reason?: string): number {
@@ -2136,6 +2184,32 @@ function notResumable(state: GuiHelperState): string {
 const RESUME_WITHOUT_CONVERSATION =
   'este ajudante parou antes de o CLI anunciar o endereço da conversa dele: não há de onde retomar. ' +
   'Descarte com helper_cancel e abra outro com delegate, repetindo o briefing.'
+
+/** O motivo que fica no registro e no diário quando o descarte veio do ✕. Ele
+ *  nomeia QUEM decidiu: uma auditoria futura precisa distinguir o gesto do dono
+ *  do `helper_cancel` do agente, e os dois passam pelo mesmo caminho. */
+export const GUI_HELPER_OWNER_DISMISS_REASON = 'descartado pelo dono no ✕ da frota'
+
+/**
+ * A recusa do ✕, na voz do DONO (nunca a do agente): ela nomeia a alavanca que
+ * ele tem na mão, e não uma tool de MCP que ele não chama. Beco sem saída é bug
+ * — toda recusa aqui aponta para o gesto que resolve.
+ */
+function ownerDismissRefusal(state: GuiHelperState): string {
+  if (state === 'spawning' || state === 'working') {
+    return (
+      'este ajudante ainda está TRABALHANDO — o ✕ só descarta quem já parou. ' +
+      'Interrompa a frota no ■ da conversa (ela para preservando) e então descarte a ficha parada.'
+    )
+  }
+  if (state === 'done') {
+    return (
+      'este ajudante já ENTREGOU — descartar apagaria a entrega dele, que é o produto do ' +
+      'trabalho. Leia a entrega pelo arquivo citado na ficha.'
+    )
+  }
+  return `este ajudante já encerrou (${state}) — não há entrega parcial nem conversa a jogar fora.`
+}
 
 function cancelReason(reason?: string): string {
   const clean = typeof reason === 'string' ? reason.trim() : ''

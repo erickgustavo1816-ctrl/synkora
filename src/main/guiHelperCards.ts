@@ -1003,7 +1003,20 @@ export class GuiHelperCardCorrelator {
     const state = this.panes.get(record.delegatorPaneId)
     const batchId = state?.batchOfHelper.get(record.helperId)
     const batch = state && batchId ? state.batches.get(batchId) : undefined
-    if (!state || !batch) return
+    if (!state || !batch) {
+      // A FROTA QUE VOLTOU DO DISCO (R27F3): o correlacionador nasce vazio com
+      // o processo, mas o CARD do ajudante voltou no anel e continua na
+      // lateral. Um desfecho TERMINAL precisa alcançá-lo — senão o descarte
+      // (✕ do dono ou helper_cancel do agente) apaga registro e entrega no
+      // motor e deixa a ficha "interrompido" na tela para sempre. O id cai no
+      // padrão `helper:<helperId>` — certo para a primeira vida; a vida N de
+      // um retomado pré-restart exigiria persistir `cardOfHelper` (outra
+      // rodada). Estado vivo sem lote segue mudo: não é desfecho de ninguém.
+      if (isGuiHelperTerminal(record.state)) {
+        this.deps.emit(record.delegatorPaneId, guiHelperSettledEvent(record))
+      }
+      return
+    }
     const cardId = state.cardOfHelper.get(record.helperId)
     if (!batch.live.delete(record.helperId)) {
       // DESCARTE DE UM INTERROMPIDO (R6.2): ele já saiu do `live` quando parou,

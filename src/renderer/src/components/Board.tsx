@@ -44,7 +44,6 @@ import {
 import { missionGui, type MissionGuiRole } from '../missionGui'
 import { GuiRequestEpoch, withoutMissionGuiSlots } from '../guiRequestEpoch'
 import GuiSeatPick from './GuiSeatPick'
-import { missionShell } from '../missionShell'
 import { projectLanding } from '../projectLanding'
 import { plansApi } from '../plansApi'
 import type { PlanView } from '../planContract'
@@ -570,18 +569,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     setMissionGuiActive((prev) => ({ ...prev, [missionId]: spawn.paneId }))
   }
 
-  /** Terminal CRU no worktree da missão (trilho de entrega → "▷ terminal").
-   *  F3-c3: TODO nascimento de pane viaja por evento do main — o handler do
-   *  `missions:shellSpec` já transmitiu `panes:open-free` e o store montou a
-   *  lista. Aqui NÃO se chama addPane (seria uma segunda entrada do mesmo
-   *  pane): ONDA D — o terminal nasce como SLOT desta coluna e o efeito de
-   *  foco automático já o coloca no ar. */
-  async function openMissionShell(missionId: string): Promise<void> {
-    const res = await missionShell.spec(missionId)
-    if (!res.ok || !res.spec) {
-      setMissionMsg(res.error ?? 'não deu para abrir o terminal desta missão')
-    }
-  }
+  // O TERMINAL CRU do worktree (o antigo "▷ terminal" do trilho) saiu daqui na
+  // rodada 2 do dock (2026-08-22): ordem do dono — "o único que tem necessidade
+  // é o terminal de teste". O canal `missions:shellSpec` continua de pé no
+  // main, dormente; o que morreu foi a alavanca e a costura que a servia.
 
   /** Guarda o modo de permissão que o dono escolheu NO CHAT (onda D). O motor
    *  também persiste do lado dele; aqui é para o slot remontado nascer com a
@@ -1340,7 +1331,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
             queueRows={integrationRows}
             guiAvailable={missionGui.available()}
             reviewReady={reviewReady}
-            shellAvailable={missionShell.available()}
             subagentItems={directGui?.items ?? []}
             testServerOpen={panes.some((p) => p.testServer && p.missionId === selMission.id)}
             reloadToken={railReload}
@@ -1348,7 +1338,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
             activityToken={railActivity}
             onIntegrate={() => void onIntegrate()}
             onReview={() => void nudgeReview()}
-            onTerminal={() => void openMissionShell(selMission.id)}
             onTestServer={() => setTestServerOpen(true)}
             onKillTestServer={() => {
               const testPane = panes.find((p) => p.testServer && p.missionId === selMission.id)

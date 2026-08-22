@@ -58,10 +58,19 @@ export default function ReleaseRail({
 
   return (
     <section className="release-rail dock" aria-label="Release da versão">
+      {/* RODADA 2 (mockup rightdock-2, header V1): a moldura passou a ter DUAS
+          linhas — o tipo em cima, com o ⋮⋮ do pega de largura, e o NOME DA
+          VERSÃO inteiro embaixo (o valor completo na dica quando não couber).
+          A subida não tem estado-notícia próprio: quem conta o desfecho é a
+          seção "última subida". */}
       <div className="dock-head">
-        <span className="dock-head-kind">release</span>
-        <span className="dock-head-title">· {versionName ?? 'versão'}</span>
-        <span className="dock-grip" aria-hidden="true">⋮⋮</span>
+        <div className="dock-head-l1">
+          <span className="dock-head-kind">release</span>
+          <span className="dock-grip" aria-hidden="true">⋮⋮</span>
+        </div>
+        <div className="dock-head-title" data-tip={versionName ?? 'versão'}>
+          {versionName ?? 'versão'}
+        </div>
       </div>
 
       <DockSection id="release-subida" title="a subida">

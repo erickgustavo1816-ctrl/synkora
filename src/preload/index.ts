@@ -13,6 +13,9 @@ import type {
   GuiQueuedDeliveryInput,
   GuiResult
 } from '../main/guiSessions'
+/** O ✕ da frota (R27F3) — contrato do MOTOR, importado direto: o descarte do
+ *  dono e o do agente respondem a mesma coisa, e uma cópia aqui divergiria. */
+import type { GuiHelperOwnerDismissResult } from '../main/guiHelperSessions'
 import type { SessionEvent } from '../main/maestroSession'
 import type {
   GuiAttachPayload,
@@ -91,6 +94,9 @@ export type {
   GuiQueuedDeliveryInput,
   GuiResult
 }
+/** O ✕ da frota (R27F3): o renderer lê o desfecho do descarte do dono pela
+ *  MESMA declaração do motor — sem espelho para desencontrar. */
+export type { GuiHelperOwnerDismissResult }
 export type { GuiAlertPayload }
 export type { GuiFileChoice, GuiFileOpenResult, GuiFilePreview }
 /** Saída do arquivo CITADO NO FIO para fora do app (rodada 7, C1 — metade do
@@ -933,6 +939,12 @@ const api = {
     ): Promise<GuiResult> =>
       ipcRenderer.invoke('gui:answerPlanProposal', paneId, requestId, approve, text),
     // ————— fim do BLOCO NOVO —————
+    /** O ✕ DA FROTA (R27F3): o dono descarta uma ficha de ajudante PARADA — o
+     *  mesmo descarte do `helper_cancel` do agente (a conversa interrompida e a
+     *  entrega parcial vão junto). `state: 'gone'` = o motor já não conhecia
+     *  aquele ajudante e a ficha é história; a lateral tira a linha nos dois. */
+    dismissHelper: (helperId: string): Promise<GuiHelperOwnerDismissResult> =>
+      ipcRenderer.invoke('gui:dismissHelper', helperId),
     interrupt: (paneId: string): Promise<GuiResult> =>
       ipcRenderer.invoke('gui:interrupt', paneId),
     kill: (paneId: string): Promise<GuiResult> => ipcRenderer.invoke('gui:kill', paneId),

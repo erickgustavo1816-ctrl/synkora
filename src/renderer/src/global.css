@@ -5320,29 +5320,73 @@ body.pane-docking .pane-bar.draggable {
   overflow: hidden;
 }
 
+/* HEADER V1 (rodada 2, 2026-08-22 — o dono escolheu esta variação): DUAS
+   linhas. A de cima é só forma — o TIPO, a notícia de estado quando existe e o
+   ⋮⋮ do pega de largura; a de baixo é o TÍTULO inteiro, com peso, porque é ele
+   que responde "onde eu estou". Numa linha só o título disputava espaço com os
+   controles e o chip bordado do estado quebrava em duas — o que o dono chamou
+   de feio. Medidas lidas de docs/mockups/rightdock-2.html (.head2). */
 .dock-head {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  flex-direction: column;
+  gap: 1px;
   min-width: 0;
-  padding: 8px 12px;
+  padding: 8px 12px 9px;
   border-bottom: 1px solid var(--line);
+}
+
+.dock-head-l1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   font-size: 10px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--ink-3);
 }
 
 .dock-head-kind {
-  font-weight: 700;
+  flex: none;
+  white-space: nowrap;
 }
 
-.dock-head-title {
+/* Só estado-NOTÍCIA chega aqui ("em andamento" é o padrão e mora na coluna):
+   PALAVRA colorida, nunca pastilha — a borda é que quebrava a linha.
+   Ela é a ÚNICA da linha 1 que encolhe: com `flex: none` aqui, "INTEGRANDO
+   AGORA" num trilho de 204px estourava a caixa e empurrava o ⋮⋮ para debaixo do
+   botão de recolher (medido no harness). O TIPO é a identidade e não cede; a
+   notícia corta com reticências e a dica guarda a palavra inteira. */
+.dock-head-state {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: 2px;
+  letter-spacing: 0.04em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: 0.06em;
-  color: var(--ink-2);
+}
+
+.dock-head-state.integrando {
+  color: var(--accent);
+}
+
+.dock-head-state.concluida {
+  color: var(--ok);
+}
+
+.dock-head-state.arquivada {
+  color: var(--ink-3);
+}
+
+.dock-head-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
 }
 
 .dock-grip {
@@ -5479,9 +5523,9 @@ body.pane-docking .pane-bar.draggable {
   padding-right: 8px;
 }
 
-/* O chip ABRAÇA o texto: os fatos da entrega empilham numa coluna, e sem o
-   `align-self` ele esticaria de ponta a ponta do trilho — uma caixa vazia com
-   duas palavras no canto, nada parecido com a pastilha do mockup. */
+/* O chip ABRAÇA o texto: o `align-self` sobrevive porque a mesma pastilha
+   pode nascer fora de uma fileira — sem ele esticaria de ponta a ponta do
+   trilho, uma caixa vazia com duas palavras no canto. */
 .dock-chip {
   align-self: flex-start;
   font-size: 10px;
@@ -5500,14 +5544,46 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ok);
 }
 
-.dr-facts-sub {
-  font-size: 10.5px;
+/* A ENTREGA COMPOSTA (rodada 2, mockup rightdock-2 `.row`/`.fine`): a branch e
+   o chip dividem UMA linha — o chip empurrado para a direita — e a base e a
+   versão dividem a linha fina de baixo. Classes PRÓPRIAS de propósito:
+   `.dr-facts` é a coluna do PLANEJAMENTO, e torcê-la para virar fileira
+   quebraria a única linha daquela caixa. */
+.dr-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.dr-row .dr-branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dr-row .dock-chip {
+  margin-left: auto;
+  flex: none;
+  align-self: auto;
+}
+
+.dr-fine {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--ink-3);
 }
 
 /* `base: version/5e846dd0-…-0b1e9eb12357` é um UUID inteiro numa coluna de
-   176px: ele CORTA aqui (a régua não fica só herdada de `.dr-facts > span`,
-   porque é ESTA linha que estoura) e o valor completo fica na dica do span. */
+   176px: o corte pelo MEIO é do componente (as duas pontas identificam a
+   branch), e esta régua é o cinto para o que ainda estourar. O valor completo
+   fica na dica do span. */
 .dr-base {
   min-width: 0;
   overflow: hidden;
@@ -5515,23 +5591,62 @@ body.pane-docking .pane-bar.draggable {
   white-space: nowrap;
 }
 
-.dr-file-wrap {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+.dr-version {
+  margin-left: auto;
+  flex: none;
+  white-space: nowrap;
 }
 
-.dr-file.open {
+/* A LINHA de arquivo do TRABALHO (mockup `.file`): a linha inteira é a área do
+   gesto de LEITURA e o ±placar mora nela, encostado à direita, como alavanca
+   própria do diff. Sem caixa em volta da lista — é o mockup. */
+.dr-file-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.dr-file-wrap:hover {
   background: var(--paper);
-  border-color: var(--line);
+}
+
+/* a linha que está aberta no leitor de papel se identifica sem caixa nova */
+.dr-file.open {
+  color: var(--ink);
+  font-weight: 700;
 }
 
 .dr-file-delta {
+  flex: none;
   margin-left: auto;
   display: flex;
   gap: 5px;
-  font-size: 10px;
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0 4px;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 10.5px;
   white-space: nowrap;
+  cursor: pointer;
+  color: var(--ink-2);
+}
+
+/* o placar PARECE alavanca no hover — é a affordance do mockup (`.delta:hover`) */
+.dr-file-delta:hover {
+  border-color: var(--line-strong);
+  background: var(--card);
+  color: var(--ink);
+}
+
+.dr-file-delta:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 1px;
+  background: var(--card);
 }
 
 .dr-file-delta .add {
@@ -5542,36 +5657,31 @@ body.pane-docking .pane-bar.draggable {
   color: var(--err);
 }
 
-/* O diff inline no idioma term-window: painel escuro, uma linha por span,
-   adição/remoção nos tons AA sobre o escuro (par dos tokens de papel). */
-.dr-inline-diff {
-  display: flex;
-  flex-direction: column;
-  background: var(--panel);
-  border-radius: 7px;
-  padding: 8px 10px;
-  margin: 3px 0 5px;
-  font-size: 10.5px;
-  line-height: 1.55;
-  color: #b8b09c;
-  overflow-x: auto;
+/* Arquivo sem numstat (binário, fora do git) não fica SEM porta para o diff:
+   o placar existe como ± neutro. */
+.dr-file-delta-any {
+  color: var(--ink-3);
 }
 
-.dr-inline-diff .dl {
-  white-space: pre;
-}
-
-.dr-inline-diff .dl.a {
-  color: #7dc794;
-}
-
-.dr-inline-diff .dl.d {
-  color: #e0917e;
-}
-
-.dr-inline-trunc {
-  color: #857f70;
+/* O ±placar fala aqui quando NÃO abre janela: o patch em voo e o "sem
+   diferença contra a base". Recado é frase — ele QUEBRA (o caminho longo
+   quebra em qualquer ponto), nunca vira reticências. */
+.dr-files-note {
+  margin-top: 2px;
+  font-size: 10px;
+  line-height: 1.35;
   font-style: italic;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+/* Os DOIS gestos ditos uma vez, ao pé da lista (mockup `.mini`): o dono acabou
+   de trocar o significado do clique, e a dica de cada linha só aparece no
+   hover. */
+.dr-file-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-2);
 }
 
 /* A lateral factual do chat fica DENTRO do trilho de entrega existente. Ela
@@ -5797,26 +5907,9 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink-2);
 }
 
-.dr-status {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--line-strong);
-  color: var(--ink-2);
-  background: rgba(255, 255, 255, 0.4);
-}
-
-.dr-status.integrando {
-  color: var(--accent-deep);
-  border-color: rgba(217, 108, 63, 0.4);
-}
-
-.dr-status.concluida {
-  color: var(--ok);
-  border-color: rgba(62, 155, 95, 0.42);
-}
+/* `.dr-status` (a pastilha bordada do estado no cabeçalho) morreu na rodada 2:
+   no header V1 o estado é PALAVRA na linha 1 (`.dock-head-state`), e só quando
+   é notícia — era a borda dela que quebrava em duas linhas no trilho estreito. */
 
 /* ---------- DIFF VIVO DA BRANCH (onda D) ----------
    A pergunta que precede todo ⇪ ("o que mudou aí?") respondida na própria
@@ -5865,16 +5958,17 @@ body.pane-docking .pane-bar.draggable {
   color: var(--accent-deep);
 }
 
+/* RODADA 2: a lista perdeu a caixa (borda + fundo + padding). O mockup mostra
+   os arquivos soltos no corpo da seção — a caixa era mais uma moldura dentro da
+   moldura do dock. O teto de altura fica: 60 arquivos não empurram a FROTA para
+   fora da tela. */
 .dr-files {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
   max-height: 220px;
   overflow-y: auto;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.36);
 }
 
 .dr-files-empty {
@@ -5888,7 +5982,7 @@ body.pane-docking .pane-bar.draggable {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-family: var(--mono);
   color: var(--ink-2);
   cursor: default;
@@ -6686,9 +6780,10 @@ body.pane-docking .pane-bar.draggable {
   white-space: nowrap;
 }
 
+/* peso normal desde a rodada 2: o mockup escreve a branch em texto corrido, e o
+   600 disputava atenção com o título de 700 duas linhas acima */
 .dr-branch {
   color: var(--ink-2);
-  font-weight: 600;
 }
 
 /* Trilho da missão de PLANEJAMENTO: no lugar de branch/base/diff entra a
@@ -8277,40 +8372,55 @@ body.pane-docking .pane-bar.draggable {
     visibility var(--right-rail-motion, var(--motion-base)) linear;
 }
 
+/* RODADA 2 DO DOCK: o botão é GHOST e senta NA linha 1 do header em vez de
+   flutuar como uma caixinha por cima do texto. O `top` é a conta da moldura,
+   conferida no harness: 1,5px de borda do dock + 8px do padding do `.dock-head`
+   + metade da linha 1 (12,8px), menos metade dos 18px da caixa ⇒ 6,9px. O
+   `right` fica onde estava — é ele que a linha 1 respeita com o próprio
+   padding (regra abaixo), deixando o ⋮⋮ a uma folga de ~7px. */
 .right-rail-toggle {
   position: absolute;
   z-index: 5;
-  top: 10px;
+  top: 7px;
   right: 12px;
   display: grid;
   width: 18px;
   height: 18px;
   place-items: center;
   padding: 0;
-  border: 1px solid var(--line-strong);
+  border: 0;
   border-radius: 4px;
-  background: var(--card);
+  background: transparent;
   color: var(--ink-3);
   cursor: pointer;
-  transition:
-    color var(--motion-fast) ease,
-    background var(--motion-fast) ease;
+  transition: color var(--motion-fast) ease;
 }
 
 .right-rail-toggle svg {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.4;
+  stroke-width: 1.2;
+}
+
+/* A FATIA do painel: cheia com o trilho aberto, ausente com ele fechado — o
+   estado se lê pela FORMA. O `fill: none` do svg desceria até aqui. */
+.right-rail-toggle svg .right-rail-toggle-pane {
+  fill: currentColor;
+  stroke: none;
 }
 
 .right-rail-toggle:hover {
-  border-color: var(--ink-2);
-  background: var(--paper);
   color: var(--ink);
+}
+
+/* O botão FLUTUA sobre a linha 1 do dock (ele mora no trilho, não no dock):
+   sem este respiro o ⋮⋮ do pega de largura ficaria debaixo dele. */
+.right-rail-content > .dock > .dock-head > .dock-head-l1 {
+  padding-right: 22px;
 }
 
 .right-rail-toggle:focus-visible,
@@ -20295,42 +20405,39 @@ details.gui-error-line {
    · nada se mexe. O que informa é forma e tom, como no resto do papel. */
 
 /* O item da entrega virou <button>: o reset é mínimo de propósito, porque a
-   régua de fonte/cor/elipse continua na regra original de `.dr-file`. */
+   régua de fonte/cor/elipse continua na regra original de `.dr-file`.
+   RODADA 2: quem pinta o hover é a LINHA inteira (`.dr-file-wrap`), porque o
+   ±placar ao lado é um segundo botão dentro dela — este aqui é só o gesto de
+   leitura, sem caixa própria. */
 .dr-file {
-  width: 100%;
+  flex: 1 1 auto;
   appearance: none;
-  padding: 1px 3px;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  padding: 0;
+  border: 0;
   background: transparent;
   text-align: left;
   cursor: pointer;
 }
 
 .dr-file:hover {
-  border-color: var(--line-strong);
-  background: rgba(255, 255, 255, 0.7);
   color: var(--ink);
 }
 
 .dr-file:focus-visible {
-  outline: none;
-  border-color: var(--ink);
-  background: rgba(255, 255, 255, 0.7);
+  outline: 1px solid var(--ink);
+  outline-offset: 2px;
   color: var(--ink);
 }
 
 /* Apagado nesta branch: continua legível (é informação do diff), só não é
-   gesto — e a dica no hover explica por quê, que é o motivo de não usar
-   `disabled` aqui. */
+   gesto de LEITURA — e a dica no hover explica por quê, que é o motivo de não
+   usar `disabled` aqui. O ±placar da linha continua abrindo o diff. */
 .dr-file[aria-disabled='true'] {
   cursor: default;
   color: var(--ink-3);
 }
 
 .dr-file[aria-disabled='true']:hover {
-  border-color: transparent;
-  background: transparent;
   color: var(--ink-3);
 }
 
@@ -20504,3 +20611,78 @@ details.gui-error-line {
   color: var(--accent);
 }
 /* ————— fim do BLOCO NOVO do toggle fast ————— */
+
+/* ————— BLOCO NOVO: o ✕ da FROTA (R27F3 — mockup rightdock-2, seção FROTA) —————
+   Ordem do dono: "quando o subagente deu interrompido, eu quero algum X pra eu
+   tirar dali, porque eu já entendi". O mockup aprovado põe a saída no CANTO da
+   ficha, e os valores abaixo são os dele, verbatim: ghost (sem borda, sem
+   fundo), ink-3 em 11px, e o vermelho do descarte só no hover — a ficha parada
+   continua sem nenhum vermelho enquanto ninguém aponta para ela.
+   `align-self: start` é o que o encosta no topo da fileira (o canto do mockup);
+   `flex: none` mantém o glifo inteiro quando o trilho encolhe a 176px, onde
+   quem cede espaço é o NOME, e só ele. */
+/* A FILEIRA DO TOPO PASSA A QUEBRAR — precedente literal do dock (`.dock-acts`:
+   "ela QUEBRA em vez de cuspir ícone para fora da moldura — o trilho vai a
+   176px no piso"). Medido nesta rodada num harness com o global.css real: com o
+   ✕ na linha e o nome sem piso, o nome do ajudante caía a 13px no piso de 176px
+   — identidade nenhuma. Com o piso de 5ch, a linha quebra em vez de esmagar o
+   nome (176px: o nome ganha ~99px e o estado desce com o ✕; 204px e 340px
+   continuam numa linha só, como no mockup). */
+.gui-subagent-row-head {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.gui-subagent-row-head strong {
+  min-width: 5ch;
+}
+
+.gui-subagent-row-dismiss {
+  flex: none;
+  margin-left: auto;
+  align-self: start;
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.gui-subagent-row-dismiss:hover {
+  color: var(--err);
+}
+
+/* O anel de 2px do papel; `offset: 1px` porque a fileira é apertada e o de 2px
+   encostaria no cronômetro ao lado. */
+.gui-subagent-row-dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+  color: var(--err);
+}
+
+/* Descarte em voo: o clique já foi, o motor ainda não respondeu. Esmaecer é o
+   suficiente — nada de rótulo novo numa ficha que mede 12px de altura. */
+.gui-subagent-row-dismiss:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* A recusa mora AO PÉ DA LISTA, onde o gesto aconteceu — mesmas medidas da
+   linha de recusa do trilho (`.dr-file-notice`), que é a régua desta casa. */
+.gui-subagent-note {
+  margin: 4px 0 0;
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: var(--err);
+  overflow-wrap: anywhere;
+}
+
+/* O recibo do que DEU CERTO não é vermelho: "ficha descartada" é a confirmação
+   do gesto, e pintá-la de erro faria o dono achar que algo quebrou. */
+.gui-subagent-note.quiet {
+  color: var(--ink-3);
+}
+/* ————— fim do BLOCO NOVO do ✕ da frota ————— */

@@ -1,5 +1,9 @@
 import type { GuiItem } from './store'
 import type { GuiToolItem } from './guiToolPresentation'
+/** O ✕ da frota (R27F3) lê o desfecho do descarte pela declaração do MOTOR —
+ *  o preload reexporta o tipo justamente para não existir uma segunda verdade
+ *  sobre a mesma resposta. Import de TIPO: nada de Electron atravessa daqui. */
+import type { GuiHelperOwnerDismissResult } from '../../preload/index'
 
 /**
  * Metadados que o protocolo pode trazer no input da ferramenta de delegação.
@@ -58,6 +62,10 @@ export interface GuiSubagentSidebarEntry {
   fast?: boolean
   seat: string | null
   cli: string | null
+  /** Identidade do ajudante no MOTOR (`null` no caminho NATIVO aposentado, que
+   *  nunca teve ajudante nenhum lá). É por ela que o ✕ da ficha fala com o
+   *  descarte — e é a ausência dela que impede um botão morto de nascer. */
+  helperId: string | null
   task: string
   activity: string | null
   status: GuiSubagentSidebarTone
@@ -504,6 +512,7 @@ export function guiSubagentSidebarEntries(
       ...(metadata?.fast ? { fast: true } : {}),
       seat: metadata?.seat ?? null,
       cli: metadata?.cli ?? null,
+      helperId: metadata?.helperId ?? null,
       task: taskFor(parent),
       // "agora" é presente do indicativo: ajudante parado não tem atividade em
       // curso. O terminal do card já fecha a árvore dele no redutor, mas um
@@ -517,6 +526,91 @@ export function guiSubagentSidebarEntries(
       at: parent.at
     }
   })
+}
+
+// ————— O ✕ DA FROTA (R27F3, mockup rightdock-2 §FROTA) —————
+//
+// Ordem literal do dono (2026-08-22): "quando o subagente deu interrompido, eu
+// quero algum X pra eu tirar dali, porque eu já entendi". Até aqui só o AGENTE
+// descartava (`helper_cancel` pelo MCP); o ✕ vira o canal MECÂNICO do dono para
+// a MESMA decisão — e o mockup é explícito: descartar joga fora, a entrega
+// parcial vai junto, e a dica avisa.
+
+/** A DICA, e ela promete o preço inteiro: quem lê "✕" sem isto pensaria em
+ *  "esconder da lista". O nome do verbo do agente entra de propósito — é o que
+ *  liga o gesto do dono ao que a conversa já sabe fazer. */
+export const GUI_SUBAGENT_DISMISS_TIP =
+  'descarta o ajudante — a conversa interrompida e a entrega parcial somem ' +
+  '(mesmo efeito do helper_cancel do agente)'
+
+/** A metade do MAIN só chega no restart seguinte: enquanto a ponte não existe,
+ *  o clique NOMEIA a receita em vez de não fazer nada. Padrão da casa (ver
+ *  `missionHistory`, `guiFileContextMenu`). */
+export const GUI_SUBAGENT_DISMISS_NO_BRIDGE =
+  'reinicie o app (npm run dev) para descartar ajudante daqui — esta janela ainda não tem a ponte'
+
+/** Resposta sem forma (ponte de outra geração, canal que devolveu lixo) nunca
+ *  vira "descartei": o dono ficaria olhando uma ficha que ele acha que já foi. */
+const DISMISS_WITHOUT_ANSWER =
+  'o app não respondeu se o ajudante foi descartado — abra o helpers_status pelo chat antes de tentar de novo'
+
+/**
+ * QUEM GANHA O ✕. Duas condições, e as duas são estruturais:
+ *
+ * · o tom tem de ser INTERROMPIDO. Não é a lista de "tudo que não trabalha": é
+ *   o único desfecho que o motor sabe DESCARTAR (`ownerDismiss` →
+ *   `helper_cancel`), porque só ele tem conversa e entrega PARCIAL para jogar
+ *   fora. Quem entregou, falhou ou já foi descartado não volta a ser matéria de
+ *   descarte — e a lateral nem chega a mostrá-los, porque todo desfecho que
+ *   ENCERRA já sai da lista em `guiSubagentSidebarEntries`. Um botão que só
+ *   sabe recusar é pior que botão nenhum;
+ * · tem de haver ajudante no MOTOR (`helperId`). A ficha do caminho NATIVO
+ *   aposentado nunca teve um — botão morto é pior que botão ausente.
+ */
+export function guiSubagentDismissable(entry: {
+  status: GuiSubagentSidebarTone
+  helperId: string | null
+}): boolean {
+  return entry.status === 'interrupted' && Boolean(entry.helperId)
+}
+
+interface GuiSubagentDismissBridge {
+  dismissHelper?(helperId: string): Promise<GuiHelperOwnerDismissResult>
+}
+
+function dismissBridge(): GuiSubagentDismissBridge | undefined {
+  return (window as unknown as { synkora?: { gui?: GuiSubagentDismissBridge } }).synkora?.gui
+}
+
+/**
+ * O CLIQUE. Ele não decide nada: quem descarta é o motor, e a resposta dele
+ * viaja VERBATIM até a lateral — é ela que nomeia o estado real do ajudante
+ * quando o descarte não vale (ficha viva, entrega pronta).
+ *
+ * `state: 'gone'` é sucesso: o motor já não conhecia aquele ajudante (o app
+ * reiniciou, o registro envelheceu, o agente já tinha descartado) e a ficha na
+ * tela é história. Recusar ali deixaria o dono preso a uma linha que ele não
+ * teria como tirar — beco sem saída é bug.
+ */
+export async function dismissGuiSubagentHelper(
+  helperId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const api = dismissBridge()
+  if (typeof api?.dismissHelper !== 'function') {
+    return { ok: false, error: GUI_SUBAGENT_DISMISS_NO_BRIDGE }
+  }
+  try {
+    const outcome = await api.dismissHelper(helperId)
+    if (!outcome || typeof outcome !== 'object') {
+      return { ok: false, error: DISMISS_WITHOUT_ANSWER }
+    }
+    if (outcome.ok) return { ok: true }
+    return { ok: false, error: outcome.error || DISMISS_WITHOUT_ANSWER }
+  } catch (error) {
+    // Canal caído tem de VIRAR TEXTO: o clique que some em silêncio é o bug que
+    // esta função existe para não ter.
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 /**

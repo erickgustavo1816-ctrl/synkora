@@ -969,7 +969,7 @@ test('RIGHTDOCK — a moldura: dock-head + três seções com resumo', async () 
   assert.match(css, /\.dock-sec-head \{/u)
 })
 
-test('RIGHTDOCK — trabalho: ± por arquivo e o diff inline num clique', async () => {
+test('RIGHTDOCK — trabalho: ± por arquivo, e o motor do diff por arquivo de pé', async () => {
   const wt = await source('src/main/worktree.ts')
   const summary = wt.slice(wt.indexOf('export function missionWorkspaceSummary'))
   assert.match(
@@ -984,8 +984,11 @@ test('RIGHTDOCK — trabalho: ± por arquivo e o diff inline num clique', async 
   const bridgeSrc = await source('src/renderer/src/missionWorkspace.ts')
   assert.match(bridgeSrc, /fileDiff/u, 'a ponte tipada expõe o diff por arquivo')
 
+  // O GESTO mudou de dono na rodada 2 (bloco no fim do arquivo): a linha LÊ o
+  // documento e o ±placar abre o diff na janela larga. O que fica prendido
+  // aqui é o motor — o canal e a ponte que as duas portas consomem.
   const rail = await source('src/renderer/src/components/MissionDeliveryRail.tsx')
-  assert.match(rail, /onDoubleClick/u, 'duplo clique abre o arquivo; o clique simples vira o diff')
+  assert.match(rail, /missionWorkspace\.fileDiff\(/u, 'o trilho parou de consumir o diff por arquivo')
 })
 
 // ————— RIGHTDOCK ONDA B (2026-08-22) — o release veste a moldura —————
@@ -1261,4 +1264,257 @@ test('CONSERTO — a base com UUID corta na moldura e guarda o valor inteiro na 
   const span = tagWith(rail, 'className="dr-base"')
   assert.match(span, /data-tip=/u, 'a base cortada precisa dizer o valor inteiro na dica')
   assert.match(span, /mission\.baseBranch/u)
+})
+
+// ————— RODADA 2 DO DOCK (2026-08-22, noite) — docs/mockups/rightdock-2.html —
+//
+// O dono escolheu o HEADER V1 (duas linhas) e mandou junto duas ordens faladas:
+// o › de recolher vira ÍCONE DE PAINEL sentado na linha 1, e o clique num
+// arquivo do TRABALHO passa a ABRIR O DOCUMENTO — o diff mudou de porta (mora
+// no ±placar e abre na janela larga do histórico), depois de ele clicar num
+// `.md` e receber uma caixa preta ilegível. Com isso morreram o diff inline, o
+// duplo clique e o ▷ terminal comum ("o único que tem necessidade é o de
+// teste"). O mockup é a LEI da composição: os contratos abaixo são lidos dele.
+
+const dock2 = () => source('docs/mockups/rightdock-2.html')
+
+test('RODADA 2 — o header tem DUAS linhas: o tipo em cima, o título inteiro embaixo', async () => {
+  const [rail, release, css, mockup] = await Promise.all([
+    source('src/renderer/src/components/MissionDeliveryRail.tsx'),
+    source('src/renderer/src/components/ReleaseRail.tsx'),
+    source('src/renderer/src/global.css'),
+    dock2()
+  ])
+  const railCode = withoutComments(rail)
+
+  // O CONTRATO LIDO DO PRÓPRIO MOCKUP (V1 = a variação escolhida).
+  const l1 = mockup.match(/\.head2 \.l1 \{([^}]*)\}/u)?.[1]
+  const t2 = mockup.match(/\.head2 \.title \{([^}]*)\}/u)?.[1]
+  assert.ok(l1 && t2, 'o mockup precisa continuar declarando o header V1')
+  assert.match(l1, /font-size:\s*10px/u)
+  assert.match(l1, /letter-spacing:\s*\.16em/u)
+  assert.match(t2, /font-size:\s*12\.5px/u)
+  assert.match(t2, /font-weight:\s*700/u)
+
+  // ...e a implementação o veste: a moldura EMPILHA as duas linhas.
+  assert.match(cssRule(css, '.dock-head'), /flex-direction:\s*column/u, 'o header voltou a ser de uma linha só')
+  const line1 = cssRule(css, '.dock-head-l1')
+  assert.match(line1, /font-size:\s*10px/u)
+  assert.match(line1, /letter-spacing:\s*0\.16em/u)
+  assert.match(line1, /text-transform:\s*uppercase/u)
+  const line2 = cssRule(css, '.dock-head-title')
+  assert.match(line2, /font-size:\s*12\.5px/u)
+  assert.match(line2, /font-weight:\s*700/u)
+  assert.match(line2, /text-overflow:\s*ellipsis/u)
+  assert.doesNotMatch(line2, /text-transform/u, 'o TÍTULO não é caixa alta — só a linha 1 é')
+
+  // As duas molduras (missão e release) vestem a mesma linha 1, e o título
+  // cortado guarda o valor inteiro na dica.
+  for (const [nome, src] of [
+    ['missão', rail],
+    ['release', release]
+  ]) {
+    assert.match(src, /className="dock-head-l1"/u, `${nome}: a linha 1 do header sumiu`)
+    assert.match(
+      tagWith(src, 'className="dock-head-title"'),
+      /data-tip=/u,
+      `${nome}: o título cortado precisa dizer o inteiro na dica`
+    )
+  }
+  assert.match(release, /dock-head-kind">release/u, 'o release perdeu o TIPO na linha 1')
+  assert.match(release, /dock-head-title" data-tip=\{versionName/u, 'a linha 2 do release é a versão')
+
+  // O ⋮⋮ continua sendo o pega de largura, agora empurrado na linha 1.
+  assert.match(railCode, /className="dock-grip"/u)
+  assert.match(cssRule(css, '.dock-grip'), /margin-left:\s*auto/u)
+})
+
+test('RODADA 2 — só o estado-NOTÍCIA entra no header; "em andamento" nunca', async () => {
+  const [rail, css] = await Promise.all([
+    source('src/renderer/src/components/MissionDeliveryRail.tsx'),
+    source('src/renderer/src/global.css')
+  ])
+  const railCode = withoutComments(rail)
+
+  // O CHIP BORDADO morreu: era ele que quebrava em duas linhas no trilho
+  // estreito — o que o dono chamou de feio.
+  assert.doesNotMatch(railCode, /dr-status/u, 'a pastilha bordada do status voltou ao header')
+
+  // O padrão é SILÊNCIO: a coluna e a seção ENTREGA já contam que a missão anda.
+  assert.match(
+    railCode,
+    /mission\.status === 'ativa'\s*\?\s*null/u,
+    '"em andamento" é o estado padrão: ele nunca vira palavra no header'
+  )
+  // A palavra vem do vocabulário ÚNICO da casa, nunca de uma tabela nova aqui.
+  assert.match(railCode, /STATUS_LABEL\[mission\.status\]/u)
+  const { MISSION_STATUS_LABEL } = await import('../src/renderer/src/missionPresentation.ts')
+  assert.equal(MISSION_STATUS_LABEL.ativa, 'em andamento')
+  assert.equal(MISSION_STATUS_LABEL.integrando, 'integrando agora')
+  assert.equal(MISSION_STATUS_LABEL.concluida, 'integrada')
+  assert.equal(MISSION_STATUS_LABEL.arquivada, 'arquivada')
+
+  // PALAVRA, não pastilha: sem borda; a cor diz qual das três notícias é.
+  const word = cssRule(css, '.dock-head-state')
+  assert.doesNotMatch(word, /border/u, 'a palavra de estado virou chip de novo')
+  assert.match(cssRule(css, '.dock-head-state.integrando'), /var\(--accent\)/u)
+  assert.match(cssRule(css, '.dock-head-state.concluida'), /var\(--ok\)/u)
+  assert.match(cssRule(css, '.dock-head-state.arquivada'), /var\(--ink-3\)/u)
+})
+
+test('RODADA 2 — o recolher virou ÍCONE DE PAINEL, sentado na linha 1', async () => {
+  const [component, css] = await Promise.all([
+    source('src/renderer/src/components/ResizableRightRail.tsx'),
+    source('src/renderer/src/global.css')
+  ])
+
+  // O chevron morreu: ele dizia uma DIREÇÃO, nunca o painel de que se trata.
+  assert.doesNotMatch(component, /m10 3\.75-4 4\.25/u, 'o chevron antigo voltou')
+  assert.doesNotMatch(component, /m6 3\.75 4 4\.25/u)
+
+  // A FORMA carrega o estado (régua da casa): moldura + divisória interna, com
+  // a fatia da direita PINTADA enquanto o trilho está aberto e OCA quando fecha.
+  assert.match(component, /<rect/u, 'a moldura do painel sumiu do ícone')
+  assert.match(
+    component,
+    /!preference\.collapsed && \(?\s*<(?:path|rect)[^>]*right-rail-toggle-pane/u,
+    'a fatia cheia precisa depender do estado — sem isso a forma não diz nada'
+  )
+  assert.match(
+    css,
+    /\.right-rail-toggle svg \.right-rail-toggle-pane\s*\{[\s\S]*?fill:\s*currentColor/u,
+    'a fatia do painel ficou sem tinta (o svg herda fill: none)'
+  )
+
+  // GHOST: o anel de contorno saiu (ele flutuava como um botão por cima do
+  // texto) e o hover é TINTA. A caixa desce para a altura da linha 1.
+  const toggle = cssRule(css, '.right-rail-toggle')
+  assert.match(toggle, /border:\s*0/u, 'o anel de contorno do botão voltou')
+  assert.match(toggle, /top:\s*7px/u, 'o botão precisa sentar na linha 1 do header')
+  assert.match(cssRule(css, '.right-rail-toggle:hover'), /color:\s*var\(--ink\)/u)
+  // ...e o ⋮⋮ do header não pode acabar DEBAIXO dele.
+  assert.match(
+    css,
+    /\.right-rail-content > \.dock > \.dock-head > \.dock-head-l1\s*\{[\s\S]*?padding-right:/u,
+    'a linha 1 precisa do respiro do botão flutuante'
+  )
+
+  // O contrato de acessibilidade não se mexe.
+  assert.match(component, /aria-expanded=\{!preference\.collapsed\}/u)
+  assert.match(component, /aria-label=\{preference\.collapsed \?/u)
+  assert.match(component, /data-tip=\{preference\.collapsed \?/u)
+  assert.match(css, /\.right-rail-toggle:focus-visible/u)
+})
+
+test('RODADA 2 — a ENTREGA é composta: branch e chip na MESMA linha, base e ◈ na fina', async () => {
+  const [rail, css, mockup] = await Promise.all([
+    source('src/renderer/src/components/MissionDeliveryRail.tsx'),
+    source('src/renderer/src/global.css'),
+    dock2()
+  ])
+  const railCode = withoutComments(rail)
+
+  // Contrato do mockup: o chip é EMPURRADO para a direita, na mesma fileira —
+  // é o que matou a sobra que o dono viu.
+  const chip = mockup.match(/\n {2}\.chip \{([^}]*)\}/u)?.[1]
+  assert.ok(chip, 'o mockup precisa continuar declarando o chip da entrega')
+  assert.match(chip, /margin-left:\s*auto/u)
+  assert.match(chip, /flex:\s*none/u)
+
+  // A fileira ganhou CLASSE PRÓPRIA: `.dr-facts` é a coluna do PLANEJAMENTO, e
+  // torcê-la quebraria a única linha daquela caixa.
+  assert.match(railCode, /className="dr-row"/u, 'a fileira da entrega não existe')
+  assert.doesNotMatch(
+    railCode,
+    /className="dr-facts"/u,
+    'a entrega voltou a torcer a classe compartilhada do planejamento'
+  )
+  assert.match(railCode, /dr-facts dr-planning/u, 'o planejamento perdeu a coluna dele')
+  const row = cssRule(css, '.dr-row')
+  assert.match(row, /display:\s*flex/u)
+  assert.match(row, /align-items:\s*center/u)
+  assert.match(row, /font-size:\s*11\.5px/u)
+  const rowChip = cssRule(css, '.dr-row .dock-chip')
+  assert.match(rowChip, /margin-left:\s*auto/u)
+  assert.match(rowChip, /flex:\s*none/u)
+
+  // A LINHA FINA: base cortada pelo MEIO (as duas pontas identificam o valor) e
+  // ◈ versão preso na direita.
+  assert.match(railCode, /className="dr-fine"/u)
+  assert.match(
+    railCode,
+    /ellipsizeMiddle\(mission\.baseBranch/u,
+    'a base perdeu o corte pelo meio (o CSS só sabe cortar a ponta)'
+  )
+  assert.match(railCode, /from '\.\.\/guiDiffPresentation'/u)
+  const fine = cssRule(css, '.dr-fine')
+  assert.match(fine, /font-size:\s*10\.5px/u)
+  assert.match(fine, /min-width:\s*0/u)
+  const ver = cssRule(css, '.dr-version')
+  assert.match(ver, /margin-left:\s*auto/u)
+  assert.match(ver, /flex:\s*none/u)
+})
+
+test('RODADA 2 — TRABALHO: o clique LÊ o documento; o ±placar abre a janela larga', async () => {
+  const [rail, viewer, css, mockup] = await Promise.all([
+    source('src/renderer/src/components/MissionDeliveryRail.tsx'),
+    source('src/renderer/src/components/MissionCommitDiffViewer.tsx'),
+    source('src/renderer/src/global.css'),
+    dock2()
+  ])
+  const railCode = withoutComments(rail)
+
+  // O GESTO QUE O DONO FEZ: clicar no documento abre o DOCUMENTO, no leitor de
+  // papel — não uma caixa preta de diff dentro de uma coluna de 200px.
+  const line = buttonWith(railCode, 'className={`dr-file')
+  assert.match(line, /setReader\(file\.path\)/u, 'o clique na linha não lê mais o arquivo')
+  assert.doesNotMatch(railCode, /onDoubleClick/u, 'o duplo clique morreu — o clique simples lê')
+
+  // O quadradinho preto morreu INTEIRO: estado, JSX e roupa.
+  assert.doesNotMatch(railCode, /inlineDiff/u, 'o diff inline voltou ao trilho')
+  assert.doesNotMatch(css, /\.dr-inline-diff/u, 'a roupa do diff inline ficou pendurada')
+  assert.doesNotMatch(css, /\.dr-inline-trunc/u)
+
+  // A PORTA do diff é o ±placar — e ela abre a MESMA janela larga do histórico.
+  const delta = buttonWith(railCode, 'className="dr-file-delta"')
+  assert.match(delta, /openFilePatch\(/u, 'o ± precisa ser o botão que abre o diff')
+  assert.match(railCode, /parseCommitDiff\(/u, 'o patch vira ESTRUTURA antes de virar pixel')
+  assert.match(railCode, /<MissionCommitDiffViewer/u, 'o diff do arquivo não abre na janela larga')
+
+  // ...e a janela larga aprendeu a moldura do ARQUIVO sem perder a do commit.
+  assert.match(viewer, /file\?:/u, 'a janela não aceita a variante de arquivo do worktree')
+  assert.match(viewer, /commit\?:/u, 'a variante commit precisa continuar existindo')
+  assert.doesNotMatch(viewer, /window\.synkora/u, 'a janela continua só DESENHANDO')
+
+  // Apagado nesta branch não tem o que LER (o diff continua existindo): o gesto
+  // de leitura fica desarmado e a dica diz por quê.
+  assert.match(railCode, /aria-disabled=\{!openable\}/u)
+  assert.match(line, /não há arquivo para ler/u)
+
+  // O ± PARECE alavanca — é o hover do placar no mockup.
+  const contract = mockup.match(/\.file \.delta:hover \{([^}]*)\}/u)?.[1]
+  assert.ok(contract, 'o mockup precisa continuar declarando o hover do placar')
+  assert.match(cssRule(css, '.dr-file-delta:hover'), /background|border-color/u)
+  assert.match(cssRule(css, '.dr-file-delta'), /cursor:\s*pointer/u)
+})
+
+test('RODADA 2 — o ▷ terminal comum MORREU; só o ▶ de teste fica', async () => {
+  const [rail, board] = await Promise.all([
+    source('src/renderer/src/components/MissionDeliveryRail.tsx'),
+    source('src/renderer/src/components/Board.tsx')
+  ])
+  const railCode = withoutComments(rail)
+  const boardCode = withoutComments(board)
+
+  assert.doesNotMatch(railCode, /onTerminal/u, 'a prop do terminal comum ficou pendurada no trilho')
+  assert.doesNotMatch(railCode, /shellAvailable/u)
+  assert.doesNotMatch(railCode, /Terminal comum/u)
+  assert.doesNotMatch(boardCode, /missionShell/u, 'o Board ainda carrega a ponte do terminal comum')
+  assert.doesNotMatch(boardCode, /openMissionShell/u)
+
+  // "O único que tem necessidade é o terminal de teste": o ▶ fica intacto, com
+  // o ■ de derrubar e as mesmas dicas.
+  assert.match(railCode, /onTestServer/u)
+  assert.match(railCode, /onKillTestServer/u)
+  assert.match(railCode, /Terminal de teste/u)
 })

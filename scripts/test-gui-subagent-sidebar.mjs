@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
+  GUI_SUBAGENT_DISMISS_NO_BRIDGE,
+  GUI_SUBAGENT_DISMISS_TIP,
+  dismissGuiSubagentHelper,
   formatGuiSubagentElapsed,
+  guiSubagentDismissable,
   guiSubagentElapsedMs,
   guiSubagentMetadataForTool,
   guiSubagentModelName,
@@ -1136,4 +1140,160 @@ test('R12 — a ficha do ajudante fast carrega e mostra o ⚡', () => {
   assert.match(source, /\{entry\.fast && <span>⚡ fast<\/span>\}/u)
   // O leitor de tela ouve a palavra, não o desenho.
   assert.match(source, /Fast: ligado/u)
+})
+
+// ————— R27F3 — O ✕ DA FROTA (ordem do dono, 2026-08-22) —————
+//
+// "Quando o subagente deu interrompido, eu quero algum X pra eu tirar dali,
+// porque eu já entendi." O mockup aprovado (docs/mockups/rightdock-2.html,
+// seção FROTA) põe o ✕ no canto da ficha, ghost em ink-3 e vermelho no hover,
+// com uma nota que é contrato: descartar é o MESMO descarte do helper_cancel —
+// a entrega parcial vai junto, e a dica tem de avisar.
+//
+// Três cercas, nesta ordem: quem GANHA o ✕ (ficha parada com ajudante no
+// motor), o que a DICA promete e como o clique DEGRADA sem a ponte do preload.
+
+/** Roda `fn` com um `window` de mentira — a ponte do preload não existe em
+ *  node, e é justamente a ausência dela que o degradê tem de cobrir. */
+async function withWindow(fake, fn) {
+  const had = 'window' in globalThis
+  const previous = globalThis.window
+  globalThis.window = fake
+  try {
+    return await fn()
+  } finally {
+    if (had) globalThis.window = previous
+    else delete globalThis.window
+  }
+}
+
+test('R27F3 — a ficha do ajudante carrega o helperId; a nativa não tem nenhum', () => {
+  const [ficha] = guiSubagentSidebarEntries([
+    helperCard('10', 'h-1', HELPER_PROFILE, { result: interruptedResult() })
+  ])
+  assert.equal(ficha.helperId, 'h-1', 'sem o id do motor o ✕ não teria a quem falar')
+
+  // O caminho NATIVO aposentado (Task/Agent) nunca teve ajudante no motor: a
+  // ficha dele não pode ganhar um botão que não tem para onde ir.
+  const [nativa] = guiSubagentSidebarEntries([agentCard('20', 'agent-1', 'investigue')])
+  assert.equal(nativa.helperId, null)
+})
+
+test('R27F3 — o ✕ só nasce na ficha PARADA que tem ajudante no motor', () => {
+  const parada = { status: 'interrupted', helperId: 'h-1' }
+  assert.equal(guiSubagentDismissable(parada), true)
+
+  // TRABALHANDO não ganha ✕: quem para a frota viva é o ■ da conversa, e um
+  // descarte por clique aqui jogaria fora trabalho em curso sem aviso.
+  assert.equal(guiSubagentDismissable({ status: 'running', helperId: 'h-1' }), false)
+  // Sem helperId não há clique possível — botão morto é pior que botão ausente.
+  assert.equal(guiSubagentDismissable({ status: 'interrupted', helperId: null }), false)
+  assert.equal(guiSubagentDismissable({ status: 'running', helperId: null }), false)
+  // E os desfechos que ENCERRAM também não: o motor não descarta quem já
+  // entregou (a entrega é o produto) nem quem já foi descartado. Eles nem
+  // chegam à lateral hoje — mas um botão que só sabe recusar seria um beco.
+  for (const status of ['completed', 'failed', 'denied', 'cancelled']) {
+    assert.equal(
+      guiSubagentDismissable({ status, helperId: 'h-1' }),
+      false,
+      `${status} não tem descarte honesto no motor`
+    )
+  }
+})
+
+test('R27F3 — a dica do ✕ avisa que a entrega parcial some junto', () => {
+  assert.match(GUI_SUBAGENT_DISMISS_TIP, /descarta o ajudante/u)
+  assert.match(GUI_SUBAGENT_DISMISS_TIP, /entrega parcial/u)
+  // O NOME do verbo do agente: é o que liga o gesto do dono ao que o chat já
+  // sabe fazer, e o que impede a leitura de "só some da tela".
+  assert.match(GUI_SUBAGENT_DISMISS_TIP, /helper_cancel/u)
+})
+
+test('R27F3 — o clique fala com a ponte; sem ponte, degrada com a receita', async () => {
+  const pedidos = []
+  const ok = await withWindow(
+    { synkora: { gui: { dismissHelper: async (helperId) => {
+      pedidos.push(helperId)
+      return { ok: true, state: 'discarded' }
+    } } } },
+    () => dismissGuiSubagentHelper('h-1')
+  )
+  assert.deepEqual(ok, { ok: true })
+  assert.deepEqual(pedidos, ['h-1'], 'o ✕ tem de chegar ao motor pelo id do ajudante')
+
+  // A metade do MAIN só chega no restart seguinte: enquanto ela não chega, o
+  // clique não pode ser um no-op silencioso — ele NOMEIA a receita.
+  const semPonte = await withWindow({ synkora: { gui: {} } }, () =>
+    dismissGuiSubagentHelper('h-1')
+  )
+  assert.deepEqual(semPonte, { ok: false, error: GUI_SUBAGENT_DISMISS_NO_BRIDGE })
+  assert.match(GUI_SUBAGENT_DISMISS_NO_BRIDGE, /reinicie o app \(npm run dev\)/u)
+  const semSynkora = await withWindow({}, () => dismissGuiSubagentHelper('h-1'))
+  assert.deepEqual(semSynkora, { ok: false, error: GUI_SUBAGENT_DISMISS_NO_BRIDGE })
+
+  // Recusa do main viaja VERBATIM (é ela que nomeia o estado real do ajudante).
+  const recusa = await withWindow(
+    { synkora: { gui: { dismissHelper: async () => ({ ok: false, error: 'o ajudante ainda trabalha' }) } } },
+    () => dismissGuiSubagentHelper('h-1')
+  )
+  assert.deepEqual(recusa, { ok: false, error: 'o ajudante ainda trabalha' })
+
+  // Ponte que explode ou responde lixo nunca vira "descartei": o dono ficaria
+  // olhando uma ficha que ele acha que já foi.
+  const explodiu = await withWindow(
+    { synkora: { gui: { dismissHelper: async () => { throw new Error('canal caiu') } } } },
+    () => dismissGuiSubagentHelper('h-1')
+  )
+  assert.equal(explodiu.ok, false)
+  assert.match(explodiu.error, /canal caiu/u)
+  const lixo = await withWindow(
+    { synkora: { gui: { dismissHelper: async () => undefined } } },
+    () => dismissGuiSubagentHelper('h-1')
+  )
+  assert.equal(lixo.ok, false)
+  assert.ok(lixo.error, 'resposta sem forma tem de virar recusa com texto')
+})
+
+test('R27F3 — a superfície do ✕ segue o mockup aprovado (ghost, ink-3, err no hover)', () => {
+  const source = readFileSync(
+    new URL('../src/renderer/src/components/GuiSubagentSidebar.tsx', import.meta.url),
+    'utf8'
+  )
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  // O botão nasce da REGRA, nunca de um `status === 'interrupted'` solto na
+  // marcação: quem decide é a mesma função que a suíte prova acima.
+  assert.match(source, /guiSubagentDismissable\(entry\)/u)
+  assert.match(source, /gui-subagent-row-dismiss/u)
+  assert.match(source, /✕/u)
+  // Dica é data-tip (o title= nativo é proibido na casa).
+  assert.match(source, /data-tip=\{GUI_SUBAGENT_DISMISS_TIP\}/u)
+  assert.doesNotMatch(source, /title=\{GUI_SUBAGENT_DISMISS_TIP\}/u)
+  // O clique passa pela ponte, e a recusa vira TEXTO na lateral.
+  assert.match(source, /dismissGuiSubagentHelper\(/u)
+  assert.match(source, /gui-subagent-note/u)
+  // A linha só sai da lista com um OK do motor — nada de esconder ficha que o
+  // outro lado recusou (ou que a ponte nem chegou a ouvir).
+  assert.match(source, /if \(outcome\.ok\) setDismissed/u)
+  assert.match(source, /else setNotice\(outcome\.error\)/u)
+  // E a seção nunca fica VAZIA sob o cabeçalho: enquanto o card seguir no anel,
+  // o corpo diz o que aconteceu.
+  assert.match(source, /derived\.length > 0 \?/u)
+  assert.match(source, /ficha descartada/u)
+
+  const botao = css.match(/\.gui-subagent-row-dismiss \{[^}]*\}/u)?.[0] ?? ''
+  assert.ok(botao, 'o ✕ da frota não tem casa no CSS')
+  // Os valores do mockup, verbatim: ghost (sem borda, sem fundo), ink-3, 11px.
+  assert.match(botao, /border: 0/u)
+  assert.match(botao, /background: none/u)
+  assert.match(botao, /color: var\(--ink-3\)/u)
+  assert.match(botao, /font-size: 11px/u)
+  assert.match(botao, /align-self: start/u)
+  assert.match(
+    css,
+    /\.gui-subagent-row-dismiss:hover \{[^}]*color: var\(--err\)/u,
+    'o hover do mockup é o vermelho do descarte'
+  )
+  // Foco visível é régua da casa — o anel de 2px do papel.
+  assert.match(css, /\.gui-subagent-row-dismiss:focus-visible \{[^}]*outline: 2px solid/u)
 })

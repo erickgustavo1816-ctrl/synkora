@@ -13,10 +13,16 @@ import {
   type IntegrationQueueRow
 } from '../integrationQueuePresentation'
 import MissionCommitHistory from './MissionCommitHistory'
+import MissionCommitDiffViewer from './MissionCommitDiffViewer'
 import GuiSubagentSidebar from './GuiSubagentSidebar'
 import GuiFileContextMenu, { useFileContextMenu } from './GuiFileContextMenu'
 import GuiFileQuickReader from './GuiFileQuickReader'
 import { fileContextOptions, type FileContextTarget } from '../guiFileContextMenu'
+import {
+  ellipsizeMiddle,
+  parseCommitDiff,
+  type CommitDiffSummary
+} from '../guiDiffPresentation'
 import type { FileTreeRoot } from '../../../preload/index'
 
 // TRILHO DE ENTREGA (Synkora 2.0, onda B; enriquecido na onda D) — a coluna da
@@ -58,6 +64,16 @@ const FILE_STATUS: Record<string, { glyph: string; label: string; cls: string }>
 function fileStatus(status: string): { glyph: string; label: string; cls: string } {
   return FILE_STATUS[status] ?? { glyph: '·', label: status, cls: 'mod' }
 }
+
+/** Corte da BASE na linha fina do header da entrega. `version/<uuid>` não cabe
+ *  num trilho de 176px, e o CSS só sabe cortar a ponta — as duas pontas é que
+ *  identificam a branch, então o miolo é o que se perde (o valor inteiro fica
+ *  na dica). O corte é o mesmo do mockup: `version/5e84…2357`. */
+const DR_BASE_CHARS = 24
+
+/** Corte do caminho nos RECADOS do ±placar (a linha ao pé da lista). Mais
+ *  folgado que o da base — ali o caminho é o sujeito da frase. */
+const DR_NOTICE_CHARS = 28
 
 /** O CHIP da ENTREGA — conserto de 2026-08-22, com o dono lendo "↑0 À FRENTE"
  *  na tela: o chip nascia com QUALQUER resumo e passava metade da vida sem
@@ -141,7 +157,6 @@ export default function MissionDeliveryRail({
   queueRows = [],
   guiAvailable,
   reviewReady,
-  shellAvailable,
   testServerOpen,
   subagentItems = [],
   reloadToken,
@@ -149,7 +164,6 @@ export default function MissionDeliveryRail({
   activityToken,
   onIntegrate,
   onReview,
-  onTerminal,
   onTestServer,
   onKillTestServer,
   onArchive,
@@ -168,8 +182,6 @@ export default function MissionDeliveryRail({
    *  revisar entra nela como uma fala do dono, então sem chat de pé não há
    *  gesto — e o porquê vai na dica, nunca num clique que não faz nada. */
   reviewReady: boolean
-  /** ponte do `missions:shellSpec` viva? sem ela o terminal não tem o que abrir */
-  shellAvailable: boolean
   /** já existe um pane de servidor de teste desta missão */
   testServerOpen: boolean
   /** transcript factual da conversa ativa; a seção some quando não há subagentes */
@@ -191,7 +203,6 @@ export default function MissionDeliveryRail({
   onIntegrate: () => void
   /** dá o toque de revisão no chat do agente (nunca abre pane) */
   onReview: () => void
-  onTerminal: () => void
   onTestServer: () => void
   onKillTestServer: () => void
   onArchive: () => void
@@ -210,18 +221,22 @@ export default function MissionDeliveryRail({
   const [summary, setSummary] = useState<MissionWorkspaceSummary | null>(null)
   const [diffError, setDiffError] = useState<string | null>(null)
   const [diffBusy, setDiffBusy] = useState(false)
-  // RIGHTDOCK — o diff INLINE da linha clicada (seção TRABALHO). Um por vez:
-  // clicar a mesma linha fecha; clicar outra troca. Duplo clique segue sendo
-  // o leitor de arquivo de sempre.
-  const [inlineDiff, setInlineDiff] = useState<{
+  // RODADA 2 DO DOCK — o diff de UM arquivo do worktree, na JANELA LARGA.
+  //
+  // O quadradinho preto inline morreu: o dono clicou num `.md` e recebeu um
+  // paredão ilegível dentro de uma coluna de 200px. O patch agora vira
+  // ESTRUTURA na chegada (o mesmo `parseCommitDiff` do histórico) e abre na
+  // mesma superfície larga em que ele já lê commit.
+  const [filePatch, setFilePatch] = useState<{
     path: string
-    busy: boolean
-    diff?: string
-    truncated?: boolean
-    error?: string
+    note: string
+    summary: CommitDiffSummary
   } | null>(null)
-  const inlineDiffRef = useRef(inlineDiff)
-  inlineDiffRef.current = inlineDiff
+  /** caminho cujo patch está no ar — a linha diz que está lendo, sem piscar */
+  const [patchBusy, setPatchBusy] = useState<string | null>(null)
+  /** o que o ±placar tem a dizer quando NÃO abre janela: a recusa do motor
+   *  (`bad`) ou o fato de não haver diferença nenhuma para desenhar. */
+  const [patchNotice, setPatchNotice] = useState<{ text: string; bad: boolean } | null>(null)
   // Contador PRÓPRIO do histórico: ele só anda quando a fotografia da branch
   // muda de verdade. Somado ao `reloadToken` do Board — os dois só crescem,
   // então a soma muda exatamente quando um deles muda — é o que o
@@ -320,27 +335,46 @@ export default function MissionDeliveryRail({
     // Leitura aberta pertence à missão que a abriu: sobreviver à troca deixaria
     // o dono lendo um arquivo de OUTRO worktree com o nome certo na moldura.
     setReader(null)
-    setInlineDiff(null)
+    setFilePatch(null)
+    setPatchBusy(null)
+    setPatchNotice(null)
   }, [mission.id])
 
-  // RIGHTDOCK — abre/fecha o diff inline de um arquivo. Resposta atrasada de
-  // outro caminho (o dono já clicou noutra linha) não pinta a tela.
-  const openFileDiff = useCallback(
-    (path: string): void => {
-      const current = inlineDiffRef.current
-      if (current?.path === path && !current.busy) {
-        setInlineDiff(null)
-        return
-      }
-      setInlineDiff({ path, busy: true })
-      void missionWorkspace.fileDiff(mission.id, path).then((res) => {
-        setInlineDiff((latest) =>
-          latest?.path === path
-            ? res.ok
-              ? { path, busy: false, diff: res.diff ?? '', truncated: res.truncated }
-              : { path, busy: false, error: res.error ?? 'não deu para ler o diff deste arquivo' }
-            : latest
-        )
+  // RODADA 2 — o ±placar pede o patch do arquivo e abre a janela larga com ele.
+  // Resposta de OUTRA missão (o dono já trocou de aba) nunca pinta a tela, e a
+  // recusa desce para a linha do pé da lista, onde o gesto aconteceu.
+  const openFilePatch = useCallback(
+    (path: string, note: string): void => {
+      const id = mission.id
+      setPatchNotice(null)
+      setPatchBusy(path)
+      void missionWorkspace.fileDiff(id, path).then((res) => {
+        if (missionRef.current !== id) return
+        setPatchBusy((current) => (current === path ? null : current))
+        if (!res.ok) {
+          setPatchNotice({
+            text: res.error ?? 'não deu para ler o diff deste arquivo',
+            bad: true
+          })
+          return
+        }
+        const parsed = parseCommitDiff(res.diff ?? '', { truncated: res.truncated })
+        // Janela vazia é beco sem saída: patch sem arquivo nenhum (o arquivo
+        // não mudou contra a base, ou o payload veio ilegível) vira RECADO na
+        // lista, nomeando onde a leitura ainda existe.
+        if (parsed.files.length === 0) {
+          // O caminho corta pelo meio: o recado mora numa coluna de 176px, e
+          // um caminho inteiro viraria seis linhas de aviso sobre a lista.
+          const curto = ellipsizeMiddle(path, DR_NOTICE_CHARS)
+          setPatchNotice({
+            text: parsed.unreadable
+              ? `não deu para separar o patch de ${curto}; o commit inteiro continua legível na seção histórico`
+              : `${curto} não tem diferença contra a base — não há diff para desenhar`,
+            bad: parsed.unreadable
+          })
+          return
+        }
+        setFilePatch({ path, note, summary: parsed })
       })
     },
     [mission.id]
@@ -395,6 +429,7 @@ export default function MissionDeliveryRail({
   useEffect(() => {
     if (visible) return
     setReader(null)
+    setFilePatch(null)
     dismissMenu(false)
   }, [visible, dismissMenu])
 
@@ -422,16 +457,33 @@ export default function MissionDeliveryRail({
   const entregaSummary = queueLabel ?? (integration ? integrationStateWord(integration) : 'fila vazia')
   const chip = deliveryChip(summary, mission.baseBranch)
 
+  // A PALAVRA DE ESTADO do header (rodada 2, mockup V1): só estado-NOTÍCIA
+  // aparece — `integrando agora`, `integrada`, `arquivada`. "Em andamento" é o
+  // padrão e já está dito pela coluna e pela seção ENTREGA; escrevê-lo aqui era
+  // ocupar a linha com o silêncio. E é PALAVRA, nunca pastilha com borda: era o
+  // chip bordado que quebrava em duas linhas no trilho estreito.
+  const stateWord = mission.status === 'ativa' ? null : STATUS_LABEL[mission.status]
+
   return (
     <div className="delivery-rail dock">
       {/* RIGHTDOCK (mockup aprovado = contrato): a moldura diz ONDE o dono
-          está; o ⋮⋮ lembra o pega de largura (a mecânica mora intacta no
-          ResizableRightRail). */}
+          está. Linha 1 é só FORMA — o tipo, a notícia (quando há) e o ⋮⋮ do
+          pega de largura (a mecânica mora intacta no ResizableRightRail); o
+          ícone de recolher flutua sobre ela, vindo do mesmo componente. Linha 2
+          é o TÍTULO inteiro, com o valor completo na dica quando não couber. */}
       <div className="dock-head">
-        <span className="dock-head-kind">{planning ? 'planejamento' : 'missão'}</span>
-        <span className="dock-head-title">· {mission.title}</span>
-        <span className={`dr-status ${mission.status}`}>{STATUS_LABEL[mission.status]}</span>
-        <span className="dock-grip" aria-hidden="true">⋮⋮</span>
+        <div className="dock-head-l1">
+          <span className="dock-head-kind">{planning ? 'planejamento' : 'missão'}</span>
+          {stateWord && (
+            <span className={`dock-head-state ${mission.status}`} data-tip={stateWord}>
+              {stateWord}
+            </span>
+          )}
+          <span className="dock-grip" aria-hidden="true">⋮⋮</span>
+        </div>
+        <div className="dock-head-title" data-tip={mission.title}>
+          {mission.title}
+        </div>
       </div>
 
       {/* A natureza no lugar onde o diff estaria: é a resposta para "o que sai
@@ -448,7 +500,9 @@ export default function MissionDeliveryRail({
 
       {!planning && (
         <DockSection id="entrega" title="entrega" summary={entregaSummary}>
-          <div className="dr-facts">
+          {/* A ENTREGA COMPOSTA (rodada 2): branch à esquerda e chip empurrado
+              para a direita NA MESMA linha — morreu a sobra que o dono viu. */}
+          <div className="dr-row">
             <span className="dr-branch" data-tip={`Worktree da missão: ${mission.worktree ?? '—'}`}>
               ⎇ {mission.branch ?? 'sem branch'}
             </span>
@@ -459,12 +513,13 @@ export default function MissionDeliveryRail({
             )}
           </div>
           {(mission.baseBranch || versionLabel) && (
-            <div className="dr-facts dr-facts-sub">
-              {/* A base costuma ser `version/<uuid>`: a linha corta na moldura
-                  (CSS) e o valor inteiro fica a um hover de distância. */}
+            <div className="dr-fine">
+              {/* A base costuma ser `version/<uuid>`: ela corta pelo MEIO (as
+                  duas pontas identificam a branch; o CSS só saberia cortar a
+                  ponta) e o valor inteiro fica a um hover de distância. */}
               {mission.baseBranch && (
                 <span className="dr-base" data-tip={`base completa: ${mission.baseBranch}`}>
-                  base: {mission.baseBranch}
+                  base: {ellipsizeMiddle(mission.baseBranch, DR_BASE_CHARS)}
                 </span>
               )}
               {versionLabel && <span className="dr-version">◈ {versionLabel}</span>}
@@ -527,18 +582,10 @@ export default function MissionDeliveryRail({
               >
                 🧐
               </button>
-              <button
-                className="btn tiny dr-btn dock-icon"
-                disabled={!shellAvailable}
-                data-tip={
-                  shellAvailable
-                    ? 'Terminal comum no worktree desta missão (sem agente) — o pane vai para a aba Panes'
-                    : 'reinicie o app (npm run dev) para habilitar o terminal da missão'
-                }
-                onClick={onTerminal}
-              >
-                ▷
-              </button>
+              {/* O ▷ TERMINAL COMUM morreu na rodada 2 (ordem do dono: "o único
+                  que tem necessidade é o terminal de teste"). O canal
+                  `missions:shellSpec` fica de pé no main, dormente — a alavanca
+                  é que saiu da fileira. */}
               {testServerOpen ? (
                 <button
                   className="btn tiny dr-btn dock-icon dr-danger"
@@ -608,8 +655,10 @@ export default function MissionDeliveryRail({
       )}
 
       {/* TRABALHO — o diff vivo vira seção: os arquivos SEMPRE à vista (com a
-          seção aberta), ± por arquivo, clique abre o DIFF aqui e duplo clique
-          lê o arquivo. W4 intacta: número na tela nunca pisca sob re-medida. */}
+          seção aberta) e DOIS gestos por linha, como o dono pediu depois de
+          clicar num documento e receber uma caixa preta: a LINHA lê o arquivo
+          no leitor de papel; o ±PLACAR abre o diff na janela larga do
+          histórico. W4 intacta: número na tela nunca pisca sob re-medida. */}
       {!planning && (
         <DockSection id="trabalho" title="trabalho" summary={diffLabel ?? undefined}>
           {diffError && (
@@ -626,7 +675,8 @@ export default function MissionDeliveryRail({
                 status: file.status
               }
               // Apagado não tem arquivo para LER (o diff continua existindo):
-              // `aria-disabled` no gesto de leitura, dica explica o porquê.
+              // `aria-disabled` no gesto de leitura, dica explica o porquê — e
+              // o ± ao lado continua sendo a porta do diff.
               const openable = fileContextOptions(target).length > 0
               const delta =
                 file.insertions !== undefined || file.deletions !== undefined
@@ -636,15 +686,14 @@ export default function MissionDeliveryRail({
                 <div className="dr-file-wrap" key={file.path}>
                   <button
                     type="button"
-                    className={`dr-file${inlineDiff?.path === file.path ? ' open' : ''}`}
-                    aria-disabled={!openable && inlineDiff?.path !== file.path}
+                    className={`dr-file${reader === file.path ? ' open' : ''}`}
+                    aria-disabled={!openable}
                     data-tip={
                       openable
-                        ? `${st.label}: ${file.path}\nclique abre o diff aqui · duplo clique lê o arquivo · botão direito abre fora do app`
-                        : `${st.label}: ${file.path}\nclique abre o diff aqui — não existe mais nesta branch, então não há arquivo para ler`
+                        ? `${st.label}: ${file.path}\nclique LÊ o arquivo · o ±placar abre o diff em janela larga · botão direito abre fora do app`
+                        : `${st.label}: ${file.path}\nnão existe mais nesta branch, então não há arquivo para ler — o ±placar ainda abre o diff`
                     }
-                    onClick={() => openFileDiff(file.path)}
-                    onDoubleClick={() => {
+                    onClick={() => {
                       if (openable) setReader(file.path)
                     }}
                     onContextMenu={(event) => fileMenu.openFromPointer(event, target)}
@@ -654,48 +703,55 @@ export default function MissionDeliveryRail({
                       {st.glyph}
                     </i>
                     <span className="dr-file-path">{file.path}</span>
-                    {delta && (
-                      <span className="dr-file-delta">
+                  </button>
+                  {/* O PLACAR é alavanca: mesmo sem numstat (binário, arquivo
+                      fora do git) ele existe como ±, senão a linha ficaria sem
+                      porta nenhuma para o diff. */}
+                  <button
+                    type="button"
+                    className="dr-file-delta"
+                    aria-busy={patchBusy === file.path || undefined}
+                    data-tip={`Abre o diff de ${file.path} na janela larga (Esc fecha)`}
+                    onClick={() => openFilePatch(file.path, st.label)}
+                  >
+                    {delta && (delta.add > 0 || delta.del > 0) ? (
+                      <>
                         {delta.add > 0 && <span className="add">+{delta.add}</span>}
                         {delta.del > 0 && <span className="del">−{delta.del}</span>}
-                      </span>
+                      </>
+                    ) : (
+                      <span className="dr-file-delta-any">±</span>
                     )}
                   </button>
-                  {inlineDiff?.path === file.path && (
-                    <div className="dr-inline-diff">
-                      {inlineDiff.busy ? (
-                        <span className="dl">lendo o diff…</span>
-                      ) : inlineDiff.error ? (
-                        <span className="dl">// {inlineDiff.error}</span>
-                      ) : inlineDiff.diff?.trim() ? (
-                        inlineDiff.diff
-                          .replace(/\n$/u, '')
-                          .split('\n')
-                          .map((line, index) => (
-                            <span
-                              key={index}
-                              className={`dl${
-                                line.startsWith('+') ? ' a' : line.startsWith('-') ? ' d' : ''
-                              }`}
-                            >
-                              {line}
-                            </span>
-                          ))
-                      ) : (
-                        <span className="dl">sem diferenças contra a base</span>
-                      )}
-                      {inlineDiff.truncated && (
-                        <span className="dl dr-inline-trunc">— cortado no teto do motor —</span>
-                      )}
-                    </div>
-                  )}
                 </div>
               )
             })}
-            {/* A recusa do sistema mora ao pé da lista, onde o gesto aconteceu. */}
-            {fileMenu.notice && <span className="dr-file-notice">// {fileMenu.notice}</span>}
           </div>
+          {/* Os recados moram FORA do scroller: a lista tem teto de altura, e um
+              aviso lá dentro sumiria de vista justamente na missão com muitos
+              arquivos — que é quando o dono mais clica. */}
+          {patchBusy && <span className="dr-files-note">lendo o diff de {patchBusy}…</span>}
+          {patchNotice && (
+            <span className={patchNotice.bad ? 'dr-file-notice' : 'dr-files-note'}>
+              // {patchNotice.text}
+            </span>
+          )}
+          {fileMenu.notice && <span className="dr-file-notice">// {fileMenu.notice}</span>}
+          {/* O gesto MUDOU de significado nesta rodada, e a dica de cada linha
+              só aparece no hover: uma frase curta ao pé da lista ensina a troca
+              sem virar parágrafo (a versão longa do mockup ocupava seis linhas
+              num trilho de 176px — medido no harness). */}
+          <span className="dr-file-hint">clique lê o arquivo · ± abre o diff</span>
         </DockSection>
+      )}
+      {filePatch && (
+        <MissionCommitDiffViewer
+          key={`worktree:${mission.id}:${filePatch.path}`}
+          file={{ path: filePatch.path, note: filePatch.note }}
+          summary={filePatch.summary}
+          focusPath={filePatch.path}
+          onClose={() => setFilePatch(null)}
+        />
       )}
       {fileMenu.menu && (
         <GuiFileContextMenu

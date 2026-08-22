@@ -1780,3 +1780,80 @@ test('cancelar um ajudante VIVO não procura arquivo que nunca existiu', () => {
   assert.equal(engine.get(helperId).state, 'cancelled')
   assert.deepEqual(discarded, [], 'nada foi gravado antes do descarte — não há o que apagar')
 })
+
+// ————— R27F3 — O ✕ DA FROTA, O GESTO DO DONO (2026-08-22) —————
+//
+// Ordem literal: "quando o subagente deu interrompido, eu quero algum X pra eu
+// tirar dali, porque eu já entendi". Até aqui só o AGENTE descartava
+// (helper_cancel via MCP); o ✕ do mockup aprovado vira o canal MECÂNICO do
+// dono — e canal do dono nunca é uma segunda meia-implementação: ele entra pelo
+// MESMO `cancel` que o agente usa, com a cerca a mais que o gesto pede.
+
+test('R27F3 — o ✕ do dono descarta o INTERROMPIDO pelo caminho do helper_cancel', () => {
+  const discarded = []
+  const { engine, helperId, changes, logs } = interrupted({
+    harness: {
+      discardDelivery: (record) => discarded.push(record.helperId),
+      deliver: () => ({ ok: true, path: '.synkora/helpers/parcial.md' })
+    }
+  })
+  assert.equal(engine.get(helperId).resultPath, '.synkora/helpers/parcial.md')
+
+  assert.deepEqual(engine.ownerDismiss(helperId), { ok: true, state: 'discarded' })
+
+  const registro = engine.get(helperId)
+  assert.equal(registro.state, 'cancelled', 'o ✕ é DESCARTE, não uma segunda pausa')
+  // A entrega parcial vai junto — é o que a dica do botão promete ao dono.
+  assert.deepEqual(discarded, [helperId])
+  assert.equal(registro.resultPath, undefined)
+  assert.equal(registro.result, undefined)
+  // Quem descartou está no registro E no diário: o gesto do dono é auditável
+  // como qualquer outro desfecho.
+  assert.match(registro.failure, /dono/u)
+  const descarte = logs.filter((entry) => entry.event === 'helper-discarded')
+  assert.equal(descarte.length, 1)
+  assert.match(String(descarte[0].detail.reason), /dono/u)
+  // O aviso que a LATERAL consome é o mesmo de sempre (`settled`): é por ele
+  // que a ficha sai do trilho, sem canal novo nenhum.
+  const ultimo = changes.at(-1)
+  assert.equal(ultimo.kind, 'settled')
+  assert.equal(ultimo.record.helperId, helperId)
+  assert.equal(ultimo.record.state, 'cancelled')
+
+  // Descartado não se retoma — o ciclo fecha igual ao do agente.
+  assert.equal(engine.resume(helperId).ok, false)
+})
+
+test('R27F3 — o ✕ do dono nunca joga fora trabalho VIVO nem entrega pronta', () => {
+  const discarded = []
+  const vivo = oneHelper({
+    harness: { discardDelivery: (record) => discarded.push(record.helperId) }
+  })
+  vivo.spawn.emit({ type: 'text', text: 'comecei' })
+  const recusaViva = vivo.engine.ownerDismiss(vivo.helperId)
+  assert.equal(recusaViva.ok, false)
+  // A recusa NOMEIA a receita: quem para a frota viva é o ■ da conversa.
+  assert.match(recusaViva.error, /■|interromp/iu)
+  assert.equal(vivo.engine.get(vivo.helperId).state, 'working')
+  assert.deepEqual(discarded, [], 'ficha viva não pode perder trabalho por um clique')
+
+  const pronto = oneHelper({
+    harness: { discardDelivery: (record) => discarded.push(record.helperId) }
+  })
+  pronto.spawn.emit({ type: 'result', isError: false, text: 'a entrega' })
+  const recusaPronta = pronto.engine.ownerDismiss(pronto.helperId)
+  assert.equal(recusaPronta.ok, false)
+  assert.match(recusaPronta.error, /entreg/iu)
+  assert.equal(pronto.engine.get(pronto.helperId).state, 'done')
+  assert.deepEqual(discarded, [], 'a entrega dele é o produto do trabalho')
+})
+
+test('R27F3 — ficha órfã: ajudante que o motor já não conhece sai sem erro', () => {
+  const { engine } = oneHelper()
+  // O caso real: o app reiniciou, o registro envelheceu (ou já foi descartado)
+  // e o CARD continuou no anel. O dono clica no ✕ da ficha fantasma — e "não
+  // existe" é exatamente a resposta que autoriza tirá-la da tela, nunca um erro
+  // que deixaria o dono preso com uma linha que ele não tem como remover.
+  assert.deepEqual(engine.ownerDismiss('helper-que-nunca-existiu'), { ok: true, state: 'gone' })
+  assert.deepEqual(engine.ownerDismiss('   '), { ok: true, state: 'gone' })
+})

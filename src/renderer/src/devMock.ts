@@ -834,6 +834,13 @@ export function installDevMock(): void {
       // BLOCO NOVO (2.0, onda D): sem main não existe rascunho guardado, então
       // a decisão do card recusa em vez de fingir que criou um plano.
       answerPlanProposal: async () => ({ ok: false, error: 'planos só funcionam no app' }),
+      // O ✕ da frota (R27F3): sem main não existe motor de ajudantes, então a
+      // recusa é honesta — fingir "descartei" tiraria da tela uma ficha que
+      // continua inteira do outro lado.
+      dismissHelper: async () => ({
+        ok: false,
+        error: 'descartar ajudante só funciona no app'
+      }),
       interrupt: async () => ({ ok: true }),
       kill: async () => ({ ok: true }),
       state: async () => ({ events: [], cursor: 0, exists: false, alive: false }),

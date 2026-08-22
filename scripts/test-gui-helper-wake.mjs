@@ -810,6 +810,26 @@ test('o retomado ganha um card NOVO e o desfecho seguinte chega ao anel', () => 
   timers.tick()
 })
 
+test('descartar depois do boot alcança o card órfão do anel — settled terminal sem lote emite', () => {
+  // O BURACO que o ✕ da frota expôs (R27F3, sonda no round2-fleet.md): depois
+  // do restart o correlacionador nasce vazio, mas o CARD do interrompido
+  // voltou no anel e continua na lateral. O descarte (✕ do dono ou
+  // helper_cancel do agente) apagava registro e entrega no motor e o card
+  // ficava "interrompido" na tela para sempre. Um desfecho TERMINAL precisa
+  // alcançar o card mesmo sem lote na memória.
+  const { correlator, emitted } = harness()
+  settle(correlator, helperRecord(), 'cancelled')
+  assert.ok(
+    emitted.some((entry) => entry.evt.type === 'tool-result' && entry.evt.agentStatus === 'settled'),
+    'o desfecho terminal não alcançou o card órfão do anel'
+  )
+
+  // Estado NÃO-terminal sem lote continua mudo: não é desfecho de ninguém.
+  emitted.length = 0
+  settle(correlator, helperRecord({ helperId: 'h-2' }), 'working')
+  assert.equal(emitted.length, 0, 'estado vivo sem lote não pode emitir nada')
+})
+
 test('retomar depois do boot funciona mesmo sem lote nenhum na memória', () => {
   // Depois do restart o correlacionador nasce vazio: o lote da chamada
   // `delegate` original morreu com o processo. O ajudante retomado ganha um
