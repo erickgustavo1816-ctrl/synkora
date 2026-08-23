@@ -1316,7 +1316,8 @@ test('R23.2 — enviar no pane morto reabre a conversa e só então manda a mens
   // receita em vez de cair na conta padrão do CLI.
   assert.match(send, /if \(!spawnRef\.current\.configDir\)[\s\S]{0,400}?return false/u)
   assert.match(send, /escolha uma conta no cabeçalho e envie de novo/u)
-  assert.match(send, /sendGuiMessage\(paneId, message, undefined, attachments, true\)/u)
+  // R33: o envio do renascimento leva `outgoing` (mensagem + citações do fio).
+  assert.match(send, /sendGuiMessage\(paneId, outgoing, undefined, attachments, true\)/u)
   assert.match(send, /reabrir a conversa/u, 'a falha do renascimento fala, com receita')
 
   // O código da morte vira ESTADO: sem ele o placeholder não teria o que dizer.
@@ -2297,7 +2298,9 @@ test('modelo e effort usam troca viva, confirmada e sem status no transcript', (
     pane,
     /const canSubmit =[\s\S]*canCompose && busyMenu === null && !attaching && !submitPending/u
   )
-  assert.match(pane, /return sendGuiMessage\(paneId, message, undefined, attachments\)/u)
+  // R33: o caminho direto envia `outgoing` (mensagem + citações) e limpa os
+  // chips no sucesso.
+  assert.match(pane, /await sendGuiMessage\(paneId, outgoing, undefined, attachments\)/u)
   assert.match(
     pane,
     /guiComposerClearPlan\([\s\S]*?if \(clear\.draft\) clearDraft\(\)[\s\S]*?if \(clear\.attachments\) clearAttachments\(\)/u
@@ -4255,4 +4258,71 @@ test('o overlay de menções materializa a última linha com a sentinela', () =>
     /\{'\\u200b'\}/u,
     'a sentinela de largura zero existe no fim do conteúdo pintado - ESCAPADA (caractere invisível cru em fonte é a armadilha do r24 §7)'
   )
+})
+
+// ————— R33: CITAÇÃO DO FIO — selecionar → botão direito → anexar à resposta —————
+//
+// Pedido do dono (23/08, verbatim): "eu seleciono essa parte da conversa como
+// um anexo mesmo na parte do chat ali do input, e aí eu falo sobre essa parte
+// que ele falou". A metade pura (clipar/rotular/compor) testa aqui; a fiação
+// (menu, chips, grid) é conferida no fonte — a lição R13 (área nomeada no
+// grid do composer) vira asserção permanente.
+
+const { GUI_QUOTE_MAX_CHARS, GUI_QUOTE_PROMPT_TAG, guiQuoteChipLabel, guiQuoteFromSelection, guiQuotedPrompt } =
+  await import('../src/renderer/src/guiThreadQuote.ts')
+
+test('R33 — a seleção vira citação: apara, recusa vazio e clipa estouro COM reticência', () => {
+  assert.equal(guiQuoteFromSelection('  um trecho do fio  '), 'um trecho do fio')
+  assert.equal(guiQuoteFromSelection('   '), null)
+  assert.equal(guiQuoteFromSelection(null), null)
+  const long = 'x'.repeat(GUI_QUOTE_MAX_CHARS + 50)
+  const clipped = guiQuoteFromSelection(long)
+  assert.equal(clipped.length, GUI_QUOTE_MAX_CHARS + 1, 'clipa no teto')
+  assert.ok(clipped.endsWith('…'), 'o corte aparece — nunca é mudo')
+})
+
+test('R33 — o rótulo do chip é a primeira linha útil, clipada', () => {
+  assert.equal(guiQuoteChipLabel('\n\n  linha útil\nsegunda'), 'linha útil')
+  const label = guiQuoteChipLabel('a'.repeat(200))
+  assert.ok(label.length <= 49 && label.endsWith('…'))
+})
+
+test('R33 — o prompt composto: bloco da casa na frente, mensagem verbatim atrás', () => {
+  assert.equal(guiQuotedPrompt([], 'oi'), 'oi', 'sem citação a mensagem passa byte a byte')
+  const prompt = guiQuotedPrompt(['linha um\nlinha dois'], 'o que você quis dizer aqui?')
+  assert.ok(prompt.startsWith(GUI_QUOTE_PROMPT_TAG), 'a marca da casa abre o bloco')
+  assert.match(prompt, /> linha um\n> linha dois/u, 'a citação vira blockquote linha a linha')
+  assert.ok(prompt.endsWith('\n\no que você quis dizer aqui?'), 'a mensagem fecha, verbatim')
+  const two = guiQuotedPrompt(['a', 'b'], 'msg')
+  assert.equal(two.split(GUI_QUOTE_PROMPT_TAG).length, 3, 'cada citação ganha o próprio bloco')
+  assert.equal(guiQuotedPrompt(['só citação'], ''), `${GUI_QUOTE_PROMPT_TAG}\n> só citação`)
+})
+
+test('R33 — a fiação existe: menu no fio, chips com área nomeada, envio composto', () => {
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  const menu = readFileSync(
+    new URL('../src/renderer/src/components/GuiSelectionMenu.tsx', import.meta.url),
+    'utf8'
+  )
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+  assert.match(pane, /onContextMenu=\{onThreadContextMenu\}/u, 'o fio não escuta o botão direito')
+  assert.match(pane, /guiQuotedPrompt\(quotes, message\)/u, 'o envio não compõe as citações')
+  assert.match(
+    pane,
+    /message\.startsWith\('\/'\) \? message : guiQuotedPrompt/u,
+    'slash cru não pode carregar citação'
+  )
+  assert.match(pane, /if \(sent\) setQuotes\(\[\]\)/u, 'envio ok tem de limpar os chips')
+  // O menu é ESPELHO do de arquivo: mesmas classes, teclado inteiro.
+  assert.match(menu, /file-context-menu gui-selection-menu/u)
+  assert.match(menu, /anexar à resposta/u)
+  assert.match(menu, /Escape/u)
+  // Lição R13 como asserção: a linha das citações tem ÁREA no grid, nas DUAS
+  // larguras — filho sem área cai no spacer.
+  assert.match(css, /\.gui-composer-quotes \{\r?\n  grid-area: quotes;/u)
+  const quoteAreas = css.match(/"quotes(?: quotes){6,7}"/gu) ?? []
+  assert.ok(quoteAreas.length >= 4, 'as variantes do grid (larga/estreita × com/sem anexos) declaram a área quotes')
 })

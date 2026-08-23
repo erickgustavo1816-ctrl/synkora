@@ -20,6 +20,13 @@ import GuiMessageCopy from './GuiMessageCopy'
 import GuiErrorLine from './GuiErrorLine'
 import GuiQueuedMessageCard from './GuiQueuedMessageCard'
 import GuiAttachmentChips from './GuiAttachmentChips'
+import GuiSelectionMenu, { type GuiSelectionAction } from './GuiSelectionMenu'
+import {
+  GUI_QUOTE_MAX_COUNT,
+  guiQuoteChipLabel,
+  guiQuoteFromSelection,
+  guiQuotedPrompt
+} from '../guiThreadQuote'
 import GuiJsonCard from './GuiJsonCard'
 import GuiSlashMenu from './GuiSlashMenu'
 import GuiContextPanel from './GuiContextPanel'
@@ -697,6 +704,16 @@ export default function GuiPane({
   latestAttachmentsRef.current = attachments
   const [attaching, setAttaching] = useState(false)
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  // R33 — CITAÇÃO DO FIO. Por pane e SÓ em memória (decisão nomeada no
+  // design): re-selecionar é barato, e a citação vive segundos entre o gesto
+  // e o envio — persisti-la como o rascunho seria peso sem dor real.
+  const [quotes, setQuotes] = useState<string[]>([])
+  const [quoteNotice, setQuoteNotice] = useState<string | null>(null)
+  const [selectionMenu, setSelectionMenu] = useState<{
+    x: number
+    y: number
+    text: string
+  } | null>(null)
   const [pendingPresentationSeqs, setPendingPresentationSeqs] = useState<number[]>([])
   const [documentVisible, setDocumentVisible] = useState(
     () => document.visibilityState === 'visible'
@@ -1027,10 +1044,57 @@ export default function GuiPane({
   // texto que compete com ela. Card ainda invisível não suspende nada.
   const awaitingCard = Boolean(gui.question || gui.planReview || planProposalCard)
 
+  // R33 — CITAÇÃO DO FIO: seleção + botão direito no fio viram "copiar" ou
+  // chip de citação no composer ("eu falo sobre essa parte que ele falou").
+  // O menu só abre com seleção viva DENTRO do fio; sem seleção o gesto segue
+  // o de sempre — e o token de arquivo continua com o menu próprio dele, que
+  // intercepta antes de chegar aqui.
+  const onThreadContextMenu = useCallback((event: React.MouseEvent): void => {
+    const selection = window.getSelection()
+    const container = logRef.current
+    if (!selection || selection.isCollapsed || !container) return
+    if (!container.contains(selection.anchorNode) || !container.contains(selection.focusNode))
+      return
+    const text = guiQuoteFromSelection(selection.toString())
+    if (!text) return
+    event.preventDefault()
+    setSelectionMenu({ x: event.clientX, y: event.clientY, text })
+  }, [])
+
+  const onSelectionAction = useCallback(
+    (action: GuiSelectionAction): void => {
+      const current = selectionMenu
+      setSelectionMenu(null)
+      if (!current) return
+      if (action === 'copy') {
+        void navigator.clipboard?.writeText(current.text)
+        return
+      }
+      // Teto cheio recusa COM a receita — citação do dono nunca some calada.
+      if (quotes.length >= GUI_QUOTE_MAX_COUNT) {
+        setQuoteNotice(
+          `máximo de ${GUI_QUOTE_MAX_COUNT} citações penduradas — remova uma (✕) para citar outra`
+        )
+        window.setTimeout(() => setQuoteNotice(null), 4000)
+        return
+      }
+      setQuotes((existing) =>
+        existing.length >= GUI_QUOTE_MAX_COUNT ? existing : [...existing, current.text]
+      )
+      // O gesto termina no composer: é lá que ele vai falar sobre o trecho.
+      inputRef.current?.focus({ preventScroll: true })
+    },
+    [quotes.length, selectionMenu]
+  )
+
   const send = useCallback(
     async (text: string): Promise<boolean> => {
       const message = text.trim()
       if ((!message && attachments.length === 0) || !canSubmit) return false
+      // R33 — as citações penduradas entram NA FRENTE do texto: uma verdade
+      // só (a bolha mostra exatamente o que o modelo leu). Slash cru viaja
+      // sem citação — comando é do binário, não conversa.
+      const outgoing = message.startsWith('/') ? message : guiQuotedPrompt(quotes, message)
       pinnedRef.current = true
       setPinned(true)
       // R23.2 — PANE MORTO RENASCE NO ENVIO (ordem do dono depois do incidente
@@ -1058,7 +1122,9 @@ export default function GuiPane({
           })
           return false
         }
-        return sendGuiMessage(paneId, message, undefined, attachments, true)
+        const revivedSent = await sendGuiMessage(paneId, outgoing, undefined, attachments, true)
+        if (revivedSent) setQuotes([])
+        return revivedSent
       }
       // R31.1 — A FALA DO DONO ENTRA JÁ (queixa de 2026-08-23: "eu mando e
       // ele lê três horas depois"). Turno aberto deixou de segurar mensagem:
@@ -1079,7 +1145,9 @@ export default function GuiPane({
           }, attachments)
         )
       }
-      return sendGuiMessage(paneId, message, undefined, attachments)
+      const sent = await sendGuiMessage(paneId, outgoing, undefined, attachments)
+      if (sent) setQuotes([])
+      return sent
     },
     [
       canSubmit,
@@ -1091,6 +1159,7 @@ export default function GuiPane({
       mode,
       paneId,
       queueGuiMessage,
+      quotes,
       sendGuiMessage,
       turnOpen
     ]
@@ -1791,11 +1860,26 @@ export default function GuiPane({
         </div>
       )}
 
+      {/* R33 — o menu da seleção (portal no body; a posição vem do cursor). */}
+      {selectionMenu && (
+        <GuiSelectionMenu
+          x={selectionMenu.x}
+          y={selectionMenu.y}
+          onChoose={onSelectionAction}
+          onDismiss={() => setSelectionMenu(null)}
+        />
+      )}
+
       {/* O palco é a âncora do "ir para o fim": preso ao .gui-pane, o botão
           cairia POR CIMA do card de permissão (que nasce entre o fio e o
           composer). Aqui ele acompanha o fim do fio, sempre. */}
       <div className="gui-stage">
-        <div className="gui-log" ref={logRef} onScroll={onTranscriptScroll}>
+        <div
+          className="gui-log"
+          ref={logRef}
+          onScroll={onTranscriptScroll}
+          onContextMenu={onThreadContextMenu}
+        >
           <div className="gui-thread">
             {/* R24.1 — A PODA FALA. O anel do main guarda uma janela do fio;
                 quando ela estoura, o começo da conversa sai da tela. A linha
@@ -2234,6 +2318,45 @@ export default function GuiPane({
                   }
                 }}
               />
+
+              {/* R33 — as citações do fio penduradas na resposta. Linha PRÓPRIA
+                  do grid (área `quotes` — lição R13: filho sem área nomeada
+                  cai no spacer). O title carrega o trecho; o ✕ respeita o
+                  envio em voo como os anexos. */}
+              {(quotes.length > 0 || quoteNotice) && (
+                <div className="gui-composer-quotes">
+                  <ul className="gui-quote-chips">
+                    {quotes.map((quote, index) => (
+                      <li
+                        key={`${index}-${quote.slice(0, 24)}`}
+                        className="gui-quote-chip"
+                        title={quote.length > 400 ? `${quote.slice(0, 400)}…` : quote}
+                      >
+                        <span className="gui-quote-glyph" aria-hidden="true">
+                          ❝
+                        </span>
+                        <span className="gui-quote-label">{guiQuoteChipLabel(quote)}</span>
+                        <button
+                          type="button"
+                          className="gui-quote-remove"
+                          aria-label="Remover citação"
+                          disabled={submitPending}
+                          onClick={() =>
+                            setQuotes((current) => current.filter((_, at) => at !== index))
+                          }
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {quoteNotice && (
+                    <span className="gui-quote-notice" role="status">
+                      {quoteNotice}
+                    </span>
+                  )}
+                </div>
+              )}
 
               <GuiAttachmentChips
                 attachments={attachments}

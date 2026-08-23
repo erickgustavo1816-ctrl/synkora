@@ -17647,6 +17647,24 @@ details.gui-error-line {
     "attach mode spacer context model effort fast send";
 }
 
+/* R33 — a linha das CITAÇÕES do fio. Área nomeada por obrigação (lição R13:
+   filho do grid do composer sem área cai no spacer), acima dos anexos: a
+   citação é contexto, o anexo é carga. */
+.gui-composer-inner:has(.gui-composer-quotes) {
+  grid-template-areas:
+    "input input input input input input input input"
+    "quotes quotes quotes quotes quotes quotes quotes quotes"
+    "attach mode spacer context model effort fast send";
+}
+
+.gui-composer-inner:has(.gui-composer-quotes):has(.gui-composer-attachments) {
+  grid-template-areas:
+    "input input input input input input input input"
+    "quotes quotes quotes quotes quotes quotes quotes quotes"
+    "attachments attachments attachments attachments attachments attachments attachments attachments"
+    "attach mode spacer context model effort fast send";
+}
+
 .gui-composer-attach {
   grid-area: attach;
 }
@@ -17912,6 +17930,90 @@ details.gui-error-line {
   border-radius: 5px;
   background: var(--gui-fill);
   color: var(--ink);
+}
+
+/* R33 — CITAÇÃO DO FIO pendurada na resposta: a mesma pele dos chips de
+   anexo (papel, linha, mono), com o ❝ e o fio de acento à esquerda dizendo a
+   espécie por FORMA antes de cor. */
+.gui-composer-quotes {
+  grid-area: quotes;
+  min-width: 0;
+  padding: 0 3px 1px;
+}
+
+.gui-quote-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gui-quote-chip {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: min(280px, 100%);
+  min-height: 30px;
+  padding: 3px 5px 3px 6px;
+  border: 1px solid var(--gui-line);
+  border-left: 3px solid var(--accent);
+  border-radius: 5px;
+  background: var(--gui-fill);
+  color: var(--ink);
+}
+
+.gui-quote-glyph {
+  color: color-mix(in srgb, var(--accent-deep) 72%, var(--ink));
+  font-weight: 700;
+  text-align: center;
+}
+
+.gui-quote-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--ink-2);
+}
+
+.gui-quote-remove {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 1px 5px;
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gui-quote-remove:hover:not(:disabled),
+.gui-quote-remove:focus-visible {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.gui-quote-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.gui-quote-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.gui-quote-notice {
+  display: block;
+  padding: 2px 2px 0;
+  font-size: 11.5px;
+  color: var(--err);
 }
 
 .gui-attachment-chip[data-kind='image'] .gui-attachment-kind {
@@ -18817,6 +18919,22 @@ details.gui-error-line {
   .gui-composer-inner:has(.gui-composer-attachments) {
     grid-template-areas:
       "input input input input input input input"
+      "attachments attachments attachments attachments attachments attachments attachments"
+      "attach mode spacer context effort fast send";
+  }
+
+  /* R33 — a linha das citações acompanha a fileira estreita. */
+  .gui-composer-inner:has(.gui-composer-quotes) {
+    grid-template-areas:
+      "input input input input input input input"
+      "quotes quotes quotes quotes quotes quotes quotes"
+      "attach mode spacer context effort fast send";
+  }
+
+  .gui-composer-inner:has(.gui-composer-quotes):has(.gui-composer-attachments) {
+    grid-template-areas:
+      "input input input input input input input"
+      "quotes quotes quotes quotes quotes quotes quotes"
       "attachments attachments attachments attachments attachments attachments attachments"
       "attach mode spacer context effort fast send";
   }
