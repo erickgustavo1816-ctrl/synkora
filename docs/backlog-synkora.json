@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-22T21:05:18.138Z",
+  "updatedAt": "2026-08-23T04:09:42.689Z",
   "lanes": {
     "agora": [
       {
@@ -85,6 +85,11 @@
         "id": "gate-raiz-nao-roda-as-suites-do-rail-3-quebras-d",
         "title": "Gate raiz não roda as suítes do rail: 3 quebras da Onda A atravessaram invisíveis",
         "desc": "test-right-rail, test-project-landing e test-backlog-view moram no test:domain — o test:gui-system (o gate raiz da casa) não as roda, e 3 marcadores quebrados pela Onda A do RightDock só apareceram na Onda B (provado em worktree do HEAD; curados em 35d3b17). Decidir: mover as suítes de GUI do domain pro gui-system, ou rodar npm test completo como gate de commit."
+      },
+      {
+        "id": "orfaos-de-cli-acumulando-18-claude-2gb-de-21-22-",
+        "title": "Órfãos de CLI acumulando: 18 claude (~2GB, de 21-22/08) + ~30 node do mesmo segundo",
+        "desc": "Achados no diagnóstico do crash de 23/08 01:03. Processos claude de conversas/helpers antigos sobrevivem ao app (headless interrompidos preservam por design, mas os de 21/08 são lixo certo) e uma ninhada de ~30 node de 37MB nasceu junta às 19:17:19 de 22/08. Rodada de higiene precisa identificar por CommandLine/CWD antes de matar (nunca por imagem — a lição do próprio crash; e um claude vivo é a sessão do orquestrador). Candidato estrutural: o boot do Synkora varrer filhos órfãos das gerações anteriores por marca própria (env/args)."
       }
     ],
     "feito": [
@@ -329,6 +334,13 @@
       "by": "orquestrador",
       "action": "update",
       "id": "rightdock"
+    },
+    {
+      "at": "2026-08-23T04:09:42.689Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "orfaos-de-cli-acumulando-18-claude-2gb-de-21-22-",
+      "detail": "→ dividas"
     }
   ]
 }
