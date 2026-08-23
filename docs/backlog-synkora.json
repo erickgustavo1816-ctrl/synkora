@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-23T20:49:15.150Z",
+  "updatedAt": "2026-08-23T22:26:50.393Z",
   "lanes": {
     "agora": [
       {
@@ -223,6 +223,16 @@
           "src/main/guiOwnerReplyDebt.ts"
         ],
         "day": "23/08 — domingo"
+      },
+      {
+        "id": "r33-citacao-do-fio-selecionar-botao-direito-anex",
+        "title": "R33 — citação do fio: selecionar → botão direito → anexar à resposta",
+        "desc": "Pedido do dono: selecionar trecho do chat, botão direito, copiar OU pendurar como chip no composer e falar sobre ele. Menu espelho do de arquivo, chips com área própria no grid (lição R13 virou asserção), teto 4 com recusa-receita, composição [synkora] trecho citado + mensagem verbatim (bolha = o que o modelo leu). QA visual com CSS real no browser pane. Commit 41efeaf; renderer puro — HMR pega com o dev rodando, senão entra no restart pendente.",
+        "refs": [
+          ".synkora/reports/DESIGN_CITACAO_DO_FIO_R33_2026-08-23.md",
+          "41efeaf"
+        ],
+        "day": "23/08 — domingo"
       }
     ]
   },
@@ -403,6 +413,13 @@
       "by": "orquestrador",
       "action": "update",
       "id": "orfaos-de-cli-acumulando-18-claude-2gb-de-21-22-"
+    },
+    {
+      "at": "2026-08-23T22:26:50.392Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "r33-citacao-do-fio-selecionar-botao-direito-anex",
+      "detail": "→ feito"
     }
   ]
 }
