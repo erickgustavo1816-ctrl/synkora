@@ -144,7 +144,7 @@
     <div class="item debt">
       <span class="glyph">⊟</span>
       <span class="title">Órfãos de CLI acumulando: 18 claude (~2GB, de 21-22/08) + ~30 node do mesmo segundo</span>
-      <span class="desc">Achados no diagnóstico do crash de 23/08 01:03. Processos claude de conversas/helpers antigos sobrevivem ao app (headless interrompidos preservam por design, mas os de 21/08 são lixo certo) e uma ninhada de ~30 node de 37MB nasceu junta às 19:17:19 de 22/08. Rodada de higiene precisa identificar por CommandLine/CWD antes de matar (nunca por imagem — a lição do próprio crash; e um claude vivo é a sessão do orquestrador). Candidato estrutural: o boot do Synkora varrer filhos órfãos das gerações anteriores por marca própria (env/args).</span>
+      <span class="desc">Achados no diagnóstico do crash de 23/08 01:03. Processos claude de conversas/helpers antigos sobrevivem ao app (headless interrompidos preservam por design, mas os de 21/08 são lixo certo) e uma ninhada de ~30 node de 37MB nasceu junta às 19:17:19 de 22/08. Rodada de higiene precisa identificar por CommandLine/CWD antes de matar (nunca por imagem — a lição do próprio crash; e um claude vivo é a sessão do orquestrador). Candidato estrutural: o boot do Synkora varrer filhos órfãos das gerações anteriores por marca própria (env/args). AGRAVANTE 23/08 tarde: suspeito nº1 do incidente do LSP tsgo (typescript 7 nativo morrendo em série com exit 2 na janela 17:26-17:34 com 3 ajudantes vivos; commit de memória 28,6/35,5 GB mesmo em repouso; repro standalone com disco idêntico passa — 04481cb fez a mensagem de morte preservar a CABEÇA do stderr pra próxima ocorrência se auto-diagnosticar).</span>
     </div>
   </section>
 
