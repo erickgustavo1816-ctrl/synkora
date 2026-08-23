@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-23T04:09:42.689Z",
+  "updatedAt": "2026-08-23T04:24:45.417Z",
   "lanes": {
     "agora": [
       {
@@ -194,6 +194,15 @@
           "4481c44"
         ],
         "day": "22/08 — sábado"
+      },
+      {
+        "id": "regra-do-fratricidio-agente-nunca-mais-mata-proc",
+        "title": "Regra do fratricídio: agente nunca mais mata processo por imagem (2 crashes diagnosticados até o transcript)",
+        "desc": "O dev da auditoria derrubou o Synkora 2× com Get-Process electron | Stop-Process (limpava o app em teste; o hospedeiro também é electron.exe). Prova no transcript do seat (tiro 1s antes do child-gone em massa). Defesa: PROCESS_KILL_FENCE nas personas dev/helper/release (persona, não guarda — shell nativo não passa pelo harness) + cerca em test-gui-mission-contracts; tetos gêmeos 6500→7200. Vale pra conversas novas no próximo restart; a conversa viva recebeu a ordem do dono.",
+        "refs": [
+          "37e376a"
+        ],
+        "day": "23/08 — domingo"
       }
     ]
   },
@@ -341,6 +350,13 @@
       "action": "add",
       "id": "orfaos-de-cli-acumulando-18-claude-2gb-de-21-22-",
       "detail": "→ dividas"
+    },
+    {
+      "at": "2026-08-23T04:24:45.417Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "regra-do-fratricidio-agente-nunca-mais-mata-proc",
+      "detail": "→ feito"
     }
   ]
 }
