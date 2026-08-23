@@ -432,7 +432,7 @@ test('composer só limpa a fotografia aceita e preserva texto ou anexos em falha
   )
 })
 
-test('dispatcher global existe no renderer e o composer enfileira durante o turno', () => {
+test('dispatcher global existe e o composer envia NA HORA (R28) — só slash cru enfileira', () => {
   const app = readFileSync(new URL('../src/renderer/src/App.tsx', import.meta.url), 'utf8')
   const pane = readFileSync(
     new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
@@ -445,7 +445,11 @@ test('dispatcher global existe no renderer e o composer enfileira durante o turn
   // Era "nos dois renderers" até a purga F6 (2026-08-17) matar a ilha
   // panes-view: sobrou um renderer, e o dispatcher continua sendo global nele.
   assert.match(app, /<GuiQueueDispatcher \/>/)
-  assert.match(pane, /if \(turnOpen\)[\s\S]*queueGuiMessage/)
+  // R28.1 (queixa de 2026-08-23: "eu mando e ele lê três horas depois"):
+  // turno aberto NÃO segura mensagem comum — o envio é o mesmo do turno
+  // fechado (o CLI steera; sonda probe-claude-owner-midturn). A fila só fica
+  // com o slash cru (comando é do binário; slash steerado não foi sondado).
+  assert.match(pane, /if \(turnOpen && message\.startsWith\('\/'\)\)[\s\S]*queueGuiMessage/)
   assert.match(pane, /useGuiDraft\(paneId\)/)
   assert.match(dispatcher, /shouldAttemptGuiQueuedDelivery\(pane\.status, pane\.ready, queued\)/)
   assert.match(dispatcher, /claimGuiQueuedMessage/)

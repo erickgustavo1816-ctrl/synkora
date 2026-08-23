@@ -2269,8 +2269,10 @@ export class GuiSessionRegistry {
     // que o agente nunca vê.
     const briefing = entry.pendingBriefing
     if (briefing) entry.pendingBriefing = undefined
-    // Turno durante turno é problema RESOLVIDO dos backends (claude enfileira,
-    // codex faz steer) — o motor não tem fila própria.
+    // Turno durante turno é problema RESOLVIDO dos backends (os dois steeram:
+    // codex via turn/steer; claude steera o stdin na fronteira da próxima tool
+    // — sonda probe-claude-owner-midturn, 2.1.241, 2026-08-23) — o motor não
+    // tem fila própria.
     entry.session.send(briefing ? guiBriefedPrompt(briefing, prompt) : prompt)
     return { ok: true }
   }

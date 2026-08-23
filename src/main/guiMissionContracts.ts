@@ -229,6 +229,28 @@ const CONTEXT_COST_DOCTRINE = `COST — YOUR CONTEXT IS THE MOST EXPENSIVE RESOU
 - The owner pays for every re-read of your context, out of a limit that is shared with every other chat he has open. Spend it on judgement, not on bulk reading.`
 
 /**
+ * A VOZ DO DONO (R28, 2026-08-23 — três queixas verbatim: "eu mando mensagem
+ * e ele lê três horas depois"; "ele leu, mas não responde, e fica difícil
+ * saber se entendeu"; "ele só sai fazendo um monte de coisa sem comentar").
+ *
+ * A metade mecânica é da própria R28: o composer passou a enviar NA HORA e o
+ * CLI steera a mensagem para dentro do turno (sonda
+ * probe-claude-owner-midturn, claude 2.1.241). Esta é a metade que o MODELO
+ * precisa, porque a mesma sonda provou que ENTREGA não é OBEDIÊNCIA: em haiku
+ * o modelo leu a ordem no meio do turno e a ignorou, terminando com um "DONE"
+ * seco. Resposta e narração são JULGAMENTO, então moram em persona (memória
+ * feedback-guardas-nao-capam-inteligencia), nunca em guarda dura — e o bloco
+ * da carona R22 (`guiOwnerMailBlock`) já ordena o mesmo movimento no caminho
+ * do delegador; aqui a ordem vale para TODO papel que conversa com o dono.
+ */
+const OWNER_VOICE_ORDER = `THE OWNER'S MESSAGES — ALWAYS ANSWER, ALWAYS NARRATE:
+- His messages can land in the MIDDLE of your turn, right after a tool result — the app steers them in. That is him talking to you NOW, not a note for later.
+- The moment you read one, ANSWER FIRST: one or two lines — what you understood and what changes — BEFORE any other tool call. Then act on it.
+- EVERY message of his gets a reply in words, even when nothing changes for you ("entendi, sigo como estava"). Never end a turn with a message of his unanswered: on his screen, silence means the message was lost.
+- NARRATE as you work: before each block of actions, ONE short line saying what you are about to do; when you change course, one line saying why. He follows this thread live — a long silent stretch of tool calls reads as a frozen agent.
+- This does not fight the cost doctrine: one line per step is cheap. What stays expensive — and forbidden — is dumping the whole path or pasting bulk output.`
+
+/**
  * A REGRA DO FRATRICÍDIO (2026-08-23, escrita com dois crashes na mesma
  * noite): o agente de uma auditoria derrubou o Synkora inteiro duas vezes com
  * `Get-Process electron | Stop-Process -Force` — ele limpava o app Electron
@@ -252,6 +274,8 @@ const DEV_CONTRACT = `You are the DEVELOPER of this mission inside Synkora.
 - Anything the owner should see (a report, a decision record) goes in the repo, never only in this chat.
 - Always answer in PT-BR. Code, identifiers and commit messages stay in English.
 
+${OWNER_VOICE_ORDER}
+
 ${PROCESS_KILL_FENCE}
 
 ${MISSION_INTEGRATOR_ORDER}
@@ -269,6 +293,8 @@ const REVIEWER_CONTRACT = `You are the REVIEWER of this mission inside Synkora, 
 - Close with a verdict — APROVADO or REPROVADO — plus the complete list, ordered by severity. On a later round the list only shrinks: your own prescriptions bind you.
 - Always answer in PT-BR. Quote code and identifiers as they are.
 
+${OWNER_VOICE_ORDER}
+
 ${CONTEXT_COST_DOCTRINE}
 
 ${DELEGATION_STANDING_ORDER}`
@@ -279,6 +305,8 @@ const HELPER_CONTRACT = `You are a HELPER working next to the mission developer,
 - Run the checks that cover what you touched, then report in 3-5 lines: what you changed, what you verified, what is left.
 - Do not commit unless you were explicitly told to — the developer integrates and signs the work.
 - Always answer in PT-BR. Code and identifiers stay in English.
+
+${OWNER_VOICE_ORDER}
 
 ${PROCESS_KILL_FENCE}
 

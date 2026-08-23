@@ -64,14 +64,12 @@ export default function GuiQueuedMessageCard({
             data-tip={
               sendNowDisabled
                 ? 'a ponte do chat está fora do ar — sem turno para entrar'
-                : // R22.5 — a VERDADE NOVA. Num chat com ajudantes, o turno é uma
-                  // request longa e o CLI segura tudo que chega no stdin até ela
-                  // acabar (o print de 19/08: "ele tá parado, só esperando os
-                  // subagentes"). Por isso a mensagem passa a viajar de carona no
-                  // próximo resultado de ferramenta — e quem decide a rota é o
-                  // MAIN, então o card conta o que acontece sem prometer qual das
-                  // duas portas vai ser usada.
-                  'entra no turno AGORA: num chat com ajudantes ela vai de carona no próximo resultado de ferramenta e o agente lê no meio do turno'
+                : // R28 — pós-steering, mensagem comum nem passa por aqui (o
+                  // composer envia na hora); a fila guarda slash cru e envelope
+                  // antigo do boot. O verbo continua sendo a saída sancionada:
+                  // entrega AGORA pelo caminho direto, e quem decide a rota
+                  // (pote do delegador, steering) é o MAIN.
+                  'entra no turno AGORA pelo caminho direto — o agente lê no meio do turno (num chat com ajudantes, de carona no próximo resultado de ferramenta)'
             }
             onClick={onSendNow}
           >

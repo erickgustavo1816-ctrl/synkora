@@ -117,9 +117,13 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // em 2026-08-23, pela REGRA DO FRATRICÍDIO — o agente de uma auditoria
     // derrubou o Synkora DUAS vezes na mesma noite com `Get-Process electron |
     // Stop-Process` (limpava o app que testava; o hospedeiro também é
-    // electron.exe): o dev mede ~7000, o ajudante ~5040. O teto continua sendo
-    // contra CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
-    assert.ok(contract.length < 7200, `${role}: contrato virou constituição`)
+    // electron.exe): o dev mede ~7000, o ajudante ~5040. E de 7200 para 8200
+    // na R28 (2026-08-23), pela VOZ DO DONO — as três queixas verbatim ("eu
+    // mando e ele lê três horas depois", "ele leu mas não responde", "ele só
+    // sai fazendo sem comentar"): o dev mede 8010, o reviewer 5876 e o
+    // ajudante 6059. O teto continua sendo contra CONSTITUIÇÃO: régua nova do
+    // dono cabe, discurso não.
+    assert.ok(contract.length < 8200, `${role}: contrato virou constituição`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -136,6 +140,22 @@ test('o dev espera aval antes de trabalho grande e trabalha só no worktree', ()
   const contract = guiMissionSystemPrompt('dev')
   assert.match(contract, /MINI-PLAN/)
   assert.match(contract, /ONLY inside this worktree/i)
+})
+
+// A VOZ DO DONO (R28, 2026-08-23). A metade mecânica é da rodada (composer
+// envia na hora + o CLI steera — sonda probe-claude-owner-midturn); esta é a
+// metade do MODELO, porque a mesma sonda provou que entrega não é obediência:
+// em haiku o modelo leu a ordem no meio do turno e terminou com um DONE seco.
+test('R28 — a voz do dono: os três papéis respondem SEMPRE e narram o passo a passo', () => {
+  for (const role of GUI_MISSION_ROLES) {
+    const contract = guiMissionSystemPrompt(role)
+    assert.match(contract, /ALWAYS ANSWER, ALWAYS NARRATE/, `${role}: sem o bloco da voz do dono`)
+    assert.match(contract, /MIDDLE of your turn/, `${role}: não avisa que a fala chega no meio do turno`)
+    assert.match(contract, /ANSWER FIRST/, `${role}: não ordena responder antes de qualquer outra tool`)
+    assert.match(contract, /gets a reply in words/, `${role}: não obriga resposta a TODA mensagem`)
+    assert.match(contract, /NARRATE as you work/, `${role}: não ordena narrar o passo a passo`)
+    assert.match(contract, /one line per step is cheap/i, `${role}: não reconcilia com a doutrina de custo`)
+  }
 })
 
 // ORDEM PERMANENTE DA DELEGAÇÃO (2026-08-18 — design D4). O dono: "deixe claro

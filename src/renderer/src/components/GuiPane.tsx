@@ -1060,7 +1060,17 @@ export default function GuiPane({
         }
         return sendGuiMessage(paneId, message, undefined, attachments, true)
       }
-      if (turnOpen) {
+      // R28.1 — A FALA DO DONO ENTRA JÁ (queixa de 2026-08-23: "eu mando e
+      // ele lê três horas depois"). Turno aberto deixou de segurar mensagem:
+      // o claude de hoje steera o stdin na fronteira da próxima tool (sonda
+      // probe-claude-owner-midturn, 2.1.241) e o codex sempre teve turn/steer
+      // — o envio é o MESMO do turno fechado, e quem roteia é o main (pote
+      // R22 com wake no delegador, steering nos demais). Falha devolve o
+      // rascunho ao composer, como em qualquer envio.
+      // A única carga que ainda espera o fecho é o SLASH CRU (R28.2): comando
+      // é executado pelo binário, e slash steerado no meio do turno é
+      // comportamento não sondado.
+      if (turnOpen && message.startsWith('/')) {
         return Boolean(
           queueGuiMessage(paneId, message, {
             model: liveModel ?? null,
@@ -1088,10 +1098,13 @@ export default function GuiPane({
 
   // PULA A FILA (ordem do dono, 18/08: "tem mensagem que eu não quero esperar
   // ele terminar"): o bilhete sai AGORA, dentro do turno vivo — o caminho
-  // direto de envio steera nos dois CLIs (codex turn/steer, claude enfileira
-  // na própria stream), e o main não trava envio por turno. O protocolo é o
-  // MESMO do dispatcher (claim → envio → ack/restore): o "enviando…", o erro
-  // com "tentar novamente" e a lease anti-disputa vêm de graça.
+  // direto de envio steera nos dois CLIs (codex turn/steer; claude steera o
+  // stdin na fronteira da próxima tool — sonda probe-claude-owner-midturn,
+  // 2.1.241, 2026-08-23), e o main não trava envio por turno. Pós-R28 a fila
+  // só guarda slash cru e envelope antigo do boot; o verbo continua para
+  // esses. O protocolo é o MESMO do dispatcher (claim → envio → ack/restore):
+  // o "enviando…", o erro com "tentar novamente" e a lease anti-disputa vêm
+  // de graça.
   const sendQueuedNow = useCallback(async () => {
     const owner = `send-now-${globalThis.crypto.randomUUID()}`
     const claimed = claimGuiQueuedMessage(paneId, owner)
