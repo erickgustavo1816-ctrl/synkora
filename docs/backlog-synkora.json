@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-23T22:26:50.393Z",
+  "updatedAt": "2026-08-23T22:35:26.353Z",
   "lanes": {
     "agora": [
       {
@@ -233,6 +233,15 @@
           "41efeaf"
         ],
         "day": "23/08 — domingo"
+      },
+      {
+        "id": "r34-selecao-do-fio-sem-briga-freio-no-scroll-pin",
+        "title": "R34 — seleção do fio sem briga: freio no scroll, pintura da casa, sem tooltip",
+        "desc": "Queixas do teste ao vivo da R33: azul default do Chromium (::selection agora é acento translúcido, só fundo — vale em papel e painel), arrasto de baixo pra cima invertendo (o keep-pinned movia o conteúdo sob o ponteiro; agora seleção viva no fio SEGURA scroll e janela, e o freio solta sozinho ao colapsar/citar), arrasto começando na margem nascia morto (.gui-log virou superfície de texto), tooltips do menu e dos chips removidos. Commit 68957e3; renderer puro (HMR pega).",
+        "refs": [
+          "68957e3"
+        ],
+        "day": "23/08 — domingo"
       }
     ]
   },
@@ -419,6 +428,13 @@
       "by": "orquestrador",
       "action": "add",
       "id": "r33-citacao-do-fio-selecionar-botao-direito-anex",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-23T22:35:26.353Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "r34-selecao-do-fio-sem-briga-freio-no-scroll-pin",
       "detail": "→ feito"
     }
   ]
