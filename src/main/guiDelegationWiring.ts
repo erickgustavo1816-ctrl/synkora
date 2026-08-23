@@ -67,6 +67,11 @@ import {
 } from './guiHelperSessions'
 import { GuiHelperInbox, guiHelperInbox, guiHelperInboxBlock } from './guiHelperCards'
 import { GuiOwnerMailbox, guiOwnerMailBlock, guiOwnerMailbox } from './guiOwnerMail'
+import {
+  GuiOwnerReplyDebt,
+  guiOwnerReplyDebt,
+  guiOwnerReplyRefusal
+} from './guiOwnerReplyDebt'
 import type { GuiDelegationDefaults } from './guiSessions'
 import type { McpHelperRequestInput } from './mcpServer'
 
@@ -1243,6 +1248,9 @@ export interface GuiDelegationApiDeps {
    *  quando ela chega com o turno aberto. A injeção existe para a suíte não
    *  dividir um pote global entre duas bancadas do mesmo paneId. */
   ownerMail?: GuiOwnerMailbox
+  /** A DÍVIDA DE RESPOSTA (R32). Ausente = a de produção (`guiOwnerReplyDebt`),
+   *  a MESMA que o pump do `guiSessions` quita quando o agente fala. */
+  replyDebt?: GuiOwnerReplyDebt
   seats(): GuiDelegationSeat[]
   seatUsage?(seat: GuiDelegationSeat): Promise<SeatUsageInfo | null>
   now?(): number
@@ -1286,8 +1294,28 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
   helperResume(id: GuiDelegationIdentity, helperId: string): string
 } {
   const now = deps.now ?? Date.now
-  const guard = (id: GuiDelegationIdentity): string | null =>
-    id.role === 'gui-delegator' ? null : NOT_A_DELEGATOR
+  /**
+   * O PORTÃO dos sete verbos: papel primeiro, DÍVIDA DE RESPOSTA depois (R32).
+   *
+   * A dívida nasce na carona (`withOwnerMail`, logo abaixo) e é guarda DURA de
+   * autoridade: o caso do transcript de 23/08 provou que persona + ordem no
+   * bloco não bastam — o modelo leu "FALE COM ELE JÁ" e voltou ao long-poll
+   * mudo. Enquanto o dono não ouvir resposta, nenhuma tool de delegação anda;
+   * a recusa re-cita a fala dele e nomeia a única saída (falar no chat), e o
+   * pump do `guiSessions` quita no primeiro texto do assistente. A recusa NÃO
+   * drena correio nenhum de propósito: recusar não consome nada.
+   */
+  const guard = (id: GuiDelegationIdentity): string | null => {
+    if (id.role !== 'gui-delegator') return NOT_A_DELEGATOR
+    const owed = replyDebt.pending(id.paneId)
+    if (!owed) return null
+    journal({
+      event: 'owner-reply-enforced',
+      paneId: id.paneId,
+      detail: { messages: owed.length }
+    })
+    return guiOwnerReplyRefusal(owed)
+  }
   // Diário indisponível ou quebrado nunca derruba uma entrega que já aconteceu:
   // a mesma disciplina do `journal` do motor.
   const journal = (entry: GuiHelperLogEntry): void => {
@@ -1320,6 +1348,7 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
    */
   const inbox = deps.inbox ?? guiHelperInbox
   const ownerMail = deps.ownerMail ?? guiOwnerMailbox
+  const replyDebt = deps.replyDebt ?? guiOwnerReplyDebt
 
   /**
    * A CARONA DO DONO (R22.2) — a MESMA costura, com a outra carga.
@@ -1338,10 +1367,16 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
     const mail = ownerMail.drain(paneId)
     if (mail.length === 0) return body
     const block = guiOwnerMailBlock(mail)
+    // R32 — entregar ARMA a dívida: a partir daqui, os verbos deste catálogo
+    // recusam até o agente falar com o dono (o guard cobra, o pump quita).
+    replyDebt.arm(
+      paneId,
+      mail.map((entry) => entry.text)
+    )
     journal({
       event: 'owner-mail-ride',
       paneId,
-      detail: { messages: mail.length, chars: block.length }
+      detail: { messages: mail.length, chars: block.length, replyDebtArmed: true }
     })
     return `${body}\n\n${block}`
   }
@@ -1411,13 +1446,17 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
       }
       // Um recibo por pedido, na ordem (contrato do `spawn`): é o que deixa a
       // origem viajar por índice sem inventar um id de correlação novo.
+      const spawnText = guiHelperSpawnText(
+        outcome.receipts,
+        [outcome.warning, guiPinDeviationText(pin, deviations)],
+        plans.map((plan) => plan.origins)
+      )
+      // R32 (queixa do dono, 23/08: "abriu dois subagentes e não falou por
+      // quê"): o recibo empurra a fala NO MOMENTO exato — advisory, nunca
+      // recusa; a lateral mostra os cards, mas só o agente sabe o plano.
       return withInbox(
         id.paneId,
-        guiHelperSpawnText(
-          outcome.receipts,
-          [outcome.warning, guiPinDeviationText(pin, deviations)],
-          plans.map((plan) => plan.origins)
-        )
+        `${spawnText}\n\nAVISE O DONO no chat, agora, em uma linha: o que esta frota vai fazer e por quê — ele vê os cards na lateral, não o seu plano.`
       )
     },
 

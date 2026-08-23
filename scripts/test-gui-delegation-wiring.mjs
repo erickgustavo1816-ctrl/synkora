@@ -44,6 +44,11 @@ const lspMcp = await import('../.tmp/gui-delegation-wiring-test/guiHelperLspMcp.
 const ownerMailModule = await import('../.tmp/gui-delegation-wiring-test/guiOwnerMail.js').catch(
   () => ({})
 )
+// A DÍVIDA DE RESPOSTA (módulo NOVO da R32) pela mesma porta tolerante: sem
+// ele, caem só os testes da cobrança — e caem dizendo o que falta.
+const ownerReplyModule = await import(
+  '../.tmp/gui-delegation-wiring-test/guiOwnerReplyDebt.js'
+).catch(() => ({}))
 
 const {
   GUI_HELPER_CARD_ACTIVITY_MAX,
@@ -816,6 +821,9 @@ function delegationApi(overrides = {}) {
     resume: (helperId) => overrides.resume?.(helperId) ?? { ok: true }
   }
   const overlap = overrides.duringResult
+  const replyDebt =
+    overrides.replyDebt ??
+    (ownerReplyModule.GuiOwnerReplyDebt ? new ownerReplyModule.GuiOwnerReplyDebt() : undefined)
   const api = buildGuiDelegationApi({
     engine,
     delegator: (paneId) =>
@@ -830,10 +838,13 @@ function delegationApi(overrides = {}) {
     // instância por bancada, senão duas suítes do mesmo paneId dividiriam o pote
     // global do processo.
     ...(overrides.ownerMail ? { ownerMail: overrides.ownerMail } : {}),
+    // R32 — dívida POR BANCADA, nunca o singleton: 'p1' é o paneId de todas as
+    // bancadas desta suíte, e uma dívida armada num teste travaria o seguinte.
+    ...(replyDebt ? { replyDebt } : {}),
     ...(overrides.log ? { log: overrides.log } : {}),
     now: () => 0
   })
-  return { api, calls }
+  return { api, calls, replyDebt }
 }
 
 const delegatorId = { paneId: 'p1', role: 'gui-delegator', projectId: 'proj', cwd: '/w' }
@@ -1759,7 +1770,7 @@ function ownerMailbox() {
 test('R22.2 — a mensagem do dono viaja no PRÓXIMO resultado de tool, uma vez só', async () => {
   const ownerMail = ownerMailbox()
   const logged = []
-  const { api } = delegationApi({ ownerMail, log: (entry) => logged.push(entry) })
+  const { api, replyDebt } = delegationApi({ ownerMail, log: (entry) => logged.push(entry) })
   ownerMail.post('p1', { messageId: 'msg-7', text: 'para tudo: o schema mudou', at: 0 })
 
   // O CENTRO DO PRINT: o delegador está dentro do turno, num `helper_result`, e
@@ -1796,7 +1807,10 @@ test('R22.2 — a mensagem do dono viaja no PRÓXIMO resultado de tool, uma vez 
   assert.equal(receipt.detail.messages, 1)
   assert.ok(receipt.detail.chars > 0, 'o recibo tem de dizer o tamanho que viajou')
 
-  // Entregue uma vez, morre: repetir faria o agente achar que o dono falou de novo.
+  // Entregue uma vez, morre: repetir faria o agente achar que o dono falou de
+  // novo. A dívida (R32) quita antes, como o pump quitaria — este teste mede o
+  // POTE, e sem a quitação a recusa mascararia um pote que repete.
+  replyDebt?.clear('p1')
   assert.equal(
     api.helpersStatus(delegatorId).includes(ownerMailModule.GUI_OWNER_MAIL_TAG),
     false,
@@ -1807,23 +1821,28 @@ test('R22.2 — a mensagem do dono viaja no PRÓXIMO resultado de tool, uma vez 
 test('R22.2 — a carona vale em TODA tool da delegação, e o dono vem por ÚLTIMO', async () => {
   const ownerMail = ownerMailbox()
   const inbox = new GuiHelperInbox()
-  const { api } = delegationApi({ ownerMail, inbox, liveCount: 2 })
+  const { api, replyDebt } = delegationApi({ ownerMail, inbox, liveCount: 2 })
 
   ownerMail.post('p1', { messageId: 'm-1', text: 'inverte a ordem das fatias', at: 0 })
   const status = api.helpersStatus(delegatorId)
   assert.ok(status.includes(ownerMailModule.GUI_OWNER_MAIL_TAG))
 
+  // Entre um verbo e outro o agente FALA (R32 cobraria o mudo): a quitação
+  // aqui é o pump fazendo o papel dele, e o que este teste mede é a CARONA.
+  replyDebt?.clear('p1')
   ownerMail.post('p1', { messageId: 'm-2', text: 'e usa a conta do hotmail', at: 0 })
   assert.ok(
     (await api.listSeats(delegatorId)).includes(ownerMailModule.GUI_OWNER_MAIL_TAG),
     'list_seats também é resultado de tool'
   )
 
+  replyDebt?.clear('p1')
   ownerMail.post('p1', { messageId: 'm-3', text: 'segura o resto', at: 0 })
   assert.ok(api.helperSend(delegatorId, 'h-meu', 'oi').includes(ownerMailModule.GUI_OWNER_MAIL_TAG))
 
   // NOVIDADE DOS AJUDANTES + FALA DO DONO na mesma resposta: relatório primeiro,
   // ORDEM por último — é a última coisa que o modelo lê antes de decidir.
+  replyDebt?.clear('p1')
   ownerMail.post('p1', { messageId: 'm-4', text: 'cancela o terceiro', at: 0 })
   inbox.post('p1', {
     helperId: 'h-9',
@@ -1846,6 +1865,70 @@ test('R22.2 — o pote do dono é POR PANE: um chat nunca lê a fala mandada ao 
   ownerMail.post('p2', { messageId: 'm-alheia', text: 'isto é do outro chat', at: 0 })
   assert.equal(api.helpersStatus(delegatorId).includes(ownerMailModule.GUI_OWNER_MAIL_TAG), false)
   assert.equal(ownerMail.count('p2'), 1, 'a fala do outro pane continua lá, intocada')
+})
+
+// ————— R32: a DÍVIDA DE RESPOSTA — mudo não anda —————
+//
+// O transcript de 23/08: a carona entregou "O que vc ta fazendo ai?" com "FALE
+// COM ELE JÁ" no mesmo segundo (caixa-preta 15:54:16), o pane JÁ tinha a
+// persona R31 no contrato — e o modelo chamou helper_result de novo, mudo,
+// duas vezes. Persona é pedido; esta é a cobrança MECÂNICA: entregar arma a
+// dívida, e nenhum verbo da delegação anda até o agente falar com o dono.
+
+test('R32 — depois da carona, TODO verbo recusa até o agente falar com o dono', async () => {
+  assert.ok(
+    ownerReplyModule.GuiOwnerReplyDebt,
+    'o módulo da dívida (guiOwnerReplyDebt) não existe — sem ele o mudo continua andando (R32)'
+  )
+  const ownerMail = ownerMailbox()
+  const logged = []
+  const { api, calls, replyDebt } = delegationApi({ ownerMail, log: (entry) => logged.push(entry) })
+  ownerMail.post('p1', { messageId: 'm-1', text: 'O que vc ta fazendo ai?', at: 0 })
+  // A carona entrega — e ARMA.
+  await api.helperResult(delegatorId, 'h-meu', 45)
+  // O caso real: voltar ao long-poll sem falar. Agora a casa recusa.
+  const refused = await api.helperResult(delegatorId, 'h-meu', 45)
+  assert.match(refused, /PARE: o DONO falou/u, 'o verbo andou com o dono sem resposta')
+  assert.match(refused, /O que vc ta fazendo ai\?/u, 'a recusa re-cita a fala pendente')
+  assert.match(refused, /uma ou duas linhas/u, 'a recusa nomeia a receita')
+  assert.match(refused, /chame a tool de novo/u, 'a recusa nomeia a saída — beco sem saída é bug')
+  // Os SETE verbos ficam atrás do mesmo portão, e a recusa não executa nada.
+  assert.match(await api.delegateHelpers(delegatorId, [{ prompt: 'x' }]), /PARE: o DONO falou/u)
+  assert.equal(calls.begin.length, 0, 'a recusa não pode abrir lote nenhum')
+  assert.match(api.helperSend(delegatorId, 'h-meu', 'oi'), /PARE: o DONO falou/u)
+  assert.match(api.helperCancel(delegatorId, 'h-meu'), /PARE: o DONO falou/u)
+  assert.match(api.helpersStatus(delegatorId), /PARE: o DONO falou/u)
+  const enforced = logged.filter((entry) => entry.event === 'owner-reply-enforced')
+  assert.ok(enforced.length >= 5, 'cada cobrança deixa carimbo na caixa-preta')
+  assert.equal(enforced[0].paneId, 'p1')
+  // O agente FALOU (no app, o pump do guiSessions quita no evento de texto):
+  // tudo volta a andar, sem resíduo.
+  replyDebt.clear('p1')
+  assert.match(await api.helperResult(delegatorId, 'h-meu', 45), /entrega do ajudante/u)
+})
+
+test('R32 — o pump do guiSessions QUITA: texto do agente ou fecho de turno paga a dívida', () => {
+  const source = readFileSync(new URL('../src/main/guiSessions.ts', import.meta.url), 'utf8')
+  assert.match(
+    source,
+    /visibleEvt\.type === 'text' && visibleEvt\.text\.trim\(\)\.length > 0/u,
+    'o pump não quita no texto do agente — a recusa viraria beco'
+  )
+  assert.match(
+    source,
+    /this\.replyDebt\.clear\(spawn\.paneId\)/u,
+    'a quitação não passa pela dívida compartilhada'
+  )
+})
+
+test('R32 — o recibo do delegate manda avisar o dono do porquê da frota', async () => {
+  const { api } = delegationApi()
+  const receipt = await api.delegateHelpers(delegatorId, [{ prompt: 'x' }])
+  assert.match(
+    receipt,
+    /AVISE O DONO no chat/u,
+    'o recibo não empurra a fala — o dono vê os cards, nunca o plano ("abriu dois e não falou por quê")'
+  )
 })
 
 test('correio e despertador são O MESMO pote: quem entrega primeiro consome', () => {

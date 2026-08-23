@@ -43,6 +43,7 @@ import {
   type GuiHelperWake
 } from './guiHelperCards'
 import { GuiOwnerMailbox, guiOwnerMailFlushText, guiOwnerMailbox } from './guiOwnerMail'
+import { GuiOwnerReplyDebt, guiOwnerReplyDebt } from './guiOwnerReplyDebt'
 import {
   guiAddApiCall,
   guiConversationWeightTokens,
@@ -1462,6 +1463,12 @@ export interface GuiSessionDeps {
    */
   ownerMail?: GuiOwnerMailbox
   /**
+   * A DÍVIDA DE RESPOSTA (R32) — armada pela carona na delegação, QUITADA
+   * aqui: o primeiro texto do assistente (ou o fecho do turno) paga. Ausente =
+   * a de produção (`guiOwnerReplyDebt`), a MESMA que o guard das tools cobra.
+   */
+  replyDebt?: GuiOwnerReplyDebt
+  /**
    * ESTE PANE DELEGA? (R22.1 — a autoridade da ROTA.)
    *
    * Quem sabe a resposta é o main (o registro de identidade do servidor MCP diz
@@ -1539,6 +1546,8 @@ export class GuiSessionRegistry {
    *  delegador espera aqui pela carona no próximo resultado de tool — e, se o
    *  turno fechar com ele cheio, o fecho a entrega pelo caminho de sempre. */
   private readonly ownerMail: GuiOwnerMailbox
+  /** A DÍVIDA DE RESPOSTA (R32): o pump quita no primeiro texto do agente. */
+  private readonly replyDebt: GuiOwnerReplyDebt
   /** O motor dos ajudantes, amarrado depois do nascimento (ver `attachHelpers`).
    *  Ausente = registro sem frota: o ■ para só o turno. */
   private helpers?: GuiSessionHelperControls
@@ -1550,6 +1559,7 @@ export class GuiSessionRegistry {
     this.deps = deps
     this.attachmentCapabilities = deps.attachmentCapabilities ?? new GuiAttachmentCapabilityStore()
     this.ownerMail = deps.ownerMail ?? guiOwnerMailbox
+    this.replyDebt = deps.replyDebt ?? guiOwnerReplyDebt
     this.helperCards = new GuiHelperCardCorrelator({
       emit: (paneId, evt) => this.panes.get(paneId)?.sink(evt),
       // SESSÃO MORTA NÃO TEM TURNO. Sem o `alive`, um processo que caiu com
@@ -1863,6 +1873,16 @@ export class GuiSessionRegistry {
           evt: guiHistoryPrunedEvent(ring.evictedCount)
         })
       }
+      // R32 — a DÍVIDA DE RESPOSTA quita no caminho por onde todo texto passa:
+      // o agente falou = o dono foi respondido. `result` quita também — o
+      // turno acabou e a cobrança mid-turn perdeu o objeto (a fala do fecho o
+      // dono vê como mensagem normal). Interrupção ■ é `result` com flag, cai
+      // aqui igual: dívida de um turno morre com o turno.
+      if (
+        (visibleEvt.type === 'text' && visibleEvt.text.trim().length > 0) ||
+        visibleEvt.type === 'result'
+      )
+        this.replyDebt.clear(spawn.paneId)
       const alertKind = alertSequencer.accept(visibleEvt, seq)
       if (alertKind) {
         this.deps.onChatAlert?.({
@@ -2111,6 +2131,11 @@ export class GuiSessionRegistry {
     // nasce sem turno, então este é o primeiro instante em que a entrega cabe —
     // e ela não é "turno nascendo aqui": é a mensagem do dono, que ele mandou,
     // finalmente chegando.
+    // R32 — o turno da dívida morreu com o processo velho: cobrar o processo
+    // novo por uma fala que ele nunca leu prenderia a delegação num pane que
+    // acabou de nascer (a mensagem re-entra pelo flush logo abaixo, como turno
+    // normal, e turno normal responde por si).
+    this.replyDebt.clear(spawn.paneId)
     this.flushOwnerMail(spawn.paneId, current ? 'respawn' : 'abertura')
     // NENHUM TURNO NASCE AQUI. O chat abre calado e espera o dono.
     return { ok: true }

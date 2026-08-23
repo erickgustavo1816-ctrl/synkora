@@ -699,6 +699,14 @@ export type GuiHelperLogEvent =
    * pergunta sem resposta mecânica — exatamente o buraco do print de 19/08.
    */
   | 'owner-mail-ride'
+  /**
+   * R32 — A COBRANÇA DA DÍVIDA DE RESPOSTA: uma tool de delegação foi RECUSADA
+   * porque a fala do dono entregue pela carona seguia sem resposta (o caso do
+   * transcript de 23/08: o modelo leu "FALE COM ELE JÁ" e voltou ao long-poll
+   * mudo, duas vezes). O carimbo distingue "o agente falou por vontade" de
+   * "falou porque a casa cobrou".
+   */
+  | 'owner-reply-enforced'
 
 export interface GuiHelperLogEntry {
   event: GuiHelperLogEvent
