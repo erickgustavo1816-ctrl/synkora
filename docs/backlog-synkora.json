@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-23T04:24:45.417Z",
+  "updatedAt": "2026-08-23T15:42:13.541Z",
   "lanes": {
     "agora": [
       {
@@ -203,6 +203,16 @@
           "37e376a"
         ],
         "day": "23/08 — domingo"
+      },
+      {
+        "id": "r28-mensagem-do-dono-entra-no-turno-na-hora-pers",
+        "title": "R31 — mensagem do dono entra no turno na hora + persona responde sempre e narra",
+        "desc": "Queixa tripla de 2026-08-23 (\"ele lê 3h depois\", \"não responde\", \"não comenta\"). Sonda probe-claude-owner-midturn: claude 2.1.241 STEERA o stdin na fronteira da próxima tool (diagnóstico da R22 envelheceu); hook PostToolUse additionalContext provado como plano B. Composer deixou de enfileirar com turno aberto (só slash cru espera); bloco OWNER_VOICE_ORDER nos três contratos. Commits 88b63d3+7571cf3; main muda = precisa restart.",
+        "refs": [
+          ".synkora/reports/DESIGN_STEER_DO_DONO_R31_2026-08-23.md",
+          "scripts/probe-claude-owner-midturn.mjs"
+        ],
+        "day": "23/08 — domingo"
       }
     ]
   },
@@ -357,6 +367,19 @@
       "action": "add",
       "id": "regra-do-fratricidio-agente-nunca-mais-mata-proc",
       "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-23T15:40:35.627Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "r28-mensagem-do-dono-entra-no-turno-na-hora-pers",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-23T15:42:13.541Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "r28-mensagem-do-dono-entra-no-turno-na-hora-pers"
     }
   ]
 }
