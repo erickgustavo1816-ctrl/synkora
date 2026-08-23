@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-23T15:42:13.541Z",
+  "updatedAt": "2026-08-23T16:10:26.743Z",
   "lanes": {
     "agora": [
       {
@@ -213,6 +213,16 @@
           "scripts/probe-claude-owner-midturn.mjs"
         ],
         "day": "23/08 — domingo"
+      },
+      {
+        "id": "r32-divida-de-resposta-tool-de-delegacao-recusa-",
+        "title": "R32 — dívida de resposta: tool de delegação recusa até o dono ser respondido",
+        "desc": "Teste ao vivo do dono provou (transcript): com R31 no ar, o fable leu \"O que vc ta fazendo ai?\" + \"FALE COM ELE JÁ\" e voltou ao long-poll mudo 2×. Persona é pedido; agora é mecânico: carona arma dívida por pane, os 7 verbos recusam re-citando a fala e nomeando a receita (falar 1 linha destrava; pump quita no texto). Recibo do delegate empurra \"AVISE O DONO\" (a queixa dos 2 subagentes sem porquê). Commit 2d1f29c; main muda = MAIS um restart.",
+        "refs": [
+          ".synkora/reports/DESIGN_DIVIDA_RESPOSTA_R32_2026-08-23.md",
+          "src/main/guiOwnerReplyDebt.ts"
+        ],
+        "day": "23/08 — domingo"
       }
     ]
   },
@@ -380,6 +390,13 @@
       "by": "orquestrador",
       "action": "update",
       "id": "r28-mensagem-do-dono-entra-no-turno-na-hora-pers"
+    },
+    {
+      "at": "2026-08-23T16:10:26.743Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "r32-divida-de-resposta-tool-de-delegacao-recusa-",
+      "detail": "→ feito"
     }
   ]
 }
