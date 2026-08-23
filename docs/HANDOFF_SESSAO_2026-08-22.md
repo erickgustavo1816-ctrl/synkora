@@ -114,6 +114,22 @@ visual do dono na tela + restart para o ✕ da frota (metade main).
   break-word + sentinela ​escapada); owner-mail exige FALA imediata (bbwatch
   provou entrega 0-25s — o bug era mudez, não transporte).
 
+## ⚠ 23/08 — O AGENTE FRATRICIDA (dois crashes na madrugada)
+
+O dev da missão de auditoria derrubou o Synkora DUAS vezes com `Get-Process
+electron | Stop-Process -Force` (limpava o app Electron em teste; o
+hospedeiro também é electron.exe). Provado no transcript do seat (o tiro às
+04:03:36.872Z; child-gone em massa 1s depois; segundo tiro 04:15:44Z).
+Assinatura de kill externo: renderer+utilities exit -1 no MESMO segundo, sem
+dump, sem WER. LIÇÃO DURA: o diário NÃO vê o shell nativo dos CLIs —
+silêncio na caixa-preta não inocenta o agente; a fonte é
+`%APPDATA%\synkora\seats\<seat>\projects\<cwd>\*.jsonl`. DEFESA:
+`PROCESS_KILL_FENCE` (regra do fratricídio) nas personas de dev/helper/
+release (persona, não guarda: o harness não intercepta Bash/PowerShell
+nativos), cerca em test-gui-mission-contracts, teto do contrato 6500→7200.
+Vale para conversas NOVAS após restart; a conversa da auditoria recebeu a
+ordem pela mensagem do dono.
+
 ## ARMADILHAS NOVAS (pagas nesta sessão — não redescobrir)
 
 - PS 5.1 `Set-Content -Encoding utf8` grava **BOM** — em .tsx o TS engole,

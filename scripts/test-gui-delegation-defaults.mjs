@@ -703,10 +703,14 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   // INTEGRADOR — "quando eu clico em subir, o AGENTE sobe" —, medindo 5462. Na
   // R25 (2026-08-20) de novo só o do CONTRATO, 5600→6500: a ordem permanente
   // seguiu intocada e os TRÊS papéis ganharam a DOUTRINA DE CUSTO (a auditoria
-  // mediu o orquestrador re-lendo ~192k por chamada), com o dev em 6352.
+  // mediu o orquestrador re-lendo ~192k por chamada), com o dev em 6352. E em
+  // 2026-08-23 de novo só o do CONTRATO, 6500→7200: a REGRA DO FRATRICÍDIO
+  // (o agente de uma auditoria derrubou o Synkora duas vezes na mesma noite
+  // com `Get-Process electron | Stop-Process`) entrou em dev/helper — a ordem
+  // permanente seguiu intocada.
   assert.ok(order.length < 3000, `a ordem permanente virou constituição (${order.length})`)
   for (const role of GUI_MISSION_ROLES) {
-    assert.ok(guiMissionSystemPrompt(role).length < 6500, `${role}: contrato virou constituição`)
+    assert.ok(guiMissionSystemPrompt(role).length < 7200, `${role}: contrato virou constituição`)
   }
   // O planejador não delega: ele nunca recebe a seção nem o pino.
   assert.doesNotMatch(guiPlanningSystemPrompt(), /STANDING ORDER FROM THE OWNER/u)

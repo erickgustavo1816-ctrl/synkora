@@ -113,9 +113,13 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // 5600 para 6500 na R25 (2026-08-20), pela DOUTRINA DE CUSTO — a auditoria
     // mediu o orquestrador re-lendo ~192k por chamada, 139 vezes numa janela de
     // 5h, e a persona é a metade que o modelo lê do empurrão para delegar cedo:
-    // o dev mede 6352, o reviewer 4912 e o ajudante 4401. O teto continua sendo
+    // o dev mede 6352, o reviewer 4912 e o ajudante 4401. E de 6500 para 7200
+    // em 2026-08-23, pela REGRA DO FRATRICÍDIO — o agente de uma auditoria
+    // derrubou o Synkora DUAS vezes na mesma noite com `Get-Process electron |
+    // Stop-Process` (limpava o app que testava; o hospedeiro também é
+    // electron.exe): o dev mede ~7000, o ajudante ~5040. O teto continua sendo
     // contra CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
-    assert.ok(contract.length < 6500, `${role}: contrato virou constituição`)
+    assert.ok(contract.length < 7200, `${role}: contrato virou constituição`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -1242,4 +1246,34 @@ test('R25.4 — a doutrina é PERSONA, nunca guarda: nenhum verbo de bloqueio', 
   assert.doesNotMatch(section, /you are not allowed|forbidden|you must not read/iu)
   // E ela não fala em DINHEIRO: com assinatura o CLI não reporta custo em $.
   assert.doesNotMatch(section, /\$|dollar|usd/iu)
+})
+
+// ————— A REGRA DO FRATRICÍDIO (2026-08-23, escrita com dois crashes) —————
+//
+// O agente de uma missão de auditoria derrubou o Synkora DUAS VEZES na mesma
+// noite com `Get-Process electron | Stop-Process -Force`: ele queria limpar o
+// app Electron que estava testando, e o app que o HOSPEDA também é
+// electron.exe. Provado no transcript (04:03:36.872Z → child-gone em massa
+// 04:03:37.874Z; segundo tiro 04:15:44). O harness não intercepta o shell
+// nativo dos CLIs, então a defesa mora na PERSONA de todo papel que roda
+// processo — e esta cerca impede a regra de sair dela.
+
+test('todo papel que roda processo carrega a regra do fratricídio', async () => {
+  const { guiReleaseSystemPrompt } = await import('../src/main/guiMissionContracts.ts')
+  for (const [nome, prompt] of [
+    ['dev', guiMissionSystemPrompt('dev')],
+    ['helper', guiMissionSystemPrompt('helper')],
+    ['release', guiReleaseSystemPrompt()]
+  ]) {
+    // A proibição nomeia as ARMAS reais (as duas formas do tiro)…
+    assert.match(prompt, /Get-Process electron/u, `${nome}: a regra nomeia o tiro do PowerShell`)
+    assert.match(prompt, /taskkill \/IM/u, `${nome}: a regra nomeia o tiro do taskkill`)
+    // …diz o PORQUÊ (o hospedeiro é electron.exe também)…
+    assert.match(prompt, /electron\.exe/u, `${nome}: a regra diz por que o tiro é fratricida`)
+    // …e dá a RECEITA sancionada (PID próprio / dono da porta) — beco sem
+    // saída é bug, inclusive em persona.
+    assert.match(prompt, /\/PID|OwningProcess/u, `${nome}: a regra entrega a rota certa`)
+  }
+  // O planejamento não roda processo nenhum — a regra não entra lá à toa.
+  assert.doesNotMatch(guiPlanningSystemPrompt(), /taskkill/u)
 })
