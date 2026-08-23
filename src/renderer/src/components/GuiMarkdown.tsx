@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { guiApi, type GuiFileOpenResult } from '../guiApi'
+import { applyGuiStableMarkdown } from '../guiStableMarkdownPatch'
 import { findGuiFileTokens, guiInlineCodeFileToken } from '../guiFileTokens'
 import {
   isChatFileTarget,
@@ -157,6 +158,21 @@ export default function GuiMarkdown({
     })
     return linkifyGuiFileReferences(routeChatLinksExternally(sanitized))
   }, [text])
+
+  // R35 — O CONTEÚDO NÃO É MAIS ENTREGUE AO REACT COMO STRING. Com
+  // `dangerouslySetInnerHTML`, cada tick da máquina de escrever trocava o
+  // innerHTML inteiro e destruía todos os nós da mensagem em streaming — a
+  // seleção do dono morria no tick seguinte ao mouseup. Aqui o container fica
+  // VAZIO para o React (nenhum filho declarado ⇒ ele nunca reconcilia esta
+  // subárvore) e quem pinta é o patch de prefixo estável, que preserva os nós
+  // do trecho já escrito. Efeito de LAYOUT: o DOM tem de estar pintado antes
+  // do browser desenhar o quadro, senão a mensagem pisca vazia.
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    const container = contentRef.current
+    if (!container) return
+    applyGuiStableMarkdown(container, html)
+  }, [html])
 
   const openingLinkRef = useRef<HTMLAnchorElement | null>(null)
   const openingTimerRef = useRef<number | null>(null)
@@ -325,11 +341,11 @@ export default function GuiMarkdown({
       onContextMenu={handleTokenContextMenu}
       onKeyDown={handleTokenMenuKey}
     >
-      <div
-        className="gui-md-content"
-        // Conteúdo JÁ sanitizado acima — é o único caminho de HTML do chat.
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      {/* Conteúdo JÁ sanitizado acima — é o único caminho de HTML do chat; o
+          efeito de layout aplica o mesmo html por patch de prefixo estável.
+          A delegação de clique/menu vive no wrapper acima e por isso
+          SOBREVIVE à troca dos filhos. */}
+      <div className="gui-md-content" ref={contentRef} />
       <span className="gui-link-opening-status" role="status" aria-live="polite" aria-atomic="true">
         {openingLinkLabel ?? fileOpeningLabel}
       </span>

@@ -4396,3 +4396,91 @@ test('R34 — sem tooltip nas seleções, e o ❝ consome a seleção pintada', 
     'anexar não consome a seleção — ela seguraria o freio do scroll para sempre'
   )
 })
+
+// ————— R35: DOM ESTÁVEL NO STREAMING — a seleção sobrevive à máquina de escrever —————
+//
+// A R34 segurou o SCROLL; faltava o DOM. `GuiStreamText` re-renderiza o
+// `GuiMarkdown` a cada tick e o markdown era pintado por
+// `dangerouslySetInnerHTML`: string nova ⇒ innerHTML inteiro trocado ⇒ todo nó
+// da mensagem em streaming destruído e recriado várias vezes por segundo. A
+// seleção do dono morria no tick seguinte ao mouseup. Agora a decisão é uma
+// função PURA (o prefixo de filhos de topo que não pode ser tocado) e o efeito
+// só aplica.
+//
+// As chaves do plano carregam a espécie do nó (`e:` elemento, `t:` texto) —
+// sondado no pipeline real: `marked` separa os blocos com "\n" e esses viram
+// Text nodes IRMÃOS dos `<p>`/`<pre>` no topo. Comparar só elementos
+// desalinharia os índices.
+
+const { guiStablePrefixPlan } = await import('../src/renderer/src/guiStableMarkdownPatch.ts')
+
+test('R35 — html idêntico não toca em nada: o prefixo é a lista inteira', () => {
+  const frame = ['e:<p>Olá</p>', 't:\n', 'e:<pre><code>x</code></pre>', 't:\n']
+  assert.deepEqual(guiStablePrefixPlan(frame, [...frame]), { keep: 4 })
+  assert.deepEqual(guiStablePrefixPlan([], []), { keep: 0 }, 'mensagem vazia não inventa filho')
+})
+
+test('R35 — dois quadros seguidos do streaming: só o último bloco é volátil', () => {
+  // O que o pipeline entrega entre dois ticks: os blocos fechados saem byte a
+  // byte iguais e só a última palavra cresce.
+  const antes = ['e:<h1>Título</h1>', 't:\n', 'e:<p>uma frase</p>', 't:\n', 'e:<p>o come</p>', 't:\n']
+  const depois = ['e:<h1>Título</h1>', 't:\n', 'e:<p>uma frase</p>', 't:\n', 'e:<p>o começo da</p>', 't:\n']
+  assert.deepEqual(
+    guiStablePrefixPlan(antes, depois),
+    { keep: 4 },
+    'os quatro filhos já escritos têm de ficar INTACTOS — é neles que a seleção vive'
+  )
+})
+
+test('R35 — cauda que cresce: bloco novo só APÊNDA, o que já existia fica', () => {
+  const antes = ['e:<p>um</p>', 't:\n']
+  const depois = ['e:<p>um</p>', 't:\n', 'e:<p>dois</p>', 't:\n']
+  assert.deepEqual(guiStablePrefixPlan(antes, depois), { keep: 2 }, 'o velho é prefixo do novo')
+})
+
+test('R35 — diferença na primeira posição zera o prefixo (mensagem outra)', () => {
+  assert.deepEqual(
+    guiStablePrefixPlan(['e:<p>um</p>', 't:\n'], ['e:<p>outro</p>', 't:\n']),
+    { keep: 0 },
+    'nada a preservar quando o primeiro filho já mudou'
+  )
+})
+
+test('R35 — html que ENCOLHE mantém o prefixo comum e o resto é removido', () => {
+  const antes = ['e:<p>um</p>', 't:\n', 'e:<p>dois</p>', 't:\n', 'e:<p>três</p>']
+  const depois = ['e:<p>um</p>', 't:\n']
+  assert.deepEqual(guiStablePrefixPlan(antes, depois), { keep: 2 })
+  assert.deepEqual(guiStablePrefixPlan(antes, []), { keep: 0 }, 'esvaziar remove tudo')
+})
+
+test('R35 — a espécie do nó importa: texto "<p>x</p>" nunca casa com o elemento', () => {
+  assert.deepEqual(
+    guiStablePrefixPlan(['t:<p>x</p>'], ['e:<p>x</p>']),
+    { keep: 0 },
+    'sem discriminador, um texto escapado casaria com um elemento e o patch removeria o nó errado'
+  )
+})
+
+test('R35 — o GuiMarkdown pinta por patch, não por dangerouslySetInnerHTML', () => {
+  const md = readFileSync(
+    new URL('../src/renderer/src/components/GuiMarkdown.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.doesNotMatch(
+    md,
+    /dangerouslySetInnerHTML=/u,
+    'o innerHTML inteiro voltou a ser trocado a cada tick — a seleção morre de novo'
+  )
+  assert.match(md, /applyGuiStableMarkdown\(container, html\)/u, 'o aplicador do patch não é chamado')
+  assert.match(md, /useLayoutEffect/u, 'efeito comum pintaria depois do quadro: a mensagem piscaria vazia')
+  assert.match(
+    md,
+    /<div className="gui-md-content" ref=\{contentRef\} \/>/u,
+    'o container do conteúdo precisa ficar SEM filhos declarados (React não pode reconciliar esta subárvore)'
+  )
+  // O contrato que não pode regredir junto: sanitização e delegação seguem
+  // exatamente onde estavam.
+  assert.match(md, /DOMPurify\.sanitize\(raw, \{/u, 'a sanitização saiu do caminho')
+  assert.match(md, /onClickCapture=\{handleLinkOpenAttempt\}/u, 'a delegação do wrapper sumiu')
+  assert.match(md, /aria-live="polite"/u, 'o status do link externo sumiu')
+})
