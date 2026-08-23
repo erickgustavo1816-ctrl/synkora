@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-23T23:42:18.332Z",
+  "updatedAt": "2026-08-23T23:55:09.772Z",
   "lanes": {
     "agora": [
       {
@@ -58,6 +58,11 @@
         "title": "Varredura de obsoletos no GitHub",
         "desc": "\"Ver o que é obsoleto e remover\" — citada e adiada pelo dono em 21/08.",
         "refs": []
+      },
+      {
+        "id": "advisory-no-diff-mexendo-em-version-do-package-j",
+        "title": "Advisory no ⇪: diff mexendo em version do package.json sem ordem do dono",
+        "desc": "A metade mecânica da R37: a integração detecta diff tocando \"version\" do manifesto e AVISA o dono no recibo (advisory auditado, nunca recusa — sugerir bump é fala legítima; a persona já proíbe decidir). Nasceu do caso do dev que bumpou 0.1.1→0.1.2 sozinho."
       }
     ],
     "dividas": [
@@ -263,6 +268,15 @@
           ".synkora/reports/r36-agent-A-report.md",
           ".synkora/reports/r36-agent-B-report.md",
           "9cade88"
+        ],
+        "day": "23/08 — domingo"
+      },
+      {
+        "id": "r37-todo-papel-abre-com-o-mundo-o-que-e-o-synkor",
+        "title": "R37 — todo papel abre com O MUNDO: o que é o Synkora, onde ele está, o que o app decide",
+        "desc": "Ordem do dono no meio da rodada (\"ao invés de ficar remendando, explica pra ele como é o synkora, onde ele está e como funciona — release e planejamento também\"). Gatilho: dev codex na v0.1.1 anunciou sozinho \"será publicada como 0.1.2\" (\"quem decide isso sou eu\"). guiSynkoraWorld(seat): UMA fonte, cinco assentos — dev/reviewer/helper/planejador/release abrem com THE WORLD YOU ARE IN + linha \"onde você está\" própria + o que o app faz sozinho (branch/fila/BUMP do release); versão nunca é decisão do agente; mecânica não escrita se PERGUNTA. Tetos 8700→10300 e 4200→5500 cronicados; teste cobre os 5 prompts. Commit 5baf237; main = restart pendente.",
+        "refs": [
+          "5baf237"
         ],
         "day": "23/08 — domingo"
       }
@@ -473,6 +487,20 @@
       "action": "add",
       "id": "r36-a-entrega-visual-aparece-no-chat-imagem-cita",
       "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-23T23:55:02.200Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "r37-todo-papel-abre-com-o-mundo-o-que-e-o-synkor",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-23T23:55:09.772Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "advisory-no-diff-mexendo-em-version-do-package-j",
+      "detail": "→ candidatas"
     }
   ]
 }
