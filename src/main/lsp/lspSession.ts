@@ -199,6 +199,17 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
 
 /** Quanto de stderr do servidor fica guardado para a mensagem de morte. */
 const STDERR_TAIL_CHARS = 2000
+/**
+ * A CABEÇA anda junto (incidente do tsgo, 2026-08-23): o typescript 7 nativo
+ * morreu em série com exit 2 e a mensagem de morte só mostrava o RABO do
+ * stderr — frames de stack de Go, sem a primeira linha ("fatal error: …" /
+ * "panic: …"), que é exatamente onde a causa mora. Guardar só o rabo amputou
+ * o diagnóstico e custou uma arqueologia inteira; a cabeça é curta, congela
+ * cheia e viaja na frente do rabo na mensagem.
+ */
+const STDERR_HEAD_CHARS = 600
+/** O rabo que entra na MENSAGEM (o buffer inteiro iria num resultado de tool). */
+const STDERR_TAIL_IN_MESSAGE = 400
 
 export class LspSession {
   readonly root: string
@@ -216,6 +227,9 @@ export class LspSession {
   private readonly deathWatchers = new Set<() => void>()
   private readonly handshakeDone: Promise<void>
   private stderrTail = ''
+  private stderrHead = ''
+  /** Total que o servidor cuspiu — é ele que diz se houve corte no meio. */
+  private stderrChars = 0
   private death: string | null = null
   private disposed = false
   /** Push até o servidor dizer o contrário no `initialize` — servidor mudo
@@ -245,7 +259,11 @@ export class LspSession {
       )
     }
     this.child.stderr?.on('data', (chunk: Buffer) => {
-      this.stderrTail = `${this.stderrTail}${chunk.toString('utf-8')}`.slice(-STDERR_TAIL_CHARS)
+      const text = chunk.toString('utf-8')
+      this.stderrChars += text.length
+      if (this.stderrHead.length < STDERR_HEAD_CHARS)
+        this.stderrHead = `${this.stderrHead}${text}`.slice(0, STDERR_HEAD_CHARS)
+      this.stderrTail = `${this.stderrTail}${text}`.slice(-STDERR_TAIL_CHARS)
     })
     // ENOENT/EACCES chegam por 'error' (assíncrono): a morte precoce vira a
     // MESMA frase da morte no meio, com a receita, em vez de exceção solta.
@@ -703,18 +721,34 @@ export class LspSession {
     })
   }
 
+  /** CABEÇA + rabo do stderr para a mensagem de morte. Stderr curto vai
+   *  inteiro; longo vai com a primeira linha preservada (a causa de um crash
+   *  de Go mora ali) e o corte NOMEADO no meio. */
+  private stderrSnippet(): string {
+    if (this.stderrChars === 0) return ''
+    // Tudo cabe na janela da mensagem — e o rabo ainda guarda o texto inteiro.
+    if (
+      this.stderrChars <= STDERR_HEAD_CHARS + STDERR_TAIL_IN_MESSAGE &&
+      this.stderrChars <= STDERR_TAIL_CHARS
+    )
+      return this.stderrTail.trim()
+    return `${this.stderrHead.trim()}\n[… stderr cortado no meio …]\n${this.stderrTail
+      .slice(-STDERR_TAIL_IN_MESSAGE)
+      .trim()}`
+  }
+
   private mourn(code: number | null, signal: string | null, error?: string): void {
     if (this.death !== null) return
-    const stderr = this.stderrTail.trim()
+    const stderr = this.stderrSnippet()
     const cause = error
       ? `não foi possível executar "${this.launch.command}": ${error}`
       : `encerrou (código ${code ?? '—'}${signal ? `, sinal ${signal}` : ''})`
     this.death =
       `o servidor de linguagem de ${this.root} ${cause} — chame de novo: a próxima chamada sobe um servidor novo` +
-      (stderr ? `; ele disse: ${stderr.slice(-400)}` : '')
+      (stderr ? `; ele disse: ${stderr}` : '')
     this.rpc.dispose(this.death)
     this.wakeDeathWatchers()
-    this.onExit?.({ code, signal, stderr })
+    this.onExit?.({ code, signal, stderr: this.stderrTail.trim() })
   }
 
   private wakeDeathWatchers(): void {

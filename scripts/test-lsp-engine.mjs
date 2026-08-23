@@ -564,6 +564,29 @@ test('servidor que morre NO MEIO da chamada responde com a receita', async (t) =
   assert.equal(session.alive, false)
 })
 
+// O incidente do tsgo (2026-08-23): o typescript 7 nativo morreu em série com
+// exit 2 e a mensagem só carregava o RABO do stderr — stack de Go sem a
+// primeira linha, que é onde a causa mora ("fatal error: …"). A cabeça agora
+// viaja na frente, e o corte é NOMEADO.
+test('morte com stderr comprido preserva a CABEÇA (a causa), não só o rabo', async (t) => {
+  const lab = labIn(t)
+  const session = lab.session(['--die-on', 'textDocument/didOpen', '--stderr-blast'], {
+    ceilingMs: 4000
+  })
+  await assert.rejects(session.diagnostics(['src/a.ts']), (e) => {
+    assert.equal(e.name, 'LspError')
+    assert.match(
+      e.message,
+      /fatal error: out of memory \(dublê\)/,
+      'a primeira linha do crash — a causa — foi amputada da mensagem'
+    )
+    assert.match(e.message, /stderr cortado no meio/, 'o corte tem de ser nomeado, nunca silencioso')
+    assert.match(e.message, /\+0x45/, 'o rabo do stack continua vindo junto')
+    return true
+  })
+  assert.equal(session.alive, false)
+})
+
 test('lançador que não existe vira frase com receita, não exceção solta', async (t) => {
   const lab = labIn(t)
   const session = new LspSession({

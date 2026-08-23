@@ -183,6 +183,17 @@ function handle(message) {
   log({ method: message.method })
   if (DIE_ON && message.method === DIE_ON) {
     log({ event: 'morrendo', method: message.method })
+    // --stderr-blast: morre como um binário de Go morre — a CAUSA na primeira
+    // linha e um stack comprido atrás (o incidente do tsgo, 2026-08-23). O
+    // write com callback garante o flush antes do exit; sem ele o pipe async
+    // do Windows engoliria o jorro.
+    if (flag('stderr-blast')) {
+      const blast =
+        'fatal error: out of memory (dublê)\n\ngoroutine 1 [running]:\n' +
+        'exemplo.stackFrame()\n\texemplo/arquivo.go:1 +0x45\n'.repeat(120)
+      process.stderr.write(blast, () => process.exit(9))
+      return
+    }
     process.exit(9)
   }
   const delay = SLOW.get(message.method)
