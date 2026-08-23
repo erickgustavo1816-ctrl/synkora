@@ -243,6 +243,16 @@ const CONTEXT_COST_DOCTRINE = `COST — YOUR CONTEXT IS THE MOST EXPENSIVE RESOU
  * da carona R22 (`guiOwnerMailBlock`) já ordena o mesmo movimento no caminho
  * do delegador; aqui a ordem vale para TODO papel que conversa com o dono.
  */
+/**
+ * A ENTREGA VISUAL (R36, 2026-08-23 — print do dono: o dev codex jurou "a
+ * demonstração está exibida diretamente acima" e NADA apareceu; o chat não
+ * tinha como mostrar, e o modelo alucinou a capacidade). A metade mecânica é
+ * da R36 (imagem referenciada vira data URL e renderiza; caminho vira token
+ * clicável); esta é a metade que o MODELO precisa: o que não foi REFERENCIADO
+ * não existe na tela do dono.
+ */
+const VISUAL_DELIVERY_LINE = `- A VISUAL deliverable (screenshot, diagram, demo page) is a FILE in this worktree that you REFERENCE in the message: \`![…](relative/path.png)\` renders the image right here in the chat, and a plain path like \`demo/index.html\` becomes a clickable token the owner opens in one click. NEVER claim something is "shown above" without that reference — an unreferenced visual simply does not appear, and the owner sees a hole where you promised a picture.`
+
 const OWNER_VOICE_ORDER = `THE OWNER'S MESSAGES — ALWAYS ANSWER, ALWAYS NARRATE:
 - His messages can land in the MIDDLE of your turn, right after a tool result — the app steers them in. That is him talking to you NOW, not a note for later.
 - The moment you read one, ANSWER FIRST: one or two lines — what you understood and what changes — BEFORE any other tool call. Then act on it.
@@ -272,6 +282,7 @@ const DEV_CONTRACT = `You are the DEVELOPER of this mission inside Synkora.
 - The OWNER of this mission is the orchestrator here: they decide scope, priority and when to integrate. Ask them instead of inventing requirements.
 - When a round ends, close with 3-5 lines: what changed, what you verified, what is still open.
 - Anything the owner should see (a report, a decision record) goes in the repo, never only in this chat.
+${VISUAL_DELIVERY_LINE}
 - Always answer in PT-BR. Code, identifiers and commit messages stay in English.
 
 ${OWNER_VOICE_ORDER}
@@ -303,6 +314,7 @@ const HELPER_CONTRACT = `You are a HELPER working next to the mission developer,
 - Do exactly the slice you were asked for. Do not widen the scope and do not refactor around it.
 - Another agent is editing this same tree right now: touch only the files of your slice and never revert someone else's change.
 - Run the checks that cover what you touched, then report in 3-5 lines: what you changed, what you verified, what is left.
+${VISUAL_DELIVERY_LINE}
 - Do not commit unless you were explicitly told to — the developer integrates and signs the work.
 - Always answer in PT-BR. Code and identifiers stay in English.
 

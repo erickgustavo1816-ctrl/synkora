@@ -121,9 +121,12 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // na R31 (2026-08-23), pela VOZ DO DONO — as três queixas verbatim ("eu
     // mando e ele lê três horas depois", "ele leu mas não responde", "ele só
     // sai fazendo sem comentar"): o dev mede 8010, o reviewer 5876 e o
-    // ajudante 6059. O teto continua sendo contra CONSTITUIÇÃO: régua nova do
-    // dono cabe, discurso não.
-    assert.ok(contract.length < 8200, `${role}: contrato virou constituição`)
+    // ajudante 6059. E de 8200 para 8700 na R36 (2026-08-23), pela ENTREGA
+    // VISUAL — o dev codex jurou "está exibida diretamente acima" e nada
+    // apareceu; a linha ensina que visual não referenciado NÃO existe na tela
+    // do dono (dev 8459, ajudante 6508). O teto continua sendo contra
+    // CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
+    assert.ok(contract.length < 8700, `${role}: contrato virou constituição`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -140,6 +143,20 @@ test('o dev espera aval antes de trabalho grande e trabalha só no worktree', ()
   const contract = guiMissionSystemPrompt('dev')
   assert.match(contract, /MINI-PLAN/)
   assert.match(contract, /ONLY inside this worktree/i)
+})
+
+// A ENTREGA VISUAL (R36, 2026-08-23). O print do dono: o dev codex jurou "a
+// demonstração está exibida diretamente acima" e NADA apareceu — o chat não
+// renderizava imagem de worktree (CSP) e o modelo alucinou a capacidade. A
+// metade mecânica é da R36 (imagem referenciada renderiza; caminho vira
+// token); esta linha é a metade do MODELO: visual sem referência não existe.
+test('R36 — dev e ajudante sabem que entrega visual é ARQUIVO referenciado, nunca promessa', () => {
+  for (const role of ['dev', 'helper']) {
+    const contract = guiMissionSystemPrompt(role)
+    assert.match(contract, /VISUAL deliverable/u, `${role}: sem a linha da entrega visual`)
+    assert.match(contract, /!\[…\]\(relative\/path\.png\)/u, `${role}: não ensina a referência de imagem`)
+    assert.match(contract, /NEVER claim something is "shown above"/u, `${role}: não proíbe a promessa vazia`)
+  }
 })
 
 // A VOZ DO DONO (R31, 2026-08-23). A metade mecânica é da rodada (composer

@@ -72,6 +72,11 @@ import {
   type GuiFileOpenResult,
   type GuiFileResolveReason
 } from '../guiFileResolver'
+import {
+  guiInlineImageData,
+  guiInlineImageRefusal,
+  type GuiInlineImageDataResult
+} from '../guiInlineImageData'
 import { ensureSynkoraGitExcludes } from '../worktree'
 import {
   GUI_OWNER_MAIL_STORE_FILE,
@@ -877,6 +882,72 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
         detail: { action: 'external' }
       })
       return { ok: true, action: 'external' }
+    }
+  )
+
+  /**
+   * O TERCEIRO IRMÃO (R36.1): o mesmo arquivo, EXIBIDO DENTRO DO FIO.
+   *
+   * `fileOpen` mostra no painel, `fileOpenExternal` manda para fora — e faltava
+   * a entrega visual aparecer onde o dono está olhando. O `<img>` que o agente
+   * escreve passa pelo sanitizador, mas o CSP do renderer (`img-src 'self'
+   * data:`) mata um caminho de worktree em silêncio; o renderer troca a
+   * referência por este canal e recebe a única forma que o CSP aceita.
+   *
+   * MESMA CERCA, sem exceção: o `cwd` vem do registro de sessões (nunca do
+   * renderer) e o `fileResolver.resolve` já recusa traversal, link/junction,
+   * arquivo fora do worktree, segredo e extensão executável. Só o caminho que o
+   * resolver PROVOU chega ao módulo — e o absoluto morre aqui: o que atravessa
+   * para o renderer é `data:<mime>;base64,…`, nunca um caminho.
+   *
+   * Sem `selectedPath` de propósito: imagem citada não abre painel de escolha.
+   * Nome ambíguo NÃO vira aposta — recusa com a receita do painel de arquivos.
+   */
+  ipcMain.handle(
+    'gui:fileImageData',
+    (e, paneId: unknown, reference: unknown): GuiInlineImageDataResult => {
+      extras.assertAppRendererSender(e)
+      if (typeof paneId !== 'string' || !paneId || paneId.length > 256) {
+        return { ok: false, error: 'pane sem identificador válido' }
+      }
+      if (typeof reference !== 'string') {
+        return { ok: false, error: guiInlineImageRefusal('invalid', 'caminho inválido') }
+      }
+
+      const cwd = registry.cwdOf(paneId)
+      if (!cwd) {
+        return {
+          ok: false,
+          error: guiInlineImageRefusal('unavailable', 'este pane não tem sessão aberta')
+        }
+      }
+
+      const resolved = fileResolver.resolve(cwd, reference)
+      if (!resolved.ok) {
+        blackbox.record({
+          cat: 'pane',
+          event: 'gui-inline-image-refused',
+          actor: 'user',
+          ids: { paneId },
+          // Régua do `fileOpen`: token, escolha e caminho podem carregar
+          // árvore/username. Só a classe segura da recusa entra no journal.
+          detail: { reason: resolved.reason }
+        })
+        return { ok: false, error: guiInlineImageRefusal(resolved.reason, resolved.error) }
+      }
+
+      const image = guiInlineImageData(resolved.file.absolutePath)
+      blackbox.record({
+        cat: 'pane',
+        event: image.ok ? 'gui-inline-image-shown' : 'gui-inline-image-refused',
+        actor: 'user',
+        ids: { paneId },
+        // `content` = o arquivo existe e é do dono, mas os BYTES não servem
+        // (formato fora da v1 ou acima do teto). O texto detalhado só vai ao
+        // renderer que pediu.
+        ...(image.ok ? {} : { detail: { reason: 'content' } })
+      })
+      return image
     }
   )
 

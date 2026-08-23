@@ -4484,3 +4484,199 @@ test('R35 — o GuiMarkdown pinta por patch, não por dangerouslySetInnerHTML', 
   assert.match(md, /onClickCapture=\{handleLinkOpenAttempt\}/u, 'a delegação do wrapper sumiu')
   assert.match(md, /aria-live="polite"/u, 'o status do link externo sumiu')
 })
+
+// ————— R36: A ENTREGA VISUAL APARECE NO CHAT —————
+//
+// Caso do dono (print do pane codex): o dev prometeu "demonstração visual", o
+// dono perguntou "cadê?" e o modelo jurou que a imagem estava "exibida
+// diretamente acima". O `![demo](caminho.png)` ATRAVESSA o sanitizador (img/src
+// estão nas listas), mas o CSP do renderer é `img-src 'self' data:` — caminho
+// de worktree não é nem 'self' nem data: e a requisição morre MUDA.
+//
+// A transformação abaixo tira o `src` condenado do caminho do browser e o
+// guarda como DADO; a hidratação do GuiMarkdown troca isso pela data URL que o
+// main produz dentro do cwd do pane. As três propriedades que os testes
+// seguram: (1) caminho local vira placeholder sem src, (2) data:/https passam
+// intocadas, (3) DETERMINISMO byte a byte — é ele que deixa o patch de prefixo
+// da R35 reconhecer os blocos já escritos durante o streaming.
+
+const {
+  decodeGuiAttributeValue,
+  isGuiInlineImagePassthrough,
+  rewriteGuiInlineImages
+} = await import('../src/renderer/src/guiInlineImageHtml.ts')
+
+test('R36 — imagem de caminho local vira placeholder: sem src, referência no data-attr, alt intacto', () => {
+  const saida = rewriteGuiInlineImages('<p><img src=".synkora/demo.png" alt="a demo"></p>')
+  assert.doesNotMatch(
+    saida,
+    /\ssrc=/u,
+    'sobrou um src de caminho local: o CSP quebra a requisição EM SILÊNCIO e o dono não vê nada'
+  )
+  assert.match(saida, /data-gui-image="\.synkora\/demo\.png"/u, 'a referência precisa sobreviver para a hidratação')
+  assert.match(saida, /alt="a demo"/u, 'o alt do agente é o que o leitor de tela lê — não pode sumir')
+  assert.match(saida, /class="gui-md-image"/u, 'sem a classe, a moldura da casa não pega')
+  assert.match(
+    saida,
+    /<button type="button" class="gui-md-image-open" data-gui-image-open="\.synkora\/demo\.png"/u,
+    'a imagem é um GESTO (abre "onde abrir"): sem o invólucro de botão, o teclado fica de fora'
+  )
+  assert.ok(
+    saida.startsWith('<p><button ') && saida.endsWith('</button></p>'),
+    'o que está em volta da imagem não pode ser remontado'
+  )
+})
+
+test('R36 — caminho absoluto do Windows e src="" também saem do caminho do browser', () => {
+  const windows = rewriteGuiInlineImages('<img src="C:\\Users\\Erick\\shot.png">')
+  assert.match(windows, /data-gui-image="C:\\Users\\Erick\\shot\.png"/u)
+  assert.doesNotMatch(windows, /\ssrc=/u)
+  // src vazio resolveria para a PRÓPRIA página: some o atributo, some a
+  // requisição — e não há referência nenhuma a hidratar.
+  assert.equal(rewriteGuiInlineImages('<img src="" alt="x">'), '<img alt="x">')
+})
+
+test('R36 — data: e https: passam INTOCADAS, byte a byte', () => {
+  const dataUrl = '<p><img src="data:image/png;base64,iVBORw0KGgo=" alt="print"></p>'
+  assert.equal(rewriteGuiInlineImages(dataUrl), dataUrl, 'data: é justamente o que o CSP já aceita')
+  const remota = '<p><img src="https://exemplo.test/a.png" alt="remota"></p>'
+  assert.equal(rewriteGuiInlineImages(remota), remota, 'https não é arquivo do worktree: não é assunto do canal do main')
+  assert.equal(isGuiInlineImagePassthrough('DATA:image/png;base64,x'), true, 'o esquema não é sensível a caixa')
+  assert.equal(
+    isGuiInlineImagePassthrough('http://exemplo.test/a.png'),
+    false,
+    'http puro não pinta sob o CSP e nem é https: vira placeholder e a recusa fala'
+  )
+})
+
+test('R36 — determinismo e idempotência: mesma entrada ⇒ mesmos bytes', () => {
+  const html = '<h1>t</h1>\n<p>antes</p>\n<p><img src="fig/a.png" alt="x"></p>\n'
+  const um = rewriteGuiInlineImages(html)
+  const dois = rewriteGuiInlineImages(html)
+  assert.equal(um, dois, 'saída instável faria o patch da R35 remontar bloco já escrito a cada tick')
+  assert.ok(
+    um.startsWith('<h1>t</h1>\n<p>antes</p>\n'),
+    'o que não é <img> tem de sair IDÊNTICO — é isso que segura o prefixo estável'
+  )
+  assert.equal(um, rewriteGuiInlineImages(um), 'reprocessar o próprio resultado não pode mudar mais nada')
+  assert.equal(rewriteGuiInlineImages('<p>sem imagem</p>'), '<p>sem imagem</p>')
+})
+
+test('R36 — o scanner não se perde: alt com ">" e com "<img>" literal dentro', () => {
+  // O serializador de HTML NÃO escapa `<`/`>` dentro de valor de atributo: uma
+  // regex ingênua sobre `<img[^>]*>` fecharia a tag no meio do alt e remontaria
+  // a mensagem errada.
+  const saida = rewriteGuiInlineImages('<p><img src="fig.png" alt="a > b <img src=nao.png>"><em>fim</em></p>')
+  assert.equal(
+    (saida.match(/data-gui-image=/gu) ?? []).length,
+    1,
+    'o <img> escrito DENTRO do alt não é uma imagem — reescrevê-lo é corromper a mensagem'
+  )
+  assert.match(saida, /alt="a > b <img src=nao\.png>"/u, 'o alt tem de sair verbatim')
+  assert.ok(saida.endsWith('<em>fim</em></p>'), 'a cauda depois da imagem não pode ser engolida')
+})
+
+test('R36 — tag truncada pelo streaming não corrompe nada', () => {
+  // No meio do tick o html pode terminar dentro de uma tag; a transformação
+  // copia o que não entende em vez de reinterpretar.
+  const meio = '<p>texto <img src="a.png'
+  assert.equal(rewriteGuiInlineImages(meio), meio)
+  assert.equal(rewriteGuiInlineImages('<p>3 < 4 e img < b</p>'), '<p>3 < 4 e img < b</p>')
+})
+
+test('R36 — a referência é DECODIFICADA para decidir e reescapada para o atributo', () => {
+  const saida = rewriteGuiInlineImages('<img src="dir/a&amp;b.png" alt="e">')
+  assert.match(saida, /data-gui-image="dir\/a&amp;b\.png"/u, 'o valor precisa continuar escapado dentro do atributo')
+  assert.equal(decodeGuiAttributeValue('dir/a&amp;b.png'), 'dir/a&b.png', 'é ISSO que a hidratação manda ao main')
+  assert.equal(decodeGuiAttributeValue('a&naoexiste;b'), 'a&naoexiste;b', 'entidade desconhecida fica verbatim')
+})
+
+test('R36.4 — a entrega vira clique: .htm/.html e as imagens são tokens do fio', () => {
+  for (const nome of [
+    'demo.htm',
+    'demo.html',
+    'shot.png',
+    'shot.jpg',
+    'shot.jpeg',
+    'shot.gif',
+    'shot.webp',
+    'icone.svg'
+  ]) {
+    assert.deepEqual(
+      findGuiFileTokens(`abri o ${nome} pra você`).map((token) => token.value),
+      [nome],
+      `${nome} precisa virar token clicável — entrega que não abre com um clique não foi entregue`
+    )
+  }
+})
+
+test('R36 — a fiação do renderer: pipeline, cache de hidratação e o guard da ponte', () => {
+  const md = readFileSync(
+    new URL('../src/renderer/src/components/GuiMarkdown.tsx', import.meta.url),
+    'utf8'
+  )
+  const api = readFileSync(new URL('../src/renderer/src/guiApi.ts', import.meta.url), 'utf8')
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  assert.match(
+    md,
+    /rewriteGuiInlineImages\(linkifyGuiFileReferences\(routeChatLinksExternally\(sanitized\)\)\)/u,
+    'a reescrita saiu do pipeline (ou entrou fora de ordem): a imagem volta a quebrar muda'
+  )
+  assert.match(
+    md,
+    /imageCacheRef = useRef<Map<string, GuiInlineImageState>>/u,
+    'sem cache por referência, cada tick do streaming pediria a MESMA imagem de novo ao main'
+  )
+  assert.match(md, /hydrateGuiInlineImages\(container, imageCacheRef\.current\)/u, 'a hidratação não é aplicada')
+  assert.match(
+    md,
+    /useLayoutEffect[\s\S]{0,600}?paintInlineImages\(\)/u,
+    'a pintura do cache tem de acontecer no efeito de LAYOUT, junto com o patch — em efeito comum a imagem pisca'
+  )
+  assert.match(md, /guiApi\.fileImageData\(paneId, reference\)/u, 'ninguém chama o canal do main')
+  assert.match(
+    api,
+    /if \(!api\?\.fileImageData\) \{/u,
+    'o guard de ponte ausente sumiu: sem ele a janela sem canal volta a falhar em silêncio'
+  )
+  assert.match(
+    api,
+    /reinicie o app \(npm run dev\)[^']*canal de imagem/u,
+    'recusa sem RECEITA é beco sem saída (regra da casa)'
+  )
+  assert.match(css, /\.gui-md-image \{/u, 'a moldura da casa não existe no CSS')
+  assert.match(css, /\.gui-md-image-fail \{/u, 'a linha de recusa não existe no CSS')
+})
+
+test('R36 — clique/teclado da imagem caem no menu "onde abrir", e a recusa nomeia o caminho', () => {
+  const md = readFileSync(
+    new URL('../src/renderer/src/components/GuiMarkdown.tsx', import.meta.url),
+    'utf8'
+  )
+  const modulo = readFileSync(
+    new URL('../src/renderer/src/guiInlineImageHtml.ts', import.meta.url),
+    'utf8'
+  )
+  assert.match(
+    md,
+    /openFromPointer\(event, chatTarget\(reference\), image\)/u,
+    'o clique na imagem não abre o menu de sempre'
+  )
+  assert.doesNotMatch(
+    md,
+    /preventDefault\(/u,
+    'o teclado da imagem tem de vir do <button> nativo — preventDefault aqui é o começo do sequestro do clique de link'
+  )
+  assert.match(
+    modulo,
+    /<button type="button" class="\$\{GUI_INLINE_IMAGE_OPEN_CLASS\}" /u,
+    'sem invólucro de botão, Enter e espaço não ativam a imagem'
+  )
+  assert.match(
+    modulo,
+    /gui-file-link/u,
+    'o caminho da recusa tem de ser o MESMO token clicável do fio (clique lê aqui, botão direito abre fora)'
+  )
+  assert.match(modulo, /não deu para mostrar /u, 'a recusa precisa dizer o que aconteceu, em PT-BR')
+})

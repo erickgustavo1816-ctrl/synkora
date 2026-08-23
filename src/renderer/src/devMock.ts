@@ -855,6 +855,13 @@ export function installDevMock(): void {
         reason: 'unavailable',
         error: 'abrir arquivo fora do app só funciona no app'
       }),
+      // R36: sem main não há disco para ler os bytes da imagem citada. Recusa
+      // com receita — no chat ela vira a linha que NOMEIA o caminho, que é
+      // justamente o oposto do sumiço mudo que o CSP causava.
+      fileImageData: async () => ({
+        ok: false,
+        error: 'imagens do chat só aparecem no app'
+      }),
       onLive: () => () => undefined,
       visibility: () => undefined,
       presented: () => undefined,

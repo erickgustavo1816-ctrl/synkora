@@ -9,14 +9,20 @@ const GUI_FILE_TOKEN_MAX_RESULTS = 64
 
 /** Extensões suficientemente específicas para transformar um nome SOLTO em
  * controle. Com barra/raiz explícita, qualquer sufixo alfabético é aceito.
- * Isso evita transformar versões, domínios e endereços de e-mail em arquivos. */
+ * Isso evita transformar versões, domínios e endereços de e-mail em arquivos.
+ *
+ * R36 (entrega visual no chat): a lista foi conferida contra o que o dev
+ * ENTREGA para o dono ver — `html`/`htm` (a "versão HTML" que abre fora do app)
+ * e as imagens (`png`, `jpg`, `jpeg`, `gif`, `webp`, `svg`, `avif`, `bmp`,
+ * `ico`). Só `htm` faltava; o resto já estava aqui. Extensão de entrega que não
+ * vira token é entrega que o dono não consegue abrir com um clique. */
 const BARE_FILE_EXTENSIONS = new Set([
   'astro', 'avif', 'bmp', 'c', 'cc', 'conf', 'cpp', 'cs', 'css', 'csv', 'diff',
-  'gif', 'go', 'gql', 'graphql', 'h', 'hpp', 'html', 'ico', 'ini', 'java', 'jpeg',
-  'jpg', 'json', 'jsonc', 'jsx', 'kt', 'kts', 'less', 'lock', 'log', 'lua', 'md',
-  'mdx', 'mjs', 'mts', 'pdf', 'php', 'png', 'prisma', 'proto', 'py', 'rb', 'rs',
-  'scss', 'sql', 'svelte', 'svg', 'swift', 'toml', 'ts', 'tsx', 'txt', 'vue',
-  'webp', 'xml', 'yaml', 'yml'
+  'gif', 'go', 'gql', 'graphql', 'h', 'hpp', 'htm', 'html', 'ico', 'ini', 'java',
+  'jpeg', 'jpg', 'json', 'jsonc', 'jsx', 'kt', 'kts', 'less', 'lock', 'log',
+  'lua', 'md', 'mdx', 'mjs', 'mts', 'pdf', 'php', 'png', 'prisma', 'proto', 'py',
+  'rb', 'rs', 'scss', 'sql', 'svelte', 'svg', 'swift', 'toml', 'ts', 'tsx',
+  'txt', 'vue', 'webp', 'xml', 'yaml', 'yml'
 ])
 
 const KNOWN_EXTENSIONLESS = new Set([

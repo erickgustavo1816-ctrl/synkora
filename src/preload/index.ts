@@ -981,6 +981,17 @@ const api = {
       mode: GuiFileExternalOpenMode
     ): Promise<GuiFileExternalOpenResult> =>
       ipcRenderer.invoke('gui:fileOpenExternal', paneId, reference, selectedPath, mode),
+    /** R36 — a ENTREGA VISUAL aparece no chat: imagem citada pelo agente
+     *  (`![…](caminho)`) vira data URL (o CSP do renderer só aceita 'self' e
+     *  data:, então caminho de worktree quebrava MUDO). MESMA cerca do
+     *  `fileOpen`: a raiz é o cwd do pane, o caminho absoluto nasce e morre no
+     *  main, o mime sai dos BYTES (nunca da extensão) e recusa vem com
+     *  receita. */
+    fileImageData: (
+      paneId: string,
+      reference: string
+    ): Promise<{ ok: true; dataUrl: string } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('gui:fileImageData', paneId, reference),
     /** Anexa print da área de transferência ou arquivo ao chat: o main grava
      *  em `<cwd do pane>/.synkora/attachments` e devolve capacidade opaca. */
     attach: (paneId: string, payload: GuiAttachPayload): Promise<GuiAttachResult> =>

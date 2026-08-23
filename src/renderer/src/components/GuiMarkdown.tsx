@@ -3,6 +3,12 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { guiApi, type GuiFileOpenResult } from '../guiApi'
 import { applyGuiStableMarkdown } from '../guiStableMarkdownPatch'
+import {
+  GUI_INLINE_IMAGE_OPEN_ATTR,
+  hydrateGuiInlineImages,
+  rewriteGuiInlineImages,
+  type GuiInlineImageState
+} from '../guiInlineImageHtml'
 import { findGuiFileTokens, guiInlineCodeFileToken } from '../guiFileTokens'
 import {
   isChatFileTarget,
@@ -84,6 +90,20 @@ function fileTokenFrom(
   return event.currentTarget.contains(button) ? button : null
 }
 
+/** A IMAGEM do fio sob o gesto (R36) — mesmo formato do token acima: a
+ *  delegação vive no wrapper, então o alvo real nunca é o `currentTarget`. O
+ *  alvo é o INVÓLUCRO (um `<button>` de verdade), por isso Enter e espaço
+ *  chegam aqui como clique nativo, sem nenhum `preventDefault` nesta folha. */
+function inlineImageFrom(
+  event: React.SyntheticEvent<HTMLDivElement>,
+  node: EventTarget | null
+): HTMLButtonElement | null {
+  if (!(node instanceof Element)) return null
+  const frame = node.closest(`button[${GUI_INLINE_IMAGE_OPEN_ATTR}]`)
+  if (!(frame instanceof HTMLButtonElement)) return null
+  return event.currentTarget.contains(frame) ? frame : null
+}
+
 /** O HTML já passou por DOMPurify. Esta transformação pós-sanitize opera
  * somente sobre Text nodes e cria elementos/atributos constantes via DOM —
  * nunca concatena o texto do agente como markup. Links HTTPS existentes e
@@ -156,7 +176,11 @@ export default function GuiMarkdown({
       ALLOWED_TAGS: GUI_MARKDOWN_TAGS,
       ALLOWED_ATTR: GUI_MARKDOWN_ATTRS
     })
-    return linkifyGuiFileReferences(routeChatLinksExternally(sanitized))
+    // R36 — a reescrita das imagens é a ÚLTIMA etapa e é DETERMINÍSTICA: só os
+    // bytes das tags `<img>` de caminho local mudam, e o placeholder que sai
+    // daqui é sempre o mesmo para a mesma entrada (é isso que deixa o patch de
+    // prefixo da R35 reconhecer os blocos já escritos durante o streaming).
+    return rewriteGuiInlineImages(linkifyGuiFileReferences(routeChatLinksExternally(sanitized)))
   }, [text])
 
   // R35 — O CONTEÚDO NÃO É MAIS ENTREGUE AO REACT COMO STRING. Com
@@ -168,11 +192,62 @@ export default function GuiMarkdown({
   // do trecho já escrito. Efeito de LAYOUT: o DOM tem de estar pintado antes
   // do browser desenhar o quadro, senão a mensagem pisca vazia.
   const contentRef = useRef<HTMLDivElement | null>(null)
+
+  // R36 — O CACHE DAS IMAGENS DESTA MENSAGEM (chave = a referência que o agente
+  // escreveu). Existe por causa do INTERPLAY com a R35: um bloco hidratado
+  // (com `src` de data URL) não é byte a byte igual ao bloco recém-saído do
+  // pipeline, então durante o streaming o patch de prefixo REMONTA o bloco da
+  // imagem a cada tick e a hidratação roda de novo. Com o cache, esse "de novo"
+  // é síncrono e vem da memória — a imagem não pisca e não há uma segunda ida
+  // ao main. Mensagem parada hidrata UMA vez e fica.
+  const imageCacheRef = useRef<Map<string, GuiInlineImageState>>(new Map())
+  const imageInFlightRef = useRef<Set<string>>(new Set())
+  const imagePendingRef = useRef<string[]>([])
+  const imageEpochRef = useRef(0)
+
+  const paintInlineImages = useCallback((): void => {
+    const container = contentRef.current
+    if (!container) return
+    imagePendingRef.current = hydrateGuiInlineImages(container, imageCacheRef.current)
+  }, [])
+
   useLayoutEffect(() => {
     const container = contentRef.current
     if (!container) return
     applyGuiStableMarkdown(container, html)
-  }, [html])
+    // No MESMO efeito de layout, antes do quadro: o que o cache já sabe volta
+    // pintado junto com o patch.
+    paintInlineImages()
+  }, [html, paintInlineImages])
+
+  useEffect(() => {
+    // Pane outro = cwd outro: a MESMA referência relativa aponta para outro
+    // arquivo. O cache de imagens não pode atravessar essa troca.
+    imageEpochRef.current += 1
+    imageCacheRef.current.clear()
+    imageInFlightRef.current.clear()
+  }, [paneId])
+
+  useEffect(() => {
+    const pending = imagePendingRef.current
+    if (pending.length === 0) return
+    const epoch = imageEpochRef.current
+    for (const reference of pending) {
+      if (imageInFlightRef.current.has(reference)) continue
+      imageInFlightRef.current.add(reference)
+      void guiApi.fileImageData(paneId, reference).then((result) => {
+        imageInFlightRef.current.delete(reference)
+        if (epoch !== imageEpochRef.current) return
+        imageCacheRef.current.set(
+          reference,
+          result.ok
+            ? { status: 'ready', dataUrl: result.dataUrl }
+            : { status: 'refused', error: result.error }
+        )
+        paintInlineImages()
+      })
+    }
+  }, [html, paneId, paintInlineImages])
 
   const openingLinkRef = useRef<HTMLAnchorElement | null>(null)
   const openingTimerRef = useRef<number | null>(null)
@@ -217,6 +292,9 @@ export default function GuiMarkdown({
 
   useEffect(() => () => {
     fileRequestRef.current += 1
+    // Resposta de imagem que chegar depois da desmontagem não pode tentar
+    // pintar num container que já não existe.
+    imageEpochRef.current += 1
     clearOpeningLink(false)
   }, [clearOpeningLink])
 
@@ -274,7 +352,52 @@ export default function GuiMarkdown({
     [openFileReference]
   )
 
+  // ONDE ABRIR O ARQUIVO DO FIO (rodada 7, C1 — a metade do CHAT). O clique
+  // ESQUERDO no TOKEN não muda uma vírgula: lê aqui, na folha de código. O botão
+  // direito (e a tecla de menu) abre as outras duas saídas do dono — programa
+  // padrão do sistema e mostrar na pasta —, que atravessam o canal do PANE.
+  //
+  // R36: a IMAGEM entrou nesta mesma delegação, com uma diferença deliberada —
+  // nela o clique ESQUERDO já abre o "onde abrir". Ler a imagem "aqui" seria
+  // redundante (ela já está na tela), e o que o dono quer ao clicar numa
+  // demonstração é levá-la para fora (visualizador do sistema ou pasta).
+  const menuAnchorRef = useRef<HTMLButtonElement | null>(null)
+
+  const openFromMenu = useCallback((menuTarget: FileContextTarget): void => {
+    if (!isChatFileTarget(menuTarget)) return
+    const anchor = menuAnchorRef.current
+    readFileHere(anchor?.isConnected ? anchor : null, menuTarget.reference)
+  }, [readFileHere])
+
+  const fileMenu = useFileContextMenu(openFromMenu, runGuiChatFileOpen)
+  // O controlador é um objeto novo a cada render; os gestos dependem só das
+  // funções dele, que são estáveis.
+  const { openFromPointer, openFromKeyboard } = fileMenu
+
+  /** O alvo do menu é sempre o que o AGENTE escreveu: quem normaliza é o
+   *  resolver do main. */
+  const chatTarget = useCallback(
+    (reference: string): ChatFileContextTarget => ({ paneId, reference, path: reference }),
+    [paneId]
+  )
+
+  const tokenTarget = useCallback((fileLink: HTMLButtonElement): ChatFileContextTarget | null => {
+    const reference = fileLink.dataset.guiFileToken
+    return reference ? chatTarget(reference) : null
+  }, [chatTarget])
+
   const handleLinkOpenAttempt = useCallback((event: React.MouseEvent<HTMLDivElement>): void => {
+    const image = inlineImageFrom(event, event.target)
+    if (image) {
+      const reference = image.getAttribute(GUI_INLINE_IMAGE_OPEN_ATTR)
+      if (!reference) return
+      menuAnchorRef.current = image
+      // Enter/espaço no invólucro sintetizam ESTE mesmo clique; quem segura o
+      // evento é o `openFromPointer` do controlador, não esta folha.
+      openFromPointer(event, chatTarget(reference), image)
+      return
+    }
+
     const fileLink = fileTokenFrom(event, event.target)
     if (fileLink) {
       event.stopPropagation()
@@ -291,48 +414,45 @@ export default function GuiMarkdown({
     // Enter sintetiza o mesmo click nativo; não há atalho paralelo que possa
     // atrasar ou duplicar a abertura do destino externo.
     beginLinkOpenFeedback(link)
-  }, [beginLinkOpenFeedback, readFileHere])
-
-  // ONDE ABRIR O ARQUIVO DO FIO (rodada 7, C1 — a metade do CHAT). O clique
-  // ESQUERDO não muda uma vírgula: lê aqui, na folha de código. O botão direito
-  // (e a tecla de menu) abre as outras duas saídas do dono — programa padrão do
-  // sistema e mostrar na pasta —, que atravessam o canal do PANE.
-  const menuAnchorRef = useRef<HTMLButtonElement | null>(null)
-
-  const openFromMenu = useCallback((menuTarget: FileContextTarget): void => {
-    if (!isChatFileTarget(menuTarget)) return
-    const anchor = menuAnchorRef.current
-    readFileHere(anchor?.isConnected ? anchor : null, menuTarget.reference)
-  }, [readFileHere])
-
-  const fileMenu = useFileContextMenu(openFromMenu, runGuiChatFileOpen)
-  // O controlador é um objeto novo a cada render; os gestos dependem só das
-  // funções dele, que são estáveis.
-  const { openFromPointer, openFromKeyboard } = fileMenu
-
-  const tokenTarget = useCallback((fileLink: HTMLButtonElement): ChatFileContextTarget | null => {
-    const reference = fileLink.dataset.guiFileToken
-    // O token é o que o AGENTE escreveu: quem normaliza é o resolver do main.
-    return reference ? { paneId, reference, path: reference } : null
-  }, [paneId])
+  }, [beginLinkOpenFeedback, chatTarget, openFromPointer, readFileHere])
 
   const handleTokenContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>): void => {
+    const image = inlineImageFrom(event, event.target)
+    if (image) {
+      const reference = image.getAttribute(GUI_INLINE_IMAGE_OPEN_ATTR)
+      if (!reference) return
+      menuAnchorRef.current = image
+      openFromPointer(event, chatTarget(reference), image)
+      return
+    }
+
     const fileLink = fileTokenFrom(event, event.target)
     if (!fileLink) return
     const target = tokenTarget(fileLink)
     if (!target) return
     menuAnchorRef.current = fileLink
     openFromPointer(event, target, fileLink)
-  }, [openFromPointer, tokenTarget])
+  }, [chatTarget, openFromPointer, tokenTarget])
 
   const handleTokenMenuKey = useCallback((event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const image = inlineImageFrom(event, event.target)
+    if (image) {
+      const reference = image.getAttribute(GUI_INLINE_IMAGE_OPEN_ATTR)
+      if (!reference) return
+      menuAnchorRef.current = image
+      // Enter/espaço já viram clique nativo no invólucro; aqui só falta a tecla
+      // de menu (e Shift+F10), exatamente como no token de arquivo.
+      openFromKeyboard(event, chatTarget(reference), image)
+      return
+    }
+
     const fileLink = fileTokenFrom(event, event.target)
     if (!fileLink) return
     const target = tokenTarget(fileLink)
     if (!target) return
     menuAnchorRef.current = fileLink
     openFromKeyboard(event, target, fileLink)
-  }, [openFromKeyboard, tokenTarget])
+  }, [chatTarget, openFromKeyboard, tokenTarget])
 
   return (
     <div

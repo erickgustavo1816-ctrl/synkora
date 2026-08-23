@@ -15381,6 +15381,10 @@ body.progress-overlay-page #root {
   .gui-file-link {
     transition: none;
   }
+
+  .gui-md-image {
+    transition: none;
+  }
 }
 
 .gui-md code {
@@ -15443,6 +15447,76 @@ body.progress-overlay-page #root {
 .gui-md img {
   max-width: 100%;
   border-radius: 6px;
+}
+
+/* ---- R36: a ENTREGA VISUAL aparece no chat ----
+   O `src` que o agente escreveu NUNCA chega ao browser (o CSP do renderer é
+   `img-src 'self' data:` e caminho de worktree quebrava MUDO): o que chega é a
+   data URL que o main produziu lendo os bytes dentro do cwd do pane. A imagem
+   é um gesto — clique abre "onde abrir" —, por isso tem estado de foco. */
+/* O invólucro é BOTÃO de verdade (o teclado ativa sozinho, como no token de
+   arquivo). Ele não desenha nada: só carrega o gesto e o foco. */
+.gui-md-image-open {
+  display: block;
+  max-width: 100%;
+  margin: 2px 0 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gui-md-image-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.gui-md-image {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--gui-line);
+  border-radius: 6px;
+  background: var(--gui-fill);
+  transition: border-color 120ms ease;
+}
+
+/* Antes de hidratar não existe pixel nenhum: o placeholder é um vão QUIETO —
+   moldura vazia prometeria uma imagem que ainda não é. Forma antes de cor. */
+.gui-md-image:not([data-gui-image-state='ready']) {
+  border-color: transparent;
+  background: none;
+}
+
+.gui-md-image-open:hover .gui-md-image[data-gui-image-state='ready'] {
+  border-color: var(--gui-line-strong);
+}
+
+/* A recusa NOMEIA o caminho e o erro, e o caminho continua clicável (é o mesmo
+   `gui-file-link` dos tokens do fio): beco sem saída é bug. */
+.gui-md-image-fail {
+  color: var(--err);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.gui-md-image-fail .gui-file-link {
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 10%, transparent);
+}
+
+.gui-md-image-fail .gui-file-link:hover {
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 18%, transparent);
+}
+
+.gui-md-image-fail .gui-file-link:focus-visible {
+  outline-color: var(--err);
 }
 
 /* Preview mínimo do P17: inerte, contido na própria mensagem e substituível

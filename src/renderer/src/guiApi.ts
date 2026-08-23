@@ -22,6 +22,14 @@ import type { PlanDraft, PlanItemDraft, PlanItemTier, PlanKind } from './planCon
 export type { GuiFileChoice, GuiFileOpenResult, GuiFilePreview } from '../../preload'
 export type { GuiFileExternalOpenMode, GuiFileExternalOpenResult } from '../../preload'
 
+/** R36 — ESPELHO DECLARADO do canal `gui:fileImageData` (o par mora em
+ *  `src/preload/index.ts`, onde o tipo é inline). Imagem citada pelo agente
+ *  vira data URL feita no main; o CSP do renderer (`img-src 'self' data:`) só
+ *  deixa pintar isso. Recusa SEMPRE traz texto com receita. */
+export type GuiFileImageDataResult =
+  | { ok: true; dataUrl: string }
+  | { ok: false; error: string }
+
 // Ponte tipada do PANE GUI (Synkora 2.0, onda A).
 //
 // O contrato vive em docs/GUI_PANE_CONTRACT.md e tem duas metades: o agente
@@ -492,6 +500,7 @@ interface GuiBridge {
     selectedPath: string | undefined,
     mode: GuiFileExternalOpenMode
   ) => Promise<GuiFileExternalOpenResult>
+  fileImageData: (paneId: string, reference: string) => Promise<GuiFileImageDataResult>
   attach: (paneId: string, payload: GuiAttachPayload) => Promise<GuiAttachResult>
   attachFolder: (paneId: string) => Promise<GuiAttachResult>
   attachmentPreview: (
@@ -789,6 +798,27 @@ export const guiApi = {
         reason: 'unavailable',
         error: error instanceof Error ? error.message : String(error)
       }
+    }
+  },
+
+  /** R36 — a IMAGEM citada no fio vira pixel. O main lê os bytes DENTRO do cwd
+   *  do pane (mesma cerca do `fileOpen`), tira o mime dos bytes e devolve data
+   *  URL; sem ponte, a recusa nomeia a receita em vez de a imagem sumir muda —
+   *  foi exatamente o sumiço mudo que fez o agente alucinar "está exibida
+   *  acima". */
+  async fileImageData(paneId: string, reference: string): Promise<GuiFileImageDataResult> {
+    const api = bridge()
+    if (!api?.fileImageData) {
+      return {
+        ok: false,
+        error:
+          'reinicie o app (npm run dev) para o chat mostrar imagens do worktree — esta janela ainda não tem o canal de imagem'
+      }
+    }
+    try {
+      return await api.fileImageData(paneId, reference)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   },
 

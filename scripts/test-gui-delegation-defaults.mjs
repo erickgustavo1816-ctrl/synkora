@@ -710,10 +710,12 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   // permanente seguiu intocada. E na R31 (2026-08-23) de novo só o do
   // CONTRATO, 7200→8200: a VOZ DO DONO (responder sempre + narrar o passo a
   // passo) entrou nos três papéis — a ordem permanente seguiu intocada; o dev
-  // mede 8010.
+  // mede 8010. E na R36 (mesma data) de novo só o do CONTRATO, 8200→8700: a
+  // ENTREGA VISUAL (visual sem referência não existe na tela do dono) entrou
+  // em dev/ajudante — a ordem permanente seguiu intocada; o dev mede 8459.
   assert.ok(order.length < 3000, `a ordem permanente virou constituição (${order.length})`)
   for (const role of GUI_MISSION_ROLES) {
-    assert.ok(guiMissionSystemPrompt(role).length < 8200, `${role}: contrato virou constituição`)
+    assert.ok(guiMissionSystemPrompt(role).length < 8700, `${role}: contrato virou constituição`)
   }
   // O planejador não delega: ele nunca recebe a seção nem o pino.
   assert.doesNotMatch(guiPlanningSystemPrompt(), /STANDING ORDER FROM THE OWNER/u)
