@@ -136,6 +136,9 @@ export function useGuiTranscriptWindow({
   const restoringScrollRef = useRef(false)
   const initialPinFrameRef = useRef<number | null>(null)
   const initialPinUntilRef = useRef(0)
+  /** R34 — o FREIO da seleção: arrasto em curso ou seleção pintada no fio. */
+  const selectionHoldRef = useRef(false)
+  const selectionDragRef = useRef(false)
 
   windowStartRef.current = windowStart
   itemCountRef.current = items.length
@@ -225,9 +228,9 @@ export function useGuiTranscriptWindow({
   }, [scrollToEnd, updatePinned, updateWindowStart])
 
   const keepPinnedToEnd = useCallback((): void => {
-    if (!pinnedRef.current) return
+    if (!pinnedRef.current || selectionHoldRef.current) return
     const frame = requestFrame(() => {
-      if (pinnedRef.current) scrollToEnd()
+      if (pinnedRef.current && !selectionHoldRef.current) scrollToEnd()
     })
     if (frame === null) scrollToEnd()
   }, [pinnedRef, scrollToEnd])
@@ -272,13 +275,20 @@ export function useGuiTranscriptWindow({
       startInitialPinning()
     } else if (total > previousTotal) {
       const previousLatestStart = guiTranscriptInitialStart(previousTotal)
-      if (pinnedRef.current && currentStart >= previousLatestStart) {
+      // R34: with a live selection, advancing the window would unmount the
+      // very nodes the selection is anchored in — the drag dies mid-gesture.
+      if (
+        pinnedRef.current &&
+        !selectionHoldRef.current &&
+        currentStart >= previousLatestStart
+      ) {
         updateWindowStart(guiTranscriptInitialStart(total))
       }
     } else if (total === previousTotal && firstItemId !== previousFirstItemIdRef.current) {
       // The store's ring may replace its oldest item without changing length.
       // When pinned, retain the latest window instead of exposing a stale gap.
-      if (pinnedRef.current) updateWindowStart(guiTranscriptInitialStart(total))
+      if (pinnedRef.current && !selectionHoldRef.current)
+        updateWindowStart(guiTranscriptInitialStart(total))
     }
 
     previousItemCountRef.current = total
@@ -308,11 +318,53 @@ export function useGuiTranscriptWindow({
   }, [logRef, windowStart])
 
   // Appending a stream/tool while pinned must remain attached to the end. A
-  // prepend is the one exception: its anchor effect above owns scrollTop.
+  // prepend is the one exception: its anchor effect above owns scrollTop —
+  // and a live selection (R34) is the other: moving content under the
+  // pointer flips the drag anchor and steals the text being read.
   useLayoutEffect(() => {
-    if (pendingAnchorRef.current || !pinnedRef.current) return
+    if (pendingAnchorRef.current || !pinnedRef.current || selectionHoldRef.current) return
     scrollToEnd()
   }, [items, scrollToEnd, windowStart, pinnedRef])
+
+  // R34 — A SELEÇÃO SEGURA O SCROLL (queixa do dono, 23/08: "começo de baixo
+  // pra cima aí buga e vem de cima pra baixo"; "conforme a ia vai escrevendo
+  // fica bugado"). Enquanto o dono ARRASTA uma seleção — ou enquanto uma
+  // seleção pintada dentro do fio existir — o acompanhamento do fim não mexe
+  // no scroll nem avança a janela. O freio solta sozinho: clique que colapsa
+  // a seleção (inclusive focar o composer) ou o ❝ que a consome. O PINO em si
+  // nunca muda aqui — soltando o freio, o fio volta a seguir o fim.
+  useEffect(() => {
+    const log = logRef.current
+    if (!log || typeof document === 'undefined') return
+    const holdNow = (): void => {
+      const selection = document.getSelection()
+      const inLog =
+        selection !== null &&
+        !selection.isCollapsed &&
+        selection.anchorNode !== null &&
+        log.contains(selection.anchorNode)
+      selectionHoldRef.current = selectionDragRef.current || inLog
+    }
+    const onPointerDown = (event: PointerEvent): void => {
+      if (event.button !== 0) return
+      selectionDragRef.current = true
+      holdNow()
+    }
+    const onPointerUp = (): void => {
+      selectionDragRef.current = false
+      holdNow()
+    }
+    document.addEventListener('selectionchange', holdNow)
+    log.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('pointerup', onPointerUp)
+    return () => {
+      document.removeEventListener('selectionchange', holdNow)
+      log.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('pointerup', onPointerUp)
+      selectionDragRef.current = false
+      selectionHoldRef.current = false
+    }
+  }, [logRef])
 
   useEffect(
     () => () => {

@@ -4326,3 +4326,73 @@ test('R33 — a fiação existe: menu no fio, chips com área nomeada, envio com
   const quoteAreas = css.match(/"quotes(?: quotes){6,7}"/gu) ?? []
   assert.ok(quoteAreas.length >= 4, 'as variantes do grid (larga/estreita × com/sem anexos) declaram a área quotes')
 })
+
+// ————— R34: a seleção NÃO briga com o fio —————
+//
+// Três queixas do dono (23/08, no teste ao vivo da R33): a pintura azul do
+// Chromium ("nada a ver com o app"), o arrasto que "começa de baixo pra cima
+// aí buga e vem de cima pra baixo" (o acompanhamento do fim movia o conteúdo
+// debaixo do ponteiro e invertia a âncora), e o streaming quebrando a
+// seleção (a janela avançava e desmontava os nós selecionados). E: sem
+// tooltip nas seleções.
+
+test('R34 — o freio da seleção: scroll e janela param enquanto o dono seleciona', () => {
+  const hook = readFileSync(
+    new URL('../src/renderer/src/useGuiTranscriptWindow.ts', import.meta.url),
+    'utf8'
+  )
+  assert.match(hook, /selectionchange/u, 'o hook não observa a seleção')
+  assert.match(
+    hook,
+    /if \(!pinnedRef\.current \|\| selectionHoldRef\.current\) return/u,
+    'o keepPinnedToEnd não respeita o freio'
+  )
+  assert.match(
+    hook,
+    /pendingAnchorRef\.current \|\| !pinnedRef\.current \|\| selectionHoldRef\.current\) return/u,
+    'o efeito de append ainda puxa o scroll com seleção viva'
+  )
+  assert.match(
+    hook,
+    /!selectionHoldRef\.current &&\r?\n\s*currentStart/u,
+    'a janela avança por baixo da seleção e desmonta os nós selecionados'
+  )
+  // O freio solta sozinho: arrasto encerrado E seleção colapsada.
+  assert.match(hook, /selectionDragRef\.current \|\| inLog/u)
+})
+
+test('R34 — a pintura da seleção é da casa e a margem do fio aceita o arrasto', () => {
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+  assert.match(
+    css,
+    /::selection \{\r?\n  background: color-mix\(in srgb, var\(--accent\) 30%, transparent\);\r?\n\}/u,
+    'o azul default do Chromium continua pintando a seleção'
+  )
+  assert.match(
+    css,
+    /\.gui-log \{[\s\S]{0,700}?user-select: text;\r?\n\}/u,
+    'o vão em volta do fio ainda mata o arrasto que começa na margem'
+  )
+})
+
+test('R34 — sem tooltip nas seleções, e o ❝ consome a seleção pintada', () => {
+  const menu = readFileSync(
+    new URL('../src/renderer/src/components/GuiSelectionMenu.tsx', import.meta.url),
+    'utf8'
+  )
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.doesNotMatch(menu, /data-tip/u, 'o menu da seleção voltou a ter tooltip (ordem do dono)')
+  assert.doesNotMatch(
+    pane,
+    /className="gui-quote-chip"\s+title=/u,
+    'o chip de citação voltou a ter tooltip'
+  )
+  assert.match(
+    pane,
+    /window\.getSelection\(\)\?\.removeAllRanges\(\)/u,
+    'anexar não consome a seleção — ela seguraria o freio do scroll para sempre'
+  )
+})

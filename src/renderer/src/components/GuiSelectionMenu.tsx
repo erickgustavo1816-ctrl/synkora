@@ -24,14 +24,11 @@ interface Props {
   onDismiss(): void
 }
 
-const OPTIONS: Array<{ action: GuiSelectionAction; glyph: string; label: string; tip: string }> = [
-  { action: 'copy', glyph: '⧉', label: 'copiar', tip: 'copia o trecho selecionado' },
-  {
-    action: 'quote',
-    glyph: '❝',
-    label: 'anexar à resposta',
-    tip: 'o trecho vira um chip no composer — sua próxima mensagem fala sobre ele'
-  }
+// Sem tooltip de propósito (ordem do dono, 23/08: "não precisa de tooltip nas
+// seleções") — os dois verbos se explicam sozinhos.
+const OPTIONS: Array<{ action: GuiSelectionAction; glyph: string; label: string }> = [
+  { action: 'copy', glyph: '⧉', label: 'copiar' },
+  { action: 'quote', glyph: '❝', label: 'anexar à resposta' }
 ]
 
 export default function GuiSelectionMenu({ x, y, onChoose, onDismiss }: Props): React.JSX.Element {
@@ -112,7 +109,6 @@ export default function GuiSelectionMenu({ x, y, onChoose, onDismiss }: Props): 
           type="button"
           role="menuitem"
           className="file-context-item"
-          data-tip={option.tip}
           onClick={() => onChoose(option.action)}
         >
           <span className="file-context-glyph" aria-hidden="true">

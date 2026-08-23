@@ -14873,6 +14873,18 @@ body.progress-overlay-page #root {
   overflow-x: hidden;
   scrollbar-gutter: stable;
   padding: 10px 0 18px;
+  /* R34 — o arrasto pode COMEÇAR na margem: o vão em volta do fio ancorava no
+     `user-select: none` global do app e o gesto nascia morto ("pra selecionar
+     tá meio bugado"). O fio dentro já era texto desde a R14. */
+  user-select: text;
+}
+
+/* R34 — a PINTURA da seleção é da casa (queixa do dono: "tá azul, nada a ver
+   com o app"). Acento translúcido e SÓ fundo: o texto mantém a própria cor em
+   qualquer superfície, papel ou painel escuro. O overlay de menções segue com
+   a regra específica dele (`.gui-input[data-mentions='active']::selection`). */
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .gui-thread {

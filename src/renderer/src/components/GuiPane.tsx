@@ -1081,6 +1081,9 @@ export default function GuiPane({
       setQuotes((existing) =>
         existing.length >= GUI_QUOTE_MAX_COUNT ? existing : [...existing, current.text]
       )
+      // O trecho virou chip: a seleção pintada já cumpriu o papel — e solta o
+      // freio do scroll (R34) para o fio voltar a seguir o fim.
+      window.getSelection()?.removeAllRanges()
       // O gesto termina no composer: é lá que ele vai falar sobre o trecho.
       inputRef.current?.focus({ preventScroll: true })
     },
@@ -2325,13 +2328,11 @@ export default function GuiPane({
                   envio em voo como os anexos. */}
               {(quotes.length > 0 || quoteNotice) && (
                 <div className="gui-composer-quotes">
+                  {/* Sem title/tooltip nos chips (ordem do dono, 23/08) — a
+                      prévia basta, e a bolha mostra o trecho inteiro no envio. */}
                   <ul className="gui-quote-chips">
                     {quotes.map((quote, index) => (
-                      <li
-                        key={`${index}-${quote.slice(0, 24)}`}
-                        className="gui-quote-chip"
-                        title={quote.length > 400 ? `${quote.slice(0, 400)}…` : quote}
-                      >
+                      <li key={`${index}-${quote.slice(0, 24)}`} className="gui-quote-chip">
                         <span className="gui-quote-glyph" aria-hidden="true">
                           ❝
                         </span>
