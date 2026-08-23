@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-23T22:55:40.245Z",
+  "updatedAt": "2026-08-23T23:42:18.332Z",
   "lanes": {
     "agora": [
       {
@@ -253,6 +253,18 @@
           "13198ca"
         ],
         "day": "23/08 — domingo"
+      },
+      {
+        "id": "r36-a-entrega-visual-aparece-no-chat-imagem-cita",
+        "title": "R36 — a entrega visual APARECE no chat (imagem citada renderiza; recusa nomeia o caminho)",
+        "desc": "Caso do print: dev codex jurou \"está exibida acima\" e nada apareceu (img passa no sanitizador mas o CSP mata caminho de worktree MUDO; o modelo alucina). 2 Opus em paralelo sobre stub do orquestrador: canal main gui:fileImageData (cerca do fileOpen, MIME por magic bytes, teto 4MB, recusas-receita exaustivas) + renderer (placeholder determinístico compatível com o patch R35, hidratação com cache sem piscada, fallback nomeando caminho clicável, clique abre \"onde abrir\", .htm tokenizável) + persona dev/helper: visual sem referência NÃO existe. Gate raiz verde; bancada enviada ao dono. Commit 9cade88; canal+persona são MAIN = restart pendente.",
+        "refs": [
+          ".synkora/reports/DESIGN_ENTREGA_VISUAL_NO_CHAT_R36_2026-08-23.md",
+          ".synkora/reports/r36-agent-A-report.md",
+          ".synkora/reports/r36-agent-B-report.md",
+          "9cade88"
+        ],
+        "day": "23/08 — domingo"
       }
     ]
   },
@@ -453,6 +465,13 @@
       "by": "orquestrador",
       "action": "add",
       "id": "r35-dom-estavel-no-streaming-a-selecao-sobrevive",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-23T23:42:18.332Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "r36-a-entrega-visual-aparece-no-chat-imagem-cita",
       "detail": "→ feito"
     }
   ]
