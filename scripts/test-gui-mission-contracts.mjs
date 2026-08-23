@@ -118,7 +118,7 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // derrubou o Synkora DUAS vezes na mesma noite com `Get-Process electron |
     // Stop-Process` (limpava o app que testava; o hospedeiro também é
     // electron.exe): o dev mede ~7000, o ajudante ~5040. E de 7200 para 8200
-    // na R28 (2026-08-23), pela VOZ DO DONO — as três queixas verbatim ("eu
+    // na R31 (2026-08-23), pela VOZ DO DONO — as três queixas verbatim ("eu
     // mando e ele lê três horas depois", "ele leu mas não responde", "ele só
     // sai fazendo sem comentar"): o dev mede 8010, o reviewer 5876 e o
     // ajudante 6059. O teto continua sendo contra CONSTITUIÇÃO: régua nova do
@@ -142,11 +142,11 @@ test('o dev espera aval antes de trabalho grande e trabalha só no worktree', ()
   assert.match(contract, /ONLY inside this worktree/i)
 })
 
-// A VOZ DO DONO (R28, 2026-08-23). A metade mecânica é da rodada (composer
+// A VOZ DO DONO (R31, 2026-08-23). A metade mecânica é da rodada (composer
 // envia na hora + o CLI steera — sonda probe-claude-owner-midturn); esta é a
 // metade do MODELO, porque a mesma sonda provou que entrega não é obediência:
 // em haiku o modelo leu a ordem no meio do turno e terminou com um DONE seco.
-test('R28 — a voz do dono: os três papéis respondem SEMPRE e narram o passo a passo', () => {
+test('R31 — a voz do dono: os três papéis respondem SEMPRE e narram o passo a passo', () => {
   for (const role of GUI_MISSION_ROLES) {
     const contract = guiMissionSystemPrompt(role)
     assert.match(contract, /ALWAYS ANSWER, ALWAYS NARRATE/, `${role}: sem o bloco da voz do dono`)

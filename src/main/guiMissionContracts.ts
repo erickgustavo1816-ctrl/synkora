@@ -229,11 +229,11 @@ const CONTEXT_COST_DOCTRINE = `COST — YOUR CONTEXT IS THE MOST EXPENSIVE RESOU
 - The owner pays for every re-read of your context, out of a limit that is shared with every other chat he has open. Spend it on judgement, not on bulk reading.`
 
 /**
- * A VOZ DO DONO (R28, 2026-08-23 — três queixas verbatim: "eu mando mensagem
+ * A VOZ DO DONO (R31, 2026-08-23 — três queixas verbatim: "eu mando mensagem
  * e ele lê três horas depois"; "ele leu, mas não responde, e fica difícil
  * saber se entendeu"; "ele só sai fazendo um monte de coisa sem comentar").
  *
- * A metade mecânica é da própria R28: o composer passou a enviar NA HORA e o
+ * A metade mecânica é da própria R31: o composer passou a enviar NA HORA e o
  * CLI steera a mensagem para dentro do turno (sonda
  * probe-claude-owner-midturn, claude 2.1.241). Esta é a metade que o MODELO
  * precisa, porque a mesma sonda provou que ENTREGA não é OBEDIÊNCIA: em haiku

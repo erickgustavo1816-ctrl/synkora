@@ -64,7 +64,7 @@ export default function GuiQueuedMessageCard({
             data-tip={
               sendNowDisabled
                 ? 'a ponte do chat está fora do ar — sem turno para entrar'
-                : // R28 — pós-steering, mensagem comum nem passa por aqui (o
+                : // R31 — pós-steering, mensagem comum nem passa por aqui (o
                   // composer envia na hora); a fila guarda slash cru e envelope
                   // antigo do boot. O verbo continua sendo a saída sancionada:
                   // entrega AGORA pelo caminho direto, e quem decide a rota

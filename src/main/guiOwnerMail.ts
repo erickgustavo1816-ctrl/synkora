@@ -9,7 +9,7 @@
  * fica na fila INTERNA do CLI até o turno fechar; pós-R19 isso pode ser HORAS.
  * O dono ficava sem volante justamente quando mais precisava dele.
  *
- * ATUALIZAÇÃO R28 (2026-08-23): o retrato acima envelheceu — o claude 2.1.241
+ * ATUALIZAÇÃO R31 (2026-08-23): o retrato acima envelheceu — o claude 2.1.241
  * STEERA o stdin na fronteira da próxima tool (sonda
  * probe-claude-owner-midturn), e o composer passou a enviar na hora. O pote
  * continua de pé pelo que o steering NÃO dá: o WAKE do long-poll da frota
