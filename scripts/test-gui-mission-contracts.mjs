@@ -14,6 +14,7 @@ import {
   guiPlanningFirstPrompt,
   guiPlanningPaneId,
   guiPlanningSystemPrompt,
+  guiReleaseSystemPrompt,
   isGuiMissionPaneId,
   isGuiMissionRole,
   isGuiPlanningPaneId,
@@ -124,9 +125,16 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // ajudante 6059. E de 8200 para 8700 na R36 (2026-08-23), pela ENTREGA
     // VISUAL — o dev codex jurou "está exibida diretamente acima" e nada
     // apareceu; a linha ensina que visual não referenciado NÃO existe na tela
-    // do dono (dev 8459, ajudante 6508). O teto continua sendo contra
+    // do dono (dev 8459, ajudante 6508). E de 8700 para 10300 na R37
+    // (2026-08-23), pelo MUNDO — o dev codex, na v0.1.1, anunciou sozinho
+    // "será publicada como 0.1.2" ("quem decide isso sou eu"), e a ordem do
+    // dono moldou a forma: "ao invés de ficar remendando, explica para ele
+    // como é o synkora, onde ele está e como funciona". TODO contrato abre com
+    // THE WORLD YOU ARE IN + a linha ONDE VOCÊ ESTÁ do papel; versão é do
+    // dono, bump é do app, mecânica não escrita se PERGUNTA (dev 9751,
+    // ajudante 7756, reviewer 7120). O teto continua sendo contra
     // CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
-    assert.ok(contract.length < 8700, `${role}: contrato virou constituição`)
+    assert.ok(contract.length < 10300, `${role}: contrato virou constituição`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -143,6 +151,50 @@ test('o dev espera aval antes de trabalho grande e trabalha só no worktree', ()
   const contract = guiMissionSystemPrompt('dev')
   assert.match(contract, /MINI-PLAN/)
   assert.match(contract, /ONLY inside this worktree/i)
+})
+
+// O MUNDO ONDE VOCÊ ESTÁ (R37, 2026-08-23). O caso: o dev codex, na v0.1.1,
+// anunciou sozinho "a correção agora será publicada como 0.1.2" ("quem decide
+// isso sou eu"). A ordem do dono moldou a forma: "ao invés de ficar
+// remendando, explica para ele como é o synkora, onde ele está e como
+// funciona — lembrando que o agente de release e de planejamento são
+// diferentes e também precisam saber onde eles estão". TODO contrato abre com
+// o MUNDO + a linha ONDE VOCÊ ESTÁ do próprio papel.
+test('R37 — os CINCO papéis conhecem o mundo: Synkora, onde estão, o que o app decide', () => {
+  const prompts = {
+    dev: guiMissionSystemPrompt('dev'),
+    reviewer: guiMissionSystemPrompt('reviewer'),
+    helper: guiMissionSystemPrompt('helper'),
+    planner: guiPlanningSystemPrompt(),
+    release: guiReleaseSystemPrompt()
+  }
+  for (const [seat, prompt] of Object.entries(prompts)) {
+    assert.match(prompt, /THE WORLD YOU ARE IN — SYNKORA:/u, `${seat}: sem o mundo`)
+    assert.match(prompt, /WHERE YOU ARE:/u, `${seat}: não sabe onde está`)
+    assert.match(
+      prompt,
+      /NEVER decide the product version/u,
+      `${seat}: não sabe que versão é do dono`
+    )
+    assert.match(
+      prompt,
+      /bumps the manifest, lockfile and tag BY ITSELF/u,
+      `${seat}: não sabe que o bump é do app`
+    )
+    assert.match(
+      prompt,
+      /ASK the owner instead of inventing the mechanism/u,
+      `${seat}: não manda perguntar em vez de inventar`
+    )
+    // O mundo abre o contrato — explicação antes de qualquer regra.
+    assert.ok(prompt.startsWith('THE WORLD YOU ARE IN'), `${seat}: o mundo não abre o contrato`)
+  }
+  // Cada papel sabe o SEU lugar — as linhas são distintas de propósito.
+  assert.match(prompts.dev, /the DEVELOPER chat of ONE mission/u)
+  assert.match(prompts.reviewer, /read-only eyes/u)
+  assert.match(prompts.helper, /a headless HELPER inside ONE mission/u)
+  assert.match(prompts.planner, /BEFORE missions exist/u)
+  assert.match(prompts.release, /operating the PROJECT FOLDER itself/u)
 })
 
 // A ENTREGA VISUAL (R36, 2026-08-23). O print do dono: o dev codex jurou "a
@@ -959,7 +1011,12 @@ test('o planejador PROPÕE o plano, não executa produto nem cria missão', () =
   // `context` — o que existe, o que será criado, onde não mexer — mais a razão
   // (ele viaja verbatim para o briefing do dev). Absorveu a antiga, como o
   // grafo fez, e o contrato mede 4036.
-  assert.ok(contract.length < 4200, 'contrato virou constituição')
+  //
+  // E de 4200 para 5500 na R37 (2026-08-23), pelo MUNDO: o dono mandou parar
+  // de remendar e explicar a TODO papel "como é o synkora, onde ele está e
+  // como funciona" — o planejador agora abre sabendo que na mesa dele missão
+  // ainda não existe e que versão/bump são do dono/app. Mede 5325.
+  assert.ok(contract.length < 5500, 'contrato virou constituição')
   assert.match(contract, /"mestre" is a DESIGNATION the owner grants/u)
   assert.match(contract, /only his click designates or removes it/u)
   assert.match(contract, /PROJECT_PLAN\.md/u)
