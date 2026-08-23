@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-23T22:35:26.353Z",
+  "updatedAt": "2026-08-23T22:55:40.245Z",
   "lanes": {
     "agora": [
       {
@@ -242,6 +242,17 @@
           "68957e3"
         ],
         "day": "23/08 — domingo"
+      },
+      {
+        "id": "r35-dom-estavel-no-streaming-a-selecao-sobrevive",
+        "title": "R35 — DOM estável no streaming: a seleção sobrevive à máquina de escrever",
+        "desc": "3ª rodada da família (aval do dono pra frota Opus; 1 agente entregou). Causa raiz: dangerouslySetInnerHTML trocava TODOS os nós da mensagem em streaming a cada tick — seleção morria na hora, arrasto invertia, mouseup apagava. Agora GuiMarkdown pinta por patch de prefixo estável (guiStableMarkdownPatch.ts; plano puro sobre childNodes — os \"\\\\n\" do marked são Text nodes irmãos, sondado). Prova na tela: arrasto de baixo pra cima segurou 306 chars por ~45 ticks (perdida 0×); modo velho matou o mesmo gesto (0 chars). Limite aceito: o bloco ainda crescendo segue volátil. Commit 13198ca; renderer (HMR pega).",
+        "refs": [
+          ".synkora/reports/DESIGN_DOM_ESTAVEL_STREAMING_R35_2026-08-23.md",
+          ".synkora/reports/r35-agent-report.md",
+          "13198ca"
+        ],
+        "day": "23/08 — domingo"
       }
     ]
   },
@@ -435,6 +446,13 @@
       "by": "orquestrador",
       "action": "add",
       "id": "r34-selecao-do-fio-sem-briga-freio-no-scroll-pin",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-23T22:55:40.245Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "r35-dom-estavel-no-streaming-a-selecao-sobrevive",
       "detail": "→ feito"
     }
   ]
