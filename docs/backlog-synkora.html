@@ -57,7 +57,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>✦ Backlog Synkora</h1>
-    <span class="stamp">atualizado 23/08 · pelo orquestrador</span>
+    <span class="stamp">atualizado 24/08 · pelo orquestrador</span>
     <p class="how"><b>Como funciona:</b> este é o mapa vivo da obra — eu re-publico neste MESMO link a cada
     entrega. Quer mudar prioridade ou adicionar item? Comente aqui na página ou me diga no chat.
     Fonte da verdade: <b>docs/backlog-synkora.json</b> (MCP + CLI em scripts/backlog*.mjs).</p>
@@ -150,6 +150,13 @@
       <span class="glyph">⊟</span>
       <span class="title">Órfãos de CLI acumulando: 18 claude (~2GB, de 21-22/08) + ~30 node do mesmo segundo</span>
       <span class="desc">Achados no diagnóstico do crash de 23/08 01:03. Processos claude de conversas/helpers antigos sobrevivem ao app (headless interrompidos preservam por design, mas os de 21/08 são lixo certo) e uma ninhada de ~30 node de 37MB nasceu junta às 19:17:19 de 22/08. Rodada de higiene precisa identificar por CommandLine/CWD antes de matar (nunca por imagem — a lição do próprio crash; e um claude vivo é a sessão do orquestrador). Candidato estrutural: o boot do Synkora varrer filhos órfãos das gerações anteriores por marca própria (env/args). AGRAVANTE 23/08 tarde: suspeito nº1 do incidente do LSP tsgo (typescript 7 nativo morrendo em série com exit 2 na janela 17:26-17:34 com 3 ajudantes vivos; commit de memória 28,6/35,5 GB mesmo em repouso; repro standalone com disco idêntico passa — 04481cb fez a mensagem de morte preservar a CABEÇA do stderr pra próxima ocorrência se auto-diagnosticar).</span>
+    </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">Reparo pós-merge não trava mais com worktree meio-deletado (sem .git)</span>
+      <span class="badge">bug curado</span>
+      <span class="desc">Incidente 2026-08-24 (SPED PRONTO, missão c0c6f56c): crash no meio do `git worktree remove` pós-merge deixou a pasta sem `.git`, e o reparo de boot repetia `target_repair_pending` para sempre. Curado em 5e0cfe1: carcaça sem `.git` ganha rota sancionada — branch no SHA aprovado + conteúdo provado por BYTES (index temp via read-tree, sem stat-cache) → quarentena por rename em `&lt;dir&gt;-carcass-bak` (nada deletado) e o CAS conclui. Teste novo falhou comprovadamente no código velho; guardas de adulteração e branch divergida cobertas. Reparo manual do incidente: pasta renomeada, missão reconcilia no próximo boot.</span>
+      <span class="refs">refs: <code>5e0cfe1</code> · <code>src/main/worktree.ts</code> · <code>scripts/test-mission-worktree.mjs</code></span>
     </div>
   </section>
 

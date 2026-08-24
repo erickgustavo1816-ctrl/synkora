@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-23T23:55:09.772Z",
+  "updatedAt": "2026-08-24T21:37:58.379Z",
   "lanes": {
     "agora": [
       {
@@ -95,6 +95,17 @@
         "id": "orfaos-de-cli-acumulando-18-claude-2gb-de-21-22-",
         "title": "Órfãos de CLI acumulando: 18 claude (~2GB, de 21-22/08) + ~30 node do mesmo segundo",
         "desc": "Achados no diagnóstico do crash de 23/08 01:03. Processos claude de conversas/helpers antigos sobrevivem ao app (headless interrompidos preservam por design, mas os de 21/08 são lixo certo) e uma ninhada de ~30 node de 37MB nasceu junta às 19:17:19 de 22/08. Rodada de higiene precisa identificar por CommandLine/CWD antes de matar (nunca por imagem — a lição do próprio crash; e um claude vivo é a sessão do orquestrador). Candidato estrutural: o boot do Synkora varrer filhos órfãos das gerações anteriores por marca própria (env/args). AGRAVANTE 23/08 tarde: suspeito nº1 do incidente do LSP tsgo (typescript 7 nativo morrendo em série com exit 2 na janela 17:26-17:34 com 3 ajudantes vivos; commit de memória 28,6/35,5 GB mesmo em repouso; repro standalone com disco idêntico passa — 04481cb fez a mensagem de morte preservar a CABEÇA do stderr pra próxima ocorrência se auto-diagnosticar)."
+      },
+      {
+        "id": "reparo-pos-merge-trava-para-sempre-com-worktree-",
+        "title": "Reparo pós-merge não trava mais com worktree meio-deletado (sem .git)",
+        "desc": "Incidente 2026-08-24 (SPED PRONTO, missão c0c6f56c): crash no meio do `git worktree remove` pós-merge deixou a pasta sem `.git`, e o reparo de boot repetia `target_repair_pending` para sempre. Curado em 5e0cfe1: carcaça sem `.git` ganha rota sancionada — branch no SHA aprovado + conteúdo provado por BYTES (index temp via read-tree, sem stat-cache) → quarentena por rename em `<dir>-carcass-bak` (nada deletado) e o CAS conclui. Teste novo falhou comprovadamente no código velho; guardas de adulteração e branch divergida cobertas. Reparo manual do incidente: pasta renomeada, missão reconcilia no próximo boot.",
+        "refs": [
+          "5e0cfe1",
+          "src/main/worktree.ts",
+          "scripts/test-mission-worktree.mjs"
+        ],
+        "badge": "bug curado"
       }
     ],
     "feito": [
@@ -501,6 +512,19 @@
       "action": "add",
       "id": "advisory-no-diff-mexendo-em-version-do-package-j",
       "detail": "→ candidatas"
+    },
+    {
+      "at": "2026-08-24T21:25:22.436Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "reparo-pos-merge-trava-para-sempre-com-worktree-",
+      "detail": "→ dividas"
+    },
+    {
+      "at": "2026-08-24T21:37:58.379Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "reparo-pos-merge-trava-para-sempre-com-worktree-"
     }
   ]
 }
