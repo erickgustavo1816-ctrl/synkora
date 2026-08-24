@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-24T21:37:58.379Z",
+  "updatedAt": "2026-08-24T23:41:51.719Z",
   "lanes": {
     "agora": [
       {
@@ -32,6 +32,15 @@
         "title": "Browser embutido",
         "desc": "4º item do plano do dono: navegador dentro do Synkora pro ciclo de teste visual sem sair do app.",
         "refs": []
+      },
+      {
+        "id": "repensar-a-landing-do-projeto-sem-missoes-aberta",
+        "title": "Repensar a landing do projeto sem missões abertas",
+        "desc": "Reprovação do dono 2026-08-24 ao ver o Board do SPED PRONTO pós-integração total (\"essa UI ficou horrível\" — e no grill: o conjunto todo, repensar a tela). Rito: mockup novo em docs/mockups/ para aprovação ANTES de codar; impeccable como lei; papel & painel; câmera, não rearranjo.",
+        "refs": [
+          "docs/mockups/"
+        ],
+        "badge": "mockup em produção"
       }
     ],
     "candidatas": [
@@ -525,6 +534,13 @@
       "by": "orquestrador",
       "action": "update",
       "id": "reparo-pos-merge-trava-para-sempre-com-worktree-"
+    },
+    {
+      "at": "2026-08-24T23:41:51.719Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "repensar-a-landing-do-projeto-sem-missoes-aberta",
+      "detail": "→ fila"
     }
   ]
 }

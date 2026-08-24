@@ -1,0 +1,228 @@
+<title>Mockup Project Landing 2</title>
+<style>
+  :root {
+    --paper: #efe9dc; --paper-2: #e8e1d0; --card: #f6f1e6; --panel: #26241f; --panel-ink: #efe9dc;
+    --ink: #262019; --ink-2: #5f574a; --ink-3: #948b78;
+    --accent: #d96c3f; --accent-deep: #c05a2e; --ok: #3e9b5f; --err: #b54036; --line: #d9d1bd; --line-strong: #b8ae95;
+    --mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--paper); color: var(--ink); font-family: var(--mono);
+    font-size: 13px; line-height: 1.5; margin: 0; padding: 28px 22px 70px; }
+  .wrap { max-width: 1220px; margin: 0 auto; display: flex; flex-direction: column; gap: 26px; }
+  header.mast { background: var(--panel); color: var(--panel-ink); border-radius: 10px; padding: 16px 22px; }
+  header.mast h1 { margin: 0; font-size: 17px; letter-spacing: .14em; text-transform: uppercase; }
+  header.mast p { margin: 8px 0 0; color: #b8b09c; font-size: 12px; max-width: 88ch; }
+  header.mast b { color: var(--panel-ink); }
+
+  .state-title { margin: 0; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-2); }
+  .state-title .pick { color: var(--accent); letter-spacing: .04em; text-transform: none; }
+  .block { display: flex; flex-direction: column; gap: 10px; }
+
+  /* ————— a FOLHA simulada (o miolo do Board) ————— */
+  .sheet { background: var(--paper); border: 1.5px solid var(--line-strong); border-radius: 10px;
+    padding: 18px 20px 22px; display: flex; flex-direction: column; gap: 16px; }
+
+  /* banda de topo: identidade + convites. SEM tiles zerados. */
+  .top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .id-quiet { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+  .id-main { font-size: 12px; font-weight: 700; }
+  .id-main .note { font-weight: 400; color: var(--ink-3); margin-left: 6px; font-size: 11px; }
+  .top .spacer { flex: 1; }
+  .btn { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    border: 1.5px solid var(--ink); border-radius: 7px; background: transparent; color: var(--ink);
+    padding: 5px 11px; cursor: pointer; white-space: nowrap; }
+  .btn.accent { background: var(--accent); border-color: var(--accent-deep); color: #fff; }
+  .btn.primary { background: var(--ink); color: var(--paper); }
+  .btn.quiet { border-color: var(--line-strong); color: var(--ink-2); }
+
+  /* resumo textual no lugar dos 4 tiles: uma linha, números no meio da frase */
+  .ledger { font-size: 11.5px; color: var(--ink-2); border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line); padding: 7px 2px; display: flex; gap: 18px; flex-wrap: wrap; }
+  .ledger b { color: var(--ink); }
+  .ledger .sep { color: var(--line-strong); }
+
+  /* ————— O PALCO: o cartão do MARCO da versão ————— */
+  .milestone { border: 2px solid var(--ink); border-radius: 10px; background: var(--card);
+    padding: 16px 18px 15px; display: flex; flex-direction: column; gap: 10px;
+    box-shadow: 0 8px 22px rgba(38, 32, 25, .12); }
+  .milestone .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .milestone .vname { font-size: 19px; font-weight: 700; letter-spacing: .02em; }
+  .milestone .vstate { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--ok); }
+  .milestone .vfacts { margin-left: auto; font-size: 11.5px; color: var(--ink-2); }
+  .vbar { height: 7px; border: 1px solid var(--ink); border-radius: 4px; overflow: hidden; background: var(--paper); }
+  .vbar .fill { height: 100%; width: 100%; background: var(--ok); }
+  .vbar.partial .fill { width: 62%; }
+  .milestone .deck { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .milestone .deck .hint { font-size: 11px; color: var(--ink-3); margin-left: 4px; }
+
+  /* ————— duas colunas de contexto ————— */
+  .cols { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; align-items: start; }
+  .sec h3 { margin: 0 0 8px; font-size: 10.5px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-2);
+    display: flex; align-items: baseline; gap: 10px; }
+  .sec h3 .more { margin-left: auto; text-transform: none; letter-spacing: .02em; color: var(--ink-3); font-size: 10.5px; }
+
+  /* a OBRA: timeline por dia — funde "integradas" + "atividade recente" */
+  .day { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); margin: 10px 0 4px; }
+  .day:first-of-type { margin-top: 0; }
+  .work { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 6px; min-width: 0; cursor: pointer; }
+  .work:hover { background: var(--card); }
+  .work .mark { color: var(--ok); flex: none; }
+  .work .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .work .meta { margin-left: auto; flex: none; font-size: 10.5px; color: var(--ink-3); }
+
+  /* plano CUMPRIDO vira selo, não instrumento ativo */
+  .seal { border: 1.5px dashed var(--line-strong); border-radius: 9px; padding: 10px 13px;
+    display: flex; flex-direction: column; gap: 6px; }
+  .seal .row { display: flex; align-items: baseline; gap: 8px; }
+  .seal .check { color: var(--ok); font-weight: 700; }
+  .seal .name { font-size: 12px; }
+  .seal .frac { margin-left: auto; font-size: 10.5px; color: var(--ink-3); }
+  .seal .bar { height: 5px; border: 1px solid var(--line-strong); border-radius: 3px; overflow: hidden; }
+  .seal .bar .fill { height: 100%; width: 100%; background: var(--ok); opacity: .55; }
+
+  /* variante compacta do palco (V2) */
+  .rail { border: 1.5px solid var(--ink); border-radius: 9px; background: var(--card);
+    padding: 10px 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .rail .vname { font-size: 13px; font-weight: 700; }
+  .rail .facts { font-size: 11px; color: var(--ink-2); }
+  .rail .spacer { flex: 1; }
+
+  /* estado B: com trabalho vivo, o palco RECUA pra uma linha */
+  .mission-row { border: 1.5px solid var(--ink); border-radius: 9px; background: var(--card);
+    padding: 9px 13px; display: flex; align-items: center; gap: 10px; }
+  .mission-row .dot { color: var(--accent); }
+  .mission-row .title { font-weight: 700; }
+  .mission-row .who { margin-left: auto; font-size: 10.5px; color: var(--ink-3); }
+
+  .notes { font-size: 11.5px; color: var(--ink-2); display: flex; flex-direction: column; gap: 6px; max-width: 92ch; }
+  .notes p { margin: 0; padding-left: 14px; position: relative; }
+  .notes p::before { content: "▸"; position: absolute; left: 0; color: var(--accent); }
+  .notes b { color: var(--ink); }
+</style>
+
+<div class="wrap">
+  <header class="mast">
+    <h1>✦ Project Landing 2 — o ✦ geral que reconhece o MOMENTO</h1>
+    <p>A reprovação de 24/08 (SPED PRONTO, tudo integrado): a tela mostrava <b>três zeros gigantes, uma coluna
+    vazia e cinco fichas repetindo a mesma linha</b> — e não contava a única história do momento: a 0.1.1 está
+    COMPLETA esperando o lançamento. A cura não é enfeitar o vazio: é a landing ter <b>estados</b>. Com trabalho
+    vivo, o retrato de hoje. Sem nada vivo e versão completa, o palco vira o <b>marco da versão</b> com a régua
+    de release — o gesto que hoje obriga a caçar a aba Versões.</p>
+  </header>
+
+  <!-- ————————— ESTADO A: o da foto ————————— -->
+  <div class="block">
+    <h2 class="state-title">Estado A — nada vivo, 0.1.1 completa <span class="pick">· o caso da reprovação · palco V1 "marco"</span></h2>
+    <div class="sheet">
+      <div class="top">
+        <span class="id-quiet">nada lançado na main ainda</span>
+        <span class="spacer"></span>
+        <button class="btn accent">+ nova missão</button>
+        <button class="btn quiet">+ nova versão</button>
+      </div>
+
+      <div class="milestone">
+        <div class="head">
+          <span class="vname">◈ 0.1.1</span>
+          <span class="vstate">pronta — aguardando lançamento</span>
+          <span class="vfacts">9/9 missões integradas · árvore limpa</span>
+        </div>
+        <div class="vbar"><div class="fill"></div></div>
+        <div class="deck">
+          <button class="btn primary">⇪ lançar na main</button>
+          <button class="btn">▶ testar a versão</button>
+          <button class="btn quiet">aba versões →</button>
+          <span class="hint">testar abre o terminal já no worktree da 0.1.1 — sem caçar pasta</span>
+        </div>
+      </div>
+
+      <div class="ledger">
+        <span><b>10</b> missões no total</span><span class="sep">·</span>
+        <span><b>10</b> integradas</span><span class="sep">·</span>
+        <span>nenhuma em andamento, na fila ou arquivada</span>
+      </div>
+
+      <div class="cols">
+        <div class="sec">
+          <h3>a obra da 0.1.1 <span class="more">9 missões — o placar completo na aba Versões</span></h3>
+          <p class="day">24/08 — hoje</p>
+          <div class="work"><span class="mark">⇪</span><span class="title">Modificar o app</span><span class="meta">Codex · Hotmail</span></div>
+          <p class="day">23/08</p>
+          <div class="work"><span class="mark">⇪</span><span class="title">Reforma das telas do fluxo</span><span class="meta">Claude · conta 2</span></div>
+          <p class="day">22/08</p>
+          <div class="work"><span class="mark">⇪</span><span class="title">Fundação visual do design system</span><span class="meta">Claude · conta 1</span></div>
+          <div class="work"><span class="mark">⇪</span><span class="title">Aplicação das melhorias de robustez aprovadas</span><span class="meta">Claude · conta 1</span></div>
+          <div class="work"><span class="mark">⇪</span><span class="title">Investigação de robustez</span><span class="meta">Claude · conta 2</span></div>
+        </div>
+        <div class="sec">
+          <h3>plano</h3>
+          <div class="seal">
+            <div class="row">
+              <span class="check">✓</span>
+              <span class="name">Versão de estabilização: bugs, robustez e interface</span>
+              <span class="frac">8/8 — cumprido</span>
+            </div>
+            <div class="bar"><div class="fill"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <p><b>O palco conta o momento.</b> "9/9 integradas, nada na main" é um MARCO, não um vazio — o cartão da
+      versão assume o centro com as três ações do instante: lançar, testar, ver o placar.</p>
+      <p><b>▶ testar a versão</b> é a receita do incidente de hoje: abre o terminal DENTRO do worktree da versão
+      (ambiente que o app garante mobiliado) em vez de o dono navegar pasta e adivinhar o estado do node_modules.</p>
+      <p><b>Os 4 tiles morreram neste estado.</b> Três zeros grandes não são informação; a contagem vira uma linha
+      de texto (o "ledger"). Com trabalho vivo os números voltam a importar — ver Estado B.</p>
+      <p><b>"Integradas" + "atividade recente" eram a MESMA lista duas vezes.</b> Viraram uma só: a obra da versão,
+      agrupada por dia (carimbo real), com conta/modelo na linha — informação que o app já tem.</p>
+      <p><b>Plano cumprido é selo, não instrumento.</b> Barra ativa de 8/8 parecia trabalho pendente; o traço
+      pontilhado + ✓ diz "encerrado" por FORMA antes de cor.</p>
+    </div>
+  </div>
+
+  <!-- ————————— palco V2 ————————— -->
+  <div class="block">
+    <h2 class="state-title">Palco V2 — a "régua" compacta <span class="pick">· mesma história, meia altura, para quem achar o cartão grande demais</span></h2>
+    <div class="rail">
+      <span class="vname">◈ 0.1.1</span>
+      <span class="facts">pronta · 9/9 integradas · nada na main</span>
+      <span class="spacer"></span>
+      <button class="btn primary">⇪ lançar</button>
+      <button class="btn">▶ testar</button>
+      <button class="btn quiet">versões →</button>
+    </div>
+  </div>
+
+  <!-- ————————— ESTADO B ————————— -->
+  <div class="block">
+    <h2 class="state-title">Estado B — com trabalho vivo <span class="pick">· o palco recua, as missões mandam (retrato de hoje preservado)</span></h2>
+    <div class="sheet">
+      <div class="top">
+        <span class="id-main">◈ 0.1.0 <span class="note">na main</span></span>
+        <span class="spacer"></span>
+        <button class="btn accent">+ nova missão</button>
+      </div>
+      <div class="rail">
+        <span class="vname">◈ 0.1.1</span>
+        <span class="facts">em construção · 5/8 integradas</span>
+        <span class="spacer"></span>
+        <div class="vbar partial" style="width:120px"><div class="fill"></div></div>
+      </div>
+      <div class="sec">
+        <h3>missões abertas</h3>
+        <div class="mission-row"><span class="dot">●</span><span class="title">Reforma das telas do fluxo</span><span class="who">Claude · conta 2 · pensando</span></div>
+        <div style="height:8px"></div>
+        <div class="mission-row"><span class="dot">●</span><span class="title">Modificar o app</span><span class="who">Codex · Hotmail · ⇪ esperando você</span></div>
+      </div>
+    </div>
+    <div class="notes">
+      <p><b>Nada do retrato atual se perde.</b> Com missões vivas, a hierarquia de hoje continua: vivas na frente,
+      contexto ao lado. A versão em construção vira a régua fina no topo — a barra parcial já diz o rumo.</p>
+      <p><b>A máquina de estados é pequena e mecânica:</b> vivas &gt; 0 → retrato · vivas = 0 e versão completa
+      não lançada → marco · universo zerado → convite (a tela ProjectGeneral que já existe).</p>
+    </div>
+  </div>
+</div>
