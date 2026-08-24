@@ -624,6 +624,94 @@ test('version cleanup preserves the worktree unless head and cleanliness are exa
   )
 })
 
+// ————— CARCAÇA DE REMOÇÃO INTERROMPIDA (incidente 2026-08-24) —————
+//
+// O `git worktree remove` pós-merge morreu no MEIO: levou o `.git` da pasta e
+// parte dos arquivos, o prune apagou o registro — e a pasta que sobrou nunca
+// mais prova identidade nenhuma. Sem rota, o reparo de boot repete
+// `target_repair_pending` para SEMPRE (beco sem saída). A cura: conteúdo
+// provado por BYTES contra o SHA aprovado vai para quarentena ao lado (rename,
+// jamais deleção) e o CAS da branch conclui a limpeza.
+
+test('carcaça sem .git com conteúdo provado vai para quarentena e o CAS conclui', (t) => {
+  const root = initializeRepository(t, 'synkora-carcass-proven-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-carcass-proven-wt-')
+  const mission = createMissionWorktree(root, worktrees, 'carcass-proven-mission')
+  assert.ok(mission)
+  writeFileSync(join(mission.dir, 'delivered.txt'), 'entrega\n', 'utf8')
+  git(mission.dir, ['add', 'delivered.txt'])
+  git(mission.dir, ['commit', '-m', 'entrega'])
+  const head = git(mission.dir, ['rev-parse', 'HEAD'])
+  git(root, ['merge', '--no-ff', mission.branch, '-m', 'merge mission'])
+
+  // o crash: identidade e registro se vão, a deleção fica pela metade e uma
+  // sobra sem cópia no git (build) permanece na pasta
+  unlinkSync(join(mission.dir, '.git'))
+  git(root, ['worktree', 'prune'])
+  unlinkSync(join(mission.dir, 'base.txt'))
+  writeFileSync(join(mission.dir, 'build-output.tmp'), 'sobra de build\n', 'utf8')
+
+  assert.equal(removeWorktreeAndBranch(root, mission.dir, mission.branch, head), true)
+  assert.equal(existsSync(mission.dir), false)
+  assert.throws(() =>
+    git(root, ['show-ref', '--verify', '--quiet', `refs/heads/${mission.branch}`])
+  )
+  // NADA foi deletado: a carcaça inteira — sobra sem cópia incluída — mora na
+  // quarentena ao lado; apagar segue sendo decisão de gente.
+  const quarantine = `${mission.dir}-carcass-bak`
+  assert.equal(
+    readFileSync(join(quarantine, 'delivered.txt'), 'utf8').replace(/\r\n/g, '\n'),
+    'entrega\n'
+  )
+  assert.equal(
+    readFileSync(join(quarantine, 'build-output.tmp'), 'utf8'),
+    'sobra de build\n'
+  )
+})
+
+test('carcaça com arquivo rastreado adulterado é preservada no lugar e bloqueia', (t) => {
+  const root = initializeRepository(t, 'synkora-carcass-tampered-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-carcass-tampered-wt-')
+  const mission = createMissionWorktree(root, worktrees, 'carcass-tampered-mission')
+  assert.ok(mission)
+  writeFileSync(join(mission.dir, 'delivered.txt'), 'entrega\n', 'utf8')
+  git(mission.dir, ['add', 'delivered.txt'])
+  git(mission.dir, ['commit', '-m', 'entrega'])
+  const head = git(mission.dir, ['rev-parse', 'HEAD'])
+
+  unlinkSync(join(mission.dir, '.git'))
+  git(root, ['worktree', 'prune'])
+  // MESMO tamanho do conteúdo aprovado: só a leitura de bytes distingue —
+  // stat (mtime/size) não pode ser a prova
+  writeFileSync(join(mission.dir, 'delivered.txt'), 'entrela\n', 'utf8')
+
+  assert.equal(removeWorktreeAndBranch(root, mission.dir, mission.branch, head), false)
+  assert.equal(existsSync(join(mission.dir, 'delivered.txt')), true)
+  assert.doesNotThrow(() =>
+    git(root, ['show-ref', '--verify', '--quiet', `refs/heads/${mission.branch}`])
+  )
+  assert.equal(existsSync(`${mission.dir}-carcass-bak`), false)
+})
+
+test('carcaça com a BRANCH divergida do SHA aprovado não é tocada', (t) => {
+  const root = initializeRepository(t, 'synkora-carcass-branch-moved-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-carcass-branch-moved-wt-')
+  const mission = createMissionWorktree(root, worktrees, 'carcass-branch-moved')
+  assert.ok(mission)
+  const head = git(mission.dir, ['rev-parse', 'HEAD'])
+
+  unlinkSync(join(mission.dir, '.git'))
+  git(root, ['worktree', 'prune'])
+  // a branch anda por fora DEPOIS da fotografia aprovada
+  git(root, ['commit', '--allow-empty', '-m', 'avanço externo'])
+  git(root, ['branch', '-f', mission.branch, 'HEAD'])
+
+  assert.equal(removeWorktreeAndBranch(root, mission.dir, mission.branch, head), false)
+  assert.equal(existsSync(mission.dir), true)
+  assert.equal(existsSync(`${mission.dir}-carcass-bak`), false)
+  assert.notEqual(git(root, ['rev-parse', `refs/heads/${mission.branch}`]), head)
+})
+
 test('release journal is discardable only while both exact pre-CAS snapshots stay clean', (t) => {
   const root = initializeRepository(t, 'synkora-release-pre-cas-')
   const source = createVersionWorktree(

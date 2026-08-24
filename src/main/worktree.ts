@@ -3,14 +3,18 @@ import {} from 'crypto'
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmdirSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
   type Dirent
 } from 'fs'
+import { tmpdir } from 'os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { ensureNodeModulesLink } from './nodeModulesLink'
 import { freshWindowsPath } from './winPath'
@@ -629,6 +633,96 @@ export function neutralizeReparsePoints(root: string): void {
   }
 }
 
+/**
+ * CARCAÇA de `worktree remove` interrompido (incidente 2026-08-24): a pasta
+ * existe, mas o `.git` — a identidade — foi levado junto com parte dos
+ * arquivos, e o registro já saiu no prune. `gitHead` jamais provará o SHA
+ * aprovado, então o preservar-e-bloquear de sempre viraria beco sem saída
+ * PERMANENTE do reparo pós-merge (`target_repair_pending` a cada boot).
+ *
+ * Rota sancionada: duas provas e um gesto SEM deleção.
+ * 1. A branch, se ainda existir, tem de apontar exatamente para o SHA
+ *    aprovado — a mesma régua do ramo sem pasta.
+ * 2. Nenhum arquivo rastreado PRESENTE pode diferir do conteúdo aprovado,
+ *    comparado por BYTES: o index temporário populado por `read-tree` não
+ *    carrega stat nenhum, então o diff lê cada arquivo de verdade. Sem o
+ *    `read-tree`, o index vazio faria o diff passar sem ler NADA (provado
+ *    em sonda) — ele é parte do lacre, não otimização.
+ * 3. Provada, a carcaça vai INTEIRA para `<dir>-carcass-bak` ao lado:
+ *    rename preserva até a sobra sem cópia no git (build ignorado, p.ex.);
+ *    apagar continua sendo decisão de gente, nunca deste reparo.
+ * Qualquer dúvida em qualquer passo preserva a pasta e bloqueia como antes.
+ */
+function quarantineProvenCarcass(
+  projectPath: string,
+  dir: string,
+  branch: string,
+  expectedHead: string
+): boolean {
+  const branchExists = gitLocalBranchExists(projectPath, branch)
+  if (branchExists === undefined) return false
+  if (branchExists) {
+    try {
+      if (git(projectPath, ['rev-parse', `refs/heads/${branch}`]) !== expectedHead) return false
+    } catch {
+      return false
+    }
+  }
+  let gitDir: string
+  try {
+    gitDir = git(projectPath, ['rev-parse', '--absolute-git-dir'])
+  } catch {
+    return false
+  }
+  const scratch = mkdtempSync(join(tmpdir(), 'synkora-carcass-proof-'))
+  try {
+    const env = {
+      ...(process.env as Record<string, string>),
+      PATH: freshWindowsPath(),
+      GIT_DIR: gitDir,
+      GIT_WORK_TREE: dir,
+      GIT_INDEX_FILE: join(scratch, 'index')
+    }
+    execFileSync('git', ['read-tree', expectedHead], {
+      cwd: dir,
+      env,
+      timeout: 60_000,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    const modified = execFileSync(
+      'git',
+      ['diff', '--diff-filter=M', '--name-only', expectedHead],
+      {
+        cwd: dir,
+        env,
+        encoding: 'utf-8',
+        timeout: 60_000,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    )
+    if (modified.trim().length > 0) return false
+  } catch {
+    return false
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
+  let quarantine = `${dir}-carcass-bak`
+  for (let n = 2; existsSync(quarantine); n += 1) {
+    // teto duro: uma fila de vinte quarentenas do MESMO worktree não é
+    // recuperação, é sintoma — aí o bloqueio de sempre volta a valer
+    if (n > 20) return false
+    quarantine = `${dir}-carcass-bak-${n}`
+  }
+  try {
+    renameSync(dir, quarantine)
+  } catch {
+    return false
+  }
+  return !existsSync(dir)
+}
+
 export function removeWorktreeAndBranch(
   projectPath: string,
   dir: string,
@@ -639,7 +733,14 @@ export function removeWorktreeAndBranch(
   // remoção e impede que uma escrita tardia seja apagada pelo cleanup.
   if (expectedHead) {
     if (existsSync(dir)) {
-      if (gitHead(dir) !== expectedHead) return false
+      if (existsSync(join(dir, '.git'))) {
+        if (gitHead(dir) !== expectedHead) return false
+      } else if (!quarantineProvenCarcass(projectPath, dir, branch, expectedHead)) {
+        // Sem `.git` a pasta é carcaça de remoção interrompida; `gitHead`
+        // subiria a árvore de diretórios e responderia pelo repo ERRADO (ou
+        // por nenhum). A prova/quarentena acima é a única rota de saída.
+        return false
+      }
     } else {
       // Recovery também cobre queda entre `worktree remove` e o CAS da
       // branch. Sem a pasta, só conclui se o ref ainda aponta exatamente para
