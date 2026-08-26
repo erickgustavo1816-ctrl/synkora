@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-24T23:41:51.719Z",
+  "updatedAt": "2026-08-26T17:06:44.288Z",
   "lanes": {
     "agora": [
       {
@@ -115,6 +115,17 @@
           "scripts/test-mission-worktree.mjs"
         ],
         "badge": "bug curado"
+      },
+      {
+        "id": "landing-2-ui-do-geral-entregue-por-agente-interr",
+        "title": "Landing 2 (UI do ✦ geral) entregue por agente interrompido — falta review + validação na tela",
+        "desc": "O agente Opus da R38 implementou o mockup project-landing-2 (landingMilestone/ledgerTail/versionPortrait, palco do marco com ⇪ lançar / ▶ testar / aba versões, obra por dia, selo de plano cumprido, rail do estado B) mas foi INTERROMPIDO antes de escrever o relatório .synkora/reports/r38-agent-landing2-report.md. Estado: typecheck verde, test:project-landing 33/33, test:landing-polish 18/18, gate raiz verde. Falta: code review pessoal do diff inteiro (970 linhas) e a validação visual na tela real (regra dura da casa) antes de declarar pronto.",
+        "refs": [
+          "docs/mockups/project-landing-2.html",
+          "src/renderer/src/components/ProjectDashboard.tsx",
+          "src/renderer/src/projectLanding.ts"
+        ],
+        "badge": "aguarda review"
       }
     ],
     "feito": [
@@ -541,6 +552,13 @@
       "action": "add",
       "id": "repensar-a-landing-do-projeto-sem-missoes-aberta",
       "detail": "→ fila"
+    },
+    {
+      "at": "2026-08-26T17:06:44.287Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "landing-2-ui-do-geral-entregue-por-agente-interr",
+      "detail": "→ dividas"
     }
   ]
 }

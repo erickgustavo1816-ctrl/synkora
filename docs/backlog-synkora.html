@@ -57,7 +57,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>✦ Backlog Synkora</h1>
-    <span class="stamp">atualizado 24/08 · pelo orquestrador</span>
+    <span class="stamp">atualizado 26/08 · pelo orquestrador</span>
     <p class="how"><b>Como funciona:</b> este é o mapa vivo da obra — eu re-publico neste MESMO link a cada
     entrega. Quer mudar prioridade ou adicionar item? Comente aqui na página ou me diga no chat.
     Fonte da verdade: <b>docs/backlog-synkora.json</b> (MCP + CLI em scripts/backlog*.mjs).</p>
@@ -164,6 +164,13 @@
       <span class="badge">bug curado</span>
       <span class="desc">Incidente 2026-08-24 (SPED PRONTO, missão c0c6f56c): crash no meio do `git worktree remove` pós-merge deixou a pasta sem `.git`, e o reparo de boot repetia `target_repair_pending` para sempre. Curado em 5e0cfe1: carcaça sem `.git` ganha rota sancionada — branch no SHA aprovado + conteúdo provado por BYTES (index temp via read-tree, sem stat-cache) → quarentena por rename em `&lt;dir&gt;-carcass-bak` (nada deletado) e o CAS conclui. Teste novo falhou comprovadamente no código velho; guardas de adulteração e branch divergida cobertas. Reparo manual do incidente: pasta renomeada, missão reconcilia no próximo boot.</span>
       <span class="refs">refs: <code>5e0cfe1</code> · <code>src/main/worktree.ts</code> · <code>scripts/test-mission-worktree.mjs</code></span>
+    </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">Landing 2 (UI do ✦ geral) entregue por agente interrompido — falta review + validação na tela</span>
+      <span class="badge">aguarda review</span>
+      <span class="desc">O agente Opus da R38 implementou o mockup project-landing-2 (landingMilestone/ledgerTail/versionPortrait, palco do marco com ⇪ lançar / ▶ testar / aba versões, obra por dia, selo de plano cumprido, rail do estado B) mas foi INTERROMPIDO antes de escrever o relatório .synkora/reports/r38-agent-landing2-report.md. Estado: typecheck verde, test:project-landing 33/33, test:landing-polish 18/18, gate raiz verde. Falta: code review pessoal do diff inteiro (970 linhas) e a validação visual na tela real (regra dura da casa) antes de declarar pronto.</span>
+      <span class="refs">refs: <code>docs/mockups/project-landing-2.html</code> · <code>src/renderer/src/components/ProjectDashboard.tsx</code> · <code>src/renderer/src/projectLanding.ts</code></span>
     </div>
   </section>
 
