@@ -75,6 +75,7 @@ import {
 import { notifyDesktop } from './desktopNotifications'
 import { type IntegrationQueueTicketView } from './integrationQueue'
 import { gitOff } from './gitAsync'
+import { retryWorktreeRelease } from './worktreeRelease'
 import {
   existsSync,
   mkdirSync,
@@ -2524,24 +2525,63 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         expectedTargetBranch: target.branch
       }
     )
-    const alignedAfterCommit =
+    // O MERGE POUSOU E SÓ O FECHO FICOU PARA TRÁS — duas metades, provadas
+    // separadamente (incidente 2026-08-26, missão f5c8fa04).
+    //
+    // 1) O DESTINO. Antes, a única prova aceita era o `alignWorktreeFromSnapshot`
+    //    ter reparado alguma coisa. Só que ele diffa contra o head ANTERIOR ao
+    //    merge: quando o destino já pousou certo — o caso comum — ele devolve
+    //    `false` por não ter nada a reparar, e o fecho inteiro era reprovado por
+    //    um destino SAUDÁVEL. Agora o destino se prova primeiro pelo que ele é
+    //    (alcançou o commit do merge e está limpo) e só cai no reparo se não
+    //    estiver; a garantia velha continua inteira, porque nenhum caminho
+    //    declara sucesso sem o destino assentado.
+    // 2) A ORIGEM. A limpeza é RETENTADA por uma janela curta: matar os panes
+    //    (acima) envia o sinal, não enterra o filho, e o `git worktree remove`
+    //    corria contra o velório do codex/claude que tem cwd no worktree — daí
+    //    a carcaça. Detalhes e limites em `worktreeRelease.ts`.
+    const targetSettled =
       !res.ok && res.committed === true
-        ? await gitOff('alignWorktreeFromSnapshot', target.dir, expectedTargetHead)
+        ? (res.committedHead !== undefined &&
+            (await gitOff('gitCommitReached', target.dir, res.committedHead)) === true &&
+            (await gitOff('isWorktreeClean', target.dir)) === true) ||
+          (await gitOff('alignWorktreeFromSnapshot', target.dir, expectedTargetHead))
         : false
-    const cleanedAfterAlignment = alignedAfterCommit
-      ? await gitOff(
-          'removeWorktreeAndBranch',
-          project.path,
-          missionSource,
-          mission.branch,
-          expectedSourceHead
+    // A branch sai do `mission` ANTES da closure: o estreitamento que o TS fez
+    // aqui em cima não atravessa uma função que roda depois.
+    const sourceBranch = mission.branch
+    const sourceRelease = targetSettled
+      ? await retryWorktreeRelease(() =>
+          gitOff(
+            'removeWorktreeAndBranch',
+            project.path,
+            missionSource,
+            sourceBranch,
+            expectedSourceHead
+          )
         )
-      : false
-    const mergeOk = res.ok || (alignedAfterCommit && cleanedAfterAlignment)
-    const mergeDetail = alignedAfterCommit
-      ? cleanedAfterAlignment
-        ? `${res.detail}; destino alinhado e origem limpa na tentativa de reparo`
-        : `${res.detail}; destino alinhado, mas a limpeza da origem ficou pendente`
+      : undefined
+    const cleanedAfterCommit = sourceRelease?.released === true
+    // Só vira recibo quando houve INSISTÊNCIA: uma limpeza de primeira é o
+    // normal e não merece linha no diário.
+    if (sourceRelease && sourceRelease.attempts > 1)
+      blackbox.record({
+        cat: 'merge',
+        event: sourceRelease.released
+          ? 'source-worktree-released-after-retry'
+          : 'source-worktree-still-held',
+        actor: 'harness',
+        ids: { projectId, missionId },
+        reason: sourceRelease.released
+          ? 'a pasta da origem estava presa por um pane ainda morrendo e se soltou dentro da janela'
+          : 'a pasta da origem seguiu presa depois da janela — algum processo vivo tem cwd nela',
+        detail: { attempts: sourceRelease.attempts, waitedMs: sourceRelease.waitedMs }
+      })
+    const mergeOk = res.ok || (targetSettled && cleanedAfterCommit)
+    const mergeDetail = targetSettled
+      ? cleanedAfterCommit
+        ? `${res.detail}; destino assentado e origem limpa na tentativa de reparo`
+        : `${res.detail}; destino assentado, mas a limpeza da origem ficou pendente`
       : res.detail
     if (mergeOk) {
       missions.update(missionId, {
