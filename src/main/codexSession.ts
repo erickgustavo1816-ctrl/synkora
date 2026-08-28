@@ -1,3 +1,5 @@
+import { sessionSpawnFailureText } from './sessionSpawnError'
+import { existsSync } from 'fs'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { freshWindowsPath } from './winPath'
 import { guiToolResultDetails } from './guiToolResults'
@@ -526,7 +528,17 @@ export class CodexSession {
       this.clearTurnErrorGuard()
       this.cancelPendingInteractions()
       this.failPendingRpcs(e.message)
-      this.emit({ type: 'fatal', text: e.message })
+      // ENOENT de spawn quase nunca e o binario: no Windows um `cwd` que
+      // sumiu falha NOMEANDO o executavel. Traduzir so o caso provado.
+      this.emit({
+        type: 'fatal',
+        text: sessionSpawnFailureText({
+          message: e.message,
+          code: (e as NodeJS.ErrnoException).code,
+          cwd: this.opts.cwd,
+          cwdExists: Boolean(this.opts.cwd) && existsSync(this.opts.cwd)
+        })
+      })
     })
     this.child.on('close', (code) => {
       const failedBeforeClose = this.closed

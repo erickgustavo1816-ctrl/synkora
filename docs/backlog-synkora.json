@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-28T16:33:59.226Z",
+  "updatedAt": "2026-08-28T18:00:33.854Z",
   "lanes": {
     "agora": [
       {
@@ -140,14 +140,14 @@
       },
       {
         "id": "causa-raiz-da-ferramenta-orfa-agora-tem-evidenci",
-        "title": "Causa raiz da ferramenta órfã: agora tem evidência para investigar",
-        "desc": "2026-08-28: o dono reclamou dos \"erros aleatórios que não explicam nada\" (card \"o turno terminou sem receber o resultado de uma ferramenta\"). Duas metades curadas: o card passa a NOMEAR a tool, e o episódio virou evento turn-orphaned-tool na caixa-preta (canal estreito gui:noteOrphanedTool, correlação por paneId). O que NÃO dá para responder ainda: POR QUE o codex/claude fecha o turno com tool sem resultado — o journal do dia não tinha um único evento de fim de turno, então não havia o que investigar. Na próxima ocorrência: node scripts/bbwatch.mjs e filtrar turn-orphaned-tool; com os nomes das tools e o outcome em mãos, dá para decidir se é protocolo do CLI, corrida do stream ou pane que perdeu o result.",
+        "title": "Causa raiz achada: navegador de teste segurava o worktree (integração travada)",
+        "desc": "2026-08-28, incidente completo. (1) \"não tá subindo\": a missão e8579a6d gravou o merge e travou na limpeza — um Edge HEADLESS aberto às 14:19 por agente para teste visual, com --user-data-dir DENTRO do worktree, segurava os LOCK do perfil. A janela de re-tentativa não resolvia porque o processo não estava morrendo, estava vivo. Curado: reapVisualsUnder ceifa apps visuais enraizados no worktree antes do merge (nome na allowlist E caminho apontando para a raiz — cada condição sozinha já produziu erro real). (2) \"spawn cmd.exe ENOENT / código -4058\": provado em sonda que cwd inexistente falha assim; a mensagem culpava o cmd.exe. Agora nomeia a PASTA e a receita. FALTA: target_repair_pending só reconcilia no BOOT — sem restart o dono fica olhando a fila travada sem alavanca nenhuma.",
         "refs": [
-          "src/renderer/src/guiTerminalTools.ts",
-          "src/main/ipc/gui.ts",
-          "scripts/bbwatch.mjs"
+          "src/main/reapVisualsUnder.ts",
+          "src/main/sessionSpawnError.ts",
+          "scripts/test-session-spawn-error.mjs"
         ],
-        "badge": "aguarda próxima ocorrência"
+        "badge": "curado — falta reparo ao vivo"
       }
     ],
     "feito": [
@@ -601,6 +601,12 @@
       "action": "add",
       "id": "causa-raiz-da-ferramenta-orfa-agora-tem-evidenci",
       "detail": "→ dividas"
+    },
+    {
+      "at": "2026-08-28T18:00:33.854Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "causa-raiz-da-ferramenta-orfa-agora-tem-evidenci"
     }
   ]
 }

@@ -181,10 +181,10 @@
     </div>
     <div class="item debt">
       <span class="glyph">⊟</span>
-      <span class="title">Causa raiz da ferramenta órfã: agora tem evidência para investigar</span>
-      <span class="badge">aguarda próxima ocorrência</span>
-      <span class="desc">2026-08-28: o dono reclamou dos &quot;erros aleatórios que não explicam nada&quot; (card &quot;o turno terminou sem receber o resultado de uma ferramenta&quot;). Duas metades curadas: o card passa a NOMEAR a tool, e o episódio virou evento turn-orphaned-tool na caixa-preta (canal estreito gui:noteOrphanedTool, correlação por paneId). O que NÃO dá para responder ainda: POR QUE o codex/claude fecha o turno com tool sem resultado — o journal do dia não tinha um único evento de fim de turno, então não havia o que investigar. Na próxima ocorrência: node scripts/bbwatch.mjs e filtrar turn-orphaned-tool; com os nomes das tools e o outcome em mãos, dá para decidir se é protocolo do CLI, corrida do stream ou pane que perdeu o result.</span>
-      <span class="refs">refs: <code>src/renderer/src/guiTerminalTools.ts</code> · <code>src/main/ipc/gui.ts</code> · <code>scripts/bbwatch.mjs</code></span>
+      <span class="title">Causa raiz achada: navegador de teste segurava o worktree (integração travada)</span>
+      <span class="badge">curado — falta reparo ao vivo</span>
+      <span class="desc">2026-08-28, incidente completo. (1) &quot;não tá subindo&quot;: a missão e8579a6d gravou o merge e travou na limpeza — um Edge HEADLESS aberto às 14:19 por agente para teste visual, com --user-data-dir DENTRO do worktree, segurava os LOCK do perfil. A janela de re-tentativa não resolvia porque o processo não estava morrendo, estava vivo. Curado: reapVisualsUnder ceifa apps visuais enraizados no worktree antes do merge (nome na allowlist E caminho apontando para a raiz — cada condição sozinha já produziu erro real). (2) &quot;spawn cmd.exe ENOENT / código -4058&quot;: provado em sonda que cwd inexistente falha assim; a mensagem culpava o cmd.exe. Agora nomeia a PASTA e a receita. FALTA: target_repair_pending só reconcilia no BOOT — sem restart o dono fica olhando a fila travada sem alavanca nenhuma.</span>
+      <span class="refs">refs: <code>src/main/reapVisualsUnder.ts</code> · <code>src/main/sessionSpawnError.ts</code> · <code>scripts/test-session-spawn-error.mjs</code></span>
     </div>
   </section>
 

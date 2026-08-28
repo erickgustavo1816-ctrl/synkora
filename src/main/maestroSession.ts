@@ -1,3 +1,5 @@
+import { sessionSpawnFailureText } from './sessionSpawnError'
+import { existsSync } from 'fs'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { randomUUID } from 'crypto'
 import { freshWindowsPath } from './winPath'
@@ -949,7 +951,17 @@ export class MaestroSession {
       this.cancelLiveAgents()
       this.pendingTurnGenerations = []
       this.activeTurnGeneration = null
-      this.emit({ type: 'fatal', text: e.message })
+      // ENOENT de spawn quase nunca e o binario: no Windows um `cwd` que
+      // sumiu falha NOMEANDO o executavel. Traduzir so o caso provado.
+      this.emit({
+        type: 'fatal',
+        text: sessionSpawnFailureText({
+          message: e.message,
+          code: (e as NodeJS.ErrnoException).code,
+          cwd: this.opts.cwd,
+          cwdExists: Boolean(this.opts.cwd) && existsSync(this.opts.cwd)
+        })
+      })
     })
     // Handshake: a resposta traz comandos, modelos e conta REAIS do CLI.
     this.write({

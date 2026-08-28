@@ -1,3 +1,4 @@
+import { VISUAL_PROCESS_NAMES } from './reapVisualsUnder'
 import { spawn, type IPty } from '@lydell/node-pty'
 import { execFile, spawn as spawnChildProcess, type ChildProcessWithoutNullStreams } from 'child_process'
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'fs'
@@ -1702,12 +1703,7 @@ while ($true) {
   // Mata SÓ descendentes com nome de app visual; o CLI e os MCP servers ficam
   // intactos (o Playwright MCP relança o browser quando precisar — provado na
   // sonda). "Abriu, testou, reportou → fechou" vira lei de máquina.
-  private static readonly VISUAL_PROCESS_NAMES = new Set([
-    'chrome.exe',
-    'msedge.exe',
-    'firefox.exe',
-    'electron.exe'
-  ])
+  private static readonly VISUAL_PROCESS_NAMES = VISUAL_PROCESS_NAMES
 
   reapVisualsOf(paneId: string): void {
     if (process.platform !== 'win32') return

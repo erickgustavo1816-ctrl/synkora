@@ -75,6 +75,7 @@ import {
 import { notifyDesktop } from './desktopNotifications'
 import { type IntegrationQueueTicketView } from './integrationQueue'
 import { gitOff } from './gitAsync'
+import { reapVisualsUnder } from './reapVisualsUnder'
 import { retryWorktreeRelease } from './worktreeRelease'
 import {
   existsSync,
@@ -2399,6 +2400,11 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // ainda rodando neste worktree seguraria arquivos durante o merge
     // (Windows). Os dois vivem no mesmo registro e caem aqui, antes de mesclar.
     if (mission.worktree) closeTestServersUnder(mission.worktree)
+    // E OS NAVEGADORES TAMBEM (incidente 2026-08-28): um Edge headless
+    // aberto por agente para teste visual, com o perfil DENTRO do worktree,
+    // segurou os LOCK do perfil e travou a limpeza para sempre — a janela de
+    // re-tentativa nao resolvia porque o processo nao estava morrendo.
+    if (mission.worktree) reapVisualsUnder(mission.worktree)
     if (
       !(await gitOff('hasGitCommit', project.path)) ||
       !mission.branch ||
