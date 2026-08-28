@@ -40,3 +40,46 @@ export function releasePortraitLine(record: VersionReleaseRecord): string {
   if (record.publishRequired) parts.push('caixa (npm run release)')
   return parts.join(' · ')
 }
+
+// ————— A SAÍDA DA SUBIDA (incidente 2026-08-27: "cliquei sem querer") —————
+//
+// R27 fez o registro de release NÃO ser missão de superfície: ele não entra na
+// lista da aba Versões, que é onde moram arquivar e excluir. A consequência não
+// projetada é que uma subida aberta por engano ficava PARA SEMPRE na coluna —
+// visível e sem gesto nenhum que a tirasse de lá. Beco sem saída é bug, e a
+// rota sancionada pertence à superfície própria do release: este trilho.
+//
+// A guarda aqui é de JULGAMENTO, não de autoridade — então ela avisa, nunca
+// interdita: o texto muda com o estado e diz a verdade daquele estado. O que a
+// régua NÃO faz é prometer desfazer git: descartar apaga o registro e a
+// conversa, e nada mais.
+
+/** Espelho mínimo de `Mission` (store) — o módulo é puro de propósito. */
+export interface ReleaseDiscardInput {
+  status: 'ativa' | 'integrando' | 'concluida' | 'arquivada'
+  /** conta escolhida no card do chat; ausente = a conversa nunca abriu. */
+  seatId?: string
+}
+
+export interface ReleaseDiscardOffer {
+  /** o gesto aparece na tela? */
+  offered: boolean
+  /** o que o passo de confirmação afirma — uma verdade por estado. */
+  confirm: string
+}
+
+export function releaseDiscardOffer(mission: ReleaseDiscardInput): ReleaseDiscardOffer {
+  // Encerrada já saiu da coluna sozinha: oferecer descarte seria inventar um
+  // problema que o dono não tem.
+  if (mission.status !== 'ativa')
+    return { offered: false, confirm: '' }
+  if (!mission.seatId)
+    return {
+      offered: true,
+      confirm: 'a subida não começou — descartar não desfaz nada'
+    }
+  return {
+    offered: true,
+    confirm: 'descarta a conversa da subida; o que já subiu no git NÃO volta'
+  }
+}

@@ -1557,3 +1557,42 @@ test('RODADA 2 — o ▷ terminal comum MORREU; só o ▶ de teste fica', async 
   assert.match(railCode, /onKillTestServer/u)
   assert.match(railCode, /Terminal de teste/u)
 })
+
+// ————— A SAÍDA DA SUBIDA (incidente 2026-08-27: "cliquei sem querer") —————
+// R27 tirou o registro de release da lista da aba Versões — que é onde moram
+// arquivar e excluir. Uma subida aberta por engano ficava para sempre na
+// coluna, visível e sem gesto que a removesse. Estes testes prendem a rota de
+// saída no trilho, e prendem também o que ela NUNCA promete: desfazer git.
+
+test('subida que nunca abriu conversa é descartável e o texto diz que nada se desfaz', async () => {
+  const { releaseDiscardOffer } = await releasePresentation()
+  const offer = releaseDiscardOffer({ status: 'ativa' })
+
+  assert.equal(offer.offered, true)
+  assert.match(offer.confirm, /não começou/u)
+  assert.doesNotMatch(offer.confirm, /git/u, 'sem conversa não há nada de git a ressalvar')
+})
+
+test('subida JÁ COM conversa continua descartável, mas o texto ressalva o git', async () => {
+  const { releaseDiscardOffer } = await releasePresentation()
+  const offer = releaseDiscardOffer({ status: 'ativa', seatId: 'seat-1' })
+
+  assert.equal(offer.offered, true, 'guarda de julgamento avisa, nunca interdita')
+  assert.match(offer.confirm, /NÃO volta/u)
+})
+
+test('subida encerrada não oferece descarte — ela já saiu da coluna sozinha', async () => {
+  const { releaseDiscardOffer } = await releasePresentation()
+  for (const status of ['concluida', 'arquivada', 'integrando']) {
+    assert.equal(releaseDiscardOffer({ status, seatId: 's' }).offered, false, status)
+  }
+})
+
+test('o trilho do release oferece o descarte com confirmação em dois passos', async () => {
+  const code = withoutComments(await source('src/renderer/src/components/ReleaseRail.tsx'))
+  assert.match(code, /releaseDiscardOffer/u, 'a régua vem do módulo puro, não do JSX')
+  assert.match(code, /onDiscard/u)
+  // nunca window.confirm (quebra o foco no Windows) e nunca um clique só
+  assert.doesNotMatch(code, /window\.confirm/u)
+  assert.match(code, /confirmar/iu)
+})

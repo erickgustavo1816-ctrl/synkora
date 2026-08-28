@@ -1752,6 +1752,8 @@ interface SynkoraState {
    *  'concluida' por aqui só entra em missão de PLANEJAMENTO). */
   concludePlanningMission: (id: string) => Promise<void>
   deleteMission: (id: string) => Promise<void>
+  /** A SAÍDA DA SUBIDA: arquiva e exclui num gesto só (ver releaseRailPresentation). */
+  discardRelease: (id: string) => Promise<void>
   integrateMission: (missionId: string) => Promise<string>
   /** aba de missão selecionada no board, POR projeto (null = Geral) */
   missionTabByProject: Record<string, string | null>
@@ -1999,6 +2001,14 @@ export const useStore = create<SynkoraState>((set, get) => ({
       // a missão saiu da coluna — a aba volta para o painel do projeto
       get().setMissionTab(pid, null)
     }
+  },
+  discardRelease: async (id) => {
+    if (!window.synkora.missions?.remove) return
+    // `missions:remove` só aceita ARQUIVADA — o fluxo do app é arquivar →
+    // excluir. Para o dono, porém, descartar uma subida aberta por engano é UMA
+    // decisão, não duas: os dois passos acontecem aqui dentro.
+    await window.synkora.missions.update(id, { status: 'arquivada' })
+    await get().deleteMission(id)
   },
   deleteMission: async (id) => {
     if (!window.synkora.missions?.remove) return
