@@ -1596,3 +1596,38 @@ test('o trilho do release oferece o descarte com confirmação em dois passos', 
   assert.doesNotMatch(code, /window\.confirm/u)
   assert.match(code, /confirmar/iu)
 })
+
+// ————— O RODAPÉ DO PLANEJAMENTO (reprovação do dono, 2026-08-27) —————
+// "a parte lateral do planejamento tá bugado e feio". Medido no harness com o
+// CSS real, numa régua de 340px: as duas ações eram filhas DIRETAS do dock, ou
+// seja, ficavam fora dos 12px do corpo de seção — `left: 1 / right: 1`, coladas
+// na borda e 12px fora do alinhamento de tudo que estava acima. E o arquivar
+// vestia `dr-quiet` (opacity .75), que num botão ATIVO lê como desabilitado.
+
+test('as ações do planejamento moram DENTRO da seção, alinhadas com o corpo', async () => {
+  const rail = withoutComments(await source('src/renderer/src/components/MissionDeliveryRail.tsx'))
+  assert.match(rail, /dock-acts dr-planning-acts/u, 'a fileira do dock é o lugar das ações')
+  assert.match(
+    rail,
+    /dock-primary[\s\S]*✔ concluir planejamento/u,
+    'concluir é o primário da seção, com a mesma tinta do ⇪ da missão'
+  )
+})
+
+test('arquivar planejamento é secundário por FORMA, nunca por transparência', async () => {
+  const rail = withoutComments(await source('src/renderer/src/components/MissionDeliveryRail.tsx'))
+  assert.doesNotMatch(
+    rail,
+    /live \? 'dr-quiet' : ''/u,
+    'opacity num botão ativo mente: ele parece desabilitado'
+  )
+})
+
+test('a seção do planejamento não repete a palavra do cabeçalho', async () => {
+  const rail = withoutComments(await source('src/renderer/src/components/MissionDeliveryRail.tsx'))
+  assert.doesNotMatch(
+    rail,
+    /id="planejamento" title="planejamento"/u,
+    'o cabeçalho já diz PLANEJAMENTO — a seção precisa dizer o que SAI dali'
+  )
+})

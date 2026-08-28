@@ -463,6 +463,11 @@ export default function MissionDeliveryRail({
   // ocupar a linha com o silêncio. E é PALAVRA, nunca pastilha com borda: era o
   // chip bordado que quebrava em duas linhas no trilho estreito.
   const stateWord = mission.status === 'ativa' ? null : STATUS_LABEL[mission.status]
+  // Os dois desfechos do planejamento, NOMEADOS: a secao decide o que
+  // mostrar por eles, nunca por uma condicao escrita no meio do JSX.
+  const showConclude = planning && live && Boolean(onConclude)
+  const showArchive =
+    planning && (mission.status === 'ativa' || mission.status === 'arquivada')
 
   return (
     <div className="delivery-rail dock">
@@ -489,12 +494,44 @@ export default function MissionDeliveryRail({
       {/* A natureza no lugar onde o diff estaria: é a resposta para "o que sai
           daqui?" numa missão que não produz branch. */}
       {planning && (
-        <DockSection id="planejamento" title="planejamento">
+        <DockSection id="planejamento" title="entrega">
           <div className="dr-facts dr-planning">
             <span className="dr-branch" data-tip="A conversa roda na RAIZ do projeto: sem branch e sem worktree">
               ✎ escreve <code>plano/</code> na raiz do projeto
             </span>
           </div>
+          {/* PLANEJAMENTO tem DOIS desfechos (ordem do dono, 2026-08-17):
+              CONCLUIR e o caminho feliz de um clique; ARQUIVAR e a pausa
+              (retomar ou excluir depois). Eles moram AQUI, na fileira da
+              secao, e nao soltos no rodape: fora do corpo eles ignoravam os
+              12px de recuo e encostavam na borda do painel (medido a 340px:
+              left 1 / right 1 contra os 13 de tudo acima). */}
+          {(showConclude || showArchive) && (
+            <div className="dock-acts dr-planning-acts">
+              {showConclude && (
+                <button
+                  className="btn tiny dr-btn dock-primary"
+                  data-tip="Encerra esta sessão de planejamento: a missão conclui e some da coluna; o plano/ fica no repo e o plano continua no mapa"
+                  onClick={onConclude}
+                >
+                  ✔ concluir planejamento
+                </button>
+              )}
+              {showArchive && (
+                <button
+                  className="btn tiny dr-btn"
+                  data-tip={
+                    live
+                      ? 'Pausa esta sessão de planejamento para retomar depois — ou excluir de vez; o plano/ fica no repo'
+                      : 'Reabrir esta sessão de planejamento'
+                  }
+                  onClick={onArchive}
+                >
+                  {live ? '⊟ arquivar planejamento' : '↩ reabrir planejamento'}
+                </button>
+              )}
+            </div>
+          )}
         </DockSection>
       )}
 
@@ -798,31 +835,6 @@ export default function MissionDeliveryRail({
         </DockSection>
       )}
 
-      {/* PLANEJAMENTO tem DOIS desfechos (ordem do dono, 2026-08-17): CONCLUIR
-          é o caminho feliz de um clique; ARQUIVAR é a pausa (retomar ou
-          excluir depois). Ficam fora das seções: são o rodapé da conversa. */}
-      {planning && live && onConclude && (
-        <button
-          className="btn tiny dr-btn"
-          data-tip="Encerra esta sessão de planejamento: a missão conclui e some da coluna; o plano/ fica no repo e o plano continua no mapa"
-          onClick={onConclude}
-        >
-          ✔ concluir planejamento
-        </button>
-      )}
-      {planning && (mission.status === 'ativa' || mission.status === 'arquivada') && (
-        <button
-          className={`btn tiny dr-btn ${live ? 'dr-quiet' : ''}`}
-          data-tip={
-            live
-              ? 'Pausa esta sessão de planejamento para retomar depois — ou excluir de vez; o plano/ fica no repo'
-              : 'Reabrir esta sessão de planejamento'
-          }
-          onClick={onArchive}
-        >
-          {live ? '⊟ arquivar planejamento' : '↩ reabrir planejamento'}
-        </button>
-      )}
     </div>
   )
 }

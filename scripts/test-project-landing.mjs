@@ -82,8 +82,8 @@ test('KPIs contam vivo, integrado, fila e arquivado sem se sobrepor', async () =
   })
 })
 
-test('as listas do painel: vivas por nascimento, integradas por completedAt, teto 5', async () => {
-  const { liveMissions, recentConcluded, RECENT_CONCLUDED_CAP } = await landing()
+test('a lista de vivas do painel ordena por nascimento, mais nova primeiro', async () => {
+  const { liveMissions } = await landing()
 
   const all = [
     mission({ id: 'velha', createdAt: '2026-08-01T00:00:00.000Z' }),
@@ -103,25 +103,10 @@ test('as listas do painel: vivas por nascimento, integradas por completedAt, tet
     liveMissions(all).map((m) => m.id),
     ['nova', 'integrando', 'velha']
   )
-  // `updatedAt` NUNCA ordena: 'feita-antes' tem o updatedAt mais novo de todos
-  // (manutenção do store) e mesmo assim fica atrás — quem manda é o carimbo da
-  // integração.
-  assert.deepEqual(
-    recentConcluded(all).map((m) => m.id),
-    ['feita-depois', 'feita-antes']
-  )
-
-  const many = Array.from({ length: 9 }, (_, i) =>
-    mission({
-      id: `c${i}`,
-      status: 'concluida',
-      completedAt: `2026-08-0${i + 1}T00:00:00.000Z`
-    })
-  )
-  assert.equal(recentConcluded(many).length, RECENT_CONCLUDED_CAP)
-  assert.equal(recentConcluded(many)[0].id, 'c8', 'a mais recente abre a lista')
-  assert.equal(recentConcluded(many, 2).length, 2)
-  assert.deepEqual(recentConcluded([]), [])
+  // Encerrada e arquivada NÃO entram: a seção é a do trabalho aberto.
+  assert.deepEqual(liveMissions([]), [])
+  // A ORDEM POR CARIMBO DE INTEGRAÇÃO (que era da extinta `recentConcluded`)
+  // vive agora no `missionTimeline` — teste próprio, mais abaixo.
 })
 
 test('a data da linha usa o VERBO certo e cala quando não tem fonte', async () => {
@@ -259,12 +244,21 @@ test('a alavanca de arquivo do planejamento não depende de branch nem de fila',
   // existem numa missão sem worktree. Prender isto evita que uma limpeza
   // futura arraste a alavanca para dentro da seção de entrega e ela suma da
   // tela exatamente na natureza que mais precisa dela.
-  const block = code.match(
-    /\{planning && \(mission\.status === 'ativa' \|\| mission\.status === 'arquivada'\)[\s\S]*?onClick=\{onArchive\}/u
+  // 2026-08-27: a guarda virou um NOME e a alavanca desceu para DENTRO da
+  // secao do planejamento (que so existe sob `planning`) — antes ela morava
+  // solta no rodape, fora do recuo do corpo. A verdade prendida e a mesma.
+  assert.ok(code.includes("const showArchive ="), 'a guarda virou um nome')
+  assert.ok(
+    code.includes("planning && (mission.status === 'ativa' || mission.status === 'arquivada')"),
+    'a guarda de arquivar/reabrir do planejamento mudou'
   )
-  assert.ok(block, 'o rodapé de arquivar/reabrir do planejamento mudou de guarda')
-  assert.doesNotMatch(block[0], /!planning/u)
-  assert.doesNotMatch(block[0], /integration/u, 'a alavanca não consulta fila nenhuma')
+  const abre = code.indexOf("{showArchive && (")
+  assert.ok(abre >= 0, 'a alavanca de arquivar sumiu da secao do planejamento')
+  const fecha = code.indexOf("onClick={onArchive}", abre)
+  assert.ok(fecha > abre, 'a alavanca perdeu o onArchive')
+  const block = code.slice(abre, fecha)
+  assert.doesNotMatch(block, /!planning/u)
+  assert.doesNotMatch(block, /integration/u, 'a alavanca nao consulta fila nenhuma')
 })
 
 test('o convite perdeu o rodapé da foto e ganhou o centro', async () => {
@@ -371,7 +365,10 @@ test('o Board escolhe a tela pelo módulo puro e mantém as duas no mesmo limite
     board,
     /paneId=\{`board-general:\$\{projectId\}`\}[\s\S]{0,600}projectLanding\(projectMissions\) === 'invite'[\s\S]{0,600}<ProjectGeneral/u
   )
-  assert.match(board, /<ProjectDashboard[\s\S]{0,700}<\/GuiPanelErrorBoundary>/u)
+  // A janela cresceu na R38 (o palco levou `onOpenVersions`/`onTestVersion`
+  // para dentro do mesmo JSX) — o que se prende aqui é o painel estar DENTRO
+  // do limite de erro, não o tamanho da chamada.
+  assert.match(board, /<ProjectDashboard[\s\S]{0,1600}<\/GuiPanelErrorBoundary>/u)
   // Os PLANOS chegam prontos do Board (mesma lista da aba Mapa) e o gesto do
   // painel leva para lá — a casa mostra o relance, o mapa é onde se edita.
   assert.match(board, /plans=\{projectPlans\}/u)
@@ -709,4 +706,209 @@ test('o trilho do planejamento oferece concluir E arquivar, com portas distintas
     /patch\.status === 'arquivada' \|\| patch\.status === 'concluida'/u,
     'concluir encerra os chats da missão como o arquivar (conversa fica gravada)'
   )
+})
+
+/* ————————————————————————————————————————————————————————————————————————
+   R38 — A LANDING GANHOU ESTADOS (mockup docs/mockups/project-landing-2.html,
+   reprovação de 2026-08-24).
+
+   A foto da reprovação: SPED com a 0.1.1 completa e nada vivo. A tela mostrava
+   três zeros gigantes, a coluna "missões abertas" vazia e cinco fichas
+   repetindo a mesma linha em duas seções — e NÃO contava a única história do
+   momento: a versão está pronta esperando o lançamento. A cura é a máquina de
+   estados: vivas > 0 → retrato de hoje; vivas = 0 com versão completa não
+   lançada → o MARCO da versão; universo zerado → o convite de sempre.
+   ———————————————————————————————————————————————————————————————————————— */
+
+const vstats = (over = {}) => ({
+  name: over.name ?? '0.1.1',
+  lancada: over.lancada ?? false,
+  missoesFeitas: over.missoesFeitas ?? 9,
+  missoesTotal: over.missoesTotal ?? 9
+})
+
+test('o MARCO: sem trabalho vivo e com a linha COMPLETA, o palco é da versão', async () => {
+  const { landingMilestone } = await landing()
+
+  const completa = vstats()
+  const feita = mission({ status: 'concluida', completedAt: '2026-08-24T10:00:00.000Z' })
+
+  // O CASO DA REPROVAÇÃO: 9/9 integradas, nada vivo.
+  assert.deepEqual(landingMilestone([feita], [completa]), completa)
+
+  // Com QUALQUER missão viva o retrato de hoje manda — o palco recua.
+  assert.equal(landingMilestone([mission({ status: 'ativa' })], [completa]), null)
+  assert.equal(landingMilestone([mission({ status: 'integrando' })], [completa]), null)
+
+  // Linha pela metade não é marco: não há gesto de lançamento a oferecer.
+  assert.equal(landingMilestone([feita], [vstats({ missoesFeitas: 5, missoesTotal: 9 })]), null)
+  // Linha JÁ LANÇADA não é marco — o gesto já aconteceu.
+  assert.equal(landingMilestone([feita], [vstats({ lancada: true })]), null)
+  // Linha VAZIA (0/0) seria "completa" por acidente aritmético: 0 === 0.
+  assert.equal(
+    landingMilestone([feita], [vstats({ missoesFeitas: 0, missoesTotal: 0 })]),
+    null
+  )
+  // Sem retrato de versão (janela que ainda não leu o homeStats) não há palco.
+  assert.equal(landingMilestone([feita], undefined), null)
+  assert.equal(landingMilestone([feita], []), null)
+
+  // DUAS completas: abre o palco a MAIS ANTIGA (a que espera há mais tempo) —
+  // o `versoes` já chega da mais velha para a mais nova e o release é serial.
+  assert.equal(
+    landingMilestone([feita], [completa, vstats({ name: '0.1.2' })]).name,
+    '0.1.1'
+  )
+})
+
+test('a obra vem AGRUPADA POR DIA, na ordem dos carimbos reais', async () => {
+  const { missionWorkDays, missionTimeline } = await landing()
+
+  const events = missionTimeline([
+    mission({
+      id: 'a',
+      title: 'Modificar o app',
+      status: 'concluida',
+      createdAt: '2026-08-23T09:00:00.000Z',
+      completedAt: '2026-08-24T10:00:00.000Z'
+    }),
+    mission({
+      id: 'b',
+      title: 'Reforma das telas',
+      status: 'concluida',
+      createdAt: '2026-08-23T08:00:00.000Z',
+      completedAt: '2026-08-23T19:00:00.000Z'
+    })
+  ])
+
+  const days = missionWorkDays(events, '24/08/2026')
+  assert.deepEqual(
+    days.map((d) => d.day),
+    ['24/08/2026', '23/08/2026'],
+    'um grupo por dia, do mais recente para o mais antigo'
+  )
+  // O DIA CORRENTE se anuncia: "24/08/2026" e "hoje" são a mesma data, e sem o
+  // sufixo o dono precisa fazer a conta de cabeça para saber se é de agora.
+  assert.equal(days[0].label, '24/08/2026 — hoje')
+  assert.equal(days[1].label, '23/08/2026')
+  assert.deepEqual(
+    days[0].events.map((e) => `${e.kind}:${e.title}`),
+    ['integrada:Modificar o app']
+  )
+  assert.equal(days[1].events.length, 3, 'o dia 23 tem as duas criações e uma integração')
+  assert.deepEqual(missionWorkDays([], '24/08/2026'), [])
+})
+
+test('o ledger conta em UMA linha e nunca anuncia zero', async () => {
+  const { ledgerTail } = await landing()
+
+  // O ESTADO DA REPROVAÇÃO: três tiles com zero não são informação.
+  assert.equal(
+    ledgerTail({ emAndamento: 0, integradas: 10, naFila: 0, arquivadas: 0 }),
+    'nenhuma em andamento, na fila ou arquivada'
+  )
+  assert.equal(
+    ledgerTail({ emAndamento: 2, integradas: 1, naFila: 1, arquivadas: 3 }),
+    '2 em andamento · 1 na fila ⇪ · 3 arquivadas'
+  )
+  assert.equal(
+    ledgerTail({ emAndamento: 0, integradas: 4, naFila: 0, arquivadas: 1 }),
+    '1 arquivada'
+  )
+})
+
+test('a barra de versão mede a fração real e cala quando não há denominador', async () => {
+  const { versionPercent } = await landing()
+
+  assert.equal(versionPercent(9, 9), 100)
+  assert.equal(versionPercent(5, 8), 63)
+  assert.equal(versionPercent(0, 8), 0)
+  // sem missão nenhuma não há barra a preencher — 0/0 não é 100%
+  assert.equal(versionPercent(0, 0), 0)
+  assert.equal(versionPercent(3, 0), 0)
+})
+
+test('as DUAS listas repetidas viraram UMA: a obra por dia', async () => {
+  const mod = await landing()
+  const panel = await source('src/renderer/src/components/ProjectDashboard.tsx')
+  const code = withoutComments(panel)
+
+  // "integradas" e "atividade recente" eram a MESMA lista duas vezes.
+  assert.equal('recentConcluded' in mod, false, 'a lista de integradas saiu do módulo')
+  assert.equal('RECENT_CONCLUDED_CAP' in mod, false)
+  assert.doesNotMatch(code, /recentConcluded/u)
+  assert.doesNotMatch(code, /atividade recente/u)
+
+  // A que ficou é a cronologia por carimbo, agrupada por dia.
+  assert.match(code, /missionWorkDays\(missionTimeline\(missions\)\)/u)
+  assert.match(code, /pd-work-day/u)
+  assert.match(code, /a obra/u)
+})
+
+test('o palco do MARCO tem as três ações do instante e apaga os tiles zerados', async () => {
+  const panel = await source('src/renderer/src/components/ProjectDashboard.tsx')
+  const code = withoutComments(panel)
+
+  assert.match(code, /landingMilestone\(missions, versoes\)/u)
+  assert.match(code, /pd-milestone/u)
+  assert.match(code, /pronta — aguardando lançamento/u)
+  assert.match(code, /⇪ lançar na main/u)
+  assert.match(code, /▶ testar a versão/u)
+  assert.match(code, /aba versões →/u)
+  assert.match(code, /onOpenVersions/u)
+  assert.match(code, /onTestVersion/u)
+
+  // OS TILES MORREM NESTE ESTADO: três zeros grandes não são informação. A
+  // contagem vira a linha de texto do ledger — e os tiles voltam no retrato.
+  assert.match(
+    code,
+    /\{!marco && \([\s\S]{0,400}pd-kpis/u,
+    'a faixa de KPIs só nasce quando NÃO há palco'
+  )
+  assert.match(code, /pd-ledger/u)
+  assert.match(code, /ledgerTail\(kpis\)/u)
+})
+
+test('plano CUMPRIDO é selo, não instrumento com barra pendente', async () => {
+  const panel = await source('src/renderer/src/components/ProjectDashboard.tsx')
+  const code = withoutComments(panel)
+
+  assert.match(
+    code,
+    /progress\.total > 0 && progress\.done === progress\.total/u,
+    'o selo nasce da fração CHEIA, não do status'
+  )
+  assert.match(code, /pd-plan-frac/u)
+  assert.match(code, /cumprido/u)
+})
+
+test('a linha de versão virou RÉGUA: os mesmos dados, com a fração desenhada', async () => {
+  const panel = await source('src/renderer/src/components/ProjectDashboard.tsx')
+  const code = withoutComments(panel)
+
+  assert.match(code, /pd-version-bar/u)
+  assert.match(code, /versionPercent\(v\.missoesFeitas, v\.missoesTotal\)/u)
+  assert.match(code, /em construção/u)
+})
+
+test('o Board leva o palco à aba Versões e sobe o teste NO worktree da versão', async () => {
+  const board = await source('src/renderer/src/components/Board.tsx')
+
+  // A aba do universo chamada "Versões" é a `backlog` (screens/Universe.tsx).
+  assert.match(board, /onOpenVersions=\{\(\) => setUniverseTab\(projectId, 'backlog'\)\}/u)
+  assert.match(board, /onTestVersion=/u)
+  // O ▶ testar reusa o canal que já existe (TestServerModal com alvo de
+  // VERSÃO) — nenhum IPC novo nasceu para isto.
+  assert.match(board, /target=\{\{ versionId: testVersion\.id \}\}/u)
+})
+
+test('a linha do painel não finge mais ser uma missão encerrada', async () => {
+  const row = await source('src/renderer/src/components/MissionDashboardRow.tsx')
+  const code = withoutComments(row)
+
+  // Com a lista de "integradas" fundida na obra, a linha só recebe missão VIVA:
+  // o modo `done` (linha de leitura, sem clique) ficou sem chamador.
+  assert.doesNotMatch(code, /done = false/u)
+  assert.doesNotMatch(code, /done\?:/u)
+  assert.match(code, /onOpen: \(missionId: string\) => void/u, 'abrir deixou de ser opcional')
 })
