@@ -415,6 +415,39 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     })
   })
 
+  // A FERRAMENTA ORFA VIRA EVIDENCIA (ordem do dono, 2026-08-28: "pega ai na
+  // caixa preta, ve por que ta acontecendo esses erros"). O episodio nascia e
+  // morria na TELA: conferido no journal do dia, nao havia evento nenhum de
+  // fim de turno, entao nao existia o que investigar depois.
+  //
+  // Canal ESTREITO de proposito: ele nao aceita um evento qualquer vindo do
+  // renderer (isso seria um buraco), so este episodio, com os nomes das tools
+  // e as bandeiras do turno. Correlacao por paneId, do jeito do resto do
+  // diario. Ler com: node scripts/bbwatch.mjs
+  ipcMain.on('gui:noteOrphanedTool', (event, paneId: unknown, payload: unknown) => {
+    extras.assertAppRendererSender(event)
+    if (typeof paneId !== 'string' || paneId.length === 0) return
+    if (typeof payload !== 'object' || payload === null) return
+    const bruto = payload as { tools?: unknown; outcome?: unknown; isError?: unknown }
+    const tools = Array.isArray(bruto.tools)
+      ? bruto.tools.filter((t): t is string => typeof t === 'string').slice(0, 8)
+      : []
+    blackbox.record({
+      cat: 'pane',
+      event: 'turn-orphaned-tool',
+      actor: 'harness',
+      ids: { paneId },
+      reason:
+        tools.length > 0
+          ? `o turno fechou com ferramenta sem resultado: ${tools.join(', ')}`
+          : 'o turno fechou com ferramenta sem resultado (sem nome legivel)',
+      detail: {
+        tools,
+        outcome: typeof bruto.outcome === 'string' ? bruto.outcome : undefined,
+        isError: bruto.isError === true
+      }
+    })
+  })
   ipcMain.on('gui:presented', (event, paneId: unknown, terminalSeq: unknown) => {
     extras.assertAppRendererSender(event)
     if (

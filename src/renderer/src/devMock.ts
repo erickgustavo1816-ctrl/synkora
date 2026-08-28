@@ -462,7 +462,9 @@ export function installDevMock(): void {
 
   const api: SynkoraApi = {
     blackbox: {
-      exportDiagnostics: async () => ({ ok: false, msg: 'preview: sem diagnóstico no browser' })
+      exportDiagnostics: async () => ({ ok: false, msg: 'preview: sem diagnóstico no browser' }),
+      // preview de browser nao tem diario: o recibo cai no vazio, sem quebrar
+      noteOrphanedTool: () => {}
     },
     backlog: {
       listVersions: async () => [],

@@ -184,6 +184,56 @@ export function hasPendingGuiTools(items: GuiItem[]): boolean {
   return items.some((item) => item.kind === 'tool' && !item.result)
 }
 
+// ————— A FERRAMENTA ÓRFÃ TEM NOME (ordem do dono, 2026-08-28) —————
+//
+// "esses erros aleatórios, ele não explica nada". O card dizia apenas "o
+// turno terminou sem receber o resultado de uma ferramenta": nem qual, nem
+// quantas. Sem o nome não há nem o que investigar depois — e a caixa-preta,
+// conferida no journal do dia, não guardava evento nenhum de fim de turno.
+//
+// Estas duas contas são PURAS de propósito: o que a tela diz sobre uma falha
+// é exatamente o tipo de coisa que precisa ser provada sem React.
+
+/** Os NOMES das ferramentas que o turno deixou sem resposta, na ordem em que
+ *  apareceram e sem repetir — "Bash · Bash" não informa nada além de "Bash". */
+export function pendingGuiToolNames(items: readonly GuiItem[]): string[] {
+  const nomes: string[] = []
+  for (const item of items) {
+    if (item.kind !== 'tool' || item.result) continue
+    const nome = item.name?.trim()
+    if (!nome || nomes.includes(nome)) continue
+    nomes.push(nome)
+  }
+  return nomes
+}
+
+/**
+ * O EPISODIO da orfa, decidido em UM lugar so: o card que o dono le e o
+ * recibo que vai para a caixa-preta nascem desta mesma conta — duas reguas
+ * diriam coisas diferentes sobre o mesmo turno.
+ *
+ * `orphaned` continua sendo a pergunta ANTIGA (existe tool sem result?), e
+ * nao a lista de nomes: uma tool sem nome legivel segue sendo orfa, so que
+ * anunciada pela frase generica.
+ */
+export function orphanedTurnTools(
+  items: readonly GuiItem[],
+  evt: { continues?: boolean; outcome?: string; interrupted?: boolean }
+): { orphaned: boolean; names: string[] } {
+  const fechou = !evt.continues && evt.interrupted !== true && evt.outcome !== 'cancelled'
+  const pendente = items.some((item) => item.kind === 'tool' && !item.result)
+  if (!fechou || !pendente) return { orphaned: false, names: [] }
+  return { orphaned: true, names: pendingGuiToolNames(items) }
+}
+/** A linha do card. Sem nome legível ela mantém a frase antiga: inventar uma
+ *  tool para preencher a lacuna seria pior que a lacuna. */
+export function orphanedToolText(names: readonly string[]): string {
+  const [primeiro, ...resto] = names
+  if (!primeiro) return 'o turno terminou sem receber o resultado de uma ferramenta'
+  const cauda = resto.length > 0 ? ` e mais ${resto.length}` : ''
+  return `o turno terminou sem o resultado de ${primeiro}${cauda}`
+}
+
 /** Pai factual de cada card por identidade de item. Id de pai ambíguo é tratado
  *  como inexistente — replay corrompido não sequestra a árvore de outra tool. */
 function guiToolParentByItemId(items: readonly GuiItem[]): Map<string, GuiToolItem> {

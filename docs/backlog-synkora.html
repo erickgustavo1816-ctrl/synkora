@@ -179,6 +179,13 @@
       <span class="desc">O agente Opus da R38 implementou o mockup project-landing-2 (landingMilestone/ledgerTail/versionPortrait, palco do marco com ⇪ lançar / ▶ testar / aba versões, obra por dia, selo de plano cumprido, rail do estado B) mas foi INTERROMPIDO antes de escrever o relatório .synkora/reports/r38-agent-landing2-report.md. Estado: typecheck verde, test:project-landing 33/33, test:landing-polish 18/18, gate raiz verde. Falta: code review pessoal do diff inteiro (970 linhas) e a validação visual na tela real (regra dura da casa) antes de declarar pronto.</span>
       <span class="refs">refs: <code>docs/mockups/project-landing-2.html</code> · <code>src/renderer/src/components/ProjectDashboard.tsx</code> · <code>src/renderer/src/projectLanding.ts</code></span>
     </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">Causa raiz da ferramenta órfã: agora tem evidência para investigar</span>
+      <span class="badge">aguarda próxima ocorrência</span>
+      <span class="desc">2026-08-28: o dono reclamou dos &quot;erros aleatórios que não explicam nada&quot; (card &quot;o turno terminou sem receber o resultado de uma ferramenta&quot;). Duas metades curadas: o card passa a NOMEAR a tool, e o episódio virou evento turn-orphaned-tool na caixa-preta (canal estreito gui:noteOrphanedTool, correlação por paneId). O que NÃO dá para responder ainda: POR QUE o codex/claude fecha o turno com tool sem resultado — o journal do dia não tinha um único evento de fim de turno, então não havia o que investigar. Na próxima ocorrência: node scripts/bbwatch.mjs e filtrar turn-orphaned-tool; com os nomes das tools e o outcome em mãos, dá para decidir se é protocolo do CLI, corrida do stream ou pane que perdeu o result.</span>
+      <span class="refs">refs: <code>src/renderer/src/guiTerminalTools.ts</code> · <code>src/main/ipc/gui.ts</code> · <code>scripts/bbwatch.mjs</code></span>
+    </div>
   </section>
 
   <details class="done-wrap" open>

@@ -2552,10 +2552,12 @@ test('terminal de erro encerra pai e filhos sem deixar a caixa pulsando', () => 
 test('C1 — result com continues não fecha ferramenta pendente nem inventa órfão', () => {
   const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
   assert.match(store, /const settlesTurn = !evt\.continues/u)
-  assert.match(
-    store,
-    /const orphanedTool =\s*settlesTurn && hasPendingGuiTools\(next\.items\) && evt\.outcome !== 'cancelled'/u
-  )
+  // 2026-08-28: a conta saiu do meio do reducer e virou `orphanedTurnTools`,
+  // pura e compartilhada com o recibo da caixa-preta. O `continues` segue
+  // barrado duas vezes: pelo `settlesTurn` aqui e dentro da propria conta.
+  assert.match(store, /const orphan = settlesTurn/u)
+  assert.match(store, /orphanedTurnTools\(next\.items, evt\)/u)
+  assert.match(store, /const orphanedTool = orphan\.orphaned/u)
   assert.match(store, /if \(settlesTurn\) next = \{ \.\.\.next, items: closePendingGuiTools\(next\.items, evt\) \}/u)
   // O terminal do turno lógico continua reconciliando exatamente como antes.
   const pending = [{ ...tool('pendente', 'Bash', 'npm test'), toolUseId: 'bash-1' }]
@@ -4679,4 +4681,74 @@ test('R36 — clique/teclado da imagem caem no menu "onde abrir", e a recusa nom
     'o caminho da recusa tem de ser o MESMO token clicável do fio (clique lê aqui, botão direito abre fora)'
   )
   assert.match(modulo, /não deu para mostrar /u, 'a recusa precisa dizer o que aconteceu, em PT-BR')
+})
+
+// ————— O ERRO QUE NÃO EXPLICAVA NADA (ordem do dono, 2026-08-28) —————
+// "esses erros aleatórios, ele não explica nada, ele não explica por que foi o
+// erro". O card dizia só "o turno terminou sem receber o resultado de uma
+// ferramenta" — nem QUAL. E a caixa-preta não guardava linha nenhuma sobre o
+// episódio: conferido no journal do dia, zero eventos de fim de turno. Aqui
+// fica a metade que o dono LÊ; o recibo do diário tem contrato próprio abaixo.
+
+test('a ferramenta órfã é NOMEADA no card, não escondida atrás de "uma ferramenta"', async () => {
+  const { pendingGuiToolNames, orphanedToolText } = await import(
+    '../src/renderer/src/guiTerminalTools.ts'
+  )
+  const items = [
+    { ...tool('t1', 'Bash'), result: { status: 'completed' } },
+    tool('t2', 'Read'),
+    note('n1')
+  ]
+  assert.deepEqual(pendingGuiToolNames(items), ['Read'])
+  assert.match(orphanedToolText(['Read']), /Read/u)
+})
+
+test('várias órfãs cabem numa linha: a primeira nomeada e a conta do resto', async () => {
+  const { pendingGuiToolNames, orphanedToolText } = await import(
+    '../src/renderer/src/guiTerminalTools.ts'
+  )
+  const items = [tool('a', 'Bash'), tool('b', 'Read'), tool('c', 'Bash')]
+  // o MESMO nome duas vezes conta uma vez só: "Bash · Bash" não informa nada
+  assert.deepEqual(pendingGuiToolNames(items), ['Bash', 'Read'])
+  const texto = orphanedToolText(['Bash', 'Read', 'Edit'])
+  assert.match(texto, /Bash/u)
+  assert.match(texto, /mais 2/u, 'a cauda vira contagem, nunca uma lista sem fim')
+})
+
+test('sem nome legível o card mantém a verdade antiga — nunca inventa uma tool', async () => {
+  const { orphanedToolText } = await import('../src/renderer/src/guiTerminalTools.ts')
+  assert.match(orphanedToolText([]), /uma ferramenta/u)
+})
+
+test('a conta do episódio é UMA só, e o turno que continua nunca vira órfão', async () => {
+  const { orphanedTurnTools } = await import('../src/renderer/src/guiTerminalTools.ts')
+  const pendentes = [tool('t1', 'Bash')]
+
+  assert.deepEqual(orphanedTurnTools(pendentes, { outcome: 'completed' }), {
+    orphaned: true,
+    names: ['Bash']
+  })
+  // subagente em background: o turno não fechou, então não há órfão
+  assert.equal(orphanedTurnTools(pendentes, { continues: true }).orphaned, false)
+  // ■ do dono e cancelamento não são erro (R7-E)
+  assert.equal(orphanedTurnTools(pendentes, { interrupted: true }).orphaned, false)
+  assert.equal(orphanedTurnTools(pendentes, { outcome: 'cancelled' }).orphaned, false)
+  // tool SEM nome legível continua sendo órfã — só que anunciada pela frase antiga
+  const semNome = [{ ...tool('t2', 'Bash'), name: '  ' }]
+  assert.deepEqual(orphanedTurnTools(semNome, { outcome: 'completed' }), {
+    orphaned: true,
+    names: []
+  })
+})
+
+test('o episódio da órfã vira linha na caixa-preta, com o pane para correlacionar', () => {
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  const gui = readFileSync(new URL('../src/main/ipc/gui.ts', import.meta.url), 'utf8')
+
+  // o renderer avisa do lugar que TEM paneId (o reducer segue puro)
+  assert.match(store, /noteOrphanedTool\?\.\(paneId/u)
+  // e o main grava com correlação, no diário que o bbwatch lê
+  assert.match(gui, /gui:noteOrphanedTool/u)
+  assert.match(gui, /event: 'turn-orphaned-tool'/u)
+  assert.match(gui, /ids: \{ paneId \}/u)
 })

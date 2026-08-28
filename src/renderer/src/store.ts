@@ -59,6 +59,8 @@ import {
   guiClosedLine,
   guiSubagentChildClosure,
   hasPendingGuiTools,
+  orphanedToolText,
+  orphanedTurnTools,
   settleLaunchedGuiSubagents
 } from './guiTerminalTools'
 import {
@@ -1405,8 +1407,12 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
       // "falhou · erro sem detalhe" do print do dono (2026-08-18) nascia aqui,
       // do result que o claude carimba `is_error` ao interromper.
       const ownerInterrupted = evt.interrupted === true
-      const orphanedTool =
-        settlesTurn && hasPendingGuiTools(next.items) && evt.outcome !== 'cancelled'
+      // Os nomes saem ANTES do fecho: `closePendingGuiTools` carimba result
+      // em todas elas, e depois disso nao existe mais orfa para nomear.
+      const orphan = settlesTurn
+        ? orphanedTurnTools(next.items, evt)
+        : { orphaned: false, names: [] }
+      const orphanedTool = orphan.orphaned
       if (settlesTurn) next = { ...next, items: closePendingGuiTools(next.items, evt) }
       if (ownerInterrupted) {
         // NOTA NEUTRA, nunca item de erro: o fio precisa dizer por que o turno
@@ -1440,9 +1446,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
             kind: 'error',
             text:
               evt.errorText?.trim() ||
-              (orphanedTool
-                ? 'o turno terminou sem receber o resultado de uma ferramenta'
-                : 'o turno falhou sem detalhes'),
+              (orphanedTool ? orphanedToolText(orphan.names) : 'o turno falhou sem detalhes'),
             at: Date.now(),
             ...(orphanedTool && !evt.isError && evt.outcome !== 'failed'
               ? { transient: true }
@@ -2295,6 +2299,20 @@ export const useStore = create<SynkoraState>((set, get) => ({
           ...EMPTY_GUI_PANE,
           queued: readGuiQueuedMessage(paneId)
         }
+      // O EPISODIO DA ORFA VIRA LINHA NO DIARIO (2026-08-28). A conta e a
+      // MESMA do card (`orphanedTurnTools`), lida de `prev`: o finalize do
+      // stream so toca o item do assistente, entao as tools sao identicas
+      // aqui e la dentro. Preload velho nao tem o canal — a metade main
+      // chega no proximo restart —, e o `?.` deixa a tela seguir igual.
+      if (evt.type === 'result') {
+        const orphan = orphanedTurnTools(prev.items, evt)
+        if (orphan.orphaned)
+          window.synkora.blackbox?.noteOrphanedTool?.(paneId, {
+            tools: orphan.names,
+            outcome: evt.outcome,
+            isError: evt.isError === true
+          })
+      }
       const next = applyGuiEvent(prev, evt)
       if (next === prev) return {}
       const patch: Partial<SynkoraState> = {

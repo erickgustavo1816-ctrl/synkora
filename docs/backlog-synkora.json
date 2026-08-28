@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-28T16:21:32.172Z",
+  "updatedAt": "2026-08-28T16:33:59.226Z",
   "lanes": {
     "agora": [
       {
@@ -137,6 +137,17 @@
           "src/renderer/src/projectLanding.ts"
         ],
         "badge": "aguarda review"
+      },
+      {
+        "id": "causa-raiz-da-ferramenta-orfa-agora-tem-evidenci",
+        "title": "Causa raiz da ferramenta órfã: agora tem evidência para investigar",
+        "desc": "2026-08-28: o dono reclamou dos \"erros aleatórios que não explicam nada\" (card \"o turno terminou sem receber o resultado de uma ferramenta\"). Duas metades curadas: o card passa a NOMEAR a tool, e o episódio virou evento turn-orphaned-tool na caixa-preta (canal estreito gui:noteOrphanedTool, correlação por paneId). O que NÃO dá para responder ainda: POR QUE o codex/claude fecha o turno com tool sem resultado — o journal do dia não tinha um único evento de fim de turno, então não havia o que investigar. Na próxima ocorrência: node scripts/bbwatch.mjs e filtrar turn-orphaned-tool; com os nomes das tools e o outcome em mãos, dá para decidir se é protocolo do CLI, corrida do stream ou pane que perdeu o result.",
+        "refs": [
+          "src/renderer/src/guiTerminalTools.ts",
+          "src/main/ipc/gui.ts",
+          "scripts/bbwatch.mjs"
+        ],
+        "badge": "aguarda próxima ocorrência"
       }
     ],
     "feito": [
@@ -583,6 +594,13 @@
       "by": "orquestrador",
       "action": "update",
       "id": "concluir-plano-precisa-acontecer-curar-o-beco-se"
+    },
+    {
+      "at": "2026-08-28T16:33:59.226Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "causa-raiz-da-ferramenta-orfa-agora-tem-evidenci",
+      "detail": "→ dividas"
     }
   ]
 }

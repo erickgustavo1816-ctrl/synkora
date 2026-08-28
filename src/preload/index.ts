@@ -1428,7 +1428,13 @@ const api = {
   blackbox: {
     /** exporta o pacote de diagnóstico completo (diário + estado + Git) */
     exportDiagnostics: (): Promise<{ ok: boolean; msg: string }> =>
-      ipcRenderer.invoke('blackbox:export')
+      ipcRenderer.invoke('blackbox:export'),
+    /** O turno fechou com ferramenta sem resultado — o card diz ao dono, e
+     *  ESTE canal conta ao diário, para o episódio ter o que investigar. */
+    noteOrphanedTool: (
+      paneId: string,
+      payload: { tools: string[]; outcome?: string; isError?: boolean }
+    ): void => ipcRenderer.send('gui:noteOrphanedTool', paneId, payload)
   },
   clipboard: {
     hasImage: (): boolean => ipcRenderer.sendSync('clipboard:hasImage') as boolean,
