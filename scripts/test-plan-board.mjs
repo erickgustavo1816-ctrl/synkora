@@ -227,7 +227,9 @@ test('arquivar a missão de planejamento não apaga o plano do mapa', async () =
   )
   // Só o STATUS DO PLANO tira uma aba da fila — nunca o estado de uma missão.
   assert.equal(mapTabs({ plans: [planTab({ status: 'arquivado' })] }).length, 1)
-  assert.equal(mapTabs({ plans: [planTab({ status: 'concluido' })] }).length, 2)
+  // 2026-08-28 (ordem do dono): concluir TAMBEM tira a aba — antes esta
+  // linha esperava 2, e era exatamente o "nao acontece nada" que ele viu.
+  assert.equal(mapTabs({ plans: [planTab({ status: 'concluido' })] }).length, 1)
 
   // E a tela lê os planos POR PROJETO, com a lista inteira: nenhum filtro de
   // missão entra no caminho entre `plans:list` e a fila de abas.
@@ -256,14 +258,15 @@ test('rótulo cortado na aba nunca é a única cópia do título', async () => {
   // trata. O tooltip é esse lugar — e o título inteiro ABRE a frase, para o
   // sufixo explicativo nunca empurrar o nome para fora da leitura.
   const inteiro = 'Reforma completa da fila de integração e da retomada'
-  const [, livre, mestre, concluido] = mapTabs({
+  // O concluido saiu daqui em 2026-08-28: ele nao vira mais aba. O corte do
+  // titulo dele agora e verdade da PRATELEIRA, provada na suite dela.
+  const [, livre, mestre] = mapTabs({
     plans: [
       planTab({ id: 'l', title: inteiro, order: 1 }),
-      planTab({ id: 'm', title: inteiro, kind: 'mestre', order: 2 }),
-      planTab({ id: 'c', title: inteiro, status: 'concluido', order: 3 })
+      planTab({ id: 'm', title: inteiro, kind: 'mestre', order: 2 })
     ]
   })
-  for (const tab of [livre, mestre, concluido]) {
+  for (const tab of [livre, mestre]) {
     assert.notEqual(tab.label, inteiro, 'o rótulo devia estar cortado neste título')
     assert.ok(tab.tip.startsWith(inteiro), `tooltip sem o título inteiro na frente: ${tab.tip}`)
   }
@@ -804,4 +807,96 @@ test('criar missão do quadro LEVA o dono ao chat — a tela vai atrás da miss�
   const created = board.slice(board.indexOf('onCreated={async (mission)'))
   assert.match(created, /setMissionTab\(projectId, mission\.id\)/u, 'sem selecionar a aba da missão')
   assert.match(created, /setUniverseTab\(projectId, 'board'\)/u, 'sem trocar para a tela do board')
+})
+
+// ————— CONCLUIR UM PLANO PRECISA ACONTECER (ordem do dono, 2026-08-28) —————
+//
+// "eu concluo ele e não acontece nada". Estava certo: `concluir` só virava um
+// status que nenhuma superfície lia — a fila de abas só reagia a `arquivado`,
+// e a única mudança visível era o botão sumir.
+// Decisão do dono no grill: a aba SAI da fila e o plano vai para a PRATELEIRA
+// (concluídos + arquivados), com reabrir; e o app AVISA quando tudo integrou,
+// sem nunca concluir sozinho.
+
+test('a aba sai da fila quando o plano conclui — não só quando arquiva', async () => {
+  const { mapTabs } = await presentation()
+
+  const tabs = mapTabs({
+    plans: [
+      planTab({ id: 'vivo', title: 'V1.1' }),
+      planTab({ id: 'feito', title: 'Estabilização', status: 'concluido' }),
+      planTab({ id: 'guardado', title: 'Antigo', status: 'arquivado' })
+    ]
+  })
+
+  assert.deepEqual(
+    tabs.map((tab) => tab.id),
+    ['rotas', 'plano:vivo'],
+    'a fila de abas é sobre rota VIVA'
+  )
+})
+
+test('a prateleira devolve o que saiu da fila, com o motivo de cada um', async () => {
+  const { shelfPlans } = await presentation()
+
+  const shelf = shelfPlans({
+    plans: [
+      planTab({ id: 'vivo', title: 'V1.1' }),
+      planTab({ id: 'guardado', title: 'Antigo', status: 'arquivado' }),
+      planTab({ id: 'feito', title: 'Estabilização', status: 'concluido' })
+    ]
+  })
+
+  // vivo nunca entra (ele tem aba); concluído vem antes do arquivado
+  assert.deepEqual(
+    shelf.map((p) => p.id),
+    ['feito', 'guardado']
+  )
+  assert.equal(shelf[0].status, 'concluido')
+  assert.equal(shelf[1].status, 'arquivado')
+  assert.equal(shelf[0].title, 'Estabilização')
+})
+
+test('prateleira vazia é lista vazia — nunca uma seção fantasma', async () => {
+  const { shelfPlans } = await presentation()
+  assert.deepEqual(shelfPlans({ plans: [planTab({ id: 'vivo' })] }), [])
+  assert.deepEqual(shelfPlans({ plans: [] }), [])
+})
+
+test('o app avisa que o plano está pronto — e nunca conclui sozinho', async () => {
+  const { planReadyToConclude } = await presentation()
+  const item = (status) => ({ status })
+
+  // 8/8 como no print do dono: pronto, e o aviso é só aviso
+  assert.equal(
+    planReadyToConclude({ status: 'ativo', items: [item('concluida'), item('concluida')] }),
+    true
+  )
+  // descartada sai da conta, igual ao `planProgress`
+  assert.equal(
+    planReadyToConclude({ status: 'ativo', items: [item('concluida'), item('descartada')] }),
+    true
+  )
+  // falta uma: não avisa
+  assert.equal(
+    planReadyToConclude({ status: 'ativo', items: [item('concluida'), item('pendente')] }),
+    false
+  )
+  // plano sem item nenhum não está "pronto", está vazio
+  assert.equal(planReadyToConclude({ status: 'ativo', items: [] }), false)
+  // já concluído não avisa de novo
+  assert.equal(
+    planReadyToConclude({ status: 'concluido', items: [item('concluida')] }),
+    false
+  )
+})
+
+test('a prateleira existe na tela do mapa, com abrir e reabrir', async () => {
+  const map = withoutComments(await source('src/renderer/src/components/UniverseMapView.tsx'))
+
+  assert.match(map, /shelfPlans\(\{ plans \}\)/u, 'a régua vem do módulo puro')
+  assert.match(map, /map-shelf/u, 'a seção dos guardados sumiu da tela')
+  assert.match(map, /reabrir/u, 'sem reabrir, arquivar volta a ser beco sem saída')
+  // reabrir devolve o plano à fila de abas pelo MESMO canal com CAS de sempre
+  assert.match(map, /status: 'ativo' \}, plan\.updatedAt/u)
 })

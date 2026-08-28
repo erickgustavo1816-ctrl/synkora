@@ -13,6 +13,7 @@ import {
   planItemPresentation,
   planItemStartBlock,
   planProgress,
+  planReadyToConclude,
   planTierLabel,
   type PlanDependencySource,
   type PlanItemDependency,
@@ -218,6 +219,10 @@ export default function PlanBoardView({
   )
 
   const concluded = plan.status === 'concluido'
+  // O AVISO (ordem do dono, 2026-08-28): o dono viu 8/8 na tela e o app nao
+  // disse nada. Agora ele diz — e so diz: concluir continua sendo o clique
+  // dele, inclusive com item abandonado.
+  const ready = planReadyToConclude(plan)
 
   return (
     <div className="planboard">
@@ -245,6 +250,11 @@ export default function PlanBoardView({
         {plan.description && <PlanDescription text={plan.description} />}
 
         <div className="planboard-meta">
+          {ready && (
+            <span className="planboard-ready" data-tip="O app não conclui sozinho: a decisão continua sua">
+              pronto para concluir
+            </span>
+          )}
           <span className="planboard-progress">
             <span
               className="planboard-progress-bar"
@@ -295,9 +305,13 @@ export default function PlanBoardView({
                 )}
             {!concluded && (
               <button
-                className="btn ghost tiny"
+                className={`btn tiny${ready ? '' : ' ghost'}`}
                 disabled={Boolean(pending)}
-                data-tip="Marca o plano como concluído. Ele continua legível na aba; nada é apagado."
+                data-tip={
+                  ready
+                    ? 'Todas as missões deste plano já integraram. Concluir tira a rota da fila de abas e guarda o plano — nada é apagado, e dá para reabrir.'
+                    : 'Marca o plano como concluído: a rota sai da fila de abas e vai para os guardados. Nada é apagado, e dá para reabrir.'
+                }
                 onClick={() =>
                   void run('concluir', () =>
                     plansApi.update(plan.id, { status: 'concluido' }, plan.updatedAt)

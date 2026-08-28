@@ -5472,6 +5472,18 @@ body.pane-docking .pane-bar.draggable {
   text-align: center;
 }
 
+/* O RODAPE DO PLANEJAMENTO (reprovacao do dono, 2026-08-27): "se voce for
+   colocar um botao embaixo de arquivar planejamento, o certo e utilizar a
+   largura total". As duas decisoes do planejamento empilham CHEIAS - o auto
+   herdado da fileira de icones deixava o segundo com 175px numa regua de 340
+   e um vao de 152px a direita. A hierarquia continua existindo, dita por
+   FORMA (o primario veste tinta cheia), nunca por largura sobrando. */
+.dr-planning-acts .dr-btn {
+  flex: 1 1 100%;
+  width: 100%;
+  justify-content: center;
+}
+
 /* O ⇪ é o PRIMÁRIO do mockup: tinta cheia sobre papel (o contorno accent do
    trilho antigo morreu com o `.dr-integrate`). O seletor carrega `.btn` de
    propósito — sem ele o `flex-shrink: 0` do `.btn.tiny` (declarado depois,
@@ -9366,6 +9378,19 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink-2);
 }
 
+/* A SAIDA DA SUBIDA (2026-08-27): o passo armado empilha a verdade daquele
+   estado e as duas escolhas. Sem cor nova - a recusa veste --err, a mesma
+   linguagem do resto da casa. */
+.release-rail-discard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.release-rail-discard-acts {
+  display: flex;
+  gap: 6px;
+}
+
 /* o RETRATO da última subida (mockup: margem verde à esquerda — o release que
    DEU certo; a entidade só nasce no sucesso) */
 .release-rail-portrait {
@@ -10154,44 +10179,200 @@ body.pane-docking .pane-bar.draggable {
 
 /* Retrato por versão COMPACTO: o placar inteiro é da aba Versões.
    Ele mora na banda de topo, do lado DIREITO do instrumento — o outro eixo do
-   mesmo placar (missões por linha de versão). `justify-content: flex-end`
-   ancora os chips na borda quando sobra folha. */
+   mesmo placar (missões por linha de versão).
+   R38 (2026-08-24): a pílula virou RÉGUA. Uma linha por versão, empilhadas: o
+   chip dizia "5/8 missões" e escondia o RUMO, e é o rumo que o dono procura
+   quando olha a linha em construção. */
 .pd-versions {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
+  flex-direction: column;
   gap: 6px;
-  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* A RÉGUA SÓ DISPUTA LARGURA DENTRO DA BANDA. O `flex: 1 1 320px` mora AQUI e
+   não na regra base: `.pd-top` é uma coluna flex, e ali a mesma base de 320px
+   viraria 320px de ALTURA — medido no harness, 300px de papel morto entre a
+   régua e o ledger no estado do marco. */
+.pd-top-line.instruments .pd-versions {
+  flex: 1 1 320px;
   padding-top: 3px;
 }
 
 /* A COR CONTINUA SENDO A MESMA FALA (laranja = em construção, verde = na main);
    o que muda é a PROFUNDIDADE do texto. `--accent` puro a 11px sobre o cartão
    dá 2,85:1 e `--ok` puro 2,90:1 — abaixo do piso de leitura. Uma volta na
-   direção da tinta devolve 5,5:1 e 4,9:1 sem tirar o matiz de ninguém. */
+   direção da tinta devolve 5,5:1 e 4,9:1 sem tirar o matiz de ninguém.
+   A BORDA CONTINUA DE FIO (`--line-strong`), não de tinta: a régua divide a
+   banda com os tiles do instrumento, e duas molduras de `--ink` lado a lado
+   brigariam pela mesma atenção. Quem dá a notícia aqui é a barra. */
 .pd-version {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  min-width: 0;
   font-size: 11px;
   font-weight: 700;
   color: color-mix(in srgb, var(--accent-deep) 70%, var(--ink));
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  padding: 3px 10px;
+  border-radius: 8px;
+  padding: 7px 12px;
   background: var(--card);
-  white-space: nowrap;
 }
 
 .pd-version.released {
   color: color-mix(in srgb, var(--ok) 65%, var(--ink));
 }
 
+.pd-version-name {
+  flex: none;
+  white-space: nowrap;
+}
+
 .pd-version-count {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 400;
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* o trilho da régua: medido em px porque ele é INSTRUMENTO — esticar com a
+   folha faria a mesma fração parecer outra a cada largura de janela */
+.pd-version-bar {
+  flex: none;
+  width: 96px;
+  height: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+.pd-version-fill {
+  display: block;
+  height: 100%;
+  background: color-mix(in srgb, var(--ok) 72%, var(--ink));
+}
+
+/* ---------- O PALCO DO MARCO (R38, 2026-08-24) ----------
+   Sem trabalho vivo e com a linha COMPLETA, a história do momento é a versão
+   pronta esperando o lançamento — e ela toma o lugar dos quatro tiles (que
+   naquele estado marcam três zeros).
+
+   FORMA, NUNCA ELEVAÇÃO: o palco se destaca por uma borda de 2px de tinta
+   contra o 1px de fio de toda a folha. O mockup pedia sombra; cartão que
+   FLUTUA é a linguagem do mapa (ordem do dono), e trazê-la para a casa do
+   projeto misturaria dois vocabulários na mesma tela. */
+.pd-milestone {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.pd-milestone-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.pd-milestone-name {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.pd-milestone-state {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--ok) 65%, var(--ink));
+}
+
+.pd-milestone-facts {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* a barra CHEIA é a prova visual do "9/9" — a mesma figura da régua, em
+   tamanho de palco */
+.pd-milestone-bar {
+  display: block;
+  height: 6px;
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+.pd-milestone-fill {
+  display: block;
+  height: 100%;
+  background: color-mix(in srgb, var(--ok) 72%, var(--ink));
+}
+
+.pd-milestone-deck {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* O GESTO DO INSTANTE: preenchido de tinta, escopado ao palco. `.btn.accent`
+   é o laranja do "+ nova missão" e os dois lado a lado disputariam o clique;
+   um `.btn.primary` global seria uma variante nova da casa inteira por causa
+   de UM botão. */
+.pd-milestone-deck .btn.go {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+.pd-milestone-deck .btn.go:hover {
+  background: color-mix(in srgb, var(--ink) 82%, var(--accent));
+  color: var(--paper);
+}
+
+.pd-milestone-hint {
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--ink-2);
+}
+
+/* O LEDGER — a contagem que substitui os tiles no marco. Ele fecha a banda de
+   topo por dentro: o fio de cima é dele, o de baixo é o da própria banda. */
+.pd-ledger {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.pd-ledger b {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.pd-ledger-sep {
+  color: var(--line-strong);
 }
 
 /* O QUE ESPERA VOCÊ, atravessando a folha. Estava só dentro da linha da missão
@@ -10350,11 +10531,8 @@ button.pd-mission.waiting:hover {
   background: color-mix(in srgb, var(--warn) 17%, var(--card));
 }
 
-.pd-mission.done {
-  background: transparent;
-  border-style: dashed;
-  border-left-color: var(--ok);
-}
+/* `.pd-mission.done` saiu na R38: a linha de missão ENCERRADA era a seção
+   "integradas", que se fundiu na obra por dia (linha fina, sem cartão). */
 
 /* PROXIMIDADE: o ponto é parte do TÍTULO (ele diz o estado daquela missão),
    não um irmão do selo. Com 7px iguais para todos, dot · título · palavra ·
@@ -10665,8 +10843,30 @@ button.pd-mission.waiting:hover {
   padding: 9px 12px;
 }
 
+/* PLANO CUMPRIDO É SELO (R38, 2026-08-24): uma barra ATIVA de 8/8, com a
+   mesma roupa de um plano em curso, lia como trabalho pendente. O traço
+   pontilhado e o fundo que se apaga dizem "encerrado" por FORMA antes de cor;
+   o preenchimento recua para não competir com o que ainda anda. */
 .pd-plan.done {
   border-style: dashed;
+  background: transparent;
+}
+
+.pd-plan.done .pd-plan-fill {
+  opacity: 0.55;
+}
+
+.pd-plan-check {
+  flex: none;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--ok) 65%, var(--ink));
+}
+
+.pd-plan-frac {
+  flex: none;
+  font-size: 10px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
 }
 
 .pd-plan-head {
@@ -10724,10 +10924,48 @@ button.pd-mission.waiting:hover {
   color: color-mix(in srgb, var(--accent-deep) 70%, var(--ink));
 }
 
-/* ---------- ATIVIDADE (2026-08-17) ----------
+/* ---------- A OBRA (2026-08-17, agrupada por dia na R38) ----------
    Cronologia por carimbo REAL — nasceu e integrou. Linhas, não cartões: são
-   seis itens de uma frase, e um cartão por frase seria o "container preguiçoso"
-   que a folha inteira evita. */
+   itens de uma frase, e um cartão por frase seria o "container preguiçoso"
+   que a folha inteira evita.
+   R38: esta lista absorveu a seção "integradas", que repetia as mesmas
+   missões logo acima dela. O DIA subiu para um cabeçalho próprio — com a data
+   em toda linha, o olho lia oito datas para descobrir dois dias. */
+.pd-work {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pd-work-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* O DIA E O TÍTULO DE SEÇÃO são os dois `--ink-2` maiúsculos (o piso de
+   leitura fecha a porta do `--ink-3` do mockup, que dá 2,5:1 no papel): quem
+   os separa é o PESO — 400 contra 700 — e o fio que corre depois da data, que
+   desenha a divisão do dia sem gastar uma segunda tinta. */
+.pd-work-day {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.pd-work-day::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--line);
+}
+
 .pd-activity {
   margin: 0;
   padding: 0;
@@ -10764,18 +11002,14 @@ button.pd-mission.waiting:hover {
   color: var(--ink);
 }
 
+/* `.pd-event-day` saiu na R38: a data virou o cabeçalho do GRUPO, e repeti-la
+   em cada linha era a mesma informação escrita oito vezes. */
 .pd-event-kind {
   flex: none;
   font-size: 9.5px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink-2);
-}
-
-.pd-event-day {
-  flex: none;
-  color: var(--ink-2);
-  font-variant-numeric: tabular-nums;
 }
 
 /* Coluna apertada (o ✦ geral divide a largura com o palco): os KPIs viram duas
@@ -10804,14 +11038,24 @@ button.pd-mission.waiting:hover {
     justify-content: center;
   }
 
-  /* Na coluna apertada os chips de versão voltam a começar pela esquerda: a
-     ancoragem à direita só existe para fechar o vão da banda larga. */
-  .pd-versions {
-    justify-content: flex-start;
+  /* Na coluna apertada a régua da versão cede o trilho: com ~200px de linha,
+     96px de barra comeriam o nome e a fração, que são o texto. */
+  .pd-version-bar {
+    display: none;
   }
 
   .pd-top-line {
     align-items: stretch;
+  }
+
+  /* O palco não vira cartaz na coluna estreita: o nome da versão desce um
+     degrau e a fileira de ações empilha em vez de cortar o último botão. */
+  .pd-milestone-name {
+    font-size: 15px;
+  }
+
+  .pd-milestone-facts {
+    margin-left: 0;
   }
 }
 
@@ -20060,6 +20304,107 @@ details.gui-error-line {
   gap: 8px;
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
+}
+
+/* O AVISO de rota terminada (2026-08-28): NOTICIA, nao pastilha — a mesma
+   voz do estado no header do dock. Verde de sucesso so no marcador; o texto
+   fica em --ink-2 para nao reprovar contraste sobre papel. */
+.planboard-ready {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.planboard-ready::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+/* A PRATELEIRA do mapa: o que saiu da fila de abas. Lista sobria de
+   propriedade — ela e memoria, nao trabalho vivo, e nao pode competir com o
+   quadro de rotas logo acima. */
+.map-shelf {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.map-shelf-title {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.map-shelf-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.map-shelf-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.map-shelf-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.map-shelf-open:hover {
+  border-color: var(--line);
+  background: var(--card);
+}
+.map-shelf-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.map-shelf-mark {
+  flex: none;
+  color: var(--ink-3);
+}
+.map-shelf-mark.concluido {
+  color: var(--ok);
+}
+.map-shelf-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.map-shelf-word {
+  flex: none;
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 10.5px;
+}
+.map-shelf-back {
+  align-self: flex-start;
+  margin-bottom: 10px;
 }
 
 .planboard-progress-bar {

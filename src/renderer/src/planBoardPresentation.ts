@@ -321,8 +321,12 @@ export function planTabLabel(plan: PlanTabSource, max = 22): string {
  */
 export function mapTabs(input: { plans: readonly PlanTabSource[] }): MapTab[] {
   const tabs: MapTab[] = [MAP_TAB_ROTAS]
+  // 2026-08-28 (ordem do dono): a fila de abas e sobre rota VIVA. Concluir
+  // era um status que ninguem lia — o dono clicava e a tela nao mudava. Uma
+  // rota terminada nao ocupa mais slot permanente: ela desce para a
+  // PRATELEIRA (`shelfPlans`), de onde volta pelo reabrir.
   const visible = input.plans
-    .filter((plan) => plan.status !== 'arquivado')
+    .filter((plan) => plan.status === 'ativo')
     .slice()
     .sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === 'mestre' ? -1 : 1
@@ -334,12 +338,12 @@ export function mapTabs(input: { plans: readonly PlanTabSource[] }): MapTab[] {
       id: `plano:${plan.id}`,
       kind: 'plano',
       label: planTabLabel(plan),
+      // Sem galho para `concluido`: ele nao chega mais aqui (a fila e so de
+      // rota viva), e ramo inalcancavel e uma verdade que mente.
       tip:
-        plan.status === 'concluido'
-          ? `${plan.title} — plano concluído`
-          : plan.kind === 'mestre'
-            ? `${plan.title} — o plano mestre deste projeto`
-            : plan.title,
+        plan.kind === 'mestre'
+          ? `${plan.title} — o plano mestre deste projeto`
+          : plan.title,
       planId: plan.id
     })
   }
@@ -402,4 +406,46 @@ export function planItemMissionGoal(item: {
     parts.push(`Pronto quando:\n${item.doneCriteria.map((c) => `- ${c}`).join('\n')}`)
   if (item.docPath?.trim()) parts.push(`Brief completo: ${item.docPath.trim()}`)
   return parts.join('\n\n')
+}
+
+/**
+ * A PRATELEIRA DO MAPA (2026-08-28) — o que saiu da fila de abas mas continua
+ * legivel: os CONCLUIDOS na frente (a noticia mais nova do projeto) e os
+ * ARQUIVADOS atras. Antes desta lista o arquivar era sumico sem volta: o
+ * motor sempre soube desarquivar, mas nenhuma tela oferecia o gesto.
+ *
+ * Lista VAZIA quando nao ha nada guardado — a secao nao nasce, e prateleira
+ * vazia nao vira moldura fantasma.
+ */
+// GENERICA de proposito: quem chama passa `PlanView` inteiro e recebe
+// `PlanView` de volta — o `updatedAt` do CAS do reabrir sobrevive a viagem,
+// sem a prateleira precisar conhecer o contrato gordo.
+export function shelfPlans<T extends PlanTabSource>(input: { plans: readonly T[] }): T[] {
+  const peso = (plan: PlanTabSource): number => (plan.status === 'concluido' ? 0 : 1)
+  return input.plans
+    .filter((plan) => plan.status === 'concluido' || plan.status === 'arquivado')
+    .slice()
+    .sort((a, b) => {
+      if (peso(a) !== peso(b)) return peso(a) - peso(b)
+      if (a.order !== b.order) return a.order - b.order
+      return a.title.localeCompare(b.title, 'pt-BR')
+    })
+}
+
+/**
+ * O AVISO de que a rota chegou ao fim (2026-08-28). O dono viu 8/8 na tela e
+ * o app nao disse nada; agora ele diz — e SO diz. Concluir com item
+ * abandonado continua sendo decisao dele, entao isto nunca conclui sozinho:
+ * e guarda de julgamento, que na casa vira advisory, jamais automacao.
+ *
+ * A conta e a MESMA do `planProgress` (descartada fora do denominador): duas
+ * reguas para a mesma fracao diriam numeros diferentes na mesma tela.
+ */
+export function planReadyToConclude(plan: {
+  status: PlanStatus
+  items: readonly { status: PlanItemStatus }[]
+}): boolean {
+  if (plan.status !== 'ativo') return false
+  const progress = planProgress(plan.items)
+  return progress.total > 0 && progress.done === progress.total
 }

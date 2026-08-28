@@ -57,7 +57,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>✦ Backlog Synkora</h1>
-    <span class="stamp">atualizado 26/08 · pelo orquestrador</span>
+    <span class="stamp">atualizado 28/08 · pelo orquestrador</span>
     <p class="how"><b>Como funciona:</b> este é o mapa vivo da obra — eu re-publico neste MESMO link a cada
     entrega. Quer mudar prioridade ou adicionar item? Comente aqui na página ou me diga no chat.
     Fonte da verdade: <b>docs/backlog-synkora.json</b> (MCP + CLI em scripts/backlog*.mjs).</p>
@@ -94,6 +94,13 @@
       <span class="badge">mockup em produção</span>
       <span class="desc">Reprovação do dono 2026-08-24 ao ver o Board do SPED PRONTO pós-integração total (&quot;essa UI ficou horrível&quot; — e no grill: o conjunto todo, repensar a tela). Rito: mockup novo em docs/mockups/ para aprovação ANTES de codar; impeccable como lei; papel &amp; painel; câmera, não rearranjo.</span>
       <span class="refs">refs: <code>docs/mockups/</code></span>
+    </div>
+    <div class="item queue">
+      <span class="glyph">4</span>
+      <span class="title">Concluir plano ACONTECE + prateleira dos guardados (arquivar tem volta)</span>
+      <span class="badge">camadas 1-2 entregues</span>
+      <span class="desc">Reprovação do dono 2026-08-28: &quot;eu concluo ele e não acontece nada&quot;. Verificado: concluir só virava status — nenhuma superfície lia. Achado no caminho: mapTabs prometia uma &quot;lista de arquivados&quot; que NÃO EXISTIA, então arquivar era sumiço sem volta pela UI. Camadas 1 e 2 ENTREGUES: a aba sai da fila ao concluir; nasce a seção &quot;guardados&quot; na aba ROTAS (concluídos na frente, arquivados atrás) com abrir para leitura e reabrir com CAS; e o cabeçalho do plano avisa &quot;pronto para concluir&quot; quando todo item integrou (advisory — nunca conclui sozinho). Camada 3 (recibo do fecho da rota em plano/) fica pendente.</span>
+      <span class="refs">refs: <code>.synkora/reports/DESIGN_CONCLUSAO_DE_PLANO_2026-08-28.md</code> · <code>src/renderer/src/planBoardPresentation.ts</code> · <code>src/renderer/src/components/UniverseMapView.tsx</code></span>
     </div>
   </section>
 

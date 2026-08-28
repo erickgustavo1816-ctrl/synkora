@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { plansApi } from '../plansApi'
 import type { PlanView } from '../planContract'
-import { mapTabs, resolveMapTab } from '../planBoardPresentation'
+import { mapTabs, resolveMapTab, shelfPlans } from '../planBoardPresentation'
 import MissionRouteBoard from './MissionRouteBoard'
 import PlanBoardView from './PlanBoardView'
 
@@ -32,6 +32,10 @@ export default function UniverseMapView({
   const [plansLoaded, setPlansLoaded] = useState(false)
   const activeTabId = useStore((s) => s.mapTabByProject[projectId])
   const setMapTab = useStore((s) => s.setMapTab)
+  // O plano guardado que o dono abriu para LER. Ele nao tem aba (a fila e so
+  // de rota viva), entao a leitura e transitoria: vive nesta tela, some ao
+  // voltar, e nunca disputa slot com o trabalho vivo.
+  const [reading, setReading] = useState<string | null>(null)
 
   const refreshPlans = useCallback(async (): Promise<void> => {
     const list = await plansApi.list(projectId)
@@ -56,10 +60,12 @@ export default function UniverseMapView({
   }, [projectId, refreshPlans])
 
   const tabs = useMemo(() => mapTabs({ plans }), [plans])
+  const shelf = useMemo(() => shelfPlans({ plans }), [plans])
   // Aba lembrada que sumiu (plano excluído, ou a aba do roadmap F6 que deixou
   // de existir) nunca prende a tela numa visão vazia: cai em `rotas`.
   const active = useMemo(() => resolveMapTab(tabs, activeTabId), [tabs, activeTabId])
   const activePlan = active.planId ? plans.find((plan) => plan.id === active.planId) : undefined
+  const readingPlan = reading ? plans.find((plan) => plan.id === reading) : undefined
 
   return (
     <div className="universe-map">
@@ -84,14 +90,71 @@ export default function UniverseMapView({
       )}
 
       <div className="universe-map-stage">
-        {active.kind === 'plano' && activePlan ? (
+        {readingPlan ? (
+          <>
+            <button
+              type="button"
+              className="btn ghost tiny map-shelf-back"
+              onClick={() => setReading(null)}
+            >
+              ← voltar para as rotas
+            </button>
+            <PlanBoardView
+              projectId={projectId}
+              plan={readingPlan}
+              onChanged={() => void refreshPlans()}
+            />
+          </>
+        ) : active.kind === 'plano' && activePlan ? (
           <PlanBoardView
             projectId={projectId}
             plan={activePlan}
             onChanged={() => void refreshPlans()}
           />
         ) : (
-          <MissionRouteBoard projectId={projectId} />
+          <>
+            <MissionRouteBoard projectId={projectId} />
+            {/* A PRATELEIRA (2026-08-28): o que saiu da fila de abas continua
+                alcancavel aqui — concluidos na frente, arquivados atras. Antes
+                dela, concluir nao fazia nada e arquivar era sumico sem volta. */}
+            {shelf.length > 0 && (
+              <section className="map-shelf" aria-label="Planos guardados">
+                <p className="map-shelf-title">guardados</p>
+                <ul className="map-shelf-list">
+                  {shelf.map((plan) => (
+                    <li key={plan.id} className="map-shelf-row">
+                      <button
+                        type="button"
+                        className="map-shelf-open"
+                        data-tip={`Abrir ${plan.title} para leitura`}
+                        onClick={() => setReading(plan.id)}
+                      >
+                        <span className={`map-shelf-mark ${plan.status}`} aria-hidden="true">
+                          {plan.status === 'concluido' ? '✓' : '⊟'}
+                        </span>
+                        <span className="map-shelf-name">{plan.title}</span>
+                        <span className="map-shelf-word">
+                          {plan.status === 'concluido' ? 'concluído' : 'arquivado'}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="btn ghost tiny"
+                        data-tip="Devolve o plano para a fila de abas, como rota viva"
+                        onClick={() => {
+                          void plansApi
+                            .update(plan.id, { status: 'ativo' }, plan.updatedAt)
+                            .then(() => refreshPlans())
+                        }}
+                      >
+                        reabrir
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+          </>
         )}
       </div>
 
