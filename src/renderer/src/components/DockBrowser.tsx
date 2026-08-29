@@ -283,15 +283,32 @@ export default function DockBrowser({
   // O RESTO do trilho, medido de verdade (bug pago 2026-08-29: "aumento o
   // tamanho aí some e não tem mais como diminuir" — o floor de chute deixava a
   // página crescer além da viewport e a alça sumia atrás da view nativa, que
-  // come o wheel). `scrollHeight - página` é estável por construção: o que
-  // sobra são exatamente as irmãs + o chrome + a alça. Os 2px são o respiro do
-  // arredondamento sub-pixel a 125% de DPI (lição da casa). `undefined` quando
-  // ainda não há o que medir — o modelo cai no floor de sempre.
+  // come o wheel).
+  //
+  // SEGUNDO BUG PAGO NO MESMO DIA ("quando eu entro tá diminuindo sozinho do
+  // nada"): a 1ª medição usava `scrollHeight - página`, e `scrollHeight` NUNCA
+  // fica menor que o clientHeight — com o conteúdo CABENDO no trilho, o vazio
+  // embaixo entrava no "resto", o teto colapsava para a altura atual menos o
+  // respiro, e o clamp encolhia a página 2px por tick de 400ms, para sempre.
+  // A medição honesta soma o CONTEÚDO REAL (filhos + gaps + paddings do
+  // scroller) e subtrai a página: vazio não é irmã, e não reserva teto.
+  // Os 2px são o respiro do arredondamento sub-pixel a 125% de DPI (lição da
+  // casa). `undefined` quando ainda não há o que medir — o modelo cai no
+  // floor de sempre.
   const currentRailRest = useCallback((): number | undefined => {
     const rail = railRef.current
     const page = pageRef.current
     if (!rail || !page || page.offsetHeight <= 0) return undefined
-    return Math.max(0, rail.scrollHeight - page.offsetHeight + 2)
+    let content = 0
+    for (const child of Array.from(rail.children)) {
+      if (child instanceof HTMLElement) content += child.offsetHeight
+    }
+    const style = window.getComputedStyle(rail)
+    const gap = Number.parseFloat(style.rowGap) || 0
+    content += gap * Math.max(0, rail.children.length - 1)
+    content +=
+      (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0)
+    return Math.max(0, content - page.offsetHeight + 2)
   }, [])
   const [railRest, setRailRest] = useState<number | undefined>(undefined)
   const measureRailRest = useCallback((): void => {
