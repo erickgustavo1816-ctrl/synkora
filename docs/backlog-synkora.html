@@ -57,7 +57,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>✦ Backlog Synkora</h1>
-    <span class="stamp">atualizado 28/08 · pelo orquestrador</span>
+    <span class="stamp">atualizado 29/08 · pelo orquestrador</span>
     <p class="how"><b>Como funciona:</b> este é o mapa vivo da obra — eu re-publico neste MESMO link a cada
     entrega. Quer mudar prioridade ou adicionar item? Comente aqui na página ou me diga no chat.
     Fonte da verdade: <b>docs/backlog-synkora.json</b> (MCP + CLI em scripts/backlog*.mjs).</p>
@@ -65,38 +65,25 @@
 
   <section>
     <h2>Agora <span class="count">— em curso</span></h2>
-    <div class="item now">
-      <span class="glyph">●</span>
-      <span class="title">RightDock — o lado direito do app</span>
-      <span class="badge">rodada 2 no ar — valida na tela</span>
-      <span class="desc">Conserto pós-reprovação COMMITADO em 2 rodadas: (1) ✦ geral restaurado verbatim + dock desesmagado (3e75d39); (2) header V1 do mockup rightdock-2 aprovado (duas linhas, estado só-notícia, ícone de painel no recolher), entrega composta, clique no arquivo ABRE o documento (± abre o diff na janela larga; inline morto), ▷ terminal comum removido, ✕ descarta ficha interrompida da frota (canal gui:dismissHelper + buraco pós-restart do correlacionador consertado na fonte). Dock chega por HMR; o ✕ precisa do próximo restart. Falta: validação visual do dono.</span>
-      <span class="refs">refs: <code>docs/mockups/rightdock-2.html</code> · <code>3e75d39</code> · <code>.synkora/reports/PLANO_CONSERTO_RIGHTDOCK_2026-08-22.md</code></span>
-    </div>
+
   </section>
 
   <section>
     <h2>Fila <span class="count">— ordem do dono</span></h2>
     <div class="item queue">
       <span class="glyph">1</span>
-      <span class="title">Skills 2.0 — o build</span>
-      <span class="badge">planejamento fechado hoje</span>
-      <span class="desc">Grill com o dono concluído: 7 ADRs + glossário; kit final de 16 skills (uma por ocasião, impeccable como única lei); as duas da casa já escritas (código-limpo e investigação). Falta construir: store semeado, sync no spawn pro worktree, tela completa de gestão, instalar-por-URL pinado, personas com lei + cardápio, e a PODA das ~400.</span>
-      <span class="refs">refs: <code>docs/adr/0001–0007</code> · <code>CONTEXT.md</code> · <code>skills novas na lib</code></span>
-    </div>
-    <div class="item queue">
-      <span class="glyph">2</span>
       <span class="title">Browser embutido</span>
       <span class="desc">4º item do plano do dono: navegador dentro do Synkora pro ciclo de teste visual sem sair do app.</span>
     </div>
     <div class="item queue">
-      <span class="glyph">3</span>
+      <span class="glyph">2</span>
       <span class="title">Repensar a landing do projeto sem missões abertas</span>
       <span class="badge">mockup em produção</span>
       <span class="desc">Reprovação do dono 2026-08-24 ao ver o Board do SPED PRONTO pós-integração total (&quot;essa UI ficou horrível&quot; — e no grill: o conjunto todo, repensar a tela). Rito: mockup novo em docs/mockups/ para aprovação ANTES de codar; impeccable como lei; papel &amp; painel; câmera, não rearranjo.</span>
       <span class="refs">refs: <code>docs/mockups/</code></span>
     </div>
     <div class="item queue">
-      <span class="glyph">4</span>
+      <span class="glyph">3</span>
       <span class="title">Concluir plano ACONTECE + prateleira dos guardados (arquivar tem volta)</span>
       <span class="badge">camadas 1-2 entregues</span>
       <span class="desc">Reprovação do dono 2026-08-28: &quot;eu concluo ele e não acontece nada&quot;. Verificado: concluir só virava status — nenhuma superfície lia. Achado no caminho: mapTabs prometia uma &quot;lista de arquivados&quot; que NÃO EXISTIA, então arquivar era sumiço sem volta pela UI. Camadas 1 e 2 ENTREGUES: a aba sai da fila ao concluir; nasce a seção &quot;guardados&quot; na aba ROTAS (concluídos na frente, arquivados atrás) com abrir para leitura e reabrir com CAS; e o cabeçalho do plano avisa &quot;pronto para concluir&quot; quando todo item integrou (advisory — nunca conclui sozinho). Camada 3 (recibo do fecho da rota em plano/) fica pendente.</span>
@@ -186,6 +173,12 @@
       <span class="desc">2026-08-28, incidente completo. (1) &quot;não tá subindo&quot;: a missão e8579a6d gravou o merge e travou na limpeza — um Edge HEADLESS aberto às 14:19 por agente para teste visual, com --user-data-dir DENTRO do worktree, segurava os LOCK do perfil. A janela de re-tentativa não resolvia porque o processo não estava morrendo, estava vivo. Curado: reapVisualsUnder ceifa apps visuais enraizados no worktree antes do merge (nome na allowlist E caminho apontando para a raiz — cada condição sozinha já produziu erro real). (2) &quot;spawn cmd.exe ENOENT / código -4058&quot;: provado em sonda que cwd inexistente falha assim; a mensagem culpava o cmd.exe. Agora nomeia a PASTA e a receita. FALTA: target_repair_pending só reconcilia no BOOT — sem restart o dono fica olhando a fila travada sem alavanca nenhuma.</span>
       <span class="refs">refs: <code>src/main/reapVisualsUnder.ts</code> · <code>src/main/sessionSpawnError.ts</code> · <code>scripts/test-session-spawn-error.mjs</code></span>
     </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">Split de guiMissionContracts travado pelo resolvedor duplo — receita pronta no report F</span>
+      <span class="desc">A extração dos blocos de persona para guiPersonaBlocks.ts foi FEITA e provada byte a byte, mas revertida: tsc --outDir exige import sem extensão e --experimental-strip-types exige com — não há forma que sirva aos dois. Desbloqueio verificado em binário: --rewriteRelativeImportExtensions nos 10 scripts tsc + allowImportingTsExtensions no tsconfig.node.json. No mesmo pacote: cerca frágil test-gui-cli-launch.mjs:82 (casa a string 'return registry.create(spawn)' com o return) e test-skills-kit.mjs em 1003 linhas (corte natural: cercas do SYNC para test-skills-sync.mjs).</span>
+      <span class="refs">refs: <code>.synkora/reports/skills2-agent-F-report.md</code> · <code>src/main/guiMissionContracts.ts</code> · <code>src/main/ipc/gui.ts</code></span>
+    </div>
   </section>
 
   <details class="done-wrap" open>
@@ -215,6 +208,9 @@
       <div class="done"><span class="glyph">✓</span><span class="title">R35 — DOM estável no streaming: a seleção sobrevive à máquina de escrever</span><span class="refs"><code>.synkora/reports/DESIGN_DOM_ESTAVEL_STREAMING_R35_2026-08-23.md</code> · <code>.synkora/reports/r35-agent-report.md</code> · <code>13198ca</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">R36 — a entrega visual APARECE no chat (imagem citada renderiza; recusa nomeia o caminho)</span><span class="refs"><code>.synkora/reports/DESIGN_ENTREGA_VISUAL_NO_CHAT_R36_2026-08-23.md</code> · <code>.synkora/reports/r36-agent-A-report.md</code> · <code>.synkora/reports/r36-agent-B-report.md</code> · <code>9cade88</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">R37 — todo papel abre com O MUNDO: o que é o Synkora, onde ele está, o que o app decide</span><span class="refs"><code>5baf237</code></span></div>
+      <p class="done-day">29/08 — sábado</p>
+      <div class="done"><span class="glyph">✓</span><span class="title">RightDock — o lado direito do app</span><span class="refs"><code>docs/mockups/rightdock-2.html</code> · <code>3e75d39</code> · <code>.synkora/reports/PLANO_CONSERTO_RIGHTDOCK_2026-08-22.md</code></span></div>
+      <div class="done"><span class="glyph">✓</span><span class="title">Skills 2.0 — o build ENTREGUE (kit de 16 semeado, sync no spawn provado em binário, tela de gestão, instalar-por-URL pinado, personas com lei + cardápio, PODA 406→16)</span><span class="refs"><code>2e7be90</code> · <code>.synkora/reports/DESIGN_SKILLS_2_0_BUILD_2026-08-29.md</code> · <code>.synkora/reports/PROBE_SKILLS_CWD_2026-08-29.md</code> · <code>docs/HANDOFF_SESSAO_2026-08-29.md</code></span></div>
     </div>
   </details>
 </div>

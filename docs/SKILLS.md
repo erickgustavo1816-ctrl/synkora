@@ -1,5 +1,46 @@
 # Synkora — Biblioteca de Skills (arquitetura v4, 2026-08-10)
 
+## ⚡ SKILLS 2.0 — O ESTADO VIVO (build de 2026-08-29)
+
+O sistema F6 descrito abaixo foi DEMOLIDO na LIMPA; esta página fica como
+memória de curadoria (fontes + shas + vetos — é ela que permite reinstalar
+qualquer skill pinada). O que vale hoje:
+
+- **ADRs 0001–0007** (`docs/adr/`) + glossário (`CONTEXT.md`): agente escolhe
+  do cardápio; transporte por pasta no worktree; kit por tipo de chat (dev com
+  alas execução/orquestração, planejamento; release sem kit); UMA lei
+  (UI ⇒ `impeccable`, na persona); tela completa de gestão; biblioteca
+  congelada + instalar-por-URL pinado.
+- **Build entregue em 2026-08-29** (commit `2e7be90`): `skillsKit`
+  (store semeado com o kit v1 de 16 aprovado pelo dono), `skillsSync` +
+  `guiSpawnSkills` (sync no `gui:create`, manifesto gerenciado — pasta do dono
+  nunca é tocada), `skillsLibraryScan`/`skillsInstall`/`skillsPrune`,
+  IPC `skills:*` + `api.skills`, tela Ajustes ▸ Skills, personas com cardápio
+  (dev/ajudante/planejador) e a lei (dev/ajudante). Gate: `test:skills-kit` +
+  `test:skills-settings-ui` no `test:gui-system`.
+- **Sonda 2026-08-29** (`scripts/probe-skills-cwd.mjs` +
+  `.synkora/reports/PROBE_SKILLS_CWD_2026-08-29.md`): claude lê
+  `.claude/skills` do cwd (pasta precisa existir no boot; `/reload-skills`
+  recupera com 0 token); codex lê `.agents/skills` E `.codex/skills` — mas
+  criar `.codex/` dispara ERROR de trust a cada sessão, então o sync escreve
+  SÓ em `.agents/skills`. BOM hoje quebra SÓ o codex (claude 2.1.250 tolera);
+  a regra segue UTF-8 sem BOM. `skills/extraRoots/set` do codex funciona
+  (apontar em vez de copiar) — registrado, fora do v1.
+- **PODA executada em 2026-08-29**: 406 → 16 pastas na lib (o kit inteiro);
+  manifest limpo preservando procedência. Qualquer skill desta página volta
+  re-instalável pela URL da fonte, pinada.
+
+Kit v1 (uma por ocasião): dev/execução — `impeccable` (lei),
+`synkora-investigacao`, `synkora-codigo-limpo`, `test-driven-development`,
+`systematic-debugging`, `verification-before-completion`,
+`nodejs-backend-patterns`, `supabase-postgres-best-practices`,
+`owasp-security`, `better-writing`; dev/orquestração — `writing-plans`,
+`resolving-merge-conflicts`; planejamento — `brainstorming`,
+`domain-modeling`, `codebase-design`, `architecture-decision-records`,
+`writing-plans`.
+
+---
+
 Skills que o Synkora instala da fonte, seleciona por necessidade e entrega por
 receipt somente ao pane autorizado. A biblioteca pode ser grande; o contexto
 de cada execução é deliberadamente pequeno.

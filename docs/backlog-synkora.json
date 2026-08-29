@@ -1,32 +1,9 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-28T18:00:33.854Z",
+  "updatedAt": "2026-08-29T18:35:24.080Z",
   "lanes": {
-    "agora": [
-      {
-        "id": "rightdock",
-        "title": "RightDock — o lado direito do app",
-        "desc": "Conserto pós-reprovação COMMITADO em 2 rodadas: (1) ✦ geral restaurado verbatim + dock desesmagado (3e75d39); (2) header V1 do mockup rightdock-2 aprovado (duas linhas, estado só-notícia, ícone de painel no recolher), entrega composta, clique no arquivo ABRE o documento (± abre o diff na janela larga; inline morto), ▷ terminal comum removido, ✕ descarta ficha interrompida da frota (canal gui:dismissHelper + buraco pós-restart do correlacionador consertado na fonte). Dock chega por HMR; o ✕ precisa do próximo restart. Falta: validação visual do dono.",
-        "refs": [
-          "docs/mockups/rightdock-2.html",
-          "3e75d39",
-          ".synkora/reports/PLANO_CONSERTO_RIGHTDOCK_2026-08-22.md"
-        ],
-        "badge": "rodada 2 no ar — valida na tela"
-      }
-    ],
+    "agora": [],
     "fila": [
-      {
-        "id": "skills-2-0-build",
-        "title": "Skills 2.0 — o build",
-        "badge": "planejamento fechado hoje",
-        "desc": "Grill com o dono concluído: 7 ADRs + glossário; kit final de 16 skills (uma por ocasião, impeccable como única lei); as duas da casa já escritas (código-limpo e investigação). Falta construir: store semeado, sync no spawn pro worktree, tela completa de gestão, instalar-por-URL pinado, personas com lei + cardápio, e a PODA das ~400.",
-        "refs": [
-          "docs/adr/0001–0007",
-          "CONTEXT.md",
-          "skills novas na lib"
-        ]
-      },
       {
         "id": "browser-embutido",
         "title": "Browser embutido",
@@ -148,6 +125,16 @@
           "scripts/test-session-spawn-error.mjs"
         ],
         "badge": "curado — falta reparo ao vivo"
+      },
+      {
+        "id": "split-de-guimissioncontracts-travado-pelo-resolv",
+        "title": "Split de guiMissionContracts travado pelo resolvedor duplo — receita pronta no report F",
+        "desc": "A extração dos blocos de persona para guiPersonaBlocks.ts foi FEITA e provada byte a byte, mas revertida: tsc --outDir exige import sem extensão e --experimental-strip-types exige com — não há forma que sirva aos dois. Desbloqueio verificado em binário: --rewriteRelativeImportExtensions nos 10 scripts tsc + allowImportingTsExtensions no tsconfig.node.json. No mesmo pacote: cerca frágil test-gui-cli-launch.mjs:82 (casa a string 'return registry.create(spawn)' com o return) e test-skills-kit.mjs em 1003 linhas (corte natural: cercas do SYNC para test-skills-sync.mjs).",
+        "refs": [
+          ".synkora/reports/skills2-agent-F-report.md",
+          "src/main/guiMissionContracts.ts",
+          "src/main/ipc/gui.ts"
+        ]
       }
     ],
     "feito": [
@@ -332,6 +319,31 @@
           "5baf237"
         ],
         "day": "23/08 — domingo"
+      },
+      {
+        "id": "rightdock",
+        "title": "RightDock — o lado direito do app",
+        "desc": "Conserto pós-reprovação COMMITADO em 2 rodadas: (1) ✦ geral restaurado verbatim + dock desesmagado (3e75d39); (2) header V1 do mockup rightdock-2 aprovado (duas linhas, estado só-notícia, ícone de painel no recolher), entrega composta, clique no arquivo ABRE o documento (± abre o diff na janela larga; inline morto), ▷ terminal comum removido, ✕ descarta ficha interrompida da frota (canal gui:dismissHelper + buraco pós-restart do correlacionador consertado na fonte). Dock chega por HMR; o ✕ precisa do próximo restart. Falta: validação visual do dono.",
+        "refs": [
+          "docs/mockups/rightdock-2.html",
+          "3e75d39",
+          ".synkora/reports/PLANO_CONSERTO_RIGHTDOCK_2026-08-22.md"
+        ],
+        "badge": "rodada 2 no ar — valida na tela",
+        "day": "29/08 — sábado"
+      },
+      {
+        "id": "skills-2-0-build",
+        "title": "Skills 2.0 — o build ENTREGUE (kit de 16 semeado, sync no spawn provado em binário, tela de gestão, instalar-por-URL pinado, personas com lei + cardápio, PODA 406→16)",
+        "badge": "restart pendente",
+        "desc": "Frota Opus max (motor/sync/personas/tela/gate/split) + sonda em binário real: claude lê .claude/skills, codex lê .agents/skills (.codex/ dispara ERROR de trust — nunca). Gate raiz verde com as 2 suítes novas (33+13, falha provada no código velho); validação visual feita na tela real; poda executada (manifest coerente). Restart pendente para o main novo chegar ao app.",
+        "refs": [
+          "2e7be90",
+          ".synkora/reports/DESIGN_SKILLS_2_0_BUILD_2026-08-29.md",
+          ".synkora/reports/PROBE_SKILLS_CWD_2026-08-29.md",
+          "docs/HANDOFF_SESSAO_2026-08-29.md"
+        ],
+        "day": "29/08 — sábado"
       }
     ]
   },
@@ -607,6 +619,40 @@
       "by": "orquestrador",
       "action": "update",
       "id": "causa-raiz-da-ferramenta-orfa-agora-tem-evidenci"
+    },
+    {
+      "at": "2026-08-29T17:06:32.107Z",
+      "by": "dono",
+      "action": "move",
+      "id": "rightdock",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-29T17:22:16.065Z",
+      "by": "orquestrador",
+      "action": "move",
+      "id": "skills-2-0-build",
+      "detail": "→ agora"
+    },
+    {
+      "at": "2026-08-29T18:35:03.312Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "skills-2-0-build"
+    },
+    {
+      "at": "2026-08-29T18:35:22.424Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "split-de-guimissioncontracts-travado-pelo-resolv",
+      "detail": "→ dividas"
+    },
+    {
+      "at": "2026-08-29T18:35:24.080Z",
+      "by": "orquestrador",
+      "action": "move",
+      "id": "skills-2-0-build",
+      "detail": "→ feito"
     }
   ]
 }
