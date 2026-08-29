@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-29T21:13:20.453Z",
+  "updatedAt": "2026-08-29T23:47:34.139Z",
   "lanes": {
     "agora": [],
     "fila": [
@@ -137,6 +137,15 @@
           ".synkora/reports/skills2-agent-F-report.md",
           "src/main/guiMissionContracts.ts",
           "src/main/ipc/gui.ts"
+        ]
+      },
+      {
+        "id": "browser-4-sobras-nomeadas-do-pop-out-titlebar-da",
+        "title": "Browser: 4 sobras nomeadas do pop-out (titlebar da casa, browserPane 1069, guarda dock-minimizado, cerca do TypeError)",
+        "desc": "Todas com receita nos reports: titlebar da casa na janela destacada (hoje moldura nativa — P2 §5); browserPane.ts em 1069 linhas, corte browserPaneGeometry+browserPaneUrl (P3 §2.2); guarda de captura com o DOCK minimizado ainda recusa embora a sonda nova prove pixel fresco (relaxar é decisão explícita — 3 linhas); cerca do TypeError síncrono do preload velho exige suíte de renderer com esbuild (P3 §6).",
+        "refs": [
+          ".synkora/reports/browser-agent-P2-report.md",
+          ".synkora/reports/browser-agent-P3-report.md"
         ]
       }
     ],
@@ -351,11 +360,14 @@
       {
         "id": "browser-embutido",
         "title": "Browser embutido ENTREGUE — a missão dirige, o dono assiste (rota B provada em sonda, 11 tools texto-first nos 2 CLIs, painel no dock)",
-        "desc": "Rota B por evidência (2 sondas): tools da casa via webContents.debugger no MCP synkora que os 2 CLIs já falam — zero fiação nova pro codex; capturePage 24ms/7ms contra 100-1060ms. TEXTO-FIRST porque o codex descarta imagem de MCP: browser_probe (caixa/contraste/oclusão em texto) é o veredito; browser_shot grava no worktree com carimbo de frescor. As 3 leis do motor pagas em sonda (view nunca desanexa; frescor é carimbo; ação já observa). Kit para dev+ajudante (reviewer fora); personas proíbem playwright próprio nomeando as armas. Gate raiz verde com 56 cercas novas. Validação na tela real espera o restart.",
+        "desc": "Rota B por evidência (2 sondas) + a noite da validação ao vivo: 3 reprovações do dono na tela viraram 3 consertos provados (altura por fração com alça, teto pelo resto medido — alça nunca some, casca única fora do vale da estranheza) e o pedido novo virou o POP-OUT (12ab93a): sonda própria provou reparent da MESMA view em 4,2ms com estado+CDP intactos; janela por missão, X reencaixa, recibo no dock, agente nem percebe. Gate raiz verde. Renderer já vivo por HMR; motor (pop-out + kit MCP) espera o restart.",
         "refs": [
           "c126764",
-          ".synkora/reports/DESIGN_BROWSER_EMBUTIDO_2026-08-29.md",
-          ".synkora/reports/PROBE_BROWSER_CDP_2026-08-29.md",
+          "8669e00",
+          "730d9bc",
+          "ad771b3",
+          "12ab93a",
+          ".synkora/reports/DESIGN_BROWSER_POPOUT_2026-08-29.md",
           "docs/HANDOFF_SESSAO_2026-08-29.md"
         ],
         "badge": "restart pendente — validar na tela",
@@ -695,6 +707,19 @@
       "action": "add",
       "id": "browser-certificate-error-para-https-localhost-a",
       "detail": "→ candidatas"
+    },
+    {
+      "at": "2026-08-29T23:47:30.981Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "browser-embutido"
+    },
+    {
+      "at": "2026-08-29T23:47:34.139Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "browser-4-sobras-nomeadas-do-pop-out-titlebar-da",
+      "detail": "→ dividas"
     }
   ]
 }

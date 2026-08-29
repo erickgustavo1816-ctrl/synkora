@@ -38,7 +38,28 @@ perfeita nos 2 CLIs e QA visual rápido). Evidência:
   prova por mutação) no `test:gui-system`; suítes de catálogo aprenderam a
   superfície nova (reviewer diverge do dev pela 1ª vez).
 
-**PENDÊNCIAS NOMEADAS do browser**: (1) validação na TELA REAL espera o
+**A NOITE DA VALIDAÇÃO AO VIVO (mesma sessão, pós-restart do dono)** — três
+reprovações dele na tela, três consertos com evidência:
+- Altura travada → FRAÇÃO do trilho + alça (8669e00); a alça que sumia →
+  teto pelo RESTO MEDIDO do scroller (730d9bc — a view nativa come o wheel,
+  então alça fora do fold era beco sem saída).
+- "Vale da estranheza" → UMA casca por instrumento (ad771b3; regressão de
+  contraste pega POR MEDIDA no meio da rodada e consertada; 12 PNGs
+  antes/depois em .synkora/reports/h7/).
+- **POP-OUT entregue (12ab93a)**: pedido novo do dono ("desfixar como o
+  microfone, quase um app à parte") — sonda própria
+  (PROBE_BROWSER_POPOUT_2026-08-29: reparent da MESMA view em UM PASSO,
+  4,2ms, estado+CDP intactos; 3 curas viraram lei/cerca), janela por missão
+  com bounds persistidos por projeto, X = reencaixa, recibo no dock,
+  BrowserChrome compartilhado. Design em DESIGN_BROWSER_POPOUT_2026-08-29.md;
+  reports P1/P2/P3.
+
+**PENDÊNCIAS NOMEADAS do browser**:
+- Pop-out: titlebar da casa (hoje moldura nativa — receita no report P2 §5);
+  browserPane.ts em 1069 linhas (receita §2.2 do report P3); guarda de
+  captura com o DOCK minimizado segue recusando (a sonda nova prova que
+  funciona — relaxar é decisão explícita, não inferência); cerca do
+  TypeError síncrono do preload velho (receita §6 do P3). (1) validação na TELA REAL espera o
 restart (main não chega por HMR; o preview de browser puro não monta o rail
 de missão — mock sem conversa); primeira sessão viva também fecha o que as
 sondas não cobriram (`Input.insertText`, `Network.enable` — ambos degradam

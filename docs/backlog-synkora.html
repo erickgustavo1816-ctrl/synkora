@@ -180,6 +180,12 @@
       <span class="desc">A extração dos blocos de persona para guiPersonaBlocks.ts foi FEITA e provada byte a byte, mas revertida: tsc --outDir exige import sem extensão e --experimental-strip-types exige com — não há forma que sirva aos dois. Desbloqueio verificado em binário: --rewriteRelativeImportExtensions nos 10 scripts tsc + allowImportingTsExtensions no tsconfig.node.json. No mesmo pacote: cerca frágil test-gui-cli-launch.mjs:82 (casa a string 'return registry.create(spawn)' com o return) e test-skills-kit.mjs em 1003 linhas (corte natural: cercas do SYNC para test-skills-sync.mjs).</span>
       <span class="refs">refs: <code>.synkora/reports/skills2-agent-F-report.md</code> · <code>src/main/guiMissionContracts.ts</code> · <code>src/main/ipc/gui.ts</code></span>
     </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">Browser: 4 sobras nomeadas do pop-out (titlebar da casa, browserPane 1069, guarda dock-minimizado, cerca do TypeError)</span>
+      <span class="desc">Todas com receita nos reports: titlebar da casa na janela destacada (hoje moldura nativa — P2 §5); browserPane.ts em 1069 linhas, corte browserPaneGeometry+browserPaneUrl (P3 §2.2); guarda de captura com o DOCK minimizado ainda recusa embora a sonda nova prove pixel fresco (relaxar é decisão explícita — 3 linhas); cerca do TypeError síncrono do preload velho exige suíte de renderer com esbuild (P3 §6).</span>
+      <span class="refs">refs: <code>.synkora/reports/browser-agent-P2-report.md</code> · <code>.synkora/reports/browser-agent-P3-report.md</code></span>
+    </div>
   </section>
 
   <details class="done-wrap" open>
@@ -212,7 +218,7 @@
       <p class="done-day">29/08 — sábado</p>
       <div class="done"><span class="glyph">✓</span><span class="title">RightDock — o lado direito do app</span><span class="refs"><code>docs/mockups/rightdock-2.html</code> · <code>3e75d39</code> · <code>.synkora/reports/PLANO_CONSERTO_RIGHTDOCK_2026-08-22.md</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">Skills 2.0 — o build ENTREGUE (kit de 16 semeado, sync no spawn provado em binário, tela de gestão, instalar-por-URL pinado, personas com lei + cardápio, PODA 406→16)</span><span class="refs"><code>2e7be90</code> · <code>61853e2</code> · <code>.synkora/reports/DESIGN_SKILLS_2_0_BUILD_2026-08-29.md</code> · <code>docs/HANDOFF_SESSAO_2026-08-29.md</code></span></div>
-      <div class="done"><span class="glyph">✓</span><span class="title">Browser embutido ENTREGUE — a missão dirige, o dono assiste (rota B provada em sonda, 11 tools texto-first nos 2 CLIs, painel no dock)</span><span class="refs"><code>c126764</code> · <code>.synkora/reports/DESIGN_BROWSER_EMBUTIDO_2026-08-29.md</code> · <code>.synkora/reports/PROBE_BROWSER_CDP_2026-08-29.md</code> · <code>docs/HANDOFF_SESSAO_2026-08-29.md</code></span></div>
+      <div class="done"><span class="glyph">✓</span><span class="title">Browser embutido ENTREGUE — a missão dirige, o dono assiste (rota B provada em sonda, 11 tools texto-first nos 2 CLIs, painel no dock)</span><span class="refs"><code>c126764</code> · <code>8669e00</code> · <code>730d9bc</code> · <code>ad771b3</code> · <code>12ab93a</code> · <code>.synkora/reports/DESIGN_BROWSER_POPOUT_2026-08-29.md</code> · <code>docs/HANDOFF_SESSAO_2026-08-29.md</code></span></div>
     </div>
   </details>
 </div>
