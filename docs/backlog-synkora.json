@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-29T18:35:24.080Z",
+  "updatedAt": "2026-08-29T18:53:49.709Z",
   "lanes": {
     "agora": [],
     "fila": [
@@ -336,11 +336,11 @@
         "id": "skills-2-0-build",
         "title": "Skills 2.0 — o build ENTREGUE (kit de 16 semeado, sync no spawn provado em binário, tela de gestão, instalar-por-URL pinado, personas com lei + cardápio, PODA 406→16)",
         "badge": "restart pendente",
-        "desc": "Frota Opus max (motor/sync/personas/tela/gate/split) + sonda em binário real: claude lê .claude/skills, codex lê .agents/skills (.codex/ dispara ERROR de trust — nunca). Gate raiz verde com as 2 suítes novas (33+13, falha provada no código velho); validação visual feita na tela real; poda executada (manifest coerente). Restart pendente para o main novo chegar ao app.",
+        "desc": "Frota Opus max (motor/sync/personas/tela/gate/split/restore) + sonda em binário real: claude lê .claude/skills, codex lê .agents/skills (.codex/ dispara ERROR de trust — nunca). Gate raiz verde com as 2 suítes novas; validação visual feita na tela real. CORREÇÃO no mesmo dia: o seed do build era uma reconstrução aprovada às cegas — a lista v3 original do grill foi recuperada da memória e restaurada verbatim por ordem do dono (61853e2); lib final = as 16 do v3 (4 reinstaladas pinadas + DS-standard do git history). Restart pendente para o main novo chegar ao app.",
         "refs": [
           "2e7be90",
+          "61853e2",
           ".synkora/reports/DESIGN_SKILLS_2_0_BUILD_2026-08-29.md",
-          ".synkora/reports/PROBE_SKILLS_CWD_2026-08-29.md",
           "docs/HANDOFF_SESSAO_2026-08-29.md"
         ],
         "day": "29/08 — sábado"
@@ -653,6 +653,12 @@
       "action": "move",
       "id": "skills-2-0-build",
       "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-29T18:53:49.709Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "skills-2-0-build"
     }
   ]
 }
