@@ -286,9 +286,28 @@ export default function DockBrowser({
   // que não muda.
   const railRef = useRef<HTMLElement | null>(null)
   const currentRailHeight = useCallback((): number => railHeightOf(railRef.current), [])
+  // O RESTO do trilho, medido de verdade (bug pago 2026-08-29: "aumento o
+  // tamanho aí some e não tem mais como diminuir" — o floor de chute deixava a
+  // página crescer além da viewport e a alça sumia atrás da view nativa, que
+  // come o wheel). `scrollHeight - página` é estável por construção: o que
+  // sobra são exatamente as irmãs + o chrome + a alça. Os 2px são o respiro do
+  // arredondamento sub-pixel a 125% de DPI (lição da casa). `undefined` quando
+  // ainda não há o que medir — o modelo cai no floor de sempre.
+  const currentRailRest = useCallback((): number | undefined => {
+    const rail = railRef.current
+    const page = pageRef.current
+    if (!rail || !page || page.offsetHeight <= 0) return undefined
+    return Math.max(0, rail.scrollHeight - page.offsetHeight + 2)
+  }, [])
+  const [railRest, setRailRest] = useState<number | undefined>(undefined)
+  const measureRailRest = useCallback((): void => {
+    const next = currentRailRest()
+    if (next === undefined) return
+    setRailRest((current) => (current !== undefined && Math.abs(current - next) < 2 ? current : next))
+  }, [currentRailRest])
 
-  const pageRange = browserPageRange(railHeight)
-  const pageHeight = browserPageHeight(fraction, railHeight)
+  const pageRange = browserPageRange(railHeight, { railRest })
+  const pageHeight = browserPageHeight(fraction, railHeight, { railRest })
   // O componente publica a altura como VARIÁVEL no próprio nó: o CSS lê dela, e
   // o arrasto escreve nela direto (sem um render por quadro) — o arranjo pago
   // do `--right-rail-rendered-width`.
@@ -314,6 +333,10 @@ export default function DockBrowser({
     const measure = (): void => {
       const next = railHeightOf(rail)
       if (next > 0) setRailHeight((current) => (current === next ? current : next))
+      // O resto muda quando uma irmã colapsa/expande SEM o trilho mudar de
+      // tamanho — medir junto aqui cobre o resize; o reconciliador de 400ms
+      // cobre o colapso da irmã.
+      measureRailRest()
     }
     measure()
     const sizes = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
@@ -329,7 +352,7 @@ export default function DockBrowser({
       dragCleanupRef.current = null
       railRef.current = null
     }
-  }, [])
+  }, [measureRailRest])
 
   const persistFraction = useCallback(
     (next: number): void => {
@@ -389,7 +412,12 @@ export default function DockBrowser({
       const handle = event.currentTarget
       const pointerId = event.pointerId
       const startY = event.clientY
-      const startHeight = browserPageHeight(fraction, currentRailHeight())
+      // O resto é capturado no INÍCIO do gesto: as irmãs não mudam no meio de
+      // um arrasto, e re-medi-lo por quadro leria a própria página mexendo.
+      const railRestNow = currentRailRest()
+      const startHeight = browserPageHeight(fraction, currentRailHeight(), {
+        railRest: railRestNow
+      })
       let nextHeight = startHeight
       let raf = 0
       let finished = false
@@ -412,7 +440,7 @@ export default function DockBrowser({
         move.preventDefault()
         // A régua é relida a cada quadro: a janela pode mudar de tamanho no meio
         // do gesto, e a altura obedece ao trilho de AGORA.
-        const range = browserPageRange(currentRailHeight())
+        const range = browserPageRange(currentRailHeight(), { railRest: railRestNow })
         nextHeight = Math.round(
           Math.min(range.max, Math.max(range.min, startHeight + (move.clientY - startY)))
         )
@@ -428,7 +456,9 @@ export default function DockBrowser({
         paint()
         setDragging(false)
         // A fração é a preferência DURÁVEL; o pixel do gesto é só o meio.
-        persistFraction(browserPageFraction(nextHeight, currentRailHeight()))
+        persistFraction(
+          browserPageFraction(nextHeight, currentRailHeight(), { railRest: railRestNow })
+        )
         handle.removeEventListener('pointermove', onMove)
         handle.removeEventListener('pointerup', onUp)
         handle.removeEventListener('pointercancel', onCancel)
@@ -462,7 +492,7 @@ export default function DockBrowser({
       handle.addEventListener('lostpointercapture', onLostCapture)
       window.addEventListener('blur', onCancel)
     },
-    [currentRailHeight, fraction, persistFraction]
+    [currentRailHeight, currentRailRest, fraction, persistFraction]
   )
 
   /** O MESMO ajuste pelo teclado: a casa não entrega controle só de mouse.
@@ -471,20 +501,33 @@ export default function DockBrowser({
   const onGripKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>): void => {
       const rail = currentRailHeight()
+      const opts = { railRest: currentRailRest() }
       const big = BROWSER_PAGE_KEYBOARD_STEP * 2
       let next: number | null = null
       switch (event.key) {
         case 'ArrowDown':
-          next = stepBrowserPageFraction(fraction, 'grow', rail, event.shiftKey ? big : undefined)
+          next = stepBrowserPageFraction(
+            fraction,
+            'grow',
+            rail,
+            event.shiftKey ? big : undefined,
+            opts
+          )
           break
         case 'ArrowUp':
-          next = stepBrowserPageFraction(fraction, 'shrink', rail, event.shiftKey ? big : undefined)
+          next = stepBrowserPageFraction(
+            fraction,
+            'shrink',
+            rail,
+            event.shiftKey ? big : undefined,
+            opts
+          )
           break
         case 'Home':
-          next = browserPageFraction(browserPageRange(rail).min, rail)
+          next = browserPageFraction(browserPageRange(rail, opts).min, rail, opts)
           break
         case 'End':
-          next = browserPageFraction(browserPageRange(rail).max, rail)
+          next = browserPageFraction(browserPageRange(rail, opts).max, rail, opts)
           break
         default:
           return
@@ -495,7 +538,7 @@ export default function DockBrowser({
       event.stopPropagation()
       persistFraction(next)
     },
-    [currentRailHeight, fraction, persistFraction]
+    [currentRailHeight, currentRailRest, fraction, persistFraction]
   )
 
   // ————— GEOMETRIA: o único canal entre este painel e a view nativa —————
@@ -570,7 +613,13 @@ export default function DockBrowser({
     // dentro do trilho): captura para pegar todos, passivo para não segurar o
     // gesto de rolar de ninguém.
     document.addEventListener('scroll', schedule, { capture: true, passive: true })
-    const timer = window.setInterval(schedule, BOUNDS_RECONCILE_MS)
+    // O mesmo relógio reconcilia o RESTO do trilho: irmã que colapsou/expandiu
+    // não mexe no tamanho do scroller nem do retângulo — só o resto muda, e o
+    // teto da página muda com ele (é o clamp que mantém a alça alcançável).
+    const timer = window.setInterval(() => {
+      schedule()
+      measureRailRest()
+    }, BOUNDS_RECONCILE_MS)
 
     return () => {
       scheduleRef.current = null
@@ -587,7 +636,7 @@ export default function DockBrowser({
       lastSentRef.current = null
       lastRectRef.current = null
     }
-  }, [missionId, report])
+  }, [missionId, report, measureRailRest])
 
   // Três mudanças que NENHUM observador de tamanho enxerga:
   //  · o trilho saiu/voltou de vista (o Board mantém o dock montado);

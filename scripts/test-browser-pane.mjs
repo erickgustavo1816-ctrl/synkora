@@ -348,6 +348,33 @@ test('ALTURA: o PISO de 180px vence a fração, e o TETO respeita o palmo das ir
   assert.ok(browserPageHeight(1, 900) <= 900 - BROWSER_PAGE_RAIL_FLOOR)
 })
 
+test('ALTURA: o RESTO MEDIDO vence o chute — a alça nunca sai da viewport do trilho', () => {
+  // BUG PAGO (dono na tela viva, 2026-08-29): "eu aumento o tamanho aí some e
+  // não tem mais como diminuir". Com as irmãs colapsadas o resto real (~240px)
+  // passa do floor de 160: a página crescia além do fold e a alça ficava atrás
+  // da view nativa — que come o wheel, então não havia como rolar até ela.
+  // Com o resto MEDIDO, o teto garante: página + resto ≤ viewport do trilho,
+  // logo o pé do painel (a alça) está SEMPRE dentro do quadro.
+  const rail = 900
+  const rest = 240
+  assert.deepEqual(browserPageBounds(rail, { railRest: rest }), { min: 180, max: 660 })
+  assert.ok(
+    browserPageHeight(BROWSER_PAGE_MAX_FRACTION, rail, { railRest: rest }) + rest <= rail,
+    'a página no máximo ainda deixa o resto (e a alça) dentro da viewport'
+  )
+  // Resto pequeno (irmãs colapsadas E chrome enxuto) DÁ MAIS página que o
+  // floor daria — o chute era conservador nos dois sentidos.
+  assert.equal(browserPageBounds(rail, { railRest: 90 }).max, 810)
+  // Sem medida (primeiro quadro, harness), o floor de sempre.
+  assert.equal(browserPageBounds(rail).max, rail - BROWSER_PAGE_RAIL_FLOOR)
+  // Lixo na medida não vira NaN nem teto negativo.
+  assert.deepEqual(browserPageBounds(rail, { railRest: Number.NaN }), {
+    min: 180,
+    max: rail - BROWSER_PAGE_RAIL_FLOOR
+  })
+  assert.equal(browserPageBounds(200, { railRest: 500 }).max, 0)
+})
+
 test('ALTURA: trilho apertado faz o PISO ceder — a geometria nunca devolve min > max', () => {
   // Mesma escolha do `rightRailBounds`: com a coluna curta o piso cede, porque
   // um clamp com min > max passaria a mentir e estouraria o dock.

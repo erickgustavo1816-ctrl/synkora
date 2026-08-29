@@ -312,6 +312,24 @@ export interface BrowserPageBounds {
 export interface BrowserPageOptions {
   minHeight?: number
   railFloor?: number
+  /**
+   * O RESTO MEDIDO do trilho: tudo que divide o scroller com a página
+   * (cabeçalhos das irmãs, chrome do browser, a própria alça), em pixels.
+   *
+   * BUG PAGO (2026-08-29, dono na tela viva: "eu aumento o tamanho aí some e
+   * não tem mais como diminuir"): o floor de 160px era um CHUTE do resto, e
+   * com as irmãs colapsadas o resto real passa de 220px — a página crescia
+   * além da viewport do trilho, a alça saía do quadro, e a view NATIVA come o
+   * wheel do mouse: não sobrava papel para rolar até ela. Alça inalcançável é
+   * beco sem saída, e beco sem saída é bug.
+   *
+   * Quando o componente mede e passa o resto, ele SUBSTITUI o floor: o teto
+   * vira `viewport - resto`, e o pé do painel (a alça) cabe SEMPRE dentro da
+   * viewport do scroller, com qualquer combinação de irmãs abertas/fechadas.
+   * O floor fixo fica como fallback dos contextos sem medida (primeiro
+   * quadro, harness).
+   */
+  railRest?: number
 }
 
 /** Storage injetado (o módulo continua puro; quem passa `window.localStorage`
@@ -341,9 +359,14 @@ export function browserPageBounds(
   options: BrowserPageOptions = {}
 ): BrowserPageBounds {
   const rail = positive(railHeight)
-  const floor = positive(options.railFloor ?? BROWSER_PAGE_RAIL_FLOOR)
+  // O resto MEDIDO vence o chute: é ele que garante a alça dentro da viewport
+  // (ver o comentário de `railRest`). Sem medida, o floor de sempre.
+  const reserved =
+    options.railRest !== undefined && Number.isFinite(options.railRest)
+      ? positive(options.railRest)
+      : positive(options.railFloor ?? BROWSER_PAGE_RAIL_FLOOR)
   const wanted = positive(options.minHeight ?? BROWSER_PAGE_MIN_HEIGHT)
-  const max = Math.max(0, rail - floor)
+  const max = Math.max(0, rail - reserved)
   const min = Math.min(wanted, max)
   return { min, max }
 }
