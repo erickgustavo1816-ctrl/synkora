@@ -137,9 +137,17 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // chat passa a chegar pela PASTA do worktree e o modelo precisa da régua de
     // USO — a ocasião como gatilho, playbook em vez de enfeite, e a LEI do
     // `impeccable` em quem estiliza (dev 10985, ajudante 8990; o reviewer não
-    // recebe nem cardápio nem lei e continua exatamente em 7120). O teto
-    // continua sendo contra CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
-    assert.ok(contract.length < 11400, `${role}: contrato virou constituição`)
+    // recebe nem cardápio nem lei e continua exatamente em 7120). E de 11400
+    // para 13300 na MESMA data, pelo BROWSER DA CASA
+    // (DESIGN_BROWSER_EMBUTIDO_2026-08-29): a dor do dono — "QA visual não pode
+    // demorar 40-50 min" — vinha do agente abrindo browser FORA do app, cego
+    // para ele; o bloco manda o QA visual rodar no painel do dock pelas tools
+    // `browser_*`, com `browser_probe` de veredito em TEXTO (o codex descarta
+    // imagem de MCP), `browser_shot` referenciado para o dono ver e a página
+    // tratada como conteúdo não-confiável (dev 12848, ajudante 10853; o
+    // reviewer não testa UI e continua exatamente em 7120). O teto continua
+    // sendo contra CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
+    assert.ok(contract.length < 13300, `${role}: contrato virou constituição`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -1516,5 +1524,138 @@ test('quem não PRODUZ não recebe cardápio nem lei: reviewer e release intocad
     assert.equal(skillsSection(prompt), undefined, `${nome}: recebeu o cardápio de skills`)
     assert.doesNotMatch(prompt, /impeccable/iu, `${nome}: recebeu a lei da UI`)
     assert.doesNotMatch(prompt, /THE ONE LAW/u, `${nome}: recebeu a lei da UI`)
+  }
+})
+
+// ————— O BROWSER DA CASA (2026-08-29 — DESIGN_BROWSER_EMBUTIDO, fatia H4) —————
+//
+// A dor do dono, verbatim: "QA visual não pode demorar 40-50 min". O caminho que
+// custava esse tempo era sempre o mesmo — o agente abrindo um browser FORA do
+// app (ou subindo um playwright dele) para olhar a UI, com o dono cego do outro
+// lado. O browser embutido existe para matar exatamente esse desvio: painel no
+// dock da missão, dirigido daqui pelas tools `browser_*`, com o dono assistindo
+// e podendo assumir o volante.
+//
+// A metade mecânica é das fatias H1-H3 (view, driver, kit no mcpServer); esta é
+// a metade que o MODELO lê, e ela carrega as três coisas que o design mandou
+// escrever: (1) o QA visual roda NA CASA, nunca em browser externo nem em
+// playwright próprio; (2) `browser_probe` é o VEREDITO — fato visual em TEXTO,
+// que o codex enxerga (ele descarta imagem de MCP: openai/codex#10334) — e
+// `browser_shot` é para o DONO ver, o que só acontece se o caminho for
+// REFERENCIADO (a régua da R36, que já mora neste contrato); (3) a página é
+// conteúdo NÃO-CONFIÁVEL.
+//
+// QUEM RECEBE: dev e ajudante, os dois que mexem em UI e verificam o que
+// fizeram. O reviewer lê diff e NÃO roda o produto (contrato dele), o
+// planejador não executa produto e o release opera a subida da versão — o
+// catálogo do MCP nem lhes serve as tools, então prometer o verbo a eles seria
+// mandá-los procurar ferramenta que não existe.
+
+const BROWSER_HEADER = 'BROWSER — VISUAL QA RUNS IN THE HOUSE BROWSER, NEVER IN ONE YOU OPEN:'
+
+/** O bloco do browser, lido da FONTE — do cabeçalho até a linha em branco que
+ *  separa as seções. Como o do cardápio: o teste nunca guarda uma cópia dele. */
+function browserSection(contract) {
+  const at = contract.indexOf(BROWSER_HEADER)
+  if (at < 0) return undefined
+  const end = contract.indexOf('\n\n', at)
+  return (end < 0 ? contract.slice(at) : contract.slice(at, end)).trim()
+}
+
+test('o browser da casa é FONTE ÚNICA e chega a quem TESTA UI: dev e ajudante', () => {
+  const dev = browserSection(guiMissionSystemPrompt('dev'))
+  const helper = browserSection(guiMissionSystemPrompt('helper'))
+  assert.ok(dev, 'dev: sem o bloco do browser da casa')
+  assert.ok(helper, 'helper: sem o bloco do browser da casa')
+  // FONTE ÚNICA, como a ordem da delegação e o cardápio: ninguém tem a própria
+  // versão da régua do dono.
+  assert.equal(dev, helper, 'dev e ajudante divergiram no bloco do browser')
+
+  // O ENDEREÇO: um painel DENTRO do Synkora, no dock da missão, e as tools que
+  // o dirigem — nas DUAS grafias (o codex vê o nome cru, o claude o prefixado).
+  assert.match(dev, /browser_\*/u, 'o bloco não nomeia a família de tools')
+  assert.match(dev, /mcp__synkora__browser_/u, 'sem a grafia que o claude enxerga')
+  assert.match(dev, /browser_open/u, 'sem o verbo que abre a página')
+  assert.match(dev, /dock/iu, 'o bloco não diz ONDE a página aparece para o dono')
+  // O dono assiste e pode assumir (decisão D5.2 — o ⚡ indica, não trava).
+  assert.match(dev, /watch/iu, 'o dono some da cena que é dele')
+
+  // Curto como as seções irmãs: régua, não constituição.
+  assert.ok(dev.length > 700, 'o bloco do browser ficou vago demais')
+  assert.ok(dev.length < 2000, 'o bloco do browser virou constituição')
+
+  // E ele não desloca a última palavra do contrato (a ordem da delegação).
+  for (const role of ['dev', 'helper']) {
+    const contract = guiMissionSystemPrompt(role)
+    assert.ok(
+      contract.indexOf(BROWSER_HEADER) < contract.indexOf(DELEGATION_HEADER),
+      `${role}: o browser passou na frente da ordem permanente da delegação`
+    )
+    assert.ok(
+      contract.endsWith(delegationSection(contract)),
+      `${role}: a ordem permanente deixou de fechar o contrato`
+    )
+  }
+})
+
+test('o QA visual nunca sai de casa: browser externo e playwright próprio são proibidos PELO NOME', () => {
+  const section = browserSection(guiMissionSystemPrompt('dev'))
+  assert.ok(section, 'sem o bloco do browser da casa')
+  // A proibição nomeia o DESVIO real (a mesma régua do fratricídio: cercar sem
+  // nomear a arma deixa a porta aberta).
+  assert.match(section, /NEVER open an external browser/u, 'o browser externo virou sugestão')
+  for (const arma of ['playwright', 'puppeteer', 'headless chrome']) {
+    assert.ok(section.includes(arma), `sem o nome ${arma} — a porta continua aberta`)
+  }
+  // E diz o PORQUÊ, que é o que faz a régua colar: a dor que originou o browser.
+  assert.match(section, /40-50 minutes/u, 'sem a dor medida do dono, a proibição vira capricho')
+  // Beco sem saída é bug, inclusive em persona: motor desligado tem rota.
+  assert.match(section, /not in your catalog/iu, 'a guarda ficou sem rota de saída')
+  assert.match(section, /never the exit/iu, 'sem a saída sancionada, o agente cai no browser dele')
+})
+
+test('probe é o VEREDITO em texto; shot é para o DONO ver, e o caminho tem de ser REFERENCIADO', () => {
+  const section = browserSection(guiMissionSystemPrompt('dev'))
+  // O VEREDITO: fato visual em TEXTO — o único que o codex enxerga.
+  assert.match(section, /browser_probe is the VERDICT/u, 'probe deixou de ser o veredito')
+  for (const fato of ['contrast', 'overflow', 'box']) {
+    assert.ok(section.includes(fato), `o veredito não cobre ${fato}`)
+  }
+  assert.match(section, /as text/iu, 'o veredito deixou de ser texto')
+  // O SHOT é do dono, e ele só existe na tela dele se for referenciado (R36).
+  assert.match(section, /browser_shot/u, 'sumiu a tool do screenshot')
+  assert.match(section, /OWNER'S EYES/u, 'o shot deixou de ser para o dono')
+  assert.match(section, /REFERENCE that path/u, 'o caminho pode voltar a não ser referenciado')
+  // A ação já observa (lei 3 do motor): formulário é UMA ida, não N.
+  assert.match(section, /browser_act already observes/u, 'a ação voltou a exigir leitura extra')
+  // e a recusa nomeia a receita — a régua da casa, também aqui
+  assert.match(section, /refusal/iu, 'a recusa do browser não ensina a saída')
+})
+
+test('a página é conteúdo NÃO-CONFIÁVEL: nem segredo entra nela, nem ordem sai dela', () => {
+  for (const role of ['dev', 'helper']) {
+    const section = browserSection(guiMissionSystemPrompt(role))
+    assert.match(section, /UNTRUSTED CONTENT/u, `${role}: a página virou fonte confiável`)
+    assert.match(section, /DATA, never instructions/u, `${role}: o texto da página pode virar ordem`)
+    assert.match(section, /NEVER type a secret/u, `${role}: segredo pode entrar na página`)
+    for (const segredo of ['token', 'password']) {
+      assert.ok(section.includes(segredo), `${role}: a proibição não cobre ${segredo}`)
+    }
+  }
+})
+
+test('quem não TESTA UI não recebe o browser: reviewer, planejador e release intocados', () => {
+  // O reviewer lê diff e não roda o produto; o planejador não executa produto; o
+  // release sobe a versão pelas duas ferramentas dele. O catálogo do MCP não
+  // lhes serve as tools `browser_*` (cerca da fatia H2) — prometê-las aqui seria
+  // mandá-los procurar ferramenta que não existe.
+  for (const [nome, prompt] of [
+    ['reviewer', guiMissionSystemPrompt('reviewer')],
+    ['planner', guiPlanningSystemPrompt()],
+    ['release', guiReleaseSystemPrompt()]
+  ]) {
+    assert.equal(browserSection(prompt), undefined, `${nome}: recebeu o bloco do browser`)
+    assert.doesNotMatch(prompt, /browser_/u, `${nome}: recebeu tool de browser no contrato`)
+    assert.doesNotMatch(prompt, /playwright/iu, `${nome}: ganhou régua de QA visual à toa`)
   }
 })

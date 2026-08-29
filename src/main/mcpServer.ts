@@ -41,6 +41,11 @@ import {
   type GuiLspToolkit
 } from './guiLspTools'
 import { LSP_DIAGNOSTICS_CEILING_MS } from './lsp/lspSession'
+// BROWSER EMBUTIDO (2026-08-29 — design DESIGN_BROWSER_EMBUTIDO). O kit de 11
+// tools mora no módulo próprio (mesma doutrina do `guiLspTools`: o mcpServer
+// REGISTRA catálogos, nunca implementa produto), e é servido pelos retornos
+// antecipados de `gui-delegator` e `ajudante` logo abaixo.
+import { registerBrowserKit, type GuiBrowserToolkit } from './guiBrowserTools'
 
 const requireFromMain = createRequire(
   typeof __filename === 'string' ? __filename : join(process.cwd(), 'package.json')
@@ -138,6 +143,19 @@ export interface McpApi {
    * agente racionaliza a ausência em vez de ler o motivo.
    */
   lsp?: GuiLspToolkit
+
+  // ——— kit do BROWSER (2026-08-29 — o chat de missão e os AJUDANTES) ———
+  /**
+   * O produto do `buildGuiBrowserTools`: as 11 ferramentas do browser embutido
+   * da missão. Objeto e não função, pelo MESMO motivo do `lsp` acima — o kit é
+   * o mesmo para os dois papéis que o recebem, e cada método já escreve a
+   * própria caixa-preta com a missão junto (o proxy de instrumentação do
+   * `index.ts` só enxerga membros-função).
+   *
+   * Ausente = as tools continuam no catálogo e respondem `BROWSER_ENGINE_OFF`,
+   * que diz em letras maiúsculas que NADA foi aberto.
+   */
+  browser?: GuiBrowserToolkit
 }
 
 /** Um helper pedido no `delegate` (contrato D2; validação zod no catálogo). */
@@ -714,6 +732,13 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     // ajudante precisam achar o problema exato tanto quanto o dev; o que é do
     // dev é a INTEGRAÇÃO, não a leitura.
     registerLspKit(server, api, identity)
+    // BROWSER (2026-08-29): também fora do `if` do dev, e pelo mesmo motivo —
+    // verificar a própria tela não é autoridade sobre nada. O reviewer é a
+    // exceção deliberada e ela mora no `guiMissionRoleOf` abaixo: o contrato
+    // dele é LER o diff e reportar, não rodar o produto.
+    if (guiMissionRoleOf(identity.paneId) !== 'reviewer') {
+      registerBrowserKit(server, api.browser, identity)
+    }
     return finishCatalog()
   }
 
@@ -759,6 +784,11 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   // existente já diz só duplicaria a régua.
   if (identity.role === 'ajudante') {
     registerLspKit(server, api, identity)
+    // BROWSER (2026-08-29): o QA DELEGADO é o caso real que o design nomeia —
+    // o dev abre um ajudante só para varrer a tela enquanto ele segue no
+    // código. Sem browser aqui, esse ajudante voltaria a abrir browser externo,
+    // que é a dor que originou a feature.
+    registerBrowserKit(server, api.browser, identity)
     return finishCatalog()
   }
 

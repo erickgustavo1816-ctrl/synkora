@@ -795,6 +795,64 @@ export interface HubCommunicationEvent {
   kind: 'message' | 'delegate' | 'report' | 'feedback' | 'handoff'
 }
 
+// ————— BROWSER EMBUTIDO (2026-08-29) —————
+//
+// ESPELHO DECLARADO de `src/main/ipc/browser.ts` (o par): os nomes de canal e a
+// ordem dos argumentos abaixo SÃO o contrato — mexeu num lado, mexe no outro.
+// A fatia do renderer que consome isto é `components/DockBrowser.tsx`.
+//
+// A view nativa (WebContentsView) compõe POR CIMA do DOM: o renderer não
+// desenha página nenhuma, ele só REPORTA o retângulo do painel e se ele está à
+// vista. Esconder é sempre `visible:false` — nunca desanexar (lei 1 do design,
+// paga na sonda: `removeChildView` pendura a captura por 5-8s e mata o rAF).
+
+/** Retângulo do painel em coordenadas da PÁGINA do renderer (= DIP da janela,
+ *  com zoom 1) — o main o aplica em `view.setBounds`. */
+export interface BrowserRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** Uma aba do browser da missão. `canBack`/`canForward` vêm do histórico real
+ *  do webContents: o chrome não adivinha se as setas fazem alguma coisa. */
+export interface BrowserTab {
+  tabId: string
+  title: string
+  url: string
+  active: boolean
+  loading: boolean
+  canBack: boolean
+  canForward: boolean
+}
+
+/** Nota legível do MOTOR para o dono (download barrado, teto de abas, página
+ *  que caiu). Ela viaja DENTRO do state de propósito: mensagem durável com
+ *  recibo, nunca um pulso que se perde se o painel ainda não estava montado.
+ *  `kind` é `string` aqui e união no main — o motor é o dono do vocabulário, e
+ *  um valor novo não pode quebrar a tela. */
+export interface BrowserNoticeView {
+  kind: string
+  text: string
+  at: string
+}
+
+/** Fotografia do browser de UMA missão. `alive: false` = nenhuma view nasceu
+ *  ainda (ele é LAZY) — o painel convida a abrir em vez de mentir que existe. */
+export interface BrowserPanelState {
+  alive: boolean
+  /** o agente está dirigindo AGORA (⚡ do chrome) — indicação, nunca trava:
+   *  a view visível recebe o mouse/teclado do dono de graça (decisão D5.2). */
+  agentDriving: boolean
+  tabs: BrowserTab[]
+  notice?: BrowserNoticeView
+}
+
+/** Toda alavanca do chrome devolve o mesmo ack: recusa é TEXTO em PT-BR que
+ *  nomeia a receita (teto de abas, missão sem worktree…), nunca um silêncio. */
+export type BrowserActionResult = { ok: true } | { ok: false; error: string }
+
 const api = {
   projects: {
     list: (): Promise<Project[]> => ipcRenderer.invoke('projects:list'),
@@ -1375,6 +1433,51 @@ const api = {
     }
   },
   // ————— fim do BLOCO NOVO de planos —————
+  /**
+   * BROWSER EMBUTIDO — o painel do RightDock, por missão.
+   * Espelho 1:1 dos canais de `src/main/ipc/browser.ts` (o par declarado). O
+   * `missionId` é sempre o PRIMEIRO argumento: é ele que escolhe o grupo de
+   * abas; a SESSÃO (cookies/logins) é do PROJETO e vive no main.
+   */
+  browser: {
+    /** Fotografia atual — o renderer relê isto a cada `browser:changed`. */
+    state: (missionId: string): Promise<BrowserPanelState> =>
+      ipcRenderer.invoke('browser:state', missionId),
+    /** URL do dono: o main normaliza (https por padrão) e aceita qualquer
+     *  endereço — o browser é dele. */
+    navigate: (missionId: string, url: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke('browser:navigate', missionId, url),
+    back: (missionId: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke('browser:back', missionId),
+    forward: (missionId: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke('browser:forward', missionId),
+    reload: (missionId: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke('browser:reload', missionId),
+    /** Abre aba (e o browser, se ele ainda não nasceu). Sem `url`, a aba nasce
+     *  em branco. Recusa com receita quando o teto de 8 abas já está cheio. */
+    newTab: (missionId: string, url?: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke('browser:newTab', missionId, url),
+    closeTab: (missionId: string, tabId: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke('browser:closeTab', missionId, tabId),
+    selectTab: (missionId: string, tabId: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke('browser:selectTab', missionId, tabId),
+    /** DevTools da PÁGINA (janela separada) — nunca as do app. */
+    devtools: (missionId: string, tabId: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke('browser:devtools', missionId, tabId),
+    /** GEOMETRIA: o painel reporta onde está e se está à vista. Fire-and-forget
+     *  de propósito — chega a cada frame de um arrasto de largura, e um invoke
+     *  por frame encheria a fila de promessas por nada. */
+    bounds: (missionId: string, rect: BrowserRect, visible: boolean): void =>
+      ipcRenderer.send('browser:bounds', missionId, rect, visible),
+    /** O main mexeu no browser desta missão (agente pelas tools `browser_*`,
+     *  ou o próprio clique do dono): o painel relê o `state`. */
+    onChanged: (cb: (missionId: string) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, missionId: string): void => cb(missionId)
+      ipcRenderer.on('browser:changed', listener)
+      return () => ipcRenderer.removeListener('browser:changed', listener)
+    }
+  },
+  // ————— fim do BLOCO NOVO do browser —————
   /**
    * SKILLS 2.0 — a central GLOBAL (a biblioteca é da máquina, não do projeto).
    * Espelho 1:1 dos canais de `src/main/ipc/skills.ts`. Todo mutador devolve

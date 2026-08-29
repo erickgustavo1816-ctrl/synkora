@@ -108,6 +108,13 @@ import {
 // derrubada por ociosidade, por worktree removido e no quit.
 import { LspManager, tsServerLaunch } from './lsp/lspManager'
 import { buildGuiLspTools } from './guiLspTools'
+// BROWSER EMBUTIDO (2026-08-29 — design DESIGN_BROWSER_EMBUTIDO). Três peças
+// que só valem juntas: o MOTOR das views por missão (H1), a superfície do DONO
+// (`browser:*`, H1) e o KIT DE 11 TOOLS do agente (H2). A costura é esta.
+import { createBrowserManager, type BrowserPaneManager } from './browserPane'
+import { registerBrowserIpc } from './ipc/browser'
+import { buildGuiBrowserTools, type GuiBrowserToolkit } from './guiBrowserTools'
+import { GUI_HELPER_MCP_PANE_PREFIX } from './guiHelperLspMcp'
 import { SynVoiceService } from './synVoice'
 import { WindowsTextInput } from './windowsTextInput'
 import { WindowsGlobalActivation } from './windowsGlobalActivation'
@@ -3540,6 +3547,17 @@ app.whenReady().then(async () => {
       }
     }, STALL_TICK_MS)
   }
+  // ————— BROWSER EMBUTIDO: o motor das views por missão (H1) —————
+  //
+  // Nasce AQUI, antes do `killMissionGuiPanes`, porque é lá que ele morre: a
+  // aba de uma missão tem exatamente o mesmo tempo de vida que os chats dela.
+  // A partition (cookies, logins) é do PROJETO e sobrevive — é isso que faz o
+  // dono logar uma vez só.
+  const browserPanes: BrowserPaneManager = createBrowserManager({
+    window: () => mainWindow,
+    record: (input) => blackbox.record(input),
+    push: (channel, ...args) => pushAll(channel, ...args)
+  })
   const killMissionGuiPanes = (missionId: string): void => {
     guiSessions?.killWhere((paneId) => isGuiMissionPaneId(paneId, missionId))
     // O servidor de linguagem tem `cwd` DENTRO do worktree, igual aos chats:
@@ -3549,6 +3567,13 @@ app.whenReady().then(async () => {
     // kill dos panes — a próxima pergunta em outra raiz sobe um servidor novo.
     const worktree = missions.get(missionId)?.worktree
     if (worktree) lspManager.invalidate(worktree)
+    // O BROWSER MORRE NO MESMO PONTO (design H1/H2). É a costura que o design
+    // pede nominalmente: arquivar, integrar e "excluir de vez" passam todos
+    // por aqui, então nenhum deles precisa lembrar do browser. Uma view viva
+    // segurando o worktree é a mesma classe de bug do LSP acima — e a fatia
+    // que ficaria órfã na tela é pior ainda: ela mostraria a missão que o dono
+    // acabou de fechar.
+    browserPanes.closeMission(missionId)
   }
   // Onda C: os chats do PROJETO (hoje só o de planejamento, `gui-plan-<id8>`)
   // rodam na RAIZ do universo — morrem quando essa raiz sai debaixo deles
@@ -3735,6 +3760,45 @@ app.whenReady().then(async () => {
     seatUsage: (seat) => getSeatUsage(seat.id, seat.cli, seat.configDir)
   })
 
+  // ————— BROWSER EMBUTIDO: o kit de 11 tools do agente (H2) —————
+  //
+  // Três traduções moram aqui, e só aqui:
+  //  1. IDENTIDADE → MISSÃO. O chat de missão traz `missionId` no bearer; o
+  //     AJUDANTE não traz nenhum — ele nasce com o endereço do DELEGADOR
+  //     (`guiHelperLspMcp`), e é de lá que a missão vem. Os dois trabalham no
+  //     MESMO worktree, então têm de enxergar o MESMO browser: dar ao ajudante
+  //     um browser próprio seria uma segunda tela para a mesma missão.
+  //  2. IDENTIDADE → CLI. Só o claude recebe a imagem inline do `browser_shot`
+  //     — o codex DESCARTA imagem de MCP (`openai/codex#10334`), e o caminho em
+  //     texto é o que serve aos dois (o chat do dono renderiza, R36).
+  //  3. EVENTOS → CAIXA-PRETA. O kit é um OBJETO no `McpApi` (como o `lsp`),
+  //     então o proxy de instrumentação o deixa passar intacto de propósito: é
+  //     este `log` que escreve o diário, com a missão junto.
+  const guiBrowserTools: GuiBrowserToolkit = buildGuiBrowserTools({
+    manager: browserPanes,
+    resolveTarget: (id) => {
+      const missionId =
+        id.missionId ??
+        (id.delegatorPaneId ? hub.identityByPane(id.delegatorPaneId)?.missionId : undefined)
+      if (!missionId) return undefined
+      return { missionId, projectId: id.projectId, root: id.cwd }
+    },
+    cliOf: (id) => {
+      if (id.paneId.startsWith(GUI_HELPER_MCP_PANE_PREFIX)) {
+        return guiHelperEngine.get(id.paneId.slice(GUI_HELPER_MCP_PANE_PREFIX.length))?.cli
+      }
+      return guiSessions?.delegatorFor(id.paneId)?.cli
+    },
+    log: (entry) =>
+      blackbox.record({
+        cat: 'mcp',
+        event: entry.event,
+        actor: 'harness',
+        ...(entry.detail ? { detail: entry.detail } : {}),
+        ...(entry.err ? { err: entry.err } : {})
+      })
+  })
+
   const mcpApi: McpApi = {
     ...buildPlansApi(ctx, {
       proposePlanToPane: (paneId, draft) =>
@@ -3881,6 +3945,10 @@ app.whenReady().then(async () => {
     // `McpApi.lsp`), então o proxy de instrumentação abaixo o deixa passar
     // intacto de propósito.
     lsp: guiLspTools,
+    // BROWSER (2026-08-29): o kit dos dois papéis que verificam a própria tela
+    // (`gui-delegator` sem ser reviewer, e `ajudante`). Objeto, não função —
+    // ver o comentário do `McpApi.browser`.
+    browser: guiBrowserTools,
     hub
   }
 
@@ -4274,6 +4342,9 @@ app.whenReady().then(async () => {
   })
   registerFilesIpc(ctx, { assertAppRendererSender })
   registerSettingsIpc(ctx, { assertMainRendererSender, assertAppRendererSender })
+  // BROWSER EMBUTIDO: a superfície do DONO (barra de URL, abas, ← → ⟳,
+  // devtools, bounds do painel). O agente entra pelo MCP, nunca por aqui.
+  registerBrowserIpc(ctx, { assertAppRendererSender, browser: browserPanes })
   // PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md): sessão de chat
   // por pane. Nenhum CLI filho sobrevive ao quit.
   guiSessions = registerGuiIpc(ctx, {
@@ -4312,6 +4383,10 @@ app.whenReady().then(async () => {
     // typescript-language-server tem o tsserver como FILHO, e matar só o pai
     // deixaria um órfão segurando o worktree.
     lspManager.disposeAll()
+    // As views do browser são filhas da janela e morrem com ela; o `destroy`
+    // existe para o que NÃO morre sozinho (listeners de janela, sessões CDP
+    // anexadas) e para o quit não deixar processo de renderer órfão.
+    browserPanes.destroy()
   })
   // Cmd/Ctrl+K: só depois do registro GUI existir, porque o índice de
   // históricos liga sessionId aos panes/mission tabs que podem remontá-los.

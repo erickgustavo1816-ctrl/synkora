@@ -498,8 +498,15 @@ test('o canal do CHAT existe no preload e no espelho do guiApi', async () => {
 
 test('o bloco de estilo novo é papel & painel, sem animação e sem tema escuro', async () => {
   const css = await source('src/renderer/src/global.css')
-  const block = css.slice(css.indexOf('BLOCO NOVO: abrir arquivo onde o dono quiser'))
-  assert.ok(block, 'o bloco novo não foi declarado no fim do global.css')
+  // O recorte vai do marcador de INÍCIO ao de FIM do próprio bloco — até
+  // 2026-08-29 ele ia "até o fim do arquivo", e o CSS do browser embutido
+  // (que tem animação e painel POR DESIGN: o ⚡ pulsa e a página é escura)
+  // apendado depois dele fez a cerca morder o vizinho. Cerca prende o que é
+  // dela; bloco sem marcador de fim é que seria o bug.
+  const start = css.indexOf('BLOCO NOVO: abrir arquivo onde o dono quiser')
+  const end = css.indexOf('fim do BLOCO NOVO de abrir arquivo onde o dono quiser')
+  assert.ok(start >= 0 && end > start, 'o bloco novo não está delimitado no global.css')
+  const block = css.slice(start, end)
 
   // O menu reaproveita a linguagem de `.file-context-menu` (uma só no app).
   assert.ok(block.includes('.gui-file-context-menu'))

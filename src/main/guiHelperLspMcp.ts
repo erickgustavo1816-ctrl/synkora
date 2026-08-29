@@ -26,6 +26,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, unlinkSync } from 'node:fs'
 import { claudeMcpArgs, writeClaudeMcpConfig } from './mcpServer'
 import { GUI_PLANNER_TOKEN_ENV, guiPlannerCodexArgs } from './guiPlannerMcp'
+import { BROWSER_TOOL_NAMES } from './guiBrowserTools'
 import { LSP_TOOL_NAMES } from './guiLspTools'
 import type { GuiHelperCli } from './guiHelperSessions'
 import type { Hub } from './hub'
@@ -51,9 +52,15 @@ export const GUI_HELPER_LSP_TOOLS: readonly string[] = LSP_TOOL_NAMES
  * motor traduz pedido de permissão em desfecho fatal (`HELPER_PERMISSION_DEAD_END`).
  * Ou seja: sem esta lista, o primeiro `lsp_diagnostics` MATA o ajudante.
  */
-export const GUI_HELPER_LSP_CLAUDE_ALLOWED_TOOLS: readonly string[] = GUI_HELPER_LSP_TOOLS.map(
-  (tool) => `mcp__synkora__${tool}`
-)
+export const GUI_HELPER_LSP_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
+  // O BROWSER DA CASA (build de 2026-08-29): o catálogo do papel `ajudante`
+  // serve as browser_* (QA delegado é o caso real), então a pré-sanção as
+  // cobre pela MESMA fonte que o mcpServer registra — sem elas aqui, o
+  // primeiro `browser_read` de um ajudante claude morreria no can_use_tool,
+  // a lição exata deste cabeçalho.
+  ...GUI_HELPER_LSP_TOOLS,
+  ...BROWSER_TOOL_NAMES
+].map((tool) => `mcp__synkora__${tool}`)
 
 /**
  * O endereço do ajudante no hub. NÃO é um pane e não pode parecer um: o prefixo

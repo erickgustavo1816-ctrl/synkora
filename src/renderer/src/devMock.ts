@@ -105,6 +105,18 @@ function skillsMock(): SynkoraApi['skills'] {
   }
 }
 
+/** A verdade do preview para o painel de browser: aqui não há Electron, então
+ *  não há `WebContentsView` para compor por cima do retângulo. */
+const BROWSER_PREVIEW_REFUSAL = 'preview: sem browser no browser'
+
+/** A mesma verdade como NOTA do motor, com carimbo FIXO: o painel compara a
+ *  nota por `at`, e um relógio novo a cada leitura repintaria o dock à toa. */
+const BROWSER_PREVIEW_NOTICE = {
+  kind: 'load-failed',
+  text: BROWSER_PREVIEW_REFUSAL,
+  at: '2026-08-29T12:00:00.000Z'
+}
+
 // Mock do bridge para desenvolver a UI num browser comum (sem Electron).
 // No app real o preload injeta window.synkora antes e este arquivo não faz nada.
 export function installDevMock(): void {
@@ -983,6 +995,31 @@ export function installDevMock(): void {
       onChanged: () => () => undefined
     },
     // ————— fim do BLOCO NOVO —————
+    // ————— BLOCO NOVO (2026-08-29): o browser embutido —————
+    // A página do painel é uma `WebContentsView` do Electron: no preview de
+    // browser ela simplesmente NÃO EXISTE. O mock conta isso — estado fechado
+    // (o convite "abrir browser" aparece, que é justamente o estado que se vem
+    // conferir aqui) e recusa honesta em cada alavanca. `bounds` engole o
+    // report sem ruído: medir é o certo mesmo sem motor do outro lado.
+    browser: {
+      state: async () => ({
+        alive: false,
+        agentDriving: false,
+        tabs: [],
+        notice: BROWSER_PREVIEW_NOTICE
+      }),
+      navigate: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
+      back: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
+      forward: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
+      reload: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
+      newTab: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
+      closeTab: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
+      selectTab: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
+      devtools: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
+      bounds: () => undefined,
+      onChanged: () => () => undefined
+    },
+    // ————— fim do BLOCO NOVO do browser —————
     hub: {
       onEvent: () => () => undefined,
       onCommunication: () => () => undefined

@@ -26,6 +26,7 @@ import { GUI_PLANNER_TOKEN_ENV, guiPlannerCodexArgs } from './guiPlannerMcp'
 import type { GuiPlannerMcp, GuiPlannerMcpDeps } from './guiPlannerMcp'
 import { guiMissionRoleOf, missionTypeOf } from './guiMissionContracts'
 import { LSP_TOOL_NAMES } from './guiLspTools'
+import { BROWSER_TOOL_NAMES } from './guiBrowserTools'
 
 /** A cerca anti-subagente-nativo do claude (sonda 2026-08-18: cerca de 1-2
  *  nomes NÃO basta — o modelo desvia por RemoteTrigger etc.; esta lista de 12
@@ -168,7 +169,13 @@ export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   // aqui é exatamente como uma tool nova volta a levantar card de permissão no
   // gesto que o dono acabou de pedir. Ler código não decide nada — pedir
   // aprovação para isso seria atrito puro.
-  ...LSP_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`)
+  ...LSP_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
+  // BROWSER EMBUTIDO (2026-08-29) — as ONZE `browser_*`, também derivadas da
+  // fonte. A pré-sanção aqui não é conforto: um QA visual são dezenas de
+  // chamadas seguidas, e sem esta lista CADA uma delas viraria um card de
+  // permissão para o dono — no gesto em que ele pediu justamente para não
+  // precisar olhar. Verificar a própria tela não decide nada.
+  ...BROWSER_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`)
 ]
 
 /** Flags do claude: config por arquivo + strict + a cerca + a pré-sanção. */

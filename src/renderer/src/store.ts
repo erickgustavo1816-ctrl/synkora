@@ -9,12 +9,14 @@ import {
 } from './guiApi'
 import type { PlanDraft } from './planContract'
 import type {
+  BrowserPanelState,
   GuiAttachmentDescriptor,
   HistoryTranscriptMessage,
   SynkoraSettings,
   SynkoraSettingsPatch
 } from '../../preload/index'
 import { applyDeptHueVars, DEPT_HUES_LS_KEY, loadDeptHues } from './departments'
+import { sameBrowserPanel } from './dockBrowserModel'
 import { versionPortrait } from './projectLanding'
 import { isReleaseMissionRecord } from './missionCardAccess'
 import {
@@ -1769,6 +1771,13 @@ interface SynkoraState {
   /** aba de missão selecionada no board, POR projeto (null = Geral) */
   missionTabByProject: Record<string, string | null>
   setMissionTab: (projectId: string, missionId: string | null) => void
+  // ——— BROWSER EMBUTIDO (2026-08-29) — o painel do RightDock, por missão ———
+  /** Fotografia do browser de cada missão, alimentada pelo `browser:changed`
+   *  (agente pelas tools `browser_*` ou clique do dono no painel). Missão sem
+   *  chave nenhuma NÃO é "browser fechado": é "ainda não perguntei" — quem lê
+   *  cai no `EMPTY_BROWSER_PANEL`, que tem referência estável de propósito. */
+  browserByMission: Record<string, BrowserPanelState>
+  setMissionBrowser: (missionId: string, state: BrowserPanelState) => void
   catalogByCli: Record<string, Catalog>
   loadCatalog: (cli: SeatCli, seatId?: string) => Promise<void>
   /** esquece as listas em cache — usado quando o CLI é atualizado e passa a
@@ -2079,6 +2088,17 @@ export const useStore = create<SynkoraState>((set, get) => ({
     set((s) => ({
       missionTabByProject: { ...s.missionTabByProject, [projectId]: missionId }
     })),
+
+  browserByMission: {},
+  // Fotografia IGUAL não notifica ninguém: o `browser:changed` chega a cada
+  // passo do agente (uma tool de ação por vez), e trocar o objeto por um
+  // gêmeo repintaria o dock inteiro sem novidade nenhuma na tela.
+  setMissionBrowser: (missionId, state) =>
+    set((s) => {
+      const current = s.browserByMission[missionId]
+      if (current && sameBrowserPanel(current, state)) return s
+      return { browserByMission: { ...s.browserByMission, [missionId]: state } }
+    }),
 
   catalogByCli: {},
 

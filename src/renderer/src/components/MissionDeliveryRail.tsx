@@ -14,6 +14,7 @@ import {
 } from '../integrationQueuePresentation'
 import MissionCommitHistory from './MissionCommitHistory'
 import MissionCommitDiffViewer from './MissionCommitDiffViewer'
+import DockBrowser, { useMissionBrowser } from './DockBrowser'
 import GuiSubagentSidebar from './GuiSubagentSidebar'
 import GuiFileContextMenu, { useFileContextMenu } from './GuiFileContextMenu'
 import GuiFileQuickReader from './GuiFileQuickReader'
@@ -379,6 +380,19 @@ export default function MissionDeliveryRail({
     },
     [mission.id]
   )
+
+  // ——— BROWSER EMBUTIDO (2026-08-29) ———
+  //
+  // A assinatura mora AQUI, e não dentro do painel, por um motivo só: a seção
+  // recolhida DESMONTA o filho, e o resumo dela ("⚡ carregando…", "3 abas",
+  // "fechado") tem que continuar verdadeiro do lado de fora. O painel recebe a
+  // fotografia pronta.
+  const browser = useMissionBrowser(mission.id)
+  // Missão encerrada é registro: o motor já fechou o browser dela junto com os
+  // panes, e um convite para abrir ali seria um botão que o main tem de
+  // recusar. Planejamento TEM browser (pesquisa é o trabalho dele) — o que ele
+  // não tem é worktree, e nada nesta seção depende de um.
+  const browserAvailable = mission.status === 'ativa' || mission.status === 'integrando'
 
   // A FROTA (fichas dos ajudantes) já morava no trilho; a seção só a veste e
   // conta a verdade no resumo — encerrada inclui entregue, negada e parada.
@@ -811,6 +825,24 @@ export default function MissionDeliveryRail({
           path={reader}
           onClose={() => setReader(null)}
         />
+      )}
+
+      {/* BROWSER — o instrumento, entre o trabalho vivo e os registros. Acima
+          dele ficam as duas coisas que o dono lê o tempo todo (a entrega e os
+          arquivos que mudaram); abaixo, o que ele abre de propósito (histórico,
+          frota). A seção guarda o colapso como as irmãs: quem não usa browser
+          fecha uma vez e nunca mais vê o retângulo. */}
+      {browserAvailable && (
+        <DockSection id="browser" title="browser" summary={browser.summary}>
+          <DockBrowser
+            missionId={mission.id}
+            projectId={mission.projectId}
+            state={browser.state}
+            engine={browser.engine}
+            error={browser.error}
+            visible={visible}
+          />
+        </DockSection>
       )}
 
       {/* P24: fotografia visual do histórico próprio da missão — vive como

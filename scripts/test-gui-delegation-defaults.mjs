@@ -720,11 +720,36 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   // Skills 2.0 (2026-08-29) de novo só o do CONTRATO, 10300→11400: o CARDÁPIO
   // DE SKILLS (ADR-0001: escolher é julgamento do agente) + a LEI do
   // impeccable (ADR-0005) entraram em dev/ajudante — a ordem permanente
-  // seguiu intocada; o dev mede 10985.
+  // seguiu intocada; o dev mede 10985. E no BROWSER DA CASA (2026-08-29,
+  // mesma data) de novo só o do CONTRATO, 11400→13300: o bloco do browser
+  // embutido ("QA visual não pode demorar 40-50 min" — nunca em browser
+  // externo nem em playwright próprio) entrou em dev/ajudante; a ordem
+  // permanente seguiu intocada (2922) e o dev mede 12848.
   assert.ok(order.length < 3000, `a ordem permanente virou constituição (${order.length})`)
   for (const role of GUI_MISSION_ROLES) {
-    assert.ok(guiMissionSystemPrompt(role).length < 11400, `${role}: contrato virou constituição`)
+    assert.ok(guiMissionSystemPrompt(role).length < 13300, `${role}: contrato virou constituição`)
   }
   // O planejador não delega: ele nunca recebe a seção nem o pino.
   assert.doesNotMatch(guiPlanningSystemPrompt(), /STANDING ORDER FROM THE OWNER/u)
+})
+
+// O BROWSER DA CASA (2026-08-29 — DESIGN_BROWSER_EMBUTIDO, fatia H4) entrou em
+// dev/ajudante e é a razão do teto novo desta suíte. Aqui só a invariante que é
+// DESTE arquivo: seção nova nenhuma pode empurrar a ordem permanente do fim do
+// contrato — ela é a última palavra desde 18/08, e é assim que o agente a lê
+// por último. O conteúdo do bloco é provado na suíte de contratos.
+test('o bloco do browser não rouba a última palavra da ordem permanente', () => {
+  const BROWSER_HEADER = 'BROWSER — VISUAL QA RUNS IN THE HOUSE BROWSER, NEVER IN ONE YOU OPEN:'
+  for (const role of ['dev', 'helper']) {
+    const contract = guiMissionSystemPrompt(role)
+    const at = contract.indexOf(BROWSER_HEADER)
+    assert.ok(at >= 0, `${role}: sem o bloco do browser da casa`)
+    assert.ok(
+      at < contract.indexOf('DELEGATION — STANDING ORDER FROM THE OWNER:'),
+      `${role}: o browser passou na frente da ordem permanente`
+    )
+  }
+  // Reviewer e planejador não testam UI — o bloco não entra no contrato deles.
+  assert.doesNotMatch(guiMissionSystemPrompt('reviewer'), /browser_/u)
+  assert.doesNotMatch(guiPlanningSystemPrompt(), /browser_/u)
 })

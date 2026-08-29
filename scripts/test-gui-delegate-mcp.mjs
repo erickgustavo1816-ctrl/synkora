@@ -87,8 +87,33 @@ const HELPER_TOOLS = Object.freeze([
   'list_seats'
 ])
 
-/** O que um pane `gui-delegator` SEM missão de dev enxerga hoje, inteiro. */
-const DELEGATOR_TOOLS = Object.freeze([...HELPER_TOOLS, ...LSP_TOOLS].sort())
+/**
+ * O KIT DO BROWSER EMBUTIDO (2026-08-29, design DESIGN_BROWSER_EMBUTIDO):
+ * as onze `browser_*`, literais — ferramenta nova aqui é decisão de produto e
+ * TEM de quebrar este teste, como nos kits irmãos.
+ */
+const BROWSER_TOOLS = Object.freeze([
+  'browser_open',
+  'browser_read',
+  'browser_find',
+  'browser_act',
+  'browser_probe',
+  'browser_shot',
+  'browser_viewport',
+  'browser_console',
+  'browser_network',
+  'browser_eval',
+  'browser_wait'
+])
+
+/**
+ * Com o browser, os panes do MESMO papel `gui-delegator` DIVERGEM pela
+ * primeira vez fora da integração: o REVIEWER lê diff e não roda o produto
+ * (sem browser — a cerca é o papel do endereço), enquanto o pane de helper de
+ * missão verifica a própria tela (com browser, sem integração).
+ */
+const REVIEWER_TOOLS = Object.freeze([...HELPER_TOOLS, ...LSP_TOOLS].sort())
+const HELPER_PANE_TOOLS = Object.freeze([...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS].sort())
 
 /**
  * O KIT DO CHAT DE DEV (rodada 9): as sete de ajudante MAIS as duas do
@@ -98,7 +123,9 @@ const DELEGATOR_TOOLS = Object.freeze([...HELPER_TOOLS, ...LSP_TOOLS].sort())
  * pela entrega, e um merge de missão não pode ter dois donos no mesmo worktree.
  */
 const INTEGRATION_TOOLS = Object.freeze(['integration_run', 'integration_status'])
-const DEV_MISSION_TOOLS = Object.freeze([...DELEGATOR_TOOLS, ...INTEGRATION_TOOLS].sort())
+const DEV_MISSION_TOOLS = Object.freeze(
+  [...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS, ...INTEGRATION_TOOLS].sort()
+)
 
 /** O KIT DO CHAT DE RELEASE (R10): a conversa que sobe a VERSÃO. O papel
  *  `gui-release` compartilha o MESMO arm do delegador, então a pré-sanção do
@@ -339,8 +366,11 @@ test('reviewer e ajudante delegam, mas NUNCA integram: as duas ferramentas são 
   assert.deepEqual(await toolNames(url, dev.token, 'papel-dev'), DEV_MISSION_TOOLS)
   // O MESMO universo, a MESMA missão, o MESMO papel de MCP — e ainda assim as
   // duas ferramentas não aparecem: a cerca é o PAPEL do endereço, não o token.
-  assert.deepEqual(await toolNames(url, reviewer.token, 'papel-rev'), DELEGATOR_TOOLS)
-  assert.deepEqual(await toolNames(url, helper.token, 'papel-hlp'), DELEGATOR_TOOLS)
+  // BROWSER (2026-08-29): a primeira divergência ENTRE panes do mesmo papel —
+  // o reviewer não roda o produto (sem browser); o helper de missão verifica a
+  // própria tela (com browser, sem integração).
+  assert.deepEqual(await toolNames(url, reviewer.token, 'papel-rev'), REVIEWER_TOOLS)
+  assert.deepEqual(await toolNames(url, helper.token, 'papel-hlp'), HELPER_PANE_TOOLS)
   for (const entry of served) {
     if (entry.paneId.startsWith('gui-dev-')) continue
     for (const tool of INTEGRATION_TOOLS) {
@@ -356,7 +386,11 @@ test('endereço de dev SEM missão não integra nada: a integração precisa de 
   // delegando — mas não pode integrar uma missão que o token não nomeia.
   const orphan = delegator(hub, root, 4242, 'gui-dev-0f0f0f0f', null)
   assert.equal(hub.identityByToken(orphan.token)?.missionId, undefined)
-  assert.deepEqual(await toolNames(url, orphan.token, 'orfao'), DELEGATOR_TOOLS)
+  // O órfão cai na MESMA lista do pane de helper, por dois caminhos distintos:
+  // sem `missionId` no token não há integração (a cerca dela exige os dois),
+  // mas o browser entra pelo PAPEL (gui-dev ≠ reviewer) — e é o runtime que
+  // recusa com BROWSER_NO_MISSION quando o token não nomeia missão nenhuma.
+  assert.deepEqual(await toolNames(url, orphan.token, 'orfao'), HELPER_PANE_TOOLS)
 })
 
 test('as duas ferramentas chegam ao motor com a identidade DESTE pane (a missão vem do token)', async (t) => {
@@ -428,8 +462,10 @@ test('SEM CADEIA: identidade de ajudante NUNCA enxerga delegate — e as mortas,
   }
   // O CONTROLE NEGATIVO DO ⇪ (rodada 9) + a cerca do D1 na forma nova: um token
   // de ajudante que chegue ao servidor com o ENDEREÇO de um chat de dev recebe
-  // o kit de CÓDIGO e mais NADA. Integração vive dentro do `gui-delegator`;
-  // `delegate` também — e é isto que mantém frota-abrindo-frota impossível.
+  // o kit de CÓDIGO — e, desde 2026-08-29, o BROWSER (verificar a própria tela
+  // não é autoridade; o QA delegado é o caso real do design) — e mais NADA.
+  // Integração vive dentro do `gui-delegator`; `delegate` também — e é isto
+  // que mantém frota-abrindo-frota impossível.
   hub.registerPane('token-ajudante-com-cara-de-dev', {
     paneId: 'gui-dev-abcdef01',
     projectId: 'universo-1',
@@ -439,7 +475,7 @@ test('SEM CADEIA: identidade de ajudante NUNCA enxerga delegate — e as mortas,
   const disfarcado = await toolNames(url, 'token-ajudante-com-cara-de-dev', 'ajudante-disfarcado')
   assert.deepEqual(
     disfarcado,
-    LSP_TOOLS,
+    [...LSP_TOOLS, ...BROWSER_TOOLS].sort(),
     'endereço de dev não dá autoridade a um papel que não é gui-delegator'
   )
   for (const forbidden of [...HELPER_TOOLS, ...INTEGRATION_TOOLS, ...RELEASE_TOOLS, ...PLAN_TOOLS]) {
