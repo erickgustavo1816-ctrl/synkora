@@ -687,222 +687,231 @@ export default function DockBrowser({
       className={`dock-browser${dragging ? ' is-dragging' : ''}`}
       style={pageStyle}
     >
-      {/* A TIRA DE ABAS quebra em vez de rolar: numa coluna de 176px um
-          scroller horizontal esconderia abas atrás de um gesto que o dono não
-          tem motivo para tentar. Mesmo precedente do `.dock-acts`. */}
-      {state.tabs.length > 0 && (
-        <div className="dock-browser-tabbar">
-          <div className="dock-browser-tabs" role="tablist" aria-label="abas do browser">
-            {state.tabs.map((entry) => (
-              <span className="dock-browser-tab-wrap" key={entry.tabId}>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={entry.active}
-                  className={`dock-browser-tab${entry.active ? ' on' : ''}`}
-                  onClick={() => run((api) => api.selectTab(missionId, entry.tabId))}
-                  // A tira corta o nome no trilho estreito; a barra de status
-                  // devolve o nome INTEIRO e o endereço, que é a única forma
-                  // de saber qual aba é qual com oito abertas a 176px.
-                  {...hints(
-                    entry.url
-                      ? `${browserTabLabel(entry)} · ${entry.url}`
-                      : browserTabLabel(entry)
-                  )}
-                >
-                  <i
-                    className={`dock-browser-tab-dot${entry.loading ? ' loading' : ''}`}
-                    aria-hidden="true"
-                  />
-                  <span className="dock-browser-tab-name">{browserTabLabel(entry)}</span>
-                </button>
-                <button
-                  type="button"
-                  className="dock-browser-tab-x"
-                  aria-label={`fechar a aba ${browserTabLabel(entry)}`}
-                  onClick={() => run((api) => api.closeTab(missionId, entry.tabId))}
-                  {...hints('fechar esta aba')}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-          {/* O `+` mora FORA do scroller: com oito abas a tira ganha barra de
-              rolagem, e a porta de abrir a próxima não pode ir junto para
-              debaixo dela. */}
-          <button
-            type="button"
-            className="dock-browser-tab-add"
-            disabled={Boolean(capNotice)}
-            aria-label="abrir uma aba"
-            onClick={() => run((api) => api.newTab(missionId))}
-            {...hints(capNotice ?? `abrir aba em branco · até ${BROWSER_TAB_CAP}`)}
-          >
-            +
-          </button>
-        </div>
-      )}
-
-      <div className="dock-browser-nav">
-        <button
-          type="button"
-          className="dock-browser-btn"
-          disabled={!tab?.canBack}
-          aria-label="voltar"
-          onClick={() => run((api) => api.back(missionId))}
-          {...hints('voltar uma página')}
-        >
-          ←
-        </button>
-        <button
-          type="button"
-          className="dock-browser-btn"
-          disabled={!tab?.canForward}
-          aria-label="avançar"
-          onClick={() => run((api) => api.forward(missionId))}
-          {...hints('avançar uma página')}
-        >
-          →
-        </button>
-        <button
-          type="button"
-          className="dock-browser-btn"
-          disabled={!tab}
-          aria-label="recarregar"
-          onClick={() => run((api) => api.reload(missionId))}
-          {...hints('recarregar a página')}
-        >
-          ⟳
-        </button>
-        <button
-          type="button"
-          className="dock-browser-btn"
-          disabled={!tab}
-          aria-label="abrir as devtools da página"
-          onClick={() => {
-            if (tab) run((api) => api.devtools(missionId, tab.tabId))
-          }}
-          {...hints('devtools DA PÁGINA, em janela separada')}
-        >
-          {'</>'}
-        </button>
-        <input
-          ref={urlRef}
-          className="dock-browser-url"
-          type="text"
-          spellCheck={false}
-          autoComplete="off"
-          aria-label="endereço"
-          placeholder={tab ? 'endereço' : 'abrir um endereço'}
-          value={urlValue}
-          onChange={(event) => {
-            setDraft(event.target.value)
-            setEditing(true)
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault()
-              submitUrl()
-              return
-            }
-            // Esc devolve o campo à verdade da aba — e não sobe para o chat,
-            // que trataria a tecla como interrupção do agente.
-            if (event.key === 'Escape') {
-              event.preventDefault()
-              event.stopPropagation()
-              setEditing(false)
-              urlRef.current?.blur()
-            }
-          }}
-          onMouseEnter={() => setHint(urlHint)}
-          onMouseLeave={() => setHint((current) => (current === urlHint ? null : current))}
-          onFocus={() => {
-            setDraft(tab?.url ?? '')
-            setEditing(true)
-            setHint(urlHint)
-          }}
-          onBlur={() => {
-            setEditing(false)
-            setHint((current) => (current === urlHint ? null : current))
-          }}
-        />
-      </div>
-
-      {/* O RETÂNGULO. Vazio por contrato: a view nativa compõe por cima dele.
-          O que está pintado aqui só aparece quando ela NÃO está — e então diz
-          por quê. Painel escuro (família .term-window) porque é isso que a
-          página vai ser: a única superfície não-papel do dock. */}
-      <div ref={pageRef} className={`dock-browser-page${state.alive ? ' live' : ''}`}>
-        {!state.alive && (
-          <div className="dock-browser-empty">
-            <span className="dock-browser-empty-line">nenhuma página aberta nesta missão</span>
+      {/* O INSTRUMENTO (H7, reprovação de 2026-08-29: "ta estranho esse browser
+          flutuando… ta no vale da estranheza"). Abas, barra, página, alça e pé
+          são UM corpo com UMA borda e UM raio; as costuras de dentro são fio de
+          cabelo. Este nó não tem lógica nenhuma — ele existe para que a moldura
+          seja de TODOS e não de cada peça, e para que o `overflow: hidden` do
+          CSS recorte as faixas nos cantos. O retângulo medido continua sendo o
+          `.dock-browser-page` de sempre, com o mesmo `ref`. */}
+      <div className="dock-browser-shell">
+        {/* A TIRA DE ABAS quebra em vez de rolar: numa coluna de 176px um
+            scroller horizontal esconderia abas atrás de um gesto que o dono não
+            tem motivo para tentar. Mesmo precedente do `.dock-acts`. */}
+        {state.tabs.length > 0 && (
+          <div className="dock-browser-tabbar">
+            <div className="dock-browser-tabs" role="tablist" aria-label="abas do browser">
+              {state.tabs.map((entry) => (
+                <span className="dock-browser-tab-wrap" key={entry.tabId}>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={entry.active}
+                    className={`dock-browser-tab${entry.active ? ' on' : ''}`}
+                    onClick={() => run((api) => api.selectTab(missionId, entry.tabId))}
+                    // A tira corta o nome no trilho estreito; a barra de status
+                    // devolve o nome INTEIRO e o endereço, que é a única forma
+                    // de saber qual aba é qual com oito abertas a 176px.
+                    {...hints(
+                      entry.url
+                        ? `${browserTabLabel(entry)} · ${entry.url}`
+                        : browserTabLabel(entry)
+                    )}
+                  >
+                    <i
+                      className={`dock-browser-tab-dot${entry.loading ? ' loading' : ''}`}
+                      aria-hidden="true"
+                    />
+                    <span className="dock-browser-tab-name">{browserTabLabel(entry)}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="dock-browser-tab-x"
+                    aria-label={`fechar a aba ${browserTabLabel(entry)}`}
+                    onClick={() => run((api) => api.closeTab(missionId, entry.tabId))}
+                    {...hints('fechar esta aba')}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+            {/* O `+` mora FORA do scroller: com oito abas a tira ganha barra de
+                rolagem, e a porta de abrir a próxima não pode ir junto para
+                debaixo dela. */}
             <button
               type="button"
-              className="dock-browser-open"
-              onClick={openBrowser}
-              {...hints('abre o browser desta missão numa aba em branco')}
+              className="dock-browser-tab-add"
+              disabled={Boolean(capNotice)}
+              aria-label="abrir uma aba"
+              onClick={() => run((api) => api.newTab(missionId))}
+              {...hints(capNotice ?? `abrir aba em branco · até ${BROWSER_TAB_CAP}`)}
             >
-              abrir browser
+              +
             </button>
-            <span className="dock-browser-empty-fine">
-              o agente também abre sozinho, quando o QA visual dele precisa
-            </span>
           </div>
         )}
-        {state.alive && !painted && (
-          <div className="dock-browser-empty">
-            <span className="dock-browser-empty-line">
-              a página continua aberta — escondida enquanto esta tela está por cima
+
+        <div className="dock-browser-nav">
+          <button
+            type="button"
+            className="dock-browser-btn"
+            disabled={!tab?.canBack}
+            aria-label="voltar"
+            onClick={() => run((api) => api.back(missionId))}
+            {...hints('voltar uma página')}
+          >
+            ←
+          </button>
+          <button
+            type="button"
+            className="dock-browser-btn"
+            disabled={!tab?.canForward}
+            aria-label="avançar"
+            onClick={() => run((api) => api.forward(missionId))}
+            {...hints('avançar uma página')}
+          >
+            →
+          </button>
+          <button
+            type="button"
+            className="dock-browser-btn"
+            disabled={!tab}
+            aria-label="recarregar"
+            onClick={() => run((api) => api.reload(missionId))}
+            {...hints('recarregar a página')}
+          >
+            ⟳
+          </button>
+          <button
+            type="button"
+            className="dock-browser-btn"
+            disabled={!tab}
+            aria-label="abrir as devtools da página"
+            onClick={() => {
+              if (tab) run((api) => api.devtools(missionId, tab.tabId))
+            }}
+            {...hints('devtools DA PÁGINA, em janela separada')}
+          >
+            {'</>'}
+          </button>
+          <input
+            ref={urlRef}
+            className="dock-browser-url"
+            type="text"
+            spellCheck={false}
+            autoComplete="off"
+            aria-label="endereço"
+            placeholder={tab ? 'endereço' : 'abrir um endereço'}
+            value={urlValue}
+            onChange={(event) => {
+              setDraft(event.target.value)
+              setEditing(true)
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                submitUrl()
+                return
+              }
+              // Esc devolve o campo à verdade da aba — e não sobe para o chat,
+              // que trataria a tecla como interrupção do agente.
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                event.stopPropagation()
+                setEditing(false)
+                urlRef.current?.blur()
+              }
+            }}
+            onMouseEnter={() => setHint(urlHint)}
+            onMouseLeave={() => setHint((current) => (current === urlHint ? null : current))}
+            onFocus={() => {
+              setDraft(tab?.url ?? '')
+              setEditing(true)
+              setHint(urlHint)
+            }}
+            onBlur={() => {
+              setEditing(false)
+              setHint((current) => (current === urlHint ? null : current))
+            }}
+          />
+        </div>
+
+        {/* O RETÂNGULO. Vazio por contrato: a view nativa compõe por cima dele.
+            O que está pintado aqui só aparece quando ela NÃO está — e então diz
+            por quê. Painel escuro (família .term-window) porque é isso que a
+            página vai ser: a única superfície não-papel do dock. */}
+        <div ref={pageRef} className={`dock-browser-page${state.alive ? ' live' : ''}`}>
+          {!state.alive && (
+            <div className="dock-browser-empty">
+              <span className="dock-browser-empty-line">nenhuma página aberta nesta missão</span>
+              <button
+                type="button"
+                className="dock-browser-open"
+                onClick={openBrowser}
+                {...hints('abre o browser desta missão numa aba em branco')}
+              >
+                abrir browser
+              </button>
+              <span className="dock-browser-empty-fine">
+                o agente também abre sozinho, quando o QA visual dele precisa
+              </span>
+            </div>
+          )}
+          {state.alive && !painted && (
+            <div className="dock-browser-empty">
+              <span className="dock-browser-empty-line">
+                a página continua aberta — escondida enquanto esta tela está por cima
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* A ALÇA. Mora na borda de BAIXO da página, entre ela e a barra de
+            status — o lugar da divisória no dock do Claude Code que o dono
+            apontou como referência. Ela é um `separator` de verdade: anuncia
+            valor, mínimo e máximo, e o teclado a move como o mouse. */}
+        <div
+          className="dock-browser-grip"
+          role="separator"
+          tabIndex={0}
+          aria-label="altura da página do browser"
+          aria-orientation="horizontal"
+          aria-valuemin={pageRange.min}
+          aria-valuemax={pageRange.max}
+          aria-valuenow={pageHeight}
+          aria-valuetext={`${pageHeight} pixels`}
+          onPointerDown={onGripPointerDown}
+          onKeyDown={onGripKeyDown}
+          {...hints('altura da página · arraste ou use ↑ ↓')}
+        >
+          <i className="dock-browser-grip-line" aria-hidden="true" />
+        </div>
+
+        {/* A LINHA DO PÉ é a barra de status: ⚡ (o fato que não pode sumir) à
+            esquerda e, à direita, a frase do controle apontado — ou, em silêncio,
+            de onde vêm os logins desta página. */}
+        <div className="dock-browser-foot">
+          {state.agentDriving && (
+            <span
+              className="dock-browser-driving"
+              data-tip="O agente está usando este browser agora. Você pode assumir quando quiser: a página recebe o seu mouse e o seu teclado direto, sem trava nenhuma."
+            >
+              <i className="dock-browser-driving-dot" aria-hidden="true" />
+              <b>⚡</b> agente dirigindo
             </span>
-          </div>
-        )}
-      </div>
-
-      {/* A ALÇA. Mora na borda de BAIXO da página, entre ela e a barra de
-          status — o lugar da divisória no dock do Claude Code que o dono
-          apontou como referência. Ela é um `separator` de verdade: anuncia
-          valor, mínimo e máximo, e o teclado a move como o mouse. */}
-      <div
-        className="dock-browser-grip"
-        role="separator"
-        tabIndex={0}
-        aria-label="altura da página do browser"
-        aria-orientation="horizontal"
-        aria-valuemin={pageRange.min}
-        aria-valuemax={pageRange.max}
-        aria-valuenow={pageHeight}
-        aria-valuetext={`${pageHeight} pixels`}
-        onPointerDown={onGripPointerDown}
-        onKeyDown={onGripKeyDown}
-        {...hints('altura da página · arraste ou use ↑ ↓')}
-      >
-        <i className="dock-browser-grip-line" aria-hidden="true" />
-      </div>
-
-      {/* A LINHA DO PÉ é a barra de status: ⚡ (o fato que não pode sumir) à
-          esquerda e, à direita, a frase do controle apontado — ou, em silêncio,
-          de onde vêm os logins desta página. */}
-      <div className="dock-browser-foot">
-        {state.agentDriving && (
-          <span
-            className="dock-browser-driving"
-            data-tip="O agente está usando este browser agora. Você pode assumir quando quiser: a página recebe o seu mouse e o seu teclado direto, sem trava nenhuma."
-          >
-            <i className="dock-browser-driving-dot" aria-hidden="true" />
-            <b>⚡</b> agente dirigindo
-          </span>
-        )}
-        {hint ? (
-          <span className="dock-browser-hint">{hint}</span>
-        ) : (
-          <span
-            className="dock-browser-session"
-            data-tip={`Cookies e logins ficam na sessão deste universo (${projectId}) — compartilhada por todas as missões dele, então entrar uma vez vale para as próximas.`}
-          >
-            sessão do projeto
-          </span>
-        )}
+          )}
+          {hint ? (
+            <span className="dock-browser-hint">{hint}</span>
+          ) : (
+            <span
+              className="dock-browser-session"
+              data-tip={`Cookies e logins ficam na sessão deste universo (${projectId}) — compartilhada por todas as missões dele, então entrar uma vez vale para as próximas.`}
+            >
+              sessão do projeto
+            </span>
+          )}
+        </div>
       </div>
 
       {/* A VOZ DO MOTOR. Download barrado, página que caiu, teto de abas: a

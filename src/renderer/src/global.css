@@ -22035,6 +22035,39 @@ details.gui-error-line {
    menos os recuos do trilho e da seção): as fileiras QUEBRAM em vez de cuspir
    controle para fora, como `.dock-acts` já fazia. */
 
+/* ————— H7 (2026-08-29): O CHROME E A PÁGINA VIRARAM **UM INSTRUMENTO** —————
+
+   REPROVAÇÃO DO DONO, olhando o painel vivo: "ta estranho esse browser
+   flutuando, sei la, talvez deixar as bordas redondas, ou deixar ele igual o do
+   claude code, sei la, mas ta no vale da estranheza."
+
+   O que ele estava vendo (conferido no harness com o CSS real, cena a cena): a
+   tira de abas, a fileira de navegação, o retângulo da página e a linha do pé
+   eram QUATRO objetos independentes — cada um com sua borda, seu canto
+   arredondado e 7px de papel entre eles. Dentro de um card que já é uma caixa
+   com borda e canto, isso lê como caixa-dentro-de-caixa: nem instrumento
+   integrado (o modelo do Claude Code, onde a barra está COLADA na página), nem
+   um flutuar de propósito.
+
+   A direção não foi escolhida no gosto: **elevação/flutuação é a linguagem do
+   MAPA, nunca das outras superfícies** (ordem do dono). Logo o conserto é
+   INTEGRAR, e não reforçar o flutuar com sombra.
+
+   O desenho novo, em uma frase: UM corpo (`.dock-browser-shell`) com UMA borda
+   e UM raio; por dentro, costuras de fio de cabelo. A moldura da JANELA é a
+   mesma linha nas quatro pontas — nos lados é a borda externa do instrumento,
+   em cima é o pé da fileira de navegação, embaixo é o topo da faixa da alça. A
+   página deixou de ter borda e canto PRÓPRIOS (ela era um card dentro do card);
+   quem a emoldura agora é o instrumento.
+
+   Efeito colateral MEDIDO e desejado sobre o retângulo reportado: a página
+   perdeu a própria borda de 1px, então a `WebContentsView` não cobre mais linha
+   nenhuma — antes ela compunha por cima da borda do próprio elemento (o
+   `getBoundingClientRect` devolve a caixa de BORDA), e a moldura "sólida quando
+   vivo" era invisível na prática. A altura reportada não mudou um pixel
+   (`box-sizing: border-box` global), e a largura encolheu os 2px da borda do
+   instrumento — que é exatamente o que precisa continuar à vista. */
+
 .dock-browser {
   display: flex;
   flex-direction: column;
@@ -22042,15 +22075,49 @@ details.gui-error-line {
   min-width: 0;
 }
 
+/* O INSTRUMENTO. `overflow: hidden` é o que faz os cantos valerem para as
+   faixas de dentro (a prateleira de abas e o pé pintam de ponta a ponta) — e é
+   também o motivo de a página não precisar de raio nenhum: ela é uma faixa no
+   MEIO do corpo, e ali a borda do instrumento é reta.
+
+   A borda é INK, não `--line-strong`: a página viva é clara (um site de
+   verdade), e uma linha bege ao lado de branco não fecha janela nenhuma. É a
+   mesma escolha do `.term-window`, que também emoldura conteúdo alheio.
+
+   SEM sombra e SEM elevação de propósito (ver o bloco acima).
+
+   O fundo é o `--card` do próprio dock, e isso foi MEDIDO, não escolhido no
+   gosto: com `--paper` aqui, todo `--ink-3` de dentro (o risco da alça, o
+   "sessão do projeto", o glifo desabilitado) caía de 3,00:1 para 2,79:1 — e o
+   3:1 do risco é justamente o piso que a H6 pagou para o dono CONSEGUIR achar a
+   alça (WCAG 1.4.11). Quem declara o instrumento é a BORDA, não um fundo
+   próprio; o rebaixamento fica com a prateleira de abas e com a página. */
+.dock-browser-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--ink);
+  border-radius: 8px;
+  background: var(--card);
+  overflow: hidden;
+}
+
 /* ——— tira de abas ——— */
 
 /* A tira ROLA, o `+` NÃO: com oito abas a lista ganha barra de rolagem, e a
-   porta de abrir a próxima aba não pode descer junto para fora de vista. */
+   porta de abrir a próxima aba não pode descer junto para fora de vista.
+   H7: virou a PRATELEIRA de abas do instrumento — UM degrau de papel abaixo do
+   corpo (`--paper` contra o `--card` do resto) e um fio claro a separando da
+   fileira de navegação. Papel contra papel pede fio claro; a linha ink é
+   reservada à moldura da janela. */
 .dock-browser-tabbar {
   display: flex;
   align-items: flex-start;
   gap: 4px;
   min-width: 0;
+  padding: 4px 4px 3px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
 }
 
 /* Quebra em vez de rolar na horizontal (um scroller lateral numa coluna de
@@ -22067,20 +22134,29 @@ details.gui-error-line {
   overflow-y: auto;
 }
 
+/* H7: a aba PARADA perdeu borda e fundo. Antes eram N caixinhas com contorno
+   empilhadas dentro de outra caixa com contorno — o empilhamento que o dono
+   leu como estranheza. A borda transparente FICA (e não `border: 0`) para a
+   caixa não pular de tamanho quando a aba assume. */
 .dock-browser-tab-wrap {
   display: flex;
   align-items: stretch;
   flex: 1 1 96px;
   min-width: 0;
   max-width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--paper);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
   overflow: hidden;
+  transition: background var(--motion-fast, 0.16s) ease;
 }
 
-/* A aba ATIVA se declara por FORMA antes de cor: contorno ink cheio e papel de
-   card, contra o contorno fino e o fundo rebaixado das outras. */
+.dock-browser-tab-wrap:hover {
+  background: var(--card);
+}
+
+/* A aba ATIVA se declara por FORMA antes de cor, e agora é a ÚNICA com
+   contorno: ink cheio e papel de card sobre a prateleira rebaixada. */
 .dock-browser-tab-wrap:has(.dock-browser-tab.on) {
   border-color: var(--ink);
   background: var(--card);
@@ -22165,16 +22241,17 @@ details.gui-error-line {
   background: var(--paper-2);
 }
 
+/* H7: o `+` era um retângulo tracejado — mais uma caixa na prateleira. Virou
+   glifo, como o `×` da aba, e ganha corpo no hover (fundo, não contorno). */
 .dock-browser-tab-add {
-  border: 1px dashed var(--line-strong);
-  border-radius: 5px;
-  padding: 3px 9px;
+  border: 0;
+  border-radius: 4px;
+  padding: 3px 8px;
   color: var(--ink-2);
 }
 
 .dock-browser-tab-add:hover:not(:disabled) {
-  border-style: solid;
-  border-color: var(--ink);
+  background: var(--card);
   color: var(--ink);
 }
 
@@ -22185,16 +22262,26 @@ details.gui-error-line {
   cursor: default;
 }
 
-/* ——— fileira de navegação ——— */
+/* ——— fileira de navegação: a BARRA, colada na página ——— */
 
+/* H7: ela não flutua mais acima do retângulo — ela É o topo do instrumento, e
+   o `border-bottom` ink é a moldura de cima da janela. A página começa no
+   pixel seguinte, sem vão nenhum. */
 .dock-browser-nav {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   min-width: 0;
+  padding: 4px;
+  border-bottom: 1px solid var(--ink);
 }
 
+/* H7: glifo de barra de browser, não botão de formulário. Os quatro contornos
+   arredondados eram quatro caixas competindo com a moldura do instrumento; o
+   afordamento agora é FUNDO no hover — a mesma gramática do `×` e do `+`.
+   O campo de endereço fica sendo o único encaixe da fileira, que é o que uma
+   barra de browser de verdade faz. */
 .dock-browser-btn {
   flex: none;
   display: inline-flex;
@@ -22204,31 +22291,29 @@ details.gui-error-line {
   height: 24px;
   padding: 0 5px;
   appearance: none;
-  border: 1px solid var(--line-strong);
-  border-radius: 5px;
+  border: 0;
+  border-radius: 4px;
   background: transparent;
   font-family: var(--mono);
   font-size: 11px;
   line-height: 1;
   color: var(--ink-2);
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .dock-browser-btn:hover:not(:disabled) {
-  border-color: var(--ink);
   color: var(--ink);
-  background: var(--paper);
+  background: var(--paper-2);
 }
 
 .dock-browser-btn:active:not(:disabled) {
-  background: var(--paper-2);
+  background: var(--line);
 }
 
 /* Seta que não leva a lugar nenhum (sem histórico atrás, sem aba aberta) some
    de tom mas continua LEGÍVEL: ela é estado, e o dono lê o estado. */
 .dock-browser-btn:disabled {
-  border-color: var(--line);
   color: var(--ink-3);
   cursor: default;
 }
@@ -22241,7 +22326,7 @@ details.gui-error-line {
   height: 24px;
   padding: 0 8px;
   border: 1px solid var(--line-strong);
-  border-radius: 5px;
+  border-radius: 4px;
   outline: none;
   background: #e3dccb;
   color: var(--ink);
@@ -22275,14 +22360,22 @@ details.gui-error-line {
    pode colapsar a caixa.
 
    `flex: none` porque a altura é ORDEM, não sugestão: sem ele a página seria a
-   primeira a ceder se a coluna algum dia apertasse. */
+   primeira a ceder se a coluna algum dia apertasse.
+
+   H7: SEM borda e SEM raio próprios. A página é uma faixa de ponta a ponta no
+   meio do instrumento — a moldura de cima é o pé da fileira de navegação, a de
+   baixo é o topo da faixa da alça, e as dos lados são a borda do instrumento.
+   Como a faixa nunca alcança um canto arredondado, a `WebContentsView` (que
+   compõe um RETÂNGULO por cima do DOM, sem conhecer raio nenhum) encaixa
+   perfeita — e nenhuma linha da casa fica escondida embaixo dela.
+
+   A altura reportada não mudou: com `box-sizing: border-box` a caixa de borda
+   continua valendo `--dock-browser-page-h` exatos. */
 .dock-browser-page {
   position: relative;
   flex: none;
   min-width: 0;
   height: var(--dock-browser-page-h, 320px);
-  border-radius: 8px;
-  border: 1px dashed var(--panel-ink-3);
   background: var(--panel-2);
   overflow: hidden;
 }
@@ -22291,16 +22384,20 @@ details.gui-error-line {
 
 /* Ela mora na borda de BAIXO da página, entre o retângulo e a barra de status:
    a divisória do dock do Claude Code que o dono pediu, no dialeto da casa. A
-   caixa tem 12px de alvo (a mesma ordem dos 10px do `.right-rail-resizer`), e
-   as margens negativas a encaixam no vão que já existia — a alça aparece sem
-   empurrar a seção inteira para baixo. */
+   caixa tem 12px de alvo (a mesma ordem dos 10px do `.right-rail-resizer`).
+
+   H7: as margens negativas morreram junto com os vãos — dentro do instrumento
+   não há vão para encaixar nada. Agora ela é uma FAIXA de verdade, e o seu
+   `border-top` ink é a moldura de baixo da janela. Fica exatamente onde o
+   gesto pede: encostada no que ela redimensiona, e à vista porque a barra de
+   status é a única coisa abaixo dela. */
 .dock-browser-grip {
   position: relative;
   flex: none;
   height: 12px;
-  margin: -6px 0;
   border: 0;
-  background: transparent;
+  border-top: 1px solid var(--ink);
+  background: var(--card);
   cursor: ns-resize;
   touch-action: none;
   user-select: none;
@@ -22352,10 +22449,9 @@ details.gui-error-line {
   background: var(--accent);
 }
 
-/* Com view viva a moldura fecha: tracejado é "slot vazio", sólido é "tem
-   página aqui" — a diferença é de FORMA, antes de qualquer cor. */
+/* Com view viva o fundo fecha um tom: é a cor que a página vai ter, e a troca
+   não pisca de papel para preto. */
 .dock-browser-page.live {
-  border: 1px solid #1c1a16;
   background: var(--panel);
 }
 
@@ -22369,6 +22465,18 @@ details.gui-error-line {
   gap: 8px;
   padding: 14px;
   text-align: center;
+}
+
+/* "SLOT VAZIO" continua dito por FORMA — só que agora POR DENTRO. A moldura
+   tracejada era da caixa da página; com a página emoldurada pelo instrumento,
+   o tracejado desceu para o convite, que é o único conteúdo que existe quando
+   não há view nenhuma. (Com view viva ela cobriria isto de qualquer jeito: a
+   `WebContentsView` compõe por cima do DOM.) */
+.dock-browser-page:not(.live) .dock-browser-empty {
+  margin: 7px;
+  border: 1px dashed var(--panel-ink-3);
+  border-radius: 6px;
+  padding: 10px;
 }
 
 /* Os dois níveis do painel escuro medidos, não escolhidos no olho:
@@ -22424,7 +22532,11 @@ details.gui-error-line {
    frase cabe sem a view nativa comê-la (o tooltip da casa desce 7px e cairia
    dentro do retângulo). Altura mínima de uma linha para o retângulo NÃO se
    mexer quando a frase entra e sai — geometria que treme é bounds novo a cada
-   hover. */
+   hover.
+
+   H7: é a barra de status DO INSTRUMENTO, e por isso não tem fio de cabelo
+   próprio — ela continua a faixa de papel que começa na alça, e quem a fecha
+   embaixo é a borda do instrumento. */
 .dock-browser-foot {
   display: flex;
   flex-wrap: wrap;
@@ -22432,6 +22544,7 @@ details.gui-error-line {
   gap: 4px 8px;
   min-height: 14px;
   min-width: 0;
+  padding: 3px 6px 4px;
   font-size: 10px;
   line-height: 1.4;
 }
