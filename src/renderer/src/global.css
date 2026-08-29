@@ -13145,6 +13145,761 @@ textarea.synvoice-target:not(.gui-input) {
   color: var(--ink-3);
   font-size: 10px;
 }
+
+/* ------------------------------------------------------------------
+   SKILLS 2.0 — kit por conversa + biblioteca da máquina
+   Mesmos ossos das outras seções (settings-card / btn / pref-text-input):
+   o que muda de uma ficha para outra é FORMA (a LEI é emoldurada e não tem
+   controle; o slot comum tem toggle), nunca só cor.
+   ------------------------------------------------------------------ */
+
+.skills-settings {
+  /* tintas próprias: --ok e --accent-deep puros não alcançam 4.5:1 sobre o
+     papel em corpo pequeno; misturar com a tinta preserva a família e lê */
+  --skill-ok-ink: color-mix(in srgb, var(--ok) 70%, var(--ink));
+  --skill-accent-ink: color-mix(in srgb, var(--accent-deep) 78%, var(--ink));
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.skills-settings .btn:focus-visible,
+.skill-switch:focus-visible,
+.skill-seg-opt:focus-visible,
+.skills-settings .uc-act:focus-visible,
+.skills-settings input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.skill-head-count {
+  flex: none;
+  align-self: center;
+  padding: 3px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* a regra visível: o sync roda no SPAWN */
+.skill-rule {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: 16px 20px 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: rgba(232, 225, 208, 0.42);
+  color: var(--ink-2);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.skill-rule > i {
+  color: var(--skill-accent-ink);
+  font-style: normal;
+  font-size: 11px;
+}
+
+.skill-kit-body {
+  display: grid;
+  gap: 18px;
+  padding: 16px 20px 20px;
+}
+
+.skill-chat + .skill-chat {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.skill-chat-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.skill-chat-head h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.skill-chat-count {
+  color: var(--ink-2);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.skill-chat-head small {
+  grid-column: 1 / -1;
+  color: var(--ink-2);
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+.skill-group-head small {
+  flex: 1 0 100%;
+  color: var(--ink-2);
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+.skill-group + .skill-group {
+  margin-top: 12px;
+}
+
+/* o número anda COM o rótulo: encostado na borda oposta de um cartão largo,
+   o "10 slots" perdia o dono */
+.skill-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 10px;
+  margin-bottom: 5px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line-strong);
+}
+
+.skill-group-head h4 {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.skill-group-count {
+  color: var(--ink-2);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.skill-slot-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* colunas FIXAS em proporção: o toggle de toda ficha cai na mesma vertical,
+   que é o que deixa 12 slots legíveis de uma passada de olho */
+.skill-slot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 30%) 108px 22px;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  transition:
+    border-color 130ms ease,
+    background-color 130ms ease;
+}
+
+.skill-slot:hover,
+.skill-slot:focus-within {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--paper-2) 70%, transparent);
+}
+
+.skill-slot-occasion {
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+/* ligado ≠ desligado por PESO e tinta cheia — nunca por opacidade, que
+   derruba o contraste da linha inteira */
+.skill-slot.is-on .skill-slot-occasion,
+.skill-slot.is-law .skill-slot-occasion {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.skill-slot-idcell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 7px;
+  min-width: 0;
+}
+
+.skill-slot-id {
+  min-width: 0;
+  padding: 2px 7px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 5px;
+  background: rgba(232, 225, 208, 0.45);
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* A LEI: moldura permanente, sem coluna de controle — a diferença é de FORMA */
+.skill-slot.is-law {
+  border-color: var(--line-strong);
+  background: rgba(232, 225, 208, 0.5);
+}
+
+.skill-slot-law {
+  display: inline-flex;
+  grid-column: 3 / -1;
+  align-items: center;
+  justify-self: end;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line-strong));
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.skill-slot-law > i {
+  color: var(--skill-accent-ink);
+  font-style: normal;
+  font-size: 9px;
+}
+
+.skill-slot-lawnote {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  color: var(--ink-2);
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+/* o interruptor: mesma geometria do switch dos avisos do chat (par visual em
+   .chat-notice-switch-state) — controle igual em toda a casa */
+.skill-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 4px 5px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    border-color 130ms ease,
+    background-color 130ms ease;
+}
+
+.skill-switch:hover:not(:disabled) {
+  border-color: var(--line-strong);
+}
+
+.skill-switch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.skill-switch em {
+  color: var(--ink-2);
+  font-size: 8.5px;
+  font-style: normal;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.skill-switch > i {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--paper-3, #e3dccb);
+  transition:
+    background-color 130ms ease,
+    border-color 130ms ease;
+}
+
+.skill-switch b {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  transition:
+    transform 130ms ease,
+    background-color 130ms ease;
+}
+
+.skill-slot.is-on .skill-switch > i {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+  background: color-mix(in srgb, var(--accent) 18%, var(--paper-2));
+}
+
+.skill-slot.is-on .skill-switch b {
+  background: var(--accent);
+  transform: translateX(16px);
+}
+
+.skills-settings .uc-act:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ---------- biblioteca ---------- */
+
+.skill-lib-tools {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.85fr) minmax(280px, 1.15fr);
+  gap: 16px;
+  padding: 16px 20px 0;
+}
+
+.skill-search,
+.skill-install {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.skill-search > span,
+.skill-install > span,
+.skill-add-occasion > span {
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.skill-install-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.skill-install-row .pref-text-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.skill-install-row .btn {
+  flex: none;
+}
+
+.skill-install-error,
+.skill-install-ok,
+.skill-add-error {
+  margin: 10px 20px 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.skill-install-error,
+.skill-add-error {
+  color: var(--err);
+}
+
+.skill-install-ok {
+  color: var(--skill-ok-ink);
+}
+
+.skill-install-ok code {
+  font-size: 10px;
+}
+
+.skill-lib-body {
+  padding: 14px 20px 0;
+}
+
+.skill-lib-list {
+  max-height: min(52vh, 460px);
+  margin: 0;
+  padding: 0 4px 0 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.skill-lib-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 9px 8px;
+  border-radius: 8px;
+  transition: background-color 130ms ease;
+}
+
+.skill-lib-row + .skill-lib-row {
+  border-top: 1px solid var(--line);
+}
+
+.skill-lib-row:hover,
+.skill-lib-row:focus-within {
+  background: color-mix(in srgb, var(--paper-2) 62%, transparent);
+}
+
+.skill-lib-id {
+  flex: none;
+  max-width: 100%;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.skill-lib-desc {
+  display: -webkit-box;
+  flex: 1 1 240px;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 10px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* aviso de BOM: a pasta existe, mas o CLI não lê o frontmatter dela */
+.skill-bom {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--err) 45%, var(--line-strong));
+  border-radius: 999px;
+  color: var(--err);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.skill-bom > i {
+  font-style: normal;
+  font-size: 9px;
+}
+
+.skill-lib-flag {
+  flex: none;
+  padding: 2px 9px;
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, var(--line-strong));
+  border-radius: 999px;
+  color: var(--skill-ok-ink);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.skill-lib-add {
+  flex: none;
+  margin-left: auto;
+}
+
+/* adicionar ao kit acontece NA LINHA (modal para isto seria interrupção à toa) */
+.skill-add {
+  display: grid;
+  flex: 1 1 100%;
+  gap: 11px;
+  margin-top: 4px;
+  padding: 12px 13px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: rgba(246, 241, 230, 0.75);
+  animation: rise 160ms var(--ease-out) both;
+}
+
+.skill-add-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+}
+
+.skill-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.skill-seg.is-off {
+  opacity: 0.6;
+}
+
+.skill-seg-label {
+  color: var(--ink-2);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.skill-seg-opt {
+  position: relative;
+  padding: 6px 12px;
+  border: 1.5px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.skill-seg-opt:first-of-type {
+  border-radius: 6px 0 0 6px;
+}
+
+.skill-seg-opt:last-of-type {
+  margin-left: -1.5px;
+  border-radius: 0 6px 6px 0;
+}
+
+.skill-seg-opt:hover:not(:disabled) {
+  z-index: 1;
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.skill-seg-opt.is-on {
+  z-index: 1;
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.skill-seg-opt:disabled {
+  cursor: default;
+}
+
+.skill-add-occasion {
+  display: grid;
+  gap: 6px;
+}
+
+.skill-add-error {
+  margin: 0;
+}
+
+.skill-add-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---------- rodapé: a poda ---------- */
+
+.skill-lib-foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+  background: rgba(232, 225, 208, 0.32);
+}
+
+.skill-lib-foot > div {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 3px;
+}
+
+.skill-lib-foot strong {
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.skill-lib-foot small {
+  color: var(--ink-2);
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+.skill-lib-foot .skill-pruned {
+  color: var(--skill-ok-ink);
+}
+
+.skill-lib-foot .btn {
+  flex: none;
+}
+
+.skill-prune-modal {
+  width: min(520px, 92vw);
+}
+
+.skill-prune-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 2px 14px;
+  max-height: 168px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(232, 225, 208, 0.4);
+  list-style: none;
+  color: var(--ink-2);
+  font-size: 10px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.skill-prune-list .skill-prune-more {
+  color: var(--ink-2);
+  font-weight: 700;
+}
+
+/* ---------- estados: vazio, falha, carregando ---------- */
+
+.skill-empty {
+  margin: 0;
+  padding: 13px 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: rgba(232, 225, 208, 0.3);
+  color: var(--ink-2);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.skill-banner,
+.skill-dead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 11px 13px;
+  border: 1px dashed color-mix(in srgb, var(--err) 55%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--err) 8%, transparent);
+  color: var(--err);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.skill-banner .btn,
+.skill-dead .btn {
+  flex: none;
+  margin-left: auto;
+}
+
+.skill-skeleton {
+  display: grid;
+  gap: 8px;
+}
+
+.skill-skeleton span {
+  height: 42px;
+  border-radius: 8px;
+  background: linear-gradient(
+    90deg,
+    rgba(232, 225, 208, 0.5) 0%,
+    rgba(246, 241, 230, 0.95) 50%,
+    rgba(232, 225, 208, 0.5) 100%
+  );
+  background-size: 220% 100%;
+  animation: skill-shimmer 1.15s linear infinite;
+}
+
+@keyframes skill-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -20% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skill-skeleton span {
+    animation: none;
+  }
+
+  .skill-add {
+    animation: none;
+  }
+}
+
+@media (max-width: 1080px) {
+  .skill-lib-tools {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* viewport estreita: a ficha vira duas linhas em vez de espremer o toggle */
+@media (max-width: 760px) {
+  .skill-head-count {
+    align-self: start;
+  }
+
+  .skill-slot {
+    grid-template-columns: minmax(0, 1fr) 108px 22px;
+  }
+
+  .skill-slot-idcell {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .skill-slot.is-law .skill-slot-law {
+    grid-column: 2 / -1;
+  }
+
+  .skill-slot-lawnote {
+    grid-row: 3;
+  }
+
+  .skill-lib-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .skill-lib-foot .btn {
+    justify-content: center;
+  }
+}
+
 @media (max-width: 1080px) {
   .settings-inner {
     padding-inline: 28px;

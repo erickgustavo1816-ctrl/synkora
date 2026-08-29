@@ -61,7 +61,8 @@ import { GuiAttachmentCapabilityStore } from '../guiAttachmentCapabilities'
 import { renderGuiAttachmentPreview } from '../guiAttachmentMedia'
 import { unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { guiMissionRoleOf, missionShortId, planApprovedReceipt } from '../guiMissionContracts'
+import { guiMissionRoleOf, planApprovedReceipt } from '../guiMissionContracts'
+import { guiMissionOf, noteSkillsSync, syncSpawnSkills } from '../guiSpawnSkills'
 import { notifyDesktop } from '../desktopNotifications'
 import { GuiPaneVisibilityRegistry, GuiWindowReadyController } from '../guiWindowReady'
 import type { GuiHelperOwnerDismissResult } from '../guiHelperSessions'
@@ -149,24 +150,13 @@ function paneLabel(ctx: MainContext, paneId: string, projectId: string): string 
     const project = ctx.projects.get(projectId)
     return project ? `planejamento de ${project.name}` : 'planejamento do universo'
   }
-  const short = paneId.split('-')[2] ?? ''
-  const mission = ctx.missions
-    .list(projectId)
-    .find((candidate) => missionShortId(candidate.id) === short)
+  const mission = guiMissionOf(ctx, projectId, paneId)
   const who = ROLE_LABEL[role] ?? role
   return mission ? `${who} · ${mission.title}` : who
 }
 
-/**
- * Missão dona de um pane GUI, pela convenção `gui-<papel>-<id8>`. undefined =
- * pane de projeto (planejamento avulso) — o plano nasce sem missão de origem.
- */
 function guiMissionIdOf(ctx: MainContext, projectId: string, paneId: string): string | undefined {
-  if (!guiMissionRoleOf(paneId)) return undefined
-  const short = paneId.split('-')[2] ?? ''
-  return ctx.missions
-    .list(projectId)
-    .find((candidate) => missionShortId(candidate.id) === short)?.id
+  return guiMissionOf(ctx, projectId, paneId)?.id
 }
 
 function chatNoticeEnabled(ctx: MainContext, kind: GuiNoticeKind): boolean {
@@ -480,7 +470,19 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
       })
     }
     await extras.waitForCliStable(spawn.cli)
-    return registry.create(spawn)
+
+    // O CARDÁPIO DE SKILLS CHEGA PELA PASTA (ADR-0002), e a pasta tem de estar
+    // pronta ANTES do processo nascer. Ver `syncSpawnSkills` para o porquê da
+    // ordem; falha aqui jamais impede o spawn.
+    const skills = syncSpawnSkills(ctx, spawn)
+    try {
+      return registry.create(spawn)
+    } finally {
+      // O EPÍLOGO DO NASCIMENTO, no `finally` de propósito: a nota precisa do
+      // fio já aberto (antes do create não existe onde escrever) e o diário
+      // precisa da linha MESMO se o spawn explodir — falha muda é bug.
+      noteSkillsSync(ctx, registry, spawn, skills)
+    }
   })
 
   ipcMain.handle(

@@ -72,6 +72,7 @@ import {
   windowsNotificationShortcutSpec
 } from './desktopNotificationPolicy'
 import { registerPlansIpc } from './ipc/plans'
+import { registerSkillsIpc } from './ipc/skills'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerProgressIpc } from './ipc/progress'
 import { registerMiscIpc } from './ipc/misc'
@@ -4324,6 +4325,9 @@ app.whenReady().then(async () => {
   // EXPURGO F6 (2026-08-17): o `registerProjectPlanIpc` que ficava aqui morreu
   // com a aba do roadmap por ondas — `plans:*` é a ÚNICA ponte de plano viva.
   registerPlansIpc(ctx, { assertAppRendererSender })
+  // SKILLS 2.0 (2026-08-29): a biblioteca é da MÁQUINA e o kit é DADO em
+  // userData — a tela de Ajustes ▸ Skills entra por aqui.
+  registerSkillsIpc(ctx, { assertAppRendererSender })
   registerProjectsIpc(ctx, {
     killMaestroSession,
     ensureBypassAccepted,

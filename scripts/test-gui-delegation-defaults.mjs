@@ -716,10 +716,14 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   // na R37 (mesma data) de novo só o do CONTRATO, 8700→10300: o MUNDO ("ao
   // invés de ficar remendando, explica para ele como é o synkora, onde ele
   // está e como funciona") abriu os CINCO contratos com a linha ONDE VOCÊ
-  // ESTÁ por papel; a ordem permanente seguiu intocada; o dev mede 9751.
+  // ESTÁ por papel; a ordem permanente seguiu intocada; o dev mede 9751. E no
+  // Skills 2.0 (2026-08-29) de novo só o do CONTRATO, 10300→11400: o CARDÁPIO
+  // DE SKILLS (ADR-0001: escolher é julgamento do agente) + a LEI do
+  // impeccable (ADR-0005) entraram em dev/ajudante — a ordem permanente
+  // seguiu intocada; o dev mede 10985.
   assert.ok(order.length < 3000, `a ordem permanente virou constituição (${order.length})`)
   for (const role of GUI_MISSION_ROLES) {
-    assert.ok(guiMissionSystemPrompt(role).length < 10300, `${role}: contrato virou constituição`)
+    assert.ok(guiMissionSystemPrompt(role).length < 11400, `${role}: contrato virou constituição`)
   }
   // O planejador não delega: ele nunca recebe a seção nem o pino.
   assert.doesNotMatch(guiPlanningSystemPrompt(), /STANDING ORDER FROM THE OWNER/u)

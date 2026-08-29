@@ -2,6 +2,7 @@ import { useStore, type SettingsSection } from '../store'
 import AppearanceSettings from '../components/AppearanceSettings'
 import ChatNoticeSettings from '../components/ChatNoticeSettings'
 import SeatDeck from '../components/SeatDeck'
+import SkillsSettings from '../components/SkillsSettings'
 import SynVoiceMicrophoneSettings from '../components/SynVoiceMicrophoneSettings'
 import SynkoraMark from '../components/SynkoraMark'
 import GuiPanelErrorBoundary from '../components/GuiPanelErrorBoundary'
@@ -16,6 +17,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { id: 'appearance', glyph: 'Aa', label: 'Aparência', description: 'fonte dos painéis' },
   { id: 'accounts', glyph: '●', label: 'Minhas contas', description: 'seats e logins' },
+  { id: 'skills', glyph: '❖', label: 'Skills', description: 'biblioteca e kits' },
   { id: 'voice', glyph: '◉', label: 'SynVoice', description: 'microfone e voz' }
 ]
 
@@ -29,6 +31,11 @@ const COPY: Record<SettingsSection, { eyebrow: string; title: string; text: stri
     eyebrow: 'identidades de execução',
     title: 'Minhas contas',
     text: 'Cadastre os seats usados pelo Claude Code e Codex e mantenha os logins prontos.'
+  },
+  skills: {
+    eyebrow: 'cardápio dos agentes',
+    title: 'Skills',
+    text: 'Monte o kit que cada tipo de conversa recebe e cuide da biblioteca desta máquina.'
   },
   voice: {
     eyebrow: 'ditado inteligente',
@@ -116,6 +123,11 @@ export default function Settings(): React.JSX.Element {
                 {section === 'accounts' && (
                   <GuiPanelErrorBoundary paneId="settings:accounts" label="as contas">
                     <SeatDeck />
+                  </GuiPanelErrorBoundary>
+                )}
+                {section === 'skills' && (
+                  <GuiPanelErrorBoundary paneId="settings:skills" label="a biblioteca de skills">
+                    <SkillsSettings />
                   </GuiPanelErrorBoundary>
                 )}
                 {section === 'voice' && (

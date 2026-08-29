@@ -513,6 +513,54 @@ export type PlanRemovalResult = { ok: true } | { ok: false; error: string }
 
 // ————— fim do BLOCO NOVO de planos —————
 
+// ————— SKILLS 2.0 (2026-08-29) — biblioteca da MÁQUINA + kit por chat —————
+//
+// Espelho DECLARADO de `src/main/skillsKit.ts` (SkillsKitSlot/SkillsKitState)
+// e de `src/main/ipc/skills.ts` (a linha da biblioteca): o renderer nunca
+// importa main. Qualquer campo novo lá tem par aqui — o kit é o que a tela de
+// Ajustes ▸ Skills desenha, slot por slot.
+
+export type SkillChatType = 'dev' | 'planejamento'
+export type SkillDevWing = 'execucao' | 'orquestracao'
+
+export interface SkillsKitSlot {
+  /** pasta na biblioteca = `name:` do frontmatter */
+  id: string
+  /** a ocasião, em PT-BR, mostrada na tela ("vai mexer em UI") */
+  occasion: string
+  enabled: boolean
+  /** LEI da persona (ADR-0005): a tela mostra FIXO, SEM toggle — desligar ou
+   *  remover é recusado no main, porque mudar a lei é commit com o dono. */
+  law?: boolean
+}
+
+export interface SkillsKitState {
+  version: 1
+  dev: { execucao: SkillsKitSlot[]; orquestracao: SkillsKitSlot[] }
+  planejamento: SkillsKitSlot[]
+}
+
+/** Uma pasta da biblioteca instalada na máquina. */
+export interface SkillsLibraryItem {
+  id: string
+  /** `description:` do frontmatter, truncada; degradada quando ilegível */
+  description: string
+  /** SKILL.md com BOM: o codex rejeita o frontmatter — a tela avisa */
+  hasBom: boolean
+  /** citada por ALGUM slot de ALGUM kit (habilitado ou não) */
+  inKit: boolean
+}
+
+export interface SkillsListResult {
+  library: SkillsLibraryItem[]
+  kit: SkillsKitState
+}
+
+export type SkillInstallResult = { ok: true; id: string } | { ok: false; error: string }
+export type SkillsPruneResult = { ok: true; removed: string[] } | { ok: false; error: string }
+
+// ————— fim do BLOCO NOVO de skills —————
+
 export interface CatalogModel {
   id: string
   label: string
@@ -1327,6 +1375,39 @@ const api = {
     }
   },
   // ————— fim do BLOCO NOVO de planos —————
+  /**
+   * SKILLS 2.0 — a central GLOBAL (a biblioteca é da máquina, não do projeto).
+   * Espelho 1:1 dos canais de `src/main/ipc/skills.ts`. Todo mutador devolve
+   * o KIT INTEIRO: a tela redesenha com a fotografia que o main gravou, e uma
+   * recusa (a LEI, ADR-0005) volta como o estado inalterado — por isso o slot
+   * da lei chega com `law: true` e a tela o mostra fixo, sem toggle.
+   * Mudança vale para a PRÓXIMA conversa aberta.
+   */
+  skills: {
+    /** Biblioteca instalada + o kit dos dois tipos de chat. */
+    list: (): Promise<SkillsListResult> => ipcRenderer.invoke('skills:list'),
+    setEnabled: (
+      chat: SkillChatType,
+      id: string,
+      enabled: boolean
+    ): Promise<SkillsKitState> => ipcRenderer.invoke('skills:setEnabled', chat, id, enabled),
+    /** `wing` só existe no dev (execução/orquestração); ausente = execução. */
+    addToKit: (
+      chat: SkillChatType,
+      id: string,
+      occasion: string,
+      wing?: SkillDevWing
+    ): Promise<SkillsKitState> =>
+      ipcRenderer.invoke('skills:addToKit', chat, id, occasion, wing),
+    /** Tira a ocasião do kit — NUNCA apaga a pasta da biblioteca. */
+    removeFromKit: (chat: SkillChatType, id: string): Promise<SkillsKitState> =>
+      ipcRenderer.invoke('skills:removeFromKit', chat, id),
+    /** A única porta com rede: URL da PASTA da skill no GitHub, sha pinado. */
+    installFromUrl: (url: string): Promise<SkillInstallResult> =>
+      ipcRenderer.invoke('skills:installFromUrl', url),
+    /** PODA: apaga do disco toda pasta que nenhum kit cita. Gesto explícito. */
+    prune: (): Promise<SkillsPruneResult> => ipcRenderer.invoke('skills:prune')
+  },
   hub: {
     onEvent: (cb: (evt: HubEvent) => void): (() => void) => {
       const listener = (_e: IpcRendererEvent, evt: HubEvent): void => cb(evt)

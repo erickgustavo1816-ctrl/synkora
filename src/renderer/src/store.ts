@@ -87,6 +87,12 @@ import {
   isGuiSubagentToolEvent,
   type GuiSubagentMetadata
 } from './guiSubagentSidebar'
+import type {
+  SkillChatType,
+  SkillDevWing,
+  SkillsKitState,
+  SkillsLibraryItem
+} from './skillsSettingsModel'
 
 export interface Project {
   id: string
@@ -120,6 +126,7 @@ export type SettingsSection =
   | 'appearance'
   | 'accounts'
   | 'voice'
+  | 'skills'
 
 /** Versão do CLI que os panes executam (espelha `main/cliUpdate.ts`) — CLI
  *  velho não conhece modelo novo, então o app checa/atualiza sozinho. */
@@ -1794,6 +1801,33 @@ interface SynkoraState {
   settings: SynkoraSettings | null
   loadSettings: () => Promise<void>
   patchSettings: (patch: SynkoraSettingsPatch) => Promise<void>
+  /** SKILLS 2.0 — a biblioteca é da MÁQUINA (userData), não do projeto: um
+   *  estado só, global, alimentado pela tela de configurações. Referência
+   *  estável de propósito (a lista nasce `[]` no store; seletor nunca usa
+   *  `?? []` inline, que remontaria a lista a cada render). */
+  skillsLibrary: SkillsLibraryItem[]
+  /** null = ainda não lido. Kit vazio de verdade tem `version: 1` e listas. */
+  skillsKit: SkillsKitState | null
+  skillsLoading: boolean
+  /** falha de leitura em PT-BR, nomeando a saída — a tela mostra e oferece
+   *  "tentar de novo" (beco sem saída é bug) */
+  skillsError: string | null
+  loadSkills: () => Promise<void>
+  setSkillEnabled: (chat: SkillChatType, id: string, enabled: boolean) => Promise<void>
+  /** devolve o ERRO em PT-BR (null = entrou) em vez de acender o aviso global:
+   *  a falha pertence ao formulário aberto, que fica de pé com o que foi
+   *  digitado — perder a ocasião escrita por causa de um EPERM é bug */
+  addSkillToKit: (
+    chat: SkillChatType,
+    id: string,
+    occasion: string,
+    wing?: SkillDevWing
+  ) => Promise<string | null>
+  removeSkillFromKit: (chat: SkillChatType, id: string) => Promise<void>
+  /** rede SÓ aqui (ADR-0007); devolve o erro em vez de jogar */
+  installSkillFromUrl: (url: string) => Promise<{ ok: boolean; id?: string; error?: string }>
+  /** PODA: gesto explícito, nunca no boot */
+  pruneSkills: () => Promise<{ ok: boolean; removed?: string[]; error?: string }>
   /** universos já visitados NESTA sessão — ficam MONTADOS (display:none) para
    *  os panes/maestro continuarem rodando ao trocar de projeto */
   mountedProjects: string[]
@@ -1941,6 +1975,16 @@ function projectCreateWarning(res: unknown): string | null {
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
   return null
+}
+
+/** Preload velho (app rodando sem restart) não tem a API de skills — a tela
+ *  nomeia a receita em vez de morrer calada. */
+const SKILLS_NO_API = 'reinicie o app (npm run dev) para abrir a biblioteca de skills'
+
+/** falha de skills em PT-BR: sempre diz o que se tentava fazer */
+function skillsFailure(error: unknown, doing: string): string {
+  const detail = error instanceof Error ? error.message.trim() : String(error ?? '').trim()
+  return detail ? `não deu para ${doing}: ${detail}` : `não deu para ${doing}`
 }
 
 export const useStore = create<SynkoraState>((set, get) => ({
@@ -2180,6 +2224,89 @@ export const useStore = create<SynkoraState>((set, get) => ({
 
   patchSettings: async (patch) => {
     set({ settings: await window.synkora.settings.set(patch) })
+  },
+
+  // ————— SKILLS 2.0 (biblioteca + kit por tipo de conversa) —————
+  // O kit é DADO em userData e o motor é o dono dele: toda mutação devolve o
+  // estado inteiro e a tela adota o que voltou — nunca edita a cópia local e
+  // torce para o disco concordar.
+  skillsLibrary: [],
+  skillsKit: null,
+  skillsLoading: false,
+  skillsError: null,
+
+  loadSkills: async () => {
+    if (!window.synkora.skills) {
+      set({ skillsLoading: false, skillsError: SKILLS_NO_API })
+      return
+    }
+    set({ skillsLoading: true, skillsError: null })
+    try {
+      const { library, kit } = await window.synkora.skills.list()
+      set({ skillsLibrary: library, skillsKit: kit, skillsLoading: false, skillsError: null })
+    } catch (error) {
+      set({ skillsLoading: false, skillsError: skillsFailure(error, 'ler a biblioteca de skills') })
+    }
+  },
+
+  setSkillEnabled: async (chat, id, enabled) => {
+    if (!window.synkora.skills) {
+      set({ skillsError: SKILLS_NO_API })
+      return
+    }
+    try {
+      const kit = await window.synkora.skills.setEnabled(chat, id, enabled)
+      set({ skillsKit: kit, skillsError: null })
+    } catch (error) {
+      set({ skillsError: skillsFailure(error, `${enabled ? 'ligar' : 'desligar'} ${id}`) })
+    }
+  },
+
+  addSkillToKit: async (chat, id, occasion, wing) => {
+    if (!window.synkora.skills) return SKILLS_NO_API
+    try {
+      const kit = await window.synkora.skills.addToKit(chat, id, occasion, wing)
+      set({ skillsKit: kit, skillsError: null })
+      return null
+    } catch (error) {
+      return skillsFailure(error, `pôr ${id} no kit`)
+    }
+  },
+
+  removeSkillFromKit: async (chat, id) => {
+    if (!window.synkora.skills) {
+      set({ skillsError: SKILLS_NO_API })
+      return
+    }
+    try {
+      const kit = await window.synkora.skills.removeFromKit(chat, id)
+      set({ skillsKit: kit, skillsError: null })
+    } catch (error) {
+      set({ skillsError: skillsFailure(error, `tirar ${id} do kit`) })
+    }
+  },
+
+  installSkillFromUrl: async (url) => {
+    if (!window.synkora.skills) return { ok: false, error: SKILLS_NO_API }
+    try {
+      const res = await window.synkora.skills.installFromUrl(url)
+      // a pasta nova só aparece na lista relendo o disco
+      if (res.ok) await get().loadSkills()
+      return res.ok ? { ok: true, id: res.id } : { ok: false, error: res.error }
+    } catch (error) {
+      return { ok: false, error: skillsFailure(error, 'instalar a skill') }
+    }
+  },
+
+  pruneSkills: async () => {
+    if (!window.synkora.skills) return { ok: false, error: SKILLS_NO_API }
+    try {
+      const res = await window.synkora.skills.prune()
+      if (res.ok) await get().loadSkills()
+      return res.ok ? { ok: true, removed: res.removed } : { ok: false, error: res.error }
+    } catch (error) {
+      return { ok: false, error: skillsFailure(error, 'podar a biblioteca') }
+    }
   },
 
   loadSeats: async () => {

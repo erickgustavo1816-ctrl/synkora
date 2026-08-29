@@ -132,9 +132,14 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // como é o synkora, onde ele está e como funciona". TODO contrato abre com
     // THE WORLD YOU ARE IN + a linha ONDE VOCÊ ESTÁ do papel; versão é do
     // dono, bump é do app, mecânica não escrita se PERGUNTA (dev 9751,
-    // ajudante 7756, reviewer 7120). O teto continua sendo contra
-    // CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
-    assert.ok(contract.length < 10300, `${role}: contrato virou constituição`)
+    // ajudante 7756, reviewer 7120). E de 10300 para 11400 em 2026-08-29, pelo
+    // CARDÁPIO DE SKILLS (Skills 2.0, ADRs 0001/0002/0005): o kit do tipo de
+    // chat passa a chegar pela PASTA do worktree e o modelo precisa da régua de
+    // USO — a ocasião como gatilho, playbook em vez de enfeite, e a LEI do
+    // `impeccable` em quem estiliza (dev 10985, ajudante 8990; o reviewer não
+    // recebe nem cardápio nem lei e continua exatamente em 7120). O teto
+    // continua sendo contra CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
+    assert.ok(contract.length < 11400, `${role}: contrato virou constituição`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -1016,7 +1021,12 @@ test('o planejador PROPÕE o plano, não executa produto nem cria missão', () =
   // de remendar e explicar a TODO papel "como é o synkora, onde ele está e
   // como funciona" — o planejador agora abre sabendo que na mesa dele missão
   // ainda não existe e que versão/bump são do dono/app. Mede 5325.
-  assert.ok(contract.length < 5500, 'contrato virou constituição')
+  //
+  // E de 5500 para 6400 em 2026-08-29, pelo CARDÁPIO DE SKILLS (ADR-0001 e
+  // 0002): o planejador PRODUZ — ele destrincha o escopo e escreve plano/ —,
+  // então o menu do worktree também é dele. A LEI do `impeccable` NÃO entra
+  // aqui: ele não estiliza nada. Mede 6208.
+  assert.ok(contract.length < 6400, 'contrato virou constituição')
   assert.match(contract, /"mestre" is a DESIGNATION the owner grants/u)
   assert.match(contract, /only his click designates or removes it/u)
   assert.match(contract, /PROJECT_PLAN\.md/u)
@@ -1370,4 +1380,141 @@ test('todo papel que roda processo carrega a regra do fratricídio', async () =>
   }
   // O planejamento não roda processo nenhum — a regra não entra lá à toa.
   assert.doesNotMatch(guiPlanningSystemPrompt(), /taskkill/u)
+})
+
+// ————— SKILLS 2.0 — O CARDÁPIO E A LEI (2026-08-29, ADRs 0001/0002/0005) —————
+//
+// O cardápio de skills chega ao chat pelo TRANSPORTE NATIVO dos CLIs (ADR-0002:
+// o harness sincroniza o kit para a pasta de skills do worktree e o binário o
+// lista sozinho). Então o que falta ao MODELO não é a ferramenta — é a régua de
+// USO, e ela é de julgamento: ADR-0001 diz que quem escolhe do cardápio é o
+// AGENTE, por ocasião, porque heurística de conteúdo é proibida nesta casa.
+//
+// A LEI (ADR-0005) é a única exceção, e o dono a fixou na PERSONA de propósito:
+// "trabalho de UI ⇒ impeccable, sempre — nunca empilhada com outra direção
+// estética". Persona e não toggle porque mudar lei é doutrina com ele (commit),
+// nunca clique na tela de gestão — e a tela mostra a lei como texto FIXO
+// justamente por isso.
+//
+// QUEM RECEBE O QUÊ é decisão registrada no design: cardápio só para quem
+// PRODUZ (dev, ajudante e planejador); a lei só para quem ESTILIZA (dev e
+// ajudante). O reviewer lê diff e não edita produto, e o release opera a subida
+// da versão — prometer skill de estilo a eles seria mandá-los seguir um playbook
+// para trabalho que o contrato deles já proíbe.
+
+const SKILLS_HEADER = 'SKILLS — THE MENU COMES TO YOU; CHOOSING FROM IT IS YOUR JUDGEMENT:'
+
+/**
+ * O bloco do cardápio, lido da FONTE — do cabeçalho até a linha em branco que
+ * separa as seções do contrato (no planejador ele fecha o texto e vai até o
+ * fim). O teste nunca guarda uma cópia do bloco: é ele que prova a fonte única.
+ */
+function skillsSection(contract) {
+  const at = contract.indexOf(SKILLS_HEADER)
+  if (at < 0) return undefined
+  const end = contract.indexOf('\n\n', at)
+  return (end < 0 ? contract.slice(at) : contract.slice(at, end)).trim()
+}
+
+test('o cardápio é FONTE ÚNICA e chega a quem PRODUZ: dev, ajudante e planejador', () => {
+  const dev = skillsSection(guiMissionSystemPrompt('dev'))
+  const helper = skillsSection(guiMissionSystemPrompt('helper'))
+  const planner = skillsSection(guiPlanningSystemPrompt())
+  for (const [nome, section] of [
+    ['dev', dev],
+    ['helper', helper],
+    ['planner', planner]
+  ]) {
+    assert.ok(section, `${nome}: sem o bloco do cardápio de skills`)
+  }
+  // FONTE ÚNICA, como a ordem da delegação: ninguém tem a própria versão da
+  // régua. A diferença entre os que estilizam e o planejador é a LEI, e só ela
+  // (provado no teste seguinte, pelo DELTA — aqui basta o prefixo comum).
+  assert.equal(dev, helper, 'dev e ajudante divergiram no cardápio')
+  assert.ok(dev.startsWith(planner), 'o planejador recebeu outro cardápio, não o mesmo bloco')
+
+  // O TRANSPORTE é nativo (ADR-0002): pasta de skills do worktree, listada pelo
+  // próprio CLI. Nada de tool inventada — prometer `skill_menu`/`skill_load`
+  // mandaria o agente procurar ferramenta que o catálogo não tem.
+  assert.match(planner, /skills folder/iu, 'o bloco não diz DE ONDE o cardápio vem')
+  assert.doesNotMatch(planner, /skill_menu|skill_load/u, 'o cardápio virou tool inventada')
+  // A ESCOLHA é do agente, por OCASIÃO (ADR-0001) — e ninguém roteia por ele.
+  assert.match(planner, /JUDGEMENT/u, 'a escolha deixou de ser julgamento do agente')
+  assert.match(planner, /OCCASION/u, 'sumiu o gatilho: a ocasião')
+  assert.match(
+    planner,
+    /Nothing routes them to you/iu,
+    'o bloco não diz que ninguém escolhe no lugar dele'
+  )
+  // O QUE É uma skill: playbook para SEGUIR enquanto a ocasião dura — nunca
+  // enfeite citado de passagem.
+  assert.match(planner, /PLAYBOOK/u, 'skill virou enfeite')
+  assert.match(planner, /decoration/iu, 'sem a negação do enfeite')
+  // E a régua que a lei depois carimba: direção estética não se empilha.
+  assert.match(planner, /NEVER stack/u, 'empilhar direção estética voltou a ser livre')
+  // Beco sem saída é bug, inclusive em persona: cardápio incompleto não trava.
+  assert.match(planner, /never stops the job/iu, 'skill ausente virou impedimento')
+
+  // Curto como as seções irmãs: régua, não constituição.
+  assert.ok(planner.length > 400, 'o cardápio ficou vago demais')
+  assert.ok(planner.length < 1400, 'o cardápio virou constituição')
+
+  // E ele não desloca a última palavra do contrato (a ordem da delegação).
+  for (const role of ['dev', 'helper']) {
+    const contract = guiMissionSystemPrompt(role)
+    assert.ok(
+      contract.indexOf(SKILLS_HEADER) < contract.indexOf(DELEGATION_HEADER),
+      `${role}: o cardápio passou na frente da ordem permanente da delegação`
+    )
+  }
+})
+
+test('a LEI é do DEV e do AJUDANTE: impeccable ANTES de estilizar, fora de qualquer toggle', () => {
+  const planner = skillsSection(guiPlanningSystemPrompt())
+  assert.ok(planner, 'sem o cardápio do planejador não há como medir o delta da lei')
+  for (const role of ['dev', 'helper']) {
+    const section = skillsSection(guiMissionSystemPrompt(role))
+    assert.ok(section, `${role}: sem o bloco do cardápio, a lei não tem onde morar`)
+    // O DELTA para o bloco do planejador é EXATAMENTE a lei — nem uma linha a
+    // mais viaja escondida junto dela.
+    const law = section.slice(planner.length).trim()
+    assert.ok(law.length > 0, `${role}: sem a lei do impeccable`)
+    assert.equal(law.includes('\n'), false, `${role}: a lei virou seção, e ela é UMA linha`)
+    assert.match(law, /^- THE ONE LAW/u, `${role}: a lei não se anuncia como lei`)
+    // A skill, nomeada como o CLI a lista (a pasta = o `name:` do frontmatter).
+    assert.match(law, /`impeccable`/u, `${role}: a lei não nomeia a skill`)
+    // A OCASIÃO inteira, nas palavras do dono: trabalho de UI.
+    for (const occasion of ['styling', 'layout', 'motion', 'visual polish']) {
+      assert.ok(law.includes(occasion), `${role}: a ocasião não cobre ${occasion}`)
+    }
+    // ANTES de estilizar — carregar depois de pronto é decorar, não seguir.
+    assert.match(law, /BEFORE you style/u, `${role}: a lei perdeu a hora de carregar`)
+    // E nunca empilhada com outra direção estética (a metade que o dono ditou).
+    assert.match(
+      law,
+      /never stacked with another aesthetic direction/u,
+      `${role}: empilhar direção estética voltou a ser possível`
+    )
+    // ADR-0005: ela mora na PERSONA. Mudar lei é doutrina com o dono (commit),
+    // nunca clique — então o texto não pode sugerir chave para desligá-la.
+    assert.match(law, /no setting/iu, `${role}: a lei ficou parecendo um toggle da tela`)
+  }
+  // O planejador não estiliza: ele desenha o mapa e escreve plano/. A lei não
+  // entra no chat dele — nem a skill dela é citada por acidente.
+  assert.doesNotMatch(guiPlanningSystemPrompt(), /impeccable/iu, 'o planejador ganhou a lei da UI')
+})
+
+test('quem não PRODUZ não recebe cardápio nem lei: reviewer e release intocados', () => {
+  // Decisão registrada no design de 2026-08-29: cardápio só para quem produz. O
+  // reviewer lê diff e não edita produto; o release sobe a versão pelas duas
+  // ferramentas dele. Dar-lhes um playbook de estilo seria contradizer o próprio
+  // contrato de cada um.
+  for (const [nome, prompt] of [
+    ['reviewer', guiMissionSystemPrompt('reviewer')],
+    ['release', guiReleaseSystemPrompt()]
+  ]) {
+    assert.equal(skillsSection(prompt), undefined, `${nome}: recebeu o cardápio de skills`)
+    assert.doesNotMatch(prompt, /impeccable/iu, `${nome}: recebeu a lei da UI`)
+    assert.doesNotMatch(prompt, /THE ONE LAW/u, `${nome}: recebeu a lei da UI`)
+  }
 })

@@ -318,6 +318,57 @@ const PROCESS_KILL_FENCE = `KILLING PROCESSES — THE FRATRICIDE RULE (this exac
 - Take down ONLY a PID you can trace to YOUR app: the tree you spawned (taskkill /PID <pid> /T /F) or the port owner (Get-NetTCPConnection -LocalPort <port> → OwningProcess).
 - Cannot pin the PID? Then you do not kill — tell the owner what is holding it. node.exe is the same story: the helpers, the LSP and this harness live there.`
 
+/**
+ * O CARDÁPIO DE SKILLS (Skills 2.0, 2026-08-29 — ADRs 0001, 0002 e 0005).
+ *
+ * O kit do tipo de chat chega ao worktree como PASTA (ADR-0002: o harness
+ * sincroniza, o git nunca vê pelo info/exclude, e os dois CLIs listam e
+ * carregam sozinhos, com progressive disclosure). A metade mecânica já está de
+ * pé antes de o pane nascer — o que falta ao MODELO é a régua de USO, e ela é
+ * de JULGAMENTO: quem escolhe do cardápio é o AGENTE, por OCASIÃO (ADR-0001),
+ * porque heurística de conteúdo é proibida nesta casa e roteador mecânico de
+ * pacote foi exatamente o que a LIMPA F6 demoliu.
+ *
+ * Três linhas fazem o trabalho: a OCASIÃO é o gatilho (carregar a skill do
+ * momento quando o trabalho ALCANÇA aquele momento — não o menu inteiro na
+ * abertura por cerimônia, nem a skill depois de a obra estar pronta), skill é
+ * PLAYBOOK que se SEGUE enquanto a ocasião dura (nunca enfeite que se cita), e
+ * direção estética não se empilha — é esta última que a lei abaixo carimba.
+ *
+ * A linha do cardápio curto fecha o beco: kit incompleto (ou sync que falhou,
+ * que já vira nota no chat) nunca vira impedimento — o agente diz e trabalha.
+ *
+ * O bloco vai a quem PRODUZ: dev, ajudante e planejador. O reviewer lê diff e
+ * não edita produto; o release opera a subida da versão pelas duas ferramentas
+ * dele — cardápio ali seria playbook para trabalho que o contrato já proíbe.
+ */
+const SKILLS_MENU_ORDER = `SKILLS — THE MENU COMES TO YOU; CHOOSING FROM IT IS YOUR JUDGEMENT:
+- This workspace carries a short, curated menu of SKILLS: your CLI already lists them from the skills folder here and loads one on demand. Nothing routes them to you, and no message will tell you which one is due.
+- The trigger is the OCCASION. When the work REACHES the moment a skill was written for, load THAT skill then — not the whole menu at the start out of ceremony, and not after the work is already done.
+- A skill is a PLAYBOOK you FOLLOW while that occasion lasts, never a decoration you cite: read it, work by it, and let it go when the occasion passes.
+- ONE occasion, ONE skill: NEVER stack two aesthetic directions over the same work.
+- The menu is short on purpose. If what the moment asks for is not on it, say so here in one line and do the work anyway — a missing playbook never stops the job.`
+
+/**
+ * A LEI (ADR-0005) — a única skill que não é escolha do agente.
+ *
+ * Ordem do dono de 2026-08-15, revalidada no grill de 21/08 (que derrubou a
+ * SEGUNDA lei candidata e manteve esta): trabalho de UI ⇒ `impeccable`, sempre,
+ * nunca empilhada com outra direção estética.
+ *
+ * Ela mora na PERSONA e não no toggle da tela de gestão DE PROPÓSITO: mudar uma
+ * lei é doutrina com o dono (commit), nunca clique — e é por isso que a tela a
+ * mostra como texto FIXO, fora dos interruptores dos outros slots do kit. O
+ * texto diz isso ao modelo ("no setting anywhere turns it off") para que ele
+ * não saia procurando a chave que não existe.
+ *
+ * Só DEV e AJUDANTE a recebem — são os dois que estilizam. O planejador desenha
+ * o mapa e escreve plano/: lei de estilo ali seria régua sobre trabalho que o
+ * contrato dele proíbe. Ela viaja como ÚLTIMA linha do bloco do cardápio, e é
+ * essa diferença de uma linha só que a suíte de contratos prende.
+ */
+const UI_LAW_LINE = `- THE ONE LAW, AND IT IS NOT A CHOICE: UI work — styling, layout, motion, visual polish — means LOADING AND FOLLOWING the \`impeccable\` skill BEFORE you style anything, every single time, and never stacked with another aesthetic direction. It is a standing order of the owner written into this contract: there is no setting anywhere that turns it off.`
+
 const DEV_CONTRACT = `${guiSynkoraWorld('dev')}
 
 You are the DEVELOPER of this mission inside Synkora.
@@ -334,6 +385,9 @@ ${VISUAL_DELIVERY_LINE}
 ${OWNER_VOICE_ORDER}
 
 ${PROCESS_KILL_FENCE}
+
+${SKILLS_MENU_ORDER}
+${UI_LAW_LINE}
 
 ${MISSION_INTEGRATOR_ORDER}
 
@@ -371,6 +425,9 @@ ${VISUAL_DELIVERY_LINE}
 ${OWNER_VOICE_ORDER}
 
 ${PROCESS_KILL_FENCE}
+
+${SKILLS_MENU_ORDER}
+${UI_LAW_LINE}
 
 ${CONTEXT_COST_DOCTRINE}
 
@@ -576,7 +633,9 @@ You are the PLANNING ARCHITECT of this project inside Synkora, running as a ONE-
 - Missions are CREATED BY THE OWNER in the app, from the map. You never create, start or run a mission yourself.
 - "mestre" is a DESIGNATION the owner grants, not a property you set. You may propose a plan as 'mestre' and you may argue for it in words; only his click designates or removes it. update_plan cannot change it.
 - If this project has a legacy plano/roadmap.md or .synkora/PROJECT_PLAN.md, read it and absorb what still matters into the plan you propose: those are documents from earlier eras, not live plans — never write to them.
-- Always answer in PT-BR. Section names of the markdown files stay exactly as specified above; code, identifiers and file names stay in English.`
+- Always answer in PT-BR. Section names of the markdown files stay exactly as specified above; code, identifiers and file names stay in English.
+
+${SKILLS_MENU_ORDER}`
 
 export function guiPlanningSystemPrompt(): string {
   return PLANNING_CONTRACT

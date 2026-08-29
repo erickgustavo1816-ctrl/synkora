@@ -2,6 +2,8 @@ import type {
   Mission,
   ProgressOverlaySnapshot,
   Seat,
+  SkillsKitState,
+  SkillsLibraryItem,
   SynVoiceConfig,
   SynVoiceModel,
   SynVoiceOverlayState,
@@ -11,6 +13,86 @@ import type {
   FilePreviewResult,
   FileTreeResult
 } from '../../preload/index'
+
+/**
+ * Skills no preview de browser: um retrato REPRESENTATIVO do seed v1 (a lei
+ * fixa, as duas alas, o kit de planejamento) + biblioteca com os três estados
+ * que a tela desenha (no kit, fora do kit — alvo da poda — e com BOM), com
+ * mutações vivas em memória para o toggle/adicionar/remover responderem no
+ * preview. Sem rede e sem disco: instalar recusa com a verdade.
+ */
+function skillsMock(): SynkoraApi['skills'] {
+  const kit: SkillsKitState = {
+    version: 1,
+    dev: {
+      execucao: [
+        { id: 'impeccable', occasion: 'mexer em UI (a lei da persona)', enabled: true, law: true },
+        { id: 'synkora-investigacao', occasion: 'investigar antes de mexer', enabled: true },
+        { id: 'test-driven-development', occasion: 'código novo com teste', enabled: true },
+        { id: 'systematic-debugging', occasion: 'caçar um bug', enabled: false }
+      ],
+      orquestracao: [
+        { id: 'writing-plans', occasion: 'destrinchar/planejar a frota', enabled: true }
+      ]
+    },
+    planejamento: [
+      { id: 'brainstorming', occasion: 'entrevistar/descobrir', enabled: true },
+      { id: 'writing-plans', occasion: 'escrever o plano', enabled: true }
+    ]
+  }
+  const library: SkillsLibraryItem[] = [
+    { id: 'brainstorming', description: 'Estruturar descoberta com o dono antes de propor.', hasBom: false, inKit: true },
+    { id: 'impeccable', description: 'Design-ops: 23 comandos e 60 detectores determinísticos de polish.', hasBom: false, inKit: true },
+    { id: 'old-era-skill', description: 'Sobra da era F6 sem slot em kit nenhum — alvo da poda.', hasBom: false, inKit: false },
+    { id: 'quirky-bom-skill', description: 'Exemplo com BOM no SKILL.md para a tela avisar.', hasBom: true, inKit: false },
+    { id: 'synkora-investigacao', description: 'Investigar antes de mexer: mapa do terreno, sinal estrutural.', hasBom: false, inKit: true },
+    { id: 'systematic-debugging', description: 'Quatro fases; proíbe guess-and-check.', hasBom: false, inKit: true },
+    { id: 'test-driven-development', description: 'Se não viu o teste falhar, não sabe o que ele testa.', hasBom: false, inKit: true },
+    { id: 'writing-plans', description: 'Fatiar trabalho em planos executáveis, para a frota ou para si.', hasBom: false, inKit: true }
+  ]
+  const clone = (): SkillsKitState => JSON.parse(JSON.stringify(kit)) as SkillsKitState
+  const lists = (): Array<{ chat: 'dev' | 'planejamento'; slots: SkillsKitState['planejamento'] }> => [
+    { chat: 'dev', slots: kit.dev.execucao },
+    { chat: 'dev', slots: kit.dev.orquestracao },
+    { chat: 'planejamento', slots: kit.planejamento }
+  ]
+  return {
+    list: async () => ({ library, kit: clone() }),
+    setEnabled: async (chat, id, enabled) => {
+      for (const list of lists()) {
+        if (list.chat !== chat) continue
+        const slot = list.slots.find((candidate) => candidate.id === id)
+        if (slot && !slot.law) slot.enabled = enabled
+      }
+      return clone()
+    },
+    addToKit: async (chat, id, occasion, wing) => {
+      const target =
+        chat === 'dev'
+          ? wing === 'orquestracao'
+            ? kit.dev.orquestracao
+            : kit.dev.execucao
+          : kit.planejamento
+      if (!target.some((slot) => slot.id === id)) target.push({ id, occasion, enabled: true })
+      const row = library.find((entry) => entry.id === id)
+      if (row) row.inKit = true
+      return clone()
+    },
+    removeFromKit: async (chat, id) => {
+      for (const list of lists()) {
+        if (list.chat !== chat) continue
+        const index = list.slots.findIndex((slot) => slot.id === id && !slot.law)
+        if (index >= 0) list.slots.splice(index, 1)
+      }
+      const stillCited = lists().some((list) => list.slots.some((slot) => slot.id === id))
+      const row = library.find((entry) => entry.id === id)
+      if (row) row.inKit = stillCited
+      return clone()
+    },
+    installFromUrl: async () => ({ ok: false, error: 'preview: sem rede no browser' }),
+    prune: async () => ({ ok: false, error: 'preview: sem biblioteca no browser' })
+  }
+}
 
 // Mock do bridge para desenvolver a UI num browser comum (sem Electron).
 // No app real o preload injeta window.synkora antes e este arquivo não faz nada.
@@ -479,6 +561,7 @@ export function installDevMock(): void {
       removeItem: async () => undefined,
       onChanged: () => () => undefined
     },
+    skills: skillsMock(),
     missions: {
       list: async (projectId: string) => missions.filter((m) => m.projectId === projectId),
       versionChoices: async () => ({ versions: [], defaultVersionId: undefined }),
