@@ -1580,9 +1580,25 @@ test('o browser da casa é FONTE ÚNICA e chega a quem TESTA UI: dev e ajudante'
   // O dono assiste e pode assumir (decisão D5.2 — o ⚡ indica, não trava).
   assert.match(dev, /watch/iu, 'o dono some da cena que é dele')
 
-  // Curto como as seções irmãs: régua, não constituição.
+  // A ORDEM POSITIVA (pergunta do dono, 2026-08-29): proibir o desvio não
+  // basta — UI web mexida TERMINA no browser da casa, e "testes verdes sem
+  // olhar a página viva" não é trabalho visual verificado. A exceção é UMA e
+  // é dita: app mobile NATIVO sem preview web, verificado pelo que o alcança.
+  assert.match(dev, /PART OF "DONE"/u, 'a verificação no browser deixou de ser parte do pronto')
+  assert.match(
+    dev,
+    /tests passing without a look at the living page is NOT verified/iu,
+    'teste verde voltou a valer como verificação visual'
+  )
+  assert.match(dev, /NATIVE MOBILE/u, 'a exceção do app mobile nativo sumiu')
+
+  // Curto como as seções irmãs: régua, não constituição. Teto 2000→2500 em
+  // 2026-08-29 (mesma noite): pergunta do dono ("já está instruído a SEMPRE
+  // usar o browser?") revelou que o bloco proibia o desvio mas não dava a
+  // ORDEM POSITIVA — entrou a linha "mexeu em UI web ⇒ o browser da casa é
+  // parte do PRONTO", com a exceção de app mobile NATIVO dita. Mede 2297.
   assert.ok(dev.length > 700, 'o bloco do browser ficou vago demais')
-  assert.ok(dev.length < 2000, 'o bloco do browser virou constituição')
+  assert.ok(dev.length < 2500, 'o bloco do browser virou constituição')
 
   // E ele não desloca a última palavra do contrato (a ordem da delegação).
   for (const role of ['dev', 'helper']) {
