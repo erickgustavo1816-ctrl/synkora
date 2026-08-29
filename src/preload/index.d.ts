@@ -10,6 +10,7 @@ import type { SynkoraApi, SynkoraOverlayApi, SynkoraProgressOverlayApi } from '.
  *  `dockBrowserModel.ts`). */
 export type {
   BrowserActionResult,
+  BrowserHostKind,
   BrowserNoticeView,
   BrowserPanelState,
   BrowserRect,

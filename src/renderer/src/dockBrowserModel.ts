@@ -53,7 +53,7 @@ function bool(value: unknown): boolean {
  *  Aba sem `tabId` é descartada — sem id não há gesto possível sobre ela. */
 export function normalizeBrowserPanel(value: unknown): BrowserPanelState {
   if (!value || typeof value !== 'object') return EMPTY_BROWSER_PANEL
-  const bag = value as { alive?: unknown; agentDriving?: unknown; tabs?: unknown }
+  const bag = value as { alive?: unknown; agentDriving?: unknown; tabs?: unknown; host?: unknown }
   const rawTabs = Array.isArray(bag.tabs) ? bag.tabs : []
   const tabs: BrowserTab[] = []
   for (const entry of rawTabs) {
@@ -80,9 +80,20 @@ export function normalizeBrowserPanel(value: unknown): BrowserPanelState {
     agentDriving: bool(bag.agentDriving),
     tabs
   }
+  // ONDE a página está (pop-out, 2026-08-29). Só `'popout'` é carregado: o
+  // espelho do preload declara AUSENTE = dock, e o normalizador reconstrói o
+  // objeto — um campo inventado aqui viraria uma segunda grafia de "dock".
+  if (bag.host === 'popout') state.host = 'popout'
   const notice = readBrowserNotice((value as { notice?: unknown }).notice)
   if (notice) state.notice = notice
   return state
+}
+
+/** A página está numa JANELA PRÓPRIA? Único jeito de perguntar: `undefined` e
+ *  `'dock'` são a MESMA coisa (motor anterior ao ⧉ não manda o campo), e um
+ *  `!== 'dock'` espalhado pela tela transformaria a ausência em destaque. */
+export function browserIsPopout(state: BrowserPanelState): boolean {
+  return state.host === 'popout'
 }
 
 /** A nota do motor só entra na tela se tiver TEXTO: `kind` e `at` são carimbos
@@ -117,6 +128,9 @@ export function activeBrowserTab(state: BrowserPanelState): BrowserTab | null {
 export function sameBrowserPanel(a: BrowserPanelState, b: BrowserPanelState): boolean {
   if (a === b) return true
   if (a.alive !== b.alive || a.agentDriving !== b.agentDriving) return false
+  // O HOST muda a seção inteira (o painel vira recibo) e nada mais na fotografia
+  // precisa mudar junto: sem esta linha o ⧉ não repintaria o dock.
+  if (a.host !== b.host) return false
   // A nota do motor tem CARIMBO: duas notas do mesmo texto em momentos
   // diferentes são dois avisos, e o segundo precisa chegar à tela.
   if (a.notice?.at !== b.notice?.at || a.notice?.text !== b.notice?.text) return false
@@ -166,6 +180,10 @@ export function browserSectionSummary(
   engine: BrowserEngineState = 'ready'
 ): string {
   if (engine === 'missing') return 'motor velho'
+  // DESTACADO vem antes de tudo (menos o motor velho): com a seção recolhida,
+  // "3 abas" faria o dono procurar no dock uma página que está em outra janela.
+  // O ⚡ sobrevive porque o agente segue dirigindo a página destacada.
+  if (browserIsPopout(state)) return `${state.agentDriving ? '⚡ ' : ''}destacado`
   const tab = activeBrowserTab(state)
   if (!state.alive || !tab) return 'fechado'
   const label = tab.loading ? 'carregando…' : browserTabLabel(tab)

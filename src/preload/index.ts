@@ -838,6 +838,11 @@ export interface BrowserNoticeView {
   at: string
 }
 
+/** ONDE a página desta missão está: no painel do dock ou numa JANELA PRÓPRIA
+ *  (o ⧉ do dono). Espelho declarado do `BrowserHostKind` de
+ *  `src/main/browserPane.ts` (o par). */
+export type BrowserHostKind = 'dock' | 'popout'
+
 /** Fotografia do browser de UMA missão. `alive: false` = nenhuma view nasceu
  *  ainda (ele é LAZY) — o painel convida a abrir em vez de mentir que existe. */
 export interface BrowserPanelState {
@@ -847,6 +852,11 @@ export interface BrowserPanelState {
   agentDriving: boolean
   tabs: BrowserTab[]
   notice?: BrowserNoticeView
+  /** OPCIONAL no espelho de propósito (o main sempre manda): a fotografia vazia
+   *  do painel e o normalizador do dock são anteriores ao pop-out, e um campo
+   *  novo obrigatório quebraria a tela em vez de degradar. Ausente = `'dock'`,
+   *  que é onde a página está enquanto ninguém a destacou. */
+  host?: BrowserHostKind
 }
 
 /** Toda alavanca do chrome devolve o mesmo ack: recusa é TEXTO em PT-BR que
@@ -1438,6 +1448,12 @@ const api = {
    * Espelho 1:1 dos canais de `src/main/ipc/browser.ts` (o par declarado). O
    * `missionId` é sempre o PRIMEIRO argumento: é ele que escolhe o grupo de
    * abas; a SESSÃO (cookies/logins) é do PROJETO e vive no main.
+   *
+   * POP-OUT (2026-08-29): este MESMO bloco é o que a JANELA DESTACADA usa — ela
+   * é uma view do app (`?view=browser-popout`), carrega este preload inteiro e
+   * fala pelos mesmos canais. O que ela NÃO pode é o resto: todo IPC irmão
+   * (projetos, ajustes, chats) segue com o porteiro host-only e recusa a janela
+   * destacada; só `browser:*` tem o porteiro duplo.
    */
   browser: {
     /** Fotografia atual — o renderer relê isto a cada `browser:changed`. */
@@ -1464,9 +1480,22 @@ const api = {
     /** DevTools da PÁGINA (janela separada) — nunca as do app. */
     devtools: (missionId: string, tabId: string): Promise<BrowserActionResult> =>
       ipcRenderer.invoke('browser:devtools', missionId, tabId),
+    /** ⧉ DESTACAR: a MESMA página salta para uma janela própria, com função
+     *  inteira (abas, URL, devtools, o agente dirigindo). Nada recarrega — é a
+     *  mesma view, reparentada. Chamar de novo com a janela aberta a FOCA. */
+    popOut: (missionId: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke('browser:popOut', missionId),
+    /** REENCAIXAR: a página volta para o painel do dock e a janela fecha. O X da
+     *  janela faz exatamente isto — fechar nunca perde a página. Missão que já
+     *  está no dock devolve `ok` (gesto idempotente, não recusa). */
+    dockBack: (missionId: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke('browser:dockBack', missionId),
     /** GEOMETRIA: o painel reporta onde está e se está à vista. Fire-and-forget
      *  de propósito — chega a cada frame de um arrasto de largura, e um invoke
-     *  por frame encheria a fila de promessas por nada. */
+     *  por frame encheria a fila de promessas por nada.
+     *  A assinatura NÃO tem "quem sou eu": as duas superfícies (dock e janela
+     *  destacada) chamam isto igual, e o main identifica o remetente sozinho —
+     *  o relato de quem não está com a página é ignorado (`ipc/browser.ts`). */
     bounds: (missionId: string, rect: BrowserRect, visible: boolean): void =>
       ipcRenderer.send('browser:bounds', missionId, rect, visible),
     /** O main mexeu no browser desta missão (agente pelas tools `browser_*`,

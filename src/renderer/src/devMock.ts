@@ -1016,6 +1016,11 @@ export function installDevMock(): void {
       closeTab: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
       selectTab: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
       devtools: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
+      // ⧉ e o reencaixe (pop-out, 2026-08-29): destacar é abrir uma
+      // `BrowserWindow` de verdade — no preview de browser não há nenhuma, e a
+      // recusa é a mesma das outras alavancas.
+      popOut: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
+      dockBack: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
       bounds: () => undefined,
       onChanged: () => () => undefined
     },

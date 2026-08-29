@@ -22609,4 +22609,210 @@ details.gui-error-line {
   color: var(--ink-2);
   font-style: italic;
 }
+
+/* ————— BLOCO NOVO: o ⧉ POP-OUT (P2, 2026-08-29) —————
+
+   "Tirar ele dali e desfixar, como o microfone que eu clico e ele sai — mas que
+   ele saia com todas as funções, quase como se fosse um app à parte."
+
+   Três superfícies novas, todas no dialeto do H7 (UM corpo, uma borda, costuras
+   de fio de cabelo — nada de caixa-dentro-de-caixa):
+     1. o ⧉ na barra, que é só mais um glifo da fileira (`.dock-browser-btn`);
+     2. o RECIBO no dock, quando a página está na janela;
+     3. a JANELA, onde o mesmo instrumento ocupa tudo de ponta a ponta. */
+
+/* ——— o recibo: "destacado numa janela própria" ——— */
+
+/* O corpo do instrumento SEM instrumento: mesma moldura (é a mesma seção), mas
+   por dentro só o cartão quieto. Papel, e não o painel escuro do retângulo: não
+   há página nenhuma aqui, e um retângulo preto prometeria uma que está em outra
+   janela. */
+.dock-browser-away {
+  gap: 5px;
+  padding: 9px;
+}
+
+/* A barra de status do recibo alinha com o CARTÃO, não com a borda: o recuo já
+   é do corpo, e repeti-lo aqui deslocaria o ⚡ dois pixels à direita do título
+   (defeito visto no harness a 2,6×, não no olho). */
+.dock-browser-away .dock-browser-foot {
+  padding: 4px 0 0;
+}
+
+.dock-browser-away-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* O MESMO glifo do botão que trouxe o dono até aqui: o recibo se explica por
+   FORMA antes de palavra. Em acento porque ele é o sinal do estado (a página
+   está fora), e é o único acento deste cartão. */
+.dock-browser-away-mark {
+  flex: none;
+  font-style: normal;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.dock-browser-away-fine {
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+/* As duas portas de volta. Quebram numa coluna estreita em vez de cuspir a
+   segunda para fora (mesmo precedente do `.dock-acts`). */
+.dock-browser-away-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+/* Botão de papel do dialeto do dock: borda ink, caixa alta, sem preenchimento —
+   `.dock-browser-open` é o irmão dele em cima do painel escuro. */
+.dock-browser-away-btn {
+  flex: 1 1 auto;
+  appearance: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: transparent;
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.dock-browser-away-btn:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+  background: var(--paper-2);
+}
+
+/* TRAZER DE VOLTA é a ação principal do recibo (é o que desfaz o estado): ela
+   se declara por CONTORNO cheio, não por preenchimento colorido. */
+.dock-browser-away-btn.on {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.dock-browser-away-btn.on:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.dock-browser-away-btn:active {
+  transform: translateY(1px);
+}
+
+.dock-browser-away-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ——— a ação do host no fim da barra (⇤ reencaixar, na janela) ——— */
+
+/* Glifo COM palavra: na janela sobra largura, e "reencaixar" não se adivinha de
+   uma seta. `margin-left: auto` a joga para o fim da fileira — é ação da
+   JANELA, não da navegação. O afordamento continua sendo FUNDO no hover, como
+   todo botão desta barra (H7). */
+.dock-browser-dock-act {
+  margin-left: auto;
+  gap: 5px;
+  padding: 0 9px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* ——— a janela destacada ——— */
+
+/* SEM classe de rota no `body` (o que os dois overlays da casa precisam, esta
+   janela não): `html, body, #root { height: 100% }` + `body { overflow: hidden;
+   background: var(--paper) }` já são a base do app, e a janela destacada carrega
+   a MESMA folha. Uma regra a mais aqui seria uma cópia da base fingindo fazer
+   algo.
+
+   O INSTRUMENTO É A JANELA: sem vão, sem gap e sem raio — a moldura aqui é a
+   NATIVA (a janela da P1 nasce com `frame` padrão), e uma borda de papel por
+   dentro dela seria a caixa-dentro-de-caixa que o H7 acabou de matar.
+
+   `min-height: 0` em cadeia é o que deixa o retângulo da página encolher junto
+   com a janela em vez de empurrar a linha do pé para fora. */
+.dock-browser.browser-popout {
+  height: 100%;
+  min-height: 0;
+  gap: 0;
+}
+
+.browser-popout-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--paper);
+}
+
+/* A ALTURA DA PÁGINA NÃO É UMA FRAÇÃO AQUI: ela é o que sobra. Quem decide o
+   tamanho é a moldura da janela — foi para isso que ela saiu do dock. */
+.browser-popout-page {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+/* A tira de abas na janela larga não vira uma parede de oito linhas: com
+   espaço, cada aba tem base maior e a prateleira sobe o teto de altura. */
+.browser-popout-shell .dock-browser-tabbar {
+  padding: 5px 6px 4px;
+}
+
+.browser-popout-shell .dock-browser-tabs {
+  max-height: 60px;
+}
+
+.browser-popout-shell .dock-browser-tab-wrap {
+  flex: 0 1 176px;
+}
+
+.browser-popout-shell .dock-browser-nav {
+  padding: 5px 6px;
+}
+
+.browser-popout-shell .dock-browser-foot {
+  padding: 4px 8px 5px;
+}
+
+/* Recado numa janela sem trilho: ele ganha o respiro que o dock dava pela
+   seção. */
+.browser-popout > .dock-browser-notice {
+  margin: 0;
+  padding: 4px 8px 5px;
+}
+
+/* Janela sem missão na URL (ou preload velho): só a frase, centrada — não há
+   instrumento para desenhar, e um cromo por cima de nada seria pior. */
+.browser-popout.is-lost {
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+/* ————— fim do BLOCO NOVO do ⧉ pop-out ————— */
 /* ————— fim do BLOCO NOVO do browser embutido ————— */

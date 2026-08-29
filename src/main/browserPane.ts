@@ -21,11 +21,31 @@
  * a janela está escondida/minimizada, porque ali a captura pendura e o agente
  * perde a rodada.
  *
+ * ——— A SEGUNDA LEI (pop-out, 2026-08-29): UM HOST DE CADA VEZ ———
+ * A missão tem um `host`: `'dock'` (a janela do app) ou `'popout'` (janela
+ * própria, `./browserPopoutWindow`). Destacar é REPARENTAR A MESMA VIEW em UM
+ * PASSO — `addChildView` na janela nova, sem `removeChildView` antes (sonda
+ * `PROBE_BROWSER_POPOUT_2026-08-29.md`: 4 ms no main, um quadro de 17 ms, e
+ * scroll/formulário/timers/SSE/WebSocket/sessão CDP do agente atravessam
+ * intactos; recriar a view perderia tudo isso). Três cercas saem daqui:
+ *   1. a janela destino está VISÍVEL antes do reparent (cura 1) — quem garante
+ *      é o `open()` do host de pop-out;
+ *   2. geometria NUNCA se calcula de janela minimizada (cura 2) — o
+ *      `contentSize()` do pop-out devolve `null` ali e o `restore` refaz o
+ *      `setBounds`;
+ *   3. **autoridade única sobre a geometria**: `applyBounds` só ACEITA o
+ *      relato do host ATUAL. O ex-host segue reportando por um ou dois quadros
+ *      depois do gesto (o ResizeObserver dele não sabe que a página saiu), e
+ *      obedecer isso jogaria a view no retângulo de uma janela onde ela não
+ *      está. O relato do host errado é ignorado com registro na caixa-preta.
+ *
  * ——— fronteiras ———
  * Este módulo NÃO conhece CDP, MCP nem tools: ele entrega `webContents` vivos e
  * geometria honesta. O driver/probe/shot e o kit MCP são da H2; o chrome de
  * papel no RightDock é da H3. O `index.ts` (H2) instancia, registra o IPC e
- * chama `closeMission` nos mesmos pontos que matam os panes da missão.
+ * chama `closeMission` nos mesmos pontos que matam os panes da missão. E ele
+ * continua SEM UMA LINHA DE ELECTRON: o pop-out entra injetado (`deps.popouts`)
+ * atrás do contrato `BrowserPopoutHost`, como o host de views.
  *
  * ——— testabilidade (a suíte `test:browser-pane` da H5) ———
  * Todo contato com o Electron mora em `electronBrowserViewHost()` — hoje no
@@ -48,10 +68,17 @@ import { electronBrowserViewHost } from './browserPaneHost'
 import type {
   BrowserEventEmitter,
   BrowserEventListener,
+  BrowserPopoutHost,
   BrowserSessionHooks,
   BrowserViewHandle,
   BrowserViewHost
 } from './browserPaneHost'
+// A MÁQUINA DE HOST (onde a página está pendurada: ⧉/⇤, roteamento de
+// attach/detach e a geometria da janela destacada) mora no módulo irmão — o
+// corte de 2026-08-29, pelo mesmo motivo do `./browserPaneHost`. Extensionless
+// pela mesma razão declarada acima.
+import { createBrowserHostMachine } from './browserPaneHosting'
+import type { BrowserHostedMission, BrowserHostedTab, BrowserMissionLayout } from './browserPaneHosting'
 
 /** Teto de abas por missão (D5.1/H1). Passar disso é recusa com receita. */
 export const BROWSER_TAB_CAP = 8
@@ -119,10 +146,20 @@ export interface BrowserNotice {
   at: string
 }
 
+/** Onde a página desta missão está pendurada AGORA. Espelho declarado do
+ *  `BrowserHostKind` do preload (`src/preload/index.ts` — o par). */
+export type BrowserHostKind = 'dock' | 'popout'
+
+/** De onde veio o reencaixe — só para a caixa-preta contar a história certa. */
+export type BrowserDockBackReason = 'gesture' | 'window-close' | 'mission-closed'
+
 export interface BrowserMissionState {
   alive: boolean
   agentDriving: boolean
   tabs: BrowserTabView[]
+  /** Dock ou janela destacada. O dock desenha o RECIBO ("destacado — trazer de
+   *  volta") em vez da página quando isto é `'popout'`. */
+  host: BrowserHostKind
   /** extensões do contrato mínimo — o chrome pode ignorar sem quebrar */
   notice?: BrowserNotice
   projectId?: string
@@ -150,9 +187,12 @@ export type BrowserCaptureReadiness =
 
 export { electronBrowserViewHost } from './browserPaneHost'
 export type {
+  BrowserPopoutHandle,
+  BrowserPopoutHost,
   BrowserSessionHooks,
   BrowserViewHandle,
   BrowserViewHost,
+  BrowserViewWindow,
   BrowserWindowHooks
 } from './browserPaneHost'
 
@@ -160,10 +200,14 @@ export interface BrowserPaneDeps {
   /** A janela do app (getter — ela pode ser recriada). */
   window(): BrowserWindow | null
   record(input: BlackboxEventInput): void
-  /** Broadcast do `browser:changed` — no index é `ctx.pushAll`. */
+  /** Broadcast do `browser:changed` — no index é `ctx.pushAll` MAIS as janelas
+   *  destacadas (o `pushAll` da casa só fala com a janela principal). */
   push(channel: string, ...args: unknown[]): void
   /** Override do gate (host fake); ausente = host real do Electron. */
   host?: BrowserViewHost
+  /** As janelas do pop-out. Ausente = app sem pop-out (o gesto recusa com
+   *  receita em vez de estourar) — é assim que o gate roda sem janela. */
+  popouts?: BrowserPopoutHost
   now?(): number
 }
 
@@ -179,11 +223,29 @@ export interface BrowserPaneManager extends BrowserManager {
   closeTab(missionId: string, tabId: string): boolean
   toggleDevtools(missionId: string, tabId?: string): boolean
   /** ResizeObserver do painel (H3). NUNCA cria browser — o nascimento é lazy
-   *  e só o gesto (abrir aba / `browser_open`) o justifica. */
-  applyBounds(missionId: string, rect: BrowserPanelRect, visible: boolean): void
-  /** Guarda de captura da H2 (lei 1 + P5). */
+   *  e só o gesto (abrir aba / `browser_open`) o justifica.
+   *  `reporter` é QUEM está relatando (o remetente do IPC, não uma alegação do
+   *  payload): relato do host que não está com a página é IGNORADO — lei 2. */
+  applyBounds(
+    missionId: string,
+    rect: BrowserPanelRect,
+    visible: boolean,
+    reporter?: BrowserHostKind
+  ): void
+  /** A JANELA do host atual mexeu (arrastar/redimensionar/maximizar) ou voltou
+   *  de minimizada: a geometria da view é REFEITA. É o gancho da cura 2 — o
+   *  `restore()` sozinho não devolve o pixel certo. */
+  relayout(missionId: string): void
+  /** ⧉ DESTACAR: a MESMA página salta para uma janela própria. */
+  popOut(missionId: string): BrowserGestureResult
+  /** REENCAIXAR: a página volta para o dock e a janela fecha. */
+  dockBack(missionId: string, reason?: BrowserDockBackReason): BrowserGestureResult
+  /** Guarda de captura da H2 (lei 1 + P5 + a guarda de 296 ns do pop-out). */
   captureReadiness(missionId: string): BrowserCaptureReadiness
   hasMission(missionId: string): boolean
+  /** Onde a página desta missão está — o porteiro do IPC usa para saber se um
+   *  relato de geometria vem do host certo. */
+  hostOf(missionId: string): BrowserHostKind
   /** Teardown geral (janela fechada / quit). */
   destroy(): void
 }
@@ -269,25 +331,31 @@ export function browserPartitionFor(projectId: string): string {
 // Estado interno
 // ————————————————————————————————————————————————————————————————
 
-interface TabRecord {
-  tabId: string
+/** A aba do motor É uma aba hospedada (o `wc` inteiro no lugar do mínimo que a
+ *  máquina de host precisa) — uma definição só, sem espelho. */
+interface TabRecord extends BrowserHostedTab {
   view: BrowserViewHandle
   wc: WebContents
   disposers: (() => void)[]
 }
 
-interface MissionRecord {
-  missionId: string
-  projectId: string
+/** O registro do motor ESTENDE a fatia que a máquina de host governa (`host`,
+ *  os dois retângulos, o carimbo de relato velho — em `./browserPaneHosting`) e
+ *  acrescenta o que é só daqui: abas, ⚡ e a nota. */
+interface MissionRecord extends BrowserHostedMission {
   tabs: TabRecord[]
   activeTabId: string | null
-  layout: { rect: BrowserPanelRect; visible: boolean } | null
   agentDriving: boolean
   driveTimer: NodeJS.Timeout | null
   notice: BrowserNotice | null
 }
 
-const EMPTY_STATE: BrowserMissionState = { alive: false, agentDriving: false, tabs: [] }
+const EMPTY_STATE: BrowserMissionState = {
+  alive: false,
+  agentDriving: false,
+  tabs: [],
+  host: 'dock'
+}
 
 function roundRect(rect: BrowserPanelRect): BrowserPanelRect {
   const num = (value: number): number => (Number.isFinite(value) ? Math.round(value) : 0)
@@ -341,7 +409,25 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     changeTimer = null
     const ids = [...changePending]
     changePending.clear()
-    for (const missionId of ids) deps.push(BROWSER_CHANGED_CHANNEL, missionId)
+    for (const missionId of ids) {
+      // A barra da janela destacada conta a mesma verdade que a aba: título da
+      // página que está na frente. Vem de carona no repaint coalescido (40 ms)
+      // porque `page-title-updated` chega em rajada durante uma navegação.
+      const mission = missions.get(missionId)
+      if (mission && mission.host === 'popout') {
+        deps.popouts?.get(missionId)?.setTitle(activeTitleOf(mission))
+      }
+      deps.push(BROWSER_CHANGED_CHANNEL, missionId)
+    }
+  }
+
+  /** O que a barra da janela destacada mostra: título da página ativa, e o
+   *  endereço quando a página ainda não tem título. */
+  const activeTitleOf = (mission: MissionRecord): string => {
+    const tab = activeRecord(mission)
+    if (!tab) return ''
+    const title = tab.wc.getTitle().trim()
+    return title || tab.wc.getURL().trim()
   }
 
   const emitChanged = (missionId: string): void => {
@@ -371,11 +457,13 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     }
   }
 
-  /** Clampa o retângulo relatado ao conteúdo da janela: encolher a janela sem o
+  /** Clampa o retângulo relatado à área útil: encolher a janela sem o
    *  ResizeObserver ter reportado ainda deixaria a view pendurada para fora. */
-  const clampRect = (rect: BrowserPanelRect): BrowserPanelRect => {
+  const clampTo = (
+    rect: BrowserPanelRect,
+    size: { width: number; height: number } | null
+  ): BrowserPanelRect => {
     const bounds = roundRect(rect)
-    const size = resolveHost().contentSize()
     if (!size) return bounds
     const x = Math.max(0, Math.min(bounds.x, Math.max(0, size.width - 1)))
     const y = Math.max(0, Math.min(bounds.y, Math.max(0, size.height - 1)))
@@ -387,6 +475,27 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     }
   }
 
+  const clampRect = (rect: BrowserPanelRect): BrowserPanelRect =>
+    clampTo(rect, resolveHost().contentSize())
+
+  // ——— A MÁQUINA DE HOST (`./browserPaneHosting`) ———
+  // Onde a página está pendurada, os dois gestos do dono (⧉/⇤) e a geometria da
+  // janela destacada. Ela não conhece abas, notas nem ⚡ — pede emprestado só o
+  // que está aqui embaixo, e nada é chamado antes de existir (as funções abaixo
+  // só rodam quando um gesto acontece).
+  const hosting = createBrowserHostMachine<MissionRecord>({
+    popouts: deps.popouts,
+    viewHost: () => resolveHost(),
+    mission: (missionId) => missions.get(missionId),
+    missions: () => missions.values(),
+    liveTabs: (mission) => liveTabs(mission),
+    applyLayout: (mission) => applyLayout(mission),
+    activeTitle: (mission) => activeTitleOf(mission),
+    clampTo,
+    record,
+    changed: (missionId) => emitChanged(missionId)
+  })
+
   /**
    * Aplica geometria e visibilidade. AQUI mora a lei 1: o laço só chama
    * `setBounds`/`setVisible`. Toda aba — inclusive a que está no fundo —
@@ -394,7 +503,11 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
    * tamanho; o que muda entre ativa e inativa é só o `setVisible`.
    */
   const applyLayout = (mission: MissionRecord): void => {
-    const wanted = mission.layout
+    if (mission.host === 'popout') {
+      hosting.applyPopoutLayout(mission)
+      return
+    }
+    const wanted = mission.dockLayout
     const asked = wanted && wanted.rect.width > 0 && wanted.rect.height > 0 ? clampRect(wanted.rect) : null
     // Retângulo pedido que o clamp zerou (painel inteiro fora da janela após um
     // encolhimento) não vira superfície 0×0: aí a view cai no refúgio — anexada,
@@ -409,8 +522,12 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     }
   }
 
+  /** Gesto na JANELA DO APP: só as missões que estão no dock mudam de lugar. A
+   *  janela destacada tem os gestos dela (`onGeometry`/`onRestored` do host). */
   const relayoutAll = (): void => {
-    for (const mission of missions.values()) applyLayout(mission)
+    for (const mission of missions.values()) {
+      if (mission.host === 'dock') applyLayout(mission)
+    }
   }
 
   const ensureWindowWatch = (): void => {
@@ -452,8 +569,9 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     owners.delete(tab.wc.id)
     mission.tabs = mission.tabs.filter((entry) => entry !== tab)
     // Detach primeiro, close depois: o inverso deixa uma view órfã se o close
-    // falhar no meio do teardown.
-    resolveHost().detach(tab.view)
+    // falhar no meio do teardown. E do host CERTO: a view de uma missão
+    // destacada é filha da janela do pop-out, não da janela do app.
+    hosting.detachView(mission, tab.view)
     if (closeContents && !tab.wc.isDestroyed()) tab.wc.close()
     if (mission.activeTabId === tab.tabId) {
       mission.activeTabId = liveTabs(mission)[0]?.tabId ?? null
@@ -587,7 +705,10 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     mission.activeTabId = tab.tabId
     owners.set(tab.wc.id, { missionId: mission.missionId, projectId: mission.projectId })
     wireTab(mission, tab)
-    activeHost.attach(view)
+    // Aba nova de missão DESTACADA nasce na janela destacada — nunca na janela
+    // do app, de onde teria de dar um segundo salto (e teria um instante fora
+    // da árvore da janela onde a página aparece).
+    hosting.attachView(mission, view)
     // Nasce INVISÍVEL com bounds reais: anexada (lei 1) e capturável mesmo com
     // o painel do dock fechado. O applyLayout logo abaixo decide o resto.
     view.setVisible(false)
@@ -612,10 +733,13 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       projectId,
       tabs: [],
       activeTabId: null,
-      layout: null,
+      dockLayout: null,
+      popoutLayout: null,
       agentDriving: false,
       driveTimer: null,
-      notice: null
+      notice: null,
+      host: 'dock',
+      staleReported: null
     }
     missions.set(missionId, created)
     return created
@@ -723,7 +847,16 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       const mission = missions.get(missionId)
       if (!mission) return
       const tabs = mission.tabs.length
+      const wasPopped = mission.host === 'popout'
       for (const tab of [...mission.tabs]) dropTab(mission, tab, true)
+      // A janela destacada morre COM a missão (arquivar/integrar/excluir de vez
+      // passam todos pelo `killMissionGuiPanes` do index): uma janela órfã na
+      // taskbar mostrando uma missão que o dono acabou de fechar é pior do que
+      // qualquer view pendurada.
+      if (wasPopped) {
+        mission.host = 'dock'
+        deps.popouts?.close(missionId)
+      }
       if (mission.driveTimer) clearTimeout(mission.driveTimer)
       missions.delete(missionId)
       record('browser-mission-closed', {
@@ -771,9 +904,15 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         alive: tabs.length > 0,
         agentDriving: mission.agentDriving,
         tabs,
+        host: mission.host,
         notice: mission.notice ?? undefined,
         projectId: mission.projectId,
-        visible: Boolean(mission.layout?.visible)
+        // "à vista" é a pergunta do host ATUAL: destacada, a página está à vista
+        // enquanto a janela dela estiver de pé.
+        visible:
+          mission.host === 'popout'
+            ? Boolean(deps.popouts?.get(missionId)?.visible())
+            : Boolean(mission.dockLayout?.visible)
       }
     },
 
@@ -865,23 +1004,62 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       return true
     },
 
-    applyBounds(missionId, rect, visible) {
+    applyBounds(missionId, rect, visible, reporter = 'dock') {
       const mission = missions.get(missionId)
       // Nascimento é LAZY: bounds sozinhos nunca criam browser nenhum.
       if (!mission) return
-      mission.layout = { rect: roundRect(rect), visible: visible === true }
+      if (reporter !== mission.host) {
+        // AUTORIDADE ÚNICA SOBRE A GEOMETRIA (lei 2). O ex-host continua
+        // relatando por um ou dois quadros depois do gesto — o ResizeObserver
+        // do dock não sabe que a página saiu, e o cromo da janela destacada
+        // relata uma última vez enquanto fecha. Obedecer isso colocaria a view
+        // no retângulo de uma janela onde ela nem está.
+        if (mission.staleReported !== reporter) {
+          mission.staleReported = reporter
+          record('browser-bounds-stale-host', {
+            actor: 'harness',
+            ids: { projectId: mission.projectId, missionId },
+            reason: `relato de geometria do host ${reporter} ignorado — a página está no ${mission.host}`,
+            detail: { reporter, host: mission.host, rect: roundRect(rect), visible: visible === true }
+          })
+        }
+        return
+      }
+      const layout: BrowserMissionLayout = { rect: roundRect(rect), visible: visible === true }
+      if (reporter === 'popout') {
+        mission.popoutLayout = layout
+        applyLayout(mission)
+        return
+      }
+      mission.dockLayout = layout
       if (visible) {
         // Só UMA missão pode ocupar o retângulo do dock. Trocar de missão sem
         // o painel antigo reportar deixaria a view velha por cima — esconder as
-        // outras aqui é mecânico, não depende de o renderer lembrar.
+        // outras aqui é mecânico, não depende de o renderer lembrar. Missão
+        // DESTACADA não disputa esse retângulo: ela não está nele.
         for (const other of missions.values()) {
-          const layout = other.layout
-          if (other.missionId === missionId || !layout?.visible) continue
-          other.layout = { rect: layout.rect, visible: false }
+          const otherLayout = other.dockLayout
+          if (other.missionId === missionId || other.host !== 'dock' || !otherLayout?.visible) continue
+          other.dockLayout = { rect: otherLayout.rect, visible: false }
           applyLayout(other)
         }
       }
       applyLayout(mission)
+    },
+
+    relayout(missionId) {
+      const mission = missions.get(missionId)
+      if (mission) applyLayout(mission)
+    },
+
+    // Os dois gestos do dono são da MÁQUINA DE HOST (`./browserPaneHosting`):
+    // aqui eles só têm endereço público.
+    popOut(missionId) {
+      return hosting.popOut(missionId)
+    },
+
+    dockBack(missionId, reason) {
+      return hosting.dockBack(missionId, reason)
     },
 
     captureReadiness(missionId) {
@@ -893,9 +1071,44 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
           error: 'o browser desta missão não está aberto — chame browser_open antes de capturar'
         }
       }
-      // P5: com a janela escondida/minimizada as DUAS rotas de captura PENDURAM
-      // (5-8s) e o agente perde a rodada. Recusa na hora, com a receita.
-      if (!resolveHost().windowVisible()) {
+      const host = resolveHost()
+      // A GUARDA DE 296 ns (sonda do pop-out §P4): pergunta ao Electron ONDE a
+      // view está. `null` = ÓRFÃ (a janela morreu por baixo dela) — e é o ÚNICO
+      // predicado que enxerga isso: `view.getVisible()` devolve `true` e
+      // `wc.isDestroyed()` devolve `false` na órfã, e quem confia neles captura
+      // e PENDURA 6 s. `undefined` = host antigo (o dublê do gate), que cai na
+      // pergunta de sempre logo abaixo.
+      const where = host.viewWindow?.(tab.view)
+      if (where === null) {
+        const error =
+          'o browser desta missão está SEM JANELA (a janela destacada foi fechada por baixo dele) — reencaixe o painel pelo dock ou destaque de novo (⧉), e repita'
+        record('browser-capture-orphan-refused', {
+          actor: 'agent',
+          ids: { projectId: mission.projectId, missionId },
+          reason: error,
+          detail: { tabId: tab.tabId, wc: tab.wc.id, host: mission.host }
+        })
+        return { ok: false, error }
+      }
+      if (where === undefined) {
+        // P5: com a janela do app escondida/minimizada as duas rotas de captura
+        // PENDURAM (5-8s) e o agente perde a rodada. Recusa na hora, com receita.
+        if (!host.windowVisible()) {
+          return {
+            ok: false,
+            error:
+              'a janela do Synkora está minimizada/escondida — a captura pendura ali; restaure a janela e repita'
+          }
+        }
+        return { ok: true, tab: { tabId: tab.tabId, webContents: tab.wc } }
+      }
+      // JANELA DESTACADA minimizada NÃO é motivo de recusa: a sonda mediu
+      // captura FRESCA em 19-81 ms com a janela minimizada/oculta/atrás, desde
+      // que a view já tenha composto ali — e ela compôs, porque o reparent só
+      // acontece com a janela visível (cura 1) e a geometria nunca se recalcula
+      // com a janela minimizada (cura 2). O dono minimiza o pop-out e o agente
+      // SEGUE trabalhando, com o carimbo de frescor de sempre.
+      if (mission.host === 'dock' && (!where.visible || where.minimized)) {
         return {
           ok: false,
           error:
@@ -909,10 +1122,19 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       return missions.has(missionId)
     },
 
+    hostOf(missionId) {
+      return missions.get(missionId)?.host ?? 'dock'
+    },
+
     destroy() {
       if (disposed) return
       disposed = true
       for (const missionId of [...missions.keys()]) manager.closeMission(missionId)
+      // Fechar a janela do app (ou o quit) leva as janelas destacadas junto —
+      // elas são superfícies do app, não janelas soltas do sistema. O
+      // `closeMission` acima já fechou as das missões vivas; isto varre o que
+      // tiver sobrado de uma missão que morreu por fora.
+      deps.popouts?.closeAll()
       if (changeTimer) {
         clearTimeout(changeTimer)
         changeTimer = null

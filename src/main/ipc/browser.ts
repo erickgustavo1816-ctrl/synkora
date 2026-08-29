@@ -11,8 +11,21 @@
  * do createWindow), NUNCA no import — instrumentIpcMain só cobre handlers
  * registrados depois dele. Quem chama é o `index.ts` (fatia H2).
  *
- * Sender: `assertAppRendererSender` — o painel mora no host, e o porteiro é o
- * mesmo das irmãs.
+ * SENDER — o porteiro DUPLO do pop-out (2026-08-29). O browser da missão passou
+ * a ter duas superfícies legítimas: o painel do dock (a janela do app) e a
+ * janela DESTACADA. As duas falam pelo MESMO `api.browser` do preload, então o
+ * porteiro daqui deixou de ser o `assertAppRendererSender` das irmãs e virou o
+ * `assertBrowserSender` do index — que faz DUAS coisas de uma vez: recusa quem
+ * não é nenhuma das duas superfícies E diz QUAL delas falou.
+ *
+ * Esse retorno é a AUTORIDADE DE GEOMETRIA (lei 2 do motor). A alternativa era
+ * o renderer declarar quem ele é num argumento do `browser:bounds` — e foi
+ * recusada por três motivos: o remetente é INFALSIFICÁVEL (o main o observa, em
+ * vez de acreditar num campo do payload); ele já é o sujeito da checagem de
+ * autoridade que existe de qualquer jeito, então não se cria uma segunda
+ * verdade sobre "quem é este"; e o painel do dock não muda UMA LINHA
+ * (`api.browser.bounds(missionId, rect, visible)` continua idêntico), o que
+ * importa porque a fatia do renderer aterrissa depois desta.
  *
  * BROADCAST: `browser:changed(missionId)` NÃO sai daqui. Ele sai do próprio
  * manager (`deps.push`, que o index amarra em `ctx.pushAll`), porque metade das
@@ -24,14 +37,17 @@ import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import {
   isBrowserPanelRect,
   type BrowserGestureResult,
+  type BrowserHostKind,
   type BrowserMissionState,
   type BrowserPaneManager
 } from '../browserPane'
 import type { MainContext } from '../mainContext'
 
 export interface BrowserIpcExtras {
-  /** Host do app — mesmo porteiro das irmãs (ipc/plans, ipc/skills…). */
-  assertAppRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
+  /** Porteiro E identificador da superfície: joga quando o remetente não é nem
+   *  o painel do dock nem uma janela destacada VIVA, e devolve qual dos dois
+   *  falou. Mora no `index.ts` porque é lá que vivem as duas janelas. */
+  assertBrowserSender(event: IpcMainInvokeEvent | IpcMainEvent): BrowserHostKind
   /** Instância única do main, criada no index (H2). */
   browser: BrowserPaneManager
 }
@@ -43,7 +59,7 @@ const BROWSER_CLOSED =
 const TAB_GONE = 'esta aba não existe mais — o painel já vai se atualizar'
 
 /** Estado neutro: missão sem browser vivo desenha "fechado" no dock. */
-const CLOSED: BrowserMissionState = { alive: false, agentDriving: false, tabs: [] }
+const CLOSED: BrowserMissionState = { alive: false, agentDriving: false, tabs: [], host: 'dock' }
 
 function asId(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
@@ -61,10 +77,10 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
    *  exceção num listener `.on` não responde nada a ninguém. */
   const refusedSenders = new Set<number>()
 
-  const senderAllowed = (event: IpcMainEvent, channel: string): boolean => {
+  /** Versão sem exceção, para os canais `.on`: devolve QUEM falou, ou `null`. */
+  const senderHost = (event: IpcMainEvent, channel: string): BrowserHostKind | null => {
     try {
-      extras.assertAppRendererSender(event)
-      return true
+      return extras.assertBrowserSender(event)
     } catch {
       if (!refusedSenders.has(event.sender.id)) {
         refusedSenders.add(event.sender.id)
@@ -72,10 +88,10 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
           cat: 'pane',
           event: 'browser-ipc-refused',
           actor: 'harness',
-          reason: `webContents ${event.sender.id} tentou ${channel} — só o host comanda o browser`
+          reason: `webContents ${event.sender.id} tentou ${channel} — só o painel do dock e a janela destacada comandam o browser`
         })
       }
-      return false
+      return null
     }
   }
 
@@ -84,7 +100,7 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
     ctx.missions.get(missionId)?.projectId ?? null
 
   ipcMain.handle('browser:state', (e, missionId: unknown): BrowserMissionState => {
-    extras.assertAppRendererSender(e)
+    extras.assertBrowserSender(e)
     const id = asId(missionId)
     return id ? browser.state(id) : CLOSED
   })
@@ -95,7 +111,7 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
   ipcMain.handle(
     'browser:navigate',
     async (e, missionId: unknown, url: unknown): Promise<BrowserGestureResult> => {
-      extras.assertAppRendererSender(e)
+      extras.assertBrowserSender(e)
       const id = asId(missionId)
       if (!id) return { ok: false, error: MISSION_MISSING }
       if (browser.hasMission(id)) return browser.navigate(id, typeof url === 'string' ? url : '')
@@ -106,21 +122,21 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
   )
 
   ipcMain.handle('browser:back', (e, missionId: unknown): BrowserGestureResult => {
-    extras.assertAppRendererSender(e)
+    extras.assertBrowserSender(e)
     const id = asId(missionId)
     if (!id || !browser.hasMission(id)) return { ok: false, error: BROWSER_CLOSED }
     return ack(browser.goBack(id), 'não há para onde voltar nesta aba')
   })
 
   ipcMain.handle('browser:forward', (e, missionId: unknown): BrowserGestureResult => {
-    extras.assertAppRendererSender(e)
+    extras.assertBrowserSender(e)
     const id = asId(missionId)
     if (!id || !browser.hasMission(id)) return { ok: false, error: BROWSER_CLOSED }
     return ack(browser.goForward(id), 'não há para onde avançar nesta aba')
   })
 
   ipcMain.handle('browser:reload', (e, missionId: unknown): BrowserGestureResult => {
-    extras.assertAppRendererSender(e)
+    extras.assertBrowserSender(e)
     const id = asId(missionId)
     if (!id) return { ok: false, error: MISSION_MISSING }
     return ack(browser.reload(id), BROWSER_CLOSED)
@@ -129,7 +145,7 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
   ipcMain.handle(
     'browser:newTab',
     async (e, missionId: unknown, url: unknown): Promise<BrowserGestureResult> => {
-      extras.assertAppRendererSender(e)
+      extras.assertBrowserSender(e)
       const id = asId(missionId)
       if (!id) return { ok: false, error: MISSION_MISSING }
       const projectId = projectOf(id)
@@ -141,7 +157,7 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
   ipcMain.handle(
     'browser:closeTab',
     (e, missionId: unknown, tabId: unknown): BrowserGestureResult => {
-      extras.assertAppRendererSender(e)
+      extras.assertBrowserSender(e)
       const id = asId(missionId)
       const tab = asId(tabId)
       if (!id || !tab) return { ok: false, error: TAB_GONE }
@@ -152,7 +168,7 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
   ipcMain.handle(
     'browser:selectTab',
     (e, missionId: unknown, tabId: unknown): BrowserGestureResult => {
-      extras.assertAppRendererSender(e)
+      extras.assertBrowserSender(e)
       const id = asId(missionId)
       const tab = asId(tabId)
       if (!id || !tab) return { ok: false, error: TAB_GONE }
@@ -163,12 +179,31 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
   ipcMain.handle(
     'browser:devtools',
     (e, missionId: unknown, tabId: unknown): BrowserGestureResult => {
-      extras.assertAppRendererSender(e)
+      extras.assertBrowserSender(e)
       const id = asId(missionId)
       if (!id) return { ok: false, error: MISSION_MISSING }
       return ack(browser.toggleDevtools(id, asId(tabId) ?? undefined), BROWSER_CLOSED)
     }
   )
+
+  // ⧉ DESTACAR / REENCAIXAR. Os dois gestos são do DONO e vêm das duas
+  // superfícies: o ⧉ do chrome do dock destaca; o "trazer de volta" do recibo
+  // no dock e o botão da própria janela destacada reencaixam. Um `dockBack` de
+  // missão que já está no dock é SUCESSO, não recusa — o dono pode clicar duas
+  // vezes, e a segunda não tem por que virar um recado vermelho.
+  ipcMain.handle('browser:popOut', (e, missionId: unknown): BrowserGestureResult => {
+    extras.assertBrowserSender(e)
+    const id = asId(missionId)
+    if (!id) return { ok: false, error: MISSION_MISSING }
+    return browser.popOut(id)
+  })
+
+  ipcMain.handle('browser:dockBack', (e, missionId: unknown): BrowserGestureResult => {
+    extras.assertBrowserSender(e)
+    const id = asId(missionId)
+    if (!id) return { ok: false, error: MISSION_MISSING }
+    return browser.dockBack(id, 'gesture')
+  })
 
   // ResizeObserver do painel: volume alto, sem resposta — `.on`, como o
   // `panes-view:layout` da era F3. O retângulo vem em DIPs da PÁGINA do host
@@ -179,13 +214,20 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
   // continua ANEXADA — colapsar a seção, trocar de aba do dock ou abrir um
   // overlay do host jamais chamam `removeChildView` (P5: detached mata o rAF,
   // pendura a captura por 5-8s e faz o clique cair no vazio).
+  //
+  // E AQUI MORA A LEI 2: o canal é o MESMO para as duas superfícies, e quem
+  // separa uma da outra é o REMETENTE (nunca um campo do payload). O motor
+  // ignora — com registro na caixa-preta — o relato de quem não está com a
+  // página: depois do ⧉, o ResizeObserver do dock ainda dispara um ou dois
+  // quadros contando de um retângulo onde não há mais nada.
   ipcMain.on(
     'browser:bounds',
     (e, missionId: unknown, rect: unknown, visible: unknown) => {
-      if (!senderAllowed(e, 'browser:bounds')) return
+      const reporter = senderHost(e, 'browser:bounds')
+      if (!reporter) return
       const id = asId(missionId)
       if (!id || !isBrowserPanelRect(rect)) return
-      browser.applyBounds(id, rect, visible === true)
+      browser.applyBounds(id, rect, visible === true, reporter)
     }
   )
 }

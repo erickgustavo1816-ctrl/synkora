@@ -111,7 +111,17 @@ import { buildGuiLspTools } from './guiLspTools'
 // BROWSER EMBUTIDO (2026-08-29 — design DESIGN_BROWSER_EMBUTIDO). Três peças
 // que só valem juntas: o MOTOR das views por missão (H1), a superfície do DONO
 // (`browser:*`, H1) e o KIT DE 11 TOOLS do agente (H2). A costura é esta.
-import { createBrowserManager, type BrowserPaneManager } from './browserPane'
+import {
+  createBrowserManager,
+  type BrowserHostKind,
+  type BrowserPaneManager
+} from './browserPane'
+// POP-OUT do browser (2026-08-29 — design DESIGN_BROWSER_POPOUT §P1): a MESMA
+// view salta para uma janela própria, com função inteira, e o X reencaixa.
+import {
+  createBrowserPopoutWindows,
+  type BrowserPopoutWindows
+} from './browserPopoutWindow'
 import { registerBrowserIpc } from './ipc/browser'
 import { buildGuiBrowserTools, type GuiBrowserToolkit } from './guiBrowserTools'
 import { GUI_HELPER_MCP_PANE_PREFIX } from './guiHelperLspMcp'
@@ -244,6 +254,10 @@ function pushAll(channel: string, ...args: unknown[]): void {
   pushBoard(channel, ...args)
 }
 let synVoiceOverlayWindow: BrowserWindow | null = null
+/** As janelas destacadas do browser (uma por missão). Vive no módulo porque o
+ *  porteiro do IPC (`assertBrowserSurfaceSender`) é uma função de topo e
+ *  precisa perguntar se o remetente é uma delas. */
+let browserPopoutWindows: BrowserPopoutWindows | null = null
 let progressOverlayWindow: BrowserWindow | null = null
 let synVoiceOverlayTooltipWindow: BrowserWindow | null = null
 let synVoiceOverlayTooltipReady: Promise<void> | null = null
@@ -482,17 +496,38 @@ function resolveAppIcon(): string | undefined {
   return candidates.find((p) => existsSync(p))
 }
 
+/** Views do renderer que ganham janela própria (a `main` não tem query). */
+const ALLOWED_RENDERER_VIEWS = new Set(['synvoice-overlay', 'progress-overlay', 'browser-popout'])
+/** Chaves de query permitidas ALÉM de `view`, POR view. O pop-out do browser é
+ *  a primeira janela da casa que precisa saber DE QUEM ela é: a missão e o
+ *  projeto viajam na URL (os overlays só carregavam `view`). */
+const ALLOWED_RENDERER_VIEW_QUERY: Record<string, readonly string[]> = {
+  'browser-popout': ['missionId', 'projectId']
+}
+/** Valor de query aceito: id da casa (uuid) e nada de exótico. */
+const SAFE_RENDERER_QUERY_VALUE = /^[A-Za-z0-9._:-]{1,120}$/
+
+function allowedRendererQuery(entries: readonly [string, string][]): boolean {
+  if (entries.length === 0) return true
+  const seen = new Set<string>()
+  for (const [key] of entries) {
+    if (seen.has(key)) return false
+    seen.add(key)
+  }
+  const view = entries.find(([key]) => key === 'view')?.[1]
+  if (!view || !ALLOWED_RENDERER_VIEWS.has(view)) return false
+  const extra = ALLOWED_RENDERER_VIEW_QUERY[view] ?? []
+  return entries.every(
+    ([key, value]) =>
+      key === 'view' || (extra.includes(key) && SAFE_RENDERER_QUERY_VALUE.test(value))
+  )
+}
+
 function trustedRendererUrl(rawUrl: string): boolean {
   try {
     const actual = new URL(rawUrl)
     const queryEntries = [...actual.searchParams.entries()]
-    const allowedViews = new Set(['synvoice-overlay', 'progress-overlay'])
-    const allowedQuery = queryEntries.length === 0 || (
-      queryEntries.length === 1 &&
-      queryEntries[0][0] === 'view' &&
-      allowedViews.has(queryEntries[0][1])
-    )
-    if (!allowedQuery) return false
+    if (!allowedRendererQuery(queryEntries)) return false
     const devUrl = !app.isPackaged ? process.env['ELECTRON_RENDERER_URL'] : undefined
     if (devUrl) {
       const expected = new URL(devUrl)
@@ -523,17 +558,45 @@ function trustedRendererOrigin(rawOrigin: string): boolean {
 
 function trustedRendererView(
   rawUrl: string,
-  view: 'main' | 'synvoice-overlay' | 'progress-overlay'
+  view: 'main' | 'synvoice-overlay' | 'progress-overlay' | 'browser-popout'
 ): boolean {
   if (!trustedRendererUrl(rawUrl)) return false
   try {
     const entries = [...new URL(rawUrl).searchParams.entries()]
+    // O `trustedRendererUrl` acima já provou que a query INTEIRA é legal para a
+    // view que ela declara (chaves permitidas, valores sãos, sem repetição);
+    // aqui só se confere QUAL view é.
     return view === 'main'
       ? entries.length === 0
-      : entries.length === 1 && entries[0][0] === 'view' && entries[0][1] === view
+      : entries.some(([key, value]) => key === 'view' && value === view)
   } catch {
     return false
   }
+}
+
+/**
+ * Carrega uma view de janela própria do renderer. Mesma rota do mini SynVoice
+ * (dev = URL do Vite com a query; empacotado = `loadFile` com `query`), UMA vez
+ * só para todas as views que a usarem — e com o `trustedRendererView` como
+ * porteiro do endereço em dev, onde a URL vem do ambiente.
+ */
+function loadRendererViewInto(
+  win: BrowserWindow,
+  view: 'browser-popout',
+  query: Record<string, string>
+): void {
+  const params: Record<string, string> = { view, ...query }
+  const devUrl = !app.isPackaged ? process.env['ELECTRON_RENDERER_URL'] : undefined
+  if (devUrl) {
+    const url = new URL(devUrl)
+    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value)
+    if (!trustedRendererView(url.href, view)) {
+      throw new Error(`URL de desenvolvimento da janela ${view} não autorizada.`)
+    }
+    void win.loadURL(url.href)
+    return
+  }
+  void win.loadFile(join(__dirname, '../renderer/index.html'), { query: params })
 }
 
 function assertTrustedVoiceSender(event: IpcMainInvokeEvent | IpcMainEvent): void {
@@ -586,6 +649,39 @@ function assertAppRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
   if (!isHost) {
     throw new Error('Janela não autorizada para controlar serviços locais.')
   }
+}
+
+/**
+ * BROWSER DA MISSÃO — o porteiro das DUAS superfícies (pop-out, 2026-08-29).
+ *
+ * O `assertAppRendererSender` acima é host-only de propósito, e continua sendo:
+ * a janela destacada do browser NÃO pode mexer em projetos, ajustes, seats ou
+ * chats. O que ela pode é comandar o BROWSER — e para isso existe este
+ * porteiro, que além de recusar diz QUAL das duas superfícies falou. Esse
+ * retorno é a autoridade de geometria do motor (`ipc/browser.ts` explica por
+ * que a identidade vem do remetente e não de um campo do payload).
+ */
+function assertBrowserSurfaceSender(event: IpcMainInvokeEvent | IpcMainEvent): BrowserHostKind {
+  const frame = event.senderFrame
+  if (frame && frame === event.sender.mainFrame) {
+    if (
+      trustedRendererView(frame.url, 'main') &&
+      mainWindow !== null &&
+      !mainWindow.isDestroyed() &&
+      event.sender === mainWindow.webContents
+    ) {
+      return 'dock'
+    }
+    // Janela destacada VIVA e registrada: o id do webContents tem de estar no
+    // registro do pop-out (uma janela fechada some dele no mesmo tique).
+    if (
+      trustedRendererView(frame.url, 'browser-popout') &&
+      browserPopoutWindows?.missionOf(event.sender.id)
+    ) {
+      return 'popout'
+    }
+  }
+  throw new Error('Janela não autorizada para comandar o browser da missão.')
 }
 
 function assertOverlayVoiceSender(event: IpcMainInvokeEvent | IpcMainEvent): void {
@@ -3553,10 +3649,44 @@ app.whenReady().then(async () => {
   // aba de uma missão tem exatamente o mesmo tempo de vida que os chats dela.
   // A partition (cookies, logins) é do PROJETO e sobrevive — é isso que faz o
   // dono logar uma vez só.
+  //
+  // O POP-OUT (design DESIGN_BROWSER_POPOUT §P1) nasce ANTES do motor porque é
+  // dependência dele — e os ganchos apontam de volta para o motor por closure
+  // (nenhum deles roda durante a construção: a primeira janela só existe depois
+  // de um ⧉ do dono).
+  const browserPopouts = createBrowserPopoutWindows({
+    record: (input) => blackbox.record(input),
+    storeFile: () => join(app.getPath('userData'), 'browser-popout-position.json'),
+    missionTitle: (missionId) => missions.get(missionId)?.title ?? 'missão',
+    anchorBounds: () =>
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : null,
+    icon: () => resolveAppIcon(),
+    preloadFile: () => join(__dirname, '../preload/index.js'),
+    loadView: (win, query) => loadRendererViewInto(win, 'browser-popout', query),
+    trustedUrl: (url) => trustedRendererView(url, 'browser-popout'),
+    // O X da janela REENCAIXA a página (§P6: o Electron 43 não mata o
+    // webContents filho junto com a janela — sem isto a view ficaria viva,
+    // órfã e com a captura pendurando 6s).
+    onCloseRequested: (missionId) => browserPanes.dockBack(missionId, 'window-close'),
+    // Arrastar/redimensionar/maximizar a janela destacada move o retângulo sem
+    // o ResizeObserver do cromo acordar — o mesmo gancho que a janela do app já
+    // tinha.
+    onGeometry: (missionId) => browserPanes.relayout(missionId),
+    // CURA 2: restaurada de minimizada, o `setBounds` da view é REFEITO (o
+    // `restore` sozinho não cura — a sonda mediu o pixel errado 356× seguidas).
+    onRestored: (missionId) => browserPanes.relayout(missionId)
+  })
+  browserPopoutWindows = browserPopouts
   const browserPanes: BrowserPaneManager = createBrowserManager({
     window: () => mainWindow,
     record: (input) => blackbox.record(input),
-    push: (channel, ...args) => pushAll(channel, ...args)
+    // O `pushAll` da casa só fala com a janela principal; a janela destacada é
+    // uma superfície do app como outra qualquer e precisa do mesmo repaint.
+    push: (channel, ...args) => {
+      pushAll(channel, ...args)
+      browserPopouts.broadcast(channel, ...args)
+    },
+    popouts: browserPopouts
   })
   const killMissionGuiPanes = (missionId: string): void => {
     guiSessions?.killWhere((paneId) => isGuiMissionPaneId(paneId, missionId))
@@ -4344,7 +4474,10 @@ app.whenReady().then(async () => {
   registerSettingsIpc(ctx, { assertMainRendererSender, assertAppRendererSender })
   // BROWSER EMBUTIDO: a superfície do DONO (barra de URL, abas, ← → ⟳,
   // devtools, bounds do painel). O agente entra pelo MCP, nunca por aqui.
-  registerBrowserIpc(ctx, { assertAppRendererSender, browser: browserPanes })
+  registerBrowserIpc(ctx, {
+    assertBrowserSender: assertBrowserSurfaceSender,
+    browser: browserPanes
+  })
   // PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md): sessão de chat
   // por pane. Nenhum CLI filho sobrevive ao quit.
   guiSessions = registerGuiIpc(ctx, {
@@ -4385,7 +4518,9 @@ app.whenReady().then(async () => {
     lspManager.disposeAll()
     // As views do browser são filhas da janela e morrem com ela; o `destroy`
     // existe para o que NÃO morre sozinho (listeners de janela, sessões CDP
-    // anexadas) e para o quit não deixar processo de renderer órfão.
+    // anexadas) e para o quit não deixar processo de renderer órfão. E agora
+    // também para as JANELAS DESTACADAS: elas são superfícies do app, não
+    // janelas soltas do sistema — o `destroy` fecha todas (`closeAll`).
     browserPanes.destroy()
   })
   // Cmd/Ctrl+K: só depois do registro GUI existir, porque o índice de

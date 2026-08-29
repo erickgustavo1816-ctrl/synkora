@@ -20,9 +20,15 @@
  *
  * A superfície pública NÃO mudou de endereço: `./browserPane` re-exporta os
  * cinco nomes daqui, então quem já importava de lá não muda uma linha.
+ *
+ * POP-OUT (2026-08-29): o browser da missão passou a ter DOIS hosts possíveis —
+ * o dock (a janela do app) e a janela destacada. O contrato do segundo
+ * (`BrowserPopoutHandle`/`BrowserPopoutHost`) é DECLARADO aqui, junto do
+ * primeiro, e IMPLEMENTADO em `./browserPopoutWindow`: assim o motor continua
+ * sem uma linha de Electron e o gate injeta pop-out de mentira.
  */
-import { WebContentsView, session } from 'electron'
-import type { BrowserWindow, WebContents } from 'electron'
+import { BrowserWindow, WebContentsView, session } from 'electron'
+import type { WebContents } from 'electron'
 import type { BrowserPanelRect } from './browserPane'
 
 // ————————————————————————————————————————————————————————————————
@@ -49,6 +55,13 @@ export interface BrowserWindowHooks {
   onClosed(): void
 }
 
+/** Onde uma view REALMENTE está pendurada, agora. Ver `viewWindow`. */
+export interface BrowserViewWindow {
+  id: number
+  visible: boolean
+  minimized: boolean
+}
+
 export interface BrowserViewHost {
   /** Cria a view NA partition do projeto (webPreferences duras lá dentro).
    *  null = janela indisponível — o chamador recusa nomeando a receita. */
@@ -64,6 +77,68 @@ export interface BrowserViewHost {
   windowVisible(): boolean
   /** resize/move/maximizar da janela e o `closed`. Devolve o desligador. */
   watchWindow(hooks: BrowserWindowHooks): () => void
+  /**
+   * ONDE A VIEW ESTÁ, perguntado ao Electron — não à nossa contabilidade.
+   * `BrowserWindow.fromWebContents(view.webContents)` custou **296 ns** na sonda
+   * `PROBE_BROWSER_POPOUT_2026-08-29.md` §P4 e é o **ÚNICO predicado honesto**
+   * de view ÓRFÃ (janela fechada por baixo dela): `view.getVisible()` devolve
+   * `true` e `wc.isDestroyed()` devolve `false` nesse estado — quem confia
+   * neles captura e **PENDURA 5-8 s**. `null` = órfã.
+   *
+   * Com o pop-out a pergunta também virou obrigatória por outro motivo: a view
+   * de uma missão destacada mora em OUTRA janela, e perguntar "a janela do app
+   * está visível?" (`windowVisible`) seria perguntar da janela errada.
+   *
+   * OPCIONAL no espelho de propósito: o host FALSO do gate (que nasceu antes do
+   * pop-out) não o implementa, e ali o motor cai na pergunta antiga. O host
+   * REAL abaixo sempre responde — `undefined` só existe para o dublê.
+   */
+  viewWindow?(view: BrowserViewHandle): BrowserViewWindow | null
+}
+
+// ————————————————————————————————————————————————————————————————
+// O SEGUNDO HOST: a janela do pop-out (design BROWSER_POPOUT §P1)
+// ————————————————————————————————————————————————————————————————
+// A implementação real mora em `./browserPopoutWindow` (que é quem toca
+// `BrowserWindow`); o contrato mora AQUI, junto do outro host, para o motor
+// (`browserPane.ts`) continuar sem UMA linha de Electron — e para o gate poder
+// injetar um pop-out de mentira.
+
+/** UMA janela de pop-out (uma missão). O motor só sabe destas seis coisas. */
+export interface BrowserPopoutHandle {
+  readonly missionId: string
+  /** UM PASSO (sonda §P1): `addChildView` direto, sem `removeChildView` antes —
+   *  é o único jeito de não existir instante nenhum com a view fora de árvore,
+   *  que é exatamente onde a captura pendura 5-8 s. */
+  attach(view: BrowserViewHandle): void
+  /** Só teardown de verdade, como no host do dock (lei 1). */
+  detach(view: BrowserViewHandle): void
+  /**
+   * Área útil da janela — `null` quando ela está MINIMIZADA (ou morta).
+   * FENCE 3 da sonda: `getContentBounds()` de janela minimizada devolve
+   * `width:0` (enquanto `getBounds()` mente que está tudo bem) e a view passa a
+   * responder captura RÁPIDO e ERRADA (356× seguidas). Devolver `null` é o
+   * jeito de o motor NUNCA recalcular geometria nesse estado.
+   */
+  contentSize(): { width: number; height: number } | null
+  /** À vista de verdade (nem escondida nem minimizada). */
+  visible(): boolean
+  /** Traz para a frente (restaura se estiver minimizada). */
+  focus(): void
+  /** Título da PÁGINA; a janela compõe "«página» · «missão»". */
+  setTitle(pageTitle: string): void
+}
+
+/** O registro de janelas que o motor consome (uma por missão). */
+export interface BrowserPopoutHost {
+  /** Cria (ou reusa) a janela da missão e a deixa **VISÍVEL** antes de voltar —
+   *  CURA 1 da sonda: reparentar para janela escondida pendura as DUAS rotas de
+   *  captura. `null` = não deu para abrir; o chamador recusa com receita. */
+  open(missionId: string, projectId: string): BrowserPopoutHandle | null
+  get(missionId: string): BrowserPopoutHandle | undefined
+  /** Fecha a janela da missão. No-op quando o gesto NASCEU do `close` dela. */
+  close(missionId: string): void
+  closeAll(): void
 }
 
 export type BrowserEventListener = (...args: unknown[]) => void
@@ -160,6 +235,13 @@ export function electronBrowserViewHost(window: () => BrowserWindow | null): Bro
     windowVisible() {
       const win = window()
       return Boolean(win && !win.isDestroyed() && win.isVisible() && !win.isMinimized())
+    },
+    viewWindow(view) {
+      // 296 ns por chamada (sonda §P4) — barato o bastante para rodar em TODA
+      // captura, e o único que enxerga a órfã.
+      const win = BrowserWindow.fromWebContents(view.webContents)
+      if (!win || win.isDestroyed()) return null
+      return { id: win.id, visible: win.isVisible(), minimized: win.isMinimized() }
     },
     watchWindow(hooks) {
       const win = window()

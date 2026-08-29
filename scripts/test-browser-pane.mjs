@@ -51,6 +51,7 @@ import {
   BROWSER_TAB_CAP as BROWSER_TAB_CAP_UI,
   EMPTY_BROWSER_PANEL,
   activeBrowserTab,
+  browserIsPopout,
   browserPageBounds,
   browserPageFraction,
   browserPageHeight,
@@ -207,6 +208,50 @@ test('MODELO: o RESUMO da seção é a única verdade que sobra com o painel rec
 
   const parado = normalizeBrowserPanel({ alive: true, tabs: [tab({ title: 'Board · Synkora' })] })
   assert.equal(browserSectionSummary(parado), 'Board · Synkora')
+})
+
+test('MODELO/POP-OUT: só `popout` é carregado — a AUSÊNCIA é dock, e o ⧉ REPINTA o dock', () => {
+  const fora = { alive: true, tabs: [tab()], host: 'popout' }
+  assert.equal(normalizeBrowserPanel(fora).host, 'popout')
+  // Ausente = dock, e nada mais escreve o campo: o espelho do preload declara a
+  // ausência como padrão, e um `'dock'` inventado aqui seria uma SEGUNDA grafia
+  // da mesma coisa — duas fotografias iguais passariam a comparar diferente
+  // entre um motor anterior ao ⧉ e o de hoje.
+  assert.equal(normalizeBrowserPanel({ alive: true, tabs: [tab()] }).host, undefined)
+  assert.equal(normalizeBrowserPanel({ alive: true, tabs: [tab()], host: 'dock' }).host, undefined)
+  assert.equal(normalizeBrowserPanel({ alive: true, tabs: [tab()], host: 'lixo' }).host, undefined)
+  // A pergunta é UMA só: `!== 'dock'` espalhado pela tela transformaria a
+  // ausência (motor velho) em "destacado".
+  assert.equal(browserIsPopout(normalizeBrowserPanel(fora)), true)
+  assert.equal(browserIsPopout(EMPTY_BROWSER_PANEL), false)
+
+  // O PORTÃO DO STORE: com TUDO o mais igual, mudar de host tem de repintar —
+  // sem esta comparação o ⧉ do dono não trocaria o painel pelo recibo.
+  const dentro = normalizeBrowserPanel({ alive: true, tabs: [tab()] })
+  assert.equal(sameBrowserPanel(dentro, normalizeBrowserPanel(fora)), false)
+  assert.equal(sameBrowserPanel(normalizeBrowserPanel(fora), normalizeBrowserPanel(fora)), true)
+})
+
+test('MODELO/POP-OUT: com a seção recolhida o resumo diz "destacado" ANTES de contar aba nenhuma', () => {
+  const fora = normalizeBrowserPanel({
+    alive: true,
+    tabs: [tab({ title: 'Board' }), tab({ tabId: 't2', active: false }), tab({ tabId: 't3', active: false })],
+    host: 'popout'
+  })
+  // "Board · 3 abas" mandaria o dono procurar no dock uma página que está em
+  // OUTRA janela — o resumo é a única verdade que sobra com a seção fechada.
+  assert.equal(browserSectionSummary(fora), 'destacado')
+  // O ⚡ sobrevive ao destaque: o agente segue dirigindo a página de lá.
+  const dirigindo = normalizeBrowserPanel({
+    alive: true,
+    agentDriving: true,
+    tabs: [tab({ loading: true })],
+    host: 'popout'
+  })
+  assert.equal(browserSectionSummary(dirigindo), '⚡ destacado')
+  // Motor velho continua vencendo tudo: sem verbo no preload não há destaque
+  // nenhum para contar.
+  assert.equal(browserSectionSummary(fora, 'missing'), 'motor velho')
 })
 
 test('MODELO: o nome da aba degrada título → host → a verdade, nunca uma URL inteira', () => {
@@ -590,6 +635,10 @@ function fakeHost(options = {}) {
     visible: options.visible ?? true,
     size: options.size ?? { width: 1440, height: 900 },
     noWindow: options.noWindow ?? false,
+    /** ONDE cada view está pendurada, do ponto de vista do Electron: `'app'`, a
+     *  janela DESTACADA, ou `null` (ÓRFÃ — a janela morreu por baixo dela). É a
+     *  contabilidade que o `viewWindow` abaixo consulta. */
+    where: new Map(),
     create(partition) {
       if (host.noWindow) return null
       const wc = fakeWebContents()
@@ -609,11 +658,13 @@ function fakeHost(options = {}) {
         getVisible: () => view.visible
       }
       views.push(view)
+      host.where.set(view, 'app')
       log.push({ kind: 'create', wc: wc.id, partition })
       return view
     },
     attach(view) {
       view.attached = true
+      host.where.set(view, 'app')
       log.push({ kind: 'attach', wc: view.webContents.id })
     },
     detach(view) {
@@ -623,6 +674,9 @@ function fakeHost(options = {}) {
         )
       }
       view.attached = false
+      // Fora de toda árvore = ÓRFÃ, e é isto que `BrowserWindow.fromWebContents`
+      // enxerga (`null`) enquanto `getVisible()`/`isDestroyed()` mentem.
+      host.where.set(view, null)
       log.push({ kind: 'detach', wc: view.webContents.id })
     },
     hardenSession(partition, hooks) {
@@ -638,10 +692,23 @@ function fakeHost(options = {}) {
       }
     }
   }
+  // `viewWindow` (a guarda de 296 ns: `BrowserWindow.fromWebContents`) é
+  // OPCIONAL no contrato DE PROPÓSITO — o host que nasceu antes do pop-out não
+  // o tem, e ali o motor cai na pergunta antiga (`windowVisible`). Por isso ele
+  // só existe quando o teste PEDE: as cercas de cima continuam cobrindo a perna
+  // do host sem `viewWindow`, que é a que roda hoje no gate.
+  if (options.tracksWindows) {
+    host.viewWindow = (view) => {
+      const at = host.where.get(view) ?? null
+      if (at === null) return null
+      if (at === 'app') return { id: 1, visible: host.visible, minimized: !host.visible }
+      return { id: at.id, visible: at.shown && !at.minimized, minimized: at.minimized }
+    }
+  }
   return host
 }
 
-function makeManager(options) {
+function makeManager(options = {}) {
   const host = fakeHost(options)
   const records = []
   const pushes = []
@@ -778,7 +845,14 @@ test('MOTOR/CICLO: `closeMission` derruba tudo, registra e zera o state (a parti
   await manager.ensureTab('m2', 'p', 'https://c.test/')
   manager.closeMission('m1')
 
-  assert.deepEqual(manager.state('m1'), { alive: false, agentDriving: false, tabs: [] })
+  // `host: 'dock'` entrou na fotografia com o POP-OUT (P1): missão zerada
+  // volta ao dock por definição — não existe janela órfã de missão morta.
+  assert.deepEqual(manager.state('m1'), {
+    alive: false,
+    agentDriving: false,
+    tabs: [],
+    host: 'dock'
+  })
   assert.equal(manager.hasMission('m1'), false)
   assert.equal(manager.hasMission('m2'), true, 'a missão vizinha não é levada junto')
   assert.equal(host.views.filter((view) => view.attached).length, 1)
@@ -1144,4 +1218,502 @@ test('MOTOR: sem janela pronta, abrir RECUSA com receita em vez de deixar casca 
   assert.equal(gesture.ok, false)
   assert.match(gesture.error, /abra o app e tente de novo/u)
   assert.equal(host.views.length, 0)
+})
+
+// ————————————————————————————————————————————————————————————————
+// C. A MÁQUINA DE HOST (`src/main/browserPaneHosting.ts`) — o POP-OUT
+// ————————————————————————————————————————————————————————————————
+//
+// O ⧉ do dono REPARENTA A MESMA `WebContentsView` para uma janela própria, em
+// UM PASSO. A sonda `PROBE_BROWSER_POPOUT_2026-08-29.md` mediu o gesto em
+// binário real (4 ms no main, um quadro de 17 ms) e provou que scroll,
+// formulário digitado, timers, SSE, WebSocket e a sessão CDP do agente
+// atravessam intactos — recriar a view perderia tudo isso.
+//
+// A mesma sonda pagou TRÊS armadilhas, e as três são cercas aqui porque nenhuma
+// delas quebra nada visível quando é violada:
+//
+//  1. mover a view para uma janela ESCONDIDA pendura as duas rotas de captura
+//     (a view nunca compôs um quadro ali). O pop-out falso é o CARCEREIRO:
+//     `attach` numa janela não-mostrada JOGA, no ponto do crime.
+//  2. geometria calculada de janela MINIMIZADA sai errada e a captura passa a
+//     responder RÁPIDO e MENTINDO (356× seguidas na sonda). `contentSize()`
+//     devolve `null` ali, e o `restore` REFAZ o `setBounds` — só isso curou.
+//  3. `BrowserWindow.fromWebContents` (296 ns) é o ÚNICO predicado honesto de
+//     view ÓRFÃ: `getVisible()` e `isDestroyed()` MENTEM nesse estado, e quem
+//     confia neles captura e pendura 6 s.
+//
+// Tudo aqui é node puro: host, janelas e `webContents` são dublês.
+
+/**
+ * As janelas DESTACADAS, de mentira. Elas escrevem na MESMA linha do tempo do
+ * host do app (`host.log`, com o prefixo `popout:`) — é isso que permite provar
+ * ORDEM ENTRE OS DOIS HOSTS, que é exatamente onde as curas 1 e 3 moram.
+ *
+ * `userClose()`/`userMinimize()`/`userRestore()` são os gestos do dono com a
+ * MESMA fiação do `src/main/index.ts` (espelho declarado: `onCloseRequested →
+ * dockBack(…, 'window-close')` e `onRestored → relayout`).
+ */
+function fakePopouts(host) {
+  const windows = new Map()
+  const log = host.log
+  const wiring = { onCloseRequested: () => undefined, onRestored: () => undefined }
+  let nextId = 41
+
+  /** Quem AINDA está pendurado nesta janela. Reparentar é de UM PASSO: o
+   *  `addChildView` da outra janela já tira a view daqui, sem `removeChildView`. */
+  const heldBy = (win) => host.views.filter((view) => host.where.get(view) === win)
+
+  const destroy = (win, kind) => {
+    win.destroyed = true
+    // A janela morre e quem ainda estiver nela vira ÓRFÃO — vivo, invisível e
+    // com a captura pendurando (§P6). Quem já foi reparentado não é tocado.
+    for (const view of heldBy(win)) host.where.set(view, null)
+    if (windows.get(win.missionId) === win) windows.delete(win.missionId)
+    log.push({ kind: `popout:${kind}`, missionId: win.missionId })
+  }
+
+  const handleOf = (win) => ({
+    missionId: win.missionId,
+    attach(view) {
+      if (win.destroyed) return
+      if (!win.shown || win.minimized) {
+        throw new Error(
+          `CURA 1 VIOLADA: a view ${view.webContents.id} foi movida para uma janela do pop-out ESCONDIDA/MINIMIZADA — as duas rotas de captura penduram ali (sonda §P4)`
+        )
+      }
+      host.where.set(view, win)
+      log.push({ kind: 'popout:attach', missionId: win.missionId, wc: view.webContents.id })
+    },
+    detach(view) {
+      if (win.destroyed) return
+      host.where.set(view, null)
+      log.push({ kind: 'popout:detach', missionId: win.missionId, wc: view.webContents.id })
+    },
+    // CURA 2: nenhum retângulo sai de janela minimizada — `getContentBounds()`
+    // do Electron devolve `width:0` ali enquanto `getBounds()` mente.
+    contentSize: () => (win.destroyed || win.minimized ? null : win.size),
+    visible: () => !win.destroyed && win.shown && !win.minimized,
+    focus() {
+      win.minimized = false
+      win.shown = true
+      win.focused += 1
+      log.push({ kind: 'popout:focus', missionId: win.missionId })
+    },
+    setTitle(pageTitle) {
+      win.title = pageTitle
+      log.push({ kind: 'popout:setTitle', missionId: win.missionId, title: pageTitle })
+    }
+  })
+
+  const create = (missionId, projectId) => {
+    const win = {
+      missionId,
+      projectId,
+      id: nextId++,
+      shown: false,
+      minimized: false,
+      destroyed: false,
+      closing: false,
+      focused: 0,
+      title: '',
+      size: { width: 1000, height: 700 },
+      /** O X do dono: a janela avisa o MOTOR e só então morre (lei 3). */
+      userClose() {
+        win.closing = true
+        log.push({ kind: 'popout:close-requested', missionId })
+        wiring.onCloseRequested(missionId)
+        destroy(win, 'closed')
+      },
+      userMinimize() {
+        win.minimized = true
+      },
+      userRestore() {
+        win.minimized = false
+        wiring.onRestored(missionId)
+      }
+    }
+    windows.set(missionId, win)
+    log.push({ kind: 'popout:create', missionId })
+    return win
+  }
+
+  const api = {
+    windows,
+    wiring,
+    open(missionId, projectId) {
+      const existing = windows.get(missionId)
+      // Janela em pleno fechamento não se reusa: ela morre daqui a um tique e
+      // levaria a view junto para o limbo.
+      const alive = existing && !existing.destroyed && !existing.closing
+      const win = alive ? existing : create(missionId, projectId)
+      // CURA 1, em ORDEM OBRIGATÓRIA: o `open` real só volta depois de
+      // `restore()` (se minimizada) + `showInactive()`. Quem dá o FOCO é o
+      // motor, no fim do gesto — janela que rouba o foco antes de a página
+      // chegar pisca vazia na cara do dono.
+      if (win.minimized) {
+        win.minimized = false
+        log.push({ kind: 'popout:restore', missionId })
+      }
+      if (!win.shown) {
+        win.shown = true
+        log.push({ kind: 'popout:showInactive', missionId })
+      }
+      return handleOf(win)
+    },
+    get(missionId) {
+      const win = windows.get(missionId)
+      return win && !win.destroyed ? handleOf(win) : undefined
+    },
+    close(missionId) {
+      const win = windows.get(missionId)
+      if (!win) return
+      // Re-entrada: quando o gesto NASCEU do X, o motor reencaixa e pede o
+      // fechamento de volta — mas o fechamento já está acontecendo. Fechar de
+      // novo aqui seria um segundo `close` no meio do primeiro.
+      if (win.closing) {
+        log.push({ kind: 'popout:close-noop', missionId })
+        return
+      }
+      win.closing = true
+      destroy(win, 'close')
+    },
+    closeAll() {
+      for (const missionId of [...windows.keys()]) api.close(missionId)
+    }
+  }
+  return api
+}
+
+function makeHostedManager(options = {}) {
+  const host = fakeHost({ tracksWindows: true, ...options })
+  const popouts = fakePopouts(host)
+  const records = []
+  const pushes = []
+  const manager = createBrowserManager({
+    window: () => null,
+    host,
+    popouts,
+    record: (input) => records.push(input),
+    push: (channel, ...args) => pushes.push({ channel, args })
+  })
+  // ESPELHO DECLARADO da fiação de `src/main/index.ts` (o par): o X da janela
+  // REENCAIXA, e o `restore` dela REFAZ a geometria (a cura 2).
+  popouts.wiring.onCloseRequested = (missionId) => manager.dockBack(missionId, 'window-close')
+  popouts.wiring.onRestored = (missionId) => manager.relayout(missionId)
+
+  /** A linha do tempo dos DOIS hosts, filtrada — é o instrumento que prova
+   *  ordem (e ausência) entre a janela do app e a janela destacada. */
+  const timeline = (...kinds) => host.log.filter((entry) => kinds.includes(entry.kind)).map((entry) => entry.kind)
+  const bounds = () => host.log.filter((entry) => entry.kind === 'setBounds')
+  return { manager, host, popouts, records, pushes, timeline, bounds }
+}
+
+const POPOUT_RECT = { x: 0, y: 60, width: 1000, height: 640 }
+const POPOUT_FULL = { x: 0, y: 0, width: 1000, height: 700 }
+
+test('⧉ CURA 1: a janela fica VISÍVEL antes do reparent, e o gesto é de UM PASSO', async () => {
+  const { manager, host, popouts, records, timeline, bounds } = makeHostedManager()
+  const opened = await manager.ensureTab('m1', 'p', 'localhost:5173')
+  opened.webContents.title = 'Board · Synkora'
+  manager.applyBounds('m1', RECT, true, 'dock')
+  assert.equal(manager.state('m1').host, 'dock')
+
+  host.log.length = 0
+  assert.deepEqual(manager.popOut('m1'), { ok: true })
+
+  // A ORDEM É A CERCA: criar → MOSTRAR → só então mover a view. Mover para
+  // janela escondida pendura as DUAS rotas de captura, e o carcereiro do
+  // `attach` (acima) joga se alguém inverter isso.
+  assert.deepEqual(
+    timeline('popout:create', 'popout:showInactive', 'popout:attach', 'attach', 'detach', 'popout:detach'),
+    ['popout:create', 'popout:showInactive', 'popout:attach'],
+    'criar → mostrar → anexar, sem UM detach: o gesto é de um passo só'
+  )
+  // O FOCO é o ÚLTIMO passo: a janela aparece com a página dentro.
+  assert.ok(
+    host.log.findIndex((e) => e.kind === 'popout:focus') >
+      host.log.findIndex((e) => e.kind === 'popout:attach')
+  )
+
+  assert.equal(manager.state('m1').host, 'popout')
+  assert.equal(manager.hostOf('m1'), 'popout')
+  // A view foi para o retângulo da JANELA, não para o do dock — e sem relato do
+  // cromo ela ocupa a janela inteira (nunca uma faixa preta esperando renderer).
+  assert.deepEqual(bounds().at(-1).bounds, POPOUT_FULL)
+  // A barra da janela conta a mesma verdade que a aba.
+  assert.equal(popouts.windows.get('m1').title, 'Board · Synkora')
+  const born = records.find((entry) => entry.event === 'browser-popout-born')
+  assert.equal(born.ids.missionId, 'm1')
+  assert.equal(born.detail.tabs, 1)
+})
+
+test('⧉ IDEMPOTENTE: clicar de novo FOCA a janela que já existe, não abre uma segunda', async () => {
+  const { manager, host, popouts } = makeHostedManager()
+  await manager.ensureTab('m1', 'p')
+  manager.popOut('m1')
+  assert.deepEqual(manager.popOut('m1'), { ok: true }, 'gesto repetido é sucesso, não recado vermelho')
+  assert.equal(host.log.filter((e) => e.kind === 'popout:create').length, 1, 'UM pop-out por missão')
+  assert.equal(popouts.windows.get('m1').focused, 2, 'o segundo ⧉ é o "focar" do recibo do dock')
+  // E o segundo gesto NÃO mexeu na página: nada de re-attach, nada de detach.
+  assert.equal(host.log.filter((e) => e.kind === 'popout:attach').length, 1)
+  assert.equal(host.log.filter((e) => e.kind === 'popout:detach').length, 0)
+})
+
+test('⇤ REENCAIXAR: a view volta ao dock ANTES de a janela fechar (nunca fica órfã)', async () => {
+  const { manager, host, popouts, records, timeline, bounds } = makeHostedManager()
+  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.applyBounds('m1', RECT, true, 'dock')
+  manager.popOut('m1')
+
+  host.log.length = 0
+  assert.deepEqual(manager.dockBack('m1'), { ok: true })
+
+  // A ORDEM: `attach` na janela do app e SÓ ENTÃO o destroy da janela. O
+  // Electron 43 não mata o `webContents` filho junto com ela (§P6) — fechar
+  // primeiro deixaria uma view viva, invisível e com toda captura pendurando 6s.
+  assert.deepEqual(timeline('attach', 'detach', 'popout:attach', 'popout:detach', 'popout:close'), [
+    'attach',
+    'popout:close'
+  ])
+  assert.equal(manager.state('m1').host, 'dock')
+  assert.equal(popouts.windows.has('m1'), false)
+  // A geometria do dock volta no MESMO quadro, sem esperar o ResizeObserver do
+  // painel acordar — é para isso que os dois retângulos são guardados.
+  assert.deepEqual(bounds().at(-1).bounds, RECT)
+  assert.equal(records.find((entry) => entry.event === 'browser-docked-back').detail.trigger, 'gesture')
+  // Gesto idempotente: o dono pode clicar duas vezes sem virar recusa.
+  assert.deepEqual(manager.dockBack('m1'), { ok: true })
+})
+
+test('X DA JANELA = REENCAIXAR: a página volta ao dock e o `webContents` NUNCA morre junto', async () => {
+  const { manager, host, popouts, records, timeline, bounds } = makeHostedManager()
+  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.applyBounds('m1', RECT, true, 'dock')
+  manager.popOut('m1')
+
+  host.log.length = 0
+  // O X do dono, com a fiação de verdade: a janela avisa o motor e só então
+  // morre. O driver do agente NÃO VÊ o fechamento (§P6) — quem avisa é o app.
+  popouts.windows.get('m1').userClose()
+
+  assert.equal(manager.state('m1').host, 'dock')
+  assert.equal(opened.webContents.isDestroyed(), false, 'fechar a janela nunca perde a página')
+  assert.equal(opened.webContents.closed, false)
+  assert.equal(manager.listTabs('m1').length, 1)
+  // A ORDEM INTEIRA numa asserção: o aviso, o reparent de volta, o pedido de
+  // fechamento virando NO-OP (a janela já estava fechando — fechar de novo
+  // seria um segundo `close` no meio do primeiro) e só então o destroy.
+  assert.deepEqual(
+    timeline(
+      'popout:close-requested',
+      'attach',
+      'detach',
+      'popout:detach',
+      'popout:close',
+      'popout:close-noop',
+      'popout:closed'
+    ),
+    ['popout:close-requested', 'attach', 'popout:close-noop', 'popout:closed']
+  )
+  assert.deepEqual(bounds().at(-1).bounds, RECT)
+  assert.equal(records.find((entry) => entry.event === 'browser-docked-back').detail.trigger, 'window-close')
+  // E o agente não perde a rodada: a view está numa janela viva de novo.
+  assert.equal(manager.captureReadiness('m1').ok, true)
+})
+
+test('CURA 2: janela minimizada NÃO recalcula nada, e o restore REFAZ o `setBounds`', async () => {
+  const { manager, popouts, bounds } = makeHostedManager()
+  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.popOut('m1')
+  manager.applyBounds('m1', POPOUT_RECT, true, 'popout')
+  assert.deepEqual(bounds().at(-1).bounds, POPOUT_RECT)
+
+  const win = popouts.windows.get('m1')
+  win.userMinimize()
+  const before = bounds().length
+  manager.relayout('m1')
+  // Nem o lixo que o cromo relata enquanto minimizado: `getContentBounds()`
+  // devolve `width:0` ali e a captura passaria a responder rápido e ERRADA.
+  manager.applyBounds('m1', { x: 0, y: 0, width: 0, height: 1 }, true, 'popout')
+  assert.equal(bounds().length, before, 'nenhum retângulo sai de uma janela minimizada')
+
+  // A CURA MEDIDA: `restore()` sozinho NÃO curou o pixel na sonda — só o
+  // `setBounds` REFEITO curou. É o `onRestored` da janela que manda refazer.
+  win.userRestore()
+  assert.equal(bounds().length, before + 1, 'o restore REFAZ a geometria')
+  // Bônus da mesma cerca: o relato degenerado (0×1) não vira superfície de um
+  // pixel — cai na janela inteira, onde a página é capturável.
+  assert.deepEqual(bounds().at(-1).bounds, POPOUT_FULL)
+})
+
+test('AUTORIDADE DE GEOMETRIA: o relato do host ERRADO é ignorado, com UM registro por transição', async () => {
+  const { manager, records, bounds } = makeHostedManager()
+  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.applyBounds('m1', RECT, true, 'dock')
+  manager.popOut('m1')
+
+  const before = bounds().length
+  // O painel do dock FALA depois do ⧉ (ele relata `visible:false` na faxina do
+  // efeito) e o ResizeObserver dele relata a cada quadro. Obedecer isso poria a
+  // view no retângulo de uma janela onde ela NEM ESTÁ.
+  manager.applyBounds('m1', { x: 0, y: 0, width: 300, height: 200 }, false, 'dock')
+  manager.applyBounds('m1', { x: 0, y: 0, width: 301, height: 200 }, true, 'dock')
+  assert.equal(bounds().length, before, 'nada do host errado foi aplicado')
+  const stale = records.filter((entry) => entry.event === 'browser-bounds-stale-host')
+  assert.equal(stale.length, 1, 'UM registro por transição — um por quadro encheria o diário do dono')
+  assert.equal(stale[0].detail.reporter, 'dock')
+  assert.equal(stale[0].detail.host, 'popout')
+
+  // O host CERTO manda: 60px de cromo no topo da janela destacada.
+  manager.applyBounds('m1', POPOUT_RECT, true, 'popout')
+  assert.deepEqual(bounds().at(-1).bounds, POPOUT_RECT)
+
+  // E ao contrário: de volta no dock, quem fala fora de hora é a JANELA.
+  manager.dockBack('m1')
+  const afterBack = bounds().length
+  manager.applyBounds('m1', POPOUT_FULL, true, 'popout')
+  assert.equal(bounds().length, afterBack)
+  assert.equal(
+    records.filter((entry) => entry.event === 'browser-bounds-stale-host').length,
+    2,
+    'a transição de volta RE-ARMA o registro'
+  )
+  // O painel do dock não mudou de assinatura com o pop-out: sem `reporter`, o
+  // relato é dele — quem identifica o host, no app, é o REMETENTE do IPC.
+  manager.applyBounds('m1', RECT, true)
+  assert.deepEqual(bounds().at(-1).bounds, RECT)
+})
+
+test('MISSÃO ENCERRADA leva a janela destacada junto — e o estado volta a `host: dock`', async () => {
+  const { manager, host, popouts, records, timeline } = makeHostedManager()
+  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m2', 'p', 'https://b.test/')
+  manager.popOut('m1')
+
+  host.log.length = 0
+  manager.closeMission('m1')
+
+  // Uma janela órfã na taskbar mostrando uma missão que o dono acabou de
+  // arquivar é pior do que qualquer view pendurada.
+  assert.equal(popouts.windows.has('m1'), false)
+  assert.deepEqual(manager.state('m1'), { alive: false, agentDriving: false, tabs: [], host: 'dock' })
+  // O teardown desanexa do HOST CERTO: a view era filha da janela destacada,
+  // não da janela do app.
+  assert.deepEqual(timeline('detach', 'popout:detach', 'popout:close'), ['popout:detach', 'popout:close'])
+  assert.equal(manager.hasMission('m2'), true, 'a missão vizinha não é levada junto')
+  assert.ok(records.some((entry) => entry.event === 'browser-mission-closed'))
+})
+
+test('QUIT: o teardown geral varre as janelas destacadas — nenhuma sobra na taskbar', async () => {
+  const { manager, popouts } = makeHostedManager()
+  await manager.ensureTab('m1', 'p')
+  await manager.ensureTab('m2', 'p')
+  manager.popOut('m1')
+  manager.popOut('m2')
+  assert.equal(popouts.windows.size, 2, 'missões diferentes podem ter janelas diferentes')
+  // E a VARREDURA, que é a razão de o teardown ter uma segunda linha: uma janela
+  // que sobrou de missão morta por fora não é alcançada pelo laço de
+  // `closeMission`. Janela de trabalho nenhuma sobrevive ao app.
+  popouts.open('m-fantasma', 'p')
+  assert.equal(popouts.windows.size, 3)
+
+  manager.destroy()
+  assert.equal(popouts.windows.size, 0)
+})
+
+test('GUARDA DE CAPTURA: view SEM JANELA recusa NA HORA, nomeando a receita', async () => {
+  const { manager, host, popouts, records } = makeHostedManager()
+  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.popOut('m1')
+  assert.equal(manager.captureReadiness('m1').ok, true)
+
+  // A janela morreu POR BAIXO da view (o `closed` sem passar pelo `close`): ela
+  // fica VIVA e órfã, e é aqui que os predicados ingênuos MENTEM.
+  const view = host.views[0]
+  popouts.windows.get('m1').destroyed = true
+  popouts.windows.delete('m1')
+  host.where.set(view, null)
+  assert.equal(view.getVisible(), true, '`getVisible()` continua dizendo que está tudo bem')
+  assert.equal(view.webContents.isDestroyed(), false, 'e `isDestroyed()` também mente')
+
+  const refused = manager.captureReadiness('m1')
+  assert.equal(refused.ok, false)
+  assert.match(refused.error, /SEM JANELA/u)
+  // Beco sem saída é bug: a recusa nomeia as DUAS portas de volta.
+  assert.match(refused.error, /reencaixe/u)
+  assert.match(refused.error, /⧉/u)
+  const logged = records.find((entry) => entry.event === 'browser-capture-orphan-refused')
+  assert.equal(logged.detail.host, 'popout')
+  assert.equal(logged.detail.wc, view.webContents.id)
+})
+
+test('GUARDA DE CAPTURA: pop-out MINIMIZADO segue capturável — a janela do APP escondida, não', async () => {
+  const { manager, host, popouts } = makeHostedManager()
+  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.popOut('m1')
+  popouts.windows.get('m1').userMinimize()
+  // A sonda mediu captura FRESCA em 19-81 ms com a janela minimizada/oculta/
+  // atrás — desde que a view JÁ tenha composto ali, que é o que as curas 1 e 2
+  // garantem. O dono minimiza a janela destacada e o agente SEGUE trabalhando.
+  assert.equal(manager.captureReadiness('m1').ok, true)
+
+  // No DOCK nada foi relaxado: ali a captura pendura 5-8 s e a recusa em 1 ms
+  // é o comportamento certo.
+  manager.dockBack('m1')
+  host.visible = false
+  const refused = manager.captureReadiness('m1')
+  assert.equal(refused.ok, false)
+  assert.match(refused.error, /minimizada\/escondida/u)
+  assert.match(refused.error, /restaure a janela/u)
+})
+
+test('ROTEAMENTO: aba nova de missão destacada nasce NA JANELA DESTACADA', async () => {
+  const { manager, host, popouts, timeline } = makeHostedManager()
+  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.popOut('m1')
+
+  host.log.length = 0
+  await manager.newTab('m1', 'p', 'https://b.test/')
+  // Nascer na janela do app obrigaria a um SEGUNDO salto — e teria um instante
+  // com a view na árvore da janela errada.
+  assert.deepEqual(timeline('attach', 'popout:attach'), ['popout:attach'])
+  assert.equal(manager.listTabs('m1').length, 2)
+  assert.equal(host.where.get(host.views[1]), popouts.windows.get('m1'))
+})
+
+test('⇤ REENCAIXAR não rouba o painel de quem está no dock AGORA', async () => {
+  const { manager } = makeHostedManager()
+  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m2', 'p', 'https://b.test/')
+  manager.applyBounds('m1', RECT, true, 'dock')
+  manager.popOut('m1')
+  // Cena real: com a página da m1 fora, o dono trocou o painel para a m2 — e
+  // clicou "reencaixar" na JANELA da m1, que não sabe disso.
+  manager.applyBounds('m2', RECT, true, 'dock')
+  manager.dockBack('m1')
+  // Volta ANEXADA e invisível (lei 1: segue capturável); quem aparece no quadro
+  // seguinte é decidido pelo relato do painel, não pelo `visible` lembrado.
+  assert.equal(manager.state('m1').visible, false)
+  assert.equal(manager.state('m2').visible, true)
+  assert.equal(manager.captureReadiness('m1').ok, true, 'invisível continua capturável')
+})
+
+test('⧉ RECUSA COM RECEITA: sem aba aberta, e num app cujo main é anterior ao pop-out', async () => {
+  const semAba = makeHostedManager()
+  const refusedTab = semAba.manager.popOut('m1')
+  assert.equal(refusedTab.ok, false)
+  assert.match(refusedTab.error, /abra uma aba \(\+\)/u)
+
+  // O app de ANTES do pop-out (main velho ainda de pé, ⧉ chegando por HMR): o
+  // gesto recusa NOMEANDO o restart, em vez de estourar.
+  const { manager } = makeManager()
+  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const refused = manager.popOut('m1')
+  assert.equal(refused.ok, false)
+  assert.match(refused.error, /reinicie o Synkora/u)
+  assert.equal(manager.state('m1').host, 'dock', 'a recusa não deixa o estado mentindo')
+  // Reencaixar quem nunca saiu é SUCESSO; sobre missão que não existe, recusa.
+  assert.deepEqual(manager.dockBack('m1'), { ok: true })
+  assert.equal(manager.dockBack('missao-que-nao-existe').ok, false)
 })
