@@ -42,25 +42,40 @@ import test from 'node:test'
 // `window` no corpo e só importa TIPOS do preload (apagados na compilação).
 import {
   BROWSER_NO_API,
+  BROWSER_PAGE_DEFAULT_FRACTION,
+  BROWSER_PAGE_KEYBOARD_STEP,
+  BROWSER_PAGE_MAX_FRACTION,
+  BROWSER_PAGE_MIN_FRACTION,
+  BROWSER_PAGE_MIN_HEIGHT,
+  BROWSER_PAGE_RAIL_FLOOR,
   BROWSER_TAB_CAP as BROWSER_TAB_CAP_UI,
   EMPTY_BROWSER_PANEL,
   activeBrowserTab,
+  browserPageBounds,
+  browserPageFraction,
+  browserPageHeight,
+  browserPageRange,
+  browserPageStorageKey,
   browserRect,
   browserSectionSummary,
   browserTabLabel,
+  clampBrowserPageFraction,
   clipBrowserRect,
   intersectRects,
   isHostOverlayNode,
   normalizeBrowserPanel,
   overlayHidesPage,
   readBrowserAck,
+  readBrowserPageFraction,
   rectHasArea,
   rectsOverlap,
   sameBrowserPanel,
   sameBrowserRect,
+  stepBrowserPageFraction,
   tabCapNotice,
   trimUrlInput,
-  urlHost
+  urlHost,
+  writeBrowserPageFraction
 } from '../src/renderer/src/dockBrowserModel.ts'
 
 // O motor é do MAIN e importa irmão sem extensão (`./blackbox`): o
@@ -269,6 +284,203 @@ test('MODELO/OVERLAY: só o portal que REALMENTE cruza a página a esconde', () 
   assert.equal(isHostOverlayNode({ id: 'root', role: null }), false, 'a árvore do app não é overlay')
   assert.equal(isHostOverlayNode({ id: '', role: 'tooltip' }), false, 'tooltip apagaria a página a cada hover')
   assert.equal(isHostOverlayNode({ id: '', role: 'dialog' }), true)
+})
+
+// ————————————————————————————————————————————————————————————————
+// A.2 A ALTURA DA PÁGINA — a fração do trilho
+// ————————————————————————————————————————————————————————————————
+//
+// REPROVAÇÃO DO DONO (2026-08-29, painel vivo na tela): "não gostei do browser,
+// ele não é adaptativo igual do claude code. Ele tem altura travada, fora que
+// não vai se adaptando igual."
+//
+// A altura vinha de um `clamp(180px, 34vh, 460px)` do CSS: teto absoluto de
+// 460px, nenhum gesto do dono, nenhuma adaptação de verdade. Estas cercas
+// prendem o modelo que a substituiu — uma FRAÇÃO do trilho, com piso e teto em
+// pixels e preferência por projeto. Contra o código velho elas nem chegam a
+// falhar por valor: as funções não existiam (`TypeError`), que é a prova de que
+// o teto morreu de fato, e não foi remendado.
+
+/** Storage de mentira no formato do `window.localStorage` (só o que o modelo
+ *  usa). `broken` simula o que o Chromium faz num contexto sem storage: LANÇA
+ *  em vez de devolver `null`. */
+function fakeStorage(seed = {}, { broken = false } = {}) {
+  const bag = new Map(Object.entries(seed))
+  return {
+    bag,
+    getItem(key) {
+      if (broken) throw new DOMException('storage bloqueado', 'SecurityError')
+      return bag.has(key) ? bag.get(key) : null
+    },
+    setItem(key, value) {
+      if (broken) throw new DOMException('storage bloqueado', 'SecurityError')
+      bag.set(key, value)
+    }
+  }
+}
+
+test('ALTURA: a página é uma FRAÇÃO do trilho — a MESMA preferência se adapta a cada tela', () => {
+  // O "vai se adaptando" que o dono pediu: uma preferência só, alturas
+  // diferentes conforme a coluna que existe. Nada disto é possível com pixels
+  // guardados.
+  assert.equal(browserPageHeight(0.55, 800), 440)
+  assert.equal(browserPageHeight(0.55, 1200), 660)
+  assert.equal(browserPageHeight(0.55, 500), 275)
+
+  // E O TETO DE 460px ESTÁ MORTO. Era ele que travava a página numa tela
+  // grande — o defeito que o dono viu.
+  assert.ok(
+    browserPageHeight(BROWSER_PAGE_DEFAULT_FRACTION, 1400) > 460,
+    'numa tela alta a página tem que passar do antigo teto de 460px'
+  )
+  assert.equal(browserPageHeight(BROWSER_PAGE_DEFAULT_FRACTION, 1400), 770)
+})
+
+test('ALTURA: o PISO de 180px vence a fração, e o TETO respeita o palmo das irmãs', () => {
+  // Fração pequena num trilho curto ainda entrega página legível: abaixo de
+  // 180px não existe QA visual nenhum, só uma fresta escura.
+  assert.equal(browserPageHeight(BROWSER_PAGE_MIN_FRACTION, 400), BROWSER_PAGE_MIN_HEIGHT)
+
+  // Fração grande NÃO come o trilho inteiro: entrega, trabalho e histórico
+  // continuam com um palmo de coluna à vista.
+  assert.deepEqual(browserPageBounds(900), { min: 180, max: 900 - BROWSER_PAGE_RAIL_FLOOR })
+  assert.equal(browserPageHeight(BROWSER_PAGE_MAX_FRACTION, 900), 740)
+  assert.ok(browserPageHeight(1, 900) <= 900 - BROWSER_PAGE_RAIL_FLOOR)
+})
+
+test('ALTURA: trilho apertado faz o PISO ceder — a geometria nunca devolve min > max', () => {
+  // Mesma escolha do `rightRailBounds`: com a coluna curta o piso cede, porque
+  // um clamp com min > max passaria a mentir e estouraria o dock.
+  const apertado = browserPageBounds(300)
+  assert.equal(apertado.max, 140)
+  assert.equal(apertado.min, 140, 'o piso cede em vez de estourar a coluna')
+  assert.equal(browserPageHeight(0.55, 300), 140)
+
+  // Trilho menor que o palmo das irmãs: zero, e não um número negativo que o
+  // CSS aceitaria calado.
+  assert.deepEqual(browserPageBounds(100), { min: 0, max: 0 })
+  assert.equal(browserPageHeight(0.55, 100), 0)
+
+  // Trilho AINDA NÃO MEDIDO (primeiro quadro) e lixo do DOM não viram NaN.
+  assert.deepEqual(browserPageBounds(0), { min: 0, max: 0 })
+  assert.equal(browserPageHeight(0.55, 0), 0)
+  assert.equal(browserPageHeight(0.55, Number.NaN), 0)
+  assert.equal(browserPageHeight(Number.NaN, 800), 440, 'fração torta cai no padrão')
+})
+
+test('ALTURA: as pontas que a ALÇA anuncia são as ALCANÇÁVEIS, não as teóricas', () => {
+  // Num trilho alto a fração mínima chega ANTES do piso de 180px: prometer 180
+  // no `aria-valuemin` seria oferecer ao teclado um valor que o gesto nunca
+  // alcança.
+  assert.equal(browserPageBounds(2000).min, BROWSER_PAGE_MIN_HEIGHT)
+  assert.deepEqual(browserPageRange(2000), { min: 300, max: 1800 })
+  // Num trilho médio quem manda são os pixels, e as duas contas coincidem.
+  assert.deepEqual(browserPageRange(800), { min: 180, max: 640 })
+  // Home/End nunca saem da faixa que a alça anunciou.
+  const range = browserPageRange(1000)
+  assert.equal(browserPageHeight(browserPageFraction(range.min, 1000), 1000), range.min)
+  assert.equal(browserPageHeight(browserPageFraction(range.max, 1000), 1000), range.max)
+})
+
+test('ALTURA: a fração clampa nas DUAS pontas antes de virar conta ou preferência', () => {
+  assert.equal(clampBrowserPageFraction(9), BROWSER_PAGE_MAX_FRACTION)
+  assert.equal(clampBrowserPageFraction(-4), BROWSER_PAGE_MIN_FRACTION)
+  assert.equal(clampBrowserPageFraction(Number.NaN), BROWSER_PAGE_DEFAULT_FRACTION)
+  assert.equal(clampBrowserPageFraction(Number.POSITIVE_INFINITY), BROWSER_PAGE_DEFAULT_FRACTION)
+  assert.equal(clampBrowserPageFraction(0.42), 0.42)
+})
+
+test('ALTURA: pixels → fração → pixels fecha o ciclo (o que o arrasto grava)', () => {
+  assert.equal(browserPageFraction(440, 800), 0.55)
+  assert.equal(browserPageHeight(browserPageFraction(440, 800), 800), 440)
+
+  // Arrasto que passa do teto grava o TETO, não o exagero: soltar o ponteiro
+  // não pode fazer a página pular de volta.
+  const alem = browserPageFraction(5000, 800)
+  assert.equal(browserPageHeight(alem, 800), 640)
+  // Arrasto que passa do piso, idem.
+  assert.equal(browserPageHeight(browserPageFraction(-99, 800), 800), 180)
+
+  // Trilho sem medida NUNCA vira divisão por zero na preferência do dono.
+  assert.equal(browserPageFraction(400, 0), BROWSER_PAGE_DEFAULT_FRACTION)
+  assert.equal(Number.isFinite(browserPageFraction(400, 0)), true)
+})
+
+test('ALTURA: o passo do teclado é em PIXELS — a seta empurra igual em toda tela', () => {
+  const cresceu = stepBrowserPageFraction(0.55, 'grow', 800)
+  assert.equal(browserPageHeight(cresceu, 800), 440 + BROWSER_PAGE_KEYBOARD_STEP)
+  const encolheu = stepBrowserPageFraction(0.55, 'shrink', 800)
+  assert.equal(browserPageHeight(encolheu, 800), 440 - BROWSER_PAGE_KEYBOARD_STEP)
+  // Shift dobra o passo (o mesmo gesto do `.right-rail-resizer`).
+  assert.equal(
+    browserPageHeight(stepBrowserPageFraction(0.55, 'grow', 800, BROWSER_PAGE_KEYBOARD_STEP * 2), 800),
+    440 + BROWSER_PAGE_KEYBOARD_STEP * 2
+  )
+  // Nas pontas a seta PARA — nunca guarda um valor que a tela não desenha.
+  const noTeto = browserPageFraction(browserPageRange(800).max, 800)
+  assert.equal(browserPageHeight(stepBrowserPageFraction(noTeto, 'grow', 800), 800), 640)
+  const noPiso = browserPageFraction(browserPageRange(800).min, 800)
+  assert.equal(browserPageHeight(stepBrowserPageFraction(noPiso, 'shrink', 800), 800), 180)
+  // Passo torto não derruba a conta.
+  assert.equal(Number.isFinite(stepBrowserPageFraction(0.55, 'grow', 800, Number.NaN)), true)
+})
+
+test('ALTURA: a preferência é POR PROJETO, e gravar/ler fecha o ciclo', () => {
+  // Chave no estilo das irmãs (`DockSection`, `rightRailSizing`), com o id do
+  // projeto escapado: universo com `/` no nome não pode escrever noutra chave.
+  assert.equal(browserPageStorageKey('u-1'), 'synkora.dockBrowser.page.v1:u-1')
+  assert.equal(browserPageStorageKey('a/b'), 'synkora.dockBrowser.page.v1:a%2Fb')
+  assert.equal(browserPageStorageKey('  '), 'synkora.dockBrowser.page.v1')
+  assert.notEqual(browserPageStorageKey('u-1'), browserPageStorageKey('u-2'))
+
+  const storage = fakeStorage()
+  const key = browserPageStorageKey('u-1')
+  // Sem nada guardado, o padrão.
+  assert.equal(readBrowserPageFraction(storage, key), BROWSER_PAGE_DEFAULT_FRACTION)
+  writeBrowserPageFraction(storage, key, 0.72)
+  assert.equal(readBrowserPageFraction(storage, key), 0.72)
+  // O universo vizinho continua com o padrão: a altura é de quem a escolheu.
+  assert.equal(
+    readBrowserPageFraction(storage, browserPageStorageKey('u-2')),
+    BROWSER_PAGE_DEFAULT_FRACTION
+  )
+  // Dízima do arrasto entra ARREDONDADA (três casas) — 17 dígitos no storage do
+  // dono não contam nada a mais.
+  writeBrowserPageFraction(storage, key, 1 / 3)
+  assert.equal(storage.bag.get(key), JSON.stringify({ fraction: 0.333 }))
+  // E o que se grava já está clampado: fração absurda não fica no disco.
+  writeBrowserPageFraction(storage, key, 40)
+  assert.equal(readBrowserPageFraction(storage, key), BROWSER_PAGE_MAX_FRACTION)
+})
+
+test('ALTURA: storage quebrado ou torto degrada para o padrão — NUNCA uma exceção', () => {
+  const key = browserPageStorageKey('u-1')
+  // Storage que LANÇA na leitura e na escrita (contexto sem storage, cota
+  // estourada): a altura vale por esta sessão, o dock abre igual.
+  const quebrado = fakeStorage({}, { broken: true })
+  assert.equal(readBrowserPageFraction(quebrado, key), BROWSER_PAGE_DEFAULT_FRACTION)
+  assert.doesNotThrow(() => writeBrowserPageFraction(quebrado, key, 0.6))
+
+  // Sem storage nenhum (o modelo roda fora do browser).
+  assert.equal(readBrowserPageFraction(null, key), BROWSER_PAGE_DEFAULT_FRACTION)
+  assert.doesNotThrow(() => writeBrowserPageFraction(null, key, 0.6))
+
+  // JSON quebrado, formato de outra versão, campo de outro tipo e número
+  // impossível: todos caem no padrão em silêncio.
+  for (const sujeira of ['{', 'null', '"0.8"', '[]', '{"fraction":"0.8"}', '{"fraction":null}']) {
+    assert.equal(
+      readBrowserPageFraction(fakeStorage({ [key]: sujeira }), key),
+      BROWSER_PAGE_DEFAULT_FRACTION,
+      `preferência corrompida (${sujeira}) tem que degradar para o padrão`
+    )
+  }
+  // Guardado fora da faixa (versão futura, edição à mão) volta para dentro.
+  assert.equal(
+    readBrowserPageFraction(fakeStorage({ [key]: '{"fraction":12}' }), key),
+    BROWSER_PAGE_MAX_FRACTION
+  )
+  // E o fallback pedido também passa pelo clamp.
+  assert.equal(readBrowserPageFraction(null, key, 99), BROWSER_PAGE_MAX_FRACTION)
 })
 
 // ————————————————————————————————————————————————————————————————

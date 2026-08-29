@@ -22262,16 +22262,94 @@ details.gui-error-line {
 
 /* ——— o retângulo da página ——— */
 
-/* Altura em `clamp`: no trilho no piso ela ainda mostra página, e num trilho
-   largo (o máximo é 42% da tela) ela cresce sem virar a seção inteira. */
+/* A ALTURA VEM DO COMPONENTE, não daqui (2026-08-29, reprovação do dono: "ele
+   tem altura travada, fora que não vai se adaptando"). Era um
+   `clamp(180px, 34vh, 460px)`: um teto de 460px que nenhuma tela grande passava
+   e nenhum gesto alcançava.
+
+   Agora o painel publica `--dock-browser-page-h` no próprio nó — uma FRAÇÃO da
+   altura do trilho, guardada por projeto e ajustada pela alça. Encolher a
+   janela reescala a página junto; o `dockBrowserModel` é quem faz a conta e o
+   `test:browser-pane` é quem a prova. O valor de reserva existe pela mesma
+   razão do `--right-rail-rendered-width, 204px`: uma variável que faltasse não
+   pode colapsar a caixa.
+
+   `flex: none` porque a altura é ORDEM, não sugestão: sem ele a página seria a
+   primeira a ceder se a coluna algum dia apertasse. */
 .dock-browser-page {
   position: relative;
+  flex: none;
   min-width: 0;
-  height: clamp(180px, 34vh, 460px);
+  height: var(--dock-browser-page-h, 320px);
   border-radius: 8px;
   border: 1px dashed var(--panel-ink-3);
   background: var(--panel-2);
   overflow: hidden;
+}
+
+/* ——— a alça da altura ——— */
+
+/* Ela mora na borda de BAIXO da página, entre o retângulo e a barra de status:
+   a divisória do dock do Claude Code que o dono pediu, no dialeto da casa. A
+   caixa tem 12px de alvo (a mesma ordem dos 10px do `.right-rail-resizer`), e
+   as margens negativas a encaixam no vão que já existia — a alça aparece sem
+   empurrar a seção inteira para baixo. */
+.dock-browser-grip {
+  position: relative;
+  flex: none;
+  height: 12px;
+  margin: -6px 0;
+  border: 0;
+  background: transparent;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+/* O afordamento é FORMA antes de cor: um risco curto, parado, que diz "isto se
+   pega". Ele cresce e escurece no hover/foco, e só ACENDE em acento durante o
+   gesto — movimento como sinal, nunca como enfeite.
+
+   A cor parada é `--ink-3` — a MESMA do `▾` que abre as seções, e por medida,
+   não por gosto: sobre o papel do card ela dá 3,0:1, que é o piso do WCAG para
+   um elemento de INTERFACE (1.4.11). O `--line-strong` que estava aqui media
+   1,96:1 — quieto demais para um controle que o dono precisa achar (defeito
+   pego no harness com o CSS real, não no olho). */
+.dock-browser-grip-line {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--ink-3);
+  transform: translate(-50%, -50%);
+  transition: width var(--motion-fast) ease, background var(--motion-fast) ease;
+}
+
+.dock-browser-grip:hover .dock-browser-grip-line,
+.dock-browser-grip:focus-visible .dock-browser-grip-line {
+  width: 40px;
+  background: var(--ink-2);
+}
+
+.dock-browser-grip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+/* Durante o arrasto o cursor de redimensionar vale para o PAINEL inteiro (o
+   ponteiro sai da alça no primeiro pixel do gesto) e nada é selecionável — sem
+   isso o arrasto pinta de azul a metade do dock. */
+.dock-browser.is-dragging {
+  cursor: ns-resize;
+  user-select: none;
+}
+
+.dock-browser.is-dragging .dock-browser-grip-line {
+  width: 40px;
+  background: var(--accent);
 }
 
 /* Com view viva a moldura fecha: tracejado é "slot vazio", sólido é "tem

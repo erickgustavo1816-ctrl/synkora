@@ -254,6 +254,230 @@ export function clipBrowserRect(
   return rect
 }
 
+// ————— ALTURA DA PÁGINA: a FRAÇÃO do trilho —————
+//
+// REPROVAÇÃO DO DONO (2026-08-29, olhando o painel vivo): "não gostei do
+// browser, ele não é adaptativo igual do claude code. Ele tem altura travada,
+// fora que não vai se adaptando igual."
+//
+// A altura era `clamp(180px, 34vh, 460px)` no CSS: um TETO de 460px que nenhuma
+// tela grande passava, e nenhum gesto do dono alcançava. O modelo do Claude
+// Code desktop — que ele apontou como referência desde o design de 2026-08-15
+// (§D5.1) — é outro: cada painel tem ALTURA PRÓPRIA, ajustada por uma alça
+// entre painéis, e ela é uma FATIA da coluna, não um número absoluto.
+//
+// Por isso a preferência guardada é uma FRAÇÃO, nunca pixels:
+//  · encolher a janela reescala a página junto (o "vai se adaptando");
+//  · uma tela de 4K não herda a altura escolhida num notebook;
+//  · e o clamp em pixels continua existindo, mas como PISO e TETO da conta —
+//    o piso porque abaixo de 180px não se enxerga página nenhuma, e o teto
+//    porque o trilho tem irmãs (entrega, trabalho, histórico) que não podem
+//    ficar sem um palmo de coluna.
+//
+// Tudo aqui é puro de propósito: quem prova estas contas é o `test:browser-pane`
+// em node, sem React e sem DOM. O componente só mede o trilho e obedece.
+
+/** A fatia do trilho que a página ocupa quando o dono nunca arrastou nada.
+ *  Um pouco mais da metade: a página é o instrumento da seção, mas as irmãs
+ *  continuam à vista sem rolar. */
+export const BROWSER_PAGE_DEFAULT_FRACTION = 0.55
+
+/** Fração mínima/máxima que a preferência pode GUARDAR. Não é o limite do que
+ *  se vê (isso é dos pixels abaixo) — é a higiene do que se grava: um valor
+ *  torto no localStorage nunca vira uma página de 8 telas de altura. */
+export const BROWSER_PAGE_MIN_FRACTION = 0.15
+export const BROWSER_PAGE_MAX_FRACTION = 0.9
+
+/** Piso ABSOLUTO da página em pixels. Abaixo disto não há QA visual possível:
+ *  é uma fresta escura que só ocupa lugar. Ele VENCE a fração — trilho baixo
+ *  com fração pequena continua entregando página. */
+export const BROWSER_PAGE_MIN_HEIGHT = 180
+
+/** O palmo de trilho que a página NUNCA come. As irmãs (entrega, trabalho,
+ *  histórico, frota) e o próprio chrome do browser precisam de um pedaço de
+ *  coluna à vista — senão o dock inteiro vira um retângulo preto e o dono perde
+ *  a referência de onde está. */
+export const BROWSER_PAGE_RAIL_FLOOR = 160
+
+/** Passo do teclado, em PIXELS (e não em fração): a seta tem que dar o mesmo
+ *  empurrão numa tela pequena e numa grande. Mesma régua do
+ *  `RIGHT_RAIL_KEYBOARD_STEP`. */
+export const BROWSER_PAGE_KEYBOARD_STEP = 24
+
+export interface BrowserPageBounds {
+  min: number
+  max: number
+}
+
+export interface BrowserPageOptions {
+  minHeight?: number
+  railFloor?: number
+}
+
+/** Storage injetado (o módulo continua puro; quem passa `window.localStorage`
+ *  é o componente). Espelho do `RightRailStorage`. */
+export interface BrowserPageStorage {
+  getItem: (key: string) => string | null
+  setItem: (key: string, value: string) => void
+}
+
+function positive(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, value) : 0
+}
+
+/**
+ * Os limites da página em PIXELS, dado o trilho que existe AGORA.
+ *
+ * O teto é o que sobra do trilho depois do palmo das irmãs. Quando o trilho é
+ * baixo demais para o piso de 180px, o piso CEDE (min = max) em vez de estourar
+ * a coluna: a mesma escolha do `rightRailBounds` — geometria nunca devolve
+ * `min > max`, porque aí o clamp passaria a mentir.
+ *
+ * Trilho ainda não medido (0) devolve zero nas duas pontas: é a verdade, e quem
+ * mede é que segura o primeiro quadro.
+ */
+export function browserPageBounds(
+  railHeight: number,
+  options: BrowserPageOptions = {}
+): BrowserPageBounds {
+  const rail = positive(railHeight)
+  const floor = positive(options.railFloor ?? BROWSER_PAGE_RAIL_FLOOR)
+  const wanted = positive(options.minHeight ?? BROWSER_PAGE_MIN_HEIGHT)
+  const max = Math.max(0, rail - floor)
+  const min = Math.min(wanted, max)
+  return { min, max }
+}
+
+/** Higiene da preferência: fração fora da faixa (storage torto, versão futura)
+ *  volta para dentro antes de virar conta. */
+export function clampBrowserPageFraction(fraction: number): number {
+  if (!Number.isFinite(fraction)) return BROWSER_PAGE_DEFAULT_FRACTION
+  return Math.min(BROWSER_PAGE_MAX_FRACTION, Math.max(BROWSER_PAGE_MIN_FRACTION, fraction))
+}
+
+/**
+ * FRAÇÃO → PIXELS: a única conta que a tela usa para desenhar a página.
+ *
+ * É aqui que o "vai se adaptando" acontece: a MESMA preferência dá alturas
+ * diferentes em trilhos diferentes, e redimensionar a janela reescala a página
+ * sozinho — sem gesto nenhum do dono e sem teto fixo em lugar nenhum.
+ */
+export function browserPageHeight(
+  fraction: number,
+  railHeight: number,
+  options: BrowserPageOptions = {}
+): number {
+  const rail = positive(railHeight)
+  const bounds = browserPageBounds(rail, options)
+  const share = clampBrowserPageFraction(fraction)
+  const raw = rail * share
+  return Math.round(Math.min(bounds.max, Math.max(bounds.min, raw)))
+}
+
+/**
+ * As duas pontas ALCANÇÁVEIS, em pixels — o que a alça anuncia (`aria-valuemin`
+ * / `aria-valuemax`), o que o arrasto clampa e onde Home/End param.
+ *
+ * Não são os limites de `browserPageBounds`: num trilho muito alto a fração
+ * mínima (0,15) chega ANTES do piso de 180px, e prometer 180 num
+ * `aria-valuemin` que o gesto nunca alcança é mentir para o teclado. Aqui as
+ * duas leis já estão compostas, porque `browserPageHeight` aplica as duas.
+ */
+export function browserPageRange(
+  railHeight: number,
+  options: BrowserPageOptions = {}
+): BrowserPageBounds {
+  return {
+    min: browserPageHeight(BROWSER_PAGE_MIN_FRACTION, railHeight, options),
+    max: browserPageHeight(BROWSER_PAGE_MAX_FRACTION, railHeight, options)
+  }
+}
+
+/**
+ * PIXELS → FRAÇÃO: o fim do arrasto. A altura passa pelos limites ANTES de
+ * virar fração, então o que se grava é sempre um valor que a tela conseguiria
+ * desenhar de novo. Trilho sem medida devolve o padrão — dividir por zero
+ * gravaria `Infinity` na preferência do dono.
+ */
+export function browserPageFraction(
+  height: number,
+  railHeight: number,
+  options: BrowserPageOptions = {}
+): number {
+  const rail = positive(railHeight)
+  if (rail <= 0) return BROWSER_PAGE_DEFAULT_FRACTION
+  const bounds = browserPageBounds(rail, options)
+  const px = Number.isFinite(height) ? height : bounds.min
+  const clamped = Math.min(bounds.max, Math.max(bounds.min, px))
+  return clampBrowserPageFraction(clamped / rail)
+}
+
+/** Um empurrão de teclado, em pixels, devolvido já como fração pronta para
+ *  guardar. `grow` desce a alça (página maior), `shrink` sobe. */
+export function stepBrowserPageFraction(
+  fraction: number,
+  direction: 'grow' | 'shrink',
+  railHeight: number,
+  stepPx: number = BROWSER_PAGE_KEYBOARD_STEP,
+  options: BrowserPageOptions = {}
+): number {
+  const step = Math.max(1, Math.abs(Number.isFinite(stepPx) ? stepPx : BROWSER_PAGE_KEYBOARD_STEP))
+  const current = browserPageHeight(fraction, railHeight, options)
+  const next = current + (direction === 'grow' ? step : -step)
+  return browserPageFraction(next, railHeight, options)
+}
+
+/** A preferência é do PROJETO (como a largura do trilho): a mesma pessoa quer o
+ *  browser grande no universo em que faz QA e fechado no que só escreve plano.
+ *  `v1` no nome porque o formato pode crescer. */
+export function browserPageStorageKey(projectKey?: string): string {
+  const suffix = projectKey?.trim() ? `:${encodeURIComponent(projectKey.trim())}` : ''
+  return `synkora.dockBrowser.page.v1${suffix}`
+}
+
+/**
+ * Lê a fração guardada. TUDO que der errado — storage bloqueado, JSON quebrado,
+ * campo de outro tipo, fração absurda — cai no padrão em silêncio: a altura de
+ * um painel é preferência, e preferência ruim nunca pode impedir o dock de
+ * abrir (mesma lei do `readRightRailPreference`).
+ */
+export function readBrowserPageFraction(
+  storage: BrowserPageStorage | null | undefined,
+  key: string,
+  fallback: number = BROWSER_PAGE_DEFAULT_FRACTION
+): number {
+  if (!storage) return clampBrowserPageFraction(fallback)
+  try {
+    const raw = storage.getItem(key)
+    if (!raw) return clampBrowserPageFraction(fallback)
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return clampBrowserPageFraction(fallback)
+    const candidate = (parsed as { fraction?: unknown }).fraction
+    if (typeof candidate !== 'number' || !Number.isFinite(candidate)) {
+      return clampBrowserPageFraction(fallback)
+    }
+    return clampBrowserPageFraction(candidate)
+  } catch {
+    return clampBrowserPageFraction(fallback)
+  }
+}
+
+/** Grava a fração ARREDONDADA (três casas): o arrasto produz dízima, e um
+ *  número de 17 dígitos no storage do dono não conta nada a mais. */
+export function writeBrowserPageFraction(
+  storage: BrowserPageStorage | null | undefined,
+  key: string,
+  fraction: number
+): void {
+  if (!storage) return
+  try {
+    const value = Math.round(clampBrowserPageFraction(fraction) * 1000) / 1000
+    storage.setItem(key, JSON.stringify({ fraction: value }))
+  } catch {
+    // Storage cheio/bloqueado: a altura vale por esta sessão. Nunca um erro.
+  }
+}
+
 // ————— OVERLAYS DO HOST —————
 //
 // O padrão pago (`git show 88c49d4^`) esconde a view enquanto um overlay do

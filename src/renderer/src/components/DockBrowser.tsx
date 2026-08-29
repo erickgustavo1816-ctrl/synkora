@@ -1,10 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties
+} from 'react'
 import { useStore } from '../store'
 import {
   BROWSER_NO_API,
+  BROWSER_PAGE_KEYBOARD_STEP,
   BROWSER_TAB_CAP,
   EMPTY_BROWSER_PANEL,
   activeBrowserTab,
+  browserPageFraction,
+  browserPageHeight,
+  browserPageRange,
+  browserPageStorageKey,
   browserRect,
   browserSectionSummary,
   browserTabLabel,
@@ -13,10 +26,13 @@ import {
   normalizeBrowserPanel,
   overlayHidesPage,
   readBrowserAck,
+  readBrowserPageFraction,
   rectHasArea,
   sameBrowserRect,
+  stepBrowserPageFraction,
   tabCapNotice,
   trimUrlInput,
+  writeBrowserPageFraction,
   type BrowserEngineState
 } from '../dockBrowserModel'
 import type { BrowserPanelState, BrowserRect, SynkoraApi } from '../../../preload/index'
@@ -89,6 +105,37 @@ function clipAncestors(el: HTMLElement): HTMLElement[] {
     node = node.parentElement
   }
   return clips
+}
+
+/**
+ * O TRILHO que a página divide com as seções irmãs: o primeiro ancestral que
+ * ROLA (`.right-rail-content`). É a caixa DELE que manda na altura da página.
+ *
+ * Por que não o `.delivery-rail`, que é o dock inteiro: ele CRESCE com o
+ * conteúdo. Medir a página contra ele seria medir a página contra si mesma —
+ * mais altura, dock mais alto, mais altura ainda. O scroller, ao contrário, tem
+ * altura DEFINIDA pelo palco (`flex: 1 1 auto` com `min-height: 0`) e não se
+ * mexe quando o conteúdo cresce: é a única régua estável da coluna.
+ */
+function railViewportOf(el: HTMLElement): HTMLElement | null {
+  let node: HTMLElement | null = el.parentElement
+  while (node && node !== document.body) {
+    const style = window.getComputedStyle(node)
+    const flow = `${style.overflowY} ${style.overflowX}`
+    if (flow.includes('auto') || flow.includes('scroll')) return node
+    node = node.parentElement
+  }
+  return null
+}
+
+/** A altura da régua AGORA. Sem scroller acima (harness, modo legado, layout
+ *  futuro) ou com ele medindo zero — o trilho recolhido mede zero —, a régua é
+ *  a JANELA: uma medida grande demais ainda passa pelo clamp, uma medida zero
+ *  apagaria a página. */
+function railHeightOf(rail: HTMLElement | null): number {
+  const measured = rail?.clientHeight ?? 0
+  if (measured > 0) return measured
+  return typeof window === 'undefined' ? 0 : window.innerHeight
 }
 
 /** O elemento está mesmo PINTANDO? `checkVisibility` responde pelos quatro
@@ -194,6 +241,7 @@ export default function DockBrowser({
   /** o trilho está à vista? (o Board mantém o dock montado fora da aba) */
   visible: boolean
 }): React.JSX.Element {
+  const rootRef = useRef<HTMLDivElement>(null)
   const pageRef = useRef<HTMLDivElement>(null)
   const urlRef = useRef<HTMLInputElement>(null)
   const tab = activeBrowserTab(state)
@@ -214,6 +262,82 @@ export default function DockBrowser({
   // seção fora de vista) o retângulo vira superfície falante em vez de um
   // buraco escuro sem explicação.
   const [painted, setPainted] = useState(false)
+
+  // ————— ALTURA DA PÁGINA: a fatia do trilho que o dono escolheu —————
+  //
+  // A altura era um `clamp()` do CSS com teto de 460px — travada, sem gesto e
+  // sem adaptação (a reprovação de 2026-08-29). Agora ela é uma FRAÇÃO do
+  // trilho, guardada por PROJETO: encolher a janela reescala a página junto, e
+  // a alça do pé ajusta a fatia. As contas moram todas no modelo puro.
+  const pageKey = useMemo(() => browserPageStorageKey(projectId), [projectId])
+  const [fraction, setFraction] = useState(() =>
+    readBrowserPageFraction(typeof window === 'undefined' ? null : window.localStorage, pageKey)
+  )
+  // A régua nasce na JANELA e é corrigida pela medida real no primeiro layout:
+  // zero aqui pintaria uma página de altura nenhuma no primeiro quadro.
+  const [railHeight, setRailHeight] = useState(() =>
+    typeof window === 'undefined' ? 0 : window.innerHeight
+  )
+  const [dragging, setDragging] = useState(false)
+  const dragCleanupRef = useRef<(() => void) | null>(null)
+  // O scroller é achado UMA vez por montagem (a árvore acima do painel não muda
+  // enquanto ele vive) e relido a cada quadro do arrasto — subir a árvore com
+  // `getComputedStyle` sessenta vezes por segundo seria pagar caro por um dado
+  // que não muda.
+  const railRef = useRef<HTMLElement | null>(null)
+  const currentRailHeight = useCallback((): number => railHeightOf(railRef.current), [])
+
+  const pageRange = browserPageRange(railHeight)
+  const pageHeight = browserPageHeight(fraction, railHeight)
+  // O componente publica a altura como VARIÁVEL no próprio nó: o CSS lê dela, e
+  // o arrasto escreve nela direto (sem um render por quadro) — o arranjo pago
+  // do `--right-rail-rendered-width`.
+  const pageStyle = { '--dock-browser-page-h': `${pageHeight}px` } as CSSProperties
+
+  // Trocar de projeto troca a preferência: o browser grande do universo em que
+  // se faz QA não pode chegar herdado no universo em que só se escreve plano.
+  useLayoutEffect(() => {
+    if (typeof window === 'undefined') return
+    setFraction(readBrowserPageFraction(window.localStorage, pageKey))
+  }, [pageKey])
+
+  // A MEDIDA DO TRILHO. Um `ResizeObserver` no scroller (ele encolhe quando a
+  // janela encolhe, quando o dono arrasta a largura, quando o palco muda) mais
+  // o `resize` da janela para o caso de o observador não existir. Só grava
+  // altura POSITIVA e DIFERENTE: o trilho recolhido mede zero, e aceitar esse
+  // zero apagaria a página em vez de escondê-la.
+  useLayoutEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    const rail = railViewportOf(el)
+    railRef.current = rail
+    const measure = (): void => {
+      const next = railHeightOf(rail)
+      if (next > 0) setRailHeight((current) => (current === next ? current : next))
+    }
+    measure()
+    const sizes = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+    if (sizes && rail) sizes.observe(rail)
+    window.addEventListener('resize', measure)
+    return () => {
+      sizes?.disconnect()
+      window.removeEventListener('resize', measure)
+      // Um gesto em voo não sobrevive à desmontagem: a faxina fecha as portas e
+      // GRAVA o que o dono já tinha arrastado. Ela roda antes de a régua ser
+      // esquecida — a fração se calcula contra o trilho que o gesto usou.
+      dragCleanupRef.current?.()
+      dragCleanupRef.current = null
+      railRef.current = null
+    }
+  }, [])
+
+  const persistFraction = useCallback(
+    (next: number): void => {
+      setFraction(next)
+      if (typeof window !== 'undefined') writeBrowserPageFraction(window.localStorage, pageKey, next)
+    },
+    [pageKey]
+  )
 
   const run = useCallback((action: (api: SynkoraApi['browser']) => Promise<unknown>): void => {
     const api = browserApi()
@@ -242,6 +366,136 @@ export default function DockBrowser({
       onBlur: () => setHint((current) => (current === text ? null : current))
     }),
     []
+  )
+
+  // ————— A ALÇA: o gesto que devolve a altura ao dono —————
+  //
+  // Mecânica de ponteiro da casa (`.right-rail-resizer` / `.maestro-resizer`):
+  // captura no próprio nó, UM `requestAnimationFrame` por quadro, e uma faxina
+  // que fecha todas as portas — soltar, cancelar, perder a captura, a janela
+  // perder o foco. Gesto que não termina deixa o painel arrastando sozinho.
+  //
+  // Durante o arrasto a altura é escrita DIRETO na variável do nó: um render do
+  // React por quadro não é preciso, e o `ResizeObserver` do retângulo já leva a
+  // geometria nova para a view nativa no mesmo quadro.
+  const onGripPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>): void => {
+      if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return
+      const root = rootRef.current
+      if (!root) return
+      dragCleanupRef.current?.()
+      event.preventDefault()
+      event.stopPropagation()
+      const handle = event.currentTarget
+      const pointerId = event.pointerId
+      const startY = event.clientY
+      const startHeight = browserPageHeight(fraction, currentRailHeight())
+      let nextHeight = startHeight
+      let raf = 0
+      let finished = false
+      try {
+        handle.setPointerCapture(pointerId)
+      } catch {
+        return
+      }
+      setDragging(true)
+
+      const paint = (): void => {
+        raf = 0
+        root.style.setProperty('--dock-browser-page-h', `${nextHeight}px`)
+        // A alça é um separador com valor: quem arrasta pelo teclado/leitor de
+        // tela ouve o número mudando, não só no fim do gesto.
+        handle.setAttribute('aria-valuenow', String(nextHeight))
+      }
+      const onMove = (move: PointerEvent): void => {
+        if (move.pointerId !== pointerId) return
+        move.preventDefault()
+        // A régua é relida a cada quadro: a janela pode mudar de tamanho no meio
+        // do gesto, e a altura obedece ao trilho de AGORA.
+        const range = browserPageRange(currentRailHeight())
+        nextHeight = Math.round(
+          Math.min(range.max, Math.max(range.min, startHeight + (move.clientY - startY)))
+        )
+        if (!raf) raf = window.requestAnimationFrame(paint)
+      }
+      const finish = (): void => {
+        if (finished) return
+        finished = true
+        if (raf) window.cancelAnimationFrame(raf)
+        // O último quadro pode ter sido cancelado no meio: a caixa e o valor
+        // anunciado recebem o número FINAL aqui (se o React reencontrar a mesma
+        // altura de antes do gesto, ele não reescreveria nem um nem outro).
+        paint()
+        setDragging(false)
+        // A fração é a preferência DURÁVEL; o pixel do gesto é só o meio.
+        persistFraction(browserPageFraction(nextHeight, currentRailHeight()))
+        handle.removeEventListener('pointermove', onMove)
+        handle.removeEventListener('pointerup', onUp)
+        handle.removeEventListener('pointercancel', onCancel)
+        handle.removeEventListener('lostpointercapture', onLostCapture)
+        window.removeEventListener('blur', onCancel)
+        if (handle.hasPointerCapture(pointerId)) {
+          try {
+            handle.releasePointerCapture(pointerId)
+          } catch {
+            // O browser pode ter liberado a captura antes da faxina.
+          }
+        }
+        if (dragCleanupRef.current === finish) dragCleanupRef.current = null
+      }
+      const onUp = (up: PointerEvent): void => {
+        if (up.pointerId === pointerId) finish()
+      }
+      const onCancel = (cancel?: Event): void => {
+        if (cancel && 'pointerId' in cancel && (cancel as PointerEvent).pointerId !== pointerId) {
+          return
+        }
+        finish()
+      }
+      const onLostCapture = (lost: PointerEvent): void => {
+        if (lost.pointerId === pointerId) finish()
+      }
+      dragCleanupRef.current = finish
+      handle.addEventListener('pointermove', onMove)
+      handle.addEventListener('pointerup', onUp)
+      handle.addEventListener('pointercancel', onCancel)
+      handle.addEventListener('lostpointercapture', onLostCapture)
+      window.addEventListener('blur', onCancel)
+    },
+    [currentRailHeight, fraction, persistFraction]
+  )
+
+  /** O MESMO ajuste pelo teclado: a casa não entrega controle só de mouse.
+   *  ↓ cresce, ↑ encolhe (a alça desce quando a página cresce), Shift dobra o
+   *  passo, Home/End vão às pontas que o trilho permite. */
+  const onGripKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>): void => {
+      const rail = currentRailHeight()
+      const big = BROWSER_PAGE_KEYBOARD_STEP * 2
+      let next: number | null = null
+      switch (event.key) {
+        case 'ArrowDown':
+          next = stepBrowserPageFraction(fraction, 'grow', rail, event.shiftKey ? big : undefined)
+          break
+        case 'ArrowUp':
+          next = stepBrowserPageFraction(fraction, 'shrink', rail, event.shiftKey ? big : undefined)
+          break
+        case 'Home':
+          next = browserPageFraction(browserPageRange(rail).min, rail)
+          break
+        case 'End':
+          next = browserPageFraction(browserPageRange(rail).max, rail)
+          break
+        default:
+          return
+      }
+      // A tecla PARA aqui: seta que subisse viraria rolagem do dock, e Esc/setas
+      // no chat têm outro dono.
+      event.preventDefault()
+      event.stopPropagation()
+      persistFraction(next)
+    },
+    [currentRailHeight, fraction, persistFraction]
   )
 
   // ————— GEOMETRIA: o único canal entre este painel e a view nativa —————
@@ -379,7 +633,11 @@ export default function DockBrowser({
   const urlHint = tab ? 'endereço · Enter navega' : 'endereço · Enter abre o browser'
 
   return (
-    <div className="dock-browser">
+    <div
+      ref={rootRef}
+      className={`dock-browser${dragging ? ' is-dragging' : ''}`}
+      style={pageStyle}
+    >
       {/* A TIRA DE ABAS quebra em vez de rolar: numa coluna de 176px um
           scroller horizontal esconderia abas atrás de um gesto que o dono não
           tem motivo para tentar. Mesmo precedente do `.dock-acts`. */}
@@ -550,6 +808,27 @@ export default function DockBrowser({
             </span>
           </div>
         )}
+      </div>
+
+      {/* A ALÇA. Mora na borda de BAIXO da página, entre ela e a barra de
+          status — o lugar da divisória no dock do Claude Code que o dono
+          apontou como referência. Ela é um `separator` de verdade: anuncia
+          valor, mínimo e máximo, e o teclado a move como o mouse. */}
+      <div
+        className="dock-browser-grip"
+        role="separator"
+        tabIndex={0}
+        aria-label="altura da página do browser"
+        aria-orientation="horizontal"
+        aria-valuemin={pageRange.min}
+        aria-valuemax={pageRange.max}
+        aria-valuenow={pageHeight}
+        aria-valuetext={`${pageHeight} pixels`}
+        onPointerDown={onGripPointerDown}
+        onKeyDown={onGripKeyDown}
+        {...hints('altura da página · arraste ou use ↑ ↓')}
+      >
+        <i className="dock-browser-grip-line" aria-hidden="true" />
       </div>
 
       {/* A LINHA DO PÉ é a barra de status: ⚡ (o fato que não pode sumir) à
