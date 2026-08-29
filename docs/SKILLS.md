@@ -12,7 +12,7 @@ qualquer skill pinada). O que vale hoje:
   (UI ⇒ `impeccable`, na persona); tela completa de gestão; biblioteca
   congelada + instalar-por-URL pinado.
 - **Build entregue em 2026-08-29** (commit `2e7be90`): `skillsKit`
-  (store semeado com o kit v1 de 16 aprovado pelo dono), `skillsSync` +
+  (store semeado com o kit de 16 aprovado pelo dono), `skillsSync` +
   `guiSpawnSkills` (sync no `gui:create`, manifesto gerenciado — pasta do dono
   nunca é tocada), `skillsLibraryScan`/`skillsInstall`/`skillsPrune`,
   IPC `skills:*` + `api.skills`, tela Ajustes ▸ Skills, personas com cardápio
@@ -29,15 +29,63 @@ qualquer skill pinada). O que vale hoje:
 - **PODA executada em 2026-08-29**: 406 → 16 pastas na lib (o kit inteiro);
   manifest limpo preservando procedência. Qualquer skill desta página volta
   re-instalável pela URL da fonte, pinada.
+- **RESTAURO v3 em 2026-08-29 (mesmo dia, depois do build)**: a lista de 16 que
+  o build semeou era uma RECONSTRUÇÃO da curadoria — aprovada às cegas porque a
+  original ainda não tinha aparecido. A lista fechada com o dono no grill de
+  2026-08-21 foi recuperada da memória de longo prazo e ele mandou restaurá-la
+  verbatim. É a de baixo (kit v3), e ela é a única que vale.
 
-Kit v1 (uma por ocasião): dev/execução — `impeccable` (lei),
-`synkora-investigacao`, `synkora-codigo-limpo`, `test-driven-development`,
-`systematic-debugging`, `verification-before-completion`,
-`nodejs-backend-patterns`, `supabase-postgres-best-practices`,
-`owasp-security`, `better-writing`; dev/orquestração — `writing-plans`,
-`resolving-merge-conflicts`; planejamento — `brainstorming`,
-`domain-modeling`, `codebase-design`, `architecture-decision-records`,
-`writing-plans`.
+### O KIT v3 (o de 2026-08-21 — uma skill por ocasião)
+
+| Chat / ala | Ocasião | Skill |
+|---|---|---|
+| dev · execução | mexer em UI (**A LEI**, fora de toggle) | `impeccable` |
+| dev · execução | criar/evoluir design system | ★ `synkora-design-system-standard` |
+| dev · execução | limpar/revisar o próprio código | ★ `synkora-codigo-limpo` |
+| dev · execução | investigar antes de mexer | ★ `synkora-investigacao` |
+| dev · execução | desenhar a arquitetura | `codebase-design` |
+| dev · execução | back-end Node/runtime | `node` |
+| dev · execução | caçar um bug | `systematic-debugging` |
+| dev · execução | código novo com teste | `test-driven-development` |
+| dev · execução | declarar pronto | `verification-before-completion` |
+| dev · execução | segurança | `owasp-security` |
+| dev · execução | copy de interface | `better-writing` |
+| dev · orquestração | destrinchar/planejar a frota | `writing-plans` |
+| planejamento | estressar uma proposta | `grilling` |
+| planejamento | ser entrevistado a fundo | `grill-me` |
+| planejamento | entrevista que escreve docs/ADRs | `grill-with-docs` |
+| planejamento | modelar o domínio | `domain-modeling` |
+| planejamento | escrever o plano | `writing-plans` |
+
+★ = da casa (sem entrada no manifest: não têm procedência de rede).
+17 slots, 16 pastas — `writing-plans` serve duas ocasiões.
+
+**Instaladas no restauro** (pinadas pelo instalador por URL, 2026-08-29):
+
+| Skill | URL da pasta | sha pinado |
+|---|---|---|
+| `node` | `mcollina/skills` → `skills/node` | `c605269f85f6e449c1f76b7c9e8c73381fccfc68` |
+| `grilling` | `mattpocock/skills` → `skills/productivity/grilling` | `85f83d3fde1d3a90d5c9a657f6998c79a6c37308` |
+| `grill-me` | `mattpocock/skills` → `skills/productivity/grill-me` | `fcf0071560d32913c9d4f820e0d7ca467c881619` |
+| `grill-with-docs` | `mattpocock/skills` → `skills/engineering/grill-with-docs` | `447ca70872026d5b79d6073a546dac082117fed7` |
+
+`synkora-design-system-standard` voltou do bundle da era F6
+(`git show d43a3b4^:src/main/skillsBundled.ts`), com a de-F6ização de
+2026-08-21 aplicada no texto (fase → ocasião; briefing do card → intenção do
+dono). SKILL.md + 5 references + template de manifesto + validador.
+
+**Saíram na re-poda** (citadas pelo kit v1 reconstruído, não pelo v3):
+`architecture-decision-records`, `brainstorming`, `nodejs-backend-patterns`,
+`resolving-merge-conflicts`, `supabase-postgres-best-practices`. Continuam
+re-instaláveis — as fontes estão nas seções históricas desta página.
+
+**Armadilha do restauro (não redescobrir)**: `mattpocock/skills` foi
+REORGANIZADO — hoje é `skills/productivity/<nome>` e `skills/engineering/<nome>`
+(era `skills/engineering/<nome>` na rodada 3 e raiz antes disso). Pior: a
+listagem `data.jsdelivr.com/v1/packages/gh/<owner>/<repo>@main?structure=flat`
+devolveu uma árvore ANTIGA (pastas na raiz, sem `grilling`) enquanto
+`raw.githubusercontent.com/.../main/README.md` já mostrava a nova. jsdelivr
+serve para economizar cota, mas o path final se confere no raw da branch.
 
 ---
 

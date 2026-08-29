@@ -87,9 +87,14 @@ const LAW_SLOT: SkillsKitSlot = {
 }
 
 /**
- * O KIT v1 — reconstruído da curadoria e APROVADO pelo dono em 2026-08-29,
- * sem trocas. Uma skill por OCASIÃO (ADR-0004): kit curto por lei, e a
- * ocasião é o que a tela mostra ao lado do id.
+ * O KIT v3 — a lista ORIGINAL fechada com o dono no grill de 2026-08-21,
+ * recuperada da memória de longo prazo e RESTAURADA por ordem dele em
+ * 2026-08-29 (o build daquele dia tinha semeado uma RECONSTRUÇÃO, aprovada
+ * às cegas porque o original ainda não tinha aparecido).
+ *
+ * Uma skill por OCASIÃO (ADR-0004): kit curto por lei, e a ocasião é o que a
+ * tela mostra ao lado do id. 17 slots, 16 pastas — `writing-plans` serve duas
+ * ocasiões (planejar a frota no dev, escrever o plano no planejamento).
  */
 export function seedSkillsKit(): SkillsKitState {
   return {
@@ -97,42 +102,34 @@ export function seedSkillsKit(): SkillsKitState {
     dev: {
       execucao: [
         { ...LAW_SLOT },
-        { id: 'synkora-investigacao', occasion: 'investigar antes de mexer', enabled: true },
+        {
+          id: 'synkora-design-system-standard',
+          occasion: 'criar/evoluir design system',
+          enabled: true
+        },
         {
           id: 'synkora-codigo-limpo',
           occasion: 'limpar/revisar o próprio código',
           enabled: true
         },
-        { id: 'test-driven-development', occasion: 'código novo com teste', enabled: true },
+        { id: 'synkora-investigacao', occasion: 'investigar antes de mexer', enabled: true },
+        { id: 'codebase-design', occasion: 'desenhar a arquitetura', enabled: true },
+        { id: 'node', occasion: 'back-end Node/runtime', enabled: true },
         { id: 'systematic-debugging', occasion: 'caçar um bug', enabled: true },
+        { id: 'test-driven-development', occasion: 'código novo com teste', enabled: true },
         { id: 'verification-before-completion', occasion: 'declarar pronto', enabled: true },
-        { id: 'nodejs-backend-patterns', occasion: 'back-end/API', enabled: true },
-        {
-          id: 'supabase-postgres-best-practices',
-          occasion: 'banco de dados',
-          enabled: true
-        },
         { id: 'owasp-security', occasion: 'segurança', enabled: true },
         { id: 'better-writing', occasion: 'copy de interface', enabled: true }
       ],
       orquestracao: [
-        { id: 'writing-plans', occasion: 'destrinchar/planejar a frota', enabled: true },
-        {
-          id: 'resolving-merge-conflicts',
-          occasion: 'integrar fatias/conflitos',
-          enabled: true
-        }
+        { id: 'writing-plans', occasion: 'destrinchar/planejar a frota', enabled: true }
       ]
     },
     planejamento: [
-      { id: 'brainstorming', occasion: 'entrevistar/descobrir', enabled: true },
+      { id: 'grilling', occasion: 'estressar uma proposta', enabled: true },
+      { id: 'grill-me', occasion: 'ser entrevistado a fundo', enabled: true },
+      { id: 'grill-with-docs', occasion: 'entrevista que escreve docs/ADRs', enabled: true },
       { id: 'domain-modeling', occasion: 'modelar o domínio', enabled: true },
-      { id: 'codebase-design', occasion: 'desenhar a arquitetura', enabled: true },
-      {
-        id: 'architecture-decision-records',
-        occasion: 'registrar decisões (ADRs)',
-        enabled: true
-      },
       { id: 'writing-plans', occasion: 'escrever o plano', enabled: true }
     ]
   }

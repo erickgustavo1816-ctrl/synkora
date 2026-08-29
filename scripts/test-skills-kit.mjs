@@ -126,38 +126,61 @@ test('a primeira leitura semeia o kit aprovado e grava o arquivo', (t) => {
 
   const state = new SkillsKitStore(file).state()
   assert.equal(state.version, 1)
+  // O KIT v3 — a lista fechada com o dono no grill de 2026-08-21, restaurada
+  // por ordem dele em 2026-08-29 sobre a reconstrução que o build tinha semeado.
   assert.deepEqual(
     state.dev.execucao.map((entry) => entry.id),
     [
       'impeccable',
-      'synkora-investigacao',
+      'synkora-design-system-standard',
       'synkora-codigo-limpo',
-      'test-driven-development',
+      'synkora-investigacao',
+      'codebase-design',
+      'node',
       'systematic-debugging',
+      'test-driven-development',
       'verification-before-completion',
-      'nodejs-backend-patterns',
-      'supabase-postgres-best-practices',
       'owasp-security',
       'better-writing'
     ]
   )
   assert.deepEqual(
     state.dev.orquestracao.map((entry) => entry.id),
-    ['writing-plans', 'resolving-merge-conflicts']
+    ['writing-plans']
   )
   assert.deepEqual(
     state.planejamento.map((entry) => entry.id),
-    [
-      'brainstorming',
-      'domain-modeling',
-      'codebase-design',
-      'architecture-decision-records',
-      'writing-plans'
-    ]
+    ['grilling', 'grill-me', 'grill-with-docs', 'domain-modeling', 'writing-plans']
   )
-  // 17 slots, 16 skills DISTINTAS: `writing-plans` serve duas ocasiões (uma na
-  // ala orquestração do dev, outra no planejamento) e a pasta é uma só.
+  // 17 slots (11 + 1 + 5), 16 skills DISTINTAS: `writing-plans` serve duas
+  // ocasiões (uma na ala orquestração do dev, outra no planejamento) e a pasta
+  // é uma só — é ela que a poda protege, e é ela que o sync copia UMA vez.
+  assert.equal(state.dev.execucao.length, 11)
+  assert.equal(state.dev.orquestracao.length, 1)
+  assert.equal(state.planejamento.length, 5)
   assert.equal(state.dev.execucao.length + state.dev.orquestracao.length + state.planejamento.length, 17)
+  assert.deepEqual(
+    [...allKitSkillIds(state)].sort(),
+    [
+      'better-writing',
+      'codebase-design',
+      'domain-modeling',
+      'grill-me',
+      'grill-with-docs',
+      'grilling',
+      'impeccable',
+      'node',
+      'owasp-security',
+      'synkora-codigo-limpo',
+      'synkora-design-system-standard',
+      'synkora-investigacao',
+      'systematic-debugging',
+      'test-driven-development',
+      'verification-before-completion',
+      'writing-plans'
+    ],
+    'a biblioteca no disco é EXATAMENTE este conjunto — a poda usa esta lista'
+  )
   assert.equal(allKitSkillIds(state).size, 16)
 
   // toda ocasião é texto útil: slot sem ocasião é ficha muda na tela
@@ -187,7 +210,7 @@ test('o segundo boot é mudo: mesmo conteúdo, nenhum sinal novo', (t) => {
   const again = new SkillsKitStore(file).state()
   assert.equal(readFileSync(file, 'utf8'), before, 'o segundo boot reescreveu o kit')
   assert.equal(signals.length, marker, 'boot são não fala com a caixa-preta')
-  assert.equal(again.dev.execucao.length, 10)
+  assert.equal(again.dev.execucao.length, 11)
 })
 
 /* ================================================================= LEI ==== */
@@ -331,18 +354,14 @@ test('kitForChat dedupa a pasta e deixa o desligado fora; a poda vê os dois', (
     'slot desligado foi para o worktree'
   )
   assert.equal(dev.filter((entry) => entry.id === 'writing-plans').length, 1, 'pasta duplicada')
+  // 11 da execução − 1 desligado + o `writing-plans` empurrado; o da ala
+  // orquestração cai na deduplicação
   assert.equal(dev.length, 11)
 
   const planejamento = kitForChat(state, 'planejamento')
   assert.deepEqual(
     planejamento.map((entry) => entry.id),
-    [
-      'brainstorming',
-      'domain-modeling',
-      'codebase-design',
-      'architecture-decision-records',
-      'writing-plans'
-    ]
+    ['grilling', 'grill-me', 'grill-with-docs', 'domain-modeling', 'writing-plans']
   )
 
   // A PROTEÇÃO DA PODA IGNORA O `enabled`: desligar não é autorizar apagar.
@@ -360,7 +379,7 @@ test('arquivo ilegível volta ao seed, e o sinal diz que ele EXISTIA', (t) => {
 
   const marker = signals.length
   const state = new SkillsKitStore(file).state()
-  assert.equal(state.dev.execucao.length, 10)
+  assert.equal(state.dev.execucao.length, 11)
   assert.equal(state.dev.execucao[0].id, SKILLS_LAW_ID)
   assert.ok(signals.length > marker)
   assert.equal(signals.at(-1).event, 'skills-kit-seeded')
@@ -377,7 +396,7 @@ test('lixo parcial derruba SÓ o slot podre — o kit do dono sobrevive', (t) =>
   const raw = JSON.parse(readFileSync(file, 'utf8'))
   raw.planejamento.push({ id: 'SEM/VALIDADE', occasion: 'id ilegal' })
   raw.planejamento.push(null)
-  raw.planejamento.push({ id: 'brainstorming', occasion: 'duplicada' })
+  raw.planejamento.push({ id: 'grilling', occasion: 'duplicada' })
   raw.dev.orquestracao.push(42)
   writeFileSync(file, JSON.stringify(raw), 'utf8')
 
@@ -388,9 +407,9 @@ test('lixo parcial derruba SÓ o slot podre — o kit do dono sobrevive', (t) =>
     true,
     'o slot do dono morreu junto com o lixo'
   )
-  assert.equal(state.planejamento.filter((entry) => entry.id === 'brainstorming').length, 1)
+  assert.equal(state.planejamento.filter((entry) => entry.id === 'grilling').length, 1)
   assert.equal(state.planejamento.length, 6, 'sobraram os 5 do seed + o do dono')
-  assert.equal(state.dev.orquestracao.length, 2)
+  assert.equal(state.dev.orquestracao.length, 1)
   assert.ok(signals.length > marker)
   assert.equal(signals.at(-1).event, 'skills-kit-degraded')
   assert.ok(signals.at(-1).detail.dropped.length >= 3)

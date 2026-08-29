@@ -15,11 +15,14 @@ import type {
 } from '../../preload/index'
 
 /**
- * Skills no preview de browser: um retrato REPRESENTATIVO do seed v1 (a lei
+ * Skills no preview de browser: um retrato REPRESENTATIVO do seed v3 (a lei
  * fixa, as duas alas, o kit de planejamento) + biblioteca com os três estados
  * que a tela desenha (no kit, fora do kit — alvo da poda — e com BOM), com
  * mutações vivas em memória para o toggle/adicionar/remover responderem no
  * preview. Sem rede e sem disco: instalar recusa com a verdade.
+ *
+ * Só ids do kit v3 aparecem aqui: retrato com id que a biblioteca não tem mais
+ * ensina a tela errada a quem for olhar o preview.
  */
 function skillsMock(): SynkoraApi['skills'] {
   const kit: SkillsKitState = {
@@ -27,6 +30,11 @@ function skillsMock(): SynkoraApi['skills'] {
     dev: {
       execucao: [
         { id: 'impeccable', occasion: 'mexer em UI (a lei da persona)', enabled: true, law: true },
+        {
+          id: 'synkora-design-system-standard',
+          occasion: 'criar/evoluir design system',
+          enabled: true
+        },
         { id: 'synkora-investigacao', occasion: 'investigar antes de mexer', enabled: true },
         { id: 'test-driven-development', occasion: 'código novo com teste', enabled: true },
         { id: 'systematic-debugging', occasion: 'caçar um bug', enabled: false }
@@ -36,15 +44,18 @@ function skillsMock(): SynkoraApi['skills'] {
       ]
     },
     planejamento: [
-      { id: 'brainstorming', occasion: 'entrevistar/descobrir', enabled: true },
+      { id: 'grilling', occasion: 'estressar uma proposta', enabled: true },
+      { id: 'grill-with-docs', occasion: 'entrevista que escreve docs/ADRs', enabled: true },
       { id: 'writing-plans', occasion: 'escrever o plano', enabled: true }
     ]
   }
   const library: SkillsLibraryItem[] = [
-    { id: 'brainstorming', description: 'Estruturar descoberta com o dono antes de propor.', hasBom: false, inKit: true },
+    { id: 'grill-with-docs', description: 'A mesma entrevista, escrevendo ADRs e glossário no caminho.', hasBom: false, inKit: true },
+    { id: 'grilling', description: 'Interrogatório por rodadas até a árvore de decisão fechar.', hasBom: false, inKit: true },
     { id: 'impeccable', description: 'Design-ops: 23 comandos e 60 detectores determinísticos de polish.', hasBom: false, inKit: true },
     { id: 'old-era-skill', description: 'Sobra da era F6 sem slot em kit nenhum — alvo da poda.', hasBom: false, inKit: false },
     { id: 'quirky-bom-skill', description: 'Exemplo com BOM no SKILL.md para a tela avisar.', hasBom: true, inKit: false },
+    { id: 'synkora-design-system-standard', description: 'Método da casa: tokens semânticos, componentes, specimen e governança.', hasBom: false, inKit: true },
     { id: 'synkora-investigacao', description: 'Investigar antes de mexer: mapa do terreno, sinal estrutural.', hasBom: false, inKit: true },
     { id: 'systematic-debugging', description: 'Quatro fases; proíbe guess-and-check.', hasBom: false, inKit: true },
     { id: 'test-driven-development', description: 'Se não viu o teste falhar, não sabe o que ele testa.', hasBom: false, inKit: true },
