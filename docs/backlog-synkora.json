@@ -1,15 +1,9 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-29T18:53:49.709Z",
+  "updatedAt": "2026-08-29T21:13:20.453Z",
   "lanes": {
     "agora": [],
     "fila": [
-      {
-        "id": "browser-embutido",
-        "title": "Browser embutido",
-        "desc": "4º item do plano do dono: navegador dentro do Synkora pro ciclo de teste visual sem sair do app.",
-        "refs": []
-      },
       {
         "id": "repensar-a-landing-do-projeto-sem-missoes-aberta",
         "title": "Repensar a landing do projeto sem missões abertas",
@@ -60,6 +54,15 @@
         "id": "advisory-no-diff-mexendo-em-version-do-package-j",
         "title": "Advisory no ⇪: diff mexendo em version do package.json sem ordem do dono",
         "desc": "A metade mecânica da R37: a integração detecta diff tocando \"version\" do manifesto e AVISA o dono no recibo (advisory auditado, nunca recusa — sugerir bump é fala legítima; a persona já proíbe decidir). Nasceu do caso do dev que bumpou 0.1.1→0.1.2 sozinho."
+      },
+      {
+        "id": "browser-certificate-error-para-https-localhost-a",
+        "title": "Browser: certificate-error para https://localhost autoassinado + tooltip roteado sobre a view nativa",
+        "desc": "Duas sobras nomeadas do build do browser (29/08): (1) dev server https com certificado autoassinado bate em tela de erro — furar validação de TLS é decisão do dono, o H1 não instalou handler por conta própria; (2) o chrome do painel usa linha de status no pé porque o tooltip da casa nasceria DEBAIXO da view nativa — o conserto real é rotear o tooltip em Tooltip.tsx (receita no report H3).",
+        "refs": [
+          ".synkora/reports/browser-agent-H1-report.md",
+          ".synkora/reports/browser-agent-H3-report.md"
+        ]
       }
     ],
     "dividas": [
@@ -343,6 +346,19 @@
           ".synkora/reports/DESIGN_SKILLS_2_0_BUILD_2026-08-29.md",
           "docs/HANDOFF_SESSAO_2026-08-29.md"
         ],
+        "day": "29/08 — sábado"
+      },
+      {
+        "id": "browser-embutido",
+        "title": "Browser embutido ENTREGUE — a missão dirige, o dono assiste (rota B provada em sonda, 11 tools texto-first nos 2 CLIs, painel no dock)",
+        "desc": "Rota B por evidência (2 sondas): tools da casa via webContents.debugger no MCP synkora que os 2 CLIs já falam — zero fiação nova pro codex; capturePage 24ms/7ms contra 100-1060ms. TEXTO-FIRST porque o codex descarta imagem de MCP: browser_probe (caixa/contraste/oclusão em texto) é o veredito; browser_shot grava no worktree com carimbo de frescor. As 3 leis do motor pagas em sonda (view nunca desanexa; frescor é carimbo; ação já observa). Kit para dev+ajudante (reviewer fora); personas proíbem playwright próprio nomeando as armas. Gate raiz verde com 56 cercas novas. Validação na tela real espera o restart.",
+        "refs": [
+          "c126764",
+          ".synkora/reports/DESIGN_BROWSER_EMBUTIDO_2026-08-29.md",
+          ".synkora/reports/PROBE_BROWSER_CDP_2026-08-29.md",
+          "docs/HANDOFF_SESSAO_2026-08-29.md"
+        ],
+        "badge": "restart pendente — validar na tela",
         "day": "29/08 — sábado"
       }
     ]
@@ -659,6 +675,26 @@
       "by": "orquestrador",
       "action": "update",
       "id": "skills-2-0-build"
+    },
+    {
+      "at": "2026-08-29T21:13:09.783Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "browser-embutido"
+    },
+    {
+      "at": "2026-08-29T21:13:16.424Z",
+      "by": "orquestrador",
+      "action": "move",
+      "id": "browser-embutido",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-29T21:13:20.453Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "browser-certificate-error-para-https-localhost-a",
+      "detail": "→ candidatas"
     }
   ]
 }

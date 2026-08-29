@@ -72,18 +72,13 @@
     <h2>Fila <span class="count">— ordem do dono</span></h2>
     <div class="item queue">
       <span class="glyph">1</span>
-      <span class="title">Browser embutido</span>
-      <span class="desc">4º item do plano do dono: navegador dentro do Synkora pro ciclo de teste visual sem sair do app.</span>
-    </div>
-    <div class="item queue">
-      <span class="glyph">2</span>
       <span class="title">Repensar a landing do projeto sem missões abertas</span>
       <span class="badge">mockup em produção</span>
       <span class="desc">Reprovação do dono 2026-08-24 ao ver o Board do SPED PRONTO pós-integração total (&quot;essa UI ficou horrível&quot; — e no grill: o conjunto todo, repensar a tela). Rito: mockup novo em docs/mockups/ para aprovação ANTES de codar; impeccable como lei; papel &amp; painel; câmera, não rearranjo.</span>
       <span class="refs">refs: <code>docs/mockups/</code></span>
     </div>
     <div class="item queue">
-      <span class="glyph">3</span>
+      <span class="glyph">2</span>
       <span class="title">Concluir plano ACONTECE + prateleira dos guardados (arquivar tem volta)</span>
       <span class="badge">camadas 1-2 entregues</span>
       <span class="desc">Reprovação do dono 2026-08-28: &quot;eu concluo ele e não acontece nada&quot;. Verificado: concluir só virava status — nenhuma superfície lia. Achado no caminho: mapTabs prometia uma &quot;lista de arquivados&quot; que NÃO EXISTIA, então arquivar era sumiço sem volta pela UI. Camadas 1 e 2 ENTREGUES: a aba sai da fila ao concluir; nasce a seção &quot;guardados&quot; na aba ROTAS (concluídos na frente, arquivados atrás) com abrir para leitura e reabrir com CAS; e o cabeçalho do plano avisa &quot;pronto para concluir&quot; quando todo item integrou (advisory — nunca conclui sozinho). Camada 3 (recibo do fecho da rota em plano/) fica pendente.</span>
@@ -117,6 +112,12 @@
       <span class="glyph">◇</span>
       <span class="title">Advisory no ⇪: diff mexendo em version do package.json sem ordem do dono</span>
       <span class="desc">A metade mecânica da R37: a integração detecta diff tocando &quot;version&quot; do manifesto e AVISA o dono no recibo (advisory auditado, nunca recusa — sugerir bump é fala legítima; a persona já proíbe decidir). Nasceu do caso do dev que bumpou 0.1.1→0.1.2 sozinho.</span>
+    </div>
+    <div class="item maybe">
+      <span class="glyph">◇</span>
+      <span class="title">Browser: certificate-error para https://localhost autoassinado + tooltip roteado sobre a view nativa</span>
+      <span class="desc">Duas sobras nomeadas do build do browser (29/08): (1) dev server https com certificado autoassinado bate em tela de erro — furar validação de TLS é decisão do dono, o H1 não instalou handler por conta própria; (2) o chrome do painel usa linha de status no pé porque o tooltip da casa nasceria DEBAIXO da view nativa — o conserto real é rotear o tooltip em Tooltip.tsx (receita no report H3).</span>
+      <span class="refs">refs: <code>.synkora/reports/browser-agent-H1-report.md</code> · <code>.synkora/reports/browser-agent-H3-report.md</code></span>
     </div>
   </section>
 
@@ -211,6 +212,7 @@
       <p class="done-day">29/08 — sábado</p>
       <div class="done"><span class="glyph">✓</span><span class="title">RightDock — o lado direito do app</span><span class="refs"><code>docs/mockups/rightdock-2.html</code> · <code>3e75d39</code> · <code>.synkora/reports/PLANO_CONSERTO_RIGHTDOCK_2026-08-22.md</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">Skills 2.0 — o build ENTREGUE (kit de 16 semeado, sync no spawn provado em binário, tela de gestão, instalar-por-URL pinado, personas com lei + cardápio, PODA 406→16)</span><span class="refs"><code>2e7be90</code> · <code>61853e2</code> · <code>.synkora/reports/DESIGN_SKILLS_2_0_BUILD_2026-08-29.md</code> · <code>docs/HANDOFF_SESSAO_2026-08-29.md</code></span></div>
+      <div class="done"><span class="glyph">✓</span><span class="title">Browser embutido ENTREGUE — a missão dirige, o dono assiste (rota B provada em sonda, 11 tools texto-first nos 2 CLIs, painel no dock)</span><span class="refs"><code>c126764</code> · <code>.synkora/reports/DESIGN_BROWSER_EMBUTIDO_2026-08-29.md</code> · <code>.synkora/reports/PROBE_BROWSER_CDP_2026-08-29.md</code> · <code>docs/HANDOFF_SESSAO_2026-08-29.md</code></span></div>
     </div>
   </details>
 </div>

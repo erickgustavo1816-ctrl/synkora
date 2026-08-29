@@ -1,7 +1,57 @@
-# HANDOFF — Sessão 2026-08-29 (Skills 2.0: o build)
+# HANDOFF — Sessão 2026-08-29 (Skills 2.0: o build + BROWSER EMBUTIDO)
 
-Orquestrador + frota Opus max (A motor · B sync · C personas · D tela ·
-E gate · F split · sonda F0). Item `skills-2-0-build` (fila #1) ENTREGUE.
+Orquestrador + frota Opus max. DUAS entregas na mesma sessão: Skills 2.0
+(seções abaixo) e o BROWSER EMBUTIDO (seção própria no fim). Ler as duas.
+
+## ⚡ BROWSER EMBUTIDO — ENTREGUE (commit `c126764`)
+
+Design vinculante `.synkora/reports/DESIGN_BROWSER_EMBUTIDO_2026-08-29.md`
+(consolida o de 2026-08-15 + os requisitos novos do dono: compatibilidade
+perfeita nos 2 CLIs e QA visual rápido). Evidência:
+`PROBE_BROWSER_CDP_2026-08-29.md` (binário real) +
+`PESQUISA_BROWSER_MERCADO_2026-08-29.md`; reports por fatia em
+`browser-agent-H1..H5-report.md` (+H1b).
+
+- **ROTA B por evidência**: tools da casa sobre `webContents.debugger`, no
+  MCP synkora que os 2 CLIs já falam. Rota A (playwright-mcp+proxy) provada
+  FUNCIONAL e recusada: 2º servidor MCP por pane quebra no spawn do codex
+  (P8) e perde de 4× a 150× em latência de captura.
+- **TEXTO-FIRST**: o codex descarta imagem de MCP (openai/codex#10334) — o
+  veredito visual é `browser_probe` (caixa/estilos/overflow/contraste/
+  oclusão em texto); `browser_shot` grava arquivo no worktree
+  (`.synkora/browser/<missionId>/`) com carimbo de FRESCOR e imagem inline
+  só para panes claude.
+- **As 3 leis do motor** (pagas em sonda): view NUNCA desanexa (esconder =
+  setVisible/bounds; detach pendura captura 5-8s); frescor é carimbo (rAF-
+  probe antes de todo shot); ação já observa (`browser_act` em lote devolve
+  o read pós-ação; refs por identidade com epoch).
+- **Kit de 11 tools** para `gui-delegator` (menos reviewer) e `ajudante`
+  (QA delegado); pré-sanção estendida nos DOIS caminhos de spawn (lição
+  R14). Personas dev/helper com a ordem do browser da casa (playwright
+  próprio/browser externo NOMEADOS e proibidos; página = conteúdo
+  não-confiável).
+- **Painel no dock da missão** (`DockBrowser`): URL bar, abas (teto 8),
+  ⚡ agente dirigindo, linha de status no pé (tooltip seria engolido pela
+  view nativa), geometria reportada com `visible` em TODA saída. Sessão de
+  login por PROJETO (`persist:browser:<projectId>`).
+- **Gate**: `test:browser-pane` + `test:browser-driver` (56 cercas com
+  prova por mutação) no `test:gui-system`; suítes de catálogo aprenderam a
+  superfície nova (reviewer diverge do dev pela 1ª vez).
+
+**PENDÊNCIAS NOMEADAS do browser**: (1) validação na TELA REAL espera o
+restart (main não chega por HMR; o preview de browser puro não monta o rail
+de missão — mock sem conversa); primeira sessão viva também fecha o que as
+sondas não cobriram (`Input.insertText`, `Network.enable` — ambos degradam
+com verdade). (2) Candidatas registradas no backlog: certificate-error para
+https://localhost autoassinado (decisão do dono), tooltip roteado por cima
+da view nativa. (3) `ipc/gui.ts` 1162 linhas = dívida antiga.
+
+---
+
+# Skills 2.0: o build
+
+Frota A motor · B sync · C personas · D tela · E gate · F split · sonda F0
++ G restauro. Item `skills-2-0-build` (fila #1) ENTREGUE.
 
 ## O que subiu
 
