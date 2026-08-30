@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-30T02:12:21.539Z",
+  "updatedAt": "2026-08-30T19:06:31.688Z",
   "lanes": {
     "agora": [],
     "fila": [
@@ -371,6 +371,28 @@
         ],
         "badge": "restart pendente — validar na tela",
         "day": "29/08 — sábado"
+      },
+      {
+        "id": "r38-o-fecho-do-release-e-do-agente-a-subida-nao-",
+        "title": "R38 — o fecho do release é do AGENTE: a subida não fecha mais nada (o instalável do dono sumia junto com o chat)",
+        "desc": "Bug do dono 30/08: pediu subida + instalável; a subida pousou e o chat sumiu antes da caixa. Causa: runReleaseForChat concluía a missão no 'lancada' e mandava \"não rode mais nada\" (resíduo R10, contradizendo a R27/R29 que a própria persona já dizia) + a cura viva concluía na leitura. Agora: release_run não conclui (o desfecho nomeia a receita da caixa quando há pipeline); nasce release_done (guarda dura só no verificável; caixa não confirmada = advisory auditado, nunca trava); a cura viva vira só-órfão (pane vivo nunca é roubado). Red-proof 11 asserts no código velho, cada um pelo motivo próprio. Espera restart.",
+        "refs": [
+          "bf80e5f",
+          ".synkora/reports/release-agent-R38-report.md",
+          "src/main/releaseChat.ts"
+        ],
+        "day": "30/08 — domingo"
+      },
+      {
+        "id": "o-fio-mostra-quando-uma-skill-entra-na-conversa-",
+        "title": "O fio mostra quando uma skill ENTRA na conversa (chip ❖ nos dois CLIs, sinal estrutural sondado)",
+        "desc": "Pedido do dono 30/08. Sonda em binário real achou o contrato: claude emite tool_use tipado (chip é só renderer); codex não emite nada — o motor ganhou 2 detectores tipados (userMessage skill + commandExecution lendo SKILL.md da pasta que o próprio sync escreveu; ler outro caminho é cercado como não-evento). Achado da sonda que moldou a UI: o marcador significa \"entrou NA CONVERSA\" (2º uso não emite em CLI nenhum) — chip é marco único e quieto no fio, não selo por turno. Tudo na caixa-preta como skill-entered. Red-proof 5+7 no código velho; gate 40 suítes verde. Chip por HMR; detector codex no restart.",
+        "refs": [
+          "38f8718",
+          ".synkora/reports/PROBE_SKILL_USE_2026-08-30.md",
+          ".synkora/reports/skill-chip-agent-report.md"
+        ],
+        "day": "30/08 — domingo"
       }
     ]
   },
@@ -725,6 +747,20 @@
       "by": "orquestrador",
       "action": "update",
       "id": "browser-embutido"
+    },
+    {
+      "at": "2026-08-30T18:19:02.107Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "r38-o-fecho-do-release-e-do-agente-a-subida-nao-",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-30T19:06:31.688Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "o-fio-mostra-quando-uma-skill-entra-na-conversa-",
+      "detail": "→ feito"
     }
   ]
 }
