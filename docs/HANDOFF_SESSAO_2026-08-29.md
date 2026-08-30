@@ -54,6 +54,26 @@ reprovações dele na tela, três consertos com evidência:
   BrowserChrome compartilhado. Design em DESIGN_BROWSER_POPOUT_2026-08-29.md;
   reports P1/P2/P3.
 
+**A SEGUNDA LEVA DA NOITE (dono validando o pop-out vivo)** — três pedidos,
+três rodadas com sonda/medida:
+- H8 (28bad34): modos de largura estilo CC — AUTO·375·768·1280, zoom-to-fit
+  por `setZoomFactor` puro (sonda descartou emulação CDP com scale: quebra o
+  input do driver; emulação+zoom multiplicam largura). Autoridade única por
+  aba (seletor do dono e browser_viewport do agente no MESMO estado). Traps
+  cercadas: grampo de zoom 0,25 silencioso; zoom vaza por ORIGEM dentro da
+  partition.
+- H9 (a9a5d0b): fluidez medida quadro a quadro ANTES de mexer (2 rodadas de
+  medição viciadas descartadas e documentadas) — arrasto de 2,0 → 1,03
+  quadros (piso físico); colapso de irmã de até 384ms → 0,3ms (observador
+  das seções); 4 arquivos ABSOLVIDOS por número; regra do escritor único da
+  variável de altura durante o gesto, cercada.
+- H10 (último commit): LETTERBOX — preset menor que a moldura = página em
+  tamanho REAL centrada com faixas do app e costura de 1px (lei nova:
+  zoom = min(1, moldura/lógico) — NUNCA amplia); régua por BYTES provou
+  faixa CSS == faixa do motor em 7 larguras e pegou 2 defeitos sub-pixel;
+  carona: browser:changed não dispara mais por relato de bounds (render no
+  meio do arrasto reescrevia a altura da fração congelada).
+
 **PENDÊNCIAS NOMEADAS do browser**:
 - Pop-out: titlebar da casa (hoje moldura nativa — receita no report P2 §5);
   browserPane.ts em 1069 linhas (receita §2.2 do report P3); guarda de

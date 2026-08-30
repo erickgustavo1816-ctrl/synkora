@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-29T23:47:34.139Z",
+  "updatedAt": "2026-08-30T02:12:21.539Z",
   "lanes": {
     "agora": [],
     "fila": [
@@ -360,13 +360,12 @@
       {
         "id": "browser-embutido",
         "title": "Browser embutido ENTREGUE — a missão dirige, o dono assiste (rota B provada em sonda, 11 tools texto-first nos 2 CLIs, painel no dock)",
-        "desc": "Rota B por evidência (2 sondas) + a noite da validação ao vivo: 3 reprovações do dono na tela viraram 3 consertos provados (altura por fração com alça, teto pelo resto medido — alça nunca some, casca única fora do vale da estranheza) e o pedido novo virou o POP-OUT (12ab93a): sonda própria provou reparent da MESMA view em 4,2ms com estado+CDP intactos; janela por missão, X reencaixa, recibo no dock, agente nem percebe. Gate raiz verde. Renderer já vivo por HMR; motor (pop-out + kit MCP) espera o restart.",
+        "desc": "Rota B por evidência (2 sondas) + DUAS levas de validação ao vivo do dono. Leva 1: altura por fração com alça, teto pelo resto medido, casca única. Leva 2 (pop-out vivo): modos de largura estilo CC (AUTO·375·768·1280, zoom-to-fit sondado — emulação CDP com scale QUEBRA o input do driver, descartada), fluidez no piso físico (arrasto 2,0→1,03 quadros; colapso de irmã 384ms→0,3ms — tudo MEDIDO antes e depois), e LETTERBOX (preset menor = página em tamanho REAL centrada com faixas do app — zoom nunca amplia; régua por bytes, delta zero em 7 larguras). Pop-out entregue e validado pelo dono na tela. Gate raiz verde.",
         "refs": [
           "c126764",
-          "8669e00",
-          "730d9bc",
-          "ad771b3",
           "12ab93a",
+          "28bad34",
+          "a9a5d0b",
           ".synkora/reports/DESIGN_BROWSER_POPOUT_2026-08-29.md",
           "docs/HANDOFF_SESSAO_2026-08-29.md"
         ],
@@ -720,6 +719,12 @@
       "action": "add",
       "id": "browser-4-sobras-nomeadas-do-pop-out-titlebar-da",
       "detail": "→ dividas"
+    },
+    {
+      "at": "2026-08-30T02:12:21.539Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "browser-embutido"
     }
   ]
 }
