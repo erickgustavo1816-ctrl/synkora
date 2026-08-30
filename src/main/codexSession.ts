@@ -29,6 +29,16 @@ import {
   guiCodexAgentThreadId,
   type GuiCodexAgent
 } from './guiCodexAgents'
+// O uso de skill no codex não tem evento próprio: as duas superfícies tipadas
+// que existem viram AQUI o mesmo `{ type:'tool', name:'Skill', input:{skill} }`
+// que o claude já produz sozinho (maestroSession) — um caminho de apresentação
+// para os dois CLIs. Ver o cabeçalho do módulo para o porquê de cada uma.
+import {
+  codexSkillSignals,
+  codexSkillsRoot,
+  GUI_SKILL_TOOL_NAME,
+  type CodexSkillSource
+} from './codexSkillSignals'
 // R7-E: a palavra do terminal interrompido é UMA nos dois motores — o dono lê a
 // mesma frase venha o chat do claude ou do codex.
 import { GUI_OWNER_INTERRUPT_LABEL } from './maestroSession'
@@ -161,6 +171,14 @@ export interface CodexSessionOpts extends MaestroSessionOpts {
    *  thread/start E em todo turno (a sonda provou o eco no start e o carry
    *  do turn/start). O /fast do chat continua alternando por cima. */
   serviceTier?: 'priority'
+  /** Caixa-preta desta borda: QUEM CHAMA injeta (o motor nunca importa
+   *  blackbox). Uma linha por skill que ENTRA na conversa — ausente é sessão
+   *  sem diário, jamais sessão sem chip. */
+  recordSkillEntered?: (detail: {
+    cli: 'codex'
+    skill: string
+    source: CodexSkillSource
+  }) => void
 }
 
 interface RpcResponse {
@@ -213,6 +231,12 @@ interface CodexItem extends GuiCodexCompletedItem {
   kind?: string
   agentThreadId?: string
   agentPath?: string
+  /** `userMessage`: os blocos da mensagem — entre eles a `SkillUserInput`
+   *  (`{type:'skill', name, path}`) que o app-server devolve ecoada. */
+  content?: unknown
+  /** `commandExecution`: a leitura TIPADA que o próprio binário faz do comando
+   *  ("best-effort parsing"), com `type`/`path` por ação. */
+  commandActions?: unknown
 }
 
 type GuiCodexCollabOutcome = 'completed' | 'failed' | 'cancelled'
@@ -472,6 +496,13 @@ export class CodexSession {
   private activeCollabParentIds = new Set<string>()
   private collabParentByThreadId = new Map<string, string>()
   private startedCollabToolIds = new Set<string>()
+  /** Skills que já ENTRARAM nesta conversa, em caixa baixa. O marcador é por
+   *  CONVERSA, não por turno (veredito 3 da sonda: o segundo uso não emite nada
+   *  em CLI nenhum) — e o par started/completed ecoa o MESMO item, então sem
+   *  esta memória o chip nasceria em dobro. Sessão nova (resume, respawn) parte
+   *  vazia de propósito: ali a skill entrou no contexto outra vez, e o chip
+   *  repetido é a verdade. */
+  private skillsEntered = new Set<string>()
   private deferredCollabResult: Extract<SessionEvent, { type: 'result' }> | null = null
   /** Sub-agentes NATIVOS vivos: a chave é o thread do FILHO, e é ela que faz o
    *  roteador aceitar os frames dele. Alimentado pelas duas formas de spawn —
@@ -1355,6 +1386,48 @@ export class CodexSession {
     }
   }
 
+  /**
+   * "ESTA SKILL ENTROU NESTA CONVERSA" — o marcador que o dono pediu para ver.
+   *
+   * O codex não tem evento de uso de skill (schema do binário sem item nenhum,
+   * sonda de 2026-08-30); as duas superfícies tipadas que existem viram aqui o
+   * MESMO evento que o claude produz sozinho, para o renderer ter um caminho
+   * só. Nada é deduzido de texto: `codexSkillSignals` só olha campo tipado, e
+   * o `file-read` casa contra a pasta que o PRÓPRIO sync deste app escreveu.
+   *
+   * O card nasce com id SINTÉTICO, e isso é obrigatório: repetir o `item.id` do
+   * `commandExecution` daria dois cards com a mesma identidade, e o pareamento
+   * por id recusa duplicata — o comando ficaria sem receber o resultado dele.
+   */
+  private noteSkillsEntered(item: CodexItem): void {
+    // Sem cwd não existe raiz sincronizada, e raiz RELATIVA seria pior que
+    // nenhuma: `.agents/skills/x/SKILL.md` casaria com qualquer árvore. A
+    // superfície `input-echo` não depende da raiz e continua valendo.
+    const cwd = this.opts.cwd
+    const signals = codexSkillSignals(item, cwd ? codexSkillsRoot(cwd) : '')
+    for (const signal of signals) {
+      const key = signal.skill.toLowerCase()
+      if (this.skillsEntered.has(key)) continue
+      this.skillsEntered.add(key)
+      // O diário é acessório do chat: nem ele nem a falta dele mexem no chip.
+      this.opts.recordSkillEntered?.({ cli: 'codex', skill: signal.skill, source: signal.source })
+      const toolUseId = `synkora-skill:${item.id ?? 'sem-item'}:${key}`
+      this.emit({
+        type: 'tool',
+        name: GUI_SKILL_TOOL_NAME,
+        input: { skill: signal.skill },
+        toolUseId
+      })
+      // O RECIBO NASCE JUNTO, e é obrigatório: a entrada da skill é um fato já
+      // consumado, não um trabalho em voo. Sem ele o card ficaria pendente até
+      // o terminal do turno e a reconciliação o anunciaria como ferramenta que
+      // não retornou — alarme falso no chat do dono. No claude o próprio CLI
+      // manda o `tool_result` ("Launching skill: …"); aqui o motor o sintetiza,
+      // que é o mesmo desfecho dito pela mesma boca.
+      this.emit(commandResultEvent('', false, toolUseId, 'completed'))
+    }
+  }
+
   /** `subAgentActivity` no thread RAIZ: sinal de spawn dos binários que o
    *  emitem. O codex-cli 0.147 NÃO emite (sonda de 2026-08-18: zero ocorrências
    *  em 6 rodadas vivas com spawn real) — lá quem anuncia é o
@@ -1900,6 +1973,9 @@ export class CodexSession {
       case 'item/started': {
         const item = p['item'] as CodexItem | undefined
         if (!item) break
+        // ANTES dos cards: o chip explica o que vem depois (a leitura do corpo
+        // da skill aparece logo abaixo dele, como o comando que de fato foi).
+        this.noteSkillsEntered(item)
         if (item.type === 'subAgentActivity') {
           this.noteSubAgentActivity(item)
           break
@@ -1915,6 +1991,9 @@ export class CodexSession {
       case 'item/completed': {
         const item = p['item'] as CodexItem | undefined
         if (!item) break
+        // O par started/completed ecoa o MESMO item: a memória por conversa
+        // resolve o dobro, e ler os dois lados protege de um `started` perdido.
+        this.noteSkillsEntered(item)
         if (item.type === 'subAgentActivity') {
           this.noteSubAgentActivity(item)
         } else if (isGuiCodexCollabType(item.type)) {

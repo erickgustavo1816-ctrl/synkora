@@ -25,6 +25,23 @@ export function isGuiInteractiveTool(name: string): boolean {
   return INTERACTIVE_TOOLS.has(name.toLowerCase())
 }
 
+/** Qual card ESTE item merece. Decisão de apresentação em módulo puro: o
+ *  componente só obedece, e o agrupamento consulta a MESMA função — sem isso os
+ *  dois divergiriam em silêncio, e um chip agrupado é um chip invisível. */
+export type GuiToolCardKind = 'diff' | 'skill' | 'command' | 'generic'
+
+export function guiToolCardKind(item: GuiToolItem): GuiToolCardKind {
+  if (item.fileDiffs?.length) return 'diff'
+  // UMA autoridade sobre "isto é uso de skill": o reducer, que só preenche
+  // `skill` quando `guiSkillNameForTool` reconheceu o nome da tool E o campo
+  // tipado `input.skill`. Re-checar o nome aqui criaria uma segunda régua para
+  // a mesma pergunta — e é assim que duas divergem em silêncio. Um `Skill` sem
+  // nome normalizado chega aqui sem o campo e cai no card genérico, que é
+  // exatamente onde a mudança de protocolo precisa aparecer.
+  if (item.skill) return 'skill'
+  return isGuiShellTool(item.name) ? 'command' : 'generic'
+}
+
 /** Família de comando por TOKEN, sem confundir `run` com pedaços de outro nome. */
 export function isGuiShellTool(name: string): boolean {
   const words = name
@@ -209,7 +226,12 @@ export function groupConsecutiveGuiTools(items: readonly GuiPresentationItem[]):
   for (const item of items) {
     // Raciocínio oculto não é uma interrupção visual da sequência.
     if (item.kind === 'invisible') continue
-    const canGroup = item.kind === 'tool' && !isGuiInteractiveTool(item.name)
+    // O chip de skill é MARCO do fio, não ferramenta: colapsar duas entradas em
+    // "Skill ×2" esconderia justamente o que o dono pediu para ver.
+    const canGroup =
+      item.kind === 'tool' &&
+      !isGuiInteractiveTool(item.name) &&
+      guiToolCardKind(item) !== 'skill'
     const continues =
       canGroup &&
       (pending.length === 0 || pending[0].name.toLowerCase() === item.name.toLowerCase())

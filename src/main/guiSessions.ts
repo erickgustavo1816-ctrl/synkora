@@ -3186,7 +3186,18 @@ export class GuiSessionRegistry {
           // cinto que já viaja nos args: os dois lados da mesma cerca nascem e
           // morrem juntos, e a derivação é estável entre respawns porque o
           // re-arme reproduz os MESMOS args (e eles já entram no fingerprint).
-          ...(guiSpawnSuppressesNativeAgents(spawn) ? { suppressNativeAgents: true } : {})
+          ...(guiSpawnSuppressesNativeAgents(spawn) ? { suppressNativeAgents: true } : {}),
+          // CAIXA-PRETA DO CHIP DE SKILL: o motor detecta, a borda grava — o
+          // codexSession nunca importa blackbox. Uma linha por skill que ENTRA
+          // na conversa, com o pane para correlacionar (o `cli` vem no detail
+          // porque só o codex precisa de detecção: no claude o `tool_use:Skill`
+          // já é o próprio evento).
+          recordSkillEntered: (detail) =>
+            this.deps.record?.(
+              'skill-entered',
+              { paneId: spawn.paneId, projectId: spawn.projectId },
+              detail
+            )
         },
         persona,
         sink

@@ -1768,6 +1768,10 @@ test('ciclo de vida de subagente atravessa a hidratação sem afrouxar o contrat
 function codexAgentSession({ threadId = 'thread-root', turnId = 'turn-root' } = {}) {
   const session = Object.create(CodexSession.prototype)
   const events = []
+  // O ingest lê o cwd para saber onde mora a pasta de skills DESTE pane (o chip
+  // de skill, 2026-08-30). Fake sem `opts` é fake incompleto, não motor mudo.
+  session.opts = { cwd: '/w' }
+  session.skillsEntered = new Set()
   session.emit = (event) => events.push(event)
   session.killed = false
   session.closed = false

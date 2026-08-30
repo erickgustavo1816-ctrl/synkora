@@ -71,6 +71,7 @@ import {
   type GuiFileDiffSource
 } from './guiToolDiff'
 import type { GuiToolOutcome } from './guiToolOutcome'
+import { guiSkillNameForTool } from './guiSkillUse'
 import { pruneGuiDiffHistory } from './guiDiffHistory'
 import {
   acknowledgeGuiQueuedMessage as acknowledgeGuiQueuedMessageStorage,
@@ -430,6 +431,10 @@ export type GuiItem =
       parentToolUseId?: string
       /** Metadados factuais do input de Task/Agent, normalizados no reducer. */
       subagent?: GuiSubagentMetadata
+      /** Nome da skill que ENTROU na conversa, do campo tipado `input.skill`
+       *  (claude nativo; codex normalizado no main). Presente = este item é o
+       *  chip de skill; ausente = ferramenta comum. Ver `guiSkillUse.ts`. */
+      skill?: string
       /** Payload de edição já normalizado e limitado; o input cru não fica no store. */
       fileDiffs?: GuiFileDiffSource[]
       result?: {
@@ -758,7 +763,12 @@ const GUI_TOOL_KEYS = [
   'query',
   'url',
   'prompt',
-  'description'
+  'description',
+  // Por ÚLTIMO de propósito: só a tool `Skill` traz este campo sozinho, e a
+  // posição garante que nenhuma outra ferramenta perca o resumo que já tinha.
+  // Sem ele o fio anunciaria `Skill · {"skill":"impeccable"}` enquanto o card
+  // corre — JSON cru na linha de atividade não diz nada a ninguém.
+  'skill'
 ]
 
 export function guiToolSummary(input: Record<string, unknown> | undefined): string {
@@ -1105,6 +1115,8 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
       const summary = guiToolSummary(evt.input)
       const fileDiffs = normalizeGuiToolDiff(evt.name, evt.input)
       const subagent = guiSubagentMetadataForTool(evt.name, evt.input)
+      // Só o NOME atravessa: o input cru não fica no store, como no subagente.
+      const skill = guiSkillNameForTool(evt.name, evt.input)
       const background = isGuiSubagentToolEvent(evt)
       const base = background ? state : finalizeGuiStream(state)
       return {
@@ -1117,6 +1129,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           toolUseId: evt.toolUseId,
           parentToolUseId: evt.parentToolUseId,
           ...(subagent ? { subagent } : {}),
+          ...(skill ? { skill } : {}),
           ...(fileDiffs ? { fileDiffs } : {}),
           at: Date.now()
         }),

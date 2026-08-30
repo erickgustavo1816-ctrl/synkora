@@ -17039,6 +17039,66 @@ details.gui-tool {
   overflow-y: auto;
 }
 
+/* ---- chip de skill: "esta skill entrou na conversa" ----
+
+   MARCO, não card de ferramenta. Prefixo próprio (`gui-skill-chip-`) porque
+   ele NÃO herda de .gui-tool: sem desfecho à direita, sem chevron, sem abrir.
+   Traço lateral em acento dá a FORMA que separa o marco da linha comum — a cor
+   sozinha nunca carrega a diferença nesta casa — e nada aqui se move: um fato
+   já consumado não pisca. */
+
+.gui-skill-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  align-self: flex-start;
+  max-width: 100%;
+  min-width: 0;
+  border-left: 2px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: var(--gui-fill-2);
+  padding: 5px 10px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+/* O único emoji do fio (todo o resto é glifo tipográfico). A 11px ele virava
+   borrão no Segoe UI Emoji: tamanho próprio e alinhamento por CENTRO, porque
+   emoji não tem baseline confiável e a linha inteira dançava atrás dele. */
+.gui-skill-chip-glyph {
+  flex: none;
+  align-self: center;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.gui-skill-chip-kind {
+  flex: none;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+
+.gui-skill-chip-sep {
+  flex: none;
+  color: var(--ink-3);
+}
+
+.gui-skill-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.gui-skill-chip-note {
+  flex: none;
+  color: var(--ink-3);
+}
+
 /* ---- ferramentas repetidas: UMA linha, estado cru preservado no store ---- */
 
 .gui-tool-group {

@@ -1,5 +1,6 @@
 import {
   countGuiOutputLines,
+  guiToolCardKind,
   guiToolGroupPreview,
   isGuiShellTool,
   type GuiToolGroup,
@@ -85,9 +86,37 @@ function GuiGenericToolCard({ item }: { item: GuiToolItem }): React.JSX.Element 
   )
 }
 
+/**
+ * O CHIP DE SKILL. Marco quieto do fio, não card de ferramenta: sem desfecho,
+ * sem "rodando", sem abrir — porque o marcador diz "esta skill ENTROU nesta
+ * conversa" (o segundo uso não emite nada em CLI nenhum) e um status pulsando
+ * mentiria sobre um fato que já aconteceu. Forma antes de cor, sem movimento.
+ */
+function GuiSkillChip({ item }: { item: GuiToolItem }): React.JSX.Element {
+  return (
+    <div className="gui-skill-chip">
+      {/* ❖ é O glifo de skills na casa (o NAV de Ajustes ▸ Skills usa o
+          mesmo) — e o fio não fala emoji, fala glifo tipográfico. */}
+      <span className="gui-skill-chip-glyph" aria-hidden="true">❖</span>
+      <span className="gui-skill-chip-kind">skill</span>
+      <span className="gui-skill-chip-sep" aria-hidden="true">·</span>
+      <b className="gui-skill-chip-name">{item.skill}</b>
+      <span className="gui-skill-chip-note">— entrou na conversa</span>
+    </div>
+  )
+}
+
 export function GuiToolCard({ item }: { item: GuiToolItem }): React.JSX.Element {
-  if (item.fileDiffs?.length) return <GuiToolDiffCard item={item} />
-  return isGuiShellTool(item.name) ? <GuiCommandCard item={item} /> : <GuiGenericToolCard item={item} />
+  switch (guiToolCardKind(item)) {
+    case 'diff':
+      return <GuiToolDiffCard item={item} />
+    case 'skill':
+      return <GuiSkillChip item={item} />
+    case 'command':
+      return <GuiCommandCard item={item} />
+    default:
+      return <GuiGenericToolCard item={item} />
+  }
 }
 
 export function GuiToolGroupCard({ group }: { group: GuiToolGroup }): React.JSX.Element {

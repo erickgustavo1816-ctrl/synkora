@@ -4752,3 +4752,100 @@ test('o episódio da órfã vira linha na caixa-preta, com o pane para correlaci
   assert.match(gui, /event: 'turn-orphaned-tool'/u)
   assert.match(gui, /ids: \{ paneId \}/u)
 })
+
+// ————— O CHIP DE SKILL (2026-08-30) —————
+//
+// O dono quer VER quando o chat usa uma skill. A sonda
+// (`.synkora/reports/PROBE_SKILL_USE_2026-08-30.md`) provou o sinal: o claude
+// emite `tool_use` com `name:'Skill'` e o nome dentro de `input.skill`, e o app
+// JÁ o entrega ao renderer como SessionEvent de tool. O codex não tem evento
+// nenhum — o main normaliza as duas superfícies dele para a MESMA forma, e é
+// por isso que aqui só existe UM caminho de apresentação.
+//
+// Semântica do marcador (veredito 3 da sonda): "esta skill ENTROU nesta
+// conversa" — o segundo uso não emite nada em CLI nenhum. Por isso o chip é
+// um marco do fio, não um card de ferramenta com desfecho.
+
+test('o nome da skill sai do campo TIPADO, e só dele', async () => {
+  const { guiSkillNameForTool } = await import('../src/renderer/src/guiSkillUse.ts')
+  assert.equal(guiSkillNameForTool('Skill', { skill: 'impeccable' }), 'impeccable')
+  assert.equal(guiSkillNameForTool('Skill', { skill: '  impeccable  ' }), 'impeccable')
+  // Comparação EXATA com 'Skill': tool de MCP nasce `mcp__servidor__tool` e
+  // nunca colide; parecido não é igual.
+  assert.equal(guiSkillNameForTool('skill', { skill: 'x' }), undefined)
+  assert.equal(guiSkillNameForTool('mcp__loja__Skill', { skill: 'x' }), undefined)
+  assert.equal(guiSkillNameForTool('Bash', { skill: 'x' }), undefined)
+  // input.skill vazio NÃO vira chip anônimo: mudança de protocolo tem que
+  // aparecer (o card genérico de sempre), não ser engolida por um chip sem nome.
+  assert.equal(guiSkillNameForTool('Skill', {}), undefined)
+  assert.equal(guiSkillNameForTool('Skill', { skill: '   ' }), undefined)
+  assert.equal(guiSkillNameForTool('Skill', { skill: 42 }), undefined)
+  assert.equal(guiSkillNameForTool('Skill', undefined), undefined)
+})
+
+test('o evento Skill escolhe o CHIP; toda outra ferramenta segue no card de sempre', async () => {
+  const { guiToolCardKind } = await import('../src/renderer/src/guiToolPresentation.ts')
+  assert.equal(guiToolCardKind({ ...tool('s1', 'Skill'), skill: 'impeccable' }), 'skill')
+  // Sem nome normalizado o card é o genérico — a regressão fica VISÍVEL.
+  assert.equal(guiToolCardKind(tool('s2', 'Skill')), 'generic')
+  assert.equal(guiToolCardKind(tool('t1', 'Bash', 'npm test')), 'command')
+  assert.equal(guiToolCardKind(tool('t2', 'Read')), 'generic')
+  assert.equal(
+    guiToolCardKind({ ...tool('t3', 'Edit'), fileDiffs: [{ path: 'a.ts', newText: 'x' }] }),
+    'diff'
+  )
+})
+
+test('o chip nunca é engolido pelo agrupamento de ferramentas iguais', async () => {
+  const { groupConsecutiveGuiTools } = await import('../src/renderer/src/guiToolPresentation.ts')
+  const skill = (id, name) => ({ ...tool(id, 'Skill'), skill: name })
+  // Duas entradas seguidas são DOIS marcos do fio: colapsar em "Skill ×2"
+  // esconderia justamente o que o dono pediu para ver.
+  const dois = groupConsecutiveGuiTools([skill('a', 'impeccable'), skill('b', 'dataviz')])
+  assert.deepEqual(dois.map((item) => item.kind), ['tool', 'tool'])
+  // E o chip no meio de uma sequência não faz o grupo de Bash desaparecer.
+  const misto = groupConsecutiveGuiTools([
+    tool('b1', 'Bash', 'npm run typecheck'),
+    tool('b2', 'Bash', 'npm test'),
+    skill('s', 'impeccable')
+  ])
+  assert.deepEqual(misto.map((item) => item.kind), ['tool-group', 'tool'])
+  // A ferramenta comum continua agrupando exatamente como antes.
+  assert.equal(groupConsecutiveGuiTools([tool('r1'), tool('r2')]).length, 1)
+})
+
+test('o reducer normaliza o nome da skill no item — o input cru não fica no store', () => {
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  assert.match(store, /guiSkillNameForTool\(evt\.name, evt\.input\)/u)
+  assert.match(store, /\.\.\.\(skill \? \{ skill \} : \{\}\)/u)
+  // E o fio anuncia o NOME enquanto o card corre, nunca o JSON cru do input:
+  // a chave entra por ÚLTIMO, então nenhuma outra ferramenta perde o resumo
+  // que já tinha.
+  const chaves = store.slice(store.indexOf('const GUI_TOOL_KEYS = ['))
+  const lista = chaves.slice(0, chaves.indexOf(']') + 1)
+  assert.match(lista, /'description',[\s\S]*'skill'\s*\]/u)
+})
+
+test('o chip é papel quieto: forma, sem movimento e sem virar painel', () => {
+  const card = readFileSync(
+    new URL('../src/renderer/src/components/GuiToolCard.tsx', import.meta.url),
+    'utf8'
+  )
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  // O roteamento mora no módulo puro; o componente só obedece.
+  assert.match(card, /guiToolCardKind\(item\)/u)
+  assert.match(card, /case 'skill':/u)
+  assert.match(card, /gui-skill-chip/u)
+  // A frase do dono, em PT-BR, com o nome da skill ao lado do glifo.
+  assert.match(card, /entrou na conversa/u)
+  assert.match(card, /\{item\.skill\}/u)
+
+  // Estilo com prefixo próprio (nada de vazar em .gui-tool) e sem animação:
+  // movimento é SINAL nesta casa, e um marco parado não sinaliza nada.
+  assert.ok(css.includes('.gui-skill-chip {'), 'o chip tem regra própria, namespaced')
+  const bloco = css.slice(css.indexOf('.gui-skill-chip {'))
+  const regra = bloco.slice(0, bloco.indexOf('}') + 1)
+  assert.doesNotMatch(regra, /animation:/u, 'o chip não pisca')
+  assert.doesNotMatch(regra, /transition:/u)
+})
