@@ -1004,6 +1004,21 @@ test('o ceifar por projeto pega o planejamento e NUNCA um chat de missão', () =
   assert.equal(guiMissionRoleOf(guiPlanningPaneId(PROJECT)), undefined)
 })
 
+// R38 (2026-08-29) — O CONTRATO DO RELEASE GANHA TETO. Ele era o único dos
+// CINCO papéis sem um: dev/reviewer/ajudante compartilham o teto do laço lá em
+// cima e o planejador tem o dele logo abaixo, mas o release recebeu régua nova
+// em três rodadas seguidas (R27 a prod, R29 a caixa, R38 o fecho) sem ninguém
+// medindo. Este é o PRIMEIRO elo da corrente: media 4449 antes da regra THE
+// CLOSE IS YOURS ("o certo é ele mesmo decidir: ó, terminou aqui, vou fechar")
+// e mede 5021 com ela. O teto nasce em 5600 — folga de UMA régua do dono, que
+// é exatamente para o que o teto existe: régua nova cabe, discurso não.
+test('R38 — o contrato do release é régua, nunca constituição', () => {
+  const contract = guiReleaseSystemPrompt()
+  assert.ok(contract.length > 200, 'contrato vazio demais')
+  assert.ok(contract.length < 5600, `o contrato do release virou constituição (${contract.length})`)
+  assert.match(contract, /PT-BR/u, 'sem a regra do idioma')
+})
+
 test('o planejador PROPÕE o plano, não executa produto nem cria missão', () => {
   const contract = guiPlanningSystemPrompt()
   assert.ok(contract.length > 200, 'contrato vazio demais')

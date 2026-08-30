@@ -164,6 +164,10 @@ export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   // um card de permissão sobre a ferramenta do próprio gesto seria atrito puro.
   'mcp__synkora__release_status',
   'mcp__synkora__release_run',
+  // R38 — o FECHO do release. Ele nasce pré-sancionado pelo mesmo motivo dos
+  // irmãos: o dono não aprova o app terminando o próprio trabalho, e um card de
+  // permissão no instante do fecho seria exatamente onde a conversa trava.
+  'mcp__synkora__release_done',
   // R14 — o kit de CÓDIGO, derivado da fonte em vez de copiado: `lsp_*` é a
   // única família que os QUATRO papéis compartilham, e uma lista escrita à mão
   // aqui é exatamente como uma tool nova volta a levantar card de permissão no

@@ -129,8 +129,12 @@ const DEV_MISSION_TOOLS = Object.freeze(
 
 /** O KIT DO CHAT DE RELEASE (R10): a conversa que sobe a VERSÃO. O papel
  *  `gui-release` compartilha o MESMO arm do delegador, então a pré-sanção do
- *  claude é a UNIÃO dos dois papéis. */
-const RELEASE_TOOLS = Object.freeze(['release_run', 'release_status'])
+ *  claude é a UNIÃO dos dois papéis.
+ *
+ *  R38 (2026-08-29): entrou o `release_done` — o FECHO deixou de ser efeito
+ *  colateral da subida e virou decisão do agente (a subida fechava a conversa
+ *  antes da caixa existir). */
+const RELEASE_TOOLS = Object.freeze(['release_done', 'release_run', 'release_status'])
 
 const PLAN_TOOLS = Object.freeze([
   'delete_plan',

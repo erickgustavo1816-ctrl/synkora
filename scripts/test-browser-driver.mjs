@@ -1059,7 +1059,10 @@ const DELEGATOR_TOOLS = Object.freeze([
   'list_seats'
 ])
 const INTEGRATION_TOOLS = Object.freeze(['integration_run', 'integration_status'])
-const RELEASE_TOOLS = Object.freeze(['release_run', 'release_status'])
+// R38 (2026-08-29): mais uma no catálogo do gui-release, o `release_done` — a
+// cerca do browser (que é o que este teste prova) segue idêntica: o release
+// continua sem NENHUMA `browser_*`.
+const RELEASE_TOOLS = Object.freeze(['release_done', 'release_run', 'release_status'])
 
 const sorted = (...groups) => Object.freeze([...groups.flat()].sort())
 

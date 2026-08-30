@@ -3,14 +3,21 @@
 // Desenho aprovado pelo dono na mesma noite do "agente integrador" (R9), e é o
 // MESMO modelo um andar acima: o botão "subir pra main" da versão mantém as
 // travas de sempre, abre (ou reencontra) a MISSÃO DE RELEASE da versão — uma
-// conversa no worktree DELA — e a tela do dono vai direto para lá. O chat nasce
-// MUDO (contrato de sempre: o briefing pendente sai colado na primeira mensagem
-// dele, depois de conta/modelo/effort escolhidos) e o agente opera a subida
-// pelas duas ferramentas do papel `gui-release`.
+// conversa que nasceu no worktree DELA e, desde a R27, mora na PASTA DO PROJETO
+// (o worktree da versão é o diretório que a própria subida apaga) — e a tela do
+// dono vai direto para lá. O chat nasce MUDO (contrato de sempre: o briefing
+// pendente sai colado na primeira mensagem dele, depois de conta/modelo/effort
+// escolhidos) e o agente opera a subida pelas ferramentas do papel
+// `gui-release`.
+//
+// R38 (2026-08-29): são TRÊS — release_status, release_run e release_done. O
+// fecho virou ferramenta porque a subida deixou de fechar sozinha (ver o
+// comentário do runReleaseForChat).
 //
 // Este módulo é PURO de propósito (deps injetadas, nada de Electron): a régua
-// de reuso da missão, a fotografia do release_status e o embrulho do
-// release_run são provados em node puro (`test:release-chat`) sem subir app.
+// de reuso da missão, a fotografia do release_status, o embrulho do release_run
+// e a decisão do release_done são provados em node puro (`test:release-chat`)
+// sem subir app.
 
 // @ts-expect-error Node strip-types exige a extensão; o bundler também a aceita.
 import { missionTypeOf } from './guiMissionContracts.ts'
@@ -190,27 +197,115 @@ export interface ReleaseRunDeps {
   /** a versão DEPOIS da tentativa — 'lancada' é o sinal estrutural de sucesso
    *  (nunca heurística sobre o texto). */
   versionAfter(versionId: string): ReleaseChatVersion | undefined
-  /** conclui a missão de release no sucesso (o worktree da versão se foi). */
-  concludeMission(missionId: string): void
+  /** R38 — a sonda ESTRUTURAL da caixa, a MESMA do release_status (script
+   *  `release` no package.json do produto). Sem manifesto ou sem script =
+   *  false: nenhuma receita de publicação é inventada para quem não publica. */
+  publishRequired(): boolean
 }
 
 /**
  * O `release_run` do agente: roda o motor de sempre e, no SUCESSO (provado pelo
- * status da versão, nunca por parsing), conclui a missão de release e avisa que
- * o worktree desta conversa morreu com a subida — a régua do integration_run.
+ * status da versão, nunca por parsing), conta o que a subida MUDOU e o que
+ * ainda falta.
+ *
+ * R38 (2026-08-29) — O FECHO É DO AGENTE. Até aqui esta função CONCLUÍA a
+ * missão de release no sucesso e mandava "NÃO rode mais nada aqui" — resíduo da
+ * era R10, quando a conversa morava no worktree da versão e perdia o chão junto
+ * com ele. Desde a R27 ela opera a PASTA DO PROJETO, e desde a R29 a própria
+ * persona diz o contrário (produto com pipeline só termina com a CAIXA). A
+ * mecânica contradizia a persona e a mecânica ganhava: o dono pediu subida +
+ * instalador, a subida pousou, a missão concluiu, o card sumiu (R30) e o
+ * instalador nunca existiu. Palavras dele: "o certo é ele mesmo decidir: ó,
+ * terminou aqui, vou fechar". Quem fecha agora é o `release_done`.
  */
 export async function runReleaseForChat(
   deps: ReleaseRunDeps,
-  versionId: string,
-  missionId: string
+  versionId: string
 ): Promise<string> {
   const outcome = await deps.run(versionId, 'agent-release')
   const after = deps.versionAfter(versionId)
   if (after?.status !== 'lancada') return outcome
-  deps.concludeMission(missionId)
   return [
     outcome,
-    'O worktree e a branch da versão foram removidos pela subida — esta conversa perdeu o chão de propósito: NÃO rode mais nada aqui.',
-    'CONTE AO DONO o desfecho em uma ou duas linhas.'
+    // A verdade honesta que sobrou da frase antiga: o worktree DA VERSÃO morreu
+    // mesmo. O que morreu com ele foi a branch, não a conversa — ela mora na
+    // pasta do projeto desde a R27 e é lá que o resto do pedido acontece.
+    'A branch e o worktree da versão foram removidos pela subida; esta conversa NÃO — ela segue na PASTA DO PROJETO, que é onde o que falta é feito.',
+    ...(deps.publishRequired()
+      ? [
+          'PRÓXIMO PASSO — A CAIXA, na PASTA DO PROJETO: npm install se as dependências mudaram nesta subida, depois o script de release do produto (npm run release). Leia o veredito dele e conte ao dono.'
+        ]
+      : []),
+    'CONTE AO DONO o desfecho em uma ou duas linhas.',
+    'A conversa fecha quando VOCÊ chamar release_done, depois de entregar TUDO que o dono pediu.'
   ].join('\n')
+}
+
+// ————— o fecho (release_done, R38) —————
+
+/** O ADVISORY auditado da caixa não confirmada — guarda de JULGAMENTO: ela
+ *  nunca tranca o fecho, só carimba o recibo e a caixa-preta (regra da casa:
+ *  guarda dura só protege autoridade/verificabilidade). */
+export const RELEASE_DONE_BOX_ADVISORY =
+  'pipeline declarado e caixa não confirmada — se o dono pediu instalável, confirme antes de fechar'
+
+export interface ReleaseDoneInput {
+  /** a versão desta conversa (undefined = o registro sumiu). */
+  version: ReleaseChatVersion | undefined
+  /** o produto declara pipeline de caixa? (o MESMO sinal estrutural do status) */
+  publishRequired: boolean
+  /**
+   * A caixa está CONFIRMADA por algo verificável e BARATO daqui? `undefined` é
+   * a resposta honesta de hoje: o veredito do `npm run release` mora no shell
+   * do agente e a release publicada mora na rede — nada disso é verificável no
+   * main sem inventar heurística. Ausência vira ADVISORY, nunca recusa.
+   */
+  boxConfirmed?: boolean
+}
+
+export interface ReleaseDoneDecision {
+  /** conclui a missão de release? */
+  ok: boolean
+  /** o recibo que volta para o agente (recusa SEMPRE nomeia a receita). */
+  text: string
+  /** o advisory auditado, quando existe (recibo + caixa-preta). */
+  advisory?: string
+}
+
+/**
+ * A DECISÃO do `release_done` — pura, provada em node puro.
+ *
+ * GUARDA DURA (autoridade verificável): sem a versão `lancada` não há release a
+ * encerrar, e a recusa nomeia a RECEITA (`release_run`). É o único NÃO daqui.
+ *
+ * GUARDA DE JULGAMENTO (a caixa): pipeline declarado e caixa não confirmada
+ * NÃO trancam nada — o agente é quem sabe se o dono pediu instalável, e um
+ * beco sem saída seria pior que o vazamento. Conclui e CARIMBA o advisory.
+ */
+export function releaseDoneDecision(input: ReleaseDoneInput): ReleaseDoneDecision {
+  const { version } = input
+  if (!version)
+    return {
+      ok: false,
+      text: 'esta conversa não está ligada a uma versão — não há release a encerrar.'
+    }
+  if (version.status !== 'lancada')
+    return {
+      ok: false,
+      text:
+        `a versão ${version.name} ainda NÃO subiu para a main — não há release a encerrar. ` +
+        'RECEITA: leia release_status e, com a fotografia livre, chame release_run; ' +
+        'release_done só fecha uma subida que já pousou.'
+    }
+  const advisory =
+    input.publishRequired && input.boxConfirmed !== true ? RELEASE_DONE_BOX_ADVISORY : undefined
+  return {
+    ok: true,
+    ...(advisory ? { advisory } : {}),
+    text: [
+      `release da versão ${version.name} ENCERRADO POR VOCÊ: a missão de release conclui e o card sai da coluna.`,
+      ...(advisory ? [`ADVISORY (auditado, não bloqueia): ${advisory}.`] : []),
+      'Diga ao dono, em uma linha, que a subida terminou e o que foi entregue.'
+    ].join('\n')
+  }
 }

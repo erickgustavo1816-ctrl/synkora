@@ -10,7 +10,9 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
+  RELEASE_DONE_BOX_ADVISORY,
   ensureReleaseMission,
+  releaseDoneDecision,
   releaseNextStep,
   releaseStatusText,
   runReleaseForChat
@@ -128,34 +130,138 @@ test('a receita segue a prioridade real: intent > fila > missões > backlog > tr
 
 // ————— o embrulho do run: sucesso é ESTRUTURAL, nunca parsing —————
 
-test('sucesso (lancada) conclui a missão e avisa que o chão se foi; fracasso não', async () => {
+test('sucesso (lancada) conta o que mudou; fracasso volta cru', async () => {
+  const ok = await runReleaseForChat(
+    {
+      run: async () => 'versão V1.0 subiu para a main (ff) — é a versão atual',
+      versionAfter: () => version({ status: 'lancada' }),
+      publishRequired: () => false,
+      // dep MORTA na R38 — fica só para o motor velho não morrer antes de o
+      // assert de CONTEÚDO abaixo poder reprovar o texto dele.
+      concludeMission: () => {}
+    },
+    'v-1'
+  )
+  assert.match(ok, /branch e o worktree da versão foram removidos/u)
+  assert.match(ok, /CONTE AO DONO/u)
+
+  const refusal = await runReleaseForChat(
+    {
+      run: async () =>
+        'a versão V1.0 ainda tem 1 missão(ões) em andamento: "X" — integre (ou arquive) antes de subir',
+      versionAfter: () => version(),
+      publishRequired: () => {
+        throw new Error('fracasso não pergunta pela caixa — não houve subida')
+      }
+    },
+    'v-1'
+  )
+  assert.match(refusal, /integre \(ou arquive\)/u)
+  assert.doesNotMatch(refusal, /release_done/u, 'sem subida não há fecho a oferecer')
+})
+
+// ————— R38 (2026-08-29): O FECHO É DO AGENTE —————
+//
+// O INCIDENTE (relato do dono): ele pediu ao chat do release para SUBIR A
+// VERSÃO **e** construir o instalador. A ascensão pousou — e a conversa SUMIU
+// antes da caixa existir. Causa raiz, nas duas pontas:
+//   (a) runReleaseForChat concluía a missão no sucesso e mandava "NÃO rode mais
+//       nada aqui" — resíduo da era R10, quando o chat morava no worktree da
+//       versão; desde a R27 ele opera a PASTA DO PROJETO e desde a R29 a
+//       própria persona diz o contrário (só termina com a caixa). A mecânica
+//       contradizia a persona, e a mecânica ganhava;
+//   (b) a reconciliação viva (missionEngine) concluía a mesma missão no
+//       caminho de LEITURA, mesmo com o agente vivo no meio da entrega.
+// Ordem do dono, verbatim: "o certo é ele mesmo decidir: ó, terminou aqui, vou
+// fechar". O fecho virou FERRAMENTA (release_done).
+
+test('R38 — a ascensão NÃO conclui mais nada: quem fecha é o agente', async () => {
   const concluded = []
   const ok = await runReleaseForChat(
     {
       run: async () => 'versão V1.0 subiu para a main (ff) — é a versão atual',
       versionAfter: () => version({ status: 'lancada' }),
+      publishRequired: () => false,
+      // A dep MORREU na R38 — este espião existe para pegar o motor velho.
       concludeMission: (id) => concluded.push(id)
     },
     'v-1',
     'm-live'
   )
-  assert.deepEqual(concluded, ['m-live'])
-  assert.match(ok, /worktree e a branch da versão foram removidos/u)
-  assert.match(ok, /CONTE AO DONO/u)
-
-  const refusal = await runReleaseForChat(
-    {
-      run: async () => 'a versão V1.0 ainda tem 1 missão(ões) em andamento: "X" — integre (ou arquive) antes de subir',
-      versionAfter: () => version(),
-      concludeMission: () => {
-        throw new Error('fracasso não conclui missão nenhuma')
-      }
-    },
-    'v-1',
-    'm-live'
+  assert.deepEqual(concluded, [], 'a subida fecha NADA: o card não pode sumir no meio da entrega')
+  assert.match(ok, /release_done/u, 'o desfecho nomeia a RECEITA do fecho')
+  assert.match(ok, /TUDO que o dono pediu/u, 'e diz QUANDO se fecha')
+  assert.doesNotMatch(
+    ok,
+    /NÃO rode mais nada aqui/u,
+    'a ordem da era R10 morreu com o worktree que a justificava'
   )
-  assert.match(refusal, /integre \(ou arquive\)/u)
-  assert.ok(!/CONTE AO DONO o desfecho em uma ou duas linhas/u.test(refusal) || true)
+  assert.match(
+    ok,
+    /esta conversa NÃO/u,
+    'a frase honesta que sobrou: morreu a branch da versão, não a conversa'
+  )
+})
+
+test('R38 — pipeline declarado ⇒ o desfecho entrega a receita da CAIXA, na pasta do projeto', async () => {
+  const deps = (publishRequired) => ({
+    run: async () => 'versão V1.0 subiu para a main (ff) — é a versão atual',
+    versionAfter: () => version({ status: 'lancada' }),
+    publishRequired: () => publishRequired,
+    // dep MORTA na R38 — presente só para o motor velho chegar inteiro ao
+    // assert de conteúdo (é o TEXTO que tem de reprovar, não um crash).
+    concludeMission: () => {}
+  })
+  const withBox = await runReleaseForChat(deps(true), 'v-1')
+  assert.match(withBox, /CAIXA/u, 'o próximo passo tem nome')
+  assert.match(withBox, /PASTA DO PROJETO/u, 'e endereço — instrução sem pasta foi o build errado da R27')
+  assert.match(withBox, /npm install/u, 'a receita nomeia o install quando as dependências mudaram')
+  assert.match(withBox, /npm run release/u, 'e o script de release do produto')
+
+  const codeOnly = await runReleaseForChat(deps(false), 'v-1')
+  assert.doesNotMatch(codeOnly, /npm run release/u, 'sem pipeline, nenhuma caixa é inventada')
+  assert.match(codeOnly, /release_done/u, 'mas o fecho continua sendo dele')
+})
+
+test('R38 — release_done: guarda DURA na versão, e a recusa nomeia release_run', () => {
+  const semSubida = releaseDoneDecision({ version: version(), publishRequired: false })
+  assert.equal(semSubida.ok, false, 'sem a versão lançada não há release a encerrar')
+  assert.match(semSubida.text, /release_run/u, 'toda recusa nomeia a RECEITA (regra da casa)')
+  assert.match(semSubida.text, /release_status/u)
+  assert.equal(semSubida.advisory, undefined)
+
+  const semVersao = releaseDoneDecision({ version: undefined, publishRequired: false })
+  assert.equal(semVersao.ok, false)
+  assert.match(semVersao.text, /não está ligada a uma versão/u)
+})
+
+test('R38 — release_done conclui na versão lançada, e a caixa é ADVISORY (nunca beco)', () => {
+  const soCodigo = releaseDoneDecision({
+    version: version({ status: 'lancada' }),
+    publishRequired: false
+  })
+  assert.equal(soCodigo.ok, true)
+  assert.equal(soCodigo.advisory, undefined, 'produto sem pipeline fecha limpo')
+  assert.match(soCodigo.text, /V1\.0/u)
+
+  // GUARDA DE JULGAMENTO: pipeline declarado e caixa não confirmada NÃO trancam
+  // o fecho (só o agente sabe o que o dono pediu) — carimbam o recibo.
+  const caixaNaoConfirmada = releaseDoneDecision({
+    version: version({ status: 'lancada' }),
+    publishRequired: true
+  })
+  assert.equal(caixaNaoConfirmada.ok, true, 'guarda de julgamento vira advisory, nunca recusa')
+  assert.equal(caixaNaoConfirmada.advisory, RELEASE_DONE_BOX_ADVISORY)
+  assert.match(caixaNaoConfirmada.text, /ADVISORY/u, 'o advisory sai carimbado no recibo')
+  assert.match(RELEASE_DONE_BOX_ADVISORY, /instalável/u)
+
+  const caixaConfirmada = releaseDoneDecision({
+    version: version({ status: 'lancada' }),
+    publishRequired: true,
+    boxConfirmed: true
+  })
+  assert.equal(caixaConfirmada.ok, true)
+  assert.equal(caixaConfirmada.advisory, undefined, 'caixa provada não carimba nada')
 })
 
 // ————— os contratos da missão de release —————
@@ -191,15 +297,19 @@ test('a fila recusa missão de release pela porta certa', async () => {
 
 // ————— contratos de fonte das costuras —————
 
-test('o catálogo: papel gui-release com as DUAS tools, pré-sancionadas', async () => {
+test('o catálogo: papel gui-release com as TRÊS tools, pré-sancionadas', async () => {
   const delegate = await source('src/main/guiDelegateMcp.ts')
   assert.match(delegate, /'release'/u)
   assert.match(delegate, /mcp__synkora__release_status/u)
   assert.match(delegate, /mcp__synkora__release_run/u)
+  // R38: sem a pré-sanção, o FECHO levantaria card de permissão exatamente no
+  // instante em que o agente diz "terminei" — o pior lugar para travar.
+  assert.match(delegate, /mcp__synkora__release_done/u)
   const server = await source('src/main/mcpServer.ts')
   assert.match(server, /identity\.role === 'gui-release'/u)
   assert.match(server, /'release_status'/u)
   assert.match(server, /'release_run'/u)
+  assert.match(server, /'release_done'/u)
 })
 
 test('o botão navega: subir-pra-main leva o dono DIRETO ao chat de release', async () => {
@@ -369,12 +479,17 @@ test('R28.1 — a subida avisa quando o package.json mudou: npm install na pasta
 test('R27F2 — o fecho do release e a reconciliação empurram missions:changed', async () => {
   const index = await source('src/main/index.ts')
 
-  const conclude = index.slice(index.indexOf('concludeMission: (missionId) =>'))
+  // R38: a MESMA plumbing, com o gatilho novo — era a ascensão, agora é o
+  // release_done do agente. A régua ("todo mutador de missão fora do
+  // missionEngine empurra missions:changed") viajou junto, inteira.
+  const conclude = index.slice(index.indexOf('releaseDone: (id) =>'))
   assert.match(
-    conclude.slice(0, 900),
+    conclude.slice(0, 2600),
     /missions:changed/u,
-    'o fecho vivo do release_run avisa a tela — sem isso a aba fica até o restart'
+    'o fecho do agente avisa a tela — sem isso a aba fica até o restart'
   )
+  assert.match(conclude.slice(0, 2600), /syncBoard\(mission\.projectId\)/u)
+  assert.match(conclude.slice(0, 2600), /emitBacklogChanged\(mission\.projectId\)/u)
 
   const reconcile = index.slice(index.indexOf("missionTypeOf(m) === 'release' &&"))
   assert.match(
@@ -396,6 +511,54 @@ test('R27F2 — a leitura de missões CURA o registro de release atrasado', asyn
   assert.match(block, /'lancada'/u, 'o gatilho é o fato provado: versão já lançada')
   assert.match(block, /concluida/u, 'o registro atrasado conclui na própria leitura')
   assert.match(block, /emitMissionsChanged/u, 'curou → avisa as outras telas; nada curado → silêncio (converge)')
+})
+
+// R38 — A REDE FICA, MAS PARA DE PESCAR CONVERSA VIVA. A cura da R27F2 rodava
+// no caminho de LEITURA e concluía a missão de release da versão já lançada
+// mesmo com o agente vivo no meio da caixa: o card sumia (R30) e o dono perdia
+// o chat. Lei da casa preservada — registro atrasado não fica eternamente
+// "rodando" —, escopo estreitado: só ÓRFÃO (sem chat vivo) é curado.
+test('R38 — a cura viva só alcança release ÓRFÃO: chat vivo nunca é fechado por leitura', async () => {
+  const engine = await source('src/main/missionEngine.ts')
+  const read = engine.slice(engine.indexOf('function missionsWithIntegration'))
+  const block = read.slice(0, read.indexOf('\n  /**'))
+  assert.match(block, /paneAlive\(/u, 'a leitura pergunta se o chat do release está VIVO')
+  assert.ok(
+    block.indexOf('paneAlive(') < block.indexOf("status: 'concluida'"),
+    'a pergunta vem ANTES da conclusão — depois seria fechar e só então perguntar'
+  )
+  assert.match(
+    engine,
+    /paneAlive\(paneId: string\): boolean/u,
+    'a sonda é DEP INJETADA (o motor não fala com o registro de sessões)'
+  )
+
+  const index = await source('src/main/index.ts')
+  const wiring = index.slice(index.indexOf('const missionEngine = createMissionEngine'))
+  assert.match(
+    wiring.slice(0, 1400),
+    /paneAlive: \(paneId\) => guiSessions\?\.has\(paneId\) === true/u,
+    'o index liga a sonda ao registro REAL dos chats'
+  )
+})
+
+// O BOOT É OUTRO CASO, e ele foi VERIFICADO em vez de presumido: a
+// reconciliação de release roda no laço de projetos do whenReady, ANTES de
+// `guiSessions = registerGuiIpc(...)` — o registro de conversas nem existe
+// ainda e o Map dele nasce vazio a cada boot. Lá, todo release é órfão por
+// construção, e a rede continua sendo a única saída.
+test('R38 — a reconciliação de BOOT roda antes de existir chat: o motivo fica escrito', async () => {
+  const index = await source('src/main/index.ts')
+  const recover = index.slice(index.indexOf('function recoverVersionReleaseIntents'))
+  const block = recover.slice(0, recover.indexOf('async function releaseVersionImpl'))
+  assert.match(block, /R38/u, 'o bloco do boot declara por que NÃO pergunta pelo pane')
+  assert.match(block, /registerGuiIpc/u, 'e nomeia a prova: o registro nasce depois')
+  // A CHAMADA, não a menção: o comentário acima cita `registerGuiIpc(...)`.
+  assert.ok(
+    index.indexOf('recoverVersionReleaseIntents(p.id)') <
+      index.indexOf('guiSessions = registerGuiIpc(ctx'),
+    'a ordem real do boot é a prova — reconciliação primeiro, registro de chats depois'
+  )
 })
 
 test('R27F2 — toda recusa do motor de release carrega a receita', async () => {
@@ -459,6 +622,42 @@ test('R29 — a persona mora na pasta do projeto e conhece THE BOX', () => {
   assert.match(prompt, /PROJECT FOLDER/u)
   assert.match(prompt, /THE BOX/u, 'a regra da caixa existe e tem nome')
   assert.match(prompt, /release_status|PUBLICAÇÃO/u)
+})
+
+// R38 — A PERSONA E A MECÂNICA DIZEM A MESMA COISA. A R29 já mandava não
+// terminar sem a caixa enquanto o release_run concluía a missão sozinho; a
+// mecânica ganhava. Agora a regra do fecho está escrita na voz do contrato.
+test('R38 — a persona: a ascensão fecha NADA, e o release_done é do agente', () => {
+  const prompt = guiReleaseSystemPrompt()
+  assert.match(prompt, /THE CLOSE IS YOURS/u, 'a regra do fecho tem nome, como THE BOX')
+  assert.match(prompt, /release_done/u)
+  assert.match(prompt, /ascent closes NOTHING/u, 'a subida não é o fim — dito em voz alta')
+  assert.match(
+    prompt,
+    /THREE tools run this show/u,
+    'o inventário do papel acompanha o catálogo real'
+  )
+  assert.match(
+    prompt,
+    /that work happens HERE/u,
+    'pedido novo depois da ascensão é feito NESTA conversa, na pasta do projeto'
+  )
+  assert.doesNotMatch(
+    prompt,
+    /never call the release done without the box/u,
+    'a frase antiga não nomeava a ferramenta do fecho'
+  )
+})
+
+test('R38 — a descrição do release_done ENSINA quando fechar (e que fechar é definitivo)', async () => {
+  const server = await source('src/main/mcpServer.ts')
+  const at = server.indexOf("'release_done'")
+  assert.ok(at > 0, 'a tool do fecho existe no catálogo do gui-release')
+  const description = server.slice(at, at + 1600)
+  assert.match(description, /CAIXA/u, 'a caixa entra no "tudo que o dono pediu"')
+  assert.match(description, /release_run/u, 'a recusa nomeia a receita')
+  assert.match(description, /NÃO fecha nada/u, 'e desfaz a expectativa velha da subida')
+  assert.match(description, /tira o card da coluna/u, 'fechar é definitivo, e isso é dito antes')
 })
 
 // R30 — VALIDAÇÃO DO DONO (2026-08-21): dois vazamentos da R27, pegos ao vivo.

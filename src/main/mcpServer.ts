@@ -128,6 +128,10 @@ export interface McpApi {
   releaseStatus?: (id: PaneIdentity) => string
   /** Sobe a versão desta conversa para a main (o clique do dono é o mandato). */
   releaseRun?: (id: PaneIdentity) => Promise<string>
+  /** R38 — o FECHO, e ele é do AGENTE: a subida deixou de concluir a missão
+   *  sozinha (ela fechava a conversa antes da caixa). Guarda dura: só com a
+   *  versão 'lancada'. */
+  releaseDone?: (id: PaneIdentity) => string
 
   // ——— kit de CÓDIGO (R14, 2026-08-19 — os TRÊS chats e os AJUDANTES) ———
   /**
@@ -758,10 +762,22 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       'release_run',
       {
         description:
-          'SOBE a versão desta conversa para a branch principal do projeto — o release inteiro numa chamada (re-confere a trava do plano, recusa com missão ainda na fila, mescla a branch da versão na main, carimba a versão como atual e avisa as outras missões de que a base andou). Toda recusa NOMEIA o que falta e a receita. O desfecho volta para você: conte ao dono em uma ou duas linhas. O clique dele no botão é o seu mandato — vale para ESTA versão, uma subida por gesto.'
+          'SOBE a versão desta conversa para a branch principal do projeto — o release inteiro numa chamada (re-confere a trava do plano, recusa com missão ainda na fila, mescla a branch da versão na main, carimba a versão como atual e avisa as outras missões de que a base andou). Toda recusa NOMEIA o que falta e a receita. O desfecho volta para você: conte ao dono em uma ou duas linhas. O clique dele no botão é o seu mandato — vale para ESTA versão, uma subida por gesto. A subida NÃO encerra esta conversa: ela pousa a versão na main e devolve o que ainda falta; o fecho é seu, pelo release_done.'
       },
       async () =>
         api.releaseRun ? text(await api.releaseRun(identity)) : text(RELEASE_ENGINE_OFF)
+    )
+    // R38 — O FECHO É DO AGENTE (ordem do dono, 2026-08-29, verbatim: "o certo
+    // é ele mesmo decidir: ó, terminou aqui, vou fechar"). Antes disto a
+    // própria subida concluía a missão: o dono pediu subida + instalador, a
+    // ascensão pousou, o card sumiu (R30) e o instalador nunca existiu.
+    server.registerTool(
+      'release_done',
+      {
+        description:
+          'DECLARA o release TERMINADO e fecha esta conversa — chame quando TUDO que o dono pediu estiver entregue, a CAIXA inclusive (produto com pipeline declarado só termina com o instalador publicado; veja a linha PUBLICAÇÃO do release_status). A subida (release_run) NÃO fecha nada: depois dela esta conversa continua viva na pasta do projeto para o que faltar — publicar, conferir, responder o dono. Recusa enquanto a versão não subiu, e a recusa nomeia a receita (release_run). Fechar CONCLUI a missão de release e tira o card da coluna: só chame quando não houver mais nada a fazer aqui.'
+      },
+      () => (api.releaseDone ? text(api.releaseDone(identity)) : text(RELEASE_ENGINE_OFF))
     )
     // R14: a conversa que sobe a versão também lê código — um conflito
     // resolvido às pressas na branch da versão é exatamente o momento de

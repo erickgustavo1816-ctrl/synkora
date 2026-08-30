@@ -88,7 +88,10 @@ const DELEGATOR_TOOLS = Object.freeze([
   'list_seats'
 ])
 const INTEGRATION_TOOLS = Object.freeze(['integration_run', 'integration_status'])
-const RELEASE_TOOLS = Object.freeze(['release_run', 'release_status'])
+// R38 (2026-08-29): o `release_done` entrou no catálogo do gui-release — o
+// fecho da conversa virou decisão do AGENTE (a subida fechava sozinha, e o
+// instalador que o dono pediu deixava de existir).
+const RELEASE_TOOLS = Object.freeze(['release_done', 'release_run', 'release_status'])
 
 const sorted = (...groups) => Object.freeze([...groups.flat()].sort())
 

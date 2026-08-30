@@ -31,7 +31,7 @@ import {
 import { MissionStore } from './missions'
 import { PlanStore } from './plans'
 import { activeMasterPlan, planReleaseLock } from './planReleaseLock'
-import { releaseStatusText, runReleaseForChat } from './releaseChat'
+import { releaseDoneDecision, releaseStatusText, runReleaseForChat } from './releaseChat'
 import {
   bumpLockVersion,
   bumpManifestVersion,
@@ -3088,12 +3088,19 @@ app.whenReady().then(async () => {
       if (version.status !== 'lancada') {
         backlog.markVersionReleased(versionId)
       }
-      // O REGISTRO acompanha o fato (o MESMO sinal estrutural do caminho feliz
-      // do runReleaseForChat): com a versão provada na base, a missão de
+      // O REGISTRO acompanha o fato (a versão provada na base): a missão de
       // release não tem mais o que operar. Sem isto, uma subida reconciliada
       // por boot deixava o release eternamente "rodando" no board (incidente
       // de 2026-08-20 — a limpeza falha porque o chat do release mora DENTRO
       // do worktree da versão e segura o diretório no Windows).
+      //
+      // R38 (2026-08-29) — aqui NÃO entra a sonda de pane viva que a
+      // reconciliação de leitura ganhou (missionEngine.missionsWithIntegration),
+      // e o motivo é VERIFICADO, não presumido: este bloco tem UM chamador só
+      // (o laço de `projects.list()` do whenReady, ~350 linhas abaixo) e ele
+      // roda ANTES de `guiSessions = registerGuiIpc(...)` — o registro de
+      // conversas ainda nem existe, e o Map dele nasce vazio a cada boot. Não
+      // há chat vivo a roubar: no boot, todo release é órfão por construção.
       for (const m of missions.list(projectId)) {
         if (
           m.versionId === versionId &&
@@ -3728,7 +3735,13 @@ app.whenReady().then(async () => {
     deliverToGuiPane,
     noteInGuiPane,
     announceToGuiPane,
-    killMissionGuiPanes
+    killMissionGuiPanes,
+    // R38 — a sonda de VIDA do chat, para a rede de reconciliação parar de
+    // pescar conversa viva. `has` é a resposta do próprio registro ("sessão do
+    // pane: ausente = nunca criada ou já encerrada"), e o `?.` cobre o boot:
+    // `guiSessions` só é atribuído no registerGuiIpc, lá embaixo — antes disso
+    // não existe pane nenhum e a resposta honesta é `false`.
+    paneAlive: (paneId) => guiSessions?.has(paneId) === true
   })
   const {
     integrationDrainTimers,
@@ -3929,6 +3942,22 @@ app.whenReady().then(async () => {
       })
   })
 
+  // R38 — A SONDA DA CAIXA NUM LUGAR SÓ: `scripts.release` no package.json do
+  // produto, a MESMA pergunta ESTRUTURAL que a linha PUBLICAÇÃO do
+  // release_status faz (R29). Manifesto ausente ou ilegível = false — produto
+  // quebrado responde no build dele, e nunca inventamos pipeline de publicação
+  // para quem não declara nenhum. Leitura local de um arquivo pequeno, a mesma
+  // classe leve do resto da fotografia.
+  const releaseProductPublishesBox = (projectPath: string): boolean => {
+    try {
+      const manifestPath = join(projectPath, 'package.json')
+      if (!existsSync(manifestPath)) return false
+      return probeManifestPublish(readFileSync(manifestPath, 'utf8'))?.hasReleaseScript === true
+    } catch {
+      return false
+    }
+  }
+
   const mcpApi: McpApi = {
     ...buildPlansApi(ctx, {
       proposePlanToPane: (paneId, draft) =>
@@ -4037,25 +4066,68 @@ app.whenReady().then(async () => {
       const version = mission?.versionId ? backlog.getVersion(mission.versionId) : undefined
       if (!mission || !version)
         return 'esta conversa não está ligada a uma versão — nada subiu para a main.'
+      const runProject = projects.get(version.projectId)
       return runReleaseForChat(
         {
           run: (versionId, actor) => releaseVersionImpl(versionId, actor),
           versionAfter: (versionId) => backlog.getVersion(versionId),
-          concludeMission: (missionId) => {
-            missions.update(missionId, { status: 'concluida' })
-            emitBacklogChanged(version.projectId)
-            // R27F2 — o fecho AVISA A TELA (bug do dono, 2026-08-22): a tela
-            // só recarrega missões por este push, e sem ele a aba do release
-            // ficava aberta até o restart (emitBacklogChanged é VERSÕES;
-            // syncBoard escreve ARQUIVO). Régua: todo mutador de missão fora
-            // do missionEngine empurra missions:changed.
-            pushAll('missions:changed', version.projectId)
-            syncBoard(version.projectId)
-          }
+          // R38 — a subida DEIXOU de concluir a missão (o fecho é do agente,
+          // pelo release_done). O que ela ainda decide é o que DIZER: produto
+          // com pipeline declarado ouve a receita da CAIXA no próprio desfecho.
+          publishRequired: () =>
+            runProject ? releaseProductPublishesBox(runProject.path) : false
         },
-        version.id,
-        mission.id
+        version.id
       )
+    },
+    // R38 — O FECHO É DO AGENTE. A plumbing do fecho é a MESMA de sempre
+    // (missions.update + emitBacklogChanged + missions:changed + syncBoard);
+    // o que mudou é o GATILHO: era a ascensão, agora é a decisão do agente.
+    releaseDone: (id) => {
+      const mission = id.missionId ? missions.get(id.missionId) : undefined
+      if (!mission) return 'esta conversa não está ligada a uma missão — não há release a encerrar.'
+      const version = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
+      const doneProject = version ? projects.get(version.projectId) : undefined
+      const decision = releaseDoneDecision({
+        version,
+        publishRequired: doneProject ? releaseProductPublishesBox(doneProject.path) : false
+        // `boxConfirmed` fica AUSENTE de propósito: o veredito do `npm run
+        // release` mora no shell do agente e a release publicada mora na rede.
+        // Nada disso é verificável BARATO daqui, e fabricar prova (procurar um
+        // arquivo em dist/, adivinhar pelo texto) seria heurística — a casa
+        // proíbe. Ausência vira ADVISORY auditado, nunca recusa.
+      })
+      blackbox.record({
+        cat: 'merge',
+        event: decision.ok
+          ? decision.advisory
+            ? 'release-done-advisory'
+            : 'release-done'
+          : 'release-done-refused',
+        actor: 'agent-release',
+        ids: {
+          projectId: mission.projectId,
+          missionId: mission.id,
+          ...(version ? { ticketId: version.id } : {})
+        },
+        reason:
+          decision.advisory ??
+          (decision.ok
+            ? 'o agente declarou o release terminado'
+            : decision.text.slice(0, 200)),
+        ...(version ? { detail: { versionName: version.name, versionStatus: version.status } } : {})
+      })
+      if (!decision.ok) return decision.text
+      missions.update(mission.id, { status: 'concluida' })
+      emitBacklogChanged(mission.projectId)
+      // R27F2 — o fecho AVISA A TELA (bug do dono, 2026-08-22): a tela só
+      // recarrega missões por este push, e sem ele a aba do release ficava
+      // aberta até o restart (emitBacklogChanged é VERSÕES; syncBoard escreve
+      // ARQUIVO). Régua: todo mutador de missão fora do missionEngine empurra
+      // missions:changed.
+      pushAll('missions:changed', mission.projectId)
+      syncBoard(mission.projectId)
+      return decision.text
     },
     // R9 — O AGENTE É O INTEGRADOR. Cascas FINAS: a identidade do pane (que o
     // bearer autenticou) diz o universo e a missão, e o motor faz o resto. A

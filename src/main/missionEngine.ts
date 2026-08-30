@@ -132,6 +132,18 @@ export interface MissionEngineExtras {
   announceToGuiPane(paneId: string, text: string): boolean
   /** 2.0: encerra dev/reviewer/ajudantes GUI da missão (o worktree some). */
   killMissionGuiPanes(missionId: string): void
+  /**
+   * R38 — ESTE CHAT ESTÁ VIVO? (o registro de sessões GUI responde; `false`
+   * também quando o registro ainda nem existe, que é o estado do BOOT).
+   *
+   * Nasceu para a reconciliação viva de release: fechar o registro de uma
+   * subida já pousada é lei da casa, mas fazê-lo COM O AGENTE FALANDO roubava a
+   * conversa do dono no meio da entrega (incidente de 2026-08-29 — subida +
+   * instalador: a subida pousou, a leitura concluiu a missão, o card sumiu e o
+   * instalador nunca foi construído). A rede continua; ela só deixa de pescar
+   * quem está vivo. Late-bound no index, como o `deliverToGuiPane`.
+   */
+  paneAlive(paneId: string): boolean
 }
 
 export type MissionEngine = ReturnType<typeof createMissionEngine>
@@ -163,7 +175,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     deliverToGuiPane,
     noteInGuiPane,
     announceToGuiPane,
-    killMissionGuiPanes
+    killMissionGuiPanes,
+    paneAlive
   } = extras
 
   /** Missão 2.0: sem orquestrador e sem plano — o ⇪ tem caminho direto. */
@@ -204,6 +217,15 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // ativa com a versão JÁ lançada é registro atrasado — conclui AQUI, com
     // recibo na caixa-preta, e a lista sai curada. Converge: curou, a
     // condição some; nada curado, silêncio (sem loop de push).
+    //
+    // R38 (2026-08-29) — A REDE PESCA ÓRFÃO, NUNCA UM CHAT VIVO. A rede fica
+    // (lei da casa: registro atrasado não pode ficar eternamente "rodando"),
+    // mas ela parou de roubar a conversa do dono: com a subida pousada, o
+    // agente do release CONTINUA trabalhando na pasta do projeto (a caixa é o
+    // caso real) e só ELE fecha, pelo release_done. Concluir aqui, com o pane
+    // vivo, fazia o card sumir no meio da entrega — foi assim que o instalador
+    // que o dono pediu deixou de existir. Sem pane, não há ninguém para fechar:
+    // aí a rede é a única saída e ela pesca.
     let healed = 0
     for (const mission of missions.list(projectId)) {
       if (
@@ -214,6 +236,9 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         continue
       const version = backlog.getVersion(mission.versionId)
       if (version?.status !== 'lancada') continue
+      // O chat do release mora no endereço de DEV da missão (o roteador manda
+      // `release` pelo papel dev — guiMissionContracts.routeGuiMissionPane).
+      if (paneAlive(missionDevPaneId(mission.id))) continue
       missions.update(mission.id, { status: 'concluida' })
       healed++
       blackbox.record({
@@ -221,7 +246,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         event: 'release-record-healed',
         actor: 'harness',
         ids: { projectId, missionId: mission.id },
-        reason: 'versão já lançada — registro de release concluído na leitura (reconciliação viva)'
+        reason:
+          'versão já lançada e conversa de release ÓRFÃ (sem chat vivo) — registro concluído na leitura (reconciliação viva)'
       })
     }
     if (healed > 0) emitMissionsChanged(projectId)
