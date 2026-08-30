@@ -26,14 +26,16 @@ import {
   browserPageStorageKey,
   browserRect,
   browserSectionSummary,
+  browserSiblingsToWatch,
   browserTabLabel,
   clipBrowserRect,
+  createBrowserBoundsGate,
+  createBrowserBoundsPump,
   isHostOverlayNode,
   normalizeBrowserPanel,
   overlayHidesPage,
   readBrowserPageFraction,
   rectHasArea,
-  sameBrowserRect,
   stepBrowserPageFraction,
   writeBrowserPageFraction,
   type BrowserEngineState
@@ -69,7 +71,11 @@ import type { BrowserPanelState, BrowserRect } from '../../../preload/index'
 /** Reconciliador da geometria (doutrina da casa: nenhum passo depende de
  *  entrega única). Os observadores cobrem tudo que MEXE; este relógio cobre o
  *  que ninguém observou — um ancestral que mudou de lugar sem mudar de
- *  tamanho. Só corre com o painel montado. */
+ *  tamanho. Só corre com o painel montado.
+ *
+ *  A REDE FICA (lei da casa: nenhum passo depende de entrega única). O que a
+ *  H9 mudou não foi a rede: foi parar de PENDURAR nela o que já tinha
+ *  observador — ver o bloco "GEOMETRIA QUENTE" lá embaixo. */
 const BOUNDS_RECONCILE_MS = 400
 
 const ZERO_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 }
@@ -274,6 +280,34 @@ export default function DockBrowser({
   )
   const [dragging, setDragging] = useState(false)
   const dragCleanupRef = useRef<(() => void) | null>(null)
+  // A BANDEIRA DO GESTO (H9). O `dragging` de estado serve à CLASSE do CSS; o
+  // ref serve à MECÂNICA, e por isso ele existe: ele vira `true` no
+  // `pointerdown` e `false` na faxina — SÍNCRONO, sem esperar um render. É ele
+  // que sustenta a regra do arrasto: **enquanto o gesto dura, quem escreve a
+  // altura no nó é o gesto, e mais ninguém.** Sem isso, uma medição do trilho
+  // caindo no meio do arrasto re-renderiza o React, que reescreve
+  // `--dock-browser-page-h` a partir da FRAÇÃO velha — e a página pula para a
+  // altura de antes por um quadro, no meio do gesto.
+  const gestureRef = useRef(false)
+
+  // ————— GEOMETRIA: o único canal entre este painel e a view nativa —————
+  //
+  // As alavancas moram AQUI EM CIMA (e não junto do efeito, como até a H8)
+  // porque o gesto da alça precisa delas na SOLTA: a `forceReport` fecha o
+  // arrasto, e ela é declarada antes de quem a chama.
+  const gateRef = useRef(createBrowserBoundsGate())
+  const lastRectRef = useRef<BrowserRect | null>(null)
+  /** QUENTE: mede e relata AGORA, no quadro de quem chamou. */
+  const measureRef = useRef<(() => void) | null>(null)
+  /** Esquece o último relato e relata de novo NA HORA. Existe para os três
+   *  casos em que o retângulo não mudou mas a VERDADE mudou: a view acabou de
+   *  nascer, o painel voltou à vista, e a solta da alça (ver a faxina do
+   *  gesto). */
+  const forceReport = useCallback((): void => {
+    gateRef.current.reset()
+    measureRef.current?.()
+  }, [])
+
   // O scroller é achado UMA vez por montagem (a árvore acima do painel não muda
   // enquanto ele vive) e relido a cada quadro do arrasto — subir a árvore com
   // `getComputedStyle` sessenta vezes por segundo seria pagar caro por um dado
@@ -311,10 +345,23 @@ export default function DockBrowser({
     return Math.max(0, content - page.offsetHeight + 2)
   }, [])
   const [railRest, setRailRest] = useState<number | undefined>(undefined)
-  const measureRailRest = useCallback((): void => {
-    const next = currentRailRest()
-    if (next === undefined) return
-    setRailRest((current) => (current !== undefined && Math.abs(current - next) < 2 ? current : next))
+  /**
+   * A RÉGUA, medida de novo: a altura do scroller e o palmo que as irmãs
+   * ocupam nele. As duas juntas de propósito — quem congela, congela as duas, e
+   * quem descongela precisa das duas de volta no mesmo passo.
+   *
+   * GESTO EM VOO: a régua fica CONGELADA (ver `gestureRef`). O arrasto já relê
+   * a régua por quadro para a conta DELE; o que não pode acontecer é o React
+   * redesenhar `--dock-browser-page-h` no meio do gesto a partir da FRAÇÃO
+   * velha — a página pularia para a altura de antes por um quadro.
+   */
+  const measureRail = useCallback((): void => {
+    if (gestureRef.current) return
+    const height = railHeightOf(railRef.current)
+    if (height > 0) setRailHeight((current) => (current === height ? current : height))
+    const rest = currentRailRest()
+    if (rest === undefined) return
+    setRailRest((current) => (current !== undefined && Math.abs(current - rest) < 2 ? current : rest))
   }, [currentRailRest])
 
   const pageRange = browserPageRange(railHeight, { railRest })
@@ -336,26 +383,21 @@ export default function DockBrowser({
   // o `resize` da janela para o caso de o observador não existir. Só grava
   // altura POSITIVA e DIFERENTE: o trilho recolhido mede zero, e aceitar esse
   // zero apagaria a página em vez de escondê-la.
+  //
+  // Quem mede é o `measureRail` lá de cima — o MESMO que a solta do gesto
+  // chama, para que congelar e descongelar sejam a mesma conta.
   useLayoutEffect(() => {
     const el = rootRef.current
     if (!el) return
     const rail = railViewportOf(el)
     railRef.current = rail
-    const measure = (): void => {
-      const next = railHeightOf(rail)
-      if (next > 0) setRailHeight((current) => (current === next ? current : next))
-      // O resto muda quando uma irmã colapsa/expande SEM o trilho mudar de
-      // tamanho — medir junto aqui cobre o resize; o reconciliador de 400ms
-      // cobre o colapso da irmã.
-      measureRailRest()
-    }
-    measure()
-    const sizes = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+    measureRail()
+    const sizes = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measureRail) : null
     if (sizes && rail) sizes.observe(rail)
-    window.addEventListener('resize', measure)
+    window.addEventListener('resize', measureRail)
     return () => {
       sizes?.disconnect()
-      window.removeEventListener('resize', measure)
+      window.removeEventListener('resize', measureRail)
       // Um gesto em voo não sobrevive à desmontagem: a faxina fecha as portas e
       // GRAVA o que o dono já tinha arrastado. Ela roda antes de a régua ser
       // esquecida — a fração se calcula contra o trilho que o gesto usou.
@@ -363,7 +405,7 @@ export default function DockBrowser({
       dragCleanupRef.current = null
       railRef.current = null
     }
-  }, [measureRailRest])
+  }, [measureRail])
 
   const persistFraction = useCallback(
     (next: number): void => {
@@ -408,6 +450,7 @@ export default function DockBrowser({
       } catch {
         return
       }
+      gestureRef.current = true
       setDragging(true)
 
       const paint = (): void => {
@@ -436,11 +479,28 @@ export default function DockBrowser({
         // anunciado recebem o número FINAL aqui (se o React reencontrar a mesma
         // altura de antes do gesto, ele não reescreveria nem um nem outro).
         paint()
+        // A SOLTA DEVOLVE A AUTORIDADE ao React (a bandeira cai ANTES de
+        // `persistFraction`, senão a re-medição do trilho ficaria congelada até
+        // o próximo evento). Daqui para a frente quem escreve a altura no nó é
+        // o render, de novo.
+        gestureRef.current = false
         setDragging(false)
         // A fração é a preferência DURÁVEL; o pixel do gesto é só o meio.
         persistFraction(
           browserPageFraction(nextHeight, currentRailHeight(), { railRest: railRestNow })
         )
+        // …e a RÉGUA, congelada durante o gesto, volta a valer no mesmo passo.
+        // Não é zelo: a janela pode ter mudado de tamanho e as irmãs podem ter
+        // reflowado enquanto o dono arrastava, e as duas medidas ficariam
+        // paradas até o próximo `resize` do trilho se ninguém as chamasse aqui.
+        measureRail()
+        // O DEDUPE ZERA NA SOLTA (H9). Ele compara com o ÚLTIMO retângulo
+        // enviado; se o render pós-gesto reencontrar uma altura que já passou
+        // no meio do arrasto — e ele reencontra, porque a fração reclampa
+        // contra a régua nova —, o relato seria calado com o DOM já noutro
+        // lugar, e a página nativa ficaria parada na altura do último quadro.
+        // Um relato forçado fecha o gesto.
+        forceReport()
         handle.removeEventListener('pointermove', onMove)
         handle.removeEventListener('pointerup', onUp)
         handle.removeEventListener('pointercancel', onCancel)
@@ -474,7 +534,7 @@ export default function DockBrowser({
       handle.addEventListener('lostpointercapture', onLostCapture)
       window.addEventListener('blur', onCancel)
     },
-    [currentRailHeight, currentRailRest, fraction, persistFraction]
+    [currentRailHeight, currentRailRest, forceReport, fraction, measureRail, persistFraction]
   )
 
   /** O MESMO ajuste pelo teclado: a casa não entrega controle só de mouse.
@@ -523,10 +583,6 @@ export default function DockBrowser({
     [currentRailHeight, currentRailRest, fraction, persistFraction]
   )
 
-  // ————— GEOMETRIA: o único canal entre este painel e a view nativa —————
-  const lastSentRef = useRef<{ rect: BrowserRect; visible: boolean } | null>(null)
-  const lastRectRef = useRef<BrowserRect | null>(null)
-  const scheduleRef = useRef<(() => void) | null>(null)
   const visibleRef = useRef(visible)
   visibleRef.current = visible
   // ONDE a página está, lido pela FAXINA do efeito (que roda depois do render e
@@ -537,10 +593,14 @@ export default function DockBrowser({
   const report = useCallback((mission: string, rect: BrowserRect, shown: boolean): void => {
     const api = browserApi()
     if (!api) return
-    const last = lastSentRef.current
-    if (last && last.visible === shown && sameBrowserRect(last.rect, rect)) return
-    lastSentRef.current = { rect, visible: shown }
-    setPainted(shown)
+    // O `painted` só se mexe quando a VISIBILIDADE vira — e a guarda importa
+    // porque este caminho passou a rodar sessenta vezes por segundo: um
+    // `setState` por quadro no meio de um arrasto é despacho do React de graça.
+    // (A semântica da bandeira não mudou: ela continua sendo exatamente o
+    // `shown` que viajou no último relato.)
+    const before = gateRef.current.last()
+    if (!gateRef.current.accept(rect, shown)) return
+    if (!before || before.visible !== shown) setPainted(shown)
     api.bounds(mission, rect, shown)
   }, [])
 
@@ -551,7 +611,6 @@ export default function DockBrowser({
     // da missão que ELE reportou, mesmo que o dono já tenha trocado de aba.
     const mission = missionId
     const clips = clipAncestors(el)
-    let frame = 0
 
     const measure = (): void => {
       const box = browserRect(el.getBoundingClientRect())
@@ -574,24 +633,82 @@ export default function DockBrowser({
       report(mission, clipped, !overlayHidesPage(clipped, hostOverlayRects()))
     }
 
-    const schedule = (): void => {
-      if (frame) return
-      frame = window.requestAnimationFrame(() => {
-        frame = 0
-        measure()
-      })
-    }
-    scheduleRef.current = schedule
+    // ————— GEOMETRIA QUENTE (H9, 2026-08-29) —————
+    //
+    // A reprovação: *"deixa ele mais dinamico tbm, igual funciona o claude
+    // code… to achando ele meio travado hoje."* A sonda
+    // `.synkora/reports/h9/probe-h9-fluidity.mjs` mediu o caminho inteiro,
+    // quadro a quadro, com janela de verdade — e o veredito é de RELÓGIO, não
+    // de gosto:
+    //
+    //   arrasto da alça      2,01 quadros  →  1,03
+    //   arrasto da largura   2,03 quadros  →  1,05
+    //
+    // O quadro perdido tinha UM dono: o salto de `requestAnimationFrame` na
+    // saída do `ResizeObserver`. A ordem do quadro no Chromium explica tudo —
+    // os callbacks de rAF correm ANTES do layout, e o `ResizeObserver` é
+    // entregue DEPOIS dele. Um `rAF` pedido de dentro do observador só corre no
+    // quadro SEGUINTE, e ainda assim corre ANTES do `paint()` do arrasto (que
+    // foi agendado pelo `pointermove`, mais tarde) — ou seja: ele mede a
+    // geometria VELHA e a página nativa anda um quadro atrás do dedo, sempre.
+    //
+    // Medir DENTRO do observador não custa layout nenhum: quando ele é
+    // entregue, o layout do quadro já está limpo. E o `measure` só LÊ — nunca
+    // escreve —, então não existe laço de observador para estourar.
+    //
+    // O que ficou FRIO, e por quê (a sonda mediu os dois e não pagou nada):
+    // `scroll` e `resize` da janela são entregues ANTES da fase de rAF, então o
+    // salto já corria no MESMO quadro (16,3-16,8ms = 1,00 quadro nos dois
+    // caminhos). Ali o rAF é proteção de graça contra rajada, e fica.
+    const pump = createBrowserBoundsPump({
+      measure,
+      requestFrame: (run) => window.requestAnimationFrame(run),
+      cancelFrame: (handle) => window.cancelAnimationFrame(handle)
+    })
+    const hot = (): void => pump.hot()
+    const schedule = (): void => pump.cold()
+    measureRef.current = hot
 
     measure()
-    const sizes = new ResizeObserver(schedule)
+    const sizes = new ResizeObserver(hot)
     sizes.observe(el)
     // Os ancestrais que recortam também são observados: num arrasto de largura
     // é o TRILHO que muda de tamanho, e a página precisa acompanhar quadro a
     // quadro em vez de esperar o reconciliador.
     for (const node of clips) sizes.observe(node)
+
+    // ————— AS IRMÃS (o "pulo atrasado", medido) —————
+    //
+    // Seção vizinha que recolhe/expande EMPURRA a página sem mudar o tamanho
+    // dela nem o de ancestral nenhum: nada acima observava isso, e sobrava o
+    // relógio de 400ms — mediana de 300ms e p95 de 384ms de página parada no
+    // lugar errado (18 a 23 quadros). Observando as irmãs: 0,28ms.
+    //
+    // A lista se refaz quando o trilho ganha ou perde seção (uma missão que
+    // muda de fase troca as seções do dock). A que CONTÉM esta página fica
+    // FORA — ela muda de tamanho a cada quadro do próprio arrasto, e o
+    // observador do retângulo já contou isso.
+    const siblings = new ResizeObserver(hot)
+    const watchSiblings = (): void => {
+      siblings.disconnect()
+      const rail = railRef.current ?? railViewportOf(el)
+      if (!rail) return
+      const kids = Array.from(rail.children).filter(
+        (node): node is HTMLElement => node instanceof HTMLElement
+      )
+      for (const node of browserSiblingsToWatch(kids, (node) => node.contains(el))) {
+        siblings.observe(node)
+      }
+    }
+    watchSiblings()
+    const railKids = new MutationObserver(watchSiblings)
+    const railNode = railRef.current ?? railViewportOf(el)
+    if (railNode) railKids.observe(railNode, { childList: true })
+
     // Overlay que abre não mexe em tamanho nenhum: quem avisa é a mutação do
-    // body (todo overlay da casa é um portal ali).
+    // body (todo overlay da casa é um portal ali). FRIO de propósito: a
+    // montagem de um portal é uma rajada de mutações, e um quadro de atraso
+    // para esconder a página atrás de um modal não é gesto de ninguém.
     const overlays = new MutationObserver(schedule)
     overlays.observe(document.body, { childList: true })
     window.addEventListener('resize', schedule)
@@ -599,22 +716,25 @@ export default function DockBrowser({
     // dentro do trilho): captura para pegar todos, passivo para não segurar o
     // gesto de rolar de ninguém.
     document.addEventListener('scroll', schedule, { capture: true, passive: true })
-    // O mesmo relógio reconcilia o RESTO do trilho: irmã que colapsou/expandiu
-    // não mexe no tamanho do scroller nem do retângulo — só o resto muda, e o
-    // teto da página muda com ele (é o clamp que mantém a alça alcançável).
+    // A REDE FICA. O relógio continua reconciliando o que nenhum observador vê
+    // — um ancestral que mudou de LUGAR sem mudar de tamanho — e o RESTO do
+    // trilho, que manda no teto da alça. Ele deixou de ser o primeiro a
+    // descobrir o colapso da irmã; nunca deixou de ser a rede.
     const timer = window.setInterval(() => {
       schedule()
-      measureRailRest()
+      measureRail()
     }, BOUNDS_RECONCILE_MS)
 
     return () => {
-      scheduleRef.current = null
+      measureRef.current = null
       window.clearInterval(timer)
       document.removeEventListener('scroll', schedule, { capture: true })
       window.removeEventListener('resize', schedule)
       overlays.disconnect()
+      railKids.disconnect()
+      siblings.disconnect()
       sizes.disconnect()
-      if (frame) window.cancelAnimationFrame(frame)
+      pump.stop()
       // A SAÍDA DECLARADA: seção recolhida, missão trocada, board desmontado —
       // todos passam por aqui, e todos DIZEM que a página saiu de vista. O main
       // esconde sem desanexar; a aba continua viva do outro lado.
@@ -627,13 +747,13 @@ export default function DockBrowser({
       if (!popoutRef.current) {
         browserApi()?.bounds(mission, lastRectRef.current ?? ZERO_RECT, false)
       }
-      lastSentRef.current = null
+      gateRef.current.reset()
       lastRectRef.current = null
     }
     // `popout` entra nas dependências para o efeito RENASCER no reencaixe: o
     // retângulo volta a existir no DOM e ninguém mais avisaria o motor de onde
     // ele está (o ResizeObserver morreu junto com o nó anterior).
-  }, [missionId, report, measureRailRest, popout])
+  }, [missionId, report, measureRail, popout])
 
   // Três mudanças que NENHUM observador de tamanho enxerga:
   //  · o trilho saiu/voltou de vista (o Board mantém o dock montado);
@@ -642,9 +762,8 @@ export default function DockBrowser({
   //  · a view acabou de NASCER e precisa ouvir a geometria de novo — o dedupe
   //    teria calado a repetição, e o main não pode adivinhar o retângulo.
   useEffect(() => {
-    lastSentRef.current = null
-    scheduleRef.current?.()
-  }, [visible, state.alive, state.tabs.length])
+    forceReport()
+  }, [forceReport, visible, state.alive, state.tabs.length])
 
   // ————— gestos do chrome —————
   const openBrowser = useCallback((): void => {

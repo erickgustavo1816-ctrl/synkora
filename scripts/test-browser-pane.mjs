@@ -77,6 +77,9 @@ import {
   rectHasArea,
   rectsOverlap,
   sameBrowserPanel,
+  browserSiblingsToWatch,
+  createBrowserBoundsGate,
+  createBrowserBoundsPump,
   sameBrowserRect,
   stepBrowserPageFraction,
   tabCapNotice,
@@ -348,6 +351,193 @@ test('MODELO/OVERLAY: só o portal que REALMENTE cruza a página a esconde', () 
   assert.equal(isHostOverlayNode({ id: 'root', role: null }), false, 'a árvore do app não é overlay')
   assert.equal(isHostOverlayNode({ id: '', role: 'tooltip' }), false, 'tooltip apagaria a página a cada hover')
   assert.equal(isHostOverlayNode({ id: '', role: 'dialog' }), true)
+})
+
+// ————————————————————————————————————————————————————————————————
+// A.1b O CAMINHO QUENTE DA GEOMETRIA (H9, 2026-08-29)
+// ————————————————————————————————————————————————————————————————
+//
+// REPROVAÇÃO DO DONO, no painel vivo: *"deixa ele mais dinamico tbm, igual
+// funciona o claude code, melhorou mas ainda da pra ficar melhor, to achando
+// ele meio travado hoje."*
+//
+// A sonda `.synkora/reports/h9/probe-h9-fluidity.mjs` mediu o caminho inteiro
+// quadro a quadro, com janela de verdade e compositing ligado, e nomeou os dois
+// culpados:
+//
+//  1. o salto de `requestAnimationFrame` na saída do `ResizeObserver` —
+//     **2,01 quadros** de atraso no arrasto da alça e **2,03** no da largura,
+//     contra **1,03/1,05** medindo dentro do observador (o piso físico);
+//  2. a irmã que recolhe e EMPURRA a página sem mudar tamanho nenhum — só o
+//     relógio de 400ms via, com **mediana de 300ms e p95 de 384ms** em 30
+//     colapsos; com as irmãs observadas, **0,28ms**.
+//
+// Estas cercas prendem as três peças que curaram isso. Nenhuma delas existia no
+// código velho (`TypeError` no import), e cada uma cai sob mutação do código
+// NOVO — a lista das mutações está no relatório da rodada.
+
+/** Um relógio de quadros de mentira: nada corre até `tick()`. É o que deixa
+ *  perguntar "isto mediu AGORA ou esperou um quadro?" sem um browser. */
+function fakeFrames() {
+  const queued = new Map()
+  let next = 1
+  return {
+    queued,
+    requestFrame(run) {
+      const handle = next++
+      queued.set(handle, run)
+      return handle
+    },
+    cancelFrame(handle) {
+      queued.delete(handle)
+    },
+    /** roda o que está agendado (como o quadro seguinte faria) */
+    tick() {
+      const runs = [...queued.values()]
+      queued.clear()
+      for (const run of runs) run()
+    }
+  }
+}
+
+test('QUENTE: o observador de tamanho mede NO MESMO quadro — o salto de rAF custava um quadro inteiro', () => {
+  const frames = fakeFrames()
+  let medidas = 0
+  const pump = createBrowserBoundsPump({
+    measure: () => {
+      medidas++
+    },
+    requestFrame: frames.requestFrame,
+    cancelFrame: frames.cancelFrame
+  })
+
+  // O caminho FRIO: nada acontece até o quadro seguinte (é a coalescência que
+  // protege `scroll`/mutação/relógio de disparar em rajada).
+  pump.cold()
+  assert.equal(medidas, 0, 'o frio NÃO pode medir na hora')
+  assert.equal(pump.pending(), true)
+  frames.tick()
+  assert.equal(medidas, 1)
+  assert.equal(pump.pending(), false)
+
+  // O caminho QUENTE: mede AGORA. É esta linha que vale um quadro de página
+  // colada no dedo do dono.
+  pump.hot()
+  assert.equal(medidas, 2, 'o quente mede no quadro de quem chamou')
+  assert.equal(pump.pending(), false, 'e não deixa quadro nenhum agendado')
+})
+
+test('QUENTE: um quadro frio pendente é CANCELADO pelo quente — nunca um relato velho depois do novo', () => {
+  const frames = fakeFrames()
+  const medidas = []
+  let geometria = 'A'
+  const pump = createBrowserBoundsPump({
+    measure: () => medidas.push(geometria),
+    requestFrame: frames.requestFrame,
+    cancelFrame: frames.cancelFrame
+  })
+
+  // Uma rolagem agenda o frio; no MESMO quadro o arrasto muda a caixa e o
+  // observador de tamanho mede quente. Sem o cancelamento, o quadro seguinte
+  // ainda cuspiria uma segunda medição — trabalho puro, e um relato a mais para
+  // o motor no meio de um gesto.
+  pump.cold()
+  geometria = 'B'
+  pump.hot()
+  frames.tick()
+  assert.deepEqual(medidas, ['B'], 'o quadro frio pendente tem de morrer com o quente')
+})
+
+test('QUENTE: a rajada fria coalesce em UM quadro, e a faxina não deixa quadro pendurado', () => {
+  const frames = fakeFrames()
+  let medidas = 0
+  const pump = createBrowserBoundsPump({
+    measure: () => {
+      medidas++
+    },
+    requestFrame: frames.requestFrame,
+    cancelFrame: frames.cancelFrame
+  })
+
+  // Montar um portal dispara uma rajada de mutações; cem chamadas viram UMA.
+  for (let i = 0; i < 100; i++) pump.cold()
+  assert.equal(frames.queued.size, 1, 'a rajada não pode virar cem quadros')
+  frames.tick()
+  assert.equal(medidas, 1)
+
+  // Desmontar com quadro agendado: ele não pode acordar depois, medindo um nó
+  // que já saiu da árvore.
+  pump.cold()
+  pump.stop()
+  assert.equal(frames.queued.size, 0)
+  frames.tick()
+  assert.equal(medidas, 1, 'quadro pendurado após a faxina é medição em nó morto')
+})
+
+test('PORTÃO: repetido não viaja, mas a VISIBILIDADE conta tanto quanto a geometria', () => {
+  const gate = createBrowserBoundsGate()
+  const caixa = { x: 10, y: 20, width: 300, height: 200 }
+
+  assert.equal(gate.accept(caixa, true), true, 'o primeiro relato sempre passa')
+  assert.equal(gate.accept({ ...caixa }, true), false, 'o mesmo retângulo não vale um IPC')
+  // A LEI 1 depende disto: a página que NÃO mudou de lugar mas saiu de vista
+  // (overlay do host por cima, seção recolhida) precisa que o `false`
+  // atravesse. Deduplicar só pela geometria pintaria uma página de internet por
+  // cima do chat do dono.
+  assert.equal(gate.accept({ ...caixa }, false), true, 'sair de vista é notícia')
+  assert.equal(gate.accept({ ...caixa }, false), false)
+  assert.equal(gate.accept({ ...caixa }, true), true, 'voltar à vista também')
+  assert.deepEqual(gate.last(), { rect: caixa, visible: true })
+
+  // Mexeu um pixel em QUALQUER ponta: passa.
+  assert.equal(gate.accept({ ...caixa, height: 201 }, true), true)
+  assert.equal(gate.accept({ ...caixa, x: 11, height: 201 }, true), true)
+})
+
+test('PORTÃO: a SOLTA do gesto zera o portão — o relato repetido volta a passar', () => {
+  const gate = createBrowserBoundsGate()
+  const caixa = { x: 0, y: 0, width: 320, height: 260 }
+  assert.equal(gate.accept(caixa, true), true)
+  assert.equal(gate.accept({ ...caixa }, true), false)
+
+  // O caso real: o arrasto passou por 260px no meio do gesto; na SOLTA, o
+  // render reclampa a fração contra a régua nova e reencontra 260px. Sem zerar,
+  // o portão calaria — e a página nativa ficaria parada na altura do último
+  // quadro do arrasto, que é outra. O mesmo zerar serve à view recém-nascida
+  // (o motor não adivinha o retângulo) e ao painel que voltou à vista.
+  gate.reset()
+  assert.equal(gate.last(), null)
+  assert.equal(gate.accept({ ...caixa }, true), true, 'depois do reset o repetido TEM de passar')
+})
+
+test('IRMÃS: quem observa é a vizinhança — a seção que CONTÉM a página fica de fora', () => {
+  // Uma irmã que recolhe empurra a página sem mudar o tamanho de ninguém: nem
+  // o retângulo, nem os ancestrais que recortam, nem o body. Era o único
+  // movimento que dependia do relógio de 400ms (medido: mediana 300ms, p95 384ms).
+  const entrega = { nome: 'entrega', dona: false }
+  const trabalho = { nome: 'trabalho', dona: false }
+  const browser = { nome: 'browser', dona: true }
+  const release = { nome: 'release', dona: false }
+  const irmas = browserSiblingsToWatch(
+    [entrega, trabalho, browser, release],
+    (secao) => secao.dona
+  )
+  assert.deepEqual(
+    irmas.map((s) => s.nome),
+    ['entrega', 'trabalho', 'release']
+  )
+  // A DONA fica de fora de propósito: ela muda de tamanho a cada quadro do
+  // próprio arrasto da alça, e o observador do retângulo já conta isso. Na
+  // sonda, observá-la triplicou os relatos deduplicados de um arrasto (105 →
+  // 375) sem mover um milissegundo do atraso.
+  assert.equal(
+    irmas.some((s) => s.dona),
+    false
+  )
+  // Trilho com uma seção só (a do browser) e trilho vazio: lista vazia, nunca
+  // uma exceção no meio da montagem do painel.
+  assert.deepEqual(browserSiblingsToWatch([browser], (s) => s.dona), [])
+  assert.deepEqual(browserSiblingsToWatch([], (s) => s.dona), [])
 })
 
 // ————————————————————————————————————————————————————————————————

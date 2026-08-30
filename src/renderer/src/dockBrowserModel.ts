@@ -653,6 +653,153 @@ export function overlayHidesPage(
   return overlays.some((overlay) => rectsOverlap(page, overlay))
 }
 
+// ————— AS IRMÃS DO TRILHO (H9, 2026-08-29) —————
+//
+// A REPROVAÇÃO: *"deixa ele mais dinamico tbm, igual funciona o claude code…
+// to achando ele meio travado hoje."*
+//
+// O que a sonda `.synkora/reports/h9/probe-h9-fluidity.mjs` MEDIU, com janela
+// de verdade e compositing ligado: quando uma seção VIZINHA do dock recolhe ou
+// expande, a página do browser MUDA DE LUGAR sem mudar de tamanho — e nenhum
+// observador de hoje enxerga isso. Nem o `ResizeObserver` do retângulo (a caixa
+// não mudou), nem o dos ancestrais que recortam (o scroller tem altura fixa),
+// nem a mutação do body (o colapso acontece lá no fundo da árvore). Sobra o
+// reconciliador de 400ms: até o TETO dele. Medido em 30 colapsos: **mediana de
+// 300ms, p95 de 384ms** — 18 a 23 quadros de página parada no lugar errado. É o
+// "pulo atrasado" que o dono sente.
+//
+// A cura é observar as IRMÃS: quando a vizinha muda de altura, a página deste
+// painel mudou de lugar. Medido depois: **0,28ms** (mesmo quadro).
+//
+// A que CONTÉM a página fica de fora, e não é economia à toa: ela cresce e
+// encolhe a cada quadro do arrasto da alça, e observá-la seria um segundo
+// relato por quadro dizendo exatamente o que o observador do retângulo já
+// disse. (Medido na sonda: observar todas triplicou os relatos deduplicados de
+// um arrasto de alça — 105 → 375 — sem mover um único milissegundo do atraso.)
+export function browserSiblingsToWatch<T>(
+  children: readonly T[],
+  holdsPage: (child: T) => boolean
+): T[] {
+  return children.filter((child) => !holdsPage(child))
+}
+
+// ————— O PORTÃO E A BOMBA DA GEOMETRIA (H9) —————
+//
+// As duas peças que decidem QUANDO o motor ouve falar do retângulo. Elas moram
+// aqui, no módulo puro, por duas razões: os DOIS hosts do browser (o painel do
+// dock e a janela destacada) usam exatamente as mesmas — um instrumento
+// copiado vira dois instrumentos na terceira correção —, e porque disciplina de
+// quadro que não é testável é disciplina que ninguém defende.
+
+export interface BrowserBoundsReport {
+  rect: BrowserRect
+  visible: boolean
+}
+
+/**
+ * O PORTÃO: o relato repetido não vai ao motor.
+ *
+ * A chave é o par RETÂNGULO + VISÍVEL, e a visibilidade conta tanto quanto a
+ * geometria: a página que não mudou de lugar mas SAIU DE VISTA (overlay do host
+ * por cima, seção recolhida) precisa que o `false` atravesse. Inverter isso
+ * deixaria uma página de internet pintada por cima do chat do dono.
+ */
+export interface BrowserBoundsGate {
+  /** Este relato é novidade? (e, se for, ele passa a ser o último) */
+  accept(rect: BrowserRect, visible: boolean): boolean
+  /** ESQUECE o último. O próximo relato passa mesmo repetido — é a rota de
+   *  saída de quando o retângulo não mudou mas a VERDADE mudou: a view acabou
+   *  de nascer (o motor não adivinha onde ela vai), o painel voltou à vista, e
+   *  a SOLTA da alça (o render pós-gesto reclampa a altura contra a régua nova
+   *  e pode reencontrar um pixel que já passou no meio do arrasto — calar ali
+   *  deixaria a página nativa parada na altura do último quadro). */
+  reset(): void
+  last(): BrowserBoundsReport | null
+}
+
+export function createBrowserBoundsGate(): BrowserBoundsGate {
+  let last: BrowserBoundsReport | null = null
+  return {
+    accept(rect, visible) {
+      if (last && last.visible === visible && sameBrowserRect(last.rect, rect)) return false
+      last = { rect, visible }
+      return true
+    },
+    reset() {
+      last = null
+    },
+    last() {
+      return last
+    }
+  }
+}
+
+/**
+ * A BOMBA: duas entradas, e a diferença entre elas vale um QUADRO INTEIRO.
+ *
+ * A ordem do quadro no Chromium é a razão de existirem duas (e a sonda
+ * `.synkora/reports/h9/probe-h9-fluidity.mjs` mediu cada uma):
+ *
+ *  · `hot()` — para quem já corre DEPOIS do layout do quadro, e o
+ *    `ResizeObserver` é o caso que importa. Um `requestAnimationFrame` pedido
+ *    de dentro dele só corre no quadro SEGUINTE, e ainda assim ANTES do
+ *    `paint()` do arrasto — ou seja, lê a geometria VELHA. Medido: 2,01 quadros
+ *    de atraso no arrasto da alça, 2,03 no da largura. Medindo na hora: 1,03 e
+ *    1,05 — o piso físico (a view nativa só pode aterrissar na composição
+ *    seguinte).
+ *  · `cold()` — para quem dispara em RAJADA e já é entregue ANTES da fase de
+ *    rAF: `scroll`, `resize` da janela, mutação de portal, o relógio da rede.
+ *    Ali o salto já custava zero (16,3-16,8ms = 1,00 quadro nos dois
+ *    caminhos), e a coalescência é proteção de graça.
+ *
+ * `hot()` CANCELA um quadro frio pendente: o relato dele nasceria velho, e dois
+ * relatos do mesmo retângulo é trabalho que o portão descarta de qualquer jeito.
+ */
+export interface BrowserBoundsPumpHost {
+  /** mede e relata AGORA (quem sabe medir é o host, não a bomba) */
+  measure(): void
+  /** Agenda para o próximo quadro. O identificador tem de ser NÃO-ZERO — é ele
+   *  que responde "há quadro pendente?". O `requestAnimationFrame` do browser
+   *  cumpre isso por especificação (inteiro positivo); um dublê de teste
+   *  também precisa. */
+  requestFrame(run: () => void): number
+  cancelFrame(handle: number): void
+}
+
+export interface BrowserBoundsPump {
+  hot(): void
+  cold(): void
+  /** faxina: um quadro pendente não sobrevive à desmontagem */
+  stop(): void
+  pending(): boolean
+}
+
+export function createBrowserBoundsPump(host: BrowserBoundsPumpHost): BrowserBoundsPump {
+  let frame = 0
+  const drop = (): void => {
+    if (!frame) return
+    host.cancelFrame(frame)
+    frame = 0
+  }
+  return {
+    hot() {
+      drop()
+      host.measure()
+    },
+    cold() {
+      if (frame) return
+      frame = host.requestFrame(() => {
+        frame = 0
+        host.measure()
+      })
+    },
+    stop: drop,
+    pending() {
+      return frame !== 0
+    }
+  }
+}
+
 // ————— BARRA DE URL —————
 
 /** O que o dono digitou, pronto para viajar. Vazio não vira navegação: a

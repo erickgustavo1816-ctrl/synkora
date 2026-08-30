@@ -10,8 +10,9 @@ import {
   BROWSER_NO_API,
   browserRect,
   clipBrowserRect,
+  createBrowserBoundsGate,
+  createBrowserBoundsPump,
   rectHasArea,
-  sameBrowserRect,
   type BrowserEngineState
 } from '../dockBrowserModel'
 import type { BrowserPanelState, BrowserRect } from '../../../preload/index'
@@ -109,17 +110,20 @@ export function BrowserPopoutView({
   //
   // Ele não é opcional: sem relato, o motor põe a página na JANELA INTEIRA
   // (`applyPopoutLayout`, P1) — o que cobriria este chrome com a página.
-  const lastSentRef = useRef<{ rect: BrowserRect; visible: boolean } | null>(null)
+  // O PORTÃO e a BOMBA são os MESMOS do dock (`dockBrowserModel`): um
+  // instrumento copiado vira dois instrumentos na terceira correção.
+  const gateRef = useRef(createBrowserBoundsGate())
   const lastRectRef = useRef<BrowserRect | null>(null)
-  const scheduleRef = useRef<(() => void) | null>(null)
+  /** QUENTE: mede e relata AGORA (ver o bloco no efeito). */
+  const measureRef = useRef<(() => void) | null>(null)
 
   const report = useCallback((mission: string, rect: BrowserRect, shown: boolean): void => {
     const api = browserApi()
     if (!api) return
-    const last = lastSentRef.current
-    if (last && last.visible === shown && sameBrowserRect(last.rect, rect)) return
-    lastSentRef.current = { rect, visible: shown }
-    setPainted(shown)
+    // Espelho do dock (H9): o `painted` só se mexe quando a visibilidade vira.
+    const before = gateRef.current.last()
+    if (!gateRef.current.accept(rect, shown)) return
+    if (!before || before.visible !== shown) setPainted(shown)
     api.bounds(mission, rect, shown)
   }, [])
 
@@ -127,7 +131,6 @@ export function BrowserPopoutView({
     const el = pageRef.current
     if (!el || !missionId) return
     const mission = missionId
-    let frame = 0
 
     const measure = (): void => {
       const box = browserRect(el.getBoundingClientRect())
@@ -140,27 +143,35 @@ export function BrowserPopoutView({
       report(mission, clipped, true)
     }
 
-    const schedule = (): void => {
-      if (frame) return
-      frame = window.requestAnimationFrame(() => {
-        frame = 0
-        measure()
-      })
-    }
-    scheduleRef.current = schedule
+    // GEOMETRIA QUENTE (H9) — a MESMA disciplina do dock, e pela mesma medida:
+    // o `ResizeObserver` é entregue DEPOIS do layout do quadro, então um salto
+    // de `requestAnimationFrame` na saída dele custa um quadro INTEIRO de
+    // página atrás do gesto (2,01 → 1,03 quadros, medido em
+    // `.synkora/reports/h9/probe-h9-fluidity.mjs`). Aqui o gesto é a moldura da
+    // JANELA — arrastar o canto muda a caixa do retângulo, e é o observador de
+    // tamanho que conta. O `resize` da janela e o relógio ficam FRIOS: eles são
+    // entregues antes da fase de rAF, e ali o salto já custava zero.
+    const pump = createBrowserBoundsPump({
+      measure,
+      requestFrame: (run) => window.requestAnimationFrame(run),
+      cancelFrame: (handle) => window.cancelAnimationFrame(handle)
+    })
+    const hot = (): void => pump.hot()
+    const schedule = (): void => pump.cold()
+    measureRef.current = hot
 
     measure()
-    const sizes = new ResizeObserver(schedule)
+    const sizes = new ResizeObserver(hot)
     sizes.observe(el)
     window.addEventListener('resize', schedule)
     const timer = window.setInterval(schedule, BOUNDS_RECONCILE_MS)
 
     return () => {
-      scheduleRef.current = null
+      measureRef.current = null
       window.clearInterval(timer)
       window.removeEventListener('resize', schedule)
       sizes.disconnect()
-      if (frame) window.cancelAnimationFrame(frame)
+      pump.stop()
       // A SAÍDA DECLARADA, como no dock: se este cromo sair de cena com a janela
       // ainda de pé (um limite de painel que pegou uma exceção, um remonte),
       // a página some em vez de ficar cobrindo uma tela quebrada. Ela continua
@@ -171,7 +182,7 @@ export function BrowserPopoutView({
       // há relato atrasado para calar. O único caminho que chega aqui é aquele
       // em que relatar é a coisa certa.
       browserApi()?.bounds(mission, lastRectRef.current ?? ZERO_RECT, false)
-      lastSentRef.current = null
+      gateRef.current.reset()
       lastRectRef.current = null
     }
   }, [missionId, report])
@@ -179,8 +190,8 @@ export function BrowserPopoutView({
   // A tira de abas ganha/perde uma linha e EMPURRA o retângulo sem mudar o
   // tamanho dele — nenhum observador de tamanho enxerga isso.
   useEffect(() => {
-    lastSentRef.current = null
-    scheduleRef.current?.()
+    gateRef.current.reset()
+    measureRef.current?.()
   }, [state.alive, state.tabs.length])
 
   const openBrowser = useCallback((): void => {
