@@ -52,6 +52,14 @@ import {
 } from './browserDriver'
 import { PROBE_MAX_EXTRA_STYLES, type BrowserProbeParams } from './browserProbe'
 import {
+  BROWSER_VIEWPORT_MAX_WIDTH,
+  BROWSER_VIEWPORT_MIN_WIDTH,
+  BROWSER_VIEWPORT_PRESETS,
+  normalizeViewportMode,
+  viewportReceipt,
+  type BrowserViewportMode
+} from './browserViewport'
+import {
   captureBrowserShot,
   BROWSER_SHOT_DEFAULT_QUALITY,
   BROWSER_SHOT_MAX_WIDTH,
@@ -89,6 +97,27 @@ export interface BrowserManagerLike {
   captureReadiness?(
     missionId: string
   ): { ok: true; tab: BrowserManagerTab } | { ok: false; error: string }
+  /**
+   * A LARGURA QUE A PÁGINA ENXERGA (2026-08-29) — a metade de `browser_viewport`
+   * que NÃO é CDP. Ela mora no motor porque é geometria do painel: o zoom de
+   * ajuste sai da moldura, que muda quando o dono arrasta a alça ou destaca o
+   * browser (⧉). Escrever aqui é escrever o MESMO campo que o seletor do chrome
+   * mostra — uma autoridade só, para o dono nunca olhar uma página emulada por
+   * ordem do agente e achar que o site quebrou.
+   * Opcional no espelho pelo mesmo motivo do `captureReadiness`: o dublê da
+   * suíte não precisa dela, e sem ela a tool diz a verdade (não emula largura).
+   */
+  setViewportMode?(
+    missionId: string,
+    mode: BrowserViewportMode,
+    /** O terceiro argumento é o que impede a caixa-preta de creditar ao DONO uma
+     *  emulação que o agente ligou sozinho. */
+    actor?: 'user' | 'agent'
+  ): { ok: true } | { ok: false; error: string }
+  viewportOf?(missionId: string): BrowserViewportMode
+  /** A moldura de AGORA — o recibo precisa dela para contar a largura efetiva
+   *  (o piso de zoom do Chromium morde em painel estreito). */
+  viewportFrameWidth?(missionId: string): number
 }
 
 // ————————————————————————————— o contrato do kit —————————————————————————————
@@ -182,6 +211,36 @@ export interface GuiBrowserToolsDeps {
 
 /** Quanto o ⚡ do chrome fica aceso depois da última ação do agente. */
 const AGENT_DRIVING_LINGER_MS = 2_000
+
+/**
+ * Os presets do agente → o MESMO vocabulário do seletor do dono (o botão que
+ * ele clica é o mesmo estado que esta tool escreve).
+ *
+ * `desktop` MUDOU DE SENTIDO em 2026-08-29 e a mudança é deliberada: ele
+ * emulava "o tamanho real do painel" (que é o `auto` de hoje) e agora emula
+ * 1280 lógicos, que é o que alguém quer dizer ao pedir desktop num painel de
+ * 400px. Quem quer a moldura de verdade pede `auto`.
+ */
+const VIEWPORT_PRESET_WIDTHS: Record<string, BrowserViewportMode> = {
+  auto: 'auto',
+  mobile: 375,
+  tablet: 768,
+  desktop: 1280
+}
+
+/**
+ * O que o agente pediu, em modo do motor. Três respostas possíveis, e as três
+ * importam: `undefined` = não pediu largura nenhuma (só tema), `null` = pediu
+ * uma que não existe (recusa com receita), ou o modo.
+ */
+function viewportModeFrom(input: BrowserViewportOptions): BrowserViewportMode | null | undefined {
+  if (input.width !== undefined) {
+    const mode = normalizeViewportMode(input.width)
+    return mode ?? null
+  }
+  if (input.preset === undefined) return undefined
+  return VIEWPORT_PRESET_WIDTHS[input.preset] ?? null
+}
 
 export function buildGuiBrowserTools(deps: GuiBrowserToolsDeps): GuiBrowserToolkit {
   const log = deps.log ?? ((): void => undefined)
@@ -333,7 +392,51 @@ export function buildGuiBrowserTools(deps: GuiBrowserToolsDeps): GuiBrowserToolk
       )
     },
 
-    viewport: (id, input) => withSession(id, (session) => session.viewport(input), failText),
+    /**
+     * `browser_viewport` = DUAS metades, e cada uma tem um dono diferente.
+     *
+     * A LARGURA é do MOTOR (o painel): o zoom de ajuste sai da moldura, e é o
+     * mesmo estado que o dono vê e muda no seletor do chrome. A tool escreve ali
+     * em vez de emular por CDP — se ela emulasse, existiriam duas verdades sobre
+     * a largura e o seletor do dono mostraria uma mentira.
+     *
+     * O TEMA (`prefers-color-scheme`) é do DRIVER: é emulação de mídia, não
+     * geometria, e ninguém no chrome manda nele.
+     */
+    viewport: (id, input) =>
+      withSession(
+        id,
+        async (session, target) => {
+          const extras: string[] = []
+          const wanted = viewportModeFrom(input)
+          if (wanted === null) {
+            return `largura não reconhecida — use \`preset\` (auto · mobile · tablet · desktop) ou \`width\` entre ${BROWSER_VIEWPORT_MIN_WIDTH} e ${BROWSER_VIEWPORT_MAX_WIDTH}. NADA mudou.`
+          }
+          if (input.colorScheme) extras.push(await session.colorScheme(input.colorScheme))
+          if (wanted === undefined) {
+            if (extras.length === 0) {
+              return 'nada mudou — informe `preset`, `width` ou `colorScheme`.'
+            }
+            // Só o tema: o recibo ainda conta a largura de agora, porque é ela
+            // que explica as medidas que o `browser_probe` vai devolver.
+            const mode = deps.manager.viewportOf?.(target.missionId) ?? 'auto'
+            return viewportReceipt(mode, deps.manager.viewportFrameWidth?.(target.missionId) ?? 0, extras)
+          }
+          const apply = deps.manager.setViewportMode?.(target.missionId, wanted, 'agent')
+          if (!apply) {
+            return `este harness não controla a largura da página (motor antigo) — só o tema foi aplicado.${
+              extras.length ? `\n${extras.join('\n')}` : ''
+            }`
+          }
+          if (!apply.ok) return `${apply.error}. A largura NÃO mudou.`
+          return viewportReceipt(
+            wanted,
+            deps.manager.viewportFrameWidth?.(target.missionId) ?? 0,
+            extras
+          )
+        },
+        failText
+      ),
 
     console: (id, input) =>
       withSession(id, async (session) => session.consoleText(input), failText),
@@ -628,14 +731,21 @@ export function registerBrowserKit(
     'browser_viewport',
     {
       description:
-        'MUDA O TAMANHO E O TEMA da página em uma ida: preset mobile/tablet/desktop, largura/altura à mão, e `colorScheme` claro/escuro (que é o `prefers-color-scheme` de verdade, não um truque de CSS). É assim que o QA de responsivo e o de tema claro/escuro deixam de ser duas rodadas. Depois de mudar, o layout já reagiu: chame browser_probe para medir e browser_shot para o dono ver.',
+        'MUDA A LARGURA QUE A PÁGINA ENXERGA e o TEMA em uma ida: preset auto/mobile/tablet/desktop, `width` livre, e `colorScheme` claro/escuro (o `prefers-color-scheme` de verdade, não um truque de CSS). É assim que o QA de responsivo e o de tema deixam de ser duas rodadas. IMPORTANTE: o painel do browser é ESTREITO, então sem isto toda página responsiva te entrega o layout de celular — peça `desktop` antes de julgar qualquer tela. A página é ESCALADA para caber na moldura, e as medidas de browser_probe seguem em pixels lógicos. O DONO vê esta mesma largura no seletor do chrome do browser (AUTO · 375 · 768 · 1280) e pode mudá-la a qualquer momento: é um estado só, compartilhado — não existe emulação escondida dele.',
       inputSchema: {
         preset: z
-          .enum(['mobile', 'tablet', 'desktop'])
+          .enum(['auto', 'mobile', 'tablet', 'desktop'])
           .optional()
-          .describe('mobile 390x844 · tablet 834x1112 · desktop devolve o tamanho real do painel'),
-        width: z.number().int().min(200).max(4_000).optional(),
-        height: z.number().int().min(200).max(4_000).optional(),
+          .describe(
+            `auto = a largura real da moldura (sem emulação) · mobile ${BROWSER_VIEWPORT_PRESETS[0]} · tablet ${BROWSER_VIEWPORT_PRESETS[1]} · desktop ${BROWSER_VIEWPORT_PRESETS[2]}`
+          ),
+        width: z
+          .number()
+          .int()
+          .min(BROWSER_VIEWPORT_MIN_WIDTH)
+          .max(BROWSER_VIEWPORT_MAX_WIDTH)
+          .optional()
+          .describe('largura lógica à mão, quando nenhum preset serve (vence o `preset`)'),
         colorScheme: z
           .enum(['light', 'dark'])
           .optional()

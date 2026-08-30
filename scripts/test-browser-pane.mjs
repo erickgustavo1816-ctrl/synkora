@@ -49,9 +49,15 @@ import {
   BROWSER_PAGE_MIN_HEIGHT,
   BROWSER_PAGE_RAIL_FLOOR,
   BROWSER_TAB_CAP as BROWSER_TAB_CAP_UI,
+  BROWSER_VIEWPORT_CHOICES,
   EMPTY_BROWSER_PANEL,
   activeBrowserTab,
   browserIsPopout,
+  browserViewportHint,
+  browserViewportIsCustom,
+  browserViewportLabel,
+  browserViewportNote,
+  browserViewportOf,
   browserPageBounds,
   browserPageFraction,
   browserPageHeight,
@@ -91,6 +97,19 @@ import {
   isBrowserPanelRect,
   normalizeBrowserUrl
 } from '../.tmp/browser-pane-test/browserPane.js'
+
+// A MATEMÁTICA da largura emulada (2026-08-29). Módulo puro, sem Electron: ele
+// chega compilado de carona no import graph do motor, que é quem o consome.
+import {
+  BROWSER_VIEWPORT_MAX_WIDTH,
+  BROWSER_VIEWPORT_MIN_WIDTH,
+  BROWSER_ZOOM_FLOOR,
+  applyViewportFit,
+  normalizeViewportMode,
+  viewportEffectiveWidth,
+  viewportFitZoom,
+  viewportIsClamped
+} from '../.tmp/browser-pane-test/browserViewport.js'
 
 // ————————————————————————————————————————————————————————————————
 // A. O MODELO DO PAINEL (H3) — estado, palavras e geometria
@@ -612,8 +631,42 @@ function fakeWebContents() {
   wc.setWindowOpenHandler = (handler) => {
     wc.windowOpenHandler = handler
   }
+  // ——— O ZOOM DE AJUSTE (a largura que a página enxerga, 2026-08-29) ———
+  //
+  // O dublê é o `HostZoomMap` do Chromium visto de fora, e ele é COMPARTILHADO
+  // POR ORIGEM de propósito: a sonda mediu que `setZoomFactor` numa aba VAZA
+  // para toda aba do mesmo host na mesma sessão (a view irmã pulou de
+  // `innerWidth 540` para 1728 sozinha; a de outra partition não se mexeu).
+  //
+  // Isso não é capricho de fidelidade: é o que faz a ORDEM de escrita importar.
+  // Com duas abas da mesma missão no mesmo endereço e modos diferentes, quem
+  // escrever por último vence — e tem de ser a aba que o dono está OLHANDO. Um
+  // dublê com zoom por aba não prenderia essa regressão.
+  wc.zooms = []
+  wc.zoomKey = () => {
+    try {
+      return new URL(wc.url).host || `wc:${wc.id}`
+    } catch {
+      return `wc:${wc.id}`
+    }
+  }
+  wc.getZoomFactor = () => HOST_ZOOM.get(wc.zoomKey()) ?? 1
+  wc.setZoomFactor = (factor) => {
+    HOST_ZOOM.set(wc.zoomKey(), factor)
+    wc.zooms.push(factor)
+  }
+  // Escrever `wc.zoom` continua valendo (é como a suíte simula o vazamento de um
+  // vizinho): ele é a mesma célula do mapa, vista pela aba.
+  Object.defineProperty(wc, 'zoom', {
+    get: () => wc.getZoomFactor(),
+    set: (factor) => HOST_ZOOM.set(wc.zoomKey(), factor)
+  })
   return wc
 }
+
+/** O mapa de zoom POR HOST da sessão — o dublê do `HostZoomMap` do Chromium.
+ *  Zerado a cada aba nova para um teste não herdar o zoom do anterior. */
+const HOST_ZOOM = new Map()
 
 /**
  * O host falso. Ele é o CARCEREIRO DA PRIMEIRA LEI: com `forbidDetach` ligado,
@@ -709,6 +762,9 @@ function fakeHost(options = {}) {
 }
 
 function makeManager(options = {}) {
+  // O mapa de zoom do Chromium é da SESSÃO: cada cenário começa limpo, senão um
+  // teste herdaria o zoom que o anterior deixou no mesmo host.
+  HOST_ZOOM.clear()
   const host = fakeHost(options)
   const records = []
   const pushes = []
@@ -847,11 +903,14 @@ test('MOTOR/CICLO: `closeMission` derruba tudo, registra e zera o state (a parti
 
   // `host: 'dock'` entrou na fotografia com o POP-OUT (P1): missão zerada
   // volta ao dock por definição — não existe janela órfã de missão morta.
+  // `viewport: 'auto'` entrou com a LARGURA EMULADA (2026-08-29): missão zerada
+  // não emula nada, e o seletor do chrome desenha AUTO aceso.
   assert.deepEqual(manager.state('m1'), {
     alive: false,
     agentDriving: false,
     tabs: [],
-    host: 'dock'
+    host: 'dock',
+    viewport: 'auto'
   })
   assert.equal(manager.hasMission('m1'), false)
   assert.equal(manager.hasMission('m2'), true, 'a missão vizinha não é levada junto')
@@ -1165,7 +1224,9 @@ test('MOTOR: o state reflete o `webContents` de verdade, e as alavancas recusam 
     active: true,
     loading: true,
     canBack: true,
-    canForward: false
+    canForward: false,
+    // A largura é POR ABA e nasce em AUTO (2026-08-29).
+    viewport: 'auto'
   })
 
   assert.equal(manager.goBack('m1'), true)
@@ -1386,6 +1447,7 @@ function fakePopouts(host) {
 }
 
 function makeHostedManager(options = {}) {
+  HOST_ZOOM.clear()
   const host = fakeHost({ tracksWindows: true, ...options })
   const popouts = fakePopouts(host)
   const records = []
@@ -1597,7 +1659,13 @@ test('MISSÃO ENCERRADA leva a janela destacada junto — e o estado volta a `ho
   // Uma janela órfã na taskbar mostrando uma missão que o dono acabou de
   // arquivar é pior do que qualquer view pendurada.
   assert.equal(popouts.windows.has('m1'), false)
-  assert.deepEqual(manager.state('m1'), { alive: false, agentDriving: false, tabs: [], host: 'dock' })
+  assert.deepEqual(manager.state('m1'), {
+    alive: false,
+    agentDriving: false,
+    tabs: [],
+    host: 'dock',
+    viewport: 'auto'
+  })
   // O teardown desanexa do HOST CERTO: a view era filha da janela destacada,
   // não da janela do app.
   assert.deepEqual(timeline('detach', 'popout:detach', 'popout:close'), ['popout:detach', 'popout:close'])
@@ -1716,4 +1784,355 @@ test('⧉ RECUSA COM RECEITA: sem aba aberta, e num app cujo main é anterior ao
   // Reencaixar quem nunca saiu é SUCESSO; sobre missão que não existe, recusa.
   assert.deepEqual(manager.dockBack('m1'), { ok: true })
   assert.equal(manager.dockBack('missao-que-nao-existe').ok, false)
+})
+
+// ————————————————————————————————————————————————————————————————
+// D. A LARGURA QUE A PÁGINA ENXERGA (2026-08-29)
+// ————————————————————————————————————————————————————————————————
+//
+// REPROVAÇÃO DO DONO, olhando o painel vivo: "ta meio limitado o quanto consigo
+// deixar ele maior, meio que sempre vou ver o site/app com modo tablet, ta um
+// pouco diferente de como e hoje no claude code."
+//
+// A causa é geométrica: a página renderiza na largura FÍSICA do trilho
+// (~300-500px), então todo site responsivo entrega o layout de celular. A
+// receita saiu de binário real (`PROBE_BROWSER_VIEWPORT_FIT_2026-08-29.md`):
+// `setZoomFactor(moldura ÷ larguraLógica)`, SOZINHO — nunca combinado com
+// `Emulation.setDeviceMetricsOverride`, que MULTIPLICA (override de 1280 mais
+// zoom de 0,3125 entregou 4096 CSS px à página, medido e estável).
+//
+// O que estas cercas prendem: a MATEMÁTICA (incluindo o piso de 0,25× do
+// Chromium, que a API NÃO denuncia) e o QUANDO — porque o zoom sai da moldura, e
+// a moldura muda quando o dono arrasta a alça, troca de aba, destaca a janela ou
+// navega.
+
+test('LARGURA/PURO: o modo é lido com receita — e largura de engano NÃO vira zoom', () => {
+  assert.equal(normalizeViewportMode('auto'), 'auto')
+  assert.equal(normalizeViewportMode(undefined), 'auto', 'ausente é auto (motor antigo)')
+  assert.equal(normalizeViewportMode(1280), 1280)
+  assert.equal(normalizeViewportMode('768'), 768, 'o IPC pode entregar texto')
+  assert.equal(normalizeViewportMode(1279.6), 1280, 'sub-pixel não existe em largura de viewport')
+  assert.equal(normalizeViewportMode(BROWSER_VIEWPORT_MIN_WIDTH), BROWSER_VIEWPORT_MIN_WIDTH)
+  assert.equal(normalizeViewportMode(BROWSER_VIEWPORT_MAX_WIDTH), BROWSER_VIEWPORT_MAX_WIDTH)
+  // Fora da faixa e lixo NÃO viram largura: uma escala inventada aqui escalaria
+  // a página na tela do dono por causa de um payload torto.
+  assert.equal(normalizeViewportMode(BROWSER_VIEWPORT_MIN_WIDTH - 1), null)
+  assert.equal(normalizeViewportMode(BROWSER_VIEWPORT_MAX_WIDTH + 1), null)
+  assert.equal(normalizeViewportMode('desktop'), null)
+  assert.equal(normalizeViewportMode(Number.NaN), null)
+  assert.equal(normalizeViewportMode({}), null)
+})
+
+test('LARGURA/PURO: o zoom é a moldura dividida pela largura — e o PISO do Chromium morde', () => {
+  // O caso do dono: trilho de 400px querendo desktop.
+  assert.equal(viewportFitZoom(1280, 400), 0.3125)
+  assert.equal(viewportEffectiveWidth(1280, 400), 1280)
+  assert.equal(viewportIsClamped(1280, 400), false)
+
+  // AUTO nunca escala nada (ligar/desligar não recarrega a página — medido).
+  assert.equal(viewportFitZoom('auto', 400), 1)
+  assert.equal(viewportEffectiveWidth('auto', 400), 400)
+
+  // O PISO DE 0,25, medido em binário: `setZoomFactor(0.234)` é ACEITO,
+  // `getZoomFactor()` devolve 0,234 — e o Chromium renderiza com 0,25, dando à
+  // página 1200px em vez de 1280. Sem esta conta o chrome mostraria "1280"
+  // aceso ao lado de uma página de 1200.
+  assert.equal(viewportFitZoom(1280, 300), BROWSER_ZOOM_FLOOR)
+  assert.equal(viewportEffectiveWidth(1280, 300), 1200)
+  assert.equal(viewportIsClamped(1280, 300), true)
+
+  // AMPLIAR é exato no alcance útil (medido: moldura de 1400 pedindo 375 deu
+  // 375 cravados) — é o botão "celular" numa janela destacada larga.
+  assert.equal(viewportFitZoom(375, 1400), 1400 / 375)
+  assert.equal(viewportEffectiveWidth(375, 1400), 375)
+
+  // Moldura ainda não relatada (painel fechado, refúgio) não vira geometria
+  // inventada.
+  assert.equal(viewportFitZoom(1280, 0), 1)
+  assert.equal(viewportFitZoom(1280, Number.NaN), 1)
+})
+
+test('LARGURA/PURO: o fit LÊ o valor vivo antes de escrever (e só escreve quando muda)', () => {
+  const wc = {
+    zoom: 1,
+    writes: 0,
+    getZoomFactor: () => wc.zoom,
+    setZoomFactor: (z) => {
+      wc.zoom = z
+      wc.writes++
+    }
+  }
+
+  assert.deepEqual(applyViewportFit(wc, 1280, 400), { zoom: 0.3125, changed: true })
+  assert.equal(wc.writes, 1)
+  // O relato de geometria chega a cada quadro de um arrasto: reescrever o mesmo
+  // zoom sessenta vezes por segundo é trabalho puro.
+  assert.deepEqual(applyViewportFit(wc, 1280, 400), { zoom: 0.3125, changed: false })
+  assert.equal(wc.writes, 1)
+
+  // A ROTA DE SAÍDA DO VAZAMENTO POR ORIGEM (medido: `setZoomFactor` numa aba
+  // vaza para toda aba do mesmo host na mesma sessão, e PARA na fronteira da
+  // partition). O motor não guarda uma lembrança do que aplicou: ele PERGUNTA.
+  // Vizinho que empurrou zoom errado é corrigido no próximo layout.
+  wc.zoom = 0.9
+  assert.equal(applyViewportFit(wc, 1280, 400).changed, true)
+  assert.equal(wc.zoom, 0.3125)
+
+  // Aba morrendo entre a decisão e a escrita não derruba o layout de ninguém.
+  const morto = {
+    getZoomFactor: () => {
+      throw new Error('webContents destruído')
+    },
+    setZoomFactor: () => {
+      throw new Error('webContents destruído')
+    }
+  }
+  assert.deepEqual(applyViewportFit(morto, 1280, 400), { zoom: 0.3125, changed: false })
+})
+
+test('LARGURA/MOTOR: o modo nasce AUTO, é POR ABA, e o inválido recusa com receita', async () => {
+  const { manager, records } = makeManager()
+  const primeira = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
+
+  assert.equal(manager.viewportOf('m1'), 'auto')
+  assert.equal(manager.state('m1').viewport, 'auto')
+  assert.equal(primeira.webContents.getZoomFactor(), 1, 'AUTO não escala nada')
+
+  assert.deepEqual(manager.setViewportMode('m1', 1280), { ok: true, tabId: primeira.tabId })
+  assert.equal(manager.state('m1').viewport, 1280)
+  assert.equal(manager.state('m1').viewportWidth, 1280)
+  assert.equal(primeira.webContents.getZoomFactor(), 0.3125)
+  const diario = records.filter((entry) => entry.event === 'browser-viewport-mode')
+  assert.equal(diario.length, 1)
+  assert.equal(diario[0].actor, 'user', 'o gesto do dono é do dono')
+  // E o do AGENTE é do agente: as duas mãos escrevem o MESMO estado, mas a
+  // caixa-preta não pode creditar ao dono uma emulação que o agente ligou.
+  manager.setViewportMode('m1', 768, 'agent')
+  assert.equal(records.filter((entry) => entry.event === 'browser-viewport-mode').at(-1).actor, 'agent')
+  manager.setViewportMode('m1', 1280)
+
+  // ABA NOVA nasce em AUTO mesmo com a irmã emulada: herdar em silêncio faria o
+  // `+` abrir uma página já escalada sem ninguém ter pedido.
+  await manager.newTab('m1', 'p', 'https://b.test/')
+  assert.equal(manager.viewportOf('m1'), 'auto', 'a nova é a ativa, e ela é AUTO')
+  assert.deepEqual(
+    manager.state('m1').tabs.map((tab) => tab.viewport),
+    [1280, 'auto']
+  )
+  // Voltar para a primeira devolve o modo DELA — o estado é por aba.
+  manager.selectTab('m1', primeira.tabId)
+  assert.equal(manager.viewportOf('m1'), 1280)
+
+  // Largura de engano recusa NOMEANDO a saída, e não mexe em nada.
+  const recusa = manager.setViewportMode('m1', 42)
+  assert.equal(recusa.ok, false)
+  assert.match(recusa.error, /use AUTO ou um número/u)
+  assert.equal(manager.viewportOf('m1'), 1280, 'a recusa não deixa o estado mentindo')
+
+  // Missão sem aba: a recusa ensina o gesto que destrava.
+  const semAba = makeManager()
+  const vazio = semAba.manager.setViewportMode('m1', 1280)
+  assert.equal(vazio.ok, false)
+  assert.match(vazio.error, /abra uma aba \(\+\)/u)
+})
+
+test('LARGURA/MOTOR: AUTO devolve a moldura FÍSICA — a porta de volta é grátis', async () => {
+  const { manager } = makeManager()
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
+
+  manager.setViewportMode('m1', 1280)
+  assert.equal(tab.webContents.getZoomFactor(), 0.3125)
+  assert.deepEqual(manager.setViewportMode('m1', 'auto'), { ok: true, tabId: tab.tabId })
+  assert.equal(tab.webContents.getZoomFactor(), 1, 'AUTO é zoom 1, não um zoom "quase 1"')
+  assert.equal(manager.state('m1').viewport, 'auto')
+  assert.equal(manager.state('m1').viewportWidth, 400, 'em AUTO a largura efetiva É a moldura')
+
+  // Idempotente: clicar duas vezes no mesmo botão não é recusa — e REAPLICA, que
+  // é a rota de saída quando o zoom de um vizinho do mesmo host vazou por cima.
+  tab.webContents.zoom = 0.5
+  assert.deepEqual(manager.setViewportMode('m1', 'auto'), { ok: true, tabId: tab.tabId })
+  assert.equal(tab.webContents.getZoomFactor(), 1)
+})
+
+test('LARGURA/MOTOR: o fit é RECALCULADO a cada relato de bounds (o dono arrastando a alça)', async () => {
+  const { manager } = makeManager()
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
+  manager.setViewportMode('m1', 1280)
+  assert.equal(tab.webContents.getZoomFactor(), 0.3125)
+
+  // O dono alarga o painel. Sem recalcular, a página seguiria com zoom 0,3125 e
+  // passaria a enxergar 2432px lógicos — deixaria de ser o modo que o botão
+  // aceso promete (medido na sonda, P5).
+  manager.applyBounds('m1', { x: 0, y: 0, width: 760, height: 600 }, true)
+  assert.equal(tab.webContents.getZoomFactor(), 760 / 1280)
+  assert.equal(manager.state('m1').viewportWidth, 1280)
+
+  // E encolher também: o piso do Chromium entra em cena, e o state conta a
+  // verdade (1200, não 1280) para o chrome poder avisar.
+  manager.applyBounds('m1', { x: 0, y: 0, width: 300, height: 600 }, true)
+  assert.equal(tab.webContents.getZoomFactor(), BROWSER_ZOOM_FLOOR)
+  assert.equal(manager.state('m1').viewportWidth, 1200)
+
+  // Gesto na JANELA (arrastar a borda) passa pelo mesmo caminho: o clamp muda a
+  // moldura sem o ResizeObserver do painel acordar.
+  const outro = makeManager()
+  const alvo = await outro.manager.ensureTab('m1', 'p', 'https://a.test/')
+  outro.manager.applyBounds('m1', { x: 0, y: 0, width: 800, height: 600 }, true)
+  outro.manager.setViewportMode('m1', 1280)
+  assert.equal(alvo.webContents.getZoomFactor(), 0.625)
+  outro.host.size = { width: 500, height: 600 }
+  outro.host.windowHooks.onGeometry()
+  assert.equal(alvo.webContents.getZoomFactor(), 500 / 1280, 'a janela encolheu e o fit acompanhou')
+})
+
+test('LARGURA/MOTOR: a aba ATIVA escreve por ÚLTIMO (o zoom do Chromium é por origem)', async () => {
+  const { manager } = makeManager()
+  const primeira = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.newTab('m1', 'p', 'https://a.test/')
+  const ativa = manager.activeTab('m1')
+  manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
+  manager.setViewportMode('m1', 1280)
+
+  // Duas abas no MESMO host: o Chromium compartilha o zoom por origem dentro da
+  // sessão (medido — a view irmã pulou de innerWidth 540 para 1728 sozinha). A
+  // aba de FUNDO está em AUTO; se ELA escrevesse por último, o dono ficaria
+  // olhando a página dele com o zoom da aba que ele NÃO está vendo.
+  assert.notEqual(ativa.tabId, primeira.tabId)
+  assert.equal(manager.state('m1').tabs.find((tab) => !tab.active).viewport, 'auto')
+  assert.equal(primeira.webContents.getZoomFactor(), 0.3125, 'as duas dividem a MESMA célula')
+  assert.equal(ativa.webContents.getZoomFactor(), 0.3125)
+
+  // Um relayout inteiro (o dono arrastando a alça) termina com a escrita da
+  // ATIVA: o valor que sobra na célula compartilhada é o do modo DELA.
+  manager.applyBounds('m1', { x: 0, y: 0, width: 640, height: 600 }, true)
+  assert.equal(ativa.webContents.getZoomFactor(), 0.5, 'o último a escrever é o que o dono vê')
+  assert.equal(ativa.webContents.zooms.at(-1), 0.5)
+})
+
+test('LARGURA/MOTOR: o modo SOBREVIVE à navegação (e o fit é re-aplicado), mas MORRE com a aba', async () => {
+  const { manager } = makeManager()
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
+  manager.setViewportMode('m1', 1280)
+
+  await manager.navigate('m1', 'https://outra.test/')
+  assert.equal(manager.viewportOf('m1'), 1280, 'navegar não desliga o modo do dono')
+
+  // RE-DERIVÁVEL, não uma entrega única: o zoom do Chromium mora num mapa por
+  // HOST, e uma origem nova pode chegar sem ele. O evento de navegação REFAZ o
+  // fit — aqui, o mesmo evento que o Chromium emite.
+  tab.webContents.zoom = 1
+  tab.webContents.emit('did-navigate')
+  assert.equal(tab.webContents.getZoomFactor(), 0.3125)
+  tab.webContents.zoom = 1
+  tab.webContents.emit('did-finish-load')
+  assert.equal(tab.webContents.getZoomFactor(), 0.3125)
+
+  // MORRE COM A ABA: fechar e abrir outra devolve AUTO. Nada disto é persistido
+  // — uma página emulada que voltasse assim depois de um restart seria um estado
+  // fantasma que o dono não pediu.
+  await manager.newTab('m1', 'p', 'https://b.test/')
+  manager.closeTab('m1', tab.tabId)
+  assert.equal(manager.viewportOf('m1'), 'auto')
+})
+
+test('LARGURA/MOTOR: destacar (⧉) refaz o fit com a moldura da JANELA', async () => {
+  const { manager, popouts } = makeHostedManager()
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
+  manager.setViewportMode('m1', 1280)
+  assert.equal(tab.webContents.getZoomFactor(), 0.3125)
+
+  // A janela destacada é MUITO mais larga: o mesmo modo passa a quase não
+  // escalar. Sem refazer o fit aqui, a página iria para a janela grande com o
+  // zoom do trilho estreito — minúscula no meio dela.
+  manager.popOut('m1')
+  manager.applyBounds('m1', POPOUT_RECT, true, 'popout')
+  assert.ok(popouts.get('m1'))
+  assert.equal(tab.webContents.getZoomFactor(), POPOUT_RECT.width / 1280)
+  assert.equal(manager.state('m1').viewportWidth, 1280)
+
+  // E o reencaixe volta para a moldura do dock.
+  manager.dockBack('m1')
+  manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
+  assert.equal(tab.webContents.getZoomFactor(), 0.3125)
+})
+
+test('LARGURA/PAINEL: o seletor lê o estado do motor — inclusive o que o AGENTE pôs', () => {
+  // O chrome é a única superfície onde o dono descobre que a página está
+  // emulada. Se o normalizador comesse o campo, ele olharia uma página de 1280
+  // lógicos com AUTO aceso e concluiria que o site quebrou.
+  const emulado = normalizeBrowserPanel({
+    alive: true,
+    tabs: [{ tabId: 't1', active: true, viewport: 1280 }],
+    viewport: 1280,
+    viewportWidth: 1200
+  })
+  assert.equal(browserViewportOf(emulado), 1280)
+  assert.equal(emulado.tabs[0].viewport, 1280)
+  assert.equal(emulado.viewportWidth, 1200)
+  assert.equal(browserViewportIsCustom(1280), false)
+
+  // Ausente é AUTO (motor anterior ao seletor), e `'auto'` NÃO é gravado: uma
+  // segunda grafia do mesmo estado faria `sameBrowserPanel` ver diferença onde
+  // não há.
+  const velho = normalizeBrowserPanel({ alive: true, tabs: [{ tabId: 't1', active: true }] })
+  assert.equal(browserViewportOf(velho), 'auto')
+  assert.equal('viewport' in velho, false)
+  assert.equal(velho.tabs[0].viewport, 'auto')
+  // Payload torto não vira escala na tela de ninguém.
+  assert.equal(browserViewportOf(normalizeBrowserPanel({ viewport: 'grande' })), 'auto')
+  assert.equal(browserViewportOf(normalizeBrowserPanel({ viewport: -20 })), 'auto')
+
+  // LARGURA LIVRE do agente: nenhum botão acende, e a ficha mostra o número.
+  assert.equal(browserViewportIsCustom(1440), true)
+  assert.equal(browserViewportIsCustom('auto'), false)
+  assert.equal(browserViewportLabel('auto'), 'AUTO')
+  assert.equal(browserViewportLabel(768), '768')
+  assert.deepEqual([...BROWSER_VIEWPORT_CHOICES], ['auto', 375, 768, 1280])
+})
+
+test('LARGURA/PAINEL: a fotografia REPINTA quando o modo muda, e o resumo o carrega', () => {
+  const base = normalizeBrowserPanel({
+    alive: true,
+    tabs: [{ tabId: 't1', active: true, title: 'Board' }]
+  })
+  const emulado = normalizeBrowserPanel({
+    alive: true,
+    tabs: [{ tabId: 't1', active: true, title: 'Board', viewport: 1280 }],
+    viewport: 1280
+  })
+  // Sem esta diferença, o modo posto pelo AGENTE não repintaria o chrome.
+  assert.equal(sameBrowserPanel(base, base), true)
+  assert.equal(sameBrowserPanel(base, emulado), false)
+
+  // A largura EFETIVA também repinta: é ela que dispara o aviso do piso.
+  const apertado = normalizeBrowserPanel({
+    alive: true,
+    tabs: [{ tabId: 't1', active: true, title: 'Board', viewport: 1280 }],
+    viewport: 1280,
+    viewportWidth: 1200
+  })
+  assert.equal(sameBrowserPanel(emulado, apertado), false)
+
+  // O RESUMO da seção RECOLHIDA carrega a largura: uma página em 1280 lógicos
+  // num painel de 400px é a diferença entre "o site quebrou" e "é o modo
+  // desktop", e o dono não pode precisar reabrir a seção para descobrir isso.
+  assert.equal(browserSectionSummary(base), 'Board')
+  assert.equal(browserSectionSummary(emulado), 'Board · 1280')
+
+  // O AVISO do piso do Chromium só aparece quando ele MORDE.
+  assert.equal(browserViewportNote(base), null)
+  assert.equal(browserViewportNote(emulado), null)
+  assert.match(browserViewportNote(apertado), /a página está recebendo 1200px/u)
+  assert.match(browserViewportNote(apertado), /alargue o painel|destaque em janela própria/u)
+
+  // A frase de cada botão ensina o que o gesto faz — e o preço.
+  assert.match(browserViewportHint('auto'), /largura real do painel/u)
+  assert.match(browserViewportHint(1280), /emula largura de desktop \(1280px\) e ajusta à moldura/u)
+  assert.match(browserViewportHint(768), /tablet/u)
+  assert.match(browserViewportHint(375), /celular/u)
 })

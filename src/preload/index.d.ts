@@ -14,7 +14,8 @@ export type {
   BrowserNoticeView,
   BrowserPanelState,
   BrowserRect,
-  BrowserTab
+  BrowserTab,
+  BrowserViewportMode
 } from './index'
 
 export type {

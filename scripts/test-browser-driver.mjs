@@ -766,6 +766,10 @@ function toolkitOn(t, fixture, options = {}) {
     })
   }
   const driving = []
+  // A LARGURA QUE A PÁGINA ENXERGA (2026-08-29) mora no MOTOR, não no CDP: o
+  // dublê guarda o modo como o manager real guarda, para a suíte poder provar
+  // que a tool escreve ALI — e não numa segunda verdade só dela.
+  const viewport = { mode: 'auto', frameWidth: options.frameWidth ?? 400, writes: [] }
   const manager = {
     ensureTab: async () => tab,
     activeTab: () => (options.noTab ? undefined : tab),
@@ -773,7 +777,19 @@ function toolkitOn(t, fixture, options = {}) {
     selectTab: () => true,
     closeMission: () => undefined,
     setAgentDriving: (missionId, on) => driving.push({ missionId, on }),
-    ...(options.captureReadiness ? { captureReadiness: options.captureReadiness } : {})
+    ...(options.captureReadiness ? { captureReadiness: options.captureReadiness } : {}),
+    ...(options.noViewport
+      ? {}
+      : {
+          setViewportMode: (missionId, mode, actor) => {
+            viewport.writes.push({ missionId, mode, actor })
+            if (options.refuseViewport) return { ok: false, error: options.refuseViewport }
+            viewport.mode = mode
+            return { ok: true }
+          },
+          viewportOf: () => viewport.mode,
+          viewportFrameWidth: () => viewport.frameWidth
+        })
   }
   const tools = buildGuiBrowserTools({
     manager,
@@ -781,7 +797,7 @@ function toolkitOn(t, fixture, options = {}) {
       options.noTarget ? undefined : { missionId: 'missao-1', projectId: 'universo-1', root },
     cliOf: () => options.cli ?? 'claude'
   })
-  return { tools, root, driving, host }
+  return { tools, root, driving, host, viewport }
 }
 
 const IDENTITY = Object.freeze({
@@ -880,6 +896,113 @@ test('TOOLKIT: toda tool de trabalho acende o ⚡ do chrome (o dono vê o agente
   assert.ok(driving.length >= 2)
   assert.ok(driving.every((entry) => entry.missionId === 'missao-1'))
   assert.equal(driving[0].on, true)
+})
+
+// ————————————————————————————————————————————————————————————————
+// B2. A LARGURA QUE A PÁGINA ENXERGA — uma autoridade só (2026-08-29)
+// ————————————————————————————————————————————————————————————————
+//
+// A reprovação do dono: *"ta meio limitado o quanto consigo deixar ele maior,
+// meio que sempre vou ver o site/app com modo tablet"*. O painel é estreito, e a
+// página renderizava na largura FÍSICA dele.
+//
+// O que estas cercas prendem NÃO é o zoom (isso é do `test:browser-pane`): é a
+// FRONTEIRA. `browser_viewport` deixou de emular tamanho por CDP e passou a
+// escrever o estado do MOTOR — o mesmo que o seletor do chrome do dono mostra.
+// Se um dia alguém devolver o `Emulation.setDeviceMetricsOverride` para cá,
+// existirão duas verdades sobre a largura e o seletor do dono passará a mentir.
+
+test('VIEWPORT: os presets do agente são os MESMOS botões do dono — e `desktop` é 1280', async (t) => {
+  const fixture = makeFixture({ items: 0 })
+  const { tools, viewport, host } = toolkitOn(t, fixture)
+
+  await tools.viewport(IDENTITY, { preset: 'desktop' })
+  // O `actor` viaja junto: a caixa-preta não pode creditar ao DONO a emulação
+  // que o agente ligou sozinho (os dois escrevem o mesmo campo).
+  assert.deepEqual(viewport.writes.at(-1), { missionId: 'missao-1', mode: 1280, actor: 'agent' })
+  await tools.viewport(IDENTITY, { preset: 'tablet' })
+  assert.equal(viewport.writes.at(-1).mode, 768)
+  await tools.viewport(IDENTITY, { preset: 'mobile' })
+  assert.equal(viewport.writes.at(-1).mode, 375)
+  // `auto` é a porta de VOLTA: a moldura de verdade, sem emulação nenhuma.
+  await tools.viewport(IDENTITY, { preset: 'auto' })
+  assert.equal(viewport.writes.at(-1).mode, 'auto')
+  // `width` livre vence o preset (o dono vê o número na ficha do chrome).
+  await tools.viewport(IDENTITY, { preset: 'mobile', width: 1440 })
+  assert.equal(viewport.writes.at(-1).mode, 1440)
+
+  // A CERCA DE VERDADE: nenhuma dessas idas emulou TAMANHO por CDP. O tamanho é
+  // do motor; o que sobrou de emulação aqui é só o tema.
+  assert.equal(
+    host.sent.filter((entry) => entry.method === 'Emulation.setDeviceMetricsOverride').length,
+    0,
+    'a largura voltou a ser emulada por CDP — o seletor do dono agora mente'
+  )
+})
+
+test('VIEWPORT: o recibo conta a ESCALA, o piso do Chromium e o controle COMPARTILHADO', async (t) => {
+  const fixture = makeFixture({ items: 0 })
+  const { tools } = toolkitOn(t, fixture, { frameWidth: 400 })
+  const receipt = await tools.viewport(IDENTITY, { preset: 'desktop' })
+
+  assert.match(receipt, /1280px lógicos/u)
+  assert.match(receipt, /ESCALADA \(0\.313×\) para caber na moldura de 400px/u)
+  // O agente NÃO pode converter medida nenhuma: probe e act falam em lógico.
+  assert.match(receipt, /pixels LÓGICOS/u)
+  // E ele precisa saber que o dono vê (e muda) o mesmo estado — senão relata ao
+  // dono uma emulação que o dono está olhando de outro jeito.
+  assert.match(receipt, /O DONO vê e muda este mesmo modo pelo seletor do chrome/u)
+  assert.match(receipt, /AUTO · 375 · 768 · 1280/u)
+
+  // MOLDURA ESTREITA: o Chromium não desce de 0,25× de zoom (medido na sonda),
+  // então a página recebe 1200px, não 1280 — e o recibo DIZ, com a saída.
+  const apertado = toolkitOn(t, makeFixture({ items: 0 }), { frameWidth: 300 })
+  const nota = await apertado.tools.viewport(IDENTITY, { preset: 'desktop' })
+  assert.match(nota, /ATENÇÃO: a moldura é estreita demais para 1280px/u)
+  assert.match(nota, /recebeu 1200px, não 1280px/u)
+  assert.match(nota, /alargue o painel .* ou destaque o browser em janela própria/u)
+})
+
+test('VIEWPORT: o TEMA continua sendo CDP — e largura sem motor não vira silêncio', async (t) => {
+  const fixture = makeFixture({ items: 0 })
+  const { tools, viewport, host } = toolkitOn(t, fixture)
+
+  // Só o tema: emulação de MÍDIA é do driver, e o motor não é tocado.
+  const soTema = await tools.viewport(IDENTITY, { colorScheme: 'dark' })
+  const media = host.sent.filter((entry) => entry.method === 'Emulation.setEmulatedMedia')
+  assert.equal(media.length, 1)
+  assert.deepEqual(media[0].params.features, [{ name: 'prefers-color-scheme', value: 'dark' }])
+  assert.equal(viewport.writes.length, 0, 'tema não mexe na largura')
+  assert.match(soTema, /tema: dark/u)
+  // O recibo do tema ainda conta a largura de agora: é ela que explica as
+  // medidas que o `browser_probe` vai devolver na sequência.
+  assert.match(soTema, /largura: AUTO/u)
+
+  // Largura fora da faixa: recusa com receita, e NADA foi escrito.
+  const invalida = await tools.viewport(IDENTITY, { width: 99 })
+  assert.match(invalida, /largura não reconhecida/u)
+  assert.match(invalida, /NADA mudou/u)
+  assert.equal(viewport.writes.length, 0)
+
+  // Nada pedido é nada feito — e a frase ensina o que existe.
+  assert.match(await tools.viewport(IDENTITY, {}), /nada mudou — informe `preset`, `width` ou `colorScheme`/u)
+})
+
+test('VIEWPORT: motor sem a largura (harness velho) diz a VERDADE em vez de fingir', async (t) => {
+  const fixture = makeFixture({ items: 0 })
+  const { tools } = toolkitOn(t, fixture, { noViewport: true })
+  const receipt = await tools.viewport(IDENTITY, { preset: 'desktop', colorScheme: 'dark' })
+
+  assert.match(receipt, /este harness não controla a largura da página/u)
+  assert.match(receipt, /tema: dark/u, 'o que DEU para fazer, foi feito e dito')
+
+  // E a recusa do motor (missão sem aba) chega inteira ao agente.
+  const recusa = toolkitOn(t, makeFixture({ items: 0 }), {
+    refuseViewport: 'o browser desta missão não está aberto — abra uma aba (+) antes de mudar a largura'
+  })
+  const texto = await recusa.tools.viewport(IDENTITY, { preset: 'desktop' })
+  assert.match(texto, /abra uma aba \(\+\) antes de mudar a largura/u)
+  assert.match(texto, /A largura NÃO mudou/u)
 })
 
 // ————————————————————————————————————————————————————————————————
@@ -1185,6 +1308,21 @@ test('CATÁLOGO: os schemas ENSINAM os tetos reais, e as descrições proíbem o
   assert.match(tools.get('browser_open').description, /PROIBIDO abrir browser externo/u)
   assert.match(tools.get('browser_probe').description, /não screenshot/u)
   assert.match(tools.get('browser_eval').description, /conteúdo NÃO-CONFIÁVEL/u)
+
+  // A LARGURA (2026-08-29). Duas coisas na descrição, e as duas são a dor do
+  // dono: (1) o painel é estreito, então SEM pedir desktop o agente julga a tela
+  // pelo layout de celular — foi assim que ele mesmo passou a ver o produto; e
+  // (2) o estado é COMPARTILHADO: o dono vê e muda o mesmo modo no chrome, e um
+  // agente que não soubesse disso trataria uma mudança do dono como bug da
+  // página.
+  const viewport = tools.get('browser_viewport')
+  assert.match(viewport.description, /o painel do browser é ESTREITO/iu)
+  assert.match(viewport.description, /O DONO vê esta mesma largura no seletor do chrome/u)
+  assert.match(viewport.description, /AUTO · 375 · 768 · 1280/u)
+  assert.deepEqual(viewport.inputSchema.properties.preset.enum, ['auto', 'mobile', 'tablet', 'desktop'])
+  // `height` SUMIU do contrato: sob a receita de zoom a altura acompanha a
+  // moldura sozinha, e um parâmetro que não faz nada é uma promessa falsa.
+  assert.equal(viewport.inputSchema.properties.height, undefined)
 })
 
 test('PRÉ-SANÇÃO (a lição da R14): as onze estão na lista do AJUDANTE e na do CHAT', () => {

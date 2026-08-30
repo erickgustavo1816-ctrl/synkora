@@ -163,10 +163,14 @@ export interface BrowserReadOptions {
 }
 
 
+/**
+ * O que `browser_viewport` aceita. A LARGURA (preset/width) NÃO é aplicada aqui:
+ * ela é estado do PAINEL (o motor, `./browserViewport`), porque o dono a
+ * controla pelo seletor do chrome. Este driver só resolve o `colorScheme`.
+ */
 export interface BrowserViewportOptions {
-  preset?: 'mobile' | 'tablet' | 'desktop'
+  preset?: 'auto' | 'mobile' | 'tablet' | 'desktop'
   width?: number
-  height?: number
   colorScheme?: 'light' | 'dark'
 }
 
@@ -176,18 +180,6 @@ export interface BrowserWaitOptions {
   networkIdle?: boolean
   ms?: number
   timeoutMs?: number
-}
-
-/**
- * Os presets do `browser_viewport`. `desktop` não está aqui de propósito: ele
- * DESLIGA a emulação e devolve o tamanho real do painel, que é outra operação.
- */
-const VIEWPORT_PRESETS: Record<
-  string,
-  { width: number; height: number; mobile: boolean; scale: number }
-> = {
-  mobile: { width: 390, height: 844, mobile: true, scale: 2 },
-  tablet: { width: 834, height: 1112, mobile: false, scale: 2 }
 }
 
 /** O que o `browser_shot` precisa saber sobre o frescor do quadro (lei 2). */
@@ -763,35 +755,31 @@ export class BrowserDriverSession {
     }
   }
 
-  async viewport(options: BrowserViewportOptions): Promise<string> {
+  /**
+   * O TEMA que a página realmente enxerga (`prefers-color-scheme`), não um
+   * truque de CSS. Metade do que era `browser_viewport`.
+   *
+   * A OUTRA METADE SAIU DAQUI (2026-08-29). A LARGURA não é mais
+   * `Emulation.setDeviceMetricsOverride`: ela virou zoom de ajuste no MOTOR
+   * (`browserPane` + `browserViewport`), porque a moldura da página é do painel
+   * e o dono manda nela pelo seletor do chrome. Duas razões medidas
+   * (`PROBE_BROWSER_VIEWPORT_FIT_2026-08-29.md`):
+   * - a emulação REDIMENSIONA a superfície da view, e o `capturePage` do
+   *   `browser_shot` passava a devolver um bitmap do tamanho EMULADO com a
+   *   página ocupando 31% dele;
+   * - sob emulação com `scale`, o `Input.dispatchMouseEvent` deste driver
+   *   deixaria de acertar o alvo em coordenada lógica (é o que
+   *   `browserActions` usa, vindo do `getBoundingClientRect`).
+   * Sob a receita de zoom, este driver não muda uma linha: as coordenadas
+   * continuam lógicas e a captura continua do tamanho da moldura.
+   */
+  async colorScheme(scheme: 'light' | 'dark'): Promise<string> {
     await this.ensureAttached()
-    const applied: string[] = []
-    if (options.preset === 'desktop' && !options.width && !options.height) {
-      await this.send('Emulation.clearDeviceMetricsOverride')
-      applied.push('tamanho: o do painel (emulação desligada)')
-    } else if (options.preset || options.width || options.height) {
-      const preset = options.preset ? VIEWPORT_PRESETS[options.preset] : undefined
-      const width = options.width ?? preset?.width ?? 1280
-      const height = options.height ?? preset?.height ?? 800
-      await this.send('Emulation.setDeviceMetricsOverride', {
-        width,
-        height,
-        deviceScaleFactor: preset?.scale ?? 1,
-        mobile: preset?.mobile ?? false
-      })
-      applied.push(`tamanho: ${width}x${height}${preset?.mobile ? ' (toque, UA móvel de layout)' : ''}`)
-    }
-    if (options.colorScheme) {
-      await this.send('Emulation.setEmulatedMedia', {
-        features: [{ name: 'prefers-color-scheme', value: options.colorScheme }]
-      })
-      applied.push(`tema: ${options.colorScheme}`)
-    }
-    if (applied.length === 0) {
-      return 'nada mudou — informe `preset`, `width`/`height` ou `colorScheme`.'
-    }
+    await this.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-color-scheme', value: scheme }]
+    })
     await this.settle()
-    return `viewport aplicada — ${applied.join(' · ')}.\nO layout já reagiu; chame browser_probe para medir e browser_shot para o dono ver.`
+    return `tema: ${scheme} (o \`prefers-color-scheme\` de verdade — a página já reagiu)`
   }
 
   /** LEI 2 — frescor é carimbo, nunca fé. Dois rAF com relógio: quadro que não

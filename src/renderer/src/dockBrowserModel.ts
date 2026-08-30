@@ -2,7 +2,8 @@ import type {
   BrowserNoticeView,
   BrowserPanelState,
   BrowserRect,
-  BrowserTab
+  BrowserTab,
+  BrowserViewportMode
 } from '../../preload/index'
 
 // MODELO DO PAINEL DE BROWSER (H3 do design de 2026-08-29) — a metade PURA do
@@ -40,6 +41,59 @@ export const EMPTY_BROWSER_PANEL: BrowserPanelState = Object.freeze({
   tabs: [] as BrowserTab[]
 })
 
+// ————— A LARGURA QUE A PÁGINA ENXERGA (2026-08-29) —————
+//
+// A reprovação do dono, ao vivo: *"ta meio limitado o quanto consigo deixar ele
+// maior, meio que sempre vou ver o site/app com modo tablet"*. O painel é
+// estreito, então a página renderiza estreita e todo site responsivo entrega o
+// layout de celular. O motor passou a emular uma largura LÓGICA e escalar a
+// página para caber na moldura; aqui mora só o vocabulário da tela.
+
+/** Os botões do seletor, na ordem em que aparecem. `'auto'` primeiro porque é o
+ *  estado natural — e porque é a porta de VOLTA de qualquer emulação. */
+export const BROWSER_VIEWPORT_CHOICES: readonly BrowserViewportMode[] = ['auto', 375, 768, 1280]
+
+/** O rótulo do botão. Curto de propósito: o trilho tem 176px de largura útil e
+ *  quatro botões numa fileira só. */
+export function browserViewportLabel(mode: BrowserViewportMode): string {
+  return mode === 'auto' ? 'AUTO' : String(mode)
+}
+
+/** O modo VIVO, lido com a mesma frouxidão do resto: motor antigo não manda o
+ *  campo, e ausência é `'auto'` (que é a verdade de antes do seletor existir). */
+export function browserViewportOf(state: BrowserPanelState): BrowserViewportMode {
+  return state.viewport ?? 'auto'
+}
+
+/** O agente pode pedir QUALQUER largura (`browser_viewport` com `width`). Nesse
+ *  caso nenhum botão está aceso, e a tela precisa mostrar o número mesmo assim
+ *  — senão o dono olha uma página emulada e vê "AUTO" apagado, sem explicação. */
+export function browserViewportIsCustom(mode: BrowserViewportMode): boolean {
+  return mode !== 'auto' && !BROWSER_VIEWPORT_CHOICES.includes(mode)
+}
+
+/** A frase da barra de status de cada botão. A do dono, não a do agente: ela
+ *  diz o que o gesto FAZ, e o preço (a página é escalada). */
+export function browserViewportHint(mode: BrowserViewportMode): string {
+  if (mode === 'auto') return 'largura real do painel · nenhuma emulação'
+  if (mode >= 1024) return `emula largura de desktop (${mode}px) e ajusta à moldura`
+  if (mode >= 700) return `emula largura de tablet (${mode}px) e ajusta à moldura`
+  return `emula largura de celular (${mode}px) e ajusta à moldura`
+}
+
+/**
+ * O que a tela conta sobre a largura EFETIVA. O Chromium não desce de 0,25× de
+ * zoom (medido): num painel muito estreito a página recebe menos do que se
+ * pediu, e calar sobre isso seria mostrar "1280" ao lado de uma página de 1200.
+ */
+export function browserViewportNote(state: BrowserPanelState): string | null {
+  const mode = browserViewportOf(state)
+  if (mode === 'auto') return null
+  const real = state.viewportWidth
+  if (typeof real !== 'number' || real <= 0 || real === mode) return null
+  return `o painel é estreito demais para ${mode}px — a página está recebendo ${real}px (alargue o painel ou destaque em janela própria)`
+}
+
 function str(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
@@ -48,12 +102,27 @@ function bool(value: unknown): boolean {
   return value === true
 }
 
+/** O modo vindo do motor, lido defensivamente. Largura que não é número
+ *  positivo é `'auto'`: uma escala inventada aqui viraria uma página escalada
+ *  na tela do dono por causa de um payload torto. */
+function readViewportMode(value: unknown): BrowserViewportMode {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.round(value)
+  return 'auto'
+}
+
 /** Lê a fotografia do motor DEFENSIVAMENTE: o dono do formato é o main, e um
  *  campo que falta (motor antigo, payload torto) nunca pode derrubar o painel.
  *  Aba sem `tabId` é descartada — sem id não há gesto possível sobre ela. */
 export function normalizeBrowserPanel(value: unknown): BrowserPanelState {
   if (!value || typeof value !== 'object') return EMPTY_BROWSER_PANEL
-  const bag = value as { alive?: unknown; agentDriving?: unknown; tabs?: unknown; host?: unknown }
+  const bag = value as {
+    alive?: unknown
+    agentDriving?: unknown
+    tabs?: unknown
+    host?: unknown
+    viewport?: unknown
+    viewportWidth?: unknown
+  }
   const rawTabs = Array.isArray(bag.tabs) ? bag.tabs : []
   const tabs: BrowserTab[] = []
   for (const entry of rawTabs) {
@@ -68,7 +137,8 @@ export function normalizeBrowserPanel(value: unknown): BrowserPanelState {
       active: bool(tab.active),
       loading: bool(tab.loading),
       canBack: bool(tab.canBack),
-      canForward: bool(tab.canForward)
+      canForward: bool(tab.canForward),
+      viewport: readViewportMode(tab.viewport)
     })
   }
   // CONSERTO de uma verdade impossível: existir aba e nenhuma marcada ativa
@@ -84,6 +154,15 @@ export function normalizeBrowserPanel(value: unknown): BrowserPanelState {
   // espelho do preload declara AUSENTE = dock, e o normalizador reconstrói o
   // objeto — um campo inventado aqui viraria uma segunda grafia de "dock".
   if (bag.host === 'popout') state.host = 'popout'
+  // A LARGURA (2026-08-29). Mesma regra: só o que NÃO é `auto` é carregado —
+  // `undefined` já significa auto no espelho, e escrever `'auto'` aqui criaria
+  // uma segunda grafia do mesmo estado (e `sameBrowserPanel` acharia diferença
+  // onde não há).
+  const viewport = readViewportMode(bag.viewport)
+  if (viewport !== 'auto') state.viewport = viewport
+  if (typeof bag.viewportWidth === 'number' && Number.isFinite(bag.viewportWidth)) {
+    state.viewportWidth = Math.round(bag.viewportWidth)
+  }
   const notice = readBrowserNotice((value as { notice?: unknown }).notice)
   if (notice) state.notice = notice
   return state
@@ -131,6 +210,10 @@ export function sameBrowserPanel(a: BrowserPanelState, b: BrowserPanelState): bo
   // O HOST muda a seção inteira (o painel vira recibo) e nada mais na fotografia
   // precisa mudar junto: sem esta linha o ⧉ não repintaria o dock.
   if (a.host !== b.host) return false
+  // A LARGURA muda o botão aceso do seletor — e nada mais. Sem estas duas
+  // linhas, o modo posto pelo AGENTE não repintaria o chrome, e o dono ficaria
+  // olhando uma página emulada com o seletor mostrando AUTO.
+  if (a.viewport !== b.viewport || a.viewportWidth !== b.viewportWidth) return false
   // A nota do motor tem CARIMBO: duas notas do mesmo texto em momentos
   // diferentes são dois avisos, e o segundo precisa chegar à tela.
   if (a.notice?.at !== b.notice?.at || a.notice?.text !== b.notice?.text) return false
@@ -144,7 +227,8 @@ export function sameBrowserPanel(a: BrowserPanelState, b: BrowserPanelState): bo
       tab.active === other.active &&
       tab.loading === other.loading &&
       tab.canBack === other.canBack &&
-      tab.canForward === other.canForward
+      tab.canForward === other.canForward &&
+      tab.viewport === other.viewport
     )
   })
 }
@@ -188,7 +272,13 @@ export function browserSectionSummary(
   if (!state.alive || !tab) return 'fechado'
   const label = tab.loading ? 'carregando…' : browserTabLabel(tab)
   const extra = state.tabs.length > 1 ? ` · ${state.tabs.length} abas` : ''
-  return `${state.agentDriving ? '⚡ ' : ''}${label}${extra}`
+  // A LARGURA EMULADA entra no resumo porque ela sobrevive à seção RECOLHIDA:
+  // uma página em 1280 lógicos num painel de 400px é a diferença entre "o site
+  // quebrou" e "é o modo desktop", e o dono não pode precisar reabrir a seção
+  // para descobrir isso.
+  const mode = browserViewportOf(state)
+  const width = mode === 'auto' ? '' : ` · ${mode}`
+  return `${state.agentDriving ? '⚡ ' : ''}${label}${extra}${width}`
 }
 
 /** Recusa do `+` quando o teto chegou. Toda guarda nomeia a saída: aqui, a de

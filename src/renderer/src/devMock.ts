@@ -1021,6 +1021,9 @@ export function installDevMock(): void {
       // recusa é a mesma das outras alavancas.
       popOut: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
       dockBack: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
+      // A largura que a página enxerga (2026-08-29): sem `WebContentsView` não
+      // há página para escalar — a mesma recusa das outras alavancas.
+      setViewportMode: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
       bounds: () => undefined,
       onChanged: () => () => undefined
     },

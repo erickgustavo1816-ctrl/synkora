@@ -79,6 +79,15 @@ import type {
 // pela mesma razão declarada acima.
 import { createBrowserHostMachine } from './browserPaneHosting'
 import type { BrowserHostedMission, BrowserHostedTab, BrowserMissionLayout } from './browserPaneHosting'
+// A LARGURA QUE A PÁGINA ENXERGA (2026-08-29). Módulo puro, sem Electron: a
+// receita medida (`setZoomFactor(moldura / larguraLógica)`) e a matemática do
+// piso do Chromium moram lá; aqui mora só QUANDO ela se aplica.
+import {
+  applyViewportFit,
+  normalizeViewportMode,
+  viewportEffectiveWidth,
+  type BrowserViewportMode
+} from './browserViewport'
 
 /** Teto de abas por missão (D5.1/H1). Passar disso é recusa com receita. */
 export const BROWSER_TAB_CAP = 8
@@ -135,6 +144,9 @@ export interface BrowserTabView {
   loading: boolean
   canBack: boolean
   canForward: boolean
+  /** A largura que ESTA aba faz a página acreditar que tem (o modo é POR ABA:
+   *  uma aba conferindo o desktop e outra o celular é o caso normal do QA). */
+  viewport: BrowserViewportMode
 }
 
 /** Nota legível do motor para o dono (o "evento legível" do download barrado).
@@ -160,6 +172,15 @@ export interface BrowserMissionState {
   /** Dock ou janela destacada. O dock desenha o RECIBO ("destacado — trazer de
    *  volta") em vez da página quando isto é `'popout'`. */
   host: BrowserHostKind
+  /** O modo da aba ATIVA — é ele que o seletor do chrome mostra e escreve. UMA
+   *  autoridade: a tool `browser_viewport` do agente e o clique do dono escrevem
+   *  no MESMO campo, e por isso o dono SEMPRE vê quando a página está emulada
+   *  por ordem do agente. */
+  viewport: BrowserViewportMode
+  /** A largura que a página realmente enxerga AGORA. Nem sempre é a pedida: o
+   *  piso de zoom do Chromium (0,25×, medido na sonda) faz `viewport: 1280` numa
+   *  moldura de 300px virar 1200. Ausente enquanto ninguém relatou geometria. */
+  viewportWidth?: number
   /** extensões do contrato mínimo — o chrome pode ignorar sem quebrar */
   notice?: BrowserNotice
   projectId?: string
@@ -236,6 +257,26 @@ export interface BrowserPaneManager extends BrowserManager {
    *  de minimizada: a geometria da view é REFEITA. É o gancho da cura 2 — o
    *  `restore()` sozinho não devolve o pixel certo. */
   relayout(missionId: string): void
+  /**
+   * A LARGURA QUE A PÁGINA ENXERGA, na aba ATIVA da missão. É o mesmo verbo
+   * para as duas mãos — o seletor do dono no chrome e a tool `browser_viewport`
+   * do agente —, de propósito: dois caminhos escrevendo o mesmo estado é o que
+   * faz o dono enxergar a página emulada por ordem do agente em vez de achar
+   * que o site quebrou.
+   */
+  setViewportMode(
+    missionId: string,
+    mode: BrowserViewportMode,
+    /** QUEM pediu. As duas mãos escrevem o mesmo estado, mas o diário não pode
+     *  creditar ao dono uma emulação que o agente ligou sozinho. */
+    actor?: 'user' | 'agent'
+  ): BrowserGestureResult
+  /** O modo da aba ativa (o que o chrome desenha). Missão sem aba = `'auto'`. */
+  viewportOf(missionId: string): BrowserViewportMode
+  /** A MOLDURA de agora, em px. É a base do zoom — e do recibo que conta ao
+   *  agente que a largura efetiva pode ser menor que a pedida. `0` = ninguém
+   *  relatou geometria ainda. */
+  viewportFrameWidth(missionId: string): number
   /** ⧉ DESTACAR: a MESMA página salta para uma janela própria. */
   popOut(missionId: string): BrowserGestureResult
   /** REENCAIXAR: a página volta para o dock e a janela fecha. */
@@ -337,6 +378,9 @@ interface TabRecord extends BrowserHostedTab {
   view: BrowserViewHandle
   wc: WebContents
   disposers: (() => void)[]
+  /** POR ABA, e nasce em `auto`: o QA de responsivo é justamente ter uma aba no
+   *  desktop e outra no celular. Morre com a aba (nada disto é persistido). */
+  viewport: BrowserViewportMode
 }
 
 /** O registro do motor ESTENDE a fatia que a máquina de host governa (`host`,
@@ -348,13 +392,18 @@ interface MissionRecord extends BrowserHostedMission {
   agentDriving: boolean
   driveTimer: NodeJS.Timeout | null
   notice: BrowserNotice | null
+  /** A última largura de moldura APLICADA (dock ou janela destacada). É a base
+   *  do zoom e a única forma de o `state` contar a largura efetiva sem
+   *  perguntar geometria de novo. `0` = ninguém relatou ainda. */
+  frameWidth: number
 }
 
 const EMPTY_STATE: BrowserMissionState = {
   alive: false,
   agentDriving: false,
   tabs: [],
-  host: 'dock'
+  host: 'dock',
+  viewport: 'auto'
 }
 
 function roundRect(rect: BrowserPanelRect): BrowserPanelRect {
@@ -492,9 +541,31 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     applyLayout: (mission) => applyLayout(mission),
     activeTitle: (mission) => activeTitleOf(mission),
     clampTo,
+    // A janela destacada tem OUTRA largura — e é a largura que manda no zoom.
+    // Reencaixar/destacar tem de refazer o fit no mesmo passo do `setBounds`,
+    // senão a página fica com o zoom da moldura antiga.
+    fitViewport: (mission, frameWidth) => fitViewport(mission, frameWidth),
     record,
     changed: (missionId) => emitChanged(missionId)
   })
+
+  /**
+   * A RECEITA MEDIDA, aplicada. Ordem importa: a aba ATIVA é a ÚLTIMA a
+   * escrever. O zoom do Chromium é por ORIGEM dentro da sessão (a sonda mediu o
+   * vazamento entre views irmãs do mesmo host), então com duas abas da mesma
+   * missão no mesmo endereço e modos diferentes quem tem de vencer é a que o
+   * dono está OLHANDO.
+   */
+  const fitViewport = (mission: MissionRecord, frameWidth: number): void => {
+    mission.frameWidth = frameWidth
+    const tabs = liveTabs(mission)
+    const active = activeRecord(mission)
+    for (const tab of tabs) {
+      if (tab === active) continue
+      applyViewportFit(tab.wc, tab.viewport, frameWidth)
+    }
+    if (active) applyViewportFit(active.wc, active.viewport, frameWidth)
+  }
 
   /**
    * Aplica geometria e visibilidade. AQUI mora a lei 1: o laço só chama
@@ -520,6 +591,11 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       const visible = show && tab.tabId === mission.activeTabId
       if (tab.view.getVisible() !== visible) tab.view.setVisible(visible)
     }
+    // O FIT SAI DA GEOMETRIA, sempre — nunca de uma lembrança. Arrastar a alça
+    // do painel muda a moldura a cada quadro, e o zoom é `moldura ÷ largura
+    // lógica`: sem recalcular aqui, a página deixaria de ter a largura pedida
+    // (a sonda mediu: moldura 400→760 sem recálculo vira 2432 lógicos).
+    fitViewport(mission, rect.width)
   }
 
   /** Gesto na JANELA DO APP: só as missões que estão no dock mudam de lugar. A
@@ -590,12 +666,22 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       tab.disposers.push(() => emitter.off(event, listener))
     }
 
+    // NAVEGAR PODE APAGAR O FIT. O zoom do Chromium mora num mapa por HOST: a
+    // sonda viu a receita sobreviver a uma troca de origem, mas confiar nisso
+    // seria depender de entrega única. Re-aplicar é idempotente e custa uma
+    // comparação de float (o `applyViewportFit` só escreve quando muda) — a
+    // doutrina da casa manda a ação ser RE-DERIVÁVEL.
+    const repaintAndRefit = (): void => {
+      applyViewportFit(tab.wc, tab.viewport, mission.frameWidth)
+      repaint()
+    }
+
     on('page-title-updated', repaint)
     on('did-start-loading', repaint)
     on('did-stop-loading', repaint)
-    on('did-navigate', repaint)
+    on('did-navigate', repaintAndRefit)
     on('did-navigate-in-page', repaint)
-    on('did-finish-load', repaint)
+    on('did-finish-load', repaintAndRefit)
     on('did-fail-load', (...args) => {
       const [, errorCode, errorDescription, validatedURL, isMainFrame] = args
       // -3 = ERR_ABORTED: navegação interrompida (redirect, novo goto), não falha.
@@ -700,7 +786,16 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     if (!view) {
       return { ok: false, error: 'a janela do Synkora não está pronta — abra o app e tente de novo' }
     }
-    const tab: TabRecord = { tabId: randomUUID(), view, wc: view.webContents, disposers: [] }
+    const tab: TabRecord = {
+      tabId: randomUUID(),
+      view,
+      wc: view.webContents,
+      disposers: [],
+      // Aba nova NASCE em AUTO — inclusive quando a irmã está emulada. O modo é
+      // da aba e morre com ela; herdar em silêncio faria o `+` abrir uma página
+      // já escalada sem ninguém ter pedido.
+      viewport: 'auto'
+    }
     mission.tabs.push(tab)
     mission.activeTabId = tab.tabId
     owners.set(tab.wc.id, { missionId: mission.missionId, projectId: mission.projectId })
@@ -739,7 +834,8 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       driveTimer: null,
       notice: null,
       host: 'dock',
-      staleReported: null
+      staleReported: null,
+      frameWidth: 0
     }
     missions.set(missionId, created)
     return created
@@ -898,13 +994,21 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         active: tab.tabId === active?.tabId,
         loading: tab.wc.isLoading(),
         canBack: tab.wc.navigationHistory.canGoBack(),
-        canForward: tab.wc.navigationHistory.canGoForward()
+        canForward: tab.wc.navigationHistory.canGoForward(),
+        viewport: tab.viewport
       }))
+      const viewport = active?.viewport ?? 'auto'
       return {
         alive: tabs.length > 0,
         agentDriving: mission.agentDriving,
         tabs,
         host: mission.host,
+        viewport,
+        // A largura EFETIVA, não a pedida: com a moldura estreita demais o piso
+        // de zoom do Chromium morde e a página recebe menos do que se pediu.
+        ...(mission.frameWidth > 0
+          ? { viewportWidth: viewportEffectiveWidth(viewport, mission.frameWidth) }
+          : {}),
         notice: mission.notice ?? undefined,
         projectId: mission.projectId,
         // "à vista" é a pergunta do host ATUAL: destacada, a página está à vista
@@ -1050,6 +1154,56 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     relayout(missionId) {
       const mission = missions.get(missionId)
       if (mission) applyLayout(mission)
+    },
+
+    setViewportMode(missionId, mode, actor = 'user') {
+      const normalized = normalizeViewportMode(mode)
+      if (normalized === null) {
+        return {
+          ok: false,
+          error: `largura inválida (${String(mode)}) — use AUTO ou um número entre ${320} e ${4000}`
+        }
+      }
+      const mission = missions.get(missionId)
+      const tab = mission ? activeRecord(mission) : undefined
+      if (!mission || !tab) {
+        return {
+          ok: false,
+          error: 'o browser desta missão não está aberto — abra uma aba (+) antes de mudar a largura'
+        }
+      }
+      if (tab.viewport === normalized) {
+        // Gesto idempotente: clicar duas vezes no mesmo botão não é recusa. Mas
+        // o fit é REAPLICADO — é a rota de saída quando o zoom de um vizinho do
+        // mesmo host vazou por cima deste (o vazamento por origem, medido).
+        fitViewport(mission, mission.frameWidth)
+        return { ok: true, tabId: tab.tabId }
+      }
+      tab.viewport = normalized
+      fitViewport(mission, mission.frameWidth)
+      record('browser-viewport-mode', {
+        actor,
+        ids: { projectId: mission.projectId, missionId },
+        reason: `a página desta aba passou a enxergar ${normalized === 'auto' ? 'a moldura de verdade' : `${normalized}px lógicos`}`,
+        detail: {
+          tabId: tab.tabId,
+          mode: normalized,
+          frameWidth: mission.frameWidth,
+          efetiva: viewportEffectiveWidth(normalized, mission.frameWidth)
+        }
+      })
+      emitChanged(missionId)
+      return { ok: true, tabId: tab.tabId }
+    },
+
+    viewportOf(missionId) {
+      const mission = missions.get(missionId)
+      const tab = mission ? activeRecord(mission) : undefined
+      return tab?.viewport ?? 'auto'
+    },
+
+    viewportFrameWidth(missionId) {
+      return missions.get(missionId)?.frameWidth ?? 0
     },
 
     // Os dois gestos do dono são da MÁQUINA DE HOST (`./browserPaneHosting`):

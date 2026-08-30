@@ -22345,6 +22345,131 @@ details.gui-error-line {
   box-shadow: 0 0 0 2px rgba(217, 108, 63, 0.11);
 }
 
+/* ——— a LARGURA QUE A PÁGINA ENXERGA (2026-08-29) ——— */
+
+/* REPROVAÇÃO DO DONO, olhando o painel vivo: "ta meio limitado o quanto consigo
+   deixar ele maior, meio que sempre vou ver o site/app com modo tablet, ta um
+   pouco diferente de como e hoje no claude code."
+
+   A causa é geométrica, não de gosto: a página renderiza na largura FÍSICA do
+   trilho (~300-500px), então todo site responsivo entrega o layout de celular. O
+   motor passou a emular uma largura LÓGICA e a escalar a página para caber
+   (`setZoomFactor(moldura ÷ largura)`, receita medida em
+   `PROBE_BROWSER_VIEWPORT_FIT_2026-08-29.md`), e esta faixa é o controle disso.
+
+   ONDE ELA MORA, e por quê: entre a fileira de navegação e a página, porque é da
+   PÁGINA que ela fala. A moldura de cima da janela (a linha ink) desceu junto —
+   a fileira de navegação passa a ser separada por FIO CLARO e é esta faixa que
+   fecha a janela por cima. Continua UM corpo, UMA borda, UM raio (a lei do H7):
+   o que mudou é que a barra do instrumento agora tem duas linhas, com uma
+   costura de fio de cabelo entre elas, e não um segundo cartão.
+
+   SEM fundo próprio (ela herda o `--card` do corpo, medido: `rgba(0,0,0,0)`
+   sobre `--card`): a prateleira REBAIXADA é a das abas, e um segundo degrau de
+   papel aqui devolveria o empilhamento que o H7 desfez. */
+.dock-browser-nav:has(+ .dock-browser-vp) {
+  border-bottom-color: var(--line);
+}
+
+.dock-browser-vp {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 3px 4px 4px;
+  border-bottom: 1px solid var(--ink);
+}
+
+/* Botão de FAIXA: menor que o glifo da barra e sem contorno parado — quatro
+   contornos aqui seriam quatro caixinhas competindo com a moldura, que é
+   exatamente o "vale da estranheza" que o H7 pagou para sair. O afordamento é
+   fundo no hover, igual ao `×`, ao `+` e às setas. */
+.dock-browser-vp-btn {
+  flex: none;
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  padding: 2px 6px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.dock-browser-vp-btn:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--paper-2);
+}
+
+/* O MODO VIGENTE se declara por CONTORNO CHEIO — a mesma gramática da aba ativa
+   e do "trazer de volta". Isto não é enfeite de seleção: é o único lugar onde o
+   dono descobre que a página está EMULADA, inclusive quando quem emulou foi o
+   agente pela tool `browser_viewport` (é um estado só, compartilhado). */
+.dock-browser-vp-btn[aria-pressed='true'] {
+  border-color: var(--ink);
+  color: var(--ink);
+  background: var(--card);
+}
+
+.dock-browser-vp-btn[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.dock-browser-vp-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* Sem página aberta não há largura para mudar. Apaga de tom mas continua
+   LEGÍVEL, e a frase do pé ensina a saída ("abra uma página (+) antes"). */
+.dock-browser-vp-btn:disabled {
+  color: var(--ink-3);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.dock-browser-vp-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* A largura que o AGENTE pediu e que não é botão nenhum (`width` livre da tool).
+   Ficha, não botão: ela INFORMA — quem desfaz é o AUTO ao lado. Acento na borda
+   porque a origem dela é o agente, a mesma família do ⚡ do pé. */
+.dock-browser-vp-custom {
+  flex: none;
+  border: 1px dashed var(--accent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+/* O piso de zoom do Chromium (0,25×, medido) mordeu: a página está recebendo
+   menos do que o botão aceso promete. Ela QUEBRA para uma linha própria dentro
+   da mesma faixa (`flex-basis: 100%`) em vez de virar um bloco fora dela — a
+   moldura de cima da página continua sendo a linha ink desta faixa. Mesma voz
+   das outras notas do painel. */
+.dock-browser-vp-note {
+  flex: 1 1 100%;
+  min-width: 0;
+  padding: 1px 2px 0;
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
 /* ——— o retângulo da página ——— */
 
 /* A ALTURA VEM DO COMPONENTE, não daqui (2026-08-29, reprovação do dono: "ele
@@ -22793,6 +22918,14 @@ details.gui-error-line {
 
 .browser-popout-shell .dock-browser-nav {
   padding: 5px 6px;
+}
+
+/* A faixa da largura na janela: mesmo respiro lateral das irmãs. O seletor é o
+   MESMO nos dois hosts de propósito — o dono não aprende dois instrumentos, e
+   aqui ele importa igual: a janela destacada é larga, então "1280" quase não
+   escala, e é justamente onde o modo AUTO passa a ser o mais parecido. */
+.browser-popout-shell .dock-browser-vp {
+  padding: 4px 6px 5px;
 }
 
 .browser-popout-shell .dock-browser-foot {

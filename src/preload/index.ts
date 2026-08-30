@@ -825,6 +825,9 @@ export interface BrowserTab {
   loading: boolean
   canBack: boolean
   canForward: boolean
+  /** A largura que ESTA aba faz a página acreditar que tem. Opcional no espelho
+   *  (motor anterior a 2026-08-29 não manda) — ausente = `'auto'`. */
+  viewport?: BrowserViewportMode
 }
 
 /** Nota legível do MOTOR para o dono (download barrado, teto de abas, página
@@ -843,6 +846,15 @@ export interface BrowserNoticeView {
  *  `src/main/browserPane.ts` (o par). */
 export type BrowserHostKind = 'dock' | 'popout'
 
+/**
+ * A LARGURA QUE A PÁGINA ENXERGA. `'auto'` é a moldura de verdade (o painel é
+ * estreito, então todo site responsivo entrega o layout de celular — foi a
+ * reprovação do dono em 2026-08-29); um número é largura LÓGICA em CSS px, e a
+ * página é escalada para caber na moldura. Espelho declarado do
+ * `BrowserViewportMode` de `src/main/browserViewport.ts` (o par).
+ */
+export type BrowserViewportMode = 'auto' | number
+
 /** Fotografia do browser de UMA missão. `alive: false` = nenhuma view nasceu
  *  ainda (ele é LAZY) — o painel convida a abrir em vez de mentir que existe. */
 export interface BrowserPanelState {
@@ -857,6 +869,15 @@ export interface BrowserPanelState {
    *  novo obrigatório quebraria a tela em vez de degradar. Ausente = `'dock'`,
    *  que é onde a página está enquanto ninguém a destacou. */
   host?: BrowserHostKind
+  /** O modo da aba ATIVA — o que o seletor do chrome mostra. Ele é o MESMO
+   *  campo que a tool `browser_viewport` do agente escreve: quando o agente
+   *  emula desktop para conferir uma tela, o dono VÊ isso no seletor em vez de
+   *  achar que o site quebrou. Ausente = `'auto'` (motor anterior). */
+  viewport?: BrowserViewportMode
+  /** A largura que a página realmente enxerga agora — nem sempre a pedida: o
+   *  Chromium não desce de 0,25× de zoom, então num painel muito estreito a
+   *  página recebe menos do que se pediu (medido na sonda). */
+  viewportWidth?: number
 }
 
 /** Toda alavanca do chrome devolve o mesmo ack: recusa é TEXTO em PT-BR que
@@ -1490,6 +1511,12 @@ const api = {
      *  está no dock devolve `ok` (gesto idempotente, não recusa). */
     dockBack: (missionId: string): Promise<BrowserActionResult> =>
       ipcRenderer.invoke('browser:dockBack', missionId),
+    /** A LARGURA QUE A PÁGINA ENXERGA, na aba ativa: `'auto'` devolve a moldura
+     *  de verdade; um número emula essa largura lógica e ESCALA a página para
+     *  caber. O agente escreve no MESMO estado pela tool `browser_viewport` —
+     *  por isso o seletor sempre conta a verdade sobre a página que está ali. */
+    setViewportMode: (missionId: string, mode: BrowserViewportMode): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke('browser:setViewportMode', missionId, mode),
     /** GEOMETRIA: o painel reporta onde está e se está à vista. Fire-and-forget
      *  de propósito — chega a cada frame de um arrasto de largura, e um invoke
      *  por frame encheria a fila de promessas por nada.

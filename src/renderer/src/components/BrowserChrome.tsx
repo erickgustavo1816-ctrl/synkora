@@ -2,8 +2,14 @@ import { useCallback, useRef, useState, type ReactNode, type RefObject } from 'r
 import {
   BROWSER_NO_API,
   BROWSER_TAB_CAP,
+  BROWSER_VIEWPORT_CHOICES,
   activeBrowserTab,
   browserTabLabel,
+  browserViewportHint,
+  browserViewportIsCustom,
+  browserViewportLabel,
+  browserViewportNote,
+  browserViewportOf,
   readBrowserAck,
   tabCapNotice,
   trimUrlInput
@@ -156,6 +162,12 @@ export default function BrowserChrome({
 }): React.JSX.Element {
   const tab = activeBrowserTab(state)
   const capNotice = tabCapNotice(state.tabs.length)
+  // A LARGURA QUE A PÁGINA ENXERGA. Ela mora AQUI, e não em cada host, porque a
+  // pergunta é a mesma nos dois: o painel do dock é estreito e a janela
+  // destacada é larga, mas em ambos o dono precisa poder dizer "me mostre isto
+  // como desktop" — e VER quando foi o agente que disse.
+  const viewport = browserViewportOf(state)
+  const viewportNote = browserViewportNote(state)
   // A barra de endereço só é do DONO enquanto ele está nela: fora do foco, ela
   // conta a URL da aba ativa. Sem esta separação, uma navegação do AGENTE
   // apagaria o que ele estivesse digitando (e ele PODE assumir quando quiser).
@@ -330,6 +342,56 @@ export default function BrowserChrome({
           }}
         />
         {actions}
+      </div>
+
+      {/* A LARGURA QUE A PÁGINA ENXERGA (2026-08-29 — "ta meio limitado o quanto
+          consigo deixar ele maior, meio que sempre vou ver o site/app com modo
+          tablet"). O painel é estreito; sem isto todo site responsivo entrega o
+          layout de celular. Esta fileira é uma FAIXA do mesmo corpo (a lei do
+          H7: uma borda, um raio, costuras de fio de cabelo) — nunca um cartão
+          próprio —, e mora colada na página porque é dela que ela fala.
+
+          É o MESMO estado que a tool `browser_viewport` do agente escreve: com
+          ele conferindo uma tela em desktop, o botão 1280 acende aqui sozinho. */}
+      <div
+        className="dock-browser-vp"
+        role="group"
+        aria-label="largura que a página enxerga"
+      >
+        {BROWSER_VIEWPORT_CHOICES.map((mode) => (
+          <button
+            key={String(mode)}
+            type="button"
+            className={`dock-browser-vp-btn${viewport === mode ? ' on' : ''}`}
+            aria-pressed={viewport === mode}
+            disabled={!state.alive}
+            onClick={() => run((api) => api.setViewportMode(missionId, mode))}
+            {...hints(
+              state.alive
+                ? browserViewportHint(mode)
+                : 'abra uma página (+) antes de mudar a largura'
+            )}
+          >
+            {browserViewportLabel(mode)}
+          </button>
+        ))}
+        {/* O AGENTE pode pedir uma largura que não é botão nenhum (`width` da
+            tool). Sem esta ficha, o dono olharia uma página emulada com os
+            quatro botões apagados e nenhuma explicação. */}
+        {browserViewportIsCustom(viewport) && (
+          <span
+            className="dock-browser-vp-custom"
+            {...hints(`o agente pediu ${viewport}px lógicos · AUTO devolve a largura do painel`)}
+          >
+            {browserViewportLabel(viewport)}
+          </span>
+        )}
+        {/* O piso de zoom do Chromium (0,25×, medido na sonda): num painel
+            estreito demais a página recebe MENOS do que se pediu. Mostrar
+            "1280" aceso ao lado de uma página de 1200 seria o seletor mentindo.
+            A nota QUEBRA para uma linha própria dentro da mesma faixa — a
+            moldura da página continua sendo a linha ink de baixo. */}
+        {viewportNote && <span className="dock-browser-vp-note">// {viewportNote}</span>}
       </div>
 
       {children}

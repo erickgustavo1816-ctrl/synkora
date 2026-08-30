@@ -41,6 +41,7 @@ import {
   type BrowserMissionState,
   type BrowserPaneManager
 } from '../browserPane'
+import type { BrowserViewportMode } from '../browserViewport'
 import type { MainContext } from '../mainContext'
 
 export interface BrowserIpcExtras {
@@ -59,7 +60,13 @@ const BROWSER_CLOSED =
 const TAB_GONE = 'esta aba não existe mais — o painel já vai se atualizar'
 
 /** Estado neutro: missão sem browser vivo desenha "fechado" no dock. */
-const CLOSED: BrowserMissionState = { alive: false, agentDriving: false, tabs: [], host: 'dock' }
+const CLOSED: BrowserMissionState = {
+  alive: false,
+  agentDriving: false,
+  tabs: [],
+  host: 'dock',
+  viewport: 'auto'
+}
 
 function asId(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
@@ -183,6 +190,22 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
       const id = asId(missionId)
       if (!id) return { ok: false, error: MISSION_MISSING }
       return ack(browser.toggleDevtools(id, asId(tabId) ?? undefined), BROWSER_CLOSED)
+    }
+  )
+
+  // A LARGURA QUE A PÁGINA ENXERGA (2026-08-29). O seletor AUTO · 375 · 768 ·
+  // 1280 do chrome escreve AQUI — e a tool `browser_viewport` do agente escreve
+  // no MESMO campo do motor. Uma autoridade só, de propósito: sem isso o dono
+  // veria a página emulada por ordem do agente e concluiria que o site quebrou.
+  ipcMain.handle(
+    'browser:setViewportMode',
+    (e, missionId: unknown, mode: unknown): BrowserGestureResult => {
+      extras.assertBrowserSender(e)
+      const id = asId(missionId)
+      if (!id) return { ok: false, error: MISSION_MISSING }
+      // O motor é o dono do vocabulário: ele normaliza (`'auto'` ou largura) e
+      // recusa com receita o que não entender — o porteiro não adivinha nada.
+      return browser.setViewportMode(id, mode as BrowserViewportMode)
     }
   )
 

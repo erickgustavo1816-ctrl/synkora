@@ -106,14 +106,19 @@ export interface BrowserHostMachineContext<M extends BrowserHostedMission> {
   activeTitle(mission: M): string
   /** Clampa o retângulo relatado à área útil de quem o hospeda. */
   clampTo(rect: BrowserPanelRect, size: { width: number; height: number } | null): BrowserPanelRect
+  /** A LARGURA QUE A PÁGINA ENXERGA sai do zoom, e o zoom sai da MOLDURA — que
+   *  é outra na janela destacada. Destacar e reencaixar têm de refazer o fit no
+   *  mesmo passo do `setBounds`, senão a página fica com o zoom da moldura de
+   *  onde ela saiu. Quem sabe a receita é o motor (`./browserViewport`). */
+  fitViewport(mission: M, frameWidth: number): void
   record(event: string, input: Omit<BlackboxEventInput, 'cat' | 'event'>): void
   changed(missionId: string): void
 }
 
-export interface BrowserHostMachine {
+export interface BrowserHostMachine<M extends BrowserHostedMission = BrowserHostedMission> {
   attachView(mission: BrowserHostedMission, view: BrowserViewHandle): void
   detachView(mission: BrowserHostedMission, view: BrowserViewHandle): void
-  applyPopoutLayout(mission: BrowserHostedMission): void
+  applyPopoutLayout(mission: M): void
   /** ⧉ DESTACAR: a MESMA página salta para uma janela própria. */
   popOut(missionId: string): BrowserGestureResult
   /** REENCAIXAR: a página volta para o dock e a janela fecha. */
@@ -126,7 +131,7 @@ export interface BrowserHostMachine {
 
 export function createBrowserHostMachine<M extends BrowserHostedMission>(
   ctx: BrowserHostMachineContext<M>
-): BrowserHostMachine {
+): BrowserHostMachine<M> {
   /** A janela destacada desta missão, quando ela É o host atual. */
   const popoutOf = (mission: BrowserHostedMission): BrowserPopoutHandle | undefined =>
     mission.host === 'popout' ? ctx.popouts?.get(mission.missionId) : undefined
@@ -154,7 +159,7 @@ export function createBrowserHostMachine<M extends BrowserHostedMission>(
    * O `restore` da janela chama isto de novo, e aí o `setBounds` refeito é a
    * cura medida.
    */
-  const applyPopoutLayout = (mission: BrowserHostedMission): void => {
+  const applyPopoutLayout = (mission: M): void => {
     const popout = ctx.popouts?.get(mission.missionId)
     if (!popout) return
     const size = popout.contentSize()
@@ -173,6 +178,10 @@ export function createBrowserHostMachine<M extends BrowserHostedMission>(
       const visible = show && tab.tabId === mission.activeTabId
       if (tab.view.getVisible() !== visible) tab.view.setVisible(visible)
     }
+    // A janela destacada é MUITO mais larga que o trilho: o mesmo modo "1280"
+    // que ali pedia zoom de 0,31 aqui pede quase 1. O fit sai da geometria de
+    // AGORA, no mesmo passo do `setBounds`.
+    ctx.fitViewport(mission, rect.width)
   }
 
   const popOut = (missionId: string): BrowserGestureResult => {
