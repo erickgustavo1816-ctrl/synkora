@@ -33,6 +33,25 @@
 //   P5 A MOLDURA MUDA — redimensionar a view (o dono arrastando o trilho) sem
 //      recalcular a escala: o que quebra? E com o recálculo?
 //   P6 A VOLTA — clear + zoom 1 devolve o comportamento de hoje?
+//   P10 A MOLDURA DE DISPOSITIVO (2026-08-29, ordem do dono depois de ver os
+//      modos novos na janela destacada: "quando estiver destacado e eu colocar
+//      opções menores, poderia colocar bordas brancas ou pretas do lado, para
+//      que não tenha scroll bar, se não, como vou saber se ta quebrando de vdd
+//      ou é o app"). A receita da H8 AMPLIAVA quando o preset era menor que a
+//      moldura (1400px pedindo 375 dava zoom de 3,73×) — o dono via um site
+//      gigante e não tinha como saber se o que quebrou foi o site ou o app.
+//      A regra nova: `zoom = min(1, moldura/lógica)` e, quando a lógica CABE,
+//      a VIEW recebe bounds de exatamente `lógica` px, CENTRALIZADA na moldura.
+//      As perguntas, todas em binário:
+//        · innerWidth é EXATAMENTE a largura pedida (e o layout é o dela)?
+//        · dpr volta a 1 (a H8 cobrou o dpr acompanhando o zoom)?
+//        · sobra rolagem horizontal (a "scroll bar" que o dono não quer ver)?
+//        · a CAPTURA devolve a PÁGINA (largura lógica) — não a moldura com as
+//          faixas dentro?
+//        · o input do DRIVER e o do DONO ainda acertam com a view deslocada em
+//          x (as faixas não podem comer clique)?
+//        · e o retrato do SISTEMA OPERACIONAL mostra a página CENTRALIZADA com
+//          faixa dos dois lados?
 //
 // Uso:
 //   node scripts/probe-browser-viewport-fit.mjs
@@ -90,6 +109,7 @@ const report = {
   p4_armadilhas: null,
   p5_moldura: null,
   p6_volta: null,
+  p10_letterbox: null,
   veredito: null,
   notes: [],
   errors: []
@@ -415,9 +435,40 @@ const ops = {
   async siblingFacts() { return await evalIn(sibling, 'JSON.stringify(window.__facts())').then(JSON.parse) },
 
   async setBounds(b) {
-    view.setBounds({ x: 0, y: CHROME_H, width: b.width, height: b.height })
+    view.setBounds({ x: b.x || 0, y: CHROME_H, width: b.width, height: b.height })
     await new Promise((r) => setTimeout(r, b.settleMs || 260))
     return { bounds: view.getBounds() }
+  },
+
+  /** A RECEITA CANDIDATA INTEIRA (P10) — a que o produto vai levar, aplicada
+   *  aqui exatamente como ela seria no motor, para a medida valer:
+   *    zoom  = min(1, max(PISO, moldura / logica))   ← NUNCA amplia
+   *    viewW = min(moldura, logica)                  ← a largura da VIEW
+   *    faixa = floor((moldura - viewW) / 2)          ← o pixel impar vai p/ a direita
+   *  Quando a logica CABE, o zoom e 1 e a view fica MENOR que a moldura: o resto
+   *  e a janela (o painel escuro da casa) aparecendo dos dois lados. */
+  async applyFit(b) {
+    const logical = b.logical
+    const fw = b.frameWidth
+    const fh = b.frameHeight || 600
+    const fx = b.frameX || 0
+    await clearAll()
+    const auto = logical === 'auto'
+    const zoom = auto ? 1 : Math.min(1, Math.max(0.25, fw / logical))
+    const viewW = auto ? fw : Math.min(fw, logical)
+    const band = Math.max(0, Math.floor((fw - viewW) / 2))
+    const t0 = process.hrtime.bigint()
+    view.setBounds({ x: fx + band, y: CHROME_H, width: viewW, height: fh })
+    view.webContents.setZoomFactor(zoom)
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6
+    await new Promise((r) => setTimeout(r, b.settleMs || 280))
+    return {
+      logical: logical, frameWidth: fw, frameX: fx,
+      zoomPedido: Math.round(zoom * 100000) / 100000,
+      zoomReal: Math.round(view.webContents.getZoomFactor() * 100000) / 100000,
+      viewW: viewW, faixa: band, aplicarMs: Math.round(ms * 100) / 100,
+      bounds: view.getBounds()
+    }
   },
 
   async setZoomRaw(b) {
@@ -777,6 +828,7 @@ async function main() {
   await runP4()
   await runP5()
   await runP9()
+  await runP10()
   await runP6()
 
   raw('summary.json', report)
@@ -1104,6 +1156,141 @@ async function runP9() {
   await call('onlyCobaia', { off: true })
   report.p9_fronteira = out
   raw('p9-fronteira.json', out)
+}
+
+// ——— P10: A MOLDURA DE DISPOSITIVO (a faixa que o dono pediu) ———
+async function runP10() {
+  log('\n--- P10: MOLDURA DE DISPOSITIVO (preset menor que a moldura = faixas, sem ampliar) ---')
+  const CASOS = [
+    { moldura: 400, logica: 375, nota: 'o trilho largo com o botão celular' },
+    { moldura: 400, logica: 1280, nota: 'o caso da H8 (encolhe para caber)' },
+    { moldura: 300, logica: 1280, nota: 'o piso de 0,25 do Chromium' },
+    { moldura: 1400, logica: 375, nota: 'a JANELA DESTACADA com celular (a H8 ampliava 3,73×)' },
+    { moldura: 1400, logica: 768, nota: 'a janela destacada com tablet' },
+    { moldura: 375, logica: 375, nota: 'encaixe EXATO — faixa nenhuma' },
+    { moldura: 401, logica: 375, nota: 'sobra ÍMPAR (o pixel extra vai para a direita)' },
+    { moldura: 400, logica: 768, nota: 'tablet no trilho (ainda encolhe)' }
+  ]
+  const linhas = []
+  for (const caso of CASOS) {
+    const aplicado = await call('applyFit', {
+      frameX: 0,
+      frameWidth: caso.moldura,
+      frameHeight: 600,
+      logical: caso.logica
+    })
+    const f = await call('facts')
+    const foto = await call('shot', { save: `p10-${caso.moldura}-${caso.logica}`, de: 'view' })
+    const fx = faixas(foto)
+    // O INPUT com a view DESLOCADA em x. O driver da casa fala em coordenada
+    // LÓGICA (a que sai do getBoundingClientRect); o mouse do DONO chega pelo
+    // compositor. A pergunta que só o binário responde: o `sendInputEvent` da
+    // view deslocada fala no espaço DELA ou no da JANELA? Se fosse o da janela,
+    // centralizar a página faria todo clique do dono cair `faixa` px à esquerda.
+    const alvo = f.alvo
+    const cdp = await tryCall('clickCdp', { x: alvo.cx, y: alvo.cy })
+    const natView = await tryCall('clickNative', { x: alvo.cx, y: alvo.cy })
+    const natJanela = await tryCall('clickNative', {
+      x: alvo.cx + aplicado.faixa,
+      y: alvo.cy
+    })
+    const hit = (r) => (r?.hits > 0 ? 'ACERTOU' : r?.ultimo ? `errou (${r.ultimo.id || r.ultimo.tag})` : 'nada')
+    const linha = {
+      ...caso,
+      zoomPedido: aplicado.zoomPedido,
+      zoomReal: aplicado.zoomReal,
+      viewW: aplicado.viewW,
+      faixa: aplicado.faixa,
+      boundsX: aplicado.bounds.x,
+      innerWidth: f.innerWidth,
+      layout: f.layout,
+      colunas: f.colunas,
+      dpr: f.dpr,
+      rolagemH: f.rolagemH,
+      // A LARGURA PEDIDA CHEGOU? (só falha onde o piso do Chromium morde)
+      exata: f.innerWidth === caso.logica,
+      captura: { ms: foto.ms, largura: fx.bitmapW, inteira: fx.inteira, ocupaPct: fx.ocupaPct },
+      input: {
+        cdpLogico: hit(cdp),
+        nativoNoEspacoDaView: hit(natView),
+        nativoNoEspacoDaJanela: hit(natJanela)
+      }
+    }
+    linhas.push(linha)
+    log(
+      `   moldura ${String(caso.moldura).padStart(4)} · pede ${String(caso.logica).padStart(4)} ⇒ ` +
+        `zoom=${String(linha.zoomReal).padEnd(7)} view=${String(linha.viewW).padStart(4)}px em x=${String(linha.boundsX).padStart(3)} (faixa ${linha.faixa}) · ` +
+        `innerW=${String(linha.innerWidth).padStart(5)} ${String(linha.layout).padEnd(8)} dpr=${String(linha.dpr).padEnd(6)} rolagemH=${linha.rolagemH ? 'SIM' : 'não'}`
+    )
+    log(
+      `   ${' '.repeat(22)} captura ${linha.captura.largura}px (${linha.captura.ms}ms, página inteira=${linha.captura.inteira ? 'SIM' : 'nao'}) · ` +
+        `input: CDP-lógico ${linha.input.cdpLogico} · nativo(view) ${linha.input.nativoNoEspacoDaView} · nativo(janela) ${linha.input.nativoNoEspacoDaJanela}`
+    )
+  }
+
+  // FRESCOR sob a moldura de dispositivo (lei 2 da casa): a view menor que a
+  // moldura continua entregando pixel NOVO no mesmo prazo?
+  await call('applyFit', { frameWidth: 1400, frameHeight: 600, logical: 375 })
+  const frescor = []
+  for (let i = 0; i < Math.min(4, SAMPLES); i++) frescor.push(await call('fresh', { budgetMs: 4000 }))
+  const bons = frescor.filter((a) => a.msToFresh !== null).map((a) => a.msToFresh).sort((a, b) => a - b)
+  log(
+    `   frescor com a view centralizada (1400 pedindo 375): ${bons.length}/${frescor.length} frescos · mediana ${bons.length ? bons[Math.floor(bons.length / 2)] : null}ms`
+  )
+
+  // O QUE O DONO VÊ, composto pelo SISTEMA OPERACIONAL: a página CENTRALIZADA,
+  // com faixa dos dois lados. É a única prova que não depende de eu acreditar
+  // em como o compositor recorta a superfície da view.
+  await call('onlyCobaia')
+  const osOut = []
+  for (const caso of [
+    { moldura: 900, logica: 375 },
+    { moldura: 900, logica: 768 },
+    { moldura: 900, logica: 'auto' }
+  ]) {
+    const aplicado = await call('applyFit', {
+      frameX: 0,
+      frameWidth: caso.moldura,
+      frameHeight: 600,
+      logical: caso.logica
+    })
+    const s = await call('osShot', { save: `p10-os-${caso.moldura}-${caso.logica}` })
+    if (!s.achou) {
+      log(`   desktopCapturer não achou a janela (${(s.nomes || []).slice(0, 4).join(' | ')})`)
+      break
+    }
+    const a = s.facts.achados
+    const larguraRetrato = s.facts.bitmapPx?.[0] ?? 0
+    // A janela tem 980px de conteúdo; o retrato tem `larguraRetrato`. A moldura
+    // vai de 0 a `caso.moldura` na janela — em pixels do retrato, isto:
+    const escala = larguraRetrato / 980
+    const faixaEsperada = Math.round(aplicado.faixa * escala)
+    osOut.push({
+      ...caso,
+      faixa: aplicado.faixa,
+      faixaEsperadaNoRetrato: faixaEsperada,
+      esqMinX: a.faixaEsq.minX,
+      dirMaxX: a.faixaDir.maxX,
+      larguraRetrato,
+      // A borda ESQUERDA da página tem de começar DEPOIS da faixa (com 6px de
+      // tolerância para a escala do retrato), e não colada no zero.
+      paginaCentralizada:
+        a.faixaEsq.count > 0 && a.faixaEsq.minX !== null && a.faixaEsq.minX >= faixaEsperada - 6,
+      bordaDireitaVisivel: a.faixaDir.count > 0
+    })
+    const row = osOut.at(-1)
+    log(
+      `   [SO] moldura ${caso.moldura} pedindo ${caso.logica} ⇒ faixa de ${row.faixa}px (≈${faixaEsperada} no retrato) · ` +
+        `borda esq da página em x=${row.esqMinX} · borda dir em x=${row.dirMaxX} ⇒ ` +
+        `${row.paginaCentralizada ? 'CENTRALIZADA com faixa' : 'colada na esquerda'}`
+    )
+  }
+  await call('onlyCobaia', { off: true })
+  await call('setBounds', { x: 0, width: 400, height: 600 })
+  await call('clear')
+
+  report.p10_letterbox = { casos: linhas, frescor, telaDoSO: osOut }
+  raw('p10-letterbox.json', report.p10_letterbox)
 }
 
 // ——— P6: a volta para o modo de hoje ———

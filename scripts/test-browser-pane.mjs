@@ -53,6 +53,7 @@ import {
   EMPTY_BROWSER_PANEL,
   activeBrowserTab,
   browserIsPopout,
+  browserViewportBand,
   browserViewportHint,
   browserViewportIsCustom,
   browserViewportLabel,
@@ -109,9 +110,12 @@ import {
   BROWSER_ZOOM_FLOOR,
   applyViewportFit,
   normalizeViewportMode,
+  viewportBandWidth,
   viewportEffectiveWidth,
   viewportFitZoom,
-  viewportIsClamped
+  viewportIsClamped,
+  viewportViewRect,
+  viewportViewWidth
 } from '../.tmp/browser-pane-test/browserViewport.js'
 
 // ————————————————————————————————————————————————————————————————
@@ -2031,10 +2035,14 @@ test('LARGURA/PURO: o zoom é a moldura dividida pela largura — e o PISO do Ch
   assert.equal(viewportEffectiveWidth(1280, 300), 1200)
   assert.equal(viewportIsClamped(1280, 300), true)
 
-  // AMPLIAR é exato no alcance útil (medido: moldura de 1400 pedindo 375 deu
-  // 375 cravados) — é o botão "celular" numa janela destacada larga.
-  assert.equal(viewportFitZoom(375, 1400), 1400 / 375)
-  assert.equal(viewportEffectiveWidth(375, 1400), 375)
+  // AMPLIAR MORREU (2026-08-29, ordem do dono). A sonda mediu que funcionava —
+  // moldura de 1400 pedindo 375 entregava 375 lógicos EXATOS a 3,73× — e é
+  // exatamente por isso que a cerca precisa existir: o defeito não era técnico,
+  // era o dono não conseguir distinguir "o site quebrou" de "o app esticou".
+  // Sobrando moldura, o zoom para em 1 e quem cede é a VIEW.
+  assert.equal(viewportFitZoom(375, 1400), 1, 'nunca amplia')
+  assert.equal(viewportFitZoom(768, 1400), 1)
+  assert.equal(viewportEffectiveWidth(375, 1400), 375, 'e a página segue enxergando 375 EXATOS')
 
   // Moldura ainda não relatada (painel fechado, refúgio) não vira geometria
   // inventada.
@@ -2320,9 +2328,351 @@ test('LARGURA/PAINEL: a fotografia REPINTA quando o modo muda, e o resumo o carr
   assert.match(browserViewportNote(apertado), /a página está recebendo 1200px/u)
   assert.match(browserViewportNote(apertado), /alargue o painel|destaque em janela própria/u)
 
-  // A frase de cada botão ensina o que o gesto faz — e o preço.
+  // A frase de cada botão ensina o que o gesto faz — e o preço. Desde a moldura
+  // de dispositivo ela promete o que a receita cumpre: NUNCA amplia.
   assert.match(browserViewportHint('auto'), /largura real do painel/u)
-  assert.match(browserViewportHint(1280), /emula largura de desktop \(1280px\) e ajusta à moldura/u)
+  assert.match(browserViewportHint(1280), /largura de desktop \(1280px\)/u)
+  assert.match(browserViewportHint(1280), /nunca amplia/u)
   assert.match(browserViewportHint(768), /tablet/u)
   assert.match(browserViewportHint(375), /celular/u)
+})
+
+// ————— A MOLDURA DE DISPOSITIVO (2026-08-29) —————
+//
+// A ORDEM DO DONO, ao vivo, olhando a janela destacada com os modos novos:
+// *"Quando estiver destacado e eu colocar opções menores, poderia colocar
+// bordas brancas ou pretas do lado, para que não tenha scroll bar, se não, como
+// vou saber se ta quebrando de vdd ou é o app."*
+//
+// A receita da H8 AMPLIAVA quando o preset era menor que a moldura (a sonda
+// mediu 3,73× numa janela de 1400 pedindo 375): a página aparecia gigante e o
+// dono não tinha como separar o defeito do site do defeito do app. A lei nova,
+// medida em binário (§P10 de `PROBE_BROWSER_VIEWPORT_FIT_2026-08-29.md`):
+//
+//   zoom  = min(1, max(PISO, moldura ÷ lógica))   ← NUNCA amplia
+//   viewW = min(moldura, lógica)                  ← a view pode ser menor
+//   faixa = floor((moldura - viewW) / 2)          ← o pixel ímpar vai p/ a direita
+//
+// e o que sobra da moldura é o painel do app aparecendo dos dois lados. O que
+// estas cercas prendem é a CONTA (os dois ramos, o encaixe exato, a sobra ímpar,
+// a moldura menor que o preset) e o QUE O MOTOR FAZ COM ELA — porque o `zoom`
+// certo com o `setBounds` errado é uma página esticada com um número bonito.
+
+test('MOLDURA: a view fica com a largura PEDIDA e centralizada — e nunca mais larga que a moldura', () => {
+  // O caso do dono: a janela destacada larga com o botão do celular. Antes,
+  // ampliação de 3,73×; agora, 375px reais no meio de 1400 com 512 de faixa.
+  assert.equal(viewportViewWidth(375, 1400), 375)
+  assert.equal(viewportBandWidth(375, 1400), 512)
+  assert.deepEqual(viewportViewRect(375, { x: 0, y: 40, width: 1400, height: 600 }), {
+    x: 512,
+    y: 40,
+    width: 375,
+    height: 600
+  })
+  // O x da MOLDURA entra na conta: no dock o painel não começa no zero da
+  // janela, e uma centralização que ignorasse isso jogaria a página para cima do
+  // chat do dono.
+  assert.deepEqual(viewportViewRect(375, { x: 300, y: 40, width: 1400, height: 600 }), {
+    x: 812,
+    y: 40,
+    width: 375,
+    height: 600
+  })
+
+  // O RAMO QUE ENCOLHE não mudou uma linha: a view ocupa a moldura inteira e
+  // quem cede é a escala. Faixa nenhuma.
+  assert.equal(viewportViewWidth(1280, 400), 400)
+  assert.equal(viewportBandWidth(1280, 400), 0)
+  assert.deepEqual(viewportViewRect(1280, { x: 0, y: 0, width: 400, height: 600 }), {
+    x: 0,
+    y: 0,
+    width: 400,
+    height: 600
+  })
+
+  // ENCAIXE EXATO: a moldura tem a largura pedida — faixa zero, e nada de uma
+  // listra de 1px aparecendo do nada.
+  assert.equal(viewportViewWidth(375, 375), 375)
+  assert.equal(viewportBandWidth(375, 375), 0)
+
+  // SOBRA ÍMPAR: o pixel extra vai SEMPRE para a direita (`floor`). A decisão
+  // precisa ser sempre a mesma, senão a página tremeria meio pixel para os lados
+  // conforme a moldura passa de par para ímpar no meio de um arrasto.
+  assert.equal(viewportBandWidth(375, 400), 12, '400-375=25 ⇒ 12 à esquerda, 13 à direita')
+  assert.equal(viewportBandWidth(375, 401), 13, '401-375=26 ⇒ 13 e 13')
+  assert.equal(viewportBandWidth(375, 376), 0, 'meio pixel não vira faixa')
+  assert.equal(viewportBandWidth(375, 377), 1)
+
+  // MOLDURA MENOR QUE O PRESET (e AUTO): não existe faixa nenhuma.
+  assert.equal(viewportBandWidth(1280, 300), 0)
+  assert.equal(viewportBandWidth('auto', 1400), 0)
+  assert.equal(viewportViewWidth('auto', 1400), 1400)
+
+  // Moldura ainda não relatada (painel fechado, refúgio): a conta não inventa
+  // geometria — e não devolve retângulo negativo.
+  assert.equal(viewportViewWidth(375, 0), 0)
+  assert.equal(viewportBandWidth(375, 0), 0)
+  assert.equal(viewportViewWidth(375, Number.NaN), 0)
+})
+
+test('MOLDURA/MOTOR: o preset que CABE vira bounds menores e centralizados, por ABA', async () => {
+  const { manager, host } = makeManager()
+  const primeira = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  // A janela destacada é larga: é o caso em que a H8 ampliava.
+  manager.applyBounds('m1', { x: 40, y: 20, width: 1400, height: 600 }, true)
+  manager.setViewportMode('m1', 375)
+
+  const boundsOf = (wc) =>
+    host.log.filter((entry) => entry.kind === 'setBounds' && entry.wc === wc).at(-1).bounds
+  assert.deepEqual(boundsOf(primeira.webContents.id), {
+    x: 40 + 512,
+    y: 20,
+    width: 375,
+    height: 600
+  })
+  // ZOOM 1: nada foi esticado. É o ponto todo — o que o dono vir quebrado ali
+  // dentro é do SITE.
+  assert.equal(primeira.webContents.getZoomFactor(), 1)
+  assert.equal(manager.state('m1').viewportWidth, 375)
+  assert.equal(manager.state('m1').viewportBand, 512)
+
+  // POR ABA. A irmã em AUTO ocupa a moldura INTEIRA no mesmo quadro: o modo é da
+  // aba, e a de fundo continua sendo fotografada pelo agente na largura DELA.
+  const segunda = await manager.newTab('m1', 'p', 'https://b.test/')
+  const irma = manager.state('m1').tabs.find((entry) => entry.tabId !== primeira.tabId)
+  assert.equal(irma.viewport, 'auto')
+  const wcIrma = host.views.at(-1).webContents.id
+  assert.equal(segunda.ok, true)
+  assert.deepEqual(boundsOf(wcIrma), { x: 40, y: 20, width: 1400, height: 600 })
+  assert.deepEqual(boundsOf(primeira.webContents.id), {
+    x: 40 + 512,
+    y: 20,
+    width: 375,
+    height: 600
+  })
+})
+
+test('MOLDURA/MOTOR: o gesto do modo REPOSICIONA a view na hora (não espera o ResizeObserver)', async () => {
+  const { manager, host } = makeManager()
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.applyBounds('m1', { x: 0, y: 0, width: 900, height: 600 }, true)
+  const boundsNow = () =>
+    host.log.filter((entry) => entry.kind === 'setBounds' && entry.wc === tab.webContents.id).at(-1)
+      .bounds
+
+  assert.deepEqual(boundsNow(), { x: 0, y: 0, width: 900, height: 600 })
+  // O clique do dono (ou a tool do agente) muda o modo — e a página tem de sair
+  // do lugar NESTE passo. Reaplicar só o zoom deixaria a página esticada na
+  // moldura toda até o painel relatar geometria de novo (e ele só relata quando
+  // MUDA de tamanho — o que não acontece ao trocar de modo).
+  manager.setViewportMode('m1', 768)
+  assert.deepEqual(boundsNow(), { x: 66, y: 0, width: 768, height: 600 })
+  assert.equal(tab.webContents.getZoomFactor(), 1)
+
+  // A volta para AUTO devolve a moldura inteira, no mesmo passo.
+  manager.setViewportMode('m1', 'auto')
+  assert.deepEqual(boundsNow(), { x: 0, y: 0, width: 900, height: 600 })
+  assert.equal(manager.state('m1').viewportBand, undefined, 'sem faixa, o campo nem viaja')
+})
+
+test('MOLDURA/MOTOR: arrastar a alça re-centraliza a faixa a cada relato (sem degrau)', async () => {
+  const { manager, host } = makeManager()
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
+  manager.setViewportMode('m1', 375)
+
+  const xs = []
+  // O arrasto do dono, quadro a quadro: a moldura cresce e a faixa acompanha.
+  for (const width of [400, 460, 520, 700, 1000]) {
+    manager.applyBounds('m1', { x: 0, y: 0, width, height: 600 }, true)
+    const last = host.log
+      .filter((entry) => entry.kind === 'setBounds' && entry.wc === tab.webContents.id)
+      .at(-1).bounds
+    xs.push([width, last.x, last.width])
+  }
+  assert.deepEqual(xs, [
+    [400, 12, 375],
+    [460, 42, 375],
+    [520, 72, 375],
+    [700, 162, 375],
+    [1000, 312, 375]
+  ])
+  // A largura da view NUNCA muda no meio disso: é essa a promessa de "tamanho
+  // real" — a página não se mexe, a faixa é que cresce.
+  assert.equal(tab.webContents.getZoomFactor(), 1)
+
+  // E encolher ABAIXO da largura pedida devolve o ramo que ENCOLHE: a faixa
+  // morre, a view volta a ocupar a moldura e a escala volta a trabalhar.
+  manager.applyBounds('m1', { x: 0, y: 0, width: 300, height: 600 }, true)
+  const apertado = host.log
+    .filter((entry) => entry.kind === 'setBounds' && entry.wc === tab.webContents.id)
+    .at(-1).bounds
+  assert.deepEqual(apertado, { x: 0, y: 0, width: 300, height: 600 })
+  assert.equal(tab.webContents.getZoomFactor(), 300 / 375)
+  assert.equal(manager.state('m1').viewportBand, undefined)
+  assert.equal(manager.state('m1').viewportWidth, 375, 'e a página segue enxergando 375')
+})
+
+test('MOLDURA/MOTOR: o chrome acorda quando a NARRAÇÃO vira — e fica quieto no meio do arrasto', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { manager, pushes } = makeManager()
+  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.applyBounds('m1', { x: 0, y: 0, width: 300, height: 600 }, true)
+  manager.setViewportMode('m1', 375)
+  t.mock.timers.tick(100)
+  const contar = () => {
+    t.mock.timers.tick(100)
+    return pushes.filter((entry) => entry.channel === BROWSER_CHANGED_CHANNEL).length
+  }
+  const base = contar()
+
+  // O ARRASTO, quadro a quadro, TODO dentro do ramo que encolhe: nada mudou de
+  // estado, e o motor NÃO pode acordar o painel. Isto não é economia — é a
+  // armadilha da H9: um repaint do React no meio do gesto reescreve
+  // `--dock-browser-page-h` a partir da fração congelada, e a página pula para a
+  // altura de antes do arrasto por um quadro.
+  for (const width of [310, 320, 330, 340, 350, 360]) {
+    manager.applyBounds('m1', { x: 0, y: 0, width, height: 600 }, true)
+  }
+  assert.equal(contar(), base, 'quadro de arrasto NÃO repinta o painel')
+
+  // Cruzar a largura pedida FAZ a faixa nascer — e aí sim o chrome precisa
+  // saber: é ele quem desenha a costura e escreve a frase que responde "isso é
+  // o app ou o site quebrado?".
+  manager.applyBounds('m1', { x: 0, y: 0, width: 500, height: 600 }, true)
+  const nascida = contar()
+  assert.equal(nascida, base + 1, 'a faixa NASCER acorda o painel uma vez')
+  assert.equal(manager.state('m1').viewportBand, 62)
+
+  // Mais quadros do MESMO estado: silêncio de novo.
+  for (const width of [560, 620, 700]) {
+    manager.applyBounds('m1', { x: 0, y: 0, width, height: 600 }, true)
+  }
+  assert.equal(contar(), nascida, 'faixa que só ENGORDA não repinta nada')
+
+  // E voltar abaixo da largura pedida MATA a faixa — o painel precisa saber
+  // disso também, senão fica com a costura desenhada sem faixa por baixo.
+  manager.applyBounds('m1', { x: 0, y: 0, width: 300, height: 600 }, true)
+  assert.equal(contar(), nascida + 1)
+  assert.equal(manager.state('m1').viewportBand, undefined)
+
+  // O MESMO vale para o piso do Chromium (buraco da H8: arrastar o painel até
+  // ele morder mudava a largura efetiva e o aviso nunca aparecia na tela).
+  manager.setViewportMode('m1', 1280)
+  manager.applyBounds('m1', { x: 0, y: 0, width: 800, height: 600 }, true)
+  const antesDoPiso = contar()
+  // 340 ÷ 1280 = 0,266 — ainda acima do piso de 0,25: nada mudou de estado.
+  manager.applyBounds('m1', { x: 0, y: 0, width: 340, height: 600 }, true)
+  assert.equal(manager.state('m1').viewportWidth, 1280)
+  assert.equal(contar(), antesDoPiso, 'quadro de arrasto que não cruza limite nenhum é silêncio')
+  // 300 ÷ 1280 = 0,234 — o Chromium grampeia em 0,25 e a página passa a receber
+  // 1200px. O aviso do chrome depende deste repaint.
+  manager.applyBounds('m1', { x: 0, y: 0, width: 300, height: 600 }, true)
+  assert.equal(contar(), antesDoPiso + 1, 'o piso MORDER acorda o painel')
+  assert.equal(manager.state('m1').viewportWidth, 1200)
+})
+
+test('MOLDURA/MOTOR: a JANELA DESTACADA é onde a faixa mais vale (e o reencaixe a desfaz)', async () => {
+  const { manager, host, popouts } = makeHostedManager()
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
+  manager.setViewportMode('m1', 375)
+  const boundsNow = () =>
+    host.log.filter((entry) => entry.kind === 'setBounds' && entry.wc === tab.webContents.id).at(-1)
+      .bounds
+  assert.deepEqual(boundsNow(), { x: 12, y: 0, width: 375, height: 600 })
+
+  // ⧉: a mesma página numa janela larga. Sem a moldura de dispositivo, a receita
+  // antiga a AMPLIARIA (medido: 3,73× numa janela de 1400).
+  manager.popOut('m1')
+  manager.applyBounds('m1', POPOUT_RECT, true, 'popout')
+  assert.ok(popouts.get('m1'))
+  const faixa = Math.floor((POPOUT_RECT.width - 375) / 2)
+  assert.deepEqual(boundsNow(), {
+    x: POPOUT_RECT.x + faixa,
+    y: POPOUT_RECT.y,
+    width: 375,
+    height: POPOUT_RECT.height
+  })
+  assert.equal(tab.webContents.getZoomFactor(), 1, 'a janela larga NÃO amplia mais')
+  assert.equal(manager.state('m1').viewportBand, faixa)
+
+  // E o reencaixe volta para a moldura do dock — com a faixa recalculada ali.
+  manager.dockBack('m1')
+  manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
+  assert.deepEqual(boundsNow(), { x: 12, y: 0, width: 375, height: 600 })
+  assert.equal(manager.state('m1').viewportBand, 12)
+})
+
+test('MOLDURA/PAINEL: a faixa nasce e morre na tela, e a nota conta de quem ela é', () => {
+  const comFaixa = normalizeBrowserPanel({
+    alive: true,
+    tabs: [{ tabId: 't1', active: true, title: 'Board', viewport: 375 }],
+    viewport: 375,
+    viewportWidth: 375,
+    viewportBand: 262
+  })
+  const semFaixa = normalizeBrowserPanel({
+    alive: true,
+    tabs: [{ tabId: 't1', active: true, title: 'Board', viewport: 375 }],
+    viewport: 375,
+    viewportWidth: 375
+  })
+  assert.equal(browserViewportBand(comFaixa), 262)
+  assert.equal(browserViewportBand(semFaixa), 0)
+  // `0` e lixo NUNCA viram faixa: uma listra desenhada por causa de um payload
+  // torto seria o app se acusando de um defeito que não existe.
+  assert.equal(browserViewportBand(normalizeBrowserPanel({ viewportBand: 0 })), 0)
+  assert.equal(browserViewportBand(normalizeBrowserPanel({ viewportBand: -20 })), 0)
+  assert.equal(browserViewportBand(normalizeBrowserPanel({ viewportBand: 'larga' })), 0)
+  assert.equal(semFaixa.viewportBand, undefined, 'ausência tem UMA grafia só')
+
+  // E a ausência tem UMA GRAFIA SÓ de verdade: o motor pode mandar `0`, pode não
+  // mandar campo nenhum, e pode mandar lixo — as três são a MESMA fotografia.
+  // Sem isso, o `browser:changed` (que chega a cada passo do agente) repintaria
+  // o dock por nada, alternando entre `0` e ausente.
+  const zero = normalizeBrowserPanel({
+    alive: true,
+    tabs: [{ tabId: 't1', active: true, title: 'Board', viewport: 375 }],
+    viewport: 375,
+    viewportWidth: 375,
+    viewportBand: 0
+  })
+  const lixo = normalizeBrowserPanel({
+    alive: true,
+    tabs: [{ tabId: 't1', active: true, title: 'Board', viewport: 375 }],
+    viewport: 375,
+    viewportWidth: 375,
+    viewportBand: 'larga'
+  })
+  assert.equal(sameBrowserPanel(semFaixa, zero), true, '`0` e ausente são a mesma coisa')
+  assert.equal(sameBrowserPanel(semFaixa, lixo), true)
+
+  // SEM ESTA LINHA a faixa não nasceria nem morreria: alargar o painel até a
+  // largura pedida caber deixaria a página em tamanho real e a tela sem faixa
+  // nenhuma desenhada.
+  assert.equal(sameBrowserPanel(comFaixa, semFaixa), false)
+  assert.equal(sameBrowserPanel(comFaixa, comFaixa), true)
+
+  // A NOTA ESCRITA — porque uma faixa escura ao lado de um site escuro não se
+  // explica sozinha, e a pergunta do dono era literalmente "como vou saber".
+  const nota = browserViewportNote(comFaixa)
+  assert.match(nota, /375px REAIS/u)
+  assert.match(nota, /as faixas dos lados são o app, não o site/u)
+  // SEM o número da faixa: ele muda a cada quadro de um arrasto e a fotografia
+  // só atravessa o IPC quando a narração VIRA de estado — um "262px" congelado
+  // na tela enquanto o dono arrasta seria pior do que não dizer.
+  assert.doesNotMatch(nota, /262/u)
+  assert.equal(browserViewportNote(semFaixa), null)
+
+  // Os dois recados são de RAMOS DIFERENTES da receita e não podem se misturar:
+  // com faixa não existe piso mordendo, e com piso mordendo não existe faixa.
+  const apertado = normalizeBrowserPanel({
+    alive: true,
+    tabs: [{ tabId: 't1', active: true, viewport: 1280 }],
+    viewport: 1280,
+    viewportWidth: 1200
+  })
+  assert.match(browserViewportNote(apertado), /estreito demais/u)
+  assert.doesNotMatch(browserViewportNote(apertado), /faixas/u)
 })

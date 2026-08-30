@@ -22580,6 +22580,71 @@ details.gui-error-line {
   background: var(--panel);
 }
 
+/* ——— as faixas da MOLDURA DE DISPOSITIVO ———
+
+   ORDEM DO DONO (2026-08-29, olhando a janela destacada com os modos novos):
+   "quando estiver destacado e eu colocar opções menores, poderia colocar bordas
+   brancas ou pretas do lado, para que não tenha scroll bar, se não, como vou
+   saber se ta quebrando de vdd ou é o app".
+
+   Quando a largura pedida CABE na moldura, o motor põe a `WebContentsView` em
+   TAMANHO REAL e CENTRALIZADA (medido: 375px cravados numa moldura de 1400, com
+   zoom 1 e sem rolagem horizontal nenhuma). O que sobra do retângulo é ESTE
+   painel — a faixa. Ela não é desenho novo: é o app aparecendo. O que se desenha
+   aqui é só a COSTURA na borda exata da página, porque um site de fundo escuro
+   se confundiria com o painel e a pergunta do dono ficaria sem resposta.
+
+   A GEOMETRIA É DO LAYOUT, não do JavaScript: `min(100%, largura)` é a mesma
+   conta do motor (`viewportViewWidth`), e a metade que sobra é a faixa. Num
+   arrasto da alça ela re-centraliza a cada quadro, sem degrau e sem um render do
+   React — o mesmo arranjo pago em `--dock-browser-page-h`.
+
+   `pointer-events: none` é lei: as faixas não podem comer clique nenhum. */
+.dock-browser-bands {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.dock-browser-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* O `--dock-browser-vp-w` é a largura LÓGICA que o motor aplicou; o valor de
+     reserva é 100% para que uma variável que faltasse feche a faixa em vez de
+     abrir uma listra do tamanho da metade do painel.
+
+     O `round(down, …, 1px)` é a MESMA decisão do motor (`Math.floor` em
+     `viewportBandWidth`), e ela é obrigatória, não estética: sem ela a faixa do
+     CSS mede meio pixel a mais quando a sobra é ÍMPAR, a view nativa aterrissa
+     no pixel inteiro e COBRE a costura — o fio some e volta conforme o dono
+     arrasta a moldura de par para ímpar. Pego por leitura de BYTES na foto do
+     harness (a costura sumia na janela de 900px pedindo 375), não no olho. */
+  width: round(down, (100% - min(100%, var(--dock-browser-vp-w, 100%))) / 2, 1px);
+  background: var(--panel-2);
+}
+
+/* A COSTURA: um fio na borda da página. `--panel-ink-3` sobre `--panel` mede
+   3,1:1 — o piso do WCAG 1.4.11 para elemento de interface, a MESMA medida que
+   escolheu a cor do risco da alça. Ela fica do lado de DENTRO de cada faixa, que
+   é exatamente onde a view começa.
+
+   E ela é SOMBRA INTERNA, não borda, por um defeito pego no harness: com
+   `box-sizing: border-box` (global da casa) uma faixa de largura ZERO ainda
+   PINTA a borda — um risco de 1px encostado na página, sem faixa nenhuma para
+   justificá-lo, no instante em que a moldura encolhe abaixo da largura pedida
+   (a fotografia do estado atravessa o IPC coalescido e chega um ou dois quadros
+   depois do layout). Sombra interna de caixa vazia não pinta nada. */
+.dock-browser-band.l {
+  left: 0;
+  box-shadow: inset -1px 0 0 var(--panel-ink-3);
+}
+
+.dock-browser-band.r {
+  right: 0;
+  box-shadow: inset 1px 0 0 var(--panel-ink-3);
+}
+
 .dock-browser-empty {
   position: absolute;
   inset: 0;

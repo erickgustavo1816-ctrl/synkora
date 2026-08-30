@@ -9,6 +9,7 @@ import {
 } from 'react'
 import { useStore } from '../store'
 import BrowserChrome, {
+  BrowserPageBands,
   BrowserPageOverlay,
   browserApi,
   useBrowserHint,
@@ -902,6 +903,10 @@ export default function DockBrowser({
             por quê. Painel escuro (família .term-window) porque é isso que a
             página vai ser: a única superfície não-papel do dock. */}
         <div ref={pageRef} className={`dock-browser-page${state.alive ? ' live' : ''}`}>
+          {/* As faixas da MOLDURA DE DISPOSITIVO: com a largura pedida cabendo
+              no painel, a view fica em tamanho real e centralizada, e isto marca
+              onde ela começa e termina. */}
+          <BrowserPageBands state={state} painted={painted} />
           <BrowserPageOverlay
             state={state}
             painted={painted}

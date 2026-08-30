@@ -45,6 +45,11 @@ import type {
   BrowserViewHandle,
   BrowserViewHost
 } from './browserPaneHost'
+// A MOLDURA DE DISPOSITIVO (2026-08-29). Módulo PURO, sem Electron: a mesma
+// conta que o `applyLayout` do irmão usa no dock — importada, e não copiada,
+// porque duas cópias da centralização virariam duas centralizações diferentes na
+// terceira correção.
+import { viewportViewRect, type BrowserViewportMode } from './browserViewport'
 
 // ————————————————————————————————————————————————————————————————
 // A fatia do registro da missão que esta máquina governa
@@ -62,6 +67,10 @@ export interface BrowserHostedTab {
   readonly tabId: string
   readonly view: BrowserViewHandle
   readonly wc: { isDestroyed(): boolean }
+  /** A largura que ESTA aba faz a página enxergar. A máquina de host precisa
+   *  dela porque o retângulo da view sai daqui: com o modo cabendo na moldura, a
+   *  view fica menor que a janela e CENTRALIZADA (a moldura de dispositivo). */
+  readonly viewport: BrowserViewportMode
 }
 
 /** A missão, do ponto de vista de QUEM SEGURA A PÁGINA. O `MissionRecord` do
@@ -174,7 +183,12 @@ export function createBrowserHostMachine<M extends BrowserHostedMission>(
     const rect = usable && asked ? asked : { x: 0, y: 0, width: size.width, height: size.height }
     const show = wanted ? wanted.visible : true
     for (const tab of mission.tabs) {
-      tab.view.setBounds(rect)
+      // A MOLDURA DE DISPOSITIVO vale MAIS aqui do que no dock: é na janela
+      // destacada que sobra largura, e é ali que o dono viu o botão 375 AMPLIAR
+      // a página 3,73× (medido). A conta é a mesma do irmão, importada do módulo
+      // puro — a view fica com a largura pedida, centralizada, e o resto da
+      // janela é faixa do app.
+      tab.view.setBounds(viewportViewRect(tab.viewport, rect))
       const visible = show && tab.tabId === mission.activeTabId
       if (tab.view.getVisible() !== visible) tab.view.setVisible(visible)
     }

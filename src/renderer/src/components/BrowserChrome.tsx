@@ -1,10 +1,18 @@
-import { useCallback, useRef, useState, type ReactNode, type RefObject } from 'react'
+import {
+  useCallback,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject
+} from 'react'
 import {
   BROWSER_NO_API,
   BROWSER_TAB_CAP,
   BROWSER_VIEWPORT_CHOICES,
   activeBrowserTab,
   browserTabLabel,
+  browserViewportBand,
   browserViewportHint,
   browserViewportIsCustom,
   browserViewportLabel,
@@ -420,6 +428,53 @@ export default function BrowserChrome({
           </span>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * AS FAIXAS DA MOLDURA DE DISPOSITIVO (2026-08-29 — ordem do dono, ao vivo:
+ * *"Quando estiver destacado e eu colocar opções menores, poderia colocar bordas
+ * brancas ou pretas do lado, para que não tenha scroll bar, se não, como vou
+ * saber se ta quebrando de vdd ou é o app"*).
+ *
+ * Com a largura pedida CABENDO na moldura, o motor põe a view em tamanho REAL e
+ * CENTRALIZADA (`viewportViewRect`, medido na sonda §P10) — o que sobra do
+ * retângulo é o painel escuro do app aparecendo dos dois lados. Este componente
+ * não INVENTA essa faixa: ele a MARCA, com uma costura de fio de cabelo na borda
+ * exata da página, porque um site de fundo escuro se confundiria com o painel e
+ * a pergunta do dono continuaria sem resposta.
+ *
+ * A repartição de trabalho — e ela é o ponto:
+ *  · **a geometria é CSS** (`calc((100% - min(100%, largura)) / 2)`), calculada
+ *    pelo layout a cada quadro. Num arrasto da alça a faixa re-centraliza junto
+ *    com a página, sem degrau e sem um único render do React;
+ *  · **o estado só diz SE existe faixa** (`viewportBand`, que viaja no
+ *    `browser:changed` coalescido). Ele pode atrasar um quadro ou dois na
+ *    travessia — e no instante em que a moldura cruza a largura pedida a faixa
+ *    tem ZERO px, então o atraso é literalmente invisível.
+ *
+ * Elas NUNCA comem clique (`pointer-events: none`) e nunca cobrem a página: a
+ * `WebContentsView` compõe ACIMA de todo este DOM.
+ */
+export function BrowserPageBands({
+  state,
+  painted
+}: {
+  state: BrowserPanelState
+  /** a medida concluiu que a página está à vista AGORA — sem view por cima não
+   *  há borda de página para marcar, e duas listras num retângulo vazio só
+   *  fariam o dono procurar o que elas emolduram */
+  painted: boolean
+}): React.JSX.Element | null {
+  const mode = browserViewportOf(state)
+  if (!state.alive || !painted || mode === 'auto') return null
+  if (browserViewportBand(state) <= 0) return null
+  const style = { '--dock-browser-vp-w': `${mode}px` } as CSSProperties
+  return (
+    <div className="dock-browser-bands" style={style} aria-hidden="true">
+      <i className="dock-browser-band l" />
+      <i className="dock-browser-band r" />
     </div>
   )
 }

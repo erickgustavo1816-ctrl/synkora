@@ -35,6 +35,41 @@
  * de 0,3125 entrega **4096** CSS px para a página (medido, estável em 5
  * aplicações). Quem mexer aqui depois: ou zoom, ou emulação — nunca os dois.
  *
+ * ——— A MOLDURA DE DISPOSITIVO (2026-08-29, ordem do dono) ———
+ * *"Quando estiver destacado e eu colocar opções menores, poderia colocar bordas
+ * brancas ou pretas do lado, para que não tenha scroll bar, se não, como vou
+ * saber se ta quebrando de vdd ou é o app."*
+ *
+ * A receita acima, sozinha, AMPLIAVA quando o preset era menor que a moldura: na
+ * janela destacada de 1400px o botão 375 pedia zoom de **3,73×** (medido), e o
+ * dono via um site gigante sem ter como distinguir o defeito do site do defeito
+ * do app. A lei nova, em duas linhas:
+ *
+ *   zoom  = min(1, max(PISO, moldura ÷ lógica))   ← NUNCA amplia
+ *   viewW = min(moldura, lógica)                  ← a VIEW pode ser menor que a moldura
+ *
+ * Quando a largura lógica CABE, o zoom é 1 e a view recebe bounds de exatamente
+ * `lógica` px, CENTRALIZADA: o que sobra da moldura é o painel escuro da casa
+ * aparecendo dos dois lados — as "bordas" que o dono pediu. Qualquer quebra que
+ * ele veja dali para dentro é do SITE, garantido.
+ *
+ * O que a sonda mediu para esta metade (§P10 do mesmo relatório):
+ *  · moldura 1400 pedindo 375 ⇒ zoom **1**, view de 375px em x=512, `innerWidth`
+ *    **375 exato**, media query **mobile**, **`devicePixelRatio` de volta a 1**
+ *    (a dívida da H8 se paga sozinha neste ramo) e **rolagem horizontal
+ *    NENHUMA** — a barra falsa que o dono não queria ver não existe;
+ *  · `capturePage()` devolve **375px** (a PÁGINA, não a moldura com as faixas
+ *    dentro) em 5ms, com a página inteira;
+ *  · o input do agente (CDP em coordenada lógica) e o do dono continuam
+ *    acertando — e `sendInputEvent` fala no espaço da VIEW, não no da janela
+ *    (medido: com a view em x=512, o clique em coordenada de JANELA erra o alvo
+ *    e o clique em coordenada de VIEW acerta). As faixas não comem clique porque
+ *    elas não são da view: são do DOM do app atrás dela.
+ *  · frescor com a view centralizada: 4/4, mediana 31ms — igual ao `auto`.
+ *
+ * O ramo que ENCOLHE (lógica maior que a moldura) não mudou uma linha, e é só
+ * nele que o piso de 0,25× do Chromium ainda pode morder.
+ *
  * ——— fronteira ———
  * Módulo PURO: sem Electron, sem CDP, sem estado. Ele só sabe converter
  * (modo, largura da moldura) em número de zoom e em frases honestas. Quem tem
@@ -67,13 +102,36 @@ export const BROWSER_VIEWPORT_MAX_WIDTH = 4000
  */
 export const BROWSER_ZOOM_FLOOR = 0.25
 
-/** Teto de segurança. A sonda mediu ampliação EXATA até 3,73× (moldura de
- *  1400px pedindo 375); o preset máximo do Chromium é 500%. */
-export const BROWSER_ZOOM_CEILING = 5
+/**
+ * O TETO É 1 — NUNCA AMPLIAR (2026-08-29). Havia um teto de 5× aqui, e a sonda
+ * mediu que a ampliação funcionava (moldura de 1400px pedindo 375 entregava 375
+ * lógicos EXATOS a 3,73×). Ela funcionava e estava ERRADA: um site de celular
+ * esticado 3,7× numa janela destacada não parece um celular, parece um site
+ * quebrado — e era exatamente essa dúvida ("como vou saber se ta quebrando de
+ * vdd ou é o app") que o dono mandou matar. Quando sobra moldura, quem cede é a
+ * VIEW (ela fica menor e centralizada), nunca a escala.
+ */
+export const BROWSER_ZOOM_MAX = 1
 
 /** Zoom é float: comparar por igualdade repintaria a página a cada quadro de um
  *  arrasto. Um passo de 0,1% é bem menor que o menor gesto visível. */
 const ZOOM_EPSILON = 0.001
+
+/** Um retângulo, no mínimo que esta matemática precisa. Estruturalmente igual ao
+ *  `BrowserPanelRect` de `./browserPane` — declarado aqui de propósito, para o
+ *  módulo continuar PURO (aquele arquivo importa tipos do Electron). */
+export interface ViewportRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** Largura de moldura vinda de fora, em pixel inteiro e nunca negativa. */
+function frameOf(frameWidth: number): number {
+  if (!Number.isFinite(frameWidth) || frameWidth <= 0) return 0
+  return Math.round(frameWidth)
+}
 
 /**
  * Lê o modo de FORA (IPC do dono, tool do agente, estado gravado). Devolve
@@ -98,25 +156,76 @@ export function isAutoViewport(mode: BrowserViewportMode): boolean {
  * ligar e desligar o modo não recarrega a página — medido pelo nonce).
  * Moldura sem largura ainda não relatada (o painel fechado, o refúgio) também
  * é 1: escalar contra um retângulo que não existe seria inventar geometria.
+ *
+ * E **1 é o teto**: quando a largura pedida CABE na moldura, a página fica em
+ * tamanho REAL e quem encolhe é a view (`viewportViewWidth`). Ampliar era o
+ * defeito que o dono viu na janela destacada.
  */
 export function viewportFitZoom(mode: BrowserViewportMode, frameWidth: number): number {
   if (mode === 'auto') return 1
-  if (!Number.isFinite(frameWidth) || frameWidth <= 0) return 1
-  const raw = frameWidth / mode
-  return Math.min(BROWSER_ZOOM_CEILING, Math.max(BROWSER_ZOOM_FLOOR, raw))
+  const frame = frameOf(frameWidth)
+  if (frame <= 0) return 1
+  const raw = frame / mode
+  if (raw >= BROWSER_ZOOM_MAX) return BROWSER_ZOOM_MAX
+  return Math.max(BROWSER_ZOOM_FLOOR, raw)
+}
+
+/**
+ * A largura FÍSICA da view dentro da moldura. Ela é a moldura inteira em `auto`
+ * e no ramo que encolhe; quando a largura pedida cabe, ela é EXATAMENTE a
+ * pedida — e o que sobra da moldura vira faixa do app.
+ */
+export function viewportViewWidth(mode: BrowserViewportMode, frameWidth: number): number {
+  const frame = frameOf(frameWidth)
+  if (mode === 'auto' || frame <= 0) return frame
+  return Math.min(frame, mode)
+}
+
+/**
+ * A FAIXA DE UM LADO, em px. É o deslocamento em x que a view recebe — e o
+ * único número honesto sobre "o retângulo da view difere do retângulo da
+ * moldura", que é o que o estado leva ao chrome.
+ *
+ * O pixel ímpar vai para a faixa da DIREITA (`floor`): a decisão precisa existir
+ * e precisa ser sempre a mesma, senão a página tremeria meio pixel para os lados
+ * conforme a moldura passa de par para ímpar durante um arrasto.
+ */
+export function viewportBandWidth(mode: BrowserViewportMode, frameWidth: number): number {
+  const frame = frameOf(frameWidth)
+  const view = viewportViewWidth(mode, frameWidth)
+  return Math.max(0, Math.floor((frame - view) / 2))
+}
+
+/**
+ * O RETÂNGULO DA VIEW dentro da moldura relatada — a conta que os DOIS hosts
+ * aplicam (o `applyLayout` do dock e o `applyPopoutLayout` da janela). A altura
+ * é sempre a da moldura: o dono pediu faixas dos LADOS, e uma faixa em cima e
+ * embaixo só encolheria a página sem responder pergunta nenhuma.
+ */
+export function viewportViewRect(mode: BrowserViewportMode, frame: ViewportRect): ViewportRect {
+  const band = viewportBandWidth(mode, frame.width)
+  if (band <= 0) return frame
+  return {
+    x: Math.round(frame.x) + band,
+    y: frame.y,
+    width: viewportViewWidth(mode, frame.width),
+    height: frame.height
+  }
 }
 
 /**
  * A largura que a página REALMENTE vai enxergar — que não é a pedida quando o
  * piso de 0,25 morde (moldura mais estreita que `largura ÷ 4`). É esta que o
  * recibo do agente e a dica do dono contam.
+ *
+ * A conta sai da VIEW, não da moldura: no ramo da moldura de dispositivo a view
+ * é menor que a moldura e o zoom é 1, então a página enxerga exatamente a
+ * largura pedida (medido: 375 cravados numa moldura de 1400).
  */
 export function viewportEffectiveWidth(mode: BrowserViewportMode, frameWidth: number): number {
   const zoom = viewportFitZoom(mode, frameWidth)
-  if (mode === 'auto' || !Number.isFinite(frameWidth) || frameWidth <= 0) {
-    return Math.max(0, Math.round(frameWidth))
-  }
-  return Math.round(frameWidth / zoom)
+  const view = viewportViewWidth(mode, frameWidth)
+  return Math.round(view / zoom)
 }
 
 /** O piso mordeu? (a moldura é estreita demais para a largura pedida) */
@@ -197,9 +306,22 @@ export function viewportReceipt(
   } else {
     const efetiva = viewportEffectiveWidth(mode, frameWidth)
     const zoom = viewportFitZoom(mode, frameWidth)
-    linhas.push(
-      `largura: ${mode}px lógicos — a página acredita ter ${efetiva}px e é ESCALADA (${zoom.toFixed(3)}×) para caber na moldura de ${Math.round(frameWidth)}px.`
-    )
+    const band = viewportBandWidth(mode, frameWidth)
+    if (band > 0) {
+      // MOLDURA DE DISPOSITIVO: a largura pedida CABE, então nada é escalado — a
+      // view fica menor que a moldura e o resto é o app. O agente precisa saber
+      // disto por dois motivos concretos: `browser_shot` fotografa a PÁGINA (não
+      // a moldura com as faixas), e um defeito visto aqui é do SITE, sem a
+      // dúvida "será que foi a escala?".
+      linhas.push(
+        `largura: ${mode}px lógicos em TAMANHO REAL (zoom 1, sem escala nenhuma) — a página ocupa ${mode}px CENTRALIZADOS na moldura de ${Math.round(frameWidth)}px, com ${band}px de faixa do APP de cada lado.`,
+        `As faixas são superfície do Synkora, não da página: browser_shot captura ${mode}px (a página), e o que estiver quebrado dentro deles é do SITE.`
+      )
+    } else {
+      linhas.push(
+        `largura: ${mode}px lógicos — a página acredita ter ${efetiva}px e é ESCALADA (${zoom.toFixed(3)}×) para caber na moldura de ${Math.round(frameWidth)}px.`
+      )
+    }
     if (viewportIsClamped(mode, frameWidth)) {
       linhas.push(
         `ATENÇÃO: a moldura é estreita demais para ${mode}px — o Chromium não desce de ${BROWSER_ZOOM_FLOOR}× de zoom, então a página recebeu ${efetiva}px, não ${mode}px. Receita: alargue o painel (a alça do dock) ou destaque o browser em janela própria (⧉) e repita.`

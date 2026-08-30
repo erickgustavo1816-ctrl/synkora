@@ -963,6 +963,31 @@ test('VIEWPORT: o recibo conta a ESCALA, o piso do Chromium e o controle COMPART
   assert.match(nota, /alargue o painel .* ou destaque o browser em janela própria/u)
 })
 
+test('VIEWPORT: com a largura CABENDO, o recibo diz TAMANHO REAL e de quem são as faixas', async (t) => {
+  // A ordem do dono (2026-08-29): preset menor que a moldura vira MOLDURA DE
+  // DISPOSITIVO — a página em tamanho real, centralizada, com faixas do app dos
+  // lados. O agente precisa disto escrito por dois motivos concretos:
+  // `browser_shot` fotografa a PÁGINA (375px), não a moldura com as faixas
+  // dentro; e um defeito visto ali é do SITE, sem a dúvida "será que foi a
+  // escala?" — que é exatamente a dúvida que o dono mandou matar.
+  const { tools } = toolkitOn(t, makeFixture({ items: 0 }), { frameWidth: 1400 })
+  const recibo = await tools.viewport(IDENTITY, { preset: 'mobile' })
+
+  assert.match(recibo, /375px lógicos em TAMANHO REAL \(zoom 1, sem escala nenhuma\)/u)
+  assert.match(recibo, /CENTRALIZADOS na moldura de 1400px, com 512px de faixa do APP de cada lado/u)
+  assert.match(recibo, /browser_shot captura 375px \(a página\)/u)
+  assert.match(recibo, /o que estiver quebrado dentro deles é do SITE/u)
+  // E a palavra que ficou PROIBIDA neste ramo: nada foi escalado.
+  assert.doesNotMatch(recibo, /ESCALADA/u)
+  assert.doesNotMatch(recibo, /ATENÇÃO/u, 'o piso do Chromium não morde onde não há escala')
+
+  // O ramo que ENCOLHE continua contando a escala, na MESMA moldura larga: é a
+  // prova de que os dois recados são de ramos diferentes e não se misturam.
+  const encolhe = await tools.viewport(IDENTITY, { width: 2400 })
+  assert.match(encolhe, /ESCALADA \(0\.583×\) para caber na moldura de 1400px/u)
+  assert.doesNotMatch(encolhe, /faixa do APP/u)
+})
+
 test('VIEWPORT: o TEMA continua sendo CDP — e largura sem motor não vira silêncio', async (t) => {
   const fixture = makeFixture({ items: 0 })
   const { tools, viewport, host } = toolkitOn(t, fixture)

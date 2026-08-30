@@ -878,6 +878,13 @@ export interface BrowserPanelState {
    *  Chromium não desce de 0,25× de zoom, então num painel muito estreito a
    *  página recebe menos do que se pediu (medido na sonda). */
   viewportWidth?: number
+  /** MOLDURA DE DISPOSITIVO (2026-08-29): px de APP sobrando de cada lado da
+   *  página. Ausente/0 = a página ocupa a moldura inteira; maior que zero = a
+   *  largura pedida coube, a página está em TAMANHO REAL e centralizada, e as
+   *  faixas dos lados são superfície do Synkora — a resposta à pergunta do dono
+   *  ("como vou saber se ta quebrando de vdd ou é o app"). Espelho declarado do
+   *  `viewportBand` de `src/main/browserPane.ts` (o par). */
+  viewportBand?: number
 }
 
 /** Toda alavanca do chrome devolve o mesmo ack: recusa é TEXTO em PT-BR que

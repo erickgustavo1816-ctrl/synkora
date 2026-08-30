@@ -72,23 +72,51 @@ export function browserViewportIsCustom(mode: BrowserViewportMode): boolean {
   return mode !== 'auto' && !BROWSER_VIEWPORT_CHOICES.includes(mode)
 }
 
+/**
+ * A FAIXA DE UM LADO, em px de app, quando a largura pedida CABE na moldura
+ * (2026-08-29). Zero = a página ocupa a moldura inteira. É o motor quem calcula
+ * e centraliza a view; aqui ela só decide SE a tela desenha a faixa e o que a
+ * nota escrita conta.
+ */
+export function browserViewportBand(state: BrowserPanelState): number {
+  const band = state.viewportBand
+  return typeof band === 'number' && Number.isFinite(band) && band > 0 ? Math.round(band) : 0
+}
+
 /** A frase da barra de status de cada botão. A do dono, não a do agente: ela
- *  diz o que o gesto FAZ, e o preço (a página é escalada). */
+ *  diz o que o gesto FAZ, e o preço — que desde a moldura de dispositivo tem
+ *  duas metades, porque a receita NUNCA amplia: sobrando moldura, a página fica
+ *  em tamanho real entre faixas do app; faltando, ela encolhe para caber. */
 export function browserViewportHint(mode: BrowserViewportMode): string {
   if (mode === 'auto') return 'largura real do painel · nenhuma emulação'
-  if (mode >= 1024) return `emula largura de desktop (${mode}px) e ajusta à moldura`
-  if (mode >= 700) return `emula largura de tablet (${mode}px) e ajusta à moldura`
-  return `emula largura de celular (${mode}px) e ajusta à moldura`
+  const tipo = mode >= 1024 ? 'desktop' : mode >= 700 ? 'tablet' : 'celular'
+  return `largura de ${tipo} (${mode}px) · nunca amplia: sobrando moldura, a página fica em tamanho real entre faixas do app`
 }
 
 /**
- * O que a tela conta sobre a largura EFETIVA. O Chromium não desce de 0,25× de
- * zoom (medido): num painel muito estreito a página recebe menos do que se
- * pediu, e calar sobre isso seria mostrar "1280" ao lado de uma página de 1200.
+ * O que a tela conta sobre a largura de VERDADE — dois recados que não podem
+ * acontecer juntos, porque um é de cada ramo da receita:
+ *
+ *  · a moldura CABE (faixa > 0): a página está em tamanho REAL e centralizada, e
+ *    as faixas dos lados são o APP. É a resposta à pergunta que originou a
+ *    feature — *"como vou saber se ta quebrando de vdd ou é o app"* — e ela
+ *    precisa estar escrita, não só desenhada: uma faixa escura ao lado de um
+ *    site escuro não se explica sozinha.
+ *  · a moldura NÃO cabe e o piso de 0,25× do Chromium mordeu (medido): a página
+ *    recebe menos do que o botão aceso promete, e calar sobre isso seria mostrar
+ *    "1280" ao lado de uma página de 1200.
  */
 export function browserViewportNote(state: BrowserPanelState): string | null {
   const mode = browserViewportOf(state)
   if (mode === 'auto') return null
+  const band = browserViewportBand(state)
+  if (band > 0) {
+    // SEM o número da faixa de propósito: ela muda a cada quadro de um arrasto e
+    // a fotografia do motor só atravessa o IPC quando a narração VIRA de estado
+    // (o motor não repinta o painel durante o gesto — ver `fitViewport`). Um
+    // "262px" congelado enquanto o dono arrasta seria pior que não dizer.
+    return `a página está em ${mode}px REAIS, centralizada — as faixas dos lados são o app, não o site`
+  }
   const real = state.viewportWidth
   if (typeof real !== 'number' || real <= 0 || real === mode) return null
   return `o painel é estreito demais para ${mode}px — a página está recebendo ${real}px (alargue o painel ou destaque em janela própria)`
@@ -122,6 +150,7 @@ export function normalizeBrowserPanel(value: unknown): BrowserPanelState {
     host?: unknown
     viewport?: unknown
     viewportWidth?: unknown
+    viewportBand?: unknown
   }
   const rawTabs = Array.isArray(bag.tabs) ? bag.tabs : []
   const tabs: BrowserTab[] = []
@@ -162,6 +191,16 @@ export function normalizeBrowserPanel(value: unknown): BrowserPanelState {
   if (viewport !== 'auto') state.viewport = viewport
   if (typeof bag.viewportWidth === 'number' && Number.isFinite(bag.viewportWidth)) {
     state.viewportWidth = Math.round(bag.viewportWidth)
+  }
+  // A FAIXA (moldura de dispositivo). Mesma regra do `viewport`: só o que é
+  // POSITIVO é carregado — `0` já significa "sem faixa" na ausência, e gravá-lo
+  // criaria uma segunda grafia do mesmo estado.
+  if (
+    typeof bag.viewportBand === 'number' &&
+    Number.isFinite(bag.viewportBand) &&
+    bag.viewportBand > 0
+  ) {
+    state.viewportBand = Math.round(bag.viewportBand)
   }
   const notice = readBrowserNotice((value as { notice?: unknown }).notice)
   if (notice) state.notice = notice
@@ -213,7 +252,18 @@ export function sameBrowserPanel(a: BrowserPanelState, b: BrowserPanelState): bo
   // A LARGURA muda o botão aceso do seletor — e nada mais. Sem estas duas
   // linhas, o modo posto pelo AGENTE não repintaria o chrome, e o dono ficaria
   // olhando uma página emulada com o seletor mostrando AUTO.
-  if (a.viewport !== b.viewport || a.viewportWidth !== b.viewportWidth) return false
+  //
+  // E a FAIXA entra na conta porque ela é o que faz as bandas NASCEREM e
+  // MORREREM na tela: sem esta comparação, alargar o painel até a largura pedida
+  // caber deixaria a página em tamanho real com faixa nenhuma desenhada (e a
+  // nota escrita mentindo).
+  if (
+    a.viewport !== b.viewport ||
+    a.viewportWidth !== b.viewportWidth ||
+    a.viewportBand !== b.viewportBand
+  ) {
+    return false
+  }
   // A nota do motor tem CARIMBO: duas notas do mesmo texto em momentos
   // diferentes são dois avisos, e o segundo precisa chegar à tela.
   if (a.notice?.at !== b.notice?.at || a.notice?.text !== b.notice?.text) return false

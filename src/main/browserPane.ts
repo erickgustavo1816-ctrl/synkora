@@ -85,7 +85,10 @@ import type { BrowserHostedMission, BrowserHostedTab, BrowserMissionLayout } fro
 import {
   applyViewportFit,
   normalizeViewportMode,
+  viewportBandWidth,
   viewportEffectiveWidth,
+  viewportIsClamped,
+  viewportViewRect,
   type BrowserViewportMode
 } from './browserViewport'
 
@@ -181,6 +184,20 @@ export interface BrowserMissionState {
    *  piso de zoom do Chromium (0,25×, medido na sonda) faz `viewport: 1280` numa
    *  moldura de 300px virar 1200. Ausente enquanto ninguém relatou geometria. */
   viewportWidth?: number
+  /**
+   * A MOLDURA DE DISPOSITIVO (2026-08-29): quantos px de APP sobram de cada lado
+   * da página. `0`/ausente = a página ocupa a moldura inteira (é o caso de
+   * `auto` e o do ramo que encolhe); maior que zero = a largura pedida CABE, a
+   * página está em TAMANHO REAL e centralizada, e estas faixas são superfície do
+   * Synkora — é o que responde a pergunta do dono ("como vou saber se ta
+   * quebrando de vdd ou é o app").
+   *
+   * É a NARRAÇÃO, não a geometria: o chrome desenha a faixa por CSS a partir da
+   * largura lógica (que muda com o gesto, não com o quadro), e este número — que
+   * viaja no `browser:changed` coalescido — só decide SE existe faixa e o que a
+   * nota escrita conta. Quem posiciona a view é este motor, sozinho.
+   */
+  viewportBand?: number
   /** extensões do contrato mínimo — o chrome pode ignorar sem quebrar */
   notice?: BrowserNotice
   projectId?: string
@@ -396,6 +413,12 @@ interface MissionRecord extends BrowserHostedMission {
    *  do zoom e a única forma de o `state` contar a largura efetiva sem
    *  perguntar geometria de novo. `0` = ninguém relatou ainda. */
   frameWidth: number
+  /** O ESTADO da narração da largura (`tem faixa`:`o piso mordeu`) da última
+   *  vez que a geometria foi aplicada. Ele existe para o motor saber QUANDO
+   *  vale acordar o chrome: o relato de bounds chega a cada quadro de um
+   *  arrasto, e repintar o painel ali dentro devolveria a página à altura de
+   *  antes do gesto por um quadro (a armadilha que a H9 pagou). */
+  viewportNarration: string
 }
 
 const EMPTY_STATE: BrowserMissionState = {
@@ -565,6 +588,31 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       applyViewportFit(tab.wc, tab.viewport, frameWidth)
     }
     if (active) applyViewportFit(active.wc, active.viewport, frameWidth)
+
+    // ——— A NARRAÇÃO DA LARGURA (2026-08-29) ———
+    // A geometria já foi aplicada acima; o que falta é o chrome CONTAR o que
+    // mudou. E ele só precisa contar quando o ESTADO da narração vira:
+    //  · nasceu/morreu FAIXA (a moldura passou a caber a largura pedida);
+    //  · o piso de zoom do Chromium passou a morder (ou parou).
+    //
+    // Só isto emite — e a razão é dura, não é economia: `applyBounds` chega a
+    // CADA QUADRO de um arrasto, e um `browser:changed` por quadro faria o
+    // React re-renderizar o painel no meio do gesto. O `DockBrowser` escreve
+    // `--dock-browser-page-h` no render a partir da fração CONGELADA (a
+    // bandeira do gesto da H9), então esse render devolveria a página à altura
+    // de antes do arrasto por um quadro — o pulo que a H9 pagou para matar.
+    // Os dois booleanos abaixo, ao contrário, só viram quando a LARGURA da
+    // moldura cruza um limite, o que não acontece durante o arrasto da ALÇA.
+    //
+    // (Isto também conserta um buraco da H8: arrastar o painel até o piso
+    // morder mudava `viewportWidth` sem avisar ninguém, e o aviso do piso nunca
+    // aparecia até a página navegar por conta própria.)
+    const mode = active?.viewport ?? 'auto'
+    const narration = `${viewportBandWidth(mode, frameWidth) > 0}:${viewportIsClamped(mode, frameWidth)}`
+    if (mission.viewportNarration !== narration) {
+      mission.viewportNarration = narration
+      emitChanged(mission.missionId)
+    }
   }
 
   /**
@@ -572,6 +620,12 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
    * `setBounds`/`setVisible`. Toda aba — inclusive a que está no fundo —
    * recebe bounds REAIS, porque a captura da H2 depende de superfície com
    * tamanho; o que muda entre ativa e inativa é só o `setVisible`.
+   *
+   * E aqui mora a MOLDURA DE DISPOSITIVO: os bounds de cada aba saem de
+   * `viewportViewRect(modo DELA, moldura)`, que pode devolver um retângulo mais
+   * ESTREITO e centralizado. Por aba, e não por missão, porque o modo é por aba:
+   * a que está no fundo em 375 tem de continuar enxergando 375 quando o agente a
+   * fotografa (`capturePage` é da superfície da view, não da moldura).
    */
   const applyLayout = (mission: MissionRecord): void => {
     if (mission.host === 'popout') {
@@ -587,7 +641,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     const rect = usable && asked ? asked : defaultRect()
     const show = usable && wanted?.visible === true
     for (const tab of mission.tabs) {
-      tab.view.setBounds(rect)
+      tab.view.setBounds(viewportViewRect(tab.viewport, rect))
       const visible = show && tab.tabId === mission.activeTabId
       if (tab.view.getVisible() !== visible) tab.view.setVisible(visible)
     }
@@ -835,7 +889,8 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       notice: null,
       host: 'dock',
       staleReported: null,
-      frameWidth: 0
+      frameWidth: 0,
+      viewportNarration: 'false:false'
     }
     missions.set(missionId, created)
     return created
@@ -998,6 +1053,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         viewport: tab.viewport
       }))
       const viewport = active?.viewport ?? 'auto'
+      const band = mission.frameWidth > 0 ? viewportBandWidth(viewport, mission.frameWidth) : 0
       return {
         alive: tabs.length > 0,
         agentDriving: mission.agentDriving,
@@ -1009,6 +1065,10 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         ...(mission.frameWidth > 0
           ? { viewportWidth: viewportEffectiveWidth(viewport, mission.frameWidth) }
           : {}),
+        // A FAIXA só viaja quando EXISTE: zero é a ausência, e mandar `0` daria
+        // duas grafias do mesmo estado (o normalizador do painel reconstrói o
+        // objeto, e `sameBrowserPanel` acharia diferença onde não há).
+        ...(band > 0 ? { viewportBand: band } : {}),
         notice: mission.notice ?? undefined,
         projectId: mission.projectId,
         // "à vista" é a pergunta do host ATUAL: destacada, a página está à vista
@@ -1174,13 +1234,18 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       }
       if (tab.viewport === normalized) {
         // Gesto idempotente: clicar duas vezes no mesmo botão não é recusa. Mas
-        // o fit é REAPLICADO — é a rota de saída quando o zoom de um vizinho do
-        // mesmo host vazou por cima deste (o vazamento por origem, medido).
-        fitViewport(mission, mission.frameWidth)
+        // a geometria é REAPLICADA — é a rota de saída quando o zoom de um
+        // vizinho do mesmo host vazou por cima deste (o vazamento por origem,
+        // medido).
+        applyLayout(mission)
         return { ok: true, tabId: tab.tabId }
       }
       tab.viewport = normalized
-      fitViewport(mission, mission.frameWidth)
+      // LAYOUT INTEIRO, não só o zoom: desde a moldura de dispositivo o modo
+      // decide também o RETÂNGULO da view (375 numa moldura de 900 é uma view de
+      // 375px centralizada). Reaplicar só o zoom deixaria a página esticada na
+      // moldura toda até o próximo relato do ResizeObserver.
+      applyLayout(mission)
       record('browser-viewport-mode', {
         actor,
         ids: { projectId: mission.projectId, missionId },

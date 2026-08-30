@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import BrowserChrome, {
+  BrowserPageBands,
   BrowserPageOverlay,
   browserApi,
   useBrowserHint,
@@ -255,6 +256,11 @@ export function BrowserPopoutView({
           ref={pageRef}
           className={`dock-browser-page browser-popout-page${state.alive ? ' live' : ''}`}
         >
+          {/* As faixas da MOLDURA DE DISPOSITIVO. É AQUI que elas contam mais: a
+              janela destacada é larga, e é nela que o dono viu o botão 375
+              esticar o site (a receita antiga ampliava 3,73×). Agora a página
+              fica em 375px reais no meio da janela, com o app dos dois lados. */}
+          <BrowserPageBands state={state} painted={painted} />
           <BrowserPageOverlay
             state={state}
             painted={painted}
