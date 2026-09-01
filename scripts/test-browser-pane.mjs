@@ -975,6 +975,28 @@ function makeManager(options = {}) {
 
 const RECT = { x: 300, y: 120, width: 600, height: 400 }
 
+// ————— O DONO DA ABA (2026-09-01) —————
+//
+// Toda aba passou a ter DONO (D1 do
+// `.synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md`), e o
+// `ensureTab` deixou de ser "a aba ativa da missão" para ser "a aba DESTA
+// identidade". A colisão medida em 01/09 (missão 86a05c06: o ajudante do
+// `finish_ui_review` e o dev alternando a MESMA aba entre a porta 8791 e a 8159
+// em minutos, três leituras do ajudante caindo na página do dev) é o motivo de
+// cada cena abaixo passar um dono explícito: sem ele, o teste voltaria a provar
+// exatamente o comportamento que custou a rodada.
+const OWNER_DEV = Object.freeze({ kind: 'dev', label: 'dev', paneId: 'gui-dev-86a05c06' })
+const OWNER_HELPER = Object.freeze({
+  kind: 'helper',
+  label: 'inv-brand',
+  paneId: 'helper-mcp-1111aaaa'
+})
+const OWNER_HELPER_2 = Object.freeze({
+  kind: 'helper',
+  label: 'qa-visual',
+  paneId: 'helper-mcp-2222bbbb'
+})
+
 // ————— URL do dono e partition —————
 
 test('MOTOR: localhost sai em http, o resto em https, e `localhost:5173` não cai na armadilha do esquema', () => {
@@ -1008,12 +1030,12 @@ test('MOTOR: a sessão é do PROJETO (`persist:browser:<projectId>`), endurecida
   assert.equal(browserPartitionFor(''), 'persist:browser:sem-projeto')
 
   const { manager, host } = makeManager()
-  await manager.ensureTab('m1', 'proj-a', 'https://a.test/')
+  await manager.ensureTab('m1', 'proj-a', 'https://a.test/', OWNER_DEV)
   await manager.newTab('m1', 'proj-a', 'https://b.test/')
   // Duas missões do MESMO projeto compartilham a sessão: o login do dono vale
   // para todas elas (D5.3).
-  await manager.ensureTab('m2', 'proj-a', 'https://c.test/')
-  await manager.ensureTab('m3', 'proj-b', 'https://d.test/')
+  await manager.ensureTab('m2', 'proj-a', 'https://c.test/', OWNER_DEV)
+  await manager.ensureTab('m3', 'proj-b', 'https://d.test/', OWNER_DEV)
   const partitions = host.log.filter((e) => e.kind === 'create').map((e) => e.partition)
   assert.deepEqual(partitions, [
     'persist:browser:proj-a',
@@ -1039,7 +1061,7 @@ test('MOTOR/CICLO: o nascimento é LAZY — retângulo do painel sozinho não cr
 
 test('MOTOR/CICLO: a aba nasce ANEXADA, INVISÍVEL e com bounds REAIS — mesmo com o dock fechado', async () => {
   const { manager, host, records } = makeManager()
-  const opened = await manager.ensureTab('m1', 'proj-a', 'localhost:5173')
+  const opened = await manager.ensureTab('m1', 'proj-a', 'localhost:5173', OWNER_DEV)
   assert.equal(host.views.length, 1)
   const view = host.views[0]
   assert.equal(view.attached, true)
@@ -1057,12 +1079,12 @@ test('MOTOR/CICLO: a aba nasce ANEXADA, INVISÍVEL e com bounds REAIS — mesmo 
 
 test('MOTOR/CICLO: `ensureTab` é IDEMPOTENTE — reusa a aba morna e só navega quando o alvo é outro', async () => {
   const { manager, host } = makeManager()
-  const first = await manager.ensureTab('m1', 'p', 'https://a.test/')
-  const same = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const first = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const same = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   assert.equal(first.tabId, same.tabId)
   assert.equal(host.views.length, 1)
   assert.equal(same.webContents.loaded, 1, 'mesma URL não recarrega a página do dono debaixo dele')
-  const moved = await manager.ensureTab('m1', 'p', 'https://b.test/')
+  const moved = await manager.ensureTab('m1', 'p', 'https://b.test/', OWNER_DEV)
   assert.equal(moved.tabId, first.tabId)
   assert.equal(moved.webContents.getURL(), 'https://b.test/')
   assert.equal(moved.webContents.loaded, 2)
@@ -1070,13 +1092,13 @@ test('MOTOR/CICLO: `ensureTab` é IDEMPOTENTE — reusa a aba morna e só navega
 
 test('MOTOR/CICLO: endereço inválido do agente RECUSA antes de nascer view nenhuma', async () => {
   const { manager, host } = makeManager()
-  await assert.rejects(() => manager.ensureTab('m1', 'p', 'javascript:alert(1)'), /browser_eval/u)
+  await assert.rejects(() => manager.ensureTab('m1', 'p', 'javascript:alert(1)', OWNER_DEV), /browser_eval/u)
   assert.equal(host.views.length, 0, 'recusa não deixa casca pendurada')
 })
 
 test('MOTOR/CICLO: fechar a ÚLTIMA aba encerra o browser da missão (e devolve o processo)', async () => {
   const { manager, host, records } = makeManager()
-  const first = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const first = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   const second = await manager.newTab('m1', 'p', 'https://b.test/')
   assert.equal(manager.closeTab('m1', second.tabId), true)
   assert.equal(manager.hasMission('m1'), true, 'ainda sobra uma aba')
@@ -1090,9 +1112,9 @@ test('MOTOR/CICLO: fechar a ÚLTIMA aba encerra o browser da missão (e devolve 
 
 test('MOTOR/CICLO: `closeMission` derruba tudo, registra e zera o state (a partition do projeto persiste)', async () => {
   const { manager, host, records } = makeManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   await manager.newTab('m1', 'p', 'https://b.test/')
-  await manager.ensureTab('m2', 'p', 'https://c.test/')
+  await manager.ensureTab('m2', 'p', 'https://c.test/', OWNER_DEV)
   manager.closeMission('m1')
 
   // `host: 'dock'` entrou na fotografia com o POP-OUT (P1): missão zerada
@@ -1119,21 +1141,21 @@ test('MOTOR/CICLO: `closeMission` derruba tudo, registra e zera o state (a parti
 
 test('MOTOR/CICLO: a janela fechada encerra tudo — `win.hide()` mataria a captura de todas as views', async () => {
   const { manager, host } = makeManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
-  await manager.ensureTab('m2', 'p', 'https://b.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  await manager.ensureTab('m2', 'p', 'https://b.test/', OWNER_DEV)
   host.windowHooks.onClosed()
   assert.equal(manager.hasMission('m1'), false)
   assert.equal(manager.hasMission('m2'), false)
   assert.equal(host.views.every((view) => view.attached === false), true)
   // Depois do teardown o motor recusa nascer de novo, com receita.
-  await assert.rejects(() => manager.ensureTab('m1', 'p'), /reabra o app/u)
+  await assert.rejects(() => manager.ensureTab('m1', 'p', undefined, OWNER_DEV), /reabra o app/u)
 })
 
 // ————— A PRIMEIRA LEI —————
 
 test('LEI 1: esconder é setVisible(false) — nenhum caminho do dia a dia DESANEXA', async () => {
   const { manager, host, detaches } = makeManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', RECT, true)
   assert.equal(host.views[0].visible, true)
   assert.deepEqual(host.views[0].bounds, RECT)
@@ -1173,7 +1195,7 @@ test('LEI 1: esconder é setVisible(false) — nenhum caminho do dia a dia DESAN
 
 test('LEI 1: a aba de FUNDO fica anexada e com bounds REAIS — só o setVisible a distingue', async () => {
   const { manager, host, detaches } = makeManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   const second = await manager.newTab('m1', 'p', 'https://b.test/')
   host.forbidDetach = true
   manager.applyBounds('m1', RECT, true)
@@ -1191,8 +1213,8 @@ test('LEI 1: a aba de FUNDO fica anexada e com bounds REAIS — só o setVisible
 
 test('LEI 1: só UMA missão ocupa o retângulo do dock, e a que sai NÃO é desanexada', async () => {
   const { manager, host, detaches } = makeManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
-  await manager.ensureTab('m2', 'p', 'https://b.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  await manager.ensureTab('m2', 'p', 'https://b.test/', OWNER_DEV)
   manager.applyBounds('m1', RECT, true)
   assert.equal(host.views[0].visible, true)
 
@@ -1208,7 +1230,7 @@ test('LEI 1: só UMA missão ocupa o retângulo do dock, e a que sai NÃO é des
 
 test('LEI 1: o teardown é o ÚNICO detach — e ele acontece ANTES do close', async () => {
   const { manager, host } = makeManager()
-  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   const wc = opened.webContents.id
   manager.closeMission('m1')
   const kinds = host.log.filter((entry) => entry.wc === wc).map((entry) => entry.kind)
@@ -1221,7 +1243,7 @@ test('LEI 1: o teardown é o ÚNICO detach — e ele acontece ANTES do close', a
 
 test('LEI 1: aba que morre POR FORA sai do state sem desanexar quem continua vivo', async () => {
   const { manager, host } = makeManager()
-  const first = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const first = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   await manager.newTab('m1', 'p', 'https://b.test/')
   first.webContents.destroyed = true
   first.webContents.emit('destroyed')
@@ -1231,9 +1253,13 @@ test('LEI 1: aba que morre POR FORA sai do state sem desanexar quem continua viv
 
 // ————— teto de abas —————
 
-test('MOTOR: o teto de 8 abas por missão RECUSA nomeando a receita (e vira nota + caixa-preta)', async () => {
+test('MOTOR: o teto de 12 abas por missão RECUSA nomeando a receita (e vira nota + caixa-preta)', async () => {
+  // O teto subiu de 8 para 12 em 2026-09-01 (D5): com ABA POR IDENTIDADE o
+  // dono, o dev e uma frota de ajudantes disputam a mesma missão — 8 era o teto
+  // de um mundo em que a missão tinha uma aba só.
+  assert.equal(BROWSER_TAB_CAP, 12, 'dono + dev + frota cabem em 12')
   const { manager, records } = makeManager()
-  await manager.ensureTab('m1', 'p')
+  await manager.ensureTab('m1', 'p', undefined, OWNER_DEV)
   for (let n = 1; n < BROWSER_TAB_CAP; n += 1) {
     const opened = await manager.newTab('m1', 'p')
     assert.equal(opened.ok, true, `a aba ${n + 1} devia abrir`)
@@ -1256,19 +1282,37 @@ test('MOTOR: o teto de 8 abas por missão RECUSA nomeando a receita (e vira nota
   assert.equal((await manager.newTab('m2', 'p')).ok, true)
 })
 
-test('MOTOR: no teto, `ensureTab` do agente NÃO recusa — ele reusa a aba morna', async () => {
+test('MOTOR: no teto, `ensureTab` de quem JÁ TEM aba não recusa — mas a receita muda de mão', async () => {
   const { manager } = makeManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   for (let n = 1; n < BROWSER_TAB_CAP; n += 1) await manager.newTab('m1', 'p')
-  // `browser_open` navega a aba ativa: o teto é do `+` do dono, não do agente.
-  const reused = await manager.ensureTab('m1', 'p', 'https://z.test/')
+  // `browser_open` navega A ABA DELE: o teto é de quem abre aba NOVA.
+  const reused = await manager.ensureTab('m1', 'p', 'https://z.test/', OWNER_DEV)
   assert.equal(reused.webContents.getURL(), 'https://z.test/')
   assert.equal(manager.listTabs('m1').length, BROWSER_TAB_CAP)
+
+  // Uma identidade NOVA no teto bate nele — e a recusa não pode mandar o agente
+  // clicar no `×` do chrome, que é gesto do dono (beco sem saída é bug). E
+  // "agente" são DUAS mãos com catálogos diferentes: quem DELEGA tem
+  // `helper_cancel` (a aba do ajudante morre junto, D3); o AJUDANTE não recebe
+  // essa tool, e a saída dele é DIZER na entrega. A recusa cobre as duas —
+  // mandar um ajudante chamar uma tool que ele não tem seria o mesmo beco.
+  await assert.rejects(
+    () => manager.ensureTab('m1', 'p', 'https://nova.test/', OWNER_HELPER),
+    (error) => {
+      assert.match(error.message, new RegExp(`teto de ${BROWSER_TAB_CAP} abas`, 'u'))
+      assert.match(error.message, /se você DELEGA.*helper_cancel/su, 'a mão que TEM a tool')
+      assert.match(error.message, /se você É um ajudante/u, 'a mão que NÃO tem')
+      assert.match(error.message, /peça ao dono/u, 'a porta que serve às duas')
+      return true
+    }
+  )
+  assert.equal(manager.listTabs('m1').length, BROWSER_TAB_CAP, 'a recusa não deixa casca pendurada')
 })
 
 test('MOTOR: pop-up e `target=_blank` viram ABA INTERNA — a janela nativa é sempre negada', async () => {
   const { manager, host } = makeManager()
-  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   const decision = opened.webContents.windowOpenHandler({ url: 'https://pop.test/x' })
   assert.deepEqual(decision, { action: 'deny' })
   await new Promise((resolve) => setImmediate(resolve))
@@ -1278,11 +1322,245 @@ test('MOTOR: pop-up e `target=_blank` viram ABA INTERNA — a janela nativa é s
   assert.deepEqual(opened.webContents.windowOpenHandler({ url: 'javascript:alert(1)' }), { action: 'deny' })
 })
 
+// ————————————————————————————————————————————————————————————————
+// A ABA TEM DONO (2026-09-01) — D1, D2, D3 e D6 do design
+// `.synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md`
+// ————————————————————————————————————————————————————————————————
+//
+// A COLISÃO MEDIDA, para nenhuma destas cercas parecer capricho: missão
+// 86a05c06 em 01/09, o único ajudante que dirigiu o browser (`finish_ui_review`,
+// 48 chamadas) dividiu a MESMA aba com o dev — a URL alternou entre a porta 8791
+// (ajudante) e as 8159/8148/8163 (dev) em minutos, TRÊS leituras do ajudante
+// caíram na página do dev, e o dev cancelou o ajudante aos 20 min. Desde o
+// browser (29/08), 1 de 72 ajudantes claude usou; 0 de 91 codex.
+
+test('DONO DA ABA: cada identidade abre a SUA — `ensureTab` nunca reusa a aba de outro', async () => {
+  const { manager, host } = makeManager()
+  const dev = await manager.ensureTab('m1', 'p', 'http://localhost:8159/', OWNER_DEV)
+  const ajudante = await manager.ensureTab('m1', 'p', 'http://localhost:8791/', OWNER_HELPER)
+
+  assert.notEqual(dev.tabId, ajudante.tabId, 'o ajudante NÃO herda a aba do dev')
+  assert.equal(host.views.length, 2)
+  // A aba do dev continua na página DELE: era exatamente isto que a colisão
+  // media apagava a cada `browser_open`.
+  assert.equal(dev.webContents.getURL(), 'http://localhost:8159/')
+  assert.equal(ajudante.webContents.getURL(), 'http://localhost:8791/')
+
+  // Idempotência agora é POR IDENTIDADE: o mesmo dono, o mesmo alvo, a mesma aba
+  // e nenhum recarregamento.
+  const denovo = await manager.ensureTab('m1', 'p', 'http://localhost:8791/', OWNER_HELPER)
+  assert.equal(denovo.tabId, ajudante.tabId)
+  assert.equal(denovo.webContents.loaded, 1)
+  assert.equal(host.views.length, 2)
+
+  // A LISTA carrega o dono de cada aba (é o que o chrome do dono desenha e o que
+  // a tool imprime para o agente).
+  const tabs = manager.listTabs('m1')
+  assert.deepEqual(
+    tabs.map((tab) => tab.owner.kind),
+    ['dev', 'helper']
+  )
+  assert.equal(tabs[1].owner.label, 'inv-brand')
+  assert.equal(tabs[1].owner.paneId, OWNER_HELPER.paneId)
+  assert.deepEqual(
+    manager.state('m1').tabs.map((tab) => tab.owner.label),
+    ['dev', 'inv-brand']
+  )
+})
+
+test('DONO DA ABA: a aba nova NASCE ATIVA, e navegar a aba de outro NÃO rouba a vista', async () => {
+  const { manager } = makeManager()
+  const dev = await manager.ensureTab('m1', 'p', 'http://localhost:8159/', OWNER_DEV)
+  assert.equal(manager.activeTab('m1').tabId, dev.tabId)
+
+  // D2: o recém-chegado aparece — o dono vê a frota chegando sem caçar aba.
+  const ajudante = await manager.ensureTab('m1', 'p', 'http://localhost:8791/', OWNER_HELPER)
+  assert.notEqual(ajudante.tabId, dev.tabId, 'o ajudante abriu a DELE')
+  assert.equal(manager.activeTab('m1').tabId, ajudante.tabId, 'a aba NOVA vira a ativa')
+
+  // ...mas a NAVEGAÇÃO seguinte de uma aba que já existe não puxa a vista do
+  // dono para ela. Um QA de vinte passos roubaria a tela vinte vezes.
+  const denovo = await manager.ensureTab('m1', 'p', 'http://localhost:8160/', OWNER_DEV)
+  assert.equal(denovo.tabId, dev.tabId)
+  assert.equal(denovo.webContents.getURL(), 'http://localhost:8160/')
+  assert.equal(manager.activeTab('m1').tabId, ajudante.tabId, 'a vista do dono ficou onde estava')
+  assert.equal(manager.listTabs('m1').find((tab) => tab.active).tabId, ajudante.tabId)
+})
+
+test('DONO DA ABA: `tabOf` é a aba VIVA desta identidade — e some quando ela morre', async () => {
+  const { manager } = makeManager()
+  const dev = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const ajudante = await manager.ensureTab('m1', 'p', 'https://b.test/', OWNER_HELPER)
+
+  assert.equal(manager.tabOf('m1', OWNER_DEV.paneId).tabId, dev.tabId)
+  assert.equal(manager.tabOf('m1', OWNER_HELPER.paneId).tabId, ajudante.tabId)
+  // Identidade sem aba, missão que não existe e aba de outra missão: ausência,
+  // nunca a aba de um vizinho.
+  assert.equal(manager.tabOf('m1', OWNER_HELPER_2.paneId), undefined)
+  assert.equal(manager.tabOf('m9', OWNER_DEV.paneId), undefined)
+
+  manager.closeTab('m1', ajudante.tabId)
+  assert.equal(manager.tabOf('m1', OWNER_HELPER.paneId), undefined)
+  assert.equal(manager.tabOf('m1', OWNER_DEV.paneId).tabId, dev.tabId, 'a do vizinho segue viva')
+})
+
+test('DONO DA ABA: gesto do dono (+ e pop-up da página) nasce com dono `user`', async () => {
+  const { manager } = makeManager()
+  const primeira = await manager.newTab('m1', 'p', 'https://a.test/')
+  assert.equal(primeira.ok, true)
+  assert.equal((await manager.newTab('m1', 'p', 'https://b.test/')).ok, true)
+  // `target=_blank` vira aba INTERNA, e ela também é do dono: nenhuma tool de
+  // agente vai reusá-la achando que é a sua.
+  manager.activeTab('m1').webContents.windowOpenHandler({ url: 'https://pop.test/x' })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const donos = manager.listTabs('m1').map((tab) => tab.owner)
+  assert.equal(donos.length, 3)
+  assert.ok(
+    donos.every((owner) => owner.kind === 'user' && owner.label === 'dono'),
+    'o + e o pop-up são do DONO'
+  )
+  // A aba do dono não tem paneId: ela não é de identidade nenhuma de agente, e
+  // por isso `tabOf` jamais a devolve.
+  assert.equal(donos[0].paneId, undefined)
+  const agente = await manager.ensureTab('m1', 'p', 'https://c.test/', OWNER_DEV)
+  assert.equal(manager.listTabs('m1').length, 4, 'o agente abre a DELE, não pega a do dono')
+  assert.equal(manager.tabOf('m1', OWNER_DEV.paneId).tabId, agente.tabId)
+})
+
+test('DONO DA ABA: `closeTabsOf` fecha as abas da identidade em TODAS as missões e CONTA', async () => {
+  const { manager, host, records, pushes } = makeManager()
+  const dev = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const ajudante1 = await manager.ensureTab('m1', 'p', 'https://b.test/', OWNER_HELPER)
+  const ajudante2 = await manager.ensureTab('m2', 'p', 'https://c.test/', OWNER_HELPER)
+  await manager.ensureTab('m2', 'p', 'https://d.test/', OWNER_HELPER_2)
+
+  // D3: a aba do ajudante morre COM ele — o `dispose` do processo chama isto, e
+  // ele não sabe (nem tem por que saber) em quantas missões o ajudante andou.
+  const fechadas = manager.closeTabsOf(OWNER_HELPER.paneId)
+  assert.equal(fechadas, 2, 'as duas missões, numa passagem só')
+  assert.equal(manager.tabOf('m1', OWNER_HELPER.paneId), undefined)
+  assert.equal(manager.tabOf('m2', OWNER_HELPER.paneId), undefined)
+  // O vizinho não paga: nem a aba do dev, nem a do outro ajudante.
+  assert.equal(manager.tabOf('m1', OWNER_DEV.paneId).tabId, dev.tabId)
+  assert.equal(manager.listTabs('m2').length, 1)
+
+  // O ÚNICO caminho de morte continua sendo o `dropTab`: view desanexada E
+  // webContents fechado, nada de casca pendurada no contentView.
+  const mortas = host.views.filter((view) =>
+    [ajudante1.webContents.id, ajudante2.webContents.id].includes(view.webContents.id)
+  )
+  assert.equal(mortas.length, 2)
+  assert.ok(mortas.every((view) => view.attached === false && view.webContents.closed))
+
+  const logged = records.find((entry) => entry.event === 'browser-owner-tabs-closed')
+  assert.ok(logged, 'o fim da frota entra no diário (D6)')
+  assert.equal(logged.detail.tabs, 2)
+  assert.equal(logged.detail.ownerPaneId, OWNER_HELPER.paneId)
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  const avisadas = new Set(
+    pushes.filter((entry) => entry.channel === BROWSER_CHANGED_CHANNEL).map((entry) => entry.args[0])
+  )
+  assert.ok(avisadas.has('m1') && avisadas.has('m2'), 'o chrome das duas missões relê o state')
+
+  // Identidade sem aba nenhuma: zero, sem registro e sem explodir (o `dispose`
+  // roda para TODO ajudante, inclusive os que nunca abriram o browser).
+  const antes = records.filter((entry) => entry.event === 'browser-owner-tabs-closed').length
+  assert.equal(manager.closeTabsOf('helper-mcp-nunca-abriu'), 0)
+  assert.equal(records.filter((entry) => entry.event === 'browser-owner-tabs-closed').length, antes)
+})
+
+test('DONO DA ABA: a última aba de uma missão fechada pelo dispose encerra o browser dela', async () => {
+  const { manager } = makeManager()
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_HELPER)
+  assert.equal(manager.hasMission('m1'), true)
+  assert.equal(manager.closeTabsOf(OWNER_HELPER.paneId), 1)
+  // Mesma régua do × do dono: sem aba nenhuma o browser da missão acabou e o
+  // processo de renderer volta para o sistema.
+  assert.equal(manager.hasMission('m1'), false)
+  assert.equal(manager.state('m1').alive, false)
+})
+
+test('⚡ POR ABA: o indicador acende na aba DIRIGIDA (e na missão), e decai igual', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { manager } = makeManager()
+  const dev = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const ajudante = await manager.ensureTab('m1', 'p', 'https://b.test/', OWNER_HELPER)
+
+  manager.setAgentDriving('m1', true, ajudante.tabId)
+  const dirigindo = () =>
+    Object.fromEntries(manager.state('m1').tabs.map((tab) => [tab.tabId, tab.driving]))
+  assert.equal(dirigindo()[ajudante.tabId], true)
+  assert.equal(dirigindo()[dev.tabId], false, 'o ⚡ é da aba de quem chamou, não da missão inteira')
+  assert.equal(manager.state('m1').agentDriving, true, 'a missão continua com o ⚡ de sempre')
+  assert.equal(manager.listTabs('m1').find((tab) => tab.tabId === ajudante.tabId).driving, true)
+
+  // Mesmo decaimento de 2s da missão: nem pisca entre tools encadeadas, nem
+  // fica aceso para sempre.
+  manager.setAgentDriving('m1', false, ajudante.tabId)
+  t.mock.timers.tick(BROWSER_AGENT_DRIVING_DECAY_MS - 1)
+  assert.equal(dirigindo()[ajudante.tabId], true)
+  t.mock.timers.tick(2)
+  assert.equal(dirigindo()[ajudante.tabId], false)
+
+  // Aba que não existe não acende nada e não explode.
+  manager.setAgentDriving('m1', true, 'aba-fantasma')
+  assert.equal(
+    manager.state('m1').tabs.every((tab) => tab.driving === false),
+    true
+  )
+})
+
+test('DONO DA ABA: o nascimento no diário carrega o DONO (D6 — autoria)', async () => {
+  const { manager, records } = makeManager()
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_HELPER)
+  const born = records.filter((entry) => entry.event === 'browser-tab-open')
+  assert.equal(born.length, 1)
+  // "`browser-open` no diário sai SEM `paneId` (não se sabe quem abriu)" era a
+  // medição de 01/09. Agora sai com dono e com o pane dele.
+  assert.deepEqual(born[0].detail.owner, {
+    kind: 'helper',
+    label: 'inv-brand',
+    paneId: OWNER_HELPER.paneId
+  })
+})
+
+test('POR ABA: largura, leitura e captura endereçam a aba PEDIDA — não a que o dono olha', async () => {
+  const { manager } = makeManager()
+  const dev = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const ajudante = await manager.ensureTab('m1', 'p', 'https://b.test/', OWNER_HELPER)
+  manager.applyBounds('m1', { x: 0, y: 0, width: 900, height: 600 }, true)
+
+  // O ajudante pede 375 na aba DELE. A aba ativa (a do dono, que é a do
+  // ajudante aqui) não é a régua: o alvo é o `tabId`.
+  const aplicado = manager.setViewportMode('m1', 375, 'agent', dev.tabId)
+  assert.equal(aplicado.ok, true)
+  assert.equal(aplicado.tabId, dev.tabId)
+  assert.equal(manager.viewportOf('m1', dev.tabId), 375)
+  assert.equal(manager.viewportOf('m1', ajudante.tabId), 'auto')
+  // Sem `tabId` a semântica de sempre continua: a aba ATIVA (o seletor do dono).
+  assert.equal(manager.viewportOf('m1'), 'auto')
+
+  const pronta = manager.captureReadiness('m1', dev.tabId)
+  assert.equal(pronta.ok, true)
+  assert.equal(pronta.tab.tabId, dev.tabId, 'a foto é da aba de quem pediu')
+  assert.equal(manager.captureReadiness('m1').tab.tabId, ajudante.tabId)
+
+  // Aba que não existe RECUSA nomeando a receita — beco sem saída é bug.
+  const sumida = manager.captureReadiness('m1', 'aba-fantasma')
+  assert.equal(sumida.ok, false)
+  assert.match(sumida.error, /browser_open/u)
+  const larguraSumida = manager.setViewportMode('m1', 375, 'agent', 'aba-fantasma')
+  assert.equal(larguraSumida.ok, false)
+  assert.match(larguraSumida.error, /browser_open/u)
+  assert.equal(manager.viewportOf('m1', 'aba-fantasma'), 'auto')
+})
+
 // ————— a superfície de NOTAS (o "evento legível") —————
 
 test('NOTA: download barrado vira recado LEGÍVEL para o dono, além da caixa-preta', async () => {
   const { manager, host, records } = makeManager()
-  const opened = await manager.ensureTab('m1', 'proj-a', 'https://a.test/')
+  const opened = await manager.ensureTab('m1', 'proj-a', 'https://a.test/', OWNER_DEV)
   host.hooks.onDownloadBlocked('relatorio-final.zip', 'https://a.test/relatorio-final.zip', opened.webContents.id)
 
   const notice = manager.state('m1').notice
@@ -1300,7 +1578,7 @@ test('NOTA: download barrado vira recado LEGÍVEL para o dono, além da caixa-pr
 
 test('NOTA: permissão negada, página que não carrega e página que cai também falam', async () => {
   const { manager, host, records } = makeManager()
-  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
 
   host.hooks.onPermissionDenied('geolocation', opened.webContents.id)
   assert.equal(manager.state('m1').notice.kind, 'permission-denied')
@@ -1325,7 +1603,7 @@ test('NOTA: permissão negada, página que não carrega e página que cai també
 
 test('NOTA: a guarda que dispara sem dono conhecido vai ao diário e NÃO inventa missão', async () => {
   const { manager, host, records } = makeManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   // A session é do PROJETO: um webContents que o motor não conhece (aba de
   // outra missão já derrubada) não pode virar nota na missão errada.
   host.hooks.onDownloadBlocked('x.zip', 'https://a.test/x.zip', 9999)
@@ -1344,14 +1622,14 @@ test('GUARDA DE CAPTURA: sem browser e com a janela escondida, recusa NA HORA co
   // P5: com a janela minimizada/escondida as DUAS rotas de captura PENDURAM
   // (5-8 s) e o agente perde a rodada. Recusar em 1 ms é o comportamento certo.
   const escondida = makeManager({ visible: false })
-  await escondida.manager.ensureTab('m1', 'p', 'https://a.test/')
+  await escondida.manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   const refused = escondida.manager.captureReadiness('m1')
   assert.equal(refused.ok, false)
   assert.match(refused.error, /minimizada\/escondida/u)
   assert.match(refused.error, /restaure a janela/u)
 
   const viva = makeManager()
-  const opened = await viva.manager.ensureTab('m1', 'p', 'https://a.test/')
+  const opened = await viva.manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   const ready = viva.manager.captureReadiness('m1')
   assert.equal(ready.ok, true)
   assert.equal(ready.tab.tabId, opened.tabId)
@@ -1360,7 +1638,7 @@ test('GUARDA DE CAPTURA: sem browser e com a janela escondida, recusa NA HORA co
 test('⚡ DO AGENTE: acende na hora, NÃO pisca entre tools encadeadas e decai depois da última', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const { manager, pushes } = makeManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
 
   manager.setAgentDriving('m1', true)
   assert.equal(manager.state('m1').agentDriving, true)
@@ -1390,7 +1668,7 @@ test('⚡ DO AGENTE: acende na hora, NÃO pisca entre tools encadeadas e decai d
 
 test('MOTOR: mexer na janela reaplica o layout CLAMPADO (o ResizeObserver do painel não acorda)', async () => {
   const { manager, host } = makeManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', { x: 900, y: 100, width: 500, height: 700 }, true)
   assert.deepEqual(host.views[0].bounds, { x: 900, y: 100, width: 500, height: 700 })
 
@@ -1403,7 +1681,7 @@ test('MOTOR: mexer na janela reaplica o layout CLAMPADO (o ResizeObserver do pai
 
 test('MOTOR: o state reflete o `webContents` de verdade, e as alavancas recusam quando não há para onde ir', async () => {
   const { manager } = makeManager()
-  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   opened.webContents.title = 'Board · Synkora'
   opened.webContents.loading = true
   opened.webContents.navigationHistory.back = true
@@ -1420,7 +1698,11 @@ test('MOTOR: o state reflete o `webContents` de verdade, e as alavancas recusam 
     canBack: true,
     canForward: false,
     // A largura é POR ABA e nasce em AUTO (2026-08-29).
-    viewport: 'auto'
+    viewport: 'auto',
+    // O DONO e o ⚡ da aba (2026-09-01) — o chrome desenha os dois, e a
+    // fotografia é o único canal que ele tem.
+    owner: OWNER_DEV,
+    driving: false
   })
 
   assert.equal(manager.goBack('m1'), true)
@@ -1438,7 +1720,7 @@ test('MOTOR: navegar sem browser aberto RECUSA nomeando o `+`, e com aba viva ca
   assert.equal(semBrowser.ok, false)
   assert.match(semBrowser.error, /abra uma aba \(\+\)/u)
 
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   const bad = await manager.navigate('m1', 'javascript:alert(1)')
   assert.equal(bad.ok, false)
   assert.match(bad.error, /browser_eval/u)
@@ -1450,7 +1732,7 @@ test('MOTOR: navegar sem browser aberto RECUSA nomeando o `+`, e com aba viva ca
 
 test('MOTOR: o devtools abre DESTACADO — acoplado mexeria na geometria de que a captura depende', async () => {
   const { manager } = makeManager()
-  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   assert.equal(manager.toggleDevtools('m1'), true)
   assert.equal(opened.webContents.devtoolsMode, 'detach')
   assert.equal(opened.webContents.isDevToolsOpened(), true)
@@ -1468,7 +1750,7 @@ test('MOTOR: retângulo que não é retângulo é recusado na PORTA do IPC', () 
 
 test('MOTOR: sem janela pronta, abrir RECUSA com receita em vez de deixar casca pendurada', async () => {
   const { manager, host } = makeManager({ noWindow: true })
-  await assert.rejects(() => manager.ensureTab('m1', 'p'), /janela do Synkora não está pronta/u)
+  await assert.rejects(() => manager.ensureTab('m1', 'p', undefined, OWNER_DEV), /janela do Synkora não está pronta/u)
   const gesture = await manager.newTab('m1', 'p')
   assert.equal(gesture.ok, false)
   assert.match(gesture.error, /abra o app e tente de novo/u)
@@ -1670,7 +1952,7 @@ const POPOUT_FULL = { x: 0, y: 0, width: 1000, height: 700 }
 
 test('⧉ CURA 1: a janela fica VISÍVEL antes do reparent, e o gesto é de UM PASSO', async () => {
   const { manager, host, popouts, records, timeline, bounds } = makeHostedManager()
-  const opened = await manager.ensureTab('m1', 'p', 'localhost:5173')
+  const opened = await manager.ensureTab('m1', 'p', 'localhost:5173', OWNER_DEV)
   opened.webContents.title = 'Board · Synkora'
   manager.applyBounds('m1', RECT, true, 'dock')
   assert.equal(manager.state('m1').host, 'dock')
@@ -1706,7 +1988,7 @@ test('⧉ CURA 1: a janela fica VISÍVEL antes do reparent, e o gesto é de UM P
 
 test('⧉ IDEMPOTENTE: clicar de novo FOCA a janela que já existe, não abre uma segunda', async () => {
   const { manager, host, popouts } = makeHostedManager()
-  await manager.ensureTab('m1', 'p')
+  await manager.ensureTab('m1', 'p', undefined, OWNER_DEV)
   manager.popOut('m1')
   assert.deepEqual(manager.popOut('m1'), { ok: true }, 'gesto repetido é sucesso, não recado vermelho')
   assert.equal(host.log.filter((e) => e.kind === 'popout:create').length, 1, 'UM pop-out por missão')
@@ -1718,7 +2000,7 @@ test('⧉ IDEMPOTENTE: clicar de novo FOCA a janela que já existe, não abre um
 
 test('⇤ REENCAIXAR: a view volta ao dock ANTES de a janela fechar (nunca fica órfã)', async () => {
   const { manager, host, popouts, records, timeline, bounds } = makeHostedManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', RECT, true, 'dock')
   manager.popOut('m1')
 
@@ -1744,7 +2026,7 @@ test('⇤ REENCAIXAR: a view volta ao dock ANTES de a janela fechar (nunca fica 
 
 test('X DA JANELA = REENCAIXAR: a página volta ao dock e o `webContents` NUNCA morre junto', async () => {
   const { manager, host, popouts, records, timeline, bounds } = makeHostedManager()
-  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', RECT, true, 'dock')
   manager.popOut('m1')
 
@@ -1780,7 +2062,7 @@ test('X DA JANELA = REENCAIXAR: a página volta ao dock e o `webContents` NUNCA 
 
 test('CURA 2: janela minimizada NÃO recalcula nada, e o restore REFAZ o `setBounds`', async () => {
   const { manager, popouts, bounds } = makeHostedManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.popOut('m1')
   manager.applyBounds('m1', POPOUT_RECT, true, 'popout')
   assert.deepEqual(bounds().at(-1).bounds, POPOUT_RECT)
@@ -1805,7 +2087,7 @@ test('CURA 2: janela minimizada NÃO recalcula nada, e o restore REFAZ o `setBou
 
 test('AUTORIDADE DE GEOMETRIA: o relato do host ERRADO é ignorado, com UM registro por transição', async () => {
   const { manager, records, bounds } = makeHostedManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', RECT, true, 'dock')
   manager.popOut('m1')
 
@@ -1843,8 +2125,8 @@ test('AUTORIDADE DE GEOMETRIA: o relato do host ERRADO é ignorado, com UM regis
 
 test('MISSÃO ENCERRADA leva a janela destacada junto — e o estado volta a `host: dock`', async () => {
   const { manager, host, popouts, records, timeline } = makeHostedManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
-  await manager.ensureTab('m2', 'p', 'https://b.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  await manager.ensureTab('m2', 'p', 'https://b.test/', OWNER_DEV)
   manager.popOut('m1')
 
   host.log.length = 0
@@ -1869,8 +2151,8 @@ test('MISSÃO ENCERRADA leva a janela destacada junto — e o estado volta a `ho
 
 test('QUIT: o teardown geral varre as janelas destacadas — nenhuma sobra na taskbar', async () => {
   const { manager, popouts } = makeHostedManager()
-  await manager.ensureTab('m1', 'p')
-  await manager.ensureTab('m2', 'p')
+  await manager.ensureTab('m1', 'p', undefined, OWNER_DEV)
+  await manager.ensureTab('m2', 'p', undefined, OWNER_DEV)
   manager.popOut('m1')
   manager.popOut('m2')
   assert.equal(popouts.windows.size, 2, 'missões diferentes podem ter janelas diferentes')
@@ -1886,7 +2168,7 @@ test('QUIT: o teardown geral varre as janelas destacadas — nenhuma sobra na ta
 
 test('GUARDA DE CAPTURA: view SEM JANELA recusa NA HORA, nomeando a receita', async () => {
   const { manager, host, popouts, records } = makeHostedManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.popOut('m1')
   assert.equal(manager.captureReadiness('m1').ok, true)
 
@@ -1912,7 +2194,7 @@ test('GUARDA DE CAPTURA: view SEM JANELA recusa NA HORA, nomeando a receita', as
 
 test('GUARDA DE CAPTURA: pop-out MINIMIZADO segue capturável — a janela do APP escondida, não', async () => {
   const { manager, host, popouts } = makeHostedManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.popOut('m1')
   popouts.windows.get('m1').userMinimize()
   // A sonda mediu captura FRESCA em 19-81 ms com a janela minimizada/oculta/
@@ -1932,7 +2214,7 @@ test('GUARDA DE CAPTURA: pop-out MINIMIZADO segue capturável — a janela do AP
 
 test('ROTEAMENTO: aba nova de missão destacada nasce NA JANELA DESTACADA', async () => {
   const { manager, host, popouts, timeline } = makeHostedManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.popOut('m1')
 
   host.log.length = 0
@@ -1946,8 +2228,8 @@ test('ROTEAMENTO: aba nova de missão destacada nasce NA JANELA DESTACADA', asyn
 
 test('⇤ REENCAIXAR não rouba o painel de quem está no dock AGORA', async () => {
   const { manager } = makeHostedManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
-  await manager.ensureTab('m2', 'p', 'https://b.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  await manager.ensureTab('m2', 'p', 'https://b.test/', OWNER_DEV)
   manager.applyBounds('m1', RECT, true, 'dock')
   manager.popOut('m1')
   // Cena real: com a página da m1 fora, o dono trocou o painel para a m2 — e
@@ -1970,7 +2252,7 @@ test('⧉ RECUSA COM RECEITA: sem aba aberta, e num app cujo main é anterior ao
   // O app de ANTES do pop-out (main velho ainda de pé, ⧉ chegando por HMR): o
   // gesto recusa NOMEANDO o restart, em vez de estourar.
   const { manager } = makeManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   const refused = manager.popOut('m1')
   assert.equal(refused.ok, false)
   assert.match(refused.error, /reinicie o Synkora/u)
@@ -2090,7 +2372,7 @@ test('LARGURA/PURO: o fit LÊ o valor vivo antes de escrever (e só escreve quan
 
 test('LARGURA/MOTOR: o modo nasce AUTO, é POR ABA, e o inválido recusa com receita', async () => {
   const { manager, records } = makeManager()
-  const primeira = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const primeira = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
 
   assert.equal(manager.viewportOf('m1'), 'auto')
@@ -2137,7 +2419,7 @@ test('LARGURA/MOTOR: o modo nasce AUTO, é POR ABA, e o inválido recusa com rec
 
 test('LARGURA/MOTOR: AUTO devolve a moldura FÍSICA — a porta de volta é grátis', async () => {
   const { manager } = makeManager()
-  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
 
   manager.setViewportMode('m1', 1280)
@@ -2156,7 +2438,7 @@ test('LARGURA/MOTOR: AUTO devolve a moldura FÍSICA — a porta de volta é grá
 
 test('LARGURA/MOTOR: o fit é RECALCULADO a cada relato de bounds (o dono arrastando a alça)', async () => {
   const { manager } = makeManager()
-  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
   manager.setViewportMode('m1', 1280)
   assert.equal(tab.webContents.getZoomFactor(), 0.3125)
@@ -2177,7 +2459,7 @@ test('LARGURA/MOTOR: o fit é RECALCULADO a cada relato de bounds (o dono arrast
   // Gesto na JANELA (arrastar a borda) passa pelo mesmo caminho: o clamp muda a
   // moldura sem o ResizeObserver do painel acordar.
   const outro = makeManager()
-  const alvo = await outro.manager.ensureTab('m1', 'p', 'https://a.test/')
+  const alvo = await outro.manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   outro.manager.applyBounds('m1', { x: 0, y: 0, width: 800, height: 600 }, true)
   outro.manager.setViewportMode('m1', 1280)
   assert.equal(alvo.webContents.getZoomFactor(), 0.625)
@@ -2188,7 +2470,7 @@ test('LARGURA/MOTOR: o fit é RECALCULADO a cada relato de bounds (o dono arrast
 
 test('LARGURA/MOTOR: a aba ATIVA escreve por ÚLTIMO (o zoom do Chromium é por origem)', async () => {
   const { manager } = makeManager()
-  const primeira = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const primeira = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   await manager.newTab('m1', 'p', 'https://a.test/')
   const ativa = manager.activeTab('m1')
   manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
@@ -2212,7 +2494,7 @@ test('LARGURA/MOTOR: a aba ATIVA escreve por ÚLTIMO (o zoom do Chromium é por 
 
 test('LARGURA/MOTOR: o modo SOBREVIVE à navegação (e o fit é re-aplicado), mas MORRE com a aba', async () => {
   const { manager } = makeManager()
-  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
   manager.setViewportMode('m1', 1280)
 
@@ -2239,7 +2521,7 @@ test('LARGURA/MOTOR: o modo SOBREVIVE à navegação (e o fit é re-aplicado), m
 
 test('LARGURA/MOTOR: destacar (⧉) refaz o fit com a moldura da JANELA', async () => {
   const { manager, popouts } = makeHostedManager()
-  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
   manager.setViewportMode('m1', 1280)
   assert.equal(tab.webContents.getZoomFactor(), 0.3125)
@@ -2417,7 +2699,7 @@ test('MOLDURA: a view fica com a largura PEDIDA e centralizada — e nunca mais 
 
 test('MOLDURA/MOTOR: o preset que CABE vira bounds menores e centralizados, por ABA', async () => {
   const { manager, host } = makeManager()
-  const primeira = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const primeira = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   // A janela destacada é larga: é o caso em que a H8 ampliava.
   manager.applyBounds('m1', { x: 40, y: 20, width: 1400, height: 600 }, true)
   manager.setViewportMode('m1', 375)
@@ -2454,7 +2736,7 @@ test('MOLDURA/MOTOR: o preset que CABE vira bounds menores e centralizados, por 
 
 test('MOLDURA/MOTOR: o gesto do modo REPOSICIONA a view na hora (não espera o ResizeObserver)', async () => {
   const { manager, host } = makeManager()
-  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', { x: 0, y: 0, width: 900, height: 600 }, true)
   const boundsNow = () =>
     host.log.filter((entry) => entry.kind === 'setBounds' && entry.wc === tab.webContents.id).at(-1)
@@ -2477,7 +2759,7 @@ test('MOLDURA/MOTOR: o gesto do modo REPOSICIONA a view na hora (não espera o R
 
 test('MOLDURA/MOTOR: arrastar a alça re-centraliza a faixa a cada relato (sem degrau)', async () => {
   const { manager, host } = makeManager()
-  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
   manager.setViewportMode('m1', 375)
 
@@ -2516,7 +2798,7 @@ test('MOLDURA/MOTOR: arrastar a alça re-centraliza a faixa a cada relato (sem d
 test('MOLDURA/MOTOR: o chrome acorda quando a NARRAÇÃO vira — e fica quieto no meio do arrasto', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const { manager, pushes } = makeManager()
-  await manager.ensureTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', { x: 0, y: 0, width: 300, height: 600 }, true)
   manager.setViewportMode('m1', 375)
   t.mock.timers.tick(100)
@@ -2574,7 +2856,7 @@ test('MOLDURA/MOTOR: o chrome acorda quando a NARRAÇÃO vira — e fica quieto 
 
 test('MOLDURA/MOTOR: a JANELA DESTACADA é onde a faixa mais vale (e o reencaixe a desfaz)', async () => {
   const { manager, host, popouts } = makeHostedManager()
-  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/')
+  const tab = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
   manager.setViewportMode('m1', 375)
   const boundsNow = () =>

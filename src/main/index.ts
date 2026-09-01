@@ -65,7 +65,12 @@ import {
   buildGuiDelegationApi,
   createGuiHelperEngine
 } from './guiDelegationWiring'
-import { isGuiMissionPaneId, isGuiPlanningPaneId, missionTypeOf } from './guiMissionContracts'
+import {
+  guiMissionRoleOf,
+  isGuiMissionPaneId,
+  isGuiPlanningPaneId,
+  missionTypeOf
+} from './guiMissionContracts'
 import { initDesktopNotifications } from './desktopNotifications'
 import {
   WINDOWS_TOAST_ACTIVATOR_CLSID,
@@ -115,7 +120,8 @@ import { buildGuiLspTools } from './guiLspTools'
 import {
   createBrowserManager,
   type BrowserHostKind,
-  type BrowserPaneManager
+  type BrowserPaneManager,
+  type BrowserTabOwner
 } from './browserPane'
 // POP-OUT do browser (2026-08-29 — design DESIGN_BROWSER_POPOUT §P1): a MESMA
 // view salta para uma janela própria, com função inteira, e o X reencaixa.
@@ -125,7 +131,8 @@ import {
 } from './browserPopoutWindow'
 import { registerBrowserIpc } from './ipc/browser'
 import { buildGuiBrowserTools, type GuiBrowserToolkit } from './guiBrowserTools'
-import { GUI_HELPER_MCP_PANE_PREFIX } from './guiHelperLspMcp'
+import { GUI_HELPER_MCP_PANE_PREFIX, guiHelperMcpPaneId } from './guiHelperLspMcp'
+import { guiHelperPorts } from './guiHelperPorts'
 import { SynVoiceService } from './synVoice'
 import { WindowsTextInput } from './windowsTextInput'
 import { WindowsGlobalActivation } from './windowsGlobalActivation'
@@ -3880,6 +3887,14 @@ app.whenReady().then(async () => {
         ids: { paneId: entry.paneId, taskId: entry.helperId },
         detail: entry.detail
       }),
+    // D4 (2026-09-01) — A PORTA DE CADA AJUDANTE: reservada no spawn, anunciada
+    // no ambiente, na persona e no mapa do ▶ testar; devolvida no desfecho. O
+    // registro é o singleton do processo porque o mapa lê a MESMA faixa.
+    ports: guiHelperPorts,
+    // D3 — A ABA DO AJUDANTE MORRE COM ELE: o dispose do processo (done/failed/
+    // cancelled/interrupted) fecha as abas cujo dono é o `helper-mcp-<id>`. A
+    // bancada é do ajudante; o registro que fica são os shots em .synkora/browser/.
+    onHelperDisposed: (helperId) => browserPanes.closeTabsOf(guiHelperMcpPaneId(helperId)),
     onChange: (change) => guiSessions?.noteHelperChange(change),
     log: (entry) =>
       blackbox.record({
@@ -3932,6 +3947,31 @@ app.whenReady().then(async () => {
   //  3. EVENTOS → CAIXA-PRETA. O kit é um OBJETO no `McpApi` (como o `lsp`),
   //     então o proxy de instrumentação o deixa passar intacto de propósito: é
   //     este `log` que escreve o diário, com a missão junto.
+  //  4. IDENTIDADE → DONO DA ABA (2026-09-01, D1 do design
+  //     `DESIGN_BROWSER_ABAS_POR_IDENTIDADE`). A missão continua compartilhada —
+  //     é o worktree do dev —, mas a ABA passou a ser de quem chama: o dev tem a
+  //     dele, cada ajudante tem a dele. É aqui que a identidade vira DONO, e é o
+  //     único lugar do app que sabe traduzir `helper-mcp-<id>` no NOME que o dono
+  //     lê na aba (o apelido da delegação, `inv-brand`, e não um uuid).
+  const browserOwnerOf = (id: PaneIdentity): BrowserTabOwner => {
+    if (id.paneId.startsWith(GUI_HELPER_MCP_PANE_PREFIX)) {
+      const helperId = id.paneId.slice(GUI_HELPER_MCP_PANE_PREFIX.length)
+      return {
+        kind: 'helper',
+        // Ajudante que já morreu (a entrega ainda sendo lida) não fica sem
+        // rótulo: o id curto é feio, mas é verdade.
+        label: guiHelperEngine.get(helperId)?.name ?? helperId.slice(0, 8),
+        paneId: id.paneId
+      }
+    }
+    if (guiMissionRoleOf(id.paneId) === 'dev') {
+      return { kind: 'dev', label: 'dev', paneId: id.paneId }
+    }
+    // Identidade de agente sem classificação — o papel do bearer é o rótulo.
+    // Chutar "dev" aqui faria o dono ler uma aba errada com cara de certa.
+    return { kind: 'agent', label: id.role, paneId: id.paneId }
+  }
+
   const guiBrowserTools: GuiBrowserToolkit = buildGuiBrowserTools({
     manager: browserPanes,
     resolveTarget: (id) => {
@@ -3939,7 +3979,7 @@ app.whenReady().then(async () => {
         id.missionId ??
         (id.delegatorPaneId ? hub.identityByPane(id.delegatorPaneId)?.missionId : undefined)
       if (!missionId) return undefined
-      return { missionId, projectId: id.projectId, root: id.cwd }
+      return { missionId, projectId: id.projectId, root: id.cwd, owner: browserOwnerOf(id) }
     },
     cliOf: (id) => {
       if (id.paneId.startsWith(GUI_HELPER_MCP_PANE_PREFIX)) {
@@ -3952,6 +3992,10 @@ app.whenReady().then(async () => {
         cat: 'mcp',
         event: entry.event,
         actor: 'harness',
+        // D6 — AUTORIA: sem estes ids o diário sabia que uma aba abriu, não QUEM
+        // abriu (foi por isso que a colisão de 01/09 só apareceu na transcrição
+        // dos CLIs, e não na caixa-preta).
+        ...(entry.ids ? { ids: entry.ids } : {}),
         ...(entry.detail ? { detail: entry.detail } : {}),
         ...(entry.err ? { err: entry.err } : {})
       })

@@ -3,6 +3,8 @@ import type {
   BrowserPanelState,
   BrowserRect,
   BrowserTab,
+  BrowserTabOwner,
+  BrowserTabOwnerKind,
   BrowserViewportMode
 } from '../../preload/index'
 
@@ -21,8 +23,12 @@ import type {
 // módulo continua carregável fora do Electron).
 
 /** Teto de abas POR MISSÃO (design H1). O `+` do chrome desabilita aqui; quem
- *  aplica a lei de verdade é o main — este número é o espelho da tela. */
-export const BROWSER_TAB_CAP = 8
+ *  aplica a lei de verdade é o main — este número é o espelho da tela.
+ *
+ *  SUBIU DE 8 PARA 12 em 2026-09-01 (D5 do design das abas por identidade): 8
+ *  era o teto de uma missão com UM dev. Com uma aba POR IDENTIDADE, uma frota de
+ *  quatro ajudantes batia no teto antes de o dono abrir a dele. */
+export const BROWSER_TAB_CAP = 12
 
 /** Preload velho (app rodando sem restart) não tem `api.browser`. A tela
  *  nomeia a receita em vez de morrer calada — mesma régua do `SKILLS_NO_API`. */
@@ -130,6 +136,57 @@ function bool(value: unknown): boolean {
   return value === true
 }
 
+// ————— O DONO DA ABA (2026-09-01) —————
+//
+// Ordem do dono: *"queria que [os ajudantes] utilizassem o browser caso
+// quisessem, CADA UM NA SUA ABA, na sua porta"*
+// (`.synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md`, D1/D2).
+//
+// O preço MEDIDO de não ter isto (missão 86a05c06, 01/09): o único ajudante que
+// dirigiu o browser dividiu a MESMA aba com o dev — três leituras dele caíram na
+// página do dev, e o dev o cancelou aos 20 minutos. Com uma aba por identidade,
+// a primeira pergunta que a tira precisa responder passa a ser "de quem é esta
+// aba", e a segunda "quem está dirigindo AGORA".
+
+function isOwnerKind(value: string): value is BrowserTabOwnerKind {
+  return value === 'user' || value === 'dev' || value === 'helper' || value === 'agent'
+}
+
+/** Rótulo de socorro por ESPÉCIE. Dono sem nome não pode virar aba sem dono:
+ *  uma ficha vazia leria como aba do dono, que é exatamente o engano que esta
+ *  rodada existe para matar. */
+const OWNER_FALLBACK_LABEL: Record<BrowserTabOwnerKind, string> = {
+  user: 'dono',
+  dev: 'dev',
+  helper: 'ajudante',
+  agent: 'agente'
+}
+
+/**
+ * O dono da aba, lido DEFENSIVAMENTE — e com a mesma lei do `host`/`viewport`:
+ * só o que NÃO é o padrão é carregado.
+ *
+ *  · espécie que o espelho não conhece (ou `owner` que não é objeto) → SEM dono:
+ *    a tela não inventa identidade a partir de payload torto;
+ *  · `user` → SEM dono também, porque a AUSÊNCIA já é a aba do dono. Gravar
+ *    `{kind:'user'}` criaria uma segunda grafia do mesmo estado, e aí
+ *    `sameBrowserPanel` acharia diferença entre um motor velho e o de hoje
+ *    contando a MESMA verdade (o mesmo erro que o `host: 'dock'` já evita);
+ *  · espécie boa com rótulo vazio → a ESPÉCIE nomeia a ficha (ver acima).
+ */
+function readTabOwner(value: unknown): BrowserTabOwner | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const bag = value as { kind?: unknown; label?: unknown; paneId?: unknown }
+  const kind = str(bag.kind)
+  if (!isOwnerKind(kind) || kind === 'user') return undefined
+  const owner: BrowserTabOwner = { kind, label: str(bag.label).trim() || OWNER_FALLBACK_LABEL[kind] }
+  // O paneId não desenha pixel nenhum (é a chave do MOTOR), mas atravessa porque
+  // o espelho o declara — e espelho pela metade vira contrato pela metade.
+  const paneId = str(bag.paneId).trim()
+  if (paneId) owner.paneId = paneId
+  return owner
+}
+
 /** O modo vindo do motor, lido defensivamente. Largura que não é número
  *  positivo é `'auto'`: uma escala inventada aqui viraria uma página escalada
  *  na tela do dono por causa de um payload torto. */
@@ -159,7 +216,7 @@ export function normalizeBrowserPanel(value: unknown): BrowserPanelState {
     const tab = entry as Record<string, unknown>
     const tabId = str(tab.tabId)
     if (!tabId) continue
-    tabs.push({
+    const view: BrowserTab = {
       tabId,
       title: str(tab.title),
       url: str(tab.url),
@@ -168,7 +225,14 @@ export function normalizeBrowserPanel(value: unknown): BrowserPanelState {
       canBack: bool(tab.canBack),
       canForward: bool(tab.canForward),
       viewport: readViewportMode(tab.viewport)
-    })
+    }
+    // DONO e ⚡ POR ABA (2026-09-01): os dois só são escritos quando NÃO são o
+    // padrão — ausente é "aba do dono" e "não dirigindo", que é o que um motor
+    // anterior a esta rodada conta ao não mandar campo nenhum.
+    const owner = readTabOwner(tab.owner)
+    if (owner) view.owner = owner
+    if (bool(tab.driving)) view.driving = true
+    tabs.push(view)
   }
   // CONSERTO de uma verdade impossível: existir aba e nenhuma marcada ativa
   // deixaria a barra de URL falando de uma página e a tira de abas de outra.
@@ -278,7 +342,16 @@ export function sameBrowserPanel(a: BrowserPanelState, b: BrowserPanelState): bo
       tab.loading === other.loading &&
       tab.canBack === other.canBack &&
       tab.canForward === other.canForward &&
-      tab.viewport === other.viewport
+      tab.viewport === other.viewport &&
+      // O ⚡ PASSANDO DE UMA ABA PARA OUTRA (2026-09-01) muda a tira e mais nada:
+      // sem esta linha o raio ficaria pintado na aba de quem já parou.
+      tab.driving === other.driving &&
+      // O DONO entra pela ESPÉCIE e pelo RÓTULO, que é exatamente o que a tira
+      // desenha. O `paneId` fica de fora de propósito: ele não aparece em pixel
+      // nenhum, e comparar o que não se vê repintaria o dock por nada — o
+      // `browser:changed` chega a cada passo do agente.
+      tab.owner?.kind === other.owner?.kind &&
+      tab.owner?.label === other.owner?.label
     )
   })
 }
@@ -306,6 +379,34 @@ export function browserTabLabel(tab: BrowserTab): string {
   return 'aba em branco'
 }
 
+/**
+ * O TAG do dono na tira — o que a aba mostra ANTES do nome da página.
+ *
+ * `null` para a aba do dono (presente ou ausente a ficha): a diferença é por
+ * FORMA antes de cor, e a forma do dono é a AUSÊNCIA de prefixo — ele é a régua
+ * da tira, não um caso dela. `DEV` é fixo pela ESPÉCIE (o chat da missão é um
+ * só); ajudante e agente entram com o próprio nome/papel, que é o que o dono
+ * reconhece na lateral. A caixa alta é do CSS, para o leitor de tela continuar
+ * ouvindo "inv-brand" e não "I-N-V".
+ */
+export function browserTabOwnerTag(tab: BrowserTab): string | null {
+  const owner = tab.owner
+  if (!owner || owner.kind === 'user') return null
+  return owner.kind === 'dev' ? 'DEV' : owner.label
+}
+
+/**
+ * A FRASE do dono — o que a barra de status e o leitor de tela leem.
+ *
+ * "aba DE x" para todo mundo de propósito: "aba do dev" leria melhor, mas "aba
+ * do inv-brand" leria ERRADO. Uma regra só, que nunca sai da gramática.
+ */
+export function browserTabOwnerPhrase(tab: BrowserTab): string | null {
+  const owner = tab.owner
+  if (!owner || owner.kind === 'user') return null
+  return `aba de ${owner.label}`
+}
+
 /** O RESUMO da seção — a única verdade que sobra com o painel RECOLHIDO, então
  *  ele carrega o que decide se vale reabrir: quem está dirigindo, o que está
  *  carregando, e quantas abas existem. */
@@ -314,13 +415,26 @@ export function browserSectionSummary(
   engine: BrowserEngineState = 'ready'
 ): string {
   if (engine === 'missing') return 'motor velho'
+  // O ⚡ é POR ABA desde 2026-09-01, e a missão continua tendo o dela: qualquer
+  // um dos dois acende o raio. Ler só o `agentDriving` deixaria o sinal MUDO num
+  // motor que marca a aba e não a missão.
+  const driver = state.tabs.find((tab) => tab.driving)
+  const bolt = state.agentDriving || driver ? '⚡ ' : ''
   // DESTACADO vem antes de tudo (menos o motor velho): com a seção recolhida,
   // "3 abas" faria o dono procurar no dock uma página que está em outra janela.
   // O ⚡ sobrevive porque o agente segue dirigindo a página destacada.
-  if (browserIsPopout(state)) return `${state.agentDriving ? '⚡ ' : ''}destacado`
+  if (browserIsPopout(state)) return `${bolt}destacado`
   const tab = activeBrowserTab(state)
   if (!state.alive || !tab) return 'fechado'
-  const label = tab.loading ? 'carregando…' : browserTabLabel(tab)
+  // QUEM está dirigindo vence o nome da página: com dono + dev + frota na mesma
+  // missão, "⚡ Board" conta que ALGUÉM dirige, e o que decide se o dono precisa
+  // reabrir a seção é o NOME de quem. Driver sem dono (motor velho, aba do
+  // próprio dono) cai nas palavras de sempre — não há quem nomear.
+  const label = driver?.owner
+    ? `${driver.owner.label} dirigindo`
+    : tab.loading
+      ? 'carregando…'
+      : browserTabLabel(tab)
   const extra = state.tabs.length > 1 ? ` · ${state.tabs.length} abas` : ''
   // A LARGURA EMULADA entra no resumo porque ela sobrevive à seção RECOLHIDA:
   // uma página em 1280 lógicos num painel de 400px é a diferença entre "o site
@@ -328,7 +442,7 @@ export function browserSectionSummary(
   // para descobrir isso.
   const mode = browserViewportOf(state)
   const width = mode === 'auto' ? '' : ` · ${mode}`
-  return `${state.agentDriving ? '⚡ ' : ''}${label}${extra}${width}`
+  return `${bolt}${label}${extra}${width}`
 }
 
 /** Recusa do `+` quando o teto chegou. Toda guarda nomeia a saída: aqui, a de

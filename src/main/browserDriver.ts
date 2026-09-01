@@ -109,6 +109,13 @@ export interface BrowserPageLike {
 /** Caixa-preta desta borda: quem chama injeta; o motor nunca importa blackbox. */
 export type BrowserDriverLog = (entry: {
   event: string
+  /**
+   * OS IDS DE CORRELAÇÃO (D6 do design de 2026-09-01). Até 01/09 o `browser-open`
+   * saía do diário SEM `paneId` — sabia-se que uma aba abriu, não QUEM abriu, e
+   * foi por isso que a colisão da missão 86a05c06 só apareceu na transcrição dos
+   * CLIs. O harness repassa isto para o `blackbox.record`, que já tem o campo.
+   */
+  ids?: { paneId?: string; missionId?: string; projectId?: string }
   detail?: Record<string, unknown>
   err?: string
 }) => void

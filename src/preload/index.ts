@@ -815,6 +815,27 @@ export interface BrowserRect {
   height: number
 }
 
+/**
+ * DE QUEM é uma aba (D1 do design
+ * `.synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md`; ordem do
+ * dono, 2026-09-01: *"cada um na sua aba, na sua porta"*).
+ *
+ * `user` é gesto do dono, `dev` é o chat da missão, `helper` é um ajudante
+ * (rótulo = o nome dele) e `agent` é identidade de agente sem classificação
+ * (rótulo = o papel). `paneId` é a chave com que o MOTOR acha a aba desta
+ * identidade — a tela não desenha nada com ele.
+ *
+ * Espelho declarado de `BrowserTabOwner`/`BrowserTabView` de
+ * `src/main/browserPane.ts` (o par).
+ */
+export type BrowserTabOwnerKind = 'user' | 'dev' | 'helper' | 'agent'
+
+export interface BrowserTabOwner {
+  kind: BrowserTabOwnerKind
+  label: string
+  paneId?: string
+}
+
 /** Uma aba do browser da missão. `canBack`/`canForward` vêm do histórico real
  *  do webContents: o chrome não adivinha se as setas fazem alguma coisa. */
 export interface BrowserTab {
@@ -828,6 +849,13 @@ export interface BrowserTab {
   /** A largura que ESTA aba faz a página acreditar que tem. Opcional no espelho
    *  (motor anterior a 2026-08-29 não manda) — ausente = `'auto'`. */
   viewport?: BrowserViewportMode
+  /** QUEM abriu esta aba (2026-09-01). OPCIONAL de propósito: motor anterior a
+   *  esta rodada não manda o campo, e AUSENTE = aba do DONO — que é a verdade
+   *  de antes de existir aba por identidade. */
+  owner?: BrowserTabOwner
+  /** O agente DESTA aba está dirigindo AGORA (⚡ por aba, D2); o ⚡ da missão
+   *  (`agentDriving`) continua contando o fato geral. Ausente = não dirigindo. */
+  driving?: boolean
 }
 
 /** Nota legível do MOTOR para o dono (download barrado, teto de abas, página

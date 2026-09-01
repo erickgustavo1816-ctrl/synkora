@@ -35,6 +35,7 @@ import {
   type GuiHelperLspDeps,
   type GuiHelperLspKit
 } from './guiHelperLspMcp'
+import type { GuiHelperPortRegistry } from './guiHelperPorts'
 import { CodexSession, type CodexSessionOpts } from './codexSession'
 import { MaestroSession, type MaestroSessionOpts, type SessionEvent } from './maestroSession'
 import { getCatalog } from './catalog'
@@ -134,13 +135,45 @@ export const GUI_HELPER_LSP_PERSONA_LINE =
   'grep guesses, the compiler knows.'
 
 /**
- * A persona que ESTE ajudante recebe. `false` = a de sempre, palavra por
- * palavra; `true` = ela mais a linha do LSP. Uma função porque a resposta muda
- * por PROCESSO, não por build: o mesmo app arma o kit num ajudante e não arma no
- * seguinte se o servidor caiu no meio.
+ * A LINHA DA PORTA (D4 do design ABAS POR IDENTIDADE, 2026-09-01) — UMA, e só
+ * quando a reserva existe de verdade.
+ *
+ * Mesma régua da linha do LSP, e pela mesma razão: persona que promete porta sem
+ * reserva é persona mentindo — o ajudante subiria servidor numa porta que o
+ * mapa do dono não conhece, que é exatamente o hábito medido (missão 86a05c06:
+ * ajudante servindo em 8791 enquanto o dev servia em 8159/8148/8163, os dois na
+ * mesma aba).
+ *
+ * O vocabulário do COMO é o da casa: `portInvocation` (runtimeScripts.ts) já
+ * decidiu, por ferramenta, que vite/astro querem `--port N --strictPort`, next
+ * quer `-p N` e o resto lê `PORT` do ambiente. Repetir aqui a MESMA receita
+ * evita o ajudante inventar a dele — e é o que o `--strictPort` garante: ou ele
+ * sobe na porta reservada, ou ele SABE que não subiu.
  */
-export function guiHelperPersonaFor(lspArmed: boolean): string {
-  return lspArmed ? `${GUI_HELPER_PERSONA}\n${GUI_HELPER_LSP_PERSONA_LINE}` : GUI_HELPER_PERSONA
+export function GUI_HELPER_PORT_PERSONA_LINE(port: number): string {
+  return (
+    `- PORT ${port} IS RESERVED FOR YOU ALONE (the mission developer and every other helper have ` +
+    'their own): when your slice needs the product RUNNING, serve it on THIS port, in the background — ' +
+    `vite and astro take \`--port ${port} --strictPort\`, next takes \`-p ${port}\`, and anything else ` +
+    `that is PORT-aware reads PORT, already set to ${port} in your environment (SYNKORA_HELPER_PORT ` +
+    'carries the same number). Then LOOK at the page in the house browser with browser_open: that tab ' +
+    'is yours alone and nobody else navigates it. If the port is already taken, take the next one up ' +
+    'and SAY which one you used — and never touch a port you see someone else using.'
+  )
+}
+
+/**
+ * A persona que ESTE ajudante recebe. Sem kit e sem porta ela é a de sempre,
+ * palavra por palavra; cada linha extra só entra quando a coisa que ela promete
+ * EXISTE. Uma função porque a resposta muda por PROCESSO, não por build: o mesmo
+ * app arma o kit num ajudante e não arma no seguinte se o servidor caiu no meio,
+ * e a porta só existe quando o registro do D4 está fiado.
+ */
+export function guiHelperPersonaFor(lspArmed: boolean, port?: number): string {
+  const lines = [GUI_HELPER_PERSONA]
+  if (lspArmed) lines.push(GUI_HELPER_LSP_PERSONA_LINE)
+  if (port !== undefined) lines.push(GUI_HELPER_PORT_PERSONA_LINE(port))
+  return lines.join('\n')
 }
 
 // ————— A ENTREGA EM ARQUIVO (ordem do dono, 2026-08-18 à noite) —————
@@ -396,6 +429,84 @@ export interface GuiHelperAdapterDeps {
   lsp?: GuiHelperLspDeps
   /** Caixa-preta do kit. Ausente = arma e revoga em silêncio (as suítes). */
   journalLsp?(entry: GuiHelperLspJournalEntry): void
+  /**
+   * O REGISTRO DE PORTAS (D4, 2026-09-01). AUSENTE = ajudante sem porta
+   * reservada, exatamente como antes — é assim que as suítes rodam, e é o que
+   * mantém a persona honesta: sem registro não há linha de porta.
+   *
+   * A instância de produção é o singleton `guiHelperPorts`, fiado no index.
+   */
+  ports?: GuiHelperPortRegistry
+  /**
+   * O DESFECHO DO AJUDANTE VISTO DE FORA — hoje, quem fecha as ABAS dele no
+   * browser embutido (D3). Fica aqui e não no motor porque o motor não conhece
+   * electron; e é opcional porque nada do ciclo de vida pode depender dela.
+   */
+  onHelperDisposed?(helperId: string): void
+}
+
+/**
+ * A PORTA DESTE AJUDANTE, reservada ANTES do processo nascer.
+ *
+ * Antes é obrigatório: o número viaja no ARGV/ENV, que o CLI lê na partida —
+ * reservar depois seria entregar a porta a um processo que já perdeu a chance de
+ * ouvi-la (a mesma armadilha do catálogo de tools montado por request).
+ *
+ * A meta sai do REGISTRO do ajudante, nunca do pedido do chamador (cerca do D1).
+ * O APELIDO não viaja no `GuiHelperSpawnRequest` — ele mora no `GuiHelperRecord`
+ * do motor, que está em obra em outra sessão —, então o mapa do dono cai no id
+ * curto até o pedido carregá-lo; o registro já aceita `name` para o dia em que
+ * carregar.
+ */
+function reserveGuiHelperPort(
+  deps: GuiHelperAdapterDeps,
+  request: GuiHelperSpawnRequest
+): number | undefined {
+  if (!deps.ports) return undefined
+  return deps.ports.reserve(request.helperId, {
+    projectId: request.projectId,
+    delegatorPaneId: request.delegatorPaneId
+  })
+}
+
+/**
+ * Devolve a porta à faixa e avisa quem cuida da aba. UMA passagem, e NUNCA
+ * lança: as duas coisas acontecem no desfecho, e um desfecho que estoura porque
+ * uma aba se recusou a fechar deixaria o registro do ajudante pendurado.
+ */
+function releaseGuiHelperPort(deps: GuiHelperAdapterDeps, helperId: string): void {
+  try {
+    deps.ports?.release(helperId)
+  } catch {
+    /* soltar porta é limpeza, nunca pré-condição do desfecho */
+  }
+  try {
+    deps.onHelperDisposed?.(helperId)
+  } catch {
+    /* fechar aba é limpeza, nunca pré-condição do desfecho */
+  }
+}
+
+/**
+ * O AMBIENTE DA PORTA. Dois nomes de propósito: `SYNKORA_HELPER_PORT` é o nome
+ * DA CASA (o ajudante sabe de onde veio, e um script do produto não o
+ * sobrescreve por acidente) e `PORT` é a convenção que o `portInvocation` já usa
+ * para produto PORT-aware — sem ela, metade dos runtimes ignoraria a reserva.
+ */
+export function guiHelperPortEnv(port: number | undefined): Record<string, string> {
+  if (port === undefined) return {}
+  return { SYNKORA_HELPER_PORT: String(port), PORT: String(port) }
+}
+
+/** O env que vai ao processo: o do KIT primeiro (o bearer é o que não pode
+ *  sumir), a porta depois. Vazio = nenhuma chave `extraEnv` no spawn, que é o
+ *  mundo de antes do D4. */
+function helperSpawnEnv(
+  kit: GuiHelperLspKit | undefined,
+  port: number | undefined
+): Record<string, string> | undefined {
+  const env = { ...(kit?.env ?? {}), ...guiHelperPortEnv(port) }
+  return Object.keys(env).length > 0 ? env : undefined
 }
 
 /**
@@ -508,8 +619,11 @@ export function codexHelperThreadId(sessionId: string | undefined): string | und
 export function claudeHelperSessionOptions(
   request: GuiHelperSpawnRequest,
   systemPromptFile?: string,
-  kit?: GuiHelperLspKit
+  kit?: GuiHelperLspKit,
+  /** A PORTA reservada (D4). Ausente = o spawn de antes de 2026-09-01. */
+  port?: number
 ): MaestroSessionOpts {
+  const extraEnv = helperSpawnEnv(kit, port)
   return {
     cwd: request.cwd,
     configDir: request.seat.configDir || undefined,
@@ -526,7 +640,10 @@ export function claudeHelperSessionOptions(
     // convivem no mesmo spawn (medido), e a ordem é a da leitura — o que o
     // ajudante NÃO pode fazer é a primeira coisa dita.
     extraArgs: [...claudeHelperArgs(), ...(kit?.args ?? [])],
-    ...(kit?.env ? { extraEnv: kit.env } : {})
+    // No claude o bearer mora no ARQUIVO de config, então até o D4 não havia env
+    // nenhum aqui. A porta é a primeira coisa que ele leva no ambiente — e a
+    // fusão é a mesma dos dois CLIs, para o dia em que o kit ganhar env.
+    ...(extraEnv ? { extraEnv } : {})
   }
 }
 
@@ -537,9 +654,13 @@ export function claudeHelperSessionOptions(
  *  `thread/start`, então o briefing nunca chega antes do catálogo. */
 export function codexHelperSessionOptions(
   request: GuiHelperSpawnRequest,
-  kit?: GuiHelperLspKit
+  kit?: GuiHelperLspKit,
+  /** A PORTA reservada (D4). Ela ENTRA no env do kit, nunca por cima dele: o
+   *  bearer do codex mora justamente ali, e perdê-lo é o ajudante nascer mudo. */
+  port?: number
 ): CodexSessionOpts {
   const threadId = codexHelperThreadId(request.resumeSessionId)
+  const extraEnv = helperSpawnEnv(kit, port)
   return {
     cwd: request.cwd,
     configDir: request.seat.configDir || undefined,
@@ -552,7 +673,7 @@ export function codexHelperSessionOptions(
     // thread/resume, então retomar não reabre a porta do subagente nativo.
     ...(threadId ? { resumeSessionId: threadId } : {}),
     extraArgs: [...codexHelperArgs(), ...(kit?.args ?? [])],
-    ...(kit?.env ? { extraEnv: kit.env } : {}),
+    ...(extraEnv ? { extraEnv } : {}),
     suppressNativeAgents: true
   }
 }
@@ -567,6 +688,11 @@ export function codexHelperSessionOptions(
  * kill antes de revogar (bearer cortado embaixo de um pedido em voo devolveria
  * 401 ao ajudante em vez de silêncio) e revogação garantida mesmo se o kill
  * estourar.
+ *
+ * DESDE O D4 (2026-09-01) a mesma passagem devolve a PORTA à faixa e avisa quem
+ * cuida das ABAS do ajudante (D3: a aba dele morre com ele). Os três são
+ * limpeza do MESMO desfecho: separá-los em ganchos diferentes seria apostar que
+ * todos os caminhos do motor se lembram de chamar os três.
  */
 export function guiHelperKitDisposer(
   deps: GuiHelperAdapterDeps,
@@ -582,6 +708,7 @@ export function guiHelperKitDisposer(
       if (!revoked) {
         revoked = true
         disarmHelperLsp(deps, request, kit)
+        releaseGuiHelperPort(deps, request.helperId)
       }
     }
   }
@@ -590,15 +717,17 @@ export function guiHelperKitDisposer(
 export function createClaudeHelperAdapter(deps: GuiHelperAdapterDeps) {
   return (request: GuiHelperSpawnRequest, emit: (event: GuiHelperEvent) => void): GuiHelperProcess => {
     deps.prepareSeat?.(request.seat, 'claude')
-    // O KIT ANTES DO PROCESSO: as flags dele entram no argv, e o argv é lido no
-    // nascimento — depois do spawn não há mais onde encaixar ferramenta.
+    // O KIT E A PORTA ANTES DO PROCESSO: as flags entram no argv e a porta no
+    // env, e os dois são lidos no nascimento — depois do spawn não há mais onde
+    // encaixar ferramenta nem endereço.
+    const port = reserveGuiHelperPort(deps, request)
     const kit = armGuiHelperKit(deps, request)
-    const persona = guiHelperPersonaFor(kit !== undefined)
+    const persona = guiHelperPersonaFor(kit !== undefined, port)
     const file = deps.systemPromptFile(`helper-${request.helperId}.system.md`, persona)
     let session: MaestroSession
     try {
       session = new MaestroSession(
-        claudeHelperSessionOptions(request, file, kit),
+        claudeHelperSessionOptions(request, file, kit, port),
         (evt) => {
           const translated = guiHelperEventFor(evt)
           if (translated) emit(translated)
@@ -606,8 +735,10 @@ export function createClaudeHelperAdapter(deps: GuiHelperAdapterDeps) {
       )
     } catch (error) {
       // Processo que não nasceu nunca devolve `dispose` ao motor: sem esta
-      // revogação o bearer ficaria válido para sempre, sem dono.
+      // revogação o bearer ficaria válido para sempre, sem dono — e a porta
+      // ficaria reservada para um ajudante que nunca existiu.
       disarmHelperLsp(deps, request, kit)
+      releaseGuiHelperPort(deps, request.helperId)
       throw error
     }
     // A persona por arquivo pode falhar (disco cheio, userData sumindo): o
@@ -623,12 +754,13 @@ export function createClaudeHelperAdapter(deps: GuiHelperAdapterDeps) {
 export function createCodexHelperAdapter(deps: GuiHelperAdapterDeps) {
   return (request: GuiHelperSpawnRequest, emit: (event: GuiHelperEvent) => void): GuiHelperProcess => {
     deps.prepareSeat?.(request.seat, 'codex')
+    const port = reserveGuiHelperPort(deps, request)
     const kit = armGuiHelperKit(deps, request)
     let session: CodexSession
     try {
       session = new CodexSession(
-        codexHelperSessionOptions(request, kit),
-        guiHelperPersonaFor(kit !== undefined),
+        codexHelperSessionOptions(request, kit, port),
+        guiHelperPersonaFor(kit !== undefined, port),
         (evt) => {
           const translated = guiHelperEventFor(evt)
           if (translated) emit(translated)
@@ -636,6 +768,7 @@ export function createCodexHelperAdapter(deps: GuiHelperAdapterDeps) {
       )
     } catch (error) {
       disarmHelperLsp(deps, request, kit)
+      releaseGuiHelperPort(deps, request.helperId)
       throw error
     }
     session.send(request.prompt)

@@ -47,6 +47,20 @@
  * continua SEM UMA LINHA DE ELECTRON: o pop-out entra injetado (`deps.popouts`)
  * atrás do contrato `BrowserPopoutHost`, como o host de views.
  *
+ * ——— a família (os cinco cortes, todos pela mesma porta) ———
+ * Este arquivo é O MOTOR e só ele. O que era contorno virou irmão, e o que
+ * cada irmão levou está dito no cabeçalho DELE:
+ *   · `./browserPaneContracts` — a PROMESSA (tipos, teto, canal do broadcast);
+ *   · `./browserPaneHost` — o único lugar que toca Electron de verdade;
+ *   · `./browserPaneHosting` — ONDE a página está pendurada (⧉/⇤);
+ *   · `./browserPaneGestures` — os OITO verbos que nascem do dedo do dono;
+ *   · `./browserPaneUrl` — o endereço do dono e a sessão do projeto;
+ *   · `./browserTabOwner` — DE QUEM é a aba, e quem está com o volante.
+ * Em nenhum deles o ENDEREÇO público mudou: tudo continua saindo daqui (o
+ * bloco "O ENDEREÇO PÚBLICO", logo abaixo dos imports), e é por isso que
+ * nenhum consumidor e nenhuma suíte mudaram uma linha de import em corte
+ * nenhum.
+ *
  * ——— testabilidade (a suíte `test:browser-pane` da H5) ———
  * Todo contato com o Electron mora em `electronBrowserViewHost()` — hoje no
  * módulo irmão `./browserPaneHost` (o corte de 2026-08-29). O MOTOR
@@ -55,7 +69,6 @@
  * sem subir janela nenhuma. Nada de Electron é tocado no topo do módulo.
  */
 import { randomUUID } from 'node:crypto'
-import { pathToFileURL } from 'node:url'
 import type { BrowserWindow, WebContents } from 'electron'
 import type { BlackboxEventInput } from './blackbox'
 // O HOST (o único lugar que toca Electron) mora no módulo irmão. O especificador
@@ -78,6 +91,13 @@ import type {
 // corte de 2026-08-29, pelo mesmo motivo do `./browserPaneHost`. Extensionless
 // pela mesma razão declarada acima.
 import { createBrowserHostMachine } from './browserPaneHosting'
+// OS SETE GESTOS DO DONO (barra de URL, +, ← → ⟳, × e devtools) moram no módulo
+// irmão desde 2026-09-01 — o mesmo corte, pelo mesmo motivo. Aqui eles só têm
+// ENDEREÇO PÚBLICO: quem chama o `BrowserPaneManager` não muda uma linha.
+import { createBrowserGestureMachine } from './browserPaneGestures'
+// O ENDEREÇO DO DONO e a SESSÃO DO PROJETO (o corte de 2026-09-01). Puro, sem
+// Electron; re-exportado logo abaixo para o endereço público não mudar.
+import { browserPartitionFor, normalizeBrowserTarget, normalizeBrowserUrl } from './browserPaneUrl'
 import type { BrowserHostedMission, BrowserHostedTab, BrowserMissionLayout } from './browserPaneHosting'
 // A LARGURA QUE A PÁGINA ENXERGA (2026-08-29). Módulo puro, sem Electron: a
 // receita medida (`setZoomFactor(moldura / larguraLógica)`) e a matemática do
@@ -91,138 +111,73 @@ import {
   viewportViewRect,
   type BrowserViewportMode
 } from './browserViewport'
-
-/** Teto de abas por missão (D5.1/H1). Passar disso é recusa com receita. */
-export const BROWSER_TAB_CAP = 8
-/** ⚡ do chrome: a última tool de ação segura o indicador por ~2s. */
-export const BROWSER_AGENT_DRIVING_DECAY_MS = 2000
-/** Geometria de nascimento: o agente pode abrir o browser com o painel do dock
- *  FECHADO — sem bounds reais a superfície nasce 0×0 e a captura devolve imagem
- *  vazia ("Cannot take screenshot with 0 width" do lado CDP, P7). */
-export const BROWSER_DEFAULT_VIEW_SIZE = { width: 1280, height: 800 }
-/** Broadcast único: o renderer relê `browser:state` quando isto chega. */
-export const BROWSER_CHANGED_CHANNEL = 'browser:changed'
-/** Eventos de navegação chegam em rajada — o repaint do dock é coalescido. */
-const BROWSER_CHANGE_COALESCE_MS = 40
-/** Teto do `loadURL` do gesto: página que não responde não prende a tool. */
-const BROWSER_LOAD_TIMEOUT_MS = 20000
-
-// ————————————————————————————————————————————————————————————————
-// CONTRATO consumido pela H2 (verbatim do design — não mexer sem re-alinhar
-// as duas fatias). O supérfluo mora em `BrowserPaneManager`, abaixo.
-// ————————————————————————————————————————————————————————————————
-
-export interface MissionBrowserTab {
-  tabId: string
-  webContents: WebContents
-}
-
-export interface BrowserManager {
-  ensureTab(missionId: string, projectId: string, url?: string): Promise<MissionBrowserTab>
-  activeTab(missionId: string): MissionBrowserTab | undefined
-  listTabs(missionId: string): { tabId: string; title: string; url: string; active: boolean }[]
-  selectTab(missionId: string, tabId: string): boolean
-  closeMission(missionId: string): void
-  setAgentDriving(missionId: string, driving: boolean): void
-}
+// DE QUEM É A ABA (2026-09-01). Módulo PURO, sem Electron — e IMPORTADO pelos
+// dois lados da fronteira (aqui e no kit de tools `./guiBrowserTools`), porque
+// dono de aba é um conceito, não um detalhe do motor. O corte também tira daqui
+// a mecânica do ⚡, que passou a existir em dois lugares (missão e aba).
+import {
+  armBrowserDriving,
+  BROWSER_AGENT_DRIVING_DECAY_MS,
+  BROWSER_USER_TAB_OWNER,
+  browserTabOwnedBy,
+  clearBrowserDriving,
+  type BrowserDrivingFlag,
+  type BrowserTabOwner
+} from './browserTabOwner'
+// O CONTRATO (2026-09-01): os tipos que o IPC, o index, o kit de tools e as
+// suítes consomem, mais os três nomes públicos. Promessa não é motor.
+import {
+  BROWSER_CHANGED_CHANNEL,
+  BROWSER_DEFAULT_VIEW_SIZE,
+  BROWSER_TAB_CAP,
+  type BrowserCaptureReadiness,
+  type BrowserGestureResult,
+  type BrowserMissionState,
+  type BrowserNotice,
+  type BrowserPaneDeps,
+  type BrowserPaneManager,
+  type BrowserPanelRect,
+  type BrowserTabView
+} from './browserPaneContracts'
 
 // ————————————————————————————————————————————————————————————————
-// Tipos da superfície do dono (IPC `browser:*` → chrome da H3)
+// O ENDEREÇO PÚBLICO — o que este módulo continua entregando
 // ————————————————————————————————————————————————————————————————
+//
+// Este arquivo foi cortado CINCO vezes (o host em 2026-08-29, a máquina de host
+// no mesmo dia, e o endereço, o dono da aba, os gestos e o contrato em
+// 2026-09-01), sempre pela mesma regra da casa e sempre pela mesma porta: o que
+// sai daqui continua saindo DAQUI. É por isso que nenhum consumidor
+// (`ipc/browser.ts`, `index.ts`, `guiBrowserTools.ts`) e nenhuma suíte mudaram
+// uma linha de import em corte nenhum — e é isto que os ESPELHOS DECLARADOS do
+// preload e do `dockBrowserModel` continuam encontrando por grep do nome: as
+// declarações trocaram de ARQUIVO, nunca de LADO.
 
-/** Retângulo do painel em DIPs da PÁGINA do host (titleBarStyle hidden = a
- *  página cobre a janela inteira, então é a mesma base do contentView). */
-export interface BrowserPanelRect {
-  x: number
-  y: number
-  width: number
-  height: number
-}
+// O contrato: tipos, o teto de abas, a geometria de nascimento e o canal do
+// broadcast. Nenhuma linha dele executa nada.
+export {
+  BROWSER_CHANGED_CHANNEL,
+  BROWSER_DEFAULT_VIEW_SIZE,
+  BROWSER_TAB_CAP,
+  isBrowserPanelRect
+} from './browserPaneContracts'
+export type {
+  BrowserCaptureReadiness,
+  BrowserDockBackReason,
+  BrowserGestureResult,
+  BrowserHostKind,
+  BrowserManager,
+  BrowserMissionState,
+  BrowserNotice,
+  BrowserPaneDeps,
+  BrowserPaneManager,
+  BrowserPanelRect,
+  BrowserTabView,
+  MissionBrowserTab
+} from './browserPaneContracts'
 
-export interface BrowserTabView {
-  tabId: string
-  title: string
-  url: string
-  active: boolean
-  loading: boolean
-  canBack: boolean
-  canForward: boolean
-  /** A largura que ESTA aba faz a página acreditar que tem (o modo é POR ABA:
-   *  uma aba conferindo o desktop e outra o celular é o caso normal do QA). */
-  viewport: BrowserViewportMode
-}
-
-/** Nota legível do motor para o dono (o "evento legível" do download barrado).
- *  Viaja DENTRO do state — mensagem durável com recibo, nunca um pulso que se
- *  perde se o painel ainda não estava montado. */
-export interface BrowserNotice {
-  kind: 'download-blocked' | 'tab-cap' | 'permission-denied' | 'load-failed' | 'crashed'
-  text: string
-  at: string
-}
-
-/** Onde a página desta missão está pendurada AGORA. Espelho declarado do
- *  `BrowserHostKind` do preload (`src/preload/index.ts` — o par). */
-export type BrowserHostKind = 'dock' | 'popout'
-
-/** De onde veio o reencaixe — só para a caixa-preta contar a história certa. */
-export type BrowserDockBackReason = 'gesture' | 'window-close' | 'mission-closed'
-
-export interface BrowserMissionState {
-  alive: boolean
-  agentDriving: boolean
-  tabs: BrowserTabView[]
-  /** Dock ou janela destacada. O dock desenha o RECIBO ("destacado — trazer de
-   *  volta") em vez da página quando isto é `'popout'`. */
-  host: BrowserHostKind
-  /** O modo da aba ATIVA — é ele que o seletor do chrome mostra e escreve. UMA
-   *  autoridade: a tool `browser_viewport` do agente e o clique do dono escrevem
-   *  no MESMO campo, e por isso o dono SEMPRE vê quando a página está emulada
-   *  por ordem do agente. */
-  viewport: BrowserViewportMode
-  /** A largura que a página realmente enxerga AGORA. Nem sempre é a pedida: o
-   *  piso de zoom do Chromium (0,25×, medido na sonda) faz `viewport: 1280` numa
-   *  moldura de 300px virar 1200. Ausente enquanto ninguém relatou geometria. */
-  viewportWidth?: number
-  /**
-   * A MOLDURA DE DISPOSITIVO (2026-08-29): quantos px de APP sobram de cada lado
-   * da página. `0`/ausente = a página ocupa a moldura inteira (é o caso de
-   * `auto` e o do ramo que encolhe); maior que zero = a largura pedida CABE, a
-   * página está em TAMANHO REAL e centralizada, e estas faixas são superfície do
-   * Synkora — é o que responde a pergunta do dono ("como vou saber se ta
-   * quebrando de vdd ou é o app").
-   *
-   * É a NARRAÇÃO, não a geometria: o chrome desenha a faixa por CSS a partir da
-   * largura lógica (que muda com o gesto, não com o quadro), e este número — que
-   * viaja no `browser:changed` coalescido — só decide SE existe faixa e o que a
-   * nota escrita conta. Quem posiciona a view é este motor, sozinho.
-   */
-  viewportBand?: number
-  /** extensões do contrato mínimo — o chrome pode ignorar sem quebrar */
-  notice?: BrowserNotice
-  projectId?: string
-  visible?: boolean
-}
-
-/** Ack de TODA alavanca do chrome. Espelho declarado do `BrowserActionResult`
- *  do preload (`src/preload/index.ts`, bloco do browser — o par): recusa é
- *  TEXTO em PT-BR que nomeia a receita, nunca um `false` mudo. */
-export type BrowserGestureResult =
-  | { ok: true; tabId?: string }
-  | { ok: false; error: string }
-
-/** Guarda de captura que a H2 consulta antes de `capturePage`/CDP (P5). */
-export type BrowserCaptureReadiness =
-  | { ok: true; tab: MissionBrowserTab }
-  | { ok: false; error: string }
-
-// ————————————————————————————————————————————————————————————————
-// Host injetável — TODO o Electron do módulo mora atrás desta interface
-// ————————————————————————————————————————————————————————————————
-// A interface e a implementação real mudaram para `./browserPaneHost` (regra da
-// casa: este arquivo cruzou ~1000 linhas). O ENDEREÇO público não mudou — os
-// cinco nomes continuam saindo daqui, então nenhum consumidor muda uma linha.
-
+// O HOST — TODO o Electron do motor mora atrás desta interface, e a
+// implementação real em `./browserPaneHost` (o corte de 2026-08-29).
 export { electronBrowserViewHost } from './browserPaneHost'
 export type {
   BrowserPopoutHandle,
@@ -234,156 +189,21 @@ export type {
   BrowserWindowHooks
 } from './browserPaneHost'
 
-export interface BrowserPaneDeps {
-  /** A janela do app (getter — ela pode ser recriada). */
-  window(): BrowserWindow | null
-  record(input: BlackboxEventInput): void
-  /** Broadcast do `browser:changed` — no index é `ctx.pushAll` MAIS as janelas
-   *  destacadas (o `pushAll` da casa só fala com a janela principal). */
-  push(channel: string, ...args: unknown[]): void
-  /** Override do gate (host fake); ausente = host real do Electron. */
-  host?: BrowserViewHost
-  /** As janelas do pop-out. Ausente = app sem pop-out (o gesto recusa com
-   *  receita em vez de estourar) — é assim que o gate roda sem janela. */
-  popouts?: BrowserPopoutHost
-  now?(): number
-}
+// O ENDEREÇO DO DONO e a SESSÃO DO PROJETO — duas funções puras.
+export { browserPartitionFor, normalizeBrowserUrl } from './browserPaneUrl'
 
-/** O que o IPC e o gate consomem — o contrato do design MAIS a superfície do
- *  dono. A H2 pode continuar tipando pelo `BrowserManager` estreito. */
-export interface BrowserPaneManager extends BrowserManager {
-  state(missionId: string): BrowserMissionState
-  navigate(missionId: string, url: string): Promise<BrowserGestureResult>
-  newTab(missionId: string, projectId: string, url?: string): Promise<BrowserGestureResult>
-  goBack(missionId: string): boolean
-  goForward(missionId: string): boolean
-  reload(missionId: string): boolean
-  closeTab(missionId: string, tabId: string): boolean
-  toggleDevtools(missionId: string, tabId?: string): boolean
-  /** ResizeObserver do painel (H3). NUNCA cria browser — o nascimento é lazy
-   *  e só o gesto (abrir aba / `browser_open`) o justifica.
-   *  `reporter` é QUEM está relatando (o remetente do IPC, não uma alegação do
-   *  payload): relato do host que não está com a página é IGNORADO — lei 2. */
-  applyBounds(
-    missionId: string,
-    rect: BrowserPanelRect,
-    visible: boolean,
-    reporter?: BrowserHostKind
-  ): void
-  /** A JANELA do host atual mexeu (arrastar/redimensionar/maximizar) ou voltou
-   *  de minimizada: a geometria da view é REFEITA. É o gancho da cura 2 — o
-   *  `restore()` sozinho não devolve o pixel certo. */
-  relayout(missionId: string): void
-  /**
-   * A LARGURA QUE A PÁGINA ENXERGA, na aba ATIVA da missão. É o mesmo verbo
-   * para as duas mãos — o seletor do dono no chrome e a tool `browser_viewport`
-   * do agente —, de propósito: dois caminhos escrevendo o mesmo estado é o que
-   * faz o dono enxergar a página emulada por ordem do agente em vez de achar
-   * que o site quebrou.
-   */
-  setViewportMode(
-    missionId: string,
-    mode: BrowserViewportMode,
-    /** QUEM pediu. As duas mãos escrevem o mesmo estado, mas o diário não pode
-     *  creditar ao dono uma emulação que o agente ligou sozinho. */
-    actor?: 'user' | 'agent'
-  ): BrowserGestureResult
-  /** O modo da aba ativa (o que o chrome desenha). Missão sem aba = `'auto'`. */
-  viewportOf(missionId: string): BrowserViewportMode
-  /** A MOLDURA de agora, em px. É a base do zoom — e do recibo que conta ao
-   *  agente que a largura efetiva pode ser menor que a pedida. `0` = ninguém
-   *  relatou geometria ainda. */
-  viewportFrameWidth(missionId: string): number
-  /** ⧉ DESTACAR: a MESMA página salta para uma janela própria. */
-  popOut(missionId: string): BrowserGestureResult
-  /** REENCAIXAR: a página volta para o dock e a janela fecha. */
-  dockBack(missionId: string, reason?: BrowserDockBackReason): BrowserGestureResult
-  /** Guarda de captura da H2 (lei 1 + P5 + a guarda de 296 ns do pop-out). */
-  captureReadiness(missionId: string): BrowserCaptureReadiness
-  hasMission(missionId: string): boolean
-  /** Onde a página desta missão está — o porteiro do IPC usa para saber se um
-   *  relato de geometria vem do host certo. */
-  hostOf(missionId: string): BrowserHostKind
-  /** Teardown geral (janela fechada / quit). */
-  destroy(): void
-}
+// DE QUEM É A ABA e o relógio do ⚡.
+export {
+  BROWSER_AGENT_DRIVING_DECAY_MS,
+  BROWSER_USER_TAB_OWNER,
+  browserTabOwnerLabel
+} from './browserTabOwner'
+export type { BrowserTabOwner, BrowserTabOwnerKind } from './browserTabOwner'
 
-// ————————————————————————————————————————————————————————————————
-// URL do dono — normalização (https por padrão; localhost é http)
-// ————————————————————————————————————————————————————————————————
-
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'])
-
-function looksLocal(host: string): boolean {
-  const bare = host.replace(/:\d+$/, '').toLowerCase()
-  return LOCAL_HOSTS.has(bare) || bare.endsWith('.localhost')
-}
-
-/**
- * "URL do dono: normalizada (https default), qualquer URL — o browser é dele."
- * Duas emendas pagas por realidade, não por gosto:
- * - **localhost sai em http**, não https: o caso de uso número um é o dev
- *   server da missão (`localhost:5173`), e https ali só entrega tela de erro;
- * - **`javascript:` é recusado** nomeando a receita: ele executaria no
- *   documento ATUAL (o canal de código é `browser_eval`, da H2).
- * Texto que não é endereço NÃO vira busca: nenhum buscador foi decidido e o
- * app não manda o que o dono digitou para um terceiro por conta própria.
- */
-export function normalizeBrowserUrl(raw: unknown): { ok: true; url: string } | { ok: false; error: string } {
-  const input = typeof raw === 'string' ? raw.trim() : ''
-  if (!input) return { ok: false, error: 'digite um endereço para navegar' }
-  const invalid = { ok: false as const, error: `endereço inválido: ${input.slice(0, 120)}` }
-  // Caminho do Windows colado (`C:\build\index.html`) ou UNC — vira file://.
-  if (/^[a-zA-Z]:[\\/]/.test(input) || input.startsWith('\\\\')) {
-    try {
-      return { ok: true, url: pathToFileURL(input).href }
-    } catch {
-      return invalid
-    }
-  }
-  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(input)
-  const proto = scheme?.[1].toLowerCase()
-  if (proto === 'javascript' || proto === 'vbscript') {
-    return {
-      ok: false,
-      error: `endereço ${proto}: não navega — para rodar código NA página use a tool browser_eval`
-    }
-  }
-  // ARMADILHA PAGA: `localhost:5173` casa o regex de esquema — o `localhost:`
-  // vira protocolo e o `new URL` ACEITA, devolvendo um endereço que não abre
-  // nada. O discriminador é o que vem depois dos dois pontos: dígito = PORTA.
-  const hierarchical = /^[a-z][a-z0-9+.-]*:\/\//i.test(input)
-  const opaque = Boolean(scheme) && !/^[a-z][a-z0-9+.-]*:\d/i.test(input)
-  if (hierarchical || opaque) {
-    try {
-      return { ok: true, url: new URL(input).href }
-    } catch {
-      return invalid
-    }
-  }
-  const host = input.split(/[/?#]/)[0] ?? ''
-  // Texto que não é endereço NÃO vira busca: nenhum buscador foi decidido, e o
-  // app não manda o que o dono digitou para um terceiro por conta própria.
-  if (/\s/.test(input) || (!/[.:]/.test(input) && !looksLocal(host))) {
-    return {
-      ok: false,
-      error: 'isso não parece um endereço — digite algo como localhost:5173 ou cole o link completo (https://…)'
-    }
-  }
-  const guess = `${looksLocal(host) ? 'http' : 'https'}://${input}`
-  try {
-    return { ok: true, url: new URL(guess).href }
-  } catch {
-    return invalid
-  }
-}
-
-/** `persist:browser:<projectId>` (D5.3) — login vale para todas as missões do
- *  projeto. O id é uuid, mas a partition é sanitizada por precaução. */
-export function browserPartitionFor(projectId: string): string {
-  const safe = projectId.replace(/[^a-zA-Z0-9_-]/g, '') || 'sem-projeto'
-  return `persist:browser:${safe}`
-}
+/** Eventos de navegação chegam em rajada — o repaint do dock é coalescido. */
+const BROWSER_CHANGE_COALESCE_MS = 40
+/** Teto do `loadURL` do gesto: página que não responde não prende a tool. */
+const BROWSER_LOAD_TIMEOUT_MS = 20000
 
 // ————————————————————————————————————————————————————————————————
 // Estado interno
@@ -391,23 +211,24 @@ export function browserPartitionFor(projectId: string): string {
 
 /** A aba do motor É uma aba hospedada (o `wc` inteiro no lugar do mínimo que a
  *  máquina de host precisa) — uma definição só, sem espelho. */
-interface TabRecord extends BrowserHostedTab {
+interface TabRecord extends BrowserHostedTab, BrowserDrivingFlag {
   view: BrowserViewHandle
   wc: WebContents
   disposers: (() => void)[]
   /** POR ABA, e nasce em `auto`: o QA de responsivo é justamente ter uma aba no
    *  desktop e outra no celular. Morre com a aba (nada disto é persistido). */
   viewport: BrowserViewportMode
+  /** DE QUEM é esta aba (D1). Nunca muda em vida: a aba é a mesa de trabalho de
+   *  UMA identidade, e trocar o dono no meio seria a colisão de volta. */
+  owner: BrowserTabOwner
 }
 
 /** O registro do motor ESTENDE a fatia que a máquina de host governa (`host`,
  *  os dois retângulos, o carimbo de relato velho — em `./browserPaneHosting`) e
  *  acrescenta o que é só daqui: abas, ⚡ e a nota. */
-interface MissionRecord extends BrowserHostedMission {
+interface MissionRecord extends BrowserHostedMission, BrowserDrivingFlag {
   tabs: TabRecord[]
   activeTabId: string | null
-  agentDriving: boolean
-  driveTimer: NodeJS.Timeout | null
   notice: BrowserNotice | null
   /** A última largura de moldura APLICADA (dock ou janela destacada). É a base
    *  do zoom e a única forma de o `state` contar a largura efetiva sem
@@ -439,16 +260,6 @@ function roundRect(rect: BrowserPanelRect): BrowserPanelRect {
   }
 }
 
-export function isBrowserPanelRect(value: unknown): value is BrowserPanelRect {
-  if (!value || typeof value !== 'object') return false
-  const rect = value as Partial<BrowserPanelRect>
-  return (
-    typeof rect.x === 'number' &&
-    typeof rect.y === 'number' &&
-    typeof rect.width === 'number' &&
-    typeof rect.height === 'number'
-  )
-}
 
 // ————————————————————————————————————————————————————————————————
 // O motor
@@ -685,6 +496,20 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     return liveTabs(mission)[0]
   }
 
+  /** A aba VIVA de UMA identidade (D1). Uma identidade tem UMA aba por missão na
+   *  v1 — se um dia houver mais, a primeira viva continua sendo a dela. */
+  const ownedRecord = (mission: MissionRecord, ownerPaneId: string): TabRecord | undefined =>
+    liveTabs(mission).find((tab) => browserTabOwnedBy(tab.owner, ownerPaneId))
+
+  /**
+   * A ABA QUE A CHAMADA ENDEREÇA. Sem `tabId` é a ATIVA — a semântica do
+   * chrome do dono, que não mudou com o dono de aba; com `tabId`, a aba pedida
+   * (e `undefined` quando ela já morreu, para a recusa nomear a receita em vez
+   * de a chamada cair na página de um vizinho).
+   */
+  const targetRecord = (mission: MissionRecord, tabId?: string): TabRecord | undefined =>
+    tabId === undefined ? activeRecord(mission) : findTab(mission, tabId)
+
   /** O ÚNICO caminho de morte de uma aba — e o ÚNICO `detach` do módulo (lei 1).
    *  `closeContents: false` = o webContents já morreu por fora (crash): a casca
    *  ainda sai da árvore, senão fica uma view vazia pendurada no contentView. */
@@ -697,6 +522,9 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       }
     }
     owners.delete(tab.wc.id)
+    // O ⚡ desta aba morre com ela: um relógio pendurado seguraria a referência
+    // de uma aba fechada até decair.
+    clearBrowserDriving(tab)
     mission.tabs = mission.tabs.filter((entry) => entry !== tab)
     // Detach primeiro, close depois: o inverso deixa uma view órfã se o close
     // falhar no meio do teardown. E do host CERTO: a view de uma missão
@@ -779,18 +607,32 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     })
   }
 
-  const capRefusal = (): string =>
-    `teto de ${BROWSER_TAB_CAP} abas nesta missão — feche uma aba (×) antes de abrir outra`
+  /**
+   * O teto, dito para a mão certa. O `×` do chrome é gesto do DONO: repeti-lo
+   * para um agente seria beco sem saída (ele não tem esse verbo).
+   *
+   * E "agente" são DUAS mãos com catálogos diferentes: quem DELEGA (o chat da
+   * missão) tem `helper_cancel` e devolve uma aba encerrando um ajudante que já
+   * entregou — a aba dele morre junto (D3). O AJUDANTE não tem essa tool, e
+   * mandá-lo chamá-la seria o mesmo beco outra vez: a saída dele é DIZER na
+   * entrega e seguir pelo que dá para verificar sem browser. A terceira porta
+   * serve às duas mãos: pedir ao dono.
+   */
+  const capRefusal = (reason: 'gesture' | 'agent' | 'window-open'): string =>
+    reason === 'agent'
+      ? `teto de ${BROWSER_TAB_CAP} abas nesta missão (cada identidade tem a SUA). Receita: se você DELEGA, encerre um ajudante que já entregou (helper_cancel) — a aba dele morre junto; se você É um ajudante, diga isso na sua entrega e siga pelo que dá para verificar sem browser; ou peça ao dono para fechar uma aba (×) no painel BROWSER.`
+      : `teto de ${BROWSER_TAB_CAP} abas nesta missão — feche uma aba (×) antes de abrir outra`
 
-  /** O endereço do AGENTE passa pela MESMA normalização do dono: `localhost:5173`
-   *  é o alvo mais provável de um QA e, cru, não abre nada. Vazio = aba em branco. */
-  const normalizeTarget = (
-    url: string | undefined
-  ): { ok: true; url: string | undefined } | { ok: false; error: string } => {
-    if (url === undefined || url === '') return { ok: true, url: undefined }
-    const normalized = normalizeBrowserUrl(url)
-    return normalized.ok ? { ok: true, url: normalized.url } : normalized
-  }
+  /**
+   * A recusa de quem endereçou uma aba que não existe. Duas frases, porque são
+   * duas mãos: o DONO (sem `tabId`) ouve o `+` do chrome; o AGENTE (que sempre
+   * manda a aba dele) ouve `browser_open`, que é o verbo que reabre A DELE — e
+   * nunca "escolha outra aba", que seria mandá-lo mexer na página de um vizinho.
+   */
+  const missingTabRefusal = (tabId: string | undefined, verb: string): string =>
+    tabId === undefined
+      ? `o browser desta missão não está aberto — abra uma aba (+) antes de ${verb}`
+      : `a aba que você pediu não existe mais nesta missão — chame browser_open para reabrir a SUA aba antes de ${verb}`
 
   const loadInto = async (mission: MissionRecord, tab: TabRecord, url: string): Promise<void> => {
     let settled = false
@@ -820,10 +662,13 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
   async function openTab(
     mission: MissionRecord,
     url: string | undefined,
-    reason: 'gesture' | 'agent' | 'window-open'
+    reason: 'gesture' | 'agent' | 'window-open',
+    /** DE QUEM a aba nasce (D1). Os gestos do dono (barra de URL, `+`, pop-up de
+     *  uma página) nascem `user`; só o `ensureTab` de um agente traz outro. */
+    owner: BrowserTabOwner = BROWSER_USER_TAB_OWNER
   ): Promise<{ ok: true; tab: TabRecord } | { ok: false; error: string }> {
     if (liveTabs(mission).length >= BROWSER_TAB_CAP) {
-      const error = capRefusal()
+      const error = capRefusal(reason)
       record('browser-tab-cap-refused', {
         actor: reason === 'gesture' ? 'user' : 'agent',
         ids: { projectId: mission.projectId, missionId: mission.missionId },
@@ -848,9 +693,15 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       // Aba nova NASCE em AUTO — inclusive quando a irmã está emulada. O modo é
       // da aba e morre com ela; herdar em silêncio faria o `+` abrir uma página
       // já escalada sem ninguém ter pedido.
-      viewport: 'auto'
+      viewport: 'auto',
+      owner,
+      driving: false,
+      driveTimer: null
     }
     mission.tabs.push(tab)
+    // D2 — A ABA NOVA NASCE ATIVA: o dono VÊ o recém-chegado (é assim que ele
+    // acompanha a frota sem caçar aba). Quem NÃO rouba a vista é a navegação de
+    // uma aba que já existe — essa parte mora no `ensureTab`.
     mission.activeTabId = tab.tabId
     owners.set(tab.wc.id, { missionId: mission.missionId, projectId: mission.projectId })
     wireTab(mission, tab)
@@ -867,7 +718,15 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       actor: reason === 'gesture' ? 'user' : 'agent',
       ids: { projectId: mission.projectId, missionId: mission.missionId },
       reason: `aba do browser embutido nasceu (${reason})`,
-      detail: { tabId: tab.tabId, wc: tab.wc.id, partition, url: url?.slice(0, 200), tabs: liveTabs(mission).length }
+      detail: {
+        tabId: tab.tabId,
+        wc: tab.wc.id,
+        partition,
+        url: url?.slice(0, 200),
+        tabs: liveTabs(mission).length,
+        // D6 — AUTORIA: até 01/09 o diário não sabia QUEM abriu a aba. Sabe.
+        owner: { kind: owner.kind, label: owner.label, ...(owner.paneId ? { paneId: owner.paneId } : {}) }
+      }
     })
     if (url) await loadInto(mission, tab, url)
     emitChanged(mission.missionId)
@@ -884,7 +743,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       activeTabId: null,
       dockLayout: null,
       popoutLayout: null,
-      agentDriving: false,
+      driving: false,
       driveTimer: null,
       notice: null,
       host: 'dock',
@@ -941,27 +800,74 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     }
   }
 
+  // ——— A MÁQUINA DOS GESTOS (`./browserPaneGestures`) ———
+  // Os sete verbos que nascem de um dedo do dono no chrome. Ela não conhece
+  // dono de aba, ⚡, notas nem captura — pede emprestado só o que está aqui em
+  // cima, e as abas que ela abre nascem do DONO (o `openTab` com `reason:
+  // 'gesture'` carimba `BROWSER_USER_TAB_OWNER`), que é o que impede um agente
+  // de reusar a aba que o dono acabou de abrir.
+  const gestures = createBrowserGestureMachine<MissionRecord, TabRecord>({
+    disposed: () => disposed,
+    mission: (missionId) => missions.get(missionId),
+    ensureMission,
+    liveTabs: (mission) => liveTabs(mission),
+    activeTab: (mission) => activeRecord(mission),
+    findTab: (mission, tabId) => findTab(mission, tabId),
+    openTab: (mission, url) => openTab(mission, url, 'gesture'),
+    loadInto: (mission, tab, url) => loadInto(mission, tab, url),
+    // O × do dono fecha o `webContents` junto. O `closeContents: false` é do
+    // CRASH (a aba já morreu por fora), e esse caminho não é gesto de ninguém —
+    // fica aqui, no motor.
+    dropTab: (mission, tab) => dropTab(mission, tab, true),
+    applyLayout: (mission) => applyLayout(mission),
+    closeMission: (missionId) => manager.closeMission(missionId),
+    changed: (missionId) => emitChanged(missionId)
+  })
+
   // ——— API ———
   const manager: BrowserPaneManager = {
-    async ensureTab(missionId, projectId, url) {
+    // ——— OS OITO GESTOS DO DONO (`./browserPaneGestures`) ———
+    // Barra de URL, +, ← → ⟳, o trilho de abas e o devtools saíram daqui em
+    // 2026-09-01 (regra da casa). Eles entram POR ESPALHAMENTO, e não por oito
+    // repasses de três linhas: repasse escrito à mão é lugar de a assinatura
+    // divergir em silêncio, e o contrato que o `ipc/browser.ts` e as suítes
+    // enxergam é o mesmo de antes do corte, byte a byte.
+    ...gestures,
+
+    async ensureTab(missionId, projectId, url, owner) {
       if (disposed) throw new Error('o browser embutido foi encerrado com a janela — reabra o app')
-      const wanted = normalizeTarget(url)
+      const wanted = normalizeBrowserTarget(url)
       if (!wanted.ok) throw new Error(wanted.error)
       const target = wanted.url
       const mission = ensureMission(missionId, projectId)
-      const existing = activeRecord(mission)
+      // A ABA É DESTA IDENTIDADE (D1). Sem `paneId` (só o dono nasce assim) não
+      // há identidade a reusar, e a degradação honesta é a semântica antiga: a
+      // aba ativa. Nenhum caminho do produto cai aqui — o `resolveTarget` do
+      // index sempre carimba o pane —, mas um motor que estourasse no `undefined`
+      // seria beco sem saída num caminho que ninguém consegue destravar.
+      const existing = owner.paneId ? ownedRecord(mission, owner.paneId) : activeRecord(mission)
       if (existing) {
-        // Idempotente: `browser_open` reusa a aba MORNA (design H2) — só
-        // navega quando o alvo é outro.
-        mission.activeTabId = existing.tabId
+        // Idempotente: `browser_open` reusa a aba MORNA da PRÓPRIA identidade —
+        // e só navega quando o alvo é outro.
+        //
+        // A VISTA DO DONO NÃO É ROUBADA (D2): navegar uma aba que já existe NÃO
+        // mexe no `activeTabId`. Antes disto, um QA de vinte passos puxava a
+        // tela do dono vinte vezes; quem vira ativa é só a aba que NASCE.
         if (target && existing.wc.getURL() !== target) await loadInto(mission, existing, target)
         applyLayout(mission)
         emitChanged(missionId)
         return { tabId: existing.tabId, webContents: existing.wc }
       }
-      const opened = await openTab(mission, target, 'agent')
+      const opened = await openTab(mission, target, 'agent', owner)
       if (!opened.ok) throw new Error(opened.error)
       return { tabId: opened.tab.tabId, webContents: opened.tab.wc }
+    },
+
+    tabOf(missionId, ownerPaneId) {
+      const mission = missions.get(missionId)
+      if (!mission || !ownerPaneId) return undefined
+      const tab = ownedRecord(mission, ownerPaneId)
+      return tab ? { tabId: tab.tabId, webContents: tab.wc } : undefined
     },
 
     activeTab(missionId) {
@@ -979,19 +885,10 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         tabId: tab.tabId,
         title: tab.wc.getTitle(),
         url: tab.wc.getURL(),
-        active: tab.tabId === active?.tabId
+        active: tab.tabId === active?.tabId,
+        owner: tab.owner,
+        driving: tab.driving
       }))
-    },
-
-    selectTab(missionId, tabId) {
-      const mission = missions.get(missionId)
-      if (!mission) return false
-      const tab = findTab(mission, tabId)
-      if (!tab) return false
-      mission.activeTabId = tab.tabId
-      applyLayout(mission)
-      emitChanged(missionId)
-      return true
     },
 
     closeMission(missionId) {
@@ -1008,7 +905,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         mission.host = 'dock'
         deps.popouts?.close(missionId)
       }
-      if (mission.driveTimer) clearTimeout(mission.driveTimer)
+      clearBrowserDriving(mission)
       missions.delete(missionId)
       record('browser-mission-closed', {
         actor: 'harness',
@@ -1019,23 +916,57 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       emitChanged(missionId)
     },
 
-    setAgentDriving(missionId, driving) {
+    /**
+     * D3 — A ABA DO AJUDANTE MORRE COM ELE. Chamado do `dispose` do processo
+     * (done/failed/cancelled/interrupted), que não sabe em quantas missões
+     * aquela identidade andou: a varredura é de TODAS. Os screenshots em
+     * `.synkora/browser/` são o registro que fica — a aba é bancada, não
+     * galeria, e `helper_resume` reabre a dele pelo caminho normal.
+     */
+    closeTabsOf(ownerPaneId) {
+      if (!ownerPaneId) return 0
+      let closed = 0
+      let touched = 0
+      const emptied: string[] = []
+      for (const mission of [...missions.values()]) {
+        const doomed = mission.tabs.filter((tab) => browserTabOwnedBy(tab.owner, ownerPaneId))
+        if (doomed.length === 0) continue
+        // O ÚNICO caminho de morte continua sendo o `dropTab` (lei 1: o detach
+        // dele é de teardown, não de esconderijo).
+        for (const tab of doomed) dropTab(mission, tab, true)
+        closed += doomed.length
+        touched += 1
+        if (liveTabs(mission).length === 0) {
+          emptied.push(mission.missionId)
+          continue
+        }
+        applyLayout(mission)
+        emitChanged(mission.missionId)
+      }
+      if (closed === 0) return 0
+      record('browser-owner-tabs-closed', {
+        actor: 'harness',
+        reason: `as abas de ${ownerPaneId} morreram com ele (D3) — os screenshots em .synkora/browser/ são o registro`,
+        detail: { ownerPaneId, tabs: closed, missions: touched }
+      })
+      // Missão que ficou SEM aba nenhuma acabou — a mesma régua do × do dono:
+      // devolver o processo de renderer é melhor do que manter casca viva.
+      for (const missionId of emptied) manager.closeMission(missionId)
+      return closed
+    },
+
+    setAgentDriving(missionId, driving, tabId) {
       const mission = missions.get(missionId)
       if (!mission) return
-      // `true` acende e re-arma; `false` NÃO apaga na hora — o ⚡ segura ~2s
-      // depois da última tool para não piscar entre chamadas encadeadas.
-      const was = mission.agentDriving
-      if (!driving && !was) return
-      if (driving) mission.agentDriving = true
-      if (mission.driveTimer) clearTimeout(mission.driveTimer)
-      mission.driveTimer = setTimeout(() => {
-        mission.driveTimer = null
-        if (!mission.agentDriving) return
-        mission.agentDriving = false
-        emitChanged(missionId)
-      }, BROWSER_AGENT_DRIVING_DECAY_MS)
-      mission.driveTimer.unref?.()
-      if (mission.agentDriving !== was) emitChanged(missionId)
+      // O ⚡ DA MISSÃO (o de sempre, que o chrome pulsa) e o ⚡ DA ABA (D2, para
+      // o dono saber QUEM da frota está mexendo) acendem juntos e decaem pelo
+      // mesmo relógio de ~2s. Aba que não existe mais não acende nada — e não
+      // atrapalha o indicador da missão, que continua honesto.
+      if (tabId !== undefined) {
+        const tab = findTab(mission, tabId)
+        if (tab) armBrowserDriving(tab, driving, () => emitChanged(missionId))
+      }
+      armBrowserDriving(mission, driving, () => emitChanged(missionId))
     },
 
     state(missionId) {
@@ -1050,13 +981,15 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         loading: tab.wc.isLoading(),
         canBack: tab.wc.navigationHistory.canGoBack(),
         canForward: tab.wc.navigationHistory.canGoForward(),
-        viewport: tab.viewport
+        viewport: tab.viewport,
+        owner: tab.owner,
+        driving: tab.driving
       }))
       const viewport = active?.viewport ?? 'auto'
       const band = mission.frameWidth > 0 ? viewportBandWidth(viewport, mission.frameWidth) : 0
       return {
         alive: tabs.length > 0,
-        agentDriving: mission.agentDriving,
+        agentDriving: mission.driving,
         tabs,
         host: mission.host,
         viewport,
@@ -1078,94 +1011,6 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
             ? Boolean(deps.popouts?.get(missionId)?.visible())
             : Boolean(mission.dockLayout?.visible)
       }
-    },
-
-    async navigate(missionId, url) {
-      const mission = missions.get(missionId)
-      if (!mission) {
-        return {
-          ok: false,
-          error: 'o browser desta missão não está aberto — abra uma aba (+) antes de navegar'
-        }
-      }
-      const normalized = normalizeBrowserUrl(url)
-      if (!normalized.ok) return { ok: false, error: normalized.error }
-      const tab = activeRecord(mission)
-      if (!tab) {
-        const opened = await openTab(mission, normalized.url, 'gesture')
-        return opened.ok ? { ok: true, tabId: opened.tab.tabId } : { ok: false, error: opened.error }
-      }
-      mission.activeTabId = tab.tabId
-      await loadInto(mission, tab, normalized.url)
-      emitChanged(missionId)
-      return { ok: true, tabId: tab.tabId }
-    },
-
-    async newTab(missionId, projectId, url) {
-      if (disposed) {
-        return { ok: false, error: 'o browser embutido foi encerrado com a janela — reabra o app' }
-      }
-      const wanted = normalizeTarget(url)
-      if (!wanted.ok) return { ok: false, error: wanted.error }
-      const mission = ensureMission(missionId, projectId)
-      const opened = await openTab(mission, wanted.url, 'gesture')
-      return opened.ok ? { ok: true, tabId: opened.tab.tabId } : { ok: false, error: opened.error }
-    },
-
-    goBack(missionId) {
-      const mission = missions.get(missionId)
-      const tab = mission ? activeRecord(mission) : undefined
-      if (!tab || !tab.wc.navigationHistory.canGoBack()) return false
-      tab.wc.navigationHistory.goBack()
-      emitChanged(missionId)
-      return true
-    },
-
-    goForward(missionId) {
-      const mission = missions.get(missionId)
-      const tab = mission ? activeRecord(mission) : undefined
-      if (!tab || !tab.wc.navigationHistory.canGoForward()) return false
-      tab.wc.navigationHistory.goForward()
-      emitChanged(missionId)
-      return true
-    },
-
-    reload(missionId) {
-      const mission = missions.get(missionId)
-      const tab = mission ? activeRecord(mission) : undefined
-      if (!tab) return false
-      tab.wc.reload()
-      emitChanged(missionId)
-      return true
-    },
-
-    closeTab(missionId, tabId) {
-      const mission = missions.get(missionId)
-      if (!mission) return false
-      const tab = findTab(mission, tabId)
-      if (!tab) return false
-      dropTab(mission, tab, true)
-      if (liveTabs(mission).length === 0) {
-        // Última aba fechada = o browser da missão acabou. Devolver o processo
-        // de renderer é melhor do que manter uma casca viva; o + reabre.
-        manager.closeMission(missionId)
-        return true
-      }
-      applyLayout(mission)
-      emitChanged(missionId)
-      return true
-    },
-
-    toggleDevtools(missionId, tabId) {
-      const mission = missions.get(missionId)
-      if (!mission) return false
-      const tab = tabId ? findTab(mission, tabId) : activeRecord(mission)
-      if (!tab) return false
-      if (tab.wc.isDevToolsOpened()) tab.wc.closeDevTools()
-      // Modo DESTACADO: devtools acoplado roubaria metade do painel do dock e,
-      // pior, mexeria na geometria da view que a captura depende.
-      else tab.wc.openDevTools({ mode: 'detach' })
-      return true
     },
 
     applyBounds(missionId, rect, visible, reporter = 'dock') {
@@ -1216,7 +1061,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       if (mission) applyLayout(mission)
     },
 
-    setViewportMode(missionId, mode, actor = 'user') {
+    setViewportMode(missionId, mode, actor = 'user', tabId) {
       const normalized = normalizeViewportMode(mode)
       if (normalized === null) {
         return {
@@ -1225,11 +1070,13 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         }
       }
       const mission = missions.get(missionId)
-      const tab = mission ? activeRecord(mission) : undefined
+      // Com `tabId` a largura é da aba PEDIDA (o agente sempre manda a SUA);
+      // sem ele, a da ATIVA — o seletor do dono no chrome, inalterado.
+      const tab = mission ? targetRecord(mission, tabId) : undefined
       if (!mission || !tab) {
         return {
           ok: false,
-          error: 'o browser desta missão não está aberto — abra uma aba (+) antes de mudar a largura'
+          error: missingTabRefusal(tabId, 'mudar a largura')
         }
       }
       if (tab.viewport === normalized) {
@@ -1261,9 +1108,9 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       return { ok: true, tabId: tab.tabId }
     },
 
-    viewportOf(missionId) {
+    viewportOf(missionId, tabId) {
       const mission = missions.get(missionId)
-      const tab = mission ? activeRecord(mission) : undefined
+      const tab = mission ? targetRecord(mission, tabId) : undefined
       return tab?.viewport ?? 'auto'
     },
 
@@ -1281,13 +1128,18 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       return hosting.dockBack(missionId, reason)
     },
 
-    captureReadiness(missionId) {
+    captureReadiness(missionId, tabId) {
       const mission = missions.get(missionId)
-      const tab = mission ? activeRecord(mission) : undefined
+      // A FOTO É DA ABA DE QUEM PEDIU (2026-09-01): o agente manda a dele, e o
+      // dono (sem `tabId`) fotografa a que está olhando.
+      const tab = mission ? targetRecord(mission, tabId) : undefined
       if (!mission || !tab) {
         return {
           ok: false,
-          error: 'o browser desta missão não está aberto — chame browser_open antes de capturar'
+          error:
+            tabId === undefined
+              ? 'o browser desta missão não está aberto — chame browser_open antes de capturar'
+              : missingTabRefusal(tabId, 'capturar')
         }
       }
       const host = resolveHost()

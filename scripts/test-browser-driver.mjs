@@ -59,6 +59,7 @@ import {
 import {
   BROWSER_ENGINE_OFF,
   BROWSER_NO_MISSION,
+  BROWSER_NO_TAB,
   BROWSER_TOOL_NAMES,
   buildGuiBrowserTools
 } from '../.tmp/browser-driver-test/guiBrowserTools.js'
@@ -754,6 +755,11 @@ function fakeImage(width = 1600, height = 900) {
   return image
 }
 
+/** O DONO da aba desta conversa (D1 do design de 2026-09-01). O `paneId` é o da
+ *  `IDENTITY` abaixo de propósito: é ele que o `withSession` usa para achar A
+ *  ABA DELA — nunca a aba ativa da missão, que pode ser a de um vizinho. */
+const OWNER_DEV = Object.freeze({ kind: 'dev', label: 'dev', paneId: 'gui-dev-abcd1234' })
+
 /** O `BrowserManager` da H1 pelo buraco por onde a H2 o enxerga. */
 function toolkitOn(t, fixture, options = {}) {
   const root = mkdtempSync(join(tmpdir(), 'synkora-browser-shot-'))
@@ -766,23 +772,48 @@ function toolkitOn(t, fixture, options = {}) {
     })
   }
   const driving = []
+  const ensured = []
+  const closedOwners = []
+  const logs = []
   // A LARGURA QUE A PÁGINA ENXERGA (2026-08-29) mora no MOTOR, não no CDP: o
   // dublê guarda o modo como o manager real guarda, para a suíte poder provar
   // que a tool escreve ALI — e não numa segunda verdade só dela.
   const viewport = { mode: 'auto', frameWidth: options.frameWidth ?? 400, writes: [] }
+  const owner = options.owner ?? OWNER_DEV
+  const tabs = options.tabs ?? [
+    {
+      tabId: 'tab-1',
+      title: 'Missão · Synkora',
+      url: 'http://localhost:5173/board',
+      active: true,
+      owner,
+      driving: false
+    }
+  ]
   const manager = {
-    ensureTab: async () => tab,
-    activeTab: () => (options.noTab ? undefined : tab),
-    listTabs: () => [{ tabId: 'tab-1', title: 'Missão · Synkora', url: 'http://localhost:5173/board', active: true }],
+    ensureTab: async (missionId, projectId, url, tabOwner) => {
+      ensured.push({ missionId, projectId, url, owner: tabOwner })
+      return tab
+    },
+    // A PORTA DE ENTRADA das tools desde 2026-09-01: a aba DESTA identidade. O
+    // dublê devolve a aba ativa em `activeTab` MESMO com `noTab` ligado — é
+    // assim que a suíte prova que a recusa não cai de volta na aba do vizinho.
+    tabOf: () => (options.noTab ? undefined : tab),
+    activeTab: () => tab,
+    listTabs: () => tabs,
     selectTab: () => true,
     closeMission: () => undefined,
-    setAgentDriving: (missionId, on) => driving.push({ missionId, on }),
+    closeTabsOf: (ownerPaneId) => {
+      closedOwners.push(ownerPaneId)
+      return 1
+    },
+    setAgentDriving: (missionId, on, tabId) => driving.push({ missionId, on, tabId }),
     ...(options.captureReadiness ? { captureReadiness: options.captureReadiness } : {}),
     ...(options.noViewport
       ? {}
       : {
-          setViewportMode: (missionId, mode, actor) => {
-            viewport.writes.push({ missionId, mode, actor })
+          setViewportMode: (missionId, mode, actor, tabId) => {
+            viewport.writes.push({ missionId, mode, actor, tabId })
             if (options.refuseViewport) return { ok: false, error: options.refuseViewport }
             viewport.mode = mode
             return { ok: true }
@@ -794,10 +825,11 @@ function toolkitOn(t, fixture, options = {}) {
   const tools = buildGuiBrowserTools({
     manager,
     resolveTarget: (id) =>
-      options.noTarget ? undefined : { missionId: 'missao-1', projectId: 'universo-1', root },
-    cliOf: () => options.cli ?? 'claude'
+      options.noTarget ? undefined : { missionId: 'missao-1', projectId: 'universo-1', root, owner },
+    cliOf: () => options.cli ?? 'claude',
+    log: (entry) => logs.push(entry)
   })
-  return { tools, root, driving, host, viewport }
+  return { tools, root, driving, host, viewport, ensured, closedOwners, logs, tabs }
 }
 
 const IDENTITY = Object.freeze({
@@ -884,7 +916,11 @@ test('TOOLKIT: sem missão e sem aba, a recusa nomeia a receita e o ⚡ nem acen
 
   const fechado = toolkitOn(t, fixture, { noTab: true })
   const receipt = await fechado.tools.read(IDENTITY, {})
-  assert.match(receipt, /o browser desta missão não está aberto/u)
+  // Desde 2026-09-01 a recusa é sobre A SUA aba, não sobre "o browser da
+  // missão": o browser pode estar abertíssimo — com a aba do dev na frente — e
+  // ainda assim não haver aba SUA para ler.
+  assert.equal(receipt, BROWSER_NO_TAB)
+  assert.match(receipt, /SUA aba/u)
   assert.match(receipt, /chame browser_open/u)
 })
 
@@ -896,6 +932,118 @@ test('TOOLKIT: toda tool de trabalho acende o ⚡ do chrome (o dono vê o agente
   assert.ok(driving.length >= 2)
   assert.ok(driving.every((entry) => entry.missionId === 'missao-1'))
   assert.equal(driving[0].on, true)
+  // ⚡ POR ABA (D2): com uma frota na mesma missão, o indicador tem de dizer
+  // QUAL aba está sendo dirigida — senão o dono vê a missão inteira piscando e
+  // não sabe quem está mexendo em quê.
+  assert.ok(
+    driving.every((entry) => entry.tabId === 'tab-1'),
+    'o ⚡ nomeia a aba de quem chamou'
+  )
+})
+
+// ————————————————————————————————————————————————————————————————
+// B1. A ABA É SUA (2026-09-01) — a fronteira que o design D1/D7 move
+// ————————————————————————————————————————————————————————————————
+//
+// Antes, TODA tool operava na aba ATIVA da missão (`withSession` → `activeTab`).
+// A medição de 01/09 (missão 86a05c06) mostrou o preço: o ajudante do
+// `finish_ui_review` e o dev alternando a mesma aba entre a porta 8791 e as
+// 8159/8148/8163, três leituras do ajudante caindo na PÁGINA DO DEV. A porta de
+// entrada passou a ser `tabOf(missão, paneId da identidade)`.
+
+test('SUA ABA: a tool NUNCA cai na aba do vizinho — sem a sua, a recusa manda abrir a sua', async (t) => {
+  const fixture = makeFixture({ items: 0 })
+  // `tabOf` vazio e `activeTab` CHEIO: é exatamente a cena da colisão. Cair no
+  // `activeTab` aqui seria ler a página do dev e relatá-la como se fosse a sua.
+  const { tools, driving } = toolkitOn(t, fixture, { noTab: true })
+  const recusa = await tools.read(IDENTITY, {})
+  assert.match(recusa, /SUA aba/u)
+  assert.match(recusa, /browser_open/u, 'a recusa nomeia a RECEITA — beco sem saída é bug')
+  assert.deepEqual(driving, [], 'sem aba, o ⚡ nem acende')
+
+  // A cerca vale para a família inteira, não só para o `read`.
+  for (const chamada of [
+    () => tools.find(IDENTITY, { query: 'salvar' }),
+    () => tools.act(IDENTITY, { actions: [{ action: 'click', ref: 1 }] }),
+    () => tools.probe(IDENTITY, { selector: 'button' }),
+    () => tools.viewport(IDENTITY, { preset: 'mobile' }),
+    () => tools.evaluate(IDENTITY, { expression: '1' }),
+    () => tools.wait(IDENTITY, { ms: 1 })
+  ]) {
+    assert.match(await chamada(), /browser_open/u)
+  }
+  const foto = await tools.shot(IDENTITY, {})
+  assert.match(foto.text, /browser_open/u)
+})
+
+test('SUA ABA: `browser_open` leva o DONO ao motor — é assim que a aba nasce dela', async (t) => {
+  const fixture = makeFixture({ items: 0 })
+  const { tools, ensured } = toolkitOn(t, fixture)
+  await tools.open(IDENTITY, { url: 'localhost:8791' })
+  assert.equal(ensured.length, 1)
+  assert.equal(ensured[0].url, 'localhost:8791')
+  assert.deepEqual(ensured[0].owner, OWNER_DEV, 'o motor recebe QUEM está abrindo')
+})
+
+test('SUA ABA: sem `url`, o `browser_open` devolve a leitura e a LISTA com o dono de cada aba', async (t) => {
+  const fixture = makeFixture({ items: 0 })
+  const { tools } = toolkitOn(t, fixture, {
+    tabs: [
+      {
+        tabId: 'tab-1',
+        title: 'Board',
+        url: 'http://localhost:8159/',
+        active: false,
+        owner: OWNER_DEV,
+        driving: false
+      },
+      {
+        tabId: 'tab-9',
+        title: 'QA da landing',
+        url: 'http://localhost:8791/',
+        active: true,
+        owner: { kind: 'helper', label: 'inv-brand', paneId: 'helper-mcp-1111' },
+        driving: true
+      },
+      {
+        tabId: 'tab-7',
+        title: 'docs',
+        url: 'https://exemplo.test/',
+        active: false,
+        owner: { kind: 'user', label: 'dono' },
+        driving: false
+      }
+    ]
+  })
+  const texto = await tools.open(IDENTITY, {})
+
+  // CONSCIÊNCIA, não controle (D7): o agente vê que existem outras abas e de
+  // quem elas são — e não tem verbo nenhum para dirigi-las.
+  assert.match(texto, /abas desta missão/u)
+  assert.match(texto, /▸/u, 'a ativa é marcada')
+  assert.match(texto, /⚡/u, 'quem está sendo dirigida é marcada')
+  assert.match(texto, /ajudante "inv-brand"/u)
+  assert.match(texto, /dono/u)
+  assert.match(texto, /a SUA/u, 'a sua aba é apontada na lista')
+  // A instrução velha morreu junto com o parâmetro: focar aba alheia não é ação
+  // do agente.
+  assert.doesNotMatch(texto, /tabId/u)
+})
+
+test('DIÁRIO: `browser-open` sai com `ids` (pane, missão, projeto) e com o DONO da aba', async (t) => {
+  const fixture = makeFixture({ items: 0 })
+  const { tools, logs } = toolkitOn(t, fixture)
+  await tools.open(IDENTITY, { url: 'localhost:8791' })
+  const aberto = logs.find((entry) => entry.event === 'browser-open')
+  assert.ok(aberto, 'o diário registra a abertura')
+  // "`browser-open` no diário sai SEM `paneId` (não se sabe quem abriu)" era a
+  // medição de 01/09; D6 fecha esse buraco.
+  assert.deepEqual(aberto.ids, {
+    paneId: 'gui-dev-abcd1234',
+    missionId: 'missao-1',
+    projectId: 'universo-1'
+  })
+  assert.deepEqual(aberto.detail.owner, OWNER_DEV)
 })
 
 // ————————————————————————————————————————————————————————————————
@@ -918,8 +1066,15 @@ test('VIEWPORT: os presets do agente são os MESMOS botões do dono — e `deskt
 
   await tools.viewport(IDENTITY, { preset: 'desktop' })
   // O `actor` viaja junto: a caixa-preta não pode creditar ao DONO a emulação
-  // que o agente ligou sozinho (os dois escrevem o mesmo campo).
-  assert.deepEqual(viewport.writes.at(-1), { missionId: 'missao-1', mode: 1280, actor: 'agent' })
+  // que o agente ligou sozinho (os dois escrevem o mesmo campo). E desde
+  // 2026-09-01 a ABA viaja também: a largura é da SUA aba, não da que o dono
+  // está olhando.
+  assert.deepEqual(viewport.writes.at(-1), {
+    missionId: 'missao-1',
+    mode: 1280,
+    actor: 'agent',
+    tabId: 'tab-1'
+  })
   await tools.viewport(IDENTITY, { preset: 'tablet' })
   assert.equal(viewport.writes.at(-1).mode, 768)
   await tools.viewport(IDENTITY, { preset: 'mobile' })
@@ -1337,6 +1492,15 @@ test('CATÁLOGO: os schemas ENSINAM os tetos reais, e as descrições proíbem o
   assert.ok(tools.get('browser_wait').description.includes(String(BROWSER_WAIT_MAX_MS)))
   // A dor que originou a feature entra no lugar onde o agente sempre olha.
   assert.match(tools.get('browser_open').description, /PROIBIDO abrir browser externo/u)
+  // A ABA É SUA (D1/D7, 2026-09-01). Duas cercas no mesmo lugar: a descrição
+  // ensina a semântica nova, e o `tabId` SUMIU do contrato — com uma aba por
+  // identidade, focar a aba de outro não é ação do agente, e um parâmetro que
+  // não faz nada é uma promessa falsa (a mesma régua que matou o `height` do
+  // viewport).
+  assert.match(tools.get('browser_open').description, /SUA aba/u)
+  assert.equal(tools.get('browser_open').inputSchema.properties.tabId, undefined)
+  assert.match(tools.get('browser_read').description, /SUA aba/iu)
+  assert.match(tools.get('browser_shot').description, /SUA aba/iu)
   assert.match(tools.get('browser_probe').description, /não screenshot/u)
   assert.match(tools.get('browser_eval').description, /conteúdo NÃO-CONFIÁVEL/u)
 

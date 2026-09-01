@@ -145,9 +145,17 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // `browser_*`, com `browser_probe` de veredito em TEXTO (o codex descarta
     // imagem de MCP), `browser_shot` referenciado para o dono ver e a página
     // tratada como conteúdo não-confiável (dev 12848, ajudante 10853; o
-    // reviewer não testa UI e continua exatamente em 7120). O teto continua
-    // sendo contra CONSTITUIÇÃO: régua nova do dono cabe, discurso não.
-    assert.ok(contract.length < 13300, `${role}: contrato virou constituição`)
+    // reviewer não testa UI e continua exatamente em 7120). E de 13300 para
+    // 14500 em 2026-09-01, pela ABA POR IDENTIDADE
+    // (DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01): a ordem do dono ("cada um
+    // na sua aba, na sua porta") tem uma razão MEDIDA — na missão 86a05c06 o
+    // único ajudante que dirigiu o browser dividiu a MESMA aba com o dev e três
+    // leituras dele caíram na página do outro. O bloco passou a dizer que a aba
+    // é DELE (uma por identidade) e que ajudante tem aba E porta próprias
+    // (dev 13840, ajudante 11845; o reviewer continua exatamente em 7120). A
+    // folga é de UMA régua do dono, que é para o que o teto existe: ele continua
+    // sendo contra CONSTITUIÇÃO — régua nova cabe, discurso não.
+    assert.ok(contract.length < 14500, `${role}: contrato virou constituição (${contract.length})`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -1637,13 +1645,33 @@ test('o browser da casa é FONTE ÚNICA e chega a quem TESTA UI: dev e ajudante'
   )
   assert.match(dev, /NATIVE MOBILE/u, 'a exceção do app mobile nativo sumiu')
 
+  // A ABA É DE QUEM A ABRE (2026-09-01 — D1/D2/D7 do design ABAS POR
+  // IDENTIDADE). A razão é MEDIDA, não estética: na missão 86a05c06 o único
+  // ajudante que dirigiu o browser dividiu a MESMA aba com o dev, a URL alternou
+  // entre a porta dele (8791) e as do dev (8159/8148/8163) em minutos, três
+  // leituras do ajudante caíram na página do outro e o dev o cancelou aos 20
+  // min. Ordem do dono: "cada um na sua aba, na sua porta".
+  assert.match(dev, /THE TAB IS YOURS/u, 'a aba voltou a não ter dono')
+  assert.match(dev, /one tab per identity/iu, 'sem uma aba por identidade a disputa volta')
+  assert.match(dev, /picks which tab to look at/iu, 'o dono deixou de escolher o que olhar')
+  // O AJUDANTE tem aba E porta próprias, e nem o dev encosta nelas.
+  assert.match(dev, /THEIR OWN RESERVED PORT/u, 'a porta reservada do ajudante sumiu do contrato')
+  assert.match(dev, /never navigate a helper's tab/iu, 'o dev voltou a poder dirigir a aba alheia')
+  assert.match(dev, /never serve anything on a helper's port/iu, 'a porta do ajudante virou terra de ninguém')
+  // A lista de abas é CONSCIÊNCIA, não volante (D7: browser_open perdeu o tabId).
+  assert.match(dev, /LIST of tabs with the owner/u, 'a lista de abas deixou de mostrar os donos')
+  assert.match(dev, /awareness, not a steering wheel/iu, 'a lista virou controle da aba dos outros')
+
   // Curto como as seções irmãs: régua, não constituição. Teto 2000→2500 em
   // 2026-08-29 (mesma noite): pergunta do dono ("já está instruído a SEMPRE
   // usar o browser?") revelou que o bloco proibia o desvio mas não dava a
   // ORDEM POSITIVA — entrou a linha "mexeu em UI web ⇒ o browser da casa é
-  // parte do PRONTO", com a exceção de app mobile NATIVO dita. Mede 2297.
+  // parte do PRONTO", com a exceção de app mobile NATIVO dita. Media 2297. E
+  // 2500→3100 em 2026-09-01, pela ABA POR IDENTIDADE: a primeira linha passou a
+  // dizer de quem é a aba (e que o dono escolhe qual olhar) e entrou a linha do
+  // AJUDANTE — aba e porta próprias, que o dev não encosta. Mede 2853.
   assert.ok(dev.length > 700, 'o bloco do browser ficou vago demais')
-  assert.ok(dev.length < 2500, 'o bloco do browser virou constituição')
+  assert.ok(dev.length < 3100, `o bloco do browser virou constituição (${dev.length})`)
 
   // E ele não desloca a última palavra do contrato (a ordem da delegação).
   for (const role of ['dev', 'helper']) {

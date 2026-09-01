@@ -22,6 +22,7 @@
  * módulo é, hoje, o ciclo de vida do pane shell.
  */
 import {} from 'path'
+import { guiHelperPorts } from './guiHelperPorts'
 import { isPaneStartupRole, type PaneStartupDescriptor } from './paneStartupMetrics'
 import type { PaneKind } from './pty'
 import type { PortUseEntry } from './portMap'
@@ -155,6 +156,12 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
   // PEDIDA (produto pinado pode ter ido para outra; o flag 'requested'
   // mantém a honestidade). As duas outras fontes do mapa original — runtime
   // de QA e reserva de porta CDP — morreram com o pipeline de fases.
+  //
+  // A TERCEIRA FONTE VOLTOU (2026-09-01, D4 do design ABAS POR IDENTIDADE): a
+  // porta reservada de cada AJUDANTE vivo. Ela é o outro lado da ordem do dono
+  // ("cada um na sua aba, na sua porta") — sem ela, o dono escolheria no modal
+  // do ▶ testar justamente a porta em que um ajudante dele já está servindo, que
+  // é a colisão medida na missão 86a05c06 vista pelo outro ângulo.
   function harnessPortsInUse(projectId: string): PortUseEntry[] {
     const entries: PortUseEntry[] = []
     for (const [paneId, srv] of testServerPanes) {
@@ -169,6 +176,9 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
         owner: `servidor de teste do dono${srv.label ? ` (${srv.label.slice(0, 40)})` : ''}`
       })
     }
+    // O registro dos ajudantes solta a porta no desfecho, então o que sobra
+    // aqui é frota VIVA — a mesma régua do `ptys.has` acima.
+    entries.push(...guiHelperPorts.entries(projectId))
     return entries
   }
   function closeTestServersUnder(pathPrefix: string): void {

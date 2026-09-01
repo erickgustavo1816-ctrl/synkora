@@ -78,6 +78,7 @@ const {
   GUI_HELPER_DELIVERY_DIR,
   GUI_HELPER_LSP_PERSONA_LINE,
   GUI_HELPER_PERSONA,
+  GUI_HELPER_PORT_PERSONA_LINE,
   GUI_HELPER_RESULT_HEAD_CHARS,
   GuiHelperCatalogCache,
   armGuiHelperKit,
@@ -3032,11 +3033,193 @@ test('R14 — a linha do LSP entra UMA vez, e só no ajudante que tem as tools',
   assert.match(GUI_HELPER_LSP_PERSONA_LINE, /BEFORE you edit/u)
 
   // E os DOIS adaptadores usam a versão condicional: um deles com persona fixa
-  // seria o ajudante daquele CLI prometendo tool que não recebeu.
+  // seria o ajudante daquele CLI prometendo tool que não recebeu. Desde
+  // 2026-09-01 a chamada leva TAMBÉM a porta reservada (D4) — a mesma régua
+  // vale para as duas linhas: promessa sem reserva é persona mentindo.
   const wiringSrc = source('src/main/guiDelegationWiring.ts')
   assert.equal(
-    (wiringSrc.match(/guiHelperPersonaFor\(kit !== undefined\)/gu) ?? []).length,
+    (wiringSrc.match(/guiHelperPersonaFor\(kit !== undefined, port\)/gu) ?? []).length,
     2,
     'um dos CLIs ficou com a persona fixa'
   )
+})
+
+// ————— A PORTA DO AJUDANTE (2026-09-01 — D4 do design ABAS POR IDENTIDADE) —————
+//
+// A COLISÃO MEDIDA (missão 86a05c06, 01/09): o único ajudante que dirigiu o
+// browser dividiu a MESMA aba com o dev, e a URL alternou entre a porta dele
+// (8791) e as do dev (8159/8148/8163) em minutos — três leituras do ajudante
+// caíram na página do outro, e o dev o cancelou aos 20 min. A aba própria é a
+// fatia A; ESTA é a outra metade: cada ajudante nasce com uma porta reservada,
+// que viaja no AMBIENTE (SYNKORA_HELPER_PORT + PORT), na PERSONA (linha própria,
+// só quando reservada) e no mapa de portas do "▶ testar".
+//
+// O que estes testes NÃO fazem: subir CLI. Como na R14, a costura se prova nas
+// funções que os adaptadores usam (opções + `guiHelperKitDisposer`) e na FONTE
+// dos dois adaptadores — a ordem "reservar antes de nascer" é estrutural.
+
+/** Registro de portas dublê. O de produção é o singleton do processo
+ *  (`guiHelperPorts`), e a fiação dele mora no index — fora desta fronteira. */
+function fakePortRegistry(port = 47137) {
+  const reserved = new Map()
+  const released = []
+  return {
+    reserved,
+    released,
+    registry: {
+      reserve(helperId, meta) {
+        reserved.set(helperId, meta)
+        return port
+      },
+      release(helperId) {
+        released.push(helperId)
+        reserved.delete(helperId)
+      },
+      portOf: (helperId) => (reserved.has(helperId) ? port : undefined),
+      entries: () => []
+    }
+  }
+}
+
+test('D4 — a linha da porta entra UMA vez, e só no ajudante que TEM porta', () => {
+  const muda = guiHelperPersonaFor(false)
+  assert.equal(muda, GUI_HELPER_PERSONA, 'sem porta a persona é a de sempre, palavra por palavra')
+  assert.doesNotMatch(muda, /SYNKORA_HELPER_PORT|strictPort/u, 'a persona prometeu porta que não existe')
+
+  const comPorta = guiHelperPersonaFor(false, 47137)
+  assert.ok(comPorta.startsWith(GUI_HELPER_PERSONA), 'a linha nova reescreveu a persona')
+  assert.equal(
+    comPorta.split('\n').filter((line) => line.includes('47137')).length,
+    1,
+    'a linha da porta entrou mais de uma vez'
+  )
+  // Ela diz TRÊS coisas sem as quais o ajudante não age: a porta é DELE (dev e
+  // colegas têm as deles), COMO subir nela (o vocabulário do `portInvocation` da
+  // casa) e o que fazer se estiver ocupada — pegar a seguinte e DIZER.
+  assert.match(comPorta, /--port 47137 --strictPort/u, 'sem a receita do vite a porta vira palpite')
+  assert.match(comPorta, /\bPORT\b/u, 'sem a convenção PORT= o produto PORT-aware fica de fora')
+  assert.match(comPorta, /browser_open/u, 'a porta não desemboca no browser da casa')
+  assert.match(comPorta, /SAY/u, 'porta ocupada virou beco: ninguém fica sabendo qual ele usou')
+  assert.match(comPorta, /never touch a port/iu, 'o ajudante ficou livre para pisar na porta alheia')
+
+  // As duas linhas convivem, e nenhuma come a outra.
+  const completa = guiHelperPersonaFor(true, 47137)
+  assert.ok(completa.startsWith(GUI_HELPER_PERSONA))
+  assert.ok(completa.includes(GUI_HELPER_LSP_PERSONA_LINE), 'a porta comeu a linha do LSP')
+  assert.ok(completa.includes(GUI_HELPER_PORT_PERSONA_LINE(47137)), 'o LSP comeu a linha da porta')
+})
+
+test('D4 — a porta viaja no AMBIENTE dos dois CLIs, sem comer o env do kit', () => {
+  const request = spawnRequest({ helperId: 'h-porta' })
+
+  // 1. claude: o bearer mora no ARQUIVO, então o env é só a porta.
+  const claude = claudeHelperSessionOptions(request, 'C:/prompts/h.system.md', undefined, 47137)
+  assert.deepEqual(claude.extraEnv, { SYNKORA_HELPER_PORT: '47137', PORT: '47137' })
+
+  // 2. codex: o kit já ocupa o env com o bearer — a porta ENTRA junto, nunca
+  // por cima (perder o SYNKORA_TOKEN é o ajudante nascer sem as tools).
+  const { deps } = lspBench({ port: 5555 })
+  const codexRequest = spawnRequest({ helperId: 'h-codex', cli: 'codex' })
+  const kit = armGuiHelperKit(deps, codexRequest)
+  assert.ok(kit?.token, 'o kit não foi armado — o teste do env perde o sentido')
+  const codex = codexHelperSessionOptions(codexRequest, kit, 47210)
+  assert.deepEqual(codex.extraEnv, {
+    SYNKORA_TOKEN: kit.token,
+    SYNKORA_HELPER_PORT: '47210',
+    PORT: '47210'
+  })
+
+  // 3. Sem porta e sem kit, o spawn é o de antes — nada de env vazio pendurado.
+  assert.equal('extraEnv' in claudeHelperSessionOptions(request), false)
+  assert.equal('extraEnv' in codexHelperSessionOptions(request), false)
+})
+
+test('D4 — o desfecho SOLTA a porta e avisa quem fecha a aba, uma passagem só', () => {
+  const fake = fakePortRegistry()
+  const disposed = []
+  const deps = {
+    systemPromptFile: () => undefined,
+    ports: fake.registry,
+    onHelperDisposed: (helperId) => disposed.push(helperId)
+  }
+  const request = spawnRequest({ helperId: 'h-bomba' })
+  fake.registry.reserve('h-bomba', { projectId: request.projectId })
+
+  let kills = 0
+  const dispose = guiHelperKitDisposer(deps, request, undefined, () => {
+    kills += 1
+    throw new Error('o processo já tinha morrido')
+  })
+  // O erro do kill continua sendo o que sobe (é ele que o motor loga), e mesmo
+  // assim a porta é devolvida e a aba do ajudante é avisada.
+  assert.throws(dispose, /já tinha morrido/u)
+  assert.deepEqual(fake.released, ['h-bomba'], 'a porta ficou reservada para um processo morto')
+  assert.deepEqual(disposed, ['h-bomba'], 'ninguém foi avisado de fechar a aba do ajudante')
+
+  // O motor descarta em mais de um caminho (settle, discard, re-tentativa): a
+  // segunda passagem não solta de novo nem fecha aba de outro.
+  assert.throws(dispose, /já tinha morrido/u)
+  assert.equal(kills, 2, 'o kill é do processo e continua sendo pedido')
+  assert.deepEqual(fake.released, ['h-bomba'])
+  assert.deepEqual(disposed, ['h-bomba'])
+})
+
+test('D4 — soltar a porta NUNCA derruba o desfecho', () => {
+  // O `onHelperDisposed` de produção fecha abas de browser (fatia A): se ele
+  // estourar, o desfecho do ajudante não pode virar exceção — o motor ficaria
+  // com um registro pendurado por causa de uma aba.
+  const deps = {
+    systemPromptFile: () => undefined,
+    ports: {
+      reserve: () => 47137,
+      release: () => {
+        throw new Error('registro de portas estourou')
+      },
+      portOf: () => undefined,
+      entries: () => []
+    },
+    onHelperDisposed: () => {
+      throw new Error('a aba se recusou a fechar')
+    }
+  }
+  let killed = 0
+  const dispose = guiHelperKitDisposer(deps, spawnRequest(), undefined, () => {
+    killed += 1
+  })
+  assert.doesNotThrow(dispose, 'o desfecho do ajudante quebrou por causa da porta/aba')
+  assert.equal(killed, 1)
+})
+
+test('D4 — a reserva acontece ANTES do processo, nos DOIS adaptadores', () => {
+  const wiringSrc = source('src/main/guiDelegationWiring.ts')
+  const claudeAdapter = wiringSrc.slice(
+    wiringSrc.indexOf('export function createClaudeHelperAdapter'),
+    wiringSrc.indexOf('export function createCodexHelperAdapter')
+  )
+  const codexAdapter = wiringSrc.slice(wiringSrc.indexOf('export function createCodexHelperAdapter'))
+
+  for (const [nome, adapter, spawn] of [
+    ['claude', claudeAdapter, 'new MaestroSession'],
+    ['codex', codexAdapter, 'new CodexSession']
+  ]) {
+    const at = adapter.indexOf('reserveGuiHelperPort(deps, request)')
+    assert.ok(at > 0, `${nome}: o adaptador não reserva porta nenhuma`)
+    assert.ok(
+      at < adapter.indexOf(spawn),
+      `${nome}: a porta foi reservada depois do processo — ele nasceria sem ela no ambiente`
+    )
+  }
+  // E ela chega às opções dos dois CLIs (o env é lido no nascimento do processo).
+  assert.match(wiringSrc, /claudeHelperSessionOptions\(request, file, kit, port\)/u)
+  assert.match(wiringSrc, /codexHelperSessionOptions\(request, kit, port\)/u)
+
+  // A cerca do D1 continua verdadeira: a porta sai do REGISTRO do ajudante
+  // (projeto + delegador), nunca de um campo que o chamador do `delegate` possa
+  // escrever — o pedido de spawn segue sem campo de porta.
+  const engineSrc = source('src/main/guiHelperSessions.ts')
+  const bloco = engineSrc.slice(
+    engineSrc.indexOf('export interface GuiHelperSpawnRequest'),
+    engineSrc.indexOf('\n}', engineSrc.indexOf('export interface GuiHelperSpawnRequest'))
+  )
+  assert.doesNotMatch(bloco, /^\s*port\??:/mu, 'o pedido de spawn ganhou campo de porta')
 })

@@ -724,10 +724,17 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   // mesma data) de novo só o do CONTRATO, 11400→13300: o bloco do browser
   // embutido ("QA visual não pode demorar 40-50 min" — nunca em browser
   // externo nem em playwright próprio) entrou em dev/ajudante; a ordem
-  // permanente seguiu intocada (2922) e o dev mede 12848.
+  // permanente seguiu intocada (2922) e o dev mede 12848. E na ABA POR
+  // IDENTIDADE (2026-09-01) de novo só o do CONTRATO, 13300→14500: a ordem do
+  // dono ("cada um na sua aba, na sua porta") reescreveu o bloco do browser —
+  // uma aba por identidade e porta reservada por ajudante; a ordem permanente
+  // seguiu intocada (2922) e o dev mede 13840.
   assert.ok(order.length < 3000, `a ordem permanente virou constituição (${order.length})`)
   for (const role of GUI_MISSION_ROLES) {
-    assert.ok(guiMissionSystemPrompt(role).length < 13300, `${role}: contrato virou constituição`)
+    assert.ok(
+      guiMissionSystemPrompt(role).length < 14500,
+      `${role}: contrato virou constituição (${guiMissionSystemPrompt(role).length})`
+    )
   }
   // 2026-08-30 (ordem do dono: "coloque os ajudantes também para eu
   // selecionar"): o planejador DELEGA — a MESMA seção, palavra por palavra
@@ -753,8 +760,21 @@ test('o bloco do browser não rouba a última palavra da ordem permanente', () =
       at < contract.indexOf('DELEGATION — STANDING ORDER FROM THE OWNER:'),
       `${role}: o browser passou na frente da ordem permanente`
     )
+    // 2026-09-01 (ABA POR IDENTIDADE): quem DELEGA precisa saber, no mesmo
+    // contrato onde delega, que o ajudante nasce com aba E porta próprias — a
+    // colisão medida na missão 86a05c06 foi exatamente o delegador dirigindo a
+    // aba (e a porta) de quem ele mesmo abriu.
+    assert.match(contract, /THE TAB IS YOURS/u, `${role}: a aba voltou a não ter dono`)
+    assert.match(
+      contract,
+      /THEIR OWN RESERVED PORT/u,
+      `${role}: a porta reservada do ajudante sumiu do contrato de quem delega`
+    )
   }
-  // Reviewer e planejador não testam UI — o bloco não entra no contrato deles.
+  // Reviewer e planejador não testam UI — o bloco não entra no contrato deles,
+  // e a régua da aba/porta é do bloco: nenhum dos dois a recebe de carona.
   assert.doesNotMatch(guiMissionSystemPrompt('reviewer'), /browser_/u)
   assert.doesNotMatch(guiPlanningSystemPrompt(), /browser_/u)
+  assert.doesNotMatch(guiMissionSystemPrompt('reviewer'), /THE TAB IS YOURS/u)
+  assert.doesNotMatch(guiPlanningSystemPrompt(), /THE TAB IS YOURS/u)
 })

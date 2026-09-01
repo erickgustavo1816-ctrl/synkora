@@ -22164,8 +22164,9 @@ details.gui-error-line {
 
 /* ——— tira de abas ——— */
 
-/* A tira ROLA, o `+` NÃO: com oito abas a lista ganha barra de rolagem, e a
-   porta de abrir a próxima aba não pode descer junto para fora de vista.
+/* A tira ROLA, o `+` NÃO: com o teto cheio (doze abas desde 2026-09-01, uma por
+   identidade) a lista ganha barra de rolagem, e a porta de abrir a próxima aba
+   não pode descer junto para fora de vista.
    H7: virou a PRATELEIRA de abas do instrumento — UM degrau de papel abaixo do
    corpo (`--paper` contra o `--card` do resto) e um fio claro a separando da
    fileira de navegação. Papel contra papel pede fio claro; a linha ink é
@@ -22182,7 +22183,7 @@ details.gui-error-line {
 
 /* Quebra em vez de rolar na horizontal (um scroller lateral numa coluna de
    137px esconde aba atrás de um gesto que ninguém tenta), com TETO de altura:
-   oito abas viram oito linhas no trilho estreito, e aí a rolagem vertical —
+   doze abas viram doze linhas no trilho estreito, e aí a rolagem vertical —
    a mesma de `.dr-files` — é que segura a moldura. */
 .dock-browser-tabs {
   display: flex;
@@ -22192,6 +22193,9 @@ details.gui-error-line {
   min-width: 0;
   max-height: 88px;
   overflow-y: auto;
+  /* A PRATELEIRA SE MEDE (2026-09-01): quem decide se cabem as duas verdades de
+     uma aba (de quem é + que página é) é a largura DELA, não a da janela. */
+  container: dock-browser-tabs / inline-size;
 }
 
 /* H7: a aba PARADA perdeu borda e fundo. Antes eram N caixinhas com contorno
@@ -22213,6 +22217,15 @@ details.gui-error-line {
 
 .dock-browser-tab-wrap:hover {
   background: var(--card);
+}
+
+/* A aba COM DONO pede mais palmo (2026-09-01): ela carrega duas informações
+   (de quem é + que página é) na mesma linha que a do dono usa para uma. Sem esta
+   base maior, o trilho de 380px punha três abas por fileira e a ficha ficava
+   dividindo 96px com o nome — foi o que a prancha mostrou. Com ela, a fileira
+   passa a ter duas, e as duas verdades cabem inteiras. */
+.dock-browser-tab-wrap:has(.dock-browser-tab-owner) {
+  flex-basis: 138px;
 }
 
 /* A aba ATIVA se declara por FORMA antes de cor, e agora é a ÚNICA com
@@ -22258,11 +22271,103 @@ details.gui-error-line {
   border-radius: 4px;
 }
 
-.dock-browser-tab-name {
+/* O nome da página e o rótulo do DONO cortam pela MESMA régua: numa coluna de
+   137px os dois competem pelo mesmo palmo, e um deles cortando por outra lei
+   deixaria a tira com dois jeitos de terminar uma palavra. */
+.dock-browser-tab-name,
+.dock-browser-tab-owner-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ——— DE QUEM É A ABA (2026-09-01) ———
+
+   Ordem do dono: *"queria que [os ajudantes] utilizassem o browser caso
+   quisessem, CADA UM NA SUA ABA, na sua porta"* (D1/D2 do design
+   `.synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md`).
+
+   DIFERENÇA POR FORMA ANTES DE COR, e aqui a forma é uma ASSIMETRIA: a aba do
+   dono não ganha prefixo nenhum (ele é a régua da tira), e a de um agente nasce
+   com um rótulo em caixa alta seguido de uma COSTURA DE FIO DE CABELO. É a
+   mesma língua das costuras do instrumento (H7) — nada de caixinha com contorno
+   dentro da caixa que já tem contorno, que foi o "vale da estranheza" que o dono
+   reprovou em 2026-08-29.
+
+   Ink-2 (6,3:1 sobre o card), nunca ink-3: o rótulo é informação que ele precisa
+   LER de relance, e não pontuação decorativa. O acento fica reservado ao ⚡ —
+   cor é SINAL. */
+.dock-browser-tab-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  /* A IDENTIDADE NÃO CEDE (medido na prancha desta rodada, e o contrário estava
+     na tela: com `flex-shrink: 1` os dois textos encolhiam juntos e a ficha
+     virava "D" e "I" — um rótulo de uma letra não diz de quem é a aba, que é a
+     única coisa que ela existe para dizer). Quem cede é o NOME DA PÁGINA, que a
+     barra de status devolve inteiro. O teto de 64% é o que impede o inverso (um
+     ajudante de nome comprido comendo a aba toda) e foi medido, não escolhido no
+     gosto: é onde "INV-BRAND" coube INTEIRO no trilho de 380px sem apagar o nome
+     da página. */
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 64%;
+  padding-right: 5px;
+  border-right: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  /* A caixa alta é do CSS, e não do texto: o leitor de tela continua ouvindo
+     "inv-brand" pelo `aria-label` da aba, em vez de soletrar. */
+  text-transform: uppercase;
+}
+
+/* A identidade que está AGINDO lê mais forte — em PESO e em tinta, nunca em
+   fundo colorido: aba parada com bloco de cor viraria a tira inteira em
+   semáforo. */
+.dock-browser-tab-owner.driving,
+.dock-browser-tab.on .dock-browser-tab-owner {
+  color: var(--ink);
+}
+
+/* ⚡ POR ABA (D2): o ⚡ da LINHA DO PÉ conta que o agente está dirigindo a
+   missão; este conta QUAL aba ele está dirigindo — a pergunta que nasceu junto
+   com a frota. Movimento é SINAL: a batida é a MESMA das fichas de ajudante
+   (`gui-subagent-pulse`), porque animação nova não entra na casa por causa de um
+   raio. O `prefers-reduced-motion` global (bem no alto deste arquivo) já a
+   desliga inteira. */
+.dock-browser-tab-bolt {
+  flex: none;
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  animation: gui-subagent-pulse 1.05s ease-in-out infinite;
+}
+
+/* NO PISO DO TRILHO NÃO CABEM AS DUAS VERDADES — medido na prancha desta rodada
+   (`browser-tabs-agent-C-estreito.png`): com o trilho em 176px sobram 59px de
+   conteúdo por aba, e ali "⚡ I… | Q…" não conta nem quem é nem que página é —
+   conta duas coisas pela metade. Quando aperta, quem fica é a IDENTIDADE: ela é
+   a pergunta que esta rodada existe para responder, e o nome da página volta
+   INTEIRO na barra de status e no `aria-label` a um hover (ou um Tab) de
+   distância. Sem o nome ao lado, a costura não separa mais nada — e some junto.
+
+   Mora DEPOIS das regras acima de propósito: `@container` não soma
+   especificidade (a mesma nota do bloco do Board, mais acima neste arquivo), e
+   colocá-lo antes deixaria a regra normal vencendo por ordem. */
+@container dock-browser-tabs (max-width: 148px) {
+  .dock-browser-tab-wrap:has(.dock-browser-tab-owner) .dock-browser-tab-name {
+    display: none;
+  }
+
+  .dock-browser-tab-owner {
+    max-width: 100%;
+    padding-right: 0;
+    border-right: 0;
+  }
 }
 
 /* O ponto da aba: parado é só pontuação; CARREGANDO é o único movimento desta

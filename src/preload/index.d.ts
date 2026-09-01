@@ -15,6 +15,8 @@ export type {
   BrowserPanelState,
   BrowserRect,
   BrowserTab,
+  BrowserTabOwner,
+  BrowserTabOwnerKind,
   BrowserViewportMode
 } from './index'
 

@@ -12,6 +12,8 @@ import {
   BROWSER_VIEWPORT_CHOICES,
   activeBrowserTab,
   browserTabLabel,
+  browserTabOwnerPhrase,
+  browserTabOwnerTag,
   browserViewportBand,
   browserViewportHint,
   browserViewportIsCustom,
@@ -207,46 +209,86 @@ export default function BrowserChrome({
     <div className={shellClass ? `dock-browser-shell ${shellClass}` : 'dock-browser-shell'}>
       {/* A TIRA DE ABAS quebra em vez de rolar: numa coluna de 176px um
           scroller horizontal esconderia abas atrás de um gesto que o dono não
-          tem motivo para tentar. Mesmo precedente do `.dock-acts`. */}
+          tem motivo para tentar. Mesmo precedente do `.dock-acts`.
+
+          DE QUEM É CADA ABA (2026-09-01 — ordem do dono: *"cada um na sua aba,
+          na sua porta"*, D1/D2 do
+          `.synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md`):
+          com dono + dev + frota de ajudantes na mesma missão, a tira deixou de
+          ser uma lista de páginas e virou uma lista de IDENTIDADES. A aba do
+          dono continua exatamente como era (a régua não vira caso); a de um
+          agente ganha o rótulo dele antes do nome da página, e o ⚡ da aba
+          quando é ELE que está dirigindo agora. */}
       {state.tabs.length > 0 && (
         <div className="dock-browser-tabbar">
           <div className="dock-browser-tabs" role="tablist" aria-label="abas do browser">
-            {state.tabs.map((entry) => (
-              <span className="dock-browser-tab-wrap" key={entry.tabId}>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={entry.active}
-                  className={`dock-browser-tab${entry.active ? ' on' : ''}`}
-                  onClick={() => run((api) => api.selectTab(missionId, entry.tabId))}
-                  // A tira corta o nome no trilho estreito; a barra de status
-                  // devolve o nome INTEIRO e o endereço, que é a única forma
-                  // de saber qual aba é qual com oito abertas a 176px.
-                  {...hints(
-                    entry.url
-                      ? `${browserTabLabel(entry)} · ${entry.url}`
-                      : browserTabLabel(entry)
-                  )}
-                >
-                  <i
-                    className={`dock-browser-tab-dot${entry.loading ? ' loading' : ''}`}
-                    aria-hidden="true"
-                  />
-                  <span className="dock-browser-tab-name">{browserTabLabel(entry)}</span>
-                </button>
-                <button
-                  type="button"
-                  className="dock-browser-tab-x"
-                  aria-label={`fechar a aba ${browserTabLabel(entry)}`}
-                  onClick={() => run((api) => api.closeTab(missionId, entry.tabId))}
-                  {...hints('fechar esta aba')}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
+            {state.tabs.map((entry) => {
+              const label = browserTabLabel(entry)
+              // As PALAVRAS vêm do modelo puro (`dockBrowserModel`), não do JSX:
+              // é lá que elas se provam em node, sem React e sem DOM.
+              const tag = browserTabOwnerTag(entry)
+              const phrase = browserTabOwnerPhrase(entry)
+              const driving = entry.driving === true
+              // A frase LONGA — a da barra de status e a do leitor de tela. Ela
+              // é a única forma de saber qual aba é qual com doze abertas a
+              // 176px, onde tudo corta.
+              const said = phrase ? [phrase, label] : [label]
+              if (driving) said.push('dirigindo agora')
+              const sentence = said.join(' · ')
+              return (
+                <span className="dock-browser-tab-wrap" key={entry.tabId}>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={entry.active}
+                    // A aba do DONO fica sem `aria-label`: o nome acessível dela
+                    // continua sendo o próprio texto, como era antes desta
+                    // rodada. Só quem tem dono (ou está dirigindo) precisa que a
+                    // ficha e o ⚡ — que são `aria-hidden`, por serem glifo e
+                    // caixa alta — voltem como PALAVRA.
+                    aria-label={phrase || driving ? sentence : undefined}
+                    className={`dock-browser-tab${entry.active ? ' on' : ''}`}
+                    onClick={() => run((api) => api.selectTab(missionId, entry.tabId))}
+                    {...hints(entry.url ? `${sentence} · ${entry.url}` : sentence)}
+                  >
+                    <i
+                      className={`dock-browser-tab-dot${entry.loading ? ' loading' : ''}`}
+                      aria-hidden="true"
+                    />
+                    {/* UMA ficha só para as duas verdades da identidade: de quem
+                        é a aba, e se essa pessoa está agindo AGORA. Duas peças
+                        separadas empurrariam o rótulo de lugar toda vez que o ⚡
+                        acendesse, e a tira perderia o alinhamento que faz o dono
+                        varrer doze abas de relance. */}
+                    {(tag || driving) && (
+                      <span
+                        className={`dock-browser-tab-owner${driving ? ' driving' : ''}`}
+                        aria-hidden="true"
+                      >
+                        {driving && <b className="dock-browser-tab-bolt">⚡</b>}
+                        {tag && <span className="dock-browser-tab-owner-name">{tag}</span>}
+                      </span>
+                    )}
+                    <span className="dock-browser-tab-name">{label}</span>
+                  </button>
+                  {/* O × FICA em TODA aba, inclusive na de um ajudante: o painel
+                      é do dono, e ele tem autoridade sobre a missão inteira. O
+                      que a guarda faz é NOMEAR de quem é a aba antes do gesto —
+                      nunca esconder a porta. */}
+                  <button
+                    type="button"
+                    className="dock-browser-tab-x"
+                    aria-label={phrase ? `fechar a ${phrase} · ${label}` : `fechar a aba ${label}`}
+                    onClick={() => run((api) => api.closeTab(missionId, entry.tabId))}
+                    {...hints(phrase ? `fechar ${phrase}` : 'fechar esta aba')}
+                  >
+                    ×
+                  </button>
+                </span>
+              )
+            })}
           </div>
-          {/* O `+` mora FORA do scroller: com oito abas a tira ganha barra de
+          {/* O `+` mora FORA do scroller: com doze abas a tira ganha barra de
               rolagem, e a porta de abrir a próxima não pode ir junto para
               debaixo dela. */}
           <button

@@ -410,9 +410,29 @@ const SKILLS_MENU_ORDER = `SKILLS — THE MENU COMES TO YOU; CHOOSING FROM IT IS
  * produto e o release opera a subida da versão — o catálogo do MCP nem lhes
  * serve as tools (cerca da H2), então prometer o verbo a eles seria mandá-los
  * procurar ferramenta que não existe.
+ *
+ * A ABA É DE QUEM A ABRE (2026-09-01 — design
+ * `.synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md`, D1/D2/D7).
+ *
+ * A ordem do dono foi "queria que [os ajudantes] utilizassem o browser caso
+ * quisessem, cada um na sua aba, na sua porta", e ela tem uma medição embaixo:
+ * na missão 86a05c06 (01/09) o ÚNICO ajudante que dirigiu o browser dividiu a
+ * MESMA aba com o dev — a URL alternou entre a porta dele (8791) e as do dev
+ * (8159/8148/8163) em minutos, três leituras do ajudante caíram na página do
+ * outro e o dev o cancelou aos 20 min. Desde o browser existir, 1 de 72
+ * ajudantes claude o usou e 0 de 91 codex: quem delega guardava o browser para
+ * si porque dividir a aba não dava.
+ *
+ * Então as duas primeiras linhas mudaram de dono: a aba é DELE (uma por
+ * identidade, e `browser_open` abre ou reusa A SUA), o dono continua assistindo
+ * mas agora ESCOLHE qual aba olhar, e o ajudante tem aba E porta próprias que
+ * nem o dev encosta. A lista de abas com o dono de cada é CONSCIÊNCIA e não
+ * volante — `browser_open` perdeu o `tabId` justamente porque focar a aba alheia
+ * deixou de ser ação de agente (D7).
  */
 const EMBEDDED_BROWSER_ORDER = `BROWSER — VISUAL QA RUNS IN THE HOUSE BROWSER, NEVER IN ONE YOU OPEN:
-- This mission has a BROWSER inside Synkora: a panel in the owner's dock that you drive from here with the browser_* tools (in a claude chat, mcp__synkora__browser_*). browser_open puts a page in it and that tab stays warm; he watches you drive it and takes the wheel whenever he wants.
+- This mission has a BROWSER inside Synkora: a panel in the owner's dock that you drive from here with the browser_* tools (in a claude chat, mcp__synkora__browser_*). THE TAB IS YOURS: there is one tab per identity, so browser_open opens or reuses YOUR tab and every read, act, probe and shot of yours lands on it. The owner watches from the dock and picks which tab to look at, so your navigation never steals his view.
+- HELPERS GET THEIR OWN TAB AND THEIR OWN RESERVED PORT: never navigate a helper's tab and never serve anything on a helper's port — his bench is his, and stepping on it is how a check ends up reading someone else's page. browser_open with no url hands you your own page plus the LIST of tabs with the owner of each: that list is awareness, not a steering wheel, and there is no verb that focuses another identity's tab.
 - NEVER open an external browser to look at product UI, and never install or spawn a playwright, puppeteer or headless chrome of your own. That detour is the pain this browser was built to kill: it cost the owner 40-50 minutes per visual check, and he saw none of it happening.
 - browser_probe is the VERDICT: box, computed styles, overflow and clipping, contrast, and what covers an element — visual FACTS as text, measured by the app. Ask it instead of squinting at a picture; it is exact, and it reads the same in every chat.
 - browser_shot is for the OWNER'S EYES: it writes an image into this worktree and hands back its path. REFERENCE that path in your message, exactly as the visual-deliverable rule above demands — an unreferenced shot is a picture nobody sees.
