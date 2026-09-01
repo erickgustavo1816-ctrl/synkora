@@ -238,8 +238,13 @@ export type GuiHelperEvent =
   | { type: 'session'; sessionId: string }
   /** Contexto vivo medido pelo CLI; `null` = o backend não informou. */
   | { type: 'context'; contextTokens: number | null }
-  /** Fim do turno. `text` ausente = usa o acumulado. */
-  | { type: 'result'; isError: boolean; text?: string; errorText?: string }
+  /**
+   * Fim do turno. `text` ausente = usa o acumulado. `held` = o CLI fechou esta
+   * resposta mas o turno lógico segue (agente de fundo vivo): NÃO é desfecho —
+   * o motor a guarda e, se o canal cair antes de outro `result`, ela é a
+   * entrega (o cinto do caso 2026-08-31: relatório pronto virando "falhou").
+   */
+  | { type: 'result'; isError: boolean; held?: true; text?: string; errorText?: string }
   /** Queda do próprio canal (binário sumiu, protocolo quebrou). */
   | { type: 'fatal'; text: string }
   /** O processo morreu. NO CLAUDE ISSO É O DESFECHO NORMAL (sonda §2.6). */
@@ -955,6 +960,10 @@ interface LiveHelper {
   spawnRequest?: GuiHelperSpawnRequest
   /** Texto acumulado dos eventos `text` — a entrega quando o `result` não a traz. */
   text: string
+  /** A ÚLTIMA resposta que o CLI FECHOU com o turno lógico ainda aberto
+   *  (`result` com `held`). Trabalho novo (texto, ferramenta) a apaga: o CLI
+   *  passou dela. Se o canal cair com ela de pé, é ela o desfecho. */
+  heldResult?: { isError: boolean; text?: string; errorText?: string }
   /** Long-polls esperando o desfecho deste ajudante. */
   waiters: (() => void)[]
   activityNotifiedAt: number
@@ -1432,6 +1441,7 @@ export class GuiHelperEngine {
     record.lastActivity = { at, summary: 'retomado — continuando de onde parou' }
     live.settledSeq = undefined
     live.text = ''
+    live.heldResult = undefined
     live.activityNotifiedAt = at
     // O PROCESSO MORTO SAI DE CENA. Ele ficou pendurado no registro desde a
     // interrupção (o `settle` descarta, mas não solta a referência), e a fila de
@@ -1842,9 +1852,11 @@ export class GuiHelperEngine {
 
     if (event.type === 'text') {
       live.text += event.text
+      live.heldResult = undefined
       return
     }
     if (event.type === 'activity') {
+      live.heldResult = undefined
       const at = this.now()
       live.record.lastActivity = { at, summary: event.summary }
       if (at - live.activityNotifiedAt >= GUI_HELPER_ACTIVITY_THROTTLE_MS) {
@@ -1871,6 +1883,18 @@ export class GuiHelperEngine {
       return
     }
     if (event.type === 'result') {
+      if (event.held) {
+        // Resposta fechada com o turno lógico ainda aberto: fica de RESERVA. O
+        // card segue trabalhando — o desfecho é do próximo `result`, ou do
+        // cinto abaixo se o canal cair antes dele.
+        live.heldResult = {
+          isError: event.isError,
+          ...(event.text ? { text: event.text } : {}),
+          ...(event.errorText ? { errorText: event.errorText } : {})
+        }
+        return
+      }
+      live.heldResult = undefined
       if (event.isError) {
         this.fail(live, event.errorText?.trim() || 'o turno do ajudante falhou sem motivo declarado')
         return
@@ -1879,18 +1903,37 @@ export class GuiHelperEngine {
       return
     }
     if (event.type === 'fatal') {
+      // CINTO: o canal caiu (idle de 10 min, binário, protocolo) DEPOIS de o CLI
+      // ter fechado uma resposta — ela é a entrega, não a queda. Sem isto o
+      // relatório pronto virava "sem resposta do CLI há 10 min" (2026-08-31).
+      if (this.settleHeld(live)) return
       this.fail(live, event.text)
       return
     }
     // PROCESSO ENCERRADO É DESFECHO (sonda §2.6): o `claude -p` entrega o
     // resultado e morre sozinho com exit 0. Esperar um desligamento explícito
     // deixaria todo helper claude com o card aberto para sempre.
+    if (this.settleHeld(live)) return
     if (live.text.trim()) {
       this.settle(live, 'done', { text: live.text })
       return
     }
     const code = typeof event.code === 'number' ? `código ${event.code}` : 'sem código de saída'
     this.fail(live, `o processo do CLI encerrou (${code}) sem entregar resultado`)
+  }
+
+  /** O cinto do `held`: a resposta que o CLI fechou vira o desfecho quando o
+   *  canal cai antes de outro `result`. `true` = encerrou por aqui. */
+  private settleHeld(live: LiveHelper): boolean {
+    const held = live.heldResult
+    if (!held) return false
+    live.heldResult = undefined
+    if (held.isError) {
+      this.fail(live, held.errorText?.trim() || 'o turno do ajudante falhou sem motivo declarado')
+      return true
+    }
+    this.settle(live, 'done', { text: held.text ?? live.text })
+    return true
   }
 
   /**
@@ -1938,6 +1981,7 @@ export class GuiHelperEngine {
     live.record.lastActivity = { at, summary: `re-tentando · ${reason}` }
     live.activityNotifiedAt = at
     live.text = ''
+    live.heldResult = undefined
     try {
       live.process?.dispose()
     } catch {

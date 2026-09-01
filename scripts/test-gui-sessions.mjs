@@ -1596,12 +1596,42 @@ test('result raiz continua enquanto houver subagente vivo', () => {
   })
   line({ type: 'result', is_error: false, result: 'síntese final' })
   assert.equal(events.at(-1).continues, false, 'sem agente vivo o último ciclo fecha o turno')
+})
 
-  // A fila de mensagens do usuário continua mandando sozinha no `continues`.
-  session.pendingTurnGenerations = [7, 8]
-  session.activeTurnGeneration = 7
+test('mensagem no meio do turno é STEERING: não abre geração, e um result só fecha o turno', () => {
+  // O claude DOBRA a mensagem no turno em andamento (`queue-operation` com
+  // `reason: "absorbed_mid_turn"` no transcript, 2.1.251) e emite UM `result`.
+  // Contar geração no steer era esperar um segundo `result` que nunca vem: o
+  // turno ficava ativo para sempre e o `continues` mentia — foi o que matou
+  // dois ajudantes com o relatório pronto (idle de 10 min, 2026-08-31/09-01).
+  const { session, events, line } = claudeAgentSession()
+  const writes = []
+  session.turnGeneration = 0
+  session.write = (obj) => writes.push(obj)
+  session.resetIdle = () => {}
+
+  session.send('primeira pergunta')
+  assert.deepEqual(session.pendingTurnGenerations, [1])
+  assert.equal(session.turnActive, true)
+
+  session.send('corrija o rumo')
+  assert.deepEqual(session.pendingTurnGenerations, [1], 'steer não vira turno novo')
+  assert.equal(writes.length, 2, 'o texto vai ao stdin do mesmo jeito')
+  assert.equal(writes[1].message.content[0].text, 'corrija o rumo')
+
+  line({ type: 'result', is_error: false, result: 'resposta única' })
+  assert.equal(events.at(-1).type, 'result')
+  assert.equal(events.at(-1).continues, false, 'o único result fecha o turno inteiro')
+  assert.equal(session.turnActive, false)
+
+  // Sessão OCIOSA abre geração: o CLI desenfileira a mensagem como turno próprio
+  // (`enqueue`+`dequeue` no mesmo milissegundo, no transcript).
+  session.send('pergunta nova')
+  assert.deepEqual(session.pendingTurnGenerations, [2])
+  assert.equal(session.turnActive, true)
   line({ type: 'result', is_error: false })
-  assert.equal(events.at(-1).continues, true)
+  assert.equal(events.at(-1).continues, false)
+  assert.equal(session.turnActive, false)
 })
 
 test('envelope de tarefa fora do contrato é no-op silencioso e texto raiz segue raiz', () => {

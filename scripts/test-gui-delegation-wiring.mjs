@@ -743,10 +743,10 @@ test('a conta: mesmo CLI clona o delegador, CLI cruzado cai na primeira LOGADA',
 test('o evento do CLI vira o vocabulário do motor — e beco vira desfecho', () => {
   assert.deepEqual(guiHelperEventFor({ type: 'text', text: 'oi' }), { type: 'text', text: 'oi' })
   assert.deepEqual(guiHelperEventFor({ type: 'closed', code: 0 }), { type: 'closed', code: 0 })
-  assert.equal(
-    guiHelperEventFor({ type: 'result', isError: false, continues: true }),
-    null,
-    'turno que continua não encerra o ajudante'
+  assert.deepEqual(
+    guiHelperEventFor({ type: 'result', isError: false, continues: true, resultText: 'fechei' }),
+    { type: 'result', isError: false, held: true, text: 'fechei' },
+    'turno que continua não encerra o ajudante — mas a resposta fechada viaja como `held` (cinto)'
   )
   assert.deepEqual(guiHelperEventFor({ type: 'result', isError: false, resultText: 'pronto' }), {
     type: 'result',

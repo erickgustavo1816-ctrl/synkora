@@ -1019,9 +1019,25 @@ export class MaestroSession {
   }
 
   send(text: string): void {
-    const generation = ++this.turnGeneration
-    this.pendingTurnGenerations = enqueueGuiTurn(this.pendingTurnGenerations, generation)
-    this.activeTurnGeneration = this.pendingTurnGenerations[0] ?? null
+    // MENSAGEM NO MEIO DE UM TURNO VIVO É STEERING, nunca turno novo (paridade
+    // com o `turn/steer` do codex). O claude DOBRA o texto no turno em
+    // andamento e emite UM `result` só — o transcript grava `queue-operation`
+    // com `reason: "absorbed_mid_turn"` (2.1.251; a sonda
+    // probe-claude-owner-midturn já via o steer na 2.1.241). Abrir geração aqui
+    // era esperar um segundo `result` que nunca vem: o turno ficava "ativo"
+    // para sempre, o `continues` do único `result` mentia e o ajudante morria
+    // pelo idle de 10 min com a entrega pronta (caso real 2026-08-31/09-01:
+    // dois helpers "failed" exatos 600s depois do texto final). Só a sessão
+    // OCIOSA abre geração — aí o CLI desenfileira a mensagem como turno
+    // próprio (`enqueue`+`dequeue` no mesmo milissegundo, no transcript).
+    // Janela residual: steer que alcança o CLI DEPOIS de o turno fechar vira
+    // turno sem geração — o `result` dele chega com `continues` honesto e
+    // nada fica preso; só o `turnActive` não o enxerga enquanto ele roda.
+    if (!this.turnActive) {
+      const generation = ++this.turnGeneration
+      this.pendingTurnGenerations = enqueueGuiTurn(this.pendingTurnGenerations, generation)
+      this.activeTurnGeneration = this.pendingTurnGenerations[0] ?? null
+    }
     this.write({
       type: 'user',
       message: { role: 'user', content: [{ type: 'text', text }] }

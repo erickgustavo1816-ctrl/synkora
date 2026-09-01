@@ -274,6 +274,69 @@ test('PROCESSO ENCERRADO É DESFECHO: claude é fire-and-forget (sonda S4 §2.6)
   assert.match(morreu.engine.get(morreu.helperId).failure, /1/u)
 })
 
+test('result SEGURADO (`held`) não encerra — e a queda do canal depois vira entrega, não "falhou"', () => {
+  // Caso real 2026-08-31/09-01: o CLI fechou o relatório, o turno lógico ficou
+  // "aberto" e 600s depois o idle derrubou o processo — dois ajudantes
+  // encerraram como failed com a entrega pronta. A resposta fechada é o
+  // desfecho; a queda que vem depois dela não é.
+  const { engine, helperId, spawn, changes } = oneHelper()
+  spawn.emit({ type: 'text', text: 'rascunho' })
+  spawn.emit({ type: 'result', isError: false, held: true, text: 'RELATÓRIO FINAL' })
+  assert.equal(engine.get(helperId).state, 'working', 'segurado não é desfecho')
+  assert.equal(spawn.disposed, 0)
+
+  spawn.emit({ type: 'fatal', text: 'sem resposta do CLI há 10 min — sessão encerrada' })
+  const record = engine.get(helperId)
+  assert.equal(record.state, 'done')
+  assert.equal(record.result, 'RELATÓRIO FINAL')
+  assert.equal(record.failure, undefined)
+  assert.equal(spawn.disposed, 1)
+  assert.equal(changes.at(-1).kind, 'settled')
+
+  // `closed` depois do segurado: o mesmo desfecho.
+  const fechou = oneHelper()
+  fechou.spawn.emit({ type: 'result', isError: false, held: true, text: 'pronto' })
+  fechou.spawn.emit({ type: 'closed', code: 0 })
+  assert.equal(fechou.engine.get(fechou.helperId).state, 'done')
+  assert.equal(fechou.engine.get(fechou.helperId).result, 'pronto')
+
+  // Segurado SEM texto próprio: vale o acumulado.
+  const acumulado = oneHelper()
+  acumulado.spawn.emit({ type: 'text', text: 'o que escrevi' })
+  acumulado.spawn.emit({ type: 'result', isError: false, held: true })
+  acumulado.spawn.emit({ type: 'fatal', text: 'x' })
+  assert.equal(acumulado.engine.get(acumulado.helperId).state, 'done')
+  assert.equal(acumulado.engine.get(acumulado.helperId).result, 'o que escrevi')
+})
+
+test('o `held` respeita o veredito do CLI e morre com trabalho novo', () => {
+  // Resposta fechada COM ERRO: a queda vira failed com o motivo do CLI, não o
+  // do relógio.
+  const erro = oneHelper()
+  erro.spawn.emit({ type: 'activity', summary: 'Read a.ts' })
+  erro.spawn.emit({ type: 'result', isError: true, held: true, errorText: 'limite da conta estourou' })
+  assert.equal(erro.engine.get(erro.helperId).state, 'working')
+  erro.spawn.emit({ type: 'fatal', text: 'sem resposta do CLI há 10 min — sessão encerrada' })
+  assert.equal(erro.engine.get(erro.helperId).state, 'failed')
+  assert.match(erro.engine.get(erro.helperId).failure, /limite da conta estourou/u)
+
+  // Um `result` DE VERDADE depois do segurado vence — e apaga a reserva.
+  const venceu = oneHelper()
+  venceu.spawn.emit({ type: 'result', isError: false, held: true, text: 'parcial' })
+  venceu.spawn.emit({ type: 'result', isError: false, text: 'FINAL' })
+  assert.equal(venceu.engine.get(venceu.helperId).state, 'done')
+  assert.equal(venceu.engine.get(venceu.helperId).result, 'FINAL')
+
+  // Trabalho novo (ferramenta/texto) depois do segurado: o CLI passou daquela
+  // resposta — a queda volta a ser o que sempre foi.
+  const passou = oneHelper()
+  passou.spawn.emit({ type: 'result', isError: false, held: true, text: 'parcial' })
+  passou.spawn.emit({ type: 'activity', summary: 'Bash npm test' })
+  passou.spawn.emit({ type: 'fatal', text: 'o binário sumiu do PATH' })
+  assert.equal(passou.engine.get(passou.helperId).state, 'failed')
+  assert.match(passou.engine.get(passou.helperId).failure, /o binário sumiu do PATH/u)
+})
+
 test('TODO desfecho descarta o processo — é o kill que o codex exige (sonda S4 §6)', () => {
   // O app-server do codex NUNCA encerra sozinho ao fim do turno. Chamar dispose
   // em todo desfecho é o que impede a frota de virar processo órfão.

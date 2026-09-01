@@ -327,12 +327,15 @@ export function guiHelperEventFor(evt: SessionEvent): GuiHelperEvent | null {
     case 'session-id':
       return { type: 'session', sessionId: evt.sessionId }
     case 'result':
-      // `continues` = o turno lógico ainda não acabou (mensagem enfileirada,
-      // trabalho de fundo). Encerrar aqui mataria um ajudante em pleno trabalho.
-      if (evt.continues === true) return null
+      // `continues` = o turno lógico ainda não acabou (agente de fundo vivo).
+      // Encerrar aqui mataria um ajudante em pleno trabalho — mas o motor
+      // PRECISA saber que o CLI fechou uma resposta: ela viaja como `held`, e
+      // é o cinto que transforma "o processo caiu depois" em entrega, não em
+      // "falhou" (caso real 2026-08-31: relatório pronto, ajudante `failed`).
       return {
         type: 'result',
         isError: evt.isError,
+        ...(evt.continues === true ? { held: true as const } : {}),
         ...(evt.resultText ? { text: evt.resultText } : {}),
         ...(evt.errorText ? { errorText: evt.errorText } : {})
       }
