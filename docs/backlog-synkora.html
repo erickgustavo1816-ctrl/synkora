@@ -57,7 +57,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>✦ Backlog Synkora</h1>
-    <span class="stamp">atualizado 01/09 · pelo orquestrador</span>
+    <span class="stamp">atualizado 02/09 · pelo orquestrador</span>
     <p class="how"><b>Como funciona:</b> este é o mapa vivo da obra — eu re-publico neste MESMO link a cada
     entrega. Quer mudar prioridade ou adicionar item? Comente aqui na página ou me diga no chat.
     Fonte da verdade: <b>docs/backlog-synkora.json</b> (MCP + CLI em scripts/backlog*.mjs).</p>
@@ -198,6 +198,18 @@
       <span class="desc">Rodada das abas por identidade cortou 1369 → 1221 com quatro irmãos (contracts 288, gestures 224, url 105, tabOwner 110). O que sobra é o closure (~950): próxima fronteira medida no report A (§Corte 3). Substitui a sobra &quot;browserPane 1069&quot; das 4 sobras do pop-out.</span>
       <span class="refs">refs: <code>.synkora/reports/browser-tabs-agent-A-report.md</code> · <code>src/main/browserPane.ts</code></span>
     </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">integration_run mata o próprio chamador antes do resultado voltar + limpeza do worktree bloqueada por servidores nohup da frota (incidente 02/09, 1h25 &quot;rodando&quot;)</span>
+      <span class="desc">Missão Melhorar UI (d13f0a00): ⇪ às 12:55; merge GRAVADO em 15 s; kill-batch do pane dev às 12:55:10 (o chamador do integration_run) e o resultado com a receita (&quot;feche o processo que segura os arquivos&quot;) chegou 7 s depois a um pane morto — o dono viu &quot;rodando&quot; por 1h25. A limpeza do worktree falhou porque 4 python -m reedit.webui (nohup, subidos por dev/ajudantes) seguravam a pasta; sobrou carcaça sem .git e ticket blocked target_repair_pending, que só reconcilia no BOOT. Consertos: (1) o resultado do integration_run tem de chegar ANTES de matar o pane, ou virar recado durável no fio/dock; (2) na integração, ceifar processos com cwd no worktree (o mapa de portas já conhece as portas da frota → PID por Get-NetTCPConnection), não só apps visuais; (3) reparo do target_repair_pending acionável sem boot (alavanca no dock).</span>
+      <span class="refs">refs: <code>src/main/missionEngine.ts</code> · <code>src/main/reapVisualsUnder.ts</code> · <code>src/main/paneLifecycle.ts</code></span>
+    </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">Fala do dono com PERMISSÃO/plan-review pendente ainda espera o fecho do turno (rota hold da R39) + carimbo da bolha não sobrevive ao boot</span>
+      <span class="desc">R39 (02/09): com pergunta aberta o texto do dono vira a resposta; com turno aberto ele PARA o turno. Sobrou o canto: permissão/plan-review pendente → a fala fica no pote sem interrupt e só sai no fecho. Conserto: re-avaliar a rota (ownerSteerPlan) quando a pendência é resolvida (answerPermission/answerPlanReview) e virar stop-and-hand se o turno seguir. E o evento owner-message-state não entra em isGuiPersistedEvent: bolha reaberta depois de boot perde o carimbo (ausência de informação, nunca falsa).</span>
+      <span class="refs">refs: <code>.synkora/reports/DESIGN_FALA_DO_DONO_PARA_O_TURNO_2026-09-02.md</code> · <code>src/main/guiOwnerSteer.ts</code> · <code>src/main/guiSessions.ts</code></span>
+    </div>
   </section>
 
   <details class="done-wrap" open>
@@ -238,6 +250,8 @@
       <p class="done-day">01/09 — terça</p>
       <div class="done"><span class="glyph">✓</span><span class="title">Vigia de versão dos CLIs pós-boot — modelo novo aparece sem restart</span><span class="refs"><code>src/main/cliVersionDrift.ts</code> · <code>src/main/cliUpdate.ts</code> · <code>scripts/test-cli-version-watch.mjs</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">Browser: ABA POR IDENTIDADE + PORTA POR AJUDANTE — a frota ganha bancada própria (dono/dev/ajudante cada um na sua aba; porta reservada no spawn; ⚡ e ficha do dono por aba)</span><span class="refs"><code>7b0bb49</code> · <code>.synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md</code> · <code>docs/HANDOFF_SESSAO_2026-09-01.md</code> · <code>src/main/browserTabOwner.ts</code> · <code>src/main/guiHelperPorts.ts</code></span></div>
+      <p class="done-day">02/09 — quarta</p>
+      <div class="done"><span class="glyph">✓</span><span class="title">R39 — A FALA DO DONO PARA O TURNO: mensagem com turno aberto para o agente e volta como turno novo; dívida de resposta universal por hook PreToolUse (sondado); carimbo na bolha</span><span class="refs"><code>26b7488</code> · <code>.synkora/reports/DESIGN_FALA_DO_DONO_PARA_O_TURNO_2026-09-02.md</code> · <code>.synkora/reports/PROBE_PRETOOLUSE_BLOCK_2026-09-02.md</code> · <code>docs/HANDOFF_SESSAO_2026-09-02.md</code></span></div>
     </div>
   </details>
 </div>

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-01T20:12:13.882Z",
+  "updatedAt": "2026-09-02T18:03:29.093Z",
   "lanes": {
     "agora": [],
     "fila": [
@@ -165,6 +165,26 @@
         "refs": [
           ".synkora/reports/browser-tabs-agent-A-report.md",
           "src/main/browserPane.ts"
+        ]
+      },
+      {
+        "id": "integration-run-mata-o-proprio-chamador-antes-do",
+        "title": "integration_run mata o próprio chamador antes do resultado voltar + limpeza do worktree bloqueada por servidores nohup da frota (incidente 02/09, 1h25 \"rodando\")",
+        "desc": "Missão Melhorar UI (d13f0a00): ⇪ às 12:55; merge GRAVADO em 15 s; kill-batch do pane dev às 12:55:10 (o chamador do integration_run) e o resultado com a receita (\"feche o processo que segura os arquivos\") chegou 7 s depois a um pane morto — o dono viu \"rodando\" por 1h25. A limpeza do worktree falhou porque 4 python -m reedit.webui (nohup, subidos por dev/ajudantes) seguravam a pasta; sobrou carcaça sem .git e ticket blocked target_repair_pending, que só reconcilia no BOOT. Consertos: (1) o resultado do integration_run tem de chegar ANTES de matar o pane, ou virar recado durável no fio/dock; (2) na integração, ceifar processos com cwd no worktree (o mapa de portas já conhece as portas da frota → PID por Get-NetTCPConnection), não só apps visuais; (3) reparo do target_repair_pending acionável sem boot (alavanca no dock).",
+        "refs": [
+          "src/main/missionEngine.ts",
+          "src/main/reapVisualsUnder.ts",
+          "src/main/paneLifecycle.ts"
+        ]
+      },
+      {
+        "id": "fala-do-dono-com-permissao-plan-review-pendente-",
+        "title": "Fala do dono com PERMISSÃO/plan-review pendente ainda espera o fecho do turno (rota hold da R39) + carimbo da bolha não sobrevive ao boot",
+        "desc": "R39 (02/09): com pergunta aberta o texto do dono vira a resposta; com turno aberto ele PARA o turno. Sobrou o canto: permissão/plan-review pendente → a fala fica no pote sem interrupt e só sai no fecho. Conserto: re-avaliar a rota (ownerSteerPlan) quando a pendência é resolvida (answerPermission/answerPlanReview) e virar stop-and-hand se o turno seguir. E o evento owner-message-state não entra em isGuiPersistedEvent: bolha reaberta depois de boot perde o carimbo (ausência de informação, nunca falsa).",
+        "refs": [
+          ".synkora/reports/DESIGN_FALA_DO_DONO_PARA_O_TURNO_2026-09-02.md",
+          "src/main/guiOwnerSteer.ts",
+          "src/main/guiSessions.ts"
         ]
       }
     ],
@@ -450,6 +470,18 @@
           "src/main/guiHelperPorts.ts"
         ],
         "day": "01/09 — terça"
+      },
+      {
+        "id": "r39-a-fala-do-dono-para-o-turno-mensagem-com-tur",
+        "title": "R39 — A FALA DO DONO PARA O TURNO: mensagem com turno aberto para o agente e volta como turno novo; dívida de resposta universal por hook PreToolUse (sondado); carimbo na bolha",
+        "desc": "Medido antes (d13f0a00, 01/09): 3 min no pote esperando tool do Synkora + 6 tools recusadas antes da primeira linha = 8 min até a resposta. Agora: interrupt só do turno + envelope de retomada nomeando a tool cortada; pergunta aberta vira resposta; hook em bash lendo bandeira em disco bloqueia toda tool (28 ms); bolha diz parando/entregue/respondida. Pousado em nivel5-fase1 (26b7488); validação ao vivo depende do restart.",
+        "refs": [
+          "26b7488",
+          ".synkora/reports/DESIGN_FALA_DO_DONO_PARA_O_TURNO_2026-09-02.md",
+          ".synkora/reports/PROBE_PRETOOLUSE_BLOCK_2026-09-02.md",
+          "docs/HANDOFF_SESSAO_2026-09-02.md"
+        ],
+        "day": "02/09 — quarta"
       }
     ]
   },
@@ -858,6 +890,27 @@
       "by": "orquestrador",
       "action": "add",
       "id": "browser-aba-por-identidade-porta-por-ajudante-a-",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-09-02T17:24:15.676Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "integration-run-mata-o-proprio-chamador-antes-do",
+      "detail": "→ dividas"
+    },
+    {
+      "at": "2026-09-02T18:00:40.924Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "fala-do-dono-com-permissao-plan-review-pendente-",
+      "detail": "→ dividas"
+    },
+    {
+      "at": "2026-09-02T18:03:29.093Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "r39-a-fala-do-dono-para-o-turno-mensagem-com-tur",
       "detail": "→ feito"
     }
   ]
