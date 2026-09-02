@@ -51,7 +51,20 @@ const LSP_TOOLS = Object.freeze([
   'lsp_hover',
   'lsp_references'
 ])
-const PLANNER_TOOLS = Object.freeze([...PLAN_TOOLS, ...LSP_TOOLS].sort())
+/** 2026-08-30: o planejador entrou no regime da delegação — o catálogo dele
+ *  ganhou as sete de ajudante. A propriedade DESTE arquivo continua a mesma
+ *  (as duas eras recebem o MESMO catálogo); a lista canônica por papel vive
+ *  em `test:gui-delegate-mcp`. */
+const HELPER_TOOLS = Object.freeze([
+  'delegate',
+  'helper_cancel',
+  'helper_result',
+  'helper_resume',
+  'helper_send',
+  'helpers_status',
+  'list_seats'
+])
+const PLANNER_TOOLS = Object.freeze([...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS].sort())
 
 const ERAS = Object.freeze([
   { era: 'legacy', mode: 'legacy', version: LEGACY_VERSION },

@@ -1030,8 +1030,10 @@ test('quem revoga as ferramentas no teardown tem par que as re-materializa no sp
   )
   // A autoridade sobre quem tem ferramenta é do main, e ela é RE-PROVADA a
   // cada spawn: o `spawn.mcp` que chega do renderer é só o eco do que este
-  // main entregou, nunca a permissão em si.
-  assert.match(arm, /missionTypeOf\(mission\) !== 'planejamento'/u)
+  // main entregou, nunca a permissão em si. (2026-08-30: a régua virou
+  // `guiPaneToolKind` — os três papéis armam pela mesma trilha e SÓ `none`
+  // recusa; a prova de tipo por missão mora na régua, não mais no braço.)
+  assert.match(arm, /kind === 'none'/u)
   assert.match(arm, /event: 'gui-planner-arm-refused'/u)
   // E a prova final: o arquivo que o claude vai abrir tem de existir AGORA.
   assert.match(arm, /if \(!file \|\| !existsSync\(file\)\) return refuse\('config-file-missing'\)/u)
@@ -2277,9 +2279,12 @@ test('modelo e effort usam troca viva, confirmada e sem status no transcript', (
   assert.match(pane, /const applyExecutorChange = useCallback/u)
   assert.match(pane, /guiApi\.configureExecutor\(paneId, patch\)/u)
   assert.match(pane, /if \(!res\.ok\)[\s\S]*setLiveModel\(nextModel\)/u)
+  // A fatia é SÓ a troca viva (applyExecutorChange): o carimbo do "abrindo"
+  // (deferExecutorChange, 2026-08-30) mora logo abaixo e FALA de propósito —
+  // ele adia uma ação, e adiar em silêncio seria o clique sumindo.
   const executorBlock = pane.slice(
     pane.indexOf('const applyExecutorChange'),
-    pane.indexOf('const changeMode')
+    pane.indexOf('const deferExecutorChange')
   )
   assert.doesNotMatch(executorBlock, /guiApi\.create/u)
   assert.doesNotMatch(executorBlock, /command-output/u)
@@ -4221,6 +4226,35 @@ test('R27 — o quadro de rota não conta nem mostra o registro do release', () 
   )
 })
 
+// A MISSÃO DE PLANEJAMENTO NÃO É "SEM VERSÃO" (foto do dono, 2026-08-30): ela
+// fica fora de versão por régua de nascimento (escreve plano/ e nunca integra),
+// mas o quadro a jogava na linha "sem versão" — e, viva, dentro da versão
+// CORRENTE ("é nela que ela vai integrar", falso aqui). Linha própria com
+// vocabulário próprio: planejamento CONCLUI, não integra.
+test('o quadro de rota dá linha própria ao planejamento — nunca "sem versão"', () => {
+  const route = readFileSync(
+    new URL('../src/renderer/src/components/MissionRouteBoard.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(route, /__planejamento__/u, 'a linha própria do planejamento existe')
+  const rows = route.slice(route.indexOf('const rows = useMemo'))
+  assert.match(
+    rows.slice(0, 2000),
+    /missionTypeOf\(m\) === 'planejamento'/u,
+    'planejamento é roteado ANTES da régua de versão (corrente/sem versão)'
+  )
+  assert.match(
+    route,
+    /row\.planning \? 'concluídas' : 'integradas'/u,
+    'a contagem da linha de planejamento fala "concluídas"'
+  )
+  assert.match(
+    route,
+    /=== 'planejamento' \? 'concluída' : 'integrada'/u,
+    'a ficha encerrada de planejamento diz "concluída", nunca "integrada"'
+  )
+})
+
 // O CARET NUMA LINHA, A EDIÇÃO NA OUTRA (bug do dono, 2026-08-21, em vídeo):
 // com menção ativa o textarea fica transparente e quem pinta o texto é o
 // overlay — mas o overlay quebrava linha com `overflow-wrap: anywhere`
@@ -4848,4 +4882,46 @@ test('o chip é papel quieto: forma, sem movimento e sem virar painel', () => {
   const regra = bloco.slice(0, bloco.indexOf('}') + 1)
   assert.doesNotMatch(regra, /animation:/u, 'o chip não pisca')
   assert.doesNotMatch(regra, /transition:/u)
+})
+
+// A JANELA DO "abrindo" (foto do dono, 2026-08-30): o gui:create espera o
+// waitForCliStable — no boot frio a checagem de update do CLI segura o spawn
+// por MINUTOS — e nesse vão não existe sessão no registro. O composer ficava
+// com o menu de modelos vazio, o chip de effort SUMIA, e trocar o modelo
+// batia em "este pane não tem sessão aberta": um beco. Três cercas:
+//   1. os menus caem no CATÁLOGO real da conta (o mesmo do painel D8);
+//   2. o chip de effort não some enquanto as caps não chegam;
+//   3. o clique vira CARIMBO com fala no fio, e um reconciliador o aplica
+//      pelo caminho vivo assim que a conversa fica de pé e livre.
+test('no "abrindo" o composer cai no catálogo e a troca vira carimbo, nunca beco', () => {
+  const pane = readFileSync(
+    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(
+    pane,
+    /const modelOptions = gui\.caps\?\.models \?\? catalogFallbackModels/u,
+    'sem o fallback o menu volta a nascer vazio'
+  )
+  assert.match(pane, /guiComposerCatalogModels\(/u, 'o fallback vem da metade pura')
+  assert.match(pane, /void loadCatalog\(cli, seatId\)/u, 'sem pedir o catálogo o fallback fica vazio')
+  assert.match(
+    pane,
+    /effortOptions\.length > 0 \|\| \(!gui\.caps && Boolean\(selectedEffort\)\)/u,
+    'o chip de effort não pode sumir no abrindo'
+  )
+  assert.match(pane, /deferExecutorChange/u, 'o desvio do carimbo sumiu')
+  assert.match(
+    pane,
+    /if \(gui\.status !== 'starting'\) return false/u,
+    'o carimbo é SÓ para a janela sem sessão — fora dela o caminho vivo responde'
+  )
+  assert.match(pane, /carimbei a troca/u, 'o clique carimbado fala no fio, nunca silencia')
+  const reconciler = pane.slice(pane.indexOf('O RECONCILIADOR do carimbo'))
+  assert.ok(reconciler.length > 100, 'o reconciliador do carimbo sumiu')
+  assert.match(
+    reconciler.slice(0, 1800),
+    /gui\.status === 'starting' \|\| gui\.status === 'working'\) return/u,
+    'com turno vivo o reconciliador espera — o main recusaria a troca'
+  )
 })

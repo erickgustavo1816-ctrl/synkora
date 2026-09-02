@@ -964,6 +964,17 @@ test('RIGHTDOCK — a moldura: dock-head + três seções com resumo', async () 
   assert.match(section, /aria-expanded/u, 'recolher é botão de verdade, com estado acessível')
   assert.match(section, /localStorage/u, 'o colapso persiste — o dock lembra como o dono o deixou')
 
+  // O PLANEJADOR TEM FROTA (ordem do dono, 2026-08-30: "coloque os ajudantes
+  // também para eu selecionar"): a cerca `!planning` que escondia a seção
+  // morreu — a lateral é justamente onde ele vê modelo, effort e conta de cada
+  // ajudante de pesquisa. A seção continua condicionada a TER frota.
+  assert.doesNotMatch(
+    rail,
+    /\{!planning && frota\.length > 0/u,
+    'a frota voltou a ser cercada do planejamento'
+  )
+  assert.match(rail, /\{frota\.length > 0 && \(/u, 'sem ajudante nenhum a seção nem nasce')
+
   const css = await source('src/renderer/src/global.css')
   assert.match(css, /\.dock-head \{/u)
   assert.match(css, /\.dock-sec-head \{/u)

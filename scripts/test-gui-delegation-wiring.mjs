@@ -849,11 +849,18 @@ function delegationApi(overrides = {}) {
 
 const delegatorId = { paneId: 'p1', role: 'gui-delegator', projectId: 'proj', cwd: '/w' }
 
-test('só o chat de missão dev delega — e só sobre os PRÓPRIOS ajudantes', async () => {
+test('dev e PLANEJADOR delegam; release/ajudante não — e só sobre os PRÓPRIOS ajudantes', async () => {
   const { api } = delegationApi()
+  // 2026-08-30 (ordem do dono): o planejador entrou no regime da delegação —
+  // o portão aceita o papel dele nos sete verbos.
   const planner = { ...delegatorId, role: 'gui-planner' }
-  assert.match(await api.delegateHelpers(planner, [{ prompt: 'x' }]), /não delega/u)
-  assert.match(api.helpersStatus(planner), /não delega/u)
+  assert.doesNotMatch(await api.delegateHelpers(planner, [{ prompt: 'x' }]), /não delega/u)
+  assert.doesNotMatch(api.helpersStatus(planner), /não delega/u)
+  // A cerca de autoridade continua para quem nunca delegou: release e o
+  // próprio ajudante (frota que abre frota).
+  const release = { ...delegatorId, role: 'gui-release' }
+  assert.match(await api.delegateHelpers(release, [{ prompt: 'x' }]), /não delega/u)
+  assert.match(api.helpersStatus({ ...delegatorId, role: 'ajudante' }), /não delega/u)
 
   assert.match(
     await api.helperResult(delegatorId, 'h-alheio'),
@@ -900,22 +907,28 @@ test('o aviso de custo da frota chega junto do recibo', () => {
 
 // ————— 8. CONTRATOS DE FONTE (o que só a costura do main prova) —————
 
-test('chat de missão DEV arma o MCP de delegação; o planejador segue no kit de planos', () => {
+test('o guiSpec arma os TRÊS tipos pelo mesmo encanamento, com o papel próprio', () => {
   const missions = source('src/main/ipc/missions.ts')
   assert.match(missions, /import \{ armGuiDelegateMcp \} from '\.\.\/guiDelegateMcp'/u)
-  // R10: o release COMPARTILHA o arm do delegador com papel próprio — continua
-  // sendo um kit por chat (o papel do token decide o catálogo no servidor).
-  assert.match(
+  // 2026-08-30: o arm do planejador morreu — planejamento arma pelo MESMO
+  // encanamento com o papel `gui-planner` (planos + ajudantes; é o papel do
+  // token que decide o catálogo no servidor, como no release da R10).
+  assert.doesNotMatch(
     missions,
-    /route\.missionType === 'planejamento'\s*\?\s*armGuiPlannerMcp\(mcpInput, guiPlannerMcpDeps\)\s*:\s*armGuiDelegateMcp\(/u,
-    'um kit por chat, nunca os dois'
+    /armGuiPlannerMcp\(/u,
+    'a trilha própria do planejador morreu — duas trilhas era a divergência de 08-17'
   )
   assert.match(
     missions,
-    /route\.missionType === 'release' \? 'gui-release' : 'gui-delegator'/u,
+    /route\.missionType === 'planejamento'\s*\?\s*'gui-planner'/u,
+    'o planejamento arma com o papel próprio'
+  )
+  assert.match(
+    missions,
+    /route\.missionType === 'release'\s*\?\s*'gui-release'\s*:\s*'gui-delegator'/u,
     'o papel do token roteia o catálogo do release'
   )
-  assert.match(missions, /delegateTools:/u, 'o diário tem de distinguir os dois kits')
+  assert.match(missions, /delegateTools:/u, 'o diário tem de distinguir os kits')
 })
 
 test('a frota morre com o pane e PARA com o app — fechar nunca é descartar', () => {
@@ -2270,10 +2283,11 @@ test('helper_resume: a tool existe, chega ao motor e o texto ensina o par de ver
   assert.match(text, /helpers_status|helper_result/u, 'a resposta diz como acompanhar a volta')
 
   // Escopo por pane: o id opaco de outro chat não é autorização, aqui como nas
-  // outras cinco.
+  // outras cinco. Papel sem delegação (release, ajudante) recusa — o
+  // gui-planner DEIXOU de recusar em 2026-08-30 (ele delega pesquisa).
   assert.match(api.helperResume(delegatorId, 'h-alheio'), /não é deste chat/u)
   assert.match(
-    api.helperResume({ ...delegatorId, role: 'gui-planner' }, 'h-meu'),
+    api.helperResume({ ...delegatorId, role: 'gui-release' }, 'h-meu'),
     /não delega/u
   )
 })

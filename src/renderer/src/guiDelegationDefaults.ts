@@ -230,10 +230,11 @@ export function guiDelegationSummary(
  * quatro listas do renderer, e foi o silêncio dessas listas que já deixou um
  * chat inteiro sem ferramenta por uma noite.
  *
- * Os marcadores são EXCLUSIVOS do kit de delegação (guiDelegateMcp): o claude
+ * Os marcadores são EXCLUSIVOS de chat que delega (guiDelegateMcp): o claude
  * ganha `--disallowedTools` com a cerca anti-subagente-nativo e o codex ganha
- * `features.multi_agent=false`. O kit de PLANOS não tem nenhum dos dois — e é
- * isso que impede a abinha de aparecer no chat de planejamento, que não delega.
+ * `features.multi_agent=false`. Desde 2026-08-30 o PLANEJADOR também nasce com
+ * as cercas (ele delega pesquisa), então a abinha aparece nele de graça — a
+ * mesma derivação, nenhuma lista nova para esquecer.
  */
 export function guiPaneDelegates(mcp: { args?: readonly string[] } | undefined): boolean {
   const args = mcp?.args ?? []

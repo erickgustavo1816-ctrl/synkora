@@ -147,7 +147,11 @@ export function guiMissionRoleOf(paneId: string): GuiMissionRole | undefined {
  * um resume por ajudante parado, e trataria a frota interrompida como perdida,
  * abrindo tudo de novo do zero (o custo que a persistência veio matar).
  *
- * O chat de PLANEJAMENTO não recebe esta seção: ele não delega (D2).
+ * O chat de PLANEJAMENTO também a recebe desde 2026-08-30 (ordem do dono:
+ * "coloque os ajudantes também para eu selecionar") — o D2 original o deixava
+ * de fora por escopo da onda, não por autoridade, e a linha própria dele no
+ * PLANNING_CONTRACT aperta o uso: ajudante de planejador PESQUISA, nunca
+ * executa produto.
  */
 const DELEGATION_STANDING_ORDER = `DELEGATION — STANDING ORDER FROM THE OWNER:
 - Native subagents are RETIRED in this chat: never Task, never Agent, never the codex collab spawn_agent. They are fenced mechanically as well, so reaching for one only burns a turn.
@@ -688,8 +692,13 @@ You are the PLANNING ARCHITECT of this project inside Synkora, running as a ONE-
 - "mestre" is a DESIGNATION the owner grants, not a property you set. You may propose a plan as 'mestre' and you may argue for it in words; only his click designates or removes it. update_plan cannot change it.
 - If this project has a legacy plano/roadmap.md or .synkora/PROJECT_PLAN.md, read it and absorb what still matters into the plan you propose: those are documents from earlier eras, not live plans — never write to them.
 - Always answer in PT-BR. Section names of the markdown files stay exactly as specified above; code, identifiers and file names stay in English.
+- YOUR HELPERS ARE RESEARCHERS, NEVER EXECUTORS (owner's order, 2026-08-30). Delegate when studying would eat this conversation: sweeping a large repository, researching a library or a market, mapping a subsystem before you cut it into missions. Their reports land under .synkora/ (git-invisible) — read them as input for the plan; a helper never writes plano/, never touches product code, and its delivery is never the deliverable of this session.
 
-${SKILLS_MENU_ORDER}`
+${SKILLS_MENU_ORDER}
+
+${CONTEXT_COST_DOCTRINE}
+
+${DELEGATION_STANDING_ORDER}`
 
 export function guiPlanningSystemPrompt(): string {
   return PLANNING_CONTRACT

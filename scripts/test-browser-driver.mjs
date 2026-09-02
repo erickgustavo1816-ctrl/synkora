@@ -1219,8 +1219,11 @@ test('CATÁLOGO: reviewer, planejador e release NÃO recebem o browser — a cer
 
   const rev = await toolNames(url, 'token-reviewer', 'cat-rev')
   assert.deepEqual(rev, sorted(DELEGATOR_TOOLS, LSP_TOOLS))
+  // 2026-08-30: o planejador delega (kit de ajudantes no catálogo dele) — e a
+  // propriedade DESTE teste segue de pé: browser continua fora; quem navega na
+  // pesquisa dele é o AJUDANTE.
   const planner = await toolNames(url, 'token-planner', 'cat-planner')
-  assert.deepEqual(planner, sorted(PLANNER_TOOLS, LSP_TOOLS))
+  assert.deepEqual(planner, sorted(PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS))
   const release = await toolNames(url, 'token-release', 'cat-release')
   assert.deepEqual(release, sorted(RELEASE_TOOLS, LSP_TOOLS))
 

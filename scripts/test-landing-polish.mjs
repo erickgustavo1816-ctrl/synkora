@@ -158,8 +158,17 @@ test('nenhum texto destas telas volta para baixo do piso de leitura', async () =
     ['.pd-plan-running', CARD, 4.5],
     ['.pd-plan-kind', CARD, 4.5],
     ['.pd-event-kind', PAPER, 4.5],
-    ['.pd-event-day', PAPER, 4.5],
     ['.pd-event-mark.integrada', PAPER, 4.5],
+    // R38 (2026-08-24) — as superfícies dos ESTADOS. O mockup pinta o dia da
+    // obra e a legenda do palco em `--ink-3`; aqui elas são TEXTO, e `--ink-3`
+    // é tinta de fio (2,5:1 sobre papel). Mesma fala, tinta legível.
+    ['.pd-milestone-state', CARD, 4.5],
+    ['.pd-milestone-facts', CARD, 4.5],
+    ['.pd-milestone-hint', CARD, 4.5],
+    ['.pd-ledger', PAPER, 4.5],
+    ['.pd-work-day', PAPER, 4.5],
+    ['.pd-plan-check', PAPER, 4.5],
+    ['.pd-plan-frac', PAPER, 4.5],
     ['.arch-chat-sub', CARD, 4.5],
     ['.arch-chat-glyph', CARD, 4.5],
     ['.arch-chat-head .pane-close', CARD, 4.5],
@@ -432,6 +441,57 @@ test('folha larga vira DUAS COLUNAS de papéis diferentes, nunca uma faixa de 16
     /\.pd-list\s*\{[^}]*display:\s*grid/u,
     'a grade de linhas lado a lado foi substituída pelas duas colunas do .pd-grid'
   )
+})
+
+/* ---------- R38: o palco do marco e o selo do plano (2026-08-24) ---------- */
+
+test('o palco do MARCO é FORMA, nunca elevação', async () => {
+  const css = await source('src/renderer/src/global.css')
+  const stage = rule(css, '.pd-milestone')
+
+  // A DIFERENÇA VEM DA FORMA (borda de 2px contra o 1px de todo o resto da
+  // folha), não de sombra: cartão que FLUTUA é a linguagem do mapa, e trazê-la
+  // para a casa do projeto foi reprovado pelo dono.
+  assert.match(prop(stage, 'border'), /^2px solid var\(--ink\)/u)
+  assert.equal(prop(stage, 'box-shadow'), null, 'o palco não levita')
+  assert.equal(prop(stage, 'background'), 'var(--card)')
+
+  // A barra do marco é CHEIA e desenhada com a tinta do sucesso — ela é a
+  // prova visual do "9/9", não um enfeite de dashboard.
+  assert.match(prop(rule(css, '.pd-milestone-fill'), 'background'), /--ok/u)
+})
+
+test('plano CUMPRIDO vira selo: traço pontilhado e barra apagada', async () => {
+  const css = await source('src/renderer/src/global.css')
+
+  // Barra ATIVA de 8/8 parecia trabalho pendente. O pontilhado diz "encerrado"
+  // por FORMA antes de cor, e o preenchimento recua.
+  assert.match(prop(rule(css, '.pd-plan.done'), 'border-style'), /dashed/u)
+  const faded = Number.parseFloat(prop(rule(css, '.pd-plan.done .pd-plan-fill'), 'opacity'))
+  assert.ok(faded > 0 && faded < 1, `o selo apaga a barra — leu ${faded}`)
+})
+
+test('a régua da versão desenha a fração em vez de só contá-la', async () => {
+  const css = await source('src/renderer/src/global.css')
+
+  // O chip virou RÉGUA: a linha inteira, com a barra parcial no fim. A pílula
+  // "◈ 0.1.1 5/8 missões" dizia o número e escondia o RUMO.
+  assert.equal(prop(rule(css, '.pd-versions'), 'flex-direction'), 'column')
+  assert.equal(prop(rule(css, '.pd-version'), 'display'), 'flex')
+  assert.ok(prop(rule(css, '.pd-version-bar'), 'width'), 'a régua precisa de trilho medido')
+  assert.match(prop(rule(css, '.pd-version-fill'), 'background'), /--ok/u)
+})
+
+test('o dia da obra se separa do título de seção por FORMA, não por tinta', async () => {
+  const css = await source('src/renderer/src/global.css')
+
+  // Os dois são `--ink-2` maiúsculo (o piso de leitura fecha a porta do
+  // `--ink-3` do mockup): quem separa é o peso e o fio que corre depois da
+  // data — sem isso o dia competiria com o título da seção.
+  const day = rule(css, '.pd-work-day')
+  const title = rule(css, '.pd-section-title')
+  assert.notEqual(prop(day, 'font-weight'), prop(title, 'font-weight'))
+  assert.match(css, /\.pd-work-day::after\s*\{[^}]*background:\s*var\(--line\)/u)
 })
 
 test('os KPIs do painel falam com o acento da casa, não com o hue de uma função', async () => {

@@ -402,8 +402,11 @@ test('a ordem ensina o CICLO: parar preserva, resume retoma, cancel descarta', (
       `${role}: a diferença entre pausa e descarte ficou implícita`
     )
   }
-  // o planejador não delega — nem o ciclo entra no chat dele
-  assert.doesNotMatch(guiPlanningSystemPrompt(), /helper_resume/u)
+  // 2026-08-30: o planejador delega — o MESMO ciclo entra no chat dele,
+  // palavra por palavra (fonte única, nunca uma cópia).
+  const plannerSection = delegationSection(guiPlanningSystemPrompt())
+  assert.ok(plannerSection, 'o planejador ficou sem a ordem permanente da delegação')
+  assert.match(plannerSection, /helper_resume/u, 'planejador: sem o verbo da retomada')
 })
 
 // O PINO DO PAINEL É A PALAVRA DO DONO (2026-08-18, 2º teste ao vivo dele).
@@ -511,9 +514,15 @@ test('a ordem nomeia o caminho MCP inteiro: abrir, ver, dirigir, colher, retomar
   assert.match(section, /never fall back/i)
 })
 
-test('o planejador não delega: a ordem não entra no chat de plano', () => {
+// O PLANEJADOR DELEGA (ordem do dono, 2026-08-30: "coloque os ajudantes também
+// para eu selecionar"). O D2 original o deixava fora por escopo da onda, não
+// por autoridade — e a cerca mecânica sem a ordem em prosa deixaria o chat com
+// a ferramenta na mão sem saber que o caminho é o MCP. A linha própria dele
+// aperta o uso: ajudante de planejador PESQUISA, nunca executa produto.
+test('o planejador delega PESQUISA: a ordem entra no chat de plano com a régua própria', () => {
   const planning = guiPlanningSystemPrompt()
-  assert.equal(delegationSection(planning), undefined, 'o planejador ganhou ordem de delegação')
+  const section = delegationSection(planning)
+  assert.ok(section, 'o planejador ficou sem a ordem permanente da delegação')
   for (const tool of [
     'delegate',
     'helpers_status',
@@ -523,9 +532,17 @@ test('o planejador não delega: a ordem não entra no chat de plano', () => {
     'helper_cancel',
     'list_seats'
   ]) {
-    assert.equal(planning.includes(tool), false, `o planejador não tem ${tool}`)
+    assert.ok(planning.includes(tool), `o planejador perdeu ${tool}`)
   }
-  assert.equal(/spawn_agent/.test(planning), false)
+  // a régua própria: pesquisa em .synkora/, nunca produto nem plano/ pela mão
+  // do ajudante — a entrega dele é INSUMO desta sessão.
+  assert.match(planning, /HELPERS ARE RESEARCHERS, NEVER EXECUTORS/u)
+  assert.match(planning, /\.synkora\//u, 'sem o endereço git-invisível da pesquisa')
+  assert.match(
+    planning,
+    /never writes plano\//u,
+    'o ajudante escrevendo plano/ tiraria a entrega do planejador'
+  )
   // e o kit dele continua o de planos, intocado por esta mudança
   for (const tool of ['list_plans', 'get_plan', 'propose_plan', 'update_plan', 'delete_plan']) {
     assert.ok(planning.includes(tool), `sumiu a ferramenta ${tool}`)
@@ -1049,7 +1066,14 @@ test('o planejador PROPÕE o plano, não executa produto nem cria missão', () =
   // 0002): o planejador PRODUZ — ele destrincha o escopo e escreve plano/ —,
   // então o menu do worktree também é dele. A LEI do `impeccable` NÃO entra
   // aqui: ele não estiliza nada. Mede 6208.
-  assert.ok(contract.length < 6400, 'contrato virou constituição')
+  //
+  // E de 6400 para 10900 em 2026-08-30, pela DELEGAÇÃO (ordem do dono:
+  // "coloque os ajudantes também para eu selecionar"): entram a doutrina de
+  // custo, a ordem permanente da delegação — as MESMAS dos chats de missão,
+  // fonte única — e a linha própria dele (ajudante pesquisa, nunca executa).
+  // Mede 10471; o salto é grande porque as duas seções compartilhadas já
+  // tinham o tamanho delas medido nos irmãos.
+  assert.ok(contract.length < 10900, 'contrato virou constituição')
   assert.match(contract, /"mestre" is a DESIGNATION the owner grants/u)
   assert.match(contract, /only his click designates or removes it/u)
   assert.match(contract, /PROJECT_PLAN\.md/u)
@@ -1361,8 +1385,14 @@ test('R25.4 — a doutrina vem ANTES da delegação e não desloca a última pal
       `${role}: a ordem permanente da delegação continua sendo a última palavra`
     )
   }
-  // O planejador não delega (D2) — e é a delegação que a doutrina governa.
-  assert.equal(costSection(guiPlanningSystemPrompt()), undefined)
+  // 2026-08-30: o planejador delega — a doutrina entra no chat dele também,
+  // na MESMA ordem dos irmãos (custo antes, delegação como última palavra).
+  const planning = guiPlanningSystemPrompt()
+  assert.ok(costSection(planning), 'o planejador delega sem a doutrina de custo')
+  assert.ok(
+    planning.indexOf(COST_HEADER) < planning.indexOf(DELEGATION_HEADER),
+    'planejador: a ordem permanente da delegação continua sendo a última palavra'
+  )
 })
 
 test('R25.4 — a doutrina é PERSONA, nunca guarda: nenhum verbo de bloqueio', () => {

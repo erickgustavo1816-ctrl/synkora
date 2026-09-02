@@ -600,7 +600,9 @@ test('os TRÊS chats ganham o kit de código sem perder o que já tinham', async
 
   assert.deepEqual(
     await toolNames(url, 'token-planner', 'kit-planner'),
-    sorted(PLANNER_TOOLS, LSP_TOOLS)
+    // 2026-08-30: o planejador delega — o kit de ajudantes entrou no catálogo
+    // dele (a lista canônica por papel é do `test:gui-delegate-mcp`).
+    sorted(PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS)
   )
   assert.deepEqual(
     await toolNames(url, 'token-dev', 'kit-dev'),

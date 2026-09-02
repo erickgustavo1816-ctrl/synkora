@@ -1,5 +1,6 @@
 /**
- * MCP DE DELEGAÇÃO do chat de missão (subagentes sem aba, 2026-08-18).
+ * MCP DE DELEGAÇÃO dos chats (subagentes sem aba, 2026-08-18; o PLANEJADOR
+ * entrou no regime em 2026-08-30 — planos + ajudantes num papel só).
  *
  * Ordem do dono (18/08): "deixe claro pra todo chat que eu criar que ele NUNCA
  * MAIS vai abrir subagentes dele — ele vai abrir subagentes via MCP. Porque via
@@ -91,7 +92,10 @@ export interface GuiDelegateMcpInput {
  * nascimento (`missions:guiSpec`) e o re-arme por spawn (`guiPlannerArm`) leem
  * daqui, para não existir a divergência que já produziu um chat mudo em 08-17.
  *
- * - `planner`   — missão de PLANEJAMENTO: o kit de planos, como sempre.
+ * - `planner`   — missão de PLANEJAMENTO: o kit de planos E, desde a ordem do
+ *                 dono de 2026-08-30 ("coloque os ajudantes também para eu
+ *                 selecionar"), o kit de ajudantes — pesquisa é o trabalho
+ *                 dele, e frota via MCP é a única com lateral e pino D8.
  * - `delegator` — missão de DEV (dev/reviewer/helper): o kit de ajudantes.
  * - `none`      — o resto. Chat sem ferramenta continua conversando; é o que
  *                 todo pane GUI foi até a onda D.
@@ -144,17 +148,29 @@ export function guiPaneToolKind(
  * A lista é fechada de propósito: ferramenta nova no catálogo do delegador tem
  * de entrar aqui à mão, e `scripts/test-gui-delegate-mcp.mjs` prende o par.
  */
+/**
+ * As SETE tools de ajudante — o kit de delegação em si, na ordem do ciclo
+ * (abrir, ver contas, radar, colher, dirigir, retomar, descartar). Fonte única
+ * das listas de pré-sanção: desde 2026-08-30 DOIS papéis delegam (o chat de
+ * missão e o PLANEJADOR), e duas cópias escritas à mão é exatamente como uma
+ * tool nova voltaria a levantar card de permissão num deles só.
+ *
+ * O par da interrupção (R6.2) está dentro de propósito: sem a pré-sanção do
+ * `helper_resume`, retomar um ajudante parado levantaria card de permissão
+ * para o dono — justamente no gesto que ele acabou de pedir.
+ */
+export const GUI_HELPER_TOOL_NAMES: readonly string[] = [
+  'delegate',
+  'list_seats',
+  'helpers_status',
+  'helper_result',
+  'helper_send',
+  'helper_resume',
+  'helper_cancel'
+]
+
 export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
-  'mcp__synkora__delegate',
-  'mcp__synkora__list_seats',
-  'mcp__synkora__helpers_status',
-  'mcp__synkora__helper_result',
-  'mcp__synkora__helper_send',
-  // O par da interrupção (R6.2). Sem a pré-sanção do `resume`, retomar um
-  // ajudante parado levantaria card de permissão para o dono — justamente no
-  // gesto que ele acabou de pedir.
-  'mcp__synkora__helper_resume',
-  'mcp__synkora__helper_cancel',
+  ...GUI_HELPER_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   // R9 — o AGENTE é o integrador. Sem a pré-sanção, o ⇪ do dono levantaria um
   // card de permissão para ele aprovar a ferramenta que ele mesmo acabou de
   // acionar com o clique.
@@ -182,8 +198,39 @@ export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   ...BROWSER_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`)
 ]
 
-/** Flags do claude: config por arquivo + strict + a cerca + a pré-sanção. */
-export function guiDelegateClaudeArgs(mcpFile: string): string[] {
+/**
+ * As CINCO tools do kit de PLANOS, no nome interno (o catálogo delas continua
+ * no `buildServer`, bloco `gui-planner`). Elas viram pré-sanção AQUI porque o
+ * planejador passou a delegar (ordem do dono, 2026-08-30) e o arm dele agora é
+ * o mesmo dos outros chats: com `--allowedTools` presente, tool fora da lista
+ * volta a pedir permissão — e o kit de planos pedindo card seria regressão.
+ */
+export const GUI_PLAN_TOOL_NAMES: readonly string[] = [
+  'list_plans',
+  'get_plan',
+  'propose_plan',
+  'update_plan',
+  'delete_plan'
+]
+
+/**
+ * A pré-sanção do PLANEJADOR: planos + ajudantes + o kit de código. Sem
+ * integração (planejamento nunca integra — `integrateBlocked` no motor), sem
+ * release e sem browser MCP: o ajudante de pesquisa dele é quem navega.
+ */
+export const GUI_PLANNER_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
+  ...GUI_PLAN_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
+  ...GUI_HELPER_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
+  ...LSP_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`)
+]
+
+/** Flags do claude: config por arquivo + strict + a cerca + a pré-sanção (a
+ *  lista é POR PAPEL — o planejador pré-sanciona planos no lugar de
+ *  integração/release/browser). */
+export function guiDelegateClaudeArgs(
+  mcpFile: string,
+  role: 'gui-delegator' | 'gui-release' | 'gui-planner' = 'gui-delegator'
+): string[] {
   return [
     // `--strict-mcp-config`: o chat que delega não herda MCP do seat. Servidor
     // herdado dentro de um chat com autoridade para abrir frota seria
@@ -192,7 +239,10 @@ export function guiDelegateClaudeArgs(mcpFile: string): string[] {
     '--disallowedTools',
     CLAUDE_NATIVE_AGENT_FENCE.join(','),
     '--allowedTools',
-    GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS.join(',')
+    (role === 'gui-planner'
+      ? GUI_PLANNER_CLAUDE_ALLOWED_TOOLS
+      : GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS
+    ).join(',')
   ]
 }
 
@@ -223,8 +273,9 @@ export function armGuiDelegateMcp(
   input: GuiDelegateMcpInput,
   deps: GuiPlannerMcpDeps,
   /** R10: a missão de RELEASE arma o MESMO encanamento com catálogo próprio —
-   *  o papel do token decide o early-return do servidor. */
-  role: 'gui-delegator' | 'gui-release' = 'gui-delegator'
+   *  o papel do token decide o early-return do servidor. Desde 2026-08-30 o
+   *  PLANEJADOR também entra por aqui: planos + ajudantes num papel só. */
+  role: 'gui-delegator' | 'gui-release' | 'gui-planner' = 'gui-delegator'
 ): GuiPlannerMcp | undefined {
   const port = deps.port()
   if (port === 0) return undefined
@@ -245,7 +296,7 @@ export function armGuiDelegateMcp(
     const mcpFile = writeClaudeMcpConfig(deps.configRoot(), input.paneId, port, token)
     deps.remember(input.paneId, { token, mcpFile })
     return {
-      args: guiDelegateClaudeArgs(mcpFile),
+      args: guiDelegateClaudeArgs(mcpFile, role),
       env: { MCP_TOOL_TIMEOUT: String(GUI_DELEGATE_CLAUDE_TOOL_TIMEOUT_MS) }
     }
   }

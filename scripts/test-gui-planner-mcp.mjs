@@ -32,8 +32,15 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { Hub } from '../.tmp/gui-planner-mcp-test/hub.js'
-import { armGuiPlannerMcp, GUI_PLANNER_TOKEN_ENV } from '../.tmp/gui-planner-mcp-test/guiPlannerMcp.js'
+import { GUI_PLANNER_TOKEN_ENV } from '../.tmp/gui-planner-mcp-test/guiPlannerMcp.js'
+import { armGuiDelegateMcp } from '../.tmp/gui-planner-mcp-test/guiDelegateMcp.js'
 import { startMcpServer } from '../.tmp/gui-planner-mcp-test/mcpServer.js'
+
+// O ARM DO PLANEJADOR (2026-08-30): a trilha própria (`armGuiPlannerMcp`)
+// morreu quando o planejador entrou no regime da delegação — ele arma pelo
+// MESMO encanamento dos outros chats, com o papel `gui-planner`. O wrapper
+// mantém a suíte lendo como sempre leu.
+const armGuiPlannerMcp = (input, deps) => armGuiDelegateMcp(input, deps, 'gui-planner')
 
 /** O kit de PLANOS. Lista literal de propósito: ferramenta nova aqui é decisão
  *  de produto e tem que quebrar o teste. */
@@ -55,8 +62,23 @@ const LSP_TOOLS = Object.freeze([
   'lsp_references'
 ])
 
-/** O que o pane de PLANEJAMENTO enxerga hoje, inteiro. */
-const PLANNER_TOOLS = Object.freeze([...PLAN_TOOLS, ...LSP_TOOLS].sort())
+/** O kit de AJUDANTES, que o planejador passou a enxergar em 2026-08-30
+ *  (ordem do dono: "coloque os ajudantes também para eu selecionar"). A lista
+ *  canônica dele vive em `test:gui-delegate-mcp`; aqui ela aparece porque o
+ *  catálogo do planejador passou a incluí-la. */
+const HELPER_TOOLS = Object.freeze([
+  'delegate',
+  'helper_cancel',
+  'helper_result',
+  'helper_resume',
+  'helper_send',
+  'helpers_status',
+  'list_seats'
+])
+
+/** O que o pane de PLANEJAMENTO enxerga hoje, inteiro: planos + ajudantes +
+ *  código — e NADA de integração, release ou browser. */
+const PLANNER_TOOLS = Object.freeze([...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS].sort())
 
 /** Hub REAL com as dependências mínimas que ele exige (o registro de
  *  identidade não usa nenhuma delas — é justamente o ponto).
@@ -287,7 +309,16 @@ test('R14: o AJUDANTE recebe o kit de CÓDIGO e nenhuma linha do kit de planos',
     cwd: root
   })
   const tools = await toolNames(url, 'token-ajudante', 'ajudante')
-  assert.deepEqual(tools, LSP_TOOLS)
+  // BROWSER EMBUTIDO (2026-08-29): o ajudante também verifica a própria tela —
+  // o QA delegado é o caso real do design. A lista canônica das onze vive em
+  // `test:gui-delegate-mcp`; esta suíte tinha ficado para trás (achado de
+  // 2026-08-30, na rodada que deu delegação ao planejador).
+  const browserTools = tools.filter((tool) => tool.startsWith('browser_'))
+  assert.equal(browserTools.length, 11, 'o ajudante perdeu o kit do browser')
+  assert.deepEqual(
+    tools.filter((tool) => !tool.startsWith('browser_')),
+    LSP_TOOLS
+  )
   // A cerca do ajudante mudou de NATUREZA (era ausência de token, virou
   // catálogo) mas não de tamanho: plano continua fora do alcance dele.
   for (const forbidden of PLAN_TOOLS) {
@@ -295,7 +326,7 @@ test('R14: o AJUDANTE recebe o kit de CÓDIGO e nenhuma linha do kit de planos',
   }
 })
 
-test('o planejador de um universo continua enxergando só o kit de planos', async (t) => {
+test('a tool de plano recebe a identidade REAL do pane — escopo por universo', async (t) => {
   const { hub, root } = hubIn(t)
   const { url, calls } = await serverIn(t, hub)
   const { deps, remembered } = armDeps(hub, root, 1)

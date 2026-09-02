@@ -57,7 +57,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>✦ Backlog Synkora</h1>
-    <span class="stamp">atualizado 30/08 · pelo orquestrador</span>
+    <span class="stamp">atualizado 01/09 · pelo orquestrador</span>
     <p class="how"><b>Como funciona:</b> este é o mapa vivo da obra — eu re-publico neste MESMO link a cada
     entrega. Quer mudar prioridade ou adicionar item? Comente aqui na página ou me diga no chat.
     Fonte da verdade: <b>docs/backlog-synkora.json</b> (MCP + CLI em scripts/backlog*.mjs).</p>
@@ -186,6 +186,18 @@
       <span class="desc">Todas com receita nos reports: titlebar da casa na janela destacada (hoje moldura nativa — P2 §5); browserPane.ts em 1069 linhas, corte browserPaneGeometry+browserPaneUrl (P3 §2.2); guarda de captura com o DOCK minimizado ainda recusa embora a sonda nova prove pixel fresco (relaxar é decisão explícita — 3 linhas); cerca do TypeError síncrono do preload velho exige suíte de renderer com esbuild (P3 §6).</span>
       <span class="refs">refs: <code>.synkora/reports/browser-agent-P2-report.md</code> · <code>.synkora/reports/browser-agent-P3-report.md</code></span>
     </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">Chip de skill/browser na FICHA do ajudante + skill-entered de ajudante no diário (exige o motor guiHelperSessions)</span>
+      <span class="desc">Medido em 01/09: ajudante não tem sinal nenhum de skill nem de browser (claude 7/107 usaram skill, codex 22/91; browser 1/72 claude, 0/91 codex). A aba com dono já aparece no chrome; falta a ficha da lateral. Ficou fora da rodada das abas por identidade porque guiHelperSessions.ts estava em obra em outra sessão.</span>
+      <span class="refs">refs: <code>.synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md</code> · <code>src/main/guiHelperSessions.ts</code> · <code>src/main/guiHelperCards.ts</code></span>
+    </div>
+    <div class="item debt">
+      <span class="glyph">⊟</span>
+      <span class="title">browserPane.ts em 1221 linhas — o closure do motor só desce com refatoração (contexto injetado para geometria/ciclo de aba)</span>
+      <span class="desc">Rodada das abas por identidade cortou 1369 → 1221 com quatro irmãos (contracts 288, gestures 224, url 105, tabOwner 110). O que sobra é o closure (~950): próxima fronteira medida no report A (§Corte 3). Substitui a sobra &quot;browserPane 1069&quot; das 4 sobras do pop-out.</span>
+      <span class="refs">refs: <code>.synkora/reports/browser-tabs-agent-A-report.md</code> · <code>src/main/browserPane.ts</code></span>
+    </div>
   </section>
 
   <details class="done-wrap" open>
@@ -222,6 +234,10 @@
       <p class="done-day">30/08 — domingo</p>
       <div class="done"><span class="glyph">✓</span><span class="title">R38 — o fecho do release é do AGENTE: a subida não fecha mais nada (o instalável do dono sumia junto com o chat)</span><span class="refs"><code>bf80e5f</code> · <code>.synkora/reports/release-agent-R38-report.md</code> · <code>src/main/releaseChat.ts</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">O fio mostra quando uma skill ENTRA na conversa (chip ❖ nos dois CLIs, sinal estrutural sondado)</span><span class="refs"><code>38f8718</code> · <code>.synkora/reports/PROBE_SKILL_USE_2026-08-30.md</code> · <code>.synkora/reports/skill-chip-agent-report.md</code></span></div>
+      <div class="done"><span class="glyph">✓</span><span class="title">O planejador delega — ajudantes com pino D8 e frota na lateral</span><span class="refs"><code>.synkora/reports/DESIGN_PLANEJADOR_DELEGA_2026-08-30.md</code> · <code>src/main/guiDelegateMcp.ts</code> · <code>src/main/mcpServer.ts</code> · <code>src/main/guiMissionContracts.ts</code></span></div>
+      <p class="done-day">01/09 — terça</p>
+      <div class="done"><span class="glyph">✓</span><span class="title">Vigia de versão dos CLIs pós-boot — modelo novo aparece sem restart</span><span class="refs"><code>src/main/cliVersionDrift.ts</code> · <code>src/main/cliUpdate.ts</code> · <code>scripts/test-cli-version-watch.mjs</code></span></div>
+      <div class="done"><span class="glyph">✓</span><span class="title">Browser: ABA POR IDENTIDADE + PORTA POR AJUDANTE — a frota ganha bancada própria (dono/dev/ajudante cada um na sua aba; porta reservada no spawn; ⚡ e ficha do dono por aba)</span><span class="refs"><code>7b0bb49</code> · <code>.synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md</code> · <code>docs/HANDOFF_SESSAO_2026-09-01.md</code> · <code>src/main/browserTabOwner.ts</code> · <code>src/main/guiHelperPorts.ts</code></span></div>
     </div>
   </details>
 </div>

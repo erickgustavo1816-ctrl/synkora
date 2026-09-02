@@ -118,6 +118,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const [projectPlans, setProjectPlans] = useState<PlanView[]>([])
   const loadMissions = useStore((s) => s.loadMissions)
   const archiveMission = useStore((s) => s.archiveMission)
+  const discardRelease = useStore((s) => s.discardRelease)
   const concludePlanningMission = useStore((s) => s.concludePlanningMission)
   const deleteMission = useStore((s) => s.deleteMission)
   const integrateMission = useStore((s) => s.integrateMission)
@@ -168,6 +169,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const [railReload, setRailReload] = useState(0)
   const [newMissionOpen, setNewMissionOpen] = useState(false)
   const [testServerOpen, setTestServerOpen] = useState(false)
+  // R38 — o ▶ testar do PALCO DO MARCO (painel do projeto): a mesma mesa do
+  // ▶ testar da aba Versões, com alvo de VERSÃO em vez de missão. Nenhum canal
+  // novo nasceu para isto; o que muda é a porta por onde o dono chega.
+  const [testVersion, setTestVersion] = useState<Version | null>(null)
   const uniTab = useStore((s) => s.universeTabByProject[projectId] ?? 'board')
   // "nova missão a partir deste card" (card done de missão já integrada):
   // abre o MESMO modal com título/goal pré-preenchidos referenciando o card.
@@ -1294,6 +1299,19 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               versionLabelOf={(m) => versionName(m.versionId)}
               onOpenMission={(id) => setMissionTab(projectId, id)}
               onOpenPlans={() => setUniverseTab(projectId, 'mapa')}
+              onOpenVersions={() => setUniverseTab(projectId, 'backlog')}
+              onTestVersion={(name) => {
+                // O palco fala por NOME (é o que o `VersionStats` carrega); o
+                // worktree e a branch moram no registro de versões que este
+                // Board já lê. SEM BRANCH não há o que subir: a saída
+                // sancionada é a aba Versões, onde o ▶ testar diz, no lugar
+                // certo, por que ele está apagado.
+                const target = versionsList.find(
+                  (v) => v.name === name && v.status === 'aberta' && v.branch
+                )
+                if (target) setTestVersion(target)
+                else setUniverseTab(projectId, 'backlog')
+              }}
               onNewMission={() => setNewMissionOpen(true)}
             />
           )}
@@ -1315,7 +1333,16 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           paneId={`release-rail:${selMission.id}`}
           label="o trilho do release"
         >
-          <ReleaseRail projectId={projectId} versionName={versionName(selMission.versionId)} />
+          <ReleaseRail
+            projectId={projectId}
+            versionName={versionName(selMission.versionId)}
+            mission={{ status: selMission.status, seatId: selMission.seatId }}
+            // HMR pode trazer o Board novo antes do store novo: sem a ação,
+            // a seção não nasce (o dono não ganha um botão que estoura).
+            onDiscard={
+              discardRelease ? () => void discardRelease(selMission.id) : undefined
+            }
+          />
         </GuiPanelErrorBoundary>
       )}
 
@@ -1385,6 +1412,26 @@ export default function Board({ projectId }: Props): React.JSX.Element {
             target={{ missionId: selMission.id }}
             label={`missão "${selMission.title.slice(0, 32)}"`}
             onClose={() => setTestServerOpen(false)}
+          />
+        </GuiPanelErrorBoundary>
+      )}
+
+      {/* R38 — o mesmo servidor de teste, com alvo de VERSÃO: a branch da linha
+          inteira (missões já unificadas), no worktree que o app mobiliou. É a
+          receita do incidente de 2026-08-24, em que testar a versão pronta
+          obrigava a caçar pasta e adivinhar o estado do node_modules. */}
+      {testVersion && (
+        <GuiPanelErrorBoundary
+          key={`overlay:test-version:${testVersion.id}`}
+          paneId={`overlay:test-version:${testVersion.id}`}
+          label="o servidor de teste da versão"
+          onClose={() => setTestVersion(null)}
+        >
+          <TestServerModal
+            projectId={projectId}
+            target={{ versionId: testVersion.id }}
+            label={`versão ${testVersion.name}`}
+            onClose={() => setTestVersion(null)}
           />
         </GuiPanelErrorBoundary>
       )}

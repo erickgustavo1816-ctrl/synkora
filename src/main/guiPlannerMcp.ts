@@ -21,8 +21,6 @@
  * exatamente o que queremos. Provado com `codex mcp list`: o servidor aparece
  * com a URL certa e auth "Bearer token".
  */
-import { randomUUID } from 'crypto'
-import { claudeMcpArgs, writeClaudeMcpConfig } from './mcpServer'
 import type { Hub } from './hub'
 
 /** O que o spawn do pane GUI precisa carregar para falar com o Synkora. */
@@ -33,15 +31,8 @@ export interface GuiPlannerMcp {
   env?: Record<string, string>
 }
 
-export interface GuiPlannerMcpInput {
-  paneId: string
-  projectId: string
-  cwd: string
-  cli: 'claude' | 'codex'
-  /** missão de planejamento dona da conversa (escopo da identidade) */
-  missionId?: string
-  seatId?: string
-}
+// `GuiPlannerMcpInput` morava aqui e morreu com o arm (2026-08-30): o input do
+// planejador é o `GuiDelegateMcpInput`, o mesmo dos outros chats.
 
 export interface GuiPlannerMcpDeps {
   hub: Hub
@@ -60,51 +51,14 @@ export interface GuiPlannerMcpDeps {
 /** Nome do env var que o codex lê para montar o header Authorization. */
 export const GUI_PLANNER_TOKEN_ENV = 'SYNKORA_TOKEN'
 
-/**
- * Registra a identidade `gui-planner` do pane e devolve as flags do spawn.
- * `undefined` = servidor ainda não subiu: o chat nasce sem tools em vez de
- * nascer apontando para uma porta que não existe (o dono continua conversando;
- * reabrir a conversa arma o MCP).
- *
- * IDEMPOTENTE POR PANE, e isso é contrato, não economia: a spec é pedida a cada
- * remontagem do chat (trocar de aba, recarregar a view), mas o fingerprint do
- * spawn não muda — o processo CONTINUA VIVO com o token que leu no nascimento.
- * Emitir um token novo aqui deixaria o arquivo de config e o processo em
- * desacordo, e o chat perderia as ferramentas sem nenhum sinal.
- */
-export function armGuiPlannerMcp(
-  input: GuiPlannerMcpInput,
-  deps: GuiPlannerMcpDeps
-): GuiPlannerMcp | undefined {
-  const port = deps.port()
-  if (port === 0) return undefined
-  const previous = deps.tokenOf(input.paneId)
-  const live = previous ? deps.hub.identityByToken(previous) : undefined
-  const reusable =
-    previous && live?.paneId === input.paneId && live.role === 'gui-planner' ? previous : undefined
-  const token = reusable ?? randomUUID()
-  deps.hub.registerPane(token, {
-    paneId: input.paneId,
-    projectId: input.projectId,
-    role: 'gui-planner',
-    cwd: input.cwd,
-    ...(input.seatId ? { seatId: input.seatId } : {}),
-    ...(input.missionId ? { missionId: input.missionId } : {})
-  })
-  if (input.cli === 'claude') {
-    const mcpFile = writeClaudeMcpConfig(deps.configRoot(), input.paneId, port, token)
-    deps.remember(input.paneId, { token, mcpFile })
-    // `--strict-mcp-config`: o planejador não precisa dos MCPs do seat, e um
-    // servidor herdado dentro de um chat com autoridade sobre planos seria
-    // superfície nova que ninguém pediu.
-    return { args: claudeMcpArgs(mcpFile, true) }
-  }
-  deps.remember(input.paneId, { token })
-  return {
-    args: guiPlannerCodexArgs(port),
-    env: { [GUI_PLANNER_TOKEN_ENV]: token }
-  }
-}
+// `armGuiPlannerMcp` morava aqui: o arm próprio do kit de planos, SEM cerca e
+// sem pré-sanção. Ele MORREU em 2026-08-30, quando o planejador entrou no
+// regime da delegação (ordem do dono: "coloque os ajudantes também para eu
+// selecionar") — o pane dele arma pelo `armGuiDelegateMcp` com o papel
+// `gui-planner`, que traz as duas cercas anti-subagente-nativo, o teto de tool
+// do long-poll e a pré-sanção por papel (planos + ajudantes + LSP). O que fica
+// aqui é o que os DOIS arms sempre compartilharam: os tipos, o env do token e
+// os `-c` base do codex.
 
 /**
  * Overrides `-c` do codex. Valores SEM aspas de propósito (ver a armadilha no

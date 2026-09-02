@@ -61,27 +61,11 @@ export function liveMissions(missions: readonly Mission[]): Mission[] {
     .sort((a, b) => timeOf(b.createdAt) - timeOf(a.createdAt))
 }
 
-/** Teto padrão da seção "integradas": o painel resume, não vira histórico. */
-export const RECENT_CONCLUDED_CAP = 5
-
-/**
- * Integradas, mais recentes primeiro. Ordena por `completedAt` (o carimbo da
- * transição para 'concluida') e cai em `createdAt` quando a missão é antiga
- * demais para tê-lo — nunca em `updatedAt`, que mede outra coisa.
- */
-export function recentConcluded(
-  missions: readonly Mission[],
-  cap: number = RECENT_CONCLUDED_CAP
-): Mission[] {
-  return missions
-    .filter((m) => m.status === 'concluida')
-    .sort((a, b) => concludedAt(b) - concludedAt(a))
-    .slice(0, Math.max(0, cap))
-}
-
-function concludedAt(mission: Mission): number {
-  return timeOf(mission.completedAt) || timeOf(mission.createdAt)
-}
+// `recentConcluded`/`RECENT_CONCLUDED_CAP` viviam aqui: a lista "integradas"
+// do painel. Ela MORREU na R38 (2026-08-24) porque era a mesma lista que a
+// "atividade recente" logo abaixo dela — as duas seções repetiam as mesmas
+// cinco missões com palavras diferentes. O que ficou é a CRONOLOGIA
+// (`missionTimeline` + `missionWorkDays`), que diz o mesmo agrupado por dia.
 
 function timeOf(iso?: string): number {
   if (!iso) return 0
@@ -136,8 +120,9 @@ export interface MissionEvent {
 }
 
 /** Teto da faixa: ela é um relance da cronologia, não o histórico (esse é a
- *  aba Versões). */
-export const RECENT_ACTIVITY_CAP = 6
+ *  aba Versões). Subiu de 6 para 8 na R38 (2026-08-24): esta lista passou a
+ *  ser a ÚNICA — ela absorveu a seção "integradas" que morreu ao lado. */
+export const RECENT_ACTIVITY_CAP = 8
 
 export function missionTimeline(
   missions: readonly Mission[],
@@ -168,6 +153,102 @@ export function missionTimeline(
   return events.sort((a, b) => timeOf(b.at) - timeOf(a.at)).slice(0, Math.max(0, cap))
 }
 
+/* ---------- A OBRA, POR DIA (R38, 2026-08-24) ----------
+
+   O painel tinha DUAS seções contando a mesma coisa: "integradas" (as cinco
+   últimas missões concluídas) e "atividade recente" (a cronologia, onde as
+   mesmas missões apareciam de novo). Na foto da reprovação eram cinco fichas
+   repetindo cinco linhas. Ficou UMA: a cronologia agrupada pelo DIA do
+   carimbo — o mesmo dado, com a forma que uma obra tem de verdade. */
+
+export interface MissionDayGroup {
+  /** dd/mm/aaaa — a chave do grupo */
+  day: string
+  /** o dia como ele aparece na tela: o dia corrente se anuncia */
+  label: string
+  events: MissionEvent[]
+}
+
+/**
+ * Agrupa os eventos JÁ ORDENADOS do `missionTimeline` por dia, preservando a
+ * ordem (mais recente primeiro). `today` entra por parâmetro para o teste não
+ * depender do relógio da máquina.
+ */
+export function missionWorkDays(
+  events: readonly MissionEvent[],
+  today: string | null = formatDay(new Date().toISOString())
+): MissionDayGroup[] {
+  const groups: MissionDayGroup[] = []
+  for (const event of events) {
+    const last = groups[groups.length - 1]
+    if (last && last.day === event.day) {
+      last.events.push(event)
+      continue
+    }
+    groups.push({
+      day: event.day,
+      label: event.day === today ? `${event.day} — hoje` : event.day,
+      events: [event]
+    })
+  }
+  return groups
+}
+
+/* ---------- OS ESTADOS DA LANDING (R38, 2026-08-24) ----------
+
+   A reprovação de 2026-08-24: universo com a 0.1.1 COMPLETA e nada vivo. A
+   tela mostrava três zeros grandes e uma coluna vazia — e não contava a única
+   história do momento, que é "a versão está pronta esperando o lançamento".
+
+   A máquina de estados é pequena e mecânica de propósito:
+     · vivas > 0                          → o retrato de hoje (o de sempre);
+     · vivas = 0 e versão completa aberta → o MARCO da versão;
+     · universo zerado                    → o convite (`projectLanding`).
+   Nenhum estado inventa dado: o marco só existe com uma linha de versão que o
+   `homeStats` já conta como completa. */
+
+/**
+ * A versão que merece o palco, ou `null` quando o momento é o retrato de hoje.
+ * Duas ou mais completas: a PRIMEIRA da lista — o `versoes` chega da mais
+ * antiga para a mais nova e o release é serial, então a que espera há mais
+ * tempo é a que se lança primeiro.
+ */
+export function landingMilestone(
+  missions: readonly Mission[],
+  versoes?: readonly VersionStats[]
+): VersionStats | null {
+  if (!versoes || versoes.length === 0) return null
+  if (liveMissions(missions).length > 0) return null
+  return (
+    versoes.find(
+      // `missoesTotal > 0` é a cerca do 0 === 0: uma linha SEM missão nenhuma
+      // não é uma versão pronta, é uma versão vazia.
+      (v) => !v.lancada && v.missoesTotal > 0 && v.missoesFeitas === v.missoesTotal
+    ) ?? null
+  )
+}
+
+/** A fração da linha de versão em porcentagem inteira; sem denominador não há
+ *  barra a preencher (0/0 nunca é 100%). */
+export function versionPercent(feitas: number, total: number): number {
+  if (!Number.isFinite(feitas) || !Number.isFinite(total) || total <= 0) return 0
+  return Math.round((Math.min(Math.max(feitas, 0), total) / total) * 100)
+}
+
+/**
+ * A cauda do LEDGER — a linha de texto que substitui os tiles no marco. Ela só
+ * fala do que EXISTE: três zeros grandes não são informação, e "0 na fila" é
+ * uma frase sobre nada.
+ */
+export function ledgerTail(kpis: ProjectKpis): string {
+  const parts: string[] = []
+  if (kpis.emAndamento > 0) parts.push(`${kpis.emAndamento} em andamento`)
+  if (kpis.naFila > 0) parts.push(`${kpis.naFila} na fila ⇪`)
+  if (kpis.arquivadas > 0)
+    parts.push(`${kpis.arquivadas} ${kpis.arquivadas === 1 ? 'arquivada' : 'arquivadas'}`)
+  return parts.length > 0 ? parts.join(' · ') : 'nenhuma em andamento, na fila ou arquivada'
+}
+
 /* ---------- ATRIBUIÇÃO DE VERSÃO (ordem do dono, 2026-08-17) ----------
 
    O dono leu "◈ V1.0" no alto do universo ao lado de contadores que somavam
@@ -184,7 +265,10 @@ export function missionTimeline(
       deliberada: missão VIVA sem carimbo conta na versão corrente, porque é
       nela que ela vai integrar (`ensureDefaultVersion`). Missão concluída sem
       carimbo não entra em linha nenhuma — ela integrou em algum lugar que o
-      registro não sabe dizer, e escolher um por ela seria inventar.
+      registro não sabe dizer, e escolher um por ela seria inventar. E a exceção
+      NÃO alcança o PLANEJAMENTO: ele fica fora de versão por régua de
+      nascimento (escreve plano/ e nunca integra) — sem essa cerca, uma sessão
+      de planejamento viva inflava o total da corrente.
 
    O módulo é puro de propósito: quem lê o disco é o `loadHomeStats`. */
 
@@ -234,6 +318,8 @@ export function versionPortrait(
     const vivas = missions.filter(
       (m) =>
         (m.status === 'ativa' || m.status === 'integrando') &&
+        // planejamento nunca integra em versão: fora da corrente e da conta
+        m.missionType !== 'planejamento' &&
         !feitas.has(m.id) &&
         (m.versionId === v.id || (!m.versionId && v.id === corrente))
     ).length

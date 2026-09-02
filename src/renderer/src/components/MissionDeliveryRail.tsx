@@ -860,8 +860,11 @@ export default function MissionDeliveryRail({
 
       {/* FROTA — as fichas que JÁ moravam no trilho, vestidas de seção; o
           resumo conta a verdade com a seção recolhida. Sem ajudante nenhum, a
-          seção nem nasce (dock enxuto > seção vazia). */}
-      {!planning && frota.length > 0 && (
+          seção nem nasce (dock enxuto > seção vazia). PLANEJAMENTO também tem
+          frota desde 2026-08-30 (ordem do dono): o planejador delega pesquisa
+          pelo mesmo MCP, e a lateral é justamente onde o dono vê modelo,
+          effort e conta de cada ajudante. */}
+      {frota.length > 0 && (
         <DockSection id="frota" title="frota" summary={frotaSummary}>
           <GuiSubagentSidebar items={subagentItems} />
         </DockSection>

@@ -54,7 +54,7 @@ import {
   type GuiPermissionMode,
   type GuiSessionRegistry
 } from '../guiSessions'
-import { armGuiPlannerMcp, type GuiPlannerMcpDeps } from '../guiPlannerMcp'
+import { type GuiPlannerMcpDeps } from '../guiPlannerMcp'
 import { armGuiDelegateMcp } from '../guiDelegateMcp'
 import { guiPlannerMcpDepsFor } from '../guiPlannerArm'
 import {} from '../orchestratorFlow'
@@ -583,12 +583,15 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       const resumeSessionId = resumeSessionIdFor(rememberedExecutor, seat.cli)
       const effectiveMode = permissionMode ?? remembered?.permissionMode
 
-      // UM KIT POR CHAT, NUNCA OS DOIS (D2). O chat de PLANEJAMENTO recebe o kit
-      // de planos; o chat de missão DEV (dev/reviewer/ajudante) recebe o kit de
-      // DELEGAÇÃO — a ordem do dono de 18/08: subagente nunca mais vira aba, e a
-      // única porta de delegação é o MCP, porque é ele que carimba modelo,
-      // effort e conta na lateral. `undefined` nos dois casos = servidor ainda
-      // subindo: o chat nasce conversando, sem ferramenta, e reabrir arma.
+      // UM PAPEL POR CHAT — e o papel decide o catálogo no servidor. Todos os
+      // três tipos armam pelo MESMO encanamento (armGuiDelegateMcp): o chat de
+      // missão DEV recebe o kit de DELEGAÇÃO, o RELEASE o catálogo release_* e
+      // o PLANEJADOR o kit de planos MAIS o de ajudantes (ordem do dono,
+      // 2026-08-30: "coloque os ajudantes também para eu selecionar" —
+      // pesquisa é o trabalho dele, e só a frota via MCP carimba modelo,
+      // effort e conta na lateral, com as cercas anti-nativo no spawn).
+      // `undefined` = servidor ainda subindo: o chat nasce conversando, sem
+      // ferramenta, e reabrir arma.
       const mcpInput = {
         paneId,
         projectId: mission.projectId,
@@ -597,15 +600,16 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         missionId,
         seatId: seat.id
       }
-      const mcp =
+      const mcp = armGuiDelegateMcp(
+        mcpInput,
+        guiPlannerMcpDeps,
         route.missionType === 'planejamento'
-          ? armGuiPlannerMcp(mcpInput, guiPlannerMcpDeps)
-          : armGuiDelegateMcp(
-              mcpInput,
-              guiPlannerMcpDeps,
-              // R10: o chat de release ganha o catálogo próprio (release_*).
-              route.missionType === 'release' ? 'gui-release' : 'gui-delegator'
-            )
+          ? 'gui-planner'
+          : // R10: o chat de release ganha o catálogo próprio (release_*).
+            route.missionType === 'release'
+            ? 'gui-release'
+            : 'gui-delegator'
+      )
 
       // R16: só o DEV de uma missão de dev recebe o bloco das dependências — é
       // ele quem vai estudar o produto antes de implementar (o reviewer julga o
@@ -679,8 +683,12 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
           missionType: route.missionType,
           workspace: route.workspace,
           permissionMode: effectiveMode ?? 'default',
+          // O diário distingue os kits pelo TIPO: o planejador agora arma
+          // planos+ajudantes num papel só (2026-08-30), então as duas colunas
+          // são verdadeiras juntas nele — e é assim que uma anomalia de
+          // catálogo dele se lê no journal.
           plannerTools: route.missionType === 'planejamento' && Boolean(mcp),
-          delegateTools: route.missionType !== 'planejamento' && Boolean(mcp)
+          delegateTools: route.missionType !== 'release' && Boolean(mcp)
         }
       })
       return { ok: true, spawn }

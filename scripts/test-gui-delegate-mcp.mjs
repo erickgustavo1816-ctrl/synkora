@@ -11,7 +11,9 @@
  * (design DESIGN_SUBAGENTES_SEM_ABA_2026-08-18.md, D2 e D7):
  *
  *   gui-delegator → as 7 ferramentas de ajudante, e nenhum plano;
- *   gui-planner   → as 5 de plano, e nenhum ajudante;
+ *   gui-planner   → as 5 de plano MAIS as 7 de ajudante (ordem do dono,
+ *                   2026-08-30: o planejador delega pesquisa) — e nenhuma
+ *                   integração, release ou browser;
  *   qualquer outro papel morto da era F6 → catálogo VAZIO.
  *
  * A rodada 9 (2026-08-19) acrescentou uma faixa DENTRO da primeira: o chat de
@@ -45,14 +47,15 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { Hub } from '../.tmp/gui-delegate-mcp-test/hub.js'
-import { armGuiPlannerMcp, GUI_PLANNER_TOKEN_ENV } from '../.tmp/gui-delegate-mcp-test/guiPlannerMcp.js'
+import { GUI_PLANNER_TOKEN_ENV } from '../.tmp/gui-delegate-mcp-test/guiPlannerMcp.js'
 import {
   armGuiDelegateMcp,
   guiPaneToolKind,
   CLAUDE_NATIVE_AGENT_FENCE,
   GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS,
   GUI_DELEGATE_CLAUDE_TOOL_TIMEOUT_MS,
-  GUI_DELEGATE_CODEX_TOOL_TIMEOUT_SEC
+  GUI_DELEGATE_CODEX_TOOL_TIMEOUT_SEC,
+  GUI_PLANNER_CLAUDE_ALLOWED_TOOLS
 } from '../.tmp/gui-delegate-mcp-test/guiDelegateMcp.js'
 import { startMcpServer } from '../.tmp/gui-delegate-mcp-test/mcpServer.js'
 
@@ -143,7 +146,9 @@ const PLAN_TOOLS = Object.freeze([
   'propose_plan',
   'update_plan'
 ])
-const PLANNER_TOOLS = Object.freeze([...PLAN_TOOLS, ...LSP_TOOLS].sort())
+// O PLANEJADOR DELEGA (ordem do dono, 2026-08-30): planos + ajudantes + LSP —
+// e NADA de integração, release ou browser (o ajudante de pesquisa navega).
+const PLANNER_TOOLS = Object.freeze([...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS].sort())
 
 /** Hub REAL com o mínimo que ele exige (o registro de identidade não usa nada
  *  disso — é o ponto). Sem timer: o hub perdeu a fila de digitação em 08-17. */
@@ -332,27 +337,32 @@ test('o arm registra a identidade gui-delegator e o chat de DEV serve as TREZE f
   assert.deepEqual([...receipt.tools].sort(), DEV_MISSION_TOOLS)
 })
 
-test('nenhum vazamento entre os dois kits: quem delega não planeja e quem planeja não delega', async (t) => {
+test('o planejador delega SEM herdar o resto: planos+ajudantes, nunca integração/browser', async (t) => {
   const { hub, root } = hubIn(t)
   const { url } = await serverIn(t, hub)
 
   const dev = delegator(hub, root, 4242, 'gui-dev-11111111')
   const planner = armDeps(hub, root, 4242)
-  armGuiPlannerMcp(
+  armGuiDelegateMcp(
     { paneId: 'gui-dev-22222222', projectId: 'universo-1', cwd: root, cli: 'claude' },
-    planner.deps
+    planner.deps,
+    'gui-planner'
   )
+  assert.equal(hub.identityByToken(planner.remembered[0].token)?.role, 'gui-planner')
 
   const devTools = await toolNames(url, dev.token, 'kit-dev')
   const plannerTools = await toolNames(url, planner.remembered[0].token, 'kit-plan')
   assert.deepEqual(devTools, DEV_MISSION_TOOLS)
-  assert.deepEqual(plannerTools, PLANNER_TOOLS, 'o kit de planos não pode mudar por causa desta onda')
-  // O vazamento se mede sobre os kits EXCLUSIVOS: o de código é compartilhado
-  // pelos dois desde a R14, e é o único que pode aparecer dos dois lados.
+  // ORDEM DO DONO (2026-08-30): o kit do planejador é planos + ajudantes + LSP
+  // — a lateral e o pino D8 só existem na frota via MCP, e pesquisa é o
+  // trabalho dele.
+  assert.deepEqual(plannerTools, PLANNER_TOOLS, 'o planejador delega com o kit inteiro de ajudantes')
+  // O vazamento se mede sobre os kits EXCLUSIVOS de cada lado: plano não entra
+  // no dev; integração, release e browser não entram no planejador.
   for (const tool of PLAN_TOOLS) {
     assert.equal(devTools.includes(tool), false, `o delegador enxergou ${tool}`)
   }
-  for (const tool of [...HELPER_TOOLS, ...INTEGRATION_TOOLS]) {
+  for (const tool of [...INTEGRATION_TOOLS, ...BROWSER_TOOLS, 'release_status', 'release_run']) {
     assert.equal(plannerTools.includes(tool), false, `o planejador enxergou ${tool}`)
   }
 })
@@ -767,6 +777,61 @@ test('claude: as QUINZE ferramentas internas são pré-sancionadas, e a cerca co
   assert.notEqual(mcp.args.indexOf('--disallowedTools'), -1, 'a cerca não pode sair no lugar')
 })
 
+// O PLANEJADOR NASCE CERCADO (2026-08-30): até aqui o arm dele não tinha cerca
+// nenhuma — o subagente NATIVO ficava aberto justamente no chat que agora
+// delega. Entrar no regime é o pacote inteiro: cerca, teto do long-poll e a
+// pré-sanção POR PAPEL (planos + ajudantes + LSP; sem integração/release/
+// browser — autoridade que o planejamento não tem).
+test('o arm do planejador traz a cerca e a pré-sanção própria (planos+ajudantes)', (t) => {
+  const { hub, root } = hubIn(t)
+  const armed = armDeps(hub, root, 6161)
+  const input = { paneId: 'gui-dev-a1a1a1a1', projectId: 'p', cwd: root, cli: 'claude' }
+  const mcp = armGuiDelegateMcp(input, armed.deps, 'gui-planner')
+
+  assert.ok(mcp, 'o planejador arma pelo mesmo encanamento')
+  assert.equal(hub.identityByToken(armed.remembered[0].token)?.role, 'gui-planner')
+  assert.equal(mcp.env.MCP_TOOL_TIMEOUT, String(GUI_DELEGATE_CLAUDE_TOOL_TIMEOUT_MS))
+
+  const fenceAt = mcp.args.indexOf('--disallowedTools')
+  assert.notEqual(fenceAt, -1, 'sem a cerca o planejador continuaria abrindo subagente nativo')
+  assert.equal(mcp.args[fenceAt + 1], CLAUDE_NATIVE_AGENT_FENCE.join(','))
+  const allowedAt = mcp.args.indexOf('--allowedTools')
+  assert.equal(
+    mcp.args[allowedAt + 1],
+    GUI_PLANNER_CLAUDE_ALLOWED_TOOLS.join(','),
+    'a pré-sanção do planejador é a lista própria, nunca a do delegador'
+  )
+  for (const plan of ['list_plans', 'get_plan', 'propose_plan', 'update_plan', 'delete_plan']) {
+    assert.ok(
+      GUI_PLANNER_CLAUDE_ALLOWED_TOOLS.includes(`mcp__synkora__${plan}`),
+      `sem a pré-sanção de ${plan}, o kit de planos voltaria a pedir card`
+    )
+  }
+  assert.ok(GUI_PLANNER_CLAUDE_ALLOWED_TOOLS.includes('mcp__synkora__delegate'))
+  for (const off of ['integration_run', 'release_run', 'browser_open']) {
+    assert.equal(
+      GUI_PLANNER_CLAUDE_ALLOWED_TOOLS.includes(`mcp__synkora__${off}`),
+      false,
+      `${off} não é autoridade do planejador`
+    )
+  }
+
+  // O codex do planejador leva o MESMO pacote do delegador: cerca no `-c` e
+  // teto de tool — é o cinto que o suspensório (suppressNativeAgents) segue.
+  const codex = armDeps(hub, root, 6161)
+  const codexMcp = armGuiDelegateMcp(
+    { paneId: 'gui-dev-b2b2b2b2', projectId: 'p', cwd: root, cli: 'codex' },
+    codex.deps,
+    'gui-planner'
+  )
+  assert.ok(codexMcp.args.some((arg) => arg === 'features.multi_agent=false'))
+  assert.ok(
+    codexMcp.args.some(
+      (arg) => arg === `mcp_servers.synkora.tool_timeout_sec=${GUI_DELEGATE_CODEX_TOOL_TIMEOUT_SEC}`
+    )
+  )
+})
+
 test('codex: teto de tool por config, cerca multi_agent e nenhum valor com espaço', async (t) => {
   const { hub, root } = hubIn(t)
   const armed = armDeps(hub, root, 5151)
@@ -821,7 +886,7 @@ test('re-armar o MESMO pane reusa o token; identidade de outro papel no mesmo id
   // O mesmo endereço com papel ANTIGO (o pane era planejador) não pode herdar
   // o token: o catálogo mudaria embaixo de uma identidade que já foi servida.
   const planner = armDeps(hub, root, 4242)
-  armGuiPlannerMcp({ ...input, paneId: 'gui-dev-ffff2222' }, planner.deps)
+  armGuiDelegateMcp({ ...input, paneId: 'gui-dev-ffff2222' }, planner.deps, 'gui-planner')
   const reused = armDeps(hub, root, 4242)
   reused.tokens.set('gui-dev-ffff2222', planner.remembered[0].token)
   armGuiDelegateMcp({ ...input, paneId: 'gui-dev-ffff2222' }, reused.deps)
@@ -917,13 +982,21 @@ test('o re-arme conhece o release: kind release arma o MCP com o papel gui-relea
 
   const router = arm.slice(arm.indexOf('export function rearmGuiPaneTools'))
   const routerBody = router.slice(0, router.indexOf('export function rearmGuiDelegateMcp'))
-  assert.match(routerBody, /'release'/u, 'o roteador conhece o terceiro papel')
+  // 2026-08-30: o roteador deixou de listar papéis — SÓ `none` recusa, e todo
+  // kind com kit arma pela mesma trilha. É a forma que torna o incidente do
+  // release impossível de repetir: papel novo nasce armado por construção.
+  assert.match(routerBody, /kind === 'none'/u, 'só quem não tem kit nenhum recusa')
+  assert.match(
+    routerBody,
+    /return rearmGuiDelegateMcp\(ctx, spawn\)/u,
+    'os três papéis armam pela mesma trilha'
+  )
 
   const delegateArm = arm.slice(arm.indexOf('export function rearmGuiDelegateMcp'))
   assert.match(
     delegateArm,
-    /kind === 'release' \? \('gui-release' as const\) : \('gui-delegator' as const\)/u,
-    'o papel do token é derivado do tipo da missão'
+    /kind === 'release'\s*\?\s*\('gui-release' as const\)\s*:\s*kind === 'planner'\s*\?\s*\('gui-planner' as const\)\s*:\s*\('gui-delegator' as const\)/u,
+    'o papel do token é derivado do tipo da missão — planejador incluso (2026-08-30)'
   )
   assert.match(
     delegateArm,

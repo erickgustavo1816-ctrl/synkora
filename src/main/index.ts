@@ -84,6 +84,7 @@ import {
   getCliStatus,
   isUpdatingClis,
   onCliStatus,
+  startCliVersionWatch,
   updateAllClis,
 } from './cliUpdate'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs'
@@ -2806,6 +2807,20 @@ app.whenReady().then(async () => {
   onCliStatus((all) => {
     const versions = all.map((s) => `${s.cli}@${s.version ?? '-'}`).join(' ')
     if (versions !== lastCliVersions) {
+      // O diário nomeia a mudança (rodada do app OU o vigia pós-boot): é a
+      // linha que explica "por que o modelo novo apareceu/sumiu agora".
+      if (lastCliVersions) {
+        blackbox.record({
+          cat: 'app',
+          event: 'cli-version-changed',
+          actor: 'harness',
+          detail: {
+            from: lastCliVersions,
+            to: versions,
+            reasons: all.map((s) => s.detail).filter(Boolean)
+          }
+        })
+      }
       lastCliVersions = versions
       clearCatalogCache()
     }
@@ -4552,14 +4567,24 @@ app.whenReady().then(async () => {
   })
   // PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md): sessão de chat
   // por pane. Nenhum CLI filho sobrevive ao quit.
+  // O VIGIA DE VERSÃO PÓS-BOOT (2026-09-01): o binário pode mudar com o app de
+  // pé (o dono atualizou o claude por fora e o Fable 5.1 não aparecia). A
+  // cada 5 min, e a cada pane que nasce, a versão é re-lida; mudança entra pelo
+  // mesmo `onCliStatus` de uma rodada de update — o catálogo cai, o renderer
+  // esquece as listas, o titlebar acende "CLIs atualizados".
+  const cliVersionWatch = startCliVersionWatch({ intervalMs: 5 * 60_000 })
   guiSessions = registerGuiIpc(ctx, {
     assertAppRendererSender,
-    waitForCliStable: (cli) =>
-      waitForGuiCliStable(cli, {
+    waitForCliStable: (cli) => {
+      // Fora do caminho crítico de propósito: o pane não espera o `--version`;
+      // se o binário mudou, o próximo catálogo já sai fresco.
+      void cliVersionWatch.check()
+      return waitForGuiCliStable(cli, {
         getStatus: getCliStatus,
         isUpdating: isUpdatingClis,
         updateAll: updateAllClis
-      }),
+      })
+    },
     systemPromptFile: persistTrustedSystemPrompt,
     storeFile: join(app.getPath('userData'), 'gui-sessions.json'),
     helpers: guiHelperEngine

@@ -87,6 +87,7 @@ import { useGuiDraft } from '../useGuiDraft'
 import { useGuiComposerAttachments } from '../useGuiComposerAttachments'
 import type { GuiAttachmentDescriptor, SeatUsage } from '../../../preload'
 import {
+  guiComposerCatalogModels,
   guiContextUsagePresentation,
   guiModelForSelection,
   guiModelIsDefault,
@@ -577,6 +578,11 @@ export default function GuiPane({
   const clearGuiHistoryTarget = useStore((s) => s.clearGuiHistoryTarget)
   const showGuiHistoryTarget = useStore((s) => s.showGuiHistoryTarget)
   const appendGuiHistoryPage = useStore((s) => s.appendGuiHistoryPage)
+  // O CATÁLOGO REAL da conta (o mesmo do painel D8) — é o fallback dos menus de
+  // modelo/effort enquanto as caps do CLI não chegam (o "abrindo" do boot frio
+  // pode durar minutos atrás do waitForCliStable).
+  const catalogByCli = useStore((s) => s.catalogByCli)
+  const loadCatalog = useStore((s) => s.loadCatalog)
 
   useEffect(() => {
     // Fotografia congelada não tem sessão do outro lado: anunciar visibilidade
@@ -600,6 +606,13 @@ export default function GuiPane({
   const [liveModel, setLiveModel] = useState<string | undefined>(model)
   const [liveEffort, setLiveEffort] = useState<string | undefined>(effort)
   const executorRequestRef = useRef(0)
+  // A TROCA CARIMBADA DURANTE O "abrindo" (foto do dono, 2026-08-30): com o
+  // spawn ainda atrás do waitForCliStable não existe sessão para receber o
+  // configureExecutor — clicar dava "este pane não tem sessão aberta", um beco.
+  // O clique agora fica AQUI ('' = padrão) e um efeito o aplica assim que a
+  // conversa estiver de pé e livre — a ação é re-derivável, nunca perdida em
+  // silêncio nem recusada sem receita.
+  const pendingExecutorRef = useRef<{ model?: string; effort?: string } | null>(null)
   useEffect(() => {
     setMode(permissionMode ?? 'default')
   }, [permissionMode])
@@ -1453,6 +1466,60 @@ export default function GuiPane({
     [handleGuiLive, onExecutorChange, paneId, spawnChangeLocked]
   )
 
+  /** A TROCA NA JANELA DO "abrindo": o clique vira carimbo em vez de erro.
+   *  `true` = ficou carimbado (o chamador para por aqui); o efeito abaixo o
+   *  aplica quando a conversa estiver de pé e livre. */
+  const deferExecutorChange = useCallback(
+    (patch: { model?: string; effort?: string }): boolean => {
+      if (gui.status !== 'starting') return false
+      pendingExecutorRef.current = { ...pendingExecutorRef.current, ...patch }
+      handleGuiLive(paneId, {
+        type: 'command-output',
+        text: 'a conversa ainda está abrindo — carimbei a troca e aplico assim que ela estiver de pé'
+      })
+      return true
+    },
+    [gui.status, handleGuiLive, paneId]
+  )
+
+  // O RECONCILIADOR do carimbo: sai do "abrindo" e a conversa está livre →
+  // aplica pelo MESMO caminho vivo (configureExecutor, com ACK). 'working'
+  // espera o turno acabar (o main recusaria com "aguarde a resposta atual");
+  // um pane que morreu no meio descarta — reabrir recomeça do spawn gravado.
+  useEffect(() => {
+    const pending = pendingExecutorRef.current
+    if (!pending) return
+    if (gui.status === 'starting' || gui.status === 'working') return
+    if (gui.status === 'dead') {
+      pendingExecutorRef.current = null
+      return
+    }
+    pendingExecutorRef.current = null
+    const model = pending.model === undefined ? undefined : pending.model || undefined
+    let effort = pending.effort === undefined ? undefined : pending.effort || undefined
+    if (pending.model !== undefined && pending.effort === undefined) {
+      // O mesmo movimento do changeModel, agora com as caps vivas: modelo novo
+      // só carrega o effort atual quando o suporta.
+      const supported =
+        gui.caps?.models.find((m) => m.value === model)?.supportedEffortLevels ?? []
+      const current = gui.executorKnown ? gui.effort ?? undefined : liveEffort
+      effort = current && supported.includes(current) ? current : undefined
+    }
+    void applyExecutorChange(
+      pending.model !== undefined ? 'model' : 'effort',
+      pending.model !== undefined
+        ? { model: model ?? null, effort: effort ?? null }
+        : { effort: effort ?? null }
+    )
+  }, [
+    applyExecutorChange,
+    gui.caps,
+    gui.effort,
+    gui.executorKnown,
+    gui.status,
+    liveEffort
+  ])
+
   // R11: o toggle ⚡. Fast é flag de spawn (o binário não troca em voo — a
   // sonda probe-fast provou), então o caminho é o MESMO do modo de permissão:
   // respawn com resume, a conversa continua de onde está.
@@ -1502,6 +1569,12 @@ export default function GuiPane({
         return
       }
       const value = next || undefined
+      // "abrindo": não há sessão para o configureExecutor — o clique vira
+      // carimbo e o reconciliador o aplica quando a conversa ficar de pé.
+      if (deferExecutorChange({ model: next })) {
+        setOpenMenu(null)
+        return
+      }
       // Modelo novo pode não ter o effort atual — carregar um nível que ele
       // não suporta faria o spawn nascer recusado pelo CLI.
       const supported =
@@ -1514,6 +1587,7 @@ export default function GuiPane({
     },
     [
       applyExecutorChange,
+      deferExecutorChange,
       gui.caps,
       gui.effort,
       gui.executorKnown,
@@ -1535,10 +1609,15 @@ export default function GuiPane({
         setOpenMenu(null)
         return
       }
+      // "abrindo": mesmo desvio do modelo — carimba e aplica quando abrir.
+      if (deferExecutorChange({ effort: next })) {
+        setOpenMenu(null)
+        return
+      }
       const value = next || undefined
       void applyExecutorChange('effort', { effort: value ?? null })
     },
-    [applyExecutorChange, gui.effort, gui.executorKnown, liveEffort, spawnChangeLocked]
+    [applyExecutorChange, deferExecutorChange, gui.effort, gui.executorKnown, liveEffort, spawnChangeLocked]
   )
 
   useEffect(() => {
@@ -1646,7 +1725,23 @@ export default function GuiPane({
     : liveModel
   const selectedModel = selectedModelOverride ?? gui.model ?? liveModel
   const selectedEffort = gui.executorKnown ? gui.effort ?? undefined : liveEffort
-  const modelOptions = gui.caps?.models ?? []
+  // ANTES DAS CAPS, O CATÁLOGO (foto do dono, 2026-08-30): no "abrindo" do
+  // boot frio os menus ficavam vazios e o chip de effort SUMIA por minutos. O
+  // fallback é a lista REAL da conta (a mesma do painel D8), vestida na forma
+  // das caps — e morre sozinho quando as caps chegam, que são a palavra do CLI.
+  // A ENTRADA do catálogo desta conta entra como dependência do efeito de
+  // propósito: quando o CLI muda de versão o app esquece as listas
+  // (`clearCatalogs`), e é o sumiço da entrada que faz este pane pedir a nova.
+  const catalogEntry = catalogByCli[`${cli}:${seatId ?? ''}`]
+  useEffect(() => {
+    if (readOnly || gui.caps || catalogEntry) return
+    void loadCatalog(cli, seatId)
+  }, [catalogEntry, cli, gui.caps, loadCatalog, readOnly, seatId])
+  const catalogFallbackModels = useMemo(
+    () => (gui.caps ? [] : guiComposerCatalogModels(catalogEntry)),
+    [catalogEntry, gui.caps]
+  )
+  const modelOptions = gui.caps?.models ?? catalogFallbackModels
   const modelDefaultOption = useMemo(
     () => modelOptions.find((option) => guiModelIsDefault(option)),
     [modelOptions]
@@ -2535,7 +2630,10 @@ export default function GuiPane({
                 )}
               </div>
 
-              {effortOptions.length > 0 && (
+              {/* O chip de effort NÃO some no "abrindo" (foto do dono,
+                  2026-08-30): sem caps e sem catálogo ainda, o nível carimbado
+                  no spawn continua visível — sumir lia como effort perdido. */}
+              {(effortOptions.length > 0 || (!gui.caps && Boolean(selectedEffort))) && (
                 <div className="gui-menu-host gui-composer-effort">
                   <button
                     className="gui-mode-btn mode-effort"
@@ -2578,6 +2676,15 @@ export default function GuiPane({
                       ))}
                       {switchNote && (
                         <span className="gui-menu-foot gui-menu-cost">{switchNote}</span>
+                      )}
+                      {/* espelho do menu de modelos: espera não é defeito.
+                          DEPOIS do rodapé de custo de propósito — o recorte
+                          das opções (test:gui-effort-menu-layout) termina no
+                          switchNote e não pode ver span nenhum. */}
+                      {effortOptions.length === 0 && (
+                        <span className="gui-menu-foot">
+                          os níveis chegam quando o CLI termina de abrir
+                        </span>
                       )}
                     </div>
                   )}

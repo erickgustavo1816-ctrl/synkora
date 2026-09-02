@@ -19,6 +19,13 @@ import { missionHistory, type MissionCommit } from '../missionHistory'
 // essa branch já mudou?" sem o dono abrir a missão — e isso é estado próprio
 // (busca, erro, resultado) que não pertence ao painel inteiro.
 //
+// SÓ MISSÃO VIVA (R38, 2026-08-24). A linha tinha um modo `done` — leitura,
+// sem clique e sem gaveta — para a seção "integradas" do painel. Aquela seção
+// morreu na fusão das duas listas repetidas (a obra por dia conta o que já
+// integrou, em linha fina), e um modo sem chamador é dívida, não proteção.
+// Missão encerrada não é botão de jeito nenhum: `setMissionTab` só resolve
+// missão viva, e o histórico dela mora na aba Versões.
+//
 // SOB DEMANDA, SEMPRE. A leitura só acontece no clique do dono, uma missão por
 // vez: um painel com dez missões abertas que dispara dez leituras de Git no
 // mount custaria dez processos por render e é exatamente o leque que o desenho
@@ -56,15 +63,12 @@ export default function MissionDashboardRow({
   mission,
   entry,
   versionLabel,
-  done = false,
   onOpen
 }: {
   mission: Mission
   entry?: MissionColumnEntry
   versionLabel?: string
-  /** missão encerrada: linha de leitura, sem clique e sem gaveta */
-  done?: boolean
-  onOpen?: (missionId: string) => void
+  onOpen: (missionId: string) => void
 }): React.JSX.Element {
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
   const [open, setOpen] = useState(false)
@@ -77,10 +81,8 @@ export default function MissionDashboardRow({
   const label = MISSION_STATUS_LABEL[mission.status]
   const seat = [entry?.seatName, entry?.model].filter(Boolean).join(' · ')
   // PLANEJAMENTO NÃO TEM BRANCH: ele escreve `plano/` na raiz, então não há
-  // diff de worktree para abrir. Missão encerrada também não — o worktree dela
-  // já foi removido na integração, e a gaveta responderia com um erro que não
-  // é notícia nenhuma.
-  const canDisclose = !done && !planning && Boolean(mission.branch)
+  // diff de worktree para abrir.
+  const canDisclose = !planning && Boolean(mission.branch)
 
   async function toggle(): Promise<void> {
     if (open) {
@@ -140,21 +142,7 @@ export default function MissionDashboardRow({
     </>
   )
 
-  const className = `pd-mission${waiting ? ' waiting' : ''}${done ? ' done' : ''}`
-
-  // MISSÃO ENCERRADA NÃO É BOTÃO: o canal de seleção do board (`setMissionTab`)
-  // só resolve missão VIVA — um clique aqui não abriria nada, e prometer o que
-  // não acontece é pior que não oferecer. O histórico dela está na aba Versões.
-  if (!onOpen) {
-    return (
-      <div
-        className={className}
-        data-tip={`${mission.title} — ${label}\nmissão encerrada: o histórico dela está na aba Versões`}
-      >
-        {head}
-      </div>
-    )
-  }
+  const className = `pd-mission${waiting ? ' waiting' : ''}`
 
   const openButton = (
     <button

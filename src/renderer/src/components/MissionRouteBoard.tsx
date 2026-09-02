@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useStore, type Mission, type Version } from '../store'
+import { missionTypeOf, useStore, type Mission, type Version } from '../store'
 import { missionChatSummary, missionChatLabel, type MissionChatSummary } from '../guiMissionPanes'
 import { isReleaseMissionRecord } from '../missionCardAccess'
 import { integrationShortLine } from '../integrationQueuePresentation'
@@ -57,7 +57,10 @@ function dotOf(mission: Mission, chat: MissionChatSummary): string {
 /** Linha curta embaixo do título — o que esta missão está fazendo. */
 function noteOf(mission: Mission, chat: MissionChatSummary): string {
   if (mission.pendingIntegrationApproval) return 'esperando seu ⇪'
-  if (mission.status === 'concluida') return 'integrada'
+  // Planejamento CONCLUI, não integra: "integrada" prometeria um merge que
+  // nunca existiu — ele escreve plano/ na raiz e encerra.
+  if (mission.status === 'concluida')
+    return missionTypeOf(mission) === 'planejamento' ? 'concluída' : 'integrada'
   if (mission.status === 'integrando') return 'mesclando agora'
   // O VOCABULÁRIO da fila é um só (rodada 9): a mesma missão não pode se ler
   // "fila #1" aqui e "com o agente" no trilho. A régua nova entra de graça —
@@ -72,6 +75,9 @@ interface RouteRow {
   released: boolean
   /** ordena as linhas: abertas primeiro (mais antiga em cima), lançadas depois */
   order: number
+  /** a linha do PLANEJAMENTO: fora de versão por régua de nascimento — glifo ✎
+   *  e contagem "concluídas" (planejamento conclui, não integra) */
+  planning?: boolean
   missions: Mission[]
 }
 
@@ -156,13 +162,30 @@ export default function MissionRouteBoard({
       order: 999,
       missions: []
     }
+    // PLANEJAMENTO NÃO PERTENCE A VERSÃO (régua do nascimento, NewMissionModal):
+    // ele escreve plano/ na raiz e nunca integra em linha nenhuma. Cair na
+    // corrente ("é nela que ela vai integrar" — falso aqui) ou na "sem versão"
+    // (como se faltasse um carimbo) mentiria das duas formas; a linha é própria.
+    const plano: RouteRow = {
+      key: '__planejamento__',
+      name: 'planejamento',
+      released: false,
+      order: 998,
+      planning: true,
+      missions: []
+    }
     for (const m of mine) {
+      if (missionTypeOf(m) === 'planejamento') {
+        plano.missions.push(m)
+        continue
+      }
       const target =
         (m.versionId && byId.get(m.versionId)) ||
         (m.status !== 'concluida' && corrente ? byId.get(corrente) : undefined)
       ;(target ?? loose).missions.push(m)
     }
     const out = [...byId.values()]
+    if (plano.missions.length) out.push(plano)
     if (loose.missions.length) out.push(loose)
     return out
       .filter((row) => row.missions.length > 0 || !row.released)
@@ -216,11 +239,12 @@ export default function MissionRouteBoard({
             <section key={row.key} className={`rb-row${row.released ? ' released' : ''}`}>
               <header className="rb-row-head">
                 <span className="rb-row-name">
-                  ◈ {row.name}
+                  {row.planning ? '✎' : '◈'} {row.name}
                   {row.released && <span className="rb-row-check"> ✓</span>}
                 </span>
                 <span className="rb-row-count">
-                  {byLane.integrada.length}/{row.missions.length} integradas
+                  {byLane.integrada.length}/{row.missions.length}{' '}
+                  {row.planning ? 'concluídas' : 'integradas'}
                 </span>
               </header>
               <div className="rb-lanes">
@@ -235,7 +259,11 @@ export default function MissionRouteBoard({
                         <button
                           key={m.id}
                           className={`rb-card${chat.attention || m.pendingIntegrationApproval ? ' asking' : ''}`}
-                          data-tip={`${m.title}\n${m.branch ?? 'sem branch'} · ${noteOf(m, chat)}${
+                          data-tip={`${m.title}\n${
+                            row.planning
+                              ? '✎ planejamento · escreve plano/'
+                              : (m.branch ?? 'sem branch')
+                          } · ${noteOf(m, chat)}${
                             live ? '\nclique para abrir a missão no Board' : ''
                           }`}
                           onClick={() => open(m.id, live)}

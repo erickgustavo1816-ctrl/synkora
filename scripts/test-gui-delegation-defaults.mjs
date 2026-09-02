@@ -729,8 +729,13 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   for (const role of GUI_MISSION_ROLES) {
     assert.ok(guiMissionSystemPrompt(role).length < 13300, `${role}: contrato virou constituição`)
   }
-  // O planejador não delega: ele nunca recebe a seção nem o pino.
-  assert.doesNotMatch(guiPlanningSystemPrompt(), /STANDING ORDER FROM THE OWNER/u)
+  // 2026-08-30 (ordem do dono: "coloque os ajudantes também para eu
+  // selecionar"): o planejador DELEGA — a MESMA seção, palavra por palavra
+  // (fonte única, como entre os papéis de missão), e com ela o pino D8.
+  const planning = guiPlanningSystemPrompt()
+  const plannerAt = planning.indexOf('DELEGATION — STANDING ORDER FROM THE OWNER:')
+  assert.ok(plannerAt >= 0, 'o planejador ficou sem a ordem permanente')
+  assert.equal(planning.slice(plannerAt), sections[0], 'fonte única também no planejador')
 })
 
 // O BROWSER DA CASA (2026-08-29 — DESIGN_BROWSER_EMBUTIDO, fatia H4) entrou em

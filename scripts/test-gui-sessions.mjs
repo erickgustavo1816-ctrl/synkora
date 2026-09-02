@@ -53,9 +53,13 @@ import {
 } from '../.tmp/gui-sessions-test/guiConversationOdometer.js'
 import {
   GUI_PLANNER_TOKEN_ENV,
-  armGuiPlannerMcp,
   guiPlannerCodexArgs
 } from '../.tmp/gui-sessions-test/guiPlannerMcp.js'
+import { armGuiDelegateMcp } from '../.tmp/gui-sessions-test/guiDelegateMcp.js'
+
+// O ARM DO PLANEJADOR (2026-08-30): a trilha própria morreu — o planejador
+// arma pelo mesmo encanamento dos outros chats, com o papel `gui-planner`.
+const armGuiPlannerMcp = (input, deps) => armGuiDelegateMcp(input, deps, 'gui-planner')
 import { GuiClaudeTaskRegistry } from '../.tmp/gui-sessions-test/guiClaudeTasks.js'
 import {
   GUI_CODEX_AGENT_TOOL_PREFIX,
@@ -5023,8 +5027,13 @@ test('o planejador arma token e config; sem servidor de pé, o chat nasce sem to
     deps(4321)
   )
   assert.equal(claude.args[0], '--mcp-config')
-  assert.equal(claude.args.at(-1), '--strict-mcp-config')
-  assert.equal(claude.env, undefined, 'no claude o bearer viaja no arquivo, não no env')
+  assert.ok(claude.args.includes('--strict-mcp-config'), 'o planejador não herda MCP do seat')
+  // 2026-08-30: o planejador entrou no regime da delegação — o arm dele traz a
+  // cerca anti-subagente-nativo e a pré-sanção por papel (a lista exata é do
+  // `test:gui-delegate-mcp`); o env carrega o teto do long-poll.
+  assert.ok(claude.args.includes('--disallowedTools'), 'o planejador nasce cercado')
+  assert.ok(claude.args.includes('--allowedTools'), 'sem pré-sanção o kit pediria card')
+  assert.equal(typeof claude.env?.MCP_TOOL_TIMEOUT, 'string', 'sem o teto o long-poll morre em 60s')
   assert.equal(registered[0].identity.role, 'gui-planner')
   assert.equal(registered[0].identity.projectId, 'proj')
   assert.equal(registered[0].identity.missionId, 'mission-1')

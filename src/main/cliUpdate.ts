@@ -2,6 +2,7 @@ import { execFile } from 'child_process'
 import { app } from 'electron'
 import { appendFileSync } from 'fs'
 import { join } from 'path'
+import { cliVersionDrift } from './cliVersionDrift'
 import { freshWindowsPath } from './winPath'
 
 /** CLIs que os panes executam — mantê-los atualizados é o que faz um modelo
@@ -17,7 +18,8 @@ export type CliState =
   | 'updating'
   /** checado e já estava na última versão */
   | 'current'
-  /** esta rodada instalou uma versão nova (from → version) */
+  /** uma versão nova entrou (from → version): esta rodada a instalou, OU o
+   *  vigia pós-boot viu o binário mudar por fora do app (2026-09-01) */
   | 'updated'
   /** CLI não encontrado no PATH */
   | 'missing'
@@ -180,4 +182,48 @@ export function updateAllClis(): Promise<CliStatus[]> {
 /** Uma rodada de update já está em andamento? */
 export function isUpdatingClis(): boolean {
   return running !== null
+}
+
+export interface CliVersionWatch {
+  /** Uma leitura AGORA (fora do relógio) — quem abre um pane chama. */
+  check(): Promise<void>
+  stop(): void
+}
+
+/**
+ * O VIGIA DE VERSÃO PÓS-BOOT (2026-09-01). Caso real: o Fable 5.1 saiu, o
+ * `claude` foi atualizado por fora do app e o Synkora — de pé desde a véspera
+ * — seguiu servindo o catálogo do binário velho até um restart, porque a
+ * versão só era lida no boot. Aqui ela é re-lida no relógio e a cada pane que
+ * nasce; mudança vira `set(...)`, que é o MESMO caminho de uma rodada de
+ * update: o `onCliStatus` do index derruba o cache do catálogo e o renderer
+ * esquece as listas. A régua é a de `cliVersionDrift` (pura, testada).
+ *
+ * `read` entra por injeção para a costura ser provável sem binário; o padrão
+ * é o `--version` real. Uma rodada de update em curso é dona da verdade — o
+ * vigia não fala por cima dela.
+ */
+export function startCliVersionWatch(opts: {
+  intervalMs: number
+  read?: (cli: CliName) => Promise<string | null>
+}): CliVersionWatch {
+  const read = opts.read ?? readVersion
+  let checking: Promise<void> | null = null
+  const check = (): Promise<void> => {
+    if (checking) return checking
+    checking = (async () => {
+      if (running) return
+      for (const cli of CLIS) {
+        const current = status.get(cli) as CliStatus
+        const drift = cliVersionDrift(current, await read(cli))
+        if (drift) set(cli, { ...drift, checkedAt: Date.now() })
+      }
+    })().finally(() => {
+      checking = null
+    })
+    return checking
+  }
+  const timer = setInterval(() => void check(), opts.intervalMs)
+  timer.unref()
+  return { check, stop: () => clearInterval(timer) }
 }

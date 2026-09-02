@@ -130,6 +130,59 @@ export function guiModelLabel(
   return guiModelShortName(guiModelForSelection(models, selected), fallback)
 }
 
+/** Espelho ESTREITO do catálogo real de um CLI (`catalog.ts` → `window.synkora
+ *  .catalog.get`, o mesmo que o painel D8 lê). Declarado aqui porque este
+ *  módulo é FOLHA (ver a nota do `compactTokens`): importar o tipo de
+ *  `guiDelegationDefaults` quebraria as suítes que rodam o `.ts` cru. */
+export interface GuiComposerCatalog {
+  models?: readonly { id?: unknown; label?: unknown; efforts?: readonly unknown[] }[]
+  efforts?: readonly unknown[]
+}
+
+function cleanEfforts(values: readonly unknown[] | undefined): string[] {
+  const seen = new Set<string>()
+  for (const value of values ?? []) {
+    if (typeof value !== 'string') continue
+    const trimmed = value.trim()
+    if (trimmed) seen.add(trimmed)
+  }
+  return [...seen]
+}
+
+/**
+ * A LISTA DE MODELOS ANTES DAS CAPS (foto do dono, 2026-08-30: pane "abrindo"
+ * com o menu de modelos vazio e o chip de effort SUMIDO). Enquanto o CLI não
+ * termina de abrir — no boot frio o `waitForCliStable` segura o spawn por
+ * minutos — o composer cai no CATÁLOGO REAL da conta, vestido na forma das
+ * caps, e os dois seletores continuam de pé.
+ *
+ * A régua dos efforts é ESPELHO DECLARADO de `guiDelegationModelGroups`
+ * (guiDelegationDefaults.ts): lista declarada e não vazia é ela; declarada
+ * VAZIA = o modelo não aceita effort; AUSENTE = os níveis do binário. E o
+ * rótulo parte no ` — ` como lá (`CATALOG_LABEL_SPLIT`): `catalog.ts` escreve
+ * `${displayName} — ${descrição}`, e descrição não é nome de menu.
+ */
+export function guiComposerCatalogModels(
+  catalog: GuiComposerCatalog | undefined
+): GuiCliModel[] {
+  const fallback = cleanEfforts(catalog?.efforts)
+  const models: GuiCliModel[] = []
+  for (const model of catalog?.models ?? []) {
+    const id = typeof model.id === 'string' ? model.id.trim() : ''
+    if (!id) continue
+    const raw =
+      typeof model.label === 'string' && model.label.trim() ? model.label.trim() : id
+    const head = raw.split(/\s+—\s+/u)[0]?.trim() || id
+    models.push({
+      value: id,
+      displayName: head,
+      supportedEffortLevels:
+        model.efforts === undefined ? fallback : cleanEfforts(model.efforts)
+    })
+  }
+  return models
+}
+
 /** A VOZ COMPACTA DOS NÚMEROS DO CHAT. ESPELHO DECLARADO: o par é
  *  `compactTokens` em `guiCostSignals.ts` (o odômetro fala igual ao medidor de
  *  janela). A cópia existe porque os dois módulos são FOLHAS de propósito — as

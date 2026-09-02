@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-30T19:06:31.688Z",
+  "updatedAt": "2026-09-01T20:12:13.882Z",
   "lanes": {
     "agora": [],
     "fila": [
@@ -146,6 +146,25 @@
         "refs": [
           ".synkora/reports/browser-agent-P2-report.md",
           ".synkora/reports/browser-agent-P3-report.md"
+        ]
+      },
+      {
+        "id": "chip-de-skill-browser-na-ficha-do-ajudante-skill",
+        "title": "Chip de skill/browser na FICHA do ajudante + skill-entered de ajudante no diário (exige o motor guiHelperSessions)",
+        "desc": "Medido em 01/09: ajudante não tem sinal nenhum de skill nem de browser (claude 7/107 usaram skill, codex 22/91; browser 1/72 claude, 0/91 codex). A aba com dono já aparece no chrome; falta a ficha da lateral. Ficou fora da rodada das abas por identidade porque guiHelperSessions.ts estava em obra em outra sessão.",
+        "refs": [
+          ".synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md",
+          "src/main/guiHelperSessions.ts",
+          "src/main/guiHelperCards.ts"
+        ]
+      },
+      {
+        "id": "browserpane-ts-em-1221-linhas-o-closure-do-motor",
+        "title": "browserPane.ts em 1221 linhas — o closure do motor só desce com refatoração (contexto injetado para geometria/ciclo de aba)",
+        "desc": "Rodada das abas por identidade cortou 1369 → 1221 com quatro irmãos (contracts 288, gestures 224, url 105, tabOwner 110). O que sobra é o closure (~950): próxima fronteira medida no report A (§Corte 3). Substitui a sobra \"browserPane 1069\" das 4 sobras do pop-out.",
+        "refs": [
+          ".synkora/reports/browser-tabs-agent-A-report.md",
+          "src/main/browserPane.ts"
         ]
       }
     ],
@@ -393,6 +412,44 @@
           ".synkora/reports/skill-chip-agent-report.md"
         ],
         "day": "30/08 — domingo"
+      },
+      {
+        "id": "o-planejador-delega-ajudantes-com-pino-d8-e-frot",
+        "title": "O planejador delega — ajudantes com pino D8 e frota na lateral",
+        "desc": "Ordem do dono (30/08): \"coloque os ajudantes também para eu selecionar, assim como na missão normal\". O chat de planejamento entrou no regime da delegação: papel gui-planner arma pelo armGuiDelegateMcp (cercas anti-nativo + pré-sanção própria: planos+ajudantes+LSP, sem integração/release/browser), o servidor serve o kit de ajudantes aos dois papéis (registerDelegationKit), o guard do wiring aceita gui-planner, o PLANNING_CONTRACT ganhou custo+standing order+linha própria (ajudante PESQUISA, entrega em .synkora/, nunca produto/plano/), abinha D8 liga sozinha pelos args e a seção FROTA do trilho perdeu o !planning. armGuiPlannerMcp morreu (trilha única). CONSERTO PÓS-ESTREIA (foto do dono, mesmo dia): na janela \"abrindo\" do boot frio (waitForCliStable segura o spawn por minutos) o composer ficava sem menu de modelos e sem chip de effort, e trocar dava \"este pane não tem sessão aberta\" — agora os menus caem no catálogo real da conta, o chip não some, e o clique vira CARIMBO falado no fio que um reconciliador aplica quando a conversa fica de pé. Validado ao vivo pelo dono: abinha D8 e pino GPT-5.6-Sol·xhigh·fast apareceram no chat de planejamento.",
+        "refs": [
+          ".synkora/reports/DESIGN_PLANEJADOR_DELEGA_2026-08-30.md",
+          "src/main/guiDelegateMcp.ts",
+          "src/main/mcpServer.ts",
+          "src/main/guiMissionContracts.ts"
+        ],
+        "badge": "delegação",
+        "day": "30/08 — domingo"
+      },
+      {
+        "id": "vigia-de-versao-dos-clis-pos-boot-modelo-novo-ap",
+        "title": "Vigia de versão dos CLIs pós-boot — modelo novo aparece sem restart",
+        "desc": "Caso do dono (01/09): o Fable 5.1 saiu, o claude foi atualizado por fora do app às 15:29 e o Synkora — de pé desde a véspera — seguiu servindo o catálogo do binário velho (a versão só era lida no BOOT; o cache do catálogo é eterno por processo e só cai quando a versão muda — que nunca era observado). Sondado no binário: o handshake do 2.1.257 lista `claude-fable-5-1[1m]` (\"Fable\") e o `fable-5` saiu da lista. Conserto: `startCliVersionWatch` (cliUpdate.ts) re-lê `--version` a cada 5 min e a cada pane que nasce (fora do caminho crítico); mudança entra pelo mesmo `onCliStatus` de uma rodada de update → catálogo cai, renderer esquece as listas, titlebar acende \"CLIs atualizados\", diário grava `cli-version-changed`. Régua pura em cliVersionDrift.ts (suíte nova test:cli-version-watch, no gate raiz). De carona: o composer re-pede o catálogo quando o app o esquece. Precisa RESTART para valer (main).",
+        "refs": [
+          "src/main/cliVersionDrift.ts",
+          "src/main/cliUpdate.ts",
+          "scripts/test-cli-version-watch.mjs"
+        ],
+        "badge": "catálogo",
+        "day": "01/09 — terça"
+      },
+      {
+        "id": "browser-aba-por-identidade-porta-por-ajudante-a-",
+        "title": "Browser: ABA POR IDENTIDADE + PORTA POR AJUDANTE — a frota ganha bancada própria (dono/dev/ajudante cada um na sua aba; porta reservada no spawn; ⚡ e ficha do dono por aba)",
+        "desc": "Medido antes: 1/72 ajudantes claude e 0/91 codex usavam o browser; o único que usou colidiu com o dev na mesma aba (86a05c06). Entregue na branch browser-helper-tabs (7b0bb49, sobre snapshot do WIP de nivel5-fase1) — pouso + restart pendentes.",
+        "refs": [
+          "7b0bb49",
+          ".synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md",
+          "docs/HANDOFF_SESSAO_2026-09-01.md",
+          "src/main/browserTabOwner.ts",
+          "src/main/guiHelperPorts.ts"
+        ],
+        "day": "01/09 — terça"
       }
     ]
   },
@@ -760,6 +817,47 @@
       "by": "orquestrador",
       "action": "add",
       "id": "o-fio-mostra-quando-uma-skill-entra-na-conversa-",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-30T22:09:02.034Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "o-planejador-delega-ajudantes-com-pino-d8-e-frot",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-08-31T14:26:50.529Z",
+      "by": "orquestrador",
+      "action": "update",
+      "id": "o-planejador-delega-ajudantes-com-pino-d8-e-frot"
+    },
+    {
+      "at": "2026-09-01T18:52:47.563Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "vigia-de-versao-dos-clis-pos-boot-modelo-novo-ap",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-09-01T20:11:09.537Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "chip-de-skill-browser-na-ficha-do-ajudante-skill",
+      "detail": "→ dividas"
+    },
+    {
+      "at": "2026-09-01T20:11:12.350Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "browserpane-ts-em-1221-linhas-o-closure-do-motor",
+      "detail": "→ dividas"
+    },
+    {
+      "at": "2026-09-01T20:12:13.882Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "browser-aba-por-identidade-porta-por-ajudante-a-",
       "detail": "→ feito"
     }
   ]

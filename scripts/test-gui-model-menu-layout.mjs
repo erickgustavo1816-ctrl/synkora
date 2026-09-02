@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
+  guiComposerCatalogModels,
   guiModelIsDefault,
   guiModelLabel,
   guiModelShortName
@@ -113,4 +114,36 @@ test('modelo mostra a versão canônica e mantém um único padrão', () => {
     /modelDefaultIdentity[\s\S]*!\/\^default\\b\/iu/u,
     'o label padrão não deve renderizar Default como uma segunda escolha'
   )
+})
+
+// A LISTA ANTES DAS CAPS (foto do dono, 2026-08-30): no "abrindo" do boot
+// frio — waitForCliStable pode segurar o spawn por minutos — os menus ficavam
+// vazios e o chip de effort sumia. O composer passou a cair no catálogo REAL
+// da conta, vestido na forma das caps. A régua dos efforts é espelho declarado
+// de guiDelegationModelGroups (guiDelegationDefaults.ts): declarada não-vazia
+// é ela; declarada VAZIA = o modelo não aceita effort; AUSENTE = os níveis do
+// binário. E o rótulo parte no " — " (descrição não é nome de menu).
+test('o catálogo vira lista de modelos do composer enquanto as caps não chegam', () => {
+  const models = guiComposerCatalogModels({
+    models: [
+      { id: 'opus[1m]', label: 'Opus — o confiável', efforts: ['low', 'high'] },
+      { id: 'haiku', label: 'Haiku', efforts: [] },
+      { id: 'fable-5[1m]' },
+      { id: '  ', label: 'fantasma' },
+      { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol', efforts: ['medium', ' ', 'medium'] }
+    ],
+    efforts: ['low', 'medium', 'high', 'xhigh']
+  })
+  assert.deepEqual(models, [
+    { value: 'opus[1m]', displayName: 'Opus', supportedEffortLevels: ['low', 'high'] },
+    { value: 'haiku', displayName: 'Haiku', supportedEffortLevels: [] },
+    {
+      value: 'fable-5[1m]',
+      displayName: 'fable-5[1m]',
+      supportedEffortLevels: ['low', 'medium', 'high', 'xhigh']
+    },
+    { value: 'gpt-5.6-sol', displayName: 'GPT-5.6-Sol', supportedEffortLevels: ['medium'] }
+  ])
+  assert.deepEqual(guiComposerCatalogModels(undefined), [])
+  assert.deepEqual(guiComposerCatalogModels({}), [])
 })

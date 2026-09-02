@@ -570,6 +570,29 @@ test('cada linha de versão conta as missões CARIMBADAS nela', async () => {
   ])
 })
 
+// PLANEJAMENTO FICA FORA DE VERSÃO (foto do dono, 2026-08-30): a régua do
+// nascimento (NewMissionModal) diz que planejamento não pertence a versão —
+// ele escreve plano/ na raiz e nunca integra. A exceção da "viva sem carimbo
+// conta na corrente" não pode alcançá-lo: ele é sem carimbo DE PROPÓSITO, e
+// contá-lo inflava o total da linha corrente (a família do 8/9 da R27).
+test('planejamento não conta em linha de versão nenhuma — nem na corrente', async () => {
+  const { versionPortrait } = await landing()
+
+  const { versoes } = versionPortrait(
+    [version({ id: 'v10', name: 'V1.0' })],
+    [
+      // viva sem carimbo, de DEV: essa sim cai na corrente
+      mission({ id: 'a', status: 'ativa' }),
+      mission({ id: 'p', status: 'ativa', missionType: 'planejamento' }),
+      mission({ id: 'q', status: 'concluida', missionType: 'planejamento' })
+    ]
+  )
+
+  assert.deepEqual(versoes, [
+    { name: 'V1.0', lancada: false, missoesFeitas: 0, missoesTotal: 1 }
+  ])
+})
+
 test('a linha soma entrega registrada e missão concluída SEM contar duas vezes', async () => {
   const { versionPortrait } = await landing()
 

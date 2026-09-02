@@ -1306,7 +1306,11 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
    * drena correio nenhum de propósito: recusar não consome nada.
    */
   const guard = (id: GuiDelegationIdentity): string | null => {
-    if (id.role !== 'gui-delegator') return NOT_A_DELEGATOR
+    // DOIS papéis delegam desde 2026-08-30: o chat de missão e o PLANEJADOR
+    // (ordem do dono: pesquisa é trabalho dele, com a mesma lateral e o mesmo
+    // pino). A cerca de autoridade continua a mesma: ajudante, release e
+    // qualquer outra identidade ficam fora.
+    if (id.role !== 'gui-delegator' && id.role !== 'gui-planner') return NOT_A_DELEGATOR
     const owed = replyDebt.pending(id.paneId)
     if (!owed) return null
     journal({
