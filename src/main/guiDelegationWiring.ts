@@ -1509,7 +1509,13 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
     // entregá-la aqui a colocaria dentro do turno que está sendo cortado, e o
     // modelo a leria e a perderia no mesmo passo. Ela sai pelo flush, com o
     // envelope de retomada. O correio sem marca continua viajando como sempre.
-    const mail = ownerMail.drain(paneId, { skipHandoff: true })
+    //
+    // R39.1 D3' — e também NÃO leva a cópia `steered`: essa o CLI já tem (ela
+    // foi steerada no envio, e a cópia do pote é o CINTO até o recibo de
+    // leitura). Levá-la aqui faria o dono falar duas vezes dentro do MESMO
+    // turno, e armaria a dívida ANTES do recibo — que é justamente o buraco que
+    // a R39.1 fecha.
+    const mail = ownerMail.drain(paneId, { skipHandoff: true, skipSteered: true })
     if (mail.length === 0) return body
     const block = guiOwnerMailBlock(mail)
     // R32 — entregar ARMA a dívida: a partir daqui, os verbos deste catálogo

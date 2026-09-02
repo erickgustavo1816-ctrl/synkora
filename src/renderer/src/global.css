@@ -16150,10 +16150,11 @@ body.progress-overlay-page #root {
    moldura, sem fundo, sem raio; encosta na quina de baixo da bolha como um
    comprovante que ficou preso ali.
 
-   A diferença nasce da FORMA da marca antes da cor — círculo que respira
-   (ainda acontecendo) · risco (atravessou) · canto de volta (voltou) —, e o
-   texto inteiro fica em `--ink-2`: `--ink-3` sobre papel dá 2,8:1, e um
-   carimbo de 10px que o dono precisa LER não pode reprovar em AA.
+   A diferença nasce da FORMA da marca antes da cor — traço em pé (a porta
+   ainda fechada) · círculo que respira (ainda acontecendo) · traço deitado
+   (atravessou) · canto de volta (voltou) —, e o texto inteiro fica em
+   `--ink-2`: `--ink-3` sobre papel dá 2,8:1, e um carimbo de 10px que o dono
+   precisa LER não pode reprovar em AA.
    A ÚNICA animação é a `gui-subagent-pulse` que a casa já tem: nenhum
    keyframe novo entra por causa de um carimbo. */
 
@@ -16174,6 +16175,15 @@ body.progress-overlay-page #root {
   height: 6px;
 }
 
+/* NÃO LIDA AINDA (R39.1) — o MESMO traço do "entregue", só que EM PÉ: a porta
+   ainda fechada. A história inteira dos dois estados é uma rotação de 90°, e
+   nenhuma forma nova entra no vocabulário. Sem pulso de propósito: ESPERAR NÃO
+   É MOVIMENTO — quem se mexe aqui é o dono, no botão ao lado. */
+.gui-owner-state-unread .gui-owner-state-mark {
+  width: 0;
+  border-left: 1px solid currentColor;
+}
+
 /* PARANDO — o círculo que respira: o único estado ainda em movimento, e o
    movimento é o SINAL de que o corte está em curso. */
 .gui-owner-state-stopping .gui-owner-state-mark {
@@ -16182,7 +16192,10 @@ body.progress-overlay-page #root {
   animation: gui-subagent-pulse 1.05s ease-in-out infinite;
 }
 
-/* ENTREGUE — o risco: a fala atravessou e parou. */
+/* LIDA / ENTREGUE — o traço deitado: a fala atravessou e parou. As duas rotas
+   (recibo de leitura no meio do turno · pote entregue como turno novo) são a
+   MESMA batida da história, e quem as separa é a PALAVRA, não a marca. */
+.gui-owner-state-read .gui-owner-state-mark,
 .gui-owner-state-delivered .gui-owner-state-mark {
   height: 0;
   border-top: 1px solid currentColor;
@@ -16201,6 +16214,74 @@ body.progress-overlay-page #root {
   .gui-owner-state-stopping .gui-owner-state-mark {
     animation: none;
   }
+}
+
+/* ---- R39.1: "LER AGORA", o corte por gesto (2026-09-02) -------------------
+   Decisão do dono: *"se eu quiser eu posso forçar, aí forçando ele para o
+   turno e lê o que eu quero falar, quando for algo urgente."* O ÚNICO estado
+   com ação é o `unread`, e a ação fala a língua de botão da casa (a mesma do
+   `.gui-btn`: borda ink, mono, caixa alta, fundo transparente) numa escala de
+   carimbo. O rótulo em `--ink` cheio contra o recibo em `--ink-2` põe a AÇÃO
+   acima do relato na hierarquia da linha. Alvo de 24px de altura: é o mínimo
+   confortável, e é o único alvo da bolha — nada disputa o clique com ele. */
+
+.gui-owner-force {
+  flex: none;
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    opacity 120ms ease;
+}
+
+.gui-owner-force:hover:not(:disabled) {
+  border-color: var(--ink);
+  background: var(--gui-fill);
+}
+
+.gui-owner-force:active:not(:disabled) {
+  background: var(--gui-line);
+}
+
+/* O anel de foco é o MESMO da casa, no membro ESCURO da mesma paleta: medido,
+   `--accent` sobre papel dá 2,81:1 e não alcança o piso de 3:1 de indicador
+   de estado; `--accent-deep` dá 3,66:1 com a mesma matiz. A diferença entre os
+   dois laranjas é imperceptível lado a lado — a diferença de conformidade,
+   não. (O anel `--accent` do resto da casa carrega a mesma medida: é dívida de
+   sistema, e trocá-la inteira aqui seria arrancar a rede antiga de uma vez.) */
+.gui-owner-force:focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: 2px;
+}
+
+/* Em voo: o gesto já saiu e o botão sai do caminho sem sumir da tela (sumir
+   moveria a linha inteira embaixo do dedo do dono). */
+.gui-owner-force:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* A RECUSA do main na linha de aviso da própria bolha — a mesma voz de erro do
+   fio (`.gui-error`), só na escala do recibo e ancorada no gesto que falhou,
+   não no fim da conversa. Região viva sempre montada: vazia, ela não existe. */
+.gui-owner-refusal {
+  max-width: 100%;
+  font-size: 11px;
+  text-align: left;
+}
+
+.gui-owner-refusal:empty {
+  display: none;
 }
 
 /* streaming: texto ink APAGADO + cursor piscando (o mockup, item 6) */

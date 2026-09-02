@@ -401,9 +401,12 @@ export type GuiItem =
       /** Metadados já validados pelo main; caminhos nunca são renderizados. */
       attachments?: GuiAttachmentDescriptor[]
       at: number
-      /** D6 (2026-09-02) — o que ACONTECEU com esta fala: o agente está sendo
-       *  parado, ela foi entregue (com a hora) ou já foi respondida. Ausente =
-       *  motor velho ou fala sem turno aberto: a bolha fica como sempre foi. */
+      /** D6 (2026-09-02) — o que ACONTECEU com esta fala: ela ainda NÃO FOI
+       *  LIDA (R39.1: foi ao CLI e espera a fronteira — o único estado com
+       *  botão), o agente está sendo parado, ela foi lida/entregue (com a
+       *  hora) ou já foi respondida. Ausente = motor velho ou fala sem turno
+       *  aberto: a bolha fica como sempre foi. As palavras e a régua do avanço
+       *  moram em `guiOwnerBubble.ts`. */
       delivery?: GuiOwnerDelivery
     }
   | {
@@ -1071,7 +1074,9 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
     /** D6 — A BOLHA CONTA A VERDADE. Queixa do dono de 2026-09-02: "ele tá
      *  deixando na fila". A régua (só anda para a frente, id desconhecido cai
      *  no vazio, lista intacta quando nada muda) mora em `guiOwnerBubble.ts`;
-     *  aqui fica só a costura. */
+     *  aqui fica só a costura — os estados novos da R39.1 (`unread`, `read`)
+     *  passam por este mesmo `case` sem uma linha a mais, porque a régua é
+     *  quem conhece o vocabulário. */
     case 'owner-message-state': {
       const items = applyGuiOwnerMessageState(state.items, evt.id, evt.state, evt.at)
       return items === state.items ? state : { ...state, items }

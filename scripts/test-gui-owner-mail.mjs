@@ -190,9 +190,11 @@ test('D3 — várias falas viajam NUMERADAS, na ordem, numa entrega só', () => 
 
 // ————— a RÉGUA DA ROTA (D1/D5) —————
 
-test('D1 — turno ABERTO e fala comum: PARA o turno e entrega como turno novo, em QUALQUER pane', () => {
+test("D1/D1' — turno ABERTO e fala comum: a fala ENTRA no turno, em QUALQUER pane", () => {
+  // A R39 parava o turno aqui; a R39.1 steera. A cerca da R22 continua caída: a
+  // rota vale para pane delegador ou não, e para os dois CLIs.
   const decision = plan({ ...baseInput, turnActive: true })
-  assert.equal(decision.route, 'stop-and-hand')
+  assert.equal(decision.route, 'steer')
   assert.match(decision.reason, /turno/u, 'a razão tem de nomear o que decidiu a rota')
 })
 
@@ -307,4 +309,183 @@ test('D6 — o rastreio guarda os ids ENTREGUES até o agente falar (o carimbo "
   steps.noteDelivered('p1', ['m-1', 'm-2'])
   assert.deepEqual(steps.takeDelivered('p1'), ['m-1', 'm-2'])
   assert.deepEqual(steps.takeDelivered('p1'), [], 'a mesma entrega não vira duas respostas')
+})
+
+// ————— R39.1: A FALA SEM PARAR + O RECIBO DE LEITURA + O "LER AGORA" —————
+//
+// Decisão do dono (02/09, depois de ver bônus e ônus da R39): "pode ser sem
+// parar, puro. Aí minha mensagem vai ficar lá. Só que eu quero que tenha alguma
+// coisa, tipo que ela não foi lida ainda… E se eu quiser eu posso forçar, aí
+// forçando ele para o turno e lê o que eu quero falar, quando for algo
+// urgente."
+//
+// O medo dele é o CUSTO do corte (raciocínio e tool em voo jogados fora), não a
+// frota — que nunca parou (D1.c). Então o padrão passa a ser STEER: a fala vai
+// AGORA ao CLI e uma cópia espera no pote, MARCADA `steered`, até o RECIBO DE
+// LEITURA. As sondas de 02/09 (`PROBE_STEER_RECEIPT_2026-09-02.md`) provaram o
+// recibo nos dois motores: no claude é `command_lifecycle{state:'started'}` do
+// uuid que a casa carimba (3,3 s do envio, medido); no codex é o `item/started`
+// de `userMessage` com o nosso `clientId` (16,5 s, medido).
+
+test("D1' — com turno aberto a rota é STEER (não parar), e `stop-and-hand` só com FORCE", () => {
+  assert.equal(
+    plan({ ...baseInput, turnActive: true }).route,
+    'steer',
+    'o padrão do dono é SEM PARAR: cortar joga fora raciocínio e tool em voo'
+  )
+  assert.equal(
+    plan({ ...baseInput, turnActive: true, force: true }).route,
+    'stop-and-hand',
+    'só o gesto "ler agora" volta a PARAR o turno'
+  )
+  assert.equal(
+    plan({ ...baseInput, turnActive: false, force: true }).route,
+    'stdin',
+    'sem turno não há o que cortar — forçar ali seria interromper o nada'
+  )
+})
+
+test("D1' — as cercas antigas ganham do steer: slash, briefing, pergunta e pedido parado", () => {
+  assert.equal(plan({ ...baseInput, turnActive: true, isSlash: true }).route, 'slash-queue')
+  assert.equal(plan({ ...baseInput, turnActive: true, hasPendingBriefing: true }).route, 'stdin')
+  assert.equal(
+    plan({
+      ...baseInput,
+      turnActive: true,
+      pendingInteraction: { kind: 'question', requestId: 'r1', question: 'Qual caminho?' }
+    }).route,
+    'answer-question'
+  )
+  assert.equal(
+    plan({
+      ...baseInput,
+      turnActive: true,
+      pendingInteraction: { kind: 'permission', requestId: 'r2' }
+    }).route,
+    'hold'
+  )
+})
+
+test("D1' — fala grande demais para o pote continua indo pelo caminho de sempre", () => {
+  const huge = 'x'.repeat(mailModule.GUI_OWNER_MAIL_MAX_CHARS + 1)
+  assert.equal(plan({ ...baseInput, turnActive: true, text: huge }).route, 'stdin')
+})
+
+test("D1'/D3' — o pote guarda a marca `steered`, e ela SOBREVIVE ao disco", () => {
+  const box = mailbox()
+  assert.equal(box.post('p1', { messageId: 'm-1', text: 'olha isto', at: 1, steered: true }), true)
+  assert.equal(box.peek('p1')[0].steered, true, 'sem a marca a cópia viraria correio comum')
+
+  const dir = mkdtempSync(join(tmpdir(), 'synkora-owner-steered-'))
+  try {
+    const file = join(dir, 'gui-owner-mail.json')
+    const alive = new mailModule.GuiOwnerMailbox({
+      store: mailModule.createGuiOwnerMailStore(file)
+    })
+    alive.post('p1', { messageId: 'm-1', text: 'olha isto', at: Date.now(), steered: true })
+    const reborn = new mailModule.GuiOwnerMailbox({
+      store: mailModule.createGuiOwnerMailStore(file)
+    })
+    assert.equal(reborn.peek('p1')[0].steered, true, 'o app que morre não pode perder a marca')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("D3' — `skipSteered` deixa a cópia no pote (o fecho de turno NÃO a entrega)", () => {
+  const box = mailbox()
+  box.post('p1', { messageId: 'm-1', text: 'a que foi steerada', at: 1, steered: true })
+  box.post('p1', { messageId: 'm-2', text: 'correio comum', at: 2 })
+
+  const taken = box.drain('p1', { skipSteered: true })
+  assert.deepEqual(
+    taken.map((e) => e.messageId),
+    ['m-2']
+  )
+  assert.deepEqual(
+    box.peek('p1').map((e) => e.messageId),
+    ['m-1'],
+    'a fala que já está no CLI não pode ser entregue de novo pelo fecho'
+  )
+})
+
+test("D3' — o flush de REABERTURA (sem opção) leva a steerada: entrega única, nunca perda", () => {
+  const box = mailbox()
+  box.post('p1', { messageId: 'm-1', text: 'a que ficou sem recibo', at: 1, steered: true })
+  assert.deepEqual(
+    box.drain('p1').map((e) => e.messageId),
+    ['m-1'],
+    'processo que morreu com a fala dentro tem de entregá-la no nascimento'
+  )
+})
+
+test("D2' — `removeById` tira SÓ a fala do recibo, e devolve a entrada que saiu", () => {
+  const box = mailbox()
+  box.post('p1', { messageId: 'm-1', text: 'primeira', at: 1, steered: true })
+  box.post('p1', { messageId: 'm-2', text: 'segunda', at: 2, steered: true })
+
+  const gone = box.removeById('p1', 'm-1')
+  assert.equal(gone?.text, 'primeira')
+  assert.deepEqual(
+    box.peek('p1').map((e) => e.messageId),
+    ['m-2']
+  )
+  assert.equal(box.removeById('p1', 'm-1'), null, 'recibo repetido não pode apagar outra fala')
+  assert.equal(box.removeById('p1', 'nao-existe'), null)
+})
+
+test("D4' — o envelope CURTO do \"ler agora\" diz o corte, o passo e a ordem de responder", () => {
+  assert.ok(
+    mailModule.guiOwnerForceText,
+    "falta `guiOwnerForceText` (D4'.a): sem ele o turno novo nasce sem saber que o dono FORÇOU a leitura"
+  )
+  const text = mailModule.guiOwnerForceText('Bash — npm run test:gui-system')
+  assert.match(text, /FORÇOU/u, 'o modelo tem de saber que o corte foi um gesto do dono')
+  assert.match(text, /Você estava em: Bash — npm run test:gui-system/u)
+  assert.match(text, /NÃO terminou/u, 'a tool em voo foi cortada: re-checar antes de confiar')
+  assert.match(text, /Responda PRIMEIRO/u)
+  assert.ok(text.length < 700, `o envelope de retomada é curto por obrigação (${text.length})`)
+
+  const thinking = mailModule.guiOwnerForceText(null)
+  assert.match(thinking, /pensando/u)
+  assert.doesNotMatch(
+    thinking,
+    /tool em voo NÃO terminou/u,
+    'sem tool cortada, nada de inventar corte'
+  )
+})
+
+test("D2' — o rastreio guarda a fala STEERADA até o recibo, e o recibo a leva UMA vez", () => {
+  const steps = tracker()
+  assert.ok(
+    typeof steps.noteSteered === 'function',
+    'falta `noteSteered` no rastreio: sem ele a dívida não sabe QUANDO armar'
+  )
+  steps.noteSteered('p1', 'm-1', 1_000)
+  steps.noteSteered('p1', 'm-2', 1_200)
+  assert.deepEqual(
+    steps.pendingSteered('p1').map((e) => e.messageId),
+    ['m-1', 'm-2']
+  )
+
+  const read = steps.takeRead('p1', 'm-1')
+  assert.deepEqual(
+    read.map((e) => e.messageId),
+    ['m-1']
+  )
+  assert.equal(read[0].at, 1_000, 'o instante do envio é o que mede o msSinceSend do diário')
+  assert.deepEqual(steps.takeRead('p1', 'm-1'), [], 'o mesmo recibo nunca arma a dívida duas vezes')
+
+  // Sem id: o recibo aproximado (`approx`) leva o que estiver esperando.
+  assert.deepEqual(
+    steps.takeRead('p1').map((e) => e.messageId),
+    ['m-2']
+  )
+})
+
+test("D2' — o rastreio esquece as steeradas quando a conversa acaba", () => {
+  const steps = tracker()
+  steps.noteSteered('p1', 'm-1', 1)
+  steps.forget('p1')
+  assert.deepEqual(steps.pendingSteered('p1'), [])
 })

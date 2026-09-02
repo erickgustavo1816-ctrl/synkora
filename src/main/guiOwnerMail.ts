@@ -29,6 +29,18 @@
  * (`handoff`), e a marca é o que impede a carona de levá-la para dentro do
  * turno que está sendo cortado.
  *
+ * ATUALIZAÇÃO R39.1 (2026-09-02, à tarde): o dono viu o ÔNUS do corte e mudou o
+ * padrão — *"pode ser sem parar, puro. Aí minha mensagem vai ficar lá. Só que eu
+ * quero que tenha alguma coisa, tipo que ela não foi lida ainda… E se eu quiser
+ * eu posso forçar, aí forçando ele para o turno e lê o que eu quero falar,
+ * quando for algo urgente."* Com turno vivo a fala agora vai AGORA ao CLI
+ * (steer) e o pote guarda uma cópia `steered` — CINTO, não entrega — até o
+ * RECIBO DE LEITURA, que as sondas de 02/09 acharam nos dois motores
+ * (`command_lifecycle{state:'started'}` no claude, `item/started` de
+ * `userMessage` no codex). O `handoff` continua existindo: ele é a mecânica do
+ * "ler agora", e do lado do codex — onde o corte APAGA o steer — é para ele que
+ * a cópia se converte.
+ *
  * O ÚNICO canal que alcança o modelo NO MEIO do turno é o RESULTADO DE TOOL — a
  * casa já anda nele com o correio dos ajudantes (`guiHelperCards.GuiHelperInbox`,
  * o bloco `[synkora] ajudantes:`). Este módulo é o pote da OUTRA carga: a fala do
@@ -109,6 +121,15 @@ export interface GuiOwnerMailEntry {
    * quando o flush entrega, com o envelope de retomada.
    */
   handoff?: true
+  /**
+   * R39.1 D1'/D3' — ESTA FALA JÁ FOI AO CLI (steer) e espera o RECIBO DE
+   * LEITURA. A entrada aqui é CINTO, não entrega: ninguém a entrega de novo
+   * enquanto ela estiver marcada — nem a carona, nem o fecho de turno —, porque
+   * o CLI já está com ela e repetir faria o dono falar duas vezes. Quem a apaga
+   * é o recibo (`removeById`); quem a entrega é o RENASCIMENTO do pane, o único
+   * lugar onde a marca perdeu o sentido (o processo que tinha a fala morreu).
+   */
+  steered?: true
 }
 
 /** A mesma fala, com o endereço — a forma que vai ao disco. */
@@ -146,9 +167,11 @@ function validEntry(value: unknown): value is GuiOwnerMailRecord {
     record['text'].length <= GUI_OWNER_MAIL_MAX_CHARS &&
     typeof record['at'] === 'number' &&
     Number.isFinite(record['at']) &&
-    // A marca só existe em uma forma (`true`): qualquer outra coisa é fotografia
-    // estragada, e fala do dono não se entrega com metade do endereço.
-    (record['handoff'] === undefined || record['handoff'] === true)
+    // As marcas só existem em uma forma (`true`): qualquer outra coisa é
+    // fotografia estragada, e fala do dono não se entrega com metade do
+    // endereço.
+    (record['handoff'] === undefined || record['handoff'] === true) &&
+    (record['steered'] === undefined || record['steered'] === true)
   )
 }
 
@@ -160,7 +183,8 @@ function mailEntry(record: GuiOwnerMailRecord | GuiOwnerMailEntry): GuiOwnerMail
     messageId: record.messageId,
     text: record.text,
     at: record.at,
-    ...(record.handoff === true ? { handoff: true as const } : {})
+    ...(record.handoff === true ? { handoff: true as const } : {}),
+    ...(record.steered === true ? { steered: true as const } : {})
   }
 }
 
@@ -280,14 +304,20 @@ export class GuiOwnerMailbox {
    *  - `handoffOnly`: só a marcada.
    *  - sem opção: TUDO (o fecho do turno entrega o pote inteiro numa mensagem
    *    só — foi o dono quem falou duas vezes, não o app que somou duas coisas).
+   *
+   * R39.1 D3' — e uma TERCEIRA carga apareceu: a cópia `steered`, que o CLI já
+   * tem. `skipSteered` é o que a CARONA e o FECHO DE TURNO usam; o flush do
+   * RENASCIMENTO drena sem opção nenhuma, porque ali a marca perdeu o sentido —
+   * o processo que estava com a fala morreu, e não entregá-la seria perdê-la.
    */
   drain(
     paneId: string,
-    opts: { skipHandoff?: boolean; handoffOnly?: boolean } = {}
+    opts: { skipHandoff?: boolean; handoffOnly?: boolean; skipSteered?: boolean } = {}
   ): GuiOwnerMailEntry[] {
     const pending = this.panes.get(paneId)
     if (!pending || pending.length === 0) return []
     const wanted = (entry: GuiOwnerMailEntry): boolean => {
+      if (opts.skipSteered === true && entry.steered === true) return false
       if (opts.handoffOnly === true) return entry.handoff === true
       if (opts.skipHandoff === true) return entry.handoff !== true
       return true
@@ -299,6 +329,39 @@ export class GuiOwnerMailbox {
     else this.panes.set(paneId, left)
     this.persist()
     return taken
+  }
+
+  /**
+   * R39.1 D2' — O RECIBO DE LEITURA: tira UMA fala, pelo bilhete dela.
+   *
+   * `null` = não estava lá. Recibo repetido (o CLI que ecoa duas vezes, o
+   * aproximado que corre atrás do eco) não pode apagar a fala SEGUINTE — cada
+   * cópia sai pelo próprio id, nunca por posição.
+   */
+  removeById(paneId: string, messageId: string): GuiOwnerMailEntry | null {
+    const pending = this.panes.get(paneId)
+    if (!pending || pending.length === 0) return null
+    const at = pending.findIndex((entry) => entry.messageId === messageId)
+    if (at < 0) return null
+    const [taken] = pending.splice(at, 1)
+    if (pending.length === 0) this.panes.delete(paneId)
+    this.persist()
+    return taken ?? null
+  }
+
+  /**
+   * R39.1 D4' — o "ler agora" no motor que DESCARTA a fila no corte (o codex,
+   * medido em 02/09): a cópia deixa de ser cinto e vira a ENTREGA do turno
+   * novo. `false` = não havia cópia (a fala já tinha recibo).
+   */
+  markHandoff(paneId: string, messageId: string): boolean {
+    const pending = this.panes.get(paneId)
+    const entry = pending?.find((mail) => mail.messageId === messageId)
+    if (!entry || entry.steered !== true) return false
+    delete entry.steered
+    entry.handoff = true
+    this.persist()
+    return true
   }
 
   /** Devolve à FRENTE (a entrega não aconteceu): a ordem em que o dono falou é
@@ -434,4 +497,31 @@ export function guiOwnerHandText(
     'Responda PRIMEIRO, em 1–2 linhas, o que você entendeu e o que muda; depois retome de onde estava, ' +
     'complementando o que já tinha feito. Não recomece do zero e não troque de assunto.'
   return [head, body, step, tail].join('\n')
+}
+
+/**
+ * O ENVELOPE CURTO DO "LER AGORA" (R39.1 D4'.a) — o texto que acompanha o CORTE
+ * quando o CLI GUARDA a fala enfileirada.
+ *
+ * SONDADO em binário real (`PROBE_STEER_RECEIPT_2026-09-02.md`, sonda 2, claude
+ * 2.1.258): a resposta do `control_request interrupt` traz
+ * `still_queued: [<uuid da fala>]` e o próprio CLI promove essa fala a TURNO
+ * NOVO **1 ms depois** do `result` interrompido. Repetir a fala aqui a
+ * entregaria DUAS vezes — então este texto NÃO a cita: ele só conta o que o
+ * modelo não tem como saber sozinho.
+ *
+ * Três coisas, nenhuma decorativa: (1) o corte foi um GESTO DO DONO, e não uma
+ * falha; (2) ONDE ele estava — a tool em voo morreu com o turno; (3) a ordem:
+ * responder primeiro, depois continuar de onde parou. Sem tool em voo o
+ * envelope diz "pensando" e não inventa corte nenhum.
+ */
+export function guiOwnerForceText(lastStep: string | null): string {
+  const head = `${GUI_OWNER_MAIL_TAG} — ele FORÇOU a leitura AGORA: o seu turno foi PARADO para isto, e a mensagem dele acima é o turno novo.`
+  const step = lastStep?.trim()
+    ? `Você estava em: ${lastStep.trim()}. A tool em voo NÃO terminou — re-cheque antes de confiar no que ela ia devolver.`
+    : 'Você estava em: pensando (nenhuma tool em voo).'
+  const tail =
+    'Responda PRIMEIRO, em 1–2 linhas, o que você entendeu e o que muda; depois retome de onde estava. ' +
+    'Não recomece do zero e não troque de assunto.'
+  return [head, step, tail].join('\n')
 }

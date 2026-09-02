@@ -82,3 +82,40 @@ respeita).
 - Aviso visível de conversa pesada no composer (advisory) — candidata.
 - Validação AO VIVO da R39 (mandar mensagem com o dev em Bash longo e ver o
   carimbo + o envelope) depende do restart.
+
+## R39.1 — SEM PARAR por padrão + "LER AGORA" (mesma tarde)
+
+O dono viu bônus/ônus do corte e decidiu: *"pode ser sem parar, puro. Aí
+minha mensagem vai ficar lá… tipo que ela não foi lida ainda… se eu quiser
+eu posso forçar, quando for algo urgente."* Design
+`.synkora/reports/DESIGN_FALA_DO_DONO_SEM_PARAR_R39_1_2026-09-02.md`; sonda
+`PROBE_STEER_RECEIPT_2026-09-02.md`; reports `owner-steer2-agent-{A,C}-report.md`.
+
+- **Rota padrão `steer`** (`guiOwnerSteer.ts`): com turno vivo a fala vai
+  AGORA ao CLI (claude stdin com `uuid`; codex `turn/steer` com
+  `clientUserMessageId`), uma cópia `steered` fica no pote como CINTO até o
+  recibo; carona e fecho de turno a pulam; só o renascimento a entrega.
+- **Recibo de leitura SONDADO** (claude 2.1.258 / codex 0.152.1): claude emite
+  `command_lifecycle{state:"started"}` para comando COM `uuid` (capacidade
+  `msg_lifecycle_v1` no `system/init`; sem uuid, nada); codex ecoa
+  `item/started` de `userMessage` com o `clientId`. Motores emitem
+  `owner-steer-absorbed{tag}`; o registro apaga a cópia, carimba `read`, ARMA
+  a dívida nesse instante (nunca no envio) e grava `gui-owner-read` com
+  `msSinceSend` e `signal: echo|approx` (approx só em CLI sem eco).
+- **"Ler agora"** (`gui:forceOwnerMessage`, botão na bolha `unread`): corta só
+  o turno; por CAPACIDADE, não por classe — claude preserva a fila
+  (`interrupt_receipt_v1`, `still_queued`) e promove a fala a turno novo
+  1 ms após o `result`: o harness manda só o envelope curto
+  (`guiOwnerForceText`); codex DESCARTA o steer no corte (sonda 3b): a cópia
+  vira `handoff` e o fecho a entrega com o envelope completo. O ■ do dono
+  ganhou o mesmo resgate no motor que descarta.
+- **Bolha**: `unread` ("não lida ainda" + LER AGORA, sem pulso) → `stopping` →
+  `read` ("lida hh:mm:ss") / `delivered` → `answered`; escada não regride;
+  recusa do main na própria bolha; prova visual real (8 PNGs).
+- Persona: a fala chega no próximo passo (ou como turno novo se forçada);
+  responder primeiro; toda tool bloqueada até a resposta; nada foi cortado.
+- Gate: owner-mail 32, gui-sessions 186, delegation-wiring 116, contracts 79,
+  owner-bubble 25 — todas com prova de vermelho.
+
+Pendência nova: anel de foco do app usa `--accent` (2,81:1, abaixo de 3:1) —
+o botão LER AGORA usa `--accent-deep`; candidata a rodada de tokens.

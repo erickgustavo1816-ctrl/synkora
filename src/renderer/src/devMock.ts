@@ -950,6 +950,14 @@ export function installDevMock(): void {
         error: 'descartar ajudante só funciona no app'
       }),
       interrupt: async () => ({ ok: true }),
+      // R39.1 (D4') — "ler agora" corta o turno de um CLI de verdade; sem main
+      // não há turno para cortar, então a recusa é honesta e nomeia a receita.
+      // Fingir "forcei" apagaria da tela um "não lida ainda" que continua
+      // inteiro do outro lado.
+      forceOwnerMessage: async () => ({
+        ok: false,
+        error: 'forçar a leitura só funciona no app'
+      }),
       kill: async () => ({ ok: true }),
       state: async () => ({ events: [], cursor: 0, exists: false, alive: false }),
       workspaceFiles: async () => ({ ok: false, error: 'arquivos só funcionam no app' }),

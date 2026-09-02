@@ -1,5 +1,6 @@
 import { sessionSpawnFailureText } from './sessionSpawnError'
 import { existsSync } from 'fs'
+import { randomUUID } from 'crypto'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { freshWindowsPath } from './winPath'
 import { guiToolResultDetails } from './guiToolResults'
@@ -234,6 +235,9 @@ interface CodexItem extends GuiCodexCompletedItem {
   /** `userMessage`: os blocos da mensagem — entre eles a `SkillUserInput`
    *  (`{type:'skill', name, path}`) que o app-server devolve ecoada. */
   content?: unknown
+  /** `userMessage`: o `clientUserMessageId` que NÓS mandamos no `turn/steer` /
+   *  `turn/start`, devolvido no eco. É o RECIBO DE LEITURA da R39.1 D2'. */
+  clientId?: string
   /** `commandExecution`: a leitura TIPADA que o próprio binário faz do comando
    *  ("best-effort parsing"), com `type`/`path` por ação. */
   commandActions?: unknown
@@ -489,6 +493,9 @@ export class CodexSession {
   /** Sends aceitos cujo steer/start ainda não encontrou destino definitivo. */
   private nextSendOperation = 0
   private pendingSendOperations = new Set<number>()
+  /** R39.1 D2' — as falas do dono esperando o eco do `userMessage`, por
+   *  `clientUserMessageId`. Ver `noteOwnerSteerEcho`. */
+  private readonly steerTags = new Map<string, string>()
   private terminalReconcilePending = false
   /** O app-server entrega collabToolCall separado da mensagem principal. A
    *  raiz fica ativa até o estado factual do filho encerrar; o terminal do
@@ -621,10 +628,12 @@ export class CodexSession {
     )
   }
 
-  send(text: string): void {
+  /** R39.1 D2' — `tag` liga o RECIBO DE LEITURA: ele vira o
+   *  `clientUserMessageId` do turno/steer e volta no eco do `userMessage`. */
+  send(text: string, tag?: string): void {
     const operationId = ++this.nextSendOperation
     this.pendingSendOperations.add(operationId)
-    void this.startTurn(text, operationId).catch((e: unknown) => {
+    void this.startTurn(text, operationId, tag).catch((e: unknown) => {
       const pending = this.pendingTurnStart
       if (pending?.operationId === operationId) this.clearTurnStartGuard(pending.generation)
       this.emitTurnResult({
@@ -686,6 +695,26 @@ export class CodexSession {
       this.armTurnStartGuard(generation)
       return true
     }
+    return false
+  }
+
+  /**
+   * R39.1 — o app-server ECOA a absorção: `item/started` de `userMessage` com o
+   * nosso `clientId` (sonda 3, 02/09 — 16,5 s depois do steer, com o modelo
+   * citando a fala 1,8 s depois disso). Contrato de protocolo, não versão.
+   */
+  get supportsSteerReceipt(): boolean {
+    return true
+  }
+
+  /**
+   * R39.1 D4' — no codex o CORTE APAGA a fala steerada. Medido em 02/09 (sonda
+   * 3b): `turn/interrupt` 409 ms depois do steer devolveu `turn/completed` no
+   * mesmo milissegundo e, em 30 s de janela, NENHUM `userMessage` do dono e
+   * nenhum turno novo. É o oposto do claude — e por isso o "ler agora" aqui
+   * reentrega a cópia do pote em vez de confiar na fila do motor.
+   */
+  get keepsQueuedOnInterrupt(): boolean {
     return false
   }
 
@@ -1387,6 +1416,23 @@ export class CodexSession {
   }
 
   /**
+   * R39.1 D2' — O RECIBO DE LEITURA DA FALA DO DONO, no codex.
+   *
+   * Estrutural e correlacionado por id: só vale o `userMessage` cujo `clientId`
+   * é um bilhete que ESTE motor emitiu. Nada de casar por texto — a mesma fala
+   * pode aparecer citada em qualquer lugar da conversa.
+   */
+  private noteOwnerSteerEcho(item: CodexItem): void {
+    if (item.type !== 'userMessage') return
+    const clientId = item.clientId
+    if (!clientId) return
+    const tag = this.steerTags.get(clientId)
+    if (!tag) return
+    this.steerTags.delete(clientId)
+    this.emit({ type: 'owner-steer-absorbed', tag })
+  }
+
+  /**
    * "ESTA SKILL ENTROU NESTA CONVERSA" — o marcador que o dono pediu para ver.
    *
    * O codex não tem evento de uso de skill (schema do binário sem item nenhum,
@@ -1715,7 +1761,20 @@ export class CodexSession {
     return true
   }
 
-  private async startTurn(text: string, operationId: number): Promise<void> {
+  private async startTurn(text: string, operationId: number, tag?: string): Promise<void> {
+    // R39.1 D2' — o bilhete do recibo. Mintado aqui (nunca o `messageId` cru) e
+    // guardado até o eco do `userMessage` voltar com ele. Teto pequeno: fala sem
+    // recibo depois de 32 outras não vai mais receber, e mapa que só cresce é
+    // vazamento com nome bonito.
+    let clientUserMessageId: string | undefined
+    if (tag) {
+      clientUserMessageId = randomUUID()
+      if (this.steerTags.size >= 32) {
+        const oldest = this.steerTags.keys().next().value
+        if (oldest) this.steerTags.delete(oldest)
+      }
+      this.steerTags.set(clientUserMessageId, tag)
+    }
     try {
       while (this.alive) {
         // Mensagem NO MEIO de um turno ativo = steering (igual ao TUI): entra no
@@ -1726,7 +1785,8 @@ export class CodexSession {
           const steer = await this.request('turn/steer', {
             threadId: this.threadId,
             expectedTurnId,
-            input: [{ type: 'text', text }]
+            input: [{ type: 'text', text }],
+            ...(clientUserMessageId ? { clientUserMessageId } : {})
           })
           if (!steer.error) return
           // Timeout não prova rejeição: reenviar poderia executar a mensagem
@@ -1777,7 +1837,8 @@ export class CodexSession {
         }
         const params: Record<string, unknown> = {
           threadId: this.threadId,
-          input: [{ type: 'text', text }]
+          input: [{ type: 'text', text }],
+          ...(clientUserMessageId ? { clientUserMessageId } : {})
         }
         // id em minúsculas: "GPT-5.6-Luna" (display name vazado) dá 400 na API
         if (this.opts.model) params['model'] = this.opts.model.toLowerCase()
@@ -1973,6 +2034,12 @@ export class CodexSession {
       case 'item/started': {
         const item = p['item'] as CodexItem | undefined
         if (!item) break
+        // R39.1 D2' — O RECIBO DE LEITURA: o app-server ecoa a mensagem do
+        // usuário como ITEM da thread, com o `clientId` que mandamos. Medido em
+        // 02/09 (sonda 3): o `turn/steer` responde `{turnId}` em 1 ms — isso é
+        // ACEITE, não leitura —, e o `item/started` do `userMessage` só nasce
+        // quando o turno de fato ABSORVE a fala (16,5 s no caso medido).
+        this.noteOwnerSteerEcho(item)
         // ANTES dos cards: o chip explica o que vem depois (a leitura do corpo
         // da skill aparece logo abaixo dele, como o comando que de fato foi).
         this.noteSkillsEntered(item)

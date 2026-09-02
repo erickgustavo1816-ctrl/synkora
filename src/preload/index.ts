@@ -1119,6 +1119,15 @@ const api = {
       ipcRenderer.invoke('gui:dismissHelper', helperId),
     interrupt: (paneId: string): Promise<GuiResult> =>
       ipcRenderer.invoke('gui:interrupt', paneId),
+    /** R39.1 (D4', 2026-09-02) — "LER AGORA": o dono corta o turno em curso
+     *  para que o CLI leia AGORA a fala que ainda está sem recibo de leitura.
+     *  Decisão dele, verbatim: *"se eu quiser eu posso forçar, aí forçando ele
+     *  para o turno e lê o que eu quero falar, quando for algo urgente."*
+     *  Só o TURNO é interrompido — a frota de ajudantes segue viva. Fala já
+     *  lida = no-op com nota no diário; recusa volta com texto (a bolha a
+     *  mostra na linha de aviso). O par mora em `src/main/ipc/gui.ts`. */
+    forceOwnerMessage: (paneId: string, messageId: string): Promise<GuiResult> =>
+      ipcRenderer.invoke('gui:forceOwnerMessage', paneId, messageId),
     kill: (paneId: string): Promise<GuiResult> => ipcRenderer.invoke('gui:kill', paneId),
     /** Replay para a remontagem (o main guarda ~500 eventos por pane). */
     state: (paneId: string): Promise<{

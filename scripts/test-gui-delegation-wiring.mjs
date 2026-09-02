@@ -1874,6 +1874,47 @@ test('R39 D2 — pote SÓ com handoff não vira carona nenhuma (nem recibo)', as
   )
 })
 
+test("R39.1 D3' — a carona também PULA a cópia `steered`: essa fala já está no CLI", async () => {
+  const ownerMail = ownerMailbox()
+  const logged = []
+  const { api, replyDebt } = delegationApi({ ownerMail, log: (entry) => logged.push(entry) })
+  // A cópia `steered` é o CINTO da entrega (o recibo de leitura a apaga), não
+  // uma segunda entrega: levá-la de carona faria o dono falar duas vezes dentro
+  // do MESMO turno — e a dívida armaria antes do recibo, que é o buraco que a
+  // R39.1 fecha.
+  ownerMail.post('p1', { messageId: 'm-carona', text: 'isto pode ir de carona', at: 0 })
+  ownerMail.post('p1', {
+    messageId: 'm-steer',
+    text: 'ISTO já foi pelo steer',
+    at: 0,
+    steered: true
+  })
+
+  const text = await api.helperResult(delegatorId, 'h-meu', 45)
+  assert.match(text, /isto pode ir de carona/u)
+  assert.doesNotMatch(text, /ISTO já foi pelo steer/u, 'a cópia do steer não pode viajar de novo')
+  assert.deepEqual(
+    ownerMail.peek('p1').map((mail) => mail.messageId),
+    ['m-steer'],
+    'a cópia continua no pote até o RECIBO DE LEITURA'
+  )
+  assert.deepEqual(replyDebt?.pending('p1'), ['isto pode ir de carona'])
+})
+
+test("R39.1 D3' — pote SÓ com cópia `steered` não vira carona nenhuma (nem recibo)", async () => {
+  const ownerMail = ownerMailbox()
+  const logged = []
+  const { api } = delegationApi({ ownerMail, log: (entry) => logged.push(entry) })
+  ownerMail.post('p1', { messageId: 'm-steer', text: 'já foi', at: 0, steered: true })
+  const text = await api.helpersStatus(delegatorId)
+  assert.equal(text.includes(ownerMailModule.GUI_OWNER_MAIL_TAG), false)
+  assert.equal(ownerMail.count('p1'), 1)
+  assert.equal(
+    logged.some((entry) => entry.event === 'owner-mail-ride'),
+    false
+  )
+})
+
 test('R22.2 — a carona vale em TODA tool da delegação, e o dono vem por ÚLTIMO', async () => {
   const ownerMail = ownerMailbox()
   const inbox = new GuiHelperInbox()

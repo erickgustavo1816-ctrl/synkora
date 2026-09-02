@@ -206,16 +206,23 @@ export type GuiSessionEvent =
       at: number
     }
   /** D6 (2026-09-02) — O RECIBO DA FALA DO DONO. Espelho declarado do union do
-   *  main (`src/main/guiSessions.ts`, que emite os três estados): `stopping` ao
+   *  main (`src/main/guiSessions.ts`, que emite os estados): `stopping` ao
    *  mandar o interrupt, `delivered` quando o pote sai como turno novo (ou de
    *  carona), `answered` no primeiro texto do agente depois disso. Nasceu da
    *  queixa do dono "ele tá deixando na fila" — a bolha subia igual, tivesse a
    *  fala chegado na hora ou ficado três minutos no pote. `id` é o `messageId`
-   *  da bolha; estado desconhecido não desenha nada (guiOwnerBubble.ts). */
+   *  da bolha; estado desconhecido não desenha nada (guiOwnerBubble.ts).
+   *
+   *  R39.1 (D1'/D2', 2026-09-02) — a rota padrão virou `steer` (a fala vai ao
+   *  CLI sem parar o turno), e por isso o union ganhou dois estados: `unread`
+   *  (mandada, ainda não absorvida — o único com AÇÃO na tela) e `read` (o
+   *  RECIBO DE LEITURA, quando o CLI absorve a fala). A ordem do tempo é
+   *  `unread → stopping → read`/`delivered` → `answered`; a régua que impede
+   *  o recibo de andar para trás mora em `guiOwnerBubble.ts`. */
   | {
       type: 'owner-message-state'
       id: string
-      state: 'stopping' | 'delivered' | 'answered'
+      state: 'unread' | 'stopping' | 'read' | 'delivered' | 'answered'
       at: number
     }
   | { type: 'text'; text: string }
@@ -494,6 +501,9 @@ interface GuiBridge {
     note?: string
   ) => Promise<{ ok: boolean; error?: string }>
   interrupt: (paneId: string) => Promise<{ ok: boolean; error?: string }>
+  /** R39.1 (D4') — "LER AGORA". Espelho declarado de `gui:forceOwnerMessage`
+   *  (`src/preload/index.ts` + `src/main/ipc/gui.ts`). */
+  forceOwnerMessage: (paneId: string, messageId: string) => Promise<{ ok: boolean; error?: string }>
   kill: (paneId: string) => Promise<{ ok: boolean }>
   state: (paneId: string) => Promise<{
     events: unknown[]
@@ -718,6 +728,26 @@ export const guiApi = {
     if (!api?.interrupt) return { ok: false, error: NO_BRIDGE }
     try {
       return (await api.interrupt(paneId)) ?? { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+
+  /**
+   * R39.1 (D4') — O CORTE POR GESTO. Decisão do dono: *"se eu quiser eu posso
+   * forçar, aí forçando ele para o turno e lê o que eu quero falar, quando for
+   * algo urgente."* Só o TURNO é cortado (a frota de ajudantes segue). Forçar
+   * uma fala já lida é no-op no main; a recusa volta com texto e a bolha a
+   * mostra na linha de aviso — nunca some em silêncio.
+   */
+  async forceOwnerMessage(
+    paneId: string,
+    messageId: string
+  ): Promise<{ ok: boolean; error?: string }> {
+    const api = bridge()
+    if (!api?.forceOwnerMessage) return { ok: false, error: NO_BRIDGE }
+    try {
+      return (await api.forceOwnerMessage(paneId, messageId)) ?? { ok: true }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }

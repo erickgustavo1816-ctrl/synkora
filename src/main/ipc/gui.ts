@@ -719,6 +719,28 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     return registry.interrupt(paneId)
   })
 
+  /**
+   * "LER AGORA" (R39.1 D4') — o único gesto que ainda corta um turno por causa
+   * de uma mensagem. Mesma guarda de remetente do ■: quem manda parar o turno do
+   * dono é o renderer do app, e ninguém mais.
+   *
+   * O botão só existe na bolha `unread`; forçar uma fala já lida volta `ok` como
+   * no-op (a régua mora no registro, nunca aqui).
+   */
+  ipcMain.handle(
+    'gui:forceOwnerMessage',
+    (e, paneId: unknown, messageId: unknown): GuiResult => {
+      extras.assertAppRendererSender(e)
+      if (typeof paneId !== 'string' || paneId.length === 0 || paneId.length > 256) {
+        return { ok: false, error: 'pane sem identificador válido' }
+      }
+      if (typeof messageId !== 'string' || messageId.length === 0 || messageId.length > 256) {
+        return { ok: false, error: 'mensagem sem identificador válido' }
+      }
+      return registry.forceOwnerMessage(paneId, messageId)
+    }
+  )
+
   ipcMain.handle('gui:kill', (e, paneId: string): GuiResult => {
     extras.assertAppRendererSender(e)
     return registry.kill(paneId)

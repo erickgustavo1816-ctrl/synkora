@@ -44,6 +44,7 @@ import {
 } from './guiHelperCards'
 import {
   GuiOwnerMailbox,
+  guiOwnerForceText,
   guiOwnerHandText,
   guiOwnerMailFlushText,
   guiOwnerMailbox
@@ -56,6 +57,7 @@ import {
   ownerSteerPlan,
   type GuiOwnerMessageState,
   type GuiOwnerPendingInteraction,
+  type GuiOwnerReadSignal,
   type GuiOwnerSteerPlan
 } from './guiOwnerSteer'
 import {
@@ -1919,6 +1921,23 @@ export class GuiSessionRegistry {
           this.publishOwnerState(spawn.paneId, messageId, 'answered')
         }
       }
+      // R39.1 D2' — O RECIBO APROXIMADO, e SÓ no motor que não ECOA a absorção.
+      //
+      // Onde há eco ele é o único recibo, e a sonda de 02/09 diz por quê: o CLI
+      // dobra a fala no turno no milissegundo SEGUINTE ao `tool_result` da
+      // fronteira, então a aproximação venceria a corrida sempre — por alguns
+      // milissegundos — e o diário diria `approx` para uma medição que existe.
+      //
+      // A POSIÇÃO desta linha é a régua de D2': DEPOIS da quitação e do carimbo
+      // `answered`. Um texto que o modelo já estava emitindo quando a fala
+      // chegou não pode quitar uma dívida que só nasce aqui — ele é a
+      // FRONTEIRA que prova a leitura, nunca a resposta a ela.
+      if (
+        (visibleEvt.type === 'tool-result' ||
+          (visibleEvt.type === 'text' && visibleEvt.text.trim().length > 0)) &&
+        this.panes.get(spawn.paneId)?.session.supportsSteerReceipt !== true
+      )
+        this.readOwnerSteer(spawn.paneId, 'approx')
       const alertKind = alertSequencer.accept(visibleEvt, seq)
       if (alertKind) {
         this.deps.onChatAlert?.({
@@ -1991,7 +2010,10 @@ export class GuiSessionRegistry {
             visibleEvt.interrupted === true ? 'fecho-por-interrupcao' : 'fecho-de-turno'
           queueMicrotask(() => {
             if (!token.alive) return
-            this.flushOwnerMail(spawn.paneId, reason, lastStep)
+            // R39.1 D3' — o fecho NÃO entrega a cópia `steered`: ela é cinto de
+            // uma fala que o CLI já tem, e a segunda entrega é a que faz o dono
+            // falar duas vezes.
+            this.flushOwnerMail(spawn.paneId, reason, { lastStep, skipSteered: true })
           })
         }
       }
@@ -2026,6 +2048,13 @@ export class GuiSessionRegistry {
       // seguinte deixa o chunk inteiro atravessar o parser antes do ring e do
       // reducer, sem mascarar um órfão quando nenhum resultado aparecer.
       if (!token.alive) return
+      // R39.1 D2' — O RECIBO DE LEITURA para AQUI: ele não é fala de ninguém, e
+      // não pode entrar no anel nem no transcript. O que a tela lê é o
+      // `owner-message-state` que este ramo publica logo abaixo.
+      if (evt.type === 'owner-steer-absorbed') {
+        this.readOwnerSteer(spawn.paneId, 'echo', evt.tag)
+        return
+      }
       if (evt.type === 'tool') {
         turnHasTool = true
         if (evt.toolUseId) pendingToolIds.add(evt.toolUseId)
@@ -2381,13 +2410,13 @@ export class GuiSessionRegistry {
   }
 
   /**
-   * A EXECUÇÃO DA ROTA (R39). `true` = a fala foi consumida aqui e o `send` NÃO
-   * fala com o CLI; `false` = caminho de sempre.
+   * A EXECUÇÃO DA ROTA (R39 + R39.1). `true` = a fala foi tratada aqui e o
+   * `send` não segue para o caminho de sempre; `false` = caminho de sempre.
    *
-   * ENTREGA ÚNICA, SEMPRE: mandar também pelo stdin faria o modelo ler a mesma
-   * ordem duas vezes (aqui e quando o CLI liberasse a fila) — o espelho do bug
-   * que estas rodadas matam. E toda recusa cai no caminho de sempre, que
-   * entrega no fecho do turno: nenhuma delas é beco.
+   * ENTREGA ÚNICA, SEMPRE. Na rota `steer` (o padrão da R39.1) quem fala com o
+   * CLI é ESTE ramo, uma vez só, e a cópia do pote é CINTO — ninguém a entrega
+   * de novo enquanto ela existir (nem a carona, nem o fecho de turno). Toda
+   * recusa cai no caminho de sempre, que entrega no fecho: nenhuma delas é beco.
    */
   private routeOwnerSteer(
     paneId: string,
@@ -2413,18 +2442,66 @@ export class GuiSessionRegistry {
       )
       return true
     }
-    if (steer.route !== 'stop-and-hand' && steer.route !== 'hold') return false
+    if (steer.route !== 'steer' && steer.route !== 'stop-and-hand' && steer.route !== 'hold')
+      return false
     const handoff = steer.route === 'stop-and-hand'
-    // O POTE PRIMEIRO, o interrupt depois: parar o turno para uma fala que o
-    // pote recusou (grande demais, pote cheio) a deixaria sem canal nenhum.
-    if (!this.ownerMail.post(paneId, { messageId, text, at: Date.now(), ...(handoff ? { handoff: true } : {}) }))
+    const steered = steer.route === 'steer'
+    // O POTE PRIMEIRO, o CLI depois: mandar a fala para uma sessão sem ter onde
+    // guardar a cópia (grande demais, pote cheio) a deixaria sem cinto — e o
+    // pote recusar é justamente o que mantém a rota alternativa viva.
+    if (
+      !this.ownerMail.post(paneId, {
+        messageId,
+        text,
+        at: Date.now(),
+        ...(handoff ? { handoff: true } : {}),
+        ...(steered ? { steered: true } : {})
+      })
+    )
       return false
     // R22.3 — o long-poll da frota resolve AGORA: sem isto a tool do Synkora em
-    // voo seguraria até 240s, e é o retorno dela que deixa o turno fechar.
+    // voo seguraria até 240s a fronteira em que o CLI absorve a fala.
     try {
       this.helpers?.wakePane?.(paneId)
     } catch {
       // Despertar é aceleração, nunca pré-condição.
+    }
+    if (steered) {
+      // R39.1 D1' — A ROTA PADRÃO: a fala vai AGORA, dentro do turno vivo, e
+      // NADA é cortado (o dono: "pode ser sem parar, puro"). O `messageId` viaja
+      // como carimbo: é por ele que o motor devolve o RECIBO DE LEITURA, e é o
+      // recibo — não o envio — que arma a dívida e apaga a cópia do pote.
+      this.ownerSteer.noteSteered(paneId, messageId, Date.now())
+      let delivered = true
+      try {
+        entry.session.send(text, messageId)
+      } catch {
+        delivered = false
+      }
+      if (!delivered) {
+        // O motor estourou: a cópia deixa de ser cinto e vira correio comum,
+        // para o fecho do turno entregá-la pelo caminho de sempre. Beco sem
+        // saída é bug.
+        this.ownerSteer.takeRead(paneId, messageId)
+        const copy = this.ownerMail.removeById(paneId, messageId)
+        if (copy) this.ownerMail.post(paneId, { messageId, text: copy.text, at: copy.at })
+        return true
+      }
+      this.publishOwnerState(paneId, messageId, 'unread')
+      this.deps.record?.(
+        'gui-owner-steer',
+        { paneId, projectId: entry.spawn.projectId },
+        {
+          messageId,
+          chars: text.length,
+          pending: this.ownerMail.count(paneId),
+          reason: steer.reason,
+          // O motor ECOA o recibo, ou o registro vai ter de aproximar? A
+          // resposta muda o `signal` do diário — e o diário nunca finge medição.
+          echo: entry.session.supportsSteerReceipt === true
+        }
+      )
+      return true
     }
     if (!handoff) {
       this.deps.record?.(
@@ -2489,6 +2566,147 @@ export class GuiSessionRegistry {
   }
 
   /**
+   * O RECIBO DE LEITURA (R39.1 D2') — o instante em que o CLI ABSORVEU a fala.
+   *
+   * É aqui, e não no envio, que três coisas acontecem juntas: a cópia sai do
+   * pote (recibo visto = entrega confirmada), a bolha vira "lida" e a DÍVIDA
+   * arma. Armar no envio seria errado de um jeito medível: um texto que o modelo
+   * já estava emitindo quitaria a cobrança sem ele ter lido uma linha.
+   *
+   * `signal` diz de onde veio a verdade — `echo` é o frame que o CLI emitiu
+   * (`command_lifecycle{started}` no claude, `item/started` de `userMessage` no
+   * codex, os dois sondados em 02/09); `approx` é a fronteira que o registro
+   * observou num motor que não ecoa. O diário grava qual foi: aproximação
+   * declarada é medição honesta, aproximação escondida é mentira.
+   */
+  private readOwnerSteer(
+    paneId: string,
+    signal: GuiOwnerReadSignal,
+    messageId?: string
+  ): void {
+    const notes = this.ownerSteer.takeRead(paneId, messageId)
+    if (notes.length === 0) return
+    const entry = this.panes.get(paneId)
+    const now = Date.now()
+    const texts: string[] = []
+    for (const note of notes) {
+      const copy = this.ownerMail.removeById(paneId, note.messageId)
+      if (copy) texts.push(copy.text)
+      this.publishOwnerState(paneId, note.messageId, 'read')
+      this.deps.record?.(
+        'gui-owner-read',
+        { paneId, ...(entry ? { projectId: entry.spawn.projectId } : {}) },
+        {
+          messageId: note.messageId,
+          signal,
+          // O relógio da queixa do dono, agora medido no ponto certo: quanto
+          // tempo a fala dele ficou "não lida" na tela.
+          msSinceSend: Math.max(0, now - note.at)
+        }
+      )
+    }
+    // A dívida ACUMULA (`arm` concatena): duas falas lidas em sequência têm de
+    // aparecer as DUAS na recusa, senão a citação conta metade da história.
+    if (texts.length > 0) this.replyDebt.arm(paneId, texts)
+    this.ownerSteer.noteDelivered(
+      paneId,
+      notes.map((note) => note.messageId)
+    )
+  }
+
+  /**
+   * R39.1 — O CINTO VIRA ENTREGA: a cópia `steered` de uma fala que o corte
+   * deixou SEM RECIBO passa a ser `handoff`, e o reconciliador do fecho a
+   * entrega com o envelope completo.
+   *
+   * Só faz sentido no motor que DESCARTA a fila ao cortar (o codex, medido na
+   * sonda 3b): ali a fala steerada morreu com o turno, e deixá-la marcada a
+   * prenderia no pote até o pane renascer — perda silenciosa das palavras do
+   * dono, que é o que a casa não admite. Devolve `false` quando não havia cópia.
+   */
+  private demoteSteeredCopy(paneId: string, messageId: string): boolean {
+    if (!this.ownerMail.markHandoff(paneId, messageId)) return false
+    // O bilhete do recibo morre junto: um eco atrasado não pode apagar do pote
+    // uma fala que já virou entrega do fecho.
+    this.ownerSteer.takeRead(paneId, messageId)
+    return true
+  }
+
+  /**
+   * "LER AGORA" (R39.1 D4') — o gesto do dono, e o ÚNICO lugar que ainda corta
+   * um turno por causa de uma mensagem.
+   *
+   * *"E se eu quiser eu posso forçar, aí forçando ele para o turno e lê o que eu
+   * quero falar, quando for algo urgente."* Corta SÓ o turno do CLI: nem
+   * `helpers.interruptPane`, nem `helperCards.discardPending` — a frota segue
+   * trabalhando, e o ■ do dono continua sendo o único que para tudo.
+   *
+   * O QUE VEM DEPOIS DO CORTE é o que a sonda 2 (02/09) mediu, e os dois motores
+   * DIVERGEM — por isso a pergunta é à CAPACIDADE, nunca ao nome da classe:
+   *  - motor que PRESERVA a fila (claude, `interrupt_receipt_v1`): a resposta do
+   *    interrupt lista a fala em `still_queued` e o CLI a promove a turno novo
+   *    1 ms depois do `result` interrompido. O harness manda SÓ o envelope
+   *    curto de retomada — repetir a fala a entregaria duas vezes;
+   *  - motor que DESCARTA (codex, medido: `turn/completed` no mesmo
+   *    milissegundo e nada em 30 s): a cópia do pote vira `handoff` e o
+   *    reconciliador do fecho a entrega com o envelope completo da R39.
+   *
+   * Forçar uma fala JÁ LIDA é no-op com nota no diário: cortar um turno por algo
+   * que ele já leu seria dano puro.
+   */
+  forceOwnerMessage(paneId: string, messageId: string): GuiResult {
+    const entry = this.panes.get(paneId)
+    if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
+    if (!messageId) return { ok: false, error: 'mensagem sem identificador' }
+    const waiting = this.ownerSteer
+      .pendingSteered(paneId)
+      .some((note) => note.messageId === messageId)
+    if (!waiting) {
+      this.deps.record?.(
+        'gui-owner-force',
+        { paneId, projectId: entry.spawn.projectId },
+        { messageId, noop: true, reason: 'ja-lida' }
+      )
+      return { ok: true }
+    }
+    const lastStep = this.ownerSteer.lastStepOf(paneId)
+    let stopped = false
+    try {
+      stopped = entry.session.interrupt()
+    } catch {
+      // O motor que estoura no corte não pode derrubar o gesto: a fala já está
+      // no pote e no CLI, e o fecho (ou o renascimento) resolve de todo jeito.
+      stopped = false
+    }
+    this.publishOwnerState(paneId, messageId, 'stopping')
+    const keptQueued = entry.session.keepsQueuedOnInterrupt === true
+    if (keptQueued) {
+      // D4'.a — só o envelope curto, como STEER do turno novo que o próprio CLI
+      // vai abrir com a fala do dono.
+      this.deliverBackstage(paneId, guiOwnerForceText(lastStep), 'retomada do dono')
+    } else if (this.demoteSteeredCopy(paneId, messageId)) {
+      // D4'.b — o corte apagou o steer neste motor: a cópia deixa de ser cinto
+      // e vira a ENTREGA do turno novo, com o envelope completo. A marca de
+      // "forçada" é o que faz a bolha fechar em `read` (foi ele quem mandou
+      // parar para ler), e não no `delivered` do correio comum.
+      this.ownerSteer.noteForced(paneId, messageId)
+    }
+    this.deps.record?.(
+      'gui-owner-force',
+      { paneId, projectId: entry.spawn.projectId },
+      {
+        messageId,
+        // `false` = o turno fechou entre o gesto e o corte (corrida benigna): o
+        // fecho que já está a caminho resolve do mesmo jeito.
+        stopped,
+        keptQueued,
+        lastStep: lastStep ?? 'pensando'
+      }
+    )
+    return { ok: true }
+  }
+
+  /**
    * O RECONCILIADOR (R22.4) — nenhum passo depende de entrega única.
    *
    * A carona é a entrega rápida, mas ela só existe se o agente chamar mais
@@ -2513,7 +2731,7 @@ export class GuiSessionRegistry {
   private flushOwnerMail(
     paneId: string,
     reason: string,
-    lastStep: string | null = this.ownerSteer.lastStepOf(paneId)
+    opts: { lastStep?: string | null; skipSteered?: boolean } = {}
   ): void {
     if (!this.ownerMail.has(paneId)) return
     const entry = this.panes.get(paneId)
@@ -2524,7 +2742,15 @@ export class GuiSessionRegistry {
     // A mensagem da fila saindo e a troca de executor em voo seguram o envio
     // pelo MESMO motivo do despertador (`paneBusyReason`).
     if (this.paneBusyReason(paneId, entry)) return
-    const entries = this.ownerMail.drain(paneId)
+    const lastStep = opts.lastStep !== undefined ? opts.lastStep : this.ownerSteer.lastStepOf(paneId)
+    // R39.1 D3' — O FECHO DE TURNO PULA A CÓPIA `steered`: o CLI já está com
+    // essa fala (ela foi steerada), e entregá-la de novo faria o dono falar duas
+    // vezes. Quem a apaga é o RECIBO; quem a entrega é o RENASCIMENTO do pane —
+    // ali a marca perdeu o sentido, porque o processo que a tinha morreu.
+    const entries = this.ownerMail.drain(
+      paneId,
+      opts.skipSteered === true ? { skipSteered: true } : {}
+    )
     if (entries.length === 0) return
     // UMA fala marcada marca a entrega inteira: o turno novo nasce do corte, e
     // separar as duas cargas em duas mensagens faria o dono falar duas vezes.
@@ -2552,7 +2778,16 @@ export class GuiSessionRegistry {
       paneId,
       entries.map((mail) => mail.messageId)
     )
-    for (const mail of entries) this.publishOwnerState(paneId, mail.messageId, 'delivered')
+    // R39.1 D4' — a fala que o dono FORÇOU fecha em `read`: ele mandou parar
+    // para que ela fosse lida, e é isso que a bolha tem de contar. O correio
+    // comum continua carimbando `delivered`.
+    for (const mail of entries) {
+      this.publishOwnerState(
+        paneId,
+        mail.messageId,
+        this.ownerSteer.takeForced(paneId, mail.messageId) ? 'read' : 'delivered'
+      )
+    }
     const oldest = entries.reduce((first, mail) => Math.min(first, mail.at), Date.now())
     this.deps.record?.(
       handoff ? 'gui-owner-hand' : 'gui-owner-mail-flushed',
@@ -3208,6 +3443,15 @@ export class GuiSessionRegistry {
     const entry = this.panes.get(paneId)
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
     const turnStopped = entry.session.interrupt()
+    // R39.1 — O ■ NÃO PODE ENGOLIR A FALA DELE. Num motor que descarta a fila ao
+    // cortar (o codex, medido na sonda 3b de 02/09), a fala steerada sem recibo
+    // morreu com o turno: a cópia do pote deixa de ser cinto e vira a entrega do
+    // fecho. No motor que preserva a fila (o claude), não há nada a resgatar — o
+    // CLI a promove a turno novo sozinho, e reentregar seria falar duas vezes.
+    if (entry.session.keepsQueuedOnInterrupt !== true) {
+      for (const note of [...this.ownerSteer.pendingSteered(paneId)])
+        this.demoteSteeredCopy(paneId, note.messageId)
+    }
     const helpers = this.helpers?.interruptPane(paneId, GUI_HELPER_OWNER_INTERRUPTION) ?? 0
     const wakes = this.helperCards.discardPending(paneId)
     this.deps.record?.(
@@ -3438,6 +3682,11 @@ export class GuiSessionRegistry {
     // A correlação morre com a geração: o anel é a memória durável dos cards, e
     // um envelope da conversa anterior nunca pode parear um lote da próxima.
     this.helperCards.forgetPane(paneId)
+    // R39.1 — o rastreio da fala do dono morre junto, pelo MESMO motivo. A fala
+    // sem recibo continua no POTE (durável, e o nascimento do pane a entrega);
+    // o que não pode sobreviver é o BILHETE dela — um recibo tardio da geração
+    // morta carimbaria "lida" numa bolha que o renascimento já entregou.
+    this.ownerSteer.forget(paneId)
     try {
       this.deps.onPaneDisposed?.({ paneId, projectId: entry.spawn.projectId, reason })
     } catch {

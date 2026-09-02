@@ -262,19 +262,47 @@ test('R31 — a voz do dono: os três papéis respondem SEMPRE e narram o passo 
 // tool falhou, tento outra". A metade mecânica é o hook `PreToolUse` (a sonda
 // `probe-claude-pretooluse-block` mediu a forma no binário 2.1.258); esta é a
 // metade que o modelo lê ANTES de tentar a segunda tool.
-test('R39 — a voz do dono: o turno é PARADO, a tool em voo foi CORTADA e toda tool trava', () => {
+test('R39 — a voz do dono: toda tool trava até a resposta, e a tool seguinte não é saída', () => {
   for (const role of GUI_MISSION_ROLES) {
     const contract = guiMissionSystemPrompt(role)
-    assert.match(contract, /STOPS the turn/u, `${role}: não diz que o app PARA o turno`)
-    assert.match(contract, /as a NEW turn/u, `${role}: não diz que a fala chega como turno NOVO`)
-    assert.match(contract, /WAS CUT/u, `${role}: não avisa que a tool em voo foi cortada`)
-    assert.match(contract, /envelope names it/u, `${role}: não diz que o envelope nomeia a tool cortada`)
     assert.match(contract, /EVERY tool is blocked/u, `${role}: não diz que TODA tool trava até a resposta`)
     assert.match(contract, /NATIVE ones/u, `${role}: não nomeia as tools nativas`)
     assert.match(
       contract,
       /different tool earns the same refusal/u,
       `${role}: não fecha a porta da tool seguinte — foi por ela que passaram as seis chamadas`
+    )
+    assert.match(contract, /envelope names it/u, `${role}: não diz que o envelope nomeia a tool cortada`)
+  }
+})
+
+// A EMENDA DA R39.1 (2026-09-02, à tarde — DESIGN_FALA_DO_DONO_SEM_PARAR, D7').
+// O dono viu o ônus do corte e escolheu: "pode ser sem parar, puro… E se eu
+// quiser eu posso forçar, aí forçando ele para o turno e lê o que eu quero
+// falar, quando for algo urgente." A persona da R39 dizia a coisa ERRADA para o
+// caso comum — que o turno tinha sido parado e a tool cortada. Agora ela conta
+// as DUAS rotas e a verdade que segura o modelo: no caso comum NADA foi
+// cortado, então retomar é CONTINUAR, nunca recomeçar.
+test('R39.1 — a fala chega no PRÓXIMO passo (nada cortado), e só o FORCE abre turno novo', () => {
+  for (const role of GUI_MISSION_ROLES) {
+    const contract = guiMissionSystemPrompt(role)
+    assert.match(contract, /NEXT step/u, `${role}: não diz que a fala chega no próximo passo`)
+    assert.match(
+      contract,
+      /Nothing of yours was cut/iu,
+      `${role}: não diz que nada foi cortado — é o que impede o modelo de recomeçar do zero`
+    )
+    assert.match(contract, /FORCE/u, `${role}: não diz que o dono pode FORÇAR a leitura`)
+    assert.match(
+      contract,
+      /as a NEW turn/u,
+      `${role}: não diz que a fala forçada chega como turno NOVO`
+    )
+    assert.match(contract, /ANSWER FIRST/u, `${role}: não manda responder primeiro`)
+    assert.match(
+      contract,
+      /CONTINUE FROM WHERE YOU WERE/u,
+      `${role}: não manda continuar de onde estava`
     )
   }
 })

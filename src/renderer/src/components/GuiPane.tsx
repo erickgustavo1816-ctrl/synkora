@@ -8,7 +8,12 @@ import {
   type Seat
 } from '../store'
 import { formatGuiElapsed } from '../guiActivity'
-import { ownerBubbleLabel, ownerDeliveryStamp } from '../guiOwnerBubble'
+import {
+  ownerBubbleLabel,
+  ownerDeliveryStamp,
+  ownerForceLabel,
+  ownerForceRefusalText
+} from '../guiOwnerBubble'
 import { prettyModel } from './PaneChrome'
 import CliMark from './CliMark'
 import GuiMarkdown from './GuiMarkdown'
@@ -285,6 +290,80 @@ const PERM_LABEL: Record<GuiPermBehavior | 'cancelada', string> = {
   cancelada: 'cancelado pelo CLI'
 }
 
+/**
+ * A BOLHA DO DONO. Componente próprio (e não um ramo do `GuiMessage`) porque a
+ * R39.1 deu a ela ESTADO: o `ler agora` fica desabilitado enquanto a chamada
+ * está em voo, e a recusa do main precisa parar em algum lugar — dentro do
+ * `GuiMessage`, com os `return` antecipados que ele tem, hook nenhum poderia
+ * morar.
+ */
+function GuiOwnerBubble({
+  paneId,
+  item
+}: {
+  paneId: string
+  item: Extract<GuiItem, { kind: 'user' }>
+}): React.JSX.Element {
+  // D4' (2026-09-02) — o dono: *"se eu quiser eu posso forçar, aí forçando ele
+  // para o turno e lê o que eu quero falar, quando for algo urgente."* Um
+  // gesto por vez: com a chamada em voo o botão desliga, senão dois cliques
+  // virariam dois cortes.
+  const [forcing, setForcing] = useState(false)
+  const [refusal, setRefusal] = useState<string | null>(null)
+  // D6 — O RECIBO. Sob a bolha (que não muda em nada), uma linha mono conta o
+  // destino da fala; sem entrega, nada é desenhado e a bolha fica idêntica à
+  // de sempre. A palavra e a marca saem `aria-hidden` porque o mesmo texto já
+  // viaja no nome acessível da bolha — o leitor de tela não ouve duas vezes.
+  // O BOTÃO nunca entra nesse silêncio: alvo focável escondido do leitor é
+  // armadilha, então ele leva o próprio nome, citando a fala.
+  const stamp = ownerDeliveryStamp(item.delivery, Date.now())
+  const label = ownerBubbleLabel(stamp)
+  const forceNow = useCallback(async (): Promise<void> => {
+    setForcing(true)
+    setRefusal(null)
+    const result = await guiApi.forceOwnerMessage(paneId, item.id)
+    setForcing(false)
+    // Recusa NUNCA some em silêncio: o texto do main (que nomeia a receita)
+    // cai na linha de aviso da própria bolha, do lado do gesto que falhou.
+    if (!result.ok) setRefusal(ownerForceRefusalText(result.error))
+  }, [item.id, paneId])
+  return (
+    <div className="gui-msg user" {...(label ? { role: 'group', 'aria-label': label } : {})}>
+      <span className="gui-msg-tag">você</span>
+      <GuiAttachmentChips
+        attachments={item.attachments ?? []}
+        className="gui-msg-attachments"
+        paneId={paneId}
+        presented
+      />
+      <div className="gui-msg-text">{item.text}</div>
+      {stamp && (
+        <span className={`gui-owner-state gui-owner-state-${stamp.tone}`}>
+          <i className="gui-owner-state-mark" aria-hidden="true" />
+          <span aria-hidden="true">{stamp.text}</span>
+          {stamp.action && (
+            <button
+              type="button"
+              className="gui-owner-force"
+              data-tip={stamp.action.hint}
+              aria-label={ownerForceLabel(item.text)}
+              disabled={forcing}
+              onClick={() => void forceNow()}
+            >
+              {stamp.action.label}
+            </button>
+          )}
+        </span>
+      )}
+      {/* Região viva SEMPRE montada (`:empty` some no CSS): nó de `role=status`
+          que nasce junto com o texto costuma não ser anunciado. */}
+      <div className="gui-error gui-owner-refusal" role="status">
+        {refusal}
+      </div>
+    </div>
+  )
+}
+
 function GuiMessage({
   paneId,
   item,
@@ -333,33 +412,7 @@ function GuiMessage({
       </div>
     )
   }
-  if (item.kind === 'user') {
-    // D6 (2026-09-02) — O RECIBO. Queixa do dono: "ele tá deixando na fila".
-    // Sob a bolha (que não muda em nada), uma linha mono conta o destino da
-    // fala; sem entrega, nada é desenhado e a bolha fica idêntica à de sempre.
-    // O carimbo sai `aria-hidden` porque o mesmo texto já viaja no nome
-    // acessível da bolha — o leitor de tela não ouve a frase duas vezes.
-    const stamp = ownerDeliveryStamp(item.delivery, Date.now())
-    const label = ownerBubbleLabel(stamp)
-    return (
-      <div className="gui-msg user" {...(label ? { role: 'group', 'aria-label': label } : {})}>
-        <span className="gui-msg-tag">você</span>
-        <GuiAttachmentChips
-          attachments={item.attachments ?? []}
-          className="gui-msg-attachments"
-          paneId={paneId}
-          presented
-        />
-        <div className="gui-msg-text">{item.text}</div>
-        {stamp && (
-          <span className={`gui-owner-state gui-owner-state-${stamp.tone}`} aria-hidden="true">
-            <i className="gui-owner-state-mark" />
-            {stamp.text}
-          </span>
-        )}
-      </div>
-    )
-  }
+  if (item.kind === 'user') return <GuiOwnerBubble paneId={paneId} item={item} />
   if (item.kind === 'note') return <div className="gui-note">{item.text}</div>
   if (item.kind === 'error') return <GuiErrorLine text={item.text} />
   if (item.kind !== 'assistant') return null

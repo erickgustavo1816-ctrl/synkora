@@ -1,6 +1,16 @@
 /**
- * A RÉGUA DA FALA DO DONO (R39, design vinculante
- * `.synkora/reports/DESIGN_FALA_DO_DONO_PARA_O_TURNO_2026-09-02.md`).
+ * A RÉGUA DA FALA DO DONO (R39 + R39.1, designs vinculantes
+ * `.synkora/reports/DESIGN_FALA_DO_DONO_PARA_O_TURNO_2026-09-02.md` e
+ * `.synkora/reports/DESIGN_FALA_DO_DONO_SEM_PARAR_R39_1_2026-09-02.md`).
+ *
+ * A VIRADA DA R39.1 (02/09, à tarde, depois de o dono ver bônus e ônus da R39):
+ * *"pode ser sem parar, puro. Aí minha mensagem vai ficar lá. Só que eu quero
+ * que tenha alguma coisa, tipo que ela não foi lida ainda… E se eu quiser eu
+ * posso forçar, aí forçando ele para o turno e lê o que eu quero falar, quando
+ * for algo urgente."* Cortar SEMPRE custava caro (raciocínio e tool em voo
+ * jogados fora) para resolver um problema de POSIÇÃO — e a frota, que era o
+ * medo dele, nunca esteve em risco (D1.c). Então o padrão virou STEER, com
+ * RECIBO DE LEITURA sondado, e o corte virou GESTO.
  *
  * Ordem do dono (02/09): *"toda mensagem que eu enviar, independente de onde o
  * Claude estiver, se ele estiver pensando, o que ele estiver fazendo, ele vai
@@ -41,7 +51,12 @@ export type GuiOwnerSteerRoute =
   | 'answer-question'
   /** Pedido parado esperando o dono: guardar e entregar no fecho (D5). */
   | 'hold'
-  /** Turno aberto: parar o turno e entregar como turno novo (D1). */
+  /**
+   * R39.1 D1' — O PADRÃO com turno vivo: a fala vai AGORA ao CLI (steer) e uma
+   * cópia durável espera o RECIBO DE LEITURA. Nada é cortado.
+   */
+  | 'steer'
+  /** Turno aberto + gesto "ler agora": parar o turno (D1 virou D4'). */
   | 'stop-and-hand'
   /** O caminho de sempre: direto ao CLI. */
   | 'stdin'
@@ -69,6 +84,11 @@ export interface GuiOwnerSteerInput {
   /** O pedido em aberto no anel deste pane, se houver. */
   pendingInteraction: GuiOwnerPendingInteraction | null
   text: string
+  /**
+   * R39.1 D4' — o GESTO "ler agora". Só ele volta a PARAR o turno; o composer
+   * nunca o liga, porque o padrão do dono passou a ser sem parar.
+   */
+  force?: boolean
 }
 
 export interface GuiOwnerSteerPlan {
@@ -101,9 +121,11 @@ export interface GuiOwnerSteerPlan {
  *  5. PERMISSÃO/PLANO abertos — allow/deny não têm onde caber texto, e
  *     interromper um CLI parado arriscaria a escalada de 10s derrubar o
  *     processo por nada: a fala espera no pote (comportamento de hoje);
- *  6. FALA GRANDE DEMAIS para o pote — parar o turno sem ter onde guardar a
- *     fala seria perdê-la; ela segue pelo caminho de sempre;
- *  7. TURNO ABERTO (D1) — para e entrega como turno novo;
+ *  6. FALA GRANDE DEMAIS para o pote — steerar sem ter onde guardar a cópia
+ *     deixaria a fala sem cinto; ela segue pelo caminho de sempre;
+ *  7. TURNO ABERTO (R39.1 D1') — STEER: a fala vai AGORA ao CLI e a cópia
+ *     espera o recibo. Com o gesto "ler agora" (`force`), e SÓ com ele, a rota
+ *     volta a ser a da R39: parar o turno e entregar como turno novo;
  *  8. resto — o caminho de sempre.
  */
 export function ownerSteerPlan(input: GuiOwnerSteerInput): GuiOwnerSteerPlan {
@@ -126,7 +148,11 @@ export function ownerSteerPlan(input: GuiOwnerSteerInput): GuiOwnerSteerPlan {
   if (input.text.length > GUI_OWNER_MAIL_MAX_CHARS) {
     return { route: 'stdin', reason: 'fala-grande-demais' }
   }
-  if (input.turnActive) return { route: 'stop-and-hand', reason: 'turno-aberto' }
+  if (input.turnActive) {
+    return input.force === true
+      ? { route: 'stop-and-hand', reason: 'turno-aberto-forcado' }
+      : { route: 'steer', reason: 'turno-aberto' }
+  }
   return { route: 'stdin', reason: 'sem-turno' }
 }
 
@@ -167,6 +193,13 @@ interface GuiOwnerPaneStep {
   inFlight: number
 }
 
+/** Uma fala que JÁ FOI ao CLI e ainda não tem recibo de leitura (R39.1 D1'). */
+export interface GuiOwnerSteeredNote {
+  messageId: string
+  /** Quando ela saiu — é este relógio que vira o `msSinceSend` do diário. */
+  at: number
+}
+
 /**
  * O RASTREIO POR PANE — o que o envelope precisa saber e o motor não guarda.
  *
@@ -180,6 +213,11 @@ interface GuiOwnerPaneStep {
 export class GuiOwnerStepTracker {
   private readonly steps = new Map<string, GuiOwnerPaneStep>()
   private readonly delivered = new Map<string, string[]>()
+  /** R39.1 D2' — as falas steeradas que ainda esperam o RECIBO DE LEITURA. */
+  private readonly steered = new Map<string, GuiOwnerSteeredNote[]>()
+  /** R39.1 D4' — as falas que o dono FORÇOU: a bolha delas fecha em `read`,
+   *  não em `delivered`, porque foi ele quem mandou parar para ler. */
+  private readonly forced = new Map<string, Set<string>>()
 
   /** O pump viu uma tool COMEÇAR. */
   noteTool(paneId: string, name: string, input: unknown): void {
@@ -232,10 +270,67 @@ export class GuiOwnerStepTracker {
     return ids
   }
 
+  /**
+   * R39.1 D1' — a fala FOI ao CLI e espera o recibo. `at` é o instante do envio:
+   * é a única coisa que o recibo não traz e o diário precisa (`msSinceSend`).
+   */
+  noteSteered(paneId: string, messageId: string, at: number): void {
+    if (!paneId || !messageId) return
+    const pending = this.steered.get(paneId) ?? []
+    if (pending.some((note) => note.messageId === messageId)) return
+    pending.push({ messageId, at })
+    this.steered.set(paneId, pending)
+  }
+
+  /** As falas deste pane que ainda não foram lidas — é o que a bolha `unread`
+   *  espelha e o que o "ler agora" pode forçar. */
+  pendingSteered(paneId: string): readonly GuiOwnerSteeredNote[] {
+    return this.steered.get(paneId) ?? []
+  }
+
+  /**
+   * O RECIBO. Com `messageId` (o eco sondado), leva só aquela fala; sem ele (a
+   * aproximação), leva TODAS as que estavam esperando — a fronteira que a
+   * aproximação observa absorve o pote inteiro do CLI de uma vez.
+   *
+   * Levar é consumir: o mesmo recibo nunca arma a dívida duas vezes.
+   */
+  takeRead(paneId: string, messageId?: string): GuiOwnerSteeredNote[] {
+    const pending = this.steered.get(paneId)
+    if (!pending || pending.length === 0) return []
+    if (messageId === undefined) {
+      this.steered.delete(paneId)
+      return pending
+    }
+    const at = pending.findIndex((note) => note.messageId === messageId)
+    if (at < 0) return []
+    const [taken] = pending.splice(at, 1)
+    if (pending.length === 0) this.steered.delete(paneId)
+    return taken ? [taken] : []
+  }
+
+  /** R39.1 D4' — o dono forçou esta fala; a entrega dela carimba `read`. */
+  noteForced(paneId: string, messageId: string): void {
+    if (!paneId || !messageId) return
+    const ids = this.forced.get(paneId) ?? new Set<string>()
+    ids.add(messageId)
+    this.forced.set(paneId, ids)
+  }
+
+  /** Esta entrega nasceu de um "ler agora"? Consome a marca junto. */
+  takeForced(paneId: string, messageId: string): boolean {
+    const ids = this.forced.get(paneId)
+    if (!ids?.delete(messageId)) return false
+    if (ids.size === 0) this.forced.delete(paneId)
+    return true
+  }
+
   /** A conversa acabou de vez. */
   forget(paneId: string): void {
     this.steps.delete(paneId)
     this.delivered.delete(paneId)
+    this.steered.delete(paneId)
+    this.forced.delete(paneId)
   }
 }
 
@@ -247,7 +342,21 @@ export class GuiOwnerStepTracker {
  * carregam `unknown`, então ele viaja pelo mesmo cano, entra no replay da
  * remontagem e o renderer o espelha em `guiApi.ts`.
  */
-export type GuiOwnerMessageState = 'stopping' | 'delivered' | 'answered'
+export type GuiOwnerMessageState =
+  /** R39.1 D1' — foi ao CLI e AINDA NÃO FOI LIDA (o estado com AÇÃO: "ler agora"). */
+  | 'unread'
+  /** O corte do "ler agora" saiu; a confirmação do CLI ainda não voltou. */
+  | 'stopping'
+  /** R39.1 D2' — o RECIBO chegou: o CLI absorveu a fala e ele passou a dever resposta. */
+  | 'read'
+  /** A entrega pelo pote (fecho de turno, renascimento, resposta de pergunta). */
+  | 'delivered'
+  /** O agente falou depois de ler: a dívida está paga. */
+  | 'answered'
+
+/** O SINAL do recibo — sondado (`echo`) ou aproximado. O diário nunca finge
+ *  medição: um CLI sem eco produz `approx`, e quem ler o diário sabe disso. */
+export type GuiOwnerReadSignal = 'echo' | 'approx'
 
 export interface GuiOwnerMessageStateEvent {
   type: 'owner-message-state'

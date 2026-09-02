@@ -434,6 +434,18 @@ export type SessionEvent =
   | { type: 'session-id'; sessionId: string }
   | { type: 'ready'; caps: CliCaps }
   | { type: 'command-output'; text: string }
+  /**
+   * R39.1 D2' — O RECIBO DE LEITURA DA FALA DO DONO. O motor só o emite quando
+   * o CLI DIZ que absorveu a fala carimbada por `send(text, tag)`; nunca por
+   * dedução sobre conteúdo. `tag` é o id da bolha que o registro carimbou.
+   *
+   * SONDADO em binário real (`.synkora/reports/PROBE_STEER_RECEIPT_2026-09-02.md`):
+   * no claude 2.1.258 é o frame `command_lifecycle{state:'started'}` do
+   * `command_uuid` que a casa mandou (capacidade `msg_lifecycle_v1`, anunciada
+   * no `system/init`); no codex é o `item/started` de um `userMessage` cujo
+   * `clientId` é o nosso `clientUserMessageId`.
+   */
+  | { type: 'owner-steer-absorbed'; tag: string }
   /** Medição canônica do contexto vivo; `null` significa que o backend não a informou. */
   | {
       type: 'context-usage'
@@ -650,6 +662,17 @@ interface StreamLine {
   session_id?: string
   permissionMode?: string
   tools?: string[]
+  /**
+   * R39.1 — as capacidades de PROTOCOLO que o CLI anuncia no `system/init`
+   * (2.1.258: `interrupt_receipt_v1`, `interrupt_cancel_queued_v1`,
+   * `msg_lifecycle_v1`). Enum ABERTO, e o próprio binário manda feature-detect
+   * em vez de version-sniff. Ausente = CLI antigo, e o produto degrada.
+   */
+  capabilities?: string[]
+  /** R39.1 — o ciclo de vida de um comando enfileirado (`msg_lifecycle_v1`): o
+   *  uuid é o que a casa carimbou no `send`, e `started` é a ABSORÇÃO. */
+  command_uuid?: string
+  state?: string
   result?: string
   is_error?: boolean
   // ————— tarefas de fundo (subagentes do Claude), todas sob type 'system' —————
@@ -862,6 +885,19 @@ export class MaestroSession {
   /** Limite que está BLOQUEANDO agora (R21.3). `null` = nada armado: o erro do
    *  result passa com o texto do próprio CLI. */
   private rateLimitBlocked: GuiRateLimitInfo | null = null
+  /**
+   * R39.1 D2' — AS FALAS DO DONO ESPERANDO RECIBO, por uuid de comando.
+   *
+   * O uuid é MINTADO AQUI (nunca o `messageId` cru: o schema do CLI pede uuid, e
+   * um id do renderer chegaria fora do molde) e só viaja quando há `tag` — sem
+   * tag o frame `user` sai exatamente como antes, e o CLI, por contrato dele,
+   * não emite ciclo de vida nenhum. Teto pequeno de propósito: quem não recebeu
+   * recibo depois de 32 falas não vai receber.
+   */
+  private readonly steerTags = new Map<string, string>()
+  /** As capacidades de protocolo do `system/init` — feature-detect, como o
+   *  próprio binário manda. Vazio = CLI que não as anuncia. */
+  private capabilities: readonly string[] = []
 
   /**
    * RÉGUA ÚNICA DA JANELA deste processo. A medição do CLI manda
@@ -1030,7 +1066,19 @@ export class MaestroSession {
     )
   }
 
-  send(text: string): void {
+  /**
+   * R39.1 D2' — `tag` liga o RECIBO DE LEITURA desta mensagem.
+   *
+   * Sondado no binário 2.1.258 (`PROBE_STEER_RECEIPT_2026-09-02.md`): o CLI só
+   * emite `command_lifecycle` para comandos que chegam COM `uuid` — sem ele,
+   * absorver a fala não produz frame nenhum e o único rastro é o `thinking` do
+   * modelo, que é conteúdo (heurística proibida na casa). Com o uuid vieram
+   * `queued` (+3 ms), `started` (+3,3 s — a ABSORÇÃO) e `completed`.
+   *
+   * Carimbar SÓ quando há tag é deliberado: a fala do dono liga o recibo, e o
+   * resto do app continua exatamente como estava.
+   */
+  send(text: string, tag?: string): void {
     // MENSAGEM NO MEIO DE UM TURNO VIVO É STEERING, nunca turno novo (paridade
     // com o `turn/steer` do codex). O claude DOBRA o texto no turno em
     // andamento e emite UM `result` só — o transcript grava `queue-operation`
@@ -1050,11 +1098,43 @@ export class MaestroSession {
       this.pendingTurnGenerations = enqueueGuiTurn(this.pendingTurnGenerations, generation)
       this.activeTurnGeneration = this.pendingTurnGenerations[0] ?? null
     }
+    let uuid: string | undefined
+    if (tag) {
+      uuid = randomUUID()
+      // Teto do mapa: fala sem recibo depois de 32 outras não vai mais receber,
+      // e um mapa que só cresce é vazamento com nome bonito.
+      if (this.steerTags.size >= 32) {
+        const oldest = this.steerTags.keys().next().value
+        if (oldest) this.steerTags.delete(oldest)
+      }
+      this.steerTags.set(uuid, tag)
+    }
     this.write({
       type: 'user',
-      message: { role: 'user', content: [{ type: 'text', text }] }
+      message: { role: 'user', content: [{ type: 'text', text }] },
+      ...(uuid ? { uuid } : {})
     })
     this.resetIdle()
+  }
+
+  /**
+   * R39.1 — o CLI ECOA a absorção da fala do dono? (`msg_lifecycle_v1` no
+   * `system/init`.) Quem não ecoa cai no recibo APROXIMADO do registro, e o
+   * diário grava `approx` em vez de fingir medição.
+   */
+  get supportsSteerReceipt(): boolean {
+    return this.capabilities.includes('msg_lifecycle_v1')
+  }
+
+  /**
+   * R39.1 D4' — o corte PRESERVA a fala enfileirada? (`interrupt_receipt_v1`:
+   * a resposta do interrupt lista em `still_queued` os uuids que sobrevivem.)
+   * Medido na sonda 2: com a capacidade presente, a fala vira o turno seguinte
+   * sozinha 1 ms depois do `result` interrompido — reenviá-la a entregaria
+   * DUAS vezes. Sem a capacidade, quem entrega é o harness.
+   */
+  get keepsQueuedOnInterrupt(): boolean {
+    return this.capabilities.includes('interrupt_receipt_v1')
   }
 
   /** Responde um pedido de permissão pendente; devolve o que foi decidido para logar. */
@@ -1435,6 +1515,34 @@ export class MaestroSession {
     const evt = parsed.value as StreamLine
 
     switch (evt.type) {
+      /**
+       * R39.1 D2' — O RECIBO DE LEITURA DA FALA DO DONO.
+       *
+       * `started` é a ABSORÇÃO: o schema do binário diz "when it drains into a
+       * turn", e a sonda de 02/09 viu o frame nascer no milissegundo seguinte ao
+       * `tool_result` da fronteira (3,3 s depois do envio, com o modelo citando
+       * a fala 9,4 s mais tarde). Os outros estados NÃO viram recibo: `queued`
+       * é o aceite (a fala continua não lida), e `cancelled`/`discarded`/
+       * `refused` significam que ela NÃO foi lida — nesses a cópia do pote
+       * continua de pé, que é exatamente o cinto que ela existe para ser.
+       */
+      case 'command_lifecycle': {
+        const uuid = evt.command_uuid
+        if (!uuid) break
+        if (evt.state === 'started') {
+          const tag = this.steerTags.get(uuid)
+          if (tag) {
+            this.steerTags.delete(uuid)
+            this.emit({ type: 'owner-steer-absorbed', tag })
+          }
+          break
+        }
+        // Terminal sem leitura: o bilhete morre aqui para o mapa não crescer.
+        if (evt.state === 'cancelled' || evt.state === 'discarded' || evt.state === 'refused')
+          this.steerTags.delete(uuid)
+        break
+      }
+
       case 'system': {
         if (guiClaudeParentToolUseId(evt.parent_tool_use_id)) break
         if (evt.subtype === 'init' && evt.session_id) {
@@ -1444,6 +1552,15 @@ export class MaestroSession {
           // id). NUNCA é ponto de reset: zerar tarefas de fundo aqui perderia
           // justamente os agentes que provocaram o ciclo.
           const model = evt.model ?? 'claude'
+          // R39.1 — as CAPACIDADES DE PROTOCOLO deste binário. Elas vêm no init
+          // (que repete a cada turno) e o próprio schema do CLI manda
+          // feature-detect em vez de version-sniff. É delas que saem o recibo de
+          // leitura da fala do dono e a decisão do "ler agora".
+          if (Array.isArray(evt.capabilities)) {
+            this.capabilities = evt.capabilities.filter(
+              (name): name is string => typeof name === 'string'
+            )
+          }
           // O modelo do init é a CHAVE do modelUsage no `result` — guardar aqui
           // é o que permite ler a janela real do modelo DESTA conversa, e não a
           // de uma tarefa auxiliar que apareça no mesmo mapa.
