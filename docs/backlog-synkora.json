@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-02T18:03:29.093Z",
+  "updatedAt": "2026-09-02T19:14:18.325Z",
   "lanes": {
     "agora": [],
     "fila": [
@@ -482,6 +482,19 @@
           "docs/HANDOFF_SESSAO_2026-09-02.md"
         ],
         "day": "02/09 — quarta"
+      },
+      {
+        "id": "r39-1-sem-parar-por-padrao-a-fala-do-dono-entra-",
+        "title": "R39.1 — SEM PARAR por padrão: a fala do dono entra no próximo passo do agente, fica \"não lida ainda\" até o recibo de leitura, e LER AGORA corta só por gesto",
+        "desc": "Decisão do dono depois de ver bônus/ônus do corte. Recibo de leitura sondado nos dois CLIs (claude command_lifecycle started com uuid; codex item/started userMessage com clientId); dívida arma só no recibo; corte por gesto decidido por capacidade (claude preserva a fila, codex descarta). Pousado em nivel5-fase1 (ccec212). Escalada por tempo rejeitada pelo dono.",
+        "refs": [
+          "ccec212",
+          ".synkora/reports/DESIGN_FALA_DO_DONO_SEM_PARAR_R39_1_2026-09-02.md",
+          ".synkora/reports/PROBE_STEER_RECEIPT_2026-09-02.md",
+          "src/main/guiOwnerSteer.ts",
+          "src/renderer/src/guiOwnerBubble.ts"
+        ],
+        "day": "02/09 — quarta"
       }
     ]
   },
@@ -911,6 +924,13 @@
       "by": "orquestrador",
       "action": "add",
       "id": "r39-a-fala-do-dono-para-o-turno-mensagem-com-tur",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-09-02T19:14:18.325Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "r39-1-sem-parar-por-padrao-a-fala-do-dono-entra-",
       "detail": "→ feito"
     }
   ]
