@@ -11,6 +11,7 @@ import {
   parseGuiProtocolLine
 } from './guiProtocolLine'
 import { limitGuiToolInput } from './guiToolInput'
+import { mergeClaudeSettings } from './guiOwnerDebtHook'
 import { terminateGuiProcessTree } from './guiProcessTree'
 import {
   GUI_INTERRUPT_ESCALATION_NOTE,
@@ -54,6 +55,12 @@ export interface MaestroSessionOpts {
   approvalPolicy?: string
   /** claude: fast mode via settings {"fastMode":true} — o /fast do TUI headless */
   fastMode?: boolean
+  /** claude: settings EXTRAS deste pane, fundidos com o `fastMode` no mesmo
+   *  `--settings` (o CLI aceita um só). Hoje quem usa é a dívida de resposta ao
+   *  dono, que entra por aqui como `guiOwnerDebtHookSettings(flagPath)` — o
+   *  hook `PreToolUse` que bloqueia TODA tool enquanto o pane deve resposta
+   *  (R39; a sonda probe-claude-pretooluse-block mediu a forma no binário). */
+  settings?: Record<string, unknown>
   /** codex: SandboxMode do thread/start (ex.: 'read-only' para o /estudar) */
   sandbox?: string
   /** claude: --permission-mode (ex.: 'acceptEdits' nos executores de tarefa) */
@@ -909,12 +916,17 @@ export class MaestroSession {
     if (opts.model) args.push('--model', opts.model)
     if (opts.effort) args.push('--effort', opts.effort)
     if (opts.permissionMode) args.push('--permission-mode', opts.permissionMode)
-    if (opts.fastMode) {
-      // O comando /fast é bloqueado em modo SDK, mas a CHAVE de settings liga
-      // o fast mode de verdade (validado: result.fast_mode_state=on). Com
-      // shell no Windows, o JSON precisa da camada extra de aspas.
-      const settings = JSON.stringify({ fastMode: true })
-      args.push('--settings', process.platform === 'win32' ? JSON.stringify(settings) : settings)
+    // O `--settings` do claude é UM só, e desde a R39 duas coisas disputam a
+    // vaga: o /fast (bloqueado como comando em modo SDK, mas a CHAVE de
+    // settings liga o fast mode de verdade — validado: result.fast_mode_state
+    // =on) e o hook `PreToolUse` da dívida de resposta ao dono. Por isso a
+    // fusão: quem chega depois não apaga quem chegou antes. Objeto vazio = não
+    // passar a flag, que é o caso de todo pane sem /fast e sem hook.
+    // Com shell no Windows, o JSON precisa da camada extra de aspas.
+    const settings = mergeClaudeSettings({ ...(opts.settings ?? {}), fastMode: opts.fastMode })
+    if (Object.keys(settings).length > 0) {
+      const json = JSON.stringify(settings)
+      args.push('--settings', process.platform === 'win32' ? JSON.stringify(json) : json)
     }
     if (opts.extraArgs?.length) args.push(...opts.extraArgs)
 

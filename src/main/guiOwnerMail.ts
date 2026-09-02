@@ -17,6 +17,18 @@
  * `helper_result`), o reconciliador de fecho/boot e a persistência em disco —
  * a rede não se remove inteira por se achar a causa raiz.
  *
+ * ATUALIZAÇÃO R39 (2026-09-02): a carona também envelheceu, e a medição de
+ * 01/09 (missão 86a05c06/d13f0a00) diz por quê — três falas do dono ficaram 3
+ * min no pote porque o agente estava em tools NATIVAS, que nenhuma carona
+ * alcança, e quando enfim viajaram DENTRO de um resultado de tool o modelo
+ * tentou seis tools antes de escrever uma linha: OITO minutos até a resposta.
+ * ENTREGA não é OBEDIÊNCIA, e a posição da fala é a causa. Agora a fala com
+ * turno aberto PARA o turno (`guiSessions` → `entry.session.interrupt()`) e
+ * volta como TURNO NOVO, com o envelope de `guiOwnerHandText`. O pote continua
+ * sendo o mesmo lugar de espera — só que a entrada dele nasce MARCADA
+ * (`handoff`), e a marca é o que impede a carona de levá-la para dentro do
+ * turno que está sendo cortado.
+ *
  * O ÚNICO canal que alcança o modelo NO MEIO do turno é o RESULTADO DE TOOL — a
  * casa já anda nele com o correio dos ajudantes (`guiHelperCards.GuiHelperInbox`,
  * o bloco `[synkora] ajudantes:`). Este módulo é o pote da OUTRA carga: a fala do
@@ -89,6 +101,14 @@ export interface GuiOwnerMailEntry {
   messageId: string
   text: string
   at: number
+  /**
+   * R39 D1/D2 — ESTA FALA PAROU O TURNO. Marcada assim, ela pertence ao TURNO
+   * NOVO que vai nascer do fecho da interrupção: a carona (`withOwnerMail`) a
+   * pula de propósito, porque entregá-la dentro de um turno que está sendo
+   * cortado faria o modelo lê-la e perdê-la no mesmo passo. A marca morre
+   * quando o flush entrega, com o envelope de retomada.
+   */
+  handoff?: true
 }
 
 /** A mesma fala, com o endereço — a forma que vai ao disco. */
@@ -125,8 +145,23 @@ function validEntry(value: unknown): value is GuiOwnerMailRecord {
     record['text'].length > 0 &&
     record['text'].length <= GUI_OWNER_MAIL_MAX_CHARS &&
     typeof record['at'] === 'number' &&
-    Number.isFinite(record['at'])
+    Number.isFinite(record['at']) &&
+    // A marca só existe em uma forma (`true`): qualquer outra coisa é fotografia
+    // estragada, e fala do dono não se entrega com metade do endereço.
+    (record['handoff'] === undefined || record['handoff'] === true)
   )
+}
+
+/** A fala, sem o endereço — a forma que o pote guarda em memória. Mantém a
+ *  MARCA (D2): sem ela, o disco devolveria a fala crua e o renascimento a
+ *  entregaria sem dizer que ele foi parado. */
+function mailEntry(record: GuiOwnerMailRecord | GuiOwnerMailEntry): GuiOwnerMailEntry {
+  return {
+    messageId: record.messageId,
+    text: record.text,
+    at: record.at,
+    ...(record.handoff === true ? { handoff: true as const } : {})
+  }
 }
 
 export function isGuiOwnerMailStoreDoc(value: unknown): value is GuiOwnerMailStoreDoc {
@@ -191,7 +226,7 @@ export class GuiOwnerMailbox {
       const pending = this.panes.get(record.paneId) ?? []
       if (pending.length >= GUI_OWNER_MAIL_PANE_CAP) continue
       if (pending.some((known) => known.messageId === record.messageId)) continue
-      pending.push({ messageId: record.messageId, text: record.text, at: record.at })
+      pending.push(mailEntry(record))
       this.panes.set(record.paneId, pending)
     }
     this.persist()
@@ -215,7 +250,7 @@ export class GuiOwnerMailbox {
     if (pending.length >= GUI_OWNER_MAIL_PANE_CAP) return false
     const total = pending.reduce((sum, known) => sum + known.text.length, 0)
     if (total + text.length > GUI_OWNER_MAIL_PANE_MAX_CHARS) return false
-    pending.push({ messageId: entry.messageId, text, at: entry.at })
+    pending.push(mailEntry({ ...entry, text }))
     this.panes.set(paneId, pending)
     this.persist()
     return true
@@ -234,14 +269,36 @@ export class GuiOwnerMailbox {
     return this.panes.get(paneId) ?? []
   }
 
-  /** Tira TUDO do pane. Drenar É a entrega: quem drenou tem de entregar, ou
-   *  devolver com `restore` — a fala do dono nunca some no meio. */
-  drain(paneId: string): GuiOwnerMailEntry[] {
+  /**
+   * Tira do pane. Drenar É a entrega: quem drenou tem de entregar, ou devolver
+   * com `restore` — a fala do dono nunca some no meio.
+   *
+   * R39 D2 — o pote passou a ter DUAS cargas com destinos diferentes, e quem
+   * drena diz qual leva:
+   *  - `skipHandoff` (a CARONA): só o correio SEM marca. A fala que parou o
+   *    turno não pode viajar dentro do turno que está sendo cortado.
+   *  - `handoffOnly`: só a marcada.
+   *  - sem opção: TUDO (o fecho do turno entrega o pote inteiro numa mensagem
+   *    só — foi o dono quem falou duas vezes, não o app que somou duas coisas).
+   */
+  drain(
+    paneId: string,
+    opts: { skipHandoff?: boolean; handoffOnly?: boolean } = {}
+  ): GuiOwnerMailEntry[] {
     const pending = this.panes.get(paneId)
     if (!pending || pending.length === 0) return []
-    this.panes.delete(paneId)
+    const wanted = (entry: GuiOwnerMailEntry): boolean => {
+      if (opts.handoffOnly === true) return entry.handoff === true
+      if (opts.skipHandoff === true) return entry.handoff !== true
+      return true
+    }
+    const taken = pending.filter(wanted)
+    if (taken.length === 0) return []
+    const left = pending.filter((entry) => !wanted(entry))
+    if (left.length === 0) this.panes.delete(paneId)
+    else this.panes.set(paneId, left)
     this.persist()
-    return pending
+    return taken
   }
 
   /** Devolve à FRENTE (a entrega não aconteceu): a ordem em que o dono falou é
@@ -331,4 +388,50 @@ export function guiOwnerMailFlushText(entries: readonly GuiOwnerMailEntry[]): st
     .map((entry) => entry.text.trim())
     .filter((text) => text.length > 0)
     .join('\n\n')
+}
+
+/**
+ * O ENVELOPE DE RETOMADA (R39 D3) — o texto do TURNO NOVO que nasce depois de a
+ * fala do dono PARAR o turno anterior.
+ *
+ * O QUE FOI MEDIDO (missão 86a05c06/d13f0a00, 01/09 21:30–21:40): três falas do
+ * dono ficaram 3 min no pote porque o agente estava em tools NATIVAS, que
+ * nenhuma carona alcança; entregues no meio de um resultado de tool, o modelo
+ * tentou SEIS tools — todas recusadas pela dívida — antes de escrever a
+ * primeira linha, às 21:38:45. OITO minutos entre a fala e a resposta. A sonda
+ * e o transcript já tinham nomeado a causa: a posição da mensagem. Dentro de um
+ * resultado de tool ela é a que o modelo menos respeita; a que ele obedece é a
+ * ÚLTIMA mensagem de usuário de um TURNO NOVO — que é exatamente o que este
+ * texto é.
+ *
+ * Três coisas obrigatórias, e nenhuma decorativa:
+ *  1. ele foi PARADO (senão a interrupção vira mistério e ele retoma o que
+ *     fazia como se nada tivesse acontecido);
+ *  2. ONDE ele estava — a tool em voo foi cortada e NÃO terminou, então
+ *     confiar no resultado dela seria trabalhar sobre um fato que não existe;
+ *     sem tool em voo o envelope diz "pensando" e não inventa corte nenhum;
+ *  3. a ORDEM: responder PRIMEIRO, em 1–2 linhas, e só então retomar — a
+ *     metade que a persona sozinha não segurou em 23/08 nem em 01/09.
+ */
+export function guiOwnerHandText(
+  entries: readonly GuiOwnerMailEntry[],
+  lastStep: string | null
+): string {
+  const texts = entries.map((entry) => entry.text.trim()).filter((text) => text.length > 0)
+  if (texts.length === 0) return ''
+  const head =
+    texts.length === 1
+      ? `${GUI_OWNER_MAIL_TAG} — você foi PARADO para lê-la.`
+      : `${GUI_OWNER_MAIL_TAG} — ${texts.length} mensagens, na ordem em que ele falou; você foi PARADO para lê-las.`
+  const body =
+    texts.length === 1
+      ? `"${texts[0] ?? ''}"`
+      : texts.map((text, index) => `${index + 1}. "${text}"`).join('\n')
+  const step = lastStep?.trim()
+    ? `Você estava em: ${lastStep.trim()}. A tool em voo NÃO terminou — re-cheque antes de confiar no que ela ia devolver.`
+    : 'Você estava em: pensando (nenhuma tool em voo).'
+  const tail =
+    'Responda PRIMEIRO, em 1–2 linhas, o que você entendeu e o que muda; depois retome de onde estava, ' +
+    'complementando o que já tinha feito. Não recomece do zero e não troque de assunto.'
+  return [head, body, step, tail].join('\n')
 }

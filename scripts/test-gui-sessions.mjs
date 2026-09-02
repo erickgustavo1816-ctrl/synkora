@@ -111,6 +111,11 @@ import { closePendingGuiTools } from '../src/renderer/src/guiTerminalTools.ts'
 // discriminar. Sem o módulo, caem só os testes da rota — e caem dizendo o que
 // falta.
 const ownerMailModule = await import('../.tmp/gui-sessions-test/guiOwnerMail.js').catch(() => ({}))
+// R39 — a DÍVIDA (R32) passa a ser armada TAMBÉM no fecho/handoff, e a régua da
+// rota mora em módulo NOVO: os dois entram pela mesma porta tolerante.
+const ownerDebtModule = await import('../.tmp/gui-sessions-test/guiOwnerReplyDebt.js').catch(
+  () => ({})
+)
 
 test('permissão permanente mostra e grava apenas a regra Bash estreita', () => {
   assert.equal(
@@ -5590,10 +5595,17 @@ function ownerMailBench(over = {}) {
     // A AUTORIDADE DA ROTA é do main: aqui, o duplo do registro de identidade.
     delegatorPane: (paneId) => (over.delegator ?? true) && paneId === R22_PANE
   })
+  const interrupts = []
   const session = {
     alive: true,
     turnActive: false,
     send: (text) => sent.push(text),
+    // R39 D1 — a fala com turno aberto PARA o turno: o duplo precisa do verbo,
+    // e é ele que os testes contam para provar que a frota fica de fora.
+    interrupt: () => {
+      interrupts.push('turn')
+      return true
+    },
     kill: () => {
       session.alive = false
     }
@@ -5629,6 +5641,7 @@ function ownerMailBench(over = {}) {
     woken,
     journal,
     spawn,
+    interrupts,
     emit: (evt) => emit(evt),
     bubbles: () =>
       gui
@@ -5667,24 +5680,30 @@ test('R22.1 — turno ABERTO em pane delegador: a fala do dono vai pro POTE, nun
   // segundos, em vez de esperar os até 240s do helper_result).
   assert.deepEqual(bench.woken, [R22_PANE])
 
-  // E o desvio de canal tem RECIBO.
-  const posted = bench.journal.find((entry) => entry.event === 'gui-owner-mail-posted')
+  // E o desvio de canal tem RECIBO (R39 D7: o recibo agora é o da PARADA —
+  // post e interrupt são uma decisão só).
+  const posted = bench.journal.find((entry) => entry.event === 'gui-owner-stop')
   assert.ok(posted, 'a rota não deixou recibo na caixa-preta')
   assert.equal(posted.paneId, R22_PANE)
   assert.equal(posted.detail.messageId, 'msg-2')
 })
 
-test('R22 — pane que NÃO delega mantém o comportamento de hoje, inteiro', () => {
+test('R39 D1 — pane que NÃO delega TAMBÉM para o turno (a cerca da R22 caiu)', () => {
+  // A R22 cercava a rota no pane DELEGADOR (o turno-fortaleza da frota). O caso
+  // medido de 01/09 matou a cerca: a fala presa era num trecho de tools NATIVAS
+  // (AskUserQuestion/Bash/Skill), que nenhuma carona alcança. D1: turno aberto
+  // é turno aberto, em QUALQUER pane e QUALQUER CLI.
   const bench = ownerMailBench({ delegator: false })
   bench.session.turnActive = true
   assert.equal(bench.gui.send(R22_PANE, 'segue com isto também', 'msg-1').ok, true)
   assert.deepEqual(
     bench.sent,
-    ['segue com isto também'],
-    'chat sem frota não tem turno-fortaleza: o envio continua indo direto ao CLI'
+    [],
+    'a fala não pode ir pro stdin: no meio do turno ela é a mensagem que o modelo menos respeita'
   )
-  assert.equal(bench.ownerMail.count(R22_PANE), 0)
-  assert.deepEqual(bench.woken, [], 'sem pote não há por que acordar long-poll nenhum')
+  assert.equal(bench.ownerMail.count(R22_PANE), 1)
+  assert.equal(bench.ownerMail.peek(R22_PANE)[0].handoff, true)
+  assert.deepEqual(bench.interrupts, ['turn'], 'o turno tinha de ser PARADO')
 })
 
 test('R22.4 — o turno que FECHA com o pote cheio entrega pelo caminho de sempre', async () => {
@@ -5698,15 +5717,19 @@ test('R22.4 — o turno que FECHA com o pote cheio entrega pelo caminho de sempr
   bench.emit({ type: 'result', isError: false, outcome: 'completed' })
   await settleTicks()
 
-  assert.deepEqual(
-    bench.sent,
-    ['inverte a ordem das fatias'],
-    'o fecho tem de entregar o pote — a fala do dono nunca se perde'
+  assert.equal(bench.sent.length, 1, 'o fecho tem de entregar o pote — a fala do dono nunca se perde')
+  assert.match(
+    bench.sent[0],
+    /inverte a ordem das fatias/u,
+    'a fala do dono viaja VERBATIM dentro do envelope'
   )
+  // R39 D3 — a fala saiu do pote MARCADA (ela parou o turno), então o fecho a
+  // entrega com o ENVELOPE DE RETOMADA, não crua.
+  assert.match(bench.sent[0], /você foi PARADO para lê-la/u)
   assert.equal(bench.ownerMail.count(R22_PANE), 0)
   // SEM BOLHA NOVA: a bolha saiu no envio, e o fecho é entrega, não fala.
   assert.deepEqual(bench.bubbles(), ['msg-1'])
-  const flushed = bench.journal.find((entry) => entry.event === 'gui-owner-mail-flushed')
+  const flushed = bench.journal.find((entry) => entry.event === 'gui-owner-hand')
   assert.ok(flushed, 'o fecho não deixou recibo')
   assert.equal(flushed.detail.messages, 1)
   assert.equal(flushed.detail.reason, 'fecho-de-turno')
@@ -5777,12 +5800,13 @@ test('R22.4 — o ■ do dono não engole a fala DELE: o fecho da interrupção 
   bench.emit({ type: 'result', isError: false, outcome: 'cancelled', interrupted: true })
   await settleTicks()
 
-  assert.deepEqual(
-    bench.sent,
-    ['para tudo e volta pro plano antigo'],
+  assert.equal(bench.sent.length, 1)
+  assert.match(
+    bench.sent[0],
+    /para tudo e volta pro plano antigo/u,
     'o que o pote guarda são as PALAVRAS do dono — segurá-las seria perdê-las em silêncio'
   )
-  const flushed = bench.journal.find((entry) => entry.event === 'gui-owner-mail-flushed')
+  const flushed = bench.journal.find((entry) => entry.event === 'gui-owner-hand')
   assert.equal(
     flushed.detail.reason,
     'fecho-por-interrupcao',
@@ -5811,6 +5835,317 @@ test('R22 — briefing pendente nunca vira citação: ele segue pelo caminho de 
     'o briefing da missão não pode viajar dentro de um resultado de tool'
   )
   assert.deepEqual(bench.sent, [guiBriefedPrompt('CONTRATO DA MISSÃO', 'primeira fala')])
+})
+
+// ————— R39: A FALA DO DONO PARA O TURNO —————
+//
+// Ordem do dono (02/09): "toda mensagem que eu enviar, independente de onde o
+// Claude estiver, se ele estiver pensando, o que ele estiver fazendo, ele vai
+// parar, vai ler o que eu falei e vai complementar com o que ele tava fazendo".
+//
+// O QUE FOI MEDIDO (missão 86a05c06/d13f0a00, 01/09 21:30–21:40): três falas
+// entraram no pote enquanto o agente estava em tools NATIVAS — que nenhuma
+// carona alcança — e só chegaram 3 min depois; entregues, o modelo tentou SEIS
+// tools recusadas pela dívida antes de escrever uma linha. OITO minutos entre a
+// fala e a resposta. A posição que o modelo obedece é a ÚLTIMA mensagem de
+// usuário de um turno NOVO — então a fala PARA o turno e volta como turno novo.
+
+const R39_PANE = 'gui-dev-r39'
+
+/**
+ * Bancada da PARADA: pane sem frota (a cerca da R22 caiu), sessão de verdade no
+ * prototype (o `answerQuestion` do registro exige MaestroSession) e o pote, a
+ * dívida e o motor de ajudantes injetados — nenhuma bancada divide pote global
+ * com outra.
+ */
+function ownerStopBench(over = {}) {
+  assert.ok(ownerMailModule.GuiOwnerMailbox, 'o pote do dono (guiOwnerMail) não existe')
+  assert.ok(
+    ownerDebtModule.GuiOwnerReplyDebt,
+    'a dívida de resposta (guiOwnerReplyDebt) não existe'
+  )
+  const ownerMail = over.ownerMail ?? new ownerMailModule.GuiOwnerMailbox()
+  const replyDebt = new ownerDebtModule.GuiOwnerReplyDebt()
+  const journal = []
+  const live = []
+  const sent = []
+  const interrupts = []
+  const fleetInterrupts = []
+  const answers = []
+  const sessions = []
+  const gui = new GuiSessionRegistry({
+    push: (payload) => live.push(payload),
+    systemPromptFile: () => undefined,
+    record: (event, ids, detail) => journal.push({ event, ...ids, detail }),
+    ownerMail,
+    replyDebt,
+    delegatorPane: () => over.delegator === true
+  })
+  const proto = over.cli === 'codex' ? CodexSession.prototype : MaestroSession.prototype
+  let emit = () => undefined
+  gui.spawnSession = (_input, sink) => {
+    emit = sink
+    // `alive` e `turnActive` são GETTERS no prototype dos dois motores: escrever
+    // por cima estoura em modo estrito. O duplo os sombreia com dados próprios.
+    const session = Object.create(proto, {
+      alive: { value: true, writable: true },
+      turnActive: { value: false, writable: true }
+    })
+    session.send = (text) => sent.push(text)
+    session.interrupt = () => {
+      interrupts.push('turn')
+      return true
+    }
+    session.answerQuestion = (requestId, map) => {
+      answers.push({ requestId, map })
+      return true
+    }
+    session.kill = () => {
+      session.alive = false
+    }
+    sessions.push(session)
+    sink({ type: 'ready', caps: { commands: [], models: [] } })
+    return session
+  }
+  gui.attachHelpers({
+    interruptPane: (paneId) => {
+      fleetInterrupts.push(paneId)
+      return 1
+    },
+    status: () => [],
+    wakePane: () => 1
+  })
+  // O ■ do dono descarta as pendências do despertador; a PARADA POR MENSAGEM
+  // não pode encostar nelas. O espião fica em volta do correlacionador real.
+  const discards = []
+  const realDiscard = gui.helperCards.discardPending.bind(gui.helperCards)
+  gui.helperCards.discardPending = (paneId) => {
+    discards.push(paneId)
+    return realDiscard(paneId)
+  }
+  const spawn = {
+    paneId: R39_PANE,
+    projectId: 'proj-r39',
+    cli: over.cli ?? 'claude',
+    configDir: 'c',
+    cwd: '/w',
+    ...(over.spawn ?? {})
+  }
+  assert.equal(gui.create(spawn).ok, true)
+  return {
+    gui,
+    spawn,
+    ownerMail,
+    replyDebt,
+    journal,
+    live,
+    sent,
+    interrupts,
+    fleetInterrupts,
+    discards,
+    answers,
+    session: () => sessions[sessions.length - 1],
+    emit: (evt) => emit(evt),
+    states: (id) =>
+      live
+        .filter(({ evt }) => evt?.type === 'owner-message-state' && (!id || evt.id === id))
+        .map(({ evt }) => evt.state),
+    recreate: () => assert.equal(gui.create(spawn).ok, true)
+  }
+}
+
+test('R39 D1 — turno aberto: a mensagem PARA o turno do CLI e a FROTA continua intocada', () => {
+  const bench = ownerStopBench()
+  bench.session().turnActive = true
+
+  assert.equal(bench.gui.send(R39_PANE, 'para tudo: o schema mudou', 'msg-1').ok, true)
+
+  assert.deepEqual(bench.sent, [], 'no meio do turno o stdin é a posição que o modelo menos respeita')
+  assert.equal(bench.ownerMail.count(R39_PANE), 1)
+  assert.equal(bench.ownerMail.peek(R39_PANE)[0].handoff, true, 'a fala tem de sair MARCADA')
+  assert.deepEqual(bench.interrupts, ['turn'], 'o turno do CLI tinha de ser parado')
+  assert.deepEqual(
+    bench.fleetInterrupts,
+    [],
+    'a frota segue trabalhando: só o ■ do dono a para (D1.c)'
+  )
+  assert.deepEqual(bench.discards, [], 'as pendências do despertador não são do escopo desta parada')
+
+  // D6 — a bolha conta a verdade já na saída.
+  assert.deepEqual(bench.states('msg-1'), ['stopping'])
+
+  // D7 — o diário registra post + interrupt como UMA decisão.
+  const stop = bench.journal.find((entry) => entry.event === 'gui-owner-stop')
+  assert.ok(stop, 'a parada não deixou recibo na caixa-preta')
+  assert.equal(stop.paneId, R39_PANE)
+  assert.equal(stop.projectId, 'proj-r39')
+  assert.equal(stop.detail.messageId, 'msg-1')
+  assert.equal(stop.detail.chars, 'para tudo: o schema mudou'.length)
+  assert.equal(stop.detail.pending, 1)
+})
+
+test('R39 D1 — o codex para pelo MESMO desenho', () => {
+  const bench = ownerStopBench({ cli: 'codex' })
+  bench.session().turnActive = true
+  assert.equal(bench.gui.send(R39_PANE, 'muda o rumo', 'msg-1').ok, true)
+  assert.deepEqual(bench.sent, [])
+  assert.deepEqual(bench.interrupts, ['turn'])
+  assert.equal(bench.ownerMail.peek(R39_PANE)[0].handoff, true)
+})
+
+test('R39 D3/D4/D6 — o fecho interrompido entrega o ENVELOPE, arma a dívida e carimba entregue', async () => {
+  const bench = ownerStopBench()
+  bench.session().turnActive = true
+  // O passo que o dono cortou: o pump vê a tool e o envelope a nomeia.
+  bench.emit({ type: 'tool', name: 'Bash', input: { command: 'npm run test:gui-system' } })
+  assert.equal(bench.gui.send(R39_PANE, 'para: usa o outro schema', 'msg-1').ok, true)
+
+  bench.session().turnActive = false
+  bench.emit({ type: 'result', isError: false, outcome: 'cancelled', interrupted: true })
+  await settleTicks()
+
+  assert.equal(bench.sent.length, 1, 'o fecho da interrupção tem de entregar a fala')
+  const hand = bench.sent[0]
+  assert.match(hand, /para: usa o outro schema/u, 'a fala do dono viaja VERBATIM')
+  assert.match(hand, /você foi PARADO para lê-la/u)
+  assert.match(hand, /Você estava em: Bash/u, 'o envelope nomeia o passo cortado')
+  assert.match(hand, /npm run test:gui-system/u)
+  assert.match(hand, /NÃO terminou/u)
+  assert.match(hand, /Responda PRIMEIRO/u)
+
+  // D4 — a dívida agora é armada TAMBÉM aqui (antes só na carona).
+  assert.deepEqual(
+    bench.replyDebt.pending(R39_PANE),
+    ['para: usa o outro schema'],
+    'sem dívida armada no handoff, o modelo volta a trocar de tool sem falar'
+  )
+
+  assert.deepEqual(bench.states('msg-1'), ['stopping', 'delivered'])
+
+  const receipt = bench.journal.find((entry) => entry.event === 'gui-owner-hand')
+  assert.ok(receipt, 'o handoff não deixou recibo')
+  assert.equal(receipt.detail.messages, 1)
+  assert.ok(receipt.detail.chars > 0)
+  assert.equal(typeof receipt.detail.msSincePost, 'number')
+  assert.match(receipt.detail.lastStep, /Bash/u)
+})
+
+test('R39 D6 — os três carimbos saem na ordem: parando → entregue → respondida', async () => {
+  const bench = ownerStopBench()
+  bench.session().turnActive = true
+  assert.equal(bench.gui.send(R39_PANE, 'olha isto agora', 'msg-1').ok, true)
+  bench.session().turnActive = false
+  bench.emit({ type: 'result', isError: false, outcome: 'cancelled', interrupted: true })
+  await settleTicks()
+  // O turno novo nasce e o agente FALA: é a fala dele que fecha o ciclo.
+  bench.emit({ type: 'text', text: 'entendi: troco o schema e sigo de onde parei' })
+
+  assert.deepEqual(bench.states('msg-1'), ['stopping', 'delivered', 'answered'])
+  assert.equal(
+    bench.replyDebt.pending(R39_PANE),
+    null,
+    'o texto do assistente quita a dívida — a saída sancionada é única'
+  )
+})
+
+test('R39 D1 — duas falas com o turno aberto viajam JUNTAS, numa entrega só', async () => {
+  const bench = ownerStopBench()
+  bench.session().turnActive = true
+  assert.equal(bench.gui.send(R39_PANE, 'primeira ordem', 'msg-1').ok, true)
+  assert.equal(bench.gui.send(R39_PANE, 'na verdade, faz assim', 'msg-2').ok, true)
+  assert.equal(bench.ownerMail.count(R39_PANE), 2)
+
+  bench.session().turnActive = false
+  bench.emit({ type: 'result', isError: false, outcome: 'cancelled', interrupted: true })
+  await settleTicks()
+
+  assert.equal(bench.sent.length, 1, 'duas falas não podem virar dois turnos')
+  assert.ok(
+    bench.sent[0].indexOf('primeira ordem') < bench.sent[0].indexOf('na verdade, faz assim'),
+    'a ordem do dono é a ordem da leitura'
+  )
+  assert.deepEqual(bench.states('msg-1'), ['stopping', 'delivered'])
+  assert.deepEqual(bench.states('msg-2'), ['stopping', 'delivered'])
+})
+
+test('R39/R23 — o CLI que não confirma a parada CAI, e o renascimento entrega o envelope', () => {
+  const bench = ownerStopBench()
+  bench.session().turnActive = true
+  assert.equal(bench.gui.send(R39_PANE, 'para e me responde', 'msg-1').ok, true)
+  assert.deepEqual(bench.interrupts, ['turn'])
+
+  // A escalada da R23: 10s sem confirmação e o processo é derrubado. Nenhum
+  // relógio novo — o cinto já existia, e é ele que segura a entrega.
+  bench.session().kill()
+  bench.emit({ type: 'closed', code: 1 })
+  assert.equal(bench.ownerMail.count(R39_PANE), 1, 'a fala não pode morrer com o processo')
+
+  // Enviar reabre a MESMA conversa (R23.2) e o nascimento flusha o pote.
+  bench.recreate()
+  assert.equal(bench.sent.length, 1)
+  assert.match(bench.sent[0], /para e me responde/u)
+  assert.match(bench.sent[0], /você foi PARADO para lê-la/u)
+  assert.equal(bench.ownerMail.count(R39_PANE), 0)
+})
+
+test('R39 D5 — pergunta aberta: a fala do dono vira a RESPOSTA, sem interromper nada', () => {
+  const bench = ownerStopBench()
+  bench.session().turnActive = true
+  bench.emit({
+    type: 'question',
+    requestId: 'req-1',
+    questions: [{ question: 'Qual caminho?', options: [{ label: 'A' }, { label: 'B' }] }]
+  })
+
+  assert.equal(bench.gui.send(R39_PANE, 'vai pelo B, e só o painel', 'msg-1').ok, true)
+
+  assert.deepEqual(
+    bench.answers,
+    [{ requestId: 'req-1', map: { 'Qual caminho?': 'vai pelo B, e só o painel' } }],
+    'com o CLI parado esperando o dono não há turno a interromper: o texto dele É a resposta'
+  )
+  assert.deepEqual(bench.interrupts, [], 'interromper um CLI parado arriscaria derrubá-lo na escalada')
+  assert.equal(bench.ownerMail.count(R39_PANE), 0)
+  assert.deepEqual(bench.sent, [])
+  assert.deepEqual(bench.states('msg-1'), ['delivered'])
+  const resolved = bench.gui
+    .state(R39_PANE)
+    .events.filter(({ evt }) => evt.type === 'interaction-resolved')
+  assert.equal(resolved.length, 1, 'o card tem de fechar no fio')
+})
+
+test('R39 D5 — permissão aberta: a fala ESPERA no pote e o carimbo só sai na entrega', async () => {
+  const bench = ownerStopBench()
+  bench.session().turnActive = true
+  bench.emit({
+    type: 'permission',
+    requestId: 'req-p',
+    toolName: 'Bash',
+    description: 'npm test',
+    inputPretty: '{}',
+    canAlways: true
+  })
+
+  assert.equal(bench.gui.send(R39_PANE, 'pode rodar sim', 'msg-1').ok, true)
+  assert.deepEqual(bench.interrupts, [], 'permissão pendente = CLI parado: não há turno a cortar')
+  assert.deepEqual(bench.sent, [])
+  assert.equal(bench.ownerMail.count(R39_PANE), 1)
+  assert.deepEqual(bench.states('msg-1'), [], 'nada foi entregue ainda: carimbar seria mentir')
+
+  bench.session().turnActive = false
+  bench.emit({ type: 'result', isError: false, outcome: 'completed' })
+  await settleTicks()
+  assert.equal(bench.sent.length, 1)
+  assert.deepEqual(bench.states('msg-1'), ['delivered'])
+})
+
+test('R39 D1 — o ■ do dono continua sendo o único que para a FROTA', () => {
+  const bench = ownerStopBench()
+  bench.session().turnActive = true
+  assert.equal(bench.gui.interrupt(R39_PANE).ok, true)
+  assert.deepEqual(bench.interrupts, ['turn'])
+  assert.deepEqual(bench.fleetInterrupts, [R39_PANE], 'o ■ para a frota preservando')
+  assert.deepEqual(bench.discards, [R39_PANE], 'e descarta as pendências do despertador')
 })
 
 // ————— R25 — COTA VISÍVEL (odômetro da conversa) —————

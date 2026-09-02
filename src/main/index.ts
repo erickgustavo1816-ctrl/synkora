@@ -133,6 +133,7 @@ import { registerBrowserIpc } from './ipc/browser'
 import { buildGuiBrowserTools, type GuiBrowserToolkit } from './guiBrowserTools'
 import { GUI_HELPER_MCP_PANE_PREFIX, guiHelperMcpPaneId } from './guiHelperLspMcp'
 import { guiHelperPorts } from './guiHelperPorts'
+import { guiOwnerReplyDebt, sweepFlags } from './guiOwnerReplyDebt'
 import { SynVoiceService } from './synVoice'
 import { WindowsTextInput } from './windowsTextInput'
 import { WindowsGlobalActivation } from './windowsGlobalActivation'
@@ -3852,6 +3853,21 @@ app.whenReady().then(async () => {
   // whenReady): o motor só fala com ele quando um ajudante muda de estado, e aí
   // ele já existe. Sem chat aberto, o card sintetizado simplesmente não nasce —
   // o ajudante segue trabalhando e a entrega continua no helper_result.
+  // R39 (2026-09-02) — A BANDEIRA DA DÍVIDA DE RESPOSTA mora em disco para o
+  // hook PreToolUse do claude a ler antes de CADA tool (nativas inclusive).
+  // Dívida de um turno morre com o turno: bandeira de processo morto é varrida
+  // no boot, senão travaria a primeira tool do pane seguinte.
+  const ownerDebtFlagDir = join(app.getPath('userData'), 'owner-debt')
+  guiOwnerReplyDebt.setFlagDir(ownerDebtFlagDir)
+  const sweptDebtFlags = sweepFlags(ownerDebtFlagDir)
+  if (sweptDebtFlags > 0) {
+    blackbox.record({
+      cat: 'app',
+      event: 'owner-debt-flags-swept',
+      actor: 'harness',
+      detail: { removed: sweptDebtFlags }
+    })
+  }
   const guiHelperEngine = createGuiHelperEngine({
     // A FROTA SOBREVIVE AO APP (R6.1): sem este arquivo nada persiste e o boot
     // não reencontra ninguém — a ordem do dono só existe com esta linha.

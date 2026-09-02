@@ -16144,6 +16144,65 @@ body.progress-overlay-page #root {
   color: var(--ink-3);
 }
 
+/* ---- D6: o RECIBO da fala do dono (2026-09-02) ----------------------------
+   Queixa do dono: "ele tá deixando na fila". Sob a bolha — que não muda em
+   nada — uma linha mono conta o destino da fala. É RECIBO, não card: sem
+   moldura, sem fundo, sem raio; encosta na quina de baixo da bolha como um
+   comprovante que ficou preso ali.
+
+   A diferença nasce da FORMA da marca antes da cor — círculo que respira
+   (ainda acontecendo) · risco (atravessou) · canto de volta (voltou) —, e o
+   texto inteiro fica em `--ink-2`: `--ink-3` sobre papel dá 2,8:1, e um
+   carimbo de 10px que o dono precisa LER não pode reprovar em AA.
+   A ÚNICA animação é a `gui-subagent-pulse` que a casa já tem: nenhum
+   keyframe novo entra por causa de um carimbo. */
+
+.gui-owner-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 2px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+
+.gui-owner-state-mark {
+  flex: none;
+  width: 6px;
+  height: 6px;
+}
+
+/* PARANDO — o círculo que respira: o único estado ainda em movimento, e o
+   movimento é o SINAL de que o corte está em curso. */
+.gui-owner-state-stopping .gui-owner-state-mark {
+  border-radius: 50%;
+  background: currentColor;
+  animation: gui-subagent-pulse 1.05s ease-in-out infinite;
+}
+
+/* ENTREGUE — o risco: a fala atravessou e parou. */
+.gui-owner-state-delivered .gui-owner-state-mark {
+  height: 0;
+  border-top: 1px solid currentColor;
+}
+
+/* RESPONDIDA — o canto de volta (└), desenhado em borda: o assunto voltou. */
+.gui-owner-state-answered .gui-owner-state-mark {
+  width: 5px;
+  height: 5px;
+  margin-bottom: 1px;
+  border-left: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gui-owner-state-stopping .gui-owner-state-mark {
+    animation: none;
+  }
+}
+
 /* streaming: texto ink APAGADO + cursor piscando (o mockup, item 6) */
 .gui-msg.stream .gui-msg-text {
   color: var(--ink-2);

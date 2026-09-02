@@ -152,10 +152,15 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // único ajudante que dirigiu o browser dividiu a MESMA aba com o dev e três
     // leituras dele caíram na página do outro. O bloco passou a dizer que a aba
     // é DELE (uma por identidade) e que ajudante tem aba E porta próprias
-    // (dev 13840, ajudante 11845; o reviewer continua exatamente em 7120). A
-    // folga é de UMA régua do dono, que é para o que o teto existe: ele continua
-    // sendo contra CONSTITUIÇÃO — régua nova cabe, discurso não.
-    assert.ok(contract.length < 14500, `${role}: contrato virou constituição (${contract.length})`)
+    // (dev 13840, ajudante 11845; o reviewer continua exatamente em 7120). E de
+    // 14500 para 15000 na R39 (2026-09-02): a emenda D8 da VOZ DO DONO — o app
+    // PARA o turno e entrega a fala como turno NOVO, a tool em voo foi CORTADA,
+    // e TODA tool (nativas inclusive) trava até a resposta — coube DENTRO do
+    // teto velho (dev 13840→14244, reviewer 7120→7524, ajudante 11845→12249),
+    // mas comeu a folga: 256 chars não são mais uma régua do dono. O teto sobe
+    // para devolver essa folga, que é a razão de ele existir. Ele continua sendo
+    // contra CONSTITUIÇÃO — régua nova cabe, discurso não.
+    assert.ok(contract.length < 15000, `${role}: contrato virou constituição (${contract.length})`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -245,6 +250,32 @@ test('R31 — a voz do dono: os três papéis respondem SEMPRE e narram o passo 
     assert.match(contract, /gets a reply in words/, `${role}: não obriga resposta a TODA mensagem`)
     assert.match(contract, /NARRATE as you work/, `${role}: não ordena narrar o passo a passo`)
     assert.match(contract, /one line per step is cheap/i, `${role}: não reconcilia com a doutrina de custo`)
+  }
+})
+
+// A EMENDA DA R39 (2026-09-02 — DESIGN_FALA_DO_DONO_PARA_O_TURNO, D8). A R31
+// contou ao modelo que a fala chega no MEIO do turno; o que ele NÃO sabia é o
+// que a casa passou a fazer com ela. Medido em 01/09 (missão 86a05c06): o
+// modelo recebeu as falas do dono e emendou SEIS chamadas de tool —
+// helper_send×3, delegate×2, helpers_status — todas recusadas pela dívida de
+// resposta, antes de escrever a primeira linha. Ele lia cada recusa como "essa
+// tool falhou, tento outra". A metade mecânica é o hook `PreToolUse` (a sonda
+// `probe-claude-pretooluse-block` mediu a forma no binário 2.1.258); esta é a
+// metade que o modelo lê ANTES de tentar a segunda tool.
+test('R39 — a voz do dono: o turno é PARADO, a tool em voo foi CORTADA e toda tool trava', () => {
+  for (const role of GUI_MISSION_ROLES) {
+    const contract = guiMissionSystemPrompt(role)
+    assert.match(contract, /STOPS the turn/u, `${role}: não diz que o app PARA o turno`)
+    assert.match(contract, /as a NEW turn/u, `${role}: não diz que a fala chega como turno NOVO`)
+    assert.match(contract, /WAS CUT/u, `${role}: não avisa que a tool em voo foi cortada`)
+    assert.match(contract, /envelope names it/u, `${role}: não diz que o envelope nomeia a tool cortada`)
+    assert.match(contract, /EVERY tool is blocked/u, `${role}: não diz que TODA tool trava até a resposta`)
+    assert.match(contract, /NATIVE ones/u, `${role}: não nomeia as tools nativas`)
+    assert.match(
+      contract,
+      /different tool earns the same refusal/u,
+      `${role}: não fecha a porta da tool seguinte — foi por ela que passaram as seis chamadas`
+    )
   }
 })
 

@@ -205,6 +205,19 @@ export type GuiSessionEvent =
       attachments?: GuiAttachmentDescriptor[]
       at: number
     }
+  /** D6 (2026-09-02) — O RECIBO DA FALA DO DONO. Espelho declarado do union do
+   *  main (`src/main/guiSessions.ts`, que emite os três estados): `stopping` ao
+   *  mandar o interrupt, `delivered` quando o pote sai como turno novo (ou de
+   *  carona), `answered` no primeiro texto do agente depois disso. Nasceu da
+   *  queixa do dono "ele tá deixando na fila" — a bolha subia igual, tivesse a
+   *  fala chegado na hora ou ficado três minutos no pote. `id` é o `messageId`
+   *  da bolha; estado desconhecido não desenha nada (guiOwnerBubble.ts). */
+  | {
+      type: 'owner-message-state'
+      id: string
+      state: 'stopping' | 'delivered' | 'answered'
+      at: number
+    }
   | { type: 'text'; text: string }
   | {
       type: 'tool'

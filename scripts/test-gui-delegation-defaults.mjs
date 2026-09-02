@@ -728,11 +728,17 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   // IDENTIDADE (2026-09-01) de novo só o do CONTRATO, 13300→14500: a ordem do
   // dono ("cada um na sua aba, na sua porta") reescreveu o bloco do browser —
   // uma aba por identidade e porta reservada por ajudante; a ordem permanente
-  // seguiu intocada (2922) e o dev mede 13840.
+  // seguiu intocada (2922) e o dev mede 13840. E na R39 (2026-09-02) de novo só
+  // o do CONTRATO, 14500→15000: a emenda D8 da VOZ DO DONO (o app PARA o turno
+  // e entrega a fala como turno NOVO; a tool em voo foi CORTADA; TODA tool,
+  // nativas inclusive, trava até a resposta) entrou nos três papéis — coube
+  // dentro do teto velho, mas deixou só 256 chars de folga, e o teto existe
+  // justamente para caber UMA régua do dono. A ordem permanente seguiu intocada
+  // (2922) e o dev mede 14244. Os DOIS tetos andam juntos, sempre.
   assert.ok(order.length < 3000, `a ordem permanente virou constituição (${order.length})`)
   for (const role of GUI_MISSION_ROLES) {
     assert.ok(
-      guiMissionSystemPrompt(role).length < 14500,
+      guiMissionSystemPrompt(role).length < 15000,
       `${role}: contrato virou constituição (${guiMissionSystemPrompt(role).length})`
     )
   }

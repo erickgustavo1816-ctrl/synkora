@@ -8,6 +8,7 @@ import {
   type Seat
 } from '../store'
 import { formatGuiElapsed } from '../guiActivity'
+import { ownerBubbleLabel, ownerDeliveryStamp } from '../guiOwnerBubble'
 import { prettyModel } from './PaneChrome'
 import CliMark from './CliMark'
 import GuiMarkdown from './GuiMarkdown'
@@ -333,8 +334,15 @@ function GuiMessage({
     )
   }
   if (item.kind === 'user') {
+    // D6 (2026-09-02) — O RECIBO. Queixa do dono: "ele tá deixando na fila".
+    // Sob a bolha (que não muda em nada), uma linha mono conta o destino da
+    // fala; sem entrega, nada é desenhado e a bolha fica idêntica à de sempre.
+    // O carimbo sai `aria-hidden` porque o mesmo texto já viaja no nome
+    // acessível da bolha — o leitor de tela não ouve a frase duas vezes.
+    const stamp = ownerDeliveryStamp(item.delivery, Date.now())
+    const label = ownerBubbleLabel(stamp)
     return (
-      <div className="gui-msg user">
+      <div className="gui-msg user" {...(label ? { role: 'group', 'aria-label': label } : {})}>
         <span className="gui-msg-tag">você</span>
         <GuiAttachmentChips
           attachments={item.attachments ?? []}
@@ -343,6 +351,12 @@ function GuiMessage({
           presented
         />
         <div className="gui-msg-text">{item.text}</div>
+        {stamp && (
+          <span className={`gui-owner-state gui-owner-state-${stamp.tone}`} aria-hidden="true">
+            <i className="gui-owner-state-mark" />
+            {stamp.text}
+          </span>
+        )}
       </div>
     )
   }

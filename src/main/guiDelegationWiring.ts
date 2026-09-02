@@ -1504,7 +1504,12 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
    * distingue "o app não entregou" de "o agente ignorou".
    */
   const withOwnerMail = (paneId: string, body: string): string => {
-    const mail = ownerMail.drain(paneId)
+    // R39 D2 — a carona NÃO leva correio de HANDOFF. Essa fala parou o turno (o
+    // `interrupt` já saiu) e pertence ao TURNO NOVO que vai nascer do fecho:
+    // entregá-la aqui a colocaria dentro do turno que está sendo cortado, e o
+    // modelo a leria e a perderia no mesmo passo. Ela sai pelo flush, com o
+    // envelope de retomada. O correio sem marca continua viajando como sempre.
+    const mail = ownerMail.drain(paneId, { skipHandoff: true })
     if (mail.length === 0) return body
     const block = guiOwnerMailBlock(mail)
     // R32 — entregar ARMA a dívida: a partir daqui, os verbos deste catálogo

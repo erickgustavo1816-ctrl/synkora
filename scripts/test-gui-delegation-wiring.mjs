@@ -1832,6 +1832,48 @@ test('R22.2 — a mensagem do dono viaja no PRÓXIMO resultado de tool, uma vez 
   )
 })
 
+test('R39 D2 — a carona NÃO leva correio de HANDOFF: essa fala pertence ao turno novo', async () => {
+  const ownerMail = ownerMailbox()
+  const logged = []
+  const { api, replyDebt } = delegationApi({ ownerMail, log: (entry) => logged.push(entry) })
+  // O caso medido de 01/09: a fala do dono parou o turno (`handoff`) e o
+  // `interrupt` já saiu. Uma tool do Synkora em voo que a levasse entregaria a
+  // ordem DENTRO do turno que está sendo cortado — o modelo leria e perderia no
+  // mesmo passo. A marca só é apagada quando o FECHO entrega, com envelope.
+  ownerMail.post('p1', { messageId: 'm-carona', text: 'isto pode ir de carona', at: 0 })
+  ownerMail.post('p1', { messageId: 'm-parada', text: 'PAREI você para dizer isto', at: 0, handoff: true })
+
+  const text = await api.helperResult(delegatorId, 'h-meu', 45)
+  assert.match(text, /isto pode ir de carona/u, 'o correio sem marca continua pegando carona')
+  assert.doesNotMatch(
+    text,
+    /PAREI você para dizer isto/u,
+    'a fala que parou o turno não pode viajar dentro dele'
+  )
+  assert.equal(ownerMail.count('p1'), 1, 'a fala marcada tem de continuar no pote')
+  assert.equal(ownerMail.peek('p1')[0].messageId, 'm-parada')
+  // A dívida é armada só pelo que REALMENTE viajou aqui (o handoff arma a dele
+  // no flush, do outro lado).
+  assert.deepEqual(replyDebt?.pending('p1'), ['isto pode ir de carona'])
+  const receipt = logged.find((entry) => entry.event === 'owner-mail-ride')
+  assert.equal(receipt.detail.messages, 1)
+})
+
+test('R39 D2 — pote SÓ com handoff não vira carona nenhuma (nem recibo)', async () => {
+  const ownerMail = ownerMailbox()
+  const logged = []
+  const { api } = delegationApi({ ownerMail, log: (entry) => logged.push(entry) })
+  ownerMail.post('p1', { messageId: 'm-parada', text: 'para tudo', at: 0, handoff: true })
+  const text = await api.helpersStatus(delegatorId)
+  assert.equal(text.includes(ownerMailModule.GUI_OWNER_MAIL_TAG), false)
+  assert.equal(ownerMail.count('p1'), 1)
+  assert.equal(
+    logged.some((entry) => entry.event === 'owner-mail-ride'),
+    false,
+    'recibo de entrega sem entrega é recibo falso'
+  )
+})
+
 test('R22.2 — a carona vale em TODA tool da delegação, e o dono vem por ÚLTIMO', async () => {
   const ownerMail = ownerMailbox()
   const inbox = new GuiHelperInbox()
@@ -1905,7 +1947,15 @@ test('R32 — depois da carona, TODO verbo recusa até o agente falar com o dono
   assert.match(refused, /PARE: o DONO falou/u, 'o verbo andou com o dono sem resposta')
   assert.match(refused, /O que vc ta fazendo ai\?/u, 'a recusa re-cita a fala pendente')
   assert.match(refused, /uma ou duas linhas/u, 'a recusa nomeia a receita')
-  assert.match(refused, /chame a tool de novo/u, 'a recusa nomeia a saída — beco sem saída é bug')
+  // R39 D4 — o texto da recusa passou a dizer que TODAS as tools (nativas
+  // incluídas) estão bloqueadas, e a retomada deixou de ser "chame a tool de
+  // novo". A asserção mede a MESMA coisa que sempre mediu: a recusa nomeia a
+  // saída, porque beco sem saída é bug.
+  assert.match(
+    refused,
+    /destrava|chame a tool de novo/u,
+    'a recusa nomeia a saída — beco sem saída é bug'
+  )
   // Os SETE verbos ficam atrás do mesmo portão, e a recusa não executa nada.
   assert.match(await api.delegateHelpers(delegatorId, [{ prompt: 'x' }]), /PARE: o DONO falou/u)
   assert.equal(calls.begin.length, 0, 'a recusa não pode abrir lote nenhum')

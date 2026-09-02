@@ -28,6 +28,7 @@ import {
   transitionGuiStartedAt
 } from './guiActivity'
 import { claimGuiItemId, guiItemId } from './guiItemIdentity'
+import { applyGuiOwnerMessageState, type GuiOwnerDelivery } from './guiOwnerBubble'
 import { guiPrunedEvicted, mergeGuiHistoryPage } from './guiHistoryReader'
 import {
   countGuiOutputLines,
@@ -400,6 +401,10 @@ export type GuiItem =
       /** Metadados já validados pelo main; caminhos nunca são renderizados. */
       attachments?: GuiAttachmentDescriptor[]
       at: number
+      /** D6 (2026-09-02) — o que ACONTECEU com esta fala: o agente está sendo
+       *  parado, ela foi entregue (com a hora) ou já foi respondida. Ausente =
+       *  motor velho ou fala sem turno aberto: a bolha fica como sempre foi. */
+      delivery?: GuiOwnerDelivery
     }
   | {
       id: string
@@ -1061,6 +1066,15 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           at: evt.at
         })
       }
+    }
+
+    /** D6 — A BOLHA CONTA A VERDADE. Queixa do dono de 2026-09-02: "ele tá
+     *  deixando na fila". A régua (só anda para a frente, id desconhecido cai
+     *  no vazio, lista intacta quando nada muda) mora em `guiOwnerBubble.ts`;
+     *  aqui fica só a costura. */
+    case 'owner-message-state': {
+      const items = applyGuiOwnerMessageState(state.items, evt.id, evt.state, evt.at)
+      return items === state.items ? state : { ...state, items }
     }
 
     case 'turn-started': {

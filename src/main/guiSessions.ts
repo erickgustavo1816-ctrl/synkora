@@ -42,8 +42,22 @@ import {
   type GuiHelperInterruptedInput,
   type GuiHelperWake
 } from './guiHelperCards'
-import { GuiOwnerMailbox, guiOwnerMailFlushText, guiOwnerMailbox } from './guiOwnerMail'
+import {
+  GuiOwnerMailbox,
+  guiOwnerHandText,
+  guiOwnerMailFlushText,
+  guiOwnerMailbox
+} from './guiOwnerMail'
 import { GuiOwnerReplyDebt, guiOwnerReplyDebt } from './guiOwnerReplyDebt'
+import { guiOwnerDebtHookSettings } from './guiOwnerDebtHook'
+import {
+  GuiOwnerStepTracker,
+  guiOwnerMessageStateEvent,
+  ownerSteerPlan,
+  type GuiOwnerMessageState,
+  type GuiOwnerPendingInteraction,
+  type GuiOwnerSteerPlan
+} from './guiOwnerSteer'
 import {
   guiAddApiCall,
   guiConversationWeightTokens,
@@ -1548,6 +1562,10 @@ export class GuiSessionRegistry {
   private readonly ownerMail: GuiOwnerMailbox
   /** A DÍVIDA DE RESPOSTA (R32): o pump quita no primeiro texto do agente. */
   private readonly replyDebt: GuiOwnerReplyDebt
+  /** R39 — O QUE O TURNO ESTAVA FAZENDO quando a fala do dono o parou (o passo
+   *  que o envelope nomeia) e as bolhas entregues esperando o carimbo
+   *  "respondida". Alimentado pelo pump; a régua da rota mora no mesmo módulo. */
+  private readonly ownerSteer = new GuiOwnerStepTracker()
   /** O motor dos ajudantes, amarrado depois do nascimento (ver `attachHelpers`).
    *  Ausente = registro sem frota: o ■ para só o turno. */
   private helpers?: GuiSessionHelperControls
@@ -1873,6 +1891,15 @@ export class GuiSessionRegistry {
           evt: guiHistoryPrunedEvent(ring.evictedCount)
         })
       }
+      // R39 D3 — O PASSO QUE A FALA DO DONO CORTA. O pump já vê tudo; aqui ele
+      // só conta ao rastreio, e é dele que sai o "Você estava em: …" do
+      // envelope. `tool-result` importa tanto quanto `tool`: tool que já voltou
+      // não foi cortada, e dizer o contrário mandaria o modelo re-checar um
+      // fato que está de pé.
+      if (visibleEvt.type === 'tool')
+        this.ownerSteer.noteTool(spawn.paneId, visibleEvt.name, visibleEvt.input)
+      else if (visibleEvt.type === 'tool-result') this.ownerSteer.noteToolResult(spawn.paneId)
+      else if (visibleEvt.type === 'thinking') this.ownerSteer.noteThinking(spawn.paneId)
       // R32 — a DÍVIDA DE RESPOSTA quita no caminho por onde todo texto passa:
       // o agente falou = o dono foi respondido. `result` quita também — o
       // turno acabou e a cobrança mid-turn perdeu o objeto (a fala do fecho o
@@ -1883,6 +1910,15 @@ export class GuiSessionRegistry {
         visibleEvt.type === 'result'
       )
         this.replyDebt.clear(spawn.paneId)
+      // R39 D6 — e a BOLHA fecha o ciclo no MESMO instante: o primeiro texto do
+      // assistente depois da entrega é a resposta que o dono estava esperando.
+      // Só TEXTO carimba: um `result` mudo deixaria a bolha dizendo "respondida"
+      // sem ninguém ter falado — que é exatamente a queixa de 01/09.
+      if (visibleEvt.type === 'text' && visibleEvt.text.trim().length > 0) {
+        for (const messageId of this.ownerSteer.takeDelivered(spawn.paneId)) {
+          this.publishOwnerState(spawn.paneId, messageId, 'answered')
+        }
+      }
       const alertKind = alertSequencer.accept(visibleEvt, seq)
       if (alertKind) {
         this.deps.onChatAlert?.({
@@ -1944,12 +1980,20 @@ export class GuiSessionRegistry {
       // descarta — R6.3). Segurar a própria ordem do dono depois que a UI já a
       // mostrou entregue seria perdê-la em silêncio; o motivo no diário
       // distingue os dois fechos para quem for ler isto depois.
-      if (visibleEvt.type === 'result' && this.ownerMail.has(spawn.paneId)) {
-        const reason = visibleEvt.interrupted === true ? 'fecho-por-interrupcao' : 'fecho-de-turno'
-        queueMicrotask(() => {
-          if (!token.alive) return
-          this.flushOwnerMail(spawn.paneId, reason)
-        })
+      if (visibleEvt.type === 'result') {
+        // R39 D3 — o passo é lido AGORA e viaja no fecho: o `result` encerra o
+        // turno (e o rastreio dele), mas a entrega acontece um microtask
+        // depois, e é ela que precisa saber o que ficou pela metade.
+        const lastStep = this.ownerSteer.lastStepOf(spawn.paneId)
+        this.ownerSteer.noteResult(spawn.paneId)
+        if (this.ownerMail.has(spawn.paneId)) {
+          const reason =
+            visibleEvt.interrupted === true ? 'fecho-por-interrupcao' : 'fecho-de-turno'
+          queueMicrotask(() => {
+            if (!token.alive) return
+            this.flushOwnerMail(spawn.paneId, reason, lastStep)
+          })
+        }
       }
       // R25.3a — A NOTA DA CONVERSA PESADA, uma por marco. Sai pelo MESMO sink
       // (`command-output` vira nota no redutor), então ela é durável e volta no
@@ -2270,86 +2314,178 @@ export class GuiSessionRegistry {
       this.routeSlash(entry, trimmed)
     )
       return { ok: true }
-    // A ROTA DO POTE (R22.1), com DUAS cercas — e as duas antes de o briefing
-    // ser consumido.
+    // A ROTA DA FALA DO DONO (R39 D1/D5; a régua mora em `guiOwnerSteer`, pura e
+    // testável — este arquivo já é grande demais para ganhar decisão nova).
     //
-    // SLASH CRU (`/compact`, `/status`, uma skill do CLI) chega aqui porque o
-    // roteador acima o deixou passar: é COMANDO, e comando tem de ser EXECUTADO
-    // pelo binário. Citá-lo dentro de um resultado de tool viraria texto SOBRE
-    // um comando, e o dono nunca veria o efeito que pediu.
-    //
-    // BRIEFING PENDENTE: o contrato da missão é PROMPT, não citação — e um
-    // despejo desse tamanho no meio do turno é caro. Turno aberto com briefing
-    // pendente é caso de canto (ele só existe antes da primeira fala do dono), e
-    // segue pelo caminho de sempre.
-    if (
-      !trimmed.startsWith('/') &&
-      !entry.pendingBriefing &&
-      this.postOwnerMail(paneId, entry, messageId, prompt)
-    ) {
-      return { ok: true }
-    }
+    // Ela decide TUDO o que não é o caminho de sempre: parar o turno e entregar
+    // como turno novo, responder uma pergunta aberta, ou guardar no pote. As
+    // cercas antigas continuam de pé dentro dela — SLASH é comando e tem de ser
+    // EXECUTADO pelo binário; BRIEFING pendente é prompt, não citação.
+    const steer = ownerSteerPlan({
+      alive: entry.session.alive,
+      turnActive: entry.session.turnActive === true,
+      isSlash: trimmed.startsWith('/'),
+      hasPendingBriefing: Boolean(entry.pendingBriefing),
+      pendingInteraction: this.pendingInteractionOf(entry),
+      text: prompt
+    })
+    if (this.routeOwnerSteer(paneId, entry, messageId, prompt, steer)) return { ok: true }
     // AQUI, e não antes: o `/clear` e os slash roteados voltam acima sem
     // alcançar o modelo — soltar o briefing neles seria queimá-lo num comando
     // que o agente nunca vê.
     const briefing = entry.pendingBriefing
     if (briefing) entry.pendingBriefing = undefined
-    // Turno durante turno é problema RESOLVIDO dos backends (os dois steeram:
-    // codex via turn/steer; claude steera o stdin na fronteira da próxima tool
-    // — sonda probe-claude-owner-midturn, 2.1.241, 2026-08-23) — o motor não
-    // tem fila própria.
+    // O CAMINHO DE SEMPRE. Depois da R39 ele quase nunca vê turno aberto: com
+    // turno vivo a rota PARA o turno e entrega como turno novo (D1). Sobram as
+    // cercas — comando do CLI, briefing pendente, fala que não cabe no pote — e
+    // aí vale o que a sonda de 23/08 mediu (probe-claude-owner-midturn, 2.1.241):
+    // os dois motores steeram (codex por `turn/steer`, claude pelo stdin na
+    // fronteira da próxima tool) e nenhum tem fila própria. O que a medição de
+    // 01/09 provou é que ser LIDO no meio do turno não é ser OBEDECIDO — por
+    // isso o steering deixou de ser a rota principal da fala do dono.
     entry.session.send(briefing ? guiBriefedPrompt(briefing, prompt) : prompt)
     return { ok: true }
   }
 
   /**
-   * A ROTA (R22.1) — a fala do dono no meio do turno-fortaleza vai pro POTE.
+   * O PEDIDO QUE ESTÁ PARADO ESPERANDO O DONO (R39 D5), lido do anel — a única
+   * fonte autoritativa de pendência que este registro tem.
    *
-   * O caso do print (19/08): o delegador esperando a frota num `helper_result`,
-   * o dono manda mensagem com "enviar agora", a bolha VOCÊ aparece — e o agente
-   * não lê, porque mensagem empurrada pro stdin no meio de um turno fica na fila
-   * INTERNA do CLI até o turno fechar (pós-R19, potencialmente horas).
+   * PERGUNTA só entra como `question` no CLI que aceita RESPOSTA LIVRE. Isso
+   * está PROVADO no claude, e em produção: o card do chat já manda o texto do
+   * campo "outra resposta" por este mesmo caminho (`GuiQuestionCard` →
+   * `answerQuestion` → `updatedInput.answers`), e as transcrições dos seats têm
+   * 15 pares em que a resposta não é `label` nenhum e o CLI devolve, sem erro,
+   * "The user answered: … follow what they actually say". O codex não tem a
+   * tool; se um dia tiver, ele cai no ramo de baixo e a fala espera no pote.
    *
-   * Então, com TRÊS coisas verdadeiras ao mesmo tempo — turno ABERTO, sessão
-   * viva e pane DELEGADOR —, a entrega troca de canal: o texto entra no pote e
-   * viaja de carona no próximo resultado de tool da delegação
-   * (`guiDelegationWiring.withInbox`), que é o único caminho que alcança o modelo
-   * DENTRO do turno. A bolha no fio já saiu lá em cima, e continua saindo:
-   * apresentação não é entrega.
-   *
-   * CARONA OU STDIN, NUNCA OS DOIS: `true` aqui significa que o `send` NÃO fala
-   * com o CLI — mandar também pelo stdin faria o modelo ler a mesma ordem duas
-   * vezes (agora na carona, de novo quando o CLI liberasse a fila), que é o
-   * espelho do bug que esta rodada mata.
-   *
-   * `false` = nada mudou e o chamador segue pelo caminho de sempre: pane que não
-   * delega, turno fechado, sessão morta, mensagem grande demais para viajar num
-   * resultado de tool ou pote cheio. Nenhum desses é beco — todos caem no envio
-   * de hoje, que entrega no fecho do turno.
+   * A PROPOSTA DE PLANO fica de fora de propósito: ela não bloqueia o CLI (a
+   * tool responde na hora e o turno fecha), então um turno aberto com proposta
+   * pendurada continua sendo turno aberto — e turno aberto se PARA.
    */
-  private postOwnerMail(
+  private pendingInteractionOf(entry: GuiPaneEntry): GuiOwnerPendingInteraction | null {
+    if (entry.session instanceof MaestroSession) {
+      for (const requestId of entry.ring.pendingIdsOfType('question')) {
+        const record = guiEventRecord(entry.ring.pending(requestId))
+        const questions = record?.['questions']
+        const first = Array.isArray(questions) ? guiEventRecord(questions[0]) : null
+        const question = typeof first?.['question'] === 'string' ? first['question'] : undefined
+        return { kind: 'question', requestId, ...(question ? { question } : {}) }
+      }
+    }
+    for (const kind of ['permission', 'plan-review'] as const) {
+      const requestId = entry.ring.pendingIdsOfType(kind)[0]
+      if (requestId) return { kind, requestId }
+    }
+    return null
+  }
+
+  /**
+   * A EXECUÇÃO DA ROTA (R39). `true` = a fala foi consumida aqui e o `send` NÃO
+   * fala com o CLI; `false` = caminho de sempre.
+   *
+   * ENTREGA ÚNICA, SEMPRE: mandar também pelo stdin faria o modelo ler a mesma
+   * ordem duas vezes (aqui e quando o CLI liberasse a fila) — o espelho do bug
+   * que estas rodadas matam. E toda recusa cai no caminho de sempre, que
+   * entrega no fecho do turno: nenhuma delas é beco.
+   */
+  private routeOwnerSteer(
     paneId: string,
     entry: GuiPaneEntry,
     messageId: string,
-    text: string
+    text: string,
+    steer: GuiOwnerSteerPlan
   ): boolean {
-    if (!entry.session.alive || !entry.session.turnActive) return false
-    if (this.deps.delegatorPane?.(paneId) !== true) return false
-    if (!this.ownerMail.post(paneId, { messageId, text, at: Date.now() })) return false
-    this.deps.record?.(
-      'gui-owner-mail-posted',
-      { paneId, projectId: entry.spawn.projectId },
-      { messageId, chars: text.length, pending: this.ownerMail.count(paneId) }
-    )
-    // R22.3 — o long-poll da frota resolve AGORA. Sem isto a fala do dono
-    // esperaria o teto do `helper_result` (até 240s) para pegar carona.
+    if (steer.route === 'answer-question') {
+      // O CLI está PARADO esperando o dono: não há turno a cortar, e o texto
+      // dele É a resposta. Pergunta que ficou stale entre a régua e a resposta
+      // devolve `false` — e aí a fala segue pelo caminho de sempre.
+      const requestId = steer.requestId
+      const question = steer.question
+      if (!requestId || !question) return false
+      if (!this.answerQuestion(paneId, requestId, { [question]: text }).ok) return false
+      this.ownerSteer.noteDelivered(paneId, [messageId])
+      this.publishOwnerState(paneId, messageId, 'delivered')
+      this.deps.record?.(
+        'gui-owner-answer',
+        { paneId, projectId: entry.spawn.projectId },
+        { messageId, requestId, chars: text.length }
+      )
+      return true
+    }
+    if (steer.route !== 'stop-and-hand' && steer.route !== 'hold') return false
+    const handoff = steer.route === 'stop-and-hand'
+    // O POTE PRIMEIRO, o interrupt depois: parar o turno para uma fala que o
+    // pote recusou (grande demais, pote cheio) a deixaria sem canal nenhum.
+    if (!this.ownerMail.post(paneId, { messageId, text, at: Date.now(), ...(handoff ? { handoff: true } : {}) }))
+      return false
+    // R22.3 — o long-poll da frota resolve AGORA: sem isto a tool do Synkora em
+    // voo seguraria até 240s, e é o retorno dela que deixa o turno fechar.
     try {
       this.helpers?.wakePane?.(paneId)
     } catch {
-      // Despertar é aceleração, nunca pré-condição: a carona sai no próximo
-      // resultado de tool de qualquer jeito.
+      // Despertar é aceleração, nunca pré-condição.
     }
+    if (!handoff) {
+      this.deps.record?.(
+        'gui-owner-mail-posted',
+        { paneId, projectId: entry.spawn.projectId },
+        { messageId, chars: text.length, pending: this.ownerMail.count(paneId), reason: steer.reason }
+      )
+      return true
+    }
+    // D1.c — SÓ O TURNO DO CLI. Nem `helpers.interruptPane`, nem
+    // `helperCards.discardPending`: a frota segue trabalhando e as pendências do
+    // despertador continuam de pé. O ■ do dono é que para tudo, e ele não muda.
+    //
+    // O motor que estoura aqui não pode derrubar o `send`: a fala JÁ está no
+    // pote (durável, com bolha no fio), e o fecho do turno a entrega de todo
+    // jeito — nenhum passo depende de entrega única.
+    let stopped = false
+    try {
+      stopped = entry.session.interrupt()
+    } catch {
+      stopped = false
+    }
+    this.publishOwnerState(paneId, messageId, 'stopping')
+    this.deps.record?.(
+      'gui-owner-stop',
+      { paneId, projectId: entry.spawn.projectId },
+      {
+        messageId,
+        chars: text.length,
+        pending: this.ownerMail.count(paneId),
+        // `false` = o turno fechou entre a régua e o interrupt (corrida
+        // benigna): o fecho que já está a caminho entrega o pote do mesmo jeito.
+        stopped,
+        // A cerca da R22 caiu (D1 vale para QUALQUER pane); o diário continua
+        // distinguindo o caso do turno-fortaleza para quem for ler depois.
+        delegator: this.deps.delegatorPane?.(paneId) === true
+      }
+    )
     return true
+  }
+
+  /**
+   * O CARIMBO DA BOLHA (R39 D6) — "parando o agente…" / "entregue" / "respondida".
+   *
+   * Sai pelo MESMO cano dos eventos do motor (anel + push), e não pelo `sink`:
+   * ele não é vocabulário de CLI nenhum (é o harness contando o que o harness
+   * fez), e o anel carrega `unknown` — a mesma porta por onde a poda já fala.
+   * Entrar no anel é o que faz o carimbo sobreviver à remontagem da aba.
+   *
+   * Carimbo é APRESENTAÇÃO: falhar aqui nunca pode derrubar a entrega, então
+   * pane sem sessão viva simplesmente não recebe carimbo.
+   */
+  private publishOwnerState(
+    paneId: string,
+    messageId: string,
+    state: GuiOwnerMessageState
+  ): void {
+    const entry = this.panes.get(paneId)
+    if (!entry || !entry.token.alive) return
+    const evt = guiOwnerMessageStateEvent(messageId, state, Date.now())
+    this.deps.push({ paneId, seq: entry.ring.push(evt), evt })
   }
 
   /**
@@ -2367,8 +2503,18 @@ export class GuiSessionRegistry {
    *
    * Recusa transitória NUNCA consome: o pote é devolvido inteiro, na ordem, e o
    * próximo fecho (ou a próxima abertura) tenta de novo.
+   *
+   * R39 — quando o pote traz fala MARCADA (ela PAROU o turno), o que sai não é
+   * a fala crua: é o ENVELOPE DE RETOMADA, que diz que ele foi parado, nomeia o
+   * passo cortado e manda responder antes de retomar. E a DÍVIDA (D4) é armada
+   * aqui também — no caso medido de 01/09 a entrega funcionou e a obediência é
+   * que faltou.
    */
-  private flushOwnerMail(paneId: string, reason: string): void {
+  private flushOwnerMail(
+    paneId: string,
+    reason: string,
+    lastStep: string | null = this.ownerSteer.lastStepOf(paneId)
+  ): void {
     if (!this.ownerMail.has(paneId)) return
     const entry = this.panes.get(paneId)
     if (!entry || !entry.session.alive) return
@@ -2380,7 +2526,12 @@ export class GuiSessionRegistry {
     if (this.paneBusyReason(paneId, entry)) return
     const entries = this.ownerMail.drain(paneId)
     if (entries.length === 0) return
-    const text = guiOwnerMailFlushText(entries)
+    // UMA fala marcada marca a entrega inteira: o turno novo nasce do corte, e
+    // separar as duas cargas em duas mensagens faria o dono falar duas vezes.
+    const handoff = entries.some((mail) => mail.handoff === true)
+    const text = handoff
+      ? guiOwnerHandText(entries, lastStep)
+      : guiOwnerMailFlushText(entries)
     // Pote só com brancos é impossível pela porta do `post` — e, se algum dia
     // for, some aqui em vez de abrir um turno com nada dentro.
     if (!text.trim()) return
@@ -2389,10 +2540,36 @@ export class GuiSessionRegistry {
       this.ownerMail.restore(paneId, entries)
       return
     }
+    if (handoff) {
+      // D4 — a dívida deixa de ser exclusividade da carona: quem foi PARADO
+      // para ouvir o dono não volta a chamar tool antes de falar com ele.
+      this.replyDebt.arm(
+        paneId,
+        entries.map((mail) => mail.text)
+      )
+    }
+    this.ownerSteer.noteDelivered(
+      paneId,
+      entries.map((mail) => mail.messageId)
+    )
+    for (const mail of entries) this.publishOwnerState(paneId, mail.messageId, 'delivered')
+    const oldest = entries.reduce((first, mail) => Math.min(first, mail.at), Date.now())
     this.deps.record?.(
-      'gui-owner-mail-flushed',
+      handoff ? 'gui-owner-hand' : 'gui-owner-mail-flushed',
       { paneId, projectId: entry.spawn.projectId },
-      { messages: entries.length, chars: text.length, reason }
+      {
+        messages: entries.length,
+        chars: text.length,
+        reason,
+        ...(handoff
+          ? {
+              // O relógio da queixa: no caso medido foram 3 min de pote e 8
+              // minutos até a resposta. É este número que diz se a rodada valeu.
+              msSincePost: Math.max(0, Date.now() - oldest),
+              lastStep: lastStep ?? 'pensando'
+            }
+          : {})
+      }
     )
   }
 
@@ -3207,8 +3384,18 @@ export class GuiSessionRegistry {
     const file = persona
       ? this.deps.systemPromptFile(`gui-${spawn.paneId}.system.md`, persona)
       : undefined
+    // R39 (2026-09-02) — a dívida de resposta ao dono alcança TODA tool deste
+    // pane (nativas inclusive) por um hook PreToolUse que lê a bandeira dele em
+    // disco (`guiOwnerDebtHook`, forma sondada no binário). `undefined` enquanto
+    // o boot não carimbou o flagDir: aí o pane nasce exatamente como antes.
+    const debtFlag = guiOwnerReplyDebt.flagPathFor(spawn.paneId)
     return new MaestroSession(
-      { ...opts, resumeSessionId: spawn.resumeSessionId, systemPromptFile: file },
+      {
+        ...opts,
+        resumeSessionId: spawn.resumeSessionId,
+        systemPromptFile: file,
+        ...(debtFlag ? { settings: guiOwnerDebtHookSettings(debtFlag) } : {})
+      },
       sink
     )
   }
