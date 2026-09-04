@@ -933,13 +933,14 @@ export interface BrowserBoundsPumpHost {
 export interface BrowserBoundsPump {
   hot(): void
   cold(): void
-  /** faxina: um quadro pendente não sobrevive à desmontagem */
+  /** Terminal cleanup: retained callbacks and pending frames become inert. */
   stop(): void
   pending(): boolean
 }
 
 export function createBrowserBoundsPump(host: BrowserBoundsPumpHost): BrowserBoundsPump {
   let frame = 0
+  let stopped = false
   const drop = (): void => {
     if (!frame) return
     host.cancelFrame(frame)
@@ -947,17 +948,22 @@ export function createBrowserBoundsPump(host: BrowserBoundsPumpHost): BrowserBou
   }
   return {
     hot() {
+      if (stopped) return
       drop()
       host.measure()
     },
     cold() {
-      if (frame) return
+      if (stopped || frame) return
       frame = host.requestFrame(() => {
         frame = 0
+        if (stopped) return
         host.measure()
       })
     },
-    stop: drop,
+    stop() {
+      stopped = true
+      drop()
+    },
     pending() {
       return frame !== 0
     }

@@ -914,6 +914,7 @@ export function installDevMock(): void {
       // A largura que a página enxerga (2026-08-29): sem `WebContentsView` não
       // há página para escalar — a mesma recusa das outras alavancas.
       setViewportMode: async () => ({ ok: false, error: BROWSER_PREVIEW_REFUSAL }),
+      setDockMission: () => undefined,
       bounds: () => undefined,
       onChanged: () => () => undefined
     },

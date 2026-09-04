@@ -135,12 +135,12 @@ test('SynVoice restores its position and ignores legacy saved sizes', () => {
 })
 
 test('both floating windows share one readable typographic scale', () => {
-  assert.match(css, /--floating-overlay-title-size:\s*13px/)
-  assert.match(css, /--floating-overlay-subtitle-size:\s*11\.5px/)
+  assert.match(css, /--floating-overlay-title-size:\s*14px/)
+  assert.match(css, /--floating-overlay-subtitle-size:\s*12px/)
   assert.match(css, /\.synvoice-overlay-copy strong\s*\{[\s\S]*?var\(--floating-overlay-title-size\)/)
   assert.match(css, /\.synvoice-overlay-copy small\s*\{[\s\S]*?var\(--floating-overlay-subtitle-size\)/)
-  assert.match(overlayCss, /\.progress-overlay-heading strong\s*\{[\s\S]*?var\(--floating-overlay-title-size, 13px\)/)
-  assert.match(overlayCss, /\.progress-overlay-heading small\s*\{[\s\S]*?var\(--floating-overlay-subtitle-size, 11\.5px\)/)
+  assert.match(overlayCss, /\.progress-overlay-heading strong\s*\{[\s\S]*?var\(--floating-overlay-title-size, 14px\)/)
+  assert.match(overlayCss, /\.progress-overlay-heading small\s*\{[\s\S]*?var\(--floating-overlay-subtitle-size, 12px\)/)
   assert.doesNotMatch(css, /\.synvoice-overlay-copy small\s*\{[\s\S]{0,180}?font-size:\s*7\.5px/)
   assert.match(voiceOverlay, /SynkoraMark size=\{15\}/)
   assert.ok(voiceOverlay.includes('if (mouse) return `MOUSE ${mouse[1]}`'))
@@ -149,6 +149,22 @@ test('both floating windows share one readable typographic scale', () => {
   assert.match(rendererMain, /<SynVoiceOverlay \/>[\s\S]*?<TooltipLayer \/>/)
   assert.match(css, /\.synvoice-overlay-shell button:focus-visible[\s\S]*?outline:/)
   assert.match(css, /@media \(forced-colors: active\)[\s\S]*?\.synvoice-overlay-shell button:focus-visible/)
+})
+
+test('Andamento keeps readable text at narrow and compact sizes', () => {
+  const rule = (selector) => overlayCss.slice(overlayCss.indexOf(selector)).split('{')[1].split('}')[0]
+  for (const size of overlayCss.matchAll(/font-size:\s*([\d.]+)px/g)) {
+    assert.ok(Number(size[1]) >= 11, `text must never fall below 11px: ${size[0]}`)
+  }
+  assert.match(rule('.progress-mission-title {'), /font-size:\s*14px/)
+  assert.match(rule('.progress-mission-detail {'), /font-size:\s*12px/)
+  assert.match(rule('.progress-filters {'), /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/)
+  assert.match(rule('.progress-overlay-foot {'), /flex-wrap:\s*wrap/)
+  assert.match(rule('.progress-compact-focus strong {'), /font-size:\s*14px/)
+  assert.match(rule('.progress-compact-focus > span:first-child {'), /gap:\s*2px/)
+  const shortWindow = overlayCss.slice(overlayCss.indexOf('@media (max-height: 340px)'))
+  assert.match(shortWindow, /\.progress-filters\s*\{[^}]*grid-auto-flow:\s*column;[^}]*grid-auto-columns:\s*176px;[^}]*overflow-x:\s*auto/)
+  assert.match(shortWindow, /\.progress-filter\s*\{[^}]*flex-direction:\s*row/)
 })
 
 test('completion feed stays bounded and reports hidden entries', () => {
@@ -236,7 +252,8 @@ test('empty and wide layouts adapt without manufacturing overflow', () => {
   assert.match(overlayCss, /\.progress-overlay-shell button:focus-visible[\s\S]*?outline:/)
   assert.match(overlayCss, /@media \(prefers-reduced-motion: reduce\)/)
   assert.match(overlayCss, /\.progress-overlay-head\s*\{[^}]*-webkit-app-region: drag;/)
-  assert.match(overlayCss, /background: var\(--paper, #efe9dc\)/)
+  assert.match(overlayCss, /radial-gradient\(circle at 11% 0%, rgba\(217, 108, 63, 0\.12\), transparent 34%\)/)
+  assert.match(overlayCss, /rgba\(34, 32, 28, 0\.985\)/)
   assert.doesNotMatch(overlay, /CoordinatorActivity|QuestionLine|mission\.question|project\.question/)
   assert.match(overlay, /setHistoryNotice\('Histórico ocultado\. Nenhuma missão foi apagada\.'\)/)
   assert.match(overlay, /window\.requestAnimationFrame\(\(\) => openMainButtonRef\.current\?\.focus\(\)\)/)

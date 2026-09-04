@@ -267,6 +267,7 @@ function roundRect(rect: BrowserPanelRect): BrowserPanelRect {
 
 export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager {
   const missions = new Map<string, MissionRecord>()
+  let dockMissionId: string | null = null
   /** webContents.id → missão, para os ganchos da session (que são por PROJETO)
    *  saberem em qual missão o download/permissão aconteceu. */
   const owners = new Map<number, { missionId: string; projectId: string }>()
@@ -450,7 +451,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     // invisível e AINDA capturável, que é o ponto todo da lei 1.
     const usable = asked !== null && asked.width > 0 && asked.height > 0
     const rect = usable && asked ? asked : defaultRect()
-    const show = usable && wanted?.visible === true
+    const show = mission.missionId === dockMissionId && usable && wanted?.visible === true
     for (const tab of mission.tabs) {
       tab.view.setBounds(viewportViewRect(tab.viewport, rect))
       const visible = show && tab.tabId === mission.activeTabId
@@ -1013,6 +1014,19 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       }
     },
 
+    setDockMission(missionId) {
+      if (dockMissionId === missionId) return
+      dockMissionId = missionId
+      // Revocation also clears the cached permission. Returning to a mission
+      // requires its panel to measure again; window geometry cannot revive it.
+      for (const mission of missions.values()) {
+        if (mission.dockLayout?.visible) {
+          mission.dockLayout = { ...mission.dockLayout, visible: false }
+        }
+        if (mission.host === 'dock') applyLayout(mission)
+      }
+    },
+
     applyBounds(missionId, rect, visible, reporter = 'dock') {
       const mission = missions.get(missionId)
       // Nascimento é LAZY: bounds sozinhos nunca criam browser nenhum.
@@ -1040,8 +1054,11 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         applyLayout(mission)
         return
       }
+      // A delayed measurement from a keepalive project has no authority to
+      // seize the native surface. Retain its real size for background capture.
+      layout.visible = layout.visible && missionId === dockMissionId
       mission.dockLayout = layout
-      if (visible) {
+      if (layout.visible) {
         // Só UMA missão pode ocupar o retângulo do dock. Trocar de missão sem
         // o painel antigo reportar deixaria a view velha por cima — esconder as
         // outras aqui é mecânico, não depende de o renderer lembrar. Missão

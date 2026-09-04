@@ -99,10 +99,15 @@ test('revision gate rejects older/equal results; silence changes only the age la
 const sourcePath = resolve(process.env.PROGRESS_OVERLAY_SOURCE ?? 'src/renderer/src/components/ProgressOverlay.tsx')
 const compiled = buildSync({ stdin: { contents: readFileSync(sourcePath, 'utf8') + "\nexport { default as Radar } from './ProgressRadarButton'\n",
   resolveDir: resolve('src/renderer/src/components'), loader: 'tsx' }, bundle: true, platform: 'node',
-  format: 'cjs', jsx: 'automatic', write: false, loader: { '.css': 'empty' }, external: ['react', 'react/jsx-runtime'] })
-const fakeWindow = { setInterval: () => 1, clearInterval() {}, setTimeout, clearTimeout, requestAnimationFrame: callback => callback() }
+  format: 'cjs', jsx: 'automatic', write: false, loader: { '.css': 'empty' }, external: ['react', 'react/jsx-runtime', 'react-dom'] })
+const fakeWindow = { setInterval: () => 1, clearInterval() {}, setTimeout, clearTimeout, requestAnimationFrame: callback => callback(), addEventListener() {}, removeEventListener() {} }
+const fakeDocument = { body: {}, addEventListener() {}, removeEventListener() {} }
 const loaded = { exports: {} }
-new Function('require', 'module', 'exports', 'window', compiled.outputFiles[0].text)(createRequire(import.meta.url), loaded, loaded.exports, fakeWindow)
+const nativeRequire = createRequire(import.meta.url)
+// Portal placement is browser QA; keep the real Select's state and keyboard
+// behavior while rendering its portal children in this synthetic React tree.
+const componentRequire = name => name === 'react-dom' ? { createPortal: children => children } : nativeRequire(name)
+new Function('require', 'module', 'exports', 'window', 'document', compiled.outputFiles[0].text)(componentRequire, loaded, loaded.exports, fakeWindow, fakeDocument)
 const Overlay = loaded.exports.default
 const Radar = loaded.exports.Radar
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -117,6 +122,35 @@ function setup(getState) {
 }
 const button = (tree, label) => tree.root.findAllByType('button').find(node => node.props['aria-label'] === label)
 const rowButtons = tree => tree.root.findAllByType('button').filter(node => node.props.className?.startsWith('progress-mission '))
+
+test('custom project select filters real rows with pointer and keyboard and Escape preserves selection', async () => {
+  setup(async () => ({ snapshot: mixed, compact: false, historyClearedAt: null }))
+  let tree
+  await act(async () => { tree = create(React.createElement(Overlay)) })
+  try {
+    assert.equal(tree.root.findAllByType('select').length, 0)
+    const trigger = () => tree.root.findAllByType('button').find(node => node.props['aria-haspopup'] === 'listbox')
+    assert.equal(trigger().props['aria-label'], 'Filtrar por projeto: Todos os projetos')
+    await act(async () => trigger().props.onClick())
+    const options = () => tree.root.findAllByProps({ role: 'option' })
+    assert.equal(options().length, 3)
+    await act(async () => options()[2].props.onClick())
+    assert.equal(rowButtons(tree).length, 1)
+    assert.deepEqual(rowButtons(tree)[0].findByProps({ className: 'progress-mission-title' }).children, ['delivery'])
+    assert.equal(trigger().props['aria-label'], 'Filtrar por projeto: Projeto b')
+    const key = async value => act(async () => trigger().props.onKeyDown({ key: value, preventDefault() {} }))
+    await key('ArrowDown')
+    await key('Home')
+    await key('Escape')
+    assert.equal(trigger().props['aria-expanded'], false)
+    assert.equal(rowButtons(tree).length, 1)
+    await key('ArrowDown')
+    await key('Home')
+    await key('Enter')
+    assert.equal(rowButtons(tree).length, 5)
+    assert.equal(trigger().props['aria-label'], 'Filtrar por projeto: Todos os projetos')
+  } finally { await act(async () => tree.unmount()) }
+})
 
 test('real UI filters rows and opens exact optional pending conversation without losing working signal', async () => {
   const { commands } = setup(async () => ({ snapshot: mixed, compact: false, historyClearedAt: null }))

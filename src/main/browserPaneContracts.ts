@@ -213,6 +213,9 @@ export interface BrowserPaneDeps {
 /** O que o IPC e o gate consomem — o contrato do design MAIS a superfície do
  *  dono. A H2 pode continuar tipando pelo `BrowserManager` estreito. */
 export interface BrowserPaneManager extends BrowserManager {
+  /** Navigation authority of the app renderer; null revokes every dock view.
+   * Does not create a browser or revive cached visible geometry. */
+  setDockMission(missionId: string | null): void
   state(missionId: string): BrowserMissionState
   navigate(missionId: string, url: string): Promise<BrowserGestureResult>
   newTab(missionId: string, projectId: string, url?: string): Promise<BrowserGestureResult>

@@ -39,8 +39,8 @@
      com quem está FORA do scroller — trocar a barra sem trocar a régua
      desalinha as bordas de novo. */
   --scrollbar-w: 10px;
-  --floating-overlay-title-size: 13px;
-  --floating-overlay-subtitle-size: 11.5px;
+  --floating-overlay-title-size: 14px;
+  --floating-overlay-subtitle-size: 12px;
   /* cores das FUNÇÕES (defaults de departments.ts — o boot do renderer
      sobrescreve com o override do usuário via applyDeptHueVars; pintar por
      função é sempre var(--hue-<key>), nunca o número cru) */
@@ -14022,10 +14022,13 @@ body.synvoice-overlay-page #root {
 }
 
 .synvoice-overlay-history .synvoice-history-title {
+  font-size: 11px;
   padding: 1px 4px 3px;
 }
 
 .synvoice-overlay-history .synvoice-history-empty {
+  font-size: 12px;
+  line-height: 1.5;
   display: grid;
   min-height: 142px;
   place-items: center;
@@ -14042,7 +14045,7 @@ body.synvoice-overlay-page #root {
 }
 
 .synvoice-overlay-history .synvoice-history-item {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   padding: 7px 8px;
@@ -14050,6 +14053,7 @@ body.synvoice-overlay-page #root {
 }
 
 .synvoice-overlay-history .synvoice-history-item span {
+  font-size: 12px;
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -14059,6 +14063,7 @@ body.synvoice-overlay-page #root {
 }
 
 .synvoice-overlay-history .synvoice-history-item small {
+  font-size: 11px;
   justify-self: end;
 }
 
@@ -14240,6 +14245,11 @@ body.synvoice-overlay-page #root {
 }
 
 .synvoice-overlay-copy strong {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   color: var(--panel-ink);
   font-size: var(--floating-overlay-title-size);
   line-height: 1.15;
@@ -14322,7 +14332,7 @@ body.synvoice-overlay-page #root {
   border-radius: 5px;
   background: transparent;
   color: var(--panel-ink-3);
-  font: 9px/1 var(--mono);
+  font: 11px/1 var(--mono);
   cursor: pointer;
 }
 
@@ -14357,7 +14367,7 @@ body.synvoice-overlay-page #root {
   max-width: calc(100vw - 16px);
   padding: 5px 8px;
   border-radius: 6px;
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.25;
 }
 
@@ -14406,7 +14416,7 @@ body.synvoice-overlay-page #root {
 /* Shared voice focus remains here; Andamento styles live in progressOverlay.css. */
 .synvoice-overlay-shell button:focus-visible,
 .synvoice-overlay-history button:focus-visible {
-  outline: 1px solid color-mix(in srgb, var(--accent) 82%, white);
+  outline: 2px solid color-mix(in srgb, var(--accent) 82%, white);
   outline-offset: -2px;
 }
 @media (forced-colors: active) {

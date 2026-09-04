@@ -1386,7 +1386,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
             subagentItems={directGui?.items ?? []}
             testServerOpen={panes.some((p) => p.testServer && p.missionId === selMission.id)}
             reloadToken={railReload}
-            visible={isActive && uniTab === 'board'}
+            visible={appPage === 'workspace' && isActive && uniTab === 'board'}
             activityToken={railActivity}
             onIntegrate={() => void onIntegrate()}
             onReview={() => void nudgeReview()}

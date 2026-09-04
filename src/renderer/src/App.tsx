@@ -15,8 +15,11 @@ import { installGlobalGuiEscape } from './guiEscape'
 import { guiApi } from './guiApi'
 import GuiQueueDispatcher from './components/GuiQueueDispatcher'
 import CommandPalette from './components/CommandPalette'
+import { eligibleDockMission, useBrowserDockVisibility } from './useBrowserDockVisibility'
 
 export default function App(): React.JSX.Element {
+  const dockMissionId = useStore(eligibleDockMission)
+  useBrowserDockVisibility(dockMissionId)
   const openProjectId = useStore((s) => s.openProjectId)
   const appPage = useStore((s) => s.appPage)
   const mountedProjects = useStore((s) => s.mountedProjects)

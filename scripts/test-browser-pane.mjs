@@ -970,10 +970,96 @@ function makeManager(options = {}) {
     push: (channel, ...args) => pushes.push({ channel, args })
   })
   const detaches = () => host.log.filter((entry) => entry.kind === 'detach').length
+  // Existing geometry scenarios run with m1 open in the app. Navigation
+  // regressions opt out explicitly; geometry itself never grants eligibility.
+  if (options.dockMission !== null) manager.setDockMission(options.dockMission ?? 'm1')
   return { manager, host, records, pushes, detaches }
 }
 
 const RECT = { x: 300, y: 120, width: 600, height: 400 }
+
+test('VISIBILITY: home defaults closed to dock geometry without destroying or detaching tabs', async () => {
+  const { manager, host, detaches } = makeManager({ dockMission: null, forbidDetach: true })
+  await manager.ensureTab('m1', 'synthetic-project', undefined, OWNER_DEV)
+  manager.applyBounds('m1', RECT, true)
+  manager.relayout('m1')
+  assert.equal(host.views[0].getVisible(), false)
+  assert.equal(manager.state('m1').alive, true)
+  assert.equal(detaches(), 0)
+})
+
+test('VISIBILITY: navigation revokes old geometry and late reports cannot take back the dock', async () => {
+  const { manager, host, detaches } = makeManager({ dockMission: null, forbidDetach: true })
+  await manager.ensureTab('m1', 'p1', undefined, OWNER_DEV)
+  await manager.ensureTab('m2', 'p2', undefined, OWNER_DEV)
+  manager.setDockMission('m1')
+  manager.applyBounds('m1', RECT, true)
+  assert.equal(host.views[0].getVisible(), true)
+  manager.setDockMission(null)
+  manager.applyBounds('m1', RECT, true)
+  manager.relayout('m1')
+  host.windowHooks.onGeometry()
+  assert.equal(host.views[0].getVisible(), false)
+  manager.setDockMission('m2')
+  manager.applyBounds('m2', RECT, true)
+  manager.applyBounds('m1', RECT, true)
+  assert.deepEqual(host.views.map(v => v.getVisible()), [false, true])
+  manager.setDockMission('m1')
+  manager.relayout('m1')
+  host.windowHooks.onGeometry()
+  assert.deepEqual(host.views.map(v => v.getVisible()), [false, false], 'eligibility alone cannot revive a cached rectangle')
+  manager.applyBounds('m1', RECT, true)
+  assert.deepEqual(host.views.map(v => v.getVisible()), [true, false])
+  manager.setDockMission('unopened')
+  assert.equal(manager.hasMission('unopened'), false, 'context changes never create a browser')
+  assert.equal(detaches(), 0)
+})
+
+test('VISIBILITY: popout is independent; redock to home and live return require fresh geometry', async () => {
+  const { manager, host } = makeHostedManager({ dockMission: null })
+  await manager.ensureTab('m1', 'p', undefined, OWNER_DEV)
+  manager.setDockMission('m1')
+  manager.applyBounds('m1', RECT, true)
+  manager.popOut('m1')
+  manager.setDockMission(null)
+  manager.applyBounds('m1', RECT, false, 'dock')
+  manager.applyBounds('m1', POPOUT_RECT, true, 'popout')
+  assert.equal(host.views[0].getVisible(), true)
+  manager.dockBack('m1')
+  manager.relayout('m1')
+  assert.equal(host.views[0].getVisible(), false)
+  assert.equal(manager.captureReadiness('m1').ok, true)
+  manager.setDockMission('m1')
+  manager.relayout('m1')
+  assert.equal(host.views[0].getVisible(), false)
+  manager.applyBounds('m1', RECT, true)
+  assert.equal(host.views[0].getVisible(), true)
+  manager.popOut('m1')
+  manager.dockBack('m1')
+  assert.equal(host.views[0].getVisible(), false, 'redock also starts hidden while the same mission is eligible')
+  manager.applyBounds('m1', RECT, true)
+  assert.equal(host.views[0].getVisible(), true)
+})
+
+test('VISIBILITY: stopped bounds pumps ignore retained observer and queued frame callbacks forever', () => {
+  let measures = 0
+  let callback
+  let requests = 0
+  const pump = createBrowserBoundsPump({
+    measure: () => { measures++ },
+    requestFrame: (run) => { callback = run; return ++requests },
+    cancelFrame: () => {}
+  })
+  pump.cold()
+  const retained = callback
+  pump.stop()
+  retained()
+  pump.hot()
+  pump.cold()
+  assert.equal(measures, 0)
+  assert.equal(requests, 1)
+  assert.equal(pump.pending(), false)
+})
 
 // ————— O DONO DA ABA (2026-09-01) —————
 //
@@ -1221,6 +1307,7 @@ test('LEI 1: só UMA missão ocupa o retângulo do dock, e a que sai NÃO é des
   host.forbidDetach = true
   // Trocar de missão sem o painel antigo reportar deixaria a view velha por
   // cima — esconder as outras é MECÂNICO, não depende de o renderer lembrar.
+  manager.setDockMission('m2')
   manager.applyBounds('m2', RECT, true)
   assert.equal(host.views[0].visible, false)
   assert.equal(host.views[0].attached, true)
@@ -1936,6 +2023,7 @@ function makeHostedManager(options = {}) {
     push: (channel, ...args) => pushes.push({ channel, args })
   })
   // ESPELHO DECLARADO da fiação de `src/main/index.ts` (o par): o X da janela
+  if (options.dockMission !== null) manager.setDockMission(options.dockMission ?? 'm1')
   // REENCAIXA, e o `restore` dela REFAZ a geometria (a cura 2).
   popouts.wiring.onCloseRequested = (missionId) => manager.dockBack(missionId, 'window-close')
   popouts.wiring.onRestored = (missionId) => manager.relayout(missionId)
@@ -2234,6 +2322,7 @@ test('⇤ REENCAIXAR não rouba o painel de quem está no dock AGORA', async () 
   manager.popOut('m1')
   // Cena real: com a página da m1 fora, o dono trocou o painel para a m2 — e
   // clicou "reencaixar" na JANELA da m1, que não sabe disso.
+  manager.setDockMission('m2')
   manager.applyBounds('m2', RECT, true, 'dock')
   manager.dockBack('m1')
   // Volta ANEXADA e invisível (lei 1: segue capturável); quem aparece no quadro

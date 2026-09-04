@@ -269,11 +269,9 @@ export function createBrowserHostMachine<M extends BrowserHostedMission>(
       // Voltar com o `visible` lembrado pintaria a página desta por cima da
       // outra. Volta ANEXADA e invisível (lei 1: segue capturável), e o
       // relato do painel decide quem aparece no quadro seguinte.
-      const taken = [...ctx.missions()].some(
-        (other) =>
-          other.missionId !== missionId && other.host === 'dock' && other.dockLayout?.visible === true
-      )
-      if (taken && mission.dockLayout) {
+      // Even when no other mission owns the dock, its previous rectangle may
+      // now cover Home/settings. Only a fresh dock measurement may show it.
+      if (mission.dockLayout) {
         mission.dockLayout = { rect: mission.dockLayout.rect, visible: false }
       }
       const host = ctx.viewHost()

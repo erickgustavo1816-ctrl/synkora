@@ -106,6 +106,27 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
   const projectOf = (missionId: string): string | null =>
     ctx.missions.get(missionId)?.projectId ?? null
 
+  ipcMain.on('browser:setDockMission', (event, value: unknown) => {
+    // Popout chrome and web pages cannot publish app navigation authority.
+    if (senderHost(event, 'browser:setDockMission') !== 'dock') return
+    if (value === null) {
+      browser.setDockMission(null)
+      return
+    }
+    const id = asId(value)
+    const mission = id ? ctx.missions.get(id) : undefined
+    // Invalid/stale navigation fails closed, without opening a tab/session.
+    browser.setDockMission(
+      mission &&
+        mission.projectId &&
+        mission.direct &&
+        mission.missionType !== 'release' &&
+        (mission.status === 'ativa' || mission.status === 'integrando')
+        ? mission.id
+        : null
+    )
+  })
+
   ipcMain.handle('browser:state', (e, missionId: unknown): BrowserMissionState => {
     extras.assertBrowserSender(e)
     const id = asId(missionId)

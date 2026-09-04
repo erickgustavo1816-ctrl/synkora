@@ -42,6 +42,7 @@ import {
   type BrowserEngineState
 } from '../dockBrowserModel'
 import type { BrowserPanelState, BrowserRect } from '../../../preload/index'
+import { BROWSER_DOCK_CONTEXT_CHANGED } from '../browserDockVisibility'
 
 // O PAINEL DE BROWSER DO DOCK (H3 do design de 2026-08-29).
 //
@@ -584,8 +585,6 @@ export default function DockBrowser({
     [currentRailHeight, currentRailRest, fraction, persistFraction]
   )
 
-  const visibleRef = useRef(visible)
-  visibleRef.current = visible
   // ONDE a página está, lido pela FAXINA do efeito (que roda depois do render e
   // não enxerga a prop). Ver a saída declarada, lá embaixo.
   const popoutRef = useRef(popout)
@@ -605,18 +604,20 @@ export default function DockBrowser({
     api.bounds(mission, rect, shown)
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = pageRef.current
     if (!el) return
     // A missão é capturada AQUI: a faxina deste efeito precisa esconder a view
     // da missão que ELE reportou, mesmo que o dono já tenha trocado de aba.
     const mission = missionId
     const clips = clipAncestors(el)
+    let stopped = false
 
     const measure = (): void => {
+      if (stopped) return
       const box = browserRect(el.getBoundingClientRect())
       lastRectRef.current = box
-      if (!visibleRef.current || !elementIsPainted(el)) {
+      if (!visible || !elementIsPainted(el)) {
         report(mission, box, false)
         return
       }
@@ -691,6 +692,7 @@ export default function DockBrowser({
     // observador do retângulo já contou isso.
     const siblings = new ResizeObserver(hot)
     const watchSiblings = (): void => {
+      if (stopped) return
       siblings.disconnect()
       const rail = railRef.current ?? railViewportOf(el)
       if (!rail) return
@@ -713,6 +715,7 @@ export default function DockBrowser({
     const overlays = new MutationObserver(schedule)
     overlays.observe(document.body, { childList: true })
     window.addEventListener('resize', schedule)
+    window.addEventListener(BROWSER_DOCK_CONTEXT_CHANGED, forceReport)
     // Rolagem em QUALQUER scroller da tela pode mover o retângulo (o dock rola
     // dentro do trilho): captura para pegar todos, passivo para não segurar o
     // gesto de rolar de ninguém.
@@ -722,20 +725,23 @@ export default function DockBrowser({
     // trilho, que manda no teto da alça. Ele deixou de ser o primeiro a
     // descobrir o colapso da irmã; nunca deixou de ser a rede.
     const timer = window.setInterval(() => {
+      if (stopped) return
       schedule()
       measureRail()
     }, BOUNDS_RECONCILE_MS)
 
     return () => {
+      stopped = true
+      pump.stop()
       measureRef.current = null
       window.clearInterval(timer)
       document.removeEventListener('scroll', schedule, { capture: true })
       window.removeEventListener('resize', schedule)
+      window.removeEventListener(BROWSER_DOCK_CONTEXT_CHANGED, forceReport)
       overlays.disconnect()
       railKids.disconnect()
       siblings.disconnect()
       sizes.disconnect()
-      pump.stop()
       // A SAÍDA DECLARADA: seção recolhida, missão trocada, board desmontado —
       // todos passam por aqui, e todos DIZEM que a página saiu de vista. O main
       // esconde sem desanexar; a aba continua viva do outro lado.
@@ -754,7 +760,7 @@ export default function DockBrowser({
     // `popout` entra nas dependências para o efeito RENASCER no reencaixe: o
     // retângulo volta a existir no DOM e ninguém mais avisaria o motor de onde
     // ele está (o ResizeObserver morreu junto com o nó anterior).
-  }, [missionId, report, measureRail, popout])
+  }, [missionId, report, measureRail, popout, visible, forceReport])
 
   // Três mudanças que NENHUM observador de tamanho enxerga:
   //  · o trilho saiu/voltou de vista (o Board mantém o dock montado);
@@ -762,7 +768,7 @@ export default function DockBrowser({
   //    não muda de tamanho, só de lugar);
   //  · a view acabou de NASCER e precisa ouvir a geometria de novo — o dedupe
   //    teria calado a repetição, e o main não pode adivinhar o retângulo.
-  useEffect(() => {
+  useLayoutEffect(() => {
     forceReport()
   }, [forceReport, visible, state.alive, state.tabs.length])
 

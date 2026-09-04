@@ -7,6 +7,7 @@ import {
   type ProgressFilter
 } from '../progressPresentation'
 import SynkoraMark from './SynkoraMark'
+import Select from './Select'
 import './progressOverlay.css'
 
 function completionLabel(iso: string | undefined): string {
@@ -171,9 +172,8 @@ export default function ProgressOverlay(): React.JSX.Element {
             </button>)}
           </div>
           {(snapshot.projects.length > 1 || view.totalRows > 4) && <div className="progress-search-row">
-            <select aria-label="Filtrar por projeto" value={projectId} onChange={(event) => setProjectId(event.target.value)}>
-              <option value="">Todos os projetos</option>{snapshot.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-            </select>
+            <Select className="dark progress-project-select" tip="Filtrar por projeto" value={projectId} onChange={setProjectId}
+              options={[{ value: '', label: 'Todos os projetos' }, ...snapshot.projects.map((project) => ({ value: project.id, label: project.name }))]} />
             <input type="search" aria-label="Buscar projeto ou missão" placeholder="Buscar missão…" value={query} onChange={(event) => setQuery(event.target.value)} />
           </div>}
         </div>}

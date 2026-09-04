@@ -18,7 +18,7 @@ const devMock = readFileSync(root + '/src/renderer/src/devMock.ts', 'utf8')
 const main = readFileSync(root + '/src/main/index.ts', 'utf8')
 
 function cssRule(selector) {
-  const start = css.indexOf(selector)
+  const start = css.indexOf('\n' + selector)
   assert.ok(start >= 0, `missing CSS selector: ${selector}`)
   const open = css.indexOf('{', start)
   const close = css.indexOf('}', open)
@@ -74,7 +74,7 @@ test('header and detached settings use the same tune icon', () => {
   assert.doesNotMatch(overlay, /SettingsIcon/)
 })
 
-test('history keeps fixed-height rows and truncates long speech without changing copied text', () => {
+test('history uses readable two-line rows without changing copied text', () => {
   const history = cssRule('.synvoice-overlay-history {')
   const item = cssRule('.synvoice-overlay-history .synvoice-history-item {')
   const text = cssRule('.synvoice-overlay-history .synvoice-history-item span {')
@@ -84,7 +84,8 @@ test('history keeps fixed-height rows and truncates long speech without changing
   assert.match(history, /grid-auto-rows:\s*max-content/)
   assert.match(history, /overflow-y:\s*auto/)
   assert.match(history, /scrollbar-gutter:\s*stable/)
-  assert.match(item, /grid-template-columns:\s*minmax\(0,\s*1fr\) auto/)
+  assert.match(item, /grid-template-columns:\s*minmax\(0,\s*1fr\)/)
+  assert.doesNotMatch(item, /minmax\(0,\s*1fr\) auto/)
   assert.match(text, /overflow:\s*hidden/)
   assert.match(text, /text-overflow:\s*ellipsis/)
   assert.match(text, /white-space:\s*nowrap/)
@@ -92,6 +93,32 @@ test('history keeps fixed-height rows and truncates long speech without changing
   assert.match(overlay, /<span>\{entry\.text\}<\/span>/)
   assert.match(devMock, /voiceScenario === 'history'/)
   assert.match(devMock, /SynkoraSuperLongWordWithoutNaturalBreaksNeedsToStayInsideTheCardAtEveryWidth/)
+})
+
+test('detached SynVoice preserves its original dark palette with readable text and visible keyboard focus in every surface', () => {
+  for (const selector of ['.synvoice-overlay-shell {', '.synvoice-overlay-history {']) {
+    assert.match(cssRule(selector), /background:\s*rgba\(38, 36, 31, 0\.97\)/)
+    assert.match(cssRule(selector), /color:\s*var\(--panel-ink\)/)
+  }
+  assert.match(cssRule('.synvoice-overlay-history .synvoice-history-item span {'), /font-size:\s*12px/)
+  assert.match(cssRule('.synvoice-overlay-history .synvoice-history-item small {'), /font-size:\s*11px/)
+  assert.match(cssRule('.synvoice-overlay-history .synvoice-history-empty.error {'), /color:\s*#d98d84/)
+  assert.match(cssRule('.synvoice-overlay-shell.inserted .synvoice-overlay-main-icon {'), /color:\s*#8ac99b/)
+  assert.match(cssRule('.synvoice-overlay-level i {'), /background:\s*#ff9b80/)
+  assert.match(cssRule('.synvoice-overlay-level i {'), /box-shadow:\s*0 0 5px rgba\(255, 155, 128, 0\.28\)/)
+  assert.match(cssRule('.synvoice-overlay-copy strong {'), /white-space:\s*normal/)
+  assert.match(cssRule('.synvoice-overlay-shell button:focus-visible,'), /outline:\s*2px solid color-mix/)
+})
+
+test('native voice tooltip and notices preserve their original palette with readable text', () => {
+  const popupHtml = main.slice(main.indexOf('const SYNVOICE_TOOLTIP_HTML'), main.indexOf('function configurePassiveSynVoiceWindow'))
+  assert.doesNotMatch(popupHtml, /color-scheme:light|font:11px|font-size:10px/)
+  assert.equal(popupHtml.match(/background:rgba\(38,36,31,\.99\);color:#efe8d8/g)?.length, 2)
+  assert.equal(popupHtml.match(/font:12px/g)?.length, 2)
+  assert.match(popupHtml, /#text\{color:#c8bfae\}/)
+  assert.match(popupHtml, /data-tone="warning"[^\n]*color:#efca79/)
+  assert.match(popupHtml, /data-tone="info"[^\n]*color:#a7c4df/)
+  assert.equal(popupHtml.match(/default-src 'none'; style-src 'unsafe-inline'/g)?.length, 2)
 })
 
 test('history has complete loading, error, copied, keyboard and focus states', () => {

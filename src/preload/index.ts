@@ -1520,6 +1520,9 @@ const api = {
    * destacada; só `browser:*` tem o porteiro duplo.
    */
   browser: {
+    /** Only the main app navigation owner publishes dock eligibility. */
+    setDockMission: (missionId: string | null): void =>
+      ipcRenderer.send('browser:setDockMission', missionId),
     /** Fotografia atual — o renderer relê isto a cada `browser:changed`. */
     state: (missionId: string): Promise<BrowserPanelState> =>
       ipcRenderer.invoke('browser:state', missionId),
