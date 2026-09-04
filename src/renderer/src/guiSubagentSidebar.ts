@@ -45,6 +45,7 @@ export type GuiSubagentSidebarTone =
   | 'failed'
   | 'denied'
   | 'cancelled'
+  | 'unconfirmed'
 
 export interface GuiSubagentSidebarEntry {
   id: string
@@ -279,6 +280,7 @@ function terminalTone(item: GuiToolItem): Exclude<GuiSubagentSidebarTone, 'runni
   if (result.status === 'denied') return 'denied'
   if (result.status === 'cancelled') return 'cancelled'
   if (result.status === 'failed' || result.isError) return 'failed'
+  if (result.status === 'unconfirmed') return 'unconfirmed'
   return 'completed'
 }
 
@@ -389,6 +391,8 @@ function statusLabel(status: GuiSubagentSidebarTone): string {
       return 'negado'
     case 'cancelled':
       return 'cancelado'
+    case 'unconfirmed':
+      return 'não confirmado'
     // Palavra PRÓPRIA, nunca um parente de "cancelado": é ela que diz ao dono
     // qual frota ainda dá para retomar (helper_resume) e qual foi descartada.
     case 'interrupted':

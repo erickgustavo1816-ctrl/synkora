@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import './GuiInlineImagePreview.css'
 
 interface GuiAttachmentLightboxProps {
   name: string
@@ -9,7 +10,7 @@ interface GuiAttachmentLightboxProps {
   feedback: string | null
   downloading: boolean
   onClose: () => void
-  onDownload: () => void
+  onDownload?: () => void
 }
 
 function focusableElements(root: HTMLElement): HTMLElement[] {
@@ -18,8 +19,8 @@ function focusableElements(root: HTMLElement): HTMLElement[] {
   ).filter((element) => !element.closest('[inert]'))
 }
 
-/** Modal dono de foco/Escape. A imagem recebida já é um data URL PNG limitado
- * pelo main; este componente nunca conhece um caminho local. */
+/** Modal dono de foco/Escape. Recebe somente bitmap já autorizado pela ponte
+ * ou pelo filtro de data URL do chat; nunca conhece um caminho local. */
 export default function GuiAttachmentLightbox({
   name,
   src,
@@ -32,6 +33,11 @@ export default function GuiAttachmentLightbox({
 }: GuiAttachmentLightboxProps): React.JSX.Element {
   const titleId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
+  const [failedSource, setFailedSource] = useState<string | null>(null)
+  const [actualSize, setActualSize] = useState(false)
+  const visibleError = error || (src && failedSource === src
+    ? 'Não foi possível abrir esta imagem. Feche a prévia e peça ao agente uma nova imagem.'
+    : null)
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -96,23 +102,30 @@ export default function GuiAttachmentLightbox({
         <header className="gui-attachment-lightbox-head">
           <h2 id={titleId}>{name}</h2>
           <div className="gui-attachment-lightbox-actions">
-            <button type="button" disabled={downloading} onClick={onDownload}>
-              {downloading ? 'Baixando…' : 'Baixar'}
-            </button>
+            {src && !visibleError && (
+              <button type="button" aria-pressed={actualSize} onClick={() => setActualSize((value) => !value)}>
+                {actualSize ? 'Ajustar à tela' : 'Tamanho real'}
+              </button>
+            )}
+            {onDownload && (
+              <button type="button" disabled={downloading} onClick={onDownload}>
+                {downloading ? 'Baixando…' : 'Baixar'}
+              </button>
+            )}
             <button type="button" aria-label="Fechar prévia" onClick={onClose}>
               ×
             </button>
           </div>
         </header>
-        <div className="gui-attachment-lightbox-body">
-          {src && <img src={src} alt={name} draggable={false} />}
+        <div className={`gui-attachment-lightbox-body${actualSize ? ' actual-size' : ''}`}>
+          {src && !visibleError && <img src={src} alt={name} draggable={false} onError={() => setFailedSource(src)} />}
           {loading && <span className="gui-attachment-lightbox-status">preparando imagem…</span>}
-          {error && (
+          {visibleError && (
             <span className="gui-attachment-lightbox-status error" role="alert">
-              {error}
+              {visibleError}
             </span>
           )}
-          {feedback && !error && (
+          {feedback && !visibleError && (
             <span className="gui-attachment-lightbox-status" role="status">
               {feedback}
             </span>

@@ -1,534 +1,209 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type {
-  ProgressCoordinatorSnapshot,
-  ProgressMissionSnapshot,
-  ProgressOverlaySnapshot,
-  ProgressProjectSnapshot
-} from '../../../preload/index'
+import type { ProgressMissionSnapshot, ProgressOverlaySnapshot, ProgressProjectSnapshot } from '../../../preload/index'
 import { progressCompletionFeed } from '../progressHistory'
+import {
+  createProgressRevisionGate, EMPTY_PROGRESS_SNAPSHOT, PROGRESS_FILTERS,
+  progressAction, progressEntryKey, progressFocus, progressSignalLabel, progressTarget, progressView,
+  type ProgressFilter
+} from '../progressPresentation'
 import SynkoraMark from './SynkoraMark'
+import './progressOverlay.css'
 
-const EMPTY_SNAPSHOT: ProgressOverlaySnapshot = {
-  revision: 0,
-  generatedAt: new Date(0).toISOString(),
-  totals: {
-    projects: 0,
-    activeProjects: 0,
-    activeMissions: 0,
-    activeCoordinators: 0,
-    attentionMissions: 0,
-    attentionProjects: 0,
-    recentCompletions: 0
-  },
-  projects: []
+function completionLabel(iso: string | undefined): string {
+  const at = iso ? new Date(iso) : null
+  return at && Number.isFinite(at.getTime())
+    ? at.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : 'horário não disponível'
 }
 
-function plural(value: number, one: string, many = `${one}s`): string {
-  return `${value} ${value === 1 ? one : many}`
-}
-
-function relativeCompletion(iso: string | undefined): string {
-  if (!iso) return 'recentemente'
-  const value = new Date(iso)
-  if (!Number.isFinite(value.getTime())) return 'recentemente'
-  const now = new Date()
-  const sameDay = value.toDateString() === now.toDateString()
-  if (sameDay) return `hoje, ${value.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-  if (value.toDateString() === yesterday.toDateString()) {
-    return `ontem, ${value.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
-  }
-  return value.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
-}
-
-function overallSummary(snapshot: ProgressOverlaySnapshot, completion?: string): string {
-  if (snapshot.totals.attentionMissions > 0) {
-    return `${plural(snapshot.totals.attentionMissions, 'missão')} precisa${snapshot.totals.attentionMissions === 1 ? '' : 'm'} de atenção`
-  }
-  if (snapshot.totals.attentionProjects > 0) {
-    return `${plural(snapshot.totals.attentionProjects, 'projeto')} precisa${snapshot.totals.attentionProjects === 1 ? '' : 'm'} de atenção`
-  }
-  if (completion) return `“${completion}” terminou`
-  const active: string[] = []
-  if (snapshot.totals.activeCoordinators > 0) {
-    active.push(`${plural(snapshot.totals.activeCoordinators, 'coordenador')} trabalhando`)
-  }
-  if (active.length > 0) return active.join(' · ')
-  if (snapshot.totals.activeMissions > 0) return `${plural(snapshot.totals.activeMissions, 'missão')} sendo acompanhada${snapshot.totals.activeMissions === 1 ? '' : 's'}`
-  if (snapshot.totals.recentCompletions > 0) return 'Tudo terminou por enquanto'
-  return 'Nada rodando agora'
-}
-
-// Pill de status por agente (a ideia do radar detalhado, 2026-08-06): bater o
-// olho e saber QUEM está trabalhando, travado ou esperando — com o frescor
-// "há Xs" dizendo se a informação é de agora ou de meia hora atrás.
-const PILL_LABEL: Record<string, string> = {
-  attention: 'travado',
-  running: 'trabalhando',
-  waiting: 'aguardando',
-  success: 'finalizado',
-  idle: 'ocioso'
-}
-
-function freshLabel(iso: string | undefined, nowMs: number): string | null {
-  if (!iso) return null
-  const at = new Date(iso).getTime()
-  if (!Number.isFinite(at)) return null
-  const diff = Math.max(0, Math.round((nowMs - at) / 1000))
-  if (diff < 60) return `há ${diff}s`
-  if (diff < 3600) return `há ${Math.round(diff / 60)}min`
-  if (diff < 86_400) return `há ${Math.round(diff / 3600)}h`
-  return null
-}
-
-function StatusPill({
-  tone,
-  label,
-  updatedAt,
-  nowMs
-}: {
-  tone: string
-  label?: string
-  updatedAt?: string
-  nowMs: number
-}): React.JSX.Element {
-  const fresh = freshLabel(updatedAt, nowMs)
+function MissionRow({ mission, nowMs }: { mission: ProgressMissionSnapshot; nowMs: number }): React.JSX.Element {
+  const workingAlongside = mission.group === 'attention' && mission.workingSessions > 0
   return (
-    <span className={`progress-pill tone-${tone}`}>
-      <b>{label ?? PILL_LABEL[tone] ?? tone}</b>
-      {fresh && <small>{fresh}</small>}
-    </span>
-  )
-}
-
-function QuestionLine({ question }: { question: string }): React.JSX.Element {
-  return (
-    <span className="progress-question">
-      <em>❓ esperando VOCÊ</em>
-      <span>{question}</span>
-    </span>
-  )
-}
-
-interface CompactFocus {
-  title: string
-  detail: string
-  tone: 'attention' | 'running' | 'success' | 'idle'
-}
-
-function compactFocus(
-  snapshot: ProgressOverlaySnapshot,
-  completion?: string
-): CompactFocus {
-  // pergunta pendente vence tudo — é o dono que está segurando o fluxo
-  for (const project of snapshot.projects) {
-    const question =
-      project.question ?? project.activeMissions.find((mission) => mission.question)?.question
-    if (question) {
-      return { title: 'Pergunta esperando você', detail: question, tone: 'attention' }
-    }
-  }
-  for (const project of snapshot.projects) {
-    const mission = project.activeMissions.find((candidate) => candidate.tone === 'attention')
-    if (mission) {
-      return {
-        title: `Atenção · ${mission.label}`,
-        detail: `${project.name} / ${mission.title}`,
-        tone: 'attention'
-      }
-    }
-  }
-  for (const project of snapshot.projects) {
-    if (project.tone === 'attention') {
-      return {
-        title: `Atenção · ${project.label}`,
-        detail: project.name,
-        tone: 'attention'
-      }
-    }
-  }
-  for (const project of snapshot.projects) {
-    const coordinator = project.coordinators[0]
-    if (coordinator) {
-      return {
-        title: `${coordinator.roleLabel} · ${coordinator.label}`,
-        detail: coordinator.detail
-          ? `${project.name} / ${coordinator.detail}`
-          : project.name,
-        tone: 'running'
-      }
-    }
-  }
-  const followed = snapshot.projects.find((project) => project.activeMissions.length > 0)
-  if (followed) {
-    const mission = followed.activeMissions[0]
-    return {
-      title: mission.label,
-      detail: `${followed.name} · ${mission.title}`,
-      tone: mission.tone === 'attention' ? 'attention' : 'idle'
-    }
-  }
-  const activeProject = snapshot.projects.find((project) =>
-    project.state === 'running' ||
-    project.state === 'integrating' ||
-    project.state === 'planning'
-  )
-  if (activeProject) {
-    return {
-      title: activeProject.label,
-      detail: activeProject.name,
-      tone: activeProject.tone === 'running' ? 'running' : 'idle'
-    }
-  }
-  if (completion) {
-    return { title: 'Missão concluída', detail: completion, tone: 'success' }
-  }
-  return {
-    title: snapshot.totals.recentCompletions > 0 ? 'Tudo em dia' : 'Sem atividade agora',
-    detail: snapshot.totals.recentCompletions > 0
-      ? 'As últimas entregas foram concluídas.'
-      : 'O painel atualiza automaticamente quando o trabalho começar.',
-    tone: snapshot.totals.recentCompletions > 0 ? 'success' : 'idle'
-  }
-}
-
-function CoordinatorActivity({
-  activity,
-  nowMs
-}: {
-  activity: ProgressCoordinatorSnapshot
-  nowMs: number
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      className="progress-coordinator tone-running"
-      onClick={() => window.synkoraProgressOverlay.command('open-target', {
-        projectId: activity.projectId,
-        ...(activity.missionId ? { missionId: activity.missionId } : {})
-      })}
-      aria-label={`Abrir ${activity.roleLabel}: ${activity.label}`}
-    >
-      <span className="progress-status-dot" aria-hidden="true" />
-      <span className="progress-coordinator-copy">
-        <span className="progress-coordinator-meta">
-          <b>{activity.roleLabel}</b>
-          <StatusPill tone="running" updatedAt={activity.updatedAt} nowMs={nowMs} />
-        </span>
-        <strong>{activity.label}</strong>
-        {activity.note ? (
-          <span className="progress-note">▸ {activity.note}</span>
-        ) : (
-          activity.detail && <small>{activity.detail}</small>
-        )}
-      </span>
-      <span className="progress-mission-open" aria-hidden="true">›</span>
-    </button>
-  )
-}
-
-function MissionRow({
-  mission,
-  highlighted,
-  nowMs
-}: {
-  mission: ProgressMissionSnapshot
-  highlighted: boolean
-  nowMs: number
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      className={`progress-mission tone-${mission.tone}${highlighted ? ' just-completed' : ''}${mission.question ? ' has-question' : ''}`}
-      onClick={() => window.synkoraProgressOverlay.command('open-target', {
-        projectId: mission.projectId,
-        missionId:
-          mission.state === 'completed' || mission.kind === 'general' ? undefined : mission.id
-      })}
-      aria-label={`Abrir ${mission.title}: ${mission.label}`}
-    >
-      <span className="progress-status-dot" aria-hidden="true" />
+    <button type="button" className={`progress-mission group-${mission.group}`}
+      onClick={() => window.synkoraProgressOverlay.command('open-target', progressTarget(mission))}
+      aria-label={`${progressAction(mission)}: ${mission.title}. ${mission.label}`}>
+      <span className="progress-state-mark" aria-hidden="true">{
+        mission.group === 'attention' ? '!' : mission.group === 'working' ? '›' : mission.group === 'delivery' ? '↗' : 'Ⅱ'
+      }</span>
       <span className="progress-mission-copy">
         <span className="progress-mission-title">{mission.title}</span>
         <span className="progress-mission-state">{mission.label}</span>
-        {mission.question && <QuestionLine question={mission.question} />}
-        {mission.detail && (
-          <span className="progress-mission-detail">{mission.detail}</span>
-        )}
+        {mission.detail && <span className="progress-mission-detail">{mission.detail}</span>}
+        {workingAlongside && <span className="progress-parallel-work">Continua trabalhando · {mission.workingSessions} conversa{mission.workingSessions === 1 ? '' : 's'}</span>}
+        <span className="progress-mission-meta">
+          {mission.kind === 'general' && <span>GERAL · fora da contagem de missões</span>}
+          {mission.sessionCount > 0 && <span>{mission.sessionCount} conversa{mission.sessionCount === 1 ? '' : 's'}</span>}
+          {mission.pendingCount > 0 && <span>{mission.pendingCount} pendência{mission.pendingCount === 1 ? '' : 's'}</span>}
+          {mission.helpers && mission.helpers.running > 0 && <span>{mission.helpers.running} ajudante{mission.helpers.running === 1 ? '' : 's'} trabalhando</span>}
+          {mission.helpers && mission.helpers.interrupted > 0 && <span>{mission.helpers.interrupted} ajudante{mission.helpers.interrupted === 1 ? '' : 's'} interrompido{mission.helpers.interrupted === 1 ? '' : 's'}</span>}
+          {mission.helpers && mission.helpers.failed > 0 && <span>{mission.helpers.failed} ajudante{mission.helpers.failed === 1 ? '' : 's'} com erro</span>}
+        </span>
+        <span className="progress-row-footer">
+          <span className="progress-signal" title={mission.activityAt ? completionLabel(mission.activityAt) : 'Nenhuma atividade de conversa registrada'}>
+            {mission.activityAt ? 'Último sinal ' : ''}{progressSignalLabel(mission.activityAt, nowMs)}
+          </span>
+          <span className="progress-row-action">{progressAction(mission)} <span aria-hidden="true">↗</span></span>
+        </span>
       </span>
-      <span className="progress-mission-open" aria-hidden="true">›</span>
     </button>
   )
 }
 
-function ProjectGroup({
-  project,
-  highlightedMissionId,
-  nowMs
-}: {
-  project: ProgressProjectSnapshot
-  highlightedMissionId: string | null
-  nowMs: number
-}): React.JSX.Element {
+function ProjectGroup({ project, nowMs }: { project: ProgressProjectSnapshot; nowMs: number }): React.JSX.Element {
+  const count = project.activeMissions.filter((mission) => mission.kind !== 'general').length
   return (
-    <section className={`progress-project tone-${project.tone}`}>
-      <button
-        type="button"
-        className="progress-project-head"
-        onClick={() => window.synkoraProgressOverlay.command('open-target', { projectId: project.id })}
-        aria-label={`Abrir projeto ${project.name}`}
-      >
+    <section className="progress-project" aria-label={`Projeto ${project.name}`}>
+      <button type="button" className="progress-project-head"
+        onClick={() => window.synkoraProgressOverlay.command('open-target', { projectId: project.id, destination: 'project' })}
+        aria-label={`Abrir projeto ${project.name}`}>
         <span className="progress-project-name">{project.name}</span>
-        <span className="progress-project-label">{project.label}</span>
+        <span className="progress-project-count">{count} miss{count === 1 ? 'ão' : 'ões'}</span>
         <span aria-hidden="true">↗</span>
       </button>
-      {project.question && (
-        <button
-          type="button"
-          className="progress-project-question"
-          onClick={() => window.synkoraProgressOverlay.command('open-target', { projectId: project.id })}
-          aria-label={`Responder à pergunta de ${project.name}`}
-        >
-          <QuestionLine question={project.question} />
-        </button>
-      )}
-      {project.coordinators.length > 0 && (
-        <div className="progress-coordinators">
-          <span className="progress-section-label">Coordenação agora</span>
-          {project.coordinators.map((activity) => (
-            <CoordinatorActivity key={activity.id} activity={activity} nowMs={nowMs} />
-          ))}
-        </div>
-      )}
+      {project.missing && <p className="progress-project-warning">Pasta do projeto não encontrada</p>}
       <div className="progress-mission-list">
-        {project.activeMissions.map((mission) => (
-          <MissionRow
-            key={mission.id}
-            mission={mission}
-            highlighted={highlightedMissionId === mission.id}
-            nowMs={nowMs}
-          />
-        ))}
+        {project.activeMissions.map((mission) => <MissionRow key={progressEntryKey(project.id, mission)} mission={mission} nowMs={nowMs} />)}
       </div>
     </section>
   )
 }
 
 export default function ProgressOverlay(): React.JSX.Element {
-  const [snapshot, setSnapshot] = useState(EMPTY_SNAPSHOT)
+  const [snapshot, setSnapshot] = useState(EMPTY_PROGRESS_SNAPSHOT)
   const [compact, setCompact] = useState(false)
-  // Relógio do frescor ("há 12s") — barato: um tick de 5s re-renderiza uma
-  // janelinha pequena; sem ele os carimbos congelariam no último snapshot.
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'unavailable'>('loading')
+  const [retry, setRetry] = useState(0)
+  const [filter, setFilter] = useState<ProgressFilter>('all')
+  const [projectId, setProjectId] = useState('')
+  const [query, setQuery] = useState('')
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const [historyClearedAt, setHistoryClearedAt] = useState<string | null>(null)
+  const [historyNotice, setHistoryNotice] = useState('')
+  const [highlightedKey, setHighlightedKey] = useState<string | null>(null)
+  const openMainButtonRef = useRef<HTMLButtonElement>(null)
+  const resizeGestureRef = useRef<{ pointerX: number; pointerY: number; width: number; height: number } | null>(null)
+
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 5_000)
     return () => window.clearInterval(timer)
   }, [])
-  const [historyClearedAt, setHistoryClearedAt] = useState<string | null>(null)
-  const [highlightedMissionId, setHighlightedMissionId] = useState<string | null>(null)
-  const [historyNotice, setHistoryNotice] = useState('')
-  const knownCompleted = useRef<Set<string> | null>(null)
-  const acceptedRevision = useRef(0)
-  const highlightTimer = useRef<number | null>(null)
-  const openMainButtonRef = useRef<HTMLButtonElement>(null)
-  const resizeGestureRef = useRef<{
-    pointerX: number
-    pointerY: number
-    width: number
-    height: number
-  } | null>(null)
 
   useEffect(() => {
     const bridge = window.synkoraProgressOverlay
+    if (!bridge) { setLoadState('unavailable'); return }
+    let disposed = false
+    let pushedMode = false
+    let pushedHistory = false
+    let receivedSnapshot = false
+    let knownCompleted: Set<string> | null = null
+    let highlightTimer: number | undefined
+    const acceptsRevision = createProgressRevisionGate()
     const accept = (next: ProgressOverlaySnapshot, announce = true): void => {
-      if (next.revision < acceptedRevision.current) return
-      acceptedRevision.current = next.revision
+      if (disposed || !acceptsRevision(next)) return
+      receivedSnapshot = true
       setSnapshot(next)
-      const completed = new Set(
-        next.projects.flatMap((project) => project.recentCompletions.map((mission) => mission.id))
-      )
-      if (announce && knownCompleted.current) {
-        const fresh = [...completed].find((id) => !knownCompleted.current?.has(id))
+      setLoadState('ready')
+      const completed = new Set(next.projects.flatMap((project) => project.recentCompletions.map((mission) => progressEntryKey(project.id, mission))))
+      if (announce && knownCompleted) {
+        const fresh = [...completed].find((key) => !knownCompleted?.has(key))
         if (fresh) {
-          setHighlightedMissionId(fresh)
-          if (highlightTimer.current !== null) window.clearTimeout(highlightTimer.current)
-          highlightTimer.current = window.setTimeout(() => setHighlightedMissionId(null), 6000)
+          setHighlightedKey(fresh)
+          window.clearTimeout(highlightTimer)
+          highlightTimer = window.setTimeout(() => setHighlightedKey(null), 6000)
         }
       }
-      knownCompleted.current = completed
+      knownCompleted = completed
     }
     const offSnapshot = bridge.onSnapshot((next) => accept(next))
-    const offMode = bridge.onMode((next) => setCompact(next.compact))
-    const offHistory = bridge.onHistory((next) => setHistoryClearedAt(next.clearedAt))
+    const offMode = bridge.onMode((next) => { pushedMode = true; if (!disposed) setCompact(next.compact) })
+    const offHistory = bridge.onHistory((next) => { pushedHistory = true; if (!disposed) setHistoryClearedAt(next.clearedAt) })
     void bridge.getState().then((state) => {
-      setCompact(state.compact)
-      setHistoryClearedAt(state.historyClearedAt)
+      if (disposed) return
+      if (!pushedMode) setCompact(state.compact)
+      if (!pushedHistory) setHistoryClearedAt(state.historyClearedAt)
       accept(state.snapshot, false)
-    })
+    }).catch(() => { if (!disposed && !receivedSnapshot) setLoadState('unavailable') })
     return () => {
-      offSnapshot()
-      offMode()
-      offHistory()
-      if (highlightTimer.current !== null) window.clearTimeout(highlightTimer.current)
+      disposed = true
+      offSnapshot(); offMode(); offHistory()
+      window.clearTimeout(highlightTimer)
     }
-  }, [])
+  }, [retry])
 
-  const completionFeed = useMemo(
-    () => progressCompletionFeed(snapshot, historyClearedAt, 3),
-    [snapshot, historyClearedAt]
-  )
-  const recent = completionFeed.items
-  const highlighted = recent.find(({ mission }) => mission.id === highlightedMissionId)?.mission.title
-  const visibleProjects = snapshot.projects.filter(
-    (project) =>
-      project.coordinators.length > 0 ||
-      project.activeMissions.length > 0 ||
-      project.state === 'attention' ||
-      project.state === 'planning' ||
-      project.state === 'integrating'
-  )
-  const idleProjects = snapshot.projects.length - visibleProjects.length
-  const empty = visibleProjects.length === 0 && recent.length === 0
-  const summary = overallSummary(snapshot, highlighted)
-  const focus = compactFocus(snapshot, highlighted)
+  const view = useMemo(() => progressView(snapshot, filter, projectId, query), [snapshot, filter, projectId, query])
+  const completionFeed = useMemo(() => progressCompletionFeed(snapshot, historyClearedAt, 3), [snapshot, historyClearedAt])
+  const focus = progressFocus(snapshot)
+  const focusMission = focus?.mission
+  const snapshotAge = nowMs - Date.parse(snapshot.generatedAt)
+  const snapshotStale = !Number.isFinite(snapshotAge) || snapshotAge > 45_000
+  const hasFilters = filter !== 'all' || Boolean(projectId) || Boolean(query.trim())
+  const recent = hasFilters ? [] : completionFeed.items
+  const globalEmpty = view.totalRows === 0
+  const visibleEmpty = view.projects.length === 0
+  const summary = loadState === 'loading' ? 'Buscando o estado das missões…'
+    : loadState === 'unavailable' ? 'Não foi possível carregar o andamento'
+      : `${snapshot.totals.activeMissions} miss${snapshot.totals.activeMissions === 1 ? 'ão' : 'ões'} · ${snapshot.totals.projects} projeto${snapshot.totals.projects === 1 ? '' : 's'}`
 
   return (
     <div className={`progress-overlay-shell${compact ? ' compact' : ' expanded'}`}>
       <header className="progress-overlay-head">
-        <span className="progress-overlay-brand" aria-hidden="true"><SynkoraMark size={18} /></span>
-        <span className={`progress-overlay-heading${compact ? ` tone-${focus.tone}` : ''}`}>
-          <strong>{compact ? focus.title : 'Andamento'}</strong>
-          <small aria-live="polite">{compact ? focus.detail : summary}</small>
-        </span>
+        <span className="progress-overlay-brand" aria-hidden="true"><SynkoraMark size={19} /></span>
+        <span className="progress-overlay-heading"><strong>Andamento</strong><small>{compact ? 'Synkora · visão rápida' : summary}</small></span>
         <span className="progress-overlay-actions">
-          <button
-            ref={openMainButtonRef}
-            type="button"
-            aria-label="Abrir o Synkora"
-            title="Abrir o Synkora"
-            onClick={() => window.synkoraProgressOverlay.command('open-main')}
-          >↗</button>
-          <button
-            type="button"
-            aria-label={compact ? 'Expandir andamento' : 'Compactar andamento'}
-            title={compact ? 'Expandir' : 'Compactar'}
-            onClick={() => window.synkoraProgressOverlay.command(compact ? 'expand' : 'compact')}
-          >{compact ? '▣' : '—'}</button>
-          <button
-            type="button"
-            className="close"
-            aria-label="Ocultar andamento"
-            title="Ocultar"
-            onClick={() => window.synkoraProgressOverlay.command('close')}
-          >×</button>
+          <button ref={openMainButtonRef} type="button" aria-label="Abrir o Synkora" title="Abrir o Synkora" onClick={() => window.synkoraProgressOverlay.command('open-main')}>↗</button>
+          <button type="button" aria-label={compact ? 'Expandir andamento' : 'Compactar andamento'} title={compact ? 'Expandir' : 'Compactar'} onClick={() => window.synkoraProgressOverlay.command(compact ? 'expand' : 'compact')}>{compact ? '▣' : '—'}</button>
+          <button type="button" className="close" aria-label="Ocultar andamento" title="Ocultar" onClick={() => window.synkoraProgressOverlay.command('close')}>×</button>
         </span>
       </header>
-      <span className="progress-overlay-live" role="status" aria-live="polite">
-        {historyNotice}
-      </span>
-
-      {!compact && (
-        <div
-          className="progress-overlay-resize"
-          role="presentation"
-          onPointerDown={(event) => {
-            event.preventDefault()
-            event.currentTarget.setPointerCapture(event.pointerId)
-            resizeGestureRef.current = {
-              pointerX: event.screenX,
-              pointerY: event.screenY,
-              width: window.outerWidth,
-              height: window.outerHeight
-            }
-          }}
-          onPointerMove={(event) => {
-            const start = resizeGestureRef.current
-            if (!start) return
-            window.synkoraProgressOverlay.resize(
-              start.width + (event.screenX - start.pointerX),
-              start.height + (event.screenY - start.pointerY)
-            )
-          }}
-          onPointerUp={(event) => {
-            resizeGestureRef.current = null
-            event.currentTarget.releasePointerCapture(event.pointerId)
-          }}
-          onPointerCancel={() => {
-            resizeGestureRef.current = null
-          }}
-        />
-      )}
-
-      {!compact && (
-        <div className={'progress-overlay-body' + (empty ? ' is-empty' : '')}>
-          {empty && (
-            <div className="progress-empty">
-              <span aria-hidden="true">✓</span>
-              <strong>Nada rodando agora</strong>
-              <small>Quando uma missão começar, ela aparece aqui automaticamente.</small>
+      <span className="progress-overlay-live" role="status" aria-live="polite">{historyNotice}</span>
+      {compact ? (
+        focusMission && focus && loadState === 'ready' ? <button type="button" className={`progress-compact-focus group-${focusMission.group}`}
+          aria-label={`${progressAction(focusMission)}: ${focusMission.title}`}
+          onClick={() => window.synkoraProgressOverlay.command('open-target', progressTarget(focusMission))}>
+          <span><b>{focusMission.label}</b><strong>{focus.project.name} · {focusMission.title}</strong><small>{focus.project.name}</small></span><span aria-hidden="true">↗</span>
+        </button> : focus && loadState === 'ready' ? <button type="button" className="progress-compact-focus group-attention" onClick={() => window.synkoraProgressOverlay.command('open-target', { projectId: focus.project.id, destination: 'project' })} aria-label={"Abrir projeto " + focus.project.name}><span><b>Pasta não encontrada</b><strong>{focus.project.name}</strong></span><span aria-hidden="true">↗</span></button> : <div className="progress-compact-empty"><strong>{loadState === 'ready' ? 'Sem missões em acompanhamento' : summary}</strong><small>{loadState === 'ready' ? 'Expanda para ver o histórico.' : 'Expanda para mais detalhes.'}</small></div>
+      ) : <>
+        {loadState === 'ready' && <div className="progress-controls">
+          <div className="progress-filters" role="group" aria-label="Filtrar missões por estado">
+            {PROGRESS_FILTERS.map(({ id, label }) => <button type="button" key={id} className={`progress-filter group-${id}`} aria-pressed={filter === id}
+              title={`${view.counts[id]} missões${view.generalCounts[id] ? ` e ${view.generalCounts[id]} conversa(s) geral` : ''}`} onClick={() => setFilter(id)}>
+              <span>{label}</span><b>{view.counts[id]}</b>{view.generalCounts[id] > 0 && <small>+ geral</small>}
+            </button>)}
+          </div>
+          {(snapshot.projects.length > 1 || view.totalRows > 4) && <div className="progress-search-row">
+            <select aria-label="Filtrar por projeto" value={projectId} onChange={(event) => setProjectId(event.target.value)}>
+              <option value="">Todos os projetos</option>{snapshot.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+            <input type="search" aria-label="Buscar projeto ou missão" placeholder="Buscar missão…" value={query} onChange={(event) => setQuery(event.target.value)} />
+          </div>}
+        </div>}
+        <div className={'progress-overlay-body' + (visibleEmpty && recent.length === 0 ? ' is-empty' : '')}>
+          {loadState !== 'ready' ? <div className="progress-empty"><span aria-hidden="true">{loadState === 'loading' ? '···' : '!'}</span><strong>{loadState === 'loading' ? 'Carregando andamento' : 'Andamento indisponível'}</strong><small>{loadState === 'loading' ? 'Consultando o estado confirmado no Synkora.' : 'Não foi possível consultar o aplicativo. Tente novamente.'}</small>{loadState === 'unavailable' && <button type="button" onClick={() => { setLoadState('loading'); setRetry((value) => value + 1) }}>Tentar novamente</button>}</div>
+            : visibleEmpty && <div className="progress-empty"><span aria-hidden="true">{hasFilters ? '⌕' : '○'}</span><strong>{hasFilters ? 'Nenhuma missão neste filtro' : 'Sem missões em acompanhamento'}</strong><small>{hasFilters ? 'Escolha outro estado, projeto ou termo de busca.' : 'Novas missões e conversas gerais aparecem aqui automaticamente.'}</small>{hasFilters && <button type="button" onClick={() => { setFilter('all'); setProjectId(''); setQuery('') }}>Limpar filtros</button>}</div>}
+          {loadState === 'ready' && !visibleEmpty && <div className="progress-project-grid">{view.projects.map((project) => <ProjectGroup key={project.id} project={project} nowMs={nowMs} />)}</div>}
+          {loadState === 'ready' && recent.length > 0 && <section className="progress-recent" aria-label="Conclusões recentes">
+            <div className="progress-recent-head"><h2>Concluídas recentemente</h2>{completionFeed.hiddenCount > 0 && <small>+{completionFeed.hiddenCount}</small>}
+              <button type="button" aria-label="Ocultar o histórico concluído desta janela — as missões não serão apagadas" title="Ocultar desta janela — as missões não serão apagadas" onClick={() => {
+                setHistoryClearedAt(snapshot.generatedAt)
+                setHistoryNotice('Histórico ocultado. Nenhuma missão foi apagada.')
+                window.synkoraProgressOverlay.command('clear-history')
+                window.requestAnimationFrame(() => openMainButtonRef.current?.focus())
+              }}>Ocultar</button>
             </div>
-          )}
-
-          {visibleProjects.length > 0 && (
-            <div className="progress-project-grid">
-              {visibleProjects.map((project) => (
-                <ProjectGroup
-                  key={project.id}
-                  project={project}
-                  highlightedMissionId={highlightedMissionId}
-                  nowMs={nowMs}
-                />
-              ))}
-            </div>
-          )}
-
-          {recent.length > 0 && (
-            <section className="progress-recent">
-              <div className="progress-recent-head">
-                <h2>Últimas concluídas</h2>
-                {completionFeed.hiddenCount > 0 && (
-                  <span className="progress-recent-count">
-                    +{completionFeed.hiddenCount} anteriores
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className="progress-recent-clear"
-                  aria-label="Ocultar o histórico concluído desta janela — as missões não serão apagadas"
-                  title="Ocultar desta janela — as missões não serão apagadas"
-                  onClick={() => {
-                    setHistoryClearedAt(snapshot.generatedAt)
-                    setHistoryNotice('Histórico ocultado. Nenhuma missão foi apagada.')
-                    window.synkoraProgressOverlay.command('clear-history')
-                    window.requestAnimationFrame(() => openMainButtonRef.current?.focus())
-                  }}
-                >
-                  Ocultar
-                </button>
-              </div>
-              {recent.map(({ project, mission }) => (
-                <button
-                  type="button"
-                  key={mission.id}
-                  className={highlightedMissionId === mission.id ? 'just-completed' : ''}
-                  onClick={() => window.synkoraProgressOverlay.command('open-target', { projectId: project.id })}
-                >
-                  <span className="progress-status-dot" aria-hidden="true" />
-                  <span><b>{mission.title}</b><small>{project.name} · {relativeCompletion(mission.completedAt)}</small></span>
-                  <i aria-hidden="true">✓</i>
-                </button>
-              ))}
-            </section>
-          )}
-
-          {idleProjects > 0 && (
-            <div className="progress-idle-count">
-              {plural(idleProjects, 'projeto')} sem atividade agora
-            </div>
-          )}
+            {recent.map(({ project, mission }) => <button type="button" key={progressEntryKey(project.id, mission)} className={highlightedKey === progressEntryKey(project.id, mission) ? 'just-completed' : ''}
+              aria-label={`Abrir contexto de ${mission.title} em ${project.name}`}
+              onClick={() => window.synkoraProgressOverlay.command('open-target', progressTarget(mission))}>
+              <span aria-hidden="true">✓</span><span><b>{mission.title}</b><small>{project.name} · {completionLabel(mission.completedAt)}</small></span><span aria-hidden="true">↗</span>
+            </button>)}
+          </section>}
         </div>
-      )}
+        {loadState === 'ready' && <footer className="progress-overlay-foot"><span className={'progress-live-dot' + (snapshotStale ? ' stale' : '')} aria-hidden="true" /><span>{snapshotStale ? `Sem atualização ${progressSignalLabel(snapshot.generatedAt, nowMs)}` : 'Atualização automática'}</span><span title={completionLabel(snapshot.generatedAt)}>{snapshotStale ? 'Exibindo último estado' : globalEmpty ? 'Sem execução registrada' : `Recebido ${progressSignalLabel(snapshot.generatedAt, nowMs)}`}</span></footer>}
+        <div className="progress-overlay-resize" role="presentation"
+          onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); resizeGestureRef.current = { pointerX: event.screenX, pointerY: event.screenY, width: window.outerWidth, height: window.outerHeight } }}
+          onPointerMove={(event) => { const start = resizeGestureRef.current; if (start) window.synkoraProgressOverlay.resize(start.width + event.screenX - start.pointerX, start.height + event.screenY - start.pointerY) }}
+          onPointerUp={(event) => { resizeGestureRef.current = null; event.currentTarget.releasePointerCapture(event.pointerId) }}
+          onPointerCancel={() => { resizeGestureRef.current = null }} />
+      </>}
     </div>
   )
 }

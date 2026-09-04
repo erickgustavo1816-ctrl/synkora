@@ -1,4 +1,5 @@
 import { sessionSpawnFailureText } from './sessionSpawnError'
+import { CodexUserInputRequests } from './codexUserInput'
 import { existsSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
@@ -168,6 +169,8 @@ export function codexElicitationVerdict(p: Record<string, unknown>): CodexElicit
  *  missão e helper nascem cercados, o chat do planejador fica como está. */
 export interface CodexSessionOpts extends MaestroSessionOpts {
   suppressNativeAgents?: boolean
+  /** Só chats com cartão de resposta habilitam perguntas ao dono. */
+  interactiveQuestions?: boolean
   /** R11 — nasce com o service tier Fast ('priority') armado: vale no
    *  thread/start E em todo turno (a sonda provou o eco no start e o carry
    *  do turn/start). O /fast do chat continua alternando por cima. */
@@ -476,6 +479,7 @@ export class CodexSession {
   private threadReady: Promise<boolean> | null = null
   private threadId: string | null = null
   private turnId: string | null = null
+  private userInputRequests?: CodexUserInputRequests
   private lastTokens: number | undefined
   private lastWindow: number | undefined
   // /fast: service tier "priority" (1.5x speed) aplicado como override por turno.
@@ -605,7 +609,8 @@ export class CodexSession {
     })
 
     this.initDone = this.request('initialize', {
-      clientInfo: { name: 'synkora', title: 'Synkora', version: '0.1.0' }
+      clientInfo: { name: 'synkora', title: 'Synkora', version: '0.1.0' },
+      ...(opts.interactiveQuestions ? { capabilities: { experimentalApi: true } } : {})
     }).then((resp) => {
       if (resp.error) {
         this.emit({ type: 'fatal', text: `handshake do codex falhou: ${resp.error.message}` })
@@ -660,6 +665,14 @@ export class CodexSession {
       toolName: req.toolName,
       description: req.description
     }
+  }
+
+  answerQuestion(requestId: string, answers: Record<string, string>): boolean {
+    const reply = this.userInputRequests?.answer(requestId, answers)
+    if (!reply) return false
+    this.respond(reply.rpcId, reply.response)
+    this.resetIdle()
+    return true
   }
 
   interrupt(): boolean {
@@ -1118,7 +1131,7 @@ export class CodexSession {
   private resetIdle(): void {
     this.clearIdle()
     this.clearTurnSilence()
-    if (this.approvals.size > 0) return // esperando o humano
+    if (this.approvals.size > 0 || this.userInputRequests?.blocking) return // esperando o humano
     if (
       shouldArmGuiTurnWatchdog(
         this.opts.idleTimeoutMs,
@@ -1127,7 +1140,8 @@ export class CodexSession {
       )
     ) {
       this.turnSilenceTimer = setTimeout(() => {
-        if (!this.alive || (!this.turnId && !this.pendingTurnStart) || this.approvals.size > 0)
+        if (!this.alive || (!this.turnId && !this.pendingTurnStart) || this.approvals.size > 0 ||
+          this.userInputRequests?.blocking)
           return
         this.emit({ type: 'fatal', text: 'o Codex ficou sem responder durante o turno' })
         this.kill()
@@ -1152,7 +1166,7 @@ export class CodexSession {
   }
 
   private cancelPendingInteractions(): void {
-    const requestIds = [...this.approvals.keys()]
+    const requestIds = [...this.approvals.keys(), ...(this.userInputRequests?.clear() ?? [])]
     this.approvals.clear()
     for (const requestId of requestIds) {
       this.emit({ type: 'permission-cancel', requestId })
@@ -1732,7 +1746,14 @@ export class CodexSession {
     if (this.opts.sandbox) base['sandbox'] = this.opts.sandbox
     // A cerca viaja no MESMO `base`, então vale no start E no resume: thread
     // retomada não volta a poder abrir subagente nativo.
-    if (this.opts.suppressNativeAgents) base['config'] = codexNativeAgentFenceConfig()
+    if (this.opts.suppressNativeAgents || this.opts.interactiveQuestions) {
+      const config = this.opts.suppressNativeAgents ? codexNativeAgentFenceConfig() : { features: {} }
+      if (this.opts.interactiveQuestions) {
+        const features = config['features'] as Record<string, unknown>
+        features['default_mode_request_user_input'] = true
+      }
+      base['config'] = config
+    }
     let resp: RpcResponse | null = null
     if (this.opts.resumeSessionId) {
       resp = await this.request('thread/resume', {
@@ -1913,6 +1934,21 @@ export class CodexSession {
   ): void {
     const requestId = `rpc-${String(id)}`
     const toolUseId = typeof p['itemId'] === 'string' ? p['itemId'] : undefined
+    if (method === 'item/tool/requestUserInput' || method === 'tool/requestUserInput') {
+      const ownTurn = this.opts.interactiveQuestions === true &&
+        p['threadId'] === this.threadId && p['turnId'] === this.turnId &&
+        typeof p['itemId'] === 'string' && Boolean(p['itemId']) && Boolean(this.turnId)
+      const request = ownTurn
+        ? (this.userInputRequests ??= new CodexUserInputRequests()).add(id, p) : null
+      if (!request) {
+        this.respond(id, { answers: {} })
+        this.emit({ type: 'limit', text: 'pergunta do Codex não aceita neste chat — peça para reformular sem dados sigilosos' })
+        return
+      }
+      this.resetIdle()
+      this.emit({ type: 'question', requestId, questions: request.questions, blocking: request.blocking })
+      return
+    }
     if (method === 'item/commandExecution/requestApproval' || method === 'execCommandApproval') {
       const desc = commandText(p['command'])
       const visibleDescription = firstLines(desc, 500)
@@ -1999,6 +2035,19 @@ export class CodexSession {
     // o turnId ou o terminal da conversa que o usuário está vendo.
     if (notificationThreadId && this.threadId && notificationThreadId !== this.threadId) return
     switch (method) {
+      case 'serverRequest/resolved': {
+        if (notificationThreadId !== this.threadId) break
+        const id = p['requestId']
+        if (typeof id !== 'string' && typeof id !== 'number') break
+        const requestId = `rpc-${String(id)}`
+        const question = this.userInputRequests?.cancel(requestId) === true
+        const approval = this.approvals.delete(requestId)
+        if (question || approval) {
+          this.emit({ type: 'permission-cancel', requestId })
+          this.resetIdle()
+        }
+        break
+      }
       case 'item/agentMessage/delta': {
         const delta = p['delta']
         if (typeof delta === 'string' && delta) this.emit({ type: 'delta', text: delta })

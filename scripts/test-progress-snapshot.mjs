@@ -1,195 +1,86 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {
-  applyProgressCoordinatorActivity,
-  buildProgressSnapshot
-} from '../src/main/progressSnapshot.ts'
+import { applyProgressCoordinatorActivity, buildProgressSnapshot } from '../src/main/progressSnapshot.ts'
 
-/**
- * RADAR DE ANDAMENTO — o que ele sabe depois da limpa F6 (2026-08-17).
- *
- * A suíte antiga (21 testes) descrevia o pipeline de cards: fases, gates,
- * verificação conjunta, plano mestre por ondas. Nada disso existe. O snapshot
- * é re-derivado de TRÊS fontes e só delas — missões, fila de integração e as
- * notas vivas que o agente registra. Estes testes prendem exatamente isso: o
- * que o dono vê no overlay quando não há card nenhum no mundo.
- */
+const NOW = '2026-09-04T12:00:00.000Z'
+const project = (id = 'project1') => ({ id, name: id, path: 'C:/synthetic', createdAt: NOW })
+const mission = (over = {}) => ({ id: 'mission1', projectId: 'project1', title: 'Synthetic mission', status: 'ativa', direct: true, createdAt: NOW, updatedAt: NOW, ...over })
+const session = (over = {}) => ({ paneId: 'gui-dev-mission1', projectId: 'project1', state: 'working', pendingCount: 0, activityAt: NOW, ...over })
+const ticket = (over = {}) => ({ id: 'ticket1', projectId: 'project1', missionId: 'mission1', state: 'queued', position: 1, total: 2, isHead: true, attempts: 0, requestedBy: 'user', targetKind: 'base', createdAt: NOW, ...over })
+const build = (over = {}) => buildProgressSnapshot({ projects: [project()], missions: [mission()], integrationQueue: [], now: NOW, ...over })
+const first = (snapshot) => snapshot.projects[0].activeMissions.find((row) => row.kind !== 'general')
 
-const NOW = '2026-08-17T12:00:00.000Z'
-
-const project = (id, name) => ({
-  id,
-  name,
-  path: `C:/universos/${id}`,
-  createdAt: '2026-08-01T00:00:00.000Z'
+test('active mission without GUI runtime is idle, never implementing', () => {
+  const snapshot = build()
+  assert.equal(first(snapshot).state, 'idle')
+  assert.equal(first(snapshot).group, 'idle')
+  assert.equal(snapshot.totals.workingMissions, 0)
 })
-
-const mission = (over = {}) => ({
-  id: 'm1',
-  projectId: 'p1',
-  title: 'Máscara de CNPJ',
-  status: 'ativa',
-  createdAt: '2026-08-16T00:00:00.000Z',
-  updatedAt: '2026-08-17T11:59:00.000Z',
-  direct: true,
-  ...over
+test('F6 activity, notes and questions cannot invent execution or leak text', () => {
+  const forbidden = 'SYNTHETIC_PRIVATE_CONTENT'
+  const snapshot = build({ coordinatorActivity: [{ projectId: 'project1', role: 'maestro', working: true, updatedAt: NOW, note: forbidden }], paneNotes: [{ projectId: 'project1', missionId: 'mission1', role: 'dev', text: forbidden, at: NOW }], pendingQuestions: [{ projectId: 'project1', missionKey: 'mission1', question: forbidden, at: NOW }] })
+  assert.equal(first(snapshot).group, 'idle')
+  assert.equal(snapshot.totals.activeCoordinators, 0)
+  assert.equal(JSON.stringify(snapshot).includes(forbidden), false)
+  const pulsed = applyProgressCoordinatorActivity(snapshot, [{ projectId: 'project1', role: 'maestro', working: true, updatedAt: NOW }], 2, NOW)
+  assert.equal(pulsed.projects[0].group, 'idle')
 })
-
-const ticket = (over = {}) => ({
-  id: 't1',
-  missionId: 'm1',
-  projectId: 'p1',
-  state: 'queued',
-  position: 1,
-  total: 2,
-  isHead: true,
-  attempts: 0,
-  requestedBy: 'user',
-  targetKind: 'base',
-  createdAt: NOW,
-  ...over
-})
-
-const build = (over = {}) =>
-  buildProgressSnapshot({
-    projects: [project('p1', 'PAINEL')],
-    missions: [mission()],
-    integrationQueue: [],
-    now: NOW,
-    revision: 1,
-    ...over
-  })
-
-const only = (snapshot) => snapshot.projects[0]
-const firstMission = (snapshot) => only(snapshot).activeMissions[0]
-
-test('missão viva sem fila aparece em andamento, e a nota do agente é o detalhe', () => {
-  const snapshot = build({
-    paneNotes: [
-      {
-        projectId: 'p1',
-        missionId: 'm1',
-        role: 'dev',
-        text: 'aplicando a máscara no formulário',
-        at: '2026-08-17T11:59:30.000Z'
-      }
-    ]
-  })
-  const m = firstMission(snapshot)
-  assert.equal(m.state, 'implementing')
-  assert.equal(m.tone, 'running')
-  assert.equal(m.detail, 'aplicando a máscara no formulário')
-  // frescor: a nota é mais nova que a missão e manda no updatedAt
-  assert.equal(m.updatedAt, '2026-08-17T11:59:30.000Z')
-})
-
-test('a nota de OUTRA missão nunca vaza para esta', () => {
-  const snapshot = build({
-    missions: [mission(), mission({ id: 'm2', title: 'Extrator' })],
-    paneNotes: [
-      { projectId: 'p1', missionId: 'm2', role: 'dev', text: 'lendo o SPED', at: NOW }
-    ]
-  })
-  const cnpj = only(snapshot).activeMissions.find((item) => item.id === 'm1')
-  assert.equal(cnpj.detail, undefined)
-})
-
-test('a fila manda no estado: enfileirada, sincronizando, integrando, bloqueada', () => {
-  const cases = [
-    [ticket({ state: 'queued' }), 'queued', 'waiting'],
-    [ticket({ state: 'sync_required' }), 'syncing', 'waiting'],
-    [ticket({ state: 'merging' }), 'integrating', 'running'],
-    [ticket({ state: 'blocked', block: { owner: 'maestro' } }), 'blocked', 'attention']
-  ]
-  for (const [entry, state, tone] of cases) {
-    const m = firstMission(build({ integrationQueue: [entry] }))
-    assert.equal(m.state, state, `estado errado para ${entry.state}`)
-    assert.equal(m.tone, tone, `tom errado para ${entry.state}`)
-    assert.equal(m.queue?.state, entry.state, 'a posição na fila viaja no snapshot')
+test('working, finished, interrupted and error are separate from mission completion', () => {
+  for (const [state, group] of [['working', 'working'], ['turn_finished', 'idle'], ['interrupted', 'attention'], ['error', 'attention'], ['idle', 'idle'], ['starting', 'idle']]) {
+    const snapshot = build({ guiSessions: [session({ state })] })
+    assert.equal(first(snapshot).state, state)
+    assert.equal(first(snapshot).group, group)
+    assert.equal(snapshot.totals.recentCompletions, 0)
+    if (state === 'turn_finished') assert.equal(snapshot.totals.deliveryMissions, 0)
   }
 })
-
-test('missão em "integrando" conta como integração mesmo sem ticket', () => {
-  const m = firstMission(build({ missions: [mission({ status: 'integrando' })] }))
-  assert.equal(m.state, 'integrating')
+test('attention in any pane wins working and delivery; optional questions still count work', () => {
+  const snapshot = build({ integrationQueue: [ticket({ state: 'merging' })], guiSessions: [session(), session({ paneId: 'gui-reviewer-mission1', pendingCount: 1, pendingKind: 'question' })] })
+  const row = first(snapshot)
+  assert.equal(row.group, 'attention')
+  assert.equal(row.paneId, 'gui-reviewer-mission1')
+  assert.equal(row.workingSessions, 2)
+  assert.equal(row.sessionCount, 2)
+  assert.equal(row.queue.state, 'merging')
+  assert.equal(snapshot.totals.attentionMissions, 1)
+  assert.equal(snapshot.totals.workingMissions, 0)
 })
-
-test('o ⇪ pedido e não clicado vira ATENÇÃO — é decisão parada do dono', () => {
-  const snapshot = build({ missions: [mission({ pendingIntegrationApproval: true })] })
-  const m = firstMission(snapshot)
-  assert.equal(m.state, 'awaiting_approval')
-  assert.equal(m.tone, 'attention')
-  assert.equal(only(snapshot).tone, 'attention')
+test('queue states are authoritative and sync-required does not claim syncing', () => {
+  for (const [state, group] of [['queued', 'delivery'], ['sync_required', 'attention'], ['merging', 'delivery'], ['blocked', 'attention']]) {
+    const row = first(build({ guiSessions: [session()], integrationQueue: [ticket({ state })] }))
+    assert.equal(row.group, group)
+    assert.equal(row.queue.state, state)
+    if (state === 'sync_required') { assert.equal(row.state, 'sync_required'); assert.match(row.label, /precisa sincronizar/) }
+  }
+  assert.equal(first(build({ missions: [mission({ pendingIntegrationApproval: true })] })).state, 'ready_to_integrate')
 })
-
-test('missão concluída sai das ativas e entra nas conclusões recentes', () => {
-  const snapshot = build({
-    missions: [mission({ status: 'concluida', updatedAt: '2026-08-17T10:00:00.000Z' })]
-  })
-  assert.deepEqual(only(snapshot).activeMissions, [])
-  assert.equal(only(snapshot).recentCompletions.length, 1)
-  assert.equal(snapshot.totals.recentCompletions, 1)
-})
-
-test('pergunta do dono vence qualquer tom, na missão e no projeto', () => {
-  const snapshot = build({
-    pendingQuestions: [
-      { projectId: 'p1', missionKey: 'm1', question: 'posso publicar a versão?', at: NOW }
-    ]
-  })
-  const m = firstMission(snapshot)
-  assert.equal(m.question, 'posso publicar a versão?')
-  assert.equal(m.tone, 'attention')
-  assert.equal(only(snapshot).label, 'pergunta esperando você')
-})
-
-test('pasta que sumiu do disco é o alarme mais alto do projeto', () => {
-  const snapshot = build({ missingProjectIds: ['p1'] })
-  assert.equal(only(snapshot).missing, true)
-  assert.equal(only(snapshot).label, 'pasta não encontrada')
-  assert.equal(snapshot.totals.attentionProjects, 1)
-})
-
-test('projeto sem missão viva fica ocioso e não inventa atividade', () => {
-  const snapshot = build({ missions: [] })
-  assert.equal(only(snapshot).state, 'idle')
-  assert.equal(only(snapshot).label, 'sem missão em andamento')
+test('completed and archived domain missions override live GUI and preserve recent cutoff', () => {
+  const snapshot = build({ missions: [mission({ status: 'concluida' }), mission({ id: 'archived', status: 'arquivada' }), mission({ id: 'old', status: 'concluida', completedAt: '2020-01-01T00:00:00.000Z' })], guiSessions: [session({ pendingCount: 1, pendingKind: 'permission' })] })
   assert.equal(snapshot.totals.activeMissions, 0)
+  assert.equal(snapshot.totals.recentCompletions, 1)
+  assert.equal(snapshot.projects[0].recentCompletions[0].state, 'completed')
 })
-
-test('a atividade de coordenação entra no snapshot e o pulso vivo a atualiza', () => {
-  const activity = [
-    {
-      projectId: 'p1',
-      missionId: 'm1',
-      role: 'orchestrator',
-      working: true,
-      updatedAt: NOW,
-      note: 'combinando o plano'
-    }
-  ]
-  const snapshot = build({ coordinatorActivity: activity })
-  assert.equal(only(snapshot).coordinators.length, 1)
-  assert.equal(snapshot.totals.activeCoordinators, 1)
-
-  const quiet = applyProgressCoordinatorActivity(
-    snapshot,
-    [{ ...activity[0], working: false }],
-    2,
-    NOW
-  )
-  assert.equal(quiet.projects[0].coordinators.length, 0)
-  assert.equal(quiet.revision, 2)
+test('project binding rejects cross-project tickets, panes, malformed and ambiguous IDs', () => {
+  assert.equal(first(build({ guiSessions: [session({ projectId: 'other' })], integrationQueue: [ticket({ projectId: 'other' })] })).group, 'idle')
+  assert.equal(first(build({ guiSessions: [session({ paneId: 'gui-dev-mission1-extra' })] })).group, 'idle')
+  const ambiguous = build({ missions: [mission({ id: 'mission1-a' }), mission({ id: 'mission1-b' })], guiSessions: [session()] })
+  assert.ok(ambiguous.projects[0].activeMissions.every((row) => row.sessionCount === 0))
 })
-
-test('o snapshot NÃO tem mais nenhuma superfície de card ou de plano mestre', () => {
-  const snapshot = build({ integrationQueue: [ticket()] })
-  const m = firstMission(snapshot)
-  for (const dead of ['activeCards', 'progress']) {
-    assert.equal(dead in m, false, `a missão ainda expõe "${dead}"`)
-  }
-  for (const dead of ['masterPlan', 'planUnavailable']) {
-    assert.equal(dead in only(snapshot), false, `o projeto ainda expõe "${dead}"`)
-  }
-  assert.equal('activeCards' in snapshot.totals, false, 'os totais ainda contam cards')
+test('general planning is explicit and excluded from mission totals', () => {
+  const snapshot = build({ missions: [], guiSessions: [session({ paneId: 'gui-plan-project1' })] })
+  assert.equal(snapshot.projects[0].activeMissions[0].kind, 'general')
+  assert.equal(snapshot.projects[0].group, 'working')
+  assert.equal(snapshot.totals.activeMissions, 0)
+  assert.equal(snapshot.totals.workingMissions, 0)
+})
+test('group totals partition missions and helper counts use structural fields only', () => {
+  const snapshot = build({ missions: [mission(), mission({ id: 'mission2' }), mission({ id: 'mission3' }), mission({ id: 'mission4' })], integrationQueue: [ticket({ missionId: 'mission2' })], guiSessions: [session({ helpers: { running: 2, interrupted: 1, failed: 0 }, text: 'SYNTHETIC_PRIVATE_CONTENT' }), session({ paneId: 'gui-dev-mission2', state: 'turn_finished' }), session({ paneId: 'gui-dev-mission3', state: 'waiting_user', pendingCount: 1, pendingKind: 'permission' })] })
+  assert.deepEqual([snapshot.totals.attentionMissions, snapshot.totals.workingMissions, snapshot.totals.deliveryMissions, snapshot.totals.idleMissions], [1, 1, 1, 1])
+  assert.equal(JSON.stringify(snapshot).includes('SYNTHETIC_PRIVATE_CONTENT'), false)
+  assert.deepEqual(snapshot.projects[0].activeMissions.find((row) => row.id === 'mission1').helpers, { running: 2, interrupted: 1, failed: 0 })
+})
+test('missing project produces project attention even when missions are idle', () => {
+  const snapshot = build({ missingProjectIds: ['project1'] })
+  assert.equal(snapshot.projects[0].group, 'attention')
+  assert.equal(snapshot.totals.attentionProjects, 1)
 })

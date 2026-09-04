@@ -13,6 +13,8 @@ import { type ProgressOverlaySnapshot } from '../progressSnapshot'
 import { progressOverlayExpandedSize } from '../progressOverlayWindow'
 import type { MainContext } from '../mainContext'
 import type { ProgressOverlayPreferences } from '../index'
+import { validateProgressOpenTarget, type ProgressOpenTarget } from '../progressNavigation'
+import { isGuiMissionPaneId, isGuiPlanningPaneId } from '../guiMissionContracts'
 
 /** Lets do closure do index que estes handlers leem/escrevem — o call
  * site entrega getters/setters fechando sobre as variáveis reais. */
@@ -28,7 +30,8 @@ export interface ProgressIpcState {
 export interface ProgressIpcExtras {
   assertMainRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
   assertProgressOverlaySender(event: IpcMainInvokeEvent | IpcMainEvent): void
-  deliverProgressOpenTarget(target?: { projectId: string; missionId?: string }): void
+  deliverProgressOpenTarget(target?: ProgressOpenTarget): void
+  progressPanes(): readonly { paneId: string; projectId: string }[]
   hideProgressOverlay(): void
   toggleProgressOverlay(): void
   loadProgressOverlayPreferences(): ProgressOverlayPreferences
@@ -136,29 +139,17 @@ export function registerProgressIpc(ctx: MainContext, extras: ProgressIpcExtras)
         event.sender.send('progress:overlay-history-changed', { clearedAt })
         return
       }
-      if (
-        typeof input.projectId !== 'string' ||
-        input.projectId.length === 0 ||
-        input.projectId.length > 200
-      ) return
-      const project = projects.get(input.projectId)
-      if (!project) return
-      let missionId: string | undefined
-      if (input.missionId !== undefined) {
-        if (
-          typeof input.missionId !== 'string' ||
-          input.missionId.length === 0 ||
-          input.missionId.length > 200
-        ) return
-        const mission = missions.get(input.missionId)
-        if (!mission || mission.projectId !== project.id) return
-        missionId = mission.id
-      }
-      showMainWindow()
-      deliverProgressOpenTarget({
-        projectId: project.id,
-        ...(missionId ? { missionId } : {})
+      const target = validateProgressOpenTarget(value, {
+        projectExists: (id) => Boolean(projects.get(id)),
+        mission: (id) => missions.get(id),
+        missions: (id) => missions.list(id),
+        panes: extras.progressPanes,
+        isMissionPane: isGuiMissionPaneId,
+        isPlanningPane: isGuiPlanningPaneId
       })
+      if (!target) return
+      showMainWindow()
+      deliverProgressOpenTarget(target)
     } catch {
       // Somente a janela autenticada pode navegar para um projeto real.
     }

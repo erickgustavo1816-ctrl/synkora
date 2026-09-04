@@ -501,7 +501,8 @@ export type GuiPendingInteraction =
   | {
       kind: 'question'
       requestId: string
-      question: { requestId: string; questions: GuiQuestion[] }
+      blocking?: boolean
+      question: { requestId: string; questions: GuiQuestion[]; blocking?: boolean }
     }
   | {
       kind: 'plan'
@@ -532,7 +533,7 @@ export interface GuiPaneState {
   interactionSubmitting: string | null
   perm: GuiPendingPerm | null
   /** pergunta com opções esperando o dono (AskUserQuestion) */
-  question: { requestId: string; questions: GuiQuestion[] } | null
+  question: { requestId: string; questions: GuiQuestion[]; blocking?: boolean } | null
   /** plano esperando veredito (ExitPlanMode): construir × revisar */
   planReview: { requestId: string; plan: string } | null
   /** proposta de plano esperando o dono (propose_plan): criar × ajustar */
@@ -1192,7 +1193,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           items[index] = { ...child, result: closure }
         }
       }
-      // O erro criado por um `result` sem tool-result é apenas um aviso de
+      // O aviso criado por um `result` sem tool-result indica incerteza de
       // reconciliação. Só removê-lo quando o último card provisório recebeu
       // seu resultado autoritativo; um órfão real continua visível.
       if (
@@ -1204,7 +1205,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
       ) {
         for (let index = items.length - 1; index >= 0; index -= 1) {
           const candidate = items[index]
-          if (candidate.kind === 'error' && candidate.transient === true)
+          if ((candidate.kind === 'note' || candidate.kind === 'error') && candidate.transient === true)
             items.splice(index, 1)
         }
       }
@@ -1237,18 +1238,20 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
     }
 
     case 'question': {
-      const base = finalizeGuiStream(state)
-      const question = { requestId: evt.requestId, questions: evt.questions }
+      const blocking = evt.blocking !== false
+      const base = blocking ? finalizeGuiStream(state) : state
+      const question = { requestId: evt.requestId, questions: evt.questions, blocking }
       return {
         ...base,
         ...enqueueGuiInteraction(base, {
           kind: 'question',
           requestId: evt.requestId,
+          blocking,
           question
         }),
-        thinking: false,
-        activityText: null,
-        ...guiStatusPatch(base, 'waiting-you')
+        thinking: blocking ? false : base.thinking,
+        activityText: blocking ? null : base.activityText,
+        ...guiStatusPatch(base, blocking ? 'waiting-you' : busy(base))
       }
     }
 
@@ -1484,7 +1487,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           ...next,
           items: pushGuiItem(echoed ? next.items.slice(0, -1) : next.items, {
             id: guiItemId(),
-            kind: 'error',
+            kind: evt.isError || evt.outcome === 'failed' ? 'error' : 'note',
             text:
               evt.errorText?.trim() ||
               (orphanedTool ? orphanedToolText(orphan.names) : 'o turno falhou sem detalhes'),

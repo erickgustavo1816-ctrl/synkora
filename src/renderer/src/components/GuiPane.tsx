@@ -1722,7 +1722,7 @@ export default function GuiPane({
         stream: gui.stream,
         thinking: gui.thinking,
         awaitingInteraction: Boolean(
-          gui.perm || gui.question || gui.planReview || gui.interactionSubmitting
+          gui.perm || (gui.question && gui.question.blocking !== false) || gui.planReview || gui.interactionSubmitting
         )
       }),
     [
@@ -1762,7 +1762,7 @@ export default function GuiPane({
         thinking: gui.thinking,
         activityText: gui.activityText,
         awaitingInteraction: Boolean(
-          gui.perm || gui.question || gui.planReview || gui.interactionSubmitting
+          gui.perm || (gui.question && gui.question.blocking !== false) || gui.planReview || gui.interactionSubmitting
         )
       }),
     [
@@ -2193,6 +2193,7 @@ export default function GuiPane({
 
             {!inert && gui.question && (
               <GuiQuestionCard
+                key={gui.question.requestId}
                 questions={gui.question.questions}
                 disabled={Boolean(gui.interactionSubmitting)}
                 onAnswer={(answers) => void answerGuiQuestion(projectId, paneId, answers)}

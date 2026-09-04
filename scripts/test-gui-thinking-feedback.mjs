@@ -29,11 +29,19 @@ test('feedback aparece imediatamente sem expor texto interno de raciocínio', ()
   )
 })
 
-test('feedback nunca sobrevive a resposta, ferramenta, interação ou terminal', () => {
+test('feedback continua visível enquanto uma ferramenta ainda espera resultado', () => {
+  assert.deepEqual(guiThinkingPresentation({ ...base, activityText: 'Bash · tarefa sintética' }), {
+    label: 'aguardando retorno da ferramenta'
+  })
+  assert.deepEqual(guiThinkingPresentation({ ...base, thinking: true, activityText: 'Bash' }), {
+    label: 'o agente está pensando'
+  })
+})
+
+test('feedback nunca sobrevive a resposta, interação ou terminal', () => {
   for (const input of [
     { ...base, stream: 'resposta' },
     { ...base, activeAssistantId: 'assistant-1' },
-    { ...base, activityText: 'Read · src/app.ts' },
     { ...base, awaitingInteraction: true },
     { ...base, status: 'idle' },
     { ...base, status: 'waiting-you' },

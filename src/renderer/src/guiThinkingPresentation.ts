@@ -5,7 +5,7 @@ export interface GuiThinkingPresentationInput {
   stream: string
   activeAssistantId: string | null
   thinking: boolean
-  /** Atividade de ferramenta: o próprio card é a superfície factual. */
+  /** Ferramenta ainda sem resultado, inclusive fora da janela visível. */
   activityText: string | null
   awaitingInteraction: boolean
 }
@@ -18,7 +18,7 @@ export interface GuiThinkingPresentation {
  * Indicador exclusivamente de apresentação. Ele não entra no transcript e
  * só existe enquanto o estado canônico ainda diz que um turno está trabalhando.
  * Assim o envio tem confirmação imediata, sem fingir que há atividade depois do
- * resultado, de uma ferramenta ou de uma interação humana.
+ * resultado ou durante uma interação humana que bloqueia o turno.
  */
 export function guiThinkingPresentation({
   status,
@@ -32,7 +32,6 @@ export function guiThinkingPresentation({
     status !== 'working' ||
     stream ||
     activeAssistantId ||
-    activityText ||
     awaitingInteraction
   ) {
     return null
@@ -40,5 +39,11 @@ export function guiThinkingPresentation({
 
   // `thinking.text` pode carregar raciocínio interno do backend. A UI usa
   // somente o sinal factual de atividade e nunca reproduz esse conteúdo.
-  return { label: thinking ? 'o agente está pensando' : 'o agente está preparando a resposta' }
+  return {
+    label: thinking
+      ? 'o agente está pensando'
+      : activityText
+        ? 'aguardando retorno da ferramenta'
+        : 'o agente está preparando a resposta'
+  }
 }

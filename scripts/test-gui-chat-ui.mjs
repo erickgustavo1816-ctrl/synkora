@@ -1153,8 +1153,8 @@ test('result, fatal e closed encerram tools pendentes sem tocar nas concluídas'
     [tool('orfã', 'Patch', 'src/a.ts')],
     { type: 'result', isError: false, outcome: 'completed' }
   )
-  assert.equal(orphan[0].result.status, 'failed')
-  assert.equal(orphan[0].result.isError, true)
+  assert.equal(orphan[0].result.status, 'unconfirmed')
+  assert.equal(orphan[0].result.isError, false)
 })
 
 test('resultado terminal antes do tool-result reconcilia por ID sem esconder órfão', () => {
@@ -1192,8 +1192,8 @@ test('resultado terminal antes do tool-result reconcilia por ID sem esconder ór
     [{ ...tool('orphan', 'WebSearch', 'sem retorno'), toolUseId: 'orphan-call' }],
     { type: 'result', isError: false, outcome: 'completed' }
   )
-  assert.equal(genuineOrphan[0].result.status, 'failed')
-  assert.equal(genuineOrphan[0].result.isError, true)
+  assert.equal(genuineOrphan[0].result.status, 'unconfirmed')
+  assert.equal(genuineOrphan[0].result.isError, false)
   assert.equal(genuineOrphan[0].result.provisional, true)
 })
 
@@ -2571,7 +2571,7 @@ test('C1 — result com continues não fecha ferramenta pendente nem inventa ór
     isError: false,
     outcome: 'completed'
   })
-  assert.equal(settled[0].result.status, 'failed')
+  assert.equal(settled[0].result.status, 'unconfirmed')
   assert.equal(settled[0].result.provisional, true)
 })
 
@@ -2719,7 +2719,7 @@ test('filho pendente de pai já resolvido fecha no terminal do turno', () => {
     outcome: 'completed'
   })
   assert.equal(closed[0], resolvedParent, 'desfecho real do pai fica intocado')
-  assert.equal(closed[1].result.status, 'failed', 'o filho fecha com o terminal do turno')
+  assert.equal(closed[1].result.status, 'unconfirmed', 'o filho fecha sem inventar um resultado')
   assert.equal(closed[1].result.provisional, true)
   assert.equal(hasPendingGuiTools(closed), false, 'nenhum card fica pendente para sempre')
 })
@@ -4569,14 +4569,14 @@ test('R36 — caminho absoluto do Windows e src="" também saem do caminho do br
   assert.doesNotMatch(windows, /\ssrc=/u)
   // src vazio resolveria para a PRÓPRIA página: some o atributo, some a
   // requisição — e não há referência nenhuma a hidratar.
-  assert.equal(rewriteGuiInlineImages('<img src="" alt="x">'), '<img alt="x">')
+  assert.match(rewriteGuiInlineImages('<img src="" alt="x">'), /Imagem indisponível/u)
 })
 
-test('R36 — data: e https: passam INTOCADAS, byte a byte', () => {
+test('R36 — bitmap data: usa cartão; HTTPS não ganha carregamento direto', () => {
   const dataUrl = '<p><img src="data:image/png;base64,iVBORw0KGgo=" alt="print"></p>'
-  assert.equal(rewriteGuiInlineImages(dataUrl), dataUrl, 'data: é justamente o que o CSP já aceita')
+  assert.match(rewriteGuiInlineImages(dataUrl), /aria-haspopup="dialog"/u)
   const remota = '<p><img src="https://exemplo.test/a.png" alt="remota"></p>'
-  assert.equal(rewriteGuiInlineImages(remota), remota, 'https não é arquivo do worktree: não é assunto do canal do main')
+  assert.doesNotMatch(rewriteGuiInlineImages(remota), /\ssrc=/u, 'HTTPS permanece bloqueado, com estado explícito na hidratação')
   assert.equal(isGuiInlineImagePassthrough('DATA:image/png;base64,x'), true, 'o esquema não é sensível a caixa')
   assert.equal(
     isGuiInlineImagePassthrough('http://exemplo.test/a.png'),
@@ -4667,7 +4667,7 @@ test('R36 — a fiação do renderer: pipeline, cache de hidratação e o guard 
   assert.match(md, /hydrateGuiInlineImages\(container, imageCacheRef\.current\)/u, 'a hidratação não é aplicada')
   assert.match(
     md,
-    /useLayoutEffect[\s\S]{0,600}?paintInlineImages\(\)/u,
+    /useLayoutEffect[\s\S]{0,1400}?paintInlineImages\(\)/u,
     'a pintura do cache tem de acontecer no efeito de LAYOUT, junto com o patch — em efeito comum a imagem pisca'
   )
   assert.match(md, /guiApi\.fileImageData\(paneId, reference\)/u, 'ninguém chama o canal do main')
@@ -4685,7 +4685,7 @@ test('R36 — a fiação do renderer: pipeline, cache de hidratação e o guard 
   assert.match(css, /\.gui-md-image-fail \{/u, 'a linha de recusa não existe no CSS')
 })
 
-test('R36 — clique/teclado da imagem caem no menu "onde abrir", e a recusa nomeia o caminho', () => {
+test('R36 — clique/teclado ampliam a imagem; menu contextual e receita continuam disponíveis', () => {
   const md = readFileSync(
     new URL('../src/renderer/src/components/GuiMarkdown.tsx', import.meta.url),
     'utf8'
@@ -4697,13 +4697,9 @@ test('R36 — clique/teclado da imagem caem no menu "onde abrir", e a recusa nom
   assert.match(
     md,
     /openFromPointer\(event, chatTarget\(reference\), image\)/u,
-    'o clique na imagem não abre o menu de sempre'
+    'o menu contextual da imagem continua oferecendo as ações autorizadas'
   )
-  assert.doesNotMatch(
-    md,
-    /preventDefault\(/u,
-    'o teclado da imagem tem de vir do <button> nativo — preventDefault aqui é o começo do sequestro do clique de link'
-  )
+  assert.match(md, /openImagePreview\(image, event\)/u, 'o gesto da imagem abre o viewer sem ativar o link ancestral')
   assert.match(
     modulo,
     /<button type="button" class="\$\{GUI_INLINE_IMAGE_OPEN_CLASS\}" /u,

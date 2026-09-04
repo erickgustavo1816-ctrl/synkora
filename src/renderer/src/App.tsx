@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useStore, type PaneKind, type PaneOptions } from './store'
 import { queueMarkdownOpen } from './projectFileNavigation'
+import { queueProgressOpen } from './progressNavigation'
 import { playAttentionChime, playSoftBlip } from './notify'
 import Home from './screens/Home'
 import Universe from './screens/Universe'
@@ -25,7 +26,6 @@ export default function App(): React.JSX.Element {
   const loadSettings = useStore((s) => s.loadSettings)
   const openProject = useStore((s) => s.openProject)
   const setUniverseTab = useStore((s) => s.setUniverseTab)
-  const setMissionTab = useStore((s) => s.setMissionTab)
 
   const bridgeOk = typeof window.synkora !== 'undefined'
 
@@ -73,10 +73,18 @@ export default function App(): React.JSX.Element {
       : () => undefined
     const offSeats = window.synkora.seats.onChanged(() => void loadSeats())
     const offProjectFlow = window.synkora.projects.onFlowChanged(() => void loadProjects())
-    const offProgressTarget = window.synkora.progress.onOpenTarget(({ projectId, missionId }) => {
-      openProject(projectId)
-      setUniverseTab(projectId, 'board')
-      setMissionTab(projectId, missionId ?? null)
+    let progressNavigationEpoch = 0
+    const offProgressTarget = window.synkora.progress.onOpenTarget((target) => {
+      const epoch = ++progressNavigationEpoch
+      openProject(target.projectId)
+      setUniverseTab(target.projectId, 'board')
+      void useStore.getState().loadMissions(target.projectId).then(() => {
+        if (epoch !== progressNavigationEpoch || useStore.getState().openProjectId !== target.projectId) return
+        queueProgressOpen(target)
+      }).catch(() => {
+        if (epoch !== progressNavigationEpoch || useStore.getState().openProjectId !== target.projectId) return
+        queueProgressOpen({ projectId: target.projectId, destination: 'project' })
+      })
     })
     window.synkora.progress.ready()
     const offFilesNav = window.synkora.files.onNavigate
@@ -95,6 +103,7 @@ export default function App(): React.JSX.Element {
       offOpenFree()
       offCloseById()
       offProgressTarget()
+      progressNavigationEpoch++
       offProjectFlow()
       offSeats()
       offStats()
@@ -104,7 +113,7 @@ export default function App(): React.JSX.Element {
       offHubSound()
       offGuiAlert()
     }
-  }, [bridgeOk, loadProjects, loadSeats, loadSettings, openProject, setUniverseTab, setMissionTab, setPaneStats])
+  }, [bridgeOk, loadProjects, loadSeats, loadSettings, openProject, setUniverseTab, setPaneStats])
 
   // Esc pertence ao CHAT ativo mesmo quando o foco está na lateral/header.
   // O registro dá prioridade ao card de pergunta e aos menus do composer.

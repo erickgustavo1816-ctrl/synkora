@@ -1986,14 +1986,14 @@ test('registro publica terminal depois dos tool-results do mesmo chunk e mantém
   assert.equal(tail[3].toolUseId, 'parent')
   assert.equal(tail[4].type, 'result')
 
-  // Sem tool-result, o terminal continua sendo um órfão real: o fechamento
-  // visual mantém falha, em vez de suprimir o diagnóstico.
+  // Sem tool-result, falta um recibo: o fechamento mantém essa incerteza
+  // visível sem contradizer o resultado bem-sucedido informado pelo motor.
   const orphan = closePendingGuiTools(
     [{ id: 'orphan', kind: 'tool', name: 'WebSearch', summary: 'sem retorno', toolUseId: 'orphan' }],
     { type: 'result', isError: false, outcome: 'completed' }
   )
-  assert.equal(orphan[0].result.isError, true)
-  assert.equal(orphan[0].result.status, 'failed')
+  assert.equal(orphan[0].result.isError, false)
+  assert.equal(orphan[0].result.status, 'unconfirmed')
 })
 
 // ————— O PANE NASCE MUDO (ordem do dono) —————
@@ -6284,8 +6284,47 @@ test("R39.1 D4' — no motor que DESCARTA a fila (codex), o force reentrega com 
   assert.match(hand, /você foi PARADO para lê-la/u)
   assert.match(hand, /Você estava em: shell/u)
   assert.deepEqual(bench.replyDebt.pending(R39_PANE), ['para: o schema mudou'])
-  assert.deepEqual(bench.states('msg-1'), ['unread', 'stopping', 'read'])
+  assert.deepEqual(bench.states('msg-1'), ['unread', 'stopping', 'delivered'],
+    'reenviar após o corte comprova entrega, não leitura pelo Codex')
   assert.equal(bench.ownerMail.count(R39_PANE), 0)
+  bench.emit({ type: 'text', text: 'entendi, retomo a tarefa' })
+  assert.deepEqual(bench.states('msg-1'), ['unread', 'stopping', 'delivered', 'answered'])
+})
+
+test('pergunta do Codex usa o cartão e devolve a resposta pelo mesmo registro', () => {
+  const bench = ownerStopBench({ cli: 'codex' })
+  bench.session().turnActive = true
+  bench.emit({ type: 'question', requestId: 'rpc-question', questions: [
+    { id: 'direction', question: 'Qual caminho?', options: [{ label: 'A' }] }
+  ] })
+  assert.equal(bench.gui.answerQuestion(R39_PANE, 'rpc-question', { direction: 'A' }).ok, true)
+  assert.deepEqual(bench.answers, [{ requestId: 'rpc-question', map: { direction: 'A' } }])
+  const resolution = bench.live.find(x => x.evt.type === 'interaction-resolved').evt.resolution
+  assert.deepEqual(resolution.entries, [{ question: 'Qual caminho?', answer: 'A' }])
+})
+
+test('pergunta opcional do Codex não retém uma nova orientação escrita no composer', () => {
+  const bench = ownerStopBench({ cli: 'codex' })
+  bench.session().turnActive = true
+  bench.emit({ type: 'question', requestId: 'rpc-optional', blocking: false, questions: [
+    { id: 'direction', question: 'Qual caminho?', allowCustom: false, options: [{ label: 'A' }] }
+  ] })
+  assert.equal(bench.gui.send(R39_PANE, 'continue com a validação', 'new-guidance').ok, true)
+  assert.deepEqual(bench.sent, ['continue com a validação'])
+  assert.deepEqual(bench.answers, [])
+  assert.deepEqual(bench.states('new-guidance'), ['unread'])
+})
+
+test('pergunta livre do Codex preserva identidade e natureza no replay', () => {
+  const event = { type: 'question', requestId: 'rpc-free', blocking: false, questions: [
+    { id: 'detail', question: 'Qual detalhe?', header: 'Detalhe', allowCustom: true, options: [] }
+  ] }
+  assert.equal(isGuiPersistedEvent(event), true)
+  const ring = new GuiEventRing()
+  ring.push(event)
+  assert.deepEqual(ring.snapshot(), [event])
+  assert.equal(isGuiPersistedEvent({ ...event, blocking: 'false' }), false)
+  assert.equal(isGuiPersistedEvent({ ...event, questions: [{ ...event.questions[0], id: 42 }] }), false)
 })
 
 test("R39.1 D4' — forçar uma fala JÁ LIDA é no-op, com nota no diário", () => {

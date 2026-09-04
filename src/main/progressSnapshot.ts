@@ -1,649 +1,240 @@
 import type { IntegrationQueueTicketView } from './integrationQueue'
 import type { Mission } from './missions'
 import type { Project } from './projects'
+import type { GuiProgressInput, GuiProgressPendingKind, GuiProgressHelpers } from './guiProgress'
 
 export type ProgressTone = 'attention' | 'running' | 'waiting' | 'success' | 'idle'
-
+export type ProgressGroup = 'attention' | 'working' | 'delivery' | 'idle'
 export type ProgressCoordinatorRole = 'maestro' | 'orchestrator'
-
 export type ProgressCoordinatorActivityKind = 'terminal' | 'conversation' | 'survey'
-
 export type MissionProgressState =
-  | 'planning'
-  | 'starting'
-  | 'awaiting_approval'
-  | 'paused'
-  | 'implementing'
-  | 'reviewing'
-  | 'qa'
-  | 'interrupted'
-  | 'finalizing'
-  | 'ready_to_integrate'
-  | 'queued'
-  | 'syncing'
-  | 'blocked'
-  | 'integrating'
-  | 'completed'
+  | 'planning' | 'starting' | 'awaiting_approval' | 'paused' | 'implementing'
+  | 'reviewing' | 'qa' | 'interrupted' | 'finalizing' | 'ready_to_integrate'
+  | 'queued' | 'syncing' | 'blocked' | 'integrating' | 'completed'
+  | 'working' | 'waiting_user' | 'idle' | 'turn_finished' | 'error' | 'sync_required'
+export type ProjectProgressState = 'attention' | 'integrating' | 'running' | 'planning' | 'completed' | 'idle'
 
-export type ProjectProgressState =
-  | 'attention'
-  | 'integrating'
-  | 'running'
-  | 'planning'
-  | 'completed'
-  | 'idle'
-
-/** Frase curta que o PRÓPRIO agente registrou via tool status_note — é o que
- * faz o radar contar "o que está acontecendo agora" sem abrir o app. */
+/** Retired inputs retained for old callers only; never used by the GUI projection. */
 export interface ProgressPaneNoteInput {
-  projectId: string
-  missionId?: string
-  taskId?: string
-  phase?: 'dev' | 'review' | 'qa'
-  role: string
-  text: string
-  at: string
+  projectId: string; missionId?: string; taskId?: string; phase?: 'dev' | 'review' | 'qa'
+  role: string; text: string; at: string
 }
-
-/** Pergunta do ask_user pendente — o radar é o lugar nº 1 onde ela precisa
- * aparecer (o dono pode nem estar com o app na frente). */
-export interface ProgressQuestionInput {
-  projectId: string
-  /** missionId ou 'geral' */
-  missionKey: string
-  question: string
-  at: string
-}
-
-/** Pulso vivo e sanitizado vindo do processo principal. O radar recebe apenas
- * identidade estrutural e horário; saída de terminal, prompts e caminhos nunca
- * atravessam a ponte da janela sempre visível. */
+export interface ProgressQuestionInput { projectId: string; missionKey: string; question: string; at: string }
 export interface ProgressCoordinatorActivityInput {
-  projectId: string
-  missionId?: string
-  role: ProgressCoordinatorRole
-  kind?: ProgressCoordinatorActivityKind
-  working: boolean
-  updatedAt: string
-  /** frase viva do coordenador (status_note) — viaja NA atividade para os dois
-   * caminhos (build completo e pulso vivo) a carregarem sem fonte extra */
-  note?: string
+  projectId: string; missionId?: string; role: ProgressCoordinatorRole
+  kind?: ProgressCoordinatorActivityKind; working: boolean; updatedAt: string; note?: string
 }
-
 export interface ProgressCoordinatorSnapshot {
-  id: string
-  projectId: string
-  missionId?: string
-  role: ProgressCoordinatorRole
-  roleLabel: string
-  label: string
-  detail?: string
-  tone: 'running'
-  updatedAt: string
-  /** frase viva registrada pelo próprio coordenador (status_note) */
-  note?: string
+  id: string; projectId: string; missionId?: string; role: ProgressCoordinatorRole
+  roleLabel: string; label: string; detail?: string; tone: 'running'; updatedAt: string; note?: string
 }
-
+/** Main-owned DTO; src/preload/index.ts reexports it through type-only imports. */
 export interface ProgressMissionSnapshot {
   id: string
   projectId: string
   title: string
   kind?: 'mission' | 'general'
   state: MissionProgressState
+  group: ProgressGroup
   tone: ProgressTone
   label: string
   detail?: string
   updatedAt: string
   completedAt?: string
+  paneId?: string
+  sessionCount: number
+  workingSessions: number
+  pendingCount: number
+  pendingKind?: GuiProgressPendingKind
+  activityAt?: string
+  helpers?: GuiProgressHelpers
   queue?: {
     state: IntegrationQueueTicketView['state']
     position: number
     total: number
     owner?: 'maestro' | 'orchestrator'
   }
-  /** pergunta do ask_user do ORQUESTRADOR desta missão, esperando o dono */
+  /** Deprecated and intentionally never populated. */
   question?: string
 }
-
 export interface ProgressProjectSnapshot {
-  id: string
-  name: string
-  mode?: Project['mode']
-  missing: boolean
-  state: ProjectProgressState
-  tone: ProgressTone
-  label: string
+  id: string; name: string; mode?: Project['mode']; missing: boolean
+  state: ProjectProgressState; group: ProgressGroup; tone: ProgressTone; label: string
   coordinators: ProgressCoordinatorSnapshot[]
   activeMissions: ProgressMissionSnapshot[]
   recentCompletions: ProgressMissionSnapshot[]
-  /** pergunta do ask_user do PM (missionKey 'geral'), esperando o dono */
   question?: string
 }
-
 export interface ProgressOverlaySnapshot {
   revision: number
   generatedAt: string
   totals: {
-    projects: number
-    activeProjects: number
-    activeMissions: number
-    activeCoordinators: number
-    attentionMissions: number
-    attentionProjects: number
-    recentCompletions: number
+    projects: number; activeProjects: number; activeMissions: number; activeCoordinators: number
+    attentionMissions: number; workingMissions: number; deliveryMissions: number; idleMissions: number
+    attentionProjects: number; recentCompletions: number
   }
   projects: ProgressProjectSnapshot[]
 }
-
 export interface ProgressSnapshotInput {
   projects: readonly Project[]
   missions: readonly Mission[]
   integrationQueue: readonly IntegrationQueueTicketView[]
-  /** projetos cuja pasta sumiu do disco — o radar mostra "pasta não encontrada" */
+  guiSessions?: readonly GuiProgressInput[]
   missingProjectIds?: readonly string[]
   coordinatorActivity?: readonly ProgressCoordinatorActivityInput[]
   paneNotes?: readonly ProgressPaneNoteInput[]
   pendingQuestions?: readonly ProgressQuestionInput[]
-  revision?: number
-  now?: string | Date
-  recentCompletionDays?: number
+  revision?: number; now?: string | Date; recentCompletionDays?: number
 }
 
-const PROJECT_STATE_ORDER: Record<ProjectProgressState, number> = {
-  attention: 0,
-  integrating: 1,
-  running: 2,
-  planning: 3,
-  completed: 4,
-  idle: 5
-}
-
-const MISSION_STATE_ORDER: Record<MissionProgressState, number> = {
-  blocked: 0,
-  interrupted: 1,
-  syncing: 2,
-  integrating: 3,
-  qa: 4,
-  reviewing: 5,
-  implementing: 6,
-  finalizing: 7,
-  queued: 8,
-  awaiting_approval: 9,
-  paused: 10,
-  ready_to_integrate: 11,
-  starting: 12,
-  planning: 13,
-  completed: 14
-}
-
-const ATTENTION_STATES = new Set<MissionProgressState>([
-  'blocked',
-  'interrupted',
-  'awaiting_approval'
-])
-const RUNNING_STATES = new Set<MissionProgressState>([
-  'implementing',
-  'reviewing',
-  'qa',
-  'finalizing',
-  'syncing',
-  'integrating'
-])
-
+const GROUP_ORDER: Record<ProgressGroup, number> = { attention: 0, working: 1, delivery: 2, idle: 3 }
+const PENDING_ORDER: Record<GuiProgressPendingKind, number> = { permission: 0, question: 1, 'plan-review': 2, 'plan-proposal': 3 }
 function safeDate(value: string | Date | undefined): Date {
-  if (value instanceof Date && Number.isFinite(value.getTime())) return value
-  const parsed = value ? new Date(value) : new Date()
+  const parsed = value instanceof Date ? value : new Date(value ?? Date.now())
   return Number.isFinite(parsed.getTime()) ? parsed : new Date()
 }
-
-function queueSnapshot(ticket: IntegrationQueueTicketView): ProgressMissionSnapshot['queue'] {
+function paneMatchesMission(paneId: string, missionId: string): boolean {
+  // Same constructors as guiMissionContracts. Exact suffixes avoid binding a
+  // forged/ambiguous address to a different conversation.
+  const short = missionId.slice(0, 8)
+  if (paneId === `gui-dev-${short}` || paneId === `gui-reviewer-${short}`) return true
+  const prefix = `gui-helper-${short}-`
+  return paneId.startsWith(prefix) && /^[1-9]\d*$/.test(paneId.slice(prefix.length))
+}
+function sessionPriority(pane: GuiProgressInput): number {
+  if (pane.pendingCount > 0) return pane.state === 'waiting_user' ? 0 : 1
+  if (pane.state === 'error' || pane.state === 'interrupted') return 2
+  if (pane.state === 'working') return 3
+  if (pane.state === 'turn_finished') return 4
+  return 5
+}
+function sortedSessions(panes: readonly GuiProgressInput[]): GuiProgressInput[] {
+  return [...panes].sort((a, b) => sessionPriority(a) - sessionPriority(b)
+    || (PENDING_ORDER[a.pendingKind ?? 'plan-proposal'] - PENDING_ORDER[b.pendingKind ?? 'plan-proposal'])
+    || (b.activityAt ?? '').localeCompare(a.activityAt ?? '') || a.paneId.localeCompare(b.paneId))
+}
+function sessionFields(panes: readonly GuiProgressInput[]): Pick<ProgressMissionSnapshot,
+  'paneId' | 'sessionCount' | 'workingSessions' | 'pendingCount' | 'pendingKind' | 'activityAt' | 'helpers'> {
+  const priority = sortedSessions(panes)[0]
+  const activityAt = panes.map((pane) => pane.activityAt).filter((at): at is string => Boolean(at)).sort().at(-1)
+  const measuredHelpers = panes.filter((pane) => pane.helpers)
   return {
-    state: ticket.state,
-    position: ticket.position,
-    total: ticket.total,
-    ...(ticket.block?.owner ? { owner: ticket.block.owner } : {})
+    ...(priority ? { paneId: priority.paneId } : {}),
+    sessionCount: panes.length,
+    workingSessions: panes.filter((pane) => pane.state === 'working').length,
+    pendingCount: panes.reduce((sum, pane) => sum + pane.pendingCount, 0),
+    ...(priority?.pendingKind ? { pendingKind: priority.pendingKind } : {}),
+    ...(activityAt ? { activityAt } : {}),
+    ...(measuredHelpers.length ? { helpers: measuredHelpers.reduce((sum, pane) => ({
+      running: sum.running + (pane.helpers?.running ?? 0),
+      interrupted: sum.interrupted + (pane.helpers?.interrupted ?? 0),
+      failed: sum.failed + (pane.helpers?.failed ?? 0)
+    }), { running: 0, interrupted: 0, failed: 0 }) } : {})
   }
 }
-
-function completedMission(mission: Mission): ProgressMissionSnapshot {
-  const completedAt = mission.completedAt ?? mission.updatedAt
+type Status = Pick<ProgressMissionSnapshot, 'state' | 'group' | 'tone' | 'label' | 'detail'>
+function runtimeStatus(panes: readonly GuiProgressInput[]): Status {
+  const pane = sortedSessions(panes)[0]
+  if (!pane) return { state: 'idle', group: 'idle', tone: 'idle', label: 'sem conversa em execução', detail: 'nenhum turno GUI observado' }
+  if (pane.pendingCount > 0) {
+    const labels: Record<GuiProgressPendingKind, string> = {
+      permission: 'permissão pendente', question: 'pergunta esperando você',
+      'plan-review': 'plano para revisar', 'plan-proposal': 'proposta de plano pendente'
+    }
+    return { state: pane.state, group: 'attention', tone: 'attention',
+      label: labels[pane.pendingKind ?? 'question'],
+      detail: pane.state === 'working' ? 'a conversa continua trabalhando' : pane.state === 'waiting_user' ? 'o turno aguarda sua resposta' : 'abra a conversa para decidir' }
+  }
+  switch (pane.state) {
+    case 'error': return { state: 'error', group: 'attention', tone: 'attention', label: 'falha na conversa', detail: 'abra a conversa para verificar' }
+    case 'interrupted': return { state: 'interrupted', group: 'attention', tone: 'attention', label: 'turno interrompido', detail: 'a missão permanece aberta' }
+    case 'working': return { state: 'working', group: 'working', tone: 'running', label: 'trabalhando', detail: 'agente em execução' }
+    case 'waiting_user': return { state: 'waiting_user', group: 'attention', tone: 'attention', label: 'aguardando você', detail: 'abra a conversa para continuar' }
+    default: break
+  }
+  if (panes.some((item) => (item.helpers?.running ?? 0) > 0)) return { state: 'working', group: 'working', tone: 'running', label: 'ajudantes trabalhando', detail: 'execução confirmada pelo motor de ajudantes' }
+  if (pane.state === 'turn_finished') return { state: 'turn_finished', group: 'idle', tone: 'idle', label: 'resposta pronta', detail: 'o turno terminou; a missão permanece aberta' }
+  if (pane.state === 'starting') return { state: 'starting', group: 'idle', tone: 'waiting', label: 'abrindo conversa', detail: 'ainda sem turno em execução' }
+  return { state: 'idle', group: 'idle', tone: 'idle', label: 'conversa parada', detail: 'aguardando um novo turno' }
+}
+function missionSnapshot(mission: Mission, ticket: IntegrationQueueTicketView | undefined, panes: readonly GuiProgressInput[]): ProgressMissionSnapshot {
+  if (mission.status === 'concluida') return {
+    id: mission.id, projectId: mission.projectId, title: mission.title, kind: 'mission',
+    state: 'completed', group: 'delivery', tone: 'success', label: 'concluída',
+    updatedAt: mission.updatedAt, completedAt: mission.completedAt ?? mission.updatedAt,
+    sessionCount: 0, workingSessions: 0, pendingCount: 0
+  }
+  const fields = sessionFields(panes)
+  const runtime = runtimeStatus(panes)
+  let status = runtime
+  // Human attention in any conversation must remain visible even during delivery.
+  if (runtime.group !== 'attention') {
+    if (ticket?.state === 'blocked') status = { state: 'blocked', group: 'attention', tone: 'attention', label: 'integração bloqueada', detail: 'abra a fila para verificar o impedimento' }
+    else if (ticket?.state === 'sync_required') status = { state: 'sync_required', group: 'attention', tone: 'attention', label: 'precisa sincronizar para integrar', detail: 'a fila aguarda a atualização com a base' }
+    else if (ticket?.state === 'merging' || mission.status === 'integrando') status = { state: 'integrating', group: 'delivery', tone: 'running', label: 'integrando agora', detail: 'aplicando a missão ao projeto' }
+    else if (ticket?.state === 'queued') status = { state: 'queued', group: 'delivery', tone: 'waiting', label: `na fila · ${ticket.position} de ${ticket.total}`, detail: ticket.isHead ? 'é a próxima a integrar' : 'aguardando as missões anteriores' }
+    else if (mission.pendingIntegrationApproval) status = { state: 'ready_to_integrate', group: 'attention', tone: 'attention', label: 'pronta para integrar', detail: 'aguardando sua aprovação de integração' }
+  }
   return {
-    id: mission.id,
-    projectId: mission.projectId,
-    title: mission.title,
-    kind: 'mission',
-    state: 'completed',
-    tone: 'success',
-    label: 'concluída',
-    detail: mission.kind === 'direta' ? 'ajuste direto registrado' : undefined,
-    updatedAt: mission.updatedAt,
-    completedAt,
+    id: mission.id, projectId: mission.projectId, title: mission.title, kind: 'mission',
+    ...status, ...fields,
+    updatedAt: fields.activityAt && fields.activityAt > mission.updatedAt ? fields.activityAt : mission.updatedAt,
+    ...(ticket ? { queue: { state: ticket.state, position: ticket.position, total: ticket.total,
+      ...(ticket.block?.owner ? { owner: ticket.block.owner } : {}) } } : {})
   }
 }
-
-/** Nota viva mais recente do escopo pedido (missão, ou o projeto todo). */
-function latestNoteFor(
-  notes: readonly ProgressPaneNoteInput[],
-  missionId?: string
-): ProgressPaneNoteInput | undefined {
-  const mine = notes.filter((note) => note.missionId === missionId)
-  return [...mine].sort((a, b) => b.at.localeCompare(a.at))[0]
+function projectStatus(missing: boolean, rows: readonly ProgressMissionSnapshot[]): Pick<ProgressProjectSnapshot, 'state' | 'group' | 'tone' | 'label'> {
+  if (missing) return { state: 'attention', group: 'attention', tone: 'attention', label: 'pasta não encontrada' }
+  if (rows.some((row) => row.group === 'attention')) return { state: 'attention', group: 'attention', tone: 'attention', label: 'precisa de atenção' }
+  if (rows.some((row) => row.group === 'working')) return { state: 'running', group: 'working', tone: 'running', label: 'trabalhando' }
+  if (rows.some((row) => row.group === 'delivery')) return { state: rows.some((row) => row.state === 'integrating') ? 'integrating' : 'planning', group: 'delivery', tone: 'waiting', label: 'entregas para acompanhar' }
+  return { state: 'idle', group: 'idle', tone: 'idle', label: rows.length ? 'sem turno em execução' : 'sem missão em andamento' }
 }
-
-function missionSnapshot(
-  mission: Mission,
-  ticket: IntegrationQueueTicketView | undefined,
-  notes: readonly ProgressPaneNoteInput[] = [],
-  question?: string
-): ProgressMissionSnapshot {
-  const snapshot = missionSnapshotInner(mission, ticket, notes)
-  if (!question || snapshot.state === 'completed') return snapshot
-  // pergunta pendente vence qualquer tom: é o DONO que precisa agir agora
-  return { ...snapshot, question, tone: 'attention' }
+/** Compatibility only: retired coordinator pulses cannot change GUI progress. */
+export function applyProgressCoordinatorActivity(snapshot: ProgressOverlaySnapshot, _activity: readonly ProgressCoordinatorActivityInput[], revision: number, now: string | Date = new Date()): ProgressOverlaySnapshot {
+  return { ...snapshot, revision: Math.max(0, Math.trunc(revision)), generatedAt: safeDate(now).toISOString() }
 }
-
-function missionSnapshotInner(
-  mission: Mission,
-  ticket: IntegrationQueueTicketView | undefined,
-  notes: readonly ProgressPaneNoteInput[]
-): ProgressMissionSnapshot {
-  if (mission.status === 'concluida') return completedMission(mission)
-
-  const note = latestNoteFor(notes, mission.id)
-  const base = {
-    id: mission.id,
-    projectId: mission.projectId,
-    title: mission.title,
-    kind: 'mission' as const,
-    updatedAt: note && note.at > mission.updatedAt ? note.at : mission.updatedAt,
-    ...(ticket ? { queue: queueSnapshot(ticket) } : {})
-  }
-
-  if (ticket?.state === 'blocked') {
-    const byMaestro = ticket.block?.owner === 'maestro'
-    return {
-      ...base,
-      state: 'blocked',
-      tone: 'attention',
-      label: 'integração bloqueada',
-      detail: byMaestro
-        ? 'a decisão de como resolver o conflito está pendente'
-        : 'a missão precisa ser reparada antes de voltar à fila'
-    }
-  }
-  if (ticket?.state === 'sync_required') {
-    return {
-      ...base,
-      state: 'syncing',
-      tone: 'waiting',
-      label: 'sincronizando para integrar',
-      detail: 'atualizando a missão com a base mais recente'
-    }
-  }
-  if (ticket?.state === 'merging' || mission.status === 'integrando') {
-    return {
-      ...base,
-      state: 'integrating',
-      tone: 'running',
-      label: 'integrando agora',
-      detail: 'aplicando a missão ao projeto'
-    }
-  }
-  if (ticket?.state === 'queued') {
-    return {
-      ...base,
-      state: 'queued',
-      tone: 'waiting',
-      label: `na fila · ${ticket.position} de ${ticket.total}`,
-      detail: ticket.isHead ? 'é a próxima a integrar' : 'aguardando as missões anteriores'
-    }
-  }
-  // O ⇪ já foi pedido e espera o clique do dono: nada é mais urgente.
-  if (mission.pendingIntegrationApproval) {
-    return {
-      ...base,
-      state: 'awaiting_approval',
-      tone: 'attention',
-      label: 'aguardando sua aprovação para integrar',
-      ...(note ? { detail: note.text } : {})
-    }
-  }
-  // Missão viva sem ticket: o trabalho acontece na conversa do dev. A nota
-  // que o agente registrou é a única coisa honesta a mostrar aqui.
-  return {
-    ...base,
-    state: 'implementing',
-    tone: 'running',
-    label: 'em andamento',
-    ...(note ? { detail: note.text } : {})
-  }
-}
-
-function coordinatorSnapshot(
-  activity: ProgressCoordinatorActivityInput,
-  missions: readonly ProgressMissionSnapshot[]
-): ProgressCoordinatorSnapshot | undefined {
-  if (!activity.working) return undefined
-  const mission = activity.missionId
-    ? missions.find((candidate) => candidate.id === activity.missionId)
-    : undefined
-
-  if (activity.role === 'orchestrator') {
-    if (!mission) return undefined
-    const stateCopy: Record<MissionProgressState, { label: string; detail?: string }> = {
-      planning: {
-        label: 'preparando o plano da missão',
-        detail: mission.title
-      },
-      starting: {
-        label: 'abrindo os agentes da missão',
-        detail: mission.title
-      },
-      awaiting_approval: {
-        label: 'ajustando o plano para sua revisão',
-        detail: mission.title
-      },
-      paused: {
-        label: 'revendo o plano pausado',
-        detail: mission.title
-      },
-      implementing: {
-        label: 'coordenando a implementação',
-        detail: mission.title
-      },
-      reviewing: {
-        label: 'acompanhando a revisão',
-        detail: mission.title
-      },
-      qa: {
-        label: 'acompanhando a validação de QA',
-        detail: mission.title
-      },
-      interrupted: {
-        label: 'tratando uma execução interrompida',
-        detail: mission.title
-      },
-      finalizing: {
-        label: mission.label,
-        detail: mission.title
-      },
-      ready_to_integrate: {
-        label: 'preparando a integração da missão',
-        detail: mission.title
-      },
-      queued: {
-        label: 'acompanhando a fila de integração',
-        detail: mission.title
-      },
-      syncing: {
-        label: 'sincronizando a missão com a base',
-        detail: mission.title
-      },
-      blocked: {
-        label: mission.queue?.owner === 'maestro'
-          ? 'acompanhando a decisão do Maestro'
-          : 'reparando um bloqueio da missão',
-        detail: mission.title
-      },
-      integrating: {
-        label: 'acompanhando a integração',
-        detail: mission.title
-      },
-      completed: {
-        label: 'fechando a missão concluída',
-        detail: mission.title
-      }
-    }
-    return {
-      id: `orchestrator:${mission.id}`,
-      projectId: activity.projectId,
-      missionId: mission.id,
-      role: 'orchestrator',
-      roleLabel: 'Orquestrador',
-      ...stateCopy[mission.state],
-      tone: 'running',
-      updatedAt: activity.updatedAt,
-      ...(activity.note ? { note: activity.note } : {})
-    }
-  }
-
-  if (activity.kind === 'survey') {
-    return {
-      id: `maestro:${activity.projectId}`,
-      projectId: activity.projectId,
-      role: 'maestro',
-      roleLabel: 'Maestro',
-      label: 'mapeando o projeto e atualizando o dossiê',
-      detail: 'analisando a estrutura e o contexto do projeto',
-      tone: 'running',
-      updatedAt: activity.updatedAt,
-      ...(activity.note ? { note: activity.note } : {})
-    }
-  }
-
-  if (activity.kind === 'conversation') {
-    return {
-      id: `maestro:${activity.projectId}`,
-      projectId: activity.projectId,
-      role: 'maestro',
-      roleLabel: 'Maestro',
-      label: 'analisando e respondendo sua solicitação',
-      detail: 'coordenando o projeto pelo painel do Maestro',
-      tone: 'running',
-      updatedAt: activity.updatedAt,
-      ...(activity.note ? { note: activity.note } : {})
-    }
-  }
-
-  const maestroBlock = missions.find(
-    (mission) => mission.state === 'blocked' && mission.queue?.owner === 'maestro'
-  )
-  const integrating = missions.find((mission) =>
-    mission.state === 'integrating' || mission.state === 'syncing' || mission.state === 'queued'
-  )
-  const label = maestroBlock
-    ? 'decidindo como resolver uma integração bloqueada'
-    : integrating
-      ? 'coordenando a integração das missões'
-      : missions.length > 0
-        ? 'acompanhando o projeto e suas missões'
-        : 'analisando o projeto'
-  const detail = maestroBlock?.title ?? integrating?.title
-  return {
-    id: `maestro:${activity.projectId}`,
-    projectId: activity.projectId,
-    role: 'maestro',
-    roleLabel: 'Maestro',
-    label,
-    ...(detail ? { detail } : {}),
-    tone: 'running',
-    updatedAt: activity.updatedAt,
-    ...(activity.note ? { note: activity.note } : {})
-  }
-}
-
-function projectState(
-  missing: boolean,
-  missions: readonly ProgressMissionSnapshot[],
-  activeCoordinators = 0,
-  hasQuestion = false
-): Pick<ProgressProjectSnapshot, 'state' | 'tone' | 'label'> {
-  if (missing) return { state: 'attention', tone: 'attention', label: 'pasta não encontrada' }
-  // pergunta do PM esperando o dono: nada é mais urgente que uma decisão parada
-  if (hasQuestion || missions.some((mission) => mission.question)) {
-    return { state: 'attention', tone: 'attention', label: 'pergunta esperando você' }
-  }
-  if (missions.some((mission) => ATTENTION_STATES.has(mission.state))) {
-    return { state: 'attention', tone: 'attention', label: 'precisa de atenção' }
-  }
-  if (missions.some((mission) => mission.state === 'integrating')) {
-    return { state: 'integrating', tone: 'running', label: 'integrando missão' }
-  }
-  if (missions.some((mission) => RUNNING_STATES.has(mission.state))) {
-    return { state: 'running', tone: 'running', label: 'em andamento' }
-  }
-  if (activeCoordinators > 0) {
-    return { state: 'running', tone: 'running', label: 'coordenação em atividade' }
-  }
-  if (missions.length > 0) {
-    return { state: 'planning', tone: 'waiting', label: 'missões em preparação' }
-  }
-  return { state: 'idle', tone: 'idle', label: 'sem missão em andamento' }
-}
-
-/** Atualiza somente os pulsos vivos de coordenação sobre um snapshot já
- * sanitizado. Assim o TUI pode mover trabalhando → aguardando em tempo real
- * sem reler planos do disco nem executar Git a cada frame de terminal. */
-export function applyProgressCoordinatorActivity(
-  snapshot: ProgressOverlaySnapshot,
-  activity: readonly ProgressCoordinatorActivityInput[],
-  revision: number,
-  now: string | Date = new Date()
-): ProgressOverlaySnapshot {
-  const projects = snapshot.projects.map((project): ProgressProjectSnapshot => {
-    const coordinators = activity
-      .filter((candidate) => candidate.projectId === project.id)
-      .map((candidate) => coordinatorSnapshot(candidate, project.activeMissions))
-      .filter((candidate): candidate is ProgressCoordinatorSnapshot => Boolean(candidate))
-      .sort((a, b) => {
-        if (a.role !== b.role) return a.role === 'orchestrator' ? -1 : 1
-        return b.updatedAt.localeCompare(a.updatedAt)
-      })
-    return {
-      ...project,
-      ...projectState(
-        project.missing,
-        project.activeMissions,
-        coordinators.length,
-        Boolean(project.question)
-      ),
-      coordinators
-    }
-  }).sort((a, b) => {
-    const state = PROJECT_STATE_ORDER[a.state] - PROJECT_STATE_ORDER[b.state]
-    return state || a.name.localeCompare(b.name, 'pt-BR')
-  })
-  const activeCoordinators = projects.reduce(
-    (sum, project) => sum + project.coordinators.length,
-    0
-  )
-  const attentionProjects = projects.filter((project) => project.missing).length
-  return {
-    ...snapshot,
-    revision: Math.max(0, Math.trunc(revision)),
-    generatedAt: safeDate(now).toISOString(),
-    totals: {
-      ...snapshot.totals,
-      activeProjects: projects.filter(
-        (project) => project.state !== 'idle' && project.state !== 'completed'
-      ).length,
-      activeCoordinators,
-      attentionProjects
-    },
-    projects
-  }
-}
-
 export function buildProgressSnapshot(input: ProgressSnapshotInput): ProgressOverlaySnapshot {
   const now = safeDate(input.now)
-  const generatedAt = now.toISOString()
-  const recentDays = Math.max(1, Math.min(90, input.recentCompletionDays ?? 7))
-  const recentCutoff = now.getTime() - recentDays * 24 * 60 * 60 * 1000
+  const recentCutoff = now.getTime() - Math.max(1, Math.min(90, input.recentCompletionDays ?? 7)) * 86_400_000
   const missingIds = new Set(input.missingProjectIds ?? [])
-  const queueByMission = new Map(input.integrationQueue.map((ticket) => [ticket.missionId, ticket]))
-
-  const result = input.projects.map((project): ProgressProjectSnapshot => {
-    const projectMissions = input.missions.filter((mission) => mission.projectId === project.id)
-    const projectNotes = (input.paneNotes ?? []).filter(
-      (note) => note.projectId === project.id
-    )
-    const projectQuestions = (input.pendingQuestions ?? []).filter(
-      (question) => question.projectId === project.id
-    )
-    const generalQuestion = projectQuestions.find((question) => question.missionKey === 'geral')
-    const missionSnapshots = projectMissions
-      .filter((mission) => mission.status !== 'arquivada')
-      .map((mission) => missionSnapshot(
-        mission,
-        queueByMission.get(mission.id),
-        projectNotes,
-        projectQuestions.find((question) => question.missionKey === mission.id)?.question
-      ))
-    const snapshots = missionSnapshots
-    const activeMissions = snapshots
-      .filter((mission) => mission.state !== 'completed')
-      .sort((a, b) => {
-        const state = MISSION_STATE_ORDER[a.state] - MISSION_STATE_ORDER[b.state]
-        return state || b.updatedAt.localeCompare(a.updatedAt)
-      })
-    const recentCompletions = snapshots
-      .filter(
-        (mission) =>
-          mission.state === 'completed' &&
-          safeDate(mission.completedAt ?? mission.updatedAt).getTime() >= recentCutoff
-      )
-      .sort((a, b) => (b.completedAt ?? b.updatedAt).localeCompare(a.completedAt ?? a.updatedAt))
-      .slice(0, 5)
-    const coordinators = (input.coordinatorActivity ?? [])
-      .filter((activity) => activity.projectId === project.id)
-      .map((activity) => coordinatorSnapshot(activity, activeMissions))
-      .filter((activity): activity is ProgressCoordinatorSnapshot => Boolean(activity))
-      .sort((a, b) => {
-        if (a.role !== b.role) return a.role === 'orchestrator' ? -1 : 1
-        return b.updatedAt.localeCompare(a.updatedAt)
-      })
-    const status = projectState(
-      missingIds.has(project.id),
-      activeMissions,
-      coordinators.length,
-      Boolean(generalQuestion)
-    )
-    return {
-      id: project.id,
-      name: project.name,
-      mode: project.mode,
-      missing: missingIds.has(project.id),
-      ...status,
-      coordinators,
-      activeMissions,
-      recentCompletions,
-      ...(generalQuestion ? { question: generalQuestion.question } : {})
-    }
-  }).sort((a, b) => {
-    const state = PROJECT_STATE_ORDER[a.state] - PROJECT_STATE_ORDER[b.state]
-    return state || a.name.localeCompare(b.name, 'pt-BR')
-  })
-
-  const activeMissions = result.reduce((sum, project) => sum + project.activeMissions.length, 0)
-  const activeCoordinators = result.reduce(
-    (sum, project) => sum + project.coordinators.length,
-    0
-  )
-  const attentionMissions = result.reduce(
-    (sum, project) =>
-      sum + project.activeMissions.filter((mission) => ATTENTION_STATES.has(mission.state)).length,
-    0
-  )
-  const attentionProjects = result.filter((project) => project.missing).length
-  const recentCompletions = result.reduce(
-    (sum, project) => sum + project.recentCompletions.length,
-    0
-  )
-
+  const rawPanes = input.guiSessions ?? []
+  // A live pane belongs to exactly one registry entry; reject duplicate input.
+  const panes = rawPanes.filter((pane) => rawPanes.filter((other) => other.paneId === pane.paneId).length === 1)
+  const projects = input.projects.map((project): ProgressProjectSnapshot => {
+    const missions = input.missions.filter((mission) => mission.projectId === project.id)
+    const projectPanes = panes.filter((pane) => pane.projectId === project.id)
+    const rows = missions.filter((mission) => mission.status !== 'arquivada').map((mission) => {
+      const boundPanes = projectPanes.filter((pane) => paneMatchesMission(pane.paneId, mission.id)
+        && missions.filter((candidate) => paneMatchesMission(pane.paneId, candidate.id)).length === 1)
+      const tickets = input.integrationQueue.filter((ticket) => ticket.projectId === project.id && ticket.missionId === mission.id)
+      return missionSnapshot(mission, tickets.length === 1 ? tickets[0] : undefined, boundPanes)
+    })
+    const activeMissions = rows.filter((row) => row.state !== 'completed')
+    const generalPanes = projectPanes.filter((pane) => pane.paneId === `gui-plan-${project.id.slice(0, 8)}`)
+    if (generalPanes.length) activeMissions.push({
+      id: `general:${project.id}`, projectId: project.id, kind: 'general', title: 'Planejamento do projeto',
+      ...runtimeStatus(generalPanes), ...sessionFields(generalPanes),
+      updatedAt: sessionFields(generalPanes).activityAt ?? project.createdAt
+    })
+    activeMissions.sort((a, b) => GROUP_ORDER[a.group] - GROUP_ORDER[b.group] || b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id))
+    const recentCompletions = rows.filter((row) => row.state === 'completed' && safeDate(row.completedAt ?? row.updatedAt).getTime() >= recentCutoff)
+      .sort((a, b) => (b.completedAt ?? b.updatedAt).localeCompare(a.completedAt ?? a.updatedAt)).slice(0, 5)
+    return { id: project.id, name: project.name, mode: project.mode, missing: missingIds.has(project.id),
+      ...projectStatus(missingIds.has(project.id), activeMissions), coordinators: [], activeMissions, recentCompletions }
+  }).sort((a, b) => GROUP_ORDER[a.group] - GROUP_ORDER[b.group] || a.name.localeCompare(b.name, 'pt-BR'))
+  const missions = projects.flatMap((project) => project.activeMissions).filter((row) => row.kind !== 'general')
   return {
-    revision: Math.max(0, Math.trunc(input.revision ?? 0)),
-    generatedAt,
+    revision: Math.max(0, Math.trunc(input.revision ?? 0)), generatedAt: now.toISOString(),
     totals: {
-      projects: result.length,
-      activeProjects: result.filter(
-        (project) => project.state !== 'idle' && project.state !== 'completed'
-      ).length,
-      activeMissions,
-      activeCoordinators,
-      attentionMissions,
-      attentionProjects,
-      recentCompletions
-    },
-    projects: result
+      projects: projects.length, activeProjects: projects.filter((project) => project.activeMissions.length > 0).length,
+      activeMissions: missions.length, activeCoordinators: 0,
+      attentionMissions: missions.filter((row) => row.group === 'attention').length,
+      workingMissions: missions.filter((row) => row.group === 'working').length,
+      deliveryMissions: missions.filter((row) => row.group === 'delivery').length,
+      idleMissions: missions.filter((row) => row.group === 'idle').length,
+      attentionProjects: projects.filter((project) => project.group === 'attention').length,
+      recentCompletions: projects.reduce((sum, project) => sum + project.recentCompletions.length, 0)
+    }, projects
   }
 }

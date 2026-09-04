@@ -980,6 +980,18 @@ export const GUI_HELPER_BOOT_INTERRUPTION =
   'o app fechou com o ajudante trabalhando — o processo morreu, mas a conversa dele ficou guardada e dá para retomar de onde parou'
 
 export class GuiHelperEngine {
+  /** Read-only counts: never sweep, inspect deliveries, or expose helper content. */
+  progressCounts(paneId: string): { running: number; interrupted: number; failed: number } {
+    const counts = { running: 0, interrupted: 0, failed: 0 }
+    for (const id of this.byPane.get(paneId) ?? []) {
+      const state = this.helpers.get(id)?.record.state
+      if (state === 'spawning' || state === 'working') counts.running += 1
+      else if (state === 'interrupted') counts.interrupted += 1
+      else if (state === 'failed') counts.failed += 1
+    }
+    return counts
+  }
+
   private readonly deps: GuiHelperEngineDeps
   private readonly helpers = new Map<string, LiveHelper>()
   /** Índice por pane, em ORDEM DE CRIAÇÃO: é ele que dá a ordem estável da

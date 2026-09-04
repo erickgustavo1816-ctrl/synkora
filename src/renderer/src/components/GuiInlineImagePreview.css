@@ -1,0 +1,81 @@
+/* Image cards belong to the paper transcript; dimensions never follow the bitmap. */
+.gui-md .gui-md-image-open {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  width: min(320px, 100%);
+  min-width: 0;
+  min-height: 84px;
+  margin: 4px 6px 6px 0;
+  padding: 9px;
+  border: 1px solid var(--gui-line, #c8c0b2);
+  border-radius: 7px;
+  background: var(--gui-fill, #e7e0d3);
+  color: var(--ink, #26241f);
+  font: inherit;
+  line-height: 1.35;
+  text-align: left;
+  vertical-align: top;
+  cursor: pointer;
+}
+
+.gui-md .gui-md-image {
+  display: block;
+  flex: 0 0 72px;
+  width: 72px;
+  height: 64px;
+  min-width: 0;
+  max-width: 72px;
+  max-height: 64px;
+  margin: 0;
+  border: 0;
+  border-radius: 3px;
+  object-fit: contain;
+  background: color-mix(in srgb, var(--ink, #26241f) 5%, var(--paper, #efe9dc));
+}
+
+.gui-md .gui-md-image:not([data-gui-image-state='ready']) {
+  visibility: hidden;
+}
+
+.gui-md-image-copy { display: grid; gap: 5px; min-width: 0; }
+.gui-md-image-caption {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.gui-md-image-action { font-size: 10px; font-weight: 600; text-decoration: underline; }
+.gui-md-image-loading { font-size: 10px; color: var(--ink-2, #625e56); }
+.gui-md .gui-md-image-open:hover { border-color: var(--ink, #26241f); }
+.gui-md .gui-md-image-open:focus-visible { outline: 2px solid var(--accent-deep, #a84b27); outline-offset: 2px; }
+.gui-md .gui-md-image-fail {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: min(420px, 100%);
+  padding: 8px 10px;
+  margin: 4px 6px 6px 0;
+  border: 1px solid var(--gui-line, #c8c0b2);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--err, #b54036);
+  overflow-wrap: anywhere;
+}
+
+.gui-attachment-lightbox .gui-attachment-lightbox-body { min-height: 0; }
+.gui-attachment-lightbox .gui-attachment-lightbox-body:not(.actual-size) img {
+  /* Both outer paddings + header, image padding and borders fit the viewport. */
+  max-height: max(1px, calc(100dvh - clamp(24px, 6vw, 72px) - 72px));
+}
+.gui-attachment-lightbox-body.actual-size { display: block; }
+.gui-attachment-lightbox-body.actual-size img {
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: auto;
+}

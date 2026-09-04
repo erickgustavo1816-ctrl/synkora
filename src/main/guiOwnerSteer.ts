@@ -215,8 +215,7 @@ export class GuiOwnerStepTracker {
   private readonly delivered = new Map<string, string[]>()
   /** R39.1 D2' — as falas steeradas que ainda esperam o RECIBO DE LEITURA. */
   private readonly steered = new Map<string, GuiOwnerSteeredNote[]>()
-  /** R39.1 D4' — as falas que o dono FORÇOU: a bolha delas fecha em `read`,
-   *  não em `delivered`, porque foi ele quem mandou parar para ler. */
+  /** Falas forçadas; o gesto não comprova leitura pelo motor. */
   private readonly forced = new Map<string, Set<string>>()
 
   /** O pump viu uma tool COMEÇAR. */
@@ -309,7 +308,7 @@ export class GuiOwnerStepTracker {
     return taken ? [taken] : []
   }
 
-  /** R39.1 D4' — o dono forçou esta fala; a entrega dela carimba `read`. */
+  /** O dono forçou esta fala; a entrega ainda depende do reconciliador. */
   noteForced(paneId: string, messageId: string): void {
     if (!paneId || !messageId) return
     const ids = this.forced.get(paneId) ?? new Set<string>()

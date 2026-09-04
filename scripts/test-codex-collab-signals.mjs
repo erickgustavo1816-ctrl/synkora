@@ -64,12 +64,13 @@ function ingestSession({ suppressNativeAgents } = {}) {
 
 /** Sessão de mentira para o handshake da thread: `request` só anota o que
  *  saiu no fio. `openThread` é o único caminho de nascimento de thread. */
-function threadSession({ suppressNativeAgents, resumeSessionId, resumeFails = false } = {}) {
+function threadSession({ suppressNativeAgents, resumeSessionId, resumeFails = false, interactiveQuestions = true } = {}) {
   const session = Object.create(CodexSession.prototype)
   const calls = []
   session.opts = {
     cwd: '/w',
     sandbox: 'read-only',
+    interactiveQuestions,
     ...(resumeSessionId ? { resumeSessionId } : {}),
     ...(suppressNativeAgents === undefined ? {} : { suppressNativeAgents })
   }
@@ -120,7 +121,7 @@ test('a ordem do dono cerca o subagente nativo no thread/start E no thread/resum
     fresh.calls.map((call) => call.method),
     ['thread/start']
   )
-  assert.deepEqual(fresh.calls[0].params.config, { features: { multi_agent: false } })
+  assert.deepEqual(fresh.calls[0].params.config, { features: { multi_agent: false, default_mode_request_user_input: true } })
   assert.equal(fresh.calls[0].params.cwd, '/w', 'a cerca não substitui o resto do pedido')
   assert.equal(fresh.calls[0].params.developerInstructions, 'persona do chat')
   assert.equal(fresh.calls[0].params.sandbox, 'read-only')
@@ -132,7 +133,7 @@ test('a ordem do dono cerca o subagente nativo no thread/start E no thread/resum
     resumed.calls.map((call) => call.method),
     ['thread/resume']
   )
-  assert.deepEqual(resumed.calls[0].params.config, { features: { multi_agent: false } })
+  assert.deepEqual(resumed.calls[0].params.config, { features: { multi_agent: false, default_mode_request_user_input: true } })
   assert.equal(resumed.calls[0].params.threadId, 'thread-velha')
 
   // Resume que não resolve abre thread nova — e a nova nasce cercada também.
@@ -147,7 +148,7 @@ test('a ordem do dono cerca o subagente nativo no thread/start E no thread/resum
     ['thread/resume', 'thread/start']
   )
   for (const call of reborn.calls) {
-    assert.deepEqual(call.params.config, { features: { multi_agent: false } })
+    assert.deepEqual(call.params.config, { features: { multi_agent: false, default_mode_request_user_input: true } })
   }
   assert.notEqual(
     fresh.calls[0].params.config,
@@ -156,20 +157,22 @@ test('a ordem do dono cerca o subagente nativo no thread/start E no thread/resum
   )
 })
 
-test('sem a ordem explícita nenhuma config viaja: o planejador fica como está', async () => {
+test('perguntas são habilitadas sem alterar a escolha de subagentes', async () => {
   for (const opts of [{}, { suppressNativeAgents: false }]) {
     const fresh = threadSession(opts)
     assert.equal(await fresh.session.openThread(), true)
-    assert.equal(
-      Object.hasOwn(fresh.calls[0].params, 'config'),
-      false,
-      'chave nenhuma a mais no thread/start'
-    )
+    assert.deepEqual(fresh.calls[0].params.config, { features: { default_mode_request_user_input: true } })
 
     const resumed = threadSession({ ...opts, resumeSessionId: 'thread-velha' })
     assert.equal(await resumed.session.openThread(), true)
-    assert.equal(Object.hasOwn(resumed.calls[0].params, 'config'), false)
+    assert.deepEqual(resumed.calls[0].params.config, { features: { default_mode_request_user_input: true } })
   }
+})
+
+test('sessão sem cartão humano não habilita perguntas interativas', async () => {
+  const headless = threadSession({ interactiveQuestions: false, suppressNativeAgents: true })
+  assert.equal(await headless.session.openThread(), true)
+  assert.deepEqual(headless.calls[0].params.config, { features: { multi_agent: false } })
 })
 
 // ————— detecção do spawn nativo (a correção do ouvinte morto) —————
@@ -483,11 +486,11 @@ test('modo url (reautenticação) é recusado mesmo sendo nosso — não há nav
 
 test('outros pedidos não suportados seguem exatamente como antes', () => {
   const { events, ask } = serverRequestSession()
-  const sent = ask('item/tool/requestUserInput', { threadId: 'thread-root' })
+  const sent = ask('unknown/request', { threadId: 'thread-root' })
 
   assert.deepEqual(sent, [{ jsonrpc: '2.0', id: 7, result: { decision: 'decline' } }])
   assert.deepEqual(events, [
-    { type: 'limit', text: 'pedido não suportado do codex negado: item/tool/requestUserInput' }
+    { type: 'limit', text: 'pedido não suportado do codex negado: unknown/request' }
   ])
 })
 

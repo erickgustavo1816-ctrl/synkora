@@ -30,11 +30,17 @@ export function progressCompletionFeed(
 ): ProgressCompletionFeed {
   const parsedCutoff = clearedAt ? Date.parse(clearedAt) : Number.NaN
   const cutoff = Number.isFinite(parsedCutoff) ? parsedCutoff : Number.NEGATIVE_INFINITY
+  const seen = new Set<string>()
   const all = snapshot.projects
     .flatMap((project) =>
       project.recentCompletions.map((mission) => ({ project, mission }))
     )
-    .filter(({ mission }) => completionTime(mission) > cutoff)
+    .filter(({ project, mission }) => {
+      const key = JSON.stringify([project.id, mission.kind ?? 'mission', mission.id])
+      if (seen.has(key) || completionTime(mission) <= cutoff) return false
+      seen.add(key)
+      return true
+    })
     .sort((a, b) => completionTime(b.mission) - completionTime(a.mission))
   const safeLimit = Math.max(0, Math.trunc(limit))
   return {

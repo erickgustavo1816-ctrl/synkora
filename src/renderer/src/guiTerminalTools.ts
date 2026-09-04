@@ -19,7 +19,7 @@ type GuiTerminalToolResult = {
   isError: boolean
   /** `interrupted` (R6.1) só nasce no replay de boot, para o card de AJUDANTE
    *  despachado: o motor preservou o registro, e "cancelado" mentiria. */
-  status: 'failed' | 'cancelled' | 'completed' | 'interrupted'
+  status: 'failed' | 'cancelled' | 'completed' | 'interrupted' | 'unconfirmed'
   lineCount: number
   truncated: false
   provisional?: boolean
@@ -98,14 +98,14 @@ function terminalToolResult(evt: GuiTerminalEvent): GuiTerminalToolResult {
   }
   if (evt.type === 'result' && evt.outcome !== 'cancelled') {
     return {
-      text: 'o turno terminou sem entregar o resultado da ferramenta',
-      isError: true,
-      status: 'failed',
+      text: 'resultado não confirmado — o turno encerrou sem o recibo da ferramenta',
+      isError: false,
+      status: 'unconfirmed',
       lineCount: 1,
       truncated: false,
-      // O Claude pode publicar o terminal da rodada antes do tool-result de
-      // uma ferramenta filha. O card fica fechável, mas continua elegível ao
-      // pareamento autoritativo por toolUseId até o resultado tardio chegar.
+      // O terminal do turno pode preceder o tool-result. Ausência de recibo
+      // não prova falha: o card fica neutro, elegível ao pareamento estrito
+      // por toolUseId quando o resultado autoritativo chegar.
       provisional: true
     }
   }
@@ -225,13 +225,13 @@ export function orphanedTurnTools(
   if (!fechou || !pendente) return { orphaned: false, names: [] }
   return { orphaned: true, names: pendingGuiToolNames(items) }
 }
-/** A linha do card. Sem nome legível ela mantém a frase antiga: inventar uma
- *  tool para preencher a lacuna seria pior que a lacuna. */
+/** A linha neutra do aviso. Sem nome legível a lacuna continua genérica:
+ *  ausência de recibo não autoriza inventar nome ou desfecho. */
 export function orphanedToolText(names: readonly string[]): string {
   const [primeiro, ...resto] = names
-  if (!primeiro) return 'o turno terminou sem receber o resultado de uma ferramenta'
+  if (!primeiro) return 'resultado não confirmado de uma ferramenta após o fim do turno'
   const cauda = resto.length > 0 ? ` e mais ${resto.length}` : ''
-  return `o turno terminou sem o resultado de ${primeiro}${cauda}`
+  return `resultado não confirmado de ${primeiro}${cauda} após o fim do turno`
 }
 
 /** Pai factual de cada card por identidade de item. Id de pai ambíguo é tratado

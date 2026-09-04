@@ -123,252 +123,134 @@ export function installDevMock(): void {
   const view = new URLSearchParams(window.location.search).get('view')
   if (view === 'progress-overlay') {
     if (typeof window.synkoraProgressOverlay !== 'undefined') return
-    const progressScenario = new URLSearchParams(window.location.search).get('scenario')
+    // Isolated synthetic QA: ?view=progress-overlay&scenario=mixed|empty|history|many|long|compact|unavailable|late
+    const progressScenario = new URLSearchParams(window.location.search).get('scenario') ?? 'mixed'
+    const now = Date.now()
+    const at = (seconds: number): string => new Date(now - seconds * 1000).toISOString()
+    type Row = ProgressOverlaySnapshot['projects'][number]['activeMissions'][number]
+    const row = (id: string, projectId: string, title: string, patch: Partial<Row>): Row => ({
+      id, projectId, title, kind: 'mission', state: 'idle', group: 'idle', tone: 'idle',
+      label: 'Sem conversa ativa', detail: 'Abra a missão para continuar o trabalho.',
+      updatedAt: at(600), sessionCount: 0, workingSessions: 0, pendingCount: 0, ...patch
+    })
     let snapshot: ProgressOverlaySnapshot = {
-      revision: 1,
-      generatedAt: new Date().toISOString(),
-      totals: {
-        projects: 3,
-        activeProjects: 2,
-        activeMissions: 3,
-        activeCoordinators: 3,
-        attentionMissions: 1,
-        attentionProjects: 0,
-        recentCompletions: 1
-      },
+      revision: 1, generatedAt: at(0),
+      totals: { projects: 3, activeProjects: 2, activeMissions: 7, activeCoordinators: 0,
+        attentionMissions: 3, attentionProjects: 0, workingMissions: 1, deliveryMissions: 1,
+        idleMissions: 2, recentCompletions: 1 },
       projects: [
         {
-          id: 'mock-2',
-          name: 'Synkora',
-          mode: 'existing',
-          missing: false,
-          state: 'attention',
-          tone: 'attention',
-          label: 'precisa de atenção',
-          coordinators: [
-            {
-              id: 'orchestrator:mission-radar',
-              projectId: 'mock-2',
-              missionId: 'mission-radar',
-              role: 'orchestrator',
-              roleLabel: 'Orquestrador',
-              label: 'acompanhando a revisão',
-              detail: 'Criar radar de andamento',
-              tone: 'running',
-              updatedAt: new Date().toISOString()
-            },
-            {
-              id: 'maestro:mock-2',
-              projectId: 'mock-2',
-              role: 'maestro',
-              roleLabel: 'agente',
-              label: 'decidindo como resolver uma integração bloqueada',
-              detail: 'Melhorar integração paralela',
-              tone: 'running',
-              updatedAt: new Date().toISOString()
-            }
-          ],
+          id: 'mock-2', name: 'Synkora', mode: 'existing', missing: false,
+          state: 'attention', group: 'attention', tone: 'attention', label: 'Precisa de atenção', coordinators: [],
           activeMissions: [
-            {
-              id: 'mission-radar',
-              projectId: 'mock-2',
-              title: 'Criar radar de andamento',
-              state: 'reviewing',
-              tone: 'running',
-              label: 'revisando o trabalho',
-              detail: 'Validar janela flutuante',
-              updatedAt: new Date().toISOString(),
-            },
-            {
-              id: 'mission-queue',
-              projectId: 'mock-2',
-              title: 'Melhorar integração paralela',
-              state: 'blocked',
-              tone: 'attention',
-              label: 'integração bloqueada',
-              detail: 'a decisão de como resolver o conflito está pendente',
-              updatedAt: new Date(Date.now() - 90_000).toISOString(),
-              queue: { state: 'blocked', position: 1, total: 2, owner: 'maestro' }
-            }
-          ],
-          recentCompletions: []
+            row('mission-radar', 'mock-2', 'Renovar o painel de andamento', {
+              state: 'working', group: 'attention', tone: 'attention', label: 'Pergunta opcional pendente',
+              detail: 'Uma resposta pode orientar o próximo passo.', sessionCount: 2, workingSessions: 1,
+              pendingCount: 1, pendingKind: 'question', paneId: 'gui-mock-2-mission-radar-dev', activityAt: at(12),
+              helpers: { running: 2, interrupted: 0, failed: 0 }
+            }),
+            row('mission-queue', 'mock-2', 'Simplificar a integração de entregas', {
+              state: 'blocked', group: 'attention', tone: 'attention', label: 'Integração bloqueada',
+              detail: 'Verifique o bloqueio na entrega da missão.', activityAt: at(180),
+              queue: { state: 'blocked', position: 1, total: 2 }
+            }),
+            row('mission-review', 'mock-2', 'Revisar a navegação entre conversas', {
+              state: 'working', group: 'working', tone: 'running', label: 'Trabalhando',
+              detail: 'Há um turno em execução.', sessionCount: 2, workingSessions: 1,
+              paneId: 'gui-mock-2-mission-review-reviewer', activityAt: at(4)
+            }),
+            row('mission-finished-turn', 'mock-2', 'Ajustar o seletor de projetos', {
+              state: 'turn_finished', group: 'idle', tone: 'idle', label: 'Turno encerrado',
+              detail: 'A missão permanece aberta.', sessionCount: 1, activityAt: at(480),
+              paneId: 'gui-mock-2-mission-finished-turn-dev'
+            })
+          ], recentCompletions: []
         },
         {
-          id: 'mock-1',
-          name: 'App Fitness',
-          mode: 'greenfield',
-          missing: false,
-          state: 'planning',
-          tone: 'waiting',
-          label: 'missões em preparação',
-          coordinators: [
-            {
-              id: 'maestro:mock-1',
-              projectId: 'mock-1',
-              role: 'maestro',
-              roleLabel: 'agente',
-              label: 'acompanhando o projeto e suas missões',
-              tone: 'running',
-              updatedAt: new Date().toISOString()
-            }
-          ],
+          id: 'mock-1', name: 'Estúdio Aurora', mode: 'greenfield', missing: false,
+          state: 'attention', group: 'attention', tone: 'attention', label: 'Precisa de atenção', coordinators: [],
           activeMissions: [
-            {
-              id: 'mission-app',
-              projectId: 'mock-1',
-              title: 'Tela inicial e autenticação',
-              state: 'awaiting_approval',
-              tone: 'attention',
-              label: 'aguardando sua aprovação',
-              detail: 'o plano da missão está pronto para revisão',
-              updatedAt: new Date(Date.now() - 180_000).toISOString(),
-            }
+            row('mission-app', 'mock-1', 'Tela inicial e navegação', {
+              state: 'waiting_user', group: 'attention', tone: 'attention', label: 'Permissão pendente',
+              detail: 'O trabalho aguarda sua decisão no chat.', sessionCount: 1, pendingCount: 1,
+              pendingKind: 'permission', paneId: 'gui-mock-1-mission-app-dev', activityAt: at(90)
+            }),
+            row('mission-delivery', 'mock-1', 'Componentes de identidade visual', {
+              state: 'queued', group: 'delivery', tone: 'waiting', label: 'Na fila de integração',
+              detail: 'Entrega 2 de 2 na fila.', queue: { state: 'queued', position: 2, total: 2 }
+            }),
+            row('mission-idle', 'mock-1', 'Organizar os arquivos do projeto', {}),
+            row('general-aurora', 'mock-1', 'Planejamento geral', {
+              kind: 'general', state: 'working', group: 'working', tone: 'running', label: 'Conversa geral trabalhando',
+              detail: 'Planejamento do projeto em execução.', sessionCount: 1, workingSessions: 1, activityAt: at(35)
+            })
           ],
-          recentCompletions: [
-            {
-              id: 'mission-done',
-              projectId: 'mock-1',
-              title: 'Definir identidade visual',
-              state: 'completed',
-              tone: 'success',
-              label: 'concluída',
-              updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
-              completedAt: new Date(Date.now() - 3_600_000).toISOString(),
-            }
-          ]
+          recentCompletions: [row('mission-done', 'mock-1', 'Definir a estrutura de páginas', {
+            state: 'completed', tone: 'success', label: 'Concluída', detail: undefined, completedAt: at(3600)
+          })]
         },
-        {
-          id: 'mock-idle',
-          name: 'Site antigo',
-          mode: 'existing',
-          missing: false,
-          state: 'idle',
-          tone: 'idle',
-          label: 'sem missão em andamento',
-          coordinators: [],
-          activeMissions: [],
-          recentCompletions: []
-        }
+        { id: 'mock-idle', name: 'Caderno de ideias', mode: 'existing', missing: false, state: 'idle', group: 'idle',
+          tone: 'idle', label: 'Sem missões abertas', coordinators: [], activeMissions: [], recentCompletions: [] }
       ]
     }
     if (progressScenario === 'empty') {
-      snapshot = {
-        revision: 2,
-        generatedAt: new Date().toISOString(),
-        totals: {
-          projects: snapshot.projects.length,
-          activeProjects: 0,
-          activeMissions: 0,
-          activeCoordinators: 0,
-          attentionMissions: 0,
-          attentionProjects: 0,
-          recentCompletions: 0
-        },
-        projects: snapshot.projects.map((project) => ({
-          ...project,
-          state: 'idle',
-          tone: 'idle',
-          label: 'sem missão em andamento',
-          coordinators: [],
-          activeMissions: [],
-          recentCompletions: [],
-          masterPlan: undefined
-        }))
-      }
-    } else if (progressScenario === 'many') {
+      snapshot = { ...snapshot, projects: snapshot.projects.map((project) => ({ ...project, state: 'idle', group: 'idle', tone: 'idle', activeMissions: [], recentCompletions: [] })) }
+    } else if (progressScenario === 'many' || progressScenario === 'long') {
       const source = snapshot.projects[0]
-      const missionSources = source.activeMissions
-      const activeMissions = Array.from({ length: 14 }, (_, index) => {
-        const original = missionSources[index % missionSources.length]
-        return {
-          ...original,
-          id: 'many-mission-' + index,
-          title: 'Missão simultânea ' + (index + 1),
-          updatedAt: new Date(Date.now() - index * 12_000).toISOString()
-        }
-      })
-      snapshot = {
-        revision: 3,
-        generatedAt: new Date().toISOString(),
-        totals: {
-          projects: 1,
-          activeProjects: 1,
-          activeMissions: activeMissions.length,
-          activeCoordinators: source.coordinators.length,
-          attentionMissions: activeMissions.filter((mission) => mission.tone === 'attention').length,
-          attentionProjects: 1,
-          recentCompletions: 0
-        },
-        projects: [{
-          ...source,
-          activeMissions,
-          recentCompletions: []
-        }]
-      }
+      snapshot = { ...snapshot, projects: [{ ...source,
+        name: progressScenario === 'long' ? 'Projeto de demonstração com um nome extremamente longo para verificar a janela estreita' : source.name,
+        activeMissions: Array.from({ length: 14 }, (_, index) => ({ ...source.activeMissions[index % 4], id: `many-${index}`,
+          title: progressScenario === 'long' ? 'RevisarOsEstadosDeCadaConversaSemPerderOContextoDaMissãoEmUmaJanelaBemEstreita' : `Missão simultânea ${index + 1}` })), recentCompletions: [] }] }
     } else if (progressScenario === 'history') {
       const source = snapshot.projects[1]
-      const completedSource = source.recentCompletions[0]
-      const recentCompletions = Array.from({ length: 12 }, (_, index) => ({
-        ...completedSource,
-        id: 'history-mission-' + index,
-        title: 'Entrega concluída ' + (index + 1),
-        updatedAt: new Date(Date.now() - index * 60_000).toISOString(),
-        completedAt: new Date(Date.now() - index * 60_000).toISOString()
-      }))
-      snapshot = {
-        revision: 4,
-        generatedAt: new Date().toISOString(),
-        totals: {
-          projects: 1,
-          activeProjects: 0,
-          activeMissions: 0,
-          activeCoordinators: 0,
-          attentionMissions: 0,
-          attentionProjects: 0,
-          recentCompletions: recentCompletions.length
-        },
-        projects: [{
-          ...source,
-          state: 'idle',
-          tone: 'idle',
-          label: 'sem missão em andamento',
-          coordinators: [],
-          activeMissions: [],
-          recentCompletions
-        }]
-      }
+      snapshot = { ...snapshot, projects: [{ ...source, state: 'idle', group: 'idle', tone: 'idle', activeMissions: [],
+        recentCompletions: Array.from({ length: 12 }, (_, index) => ({ ...source.recentCompletions[0], id: `history-${index}`, title: `Entrega concluída ${index + 1}`, completedAt: at(index * 60) })) }] }
+    }
+    const liveRows = snapshot.projects.flatMap((project) => project.activeMissions).filter((mission) => mission.kind !== 'general')
+    snapshot.totals = {
+      projects: snapshot.projects.length, activeProjects: snapshot.projects.filter((project) => project.activeMissions.length > 0).length,
+      activeMissions: liveRows.length, activeCoordinators: 0,
+      attentionMissions: liveRows.filter((mission) => mission.group === 'attention').length,
+      attentionProjects: snapshot.projects.filter((project) => project.activeMissions.some((mission) => mission.kind === 'general' && mission.group === 'attention')).length,
+      workingMissions: liveRows.filter((mission) => mission.group === 'working').length,
+      deliveryMissions: liveRows.filter((mission) => mission.group === 'delivery').length,
+      idleMissions: liveRows.filter((mission) => mission.group === 'idle').length,
+      recentCompletions: snapshot.projects.reduce((sum, project) => sum + project.recentCompletions.length, 0)
     }
     const listeners = new Set<(next: ProgressOverlaySnapshot) => void>()
     const modeListeners = new Set<(next: { compact: boolean }) => void>()
     const historyListeners = new Set<(next: { clearedAt: string | null }) => void>()
-    let compact = false
+    let compact = progressScenario === 'compact'
     let historyClearedAt: string | null = null
     window.synkoraProgressOverlay = {
-      getState: async () => ({ snapshot, compact, historyClearedAt }),
+      getState: async () => {
+        if (progressScenario === 'unavailable') throw new Error('Synthetic unavailable preview')
+        const initial = { snapshot, compact, historyClearedAt }
+        if (progressScenario === 'late') {
+          window.setTimeout(() => {
+            snapshot = { ...snapshot, revision: 2, projects: [{ ...snapshot.projects[0], name: 'Atualização recebida primeiro' }] }
+            for (const listener of listeners) listener(snapshot)
+            for (const listener of modeListeners) listener({ compact: true })
+          }, 20)
+          await new Promise((resolve) => window.setTimeout(resolve, 500))
+        }
+        return initial
+      },
       resize: () => undefined,
-      command: (command) => {
+      command: (command, target) => {
+        window.dispatchEvent(new CustomEvent('synkora-progress-command', { detail: { command, target } }))
         if (command === 'compact' || command === 'expand') {
           compact = command === 'compact'
           for (const listener of modeListeners) listener({ compact })
-          return
         }
         if (command === 'clear-history') {
           historyClearedAt = snapshot.generatedAt
           for (const listener of historyListeners) listener({ clearedAt: historyClearedAt })
         }
       },
-      onSnapshot: (listener) => {
-        listeners.add(listener)
-        return () => listeners.delete(listener)
-      },
-      onMode: (listener) => {
-        modeListeners.add(listener)
-        return () => modeListeners.delete(listener)
-      },
-      onHistory: (listener) => {
-        historyListeners.add(listener)
-        return () => historyListeners.delete(listener)
-      }
+      onSnapshot: (listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+      onMode: (listener) => { modeListeners.add(listener); return () => { modeListeners.delete(listener) } },
+      onHistory: (listener) => { historyListeners.add(listener); return () => { historyListeners.delete(listener) } }
     }
     return
   }
@@ -1103,7 +985,10 @@ export function installDevMock(): void {
           projects: projects.length,
           activeProjects: 1,
           activeMissions: 2,
-          activeCoordinators: 1,
+          activeCoordinators: 0,
+          workingMissions: 1,
+          deliveryMissions: 0,
+          idleMissions: 0,
           attentionMissions: 1,
           attentionProjects: 0,
           recentCompletions: 0

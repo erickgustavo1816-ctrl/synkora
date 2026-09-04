@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { ProgressOverlaySnapshot } from '../main/progressSnapshot'
+import type { ProgressOpenTarget } from '../main/progressNavigation'
+export type { ProgressOpenTarget } from '../main/progressNavigation'
 import type {
   GuiDelegationDefaults,
   GuiDelegationDefaultsPatch,
@@ -141,6 +143,7 @@ export type {
 
 export type {
   MissionProgressState,
+  ProgressGroup,
   ProgressCoordinatorActivityKind,
   ProgressCoordinatorActivityInput,
   ProgressCoordinatorRole,
@@ -729,10 +732,6 @@ export interface ProgressOverlayState {
   historyClearedAt: string | null
 }
 
-export interface ProgressOpenTarget {
-  projectId: string
-  missionId?: string
-}
 
 // `MaestroPaneSpec` descrevia o pane TUI do PM/orquestrador. Morreu na purga
 // F6 (2026-08-17) com o palco legado.

@@ -257,10 +257,13 @@ export interface GuiQuestionOption {
 }
 
 export interface GuiQuestion {
+  /** Codex usa IDs estáveis; Claude responde pelo texto da pergunta. */
+  id?: string
   question: string
   header?: string
   multiSelect?: boolean
   options: GuiQuestionOption[]
+  allowCustom?: boolean
 }
 
 export const GUI_QUESTION_MAX_COUNT = 8
@@ -419,7 +422,7 @@ export type SessionEvent =
     }
   /** AskUserQuestion virou card de opções (2.0): a resposta volta por
    *  answerQuestion, no mesmo canal de control_response da permissão. */
-  | { type: 'question'; requestId: string; questions: GuiQuestion[] }
+  | { type: 'question'; requestId: string; questions: GuiQuestion[]; blocking?: boolean }
   /** ExitPlanMode (modo plano): o plano em markdown para o dono aprovar
    *  (answerPlanReview) — construir = allow, revisar = deny. */
   | { type: 'plan-review'; requestId: string; plan: string }

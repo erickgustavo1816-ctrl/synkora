@@ -47,6 +47,8 @@ import GuiSeatPick from './GuiSeatPick'
 import { projectLanding } from '../projectLanding'
 import { plansApi } from '../plansApi'
 import type { PlanView } from '../planContract'
+import type { ProgressOpenTarget } from '../../../preload/index'
+import { focusProgressDelivery, onProgressOpen, resolveBoardProgressTarget } from '../progressNavigation'
 // O convite de planejamento que nascia sozinho no ✦ geral MORREU (ordem do
 // dono, 2026-08-13 — "o universo começa vazio"). Planejar virou um TIPO de
 // missão que o dono cria, e o chat dela abre pelo `missions:guiSpec` como
@@ -181,6 +183,29 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   )
   const [missionMsg, setMissionMsg] = useState<string | null>(null)
   const [missionCopied, setMissionCopied] = useState(false)
+  const boardRef = useRef<HTMLDivElement>(null)
+  const [progressTarget, setProgressTarget] = useState<ProgressOpenTarget | null>(null)
+  const [progressDeliveryMission, setProgressDeliveryMission] = useState<string | null>(null)
+  useEffect(() => onProgressOpen(projectId, setProgressTarget), [projectId])
+  useEffect(() => {
+    if (!isActive || !progressTarget) return
+    const target = resolveBoardProgressTarget(progressTarget, missions, missionGuiSlots)
+    const { missionId, paneId } = target
+    setMissionTab(projectId, missionId)
+    if (missionId) {
+      setMissionTerm((prev) => ({ ...prev, [missionId]: null }))
+      if (paneId) setMissionGuiActive((prev) => ({ ...prev, [missionId]: paneId }))
+    }
+    setMissionMsg(target.unavailable
+      ? 'Esta conversa não está mais aberta neste painel. O resumo do projeto continua disponível.'
+      : null)
+    setProgressDeliveryMission(target.delivery ? target.missionId : null)
+    setProgressTarget(null)
+  }, [isActive, progressTarget, missions, missionGuiSlots, projectId, setMissionTab])
+  useEffect(() => {
+    if (!isActive || !progressDeliveryMission || missionTab !== progressDeliveryMission || !boardRef.current) return
+    return focusProgressDelivery(boardRef.current, () => setProgressDeliveryMission(null))
+  }, [isActive, progressDeliveryMission, missionTab])
   // Confirmação de exclusão NOSSA (window.confirm nativo do Electron quebra o
   // foco da janela no Windows — cliques morriam depois dele — e era feio).
   // Versões do app (chip ◈ na missão + tooltip das abas).
@@ -1056,7 +1081,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           (missões · CONVERSA · entrega) sem mexer no DOM: reordenar filhos
           remontaria os TerminalPane e mataria os PTYs.
           TODOS os panes ficam montados (display:none fora da aba). */}
-      <div className={`board-main${stageMode ? ' stage-mode' : ''}`}>
+      <div ref={boardRef} className={`board-main${stageMode ? ' stage-mode' : ''}`}>
       {/* O VÉU DO "INTEGRANDO" MORREU (rodada 9, 2026-08-19). Ele cobria o
           board inteiro enquanto o Git trabalhava — e na era em que o AGENTE é
           o integrador isso é exatamente o contrário do que o dono pediu: ele

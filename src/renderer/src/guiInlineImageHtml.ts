@@ -45,13 +45,11 @@ export const GUI_INLINE_IMAGE_CLASS = 'gui-md-image'
 /** Onde a referência do agente descansa enquanto o main não a resolve. */
 export const GUI_INLINE_IMAGE_ATTR = 'data-gui-image'
 
-/** O invólucro do gesto. A imagem do fio ABRE COISA (o menu "onde abrir"), e no
+/** O invólucro do gesto. A imagem do fio abre uma prévia, e no
  *  padrão da casa quem abre coisa é `<button>` de verdade — como o token de
  *  arquivo (`gui-file-link`), que também nasce depois da sanitização. Assim
- *  Enter e espaço ativam NATIVAMENTE: nenhum `preventDefault` no GuiMarkdown
- *  (a guarda antiga do arquivo proíbe, para o clique de link jamais ser
- *  sequestrado) e nenhuma mentira de ARIA (role=button que não responde ao
- *  teclado). */
+ *  Enter e espaço ativam nativamente. Só o clique de uma imagem é consumido
+ *  pelo viewer; links normais continuam usando a navegação existente. */
 export const GUI_INLINE_IMAGE_OPEN_CLASS = 'gui-md-image-open'
 
 /** A referência repetida no invólucro: é ele quem recebe o gesto. */
@@ -121,17 +119,11 @@ export function escapeGuiAttributeValue(value: string): string {
     .replace(/"/gu, '&quot;')
 }
 
-/** O que o browser JÁ consegue pintar sob o CSP do renderer (`data:`) ou o que
- *  simplesmente não é arquivo do worktree e portanto não é assunto do canal do
- *  main (`https:`). Os dois passam INTOCADOS.
- *
- *  LIMITE CONHECIDO E HERDADO: o CSP atual também não deixa `https:` pintar —
- *  mas isso é exatamente o que já acontecia antes desta rodada, e mandar uma
- *  URL remota para um canal que resolve ARQUIVO dentro do cwd do pane só
- *  produziria uma recusa confusa. Fica como está, de propósito. */
+/** Só bitmap embutido pode dispensar o resolver local. Mesmo esses bytes
+ * passam pelo cartão e pelo limite; SVG e URLs remotas nunca ganham src. */
 export function isGuiInlineImagePassthrough(src: string): boolean {
   const value = src.trim()
-  return /^data:/iu.test(value) || /^https:\/\//iu.test(value)
+  return value.length <= 5_600_000 && /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/iu.test(value)
 }
 
 interface ParsedAttribute {
@@ -237,22 +229,26 @@ function renderImgTag(attributes: readonly string[]): string {
   return attributes.length ? `<img ${attributes.join(' ')}>` : '<img>'
 }
 
-/** A reescrita de UMA tag `<img>`. Devolve a fatia original quando não há nada
- *  a fazer — é o que mantém intocado tudo o que não é imagem local. */
+/** Toda imagem vira cartão; placeholders já processados ficam intactos. */
 function rewriteImgTag(source: string, tag: ParsedTag): string {
   const src = tag.attrs.find((attr) => attr.name === 'src')
-  if (!src) return source
+  if (!src) {
+    // Placeholders already rewritten have no src; do not nest another card.
+    if (tag.attrs.some((attr) => attr.name === GUI_INLINE_IMAGE_ATTR)) return source
+    return '<span class="gui-md-image-fail">Imagem indisponível — peça uma imagem com caminho local.</span>'
+  }
 
   const reference = decodeGuiAttributeValue(src.value).trim()
   const kept = tag.attrs.filter((attr) => !RESERVED_IMAGE_ATTRS.has(attr.name))
 
   // `src=""` não tem referência para hidratar E resolveria para a própria
-  // página: some o atributo, some a requisição, e o resto da tag fica de pé.
-  if (!reference) return renderImgTag(kept.map((attr) => attr.source))
-
-  if (isGuiInlineImagePassthrough(reference)) return source
+  // página: vira recusa compacta e não dispara requisição alguma.
+  if (!reference) return '<span class="gui-md-image-fail">Imagem indisponível — peça uma imagem com caminho local.</span>'
 
   const escaped = escapeGuiAttributeValue(reference)
+  const alt = decodeGuiAttributeValue(tag.attrs.find((attr) => attr.name === 'alt')?.value ?? '').trim()
+  const name = alt || (/^(?:data:|https?:)/iu.test(reference) ? 'Imagem' : reference.split(/[\\/]/u).pop()) || 'Imagem'
+  const caption = escapeGuiAttributeValue(name)
   const image = renderImgTag([
     `class="${GUI_INLINE_IMAGE_CLASS}"`,
     `${GUI_INLINE_IMAGE_ATTR}="${escaped}"`,
@@ -263,7 +259,10 @@ function rewriteImgTag(source: string, tag: ParsedTag): string {
   return (
     `<button type="button" class="${GUI_INLINE_IMAGE_OPEN_CLASS}" ` +
     `${GUI_INLINE_IMAGE_OPEN_ATTR}="${escaped}" ` +
-    `title="${escaped} · onde abrir" aria-haspopup="menu">${image}</button>`
+    `title="Ver imagem: ${caption}" aria-label="Ver imagem: ${caption}" aria-haspopup="dialog" aria-busy="true">` +
+    `${image}<span class="gui-md-image-copy"><span class="gui-md-image-caption">${caption}</span>` +
+    '<span class="gui-md-image-action">Ver imagem</span>' +
+    '<span class="gui-md-image-loading">Carregando imagem…</span></span></button>'
   )
 }
 
@@ -322,6 +321,25 @@ export type GuiInlineImageState =
   | { status: 'ready'; dataUrl: string }
   | { status: 'refused'; error: string }
 
+/** Caminhos locais continuam resolvidos exclusivamente pelo main. Nenhum
+ * esquema novo ganha capacidade de ler arquivo/rede por abrir a prévia. */
+export function guiInlineImageState(
+  reference: string,
+  cache: ReadonlyMap<string, GuiInlineImageState>
+): GuiInlineImageState | undefined {
+  const cached = cache.get(reference)
+  if (cached?.status === 'refused') return cached
+  if (isGuiInlineImagePassthrough(reference)) return { status: 'ready', dataUrl: reference }
+  if (/^(?:data:|https?:|\/\/)/iu.test(reference)) {
+    return { status: 'refused', error: 'Peça ao agente uma imagem PNG, JPEG, GIF ou WebP salva na pasta desta conversa.' }
+  }
+  const state = cached
+  if (state?.status === 'ready' && !isGuiInlineImagePassthrough(state.dataUrl)) {
+    return { status: 'refused', error: 'Formato de imagem indisponível. Peça ao agente um bitmap válido.' }
+  }
+  return state
+}
+
 /** Recusa que NOMEIA o caminho e o erro — e deixa o caminho CLICÁVEL: o botão
  *  é o mesmo `gui-file-link` dos tokens do fio, então a delegação que já vive
  *  no wrapper do GuiMarkdown dá clique (ler aqui) e botão direito (onde abrir)
@@ -335,6 +353,11 @@ export function buildGuiInlineImageFailure(
   line.className = GUI_INLINE_IMAGE_FAIL_CLASS
   line.append('não deu para mostrar ')
 
+  if (/^(?:data:|https?:|\/\/)/iu.test(reference)) {
+    line.append(`a imagem — ${error}`)
+    return line
+  }
+
   const token = doc.createElement('button')
   token.type = 'button'
   token.className = 'gui-file-link'
@@ -342,7 +365,7 @@ export function buildGuiInlineImageFailure(
   token.title = `Abrir ${reference} no Synkora · botão direito: onde abrir`
   token.setAttribute('aria-label', `Abrir arquivo ${reference}`)
   token.setAttribute('aria-haspopup', 'menu')
-  token.textContent = reference
+  token.textContent = reference.split(/[\\/]/u).pop() || 'imagem'
   line.append(token)
 
   line.append(` — ${error}`)
@@ -368,7 +391,7 @@ export function hydrateGuiInlineImages(
   for (const node of Array.from(container.querySelectorAll(`img[${GUI_INLINE_IMAGE_ATTR}]`))) {
     const reference = node.getAttribute(GUI_INLINE_IMAGE_ATTR)
     if (!reference) continue
-    const state = cache.get(reference)
+    const state = guiInlineImageState(reference, cache)
     if (!state) {
       if (!seen.has(reference)) {
         seen.add(reference)
@@ -381,6 +404,9 @@ export function hydrateGuiInlineImages(
       // dos BYTES). Aqui ele só chega ao atributo que o CSP aceita.
       if (node.getAttribute('src') !== state.dataUrl) node.setAttribute('src', state.dataUrl)
       node.setAttribute(GUI_INLINE_IMAGE_STATE_ATTR, 'ready')
+      const frame = node.closest(`button[${GUI_INLINE_IMAGE_OPEN_ATTR}]`)
+      frame?.setAttribute('aria-busy', 'false')
+      frame?.querySelector('.gui-md-image-loading')?.remove()
       continue
     }
     // Recusa: some o gesto INTEIRO (o invólucro junto), senão sobraria um botão

@@ -322,6 +322,7 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
   const trackedVisibilitySenders = new Set<number>()
 
   const registry = new GuiSessionRegistry({
+    onProgressChange: ctx.scheduleProgressSnapshot,
     // pushAll: a view monta o pane e o host espelha o status (§Push do contrato).
     push: (payload) => ctx.pushAll('gui:live', payload),
     systemPromptFile: extras.systemPromptFile,
@@ -601,9 +602,8 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     }
   )
 
-  // PERGUNTA COM OPÇÕES (AskUserQuestion): as escolhas do card viajam no
-  // updatedInput do MESMO control_response da permissão — quem monta o payload
-  // é o maestroSession; aqui só se valida a forma que veio do renderer.
+  // Perguntas dos dois CLIs: cada motor monta seu protocolo de resposta.
+  // Aqui se valida a forma que veio do renderer.
   ipcMain.handle(
     'gui:answerQuestion',
     (e, paneId: string, requestId: string, answers: Record<string, string>): GuiResult => {
@@ -611,7 +611,7 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
       if (!requestId) return { ok: false, error: 'pergunta sem identificador' }
       if (!answers || typeof answers !== 'object' || Array.isArray(answers))
         return { ok: false, error: 'resposta em formato inválido' }
-      const clean: Record<string, string> = {}
+      const clean: Record<string, string> = Object.create(null)
       let count = 0
       for (const question in answers) {
         if (!Object.prototype.hasOwnProperty.call(answers, question)) continue

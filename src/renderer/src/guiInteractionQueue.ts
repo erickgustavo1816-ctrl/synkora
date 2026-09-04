@@ -34,6 +34,7 @@ export function settleGuiInteractionFailure<T extends GuiInteractionIdentity>(
 /** A fila mistura duas naturezas, e o tipo é a única coisa que as separa. */
 export interface GuiInteractionNature {
   kind: string
+  blocking?: boolean
 }
 
 /**
@@ -66,5 +67,7 @@ export function retainGuiInteractionsAfterTurnEnd<T extends GuiInteractionNature
 export function guiInteractionBlocksTurn<T extends GuiInteractionNature>(
   queue: readonly T[]
 ): boolean {
-  return queue.some((item) => !guiInteractionSurvivesTurnEnd(item.kind))
+  return queue.some((item) =>
+    !(item.kind === 'question' && item.blocking === false) && !guiInteractionSurvivesTurnEnd(item.kind)
+  )
 }

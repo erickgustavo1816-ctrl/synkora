@@ -5,6 +5,7 @@ import { guiApi, type GuiFileOpenResult } from '../guiApi'
 import { applyGuiStableMarkdown } from '../guiStableMarkdownPatch'
 import {
   GUI_INLINE_IMAGE_OPEN_ATTR,
+  GUI_INLINE_IMAGE_ATTR,
   hydrateGuiInlineImages,
   rewriteGuiInlineImages,
   type GuiInlineImageState
@@ -18,6 +19,7 @@ import {
 } from '../guiFileContextMenu'
 import GuiFileContextMenu, { useFileContextMenu } from './GuiFileContextMenu'
 import GuiFileOpenPanel from './GuiFileOpenPanel'
+import { useGuiInlineImagePreview } from './GuiInlineImagePreview'
 
 const GUI_MARKDOWN_TAGS = [
   'a', 'blockquote', 'br', 'code', 'del', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
@@ -204,29 +206,35 @@ export default function GuiMarkdown({
   const imageInFlightRef = useRef<Set<string>>(new Set())
   const imagePendingRef = useRef<string[]>([])
   const imageEpochRef = useRef(0)
+  const imagePaneRef = useRef(paneId)
+  const { open: openImagePreview, close: closeImagePreview, refresh: refreshImagePreview, preview: imagePreview } =
+    useGuiInlineImagePreview(contentRef, imageCacheRef)
 
   const paintInlineImages = useCallback((): void => {
     const container = contentRef.current
     if (!container) return
     imagePendingRef.current = hydrateGuiInlineImages(container, imageCacheRef.current)
-  }, [])
+    refreshImagePreview()
+  }, [refreshImagePreview])
 
   useLayoutEffect(() => {
     const container = contentRef.current
     if (!container) return
+    // Same relative name in another pane belongs to another cwd. Invalidate
+    // before painting, and ensure a request from the old pane stays inert.
+    if (imagePaneRef.current !== paneId) {
+      imagePaneRef.current = paneId
+      imageEpochRef.current += 1
+      imageCacheRef.current.clear()
+      imageInFlightRef.current.clear()
+      closeImagePreview(false)
+      container.replaceChildren()
+    }
     applyGuiStableMarkdown(container, html)
     // No MESMO efeito de layout, antes do quadro: o que o cache já sabe volta
     // pintado junto com o patch.
     paintInlineImages()
-  }, [html, paintInlineImages])
-
-  useEffect(() => {
-    // Pane outro = cwd outro: a MESMA referência relativa aponta para outro
-    // arquivo. O cache de imagens não pode atravessar essa troca.
-    imageEpochRef.current += 1
-    imageCacheRef.current.clear()
-    imageInFlightRef.current.clear()
-  }, [paneId])
+  }, [html, paneId, paintInlineImages, closeImagePreview])
 
   useEffect(() => {
     const pending = imagePendingRef.current
@@ -236,8 +244,8 @@ export default function GuiMarkdown({
       if (imageInFlightRef.current.has(reference)) continue
       imageInFlightRef.current.add(reference)
       void guiApi.fileImageData(paneId, reference).then((result) => {
-        imageInFlightRef.current.delete(reference)
         if (epoch !== imageEpochRef.current) return
+        imageInFlightRef.current.delete(reference)
         imageCacheRef.current.set(
           reference,
           result.ok
@@ -357,10 +365,8 @@ export default function GuiMarkdown({
   // direito (e a tecla de menu) abre as outras duas saídas do dono — programa
   // padrão do sistema e mostrar na pasta —, que atravessam o canal do PANE.
   //
-  // R36: a IMAGEM entrou nesta mesma delegação, com uma diferença deliberada —
-  // nela o clique ESQUERDO já abre o "onde abrir". Ler a imagem "aqui" seria
-  // redundante (ela já está na tela), e o que o dono quer ao clicar numa
-  // demonstração é levá-la para fora (visualizador do sistema ou pasta).
+  // Images use the left click to enlarge in a portal; right click keeps the
+  // existing authorized file actions, and never opens a tab automatically.
   const menuAnchorRef = useRef<HTMLButtonElement | null>(null)
 
   const openFromMenu = useCallback((menuTarget: FileContextTarget): void => {
@@ -389,12 +395,7 @@ export default function GuiMarkdown({
   const handleLinkOpenAttempt = useCallback((event: React.MouseEvent<HTMLDivElement>): void => {
     const image = inlineImageFrom(event, event.target)
     if (image) {
-      const reference = image.getAttribute(GUI_INLINE_IMAGE_OPEN_ATTR)
-      if (!reference) return
-      menuAnchorRef.current = image
-      // Enter/espaço no invólucro sintetizam ESTE mesmo clique; quem segura o
-      // evento é o `openFromPointer` do controlador, não esta folha.
-      openFromPointer(event, chatTarget(reference), image)
+      openImagePreview(image, event)
       return
     }
 
@@ -414,13 +415,13 @@ export default function GuiMarkdown({
     // Enter sintetiza o mesmo click nativo; não há atalho paralelo que possa
     // atrasar ou duplicar a abertura do destino externo.
     beginLinkOpenFeedback(link)
-  }, [beginLinkOpenFeedback, chatTarget, openFromPointer, readFileHere])
+  }, [beginLinkOpenFeedback, openImagePreview, readFileHere])
 
   const handleTokenContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>): void => {
     const image = inlineImageFrom(event, event.target)
     if (image) {
       const reference = image.getAttribute(GUI_INLINE_IMAGE_OPEN_ATTR)
-      if (!reference) return
+      if (!reference || /^(?:data:|https?:|\/\/)/iu.test(reference)) return
       menuAnchorRef.current = image
       openFromPointer(event, chatTarget(reference), image)
       return
@@ -438,7 +439,7 @@ export default function GuiMarkdown({
     const image = inlineImageFrom(event, event.target)
     if (image) {
       const reference = image.getAttribute(GUI_INLINE_IMAGE_OPEN_ATTR)
-      if (!reference) return
+      if (!reference || /^(?:data:|https?:|\/\/)/iu.test(reference)) return
       menuAnchorRef.current = image
       // Enter/espaço já viram clique nativo no invólucro; aqui só falta a tecla
       // de menu (e Shift+F10), exatamente como no token de arquivo.
@@ -460,12 +461,24 @@ export default function GuiMarkdown({
       onClickCapture={handleLinkOpenAttempt}
       onContextMenu={handleTokenContextMenu}
       onKeyDown={handleTokenMenuKey}
+      onErrorCapture={(event) => {
+        const node = event.target
+        if (!(node instanceof HTMLImageElement)) return
+        const reference = node.getAttribute(GUI_INLINE_IMAGE_ATTR)
+        if (!reference || !contentRef.current?.contains(node)) return
+        imageCacheRef.current.set(reference, {
+          status: 'refused',
+          error: 'Não foi possível abrir esta imagem. Peça ao agente uma nova imagem.'
+        })
+        paintInlineImages()
+      }}
     >
       {/* Conteúdo JÁ sanitizado acima — é o único caminho de HTML do chat; o
           efeito de layout aplica o mesmo html por patch de prefixo estável.
           A delegação de clique/menu vive no wrapper acima e por isso
           SOBREVIVE à troca dos filhos. */}
       <div className="gui-md-content" ref={contentRef} />
+      {imagePreview}
       <span className="gui-link-opening-status" role="status" aria-live="polite" aria-atomic="true">
         {openingLinkLabel ?? fileOpeningLabel}
       </span>

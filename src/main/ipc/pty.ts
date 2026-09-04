@@ -34,10 +34,6 @@ export interface PtyIpcExtras {
   engine: PaneLifecycleEngine
   /** Escopo de módulo do index — perfil de skills isolado do codex. */
   paneCodexSkillProfiles: Map<string, string>
-  /** Overlay de ANDAMENTO (escopo de módulo do index). */
-  scheduleProgressLiveSnapshot(paneId: string): void
-  refreshProgressLiveSnapshot(): unknown
-  progressLiveIdleTimers: Map<string, NodeJS.Timeout>
   /** missionEngine — gate de integração fechado sem veredito. */
   emitMissionsChanged(projectId: string): void
   /** phaseEngine — breaker de crash-loop de gate. */
@@ -61,9 +57,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
   } = ctx
   const {
     engine,
-    scheduleProgressLiveSnapshot,
-    refreshProgressLiveSnapshot,
-    progressLiveIdleTimers,
   } = extras
   const {
     livePaneSpecs,
@@ -222,9 +215,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
       onCtxWindow: (tokens) => sessionStats.setWindowHint(req.id, tokens),
       onOutput: () => {
         ctx.paneStartupMetrics?.observeOutput(req.id)
-        if (hub.identityByPane(req.id)?.role === 'maestro') {
-          scheduleProgressLiveSnapshot(req.id)
-        }
       },
       onSubmit: () => ctx.paneStartupMetrics?.markFirstMessage(req.id),
       onSecurityDecision: (decision) => {
@@ -362,12 +352,6 @@ export function registerPtyIpc(ctx: MainContext, extras: PtyIpcExtras): void {
         paneTokens.delete(req.id)
         cleanPaneMcpFile(req.id)
         if (!identity) return
-        if (identity.role === 'maestro') {
-          const idleTimer = progressLiveIdleTimers.get(req.id)
-          if (idleTimer) clearTimeout(idleTimer)
-          progressLiveIdleTimers.delete(req.id)
-          refreshProgressLiveSnapshot()
-        }
         // pushAll substitui o fallback `ctx.uiSender ?? sender` (F3-c0): a
         // lista de panes vive nas DUAS views e o exit precisa limpar ambas.
         ctx.pushAll('panes:closeById', identity.projectId, req.id)

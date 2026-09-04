@@ -1,56 +1,41 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ProgressOverlaySnapshot } from '../../../preload/index'
+import { createProgressRevisionGate, EMPTY_PROGRESS_TOTALS } from '../progressPresentation'
 import ProgressPanelIcon from './ProgressPanelIcon'
 
-const EMPTY_TOTALS: ProgressOverlaySnapshot['totals'] = {
-  projects: 0,
-  activeProjects: 0,
-  activeMissions: 0,
-  activeCoordinators: 0,
-  attentionMissions: 0,
-  attentionProjects: 0,
-  recentCompletions: 0
-}
-
 export default function ProgressRadarButton(): React.JSX.Element {
-  const [totals, setTotals] = useState(EMPTY_TOTALS)
-  const acceptedRevision = useRef(0)
-
+  const [totals, setTotals] = useState(EMPTY_PROGRESS_TOTALS)
+  const [unavailable, setUnavailable] = useState(false)
   useEffect(() => {
+    let disposed = false
+    let received = false
     const progress = window.synkora.progress
+    const acceptsRevision = createProgressRevisionGate()
     const accept = (snapshot: ProgressOverlaySnapshot): void => {
-      if (snapshot.revision < acceptedRevision.current) return
-      acceptedRevision.current = snapshot.revision
+      if (disposed || !acceptsRevision(snapshot)) return
+      received = true
       setTotals(snapshot.totals)
+      setUnavailable(false)
     }
     const off = progress.onSnapshot(accept)
-    void progress.getSnapshot().then(accept)
-    return off
+    void progress.getSnapshot().then(accept).catch(() => { if (!disposed && !received) setUnavailable(true) })
+    return () => { disposed = true; off() }
   }, [])
 
-  const attentionCount = totals.attentionMissions + totals.attentionProjects
-  const liveCount = totals.activeCoordinators
-  const count = attentionCount || liveCount || totals.activeMissions || totals.activeProjects
-  const attention = attentionCount > 0
-  const details: string[] = []
-  if (totals.attentionMissions > 0) details.push(`${totals.attentionMissions} missão(ões) precisam de atenção`)
-  if (totals.attentionProjects > 0) details.push(`${totals.attentionProjects} projeto(s) precisam de atenção`)
-  if (totals.activeCoordinators > 0) details.push(`${totals.activeCoordinators} agente(s) de coordenação trabalhando`)
-  if (details.length === 0 && totals.activeMissions > 0) {
-    details.push(`${totals.activeMissions} missão(ões) sendo acompanhadas`)
-  }
-  const tip = details.length > 0
-    ? `${details.join(' · ')}. Abrir painel de andamento.`
-    : 'Abrir painel de andamento dos projetos e missões'
-
+  // Projects may contain the same attention missions. Never add both counters.
+  const attention = totals.attentionMissions > 0 || totals.attentionProjects > 0
+  const count = totals.attentionMissions || totals.workingMissions || totals.activeMissions
+  const detail = [
+    `${totals.attentionMissions} missões precisam de atenção`,
+    `${totals.workingMissions} trabalhando`,
+    `${totals.deliveryMissions} em entrega`,
+    `${totals.idleMissions} paradas`
+  ].join(' · ')
+  const tip = unavailable ? 'Andamento indisponível. Abrir painel para tentar novamente.'
+    : `${detail}${totals.attentionProjects > 0 ? ' · Há projeto(s) que precisam de atenção' : ''}. Abrir painel de andamento.`
   return (
-    <button
-      type="button"
-      className={`tb-btn progress-radar-trigger${attention ? ' attention' : ''}`}
-      data-tip={tip}
-      aria-label={tip}
-      onClick={() => void window.synkora.progress.openOverlay()}
-    >
+    <button type="button" className={`tb-btn progress-radar-trigger${attention ? ' attention' : ''}`}
+      data-tip={tip} aria-label={tip} onClick={() => void window.synkora.progress.openOverlay()}>
       <ProgressPanelIcon className="progress-radar-icon" />
       {count > 0 && <b aria-hidden="true">{count > 9 ? '9+' : count}</b>}
     </button>

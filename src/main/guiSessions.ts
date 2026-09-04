@@ -23,6 +23,7 @@
 import { randomUUID } from 'node:crypto'
 import { CodexSession } from './codexSession'
 import { MaestroSession, type SessionEvent } from './maestroSession'
+import { GuiProgressTracker, type GuiProgressInput, type GuiProgressHelpers } from './guiProgress'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
 import { limitGuiToolInput } from './guiToolInput'
 import { GuiAlertSequencer, type GuiNoticeKind } from './guiNotices'
@@ -479,9 +480,11 @@ function guiPersistedQuestions(value: unknown): boolean {
       typeof item['question'] !== 'string' ||
       !item['question'].trim() ||
       !guiOptionalString(item['header']) ||
+      (item['id'] !== undefined && (typeof item['id'] !== 'string' || !item['id'] || item['id'].length > 256)) ||
+      (item['allowCustom'] !== undefined && typeof item['allowCustom'] !== 'boolean') ||
       (item['multiSelect'] !== undefined && typeof item['multiSelect'] !== 'boolean') ||
       !Array.isArray(item['options']) ||
-      item['options'].length === 0 ||
+      (item['options'].length === 0 && item['allowCustom'] !== true) ||
       item['options'].length > 12
     )
       return false
@@ -625,7 +628,8 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
     case 'interaction-resolved':
       return guiRequestId(event['requestId']) && guiPersistedResolution(event['resolution'])
     case 'question':
-      return guiRequestId(event['requestId']) && guiPersistedQuestions(event['questions'])
+      return guiRequestId(event['requestId']) && guiPersistedQuestions(event['questions']) &&
+        (event['blocking'] === undefined || typeof event['blocking'] === 'boolean')
     case 'plan-review':
       return (
         guiRequestId(event['requestId']) &&
@@ -1398,6 +1402,8 @@ function rememberedGuiMessageIds(
 }
 
 export interface GuiSessionDeps {
+  /** Structural progress changed; carries no conversation content. */
+  onProgressChange?(): void
   /** Empurra o evento vivo ao renderer (ctx.pushAll no canal `gui:live`). */
   push(payload: GuiLivePayload): void
   /** Materializa a persona do claude em arquivo; undefined = falhou. */
@@ -1504,6 +1510,8 @@ export interface GuiSessionDeps {
  * conhece o motor, e a suíte injeta um duplo de três linhas.
  */
 export interface GuiSessionHelperControls {
+  /** Pure counts only; unavailable on older doubles, so metadata stays absent. */
+  progressCounts?(paneId: string): GuiProgressHelpers
   /** Parada PRESERVADORA da frota do pane (nunca descarte). Devolve quantos. */
   interruptPane(paneId: string, reason?: string): number
   /** Fotografia dos ajudantes do pane — é dela que sai a lista de parados. */
@@ -1540,6 +1548,18 @@ export const GUI_HELPER_OWNER_INTERRUPTION =
 const READY_TIMEOUT_MS = 45_000
 
 export class GuiSessionRegistry {
+  private readonly progressTracker = new GuiProgressTracker()
+
+  progress(): GuiProgressInput[] {
+    return this.progressTracker.snapshot().map((pane) => {
+      if (!this.helpers?.progressCounts) return pane
+      return { ...pane, helpers: this.helpers.progressCounts(pane.paneId) }
+    })
+  }
+
+  private notifyProgressChange(): void {
+    try { this.deps.onProgressChange?.() } catch { /* Progress cannot interrupt a conversation. */ }
+  }
   private readonly deps: GuiSessionDeps
   private readonly panes = new Map<string, GuiPaneEntry>()
   /** Cursor salvo por INSTÂNCIA do anel. O cursor persistido não serve para
@@ -1838,6 +1858,8 @@ export class GuiSessionRegistry {
     }
 
     const ring = replayRing ?? new GuiEventRing()
+    this.progressTracker.open(spawn, replayRing?.snapshot())
+    this.notifyProgressChange()
     // Vale já DURANTE o construtor da sessão (um 'fatal' síncrono é captado
     // antes de a entrada existir no Map).
     const token = { alive: true }
@@ -1862,6 +1884,7 @@ export class GuiSessionRegistry {
       // MESMO degrau que o claude usa para as tarefas de fundo dele — sem ele o
       // fim de turno cancelaria no renderer os cards de quem ainda trabalha).
       const evt = this.helperCards.observe(spawn.paneId, raw)
+      if (this.progressTracker.observe(spawn.paneId, evt)) this.notifyProgressChange()
       if (replayRing && evt.type === 'ready') replaySawReady = true
       // R25.1 — O ODÔMETRO ANDA AQUI, no caminho por onde TUDO passa: a parcela
       // da chamada é somada, persistida e trocada pelo TOTAL antes de o evento
@@ -2090,6 +2113,8 @@ export class GuiSessionRegistry {
       session = this.spawnSession(armedSpawn, sink)
     } catch (error) {
       token.alive = false
+      this.progressTracker.observe(spawn.paneId, { type: 'fatal', text: '' })
+      this.notifyProgressChange()
       const text = error instanceof Error ? error.message : String(error)
       this.deps.record?.(
         'gui-session-spawn-failed',
@@ -2385,20 +2410,23 @@ export class GuiSessionRegistry {
    * campo "outra resposta" por este mesmo caminho (`GuiQuestionCard` →
    * `answerQuestion` → `updatedInput.answers`), e as transcrições dos seats têm
    * 15 pares em que a resposta não é `label` nenhum e o CLI devolve, sem erro,
-   * "The user answered: … follow what they actually say". O codex não tem a
-   * tool; se um dia tiver, ele cai no ramo de baixo e a fala espera no pote.
+   * "The user answered: … follow what they actually say". No Codex, o ID
+   * estável identifica a pergunta; texto livre respeita a opção do pedido.
    *
    * A PROPOSTA DE PLANO fica de fora de propósito: ela não bloqueia o CLI (a
    * tool responde na hora e o turno fecha), então um turno aberto com proposta
    * pendurada continua sendo turno aberto — e turno aberto se PARA.
    */
   private pendingInteractionOf(entry: GuiPaneEntry): GuiOwnerPendingInteraction | null {
-    if (entry.session instanceof MaestroSession) {
+    if (entry.session instanceof MaestroSession || entry.session instanceof CodexSession) {
       for (const requestId of entry.ring.pendingIdsOfType('question')) {
         const record = guiEventRecord(entry.ring.pending(requestId))
+        // Pergunta opcional tem cartão próprio; não retém orientações do composer.
+        if (record?.['blocking'] === false) continue
         const questions = record?.['questions']
         const first = Array.isArray(questions) ? guiEventRecord(questions[0]) : null
-        const question = typeof first?.['question'] === 'string' ? first['question'] : undefined
+        const key = first?.['id'] ?? first?.['question']
+        const question = first?.['allowCustom'] !== false && typeof key === 'string' ? key : undefined
         return { kind: 'question', requestId, ...(question ? { question } : {}) }
       }
     }
@@ -2687,8 +2715,7 @@ export class GuiSessionRegistry {
     } else if (this.demoteSteeredCopy(paneId, messageId)) {
       // D4'.b — o corte apagou o steer neste motor: a cópia deixa de ser cinto
       // e vira a ENTREGA do turno novo, com o envelope completo. A marca de
-      // "forçada" é o que faz a bolha fechar em `read` (foi ele quem mandou
-      // parar para ler), e não no `delivered` do correio comum.
+      // "forçada" acompanha a entrega; o gesto em si não comprova leitura.
       this.ownerSteer.noteForced(paneId, messageId)
     }
     this.deps.record?.(
@@ -2778,15 +2805,11 @@ export class GuiSessionRegistry {
       paneId,
       entries.map((mail) => mail.messageId)
     )
-    // R39.1 D4' — a fala que o dono FORÇOU fecha em `read`: ele mandou parar
-    // para que ela fosse lida, e é isso que a bolha tem de contar. O correio
-    // comum continua carimbando `delivered`.
+    // Reenvio confirma entrega ao motor, não leitura. O carimbo `read`
+    // pertence ao recibo nativo em readOwnerSteer, nunca ao gesto de forçar.
     for (const mail of entries) {
-      this.publishOwnerState(
-        paneId,
-        mail.messageId,
-        this.ownerSteer.takeForced(paneId, mail.messageId) ? 'read' : 'delivered'
-      )
+      this.ownerSteer.takeForced(paneId, mail.messageId)
+      this.publishOwnerState(paneId, mail.messageId, 'delivered')
     }
     const oldest = entries.reduce((first, mail) => Math.min(first, mail.at), Date.now())
     this.deps.record?.(
@@ -3139,13 +3162,12 @@ export class GuiSessionRegistry {
     return { ok: true }
   }
 
-  /** Resposta do card de AskUserQuestion (claude apenas — o codex não tem a
-   *  tool, e a recusa diz isso em vez de fingir). */
+  /** O mesmo cartão responde a AskUserQuestion e ao request_user_input. */
   answerQuestion(paneId: string, requestId: string, answers: Record<string, string>): GuiResult {
     const entry = this.panes.get(paneId)
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
-    if (!(entry.session instanceof MaestroSession))
-      return { ok: false, error: 'este CLI não tem perguntas interativas' }
+    const pending = guiEventRecord(entry.ring.pending(requestId))
+    const questions = Array.isArray(pending?.['questions']) ? pending['questions'] : []
     if (!entry.session.answerQuestion(requestId, answers)) {
       entry.sink({ type: 'interaction-resolved', requestId, resolution: { kind: 'stale' } })
       return { ok: false, error: 'esta pergunta não está mais pendente' }
@@ -3157,10 +3179,11 @@ export class GuiSessionRegistry {
         kind: 'question',
         entries: Object.entries(answers)
           .slice(0, 8)
-          .map(([question, answer]) => ({
-            question: question.slice(0, 2_000),
-            answer: answer.slice(0, 4_000)
-          }))
+          .map(([key, answer]) => {
+            const original = questions.map(guiEventRecord).find((q) => q?.['id'] === key)
+            const question = typeof original?.['question'] === 'string' ? original['question'] : key
+            return { question: question.slice(0, 2_000), answer: answer.slice(0, 4_000) }
+          })
       }
     })
     return { ok: true }
@@ -3301,6 +3324,7 @@ export class GuiSessionRegistry {
   /** O motor falou (nasceu / mexeu / voltou / encerrou): vira card no anel. */
   noteHelperChange(change: GuiHelperChange): void {
     this.helperCards.change(change)
+    this.notifyProgressChange()
   }
 
   /**
@@ -3318,6 +3342,7 @@ export class GuiSessionRegistry {
    */
   attachHelpers(controls: GuiSessionHelperControls): void {
     this.helpers = controls
+    this.notifyProgressChange()
   }
 
   /**
@@ -3602,6 +3627,7 @@ export class GuiSessionRegistry {
       return new CodexSession(
         {
           ...opts,
+          interactiveQuestions: true,
           resumeSessionId: threadId,
           // CERCA ANTI-SUBAGENTE-NATIVO por THREAD (D5/S2). Ela ACOMPANHA o
           // cinto que já viaja nos args: os dois lados da mesma cerca nascem e
@@ -3678,6 +3704,8 @@ export class GuiSessionRegistry {
     entry.flushPendingTerminal?.()
     this.saveTranscript(paneId, entry.ring)
     this.panes.delete(paneId)
+    this.progressTracker.forget(paneId)
+    this.notifyProgressChange()
     entry.token.alive = false
     // A correlação morre com a geração: o anel é a memória durável dos cards, e
     // um envelope da conversa anterior nunca pode parear um lote da próxima.

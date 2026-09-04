@@ -1,6 +1,7 @@
 /** `interrupted` (R6.1): parada PRESERVADORA de um ajudante — não terminou,
- *  não caiu, não foi jogado fora; dele se volta (helper_resume). */
-export type GuiToolOutcome = 'completed' | 'failed' | 'denied' | 'cancelled' | 'interrupted'
+ *  não caiu, não foi jogado fora; dele se volta (helper_resume).
+ *  `unconfirmed`: o turno encerrou sem recibo autoritativo da ferramenta. */
+export type GuiToolOutcome = 'completed' | 'failed' | 'denied' | 'cancelled' | 'interrupted' | 'unconfirmed'
 
 export interface GuiToolResultLike {
   text: string
@@ -38,6 +39,11 @@ export function guiToolOutcomeView(
       compactLabel: 'falhou',
       statusLabel: 'falhou'
     }
+  }
+  // Ausência de recibo não confirma nem sucesso nem falha da ferramenta.
+  // Erro factual acima prevalece sobre um marcador provisório inconsistente.
+  if (result.status === 'unconfirmed') {
+    return { tone: 'cancel', compactLabel: 'não confirmado', statusLabel: 'não confirmado' }
   }
   const passed = /(\d+)\s+(?:passed|passing|passaram)/iu.exec(result.text)
   if (passed) return { tone: 'ok', compactLabel: `✓ ${passed[1]} passed`, statusLabel: 'concluído' }

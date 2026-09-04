@@ -140,12 +140,11 @@ import { WindowsGlobalActivation } from './windowsGlobalActivation'
 import { PaneStartupMetrics } from './paneStartupMetrics'
 import {} from './projectFolder'
 import {
-  applyProgressCoordinatorActivity,
   buildProgressSnapshot,
   type ProgressCoordinatorActivityKind,
-  type ProgressCoordinatorActivityInput,
   type ProgressOverlaySnapshot
 } from './progressSnapshot'
+import type { ProgressOpenTarget } from './progressNavigation'
 import {
   PROGRESS_OVERLAY_COMPACT_HEIGHT,
   PROGRESS_OVERLAY_DEFAULT_HEIGHT,
@@ -169,10 +168,8 @@ import { loadJsonStore, persistJsonStore } from './jsonStore'
 import { Blackbox } from './blackbox'
 
 const ptys = new PtyManager()
-// Frases vivas dos agentes (tool status_note): paneId → nota curta. Morrem
-// com o pane (nota é "agora", não histórico); o consumidor é o radar de
-// andamento (pedido do usuário, 2026-08-06: "preciso saber exatamente o que
-// está acontecendo sem abrir o Synkora").
+// Notas do contrato legado status_note. Permanecem para os consumidores do
+// contexto antigo; não alimentam a projeção GUI do painel de andamento.
 const paneStatusNotes = new Map<string, { text: string; at: string }>()
 // Entrega única da conclusão: helper_output após report consome o resumo e o
 // aviso assíncrono deixa de ser injetado como uma segunda mensagem.
@@ -227,6 +224,7 @@ let seats: SeatStore
 // claude stream-json ou codex app-server, mesma interface de eventos).
 const maestroSessions = new Map<string, MaestroBackend>()
 type ProgressHeadlessActivityKind = Extract<ProgressCoordinatorActivityKind, 'conversation' | 'survey'>
+// Compatibility bookkeeping for legacy maestro IPC; never a GUI progress source.
 interface ProgressHeadlessActivity {
   token: number
   kind: ProgressHeadlessActivityKind
@@ -282,10 +280,7 @@ let synVoiceOverlayHistoryOffsetY = 0
 let progressOverlayMoveTimer: NodeJS.Timeout | null = null
 let progressOverlayBoundsFlush: (() => void) | null = null
 let progressSnapshotTimer: NodeJS.Timeout | null = null
-let progressLivePulseTimer: NodeJS.Timeout | null = null
-const progressLiveIdleTimers = new Map<string, NodeJS.Timeout>()
-
-const PROGRESS_COORDINATOR_ACTIVE_MS = 4_000
+let progressHeartbeatTimer: NodeJS.Timeout | null = null
 
 export interface ProgressOverlayPreferences {
   x: number
@@ -300,9 +295,8 @@ export interface ProgressOverlayPreferences {
 let progressOverlayPreferences: ProgressOverlayPreferences | null = null
 let progressSnapshotRevision = 0
 let mainProgressRendererReady = false
-let pendingProgressOpenTarget: { projectId: string; missionId?: string } | null = null
+let pendingProgressOpenTarget: ProgressOpenTarget | null = null
 let progressSnapshotSource: ((revision: number) => ProgressOverlaySnapshot) | null = null
-let progressCoordinatorActivitySource: (() => ProgressCoordinatorActivityInput[]) | null = null
 let latestProgressSnapshot = buildProgressSnapshot({
   projects: [],
   missions: [],
@@ -452,7 +446,6 @@ function beginProgressHeadlessActivity(
   const activities = progressHeadlessActivities.get(projectId) ?? new Map()
   activities.set(kind, { token, kind, startedAt: new Date().toISOString() })
   progressHeadlessActivities.set(projectId, activities)
-  if (progressCoordinatorActivitySource) refreshProgressLiveSnapshot()
   return token
 }
 
@@ -466,7 +459,6 @@ function endProgressHeadlessActivity(
   if (!activities || !current || (token !== undefined && current.token !== token)) return
   activities.delete(kind)
   if (activities.size === 0) progressHeadlessActivities.delete(projectId)
-  if (progressCoordinatorActivitySource) refreshProgressLiveSnapshot()
 }
 
 function beginProgressMaestroTurn(projectId: string, session: MaestroBackend): void {
@@ -483,11 +475,6 @@ function finishProgressMaestroTurn(
   progressMaestroTurnTokens.delete(session)
   if (token !== undefined) endProgressHeadlessActivity(projectId, 'conversation', token)
   else if (force) endProgressHeadlessActivity(projectId, 'conversation')
-}
-
-function currentProgressHeadlessActivity(projectId: string): ProgressHeadlessActivity | undefined {
-  const activities = progressHeadlessActivities.get(projectId)
-  return activities?.get('survey') ?? activities?.get('conversation')
 }
 
 
@@ -790,7 +777,7 @@ function showMainWindow(): void {
   mainWindow.focus()
 }
 
-function deliverProgressOpenTarget(target?: { projectId: string; missionId?: string }): void {
+function deliverProgressOpenTarget(target?: ProgressOpenTarget): void {
   if (target) pendingProgressOpenTarget = target
   if (
     !pendingProgressOpenTarget ||
@@ -1795,17 +1782,6 @@ function refreshProgressSnapshot(): ProgressOverlaySnapshot {
   return publishProgressSnapshot()
 }
 
-function refreshProgressLiveSnapshot(): ProgressOverlaySnapshot {
-  if (!progressCoordinatorActivitySource) return refreshProgressSnapshot()
-  progressSnapshotRevision += 1
-  latestProgressSnapshot = applyProgressCoordinatorActivity(
-    latestProgressSnapshot,
-    progressCoordinatorActivitySource(),
-    progressSnapshotRevision
-  )
-  return publishProgressSnapshot()
-}
-
 function publishProgressSnapshot(): ProgressOverlaySnapshot {
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
     mainWindow.webContents.send('progress:snapshot-changed', latestProgressSnapshot)
@@ -1821,29 +1797,12 @@ function publishProgressSnapshot(): ProgressOverlaySnapshot {
 }
 
 function scheduleProgressSnapshot(): void {
-  if (progressSnapshotTimer) clearTimeout(progressSnapshotTimer)
+  // Bounded throttle: tokens cannot keep moving the publication deadline.
+  if (progressSnapshotTimer) return
   progressSnapshotTimer = setTimeout(() => {
     progressSnapshotTimer = null
     refreshProgressSnapshot()
-  }, 90)
-}
-
-/** Saída de Maestro/orquestrador chega em muitos chunks por segundo. Este
- * throttle mantém o painel vivo sem reler stores/planos a cada repaint do TUI;
- * o segundo timer publica a transição quando passam 4s sem nova atividade. */
-function scheduleProgressLiveSnapshot(paneId: string): void {
-  if (!progressLivePulseTimer) {
-    progressLivePulseTimer = setTimeout(() => {
-      progressLivePulseTimer = null
-      refreshProgressLiveSnapshot()
-    }, 700)
-  }
-  const previousIdleTimer = progressLiveIdleTimers.get(paneId)
-  if (previousIdleTimer) clearTimeout(previousIdleTimer)
-  progressLiveIdleTimers.set(paneId, setTimeout(() => {
-    progressLiveIdleTimers.delete(paneId)
-    refreshProgressLiveSnapshot()
-  }, PROGRESS_COORDINATOR_ACTIVE_MS + 120))
+  }, 700)
 }
 
 function setProgressOverlayCompact(compact: boolean): void {
@@ -2428,78 +2387,30 @@ app.whenReady().then(async () => {
   const maestro = new MaestroStore()
   const settings = new SettingsStore()
   endBootStores()
-  progressCoordinatorActivitySource = () => {
-    const activityNow = Date.now()
-    return projects.list().flatMap((project) => {
-      const byIdentity = new Map<string, ProgressCoordinatorActivityInput>()
-      for (const activity of hub
-        .panesOf(project.id)
-        .filter((pane) => pane.role === 'maestro' && ptys.has(pane.paneId))
-        .map((pane) => {
-          const lastOutputAt = ptys.lastOutputAt(pane.paneId)
-          const note = paneStatusNotes.get(pane.paneId)
-          return {
-            projectId: project.id,
-            ...(pane.missionId ? { missionId: pane.missionId } : {}),
-            role: pane.missionId ? 'orchestrator' as const : 'maestro' as const,
-            kind: 'terminal' as const,
-            working:
-              lastOutputAt !== undefined &&
-              activityNow - lastOutputAt < PROGRESS_COORDINATOR_ACTIVE_MS,
-            updatedAt: new Date(lastOutputAt ?? activityNow).toISOString(),
-            ...(note ? { note: note.text } : {})
-          }
-        })) {
-        const identity = activity.role === 'orchestrator'
-          ? `orchestrator:${activity.missionId ?? project.id}`
-          : `maestro:${project.id}`
-        const previous = byIdentity.get(identity)
-        if (!previous || activity.updatedAt > previous.updatedAt) byIdentity.set(identity, activity)
-      }
-      const headless = currentProgressHeadlessActivity(project.id)
-      if (headless) {
-        byIdentity.set(`maestro:${project.id}`, {
-          projectId: project.id,
-          role: 'maestro',
-          kind: headless.kind,
-          working: true,
-          updatedAt: headless.startedAt
-        })
-      }
-      return [...byIdentity.values()]
-    })
-  }
+  // Stores are in-memory; filesystem availability alone uses a short cache.
+  // Streaming GUI events never trigger a disk read for every token.
+  let guiSessions: GuiSessionRegistry | undefined
+  const progressProjectPaths = new Map<string, { path: string; checkedAt: number; missing: boolean }>()
   progressSnapshotSource = (revision) => {
     const allProjects = projects.list()
+    const now = Date.now()
+    const projectIds = new Set(allProjects.map((project) => project.id))
+    for (const id of progressProjectPaths.keys()) {
+      if (!projectIds.has(id)) progressProjectPaths.delete(id)
+    }
+    const missingProjectIds = allProjects.filter((project) => {
+      const cached = progressProjectPaths.get(project.id)
+      if (cached?.path === project.path && now - cached.checkedAt < 30_000) return cached.missing
+      const missing = !existsSync(project.path)
+      progressProjectPaths.set(project.id, { path: project.path, checkedAt: now, missing })
+      return missing
+    }).map((project) => project.id)
     return buildProgressSnapshot({
       projects: allProjects,
       missions: allProjects.flatMap((project) => missions.list(project.id)),
       integrationQueue: integrationQueue.listPending(),
-      coordinatorActivity: progressCoordinatorActivitySource?.() ?? [],
-      missingProjectIds: allProjects
-        .filter((project) => !existsSync(project.path))
-        .map((project) => project.id),
-      // frases vivas dos agentes de execução/gate (status_note) — resolvidas
-      // pela identidade do pane no instante do snapshot
-      paneNotes: [...paneStatusNotes].flatMap(([paneId, note]) => {
-        const identity = hub.identityByPane(paneId)
-        if (!identity) return []
-        const phase =
-          identity.role === 'dev' || identity.role === 'review' || identity.role === 'qa'
-            ? identity.role
-            : undefined
-        return [
-          {
-            projectId: identity.projectId,
-            ...(identity.missionId ? { missionId: identity.missionId } : {}),
-            ...(identity.taskId ? { taskId: identity.taskId } : {}),
-            ...(phase ? { phase } : {}),
-            role: identity.role,
-            text: note.text,
-            at: note.at
-          }
-        ]
-      }),
+      guiSessions: guiSessions?.progress() ?? [],
+      missingProjectIds,
       revision
     })
   }
@@ -3584,7 +3495,6 @@ app.whenReady().then(async () => {
   // Os dois acessos abaixo são a fonte ÚNICA para engine/ipc/mcpApi: entregar
   // texto na conversa de um pane e ceifar os chats de uma missão (dev,
   // reviewer e ajudantes) quando o worktree dela vai embora.
-  let guiSessions: GuiSessionRegistry | undefined
   const deliverToGuiPane = (paneId: string, text: string): boolean =>
     guiSessions?.send(paneId, text).ok === true
   // R9 — as DUAS superfícies do ⇪, e elas não se misturam: a NOTA é o que o
@@ -4585,6 +4495,7 @@ app.whenReady().then(async () => {
     }
   })
   registerProgressIpc(ctx, {
+    progressPanes: () => guiSessions?.progress() ?? [],
     assertMainRendererSender,
     assertProgressOverlaySender,
     deliverProgressOpenTarget,
@@ -4732,9 +4643,6 @@ app.whenReady().then(async () => {
   registerPtyIpc(ctx, {
     engine: paneLifecycle,
     paneCodexSkillProfiles,
-    scheduleProgressLiveSnapshot,
-    refreshProgressLiveSnapshot,
-    progressLiveIdleTimers,
     emitMissionsChanged,
     recordGateDeath: () => ({ looping: false, deaths: 0 })
   })
@@ -4746,6 +4654,7 @@ app.whenReady().then(async () => {
   // Fase 0: criação da janela é etapa medida do boot
   mainStalls.wrap('boot:createWindow', undefined, () => createWindow())
   mainStalls.wrap('boot:progressSnapshot', undefined, () => refreshProgressSnapshot())
+  progressHeartbeatTimer = setInterval(refreshProgressSnapshot, 15_000)
   if (loadProgressOverlayPreferences().visible) createProgressOverlay()
 
   // CLIs SEMPRE ATUALIZADOS (decisão do usuário, 2026-07-24): pane roda o
@@ -4784,9 +4693,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  if (progressLivePulseTimer) clearTimeout(progressLivePulseTimer)
-  for (const timer of progressLiveIdleTimers.values()) clearTimeout(timer)
-  progressLiveIdleTimers.clear()
+  if (progressHeartbeatTimer) clearInterval(progressHeartbeatTimer)
   for (const s of maestroSessions.values()) s.kill()
   maestroSessions.clear()
   progressHeadlessActivities.clear()

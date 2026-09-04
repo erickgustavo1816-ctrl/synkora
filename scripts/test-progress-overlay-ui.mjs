@@ -28,6 +28,7 @@ const overlay = readFileSync(root + '/src/renderer/src/components/ProgressOverla
 const voiceOverlay = readFileSync(root + '/src/renderer/src/components/SynVoiceOverlay.tsx', 'utf8')
 const rendererMain = readFileSync(root + '/src/renderer/src/main.tsx', 'utf8')
 const css = readFileSync(root + '/src/renderer/src/global.css', 'utf8')
+const overlayCss = readFileSync(root + '/src/renderer/src/components/progressOverlay.css', 'utf8')
 const voiceWindow = main.slice(
   main.indexOf('function createSynVoiceOverlay'),
   main.indexOf('function toggleSynVoiceOverlay')
@@ -138,8 +139,8 @@ test('both floating windows share one readable typographic scale', () => {
   assert.match(css, /--floating-overlay-subtitle-size:\s*11\.5px/)
   assert.match(css, /\.synvoice-overlay-copy strong\s*\{[\s\S]*?var\(--floating-overlay-title-size\)/)
   assert.match(css, /\.synvoice-overlay-copy small\s*\{[\s\S]*?var\(--floating-overlay-subtitle-size\)/)
-  assert.match(css, /\.progress-overlay-heading strong\s*\{[\s\S]*?var\(--floating-overlay-title-size\)/)
-  assert.match(css, /\.progress-overlay-heading small\s*\{[\s\S]*?var\(--floating-overlay-subtitle-size\)/)
+  assert.match(overlayCss, /\.progress-overlay-heading strong\s*\{[\s\S]*?var\(--floating-overlay-title-size, 13px\)/)
+  assert.match(overlayCss, /\.progress-overlay-heading small\s*\{[\s\S]*?var\(--floating-overlay-subtitle-size, 11\.5px\)/)
   assert.doesNotMatch(css, /\.synvoice-overlay-copy small\s*\{[\s\S]{0,180}?font-size:\s*7\.5px/)
   assert.match(voiceOverlay, /SynkoraMark size=\{15\}/)
   assert.ok(voiceOverlay.includes('if (mouse) return `MOUSE ${mouse[1]}`'))
@@ -225,15 +226,18 @@ test('main preserves expanded bounds and exposes only authenticated history IPC'
 test('empty and wide layouts adapt without manufacturing overflow', () => {
   assert.match(overlay, /progress-overlay-body.*is-empty/)
   assert.match(overlay, /className="progress-project-grid"/)
-  assert.match(css, /\.progress-empty\s*\{[\s\S]*?min-height:\s*0;/)
+  assert.match(overlayCss, /\.progress-empty\s*\{[\s\S]*?min-height:\s*0;/)
   assert.match(
-    css,
-    /\.progress-overlay-body\.is-empty\s*\{[\s\S]*?display:\s*flex;[\s\S]*?overflow-y:\s*hidden;/
+    overlayCss,
+    /\.progress-overlay-body\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;[^}]*overflow-x:\s*hidden;/
   )
-  assert.match(css, /@media \(min-width:\s*760px\)[\s\S]*?repeat\(auto-fit,/)
-  assert.match(css, /@container \(min-width:\s*700px\)[\s\S]*?progress-mission-list/)
-  assert.match(css, /\.progress-project-grid\s*\{[\s\S]*?align-items:\s*start;/)
-  assert.match(css, /\.progress-overlay-shell button:focus-visible[\s\S]*?outline:/)
+  assert.match(overlayCss, /@media \(min-width:\s*760px\)[\s\S]*?repeat\(auto-fit,/)
+  assert.match(overlayCss, /\.progress-project-grid\s*\{[\s\S]*?align-items:\s*start;/)
+  assert.match(overlayCss, /\.progress-overlay-shell button:focus-visible[\s\S]*?outline:/)
+  assert.match(overlayCss, /@media \(prefers-reduced-motion: reduce\)/)
+  assert.match(overlayCss, /\.progress-overlay-head\s*\{[^}]*-webkit-app-region: drag;/)
+  assert.match(overlayCss, /background: var\(--paper, #efe9dc\)/)
+  assert.doesNotMatch(overlay, /CoordinatorActivity|QuestionLine|mission\.question|project\.question/)
   assert.match(overlay, /setHistoryNotice\('Histórico ocultado\. Nenhuma missão foi apagada\.'\)/)
   assert.match(overlay, /window\.requestAnimationFrame\(\(\) => openMainButtonRef\.current\?\.focus\(\)\)/)
   assert.match(overlay, /className="progress-overlay-live" role="status" aria-live="polite"/)

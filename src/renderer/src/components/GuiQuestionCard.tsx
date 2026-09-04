@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GuiQuestion } from '../guiApi'
 
-// PERGUNTA COM OPÇÕES (AskUserQuestion) — o desenho que o dono pediu ("aquelas
+// PERGUNTA COM OPÇÕES (AskUserQuestion / request_user_input) — o desenho que o dono pediu ("aquelas
 // perguntas que você seleciona e digita"), traduzido do claudecodeui para o
 // tema papel.
 //
 // Regras do formato (provadas no fork, fixadas no contrato 2.0):
 //  - UMA pergunta por vez, com contador e passos clicáveis: perguntar três
 //    coisas de uma vez vira formulário, e formulário ninguém responde.
-//  - A resposta é um MAPA { texto da pergunta → labels unidos por ', ' } —
-//    é assim que ela volta ao CLI, dentro do updatedInput.
+//  - A resposta usa o ID do Codex, ou o texto da pergunta no Claude.
 //  - "Pular" é uma resposta legítima (mapa vazio), NUNCA um "não".
 //  - Teclado: 1-9 escolhe, 0 abre "outra resposta", Enter avança/envia,
 //    Esc pula. O card recebe o foco sozinho a cada passo.
@@ -36,6 +35,8 @@ export default function GuiQuestionCard({
   const current = questions[step]
   const total = questions.length
   const multi = current?.multiSelect === true
+  const allowCustom = current?.allowCustom !== false
+  const freeTextOnly = current?.options.length === 0
 
   // O card é a coisa a responder: ele toma o foco para o teclado valer sem
   // clique. `preventScroll` porque o fio já está preso no fim.
@@ -62,20 +63,20 @@ export default function GuiQuestionCard({
   )
 
   const openCustom = useCallback((): void => {
-    if (disabled) return
+    if (disabled || !allowCustom) return
     setCustomOpen((prev) => ({ ...prev, [step]: !prev[step] }))
     window.setTimeout(() => customRef.current?.focus({ preventScroll: true }), 0)
-  }, [disabled, step])
+  }, [allowCustom, disabled, step])
 
   /** O mapa que viaja ao CLI: labels escolhidos + o texto livre, na ordem em
    *  que aparecem. Pergunta sem resposta simplesmente não entra. */
   const buildAnswers = useCallback((): Record<string, string> => {
-    const answers: Record<string, string> = {}
+    const answers: Record<string, string> = Object.create(null)
     questions.forEach((q, i) => {
       const parts = [...(picked[i] ?? [])]
       const extra = custom[i]?.trim()
-      if (extra) parts.push(extra)
-      if (parts.length) answers[q.question] = parts.join(', ')
+      if (extra && q.allowCustom !== false) parts.push(extra)
+      if (parts.length) answers[q.id ?? q.question] = parts.join(', ')
     })
     return answers
   }, [custom, picked, questions])
@@ -83,8 +84,9 @@ export default function GuiQuestionCard({
   const advance = useCallback((): void => {
     if (disabled) return
     if (step + 1 < total) setStep(step + 1)
-    else onAnswer(buildAnswers())
-  }, [buildAnswers, disabled, onAnswer, step, total])
+    else if ((picked[step]?.size ?? 0) > 0 || (allowCustom && custom[step]?.trim()))
+      onAnswer(buildAnswers())
+  }, [allowCustom, buildAnswers, custom, disabled, onAnswer, picked, step, total])
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -190,7 +192,7 @@ export default function GuiQuestionCard({
           )
         })}
 
-        <button
+        {allowCustom && !freeTextOnly && <button
           type="button"
           disabled={disabled}
           className={`gq-option other${customOpen[step] ? ' active' : ''}`}
@@ -200,13 +202,14 @@ export default function GuiQuestionCard({
           <span className="gq-body">
             <b>outra resposta…</b>
           </span>
-        </button>
-        {customOpen[step] && (
+        </button>}
+        {allowCustom && (freeTextOnly || customOpen[step]) && (
           <input
             ref={customRef}
             className="gq-custom"
             disabled={disabled}
             placeholder="escreva sua resposta"
+            maxLength={4_000}
             value={custom[step] ?? ''}
             onChange={(e) => setCustom((prev) => ({ ...prev, [step]: e.target.value }))}
           />
