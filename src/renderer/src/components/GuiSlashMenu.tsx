@@ -4,7 +4,9 @@ import type { GuiCliCommand } from '../guiApi'
 // AUTOCOMPLETE DE COMANDOS (2.0). A lista NÃO é inventada nem varrida do
 // disco: vem das caps REAIS do CLI (evento `ready`) — no claude o handshake
 // já entrega built-ins, skills e comandos personalizados com descrição; no
-// codex é o cardápio que o app-server atende. Por isso comando personalizado
+// codex é o cardápio que o app-server atende. O registro acrescenta os
+// comandos locais /new, /reset e /clear, que reiniciam dentro do mesmo pane.
+// Por isso comando personalizado
 // aparece aqui sozinho, sem nenhum catálogo nosso para manter.
 //
 // Os nomes chegam SEM a barra nos dois CLIs — quem normaliza é este módulo.

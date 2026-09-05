@@ -372,8 +372,6 @@ const CODEX_COMMANDS = [
 // Comandos que existem no TUI do Codex mas são UI de terminal — não se
 // aplicam ao painel embutido. Responder explicando é melhor que "não existe".
 const CODEX_TUI_ONLY = new Map<string, string>([
-  ['/new', 'use /clear — reinicia a conversa do Maestro'],
-  ['/clear', 'use o /clear do Synkora (mesmo efeito)'],
   ['/quit', 'o painel vive embutido — feche o projeto para encerrá-lo'],
   ['/exit', 'o painel vive embutido — feche o projeto para encerrá-lo'],
   ['/logout', 'login/logout é por seat, em Configurações › Minhas contas'],

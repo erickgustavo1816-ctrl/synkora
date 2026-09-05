@@ -23,6 +23,12 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { CodexSession } from './codexSession'
 import { codexAsyncQuestionAnswer } from './codexAsyncQuestions'
+import {
+  GUI_NEW_CONVERSATION_NOTE,
+  GUI_NEW_CONVERSATION_USAGE,
+  routeGuiConversationCommand,
+  withGuiConversationCommands
+} from './guiConversationCommands'
 import { MaestroSession, type SessionEvent } from './maestroSession'
 import { GuiProgressTracker, type GuiProgressInput, type GuiProgressHelpers } from './guiProgress'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
@@ -1909,7 +1915,9 @@ export class GuiSessionRegistry {
       // executa a tool. Replay e IPC recebem uma cópia orçada.
       const budgeted: SessionEvent =
         evt.type === 'tool' ? { ...evt, input: limitGuiToolInput(evt.input) } : evt
-      const visibleEvt: SessionEvent = metered?.event ?? budgeted
+      const visibleEvt: SessionEvent = evt.type === 'ready'
+        ? { ...evt, caps: withGuiConversationCommands(evt.caps) }
+        : metered?.event ?? budgeted
       const seq = ring.push(visibleEvt)
       // Eventos intermediários ficam no anel; o próximo ponto legível captura
       // o snapshot inteiro, e dispose captura inclusive um stream parcial.
@@ -2355,11 +2363,12 @@ export class GuiSessionRegistry {
       }
     }
     const trimmed = text.trim()
-    if (
-      validatedAttachments.attachments.length === 0 &&
-      (trimmed === '/clear' || (entry.spawn.cli === 'codex' && trimmed === '/new'))
-    )
-      return this.clearConversation(entry)
+    const conversationCommand = routeGuiConversationCommand(trimmed)
+    if (conversationCommand) {
+      if (validatedAttachments.attachments.length === 0 && conversationCommand === 'reset')
+        return this.clearConversation(entry)
+      return { ok: false, error: GUI_NEW_CONVERSATION_USAGE }
+    }
     messageIds.add(messageId)
     if (messageIds.size > 2_048) {
       const oldest = messageIds.values().next().value
@@ -3698,7 +3707,7 @@ export class GuiSessionRegistry {
     )
   }
 
-  /** /clear (e /new do Codex) é uma troca deliberada de conversa. O cursor
+  /** /new, /new chat, /reset e /clear trocam deliberadamente a conversa. O cursor
    *  segue monotônico para o listener já montado, mas o fio e o resume antigos
    *  saem juntos antes de o processo novo nascer. */
   private clearConversation(entry: GuiPaneEntry): GuiResult {
@@ -3721,7 +3730,9 @@ export class GuiSessionRegistry {
     // sessionId. Ao vivo, o mesmo marco remove o /clear otimista do composer.
     entry.sink({ type: 'conversation-cleared' })
     this.dispose(paneId, 'clear')
-    return this.create(spawn)
+    const result = this.create(spawn)
+    if (result.ok) this.note(paneId, GUI_NEW_CONVERSATION_NOTE)
+    return result
   }
 
   private dispose(paneId: string, reason: string, preserveRing = false): void {

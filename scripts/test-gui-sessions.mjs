@@ -3476,6 +3476,128 @@ test('/clear troca o backend, apaga fio e resume; kill sozinho preserva até exc
   assert.equal(gui.remembered(spawn.paneId), undefined)
 })
 
+test('nova conversa — o menu anuncia comandos locais sem duplicar os do CLI', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-new-chat-menu-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    storeFile: join(root, 'sessions.json')
+  })
+  const caps = {
+    commands: [
+      { name: '/new', description: 'opens another chat' },
+      { name: 'clear', description: 'clear the terminal' },
+      { name: 'compact', description: 'compact context' },
+      { name: 'my-skill', description: 'custom skill' }
+    ],
+    models: [{ value: 'model-test', displayName: 'Modelo de teste' }]
+  }
+  gui.spawnSession = (_spawn, sink) => {
+    sink({ type: 'ready', caps })
+    return { alive: true, kill: () => undefined }
+  }
+  gui.create({ paneId: 'p-menu', projectId: 'project-test', cli: 'codex', configDir: root, cwd: root })
+  const ready = gui.state('p-menu').events.find(({ evt }) => evt.type === 'ready').evt
+  const names = ready.caps.commands.map(({ name }) => name.replace(/^\//u, ''))
+  for (const name of ['new', 'reset', 'clear']) {
+    assert.equal(names.filter((item) => item === name).length, 1)
+    assert.match(ready.caps.commands.find((c) => c.name === name).description, /mesm[ao] (missão|chat)/u)
+  }
+  assert.ok(names.includes('compact'))
+  assert.ok(names.includes('my-skill'))
+  assert.deepEqual(ready.caps.models, caps.models)
+  assert.equal(caps.commands[0].description, 'opens another chat', 'caps do motor não são mutadas')
+  gui.kill('p-menu')
+  const reopened = new GuiSessionRegistry({
+    push: () => undefined, systemPromptFile: () => undefined, storeFile: join(root, 'sessions.json')
+  })
+  assert.deepEqual(reopened.state('p-menu').events.find(({ evt }) => evt.type === 'ready').evt.caps, ready.caps)
+})
+
+test('nova conversa — argumentos, texto multilinha e comandos parecidos não apagam o contexto', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-new-chat-arguments-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  let spawns = 0
+  const messages = []
+  const gui = new GuiSessionRegistry({
+    push: () => undefined, systemPromptFile: () => undefined, storeFile: join(root, 'sessions.json')
+  })
+  gui.spawnSession = (_spawn, sink) => {
+    spawns += 1
+    sink({ type: 'ready', caps: { commands: [], models: [] } })
+    return { alive: true, turnActive: false, send: (text) => messages.push(text), kill: () => undefined }
+  }
+  gui.create({ paneId: 'p-args', projectId: 'project-test', cli: 'claude', configDir: root, cwd: root })
+  for (const text of ['/new chat agora', '/reset agora', '/clear agora', '/new\nchat']) {
+    const result = gui.send('p-args', text)
+    assert.equal(result.ok, false, 'argumento extra recebe uma receita, não um reset')
+    assert.match(result.error, /envie \/new/u)
+  }
+  for (const text of ['Explique /new chat', '/new-feature', '```\n/new\n```']) {
+    assert.equal(gui.send('p-args', text).ok, true)
+  }
+  assert.equal(spawns, 1)
+  assert.deepEqual(messages, ['Explique /new chat', '/new-feature', '```\n/new\n```'])
+})
+
+for (const cli of ['codex', 'claude']) {
+  for (const command of ['/new', '/new chat', '/reset', '/clear']) {
+    test(`nova conversa — ${cli} ${command} reinicia somente o contexto na mesma missão`, (t) => {
+      const root = mkdtempSync(join(tmpdir(), 'synkora-new-chat-'))
+      t.after(() => rmSync(root, { recursive: true, force: true }))
+      const storeFile = join(root, 'sessions.json')
+      const projectFile = join(root, 'work-in-progress.txt')
+      writeFileSync(projectFile, 'trabalho preservado', 'utf8')
+      const spawns = []
+      const sinks = []
+      const messages = []
+      let killed = 0
+      const gui = new GuiSessionRegistry({
+        push: () => undefined, systemPromptFile: () => undefined, storeFile
+      })
+      gui.spawnSession = (spawn, sink) => {
+        spawns.push({ ...spawn })
+        sinks.push(sink)
+        sink({ type: 'init', model: cli, sessionId: `session-${spawns.length}`, permissionMode: 'default', toolCount: 0 })
+        sink({ type: 'ready', caps: { commands: [], models: [] } })
+        return {
+          alive: true, turnActive: false,
+          send: (text) => messages.push(text), kill: () => { killed += 1 }
+        }
+      }
+      const spawn = {
+        paneId: 'gui-dev-newchat', projectId: 'project-test', cli,
+        configDir: root, cwd: root, seatId: 'seat-test', model: 'model-test',
+        effort: 'high', systemPrompt: 'contrato da missão', permissionMode: 'default', fast: true,
+        resumeSessionId: 'session-old', firstPrompt: 'briefing inicial antigo'
+      }
+      assert.equal(gui.create(spawn).ok, true)
+      assert.equal(gui.send(spawn.paneId, 'assunto antigo', 'old-message').ok, true)
+      sinks[0]({ type: 'text', text: 'resposta antiga' })
+      sinks[0]({ type: 'result', isError: false, contextTokens: 180_000, contextWindow: 200_000 })
+      const cursor = gui.state(spawn.paneId).cursor
+      assert.equal(gui.send(spawn.paneId, command, 'new-chat-command').ok, true)
+      assert.equal(spawns.length, 2, 'abre um novo motor no mesmo pane')
+      assert.equal(killed, 1)
+      assert.deepEqual(spawns[1], { ...spawn, resumeSessionId: undefined, firstPrompt: undefined })
+      assert.equal(gui.remembered(spawn.paneId).sessionId, 'session-2')
+      assert.equal(gui.remembered(spawn.paneId).contextTokens, undefined)
+      sinks[0]({ type: 'text', text: 'resposta atrasada da conversa anterior' })
+      const fresh = gui.state(spawn.paneId)
+      assert.ok(fresh.cursor > cursor)
+      assert.equal(fresh.events.some(({ evt }) => ['text', 'user-message'].includes(evt.type)), false)
+      assert.ok(fresh.events.some(({ evt }) => evt.type === 'command-output' && /Ctrl\+K/u.test(evt.text)), 'explica como consultar o histórico')
+      assert.equal(gui.send(spawn.paneId, 'continue pelo arquivo', 'fresh-message').ok, true)
+      assert.deepEqual(messages, [guiBriefedPrompt('briefing inicial antigo', 'assunto antigo'), 'continue pelo arquivo'])
+      assert.equal(readFileSync(projectFile, 'utf8'), 'trabalho preservado')
+      const reopened = new GuiSessionRegistry({ push: () => undefined, systemPromptFile: () => undefined, storeFile })
+      assert.equal(reopened.remembered(spawn.paneId).sessionId, 'session-2')
+      assert.equal(reopened.state(spawn.paneId).events.some(({ evt }) => evt.type === 'text'), false)
+    })
+  }
+}
+
 // RECIBO DO CLIQUE DO DONO CHEGA AO MODELO SEM VIRAR FALA DELE.
 //
 // O caso real (2026-08-17): aprovar o plano injetava o recibo pelo `send`, e o
