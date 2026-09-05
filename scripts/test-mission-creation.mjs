@@ -780,7 +780,7 @@ const { guiMissionPaneId } = require(join(COMPILED, 'guiMissionContracts.js'))
  * estímulo que o modelo recebe) — que aqui viram espiões, porque são
  * justamente o que esta rodada inventou.
  */
-function createIntegrationHarness(t) {
+function createIntegrationHarness(t, extras = {}) {
   const projectPath = mkdtempSync(join(tmpdir(), 'synkora-r9-'))
   const worktreesRoot = join(userData, 'worktrees', 'proj-1')
   const queueFile = join(mkdtempSync(join(tmpdir(), 'synkora-r9-queue-')), 'queue.json')
@@ -898,7 +898,8 @@ function createIntegrationHarness(t) {
       stimuli.push({ paneId, text })
       return livePanes.has(paneId)
     },
-    killMissionGuiPanes: () => {}
+    killMissionGuiPanes: () => {},
+    ...extras
   })
 
   gitOffCalls.length = 0
@@ -1108,6 +1109,126 @@ test('integration_run INTEGRA de verdade e a fila anda: o próximo agente é est
       event.event === 'mission-integration-stimulus' && event.detail.origin === 'queue-advance'
   )
   assert.equal(avanco.length, 1)
+})
+
+test('integração aguarda os previews antes do merge e novamente antes da limpeza adiada', async (t) => {
+  const stages = []
+  const replies = []
+  let closing = 0
+  const h = createIntegrationHarness(t, {
+    closeTestServersUnder: async () => {
+      const generation = ++closing
+      stages.push(`closing-${generation}`)
+      await new Promise((resolve) => setImmediate(resolve))
+      stages.push(`closed-${generation}`)
+    },
+    afterIntegrationReply: (_id, _text, finish) => replies.push(finish)
+  })
+  const mission = await h.missionWithDelivery('Preview separado', 'preview.txt', 'entrega\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  gitOffProbe = () => [...stages]
+  const result = await h.engine.runMissionIntegration('proj-1', mission.id)
+  assert.match(result, /INTEGRADA/u)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.ok(gitOffCalls.find(({ fn }) => fn === 'mergeTaskWorktree').probe.includes('closed-1'), 'o primeiro fechamento precisa terminar antes de mesclar')
+  assert.equal(existsSync(join(mission.worktree, '.git')), true)
+  assert.equal(replies.length, 1)
+  const finish = await replies[0]()
+  assert.match(finish, /INTEGRADA/u)
+  assert.equal(closing, 2, 'um preview iniciado durante o recibo também é fechado')
+  assert.ok(gitOffCalls.find(({ fn }) => fn === 'removeWorktreeAndBranch').probe.includes('closed-2'), 'não remove arquivos enquanto o preview está encerrando')
+  assert.equal(h.missionOf(mission.id).status, 'concluida')
+  assert.equal(h.integrationQueue.getByMission(mission.id), undefined)
+})
+
+test('integration_run entrega o resultado antes de matar o dev e limpar a origem', async (t) => {
+  const kills = []
+  const replies = []
+  const h = createIntegrationHarness(t, {
+    killMissionGuiPanes: (id, keepPaneId) => kills.push({ id, keepPaneId }),
+    afterIntegrationReply: (id, text, finish) => replies.push({ id, text, finish })
+  })
+  const mission = await h.missionWithDelivery('Resultado antes da limpeza', 'reply.txt', 'entrega\n')
+  const second = await h.missionWithDelivery('Proxima entrega', 'next.txt', 'proxima\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  await h.engine.startMissionIntegration(second.id, 'user')
+
+  const run = await h.engine.runMissionIntegration('proj-1', mission.id)
+  assert.equal(kills.some((call) => call.id === mission.id && !call.keepPaneId), false,
+    'o dev não pode morrer esperando o retorno da própria ferramenta')
+  assert.equal(replies.length, 1)
+  assert.match(run, /INTEGRADA/u)
+  assert.equal(existsSync(join(h.version.worktree, 'reply.txt')), true)
+  assert.equal(existsSync(join(mission.worktree, '.git')), true, 'a origem vive até o recibo')
+  assert.equal(h.integrationQueue.getByMission(mission.id).state, 'merging')
+  assert.equal(h.engine.integrationDraining.has('proj-1'), true)
+  assert.match(await h.engine.runMissionIntegration('proj-1', second.id), /em andamento/u)
+
+  const final = await replies[0].finish()
+  assert.match(final, /INTEGRADA/u)
+  assert.equal(h.missionOf(mission.id).status, 'concluida')
+  assert.equal(existsSync(mission.worktree), false)
+  assert.equal(h.integrationQueue.getByMission(mission.id), undefined)
+  assert.equal(h.integrationQueue.getByMission(second.id).isHead, true)
+  assert.equal(h.engine.integrationDraining.has('proj-1'), false)
+  assert.equal(kills.at(-1).keepPaneId, undefined)
+})
+
+test('falha antes do merge mantém o dev vivo e o mesmo ticket pronto para corrigir', async (t) => {
+  const kills = []
+  const replies = []
+  const h = createIntegrationHarness(t, {
+    killMissionGuiPanes: (id, keepPaneId) => kills.push({ id, keepPaneId }),
+    afterIntegrationReply: (...args) => replies.push(args)
+  })
+  const mission = await h.missionWithDelivery('Falha sintetica', 'failure.txt', 'entrega\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  const before = h.targetSha()
+  const ticketId = h.integrationQueue.getByMission(mission.id).id
+  gitOffOverride = (fn, args) => fn === 'mergeTaskWorktree'
+    ? { ok: false, detail: 'destino mudou antes do CAS' }
+    : worktreeApi[fn](...args)
+  const run = await h.engine.runMissionIntegration('proj-1', mission.id)
+  assert.match(run, /NÃO rodou/u)
+  assert.equal(h.targetSha(), before)
+  assert.equal(h.integrationQueue.getByMission(mission.id).state, 'queued')
+  assert.equal(h.integrationQueue.getByMission(mission.id).id, ticketId)
+  assert.equal(kills.some((call) => !call.keepPaneId), false)
+  assert.equal(replies.length, 0)
+  assert.equal(h.engine.integrationDraining.has('proj-1'), false)
+})
+
+test('origem alterada depois do recibo é preservada e a falha de limpeza não repete o merge', async (t) => {
+  const replies = []
+  const h = createIntegrationHarness(t, {
+    afterIntegrationReply: (id, text, finish) => replies.push({ id, text, finish })
+  })
+  const mission = await h.missionWithDelivery('Origem preservada', 'kept.txt', 'entrega\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  await h.engine.runMissionIntegration('proj-1', mission.id)
+  const merged = h.targetSha()
+  writeFileSync(join(mission.worktree, 'kept.txt'), 'edicao tardia\n', 'utf8')
+  const final = await replies[0].finish()
+  assert.match(final, /JÁ FOI GRAVADO/u)
+  assert.equal(h.integrationQueue.getByMission(mission.id).block.code, 'target_repair_pending')
+  assert.equal(existsSync(join(mission.worktree, '.git')), true)
+  assert.equal(h.engine.integrationDraining.has('proj-1'), false)
+  assert.match(await h.engine.runMissionIntegration('proj-1', mission.id), /JÁ está gravado/u)
+  assert.equal(h.targetSha(), merged)
+  assert.equal(gitOffCalls.filter((call) => call.fn === 'mergeTaskWorktree').length, 1)
+})
+
+test('exceção ao armar o recibo depois do merge falha fechada e libera a trava', async (t) => {
+  const h = createIntegrationHarness(t, {
+    afterIntegrationReply: () => { throw new Error('synthetic reply registration failure') }
+  })
+  const mission = await h.missionWithDelivery('Recibo indisponivel', 'receipt.txt', 'entrega\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  const run = await h.engine.runMissionIntegration('proj-1', mission.id)
+  assert.match(run, /merge foi GRAVADO/u)
+  assert.equal(h.integrationQueue.getByMission(mission.id).block.code, 'target_repair_pending')
+  assert.equal(h.engine.integrationDraining.has('proj-1'), false)
+  assert.equal(existsSync(join(mission.worktree, '.git')), true)
 })
 
 test('CONFLITO volta ao agente com a receita — e o ticket NUNCA vira blocked', async (t) => {

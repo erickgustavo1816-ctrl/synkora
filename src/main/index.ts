@@ -66,6 +66,7 @@ import {
   createGuiHelperEngine
 } from './guiDelegationWiring'
 import {
+  guiMissionPaneId,
   guiMissionRoleOf,
   isGuiMissionPaneId,
   isGuiPlanningPaneId,
@@ -3075,7 +3076,7 @@ app.whenReady().then(async () => {
       return `a versão ${version.name} já foi lançada`
     }
     // Servidor de teste do dono no worktree da versão fecha antes do merge.
-    if (version.worktree) closeTestServersUnder(version.worktree)
+    if (version.worktree) await closeTestServersUnder(version.worktree)
     // Pelo mesmo motivo, o servidor de LINGUAGEM daquela raiz (R14): o
     // worktree da versão some na limpeza, e um processo com `cwd` lá dentro
     // trava a remoção no Windows.
@@ -3628,8 +3629,8 @@ app.whenReady().then(async () => {
     },
     popouts: browserPopouts
   })
-  const killMissionGuiPanes = (missionId: string): void => {
-    guiSessions?.killWhere((paneId) => isGuiMissionPaneId(paneId, missionId))
+  const killMissionGuiPanes = (missionId: string, keepPaneId?: string): void => {
+    guiSessions?.killWhere((paneId) => paneId !== keepPaneId && isGuiMissionPaneId(paneId, missionId))
     // O servidor de linguagem tem `cwd` DENTRO do worktree, igual aos chats:
     // este ponto é chamado logo antes de toda remoção de worktree de missão (o
     // merge da fila e o "excluir de vez"), e um processo segurando a pasta é o
@@ -3669,6 +3670,10 @@ app.whenReady().then(async () => {
     noteInGuiPane,
     announceToGuiPane,
     killMissionGuiPanes,
+    afterIntegrationReply: (missionId, text, finish) => {
+      if (guiSessions) guiSessions.afterIntegrationReply(guiMissionPaneId('dev', missionId), text, finish)
+      else setImmediate(() => { void finish() })
+    },
     // R38 — a sonda de VIDA do chat, para a rede de reconciliação parar de
     // pescar conversa viva. `has` é a resposta do próprio registro ("sessão do
     // pane: ausente = nunca criada ou já encerrada"), e o `?.` cobre o boot:

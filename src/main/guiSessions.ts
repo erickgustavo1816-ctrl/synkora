@@ -34,6 +34,7 @@ import { GuiProgressTracker, type GuiProgressInput, type GuiProgressHelpers } fr
 import { loadJsonStore, persistJsonStore } from './jsonStore'
 import { limitGuiToolInput } from './guiToolInput'
 import { GuiAlertSequencer, type GuiNoticeKind } from './guiNotices'
+import { GuiIntegrationReply, pendingIntegrationTool } from './guiIntegrationReply'
 import {
   GUI_ATTACHMENT_MAX_FILES,
   isGuiAttachmentDescriptor,
@@ -1568,6 +1569,7 @@ const READY_TIMEOUT_MS = 45_000
 
 export class GuiSessionRegistry {
   private readonly progressTracker = new GuiProgressTracker()
+  private readonly integrationReply = new GuiIntegrationReply()
 
   progress(): GuiProgressInput[] {
     return this.progressTracker.snapshot().map((pane) => {
@@ -1924,6 +1926,7 @@ export class GuiSessionRegistry {
       // Assim o histórico é durável sem escrever disco por token/tool-start.
       if (guiTranscriptCheckpoint(visibleEvt)) this.saveTranscript(spawn.paneId, ring)
       this.deps.push({ paneId: spawn.paneId, seq, evt: visibleEvt })
+      this.integrationReply.observe(token, visibleEvt)
       // A PRIMEIRA PODA DESTA CONVERSA (R24.1). Uma notícia só: o que a linha
       // do topo precisa é a VERDADE "há mais antes", e o número exato volta
       // afinado no próximo replay. O `seq` é o do anel (posterior ao evento
@@ -3547,6 +3550,36 @@ export class GuiSessionRegistry {
     return { ok: true }
   }
 
+  /** A resposta MCP atravessa o CLI antes do fecho que remove seu cwd. */
+  afterIntegrationReply(paneId: string, text: string, finish: () => Promise<string>): void {
+    const entry = this.panes.get(paneId)
+    const generation = entry?.token ?? {}
+    const events = entry?.ring.snapshot() ?? this.restoreTranscript(paneId)?.snapshot() ?? []
+    // O fecho mata os processos antes de remover a pasta. A nota final precisa
+    // alcançar também o transcript já fechado, com o MESMO cursor monotônico.
+    const emit = (event: SessionEvent): void => {
+      const current = this.panes.get(paneId)
+      if (current === entry && current?.token.alive) {
+        current.sink(event)
+        return
+      }
+      // Nunca publique eventos de uma geração morta por cima de uma nova.
+      if (current) return
+      const ring = this.restoreTranscript(paneId) ?? new GuiEventRing()
+      const seq = ring.push(event)
+      this.saveTranscript(paneId, ring)
+      this.deps.push({ paneId, seq, evt: event })
+    }
+    this.integrationReply.arm(
+      generation,
+      pendingIntegrationTool(events.filter(isGuiPersistedEvent)),
+      text,
+      emit,
+      finish
+    )
+    if (!entry?.session.alive) this.integrationReply.disposed(generation)
+  }
+
   kill(paneId: string): GuiResult {
     if (!this.panes.has(paneId)) return { ok: true }
     this.dispose(paneId, 'kill')
@@ -3742,6 +3775,7 @@ export class GuiSessionRegistry {
     // ainda não tinham alcançado um checkpoint semântico.
     entry.flushPendingTerminal?.()
     this.saveTranscript(paneId, entry.ring)
+    this.integrationReply.disposed(entry.token)
     this.panes.delete(paneId)
     this.progressTracker.forget(paneId)
     this.notifyProgressChange()

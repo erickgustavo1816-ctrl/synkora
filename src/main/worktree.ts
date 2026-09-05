@@ -1735,6 +1735,8 @@ export interface MergeResult {
    *  ao lado do `detail` em prosa — quem precisa contar (notificação de desktop
    *  da onda D) nunca deve fazer parsing de mensagem de UI. */
   conflictFiles?: string[]
+  /** Destino integrado; a origem deve ser removida depois do recibo do chat. */
+  sourceCleanupDeferred?: boolean
 }
 
 export interface MergeTargetSnapshot {
@@ -1745,6 +1747,8 @@ export interface MergeTargetSnapshot {
 }
 
 export interface MergeWorktreeOptions {
+  /** O chamador MCP ainda tem cwd na origem. Só adia a limpeza, nunca o merge. */
+  deferSourceCleanup?: boolean
   /** Gate final: nunca transforme alterações posteriores aos gates em commit. */
   requireCleanSource?: boolean
   /** SHA imutável que foi validado/journalado e deve ser o único a entrar. */
@@ -1789,6 +1793,7 @@ export function mergeTaskWorktree(
     // status falhou — deixa o merge reportar o erro real
   }
   const cleanup = (sourceHead?: string): boolean => {
+    if (options.deferSourceCleanup) return true
     const approvedHead = options.expectedSourceHead ?? sourceHead
     // `--force` jamais pode apagar uma escrita que apareceu depois do gate.
     // Quando a origem é um snapshot aprovado, confira novamente imediatamente
@@ -1856,7 +1861,13 @@ export function mergeTaskWorktree(
           ok: false,
           detail: 'sem mudanças para integrar, mas a limpeza do worktree ficou pendente'
         }
-      return { ok: true, detail: 'sem mudanças para integrar' }
+      return {
+        ok: true,
+        detail: 'sem mudanças para integrar',
+        ...(options.deferSourceCleanup
+          ? { sourceCleanupDeferred: true, committed: true, committedHead: targetHead, previousTargetHead: targetHead }
+          : {})
+      }
     }
     try {
       if (options.expectedTargetHead && options.expectedTargetBranch) {
@@ -1947,7 +1958,13 @@ export function mergeTaskWorktree(
         committedHead: targetRefUpdated ? committedTargetHead : undefined
       }
     }
-    return { ok: true, detail: `branch ${wt.branch} integrada` }
+    return {
+      ok: true,
+      detail: `branch ${wt.branch} integrada`,
+      ...(options.deferSourceCleanup
+        ? { sourceCleanupDeferred: true, committed: true, committedHead: committedTargetHead, previousTargetHead }
+        : {})
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message.split('\n')[0] : String(e)
     return { ok: false, detail: msg.slice(0, 200) }

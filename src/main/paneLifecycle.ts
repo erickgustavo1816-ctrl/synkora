@@ -21,7 +21,8 @@
  * SHELL (missions:shellSpec, panes:testServerSpec, login-<seatId>). Este
  * módulo é, hoje, o ciclo de vida do pane shell.
  */
-import {} from 'path'
+import { basename } from 'path'
+import { stopWorktreePreviewProcesses } from './worktreePreviewProcesses'
 import { guiHelperPorts } from './guiHelperPorts'
 import { isPaneStartupRole, type PaneStartupDescriptor } from './paneStartupMetrics'
 import type { PaneKind } from './pty'
@@ -181,7 +182,7 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
     entries.push(...guiHelperPorts.entries(projectId))
     return entries
   }
-  function closeTestServersUnder(pathPrefix: string): void {
+  async function closeTestServersUnder(pathPrefix: string): Promise<void> {
     const prefix = pathPrefix.toLowerCase()
     for (const [paneId, entry] of [...testServerPanes]) {
       if (!entry.cwd.toLowerCase().startsWith(prefix)) continue
@@ -198,6 +199,20 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
           entry.purpose === 'mission-shell'
             ? 'terminal da missão fechado antes do merge/release do worktree'
             : 'servidor de teste fechado antes do merge/release do worktree'
+      })
+    }
+    // Agent-launched previews may outlive their CLI parent and never enter
+    // testServerPanes. Match only the proven runtime entry point in this root.
+    const previews = await stopWorktreePreviewProcesses(pathPrefix)
+    if (previews.stopped > 0 || previews.failed > 0) {
+      blackbox.record({
+        cat: 'pane',
+        event: 'worktree-preview-processes-closed',
+        actor: 'harness',
+        reason: previews.failed > 0
+          ? 'alguns previews do worktree não confirmaram encerramento; a prova de limpeza continua obrigatória'
+          : 'previews Astro do worktree encerrados antes da remoção',
+        detail: { worktree: basename(pathPrefix), stopped: previews.stopped, failed: previews.failed }
       })
     }
   }
