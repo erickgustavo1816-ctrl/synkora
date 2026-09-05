@@ -87,3 +87,31 @@ test('Enter sem seleção não responde nem aceita; pular continua explícito', 
     assert.equal(skipped, 1)
   } finally { await act(async () => card.unmount()) }
 })
+
+test('cartão async sobrevive ao fim do turno e resume; resposta normal não duplica o recibo', () => {
+  let state = applyGuiEvent({ ...EMPTY_GUI_PANE }, { type: 'question', requestId: 'async-7',
+    questions: [question], blocking: false, asynchronous: true })
+  for (const event of [
+    { type: 'result', isError: false }, { type: 'closed', code: 0 },
+    { type: 'session-restarted', ready: true, resumed: true },
+    { type: 'turn-started' }, { type: 'delta', text: 'trabalho independente' }
+  ]) state = applyGuiEvent(state, event)
+  assert.equal(state.question?.requestId, 'async-7')
+  assert.equal(state.interactionQueue.length, 1)
+  state = applyGuiEvent(state, { type: 'user-message', id: 'answer-7', text: 'Resposta escolhida', at: 1 })
+  state = applyGuiEvent(state, { type: 'interaction-resolved', requestId: 'async-7', resolution: {
+    kind: 'question', entries: [{ question: 'Qual caminho?', answer: 'A' }], messageId: 'answer-7' } })
+  assert.equal(state.question, null)
+  assert.equal(state.items.filter(i => i.kind === 'user').length, 1)
+  assert.equal(state.items.filter(i => i.kind === 'question').length, 0)
+})
+
+test('cartão async da conversa anterior sai quando o resume abre outra identidade', () => {
+  let state = applyGuiEvent({ ...EMPTY_GUI_PANE }, { type: 'session-id', sessionId: 'codex-thread:old' })
+  state = applyGuiEvent(state, { type: 'question', requestId: 'async-old',
+    questions: [question], blocking: false, asynchronous: true })
+  state = applyGuiEvent(state, { type: 'session-id', sessionId: 'codex-thread:old' })
+  assert.equal(state.question?.requestId, 'async-old')
+  state = applyGuiEvent(state, { type: 'session-id', sessionId: 'codex-thread:new' })
+  assert.equal(state.question, null)
+})

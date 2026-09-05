@@ -502,6 +502,7 @@ export type GuiPendingInteraction =
       kind: 'question'
       requestId: string
       blocking?: boolean
+      asynchronous?: boolean
       question: { requestId: string; questions: GuiQuestion[]; blocking?: boolean }
     }
   | {
@@ -925,7 +926,11 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
       }
 
     case 'session-id':
-      return { ...state, sessionId: evt.sessionId }
+      return { ...state, sessionId: evt.sessionId,
+        ...(state.sessionId && state.sessionId !== evt.sessionId ? guiInteractionPatch(
+          state.interactionQueue.filter(item => item.kind !== 'question' || item.asynchronous !== true),
+          state.interactionSubmitting
+        ) : {}) }
 
     case 'history-pruned': {
       // R24.1 — o anel do main descartou os eventos mais antigos: o fio na
@@ -1247,6 +1252,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           kind: 'question',
           requestId: evt.requestId,
           blocking,
+          ...(evt.asynchronous ? { asynchronous: true } : {}),
           question
         }),
         thinking: blocking ? false : base.thinking,
@@ -1317,7 +1323,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
             evt.resolution.toolUseId
           )
         }
-      } else if (evt.resolution.kind === 'question') {
+      } else if (evt.resolution.kind === 'question' && !evt.resolution.messageId) {
         items = pushGuiItem(items, {
           id: guiItemId(),
           kind: 'question',
@@ -1934,7 +1940,7 @@ interface SynkoraState {
     options: GuiQueuedOptions,
     attachments?: readonly GuiAttachmentDescriptor[]
   ) => GuiQueuedMessage | null
-  discardGuiQueuedMessage: (paneId: string, expectedId?: string) => void
+  discardGuiQueuedMessage: (paneId: string, expectedId?: string) => boolean
   claimGuiQueuedMessage: (paneId: string, ownerToken: string) => GuiQueuedMessage | null
   acknowledgeGuiQueuedMessage: (
     paneId: string,
@@ -2643,18 +2649,23 @@ export const useStore = create<SynkoraState>((set, get) => ({
   },
 
   discardGuiQueuedMessage: (paneId, expectedId) => {
-    removeGuiQueuedMessageStorage(paneId, expectedId)
+    const removed = removeGuiQueuedMessageStorage(paneId, expectedId)
+    const persisted = readGuiQueuedMessage(paneId)
     set((s) => {
       const prev = s.guiPanes[paneId]
-      if (!prev?.queued || (expectedId && prev.queued.id !== expectedId)) return {}
-      if (prev.queued.deliveryInFlight) return {}
+      if (!prev) return {}
+      // O disco é a autoridade: falha ou claim de outra janela não pode virar
+      // cancelamento apenas visual. Leitura indisponível conserva a cópia.
+      const queued = removed ? persisted : (persisted ?? prev.queued)
+      if (queued === prev.queued) return {}
       return {
         guiPanes: {
           ...s.guiPanes,
-          [paneId]: { ...prev, queued: null }
+          [paneId]: { ...prev, queued }
         }
       }
     })
+    return removed
   },
 
   claimGuiQueuedMessage: (paneId, ownerToken) => {

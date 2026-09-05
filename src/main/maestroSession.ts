@@ -414,7 +414,7 @@ export type SessionEvent =
             toolName: string
             behavior: PermissionChoice
           }
-        | { kind: 'question'; entries: { question: string; answer: string }[] }
+        | { kind: 'question'; entries: { question: string; answer: string }[]; messageId?: string }
         | { kind: 'plan'; approve: boolean }
         /** Proposta de plano: aprovada = o Plan nasceu (id no eco). */
         | { kind: 'plan-proposal'; approve: boolean; planId?: string; planTitle?: string }
@@ -422,7 +422,7 @@ export type SessionEvent =
     }
   /** AskUserQuestion virou card de opções (2.0): a resposta volta por
    *  answerQuestion, no mesmo canal de control_response da permissão. */
-  | { type: 'question'; requestId: string; questions: GuiQuestion[]; blocking?: boolean }
+  | { type: 'question'; requestId: string; questions: GuiQuestion[]; blocking?: boolean; asynchronous?: boolean }
   /** ExitPlanMode (modo plano): o plano em markdown para o dono aprovar
    *  (answerPlanReview) — construir = allow, revisar = deny. */
   | { type: 'plan-review'; requestId: string; plan: string }

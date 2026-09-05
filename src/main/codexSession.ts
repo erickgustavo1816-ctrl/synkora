@@ -1,5 +1,6 @@
 import { sessionSpawnFailureText } from './sessionSpawnError'
 import { CodexUserInputRequests } from './codexUserInput'
+import { codexAsyncQuestionEvent } from './codexAsyncQuestions'
 import { existsSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
@@ -238,6 +239,8 @@ interface CodexItem extends GuiCodexCompletedItem {
   /** `userMessage`: os blocos da mensagem — entre eles a `SkillUserInput`
    *  (`{type:'skill', name, path}`) que o app-server devolve ecoada. */
   content?: unknown
+  /** codex-cli 0.153+: payload estruturado de request_user_input_async. */
+  questions?: unknown
   /** `userMessage`: o `clientUserMessageId` que NÓS mandamos no `turn/steer` /
    *  `turn/start`, devolvido no eco. É o RECIBO DE LEITURA da R39.1 D2'. */
   clientId?: string
@@ -480,6 +483,7 @@ export class CodexSession {
   private threadId: string | null = null
   private turnId: string | null = null
   private userInputRequests?: CodexUserInputRequests
+  private asyncQuestionIds?: Set<string>
   private lastTokens: number | undefined
   private lastWindow: number | undefined
   // /fast: service tier "priority" (1.5x speed) aplicado como override por turno.
@@ -2114,8 +2118,22 @@ export class CodexSession {
           this.noteSubAgentActivity(item)
         } else if (isGuiCodexCollabType(item.type)) {
           this.finishCollabItem(item)
-        } else if (item.type === 'agentMessage' && item.text) {
-          this.emit({ type: 'text', text: item.text })
+        } else if (item.type === 'agentMessage') {
+          if (item.text) this.emit({ type: 'text', text: item.text })
+          if (this.opts.interactiveQuestions && p['threadId'] === this.threadId &&
+            p['turnId'] === this.turnId && this.turnId) {
+            const question = codexAsyncQuestionEvent(item)
+            if (question) {
+              const seen = this.asyncQuestionIds ??= new Set<string>()
+              if (!seen.has(question.requestId)) {
+                seen.add(question.requestId)
+                if (seen.size > 256) seen.delete(seen.values().next().value as string)
+                this.emit(question)
+              }
+            } else if (item.questions !== undefined && item.questions !== null) {
+              this.emit({ type: 'limit', text: 'não consegui montar a pergunta do Codex — peça para reformular com opções mais curtas' })
+            }
+          }
         } else if (isGuiCodexToolType(item.type)) {
           const completed = guiCodexToolCompletion(item)
           // Cada card aberto no item/started fecha pelo id autoritativo, mesmo

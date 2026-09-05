@@ -275,14 +275,14 @@ export type GuiSessionEvent =
             toolName: string
             behavior: GuiPermBehavior
           }
-        | { kind: 'question'; entries: { question: string; answer: string }[] }
+        | { kind: 'question'; entries: { question: string; answer: string }[]; messageId?: string }
         | { kind: 'plan'; approve: boolean }
         /** `approve` true = o dono criou o plano; o título volta para o fio
          *  poder dizer QUAL plano nasceu sem consultar o mapa. */
         | { kind: 'plan-proposal'; approve: boolean; planTitle?: string }
         | { kind: 'stale' }
     }
-  | { type: 'question'; requestId: string; questions: GuiQuestion[]; blocking?: boolean }
+  | { type: 'question'; requestId: string; questions: GuiQuestion[]; blocking?: boolean; asynchronous?: boolean }
   | { type: 'plan-review'; requestId: string; plan: string }
   /** PROPOSTA DE PLANO (D4.4): nasce no HARNESS, não no CLI — quando a tool
    *  `propose_plan` chega, o main injeta este evento no anel da sessão. A
@@ -573,13 +573,21 @@ export const guiApi = {
     text: string,
     messageId: string,
     attachments?: GuiAttachmentDescriptor[]
-  ): Promise<{ ok: boolean; error?: string }> {
+  ): Promise<{ ok: boolean; error?: string; deliveryUncertain?: boolean }> {
     const api = bridge()
     if (!api?.send) return { ok: false, error: NO_BRIDGE }
     try {
-      return (await api.send(paneId, text, messageId, attachments)) ?? { ok: true }
+      const result = await api.send(paneId, text, messageId, attachments)
+      if (result && typeof result.ok === 'boolean') return result
+      return {
+        ok: false, error: 'a sessão não confirmou o envio', deliveryUncertain: true
+      }
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        deliveryUncertain: true
+      }
     }
   },
 
@@ -604,13 +612,21 @@ export const guiApi = {
   async deliverQueued(
     paneId: string,
     input: GuiQueuedDeliveryInput
-  ): Promise<{ ok: boolean; error?: string }> {
+  ): Promise<{ ok: boolean; error?: string; deliveryUncertain?: boolean }> {
     const api = bridge()
-    if (!api?.deliverQueued) return { ok: false, error: NO_BRIDGE }
+    if (!api?.deliverQueued) return { ok: false, error: NO_BRIDGE, deliveryUncertain: true }
     try {
-      return (await api.deliverQueued(paneId, input)) ?? { ok: true }
+      const result = await api.deliverQueued(paneId, input)
+      if (result && typeof result.ok === 'boolean') return result
+      return {
+        ok: false, error: 'a sessão não confirmou o envio', deliveryUncertain: true
+      }
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        deliveryUncertain: true
+      }
     }
   },
 

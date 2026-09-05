@@ -729,7 +729,10 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         owner: { kind: owner.kind, label: owner.label, ...(owner.paneId ? { paneId: owner.paneId } : {}) }
       }
     })
-    if (url) await loadInto(mission, tab, url)
+    // Uma WebContentsView recém-criada ainda não tem renderer pronto para CDP.
+    // Sem documento, Page.enable pendura até o teto quando browser_open não
+    // recebe URL. Inicialize também o +/a aba vazia, sem escolher site por ela.
+    await loadInto(mission, tab, url ?? 'about:blank')
     emitChanged(mission.missionId)
     return { ok: true, tab }
   }

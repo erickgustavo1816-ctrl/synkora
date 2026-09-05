@@ -6,11 +6,19 @@ export type GuiQueuedDeliveryResult =
   | { status: 'pending-ack'; message: GuiQueuedMessage }
   | { status: 'failed'; message: GuiQueuedMessage; error: string }
 
+export interface GuiMessageDeliveryResult {
+  ok: boolean
+  error?: string
+  /** No authoritative reply reached the renderer. The main may already have
+   * accepted the exact message ID; keep its claim until receipt reconciliation. */
+  deliveryUncertain?: boolean
+}
+
 interface GuiQueuedDeliveryDeps {
   /** Claim comes first: the options and attachments sent are from the exact
    * storage envelope won by this renderer, never from an earlier render. */
   claim: () => GuiQueuedMessage | null
-  deliver: (message: GuiQueuedMessage) => Promise<{ ok: boolean; error?: string }>
+  deliver: (message: GuiQueuedMessage) => Promise<GuiMessageDeliveryResult>
   ack: (message: GuiQueuedMessage) => boolean
   restore: (message: GuiQueuedMessage, error: string) => void
 }
@@ -39,15 +47,13 @@ export async function dispatchOneGuiQueuedMessage(
   const message = deps.claim()
   if (!message) return { status: 'empty' }
 
-  let result: { ok: boolean; error?: string }
+  let result: GuiMessageDeliveryResult
   try {
     result = await deps.deliver(message)
-  } catch (error) {
-    result = {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error)
-    }
+  } catch {
+    return { status: 'pending-ack', message }
   }
+  if (result.deliveryUncertain) return { status: 'pending-ack', message }
   if (result.ok) {
     return deps.ack(message)
       ? { status: 'sent', message }

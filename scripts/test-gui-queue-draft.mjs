@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { buildSync } from 'esbuild'
+import React from 'react'
+import { act, create } from 'react-test-renderer'
 import {
   GUI_QUEUE_CLAIM_LEASE_MS,
   acknowledgeGuiQueuedMessage,
@@ -25,6 +29,27 @@ import {
   removeGuiComposerAttachments,
   writeGuiComposerAttachments
 } from '../src/renderer/src/guiComposerAttachmentStorage.ts'
+
+const compiled = buildSync({
+  stdin: { contents: `
+    export { useStore } from './src/renderer/src/store';
+    export { default as QueueCard } from './src/renderer/src/components/GuiQueuedMessageCard';
+    export { default as DeliveryActions } from './src/renderer/src/components/GuiComposerDeliveryActions';
+    export { guiApi } from './src/renderer/src/guiApi';
+  `, resolveDir: process.cwd(), loader: 'ts' },
+  bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', write: false,
+  loader: { '.css': 'empty' }, external: ['react', 'react/jsx-runtime', 'zustand']
+})
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+function rendererHarness(storage, windowMock = {}) {
+  const loaded = { exports: {} }
+  new Function('require', 'module', 'exports', 'document', 'window', 'localStorage', compiled.outputFiles[0].text)(
+    createRequire(import.meta.url), loaded, loaded.exports,
+    { documentElement: { style: { setProperty() {} } } }, windowMock, storage
+  )
+  return loaded.exports
+}
 
 class MemoryStorage {
   #values = new Map()
@@ -64,6 +89,143 @@ class MemoryStorage {
     this.#values.delete(key)
   }
 }
+
+/** Real Zustand queue actions; only browser globals and storage are synthetic. */
+function discardActionHarness(message, storage) {
+  const { useStore } = rendererHarness(storage)
+  useStore.setState({ guiPanes: { pane: { status: 'working', queued: message } } })
+  return { action: useStore.getState().discardGuiQueuedMessage, state: useStore.getState }
+}
+
+test('cancelamento recusado pelo storage conserva o cartão e informa a falha', () => {
+  const storage = new MemoryStorage()
+  const message = {
+    id: 'cancel-storage', text: 'ainda necessária', at: 10,
+    options: { model: null, effort: null, permissionMode: 'default' }, attachments: []
+  }
+  writeGuiQueuedMessage('pane', message, storage)
+  const refusing = {
+    getItem: (key) => storage.getItem(key),
+    setItem: (key, value) => storage.setItem(key, value),
+    removeItem: () => { throw new Error('armazenamento indisponível') }
+  }
+  const harness = discardActionHarness(message, refusing)
+  const cancelled = harness.action('pane', message.id)
+  assert.deepEqual(harness.state().guiPanes.pane.queued, message)
+  assert.deepEqual(readGuiQueuedMessage('pane', storage), message)
+  assert.equal(cancelled, false)
+})
+
+test('cancelar com cartão antigo preserva a mensagem que outro renderer já está enviando', () => {
+  const storage = new MemoryStorage()
+  const message = {
+    id: 'cancel-race', text: 'mensagem exata', at: 11,
+    options: { model: null, effort: null, permissionMode: 'default' }, attachments: []
+  }
+  writeGuiQueuedMessage('pane', message, storage)
+  const harness = discardActionHarness(message, storage)
+  claimGuiQueuedMessage('pane', 'other-renderer', storage)
+  const cancelled = harness.action('pane', message.id)
+  assert.equal(harness.state().guiPanes.pane.queued?.deliveryInFlight, true)
+  assert.equal(readGuiQueuedMessage('pane', storage)?.id, message.id)
+  assert.equal(cancelled, false)
+})
+
+test('mensagem comum pode esperar e ser cancelada sem tocar no turno atual ou nos anexos', async () => {
+  const storage = new MemoryStorage()
+  const { useStore } = rendererHarness(storage)
+  const currentItems = [{ id: 'current', kind: 'assistant', text: 'trabalho em andamento' }]
+  useStore.setState({ guiPanes: { pane: { status: 'working', queued: null, items: currentItems } } })
+  const options = { model: 'modelo-sintetico', effort: 'high', permissionMode: 'default' }
+  const attachments = [{ id: 'document', capability: `gui-cap-v1-${'Q'.repeat(43)}`,
+    kind: 'file', name: 'notas.txt', mime: 'text/plain', size: 18 }]
+  const queued = useStore.getState().queueGuiMessage('pane', 'pode fazer isso depois', options, attachments)
+  assert.ok(queued)
+  assert.deepEqual(readGuiQueuedMessage('pane', storage)?.attachments, attachments)
+  assert.equal(useStore.getState().discardGuiQueuedMessage('pane', queued.id), true)
+  assert.equal(useStore.getState().guiPanes.pane.status, 'working')
+  assert.equal(useStore.getState().guiPanes.pane.items, currentItems)
+  assert.deepEqual(attachments[0].name, 'notas.txt')
+  assert.equal(readGuiQueuedMessage('pane', storage), null)
+  const reopened = rendererHarness(storage)
+  reopened.useStore.getState().markGuiSpawned('pane')
+  assert.equal(reopened.useStore.getState().guiPanes.pane.queued, null)
+  const outcome = await dispatchOneGuiQueuedMessage({
+    claim: () => claimGuiQueuedMessage('pane', 'next-turn', storage),
+    deliver: () => { throw new Error('cancelamento não pode virar envio') },
+    ack: () => false,
+    restore: () => { throw new Error('cancelamento não pode ressuscitar a fila') }
+  })
+  assert.equal(outcome.status, 'empty')
+})
+
+test('cartão antigo não cancela a próxima mensagem e reenvio recusado conserva o rascunho', () => {
+  const storage = new MemoryStorage()
+  const older = { id: 'older', text: 'antiga', at: 1,
+    options: { model: null, effort: null, permissionMode: 'default' }, attachments: [] }
+  const newer = { ...older, id: 'newer', text: 'mais recente' }
+  writeGuiQueuedMessage('pane', newer, storage)
+  const harness = discardActionHarness(older, storage)
+  assert.equal(harness.action('pane', older.id), false)
+  assert.deepEqual(harness.state().guiPanes.pane.queued, newer)
+  assert.deepEqual(readGuiQueuedMessage('pane', storage), newer)
+  const { useStore } = rendererHarness(storage)
+  useStore.setState({ guiPanes: { pane: { status: 'idle', queued: null } } })
+  const queued = useStore.getState().queueGuiMessage('pane', 'rascunho atual', older.options, [])
+  assert.equal(queued, null, 'resposta já terminou; o gesto não deve enviar agora por conta própria')
+  assert.deepEqual(guiComposerClearPlan(Boolean(queued), 'rascunho atual', 'rascunho atual', [], []),
+    { draft: false, attachments: false })
+})
+
+test('ações de envio têm destinos distintos e cartão anuncia recusa do cancelamento', async () => {
+  const { DeliveryActions, QueueCard } = rendererHarness(new MemoryStorage())
+  let actions, card, now = 0, later = 0, cancelled = 0, edited = 0
+  const props = { disabled: false, showSendNow: true,
+    onSendNow: () => now++, onSendLater: () => later++ }
+  await act(async () => { actions = create(React.createElement(DeliveryActions, props)) })
+  try {
+    const buttons = actions.root.findAllByType('button')
+    await act(async () => buttons.find(button => button.children.includes('enviar depois')).props.onClick())
+    assert.equal(later, 1)
+    assert.equal(now, 0)
+    await act(async () => buttons.find(button => button.children.includes('enviar agora')).props.onClick())
+    assert.equal(now, 1)
+    await act(async () => actions.update(React.createElement(DeliveryActions, { ...props, disabled: true })))
+    assert.ok(actions.root.findAllByType('button').every(button => button.props.disabled))
+  } finally { await act(async () => actions.unmount()) }
+  const message = { id: 'queue-ui', text: 'orientação sintética', at: 10,
+    options: { model: null, effort: null, permissionMode: 'default' }, attachments: [] }
+  const cardProps = { message, editDisabled: true, onEdit: () => { edited++; return true },
+    onCancel: () => { cancelled++; return false }, onRetry() {} }
+  await act(async () => { card = create(React.createElement(QueueCard, cardProps)) })
+  try {
+    assert.equal(card.root.findAllByType('button').find(button => button.children.includes('editar')).props.disabled, true)
+    await act(async () => card.root.findByProps({ 'aria-label': 'Cancelar envio da mensagem na fila' }).props.onClick())
+    assert.equal(cancelled, 1)
+    assert.equal(edited, 0)
+    assert.match(card.root.findByProps({ role: 'alert' }).children.join(''), /não foi possível confirmar o cancelamento/iu)
+    await act(async () => card.update(React.createElement(QueueCard, { ...cardProps,
+      message: { ...message, deliveryInFlight: true } })))
+    assert.equal(card.root.findByProps({ 'aria-label': 'Cancelar envio da mensagem na fila' }).props.disabled, true)
+  } finally { await act(async () => card.unmount()) }
+})
+
+test('bridge diferencia recusa autoritativa de envio sem recibo', async () => {
+  const response = { value: { ok: false, error: 'a resposta anterior ainda não terminou' } }
+  const { guiApi } = rendererHarness(new MemoryStorage(), { synkora: { gui: {
+    send: async () => response.value,
+    deliverQueued: async () => response.value
+  } } })
+  const message = { id: 'api-queue', text: 'texto sintético', at: Date.now(),
+    options: { model: null, effort: null, permissionMode: 'default' }, attachments: [] }
+  assert.deepEqual(await guiApi.deliverQueued('pane', message), response.value)
+  response.value = undefined
+  assert.equal((await guiApi.deliverQueued('pane', message)).deliveryUncertain, true)
+  assert.equal((await guiApi.send('pane', message.text, message.id, [])).deliveryUncertain, true)
+  response.value = {}
+  assert.equal((await guiApi.deliverQueued('pane', message)).deliveryUncertain, true)
+  assert.equal((await guiApi.send('pane', message.text, message.id, [])).deliveryUncertain, true)
+})
 
 test('fila persiste até o ACK e uma lease impede outro renderer de tomar o bilhete', () => {
   const storage = new MemoryStorage()
@@ -358,7 +520,56 @@ test('dispatcher toma o bilhete antes de entregar e restaura o mesmo id na falha
   assert.equal(restored.error, 'CLI indisponível')
 })
 
-test('ACK confirmado não restaura e exceção de bridge vira falha recuperável', async () => {
+test('resposta IPC perdida não autoriza cancelar uma mensagem possivelmente entregue', async () => {
+  const storage = new MemoryStorage()
+  const message = {
+    id: 'cancel-uncertain', text: 'uma vez só', at: Date.now(),
+    options: { model: null, effort: null, permissionMode: 'default' }, attachments: []
+  }
+  writeGuiQueuedMessage('pane', message, storage)
+  let restores = 0
+  const outcome = await dispatchOneGuiQueuedMessage({
+    claim: () => claimGuiQueuedMessage('pane', 'renderer', storage),
+    deliver: async () => ({ ok: false, deliveryUncertain: true }),
+    ack: () => { throw new Error('não houve recibo') },
+    restore: (claimed, error) => {
+      restores += 1
+      releaseGuiQueuedMessageClaim('pane', 'renderer', claimed, error, storage)
+    }
+  })
+  assert.equal(restores, 0)
+  assert.equal(outcome.status, 'pending-ack')
+  assert.equal(removeGuiQueuedMessage('pane', message.id, storage), false)
+  assert.equal(readGuiQueuedMessage('pane', storage)?.deliveryInFlight, true)
+})
+
+test('reconciliação depois do ACK perdido conserva o id e encerra a fila sem reenviar', async () => {
+  const storage = new MemoryStorage()
+  const now = Date.now()
+  const message = { id: 'delivery-receipt', text: 'entrega única', at: now,
+    options: { model: null, effort: null, permissionMode: 'default' }, attachments: [] }
+  writeGuiQueuedMessage('pane', message, storage)
+  const deliveredIds = new Set()
+  let sends = 0
+  const run = (owner, at, loseAck) => dispatchOneGuiQueuedMessage({
+    claim: () => claimGuiQueuedMessage('pane', owner, storage, at),
+    deliver: async (claimed) => {
+      assert.equal(claimed.id, message.id)
+      if (!deliveredIds.has(claimed.id)) { deliveredIds.add(claimed.id); sends++ }
+      if (loseAck) throw new Error('conexão caiu após o main aceitar')
+      return { ok: true }
+    },
+    ack: claimed => acknowledgeGuiQueuedMessage('pane', claimed.id, owner, storage),
+    restore: () => { throw new Error('entrega aceita não pode voltar como falha') }
+  })
+  assert.equal((await run('renderer-first', now, true)).status, 'pending-ack')
+  assert.equal(removeGuiQueuedMessage('pane', message.id, storage), false)
+  assert.equal((await run('renderer-reopened', now + GUI_QUEUE_CLAIM_LEASE_MS + 1, false)).status, 'sent')
+  assert.equal(sends, 1)
+  assert.equal(readGuiQueuedMessage('pane', storage), null)
+})
+
+test('ACK confirmado não restaura e exceção de bridge conserva a claim para reconciliar', async () => {
   let restores = 0
   const message = {
     id: 'queued-ack',
@@ -389,8 +600,8 @@ test('ACK confirmado não restaura e exceção de bridge vira falha recuperável
       assert.equal(error, 'ponte caiu')
     }
   })
-  assert.equal(failed.status, 'failed')
-  assert.equal(restores, 1)
+  assert.equal(failed.status, 'pending-ack')
+  assert.equal(restores, 0)
 
   const pendingAck = await dispatchOneGuiQueuedMessage({
     claim: () => message,
@@ -432,7 +643,7 @@ test('composer só limpa a fotografia aceita e preserva texto ou anexos em falha
   )
 })
 
-test('dispatcher global existe e o composer envia NA HORA (R31) — só slash cru enfileira', () => {
+test('dispatcher global mantém envio imediato e permite fila por escolha explícita', () => {
   const app = readFileSync(new URL('../src/renderer/src/App.tsx', import.meta.url), 'utf8')
   const pane = readFileSync(
     new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
@@ -450,6 +661,10 @@ test('dispatcher global existe e o composer envia NA HORA (R31) — só slash cr
   // fechado (o CLI steera; sonda probe-claude-owner-midturn). A fila só fica
   // com o slash cru (comando é do binário; slash steerado não foi sondado).
   assert.match(pane, /if \(turnOpen && message\.startsWith\('\/'\)\)[\s\S]*queueGuiMessage/)
+  assert.match(pane, /if \(timing === 'after-turn'\)[\s\S]*queueGuiMessage\(paneId, outgoing/)
+  assert.match(pane, /onSendLater=\{\(\) => submit\('after-turn'\)\}/)
+  assert.match(pane, /onSendNow=\{\(\) => submit\(\)\}/)
+  assert.ok(!pane.includes('Colocar mensagem na fila'), 'mensagem comum enviada agora não é fila')
   assert.match(pane, /useGuiDraft\(paneId\)/)
   assert.match(dispatcher, /shouldAttemptGuiQueuedDelivery\(pane\.status, pane\.ready, queued\)/)
   assert.match(dispatcher, /claimGuiQueuedMessage/)
@@ -471,8 +686,8 @@ test('acoes da fila têm hover/foco contrastantes e disabled honesto durante o e
     'utf8'
   )
   assert.match(card, /className=\{`gui-queued-message[\s\S]*is-sending/u)
-  assert.match(card, /className="term-btn ghost-dim" disabled=\{sending\} onClick=\{onEdit\}/u)
-  assert.match(card, /className="term-btn ghost-dim" disabled=\{sending\}[\s\S]*aria-label="Apagar mensagem da fila"/u)
+  assert.match(card, /className="term-btn ghost-dim"[\s\S]*disabled=\{sending \|\| editDisabled\}/u)
+  assert.match(card, /className="term-btn ghost-dim"[\s\S]*disabled=\{sending\}[\s\S]*aria-label="Cancelar envio da mensagem na fila"/u)
   assert.match(css, /\.gui-queued-message-actions \.term-btn\.ghost-dim:hover:not\(:disabled\)[\s\S]*color: var\(--ink\)[\s\S]*border-color:[^;]*var\(--accent\)/u)
   assert.match(css, /\.gui-queued-message-actions \.term-btn\.ghost-dim:focus-visible[\s\S]*outline: 2px solid/u)
   // `\r?\n`: a árvore é conferida com core.autocrlf, então a folha chega em
@@ -505,28 +720,21 @@ test('enviar agora: o dono pula a fila e a mensagem entra no turno vivo (ordem d
   assert.match(pane, /claimGuiQueuedMessage/u, 'o pulo de fila nao reclama o bilhete')
   assert.match(
     pane,
-    /sendGuiMessage\(paneId, claimed\.text, claimed\.id, claimed\.attachments\)/u,
-    'o pulo de fila nao usa o caminho direto de envio (que steera em turno vivo)'
+    /guiApi\.send\(paneId, claimed\.text, claimed\.id, claimed\.attachments\)/u,
+    'o envio direto deve conservar a identidade durável da fila, inclusive no retry'
   )
   assert.match(pane, /acknowledgeGuiQueuedMessage/u, 'sucesso nao da ACK no bilhete')
   assert.match(pane, /restoreGuiQueuedMessage/u, 'falha nao devolve o bilhete com o motivo')
 })
 
-// R22.5 — a fila diz a VERDADE NOVA. O print de 19/08: num chat com ajudantes o
-// turno e uma request longa, e o CLI segura tudo que chega no stdin ate ela
-// acabar (potencialmente horas, pos-R19). Desde a R22 a mensagem passa a viajar
-// de carona no proximo resultado de ferramenta — e o card tem de contar isso,
-// senao o dono clica "enviar agora" achando que o agente le na hora, que era
-// exatamente a mentira do estado anterior.
-test('R22.5 — o card do "enviar agora" conta a carona no resultado de ferramenta', () => {
+test('card explica que enviar agora encerra a possibilidade de cancelamento', () => {
   const card = readFileSync(
     new URL('../src/renderer/src/components/GuiQueuedMessageCard.tsx', import.meta.url),
     'utf8'
   )
   const tip = card.slice(card.indexOf('sendNowDisabled'), card.indexOf('enviar agora'))
-  assert.match(tip, /carona/u, 'o card nao explica a carona')
-  assert.match(tip, /resultado de ferramenta/u, 'o card nao diz por onde a mensagem viaja')
-  assert.match(tip, /no meio do turno/u, 'o card nao diz que o agente le DENTRO do turno')
+  assert.match(tip, /durante a resposta atual/u)
+  assert.match(tip, /depois do envio ela não pode mais ser cancelada/u)
   // A ponte fora do ar continua com a dica honesta: ali nao ha turno nenhum.
   assert.match(card, /a ponte do chat[\s\S]{0,20}fora do ar/u)
 })

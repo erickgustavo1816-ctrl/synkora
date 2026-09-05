@@ -25,6 +25,7 @@ import { GuiToolCard, GuiToolGroupCard } from './GuiToolCard'
 import GuiMessageCopy from './GuiMessageCopy'
 import GuiErrorLine from './GuiErrorLine'
 import GuiQueuedMessageCard from './GuiQueuedMessageCard'
+import GuiComposerDeliveryActions from './GuiComposerDeliveryActions'
 import GuiAttachmentChips from './GuiAttachmentChips'
 import GuiSelectionMenu, { type GuiSelectionAction } from './GuiSelectionMenu'
 import {
@@ -115,6 +116,7 @@ import {
 import { shouldBlurGuiComposerOnOutsidePointerDown } from '../guiComposerFocus'
 import { guiAwaitingGoDecision } from '../guiAskForGo'
 import { guiComposerClearPlan } from '../guiComposerDelivery'
+import { dispatchOneGuiQueuedMessage } from '../guiQueuedDelivery'
 import { parseGuiJsonCard } from '../guiJsonCard'
 import { useGuiTranscriptWindow } from '../useGuiTranscriptWindow'
 
@@ -1171,7 +1173,7 @@ export default function GuiPane({
   )
 
   const send = useCallback(
-    async (text: string): Promise<boolean> => {
+    async (text: string, timing: 'now' | 'after-turn' = 'now'): Promise<boolean> => {
       const message = text.trim()
       if ((!message && attachments.length === 0) || !canSubmit) return false
       // R33 — as citações penduradas entram NA FRENTE do texto: uma verdade
@@ -1180,6 +1182,19 @@ export default function GuiPane({
       const outgoing = message.startsWith('/') ? message : guiQuotedPrompt(quotes, message)
       pinnedRef.current = true
       setPinned(true)
+      if (timing === 'after-turn') {
+        const queued = queueGuiMessage(paneId, outgoing, {
+          model: liveModel ?? null,
+          effort: liveEffort ?? null,
+          permissionMode: mode
+        }, attachments)
+        if (queued) setQuotes([])
+        else handleGuiLive(paneId, {
+          type: 'limit',
+          text: 'não deu para colocar na fila — sua mensagem continua no campo de texto; confira a conversa e tente enviar novamente'
+        })
+        return Boolean(queued)
+      }
       // R23.2 — PANE MORTO RENASCE NO ENVIO (ordem do dono depois do incidente
       // de 2026-08-19: o composer travou e a única fuga era trocar de conta).
       // NADA de botão novo: enviar É o gesto. O respawn é o MESMO da troca de
@@ -1259,25 +1274,19 @@ export default function GuiPane({
   // de graça.
   const sendQueuedNow = useCallback(async () => {
     const owner = `send-now-${globalThis.crypto.randomUUID()}`
-    const claimed = claimGuiQueuedMessage(paneId, owner)
-    if (!claimed) return
-    const ok = await sendGuiMessage(paneId, claimed.text, claimed.id, claimed.attachments)
-    if (ok) {
-      acknowledgeGuiQueuedMessage(paneId, claimed.id, owner)
-      return
-    }
-    restoreGuiQueuedMessage(
-      paneId,
-      claimed,
-      'não consegui entrar no turno — a ponte do chat recusou a mensagem',
-      owner
-    )
+    await dispatchOneGuiQueuedMessage({
+      claim: () => claimGuiQueuedMessage(paneId, owner),
+      // O bilhete já tem identidade durável. O eco autoritativo do main cria
+      // a bolha, e o retry usa o MESMO id mesmo depois de uma resposta perdida.
+      deliver: (claimed) => guiApi.send(paneId, claimed.text, claimed.id, claimed.attachments),
+      ack: (claimed) => acknowledgeGuiQueuedMessage(paneId, claimed.id, owner),
+      restore: (claimed, error) => restoreGuiQueuedMessage(paneId, claimed, error, owner)
+    })
   }, [
     acknowledgeGuiQueuedMessage,
     claimGuiQueuedMessage,
     paneId,
-    restoreGuiQueuedMessage,
-    sendGuiMessage
+    restoreGuiQueuedMessage
   ])
 
   // ————— autocomplete de comandos —————
@@ -1366,7 +1375,7 @@ export default function GuiPane({
     [fileMentions, setDraft, slashCursor]
   )
 
-  const submit = useCallback((): void => {
+  const submit = useCallback((timing: 'now' | 'after-turn' = 'now'): void => {
     const text = draft.trim()
     if ((!text && attachments.length === 0) || !canSubmit || submitInFlightRef.current) return
 
@@ -1374,7 +1383,7 @@ export default function GuiPane({
     const attachmentSnapshot = attachments.map((attachment) => ({ ...attachment }))
     submitInFlightRef.current = true
     setSubmitPending(true)
-    void send(text)
+    void send(text, timing)
       .then((accepted) => {
         const clear = guiComposerClearPlan(
           accepted,
@@ -2319,15 +2328,19 @@ export default function GuiPane({
 
       {!inert && queuedMessage && (
         <GuiQueuedMessageCard
+          key={queuedMessage.id}
           message={queuedMessage}
           optionsLabel={queuedOptionsLabel}
+          editDisabled={Boolean(draft || attachments.length || quotes.length)}
           onEdit={() => {
-            discardGuiQueuedMessage(paneId, queuedMessage.id)
+            if (latestDraftRef.current || latestAttachmentsRef.current.length || quotes.length) return false
+            if (!discardGuiQueuedMessage(paneId, queuedMessage.id)) return false
             setDraft(queuedMessage.text)
             setAttachments(queuedMessage.attachments)
             window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0)
+            return true
           }}
-          onDelete={() => discardGuiQueuedMessage(paneId, queuedMessage.id)}
+          onCancel={() => discardGuiQueuedMessage(paneId, queuedMessage.id)}
           onRetry={() => retryGuiQueuedMessage(paneId, queuedMessage.id)}
           onSendNow={() => void sendQueuedNow()}
           sendNowDisabled={!canSend}
@@ -2804,18 +2817,22 @@ export default function GuiPane({
                       : turnOpen
                         ? gui.queued
                           ? 'Já existe uma mensagem na fila'
-                          : 'Colocar na fila · Enter'
+                          : draft.trim().startsWith('/')
+                            ? 'Colocar comando na fila · Enter'
+                            : 'Enviar agora · Enter'
                         : 'Enviar · Enter'
                 }
                 aria-label={
                   activityRunning
                     ? 'Interromper resposta'
                     : turnOpen
-                      ? 'Colocar mensagem na fila'
+                      ? draft.trim().startsWith('/')
+                        ? 'Colocar comando na fila'
+                        : 'Enviar mensagem agora'
                       : 'Enviar mensagem'
                 }
                 aria-keyshortcuts={activityRunning ? 'Escape' : undefined}
-                onClick={activityRunning ? () => void interruptGuiPane(paneId) : submit}
+                onClick={activityRunning ? () => void interruptGuiPane(paneId) : () => submit()}
               >
                 {activityRunning ? <StopGlyph /> : <SendGlyph />}
               </button>
@@ -2825,6 +2842,14 @@ export default function GuiPane({
                 </div>
               )}
             </div>
+            {turnOpen && Boolean(draft.trim() || attachments.length) && (
+              <GuiComposerDeliveryActions
+                disabled={!canSubmit}
+                showSendNow={activityRunning && !draft.trim().startsWith('/')}
+                onSendNow={() => submit()}
+                onSendLater={() => submit('after-turn')}
+              />
+            )}
           </div>
         </div>
       )}

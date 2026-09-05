@@ -179,6 +179,19 @@ test('o dev espera aval antes de trabalho grande e trabalha só no worktree', ()
   assert.match(contract, /ONLY inside this worktree/i)
 })
 
+test('escolhas do dono usam o cartão nativo de cada CLI em todo chat GUI', () => {
+  for (const contract of [
+    ...GUI_MISSION_ROLES.map(guiMissionSystemPrompt), guiPlanningSystemPrompt(), guiReleaseSystemPrompt()
+  ]) {
+    assert.match(contract, /CHOICES — USE THE QUESTION CARD/u)
+    assert.match(contract, /AskUserQuestion/u)
+    assert.match(contract, /request_user_input_async/u)
+    assert.match(contract, /request_user_input \(Codex\)/u)
+    assert.match(contract, /a list in prose or raw JSON does not create a card/u)
+    assert.match(contract, /Wait for his actual answer before dependent work/u)
+  }
+})
+
 // O MUNDO ONDE VOCÊ ESTÁ (R37, 2026-08-23). O caso: o dev codex, na v0.1.1,
 // anunciou sozinho "a correção agora será publicada como 0.1.2" ("quem decide
 // isso sou eu"). A ordem do dono moldou a forma: "ao invés de ficar

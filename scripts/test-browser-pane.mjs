@@ -1176,6 +1176,31 @@ test('MOTOR/CICLO: `ensureTab` é IDEMPOTENTE — reusa a aba morna e só navega
   assert.equal(moved.webContents.loaded, 2)
 })
 
+test('MOTOR/CICLO: browser_open sem URL inicializa a página em branco antes de devolver a aba', async () => {
+  const { manager, host } = makeManager()
+  const opened = await manager.ensureTab('m1', 'p', undefined, OWNER_DEV)
+  // Electron real: uma WebContentsView sem loadURL não responde Page.enable.
+  // A aba vazia precisa de documento, mesmo sem um endereço pedido pelo agente.
+  assert.equal(opened.webContents.getURL(), 'about:blank')
+  assert.equal(opened.webContents.loaded, 1)
+  const reused = await manager.ensureTab('m1', 'p', undefined, OWNER_DEV)
+  assert.equal(reused.tabId, opened.tabId)
+  assert.equal(reused.webContents.loaded, 1, 'reabrir uma aba pronta não apaga a página')
+  assert.equal(host.views.length, 1)
+
+  await manager.ensureTab('m1', 'p', 'localhost:5173/lab', OWNER_DEV)
+  const current = await manager.ensureTab('m1', 'p', undefined, OWNER_DEV)
+  assert.equal(current.webContents.getURL(), 'http://localhost:5173/lab')
+  assert.equal(current.webContents.loaded, 2, 'sem URL preserva o endereço da própria identidade')
+})
+
+test('MOTOR/CICLO: o + do dono também inicializa a aba em branco', async () => {
+  const { manager } = makeManager()
+  const opened = await manager.newTab('m1', 'p')
+  assert.equal(opened.ok, true)
+  assert.equal(manager.activeTab('m1').webContents.getURL(), 'about:blank')
+})
+
 test('MOTOR/CICLO: endereço inválido do agente RECUSA antes de nascer view nenhuma', async () => {
   const { manager, host } = makeManager()
   await assert.rejects(() => manager.ensureTab('m1', 'p', 'javascript:alert(1)', OWNER_DEV), /browser_eval/u)

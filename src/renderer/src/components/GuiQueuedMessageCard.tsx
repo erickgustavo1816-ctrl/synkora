@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { GuiQueuedMessage } from '../guiMessageQueue'
 import './GuiQueuedMessageCard.css'
 import GuiAttachmentChips from './GuiAttachmentChips'
@@ -5,8 +6,9 @@ import GuiAttachmentChips from './GuiAttachmentChips'
 interface GuiQueuedMessageCardProps {
   message: GuiQueuedMessage
   optionsLabel?: string
-  onEdit: () => void
-  onDelete: () => void
+  onEdit: () => boolean
+  onCancel: () => boolean
+  editDisabled?: boolean
   onRetry: () => void
   /** PULA A FILA (ordem do dono, 18/08): entrega AGORA, dentro do turno vivo,
    *  pelo caminho direto de envio — os dois CLIs aceitam steering. Ausente =
@@ -20,13 +22,15 @@ export default function GuiQueuedMessageCard({
   message,
   optionsLabel,
   onEdit,
-  onDelete,
+  onCancel,
+  editDisabled,
   onRetry,
   onSendNow,
   sendNowDisabled
 }: GuiQueuedMessageCardProps) {
   const failed = Boolean(message.deliveryError)
   const sending = Boolean(message.deliveryInFlight)
+  const [actionError, setActionError] = useState<string | null>(null)
   return (
     <aside
       className={`gui-queued-message${failed ? ' has-error' : ''}${sending ? ' is-sending' : ''}`}
@@ -49,6 +53,9 @@ export default function GuiQueuedMessageCard({
             {message.deliveryError}
           </span>
         )}
+        <span className="gui-queued-message-error" role="alert">
+          {actionError}
+        </span>
       </div>
       <div className="gui-queued-message-actions">
         {failed && !sending && (
@@ -64,29 +71,47 @@ export default function GuiQueuedMessageCard({
             data-tip={
               sendNowDisabled
                 ? 'a ponte do chat está fora do ar — sem turno para entrar'
-                : // R31 — pós-steering, mensagem comum nem passa por aqui (o
-                  // composer envia na hora); a fila guarda slash cru e envelope
-                  // antigo do boot. O verbo continua sendo a saída sancionada:
-                  // entrega AGORA pelo caminho direto, e quem decide a rota
-                  // (pote do delegador, steering) é o MAIN.
-                  'entra no turno AGORA pelo caminho direto — o agente lê no meio do turno (num chat com ajudantes, de carona no próximo resultado de ferramenta)'
+                : 'envia esta mensagem durante a resposta atual; depois do envio ela não pode mais ser cancelada'
             }
             onClick={onSendNow}
           >
             enviar agora
           </button>
         )}
-        <button type="button" className="term-btn ghost-dim" disabled={sending} onClick={onEdit}>
+        <button
+          type="button"
+          className="term-btn ghost-dim"
+          disabled={sending || editDisabled}
+          data-tip={
+            editDisabled
+              ? 'conclua seu rascunho atual antes de editar a mensagem da fila'
+              : undefined
+          }
+          onClick={() => {
+            if (!onEdit()) {
+              setActionError('Não foi possível trazer a mensagem para edição. Ela foi preservada na fila.')
+            }
+          }}
+        >
           editar
         </button>
         <button
           type="button"
           className="term-btn ghost-dim"
           disabled={sending}
-          aria-label="Apagar mensagem da fila"
-          onClick={onDelete}
+          aria-label="Cancelar envio da mensagem na fila"
+          data-tip={
+            sending
+              ? 'o envio já começou; aguarde a confirmação'
+              : 'retira esta mensagem da fila sem interromper a resposta atual'
+          }
+          onClick={() => {
+            if (!onCancel()) {
+              setActionError('Não foi possível confirmar o cancelamento. A mensagem foi preservada; confira o estado da fila e tente novamente.')
+            }
+          }}
         >
-          apagar
+          cancelar envio
         </button>
       </div>
     </aside>

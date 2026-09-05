@@ -20,8 +20,9 @@
  * - Higiene de env (deletar os marcadores CLAUDE_CODE_ e CLAUDECODE herdados)
  *   já é feita dentro das classes de sessão — nada a repetir aqui.
  */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { CodexSession } from './codexSession'
+import { codexAsyncQuestionAnswer } from './codexAsyncQuestions'
 import { MaestroSession, type SessionEvent } from './maestroSession'
 import { GuiProgressTracker, type GuiProgressInput, type GuiProgressHelpers } from './guiProgress'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
@@ -207,6 +208,7 @@ export interface GuiStatePayload {
 export interface GuiResult {
   ok: boolean
   error?: string
+  retryable?: boolean
 }
 
 /** Mudança de executor solicitada pelo composer. `null` limpa o override;
@@ -351,13 +353,13 @@ type GuiStickyEvent =
 type GuiPendingInteractionEvent = 'permission' | 'question' | 'plan-review' | 'plan-proposal'
 
 /**
- * A proposta de plano é a ÚNICA pendência que não bloqueia o CLI: o agente
- * chama `propose_plan`, a tool responde na hora e o turno termina. Se ela
- * caísse na limpeza do `result` como as outras, o card sumiria antes de o dono
- * chegar a vê-lo.
+ * Propostas de plano e perguntas async já devolveram a tool ao CLI. Continuam
+ * esperando o dono depois do turno; perguntas RPC morrem quando ele termina.
  */
-function guiSurvivesTurnEnd(type: GuiPendingInteractionEvent): boolean {
-  return type === 'plan-proposal'
+function guiSurvivesTurnEnd(evt: unknown): boolean {
+  const event = guiEventRecord(evt)
+  return event?.['type'] === 'plan-proposal' ||
+    (event?.['type'] === 'question' && event['asynchronous'] === true)
 }
 
 function guiStickyEvent(evt: unknown): GuiStickyEvent | null {
@@ -519,7 +521,8 @@ function guiPersistedResolution(value: unknown): boolean {
         resolution['behavior'] === 'allow-always' ||
         resolution['behavior'] === 'deny')
     )
-  if (resolution['kind'] !== 'question' || !Array.isArray(resolution['entries'])) return false
+  if (resolution['kind'] !== 'question' || !Array.isArray(resolution['entries']) ||
+    (resolution['messageId'] !== undefined && guiMessageIdProblem(resolution['messageId']) !== null)) return false
   return resolution['entries'].every((entry) => {
     const item = guiPlainRecord(entry)
     return Boolean(
@@ -629,7 +632,9 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
       return guiRequestId(event['requestId']) && guiPersistedResolution(event['resolution'])
     case 'question':
       return guiRequestId(event['requestId']) && guiPersistedQuestions(event['questions']) &&
-        (event['blocking'] === undefined || typeof event['blocking'] === 'boolean')
+        (event['blocking'] === undefined || typeof event['blocking'] === 'boolean') &&
+        (event['asynchronous'] === undefined || typeof event['asynchronous'] === 'boolean') &&
+        (event['asynchronous'] !== true || event['blocking'] === false)
     case 'plan-review':
       return (
         guiRequestId(event['requestId']) &&
@@ -684,6 +689,7 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
  *  checkpoint ou na barreira final de `dispose`. */
 function guiTranscriptCheckpoint(evt: SessionEvent): boolean {
   switch (evt.type) {
+    case 'session-id':
     case 'user-message':
     case 'text':
     case 'tool-result':
@@ -800,6 +806,16 @@ export class GuiEventRing {
     const stickyKey = guiStickyEvent(evt)
     if (stickyKey) {
       const previous = this.sticky.get(stickyKey)
+      if (stickyKey === 'session-id' && previous &&
+        guiEventRecord(previous.evt)?.['sessionId'] !== event?.['sessionId']) {
+        // Resume que caiu numa thread nova não herda escolhas da anterior.
+        for (const [requestId, pending] of this.interactions) {
+          const question = guiEventRecord(pending.evt)
+          if (question?.['type'] !== 'question' || question['asynchronous'] !== true) continue
+          this.interactions.delete(requestId)
+          this.interactionBytes -= pending.size
+        }
+      }
       if (previous) this.stickyBytes -= previous.size
       this.sticky.set(stickyKey, { seq, evt, size })
       this.stickyBytes += size
@@ -825,13 +841,10 @@ export class GuiEventRing {
         this.interactionBytes -= previous.size
       }
     } else if (guiTerminalEvent(evt)) {
-      // Pedido que BLOQUEIA o CLI morre com o turno (o backend já desistiu
-      // dele). A proposta de plano não bloqueia nada e continua esperando o
-      // clique do dono — limpá-la aqui apagaria o card assim que o agente
-      // terminasse de falar.
+      // RPC já encerrado morre com o turno; proposta e pergunta async esperam
+      // uma mensagem futura e continuam respondíveis depois dele.
       for (const [requestId, item] of this.interactions) {
-        const pendingType = guiPendingInteraction(item.evt)?.type
-        if (pendingType && guiSurvivesTurnEnd(pendingType)) continue
+        if (guiSurvivesTurnEnd(item.evt)) continue
         this.interactions.delete(requestId)
         this.interactionBytes -= item.size
       }
@@ -3166,7 +3179,22 @@ export class GuiSessionRegistry {
   answerQuestion(paneId: string, requestId: string, answers: Record<string, string>): GuiResult {
     const entry = this.panes.get(paneId)
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
-    const pending = guiEventRecord(entry.ring.pending(requestId))
+    const pendingEvent = entry.ring.pending(requestId)
+    const pending = guiEventRecord(pendingEvent)
+    if (requestId.startsWith('codex-async-') || pending?.['asynchronous'] === true) {
+      if (entry.spawn.cli !== 'codex' || !isGuiPersistedEvent(pendingEvent) ||
+        pendingEvent.type !== 'question' || pendingEvent.asynchronous !== true) {
+        return { ok: false, error: 'esta pergunta não está mais pendente' }
+      }
+      const reply = codexAsyncQuestionAnswer(pendingEvent.questions, answers)
+      if (!reply) return { ok: false, error: 'resposta inválida; responda todas as perguntas ou use pular', retryable: true }
+      const messageId = `answer-${createHash('sha256').update(requestId).digest('hex')}`
+      const sent = this.send(paneId, reply.text, messageId)
+      if (!sent.ok) return { ...sent, retryable: true }
+      entry.sink({ type: 'interaction-resolved', requestId,
+        resolution: { kind: 'question', entries: reply.entries, messageId } })
+      return { ok: true }
+    }
     const questions = Array.isArray(pending?.['questions']) ? pending['questions'] : []
     if (!entry.session.answerQuestion(requestId, answers)) {
       entry.sink({ type: 'interaction-resolved', requestId, resolution: { kind: 'stale' } })

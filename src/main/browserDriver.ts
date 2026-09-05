@@ -247,6 +247,8 @@ export class BrowserDriverSession {
   private readonly page: BrowserPageLike
   private readonly log: BrowserDriverLog
   private attached = false
+  private listening = false
+  private attaching: Promise<void> | undefined
   private epochValue = 1
   private consoleRing: ConsoleEntry[] = []
   private networkRing: NetworkEntry[] = []
@@ -283,14 +285,28 @@ export class BrowserDriverSession {
    * que não pintou.
    */
   async ensureAttached(): Promise<void> {
+    if (this.attaching) return this.attaching
     if (this.attached && this.page.debugger.isAttached()) return
+    this.attached = false
+    const attaching = this.attachDomains()
+    this.attaching = attaching
+    try {
+      await attaching
+    } finally {
+      if (this.attaching === attaching) this.attaching = undefined
+    }
+  }
+
+  private async attachDomains(): Promise<void> {
     if (!this.page.debugger.isAttached()) this.page.debugger.attach('1.3')
-    if (!this.attached) {
+    if (!this.listening) {
       this.page.debugger.on('message', (_event, method, params) => {
         this.onCdpEvent(method, params)
       })
-      this.attached = true
+      this.listening = true
     }
+    this.logDomain = false
+    this.networkDomain = false
     // Page e Runtime são ESSENCIAIS (sem eles não há leitura nem ação) e estão
     // provados em binário real (P6). Log e Network são acessórios: se um deles
     // não existir neste Electron, a tool correspondente diz a verdade em vez de
@@ -313,6 +329,9 @@ export class BrowserDriverSession {
     } catch (error) {
       this.log({ event: 'browser-cdp-domain-off', detail: { domain: 'Network' }, err: String(error) })
     }
+    // Assinar eventos não significa estar pronto. Falhar em Page/Runtime deixa
+    // a próxima chamada refazer o attach; chamadas concorrentes aguardam juntas.
+    this.attached = true
     this.log({ event: 'browser-cdp-attached', detail: { wc: this.page.id } })
   }
 

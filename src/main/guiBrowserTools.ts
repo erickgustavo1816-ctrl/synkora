@@ -393,18 +393,34 @@ export function buildGuiBrowserTools(deps: GuiBrowserToolsDeps): GuiBrowserToolk
           error instanceof Error ? error.message : String(error)
         }. NADA foi aberto.`
       }
-      markDriving(target.missionId, tab.tabId)
-      const session = registry.for(tab.webContents)
-      await session.ensureAttached()
-      // Espera curta pelo carregamento: sem ela a leitura inicial fotografaria
-      // o esqueleto e o agente concluiria que a página "está vazia".
-      const deadline = Date.now() + 8_000
-      while (Date.now() < deadline) {
-        const state = await session.readyState()
-        if (state === 'complete' || state === 'interactive') break
-        await new Promise((resolve) => setTimeout(resolve, 120))
+      let initial: string
+      let stage: 'attach' | 'load' | 'read' = 'attach'
+      try {
+        markDriving(target.missionId, tab.tabId)
+        const session = registry.for(tab.webContents)
+        await session.ensureAttached()
+        // Espera curta pelo carregamento: sem ela a leitura inicial fotografaria
+        // o esqueleto e o agente concluiria que a página "está vazia".
+        stage = 'load'
+        const deadline = Date.now() + 8_000
+        while (Date.now() < deadline) {
+          const state = await session.readyState()
+          if (state === 'complete' || state === 'interactive') break
+          await new Promise((resolve) => setTimeout(resolve, 120))
+        }
+        stage = 'read'
+        initial = await session.read({ filter: 'all' })
+      } catch {
+        // A aba já nasceu: dizer "NADA foi aberto" seria falso. CDP pode cair
+        // numa troca de página; a receita retoma só a aba desta identidade.
+        log({
+          event: 'browser-open-incomplete',
+          ids: { paneId: id.paneId, missionId: target.missionId, projectId: target.projectId },
+          detail: { tabId: tab.tabId, stage }
+        })
+        if (tab.webContents.isDestroyed()) return BROWSER_NO_TAB
+        return 'a SUA aba está aberta, mas não consegui concluir a leitura inicial. NENHUMA tela foi verificada. Receita: chame browser_open novamente com a URL desta missão para retomar a mesma aba; se ela ainda estiver carregando, use browser_wait e depois browser_read.'
       }
-      const initial = await session.read({ filter: 'all' })
       log({
         event: 'browser-open',
         // D6 — AUTORIA: até 01/09 o `browser-open` saía SEM `paneId` e o diário
@@ -417,7 +433,10 @@ export function buildGuiBrowserTools(deps: GuiBrowserToolsDeps): GuiBrowserToolk
           owner: target.owner
         }
       })
-      return `${initial}${tabsBlock(target, tab.tabId)}`
+      const blank = tab.webContents.getURL() === 'about:blank'
+        ? 'a SUA aba está em branco. Receita: chame browser_open com a URL que você quer verificar nesta missão. Nenhuma página do projeto foi verificada.\n\n'
+        : ''
+      return `${blank}${initial}${tabsBlock(target, tab.tabId)}`
     },
 
     read: (id, input) => withSession(id, (session) => session.read(input), failText),
@@ -618,7 +637,7 @@ export function registerBrowserKit(
           .max(2_000)
           .optional()
           .describe(
-            'endereço a abrir (http/https, ou o localhost do dev server desta missão — se você é ajudante, a SUA porta). Ausente = fica onde está'
+            'endereço a abrir (http/https, ou o localhost do dev server desta missão — se você é ajudante, a SUA porta). Ausente = mantém sua página atual; se ainda não tiver aba, abre em branco e pede a URL'
           )
       }
     },

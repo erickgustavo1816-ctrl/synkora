@@ -35,17 +35,17 @@ export function settleGuiInteractionFailure<T extends GuiInteractionIdentity>(
 export interface GuiInteractionNature {
   kind: string
   blocking?: boolean
+  asynchronous?: boolean
 }
 
 /**
  * ESPELHO RENDERER da isenção do anel (`guiSurvivesTurnEnd`, src/main/
- * guiSessions.ts): a proposta de plano é a ÚNICA pendência que não bloqueia o
- * CLI — o agente chama `propose_plan`, a tool responde na hora e o turno segue.
- * Permissão, pergunta e veredito de plano PARAM o backend, então morrem com o
- * turno (quem esperava já desistiu); a proposta continua esperando o dono.
+ * guiSessions.ts): propostas e perguntas async esperam uma resposta futura do
+ * dono, mesmo depois do turno. Perguntas RPC, inclusive as opcionais, perdem
+ * seu pedido pendente no servidor quando o turno termina.
  */
-export function guiInteractionSurvivesTurnEnd(kind: string): boolean {
-  return kind === 'plan-proposal'
+export function guiInteractionSurvivesTurnEnd(kind: string, asynchronous = false): boolean {
+  return kind === 'plan-proposal' || (kind === 'question' && asynchronous)
 }
 
 /**
@@ -56,7 +56,7 @@ export function guiInteractionSurvivesTurnEnd(kind: string): boolean {
 export function retainGuiInteractionsAfterTurnEnd<T extends GuiInteractionNature>(
   queue: readonly T[]
 ): T[] {
-  return queue.filter((item) => guiInteractionSurvivesTurnEnd(item.kind))
+  return queue.filter((item) => guiInteractionSurvivesTurnEnd(item.kind, item.asynchronous))
 }
 
 /**

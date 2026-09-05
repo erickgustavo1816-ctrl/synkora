@@ -37,6 +37,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 
 import {
   BROWSER_ACT_MAX_STEPS,
+  BROWSER_CDP_TIMEOUT_MS,
   BROWSER_READ_CEILING_CHARS,
   BROWSER_READ_DEFAULT_MAX_CHARS,
   BROWSER_STALE_REF_RECIPE,
@@ -401,6 +402,50 @@ const refIn = (text, needle) => {
   assert.ok(found, `não achei o ref de ${needle} em:\n${text}`)
   return Number(found[1])
 }
+
+test('CDP/RECUPERAÇÃO: inicialização que falhou não fica marcada como pronta', async () => {
+  let first = true
+  const host = makeFakePage(makeFixture({ items: 0 }), {
+    refuse: (method) => {
+      if (method !== 'Page.enable' || !first) return false
+      first = false
+      return true
+    }
+  })
+  let subscriptions = 0
+  const on = host.page.debugger.on
+  host.page.debugger.on = (event, listener) => { subscriptions += 1; return on(event, listener) }
+  const session = new BrowserDriverSession(host.page)
+  await assert.rejects(session.ensureAttached(), /Page.enable/u)
+  await session.ensureAttached()
+  assert.equal(host.sent.filter(({ method }) => method === 'Page.enable').length, 2)
+  assert.ok(host.sent.some(({ method }) => method === 'Runtime.enable'))
+  assert.equal(subscriptions, 1, 'a recuperação não duplica eventos nem o epoch')
+  assert.match(await session.read(), /Painel da missão/u)
+})
+
+test('CDP/RECUPERAÇÃO: chamadas simultâneas esperam a mesma inicialização', async () => {
+  const host = makeFakePage(makeFixture({ items: 0 }))
+  const send = host.page.debugger.sendCommand
+  let release
+  const pending = new Promise((resolve) => { release = resolve })
+  host.page.debugger.sendCommand = async (method, params) => {
+    if (method === 'Page.enable') await pending
+    return send(method, params)
+  }
+  const session = new BrowserDriverSession(host.page)
+  const first = session.ensureAttached()
+  let secondReady = false
+  const second = session.ensureAttached().then(() => { secondReady = true })
+  await new Promise((resolve) => setImmediate(resolve))
+  try {
+    assert.equal(secondReady, false, 'nenhuma leitura começa antes de Page/Runtime prontos')
+  } finally {
+    release()
+    await Promise.all([first, second])
+  }
+  assert.equal(host.sent.filter(({ method }) => method === 'Page.enable').length, 1)
+})
 
 // ————————————————————————————————————————————————————————————————
 // A. A PÁGINA EM TEXTO — leitura, refs e o EPOCH
@@ -983,6 +1028,54 @@ test('SUA ABA: `browser_open` leva o DONO ao motor — é assim que a aba nasce 
   assert.equal(ensured.length, 1)
   assert.equal(ensured[0].url, 'localhost:8791')
   assert.deepEqual(ensured[0].owner, OWNER_DEV, 'o motor recebe QUEM está abrindo')
+})
+
+test('TOOLKIT/RECUPERAÇÃO: falha ao conectar uma aba aberta devolve receita e permite nova tentativa', async (t) => {
+  let unavailable = true
+  const { tools, logs, ensured } = toolkitOn(t, makeFixture({ items: 0 }), {
+    page: { refuse: (method) => method === 'Page.enable' && unavailable }
+  })
+  const result = await tools.open(IDENTITY, {})
+  assert.match(result, /SUA aba está aberta/u)
+  assert.match(result, /browser_open/u)
+  assert.match(result, /NENHUMA tela foi verificada/u)
+  assert.doesNotMatch(result, /NADA foi aberto/u)
+  const failed = logs.find(({ event }) => event === 'browser-open-incomplete')
+  assert.equal(failed.ids.paneId, IDENTITY.paneId)
+  assert.equal(failed.detail.stage, 'attach')
+  unavailable = false
+  assert.match(await tools.open(IDENTITY, {}), /Painel da missão/u)
+  assert.equal(ensured.length, 2, 'a próxima tentativa continua na aba da mesma identidade')
+})
+
+test('TOOLKIT/RECUPERAÇÃO: CDP sem resposta termina no teto e a mesma aba pode recuperar', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { tools, host, logs } = toolkitOn(t, makeFixture({ items: 0 }))
+  const send = host.page.debugger.sendCommand
+  let unavailable = true
+  host.page.debugger.sendCommand = (method, params) =>
+    method === 'Page.enable' && unavailable ? new Promise(() => {}) : send(method, params)
+  let settled = false
+  const opened = tools.open(IDENTITY, {}).then((result) => { settled = true; return result })
+  await new Promise((resolve) => setImmediate(resolve))
+  t.mock.timers.tick(BROWSER_CDP_TIMEOUT_MS - 1)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(settled, false)
+  t.mock.timers.tick(1)
+  assert.match(await opened, /NENHUMA tela foi verificada/u)
+  assert.equal(logs.find(({ event }) => event === 'browser-open-incomplete').detail.stage, 'attach')
+  unavailable = false
+  assert.match(await tools.open(IDENTITY, {}), /Painel da missão/u)
+})
+
+test('TOOLKIT/RECUPERAÇÃO: falha na leitura inicial também tem receita sem alegar aba fechada', async (t) => {
+  let evaluations = 0
+  const { tools, logs } = toolkitOn(t, makeFixture({ items: 0 }), {
+    page: { refuse: (method) => method === 'Runtime.evaluate' && ++evaluations === 2 }
+  })
+  assert.match(await tools.open(IDENTITY, {}), /SUA aba está aberta/u)
+  assert.equal(logs.find(({ event }) => event === 'browser-open-incomplete').detail.stage, 'read')
+  assert.match(await tools.open(IDENTITY, {}), /Painel da missão/u)
 })
 
 test('SUA ABA: sem `url`, o `browser_open` devolve a leitura e a LISTA com o dono de cada aba', async (t) => {

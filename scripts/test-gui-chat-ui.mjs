@@ -2170,7 +2170,8 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
   assert.match(pane, /activityRunning \? ' stop' : ''/u)
   assert.match(pane, /aria-label=\{\s*activityRunning\s*\? 'Interromper resposta'/u)
   assert.match(pane, /aria-keyshortcuts=\{activityRunning \? 'Escape' : undefined\}/u)
-  assert.match(pane, /onClick=\{activityRunning \? \(\) => void interruptGuiPane\(paneId\) : submit\}/u)
+  assert.ok(/onClick=\{activityRunning \? \(\) => void interruptGuiPane\(paneId\) : \(\) => submit\(\)\}/u.test(pane),
+    'botão principal interrompe a resposta atual ou envia com o modo padrão')
   assert.match(pane, /activityRunning \? <StopGlyph \/> : <SendGlyph \/>/u)
   // Glifos desenhados à mão na mesma grade de 16: nada de emoji, nada de
   // biblioteca de ícones, e a MESMA caixa nos dois estados — trocar enviar por

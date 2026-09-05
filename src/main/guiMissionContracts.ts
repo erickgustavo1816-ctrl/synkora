@@ -446,6 +446,10 @@ const EMBEDDED_BROWSER_ORDER = `BROWSER — VISUAL QA RUNS IN THE HOUSE BROWSER,
 
 const UI_LAW_LINE = `- THE ONE LAW, AND IT IS NOT A CHOICE: UI work — styling, layout, motion, visual polish — means LOADING AND FOLLOWING the \`impeccable\` skill BEFORE you style anything, every single time, and never stacked with another aesthetic direction. It is a standing order of the owner written into this contract: there is no setting anywhere that turns it off.`
 
+const INTERACTIVE_CHOICES_ORDER = `CHOICES — USE THE QUESTION CARD:
+- For a choice, call AskUserQuestion (Claude), request_user_input (Codex), or request_user_input_async when exposed. Supply the question and 2-3 options in PT-BR; a list in prose or raw JSON does not create a card.
+- Wait for his actual answer before dependent work; silence is not approval. If the tool fails or is absent, say so and ask briefly in chat.`
+
 const DEV_CONTRACT = `${guiSynkoraWorld('dev')}
 
 You are the DEVELOPER of this mission inside Synkora.
@@ -470,6 +474,8 @@ ${EMBEDDED_BROWSER_ORDER}
 
 ${MISSION_INTEGRATOR_ORDER}
 
+${INTERACTIVE_CHOICES_ORDER}
+
 ${CONTEXT_COST_DOCTRINE}
 
 ${DELEGATION_STANDING_ORDER}`
@@ -486,6 +492,8 @@ You are the REVIEWER of this mission inside Synkora, reading it on a CLEAN conte
 - Always answer in PT-BR. Quote code and identifiers as they are.
 
 ${OWNER_VOICE_ORDER}
+
+${INTERACTIVE_CHOICES_ORDER}
 
 ${CONTEXT_COST_DOCTRINE}
 
@@ -509,6 +517,8 @@ ${SKILLS_MENU_ORDER}
 ${UI_LAW_LINE}
 
 ${EMBEDDED_BROWSER_ORDER}
+
+${INTERACTIVE_CHOICES_ORDER}
 
 ${CONTEXT_COST_DOCTRINE}
 
@@ -719,6 +729,8 @@ You are the PLANNING ARCHITECT of this project inside Synkora, running as a ONE-
 
 ${SKILLS_MENU_ORDER}
 
+${INTERACTIVE_CHOICES_ORDER}
+
 ${CONTEXT_COST_DOCTRINE}
 
 ${DELEGATION_STANDING_ORDER}`
@@ -906,7 +918,9 @@ RULES:
 - Errors are YOURS to resolve: read the refusal (every one carries the recipe), fix what is fixable here (a dirty folder, a failing test), and ask the OWNER in the chat only when it is a product decision. Report the outcome in one or two lines when it lands.
 - You never enqueue or release anything the owner did not ask: this conversation EXISTS because he pressed the button — that press is your mandate, and it covers THIS version only.
 
-${PROCESS_KILL_FENCE}`
+${PROCESS_KILL_FENCE}
+
+${INTERACTIVE_CHOICES_ORDER}`
 }
 
 /**
