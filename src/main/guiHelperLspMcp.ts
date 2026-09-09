@@ -28,6 +28,7 @@ import { claudeMcpArgs, writeClaudeMcpConfig } from './mcpServer'
 import { GUI_PLANNER_TOKEN_ENV, guiPlannerCodexArgs } from './guiPlannerMcp'
 import { BROWSER_TOOL_NAMES } from './guiBrowserTools'
 import { LSP_TOOL_NAMES } from './guiLspTools'
+import { SKILL_TOOL_NAMES } from './guiSkillKit'
 import type { GuiHelperCli } from './guiHelperSessions'
 import type { Hub } from './hub'
 
@@ -59,7 +60,13 @@ export const GUI_HELPER_LSP_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   // primeiro `browser_read` de um ajudante claude morreria no can_use_tool,
   // a lição exata deste cabeçalho.
   ...GUI_HELPER_LSP_TOOLS,
-  ...BROWSER_TOOL_NAMES
+  ...BROWSER_TOOL_NAMES,
+  // SKILLS 3.0 (2026-09-08): o catálogo do papel `ajudante` serve as `skill_*`
+  // (o briefing dele já lista o harness da missão, mas uma fatia pode precisar de
+  // um playbook que ninguém previu). Derivadas da MESMA fonte, pela lição deste
+  // cabeçalho: sem elas aqui, o primeiro `skill_search` de um ajudante claude
+  // morreria no can_use_tool — e a morte é o desfecho, não um aviso.
+  ...SKILL_TOOL_NAMES
 ].map((tool) => `mcp__synkora__${tool}`)
 
 /**

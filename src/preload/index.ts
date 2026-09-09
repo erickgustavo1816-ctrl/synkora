@@ -620,6 +620,9 @@ export interface SynkoraPreferences {
   chatNotifyFinished: boolean
   chatNotifyFailed: boolean
   chatSoundsEnabled: boolean
+  /** INTERRUPTOR do `skill_pull` de rede do agente (Skills 3.0 — ADR-0010).
+   *  Ausente/true = ligado; o par é `skillsAgentPull` em main/settingsCore.ts. */
+  skillsAgentPull?: boolean
 }
 
 /** Snapshot seguro do main. Nenhum segredo bruto cruza esta fronteira. */
@@ -1181,6 +1184,26 @@ const api = {
      */
     attachFolder: (paneId: string): Promise<GuiAttachResult> =>
       ipcRenderer.invoke('gui:attachFolder', paneId),
+    /** O item SOLTO no chat (pasta ou arquivo arrastado). O caminho nasce AQUI,
+     *  do File que o SO entregou (webUtils — Electron 43 não tem File.path); o
+     *  renderer só passa o File, então não há como ele escolher um alvo. O
+     *  main ainda revalida (link/junction recusa; pasta vira referência,
+     *  arquivo é copiado). */
+    attachDropped: (paneId: string, file: File): Promise<GuiAttachResult> => {
+      let path = ''
+      try {
+        path = webUtils.getPathForFile(file)
+      } catch {
+        path = ''
+      }
+      if (!path) {
+        return Promise.resolve({
+          ok: false,
+          error: `não deu para localizar ${file.name || 'o item solto'} — escolha pelo + do composer`
+        })
+      }
+      return ipcRenderer.invoke('gui:attachDropped', paneId, path)
+    },
     /** A prévia é PNG limitado produzido pelo main; nunca uma URL de arquivo. */
     attachmentPreview: (
       paneId: string,
@@ -1363,8 +1386,8 @@ const api = {
       mode: FileExternalOpenMode
     ): Promise<FileExternalOpenResult> =>
       ipcRenderer.invoke('files:openExternal', projectId, root, relativePath, mode),
-    tree: (scope: FileActionScope): Promise<FileTreeSnapshot> =>
-      ipcRenderer.invoke('files:tree', scope),
+    tree: (scope: FileActionScope, directoryPath = '', offset = 0): Promise<FileTreeSnapshot> =>
+      ipcRenderer.invoke('files:tree', scope, directoryPath, offset),
     createFile: (
       scope: FileActionScope,
       parentPath: string,

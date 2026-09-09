@@ -49,6 +49,11 @@ const ownerMailModule = await import('../.tmp/gui-delegation-wiring-test/guiOwne
 const ownerReplyModule = await import(
   '../.tmp/gui-delegation-wiring-test/guiOwnerReplyDebt.js'
 ).catch(() => ({}))
+// O RASTRO DO HARNESS DA MISSÃO (módulo NOVO da fatia 5.B, Skills 3.0) pela
+// MESMA porta tolerante: sem ele cai só o teste do briefing do ajudante.
+const harnessModule = await import(
+  '../.tmp/gui-delegation-wiring-test/skillsHarness.js'
+).catch(() => ({}))
 
 const {
   GUI_HELPER_CARD_ACTIVITY_MAX,
@@ -1072,6 +1077,29 @@ test('a conta pedida na tool chega ao motor (o campo se chama `seat` lá fora)',
   assert.equal(plans[0].request.seatId, 'seat-codex', 'o motor lê seatId, a tool publica seat')
 })
 
+test('a CONTA carimbada na aba entra na cadeia: explícita na tool vence, ausente segue o motor', async () => {
+  // 2026-09-08 — a aba "ajudantes ˄" carimba a conta como primeira etapa.
+  const { api, spawned } = panelApi({ defaults: { seat: 'seat-codex', model: 'gpt-5.6-sol' } })
+  const receipt = await api.delegateHelpers(delegatorId, [{ prompt: 'a' }])
+  assert.equal(spawned[0].seat.seatId, 'seat-codex', 'a conta do painel chega ao motor')
+  assert.match(receipt, /Codex A \(painel\)/u, 'o recibo carimba a origem da conta')
+  const plans = planGuiHelperRequests(
+    [{ prompt: 'a' }, { prompt: 'b', seat: 'seat-claude' }],
+    { seat: 'seat-codex' }
+  )
+  assert.equal(plans[0].request.seatId, 'seat-codex')
+  assert.equal(plans[0].origins.seat, 'painel')
+  assert.equal(plans[1].request.seatId, 'seat-claude', 'o pedido explícito vence o painel')
+  assert.equal(plans[1].origins.seat, 'explicito')
+  assert.equal(planGuiHelperRequests([{ prompt: 'a' }], undefined)[0].origins.seat, 'herdado')
+  // Conta carimbada de OUTRO CLI que o do modelo não é recusa: o resolvedor
+  // cai na primeira logada do CLI do modelo, e o recibo diz qual foi.
+  const cruzado = panelApi({ defaults: { seat: 'seat-codex' } })
+  await cruzado.api.delegateHelpers(delegatorId, [{ prompt: 'a' }])
+  assert.equal(cruzado.spawned[0].cli, 'claude', 'sem modelo carimbado o modelo é o da conversa')
+  assert.equal(cruzado.spawned[0].seat.seatId, 'seat-claude')
+})
+
 test('a origem é decidida por campo, e o plano preserva o pedido', () => {
   const plans = planGuiHelperRequests(
     [
@@ -1114,11 +1142,58 @@ test('o recibo só carimba origem do valor que existe', () => {
   )
   assert.match(text, /opus \(painel\)/u)
   assert.doesNotMatch(text, /\(painel\) · \(painel\)/u, 'effort ausente não vira parêntese solto')
+  // A conta só ganha carimbo quando alguém a ESCOLHEU: a decidida pelo motor
+  // ("herdado") não vira ruído na linha que os chamadores antigos já leem.
+  const receipt = { ok: true, helperId: 'h-1', cli: 'codex', model: 'gpt-5.6-sol', seatId: 'seat-codex', seatName: 'Codex A' }
+  assert.match(
+    guiHelperSpawnText([receipt], undefined, [{ model: 'painel', effort: 'herdado', fast: 'desligado', seat: 'painel' }]),
+    /Codex A \(painel\)/u
+  )
+  assert.doesNotMatch(
+    guiHelperSpawnText([receipt], undefined, [{ model: 'herdado', effort: 'herdado', fast: 'desligado', seat: 'herdado' }]),
+    /Codex A \(herdado\)/u
+  )
   // Chamada SEM origens continua válida e devolve a linha crua de sempre.
   assert.match(
     guiHelperSpawnText([{ ok: true, helperId: 'h-1', cli: 'claude', model: 'opus', seatId: 's' }]),
     /\n {4}opus · s · claude\n/u
   )
+})
+
+test('a CONTA da aba persiste por pane, atravessa o respawn e some no limpar', () => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-panel-seat-'))
+  try {
+    const storeFile = join(root, 'gui-sessions.json')
+    const first = registryWith(storeFile)
+    assert.equal(first.gui.create(devSpawn).ok, true)
+    assert.deepEqual(first.gui.setDelegationDefaults(devSpawn.paneId, { seat: 'seat-codex' }), {
+      ok: true,
+      seat: 'seat-codex'
+    })
+    assert.deepEqual(
+      first.gui.setDelegationDefaults(devSpawn.paneId, { model: 'gpt-5.6-sol' }),
+      { ok: true, seat: 'seat-codex', model: 'gpt-5.6-sol' },
+      'campo ausente CONSERVA a conta'
+    )
+    // O respawn regrava o record inteiro: a conta atravessa como os irmãos.
+    assert.equal(first.gui.create({ ...devSpawn, permissionMode: 'plan' }).ok, true)
+    assert.equal(first.gui.delegationDefaults(devSpawn.paneId).seat, 'seat-codex')
+    const second = registryWith(storeFile)
+    assert.deepEqual(second.gui.delegationDefaults(devSpawn.paneId), {
+      seat: 'seat-codex',
+      model: 'gpt-5.6-sol'
+    })
+    assert.deepEqual(
+      second.gui.setDelegationDefaults(devSpawn.paneId, { seat: null, model: null }),
+      { ok: true }
+    )
+    // Conta vazia é recusada com a receita, nunca gravada como pino em branco.
+    const blank = second.gui.setDelegationDefaults(devSpawn.paneId, { seat: '   ' })
+    assert.equal(blank.ok, false)
+    assert.match(blank.error, /conta/u)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('o padrão do painel persiste POR PANE e volta do disco', () => {
@@ -3129,10 +3204,62 @@ test('R14 — a linha do LSP entra UMA vez, e só no ajudante que tem as tools',
   // vale para as duas linhas: promessa sem reserva é persona mentindo.
   const wiringSrc = source('src/main/guiDelegationWiring.ts')
   assert.equal(
-    (wiringSrc.match(/guiHelperPersonaFor\(kit !== undefined, port\)/gu) ?? []).length,
+    (
+      wiringSrc.match(
+        /guiHelperPersonaFor\(\s*kit !== undefined,\s*port,\s*missionHarnessBriefing\(request\.cwd\)\s*\)/gu
+      ) ?? []
+    ).length,
     2,
     'um dos CLIs ficou com a persona fixa'
   )
+})
+
+// ————— O HARNESS DA MISSÃO CHEGA AO AJUDANTE (Skills 3.0 — fatia 5.D) —————
+//
+// ADR-0009: "o `mission-playbook` vai a cada ajudante". Sem esta linha, o
+// ajudante puxaria de novo (uma chamada de rede por skill que já está no disco
+// dele) ou, pior, trabalharia sem o playbook que o dev escreveu para a missão.
+// A régua é a MESMA das outras duas linhas: só entra quando a coisa EXISTE.
+test('5.D — o briefing do harness entra na persona quando a missão puxou algo', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-helper-harness-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+
+  // 1. Missão que não puxou nada: a persona é a de sempre, palavra por palavra.
+  assert.equal(guiHelperPersonaFor(false, undefined, harnessModule.missionHarnessBriefing(root)), GUI_HELPER_PERSONA)
+
+  // 2. Com rastro no worktree, o bloco entra UMA vez, nomeando o playbook
+  // primeiro e a procedência de cada skill puxada.
+  harnessModule.recordSkillPull(root, {
+    id: 'grilling',
+    origin: 'catalog',
+    repo: 'mattpocock/skills',
+    sha: 'c0ffee1234567890',
+    description: 'uma pergunta por vez',
+    by: 'gui-dev-abc12345'
+  })
+  harnessModule.recordSkillPull(root, {
+    id: 'mission-playbook',
+    origin: 'authored',
+    description: 'a direção desta missão',
+    by: 'gui-dev-abc12345'
+  })
+  const briefing = harnessModule.missionHarnessBriefing(root)
+  assert.ok(briefing, 'o motor do rastro não devolveu bloco nenhum')
+  const persona = guiHelperPersonaFor(false, undefined, briefing)
+  assert.ok(persona.startsWith(GUI_HELPER_PERSONA), 'o bloco novo reescreveu a persona')
+  assert.equal(
+    persona.split('SKILLS THIS MISSION ALREADY PULLED').length - 1,
+    1,
+    'o briefing do harness entrou mais de uma vez'
+  )
+  assert.match(persona, /mission-playbook.+read it FIRST/u)
+  assert.match(persona, /mattpocock\/skills @ c0ffee1/u)
+
+  // 3. As três linhas condicionais convivem sem se comer.
+  const completa = guiHelperPersonaFor(true, 47137, briefing)
+  assert.ok(completa.includes(GUI_HELPER_LSP_PERSONA_LINE), 'o harness comeu a linha do LSP')
+  assert.ok(completa.includes(GUI_HELPER_PORT_PERSONA_LINE(47137)), 'o harness comeu a linha da porta')
+  assert.ok(completa.includes(briefing), 'a porta comeu o briefing do harness')
 })
 
 // ————— A PORTA DO AJUDANTE (2026-09-01 — D4 do design ABAS POR IDENTIDADE) —————

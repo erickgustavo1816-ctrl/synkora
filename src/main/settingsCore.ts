@@ -33,6 +33,13 @@ export interface SynkoraPreferences {
   chatNotifyFinished: boolean
   chatNotifyFailed: boolean
   chatSoundsEnabled: boolean
+  /**
+   * INTERRUPTOR do `skill_pull` de rede (Skills 3.0 — ADR-0010, 2026-09-08).
+   * Ligado por padrão: o harness é do agente ("ele vá atrás, ela busque, ela
+   * pegue e ela faça"). Desligado, o pull de catálogo/URL recusa NOMEANDO este
+   * ajuste — a prateleira, a biblioteca e o playbook autoral continuam valendo.
+   */
+  skillsAgentPull: boolean
 }
 
 /** Estado completo, restrito ao processo principal. */
@@ -55,7 +62,8 @@ const DEFAULTS: SynkoraPreferences = {
   chatNotifyNeedsYou: true,
   chatNotifyFinished: true,
   chatNotifyFailed: true,
-  chatSoundsEnabled: true
+  chatSoundsEnabled: true,
+  skillsAgentPull: true
 }
 
 function recordOf(value: unknown): Record<string, unknown> {
@@ -89,7 +97,10 @@ function sanitizePreferences(value: unknown): SynkoraPreferences {
     chatNotifyNeedsYou: source.chatNotifyNeedsYou !== false,
     chatNotifyFinished: source.chatNotifyFinished !== false,
     chatNotifyFailed: source.chatNotifyFailed !== false,
-    chatSoundsEnabled: source.chatSoundsEnabled !== false
+    chatSoundsEnabled: source.chatSoundsEnabled !== false,
+    // Ausente/torto = LIGADO: a ausência do campo é o documento de antes da
+    // ADR-0010, e o padrão dela é o agente podendo puxar.
+    skillsAgentPull: source.skillsAgentPull !== false
   }
 }
 

@@ -28,6 +28,7 @@ import type { GuiPlannerMcp, GuiPlannerMcpDeps } from './guiPlannerMcp'
 import { guiMissionRoleOf, missionTypeOf } from './guiMissionContracts'
 import { LSP_TOOL_NAMES } from './guiLspTools'
 import { BROWSER_TOOL_NAMES } from './guiBrowserTools'
+import { SKILL_TOOL_NAMES } from './guiSkillKit'
 
 /** A cerca anti-subagente-nativo do claude (sonda 2026-08-18: cerca de 1-2
  *  nomes NÃO basta — o modelo desvia por RemoteTrigger etc.; esta lista de 12
@@ -195,7 +196,12 @@ export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   // chamadas seguidas, e sem esta lista CADA uma delas viraria um card de
   // permissão para o dono — no gesto em que ele pediu justamente para não
   // precisar olhar. Verificar a própria tela não decide nada.
-  ...BROWSER_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`)
+  ...BROWSER_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
+  // SKILLS 3.0 (2026-09-08) — as TRÊS `skill_*`, derivadas da MESMA fonte que o
+  // catálogo registra. Montar o harness é a primeira coisa que o agente faz num
+  // turno de trabalho (ADR-0009): um card de permissão ali pararia a conversa
+  // antes de ela começar, e o dono não aprova o app escolhendo playbook.
+  ...SKILL_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`)
 ]
 
 /**
@@ -221,7 +227,11 @@ export const GUI_PLAN_TOOL_NAMES: readonly string[] = [
 export const GUI_PLANNER_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   ...GUI_PLAN_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   ...GUI_HELPER_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
-  ...LSP_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`)
+  ...LSP_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
+  // SKILLS 3.0 (2026-09-08, ADR-0011): o planejador escolhe o MÉTODO do mesmo
+  // cardápio. Derivada, como as irmãs — lista à mão aqui é como uma tool nova
+  // volta a pedir card no gesto que o dono acabou de fazer.
+  ...SKILL_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`)
 ]
 
 /** Flags do claude: config por arquivo + strict + a cerca + a pré-sanção (a

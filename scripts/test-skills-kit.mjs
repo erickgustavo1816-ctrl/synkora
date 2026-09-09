@@ -1,26 +1,33 @@
-// SKILLS 2.0 — A CERCA DO MOTOR (kit, biblioteca, sync, instalação, poda).
+// SKILLS 2.0/3.0 — A CERCA DO MOTOR (prateleira, biblioteca, sync, download,
+// harness da missão, poda).
 //
-// Contrato: `.synkora/reports/DESIGN_SKILLS_2_0_BUILD_2026-08-29.md` (§Gate) +
-// os ADRs 0002/0004/0005/0007. Módulos sob teste (compilados por `tsc` como as
-// suítes irmãs, ver o script `test:skills-kit` no package.json):
+// Contrato: `.synkora/reports/DESIGN_SKILLS_2_0_BUILD_2026-08-29.md` (§Gate) e
+// `.synkora/reports/DESIGN_HARNESS_DO_MODELO_2026-09-08.md` (§5.B) + os ADRs
+// 0002/0004/0007 e 0008/0009/0010. Módulos sob teste (compilados por `tsc` como
+// as suítes irmãs, ver o script `test:skills-kit` no package.json):
 //
-//   src/main/skillsKit.ts          o DADO do cardápio + a LEI da persona
+//   src/main/skillsKit.ts          o DADO da prateleira do dono
 //   src/main/skillsLibraryScan.ts  a lib do disco e o manifest.json
-//   src/main/skillsInstall.ts      instalar por URL pinada (a única rede)
+//   src/main/skillsInstall.ts      baixar pasta pinada (a única rede)
 //   src/main/skillsPrune.ts        a poda por gesto explícito
-//   src/main/skillsSync.ts         o transporte para o worktree
+//   src/main/skillsSync.ts         o transporte do kit para o worktree
+//   src/main/skillsAgentSync.ts    o harness que o AGENTE monta no worktree
+//   src/main/skillsHarness.ts      o RASTRO (.synkora/harness.json + notas)
 //
 // O QUE ESTA SUÍTE PRENDE (e por que cada cerca existe):
 //
-//  1. A LEI VOLTA SEMPRE. Desligar/remover `impeccable` é recusado NOMEANDO a
-//     receita, e um `skills-kit.json` editado à mão que perdeu (ou desligou) a
-//     lei a recebe de volta na leitura. Uma implementação que só faça
-//     `JSON.parse` do arquivo passa no resto e MORRE aqui.
-//  2. DESLIGAR NÃO É AUTORIZAR APAGAR. A poda protege por `allKitSkillIds`
+//  1. A LEI CAIU (ADR-0008) E NADA VOLTA SOZINHO. `impeccable` é slot comum:
+//     desliga, sai do kit, e um `skills-kit.json` com `law: true` dentro não
+//     promove ninguém. Uma implementação que re-afirme doutrina na leitura
+//     passa no resto e MORRE aqui.
+//  2. O QUE O AGENTE PUXOU SOBREVIVE AO SYNC. Entrada `origin: 'agent'` não sai
+//     na remontagem de aba nem com `chat: null` — só por discard (ADR-0010).
+//  3. DESLIGAR NÃO É AUTORIZAR APAGAR. A poda protege por `allKitSkillIds`
 //     (todo id citado), não por `kitForChat` (só os habilitados).
-//  3. O QUE É DO DONO NÃO SE TOCA. Pasta que o dono pôs à mão no worktree — ou
-//     a nossa que ele editou — nunca é sobrescrita nem apagada pelo sync.
-//  4. NADA DE REDE. O instalador roda inteiro com `fetch` injetado; nenhum teste
+//  4. O QUE É DO DONO NÃO SE TOCA. Pasta que o dono pôs à mão no worktree — ou
+//     a nossa que ele editou — nunca é sobrescrita nem apagada, e a recusa
+//     nomeia a rota real.
+//  5. NADA DE REDE. O download roda inteiro com `fetch` injetado; nenhum teste
 //     desta suíte abre socket nem encosta em `userData`.
 //
 // Toda escrita acontece em pasta temporária descartada no `t.after`.
@@ -35,7 +42,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import test from 'node:test'
 
 import {
@@ -44,15 +51,14 @@ import {
   attachSkillsKitRecorder,
   isSkillId,
   kitForChat,
-  seedSkillsKit,
-  skillsLawRefusal,
-  SKILLS_LAW_ID
+  seedSkillsKit
 } from '../.tmp/skills-kit-test/skillsKit.js'
 import {
   parseSkillFrontmatter,
   scanSkillsLibrary
 } from '../.tmp/skills-kit-test/skillsLibraryScan.js'
 import {
+  downloadSkillFolder,
   installSkillFromUrl,
   parseSkillFolderUrl
 } from '../.tmp/skills-kit-test/skillsInstall.js'
@@ -62,6 +68,24 @@ import {
   skillsSyncNoteText,
   syncPaneSkills
 } from '../.tmp/skills-kit-test/skillsSync.js'
+import {
+  discardAgentSkill,
+  discardAgentSkills,
+  listWorktreeSkills,
+  materializeAgentSkill,
+  mirrorLocalSkill
+} from '../.tmp/skills-kit-test/skillsAgentSync.js'
+import {
+  MISSION_PLAYBOOK_ID,
+  SKILL_HARNESS_FILE,
+  liveHarnessEntries,
+  missionHarnessBriefing,
+  readSkillHarness,
+  recordSkillDiscard,
+  recordSkillPull,
+  skillDiscardNoteText,
+  skillPullNoteText
+} from '../.tmp/skills-kit-test/skillsHarness.js'
 
 /* ------------------------------------------------------------ utilidades -- */
 
@@ -189,15 +213,22 @@ test('a primeira leitura semeia o kit aprovado e grava o arquivo', (t) => {
     assert.equal(entry.enabled, true)
   }
 
-  // a LEI nasce carimbada e é a primeira da ala execução
-  assert.equal(state.dev.execucao[0].id, SKILLS_LAW_ID)
-  assert.equal(state.dev.execucao[0].law, true)
-  assert.equal(state.dev.execucao.filter((entry) => entry.law).length, 1, 'v1 tem UMA lei')
+  // `impeccable` abre a ala execução como SLOT COMUM (ADR-0008: a lei caiu) e a
+  // ocasião dele diz que é UMA direção entre várias
+  assert.equal(state.dev.execucao[0].id, 'impeccable')
+  assert.equal(state.dev.execucao[0].occasion, 'direção/polish de UI — uma das direções de design')
+  assert.equal(
+    [...state.dev.execucao, ...state.dev.orquestracao, ...state.planejamento].some(
+      (entry) => 'law' in entry
+    ),
+    false,
+    'algum slot nasceu carimbado como lei'
+  )
 
   assert.ok(existsSync(file), 'o arquivo nasce na primeira leitura, sem clique nenhum')
   assert.ok(existsSync(`${file}.bak`), 'jsonStore grava o .bak junto')
   const onDisk = JSON.parse(readFileSync(file, 'utf8'))
-  assert.equal(onDisk.dev.execucao[0].law, true)
+  assert.equal('law' in onDisk.dev.execucao[0], false, 'o disco guardou a lei')
 })
 
 test('o segundo boot é mudo: mesmo conteúdo, nenhum sinal novo', (t) => {
@@ -213,80 +244,110 @@ test('o segundo boot é mudo: mesmo conteúdo, nenhum sinal novo', (t) => {
   assert.equal(again.dev.execucao.length, 11)
 })
 
-/* ================================================================= LEI ==== */
+/* ============================================ A LEI CAIU (ADR-0008) ======= */
 
-test('a lei recusa desligar e recusa sair, e a recusa NOMEIA a receita', (t) => {
-  const root = sandbox(t, 'lei')
+test('a ocasião da ERA DA LEI migra na leitura: "(a lei da persona)" vira a direção de design', (t) => {
+  // O userData do dono guarda a fotografia do kit de 08-29, em que o slot do
+  // impeccable dizia "mexer em UI (a lei da persona)". A lei caiu (ADR-0008) e
+  // a tela mostraria uma história revogada até ele editar à mão. A migração é
+  // UMA troca de texto, só quando o texto é EXATAMENTE o da era da lei (uma
+  // ocasião que o dono escreveu por conta própria nunca é tocada), persistida
+  // e dita à caixa-preta uma vez; o segundo boot é mudo.
+  const root = sandbox(t, 'ocasiao-da-lei')
+  const file = join(root, 'skills-kit.json')
+  const seed = seedSkillsKit()
+  seed.dev.execucao[0] = { id: 'impeccable', occasion: 'mexer em UI (a lei da persona)', enabled: true, law: true }
+  seed.planejamento.push({ id: 'grilling-x', occasion: 'mexer em UI (a lei da persona)', enabled: true })
+  writeFileSync(file, JSON.stringify(seed))
+  const marker = signals.length
+
+  const state = new SkillsKitStore(file).state()
+  const impeccable = state.dev.execucao.find((entry) => entry.id === 'impeccable')
+  assert.equal(impeccable.occasion, 'direção/polish de UI — uma das direções de design')
+  assert.equal('law' in impeccable, false)
+  // só o impeccable migra: outro slot com o mesmo texto é ocasião do dono
+  assert.equal(state.planejamento.find((entry) => entry.id === 'grilling-x').occasion, 'mexer em UI (a lei da persona)')
+  const onDisk = JSON.parse(readFileSync(file, 'utf8'))
+  assert.equal(onDisk.dev.execucao[0].occasion, 'direção/polish de UI — uma das direções de design', 'a migração não pousou no disco')
+  assert.deepEqual(
+    signals.slice(marker).map((signal) => signal.event),
+    ['skills-kit-migrated'],
+    'a migração é dita à caixa-preta exatamente uma vez'
+  )
+
+  const again = new SkillsKitStore(file).state()
+  assert.equal(again.dev.execucao[0].occasion, 'direção/polish de UI — uma das direções de design')
+  assert.equal(signals.length, marker + 1, 'o segundo boot é mudo')
+})
+
+test('impeccable é slot COMUM: desliga, sai do kit e volta pela tela', (t) => {
+  const root = sandbox(t, 'impeccable-comum')
   const file = join(root, 'skills-kit.json')
   const store = new SkillsKitStore(file)
 
-  const off = store.setSlotEnabled('dev', SKILLS_LAW_ID, false)
-  assert.equal(off.ok, false)
-  assert.equal(off.error, skillsLawRefusal(SKILLS_LAW_ID))
-  assert.match(off.error, /LEI da persona/u)
-  assert.match(off.error, /commit no seed de src\/main\/skillsKit\.ts/u, 'beco sem saída é bug')
-  assert.equal(off.state.dev.execucao[0].enabled, true, 'a recusa devolve o estado intacto')
-
-  const gone = store.removeSlot('dev', SKILLS_LAW_ID)
-  assert.equal(gone.ok, false)
-  assert.equal(gone.error, skillsLawRefusal(SKILLS_LAW_ID))
-
-  // e o disco também não mudou: a recusa acontece ANTES do commit
-  const persisted = JSON.parse(readFileSync(file, 'utf8'))
-  assert.equal(persisted.dev.execucao[0].id, SKILLS_LAW_ID)
-  assert.equal(persisted.dev.execucao[0].enabled, true)
-})
-
-test('lei APAGADA à mão volta na leitura seguinte, com sinal', (t) => {
-  const root = sandbox(t, 'lei-apagada')
-  const file = join(root, 'skills-kit.json')
-  new SkillsKitStore(file)
-
-  const raw = JSON.parse(readFileSync(file, 'utf8'))
-  raw.dev.execucao = raw.dev.execucao.filter((entry) => entry.id !== SKILLS_LAW_ID)
-  writeFileSync(file, JSON.stringify(raw, null, 2), 'utf8')
+  const off = store.setSlotEnabled('dev', 'impeccable', false)
+  assert.equal(off.ok, true, `recusou desligar: ${off.error ?? ''}`)
+  assert.equal(off.state.dev.execucao[0].enabled, false)
   assert.equal(
-    JSON.parse(readFileSync(file, 'utf8')).dev.execucao.some((e) => e.id === SKILLS_LAW_ID),
+    JSON.parse(readFileSync(file, 'utf8')).dev.execucao[0].enabled,
     false,
-    'o arquivo doutorado precisa MESMO estar sem a lei'
+    'o toggle da direção de design não pousou no disco'
   )
-
-  const marker = signals.length
-  const healed = new SkillsKitStore(file).state()
-  assert.equal(healed.dev.execucao[0].id, SKILLS_LAW_ID)
-  assert.equal(healed.dev.execucao[0].law, true)
-  assert.equal(healed.dev.execucao[0].enabled, true)
-  assert.ok(signals.length > marker, 'a cura da lei é muda')
-  assert.equal(signals.at(-1).event, 'skills-kit-degraded')
-  // a cura POUSA no disco: o próximo boot já encontra a lei de volta
+  // desligada, ela não viaja para o worktree — mas a poda continua protegendo a
+  // pasta (desligar nunca foi autorizar apagar)
   assert.equal(
-    JSON.parse(readFileSync(file, 'utf8')).dev.execucao[0].id,
-    SKILLS_LAW_ID,
-    'a lei voltou só na memória'
+    kitForChat(off.state, 'dev').some((slot) => slot.id === 'impeccable'),
+    false
   )
+  assert.equal(allKitSkillIds(off.state).has('impeccable'), true)
+
+  const gone = store.removeSlot('dev', 'impeccable')
+  assert.equal(gone.ok, true, `recusou remover: ${gone.error ?? ''}`)
+  assert.equal(
+    JSON.parse(readFileSync(file, 'utf8')).dev.execucao.some((e) => e.id === 'impeccable'),
+    false,
+    'a remoção não pousou no disco'
+  )
+  // e ela volta como qualquer outra ocasião: nada aqui é irreversível
+  const back = store.addSlot('dev', { id: 'impeccable', occasion: 'polir a interface' })
+  assert.equal(back.ok, true)
+  assert.equal(back.state.dev.execucao.at(-1).occasion, 'polir a interface')
 })
 
-test('lei DESLIGADA à mão volta ligada; e o arquivo não promove ninguém a lei', (t) => {
-  const root = sandbox(t, 'lei-desligada')
+test('kit sem impeccable NÃO ressuscita, e `law: true` no JSON não promove ninguém', (t) => {
+  const root = sandbox(t, 'lei-revogada')
   const file = join(root, 'skills-kit.json')
   new SkillsKitStore(file)
 
   const raw = JSON.parse(readFileSync(file, 'utf8'))
-  raw.dev.execucao[0].enabled = false
-  // e uma tentativa de PROMOVER outra skill a lei, editando userData
-  raw.dev.execucao[1].law = true
+  raw.dev.execucao = raw.dev.execucao.filter((entry) => entry.id !== 'impeccable')
+  // um arquivo da ERA DA LEI (ou doutorado à mão) tentando promover alguém
+  raw.dev.execucao[0].law = true
   raw.planejamento[0].law = true
   writeFileSync(file, JSON.stringify(raw, null, 2), 'utf8')
 
-  const healed = new SkillsKitStore(file).state()
-  assert.equal(healed.dev.execucao[0].enabled, true, 'a lei ficou desligada')
-  assert.equal(healed.dev.execucao[0].law, true)
-  assert.equal(healed.dev.execucao[1].law, undefined, 'o arquivo promoveu uma skill a lei')
-  assert.equal(healed.planejamento[0].law, undefined)
-  // e a falsa lei continua desligável: quem manda é o código, não o JSON
+  const marker = signals.length
+  const state = new SkillsKitStore(file).state()
+  assert.equal(
+    state.dev.execucao.some((entry) => entry.id === 'impeccable'),
+    false,
+    'a lei ressuscitou na leitura'
+  )
+  for (const slot of [...state.dev.execucao, ...state.planejamento]) {
+    assert.equal('law' in slot, false, `${slot.id} chegou carimbado como lei`)
+  }
+  // nada de degradação: um kit sem impeccable é uma ESCOLHA do dono, não avaria
+  assert.equal(signals.length, marker, 'a leitura de um kit legítimo falou com a caixa-preta')
+  assert.equal(
+    JSON.parse(readFileSync(file, 'utf8')).dev.execucao.some((e) => e.id === 'impeccable'),
+    false,
+    'a leitura reescreveu o arquivo do dono'
+  )
+
+  // e o slot que o arquivo tentou promover continua desligável e removível
   const store = new SkillsKitStore(file)
-  assert.equal(store.setSlotEnabled('dev', healed.dev.execucao[1].id, false).ok, true)
-  assert.equal(store.removeSlot('planejamento', healed.planejamento[0].id).ok, true)
+  assert.equal(store.setSlotEnabled('dev', state.dev.execucao[0].id, false).ok, true)
+  assert.equal(store.removeSlot('planejamento', state.planejamento[0].id).ok, true)
 })
 
 /* =========================================================== MUTAÇÕES ===== */
@@ -380,7 +441,7 @@ test('arquivo ilegível volta ao seed, e o sinal diz que ele EXISTIA', (t) => {
   const marker = signals.length
   const state = new SkillsKitStore(file).state()
   assert.equal(state.dev.execucao.length, 11)
-  assert.equal(state.dev.execucao[0].id, SKILLS_LAW_ID)
+  assert.equal(state.dev.execucao[0].id, 'impeccable')
   assert.ok(signals.length > marker)
   assert.equal(signals.at(-1).event, 'skills-kit-seeded')
   assert.match(signals.at(-1).reason, /existia mas não era legível/u)
@@ -1019,4 +1080,676 @@ test('lib inexistente não é erro de poda; e o id da pasta é sempre validado',
   assert.equal(isSkillId('com--dois'), false)
   assert.equal(isSkillId('com/barra'), false)
   assert.equal(isSkillId('../fuga'), false)
+})
+
+/* ========================================== DOWNLOAD PARA O WORKTREE ====== */
+
+/** Uma pasta já "baixada" (o pouso que o downloadSkillFolder devolve). */
+function fakeDownload(root, id, body = 'puxada') {
+  const dir = join(root, 'staging', `.dl-${id}-${body}`)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, 'SKILL.md'),
+    Buffer.from(`---\nname: ${id}\ndescription: ${body} ✦\n---\n# ${id}\n${body}\n`, 'utf8')
+  )
+  return dir
+}
+
+/** Pastas `.dl-*` que sobraram num staging — pouso vazado é lixo no worktree. */
+function landings(staging) {
+  try {
+    return readdirSync(staging).filter((name) => name.startsWith('.dl-'))
+  } catch {
+    return []
+  }
+}
+
+test('downloadSkillFolder pousa no staging, pinado no sha da PASTA', async (t) => {
+  const root = sandbox(t, 'download')
+  const staging = join(root, 'staging')
+  mkdirSync(staging, { recursive: true })
+  const { fetchImpl, calls } = githubFake(
+    { 'skills/alpha/reference/uso.md': 'como usar' },
+    { bom: true }
+  )
+
+  const out = await downloadSkillFolder(
+    { repo: 'dono/repo', path: 'skills/alpha', ref: 'main' },
+    { staging, fetch: fetchImpl }
+  )
+  assert.equal(out.ok, true, out.error)
+  assert.equal(out.download.id, 'alpha')
+  assert.equal(out.download.sha, PINNED_SHA)
+  assert.equal(out.download.description, 'skill de teste')
+  assert.equal(out.download.files, 2)
+  assert.ok(out.download.bytes > 0)
+  // o pouso mora DENTRO do staging e leva sufixo aleatório: duas frotas puxando
+  // a mesma skill não podem colidir num nome previsível
+  assert.equal(dirname(out.download.dir), staging)
+  assert.ok(basename(out.download.dir).startsWith('.dl-alpha-'))
+  assert.notEqual(basename(out.download.dir), '.dl-alpha-')
+
+  const md = readFileSync(join(out.download.dir, 'SKILL.md'))
+  assert.notEqual(md[0], 0xef, 'o BOM sobreviveu ao download')
+  assert.equal(readFileSync(join(out.download.dir, 'reference', 'uso.md'), 'utf8'), 'como usar')
+  // NINGUÉM decidiu destino aqui: a biblioteca da máquina segue intocada
+  assert.equal(existsSync(join(root, 'lib')), false)
+
+  const commits = calls.find((url) => url.includes('/commits?'))
+  assert.match(commits, /path=skills%2Falpha/u, 'o pin não é da pasta')
+  assert.match(commits, /sha=main/u, 'o ref não chegou no pin')
+  assert.equal(calls.filter((url) => url.includes('api.github.com')).length, 2, '2 chamadas core')
+})
+
+test('um SHA serve de ref — é assim que o dono guarda no MESMO pin (R2)', async (t) => {
+  const root = sandbox(t, 'download-sha')
+  const staging = join(root, 'staging')
+  mkdirSync(staging, { recursive: true })
+  const { fetchImpl, calls } = githubFake({})
+
+  const out = await downloadSkillFolder(
+    { repo: 'dono/repo', path: 'skills/alpha', ref: PINNED_SHA },
+    { staging, fetch: fetchImpl }
+  )
+  assert.equal(out.ok, true, out.error)
+  assert.match(
+    calls.find((url) => url.includes('/commits?')),
+    new RegExp(`sha=${PINNED_SHA}`, 'u'),
+    'o sha não foi usado como ref no pin'
+  )
+})
+
+test('expectId do catálogo troca a régua: vale o `name:`, não o nome da pasta', async (t) => {
+  const root = sandbox(t, 'download-expect')
+  const staging = join(root, 'staging')
+  mkdirSync(staging, { recursive: true })
+  // o caso real da curadoria F6: skills/soft-skill → high-end-visual-design
+  const fake = () =>
+    githubFake({}, { name: 'high-end-visual-design', prefix: 'skills/soft-skill/' }).fetchImpl
+  const source = { repo: 'dono/repo', path: 'skills/soft-skill' }
+
+  const ok = await downloadSkillFolder(source, {
+    staging,
+    fetch: fake(),
+    expectId: 'high-end-visual-design'
+  })
+  assert.equal(ok.ok, true, ok.error)
+  assert.equal(ok.download.id, 'high-end-visual-design')
+
+  // catálogo desatualizado (a fonte virou outra skill) é recusa NOMEADA
+  const wrong = await downloadSkillFolder(source, {
+    staging,
+    fetch: fake(),
+    expectId: 'outra-coisa'
+  })
+  assert.equal(wrong.ok, false)
+  assert.match(wrong.error, /o catálogo pede "outra-coisa"/u)
+  assert.match(wrong.error, /name: "high-end-visual-design"/u)
+
+  // e SEM expectId a régua volta a ser a spec dos CLIs: pasta == name
+  const strict = await downloadSkillFolder(source, { staging, fetch: fake() })
+  assert.equal(strict.ok, false)
+  assert.match(strict.error, /a pasta apontada chama "soft-skill"/u)
+})
+
+test('tree truncada é recusa e não deixa pouso no staging', async (t) => {
+  const root = sandbox(t, 'download-truncada')
+  const staging = join(root, 'staging')
+  mkdirSync(staging, { recursive: true })
+  const { fetchImpl } = githubFake({ 'skills/alpha/extra.md': 'x' }, { truncated: true })
+
+  const out = await downloadSkillFolder(
+    { repo: 'dono/repo', path: 'skills/alpha' },
+    { staging, fetch: fetchImpl }
+  )
+  assert.equal(out.ok, false)
+  assert.match(out.error, /truncou/u)
+  assert.match(out.error, /pela metade/u)
+  assert.deepEqual(landings(staging), [], 'a recusa deixou pouso para trás')
+})
+
+/* ==================================== O HARNESS DO AGENTE NO WORKTREE ==== */
+
+test('materializeAgentSkill escreve nos DOIS alvos com origin agent', (t) => {
+  const root = sandbox(t, 'agent-materializa')
+  const cwd = join(root, 'worktree')
+  mkdirSync(cwd, { recursive: true })
+  const source = fakeDownload(root, 'gsap-core')
+
+  const out = materializeAgentSkill(cwd, source, 'gsap-core')
+  assert.equal(out.ok, true, out.error)
+  assert.deepEqual(out.targets, [CLAUDE_TARGET, CODEX_TARGET])
+  assert.equal(out.replaced, false)
+
+  const bytes = readFileSync(join(source, 'SKILL.md'))
+  for (const target of [CLAUDE_TARGET, CODEX_TARGET]) {
+    assert.deepEqual(readFileSync(join(cwd, target, 'gsap-core', 'SKILL.md')), bytes)
+    const manifest = JSON.parse(readFileSync(join(cwd, target, SYNC_MANIFEST), 'utf8'))
+    assert.deepEqual(
+      manifest.entries.map((entry) => [entry.id, entry.origin]),
+      [['gsap-core', 'agent']],
+      `${target}: a origem não pousou no manifesto`
+    )
+  }
+  // a pasta-FONTE não é tocada (quem a apaga é quem a criou)
+  assert.equal(existsSync(join(source, 'SKILL.md')), true)
+  // o pouso do transporte não deixa skill FANTASMA: a pasta-alvo tem só a skill
+  // e o manifesto, e `.synkora/skills-sync-tmp` fica vazia (a varredura dela é
+  // do sync do kit — aqui ela pode hospedar o staging de outro pull em voo)
+  assert.deepEqual(readdirSync(join(cwd, CLAUDE_TARGET)).sort(), [SYNC_MANIFEST, 'gsap-core'])
+  assert.deepEqual(readdirSync(join(cwd, '.synkora', 'skills-sync-tmp')), [])
+
+  const shelf = listWorktreeSkills(cwd)
+  assert.deepEqual(shelf, [
+    {
+      id: 'gsap-core',
+      origin: 'agent',
+      targets: [CLAUDE_TARGET, CODEX_TARGET],
+      description: 'puxada ✦'
+    }
+  ])
+})
+
+test('pasta do DONO com o mesmo id é recusa NOMEADA — e nada é escrito', (t) => {
+  const root = sandbox(t, 'agent-pasta-do-dono')
+  const cwd = join(root, 'worktree')
+  mkdirSync(cwd, { recursive: true })
+  const source = fakeDownload(root, 'gsap-core')
+  // o dono (ou o agente, com as ferramentas dele) já tem uma pasta com esse id
+  const dele = join(cwd, CODEX_TARGET, 'gsap-core')
+  mkdirSync(dele, { recursive: true })
+  const bytes = Buffer.from('---\nname: gsap-core\n---\nMEU, escrito à mão\n', 'utf8')
+  writeFileSync(join(dele, 'SKILL.md'), bytes)
+
+  const out = materializeAgentSkill(cwd, source, 'gsap-core')
+  assert.equal(out.ok, false)
+  assert.match(out.error, /"gsap-core" já existe em \.agents\/skills\//u)
+  assert.match(out.error, /não é minha/u)
+  assert.match(out.error, /skill_pull/u, 'beco sem saída é bug: a recusa nomeia a receita')
+  assert.deepEqual(readFileSync(join(dele, 'SKILL.md')), bytes, 'sobrescreveu a pasta do dono')
+  // PRÉ-VOO: o alvo livre também não foi escrito — meio-caminho seria um
+  // cardápio diferente por CLI na mesma missão
+  assert.equal(existsSync(join(cwd, CLAUDE_TARGET, 'gsap-core')), false)
+  assert.equal(existsSync(join(cwd, CLAUDE_TARGET, SYNC_MANIFEST)), false)
+
+  // id fora do padrão nunca vira caminho
+  for (const hostil of ['..', '.', 'com/barra', 'com\\barra', 'Com-Maiuscula']) {
+    const refused = materializeAgentSkill(cwd, source, hostil)
+    assert.equal(refused.ok, false, `${hostil} virou caminho`)
+    assert.match(refused.error, /id de skill/u)
+  }
+})
+
+test('substituir só com a impressão digital: igual troca, EDITADA é recusada', (t) => {
+  const root = sandbox(t, 'agent-substitui')
+  const cwd = join(root, 'worktree')
+  mkdirSync(cwd, { recursive: true })
+
+  assert.equal(materializeAgentSkill(cwd, fakeDownload(root, 'gsap-core', 'v1'), 'gsap-core').ok, true)
+  const v2 = fakeDownload(root, 'gsap-core', 'v2')
+  const again = materializeAgentSkill(cwd, v2, 'gsap-core')
+  assert.equal(again.ok, true, again.error)
+  assert.equal(again.replaced, true, 'a troca pela versão nova não aconteceu')
+  for (const target of [CLAUDE_TARGET, CODEX_TARGET]) {
+    assert.deepEqual(
+      readFileSync(join(cwd, target, 'gsap-core', 'SKILL.md')),
+      readFileSync(join(v2, 'SKILL.md'))
+    )
+  }
+
+  // o agente editou a skill puxada: a re-materialização NÃO joga fora o dele
+  const editado = join(cwd, CLAUDE_TARGET, 'gsap-core', 'SKILL.md')
+  const meu = Buffer.from('---\nname: gsap-core\n---\nEDITADO AQUI DENTRO\n', 'utf8')
+  writeFileSync(editado, meu)
+  const v3 = fakeDownload(root, 'gsap-core', 'v3')
+  const refused = materializeAgentSkill(cwd, v3, 'gsap-core')
+  assert.equal(refused.ok, false)
+  assert.match(refused.error, /EDITADA depois de puxada/u)
+  assert.match(refused.error, /skill_pull/u)
+  assert.deepEqual(readFileSync(editado), meu, 'a edição do agente foi por cima')
+  // e o outro alvo continua no v2 (o pré-voo recusou antes de escrever)
+  assert.deepEqual(
+    readFileSync(join(cwd, CODEX_TARGET, 'gsap-core', 'SKILL.md')),
+    readFileSync(join(v2, 'SKILL.md'))
+  )
+})
+
+test('mirrorLocalSkill: o playbook escrito em .claude/skills aparece em .agents/skills', (t) => {
+  const root = sandbox(t, 'agent-espelha')
+  const cwd = join(root, 'worktree')
+  const dir = join(cwd, CLAUDE_TARGET, MISSION_PLAYBOOK_ID)
+  mkdirSync(dir, { recursive: true })
+  const bytes = Buffer.from(
+    `---\nname: ${MISSION_PLAYBOOK_ID}\ndescription: o playbook desta missão\n---\n# direção\n`,
+    'utf8'
+  )
+  writeFileSync(join(dir, 'SKILL.md'), bytes)
+
+  const out = mirrorLocalSkill(cwd, `${CLAUDE_TARGET}/${MISSION_PLAYBOOK_ID}`)
+  assert.equal(out.ok, true, out.error)
+  assert.equal(out.id, MISSION_PLAYBOOK_ID)
+  assert.deepEqual(out.targets, [CLAUDE_TARGET, CODEX_TARGET])
+  assert.deepEqual(readFileSync(join(cwd, CODEX_TARGET, MISSION_PLAYBOOK_ID, 'SKILL.md')), bytes)
+
+  // a pasta-FONTE (autoral) não entra no manifesto: o discard não pode apagar o
+  // que o agente escreveu à mão
+  assert.equal(existsSync(join(cwd, CLAUDE_TARGET, SYNC_MANIFEST)), false)
+  const mirrored = JSON.parse(readFileSync(join(cwd, CODEX_TARGET, SYNC_MANIFEST), 'utf8'))
+  assert.deepEqual(
+    mirrored.entries.map((entry) => [entry.id, entry.origin]),
+    [[MISSION_PLAYBOOK_ID, 'agent']]
+  )
+  assert.deepEqual(listWorktreeSkills(cwd), [
+    {
+      id: MISSION_PLAYBOOK_ID,
+      origin: 'agent',
+      targets: [CLAUDE_TARGET, CODEX_TARGET],
+      description: 'o playbook desta missão'
+    }
+  ])
+
+  // o playbook evoluiu: espelhar nsegunda vez re-espelha a versão nova
+  const v2 = Buffer.from(
+    `---\nname: ${MISSION_PLAYBOOK_ID}\ndescription: o playbook desta missão\n---\n# direção v2\n`,
+    'utf8'
+  )
+  writeFileSync(join(dir, 'SKILL.md'), v2)
+  const respelhado = mirrorLocalSkill(cwd, `${CLAUDE_TARGET}/${MISSION_PLAYBOOK_ID}`)
+  assert.equal(respelhado.ok, true, respelhado.error)
+  assert.deepEqual(readFileSync(join(cwd, CODEX_TARGET, MISSION_PLAYBOOK_ID, 'SKILL.md')), v2)
+})
+
+test('mirrorLocalSkill recusa nome divergente, BOM e caminho fora do worktree', (t) => {
+  const root = sandbox(t, 'agent-espelha-recusas')
+  const cwd = join(root, 'worktree')
+  mkdirSync(cwd, { recursive: true })
+
+  const write = (folder, body) => {
+    const dir = join(cwd, 'playbooks', folder)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'SKILL.md'), body)
+    return `playbooks/${folder}`
+  }
+
+  const divergente = write('meu-plano', '---\nname: outra-coisa\n---\n')
+  const nome = mirrorLocalSkill(cwd, divergente)
+  assert.equal(nome.ok, false)
+  assert.match(nome.error, /a pasta chama "meu-plano"/u)
+  assert.match(nome.error, /name: "outra-coisa"/u)
+
+  const comBom = write(
+    'com-bom',
+    Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from('---\nname: com-bom\n---\n', 'utf8')
+    ])
+  )
+  const bom = mirrorLocalSkill(cwd, comBom)
+  assert.equal(bom.ok, false)
+  assert.match(bom.error, /BOM/u)
+  assert.match(bom.error, /SEM BOM/u, 'a recusa do BOM precisa dizer o que fazer')
+
+  const semSkill = join(cwd, 'playbooks', 'vazia')
+  mkdirSync(semSkill, { recursive: true })
+  const vazia = mirrorLocalSkill(cwd, 'playbooks/vazia')
+  assert.equal(vazia.ok, false)
+  assert.match(vazia.error, /não tem SKILL\.md/u)
+
+  for (const hostil of ['../fora', '..', '', '/etc/skills', 'C:/Windows']) {
+    const refused = mirrorLocalSkill(cwd, hostil)
+    assert.equal(refused.ok, false, `"${hostil}" atravessou`)
+    assert.match(refused.error, /caminho inválido|fora do worktree|não achei a pasta/u)
+  }
+  // nada disso escreveu pasta-alvo nenhuma
+  assert.equal(existsSync(join(cwd, CODEX_TARGET)), false)
+})
+
+test('a skill do AGENTE sobrevive ao sync do kit e ao chat null', (t) => {
+  const root = sandbox(t, 'agent-sobrevive')
+  const cwd = join(root, 'worktree')
+  const lib = join(root, 'lib')
+  mkdirSync(cwd, { recursive: true })
+  mkdirSync(lib, { recursive: true })
+  seedLibSkill(lib, 'better-writing')
+  const kit = [slot('better-writing')]
+
+  syncPaneSkills(cwd, 'dev', { kit, libraryRoot: lib })
+  assert.equal(materializeAgentSkill(cwd, fakeDownload(root, 'gsap-core'), 'gsap-core').ok, true)
+
+  // 1) REMONTAGEM DE ABA: o sync do kit passa por cima e não leva o harness
+  const again = syncPaneSkills(cwd, 'dev', { kit, libraryRoot: lib })
+  assert.equal(again.removed.includes('gsap-core'), false, 'o sync do kit removeu a do agente')
+  assert.deepEqual(again.failures, [])
+  for (const target of [CLAUDE_TARGET, CODEX_TARGET]) {
+    assert.equal(existsSync(join(cwd, target, 'gsap-core', 'SKILL.md')), true, target)
+  }
+
+  // 2) `chat: null` (release, pane sem tipo): limpa o KIT e mantém o harness
+  const cleared = syncPaneSkills(cwd, null, { libraryRoot: lib })
+  assert.deepEqual(cleared.removed, ['better-writing'])
+  for (const target of [CLAUDE_TARGET, CODEX_TARGET]) {
+    assert.equal(
+      existsSync(join(cwd, target, 'gsap-core', 'SKILL.md')),
+      true,
+      `${target}: chat null apagou a skill puxada pelo agente`
+    )
+    assert.equal(existsSync(join(cwd, target, 'better-writing')), false)
+    const manifest = JSON.parse(readFileSync(join(cwd, target, SYNC_MANIFEST), 'utf8'))
+    assert.deepEqual(
+      manifest.entries.map((entry) => entry.id),
+      ['gsap-core'],
+      `${target}: o manifesto perdeu a entrada do agente`
+    )
+  }
+
+  // 3) o id que o agente puxou TAMBÉM está no kit: a pasta continua dele, o
+  // sync não a re-materializa da lib nem a apaga
+  seedLibSkill(lib, 'gsap-core', 'da-lib')
+  const doKit = syncPaneSkills(cwd, 'dev', { kit: [slot('gsap-core')], libraryRoot: lib })
+  assert.deepEqual(doKit.synced, ['gsap-core'])
+  assert.deepEqual(doKit.removed, [])
+  assert.match(
+    readFileSync(join(cwd, CLAUDE_TARGET, 'gsap-core', 'SKILL.md'), 'utf8'),
+    /puxada/u,
+    'o kit sobrescreveu a versão que o agente pinou'
+  )
+})
+
+test('discardAgentSkill leva a pasta dos dois alvos e nomeia o que fica', (t) => {
+  const root = sandbox(t, 'agent-descarta')
+  const cwd = join(root, 'worktree')
+  mkdirSync(cwd, { recursive: true })
+  assert.equal(materializeAgentSkill(cwd, fakeDownload(root, 'gsap-core'), 'gsap-core').ok, true)
+
+  const out = discardAgentSkill(cwd, 'gsap-core')
+  assert.equal(out.ok, true, out.error)
+  assert.deepEqual(out.removed, [CLAUDE_TARGET, CODEX_TARGET])
+  for (const target of [CLAUDE_TARGET, CODEX_TARGET]) {
+    assert.equal(existsSync(join(cwd, target, 'gsap-core')), false, target)
+    // manifesto vazio some, e a pasta-alvo vazia volta a não existir
+    assert.equal(existsSync(join(cwd, target, SYNC_MANIFEST)), false)
+  }
+  assert.deepEqual(listWorktreeSkills(cwd), [])
+
+  // descartar de novo é recusa que nomeia a receita de VER a prateleira
+  const outra = discardAgentSkill(cwd, 'gsap-core')
+  assert.equal(outra.ok, false)
+  assert.match(outra.error, /não está entre as skills que este worktree puxou/u)
+  assert.match(outra.error, /skill_search/u)
+
+  // pasta do DONO nunca é destruída pelo discard, e a recusa a nomeia
+  const dele = join(cwd, CLAUDE_TARGET, 'meu-manual')
+  mkdirSync(dele, { recursive: true })
+  writeFileSync(join(dele, 'SKILL.md'), '---\nname: meu-manual\n---\n')
+  const doDono = discardAgentSkill(cwd, 'meu-manual')
+  assert.equal(doDono.ok, false)
+  assert.match(doDono.error, /não apaguei nada/u)
+  assert.match(doDono.error, /\.claude\/skills\/meu-manual/u)
+  assert.equal(existsSync(join(dele, 'SKILL.md')), true)
+
+  assert.equal(discardAgentSkill(cwd, '../fuga').ok, false)
+  assert.match(discardAgentSkill(cwd, '../fuga').error, /id de skill/u)
+
+  // MANIFESTO HOSTIL: a entrada se declara `agent` para a pasta do dono. Dizer
+  // "é minha" não é prova — só a impressão digital autoriza destruir.
+  writeFileSync(
+    join(cwd, CLAUDE_TARGET, SYNC_MANIFEST),
+    JSON.stringify({
+      version: 1,
+      entries: [
+        {
+          id: 'meu-manual',
+          origin: 'agent',
+          fingerprint: 'a'.repeat(64),
+          dest: { files: 1, bytes: 1, mtimeMs: 1 },
+          source: { files: 1, bytes: 1, mtimeMs: 1 }
+        }
+      ]
+    }),
+    'utf8'
+  )
+  const mentiroso = discardAgentSkill(cwd, 'meu-manual')
+  assert.equal(mentiroso.ok, false)
+  assert.match(mentiroso.error, /não apaguei nada/u)
+  assert.match(mentiroso.error, /editada depois de puxada/u)
+  assert.equal(existsSync(join(dele, 'SKILL.md')), true, 'o manifesto virou um rm')
+  // e paramos de gerenciá-la: o registro mentiroso sai, a pasta fica
+  assert.equal(existsSync(join(cwd, CLAUDE_TARGET, SYNC_MANIFEST)), false)
+})
+
+test('discardAgentSkills limpa a missão, deixa o kit e o autoral de pé', (t) => {
+  const root = sandbox(t, 'agent-descarta-tudo')
+  const cwd = join(root, 'worktree')
+  const lib = join(root, 'lib')
+  mkdirSync(cwd, { recursive: true })
+  mkdirSync(lib, { recursive: true })
+  seedLibSkill(lib, 'writing-plans')
+  syncPaneSkills(cwd, 'planejamento', { kit: [slot('writing-plans')], libraryRoot: lib })
+  assert.equal(materializeAgentSkill(cwd, fakeDownload(root, 'gsap-core'), 'gsap-core').ok, true)
+  assert.equal(materializeAgentSkill(cwd, fakeDownload(root, 'brainstorming'), 'brainstorming').ok, true)
+  // e um playbook AUTORAL, espelhado a partir da pasta do próprio agente
+  const autoral = join(cwd, CLAUDE_TARGET, MISSION_PLAYBOOK_ID)
+  mkdirSync(autoral, { recursive: true })
+  writeFileSync(
+    join(autoral, 'SKILL.md'),
+    `---\nname: ${MISSION_PLAYBOOK_ID}\ndescription: meu playbook\n---\n`
+  )
+  assert.equal(mirrorLocalSkill(cwd, `${CLAUDE_TARGET}/${MISSION_PLAYBOOK_ID}`).ok, true)
+
+  const swept = discardAgentSkills(cwd)
+  assert.deepEqual(swept.removed, ['brainstorming', 'gsap-core', MISSION_PLAYBOOK_ID])
+  assert.deepEqual(swept.kept, [])
+  for (const target of [CLAUDE_TARGET, CODEX_TARGET]) {
+    assert.equal(existsSync(join(cwd, target, 'gsap-core')), false, target)
+    assert.equal(existsSync(join(cwd, target, 'brainstorming')), false, target)
+    // o KIT do dono não é alcançado pela limpeza do harness
+    assert.equal(existsSync(join(cwd, target, 'writing-plans', 'SKILL.md')), true, target)
+  }
+  // o ESPELHO sai; a pasta que o agente escreveu à mão fica (é dele)
+  assert.equal(existsSync(join(cwd, CODEX_TARGET, MISSION_PLAYBOOK_ID)), false)
+  assert.equal(existsSync(join(autoral, 'SKILL.md')), true)
+
+  // worktree sem harness: varredura vazia, nunca exceção
+  assert.deepEqual(discardAgentSkills(join(root, 'virgem')), { removed: [], kept: [] })
+  assert.deepEqual(discardAgentSkills(''), { removed: [], kept: [] })
+})
+
+test('listWorktreeSkills mostra a prateleira viva com as três origens', (t) => {
+  const root = sandbox(t, 'agent-prateleira')
+  const cwd = join(root, 'worktree')
+  const lib = join(root, 'lib')
+  mkdirSync(cwd, { recursive: true })
+  mkdirSync(lib, { recursive: true })
+  assert.deepEqual(listWorktreeSkills(cwd), [], 'worktree virgem tem prateleira vazia')
+  assert.deepEqual(listWorktreeSkills(''), [])
+
+  seedLibSkill(lib, 'owasp-security', 'do kit')
+  syncPaneSkills(cwd, 'dev', { kit: [slot('owasp-security')], libraryRoot: lib })
+  assert.equal(materializeAgentSkill(cwd, fakeDownload(root, 'gsap-core'), 'gsap-core').ok, true)
+  const dele = join(cwd, CLAUDE_TARGET, 'meu-manual')
+  mkdirSync(dele, { recursive: true })
+  writeFileSync(join(dele, 'SKILL.md'), '---\nname: meu-manual\ndescription: escrito à mão\n---\n')
+
+  assert.deepEqual(listWorktreeSkills(cwd), [
+    { id: 'gsap-core', origin: 'agent', targets: [CLAUDE_TARGET, CODEX_TARGET], description: 'puxada ✦' },
+    { id: 'meu-manual', origin: 'user', targets: [CLAUDE_TARGET], description: 'escrito à mão' },
+    {
+      id: 'owasp-security',
+      origin: 'kit',
+      targets: [CLAUDE_TARGET, CODEX_TARGET],
+      description: 'ação — do kit ✦'
+    }
+  ])
+})
+
+/* ============================================================== RASTRO ==== */
+
+test('harness.json: ida e volta, re-pull revive e o descarte carimba', (t) => {
+  const root = sandbox(t, 'harness')
+  const cwd = join(root, 'worktree')
+  mkdirSync(cwd, { recursive: true })
+
+  assert.deepEqual(readSkillHarness(cwd), { version: 1, entries: [] }, 'missão nova tem harness vazio')
+  assert.deepEqual(readSkillHarness(''), { version: 1, entries: [] })
+  assert.deepEqual(readSkillHarness(join(root, 'nao-existe')), { version: 1, entries: [] })
+
+  const first = recordSkillPull(cwd, {
+    id: 'gsap-core',
+    origin: 'catalog',
+    repo: 'dono/repo',
+    path: 'skills/gsap-core',
+    sha: 'c0ffee1234567890abcdef',
+    description: 'animação com GSAP',
+    by: 'gui-dev-ab12cd34'
+  })
+  assert.equal(first.entries.length, 1)
+  assert.equal(first.entries[0].id, 'gsap-core')
+  assert.ok(first.entries[0].pulledAt.endsWith('Z'), 'pulledAt não é ISO')
+  assert.equal(first.entries[0].by, 'gui-dev-ab12cd34')
+
+  const file = join(cwd, SKILL_HARNESS_FILE)
+  assert.equal(existsSync(file), true, `o rastro não pousou em ${SKILL_HARNESS_FILE}`)
+  assert.equal(existsSync(`${file}.bak`), false, 'o rastro é re-derivável: nada de .bak no worktree')
+  assert.deepEqual(
+    readdirSync(join(cwd, '.synkora')).filter((name) => name.includes('.tmp-')),
+    [],
+    'a escrita atômica deixou temporário para trás'
+  )
+  assert.deepEqual(readSkillHarness(cwd), first)
+
+  // DESCARTOU: a linha fica, carimbada — "puxei e descartei" é história do dono
+  const discarded = recordSkillDiscard(cwd, 'gsap-core')
+  assert.equal(discarded.entries.length, 1)
+  assert.ok(discarded.entries[0].discardedAt)
+  assert.deepEqual(liveHarnessEntries(discarded), [])
+  // descarte de quem nunca foi puxado não inventa linha
+  assert.deepEqual(recordSkillDiscard(cwd, 'nunca-puxada').entries.length, 1)
+
+  // RE-PULL revive a MESMA linha (não cria uma segunda) e atualiza o pin
+  const revived = recordSkillPull(cwd, {
+    id: 'gsap-core',
+    origin: 'url',
+    repo: 'dono/repo',
+    sha: 'facade9876543210',
+    by: 'ajudante-1'
+  })
+  assert.equal(revived.entries.length, 1)
+  assert.equal(revived.entries[0].discardedAt, undefined, 'o re-pull não reviveu a linha')
+  assert.equal(revived.entries[0].sha, 'facade9876543210')
+  assert.equal(revived.entries[0].origin, 'url')
+  assert.equal(liveHarnessEntries(revived).length, 1)
+})
+
+test('harness.json é entrada NÃO confiável: lixo degrada para vazio, texto é cortado', (t) => {
+  const root = sandbox(t, 'harness-hostil')
+  const cwd = join(root, 'worktree')
+  mkdirSync(join(cwd, '.synkora'), { recursive: true })
+  const file = join(cwd, SKILL_HARNESS_FILE)
+
+  writeFileSync(file, '{{{ não é json', 'utf8')
+  assert.deepEqual(readSkillHarness(cwd), { version: 1, entries: [] })
+  writeFileSync(file, JSON.stringify({ version: 2, entries: [{ id: 'x' }] }), 'utf8')
+  assert.deepEqual(readSkillHarness(cwd), { version: 1, entries: [] }, 'versão futura entrou')
+
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      entries: [
+        { id: '../fuga', origin: 'url', pulledAt: 'x', by: 'y' },
+        { id: 'Com-Maiuscula', origin: 'url', pulledAt: 'x', by: 'y' },
+        null,
+        { id: 'boa', origin: 'inventada', description: 'd'.repeat(900), by: 'b'.repeat(400) },
+        { id: 'boa', origin: 'url', by: 'duplicada' }
+      ]
+    }),
+    'utf8'
+  )
+  const harness = readSkillHarness(cwd)
+  assert.deepEqual(
+    harness.entries.map((entry) => entry.id),
+    ['boa'],
+    'id hostil ou duplicado entrou no rastro'
+  )
+  assert.equal(harness.entries[0].origin, 'url', 'origem inventada não degradou')
+  assert.ok(harness.entries[0].description.length <= 301)
+  assert.ok(harness.entries[0].by.length <= 141)
+  assert.ok(harness.entries[0].pulledAt.endsWith('Z'))
+  // e um pull sobre arquivo podre reconstrói o rastro em vez de morrer
+  const healed = recordSkillPull(cwd, { id: 'gsap-core', origin: 'library', by: 'gui-dev-1' })
+  assert.deepEqual(
+    healed.entries.map((entry) => entry.id),
+    ['boa', 'gsap-core']
+  )
+  assert.deepEqual(recordSkillPull('', { id: 'x', origin: 'url', by: 'y' }).entries, [])
+})
+
+test('as notas do fio nomeiam a procedência de cada origem', () => {
+  const base = { pulledAt: '2026-09-08T12:00:00.000Z', by: 'gui-dev-1' }
+  assert.equal(
+    skillPullNoteText({ ...base, id: 'gsap-core', origin: 'url', repo: 'dono/repo', sha: 'c0ffee1234567' }),
+    '❖ skill puxada pelo agente: gsap-core · dono/repo @ c0ffee1'
+  )
+  assert.equal(
+    skillPullNoteText({ ...base, id: 'gsap-core', origin: 'catalog', repo: 'dono/repo', sha: 'abcdef7890' }),
+    '❖ skill puxada pelo agente: gsap-core · dono/repo @ abcdef7'
+  )
+  assert.equal(
+    skillPullNoteText({ ...base, id: 'grilling', origin: 'library' }),
+    '❖ skill puxada da biblioteca: grilling'
+  )
+  assert.equal(
+    skillPullNoteText({ ...base, id: MISSION_PLAYBOOK_ID, origin: 'authored' }),
+    `❖ playbook da missão escrito pelo agente: ${MISSION_PLAYBOOK_ID}`
+  )
+  // sem sha (procedência incompleta) a nota não INVENTA pin nenhum
+  assert.equal(
+    skillPullNoteText({ ...base, id: 'gsap-core', origin: 'url', repo: 'dono/repo' }),
+    '❖ skill puxada pelo agente: gsap-core · dono/repo'
+  )
+  assert.equal(skillDiscardNoteText('gsap-core'), '❖ skill descartada: gsap-core')
+})
+
+test('o briefing do ajudante lista o que a missão puxou, playbook PRIMEIRO', (t) => {
+  const root = sandbox(t, 'harness-briefing')
+  const cwd = join(root, 'worktree')
+  mkdirSync(cwd, { recursive: true })
+  assert.equal(missionHarnessBriefing(cwd), undefined, 'missão sem harness ganhou bloco vazio')
+
+  recordSkillPull(cwd, {
+    id: 'gsap-core',
+    origin: 'catalog',
+    repo: 'dono/repo',
+    sha: 'c0ffee1234567',
+    description: 'animação com GSAP',
+    by: 'gui-dev-1'
+  })
+  recordSkillPull(cwd, {
+    id: 'brainstorming',
+    origin: 'library',
+    description: 'abrir o leque antes de decidir',
+    by: 'gui-dev-1'
+  })
+  recordSkillPull(cwd, {
+    id: MISSION_PLAYBOOK_ID,
+    origin: 'authored',
+    description: 'a direção desta missão',
+    by: 'gui-dev-1'
+  })
+  recordSkillPull(cwd, { id: 'owasp-security', origin: 'library', by: 'gui-dev-1' })
+  recordSkillDiscard(cwd, 'owasp-security')
+
+  const briefing = missionHarnessBriefing(cwd)
+  const lines = briefing.split('\n')
+  assert.equal(
+    lines[0],
+    'SKILLS THIS MISSION ALREADY PULLED — they are in your skills folder, load them by name:'
+  )
+  assert.equal(
+    lines[1],
+    `- ${MISSION_PLAYBOOK_ID} — a direção desta missão (the mission's own playbook: read it FIRST)`
+  )
+  assert.equal(lines[2], '- gsap-core — animação com GSAP (dono/repo @ c0ffee1)')
+  assert.equal(lines[3], '- brainstorming — abrir o leque antes de decidir')
+  assert.equal(lines.length, 4, 'a skill descartada entrou no briefing')
 })

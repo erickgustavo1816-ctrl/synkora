@@ -110,13 +110,24 @@ const BROWSER_TOOLS = Object.freeze([
 ])
 
 /**
+ * O KIT DE SKILLS (2026-09-08, Skills 3.0 — fatia 5.D do design
+ * DESIGN_HARNESS_DO_MODELO): as três `skill_*` com que o agente MONTA o harness
+ * da missão. Literais pelo mesmo contrato dos irmãos — e com a MESMA cerca do
+ * browser: quem lê diff não puxa skill nenhuma (o reviewer fica fora).
+ */
+const SKILL_TOOLS = Object.freeze(['skill_discard', 'skill_pull', 'skill_search'])
+
+/**
  * Com o browser, os panes do MESMO papel `gui-delegator` DIVERGEM pela
  * primeira vez fora da integração: o REVIEWER lê diff e não roda o produto
  * (sem browser — a cerca é o papel do endereço), enquanto o pane de helper de
- * missão verifica a própria tela (com browser, sem integração).
+ * missão verifica a própria tela (com browser, sem integração). As `skill_*`
+ * seguem a MESMA divisão (2026-09-08): o reviewer não monta harness.
  */
 const REVIEWER_TOOLS = Object.freeze([...HELPER_TOOLS, ...LSP_TOOLS].sort())
-const HELPER_PANE_TOOLS = Object.freeze([...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS].sort())
+const HELPER_PANE_TOOLS = Object.freeze(
+  [...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS].sort()
+)
 
 /**
  * O KIT DO CHAT DE DEV (rodada 9): as sete de ajudante MAIS as duas do
@@ -127,7 +138,7 @@ const HELPER_PANE_TOOLS = Object.freeze([...HELPER_TOOLS, ...LSP_TOOLS, ...BROWS
  */
 const INTEGRATION_TOOLS = Object.freeze(['integration_run', 'integration_status'])
 const DEV_MISSION_TOOLS = Object.freeze(
-  [...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS, ...INTEGRATION_TOOLS].sort()
+  [...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS, ...INTEGRATION_TOOLS, ...SKILL_TOOLS].sort()
 )
 
 /** O KIT DO CHAT DE RELEASE (R10): a conversa que sobe a VERSÃO. O papel
@@ -148,7 +159,11 @@ const PLAN_TOOLS = Object.freeze([
 ])
 // O PLANEJADOR DELEGA (ordem do dono, 2026-08-30): planos + ajudantes + LSP —
 // e NADA de integração, release ou browser (o ajudante de pesquisa navega).
-const PLANNER_TOOLS = Object.freeze([...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS].sort())
+// SKILLS 3.0 (2026-09-08): ele TAMBÉM monta harness — o método do planejamento
+// (ADR-0011) é escolhido do mesmo cardápio que o dev usa.
+const PLANNER_TOOLS = Object.freeze(
+  [...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS, ...SKILL_TOOLS].sort()
+)
 
 /** Hub REAL com o mínimo que ele exige (o registro de identidade não usa nada
  *  disso — é o ponto). Sem timer: o hub perdeu a fila de digitação em 08-17. */
@@ -489,7 +504,7 @@ test('SEM CADEIA: identidade de ajudante NUNCA enxerga delegate — e as mortas,
   const disfarcado = await toolNames(url, 'token-ajudante-com-cara-de-dev', 'ajudante-disfarcado')
   assert.deepEqual(
     disfarcado,
-    [...LSP_TOOLS, ...BROWSER_TOOLS].sort(),
+    [...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS].sort(),
     'endereço de dev não dá autoridade a um papel que não é gui-delegator'
   )
   for (const forbidden of [...HELPER_TOOLS, ...INTEGRATION_TOOLS, ...RELEASE_TOOLS, ...PLAN_TOOLS]) {
@@ -738,7 +753,10 @@ test('claude: config própria, strict, a CERCA de subagente nativo e o teto de t
   assert.deepEqual(Object.keys(config.mcpServers), ['synkora'], 'catálogo fechado: nenhum MCP extra')
 })
 
-test('claude: as QUINZE ferramentas internas são pré-sancionadas, e a cerca continua de pé', async (t) => {
+// O NÚMERO saiu do título em 2026-09-08 (as três `skill_*` da fatia 5.D o
+// levariam de 15 para 30 e ele já estava velho por duas rodadas): a régua
+// medida é a UNIÃO dos catálogos deste arm, e ela mora na asserção.
+test('claude: as ferramentas internas são pré-sancionadas, e a cerca continua de pé', async (t) => {
   const { hub, root } = hubIn(t)
   const { mcp } = delegator(hub, root, 5151)
 
@@ -808,6 +826,14 @@ test('o arm do planejador traz a cerca e a pré-sanção própria (planos+ajudan
     )
   }
   assert.ok(GUI_PLANNER_CLAUDE_ALLOWED_TOOLS.includes('mcp__synkora__delegate'))
+  // SKILLS 3.0 (2026-09-08): o planejador monta harness, e um card de permissão
+  // no primeiro `skill_search` seria atrito no gesto que o dono acabou de pedir.
+  for (const skill of SKILL_TOOLS) {
+    assert.ok(
+      GUI_PLANNER_CLAUDE_ALLOWED_TOOLS.includes(`mcp__synkora__${skill}`),
+      `sem a pré-sanção de ${skill}, montar harness voltaria a pedir card`
+    )
+  }
   for (const off of ['integration_run', 'release_run', 'browser_open']) {
     assert.equal(
       GUI_PLANNER_CLAUDE_ALLOWED_TOOLS.includes(`mcp__synkora__${off}`),

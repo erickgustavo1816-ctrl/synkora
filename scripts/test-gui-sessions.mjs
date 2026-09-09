@@ -27,6 +27,7 @@ import {
   guiPromptProblem,
   guiPermissionProfile,
   rememberedGuiExecutorValue,
+  guiSkillReloadNote,
   guiSessionWithoutIdentity,
   guiSessionWithoutResume,
   inheritedResumeSessionId,
@@ -99,6 +100,7 @@ import {
 } from '../.tmp/gui-sessions-test/chatPermissions.js'
 import {
   prepareGuiAttachmentDirectory,
+  resolveGuiDroppedTarget,
   resolveGuiExternalFolderReference,
   resolveGuiFolderReference,
   validateGuiAttachmentReferences,
@@ -7051,4 +7053,195 @@ test('R25.3 — o marco é de 150k e a nota nomeia as receitas REAIS', () => {
   assert.match(note, /ciente do custo/u)
   // Advisory nunca fala em dinheiro nem em proibição.
   assert.doesNotMatch(note, /\$|R\$|proibid|não pode/iu)
+})
+
+test('o item solto no chat é revalidado pelo main: pasta vira referência, arquivo volta com tamanho', () => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-dropped-'))
+  try {
+    const folder = join(root, 'Documentos da Luma')
+    mkdirSync(folder)
+    const file = join(root, 'nota.txt')
+    writeFileSync(file, 'abc')
+
+    // A pasta arrastada do Explorer: a MESMA referência que o diálogo nativo
+    // emitiria — o FileReader do renderer nunca mais a vê.
+    const dropped = resolveGuiDroppedTarget(folder)
+    assert.equal(dropped.ok, true)
+    if (dropped.ok) {
+      assert.equal(dropped.kind, 'folder')
+      assert.equal(dropped.path, folder)
+    }
+    const droppedFile = resolveGuiDroppedTarget(file)
+    assert.deepEqual(droppedFile, { ok: true, kind: 'file', path: file, size: 3 })
+
+    const missing = resolveGuiDroppedTarget(join(root, 'sumiu'))
+    assert.equal(missing.ok, false)
+    if (!missing.ok) assert.match(missing.error, /não está mais disponível/u)
+    const relative = resolveGuiDroppedTarget('Documentos da Luma')
+    assert.equal(relative.ok, false)
+    if (!relative.ok) assert.match(relative.error, /[+]/u, 'a recusa nomeia a receita (o + do composer)')
+    assert.equal(resolveGuiDroppedTarget(undefined).ok, false)
+    assert.equal(resolveGuiDroppedTarget({ path: folder }).ok, false)
+
+    const link = join(root, 'atalho')
+    symlinkSync(folder, link, process.platform === 'win32' ? 'junction' : 'dir')
+    const viaLink = resolveGuiDroppedTarget(link)
+    assert.equal(viaLink.ok, false, 'link/junction solto falha fechado como no diálogo')
+    if (!viaLink.ok) assert.match(viaLink.error, /link simbólico|junction/u)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+// ————— A RECARGA DO CATÁLOGO DE SKILLS (Skills 3.0 — fatia 5.D) —————
+//
+// SONDADO em 2026-09-08 (`.synkora/reports/PROBE_SKILL_RELOAD_MIDTURN`): o
+// `/reload-skills` mandado pelo stdin com o TURNO ABERTO não recarrega no turno
+// corrente nem vira fala — fica na fila e executa como MINI-TURNO próprio logo
+// depois do `result` do agente (`commands_changed` → `init` → `result` com
+// "Reloaded skills: N skills available (1 added)"). Duas propriedades saem daí,
+// e as duas moram aqui: (1) o pedido vai pelo BASTIDOR — sem bolha do dono, sem
+// briefing consumido, sem turno novo no fio; (2) o `result` do mini-turno é
+// RECIBO, não turno do agente: ele nunca fecha um turno que não é dele nem
+// aparece como resposta ao dono. Ele vira uma NOTA no fio.
+function reloadBench(t, cli) {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-skill-reload-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const live = []
+  const sent = []
+  const sinks = []
+  const journal = []
+  const gui = new GuiSessionRegistry({
+    push: (payload) => live.push(payload),
+    systemPromptFile: () => undefined,
+    storeFile: join(root, 'gui-sessions.json'),
+    record: (event, ids, detail) => journal.push({ event, ids, detail })
+  })
+  const state = { turnActive: false, alive: true }
+  gui.spawnSession = (_input, sink) => {
+    sinks.push(sink)
+    return {
+      get alive() {
+        return state.alive
+      },
+      get turnActive() {
+        return state.turnActive
+      },
+      send: (text) => sent.push(text),
+      kill: () => {
+        state.alive = false
+      }
+    }
+  }
+  const paneId = `gui-dev-reload${cli === 'codex' ? 'c' : 'a'}1`
+  assert.equal(
+    gui.create({
+      paneId,
+      projectId: 'proj-reload',
+      cli,
+      configDir: root,
+      cwd: root,
+      firstPrompt: 'briefing da missão'
+    }).ok,
+    true
+  )
+  return { gui, paneId, live, sent, sinks, journal, state }
+}
+
+test('5.D — no claude a recarga vai pelo bastidor e o recibo do CLI vira NOTA, não turno', async (t) => {
+  const { gui, paneId, live, sent, sinks, state } = reloadBench(t, 'claude')
+  // O `skill_pull` roda DENTRO do turno do agente: é este o estado medido.
+  state.turnActive = true
+  const before = live.length
+
+  const asked = await gui.reloadSkills(paneId)
+  assert.equal(asked.ok, true)
+  assert.deepEqual(sent, ['/reload-skills'], 'o comando não chegou cru ao CLI')
+  const after = live.slice(before)
+  assert.equal(
+    after.some(({ evt }) => evt.type === 'user-message'),
+    false,
+    'a recarga virou fala do DONO no fio'
+  )
+  assert.equal(
+    after.some(({ evt }) => evt.type === 'turn-started'),
+    false,
+    'a recarga abriu um turno que o CLI não vai executar agora'
+  )
+  assert.equal(
+    gui.state(paneId).events.some(({ evt }) => evt.type === 'user-message'),
+    false
+  )
+
+  // O turno do AGENTE fecha normalmente…
+  sinks[0]({ type: 'text', text: 'terminei a fatia' })
+  sinks[0]({
+    type: 'result',
+    isError: false,
+    outcome: 'completed',
+    continues: false,
+    resultText: 'terminei a fatia'
+  })
+  state.turnActive = false
+  // …e só então o mini-turno da recarga chega (init + result do recibo).
+  sinks[0]({
+    type: 'init',
+    model: 'claude',
+    sessionId: 's-reload',
+    permissionMode: 'default',
+    toolCount: 7
+  })
+  sinks[0]({
+    type: 'result',
+    isError: false,
+    outcome: 'completed',
+    continues: false,
+    resultText: 'Reloaded skills: 14 skills available (1 added)'
+  })
+
+  const results = live.filter(({ evt }) => evt.type === 'result')
+  assert.equal(results.length, 1, 'o recibo da recarga virou um SEGUNDO fim de turno')
+  assert.equal(results[0].evt.resultText, 'terminei a fatia')
+  const notes = live.filter(({ evt }) => evt.type === 'command-output').map(({ evt }) => evt.text)
+  // A linha é a do módulo, não uma frase re-digitada: o texto do CLI viaja
+  // dentro dela e o `❖` a põe junto das notas de pull/discard no fio.
+  assert.ok(
+    notes.includes(guiSkillReloadNote('Reloaded skills: 14 skills available (1 added)', false)),
+    `o recibo do CLI não virou nota no fio: ${JSON.stringify(notes)}`
+  )
+  assert.match(
+    guiSkillReloadNote(undefined, true),
+    /não recarregou/u,
+    'a variante de erro precisa dizer que a recarga NÃO aconteceu'
+  )
+
+  // E o turno SEGUINTE do agente segue normal — a marca da recarga não come o
+  // `result` de ninguém depois de ter sido consumida.
+  sinks[0]({
+    type: 'result',
+    isError: false,
+    outcome: 'completed',
+    continues: false,
+    resultText: 'segunda resposta'
+  })
+  assert.equal(live.filter(({ evt }) => evt.type === 'result').length, 2)
+})
+
+test('5.D — no codex a recarga é NO-OP dita: a pasta entra no próximo turno', async (t) => {
+  const { gui, paneId, sent } = reloadBench(t, 'codex')
+  const asked = await gui.reloadSkills(paneId)
+  assert.equal(asked.ok, true)
+  assert.match(asked.detail ?? '', /próximo turno/u)
+  assert.deepEqual(sent, [], 'o codex não tem o que recarregar — mandar slash seria queimar tokens')
+})
+
+test('5.D — pane sem sessão ou com sessão morta recusa a recarga sem estourar', async (t) => {
+  const { gui, paneId, state } = reloadBench(t, 'claude')
+  const ausente = await gui.reloadSkills('gui-dev-nao-existe')
+  assert.equal(ausente.ok, false)
+  assert.ok(ausente.detail)
+  state.alive = false
+  const morta = await gui.reloadSkills(paneId)
+  assert.equal(morta.ok, false)
+  assert.ok(morta.detail)
 })

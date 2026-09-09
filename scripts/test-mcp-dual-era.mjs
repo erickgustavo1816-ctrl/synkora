@@ -64,7 +64,13 @@ const HELPER_TOOLS = Object.freeze([
   'helpers_status',
   'list_seats'
 ])
-const PLANNER_TOOLS = Object.freeze([...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS].sort())
+/** SKILLS 3.0 (2026-09-08 — fatia 5.D): as três de skill entram no catálogo do
+ *  planejador junto com o resto. Mesma razão do bloco acima: a propriedade
+ *  medida aqui é "as duas eras recebem o MESMO catálogo", e ele cresceu. */
+const SKILL_TOOLS = Object.freeze(['skill_discard', 'skill_pull', 'skill_search'])
+const PLANNER_TOOLS = Object.freeze(
+  [...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS, ...SKILL_TOOLS].sort()
+)
 
 const ERAS = Object.freeze([
   { era: 'legacy', mode: 'legacy', version: LEGACY_VERSION },

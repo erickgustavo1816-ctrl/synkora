@@ -57,7 +57,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>✦ Backlog Synkora</h1>
-    <span class="stamp">atualizado 02/09 · pelo orquestrador</span>
+    <span class="stamp">atualizado 08/09 · pelo orquestrador</span>
     <p class="how"><b>Como funciona:</b> este é o mapa vivo da obra — eu re-publico neste MESMO link a cada
     entrega. Quer mudar prioridade ou adicionar item? Comente aqui na página ou me diga no chat.
     Fonte da verdade: <b>docs/backlog-synkora.json</b> (MCP + CLI em scripts/backlog*.mjs).</p>
@@ -65,7 +65,12 @@
 
   <section>
     <h2>Agora <span class="count">— em curso</span></h2>
-
+    <div class="item now">
+      <span class="glyph">●</span>
+      <span class="title">O HARNESS É DO MODELO (Skills 3.0) — R1 núcleo: a lei cai, catálogo curado como dado, skill_search/pull/discard efêmeros com rastro, playbook da missão nos ajudantes, método do planejador</span>
+      <span class="desc">Ordem do dono 2026-09-08: &quot;não quero mais algo fixo — a IA decide a melhor opção, vai atrás, busca, pega, usa e descarta&quot;. Plano aprovado (HTML leigo entregue). R1 = Onda 0 (design + ADRs 0008–0011 + sonda de recarga) → Onda 1 (A catálogo ∥ B motor ∥ C personas) → Onda 2 (D tools + costura) → fecho. R2 = tela Ajustes › Skills (interruptor) + painel &quot;harness desta missão&quot; com &quot;guardar na biblioteca&quot;.</span>
+      <span class="refs">refs: <code>.synkora/reports/DESIGN_HARNESS_DO_MODELO_2026-09-08.md</code> · <code>docs/adr/0008-a-lei-caiu-o-padrao-ficou.md</code> · <code>docs/adr/0009-o-harness-da-missao-e-do-agente.md</code> · <code>docs/adr/0010-skill-efemera-por-missao-com-rastro.md</code> · <code>docs/adr/0011-planejamento-com-metodo-escolhido.md</code></span>
+    </div>
   </section>
 
   <section>
@@ -253,6 +258,12 @@
       <p class="done-day">02/09 — quarta</p>
       <div class="done"><span class="glyph">✓</span><span class="title">R39 — A FALA DO DONO PARA O TURNO: mensagem com turno aberto para o agente e volta como turno novo; dívida de resposta universal por hook PreToolUse (sondado); carimbo na bolha</span><span class="refs"><code>26b7488</code> · <code>.synkora/reports/DESIGN_FALA_DO_DONO_PARA_O_TURNO_2026-09-02.md</code> · <code>.synkora/reports/PROBE_PRETOOLUSE_BLOCK_2026-09-02.md</code> · <code>docs/HANDOFF_SESSAO_2026-09-02.md</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">R39.1 — SEM PARAR por padrão: a fala do dono entra no próximo passo do agente, fica &quot;não lida ainda&quot; até o recibo de leitura, e LER AGORA corta só por gesto</span><span class="refs"><code>ccec212</code> · <code>.synkora/reports/DESIGN_FALA_DO_DONO_SEM_PARAR_R39_1_2026-09-02.md</code> · <code>.synkora/reports/PROBE_STEER_RECEIPT_2026-09-02.md</code> · <code>src/main/guiOwnerSteer.ts</code> · <code>src/renderer/src/guiOwnerBubble.ts</code></span></div>
+      <p class="done-day">04/09 — sexta</p>
+      <div class="done"><span class="glyph">✓</span><span class="title">Pasta solta no chat anexa (caminho nasce no preload) + zona de soltar animada no composer</span><span class="refs"><code>src/main/guiAttachmentStorage.ts</code> · <code>src/main/ipc/gui.ts</code> · <code>src/preload/index.ts</code> · <code>src/renderer/src/guiDropZone.ts</code> · <code>src/renderer/src/useGuiDropZone.ts</code> · <code>src/renderer/src/components/GuiPane.tsx</code> · <code>src/renderer/src/global.css</code> · <code>scripts/harness/drop-zone.html</code></span></div>
+      <p class="done-day">08/09 — terça</p>
+      <div class="done"><span class="glyph">✓</span><span class="title">Cabeça do palco em UMA fileira — some a linha-meta e o cabeçalho próprio do chat; ficam lateral · pílulas · estado do turno · chip da conta · botões (mockup aprovado com CSS real)</span><span class="refs"><code>src/renderer/src/components/MissionStageHead.tsx</code> · <code>src/renderer/src/components/StageRoundStatus.tsx</code> · <code>src/renderer/src/components/StageSeatChip.tsx</code> · <code>scripts/harness/stage-head.html</code> · <code>scripts/test-stage-head.mjs</code> · <code>docs/MOCKUP_WORKSPACE.md</code></span></div>
+      <div class="done"><span class="glyph">✓</span><span class="title">A aba &quot;ajudantes ˄&quot; — o padrão dos ajudantes redesenhado: a aba sobe, o cartão sai de dentro dela, selects um por vez (conta › modelo › effort) e interruptor do fast; a CONTA entrou no pino do motor</span><span class="refs"><code>.synkora/reports/DESIGN_ABA_AJUDANTES_2026-09-08.md</code> · <code>src/renderer/src/components/GuiDelegationDefaults.tsx</code> · <code>src/renderer/src/components/GuiFleetSelect.tsx</code> · <code>src/renderer/src/guiDelegationDefaults.ts</code> · <code>src/main/guiSessions.ts</code> · <code>src/main/guiDelegationWiring.ts</code> · <code>scripts/harness/helpers-defaults.html</code></span></div>
+      <div class="done"><span class="glyph">✓</span><span class="title">Polish do fio (09/09): chat coberto pelo painel fica inerte mas vivo, fala do dono em laranja, &quot;ir para o fim&quot; redondo no canto, aba dos ajudantes esticada com nomes formatados</span><span class="refs"><code>src/renderer/src/global.css</code> · <code>src/renderer/src/components/GuiPane.tsx</code> · <code>src/renderer/src/components/Board.tsx</code> · <code>src/renderer/src/workspace/WorkspacePanels.tsx</code> · <code>src/main/catalog.ts</code> · <code>scripts/harness/owner-bubble.html</code> · <code>docs/MOCKUP_WORKSPACE.md</code></span></div>
     </div>
   </details>
 </div>

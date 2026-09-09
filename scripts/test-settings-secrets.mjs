@@ -152,3 +152,21 @@ test('documento corrompido ou de tipo errado cai nos defaults sem lançar', (t) 
   assert.doesNotThrow(() => new SettingsStoreCore({ userDataPath: other }))
   assert.equal(new SettingsStoreCore({ userDataPath: other }).view().chatSoundsEnabled, true)
 })
+
+test('o interruptor do skill_pull nasce LIGADO e só um `false` explícito o desliga', (t) => {
+  const root = tempStore(t)
+  // ADR-0010 (2026-09-08): "o harness que o próprio modelo cria é melhor" — o
+  // padrão é o agente podendo puxar; o interruptor existe para o dono cortar.
+  assert.equal(new SettingsStoreCore({ userDataPath: root }).view().skillsAgentPull, true)
+
+  new SettingsStoreCore({ userDataPath: root }).update({ skillsAgentPull: false })
+  assert.equal(new SettingsStoreCore({ userDataPath: root }).view().skillsAgentPull, false)
+
+  // documento de ANTES do campo, e valor torto, caem no ligado (nunca no meio)
+  const legado = tempStore(t)
+  writeFileSync(join(legado, 'settings.json'), JSON.stringify({ terminalFontSize: 15 }))
+  assert.equal(new SettingsStoreCore({ userDataPath: legado }).view().skillsAgentPull, true)
+  const torto = tempStore(t)
+  writeFileSync(join(torto, 'settings.json'), JSON.stringify({ skillsAgentPull: 'talvez' }))
+  assert.equal(new SettingsStoreCore({ userDataPath: torto }).view().skillsAgentPull, true)
+})

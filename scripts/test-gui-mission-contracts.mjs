@@ -159,8 +159,20 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // teto velho (dev 13840→14244, reviewer 7120→7524, ajudante 11845→12249),
     // mas comeu a folga: 256 chars não são mais uma régua do dono. O teto sobe
     // para devolver essa folga, que é a razão de ele existir. Ele continua sendo
-    // contra CONSTITUIÇÃO — régua nova cabe, discurso não.
-    assert.ok(contract.length < 15000, `${role}: contrato virou constituição (${contract.length})`)
+    // contra CONSTITUIÇÃO — régua nova cabe, discurso não. E de 15000 para 16500
+    // em 2026-09-08 pelo HARNESS DO MODELO (Skills 3.0, ADRs 0008-0011): o
+    // cardápio FECHADO de 5 linhas virou o bloco em que o AGENTE monta o harness
+    // da missão — a ordem da busca, o `skill_pull` efêmero com rastro, o
+    // `mission-playbook` que ele mesmo escreve, o harness declarado no
+    // mini-plano —, e a LEI do impeccable virou UMA linha de padrão ("não quero
+    // mais algo fixo. Quero que a IA decida qual é a melhor opção pra ela ali
+    // naquele momento, e ela vá atrás, ela busque, ela pegue e ela faça"). O
+    // bloco comum sozinho pesa 2309 contra os 886 do cardápio velho: o dev mede
+    // 16311, o ajudante 14316 e o reviewer segue intocado em 8188. O orquestrador
+    // subiu 16500→17000 no review da fatia: 184 chars de folga não são uma régua
+    // do dono, e o teto existe para caber a próxima — contra constituição, não
+    // contra régua.
+    assert.ok(contract.length < 17000, `${role}: contrato virou constituição (${contract.length})`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -1153,7 +1165,19 @@ test('o planejador PROPÕE o plano, não executa produto nem cria missão', () =
   // fonte única — e a linha própria dele (ajudante pesquisa, nunca executa).
   // Mede 10471; o salto é grande porque as duas seções compartilhadas já
   // tinham o tamanho delas medido nos irmãos.
-  assert.ok(contract.length < 10900, 'contrato virou constituição')
+  //
+  // E de 10900 para 13600 em 2026-09-08 pelo HARNESS DO MODELO (Skills 3.0,
+  // ADRs 0008-0011): o cardápio de 886 chars virou o bloco do harness (2309 —
+  // ordem da busca, pull efêmero com rastro, playbook autoral, harness
+  // declarado) e o planejador ganhou o MÉTODO por cima dele (863 — ADR-0011:
+  // "é um planejamento simples, então vou montar de uma forma simples; é um
+  // planejamento mais abstrato, então eu vou usar uma skill"). Mede 13154 — o
+  // design pedia 12000, número escrito antes da medição e que o texto
+  // VINCULANTE dos dois blocos não caberia (10861 - 886 + 2309 + 2 + 863 =
+  // 13149); o teto sobe para 13600, que devolve a folga de UMA régua do dono
+  // (446 chars, a mesma ordem de grandeza do 10900 sobre 10471). Ele continua
+  // sendo contra CONSTITUIÇÃO — régua nova cabe, discurso não.
+  assert.ok(contract.length < 13600, `contrato virou constituição (${contract.length})`)
   assert.match(contract, /"mestre" is a DESIGNATION the owner grants/u)
   assert.match(contract, /only his click designates or removes it/u)
   assert.match(contract, /PROJECT_PLAN\.md/u)
@@ -1515,32 +1539,47 @@ test('todo papel que roda processo carrega a regra do fratricídio', async () =>
   assert.doesNotMatch(guiPlanningSystemPrompt(), /taskkill/u)
 })
 
-// ————— SKILLS 2.0 — O CARDÁPIO E A LEI (2026-08-29, ADRs 0001/0002/0005) —————
+// ————— SKILLS 3.0 — O HARNESS É DO MODELO (2026-09-08, ADRs 0008 a 0011) —————
 //
-// O cardápio de skills chega ao chat pelo TRANSPORTE NATIVO dos CLIs (ADR-0002:
-// o harness sincroniza o kit para a pasta de skills do worktree e o binário o
-// lista sozinho). Então o que falta ao MODELO não é a ferramenta — é a régua de
-// USO, e ela é de julgamento: ADR-0001 diz que quem escolhe do cardápio é o
-// AGENTE, por ocasião, porque heurística de conteúdo é proibida nesta casa.
+// A LEI CAIU (ADR-0008). Até 08/09 esta suíte prendia uma ordem FIXA — trabalho
+// de UI ⇒ `impeccable`, sempre, "no setting anywhere turns it off" — e o dono
+// mediu o preço dela: "impeccable não é a melhor opção pra landing page" (a
+// taste-skill seria) e "às vezes o impeccable não vai dar" a melhor animação.
+// Quem escolhia a skill era a lei, não o modelo. No lugar dela ficou o PADRÃO de
+// UMA linha (`UI_DIRECTION_LINE`): interface quase sempre pede UMA direção de
+// design escolhida pela obra, empilhar duas contraditórias é advisory, e pular a
+// direção é decisão DITA em voz alta.
 //
-// A LEI (ADR-0005) é a única exceção, e o dono a fixou na PERSONA de propósito:
-// "trabalho de UI ⇒ impeccable, sempre — nunca empilhada com outra direção
-// estética". Persona e não toggle porque mudar lei é doutrina com ele (commit),
-// nunca clique na tela de gestão — e a tela mostra a lei como texto FIXO
-// justamente por isso.
+// O HARNESS É DO AGENTE, E ELE O ESCREVE (ADR-0009) — palavras do dono: "não
+// quero mais algo fixo. Quero que a IA decida qual é a melhor opção pra ela ali
+// naquele momento, e ela vá atrás, ela busque, ela pegue e ela faça. O harness
+// que o próprio modelo cria é melhor do que um harness bruto que já vem e nem
+// sempre vai servir pra tudo." Então o que se prende aqui não é mais um cardápio
+// FECHADO: é a PRATELEIRA como ponto de partida, a ORDEM da busca (prateleira →
+// skill_search na biblioteca e no catálogo da casa → web do próprio CLI, só
+// quando o catálogo não cobre), o `skill_pull` que vive nesta missão e morre com
+// ela (ADR-0010: "ir lá, ler a skill, utilizar a skill naquela missão e depois
+// descartar"), o `mission-playbook` que o próprio agente ESCREVE e o harness
+// DECLARADO no mini-plano — com "nenhuma skill" valendo como resposta.
 //
-// QUEM RECEBE O QUÊ é decisão registrada no design: cardápio só para quem
-// PRODUZ (dev, ajudante e planejador); a lei só para quem ESTILIZA (dev e
-// ajudante). O reviewer lê diff e não edita produto, e o release opera a subida
-// da versão — prometer skill de estilo a eles seria mandá-los seguir um playbook
-// para trabalho que o contrato deles já proíbe.
+// QUEM RECEBE O QUÊ continua sendo decisão registrada no design: o bloco comum
+// vai a quem PRODUZ (dev, ajudante e planejador); a linha da direção de UI só a
+// quem ESTILIZA (dev e ajudante), e é essa diferença de UMA linha que o teste do
+// DELTA mede. O planejador recebe, no lugar dela, o bloco de MÉTODO (ADR-0011,
+// palavras do dono: "é um planejamento simples, então vou montar de uma forma
+// simples; é um planejamento mais abstrato, então eu vou usar uma skill"). O
+// reviewer lê diff e não edita produto e o release sobe a versão pelas duas
+// ferramentas dele — playbook ali seria régua para trabalho que o contrato deles
+// já proíbe.
 
-const SKILLS_HEADER = 'SKILLS — THE MENU COMES TO YOU; CHOOSING FROM IT IS YOUR JUDGEMENT:'
+const SKILLS_HEADER = 'SKILLS — YOUR HARNESS IS YOURS TO BUILD:'
+const PLANNING_METHOD_HEADER = 'PLANNING METHOD — SIZE THE JOB BEFORE YOU PLAN IT:'
 
 /**
- * O bloco do cardápio, lido da FONTE — do cabeçalho até a linha em branco que
- * separa as seções do contrato (no planejador ele fecha o texto e vai até o
- * fim). O teste nunca guarda uma cópia do bloco: é ele que prova a fonte única.
+ * O bloco do harness, lido da FONTE — do cabeçalho até a linha em branco que
+ * separa as seções do contrato. O teste nunca guarda uma cópia do bloco: é ele
+ * que prova a fonte única. No planejador a linha em branco é a que separa o
+ * bloco comum do MÉTODO, então o que volta ali é exatamente o COMUM.
  */
 function skillsSection(contract) {
   const at = contract.indexOf(SKILLS_HEADER)
@@ -1549,106 +1588,212 @@ function skillsSection(contract) {
   return (end < 0 ? contract.slice(at) : contract.slice(at, end)).trim()
 }
 
-test('o cardápio é FONTE ÚNICA e chega a quem PRODUZ: dev, ajudante e planejador', () => {
+test('o harness é FONTE ÚNICA e chega a quem PRODUZ: dev, ajudante e planejador', () => {
   const dev = skillsSection(guiMissionSystemPrompt('dev'))
   const helper = skillsSection(guiMissionSystemPrompt('helper'))
-  const planner = skillsSection(guiPlanningSystemPrompt())
+  const common = skillsSection(guiPlanningSystemPrompt())
   for (const [nome, section] of [
     ['dev', dev],
     ['helper', helper],
-    ['planner', planner]
+    ['planner', common]
   ]) {
-    assert.ok(section, `${nome}: sem o bloco do cardápio de skills`)
+    assert.ok(section, `${nome}: sem o bloco do harness`)
   }
   // FONTE ÚNICA, como a ordem da delegação: ninguém tem a própria versão da
-  // régua. A diferença entre os que estilizam e o planejador é a LEI, e só ela
-  // (provado no teste seguinte, pelo DELTA — aqui basta o prefixo comum).
-  assert.equal(dev, helper, 'dev e ajudante divergiram no cardápio')
-  assert.ok(dev.startsWith(planner), 'o planejador recebeu outro cardápio, não o mesmo bloco')
+  // régua. A diferença entre quem estiliza e o planejador é UMA linha, e ela é
+  // medida no teste do DELTA — aqui basta o prefixo comum.
+  assert.equal(dev, helper, 'dev e ajudante divergiram no bloco do harness')
+  assert.ok(dev.startsWith(common), 'o planejador recebeu outro bloco, não o mesmo comum')
 
-  // O TRANSPORTE é nativo (ADR-0002): pasta de skills do worktree, listada pelo
-  // próprio CLI. Nada de tool inventada — prometer `skill_menu`/`skill_load`
-  // mandaria o agente procurar ferramenta que o catálogo não tem.
-  assert.match(planner, /skills folder/iu, 'o bloco não diz DE ONDE o cardápio vem')
-  assert.doesNotMatch(planner, /skill_menu|skill_load/u, 'o cardápio virou tool inventada')
-  // A ESCOLHA é do agente, por OCASIÃO (ADR-0001) — e ninguém roteia por ele.
-  assert.match(planner, /JUDGEMENT/u, 'a escolha deixou de ser julgamento do agente')
-  assert.match(planner, /OCCASION/u, 'sumiu o gatilho: a ocasião')
+  // A PRATELEIRA (ADR-0009): a pasta do worktree continua sendo o transporte
+  // nativo, mas ela é PONTO DE PARTIDA, nunca cerca — e o texto diz as duas
+  // coisas, porque foi a cerca que o dono mandou derrubar.
+  assert.match(common, /skills folder/iu, 'o bloco não diz DE ONDE a prateleira vem')
+  assert.match(common, /SHELF/u, 'a prateleira perdeu o nome')
+  assert.match(common, /never a fence/iu, 'a prateleira voltou a ser cerca')
   assert.match(
-    planner,
-    /Nothing routes them to you/iu,
+    common,
+    /nothing routes a skill to you/iu,
     'o bloco não diz que ninguém escolhe no lugar dele'
   )
-  // O QUE É uma skill: playbook para SEGUIR enquanto a ocasião dura — nunca
-  // enfeite citado de passagem.
-  assert.match(planner, /PLAYBOOK/u, 'skill virou enfeite')
-  assert.match(planner, /decoration/iu, 'sem a negação do enfeite')
-  // E a régua que a lei depois carimba: direção estética não se empilha.
-  assert.match(planner, /NEVER stack/u, 'empilhar direção estética voltou a ser livre')
-  // Beco sem saída é bug, inclusive em persona: cardápio incompleto não trava.
-  assert.match(planner, /never stops the job/iu, 'skill ausente virou impedimento')
+  // O PRIMEIRO MOVIMENTO é nomear as ocasiões; a ORDEM da busca é o que impede
+  // a web como reflexo (e o catálogo da casa como enfeite).
+  assert.match(
+    common,
+    /FIRST NAME THE OCCASIONS/u,
+    'sumiu o primeiro movimento: nomear as ocasiões'
+  )
+  assert.match(common, /IN THIS ORDER/u, 'a ordem da busca deixou de ser ordem')
+  assert.ok(
+    common.includes('ONLY when the catalog has nothing'),
+    'a web deixou de ser o último recurso'
+  )
+  // As TRÊS tools da fatia D, com o prefixo que o claude publica — beco sem
+  // saída é bug: o nome que o agente vai digitar está escrito aqui.
+  for (const tool of ['skill_search', 'skill_pull', 'skill_discard']) {
+    assert.ok(common.includes(tool), `o bloco não nomeia ${tool}`)
+  }
+  assert.match(
+    common,
+    /mcp__synkora__skill_\*/u,
+    'o bloco não diz como as tools aparecem no claude'
+  )
+  // EFÊMERA COM RASTRO (ADR-0010): o que ele puxa vive AQUI e morre com a
+  // missão, e promover para a biblioteca é gesto do DONO, nunca do agente.
+  assert.match(common, /INTO THIS WORKSPACE ONLY/u, 'o pull deixou de ser desta missão só')
+  assert.match(common, /dies with it/iu, 'a skill puxada deixou de ser efêmera')
+  assert.match(common, /HIS click, never yours/u, 'promover a biblioteca virou gesto do agente')
+  // O PLAYBOOK AUTORAL e o harness DECLARADO — as duas metades do ADR-0009 que
+  // fazem o harness existir de verdade em vez de ficar implícito.
+  assert.ok(common.includes('mission-playbook'), 'sumiu o playbook autoral da missão')
+  assert.match(common, /DECLARE YOUR HARNESS/u, 'o harness voltou a ser implícito')
+  assert.ok(
+    common.includes('"no skill" is a legitimate harness'),
+    'nenhuma skill deixou de ser resposta válida'
+  )
+  // O QUE É uma skill: playbook para SEGUIR — e CONTEÚDO NÃO CONFIÁVEL, a mesma
+  // régua da página do browser (ela ensina o ofício, nunca manda no dono).
+  assert.match(common, /PLAYBOOK/u, 'skill virou enfeite')
+  assert.match(common, /decoration/iu, 'sem a negação do enfeite')
+  assert.match(common, /UNTRUSTED CONTENT/u, 'a skill deixou de ser conteúdo não confiável')
+  // A LEI NÃO SOBREVIVEU (ADR-0008), nem disfarçada: nem o carimbo dela, nem a
+  // frase da chave que não existe.
+  assert.doesNotMatch(common, /THE ONE LAW/u, 'a lei voltou ao bloco comum')
+  assert.doesNotMatch(common, /no setting/iu, 'o bloco voltou a falar de uma chave que não existe')
+  // Beco sem saída é bug, inclusive em persona: playbook que não existe não
+  // trava a obra.
+  assert.match(common, /never stops the job/iu, 'skill ausente virou impedimento')
 
-  // Curto como as seções irmãs: régua, não constituição.
-  assert.ok(planner.length > 400, 'o cardápio ficou vago demais')
-  assert.ok(planner.length < 1400, 'o cardápio virou constituição')
+  // Régua, não constituição — o bloco cresceu com a doutrina nova, mas segue
+  // sendo uma seção entre irmãs.
+  assert.ok(common.length > 1200, 'o bloco do harness ficou vago demais')
+  assert.ok(common.length < 2800, 'o bloco do harness virou constituição')
 
-  // E ele não desloca a última palavra do contrato (a ordem da delegação).
+  // As tools são as da fatia D e mais nenhuma: `skill_menu`/`skill_load` nunca
+  // existiram, e prometê-las mandaria o agente procurar o que o catálogo não tem.
+  for (const [nome, prompt] of [
+    ...GUI_MISSION_ROLES.map((role) => [role, guiMissionSystemPrompt(role)]),
+    ['planner', guiPlanningSystemPrompt()],
+    ['release', guiReleaseSystemPrompt()]
+  ]) {
+    assert.doesNotMatch(prompt, /skill_menu|skill_load/u, `${nome}: tool de skill inventada`)
+  }
+
+  // E o bloco não desloca a última palavra do contrato (a ordem da delegação).
   for (const role of ['dev', 'helper']) {
     const contract = guiMissionSystemPrompt(role)
     assert.ok(
       contract.indexOf(SKILLS_HEADER) < contract.indexOf(DELEGATION_HEADER),
-      `${role}: o cardápio passou na frente da ordem permanente da delegação`
+      `${role}: o harness passou na frente da ordem permanente da delegação`
     )
   }
 })
 
-test('a LEI é do DEV e do AJUDANTE: impeccable ANTES de estilizar, fora de qualquer toggle', () => {
-  const planner = skillsSection(guiPlanningSystemPrompt())
-  assert.ok(planner, 'sem o cardápio do planejador não há como medir o delta da lei')
+test('a direção de UI é PADRÃO, não lei: UMA linha a mais no dev e no ajudante', () => {
+  const common = skillsSection(guiPlanningSystemPrompt())
+  assert.ok(common, 'sem o bloco comum não há como medir o delta da direção')
   for (const role of ['dev', 'helper']) {
     const section = skillsSection(guiMissionSystemPrompt(role))
-    assert.ok(section, `${role}: sem o bloco do cardápio, a lei não tem onde morar`)
-    // O DELTA para o bloco do planejador é EXATAMENTE a lei — nem uma linha a
-    // mais viaja escondida junto dela.
-    const law = section.slice(planner.length).trim()
-    assert.ok(law.length > 0, `${role}: sem a lei do impeccable`)
-    assert.equal(law.includes('\n'), false, `${role}: a lei virou seção, e ela é UMA linha`)
-    assert.match(law, /^- THE ONE LAW/u, `${role}: a lei não se anuncia como lei`)
-    // A skill, nomeada como o CLI a lista (a pasta = o `name:` do frontmatter).
-    assert.match(law, /`impeccable`/u, `${role}: a lei não nomeia a skill`)
-    // A OCASIÃO inteira, nas palavras do dono: trabalho de UI.
-    for (const occasion of ['styling', 'layout', 'motion', 'visual polish']) {
-      assert.ok(law.includes(occasion), `${role}: a ocasião não cobre ${occasion}`)
-    }
-    // ANTES de estilizar — carregar depois de pronto é decorar, não seguir.
-    assert.match(law, /BEFORE you style/u, `${role}: a lei perdeu a hora de carregar`)
-    // E nunca empilhada com outra direção estética (a metade que o dono ditou).
-    assert.match(
-      law,
-      /never stacked with another aesthetic direction/u,
-      `${role}: empilhar direção estética voltou a ser possível`
+    assert.ok(section, `${role}: sem o bloco do harness, a direção não tem onde morar`)
+    // O DELTA para o bloco do planejador é EXATAMENTE a direção de UI — nem uma
+    // linha a mais viaja escondida junto dela.
+    const direction = section.slice(common.length).trim()
+    assert.ok(direction.length > 0, `${role}: sem a linha da direção de UI`)
+    assert.equal(
+      direction.includes('\n'),
+      false,
+      `${role}: a direção virou seção, e ela é UMA linha`
     )
-    // ADR-0005: ela mora na PERSONA. Mudar lei é doutrina com o dono (commit),
-    // nunca clique — então o texto não pode sugerir chave para desligá-la.
-    assert.match(law, /no setting/iu, `${role}: a lei ficou parecendo um toggle da tela`)
+    assert.match(direction, /^- INTERFACE WORK/u, `${role}: a direção não se anuncia`)
+    // ADR-0008: `impeccable` é candidata como qualquer outra, e o texto a nomeia
+    // JUNTO das irmãs — foi o dono quem disse que ela "não é a melhor opção pra
+    // landing page".
+    assert.ok(direction.includes('impeccable'), `${role}: a direção não nomeia impeccable`)
+    assert.ok(
+      direction.includes('design-taste-frontend'),
+      `${role}: impeccable voltou a ser a única candidata`
+    )
+    // Não empilhar direções contraditórias é a metade que ficou da lei — agora
+    // como advisory, dentro da mesma linha.
+    assert.ok(
+      direction.includes('never two contradictory'),
+      `${role}: empilhar direção estética voltou a ser livre`
+    )
+    // E pular a direção é decisão DITA, nunca padrão silencioso.
+    assert.match(
+      direction,
+      /Skipping the direction is a decision you state out loud/u,
+      `${role}: pular a direção voltou a ser silencioso`
+    )
+    // A lei não voltou disfarçada de padrão.
+    assert.doesNotMatch(direction, /THE ONE LAW/u, `${role}: a lei voltou`)
+    assert.doesNotMatch(direction, /no setting/iu, `${role}: a direção ficou parecendo lei`)
   }
-  // O planejador não estiliza: ele desenha o mapa e escreve plano/. A lei não
-  // entra no chat dele — nem a skill dela é citada por acidente.
-  assert.doesNotMatch(guiPlanningSystemPrompt(), /impeccable/iu, 'o planejador ganhou a lei da UI')
+  // O planejador não estiliza: no lugar da direção ele recebe o MÉTODO.
+  assert.doesNotMatch(
+    guiPlanningSystemPrompt(),
+    /- INTERFACE WORK/u,
+    'o planejador ganhou a direção de UI'
+  )
 })
 
-test('quem não PRODUZ não recebe cardápio nem lei: reviewer e release intocados', () => {
-  // Decisão registrada no design de 2026-08-29: cardápio só para quem produz. O
-  // reviewer lê diff e não edita produto; o release sobe a versão pelas duas
-  // ferramentas dele. Dar-lhes um playbook de estilo seria contradizer o próprio
-  // contrato de cada um.
+test('o planejador dimensiona o trabalho ANTES de planejá-lo (ADR-0011)', () => {
+  const planning = guiPlanningSystemPrompt()
+  const at = planning.indexOf(PLANNING_METHOD_HEADER)
+  assert.ok(at >= 0, 'o planejador ficou sem o bloco de MÉTODO')
+  const end = planning.indexOf('\n\n', at)
+  const method = (end < 0 ? planning.slice(at) : planning.slice(at, end)).trim()
+  // A LINHA DO MÉTODO, nas palavras do dono: planejamento simples se monta de
+  // forma simples; abstrato pede entrevista, grill e modelagem antes de cortar.
+  assert.ok(method.includes('SIMPLE'), 'o método perdeu o caso SIMPLES')
+  assert.ok(method.includes('ABSTRACT'), 'o método perdeu o caso ABSTRATO')
+  assert.match(method, /ONE line/iu, 'o método deixou de ser uma linha dita antes de propor')
+  // A linha é do agente, mas a palavra final é do dono.
+  assert.match(method, /he can overrule it/iu, 'o método deixou de ser derrubável pelo dono')
+  // O método ESCOLHE o playbook — pelas mesmas regras do bloco comum, nunca por
+  // uma segunda doutrina só dele.
+  assert.ok(method.includes('skill_search'), 'o método não aponta para as tools do harness')
+  // E a SUGESTÃO por missão (o caso LANDING-LUMA que o dono fez à mão): viaja no
+  // `context`, sem schema novo, e quem decide é o dev.
+  assert.ok(method.includes('SUGGEST'), 'sumiu a sugestão de skills por missão')
+  assert.match(method, /context/u, 'a sugestão perdeu o campo por onde viaja')
+  assert.match(method, /never a wishlist/iu, 'a sugestão virou lista de desejos')
+
+  // O MÉTODO vem DEPOIS do bloco comum: as regras do harness são ditas antes de
+  // se pedir que ele escolha o playbook do método.
+  assert.ok(planning.indexOf(SKILLS_HEADER) < at, 'o método passou na frente do harness')
+
+  // Ele é SÓ do planejador: dimensionar planejamento não é ofício de quem
+  // implementa, revisa ou sobe versão.
+  for (const [nome, prompt] of [
+    ...GUI_MISSION_ROLES.map((role) => [role, guiMissionSystemPrompt(role)]),
+    ['release', guiReleaseSystemPrompt()]
+  ]) {
+    assert.equal(
+      prompt.includes(PLANNING_METHOD_HEADER),
+      false,
+      `${nome}: recebeu o método do planejamento`
+    )
+  }
+})
+
+test('quem não PRODUZ não recebe harness nem direção de UI: reviewer e release intocados', () => {
+  // Decisão registrada no design de 2026-09-08 (a mesma de 08/29, com a lei
+  // fora): o bloco só vai a quem produz. O reviewer lê diff e não edita produto;
+  // o release sobe a versão pelas duas ferramentas dele. Dar-lhes um playbook
+  // seria contradizer o próprio contrato de cada um.
   for (const [nome, prompt] of [
     ['reviewer', guiMissionSystemPrompt('reviewer')],
     ['release', guiReleaseSystemPrompt()]
   ]) {
-    assert.equal(skillsSection(prompt), undefined, `${nome}: recebeu o cardápio de skills`)
-    assert.doesNotMatch(prompt, /impeccable/iu, `${nome}: recebeu a lei da UI`)
-    assert.doesNotMatch(prompt, /THE ONE LAW/u, `${nome}: recebeu a lei da UI`)
+    assert.equal(skillsSection(prompt), undefined, `${nome}: recebeu o bloco do harness`)
+    assert.doesNotMatch(prompt, /impeccable/iu, `${nome}: recebeu a direção de UI`)
+    assert.doesNotMatch(prompt, /THE ONE LAW/u, `${nome}: recebeu a lei revogada`)
+    assert.doesNotMatch(
+      prompt,
+      /skill_search|skill_pull|skill_discard/u,
+      `${nome}: recebeu as tools de skill`
+    )
   }
 })
 

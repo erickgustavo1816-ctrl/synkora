@@ -1,9 +1,17 @@
 /**
- * INSTALAR SKILL POR URL PINADA (Skills 2.0 — ADR-0007).
+ * BAIXAR SKILL DE PASTA PINADA (Skills 2.0 — ADR-0007; Skills 3.0 — ADR-0010).
  *
  * A biblioteca está CONGELADA: nada entra sozinho, nada atualiza no boot. O
- * único caminho novo é o dono colar a URL da PASTA de uma skill no GitHub, e
- * este módulo é o ÚNICO lugar do subsistema onde existe rede.
+ * dono instala colando a URL da PASTA de uma skill no GitHub, e este módulo é o
+ * ÚNICO lugar do subsistema onde existe rede.
+ *
+ * DOIS CONSUMIDORES desde 2026-09-08 (ADR-0010, "ir lá, ler a skill, utilizar a
+ * skill naquela missão e depois descartar"): o dono, por `installSkillFromUrl`
+ * (a pasta pousa na BIBLIOTECA da máquina), e o agente, por `downloadSkillFolder`
+ * (a pasta pousa num STAGING e quem chama a materializa no WORKTREE da missão,
+ * onde ela morre com a missão). O miolo — pin, validação, tetos, download — é o
+ * MESMO nos dois caminhos: uma segunda cópia dele seria uma segunda política de
+ * defesa, e é justamente a defesa que não pode divergir.
  *
  * Receita ressuscitada do instalador F6 (`git show d43a3b4^:src/main/skillsLibrary.ts`),
  * adaptada — não copiada: só o miolo que importa.
@@ -54,6 +62,45 @@ export interface SkillInstallOptions {
   /** injeção para teste: sem isto, `globalThis.fetch` */
   fetch?: typeof globalThis.fetch
 }
+
+/** O pacote baixado, pousado num staging e ainda SEM destino final. */
+export interface SkillDownload {
+  /** `name:` do frontmatter — e o nome da pasta que o consumidor vai criar */
+  id: string
+  /** sha do último commit DA PASTA: é a versão baixada (ADR-0007) */
+  sha: string
+  /** o staging com a pasta já pronta — quem chama renomeia ou apaga */
+  dir: string
+  source: SkillFolderSource
+  /** `description:` do frontmatter, quando existe (recibo e rastro) */
+  description?: string
+  files: number
+  bytes: number
+}
+
+export interface SkillDownloadOptions {
+  /** injeção para teste: sem isto, `globalThis.fetch` */
+  fetch?: typeof globalThis.fetch
+  /** pasta onde o pouso `.dl-<id>-<rand>` é criado (nunca o destino final) */
+  staging: string
+  /** id esperado (entrada do CATÁLOGO): substitui a checagem "pasta == name"
+   *  por "name == expectId" — a curadoria F6 instala pelo NAME quando a pasta
+   *  upstream difere (ex.: skills/soft-skill → high-end-visual-design). */
+  expectId?: string
+  /**
+   * AVAL DO CHAMADOR entre resolver o id e gastar rede (retornar texto = recusa).
+   * Existe porque a ORDEM é contrato na instalação do dono: "já está na
+   * biblioteca" e "manifest ilegível" recusam ANTES da listagem de arquivos —
+   * pin que não pode ser gravado é instalação sem procedência, e a suíte prende
+   * que a tree nunca é chamada nesses casos. Quem baixa para o worktree
+   * (skill_pull) simplesmente omite.
+   */
+  claimId?: (id: string, sha: string) => string | undefined
+}
+
+export type SkillDownloadResult =
+  | { ok: true; download: SkillDownload }
+  | { ok: false; error: string }
 
 const FETCH_TIMEOUT_MS = 20_000
 // Tetos do F6, mantidos: skill legítima grande EXISTE (o impeccable tem ~150
@@ -277,6 +324,152 @@ function withoutBom(buffer: Buffer, relativePath: string): Buffer {
 }
 
 /**
+ * O MIOLO: baixa a pasta apontada, pinada no sha do último commit DELA, para
+ * `<staging>/.dl-<id>-<rand>`. Nada aqui decide destino — quem chama renomeia
+ * o pouso para o lugar (biblioteca ou worktree) ou o apaga.
+ *
+ * Nunca lança: erro de rede/disco volta como recusa escrita, e o pouso é
+ * removido antes de a recusa sair.
+ */
+export async function downloadSkillFolder(
+  source: SkillFolderSource,
+  options: SkillDownloadOptions
+): Promise<SkillDownloadResult> {
+  const fetcher = options.fetch ?? globalThis.fetch
+  if (typeof fetcher !== 'function') {
+    return { ok: false, error: 'este build não tem fetch disponível para falar com o GitHub' }
+  }
+  if (!source || typeof source.repo !== 'string' || !source.repo) {
+    return { ok: false, error: `fonte de skill inválida — ${URL_RECIPE}` }
+  }
+
+  const pinned = await pinFolderSha(fetcher, source)
+  if (!pinned.sha) return { ok: false, error: pinned.error ?? 'o GitHub não respondeu' }
+  const sha = pinned.sha
+  const prefix = source.path ? `${source.path}/` : ''
+
+  // O SKILL.md vem PRIMEIRO: é ele que decide o id, e uma pasta que não é
+  // skill se recusa antes de baixar 200 arquivos.
+  let head: string
+  try {
+    head = (await fetchRaw(fetcher, source.repo, sha, `${prefix}SKILL.md`)).toString('utf8')
+  } catch {
+    return {
+      ok: false,
+      error: `não achei SKILL.md em ${source.repo}/${source.path || '(raiz)'} — ${URL_RECIPE}`
+    }
+  }
+  const frontmatter = parseSkillFrontmatter(head)
+  const id = frontmatter.name?.trim().toLowerCase()
+  if (!id || !isSkillId(id)) {
+    return {
+      ok: false,
+      error: `o SKILL.md não tem um "name:" válido no frontmatter (achei: "${frontmatter.name ?? '—'}") — o name é o id da skill: minúsculas, dígitos e hífen simples`
+    }
+  }
+  // Com `expectId` (entrada do CATÁLOGO) a régua é o NAME: a curadoria F6
+  // aponta pastas cujo nome upstream difere do id da skill. Sem ele, vale a
+  // spec dos dois CLIs — pasta igual ao name.
+  if (options.expectId) {
+    if (id !== options.expectId) {
+      return {
+        ok: false,
+        error: `o catálogo pede "${options.expectId}" e o SKILL.md dessa pasta diz name: "${id}" — a fonte mudou de conteúdo; puxe por URL se é essa skill que você quer, ou avise no fio`
+      }
+    }
+  } else {
+    const folder = folderNameOf(source)
+    if (folder && folder.toLowerCase() !== id) {
+      return {
+        ok: false,
+        error: `a pasta apontada chama "${folder}" e o frontmatter diz name: "${id}" — os dois CLIs exigem pasta igual ao name; aponte a pasta "${id}" no repositório (ou corrija o SKILL.md na origem)`
+      }
+    }
+  }
+
+  const claim = options.claimId?.(id, sha)
+  if (claim) return { ok: false, error: claim }
+
+  const tree = await repoTree(fetcher, source.repo, sha)
+  if (!tree.files) return { ok: false, error: tree.error ?? 'a listagem de arquivos falhou' }
+  const inFolder = tree.files.filter((file) => file.path.startsWith(prefix))
+  const skillMd = inFolder.find((file) => file.path === `${prefix}SKILL.md`)
+  if (!skillMd) {
+    return {
+      ok: false,
+      error: `a pasta ${source.path || '(raiz)'} não tem SKILL.md no commit ${sha.slice(0, 7)} — ${URL_RECIPE}`
+    }
+  }
+  const wanted = inFolder.filter(
+    (file) =>
+      file.path === `${prefix}SKILL.md` ||
+      (!SKIP_MEDIA_RE.test(file.path) && (file.size ?? 0) <= MAX_FILE_BYTES)
+  )
+  if (wanted.length > MAX_FILES) {
+    return {
+      ok: false,
+      error: `essa pasta tem ${wanted.length} arquivos (o teto é ${MAX_FILES}) — aponte a pasta da SKILL, não a raiz de uma coleção`
+    }
+  }
+  const totalBytes = wanted.reduce((sum, file) => sum + (file.size ?? 0), 0)
+  if (totalBytes > MAX_TOTAL_BYTES) {
+    return {
+      ok: false,
+      error: `essa pasta pesa ${Math.round(totalBytes / 1024 / 1024)}MB (o teto é 30MB) — aponte a pasta da SKILL, não a raiz de uma coleção`
+    }
+  }
+
+  // Pouso com sufixo ALEATÓRIO: duas frotas puxando a mesma skill no mesmo
+  // staging não podem colidir num nome previsível.
+  const landing = join(
+    options.staging,
+    `.dl-${id}-${process.pid}-${Math.random().toString(16).slice(2, 8)}`
+  )
+  try {
+    rmSync(landing, { recursive: true, force: true })
+    mkdirSync(landing, { recursive: true })
+    const queue = [...wanted]
+    let written = 0
+    let bytes = 0
+    const workers = Array.from({ length: Math.min(DOWNLOAD_WORKERS, queue.length) }, async () => {
+      for (;;) {
+        const file = queue.shift()
+        if (!file) return
+        const relativePath = prefix ? file.path.slice(prefix.length) : file.path
+        const target = safeDestination(landing, relativePath)
+        if (!target) throw new Error(`caminho recusado no pacote: ${file.path}`)
+        const buffer = await fetchRaw(fetcher, source.repo, sha, file.path)
+        const clean = withoutBom(buffer, relativePath)
+        mkdirSync(dirname(target), { recursive: true })
+        writeFileSync(target, clean)
+        written += 1
+        bytes += clean.length
+      }
+    })
+    await Promise.all(workers)
+    return {
+      ok: true,
+      download: {
+        id,
+        sha,
+        dir: landing,
+        source,
+        ...(frontmatter.description ? { description: frontmatter.description } : {}),
+        files: written,
+        bytes
+      }
+    }
+  } catch (error) {
+    rmSync(landing, { recursive: true, force: true })
+    const detail = error instanceof Error ? error.message : String(error)
+    return {
+      ok: false,
+      error: `o download falhou: ${detail} — confira a conexão e a fonte (${URL_RECIPE})`
+    }
+  }
+}
+
+/**
  * Baixa a pasta apontada e a promove para `lib/<name>`. A skill NÃO entra em
  * kit nenhum: é a tela que escolhe a ocasião depois.
  */
@@ -284,10 +477,6 @@ export async function installSkillFromUrl(
   url: string,
   options: SkillInstallOptions = {}
 ): Promise<SkillInstallResult> {
-  const fetcher = options.fetch ?? globalThis.fetch
-  if (typeof fetcher !== 'function') {
-    return { ok: false, error: 'este build não tem fetch disponível para falar com o GitHub' }
-  }
   const base = options.base ?? skillsBaseDir()
   const libRoot = skillsLibraryRoot(base)
   const manifestFile = skillsManifestFile(base)
@@ -296,103 +485,35 @@ export async function installSkillFromUrl(
   if (!source) return { ok: false, error: `URL inválida — ${URL_RECIPE}` }
 
   try {
-    const pinned = await pinFolderSha(fetcher, source)
-    if (!pinned.sha) return { ok: false, error: pinned.error ?? 'o GitHub não respondeu' }
-    const sha = pinned.sha
-    const prefix = source.path ? `${source.path}/` : ''
-
-    // O SKILL.md vem PRIMEIRO: é ele que decide o id, e uma pasta que não é
-    // skill se recusa antes de baixar 200 arquivos.
-    let head: string
-    try {
-      head = (await fetchRaw(fetcher, source.repo, sha, `${prefix}SKILL.md`)).toString('utf8')
-    } catch {
-      return {
-        ok: false,
-        error: `não achei SKILL.md em ${source.repo}/${source.path || '(raiz)'} — ${URL_RECIPE}`
-      }
-    }
-    const frontmatter = parseSkillFrontmatter(head)
-    const id = frontmatter.name?.trim().toLowerCase()
-    if (!id || !isSkillId(id)) {
-      return {
-        ok: false,
-        error: `o SKILL.md não tem um "name:" válido no frontmatter (achei: "${frontmatter.name ?? '—'}") — o name é o id da skill: minúsculas, dígitos e hífen simples`
-      }
-    }
-    const folder = folderNameOf(source)
-    if (folder && folder.toLowerCase() !== id) {
-      return {
-        ok: false,
-        error: `a pasta apontada chama "${folder}" e o frontmatter diz name: "${id}" — os dois CLIs exigem pasta igual ao name; aponte a pasta "${id}" no repositório (ou corrija o SKILL.md na origem)`
-      }
-    }
-    const destination = join(libRoot, id)
-    if (existsSync(destination)) {
-      return {
-        ok: false,
-        error: `"${id}" já está na biblioteca — a instalação por URL nunca sobrescreve o que já existe; use a PODA (na tela de Skills) para tirar da biblioteca o que não está em kit nenhum e instale de novo`
-      }
-    }
-    // O manifest é conferido ANTES do download: pin que não pode ser gravado
-    // é instalação sem procedência.
-    const manifestRead = readSkillsManifest(manifestFile)
-    if (!manifestRead.ok) return { ok: false, error: SKILLS_MANIFEST_UNREADABLE }
-
-    const tree = await repoTree(fetcher, source.repo, sha)
-    if (!tree.files) return { ok: false, error: tree.error ?? 'a listagem de arquivos falhou' }
-    const inFolder = tree.files.filter((file) => file.path.startsWith(prefix))
-    const skillMd = inFolder.find((file) => file.path === `${prefix}SKILL.md`)
-    if (!skillMd) {
-      return {
-        ok: false,
-        error: `a pasta ${source.path || '(raiz)'} não tem SKILL.md no commit ${sha.slice(0, 7)} — ${URL_RECIPE}`
-      }
-    }
-    const wanted = inFolder.filter(
-      (file) =>
-        file.path === `${prefix}SKILL.md` ||
-        (!SKIP_MEDIA_RE.test(file.path) && (file.size ?? 0) <= MAX_FILE_BYTES)
-    )
-    if (wanted.length > MAX_FILES) {
-      return {
-        ok: false,
-        error: `essa pasta tem ${wanted.length} arquivos (o teto é ${MAX_FILES}) — aponte a pasta da SKILL, não a raiz de uma coleção`
-      }
-    }
-    const totalBytes = wanted.reduce((sum, file) => sum + (file.size ?? 0), 0)
-    if (totalBytes > MAX_TOTAL_BYTES) {
-      return {
-        ok: false,
-        error: `essa pasta pesa ${Math.round(totalBytes / 1024 / 1024)}MB (o teto é 30MB) — aponte a pasta da SKILL, não a raiz de uma coleção`
-      }
-    }
-
-    mkdirSync(libRoot, { recursive: true })
-    const staging = join(base, `.staging-${id}`)
-    rmSync(staging, { recursive: true, force: true })
-    mkdirSync(staging, { recursive: true })
-    try {
-      const queue = [...wanted]
-      const workers = Array.from(
-        { length: Math.min(DOWNLOAD_WORKERS, queue.length) },
-        async () => {
-          for (;;) {
-            const file = queue.shift()
-            if (!file) return
-            const relativePath = prefix ? file.path.slice(prefix.length) : file.path
-            const target = safeDestination(staging, relativePath)
-            if (!target) throw new Error(`caminho recusado no pacote: ${file.path}`)
-            const buffer = await fetchRaw(fetcher, source.repo, sha, file.path)
-            mkdirSync(dirname(target), { recursive: true })
-            writeFileSync(target, withoutBom(buffer, relativePath))
-          }
+    // As duas recusas que precisam acontecer ANTES da rede de download: pasta
+    // que já existe (a instalação nunca sobrescreve) e manifest ilegível (pin
+    // que não pode ser gravado é instalação sem procedência).
+    let manifestRead: ReturnType<typeof readSkillsManifest> | undefined
+    const downloaded = await downloadSkillFolder(source, {
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+      staging: base,
+      claimId: (id) => {
+        if (existsSync(join(libRoot, id))) {
+          return `"${id}" já está na biblioteca — a instalação por URL nunca sobrescreve o que já existe; use a PODA (na tela de Skills) para tirar da biblioteca o que não está em kit nenhum e instale de novo`
         }
-      )
-      await Promise.all(workers)
-      renameSync(staging, destination)
+        manifestRead = readSkillsManifest(manifestFile)
+        return manifestRead.ok ? undefined : SKILLS_MANIFEST_UNREADABLE
+      }
+    })
+    if (!downloaded.ok) return { ok: false, error: downloaded.error }
+    const { id, sha, dir } = downloaded.download
+    if (!manifestRead) {
+      // Só acontece se o aval não tiver rodado — nunca acontece hoje, e mesmo
+      // assim a instalação não segue sem procedência.
+      rmSync(dir, { recursive: true, force: true })
+      return { ok: false, error: SKILLS_MANIFEST_UNREADABLE }
+    }
+
+    try {
+      mkdirSync(libRoot, { recursive: true })
+      renameSync(dir, join(libRoot, id))
     } catch (error) {
-      rmSync(staging, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true })
       throw error
     }
 

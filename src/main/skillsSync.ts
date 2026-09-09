@@ -12,7 +12,14 @@
  * 2.1.250 e codex-cli 0.150.1). Escrever na pasta errada é um sync que não
  * entrega nada, EM SILÊNCIO.
  *
- * AS TRÊS LEIS DESTE MÓDULO
+ * DUAS ORIGENS NO MESMO MANIFESTO (Skills 3.0 — ADR-0009/0010, 2026-09-08): o
+ * kit do dono (`origin: 'kit'`, ausente no arquivo antigo) e o que o AGENTE
+ * puxou para a missão (`origin: 'agent'`, escrito por skillsAgentSync.ts). A
+ * consequência dura é a LEI 4 aqui embaixo. As operações do agente moram no
+ * módulo irmão para este arquivo não cruzar as ~1000 linhas da casa; os helpers
+ * de árvore/manifesto são exportados como INTERNOS para ele.
+ *
+ * AS QUATRO LEIS DESTE MÓDULO
  *
  * 1. O MANIFESTO É A ESCRITURA. `<alvo>/.synkora-kit.json` lista exatamente o
  *    que o Synkora escreveu ali, com uma impressão digital do conteúdo. Só
@@ -31,6 +38,11 @@
  *    ou no destino) faz a pasta virar "estranha": não é copiada, não é apagada,
  *    é relatada. É a armadilha permanente do Windows (nunca remover recursivo
  *    através de junção viva) fechada na origem, não no `rm`.
+ * 4. O SYNC DO KIT NUNCA TIRA O QUE O AGENTE PUXOU. Entrada `origin: 'agent'`
+ *    sobrevive a toda remontagem de aba e ao `chat: null` (release, pane sem
+ *    tipo): ela é o harness DA MISSÃO (ADR-0009) e só sai por `skill_discard`,
+ *    pela conclusão do planejamento ou com o worktree. O kit também não a
+ *    re-materializa: a pasta é do agente enquanto ele a quiser.
  *
  * Idempotente e re-derivável: rodar duas vezes produz o mesmo estado, e o
  * estado não depende de nenhuma entrega única — a fotografia é o disco.
@@ -87,10 +99,10 @@ export type SkillSyncCli = keyof typeof SKILL_SYNC_TARGETS
  * os ajudantes codex da frota: materializar só a do CLI do pane deixaria metade
  * da casa sem cardápio, e o sync roda uma vez por spawn.
  */
-const TARGET_DIRS: readonly string[] = Object.values(SKILL_SYNC_TARGETS).flat()
+export const TARGET_DIRS: readonly string[] = Object.values(SKILL_SYNC_TARGETS).flat()
 
 /** O manifesto do sync, dentro de cada pasta-alvo. */
-const SYNC_MANIFEST_FILE = '.synkora-kit.json'
+export const SYNC_MANIFEST_FILE = '.synkora-kit.json'
 
 /** Pouso da cópia antes do rename atômico. Fica FORA da pasta-alvo de
  *  propósito: uma sobra de `<alvo>/tmp-x/SKILL.md` viraria uma skill fantasma
@@ -148,14 +160,21 @@ export interface SkillSyncOptions {
 // ————— manifesto —————
 
 /** Testemunha barata de uma árvore: o que `lstat` sabe dizer sem ler bytes. */
-interface SkillSyncWitness {
+export interface SkillSyncWitness {
   files: number
   bytes: number
   /** mtime mais novo da árvore, em ms */
   mtimeMs: number
 }
 
-interface SkillSyncManifestEntry {
+/**
+ * QUEM pôs a pasta ali: o kit do dono (`kit`, e é o valor de quem não diz nada
+ * — todo manifesto gravado antes de 2026-09-08 é kit) ou o agente, puxando o
+ * harness da missão (`agent`, ADR-0010).
+ */
+export type SkillSyncOrigin = 'kit' | 'agent'
+
+export interface SkillSyncManifestEntry {
   id: string
   /** sha256 do conteúdo. A cópia é byte a byte, então a impressão digital da
    *  lib e a do destino são a MESMA no momento da escrita. */
@@ -164,6 +183,8 @@ interface SkillSyncManifestEntry {
   dest: SkillSyncWitness
   /** testemunha da LIB no momento da escrita */
   source: SkillSyncWitness
+  /** ausente = 'kit' (compatibilidade com o manifesto da era Skills 2.0) */
+  origin?: SkillSyncOrigin
 }
 
 interface SkillSyncManifest {
@@ -217,13 +238,17 @@ function sanitizeManifest(value: unknown): SkillSyncManifestEntry[] {
         files: entry.source.files,
         bytes: entry.source.bytes,
         mtimeMs: entry.source.mtimeMs
-      }
+      },
+      // Origem PRESERVADA (nunca inventada): valor estranho degrada para kit,
+      // que é o regime mais restrito — o kit gerencia, e gerenciar é o que
+      // exige a impressão digital antes de qualquer destruição.
+      ...(entry.origin === 'agent' ? { origin: 'agent' as const } : {})
     })
   }
   return out
 }
 
-function readManifest(targetDir: string): Map<string, SkillSyncManifestEntry> {
+export function readManifest(targetDir: string): Map<string, SkillSyncManifestEntry> {
   const managed = new Map<string, SkillSyncManifestEntry>()
   let text: string
   try {
@@ -248,7 +273,7 @@ function readManifest(targetDir: string): Map<string, SkillSyncManifestEntry> {
  * arquivo é re-derivável — perdê-lo custa uma re-cópia, e um `.bak` seria lixo
  * permanente dentro do worktree do dono.
  */
-function writeManifest(targetDir: string, entries: SkillSyncManifestEntry[]): void {
+export function writeManifest(targetDir: string, entries: SkillSyncManifestEntry[]): void {
   const file = join(targetDir, SYNC_MANIFEST_FILE)
   if (entries.length === 0) {
     try {
@@ -286,20 +311,20 @@ function writeManifest(targetDir: string, entries: SkillSyncManifestEntry[]): vo
 
 // ————— fotografia de uma árvore —————
 
-interface TreeFile {
+export interface TreeFile {
   /** caminho relativo com `/` — a impressão digital não pode depender do SO */
   rel: string
   size: number
 }
 
-interface TreeSnapshot {
+export interface TreeSnapshot {
   dirs: string[]
   files: TreeFile[]
   bytes: number
   mtimeMs: number
 }
 
-type TreeProbe =
+export type TreeProbe =
   | { kind: 'absent' }
   /** existe, mas não é uma árvore que este módulo saiba reproduzir ou destruir
    *  com segurança: link/junção, arquivo no lugar da pasta, tipo exótico, ou
@@ -307,7 +332,7 @@ type TreeProbe =
   | { kind: 'foreign'; reason: string }
   | { kind: 'tree'; snapshot: TreeSnapshot }
 
-function probeTree(root: string): TreeProbe {
+export function probeTree(root: string): TreeProbe {
   let rootStat: ReturnType<typeof lstatSync>
   try {
     rootStat = lstatSync(root)
@@ -367,11 +392,11 @@ function probeTree(root: string): TreeProbe {
   return { kind: 'tree', snapshot }
 }
 
-function witnessOf(snapshot: TreeSnapshot): SkillSyncWitness {
+export function witnessOf(snapshot: TreeSnapshot): SkillSyncWitness {
   return { files: snapshot.files.length, bytes: snapshot.bytes, mtimeMs: snapshot.mtimeMs }
 }
 
-function sameWitness(left: SkillSyncWitness, right: SkillSyncWitness): boolean {
+export function sameWitness(left: SkillSyncWitness, right: SkillSyncWitness): boolean {
   return left.files === right.files && left.bytes === right.bytes && left.mtimeMs === right.mtimeMs
 }
 
@@ -380,7 +405,7 @@ function sameWitness(left: SkillSyncWitness, right: SkillSyncWitness): boolean {
  * tamanho e BYTES CRUS de cada arquivo. Nada de texto, nada de encoding — é a
  * mesma leitura que prova que a cópia preservou byte a byte.
  */
-function fingerprintTree(root: string, snapshot: TreeSnapshot): string | null {
+export function fingerprintTree(root: string, snapshot: TreeSnapshot): string | null {
   const hash = createHash('sha256')
   for (const dir of [...snapshot.dirs].sort(compareText)) {
     hash.update(`d\0${dir}\n`)
@@ -399,7 +424,7 @@ function fingerprintTree(root: string, snapshot: TreeSnapshot): string | null {
   return hash.digest('hex')
 }
 
-function compareText(left: string, right: string): number {
+export function compareText(left: string, right: string): number {
   if (left === right) return 0
   return left < right ? -1 : 1
 }
@@ -411,7 +436,7 @@ function compareText(left: string, right: string): number {
  * processo morrer no meio, o que sobra é uma pasta em `.synkora/` (invisível
  * para os CLIs e para o git) — nunca uma skill pela metade no cardápio.
  */
-function materialize(
+export function materialize(
   cwd: string,
   sourceRoot: string,
   snapshot: TreeSnapshot,
@@ -445,7 +470,7 @@ function materialize(
 
 /** Remoção de árvore PROVADAMENTE nossa. Só é chamada depois de a impressão
  *  digital bater — o que também prova que não há link lá dentro. */
-function removeManaged(destination: string): string | null {
+export function removeManaged(destination: string): string | null {
   try {
     rmSync(destination, { recursive: true, force: true })
     return null
@@ -502,6 +527,17 @@ function syncTarget(
   for (const [id, sourceSnapshot] of desired) {
     const destination = join(targetDir, id)
     const entry = managed.get(id)
+
+    // LEI 4: o id que o AGENTE puxou também está no kit. A pasta existe e é
+    // dele (pinada num sha que ele escolheu): o kit não a re-materializa, não a
+    // apaga e não perde a entrada. O cardápio do CLI tem o id — que é o que o
+    // sync existe para garantir.
+    if (entry?.origin === 'agent') {
+      nextEntries.set(id, entry)
+      pass.status.set(id, 'synced')
+      continue
+    }
+
     const probe = probeTree(destination)
 
     if (probe.kind === 'foreign') {
@@ -612,6 +648,12 @@ function syncTarget(
   // prova é sempre a impressão digital (nunca a testemunha barata).
   for (const [id, entry] of managed) {
     if (desired.has(id)) continue
+    // LEI 4: skill do AGENTE não sai por aqui — nem quando o kit esvazia, nem
+    // com `chat: null`. Ela é o harness da missão e só o discard a alcança.
+    if (entry.origin === 'agent') {
+      nextEntries.set(id, entry)
+      continue
+    }
     if (keep.has(id)) {
       // O kit ainda o quer; foi a BIBLIOTECA que sumiu com ele. A pasta fica
       // (e a falha já está nomeada), então o cardápio do worktree sobrevive a
@@ -664,6 +706,9 @@ function manifestChanged(
     const previous = index.get(entry.id)
     if (!previous) return true
     if (previous.fingerprint !== entry.fingerprint) return true
+    // A ORIGEM é escritura tanto quanto a impressão digital: kit → agent muda
+    // quem manda naquela pasta, e isso tem de pousar no disco.
+    if ((previous.origin ?? 'kit') !== (entry.origin ?? 'kit')) return true
     if (!sameWitness(previous.dest, entry.dest)) return true
     if (!sameWitness(previous.source, entry.source)) return true
   }

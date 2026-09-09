@@ -1,8 +1,21 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-02T19:14:18.325Z",
+  "updatedAt": "2026-09-09T00:48:50.596Z",
   "lanes": {
-    "agora": [],
+    "agora": [
+      {
+        "id": "o-harness-e-do-modelo-skills-3-0-r1-nucleo-a-lei",
+        "title": "O HARNESS É DO MODELO (Skills 3.0) — R1 núcleo: a lei cai, catálogo curado como dado, skill_search/pull/discard efêmeros com rastro, playbook da missão nos ajudantes, método do planejador",
+        "desc": "Ordem do dono 2026-09-08: \"não quero mais algo fixo — a IA decide a melhor opção, vai atrás, busca, pega, usa e descarta\". Plano aprovado (HTML leigo entregue). R1 = Onda 0 (design + ADRs 0008–0011 + sonda de recarga) → Onda 1 (A catálogo ∥ B motor ∥ C personas) → Onda 2 (D tools + costura) → fecho. R2 = tela Ajustes › Skills (interruptor) + painel \"harness desta missão\" com \"guardar na biblioteca\".",
+        "refs": [
+          ".synkora/reports/DESIGN_HARNESS_DO_MODELO_2026-09-08.md",
+          "docs/adr/0008-a-lei-caiu-o-padrao-ficou.md",
+          "docs/adr/0009-o-harness-da-missao-e-do-agente.md",
+          "docs/adr/0010-skill-efemera-por-missao-com-rastro.md",
+          "docs/adr/0011-planejamento-com-metodo-escolhido.md"
+        ]
+      }
+    ],
     "fila": [
       {
         "id": "repensar-a-landing-do-projeto-sem-missoes-aberta",
@@ -495,6 +508,67 @@
           "src/renderer/src/guiOwnerBubble.ts"
         ],
         "day": "02/09 — quarta"
+      },
+      {
+        "id": "pasta-solta-no-chat-anexa-caminho-nasce-no-prelo",
+        "title": "Pasta solta no chat anexa (caminho nasce no preload) + zona de soltar animada no composer",
+        "desc": "2026-09-04. Bug: arrastar pasta (\"Documentos da Luma\") para o chat dava \"não deu para ler\" — o File da pasta não tem bytes e o FileReader morria. Agora todo item SOLTO vai como File ao preload, que tira o caminho via webUtils e o main revalida (gui:attachDropped → resolveGuiDroppedTarget: pasta = referência igual ao diálogo; arquivo = cópia em .synkora/attachments com teto; link/junction recusa com receita). Zona de soltar: o pane inteiro aceita o drop; placa no composer com moldura tracejada que corre (ready = tinta + \"traga até aqui\"; over = acento + \"solte\"), fase pelo relógio do dragover (guiDropZone.ts + useGuiDropZone.ts), para sob reduced-motion. Testes novos (chat-ui + sessions) vermelhos no código velho; gate raiz 49 suítes verde. Harness visual reutilizável em scripts/harness-serve.mjs. PENDENTE: restart do app para main/preload novos (até lá, soltar pasta responde com a receita \"+ › Pasta\").",
+        "refs": [
+          "src/main/guiAttachmentStorage.ts",
+          "src/main/ipc/gui.ts",
+          "src/preload/index.ts",
+          "src/renderer/src/guiDropZone.ts",
+          "src/renderer/src/useGuiDropZone.ts",
+          "src/renderer/src/components/GuiPane.tsx",
+          "src/renderer/src/global.css",
+          "scripts/harness/drop-zone.html"
+        ],
+        "badge": "restart pendente",
+        "day": "04/09 — sexta"
+      },
+      {
+        "id": "cabeca-do-palco-em-uma-fileira-some-a-linha-meta",
+        "title": "Cabeça do palco em UMA fileira — some a linha-meta e o cabeçalho próprio do chat; ficam lateral · pílulas · estado do turno · chip da conta · botões (mockup aprovado com CSS real)",
+        "desc": "Ordem do dono 2026-09-08 (\"muita informação, tudo repetido; só os botões prestam\"). Três fileiras (~100px) viraram uma (~40px): papel ×3, conta ×2, modelo, effort e id da missão saíram (composer e trilho já os mostram). Estado do turno só quando é notícia (● trabalhando · 4:12 / esperando você / encerrada) em StageRoundStatus; troca de conta virou chip quieto (logo do CLI + nome + ▾) em StageSeatChip; o ⎇ que copiava o id da missão foi dispensado pelo dono. Palco < 640px guarda só os sinais (container query na própria cabeça); pílulas de sobra quebram para baixo. Suíte nova test:stage-head no gate raiz; harness em scripts/harness/stage-head.html (serve também workspacePanels.css).",
+        "refs": [
+          "src/renderer/src/components/MissionStageHead.tsx",
+          "src/renderer/src/components/StageRoundStatus.tsx",
+          "src/renderer/src/components/StageSeatChip.tsx",
+          "scripts/harness/stage-head.html",
+          "scripts/test-stage-head.mjs",
+          "docs/MOCKUP_WORKSPACE.md"
+        ],
+        "day": "08/09 — terça"
+      },
+      {
+        "id": "a-aba-ajudantes-o-padrao-dos-ajudantes-redesenha",
+        "title": "A aba \"ajudantes ˄\" — o padrão dos ajudantes redesenhado: a aba sobe, o cartão sai de dentro dela, selects um por vez (conta › modelo › effort) e interruptor do fast; a CONTA entrou no pino do motor",
+        "desc": "Ordem do dono 2026-09-08 (\"tá gigante e MUITO feio\"), três mockups reprovados (encolher, mover para a Frota, trilha de chips) até o aprovado: aba-tampa de 22px em cima do input que sobe por grid-template-rows 0fr→1fr enquanto o cartão desdobra por baixo; selects nascem um de cada vez (conta com as contas do app + \"a da conversa\"; modelo só os daquela conta; effort só os níveis do modelo; fast como interruptor só se o modelo aceita); lado a lado no chat largo, empilhados no estreito; \"limpar\" na linha da aba (sem linha fantasma). Motor: delegateSeat no record, seat na cadeia explícito > painel > herdado com origem no recibo. Bug do mockup (interruptor por cima do menu) curado com fill-mode backwards + z-index no campo aberto. Régua pura (guiFleetPlan/guiFleetSeatPatch/guiFleetModelPatch) provada em node; suítes defaults (27) e wiring (118) verdes. Main mudou: restart do app pendente.",
+        "refs": [
+          ".synkora/reports/DESIGN_ABA_AJUDANTES_2026-09-08.md",
+          "src/renderer/src/components/GuiDelegationDefaults.tsx",
+          "src/renderer/src/components/GuiFleetSelect.tsx",
+          "src/renderer/src/guiDelegationDefaults.ts",
+          "src/main/guiSessions.ts",
+          "src/main/guiDelegationWiring.ts",
+          "scripts/harness/helpers-defaults.html"
+        ],
+        "day": "08/09 — terça"
+      },
+      {
+        "id": "polish-do-fio-09-09-chat-coberto-pelo-painel-fic",
+        "title": "Polish do fio (09/09): chat coberto pelo painel fica inerte mas vivo, fala do dono em laranja, \"ir para o fim\" redondo no canto, aba dos ajudantes esticada com nomes formatados",
+        "desc": "Pedidos do dono no primeiro uso da aba \"ajudantes ˄\": (1) painel do workspace por cima do chat = palco inerte (onCovered do WorkspacePanels → inert + .is-covered a 85% no Board; o chat continua atualizando por trás); (2) o chat fecha o próprio stacking context (isolation: isolate no .gui-pane) — a aba não vaza mais para a frente do painel; (3) aba fechada com bordas de 7px, esticada na largura do composer, dizendo a configuração em uso (Claude – Gmail · Opus 5 · high · ⚡ fast), sem cortar o \"g\"; (4) menu do modelo só com o nome e a versão (resolvedModel do handshake atravessa o catálogo — main), id na dica; menus abrindo para cima; (5) fala do dono em laranja (accent 22% + borda accent 75%, texto ink, VOCÊ em accent-deep); (6) \"ir para o fim\" virou botão redondo só com a seta. Cercas em test-gui-delegation-defaults, test-workspace-panels; gate raiz verde.",
+        "refs": [
+          "src/renderer/src/global.css",
+          "src/renderer/src/components/GuiPane.tsx",
+          "src/renderer/src/components/Board.tsx",
+          "src/renderer/src/workspace/WorkspacePanels.tsx",
+          "src/main/catalog.ts",
+          "scripts/harness/owner-bubble.html",
+          "docs/MOCKUP_WORKSPACE.md"
+        ],
+        "day": "08/09 — terça"
       }
     ]
   },
@@ -932,6 +1006,41 @@
       "action": "add",
       "id": "r39-1-sem-parar-por-padrao-a-fala-do-dono-entra-",
       "detail": "→ feito"
+    },
+    {
+      "at": "2026-09-04T23:55:51.296Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "pasta-solta-no-chat-anexa-caminho-nasce-no-prelo",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-09-08T19:15:06.868Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "cabeca-do-palco-em-uma-fileira-some-a-linha-meta",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-09-08T20:17:05.530Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "a-aba-ajudantes-o-padrao-dos-ajudantes-redesenha",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-09-08T23:35:18.738Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "polish-do-fio-09-09-chat-coberto-pelo-painel-fic",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-09-09T00:48:50.595Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "o-harness-e-do-modelo-skills-3-0-r1-nucleo-a-lei",
+      "detail": "→ agora"
     }
   ]
 }

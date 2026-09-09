@@ -47,6 +47,9 @@ import {
   type GuiMissionWorkspace
 } from '../guiMissionContracts'
 import { planDependenciesOfMission } from '../plans'
+// SKILLS 3.0 (ADR-0010): o harness EFÊMERO do chat de planejamento sai na
+// conclusão — é o único desfecho dele, porque planejamento não tem worktree.
+import { discardAgentSkills } from '../skillsAgentSync'
 import {
   isGuiPermissionMode,
   rememberedGuiExecutorValue,
@@ -978,6 +981,51 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
           // 2.0: dev/reviewer/ajudantes da missão encerram junto (a conversa
           // fica gravada; concluída abre congelada, arquivada reabre no resume).
           killMissionGuiPanes(id)
+        }
+        // SKILLS 3.0 (ADR-0010): a skill que o agente puxou é EFÊMERA — ela morre
+        // com o worktree. O PLANEJAMENTO não tem worktree (o chat dele mora na
+        // RAIZ do projeto), então a conclusão é o único momento em que ela pode
+        // sair: sem isto, o playbook de um planejamento de agosto ficaria no
+        // cardápio de toda missão de dev criada depois. Só a CONCLUSÃO limpa —
+        // arquivar é reversível, e reativar sem o harness seria perder trabalho.
+        //
+        // NUNCA derruba a conclusão: o gesto do dono já aconteceu, e uma pasta
+        // que resistiu (editada à mão, link) é uma linha no diário, não um erro na
+        // tela. O rastro (`.synkora/harness.json`) FICA — é o que conta ao dono o
+        // que aquele planejamento usou.
+        if (patch.status === 'concluida') {
+          const projectPath = projects.get(updated.projectId)?.path
+          if (projectPath) {
+            try {
+              const swept = discardAgentSkills(projectPath)
+              for (const skillId of swept.removed) {
+                blackbox.record({
+                  cat: 'mcp',
+                  event: 'skill-discarded',
+                  actor: 'harness',
+                  ids: { projectId: updated.projectId, missionId: id },
+                  detail: { id: skillId, reason: 'planejamento-concluido' }
+                })
+              }
+              if (swept.kept.length > 0) {
+                blackbox.record({
+                  cat: 'mcp',
+                  event: 'skill-discard-kept',
+                  actor: 'harness',
+                  ids: { projectId: updated.projectId, missionId: id },
+                  detail: { ids: swept.kept.slice(0, 12), reason: 'planejamento-concluido' }
+                })
+              }
+            } catch (error) {
+              blackbox.record({
+                cat: 'mcp',
+                event: 'skill-discard-failed',
+                actor: 'harness',
+                ids: { projectId: updated.projectId, missionId: id },
+                err: error instanceof Error ? error.message : String(error)
+              })
+            }
+          }
         }
         // Arquivar/reativar é MARCO — o PM comenta (decisão do usuário: ele
         // fala em concluída/integrada/arquivada, não na rotina).

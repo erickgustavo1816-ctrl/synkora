@@ -993,6 +993,13 @@ export interface GuiSessionRecord {
   delegateModel?: string
   delegateEffort?: string
   /**
+   * A CONTA carimbada (2026-09-08, a aba "ajudantes ˄": a sequência do dono é
+   * conta › modelo › effort › fast). Id de seat; ausente = a conta segue o
+   * modelo, como sempre (mesmo CLI = a do delegador; cruzado = a primeira
+   * logada). Limpar REMOVE o campo, como nos irmãos.
+   */
+  delegateSeat?: string
+  /**
    * R12 — o ⚡ do painel (a queixa 2 do dono REVOGA o "fast só explícito na
    * tool" da R11). Aqui o ausente não é "herdar": fast NUNCA se herda da
    * conversa, então sem carimbo ele é DESLIGADO. Só `true` é gravado — limpar
@@ -1128,6 +1135,9 @@ export function rememberedGuiExecutorValue(
 /** O que o painel carimbou. Campo ausente = herdar da conversa — menos o
  *  `fast`, que não tem herança: ausente ali é DESLIGADO. */
 export interface GuiDelegationDefaults {
+  /** id da conta (seat) com que os ajudantes abrem; ausente = a conta segue o
+   *  modelo (regra de sempre do motor) */
+  seat?: string
   model?: string
   effort?: string
   /** R12 — o dono carimbou ⚡ para a frota inteira. Só `true` existe. */
@@ -1138,6 +1148,7 @@ export interface GuiDelegationDefaults {
  *  gramática do `GuiExecutorPatch`, para o renderer não precisar de duas).
  *  No `fast`, `false` limpa junto com `null`: desligar é a mesma ordem. */
 export interface GuiDelegationDefaultsPatch {
+  seat?: string | null
   model?: string | null
   effort?: string | null
   fast?: boolean | null
@@ -1180,12 +1191,14 @@ export function guiDelegationDefaultsOf(
     value.trim().length <= GUI_DELEGATION_DEFAULT_MAX_CHARS
       ? value.trim()
       : undefined
+  const seat = clean(record?.delegateSeat)
   const model = clean(record?.delegateModel)
   const effort = clean(record?.delegateEffort)
   // `true` LITERAL, nada de coerção: um `"sim"` ou `1` de documento sujo ligaria
   // a frota inteira num modo que gasta mais limite sem o dono ter pedido.
   const fast = record?.delegateFast === true
   return {
+    ...(seat ? { seat } : {}),
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
     ...(fast ? { fast: true } : {})
@@ -1398,6 +1411,47 @@ interface GuiQueuedDeliveryLock {
   id: string
   token: symbol
   promise: Promise<GuiResult>
+}
+
+// ————— A RECARGA DO CATÁLOGO DE SKILLS (Skills 3.0 — fatia 5.D) —————
+//
+// SONDADO em 2026-09-08 (`.synkora/reports/PROBE_SKILL_RELOAD_MIDTURN`): o
+// `/reload-skills` mandado pelo stdin com o turno ABERTO não recarrega no turno
+// corrente e NÃO se perde nem vira fala — o CLI o enfileira e o executa como um
+// MINI-TURNO próprio logo depois do `result` do agente (`commands_changed` →
+// `init` → `result` com "Reloaded skills: N skills available (1 added)").
+//
+// Daí saem as duas peças abaixo. A MARCA conta quantos `result` ainda são do
+// AGENTE antes de o recibo chegar (1 quando o pedido sai com o turno aberto — o
+// caso real, porque o `skill_pull` roda dentro de uma tool; 0 com a sessão
+// ociosa, quando o CLI desenfileira na hora). O `result` que chega com o
+// contador zerado é o RECIBO: ele NÃO é turno do agente, então não atravessa o
+// anel como fim de turno (seria um segundo plim, um segundo fecho de pote e uma
+// resposta que o dono não pediu) — ele vira uma NOTA no fio.
+interface GuiSkillReloadMark {
+  /** quantos `result` do AGENTE ainda vêm antes do recibo */
+  pendingAgentResults: number
+  at: number
+}
+
+/** Teto de espera pelo recibo. Um turno de agente pode passar de meia hora, e a
+ *  marca precisa sobreviver a ele; o que ela NÃO pode é sobreviver ao dia e
+ *  engolir o `result` de um turno futuro se o CLI nunca executar o comando. */
+const GUI_SKILL_RELOAD_TTL_MS = 60 * 60 * 1_000
+
+/** O slash cru que recarrega o catálogo nativo do claude. 0 token: o CLI o
+ *  executa localmente (medido na sonda). */
+const GUI_SKILL_RELOAD_COMMAND = '/reload-skills'
+
+/** A linha que o DONO lê quando o recibo chega. `❖` é o marcador do harness (o
+ *  mesmo das notas de pull/discard), para as três histórias ficarem juntas no
+ *  fio. */
+export function guiSkillReloadNote(text: string | undefined, isError: boolean): string {
+  const detail = typeof text === 'string' ? text.replace(/\s+/gu, ' ').trim() : ''
+  if (isError) {
+    return `❖ o CLI não recarregou o catálogo de skills${detail ? ` — ${detail}` : ''} (a skill já está na pasta: o agente pode ler o SKILL.md com Read)`
+  }
+  return `❖ catálogo de skills recarregado${detail ? ` — ${detail}` : ''}`
 }
 
 function deliveredGuiMessageIds(ring: GuiEventRing): Set<string> {
@@ -1615,6 +1669,9 @@ export class GuiSessionRegistry {
   /** O motor de missões (ver `attachIntegration`). Ausente = registro sem fila:
    *  abrir uma conversa não re-estimula ⇪ nenhum. */
   private integration?: GuiSessionIntegrationControls
+  /** SKILLS 3.0 — a recarga PEDIDA e ainda sem recibo, por pane (ver
+   *  `reloadSkills`). Chave = paneId; sai por recibo, por TTL, ou com a sessão. */
+  private readonly skillReloads = new Map<string, GuiSkillReloadMark>()
 
   constructor(deps: GuiSessionDeps) {
     this.deps = deps
@@ -1697,17 +1754,25 @@ export class GuiSessionRegistry {
     }
     // Tudo é decidido ANTES de tocar no documento: uma recusa nunca pode gravar
     // metade da escolha e deixar o painel contando outra história que o disco.
-    const writes: { field: 'delegateModel' | 'delegateEffort'; value: string | null }[] = []
-    for (const key of ['model', 'effort'] as const) {
+    const writes: {
+      field: 'delegateSeat' | 'delegateModel' | 'delegateEffort'
+      value: string | null
+    }[] = []
+    const FIELDS = {
+      seat: { field: 'delegateSeat', label: 'conta' },
+      model: { field: 'delegateModel', label: 'modelo' },
+      effort: { field: 'delegateEffort', label: 'effort' }
+    } as const
+    for (const key of ['seat', 'model', 'effort'] as const) {
       const value = patch[key]
       // Ausente CONSERVA (o painel manda um campo por clique); `null` LIMPA.
       if (value === undefined) continue
-      const field = key === 'model' ? 'delegateModel' : 'delegateEffort'
+      const { field, label } = FIELDS[key]
       if (value === null) {
         writes.push({ field, value: null })
         continue
       }
-      const problem = guiDelegationDefaultProblem(key === 'model' ? 'modelo' : 'effort', value)
+      const problem = guiDelegationDefaultProblem(label, value)
       if (problem) return { ok: false, error: problem }
       writes.push({ field, value: value.trim() })
     }
@@ -1721,7 +1786,7 @@ export class GuiSessionRegistry {
       fastWrite = patch.fast === true
     }
     if (writes.length === 0 && fastWrite === undefined) {
-      return { ok: false, error: 'diga o modelo, o effort ou o fast padrão dos ajudantes' }
+      return { ok: false, error: 'diga a conta, o modelo, o effort ou o fast padrão dos ajudantes' }
     }
     const next: GuiSessionRecord = { ...base }
     for (const write of writes) {
@@ -1747,6 +1812,7 @@ export class GuiSessionRegistry {
       'gui-delegation-defaults',
       { paneId, projectId: next.projectId },
       {
+        seat: applied.seat ?? 'segue o modelo',
         model: applied.model ?? 'herdado',
         effort: applied.effort ?? 'herdado',
         // O fast é a única escolha daqui que GASTA MAIS: o diário responde
@@ -1899,6 +1965,21 @@ export class GuiSessionRegistry {
       // Sessão substituída/encerrada: o sink da anterior morre calado — nunca
       // fala pelo pane novo nem re-suja o anel dele.
       if (!token.alive) return
+      // SKILLS 3.0 — O RECIBO DA RECARGA ANTES DE TUDO (fatia 5.D, sonda §9). O
+      // `result` do mini-turno do `/reload-skills` não é turno do agente: deixá-lo
+      // atravessar daria um segundo plim, um segundo fecho do pote do dono e um
+      // "respondi" que ninguém pediu. Ele vira NOTA pelo MESMO sink (a nota entra
+      // no anel e sobrevive à remontagem) e o `result` para aqui.
+      const reloadReceipt = this.takeSkillReloadReceipt(spawn.paneId, raw)
+      if (reloadReceipt !== undefined) {
+        publish({ type: 'command-output', text: reloadReceipt })
+        return
+      }
+      // Processo trocado ou conversa zerada: a recarga pedida à geração anterior
+      // não tem mais recibo a esperar (e a marca não pode viajar para a nova).
+      if (raw.type === 'fatal' || raw.type === 'closed' || raw.type === 'conversation-cleared') {
+        this.skillReloads.delete(spawn.paneId)
+      }
       // AJUDANTES SEM ABA: a chamada `delegate` entra na fila de envelopes, o
       // resultado dela é segurado com `launched` enquanto a frota trabalha, e o
       // `result` do turno carrega `continues` enquanto houver ajudante vivo (o
@@ -2879,6 +2960,96 @@ export class GuiSessionRegistry {
   }
 
   /**
+   * A RECARGA DO CATÁLOGO DE SKILLS (Skills 3.0 — fatia 5.D; sonda §9). Chamada
+   * pelo `skill_pull` depois de a pasta pousar no worktree.
+   *
+   * CLAUDE: manda `/reload-skills` cru AO CLI NA HORA, pelo bastidor — sem bolha
+   * do dono, sem `messageId`, sem consumir o briefing e, diferente do
+   * `deliverBackstage`, SEM `turn-started`: nenhum turno começa agora. O CLI
+   * enfileira o comando e o executa sozinho ao fim do turno corrente (mini-turno
+   * próprio), e a skill passa a valer para `Skill`/catálogo/chip ❖ do turno
+   * seguinte em diante. O `result` desse mini-turno é RECIBO — a marca abaixo é o
+   * que o distingue do turno do agente.
+   *
+   * CODEX: NO-OP dito. A thread enxerga a pasta no próximo turno sem recarga
+   * (sondado), e mandar um slash por ali viraria prompt e queimaria tokens.
+   *
+   * NUNCA LANÇA e nunca é pré-condição: pane morto/ausente devolve `ok:false` com
+   * o motivo, e o recibo do `skill_pull` continua entregando o caminho do
+   * SKILL.md — que é o que vale no turno corrente nos dois CLIs.
+   */
+  async reloadSkills(paneId: string): Promise<{ ok: boolean; detail?: string }> {
+    const entry = this.panes.get(paneId)
+    if (!entry) return { ok: false, detail: 'este pane não tem sessão aberta' }
+    if (!entry.session.alive) return { ok: false, detail: 'a sessão deste pane encerrou' }
+    if (entry.spawn.cli === 'codex') {
+      return { ok: true, detail: 'o codex enxerga a pasta no próximo turno, sem recarga' }
+    }
+    // UM pedido por vez: duas skills puxadas no mesmo turno não precisam de duas
+    // recargas (a do fim do turno cobre as duas), e um segundo recibo sem marca
+    // apareceria no fio como fim de turno fantasma.
+    const pending = this.skillReloads.get(paneId)
+    if (pending && Date.now() - pending.at < GUI_SKILL_RELOAD_TTL_MS) {
+      return { ok: true, detail: 'a recarga deste turno já está na fila do CLI' }
+    }
+    this.skillReloads.set(paneId, {
+      pendingAgentResults: entry.session.turnActive === true ? 1 : 0,
+      at: Date.now()
+    })
+    try {
+      entry.session.send(GUI_SKILL_RELOAD_COMMAND)
+    } catch (error) {
+      this.skillReloads.delete(paneId)
+      return {
+        ok: false,
+        detail: error instanceof Error ? error.message : 'o CLI não aceitou o comando'
+      }
+    }
+    this.deps.record?.(
+      'gui-skill-reload-asked',
+      { paneId, projectId: entry.spawn.projectId },
+      { turnActive: entry.session.turnActive === true }
+    )
+    return {
+      ok: true,
+      detail: 'o claude recarrega o catálogo ao fim deste turno e a skill vale do próximo em diante'
+    }
+  }
+
+  /**
+   * O RECIBO DA RECARGA, se este `result` for ele. Devolve a linha para o fio (e
+   * o `result` NÃO segue adiante), ou `undefined` quando o evento é do agente.
+   *
+   * A régua é ESTRUTURAL, nunca o texto do recibo: o contador da marca sabe
+   * quantos `result` ainda pertencem ao turno do agente. Heurística sobre
+   * conteúdo é proibida na casa — e aqui ela também erraria, porque o recibo do
+   * CLI é uma frase dele que pode mudar em qualquer update.
+   */
+  private takeSkillReloadReceipt(paneId: string, evt: SessionEvent): string | undefined {
+    if (evt.type !== 'result') return undefined
+    const mark = this.skillReloads.get(paneId)
+    if (!mark) return undefined
+    if (Date.now() - mark.at >= GUI_SKILL_RELOAD_TTL_MS) {
+      // O CLI nunca executou o comando (processo trocado, comando removido do
+      // binário): a marca morre CALADA e o `result` segue como turno do agente.
+      // Engolir o fecho de um turno futuro seria muito pior que perder a nota.
+      this.skillReloads.delete(paneId)
+      return undefined
+    }
+    if (mark.pendingAgentResults > 0) {
+      mark.pendingAgentResults -= 1
+      return undefined
+    }
+    this.skillReloads.delete(paneId)
+    this.deps.record?.(
+      'gui-skill-reload-done',
+      { paneId, projectId: this.panes.get(paneId)?.spawn.projectId },
+      { isError: evt.isError === true }
+    )
+    return guiSkillReloadNote(evt.resultText, evt.isError === true)
+  }
+
+  /**
    * UMA NOTA NO FIO — o PAR VISUAL do `announce` (rodada 9, o ⇪ do dono).
    *
    * O `announce` fala com o MODELO e não deixa rastro na tela; esta fala com o
@@ -3788,6 +3959,11 @@ export class GuiSessionRegistry {
     // o que não pode sobreviver é o BILHETE dela — um recibo tardio da geração
     // morta carimbaria "lida" numa bolha que o renascimento já entregou.
     this.ownerSteer.forget(paneId)
+    // SKILLS 3.0 — a recarga pedida à geração MORTA não tem mais recibo a
+    // esperar: a marca sobrevivendo ao respawn engoliria o primeiro `result` da
+    // conversa nova (as skills continuam no worktree; o processo novo já nasce
+    // com o catálogo lido).
+    this.skillReloads.delete(paneId)
     try {
       this.deps.onPaneDisposed?.({ paneId, projectId: entry.spawn.projectId, reason })
     } catch {
@@ -4105,6 +4281,7 @@ export class GuiSessionRegistry {
       permissionMode: mode,
       ...(rememberedModel !== undefined ? { model: rememberedModel } : {}),
       ...(rememberedEffort !== undefined ? { effort: rememberedEffort } : {}),
+      ...(delegation.seat ? { delegateSeat: delegation.seat } : {}),
       ...(delegation.model ? { delegateModel: delegation.model } : {}),
       ...(delegation.effort ? { delegateEffort: delegation.effort } : {}),
       ...(delegation.fast ? { delegateFast: true } : {}),

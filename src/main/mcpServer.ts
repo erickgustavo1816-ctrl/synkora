@@ -46,6 +46,12 @@ import { LSP_DIAGNOSTICS_CEILING_MS } from './lsp/lspSession'
 // REGISTRA catálogos, nunca implementa produto), e é servido pelos retornos
 // antecipados de `gui-delegator` e `ajudante` logo abaixo.
 import { registerBrowserKit, type GuiBrowserToolkit } from './guiBrowserTools'
+// SKILLS 3.0 (2026-09-08 — design DESIGN_HARNESS_DO_MODELO, fatia 5.D). Mesma
+// doutrina do `guiLspTools`/`guiBrowserTools`: o kit de três tools mora no
+// módulo próprio (o mcpServer REGISTRA catálogos, nunca implementa produto) e é
+// servido pelos retornos antecipados de `gui-planner`, `gui-delegator` (exceto o
+// reviewer) e `ajudante` logo abaixo.
+import { registerSkillsKit, type GuiSkillToolkit } from './guiSkillKit'
 
 const requireFromMain = createRequire(
   typeof __filename === 'string' ? __filename : join(process.cwd(), 'package.json')
@@ -162,6 +168,20 @@ export interface McpApi {
    * que diz em letras maiúsculas que NADA foi aberto.
    */
   browser?: GuiBrowserToolkit
+
+  // ——— kit de SKILLS (2026-09-08 — os dois chats que PRODUZEM e os AJUDANTES) ———
+  /**
+   * O produto do `buildGuiSkillTools`: as três ferramentas com que o AGENTE monta
+   * o harness da missão (ADR-0009 — "o harness que o próprio modelo cria é melhor
+   * do que um harness bruto que já vem"). Objeto e não função, pelo MESMO motivo
+   * do `lsp` e do `browser` acima — o kit é o mesmo para os três papéis que o
+   * recebem, e cada método já escreve a própria caixa-preta com a missão junto (o
+   * proxy de instrumentação do `index.ts` só enxerga membros-função).
+   *
+   * Ausente = as tools continuam no catálogo e respondem `SKILLS_ENGINE_OFF`, que
+   * diz em letras maiúsculas que NADA foi puxado.
+   */
+  skills?: GuiSkillToolkit
 }
 
 /** Um helper pedido no `delegate` (contrato D2; validação zod no catálogo). */
@@ -688,6 +708,10 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     // quando quem o escreve consegue perguntar onde uma coisa é usada em vez de
     // adivinhar o tamanho da mudança.
     registerLspKit(server, api, identity)
+    // SKILLS 3.0 (2026-09-08, ADR-0011): o planejador DIMENSIONA o trabalho antes
+    // de planejá-lo, e o método (simples × abstrato) sai do MESMO cardápio que o
+    // dev usa — "planejamento abstrato sem método é chute vestido de plano".
+    registerSkillsKit(server, api.skills, identity)
     return finishCatalog()
   }
 
@@ -763,8 +787,13 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     // verificar a própria tela não é autoridade sobre nada. O reviewer é a
     // exceção deliberada e ela mora no `guiMissionRoleOf` abaixo: o contrato
     // dele é LER o diff e reportar, não rodar o produto.
+    // SKILLS 3.0 (2026-09-08): as `skill_*` entram pela MESMA cerca e pela mesma
+    // razão. O dev monta o harness da missão; o reviewer lê o diff e reporta —
+    // puxar playbook para uma obra que não é dele seria escrever no worktree que
+    // ele está julgando.
     if (guiMissionRoleOf(identity.paneId) !== 'reviewer') {
       registerBrowserKit(server, api.browser, identity)
+      registerSkillsKit(server, api.skills, identity)
     }
     return finishCatalog()
   }
@@ -828,6 +857,11 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     // código. Sem browser aqui, esse ajudante voltaria a abrir browser externo,
     // que é a dor que originou a feature.
     registerBrowserKit(server, api.browser, identity)
+    // SKILLS 3.0 (2026-09-08): o ajudante TAMBÉM monta harness. O briefing dele
+    // já lista o que a missão puxou (guiDelegationWiring), mas uma fatia que
+    // precisa de um playbook que ninguém previu não pode depender de o delegador
+    // adivinhar — e a recusa do harness ao ajudante seria beco sem saída.
+    registerSkillsKit(server, api.skills, identity)
     return finishCatalog()
   }
 

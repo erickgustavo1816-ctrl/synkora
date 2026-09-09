@@ -1,0 +1,3305 @@
+[
+  {
+    "id": "ab-testing",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/ab-testing",
+    "ref": "main",
+    "group": "estatística & experimentos",
+    "depts": [
+      "data"
+    ],
+    "summary": "Desenho de experimento válido: sample size PRÉ-comprometido, peeking problem explícito, guardrail metrics e priorização ICE — refs soft ao padrão corey (opcionais).",
+    "hint": "Use to design statistically valid experiments — sample size, significance, no peeking, guardrails."
+  },
+  {
+    "id": "accessibility-testing",
+    "repo": "petrkindlmann/qa-skills",
+    "path": "skills/accessibility-testing",
+    "ref": "main",
+    "group": "acessibilidade (gate)",
+    "depts": [
+      "qa"
+    ],
+    "summary": "A11y INTEGRADA à suíte: axe-core no Playwright + auditoria de teclado + AT real, thresholds concretos (4.5:1, 24×24px), gate que não aceita \"axe passou\" como aprovação.",
+    "hint": "Use to wire accessibility checks INTO the test suite (axe-core + keyboard + AT) and gate releases on both."
+  },
+  {
+    "id": "ad-creative",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/ad-creative",
+    "ref": "main",
+    "group": "lançamento, PR & collateral",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Ad copy ATERRADA em evidência (v2.8, a mais iterada do repo): headlines/descrições/primary text rastreados a anúncios vencedores e reviews — recusa geração sem grounding; modos com APIs de plataforma são opcionais.",
+    "hint": "Use when writing ad copy — grounded generation traced to winning ads and reviews; refuses ungrounded output."
+  },
+  {
+    "id": "adding-dbt-unit-test",
+    "repo": "dbt-labs/dbt-agent-skills",
+    "path": "skills/dbt/skills/adding-dbt-unit-test",
+    "ref": "main",
+    "group": "analytics engineering (dbt)",
+    "depts": [
+      "data"
+    ],
+    "summary": "Unit tests dbt em YAML com mocks de input e output esperado pinado — cobre incremental/ephemeral/versioned; 100% local.",
+    "hint": "Use to write dbt unit tests that mock inputs and pin expected outputs."
+  },
+  {
+    "id": "address-sanitizer",
+    "repo": "trailofbits/skills",
+    "path": "plugins/testing-handbook-skills/skills/address-sanitizer",
+    "ref": "main",
+    "group": "fuzzing & sanitizers",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "ASan de ponta a ponta no fuzzing: compilar, configurar, interpretar relatórios de erro de memória e limites, com tabela de troubleshooting.",
+    "hint": "Use to wire AddressSanitizer into builds/fuzzing and interpret its memory-error reports."
+  },
+  {
+    "id": "agent-development",
+    "repo": "anthropics/claude-code",
+    "path": "plugins/plugin-dev/skills/agent-development",
+    "ref": "main",
+    "group": "meta · criação de agentes",
+    "depts": [
+      "front"
+    ],
+    "summary": "A metodologia OFICIAL da Anthropic para criar subagentes: o system prompt de produção do gerador do Claude Code, 4 arquétipos, guia de descriptions (491 linhas) e validador mecânico.",
+    "hint": "Use when authoring or refining a Claude Code subagent — the official methodology, references and validator."
+  },
+  {
+    "id": "agentic-actions-auditor",
+    "repo": "trailofbits/skills",
+    "path": "plugins/agentic-actions-auditor/skills/agentic-actions-auditor",
+    "ref": "main",
+    "group": "supply chain & segredos",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Audita GitHub Actions que RODAM agentes de IA: 9 vetores de input controlado por atacante chegando ao agente no CI (prompt injection, exfiltração) — diretamente relevante para apps como o próprio Synkora.",
+    "hint": "Use to audit AI-agent GitHub Actions workflows for prompt-injection/exfiltration attack vectors."
+  },
+  {
+    "id": "agents-md",
+    "repo": "getsentry/skills",
+    "path": "skills/agents-md",
+    "ref": "main",
+    "group": "documentação",
+    "depts": [
+      "research"
+    ],
+    "summary": "AGENTS.md/CLAUDE.md concisos (<60 linhas) e reference-backed, pela Sentry: inspeciona o repo primeiro, aponta para docs existentes em vez de duplicar.",
+    "hint": "Use to create or maintain AGENTS.md/CLAUDE.md files — concise, reference-backed, repo-grounded."
+  },
+  {
+    "id": "ai-graphic-design",
+    "repo": "designrique/ai-graphic-design-skill",
+    "path": "",
+    "ref": "main",
+    "group": "identidade & marca",
+    "depts": [
+      "design"
+    ],
+    "summary": "O OFÍCIO de logo/identidade com IA por um designer gráfico real: briefing antes de gerar, roteamento por ferramenta, vetorização (Box Method), mockups com displacement map, segurança de IP.",
+    "hint": "Use when doing graphic-design work with AI generation — brief-first craft, tool routing, vectorization, IP safety."
+  },
+  {
+    "id": "ai-seo",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/ai-seo",
+    "ref": "main",
+    "group": "conteúdo & SEO",
+    "depts": [
+      "copy"
+    ],
+    "summary": "AEO/GEO (~8k palavras, 5 referências): answer blocks, llms.txt, pesquisa de citação (Princeton GEO) e diferenças por plataforma — otimizar para respostas de IA, não só para o Google.",
+    "hint": "Use to optimize content for AI answers (ChatGPT/Claude/Perplexity) — answer blocks, llms.txt, citation research."
+  },
+  {
+    "id": "ai-system-testing",
+    "repo": "petrkindlmann/qa-skills",
+    "path": "skills/ai-system-testing",
+    "ref": "main",
+    "group": "testes de segurança & privacidade",
+    "depts": [
+      "cyber",
+      "qa"
+    ],
+    "summary": "Segurança DEFENSIVA de features com LLM: red-team do próprio produto (injeção direta e indireta via tool output/RAG, exfiltração por agente), regressão de prompts, grounding e detector de conteúdo não-confiável embutido.",
+    "hint": "Use to test LLM features you ship — prompt-injection red-teaming, tool-call validation, RAG grounding, evals."
+  },
+  {
+    "id": "airflow-dag-patterns",
+    "repo": "wshobson/agents",
+    "path": "plugins/data-engineering/skills/airflow-dag-patterns",
+    "ref": "main",
+    "group": "pipelines & orquestração",
+    "depts": [
+      "data"
+    ],
+    "summary": "Padrões de DAG Airflow (operators, sensors, testing, deploy) com um DAG completo de exemplo — o par de CONHECIMENTO do trio operacional da Astronomer.",
+    "hint": "Airflow DAG design patterns — operators, sensors, testing, scheduling."
+  },
+  {
+    "id": "algorithmic-art",
+    "repo": "anthropics/skills",
+    "path": "skills/algorithmic-art",
+    "ref": "main",
+    "group": "direção visual & linguagens",
+    "depts": [
+      "design"
+    ],
+    "summary": "Arte generativa da Anthropic: manifesto computacional → sketch p5.js autocontido com seed reproduzível e controles de parâmetro (flow fields, partículas).",
+    "hint": "Use when producing generative/algorithmic visual assets (p5.js) — philosophy, seeded reproducibility, parameter controls."
+  },
+  {
+    "id": "api-design-principles",
+    "repo": "wshobson/agents",
+    "path": "plugins/backend-development/skills/api-design-principles",
+    "ref": "main",
+    "group": "api & serviços",
+    "depts": [
+      "back"
+    ],
+    "summary": "O guia REST/GraphQL central: semântica HTTP por método, versionamento com exemplos, plural para coleções, anti-padrões GraphQL (N+1).",
+    "hint": "Use when designing or reviewing any API surface — REST semantics, versioning, GraphQL anti-patterns."
+  },
+  {
+    "id": "api-testing",
+    "repo": "petrkindlmann/qa-skills",
+    "path": "skills/api-testing",
+    "ref": "main",
+    "group": "autoria de testes",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Testes de API: APIRequestContext/Supertest, validação de schema com Zod/AJV, auth, ciclo CRUD, paginação.",
+    "hint": "Use when writing API-level tests — request contexts, schema validation, auth flows, CRUD lifecycles."
+  },
+  {
+    "id": "apple-design",
+    "repo": "emilkowalski/skills",
+    "path": "skills/apple-design",
+    "ref": "main",
+    "group": "motion design",
+    "depts": [
+      "design"
+    ],
+    "summary": "Fluid interfaces da Apple traduzidas para web: damping/response com números, projeção de momentum, animar do valor ATUAL (interrupção), materiais translúcidos — 8 princípios.",
+    "hint": "Use when the motion language should feel Apple-fluid — physics values and interruption-first principles."
+  },
+  {
+    "id": "architecture-decision-records",
+    "repo": "wshobson/agents",
+    "path": "plugins/documentation-generation/skills/architecture-decision-records",
+    "ref": "main",
+    "group": "documentação",
+    "depts": [
+      "research"
+    ],
+    "summary": "ADRs completos: 5 templates (MADR, Y-statement, RFC-style), ciclo de vida Proposed→Superseded, estrutura docs/adr/ com índice e checklists de revisão.",
+    "hint": "Use to write or restructure Architecture Decision Records — 5 templates with lifecycle management."
+  },
+  {
+    "id": "architecture-patterns",
+    "repo": "wshobson/agents",
+    "path": "plugins/backend-development/skills/architecture-patterns",
+    "ref": "main",
+    "group": "arquitetura & domínio",
+    "depts": [
+      "back"
+    ],
+    "summary": "Clean/Hexagonal/DDD tático com regras de dependência explícitas, adapter de teste in-memory completo e troubleshooting de imports circulares e contaminação por decorator de framework.",
+    "hint": "Use when structuring a service (layers, ports/adapters, DDD) or untangling circular imports and framework leakage."
+  },
+  {
+    "id": "aso",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/aso",
+    "ref": "main",
+    "group": "lançamento, PR & collateral",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Auditoria de copy de loja de app (ASO): busca o listing real, classifica tier de marca e prescreve mudanças COM contagem de caracteres por campo (specs Apple/Google Play + benchmarks nas referências).",
+    "hint": "Use when auditing/writing app-store listing copy — scored dimensions and prescriptive changes with character counts."
+  },
+  {
+    "id": "async-python-patterns",
+    "repo": "wshobson/agents",
+    "path": "plugins/python-development/skills/async-python-patterns",
+    "ref": "main",
+    "group": "typescript & python",
+    "depts": [
+      "back"
+    ],
+    "summary": "asyncio com código: gather, tasks, error handling, timeouts, tabela de decisão sync vs async, context managers e iterators async.",
+    "hint": "Use when writing or reviewing async Python — correct task/error/timeout patterns."
+  },
+  {
+    "id": "attach-db",
+    "repo": "duckdb/duckdb-skills",
+    "path": "skills/attach-db",
+    "ref": "main",
+    "group": "análise local (DuckDB)",
+    "depts": [
+      "data"
+    ],
+    "summary": "Anexa bancos .duckdb com state file reutilizável entre sessões — cita a irmã install-duckdb (não instalada; o agente avisa/instala o binário por conta própria).",
+    "hint": "Use to attach a DuckDB database and persist session state for querying."
+  },
+  {
+    "id": "attack-tree-construction",
+    "repo": "wshobson/agents",
+    "path": "plugins/security-scanning/skills/attack-tree-construction",
+    "ref": "main",
+    "group": "threat modeling",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Árvores de ataque com nós OR/AND e atributos de custo/tempo/skill/detecção — visualiza caminhos de ameaça contra o próprio sistema e prioriza defesas; complementa o STRIDE.",
+    "hint": "Use to build attack trees mapping threat paths and defense gaps against your own system."
+  },
+  {
+    "id": "audit-context-building",
+    "repo": "trailofbits/skills",
+    "path": "plugins/audit-context-building/skills/audit-context-building",
+    "ref": "main",
+    "group": "review de segurança",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Contexto arquitetural linha a linha (invariantes, fluxos) ANTES de caçar bug — anti-alucinação para auditoria séria; pesada em tokens por natureza.",
+    "hint": "Use before a deep security audit to build line-by-line architectural context of the target."
+  },
+  {
+    "id": "authoring-dags",
+    "repo": "astronomer/agents",
+    "path": "skills/authoring-dags",
+    "ref": "main",
+    "group": "pipelines & orquestração",
+    "depts": [
+      "data"
+    ],
+    "summary": "Autoria de DAGs da ASTRONOMER (oficial): 6 fases com validação real (af dags errors/warnings/explore) — exige o CLI af (gratuito, uv tool install; serve Airflow OSS); 1 ref soft fora da pasta.",
+    "hint": "Use to author Airflow DAGs through a discover→plan→validate→test loop with the af CLI."
+  },
+  {
+    "id": "baseline-ui",
+    "repo": "ibelick/ui-skills",
+    "path": "skills/baseline-ui",
+    "ref": "main",
+    "group": "polish & micro-interações",
+    "depts": [
+      "front"
+    ],
+    "summary": "27 restrições rápidas de \"deslop\" (animação só no compositor, safe-area, reduced motion) — a passada barata que evita cara de IA.",
+    "hint": "Use as a fast constraint pass on any new UI — 27 cheap rules that prevent generic AI-looking output."
+  },
+  {
+    "id": "before-you-build",
+    "repo": "wshobson/agents",
+    "path": "plugins/before-you-build/skills/before-you-build",
+    "ref": "main",
+    "group": "planejamento",
+    "depts": [
+      "research"
+    ],
+    "summary": "Pre-mortem de produto/feature em 7 lentes de risco (demanda, posicionamento, monetização, retenção, confiança, distribuição, adoção) — prioriza a suposição mais arriscada e o menor passo de validação.",
+    "hint": "Use before committing to build — surface the riskiest assumption and the cheapest way to validate it."
+  },
+  {
+    "id": "better-accessibility",
+    "repo": "jakubkrehel/skills",
+    "path": "skills/better-accessibility",
+    "ref": "main",
+    "group": "acessibilidade & microcopy",
+    "depts": [
+      "front",
+      "qa"
+    ],
+    "summary": "Acessibilidade keyboard-first → screen-reader: hit areas 24×24, focus ring 2px, zoom 200%, 13 anti-padrões e template de auditoria.",
+    "hint": "Use when implementing or auditing accessibility: keyboard flows, focus, ARIA, hit areas, zoom."
+  },
+  {
+    "id": "better-colors",
+    "repo": "jakubkrehel/skills",
+    "path": "skills/better-colors",
+    "ref": "main",
+    "group": "layout · tipografia · cor",
+    "depts": [
+      "front",
+      "design"
+    ],
+    "summary": "Cor de ponta a ponta em OKLCH: paletas, contraste APCA/WCAG, gamut/P3, tokens semânticos e Tailwind v4 — 5 guias de referência.",
+    "hint": "Use when building palettes, theming, checking contrast or defining semantic color tokens (OKLCH-first)."
+  },
+  {
+    "id": "better-interface",
+    "repo": "jakubkrehel/skills",
+    "path": "skills/better-interface",
+    "ref": "main",
+    "group": "review de interface",
+    "depts": [
+      "front",
+      "qa"
+    ],
+    "summary": "Revisão HOLÍSTICA de interface: orquestra as 6 skills irmãs (a11y primeiro), exige evidência file:line, consolida por causa-raiz e fecha com veredito único.",
+    "hint": "Use to run a coordinated interface review across a11y/layout/type/color/ui/copy with file:line evidence and a single verdict.",
+    "requires": [
+      "better-ui",
+      "better-layout",
+      "better-typography",
+      "better-colors",
+      "better-accessibility",
+      "better-writing"
+    ]
+  },
+  {
+    "id": "better-layout",
+    "repo": "jakubkrehel/skills",
+    "path": "skills/better-layout",
+    "ref": "main",
+    "group": "layout · tipografia · cor",
+    "depts": [
+      "front"
+    ],
+    "summary": "Layout e ESPAÇAMENTO: escalas de spacing (12/16/24), hierarquia, reading order, container queries, safe-area — com tabela dos 9 erros clássicos.",
+    "hint": "Use when structuring pages or fixing spacing/hierarchy/alignment/responsiveness issues."
+  },
+  {
+    "id": "better-typography",
+    "repo": "jakubkrehel/skills",
+    "path": "skills/better-typography",
+    "ref": "main",
+    "group": "layout · tipografia · cor",
+    "depts": [
+      "front",
+      "design"
+    ],
+    "summary": "Tipografia: line-height por uso, measure 60-75ch, text-wrap balance, números tabulares, inputs ≥16px no iOS — com cheat sheet CSS↔Tailwind.",
+    "hint": "Use when choosing/refining type scales, line-heights, measures or fixing text-layout issues."
+  },
+  {
+    "id": "better-ui",
+    "repo": "jakubkrehel/skills",
+    "path": "skills/better-ui",
+    "ref": "main",
+    "group": "polish & micro-interações",
+    "depts": [
+      "front"
+    ],
+    "summary": "Polimento com valores EXATOS: scale(0.96) no press, springs, blur de ícones, focus outline OKLCH — 15 princípios de micro-interação com severidade.",
+    "hint": "Use when polishing components/micro-interactions — exact values for press states, springs, focus rings."
+  },
+  {
+    "id": "better-writing",
+    "repo": "jakubkrehel/skills",
+    "path": "skills/better-writing",
+    "ref": "main",
+    "group": "acessibilidade & microcopy",
+    "depts": [
+      "front",
+      "copy"
+    ],
+    "summary": "Microcopy de INTERFACE: botões verbo-primeiro, erros que instruem ao lado do campo, estados vazios, matriz de tom — ★ da função copy (re-tag rodada 7; upstream reconferido).",
+    "hint": "Use when writing/reviewing interface copy: buttons, errors, empty states, labels, tone."
+  },
+  {
+    "id": "brainstorming",
+    "repo": "obra/superpowers",
+    "path": "skills/brainstorming",
+    "ref": "main",
+    "group": "planejamento",
+    "depts": [
+      "research"
+    ],
+    "summary": "Diálogo socrático PRÉ-implementação com gate duro (nada de código antes de design aprovado): propostas com trade-offs, spec documentada e self-review contra placeholders/ambiguidade.",
+    "hint": "Use before creative/new work to explore the space and land an approved, documented design — hard gate against premature code.",
+    "requires": [
+      "writing-plans"
+    ]
+  },
+  {
+    "id": "brand-identity",
+    "repo": "rampstackco/claude-skills",
+    "path": "skills/brand-identity",
+    "ref": "main",
+    "group": "identidade & marca",
+    "depts": [
+      "design"
+    ],
+    "summary": "Sistema de identidade visual completo: logo, cor, tipografia, imagery, iconografia e motion com princípios concretos, padrões de falha e stress-testing.",
+    "hint": "Use when defining or evolving a full brand identity system — principles, failure patterns, stress tests."
+  },
+  {
+    "id": "brand-review",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "marketing/skills/brand-review",
+    "ref": "main",
+    "group": "voz & fundamento",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Review oficial de conteúdo contra a voz da marca (Anthropic marketing): espectros de voz em 7 eixos, matrizes de tom, severidade e correções antes/depois — o melhor revisor de voz/tom do mercado.",
+    "hint": "Use to review any content against brand voice/style — 7-axis spectrums, tone matrices, before/after fixes."
+  },
+  {
+    "id": "brand-voice",
+    "repo": "rampstackco/claude-skills",
+    "path": "skills/brand-voice",
+    "ref": "main",
+    "group": "voz & fundamento",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Sistema de voz em 4 camadas: atributos \"X, não Y\", 8-15 contextos de tom, vocabulário/gramática e 15-25 exemplos pareados — produz o voice.md que DEFINE a identidade verbal (a brand-review revisa; esta define).",
+    "hint": "Use when defining a brand voice system from scratch — attributes, tone contexts, vocabulary, paired examples."
+  },
+  {
+    "id": "brandkit",
+    "repo": "Leonxlnx/taste-skill",
+    "path": "skills/brandkit",
+    "ref": "main",
+    "group": "identidade & marca",
+    "depts": [
+      "design"
+    ],
+    "summary": "Direção de arte para GERAR pranchas de brand identity via geração de imagem: metodologia de logo, composição de board, modos visuais (dark developer, luxury, voice AI) — tool-agnóstico, casa com o generate_image do app.",
+    "hint": "Use when producing brand identity boards via image generation (works with the generate_image tool available in panes)."
+  },
+  {
+    "id": "build-dashboard",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "data/skills/build-dashboard",
+    "ref": "main",
+    "group": "visualização & BI",
+    "depts": [
+      "data"
+    ],
+    "summary": "Dashboard interativo em HTML single-file (Chart.js, dados embutidos, KPI cards, filtros) — o CDN do Chart.js é dependência do ARTEFATO gerado, não da skill.",
+    "hint": "Use to build a self-contained interactive HTML dashboard with charts, filters and KPI cards."
+  },
+  {
+    "id": "building-dbt-semantic-layer",
+    "repo": "dbt-labs/dbt-agent-skills",
+    "path": "skills/dbt/skills/building-dbt-semantic-layer",
+    "ref": "main",
+    "group": "analytics engineering (dbt)",
+    "depts": [
+      "data"
+    ],
+    "summary": "MetricFlow oficial: semantic models, 5 tipos de métrica, decisão spec latest×legacy e validação local (mf validate-configs).",
+    "hint": "Use to define semantic models and MetricFlow metrics with spec-version awareness."
+  },
+  {
+    "id": "c-review",
+    "repo": "trailofbits/skills",
+    "path": "plugins/c-review/skills/c-review",
+    "ref": "main",
+    "group": "auditoria por linguagem",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Auditoria C/C++ multi-agente da ToB (workers paralelos + 2 judges + SARIF, ~47 classes de bug) — nicho de linguagem e orquestração PESADA em tokens; exige python3.",
+    "hint": "Use for a comprehensive C/C++ security audit — orchestrated parallel workers, dedup/FP judges, SARIF report."
+  },
+  {
+    "id": "canvas-design",
+    "repo": "anthropics/skills",
+    "path": "skills/canvas-design",
+    "ref": "main",
+    "group": "direção visual & linguagens",
+    "depts": [
+      "design"
+    ],
+    "summary": "A skill de pôster/arte da Anthropic: escreve uma design philosophy (manifesto de forma/espaço/cor) e a expressa como artefato visual .png/.pdf — tipografia esparsa, margens rigorosas, fontes empacotadas.",
+    "hint": "Use when producing a poster, cover, visual artifact or any static art piece — philosophy-first canvas design."
+  },
+  {
+    "id": "ce-code-review",
+    "repo": "EveryInc/compound-engineering-plugin",
+    "path": "skills/ce-code-review",
+    "ref": "main",
+    "group": "review de código (gate)",
+    "depts": [
+      "qa"
+    ],
+    "summary": "O pipeline de review mais completo do mercado (evolução dos 17 reviewers da Every): escopo por estado do git, SELEÇÃO de personas por sinal de risco do diff, dispatch paralelo com schema JSON de findings, síntese com dedupe e P0–P3. Report-only por padrão.",
+    "hint": "Use for a deep multi-persona review of a risky diff — persona selection by risk signals, parallel dispatch, deduped P0-P3 synthesis."
+  },
+  {
+    "id": "ce-doc-review",
+    "repo": "EveryInc/compound-engineering-plugin",
+    "path": "skills/ce-doc-review",
+    "ref": "main",
+    "group": "documentação",
+    "depts": [
+      "research"
+    ],
+    "summary": "Review multi-persona de requirements/planos/specs: lentes de coerência/viabilidade + condicionais (produto/design/segurança), dedupe/síntese — o gate de documentos.",
+    "hint": "Use to review a spec/plan/requirements doc through multiple expert lenses before it drives work."
+  },
+  {
+    "id": "ce-pov",
+    "repo": "EveryInc/compound-engineering-plugin",
+    "path": "skills/ce-pov",
+    "ref": "main",
+    "group": "pesquisa & avaliação",
+    "depts": [
+      "research"
+    ],
+    "summary": "Veredito fundamentado para PERGUNTAS DE ADOÇÃO (\"usamos a lib X?\"): gate de posição merecida (contexto do repo + precedentes + verificação externa), tiers de reversibilidade, decisões guardadas em solutions/.",
+    "hint": "Use to produce a grounded adopt-or-not verdict on a library/tool/approach for THIS project."
+  },
+  {
+    "id": "ce-promote",
+    "repo": "EveryInc/compound-engineering-plugin",
+    "path": "skills/ce-promote",
+    "ref": "main",
+    "group": "lançamento, PR & collateral",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Copy de divulgação do que JÁ SHIPOU a partir de PRs/diffs/changelog: thread de X, LinkedIn, changelog público. NOTA: traz disable-model-invocation — o executor claude não a auto-invoca (leia o SKILL.md pelo path ou use como comando; codex ignora a flag). Caminho Spiral é opcional e degrada.",
+    "hint": "Use to draft promo copy for shipped work from PRs/diffs — X thread, LinkedIn, public changelog formats."
+  },
+  {
+    "id": "ce-strategy",
+    "repo": "EveryInc/compound-engineering-plugin",
+    "path": "skills/ce-strategy",
+    "ref": "main",
+    "group": "specs & requisitos",
+    "depts": [
+      "research"
+    ],
+    "summary": "STRATEGY.md por entrevista rigorosa em 5 seções (problema, abordagem, persona, métricas, tracks) com rodadas de pushback obrigatórias — base Rumelt.",
+    "hint": "Use to create or update the project STRATEGY.md through a rigorous pushback interview."
+  },
+  {
+    "id": "clickhouse-architecture-advisor",
+    "repo": "ClickHouse/agent-skills",
+    "path": "skills/clickhouse-architecture-advisor",
+    "ref": "main",
+    "group": "OLAP (ClickHouse)",
+    "depts": [
+      "data"
+    ],
+    "summary": "Decisão de arquitetura ClickHouse por workload (observability/IoT/analytics…) com proveniência marcada (official/derived/field) — camada sobre a best-practices, que instala junto.",
+    "hint": "Workload-aware ClickHouse architecture decisions layered on the best-practices rules.",
+    "requires": [
+      "clickhouse-best-practices"
+    ]
+  },
+  {
+    "id": "clickhouse-best-practices",
+    "repo": "ClickHouse/agent-skills",
+    "path": "skills/clickhouse-best-practices",
+    "ref": "main",
+    "group": "OLAP (ClickHouse)",
+    "depts": [
+      "data"
+    ],
+    "summary": "ClickHouse oficial: 31 regras priorizadas (schema/query/insert/agent) com as rules DENTRO da pasta — serve qualquer instância, cloud ou self-hosted.",
+    "hint": "31 prioritized ClickHouse rules for schema, queries and inserts."
+  },
+  {
+    "id": "code-documenter",
+    "repo": "Jeffallan/claude-skills",
+    "path": "skills/code-documenter",
+    "ref": "main",
+    "group": "documentação",
+    "depts": [
+      "research"
+    ],
+    "summary": "Documentar código EXISTENTE em 6 passos: descoberta de formato, docstrings/JSDoc/OpenAPI, VALIDAÇÃO de exemplos (doctest/tsc) e relatório de cobertura.",
+    "hint": "Use to document existing code — consistent formats with validated examples and a coverage report."
+  },
+  {
+    "id": "code-review",
+    "repo": "mattpocock/skills",
+    "path": "skills/engineering/code-review",
+    "ref": "main",
+    "group": "review de código (gate)",
+    "depts": [
+      "qa"
+    ],
+    "summary": "O motor de gate de review: dois eixos em paralelo — STANDARDS (convenções do repo + ~12 smells de Fowler nomeados) e SPEC (fidelidade à origem do card) — agregados sem re-rankear.",
+    "hint": "Use as the review-gate engine on a diff: standards axis + spec-fidelity axis, aggregated without cross-ranking."
+  },
+  {
+    "id": "code-review-and-quality",
+    "repo": "addyosmani/agent-skills",
+    "path": "skills/code-review-and-quality",
+    "ref": "main",
+    "group": "review de código (gate)",
+    "depts": [
+      "qa"
+    ],
+    "summary": "A rubrica do review: 5 eixos (correção, legibilidade, arquitetura, segurança, performance) com severidade Critical/Nit/FYI, alvos de tamanho (~100 linhas ideal) e red flags de processo (\"LGTM\" sem evidência).",
+    "hint": "Use as the review rubric: severity labels, size targets and process red flags to grade a change consistently."
+  },
+  {
+    "id": "codebase-design",
+    "repo": "mattpocock/skills",
+    "path": "skills/engineering/codebase-design",
+    "ref": "main",
+    "group": "arquitetura & domínio",
+    "depts": [
+      "back"
+    ],
+    "summary": "Vocabulário de módulos profundos (deep vs shallow, seams, adapters, leverage), deletion test e interfaces testáveis — a melhor skill de arquitetura de código da varredura.",
+    "hint": "Use when designing module boundaries or judging code structure — deep-module vocabulary and the deletion test."
+  },
+  {
+    "id": "codeql",
+    "repo": "trailofbits/skills",
+    "path": "plugins/static-analysis/skills/codeql",
+    "ref": "main",
+    "group": "SAST & scanners",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Pipeline CodeQL completo (database→data extensions→taint tracking interprocedural) — exige o CLI codeql e assume ambiente unix-like (no Windows, WSL é a ressalva real).",
+    "hint": "Use for deep CodeQL analysis with taint tracking — build DB, data extensions, SARIF processing."
+  },
+  {
+    "id": "cold-email",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/cold-email",
+    "ref": "main",
+    "group": "email & social",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Cold outreach B2B: princípios de voz de PAR (não de vendedor), personalização em 4 níveis e cadências de follow-up (5 arquivos de referência) — outbound é job distinto de lifecycle.",
+    "hint": "Use when writing B2B cold outreach — peer-voice principles, 4-level personalization, follow-up cadences."
+  },
+  {
+    "id": "competitive-brief",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "product-management/skills/competitive-brief",
+    "ref": "main",
+    "group": "pesquisa & avaliação",
+    "depts": [
+      "research"
+    ],
+    "summary": "Brief competitivo oficial (Anthropic PM): overview de concorrentes, matriz de features, posicionamento e implicações estratégicas — degrada para WebSearch puro. NOTA: o repo tem um gêmeo em marketing/ com o MESMO name (só este entra).",
+    "hint": "Use to produce a competitive brief (feature matrix, positioning, implications) from web research."
+  },
+  {
+    "id": "competitors",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/competitors",
+    "ref": "main",
+    "group": "conversão & landing",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Páginas comparativas PÚBLICAS em 4 formatos (vs / alternative / alternatives / A-vs-B) com posicionamento honesto, TL;DRs e migration paths — copy + superfície de SEO (sem colisão com o competitive-brief interno).",
+    "hint": "Use when writing public comparison/alternative pages — honest positioning, 4 formats, TL;DRs."
+  },
+  {
+    "id": "competitors-analysis",
+    "repo": "daymade/claude-code-skills",
+    "path": "competitors-analysis",
+    "ref": "main",
+    "group": "pesquisa & avaliação",
+    "depts": [
+      "research"
+    ],
+    "summary": "Inteligência competitiva POR CÓDIGO-FONTE: clona repos de concorrentes e exige citação file:line para claims técnicos; separa fato de julgamento. Workspace persistente em $HOME (nota).",
+    "hint": "Use to analyze competitors through their actual source code — file:line evidence for every technical claim."
+  },
+  {
+    "id": "compliance-testing",
+    "repo": "petrkindlmann/qa-skills",
+    "path": "skills/compliance-testing",
+    "ref": "main",
+    "group": "testes de segurança & privacidade",
+    "depts": [
+      "cyber",
+      "qa"
+    ],
+    "summary": "Privacidade/consentimento EXECUTÁVEL: cookies pré-consentimento bloqueados, TCF v2/Consent Mode v2, GPC, AI Act art. 50 e drift de inventário de cookies — metodologia GDPR que transfere para a LGPD.",
+    "hint": "Use to test consent/privacy compliance — CMP behavior, pre-consent blocking, GPC, cookie inventory drift."
+  },
+  {
+    "id": "constant-time-analysis",
+    "repo": "trailofbits/skills",
+    "path": "plugins/constant-time-analysis/skills/constant-time-analysis",
+    "ref": "main",
+    "group": "criptografia",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Side-channels de timing em código cripto — 11 linguagens INCLUINDO JS/TS/Python (menos nicho do que parece), analyzer local e triage de FP; KyberSlash e Lucky Thirteen como casos reais.",
+    "hint": "Use when implementing/reviewing crypto code for timing side-channels (secret-dependent branches/division)."
+  },
+  {
+    "id": "content-and-copy",
+    "repo": "rampstackco/claude-skills",
+    "path": "skills/content-and-copy",
+    "ref": "main",
+    "group": "conteúdo & SEO",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Produção editorial geral em 5 dimensões (hook, estrutura, voz, substância, fechamento) com workflow brief-first — o complemento editorial da copywriting de conversão (venceu a gêmea draft-content da kwp).",
+    "hint": "Use for general editorial production — brief-first workflow scoring hook/structure/voice/substance/closing."
+  },
+  {
+    "id": "content-brief",
+    "repo": "inhouseseo/superseo-skills",
+    "path": "skills/content-brief",
+    "ref": "main",
+    "group": "conteúdo & SEO",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Briefs prontos-para-escrever a partir de SERP AO VIVO: 23 tipos de conteúdo, classificação de intenção — a pauta nasce do que a busca mostra, não de achismo (sem APIs).",
+    "hint": "Use to produce writer-ready content briefs from live SERP research — intent classification, 23 content types."
+  },
+  {
+    "id": "content-strategy",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/content-strategy",
+    "ref": "main",
+    "group": "conteúdo & SEO",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Estratégia de conteúdo: pilares, topic clusters, mapeamento por estágio do funil e priorização. (Id também existe em rampstack e kwp small-business — este entrou; os gêmeos ficam fora.)",
+    "hint": "Use to plan content pillars/clusters and prioritize topics by buyer stage."
+  },
+  {
+    "id": "contract-testing",
+    "repo": "petrkindlmann/qa-skills",
+    "path": "skills/contract-testing",
+    "ref": "main",
+    "group": "autoria de testes",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Contract testing neutro: Pact-JS v16, broker, can-i-deploy, message pacts e alternativa schema-first (OpenAPI/Ajv/Schemathesis).",
+    "hint": "Use when services need consumer-driven or schema-first contract tests (Pact or OpenAPI-based)."
+  },
+  {
+    "id": "copy-editing",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/copy-editing",
+    "ref": "main",
+    "group": "microcopy & edição",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Sistema de edição em 7 passadas: clareza, voz, \"so what\", prove-it, especificidade, emoção, zero-risco — transforma rascunho em copy afiada (3 arquivos de referência).",
+    "hint": "Use to edit any draft through 7 focused passes — clarity, voice, so-what, proof, specificity, emotion, zero-risk."
+  },
+  {
+    "id": "copywriting",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/copywriting",
+    "ref": "main",
+    "group": "conversão & landing",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Copy de conversão para páginas de marketing (a skill de marketing mais instalada do mercado, 164k): princípios, frameworks por tipo de página e fórmulas de CTA (2 arquivos de referência).",
+    "hint": "Use when writing conversion copy for marketing pages — page-type frameworks and CTA formulas."
+  },
+  {
+    "id": "core-web-vitals",
+    "repo": "addyosmani/web-quality-skills",
+    "path": "skills/core-web-vitals",
+    "ref": "main",
+    "group": "react & performance",
+    "depts": [
+      "front",
+      "qa"
+    ],
+    "summary": "Core Web Vitals pelo Addy Osmani (Chrome): medir antes, limiares LCP/CLS/INP e o ciclo measure→fix→verify→guard.",
+    "hint": "Use when diagnosing or protecting page-load and interaction performance (LCP/CLS/INP)."
+  },
+  {
+    "id": "coverage-analysis",
+    "repo": "petrkindlmann/qa-skills",
+    "path": "skills/coverage-analysis",
+    "ref": "main",
+    "group": "saúde da suíte",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Cobertura com juízo: ratchet no CI, diff de coverage por PR, mutation para qualidade de asserção, \"meaningful vs vanity coverage\".",
+    "hint": "Use to judge and improve what coverage MEANS — ratchets, per-PR diffs, assertion quality."
+  },
+  {
+    "id": "create-design-md",
+    "repo": "ibelick/ui-skills",
+    "path": "skills/create-design-md",
+    "ref": "main",
+    "group": "design system & componentes",
+    "depts": [
+      "front",
+      "design"
+    ],
+    "summary": "Gera/atualiza um DESIGN.md canônico a partir do código do repo (ou de uma URL de referência): tokens, estilos computados, schema validado — nunca toca no source.",
+    "hint": "Use to extract or refresh the durable design system in tracked tokens plus the repo documentation convention (or docs/design-system.md); .synkora/DESIGN.md is read-only runtime context."
+  },
+  {
+    "id": "create-prd",
+    "repo": "phuryn/pm-skills",
+    "path": "pm-execution/skills/create-prd",
+    "ref": "main",
+    "group": "specs & requisitos",
+    "depts": [
+      "research"
+    ],
+    "summary": "PRD pelo Pawel Huryn (referência mundial de PM): template de 8 seções com ênfase em gathering antes de escrever e linguagem acessível.",
+    "hint": "Use for a full-discipline PRD following an 8-section template from a leading PM educator."
+  },
+  {
+    "id": "creating-mermaid-dbt-dag",
+    "repo": "dbt-labs/dbt-agent-skills",
+    "path": "skills/dbt-extras/skills/creating-mermaid-dbt-dag",
+    "ref": "main",
+    "group": "analytics engineering (dbt)",
+    "depts": [
+      "data"
+    ],
+    "summary": "Lineage dbt → diagrama Mermaid, com fallback por manifest.json/código quando não há MCP — inclui alerta de prompt-injection em nomes de modelo.",
+    "hint": "Use to draw dbt model lineage as a Mermaid diagram from manifest or MCP."
+  },
+  {
+    "id": "crisis-communications",
+    "repo": "jamditis/claude-skills-journalism",
+    "path": "journalism-core/skills/crisis-communications",
+    "ref": "master",
+    "group": "lançamento, PR & collateral",
+    "depts": [
+      "copy",
+      "cyber"
+    ],
+    "summary": "Comunicação de crise/incidente: holding statements, correções, matrizes de escalada e comms sob pressão — do Center for Cooperative Media (Joe Amditis). (Branch master, pasta aninhada no plugin.)",
+    "hint": "Use when writing incident/crisis communications — holding statements, corrections, escalation matrices."
+  },
+  {
+    "id": "cypress-author",
+    "repo": "cypress-io/ai-toolkit",
+    "path": "skills/cypress-author",
+    "ref": "main",
+    "group": "autoria de testes",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Oficial do Cypress: criar/atualizar/consertar testes E2E e de componente com subskills de tarefa.",
+    "hint": "Use when the project tests with Cypress — official authoring workflow."
+  },
+  {
+    "id": "cypress-explain",
+    "repo": "cypress-io/ai-toolkit",
+    "path": "skills/cypress-explain",
+    "ref": "main",
+    "group": "autoria de testes",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Oficial do Cypress: explicar/revisar/criticar testes SEM alterar código — o lado gate do kit.",
+    "hint": "Use to review or critique existing Cypress tests without modifying them."
+  },
+  {
+    "id": "dagster-expert",
+    "repo": "dagster-io/skills",
+    "path": "skills/dagster-expert/skills/dagster-expert",
+    "ref": "master",
+    "group": "pipelines & orquestração",
+    "depts": [
+      "data"
+    ],
+    "summary": "OFICIAL Dagster (ref MASTER, não main): assets/components, dg CLI via uv e índice de 40+ integrações em references — \"consultar antes de responder, nunca de memória\".",
+    "hint": "Dagster and dg CLI guidance backed by reference files, not memory."
+  },
+  {
+    "id": "data-context-extractor",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "data/skills/data-context-extractor",
+    "ref": "main",
+    "group": "SQL & warehouse",
+    "depts": [
+      "data"
+    ],
+    "summary": "Meta-skill: entrevista + descoberta de schema para extrair o conhecimento tribal do warehouse (entidades, métricas, pegadinhas) e GERAR uma skill de contexto da empresa — par conceitual do CONTEXT.md.",
+    "hint": "Use to interview + schema-discover the warehouse and generate a company-specific data-context skill."
+  },
+  {
+    "id": "data-quality-frameworks",
+    "repo": "wshobson/agents",
+    "path": "plugins/data-engineering/skills/data-quality-frameworks",
+    "ref": "main",
+    "group": "qualidade & validação",
+    "depts": [
+      "data"
+    ],
+    "summary": "Validação automatizada: Great Expectations + dbt tests + data contracts + CI — o único GX instalável com licença sã da varredura (o da majestic caiu por Polyform).",
+    "hint": "Use to wire automated data validation — Great Expectations, dbt tests, data contracts in CI."
+  },
+  {
+    "id": "data-storytelling",
+    "repo": "wshobson/agents",
+    "path": "plugins/business-analytics/skills/data-storytelling",
+    "ref": "main",
+    "group": "visualização & BI",
+    "depts": [
+      "data"
+    ],
+    "summary": "Análise → narrativa executiva (story arc, 3 pilares) — corpo curto com a carne em references/details.md (existe, conferido); a única skill de narrativa de dados do mercado.",
+    "hint": "Use to turn analysis into a stakeholder narrative — story arc, context, persuasive structure."
+  },
+  {
+    "id": "data-visualization",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "data/skills/data-visualization",
+    "ref": "main",
+    "group": "visualização & BI",
+    "depts": [
+      "data"
+    ],
+    "summary": "Charts Python de publicação: 13 relações→tipo de gráfico, anti-patterns, exemplos matplotlib/seaborn/plotly, paletas colorblind e checklist de acessibilidade.",
+    "hint": "Publication-quality Python charts — selection guide, code patterns, accessibility."
+  },
+  {
+    "id": "debugging-and-error-recovery",
+    "repo": "addyosmani/agent-skills",
+    "path": "skills/debugging-and-error-recovery",
+    "ref": "main",
+    "group": "debugging & regressão",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Recuperação sistemática de falha em 6 passos com checklist por camada (UI/API/DB/build), padrões de teste flaky, git bisect para regressões — single-file, zero dependências.",
+    "hint": "Use when hunting a regression or recovering from a failure — layer triage, minimal repro, bisect, guard test."
+  },
+  {
+    "id": "debugging-code",
+    "repo": "AlmogBaku/debug-skill",
+    "path": "skills/debugging-code",
+    "ref": "master",
+    "group": "debugging",
+    "depts": [
+      "back"
+    ],
+    "summary": "Dá ao agente um DEBUGGER de verdade via Debug Adapter Protocol: breakpoints, stepping, inspeção de variáveis — em vez de printf. Exige o CLI `dap` + adapter da linguagem (debugpy, Delve, js-debug).",
+    "hint": "Use for hard runtime bugs when the dap CLI is available — real breakpoints and variable inspection instead of print statements."
+  },
+  {
+    "id": "debugging-dags",
+    "repo": "astronomer/agents",
+    "path": "skills/debugging-dags",
+    "ref": "main",
+    "group": "pipelines & orquestração",
+    "depts": [
+      "data"
+    ],
+    "summary": "RCA estruturado de DAG quebrado: logs, classificação código/dado/infra e drift de pacotes via diff de imagem — usa curl para JSON do PyPI (dados) e docker para inspeção.",
+    "hint": "Use to root-cause failed DAGs — logs, code/data/infra classification, dependency drift."
+  },
+  {
+    "id": "deep-research",
+    "repo": "daymade/claude-code-skills",
+    "path": "deep-research",
+    "ref": "main",
+    "group": "pesquisa & avaliação",
+    "depts": [
+      "research"
+    ],
+    "summary": "Deep research P0–P7 com subagentes paralelos, registro de citações deduplicado, counter-review OBRIGATÓRIO (≥3 issues) e passe de verificação — usa WebSearch/WebFetch nativos, zero deps.",
+    "hint": "Use only when the user explicitly chooses its external subagent/counter-review workflow; normal Synkora research routes through the native contract plus the source-primary research technique."
+  },
+  {
+    "id": "dependency-supply-chain",
+    "repo": "GoldenWing-360/claude-security-skills",
+    "path": "dependency-supply-chain",
+    "ref": "main",
+    "group": "supply chain & segredos",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Cadeia de suprimentos npm/pnpm/PyPI: higiene de lockfile, limites do npm audit, socket.dev/OSV, revisão de postinstall, typosquat/SLOPSQUAT e CI sem credencial — o curl à api do npm é métrica, não instrução.",
+    "hint": "Use to defend against malicious dependencies — lockfiles, postinstall review, typosquats, behavior scanning."
+  },
+  {
+    "id": "deployment-pipeline-design",
+    "repo": "wshobson/agents",
+    "path": "plugins/cicd-automation/skills/deployment-pipeline-design",
+    "ref": "main",
+    "group": "devops · ci/cd · iac",
+    "depts": [
+      "back"
+    ],
+    "summary": "Pipelines multi-estágio com gates de aprovação, canary com análise automática, troubleshooting real (health check passa no CI e falha em prod) e migração backward-compatible.",
+    "hint": "Use when designing or fixing deployment pipelines — stages, gates, canary, safe migrations."
+  },
+  {
+    "id": "design-first-ui-prompting",
+    "repo": "MengTo/Skills",
+    "path": "agent-skills/ui/design-first-ui-prompting",
+    "ref": "main",
+    "group": "direção visual & linguagens",
+    "depts": [
+      "design"
+    ],
+    "summary": "Do Meng To (Design+Code): prompts de UI dirigidos por spec — trava layout/hierarquia primeiro, itera UMA variável por vez, template goal→format→layout→type→color→constraints.",
+    "hint": "Use when directing UI generation — lock the layout spec first and iterate one variable at a time."
+  },
+  {
+    "id": "design-system-patterns",
+    "repo": "wshobson/agents",
+    "path": "plugins/ui-design/skills/design-system-patterns",
+    "ref": "main",
+    "group": "design system & theming",
+    "depts": [
+      "design"
+    ],
+    "summary": "Design systems framework-agnósticos: hierarquia primitive→semantic→component em CSS custom properties, tema claro/escuro, naming, Style Dictionary, pipeline Figma→código, antipadrões (token sprawl).",
+    "hint": "Use when structuring or refactoring a design token system — framework-neutral 3-tier hierarchy and theming infra."
+  },
+  {
+    "id": "design-taste-frontend",
+    "repo": "Leonxlnx/taste-skill",
+    "path": "skills/taste-skill",
+    "ref": "main",
+    "group": "direção estética",
+    "depts": [
+      "front",
+      "design"
+    ],
+    "summary": "O rulebook \"anti-slop\" mais completo: dials de variância/motion/densidade, proibições mecânicas (herói com máx. 4 elementos, fontes default banidas) e pre-flight de 68 checagens.",
+    "hint": "Use for high-stakes visual work when the screen must NOT look AI-generated — hard rules, dials and a 68-point pre-flight."
+  },
+  {
+    "id": "developer-newsletter",
+    "repo": "jonathimer/devmarketing-skills",
+    "path": "skills/developer-newsletter",
+    "ref": "main",
+    "group": "email & social",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Newsletter para público DEV: mix 70-20-10, teste de subject line e higiene de entregabilidade (SPF/DKIM) — feita para produtos técnicos, o caso típico dos universos deste app.",
+    "hint": "Use when writing developer-audience newsletters — 70-20-10 mix, subject testing, deliverability hygiene."
+  },
+  {
+    "id": "developing-kafka-python-client",
+    "repo": "confluentinc/agent-skills",
+    "path": "skills/developing-kafka-python-client",
+    "ref": "main",
+    "group": "streaming (Kafka)",
+    "depts": [
+      "data"
+    ],
+    "summary": "Producers/consumers de produção em confluent-kafka-python + Schema Registry, com caminho Docker local OSS e gate de confirmação antes de gerar código.",
+    "hint": "Use to build production Kafka producers/consumers in Python with Schema Registry."
+  },
+  {
+    "id": "diagnosing-bugs",
+    "repo": "mattpocock/skills",
+    "path": "skills/engineering/diagnosing-bugs",
+    "ref": "main",
+    "group": "debugging",
+    "depts": [
+      "back"
+    ],
+    "summary": "Loop de diagnóstico em 6 fases que começa por construir um feedback loop apertado ANTES de hipóteses, com instrumentação, teste de regressão e post-mortem (template de script incluso).",
+    "hint": "Use when investigating a bug — builds the tight feedback loop first, then instruments and proves the root cause."
+  },
+  {
+    "id": "differential-review",
+    "repo": "trailofbits/skills",
+    "path": "plugins/differential-review/skills/differential-review",
+    "ref": "main",
+    "group": "review de segurança",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Review de segurança de DIFFs/PRs da Trail of Bits: adapta a profundidade ao tamanho da mudança, calcula blast radius com histórico git e previne regressão — o gate cyber do dia a dia, par do code-review do qa.",
+    "hint": "Use to security-review a diff/PR/commit — blast radius, depth adapted to change size, markdown report."
+  },
+  {
+    "id": "docker-container-security",
+    "repo": "GoldenWing-360/claude-security-skills",
+    "path": "docker-container-security",
+    "ref": "main",
+    "group": "hardening de infra",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Baseline de containers: non-root, filesystem read-only, cap-drop, secrets por mount, trivy no CI, distroless e o pitfall Docker-ignora-UFW — o exemplo wget sem checksum no corpo é guidance, anotado.",
+    "hint": "Use to harden Docker containers — non-root, read-only fs, dropped caps, trivy scans, distroless."
+  },
+  {
+    "id": "documentation",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "engineering/skills/documentation",
+    "ref": "main",
+    "group": "documentação",
+    "depts": [
+      "research"
+    ],
+    "summary": "Docs técnicas oficiais (Anthropic engineering): README, API docs, runbooks, architecture docs e onboarding com 5 princípios (leitor primeiro, essencial primeiro, exemplos, atualidade).",
+    "hint": "Use when writing or maintaining technical documentation in any of the 5 standard formats."
+  },
+  {
+    "id": "domain-modeling",
+    "repo": "mattpocock/skills",
+    "path": "skills/engineering/domain-modeling",
+    "ref": "main",
+    "group": "arquitetura & domínio",
+    "depts": [
+      "back",
+      "research",
+      "data"
+    ],
+    "summary": "Modelagem de domínio: desafiar terminologia imprecisa contra glossário, stress-test de relações com cenários de borda, ADRs capturados na hora.",
+    "hint": "Use when the domain language is fuzzy or entities/relations need stress-testing before implementation."
+  },
+  {
+    "id": "duckdb-docs",
+    "repo": "duckdb/duckdb-skills",
+    "path": "skills/duckdb-docs",
+    "ref": "main",
+    "group": "análise local (DuckDB)",
+    "depts": [
+      "data"
+    ],
+    "summary": "Busca BM25 (extensão fts) sobre índice das docs do DuckDB CACHEADO localmente (baixa na 1ª execução, TTL 2 dias) — fetch de DADOS, não de instruções.",
+    "hint": "Use to full-text search DuckDB/DuckLake docs from a locally cached index."
+  },
+  {
+    "id": "editorial-qa",
+    "repo": "rampstackco/claude-skills",
+    "path": "skills/editorial-qa",
+    "ref": "main",
+    "group": "microcopy & edição",
+    "depts": [
+      "copy"
+    ],
+    "summary": "O gate pré-publicação de conteúdo: aderência ao brief, consistência de voz, exatidão de fatos, auditoria de \"cara de IA\" e amostragem em escala (10 arquivos de referência).",
+    "hint": "Use as the pre-publish gate for content — brief adherence, voice consistency, fact accuracy, AI-content audit."
+  },
+  {
+    "id": "email-sequence",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "marketing/skills/email-sequence",
+    "ref": "main",
+    "group": "email & social",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Sequências multi-email com copy completa, branching e condições de saída: 8 frameworks prontos com benchmarks (welcome, nurture, re-engajamento…) — a lane de lifecycle (venceu emails/corey e email-sequences/rampstack).",
+    "hint": "Use when building lifecycle email sequences — 8 frameworks with full copy, branching and exit conditions."
+  },
+  {
+    "id": "embedding-strategies",
+    "repo": "wshobson/agents",
+    "path": "plugins/llm-application-dev/skills/embedding-strategies",
+    "ref": "main",
+    "group": "ML & LLM data",
+    "depts": [
+      "data"
+    ],
+    "summary": "Seleção de modelo de embedding (tabela comparativa de 10) + estratégias de chunking por caso.",
+    "hint": "Use to choose embedding models and chunking strategies for search/RAG."
+  },
+  {
+    "id": "emil-design-eng",
+    "repo": "emilkowalski/skills",
+    "path": "skills/emil-design-eng",
+    "ref": "main",
+    "group": "animação",
+    "depts": [
+      "front"
+    ],
+    "summary": "A filosofia de animação de interface do Emil Kowalski (sonner/vaul, animations.dev): ease-out sempre, <300ms, só transform/opacity, quando NÃO animar.",
+    "hint": "Use when adding or reviewing interface animations — purpose, easing, duration and performance rules from a real authority."
+  },
+  {
+    "id": "excalidraw",
+    "repo": "Agents365-ai/excalidraw-skill",
+    "path": "skills/excalidraw-skill",
+    "ref": "main",
+    "group": "mockups & imagem",
+    "depts": [
+      "design"
+    ],
+    "summary": "Linguagem natural → .excalidraw JSON: paleta semântica de 8 cores, regra 60-30-10, 5 padrões de diagrama, loop render-verify-fix. Nota: o export SVG opcional usa a API kroki.io (conteúdo sai da máquina).",
+    "hint": "Use when producing wireframes/diagrams as .excalidraw files — semantic palette and layout patterns (avoid the Kroki export for private content)."
+  },
+  {
+    "id": "executing-plans",
+    "repo": "obra/superpowers",
+    "path": "skills/executing-plans",
+    "ref": "main",
+    "group": "execução de planos",
+    "depts": [
+      "research"
+    ],
+    "summary": "Executar um plano escrito passo a passo, com revisão crítica e checkpoints. Fica sob escolha explícita porque missões Synkora já têm orquestrador, cards, gates e integração próprios.",
+    "hint": "Use only for an explicitly requested external plan-execution workflow; normal missions use create_plan/create_tasks/run_task."
+  },
+  {
+    "id": "exploratory-testing",
+    "repo": "petrkindlmann/qa-skills",
+    "path": "skills/exploratory-testing",
+    "ref": "main",
+    "group": "teste ao vivo (browser)",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Testing exploratório SBTM operacionalizado: charters, sessões time-boxed (15min orientar → 40 explorar → 20 bordas/erros → 15 documentar), 7 oráculos de bug e pipeline exploração→automação.",
+    "hint": "Use for a charter-driven exploratory session on a feature — time-boxed, oracle-based bug recognition, findings feed automation."
+  },
+  {
+    "id": "explore-data",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "data/skills/explore-data",
+    "ref": "main",
+    "group": "SQL & warehouse",
+    "depts": [
+      "data"
+    ],
+    "summary": "Workflow de 7 passos para dataset DESCONHECIDO, com thresholds de null-rate — a ref ../CONNECTORS.md é soft (padrão kwp) e o MCP de warehouse é opcional.",
+    "hint": "Use to profile an unfamiliar dataset end-to-end before analysis."
+  },
+  {
+    "id": "expo-data-fetching",
+    "repo": "expo/skills",
+    "path": "plugins/expo/skills/expo-data-fetching",
+    "ref": "main",
+    "group": "mobile",
+    "depts": [
+      "front"
+    ],
+    "summary": "Dados no Expo (oficial): React Query/SWR, cache, offline e loaders.",
+    "hint": "Use when wiring data fetching/caching/offline in an Expo app."
+  },
+  {
+    "id": "expo-native-ui",
+    "repo": "expo/skills",
+    "path": "plugins/expo/skills/expo-native-ui",
+    "ref": "main",
+    "group": "mobile",
+    "depts": [
+      "front"
+    ],
+    "summary": "UI nativa no Expo (oficial): Apple HIG, cores semânticas, SF Symbols, Reanimated, blur/glass — 8 docs de referência.",
+    "hint": "Use when the mobile UI must feel native (HIG patterns, semantic colors, SF Symbols, Reanimated)."
+  },
+  {
+    "id": "expo-router",
+    "repo": "expo/skills",
+    "path": "plugins/expo/skills/expo-router",
+    "ref": "main",
+    "group": "mobile",
+    "depts": [
+      "front"
+    ],
+    "summary": "Expo Router oficial: telas, navegação, tabs nativas — o coração de qualquer app Expo.",
+    "hint": "Use when building screens/navigation in an Expo app (Expo Router)."
+  },
+  {
+    "id": "expo-tailwind-setup",
+    "repo": "expo/skills",
+    "path": "plugins/expo/skills/expo-tailwind-setup",
+    "ref": "main",
+    "group": "mobile",
+    "depts": [
+      "front"
+    ],
+    "summary": "Tailwind v4 no Expo via NativeWind v5 (oficial): setup correto pelo Metro, sem Babel.",
+    "hint": "Use when setting up or fixing Tailwind/NativeWind styling in an Expo project."
+  },
+  {
+    "id": "fastapi-templates",
+    "repo": "wshobson/agents",
+    "path": "plugins/api-scaffolding/skills/fastapi-templates",
+    "ref": "main",
+    "group": "typescript & python",
+    "depts": [
+      "back"
+    ],
+    "summary": "FastAPI de produção: estrutura de pastas, padrões async, dependency injection e testes reais com pytest + AsyncClient.",
+    "hint": "Use when building Python APIs with FastAPI — production structure, async patterns, DI, tests."
+  },
+  {
+    "id": "fastify-best-practices",
+    "repo": "mcollina/skills",
+    "path": "skills/fastify",
+    "ref": "main",
+    "group": "api & serviços",
+    "depts": [
+      "back"
+    ],
+    "summary": "Fastify pelo próprio criador: ciclo de vida completo (hooks, serialização, Pino), plugins, validação JSON Schema, auth, CORS, WebSockets, deploy.",
+    "hint": "Use when the project uses Fastify — lifecycle, plugins, schema validation and deployment done right."
+  },
+  {
+    "id": "feature-forge",
+    "repo": "Jeffallan/claude-skills",
+    "path": "skills/feature-forge",
+    "ref": "main",
+    "group": "specs & requisitos",
+    "depts": [
+      "research"
+    ],
+    "summary": "Workshop estruturado de requisitos (perspectiva PM+Dev): entrevista guiada, requisitos EARS, user stories, acceptance criteria testáveis, NFRs.",
+    "hint": "Use to run a requirements workshop producing EARS requirements and testable acceptance criteria."
+  },
+  {
+    "id": "find-animation-opportunities",
+    "repo": "emilkowalski/skills",
+    "path": "skills/find-animation-opportunities",
+    "ref": "main",
+    "group": "motion design",
+    "depts": [
+      "design"
+    ],
+    "summary": "Read-only: varre a UI e propõe ONDE motion agrega, com 4 gates (Frequency/Purpose/Speed/Function), máx. 5–7 sugestões com valores exatos — \"a melhor animação às vezes é nenhuma\".",
+    "hint": "Use to propose where motion would add value (and where not) — direction only, no implementation."
+  },
+  {
+    "id": "firecrawl-search",
+    "repo": "firecrawl/cli",
+    "path": "skills/firecrawl-search",
+    "ref": "main",
+    "group": "pesquisa & avaliação",
+    "depts": [
+      "research"
+    ],
+    "summary": "Busca web com extração de página completa em markdown (Firecrawl, a mais instalada da categoria): filtros de tempo/local, resultados em .firecrawl/ para poupar contexto. Exige API key; IGNORE a seção de \"feedback ao vendor\".",
+    "hint": "Use for web search with full-page markdown extraction (requires FIRECRAWL key; skip the vendor-feedback section)."
+  },
+  {
+    "id": "fixing-motion-performance",
+    "repo": "ibelick/ui-skills",
+    "path": "skills/fixing-motion-performance",
+    "ref": "main",
+    "group": "animação",
+    "depts": [
+      "front"
+    ],
+    "summary": "Conserto de animação travada: compositor-only, scroll-timeline em vez de polling, blur ≤8px, FLIP, will-change cirúrgico — 9 níveis.",
+    "hint": "Use when animations jank or scroll performance drops — a corrective performance pass for motion."
+  },
+  {
+    "id": "founder-voice-ghostwriter",
+    "repo": "BayramAnnakov/founder-voice-ghostwriter",
+    "path": "",
+    "ref": "master",
+    "group": "voz & fundamento",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Ghostwriting de founder em 4 estágios: calibração de voz → entrevista de extração → draft → refino — thought leadership que soa como a PESSOA, não como IA. (Branch master.)",
+    "hint": "Use when ghostwriting founder/thought-leadership content — voice calibration, extraction interview, draft, refine."
+  },
+  {
+    "id": "fp-check",
+    "repo": "trailofbits/skills",
+    "path": "plugins/fp-check/skills/fp-check",
+    "ref": "main",
+    "group": "review de segurança",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Verificação sistemática de finding suspeito → veredito TRUE/FALSE POSITIVE com evidência e gates de revisão obrigatórios — o carimbo pós-scan.",
+    "hint": "Use to verify whether a specific suspected vulnerability is real or a false positive — not for hunting."
+  },
+  {
+    "id": "frontend-design",
+    "repo": "anthropics/skills",
+    "path": "skills/frontend-design",
+    "ref": "main",
+    "group": "direção estética",
+    "depts": [
+      "front",
+      "design"
+    ],
+    "summary": "Direção estética oficial da Anthropic (a skill de design mais instalada do mercado): tipografia como personalidade, plano compacto de 4-6 cores + autocrítica contra defaults genéricos antes de codar.",
+    "hint": "Use when building or restyling ANY user-facing screen — sets the aesthetic direction pass before writing code."
+  },
+  {
+    "id": "frontend-design-review",
+    "repo": "microsoft/skills",
+    "path": ".github/skills/frontend-design-review",
+    "ref": "main",
+    "group": "gate visual",
+    "depts": [
+      "qa",
+      "design"
+    ],
+    "summary": "Review de UI da Microsoft contra design system + 3 pilares (tarefa em ≤3 interações, WCAG 2.1 AA como nota mínima, erros acionáveis) — o gate de \"quebrou a identidade = reprova\".",
+    "hint": "Use to review an implemented UI against the design system and interaction-quality pillars before approving."
+  },
+  {
+    "id": "fuzzing-obstacles",
+    "repo": "trailofbits/skills",
+    "path": "plugins/testing-handbook-skills/skills/fuzzing-obstacles",
+    "ref": "main",
+    "group": "fuzzing & sanitizers",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Destrava fuzzer parado: patch de checksums, estado global e outras barreiras, com before/after C++/Rust — autocontida.",
+    "hint": "Use when a fuzzer stalls on checksums/global state — patch techniques to unblock it."
+  },
+  {
+    "id": "generate-changelog",
+    "repo": "inprojectspl/generate-changelog",
+    "path": "",
+    "ref": "main",
+    "group": "documentação",
+    "depts": [
+      "research"
+    ],
+    "summary": "Keep a Changelog 1.1.0 imposto com spec embarcada e validate-changelog.sh; allowed-tools restrito a git. O changelog mais disciplinado da varredura.",
+    "hint": "Use to write or fix CHANGELOG.md strictly per Keep a Changelog 1.1.0 — with a mechanical validator."
+  },
+  {
+    "id": "github-actions-security",
+    "repo": "GoldenWing-360/claude-security-skills",
+    "path": "github-actions-security",
+    "ref": "main",
+    "group": "supply chain & segredos",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Hardening de GitHub Actions: SHA-pinning, GITHUB_TOKEN mínimo, OIDC no lugar de credencial longa e a armadilha pull_request_target — o par GERAL do agentic-actions-auditor (que cobre o caso com agentes de IA).",
+    "hint": "Use to harden GitHub Actions — SHA pinning, scoped tokens, OIDC, pull_request_target trap."
+  },
+  {
+    "id": "github-actions-templates",
+    "repo": "wshobson/agents",
+    "path": "plugins/cicd-automation/skills/github-actions-templates",
+    "ref": "main",
+    "group": "devops · ci/cd · iac",
+    "depts": [
+      "back"
+    ],
+    "summary": "4 workflows YAML completos (test, build/push Docker, deploy K8s, matrix), reusable workflows e security scanning com trivy.",
+    "hint": "Use when writing GitHub Actions workflows — complete, working YAML templates to adapt."
+  },
+  {
+    "id": "github-sensitive-data-cleanup",
+    "repo": "daymade/claude-code-skills",
+    "path": "github-sensitive-data-cleanup",
+    "ref": "main",
+    "group": "supply chain & segredos",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "A REMEDIAÇÃO do vazamento: varre e REESCREVE o histórico git (gitleaks→regex→review semântico + git filter-repo com backup em bundle e gates de visibilidade) — destrutiva por natureza; exige python, gitleaks, git-filter-repo e gh.",
+    "hint": "Use AFTER a secret leaked into git history — scan and rewrite history safely, with backups and verification."
+  },
+  {
+    "id": "good-readme",
+    "repo": "adewale/good-readme",
+    "path": "skills/good-readme",
+    "ref": "main",
+    "group": "documentação",
+    "depts": [
+      "research"
+    ],
+    "summary": "READMEs com rubrica de 22 critérios e score /100; o \"Source-Grounded API Drift Protocol\" verifica cada função/flag documentada contra o CÓDIGO antes de escrever (anti-alucinação). Autor de Apprenticeship Patterns.",
+    "hint": "Use to create or audit a README — 22-criteria rubric with source-grounded anti-drift verification."
+  },
+  {
+    "id": "grill-me",
+    "repo": "mattpocock/skills",
+    "path": "skills/productivity/grill-me",
+    "ref": "main",
+    "group": "planejamento",
+    "depts": [
+      "research"
+    ],
+    "summary": "O lançador do interrogatório: \"/grill-me\" inicia uma sessão de grilling sobre o plano atual.",
+    "hint": "Invoke to start a relentless interview that sharpens the current plan or design.",
+    "requires": [
+      "grilling"
+    ]
+  },
+  {
+    "id": "grill-with-docs",
+    "repo": "mattpocock/skills",
+    "path": "skills/engineering/grill-with-docs",
+    "ref": "main",
+    "group": "planejamento",
+    "depts": [
+      "research"
+    ],
+    "summary": "O interrogatório gerando documentação no caminho: ADRs + glossário (via domain-modeling) enquanto a conversa afia o plano.",
+    "hint": "Use to grill a plan while capturing ADRs and glossary entries as you go.",
+    "requires": [
+      "grilling",
+      "domain-modeling"
+    ]
+  },
+  {
+    "id": "grilling",
+    "repo": "mattpocock/skills",
+    "path": "skills/productivity/grilling",
+    "ref": "main",
+    "group": "planejamento",
+    "depts": [
+      "research"
+    ],
+    "summary": "Interrogatório implacável de plano/decisão: UMA pergunta por vez, lacunas factuais resolvidas explorando o ambiente (não perguntando), árvore de decisão com recomendação por ramo. A skill que faltava upstream — existe agora.",
+    "hint": "Use to interrogate a vague plan/decision until it holds — one question at a time, environment-first fact finding."
+  },
+  {
+    "id": "gsap-core",
+    "repo": "greensock/gsap-skills",
+    "path": "skills/gsap-core",
+    "ref": "main",
+    "group": "animação",
+    "depts": [
+      "front"
+    ],
+    "summary": "GSAP oficial (GreenSock): API correta de to/from/fromTo, autoAlpha, matchMedia responsivo — mata as alucinações clássicas da lib.",
+    "hint": "Use when the project animates with GSAP — correct core API usage and common-mistake avoidance."
+  },
+  {
+    "id": "gsap-react",
+    "repo": "greensock/gsap-skills",
+    "path": "skills/gsap-react",
+    "ref": "main",
+    "group": "animação",
+    "depts": [
+      "front"
+    ],
+    "summary": "GSAP em React (oficial): useGSAP, cleanup correto e SSR.",
+    "hint": "Use when integrating GSAP inside React components (useGSAP, cleanup, SSR)."
+  },
+  {
+    "id": "harness-writing",
+    "repo": "trailofbits/skills",
+    "path": "plugins/testing-handbook-skills/skills/harness-writing",
+    "ref": "main",
+    "group": "fuzzing & sanitizers",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Harness de fuzzing eficaz multi-linguagem — ~5,8k palavras do Testing Handbook da ToB EMBUTIDAS na skill (zero fetch do site).",
+    "hint": "Use when creating or improving fuzz targets/harnesses in any supported language."
+  },
+  {
+    "id": "headline-matrix",
+    "repo": "realkimbarrett/advertising-skills",
+    "path": "skills/copy-chief/headline-matrix",
+    "ref": "main",
+    "group": "conversão & landing",
+    "depts": [
+      "copy"
+    ],
+    "summary": "25 variações de headline em 7 ângulos psicológicos (escola Eugene Schwartz, license MIT por skill no frontmatter) — para nunca publicar a primeira headline que saiu.",
+    "hint": "Use to generate and rank headline options — 25 variations across 7 psychological angles."
+  },
+  {
+    "id": "high-end-visual-design",
+    "repo": "Leonxlnx/taste-skill",
+    "path": "skills/soft-skill",
+    "ref": "main",
+    "group": "direção estética",
+    "depts": [
+      "front",
+      "design"
+    ],
+    "summary": "Linguagem visual \"cara\": estética premium/soft para páginas que precisam parecer produto caro.",
+    "hint": "Use when the brief asks for a premium/luxurious look (landing pages, marketing surfaces)."
+  },
+  {
+    "id": "huggingface-datasets",
+    "repo": "huggingface/skills",
+    "path": "skills/huggingface-datasets",
+    "ref": "main",
+    "group": "ML & LLM data",
+    "depts": [
+      "data"
+    ],
+    "summary": "OFICIAL Hugging Face: explora/extrai datasets via Dataset Viewer API (paginação, busca, parquet) — chamadas à API do HF são DADOS; HF_TOKEN só para gated datasets.",
+    "hint": "Use to explore and extract Hugging Face datasets via the Dataset Viewer API."
+  },
+  {
+    "id": "humanizer",
+    "repo": "blader/humanizer",
+    "path": "",
+    "ref": "main",
+    "group": "microcopy & edição",
+    "depts": [
+      "copy"
+    ],
+    "summary": "A skill anti-IA mais famosa (32k★): remove os 33 sinais catalogados de texto de IA (guia da Wikipedia) com calibração de voz, pares antes/depois, guardas de falso positivo e gate anti-fabricação.",
+    "hint": "Use as a final pass on any text that must not read AI-written — 33 AI-tell categories with fixes and false-positive guards."
+  },
+  {
+    "id": "iac-checkov",
+    "repo": "AgentSecOps/SecOpsAgentKit",
+    "path": "skills/devsecops/iac-checkov",
+    "ref": "main",
+    "group": "hardening de infra",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Hardening de IaC com Checkov (Terraform/CloudFormation/K8s/Docker): scan, triage e correção com scripts e referências NA pasta — exige pip install checkov; licença CC-BY-SA-4.0 + MPL-2.0.",
+    "hint": "Use to scan and harden IaC (Terraform/K8s/Docker) with Checkov — run, triage and fix findings."
+  },
+  {
+    "id": "image-to-code",
+    "repo": "Leonxlnx/taste-skill",
+    "path": "skills/image-to-code-skill",
+    "ref": "main",
+    "group": "imagem → código",
+    "depts": [
+      "front",
+      "design"
+    ],
+    "summary": "Pipeline imagem→código: analisa um mockup/screenshot e implementa fiel (exige modelo com visão).",
+    "hint": "Use when implementing a screen from a mockup/screenshot image — structured analyze-then-build pipeline."
+  },
+  {
+    "id": "imagegen-frontend-mobile",
+    "repo": "Leonxlnx/taste-skill",
+    "path": "skills/imagegen-frontend-mobile",
+    "ref": "main",
+    "group": "mockups & imagem",
+    "depts": [
+      "design"
+    ],
+    "summary": "38 regras para telas MOBILE premium em mockups de phone: design bible travada (paleta/tipo/spacing) para consistência multi-tela, anti-tells de IA — só imagens, nunca código.",
+    "hint": "Use when generating premium mobile screen mockups as images — locked design bible for multi-screen consistency."
+  },
+  {
+    "id": "imagegen-frontend-web",
+    "repo": "Leonxlnx/taste-skill",
+    "path": "skills/imagegen-frontend-web",
+    "ref": "main",
+    "group": "mockups & imagem",
+    "depts": [
+      "design"
+    ],
+    "summary": "Direção de imagem para referências de design de SITES: uma imagem horizontal por seção, disciplina de espaçamento, anti-clichês de IA (purple gradient slop) — §1–§21.",
+    "hint": "Use when generating web-design reference images (one per section) with the generate_image tool."
+  },
+  {
+    "id": "impeccable",
+    "repo": "pbakaus/impeccable",
+    "path": ".claude/skills/impeccable",
+    "ref": "main",
+    "group": "polish & micro-interações",
+    "depts": [
+      "front",
+      "design"
+    ],
+    "summary": "Design-ops com 23 operações roteadas: escolha somente a que domina o pedido (como layout, adapt, harden, typeset ou polish); comandos interativos, de auditoria ou alta agência exigem contexto e fase apropriados.",
+    "hint": "Use exactly one context-matched Impeccable operation at a time. Do not chain commands or stack it with another aesthetic-direction skill; keep the user brief, local design authority, and Synkora UI contract above its defaults."
+  },
+  {
+    "id": "improve-animations",
+    "repo": "emilkowalski/skills",
+    "path": "skills/improve-animations",
+    "ref": "main",
+    "group": "motion design",
+    "depts": [
+      "design"
+    ],
+    "summary": "Advisor read-only de motion: recon do stack → auditoria em 8 categorias → planos AUTOCONTIDOS para executores baratos (PLAN-TEMPLATE) — casa com o fluxo de delegação do app.",
+    "hint": "Use to audit motion and produce self-contained improvement plans a cheaper executor can apply."
+  },
+  {
+    "id": "improve-ui",
+    "repo": "ibelick/ui-skills",
+    "path": "skills/improve-ui",
+    "ref": "main",
+    "group": "review de interface",
+    "depts": [
+      "front",
+      "qa"
+    ],
+    "summary": "Auditoria read-only de DRIFT do design system com prova tripla (contrato + caminho de runtime + correção determinística) — entrega planos, não edita.",
+    "hint": "Use to audit UI drift against the design system without editing — produces evidence-backed fix plans."
+  },
+  {
+    "id": "industrial-brutalist-ui",
+    "repo": "Leonxlnx/taste-skill",
+    "path": "skills/brutalist-skill",
+    "ref": "main",
+    "group": "direção visual & linguagens",
+    "depts": [
+      "design"
+    ],
+    "summary": "Linguagem Swiss print × terminal militar: um arquétipo por projeto, contraste tipográfico extremo, vermelho aviação, degradação analógica via CSS (scanlines, halftone).",
+    "hint": "Use when the design language is industrial/brutalist — a complete third aesthetic alongside minimal and premium."
+  },
+  {
+    "id": "insecure-defaults",
+    "repo": "trailofbits/skills",
+    "path": "plugins/insecure-defaults/skills/insecure-defaults",
+    "ref": "main",
+    "group": "código & config seguros",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Caça defaults fail-open: secret hardcoded, auth fraca, config permissiva — com trace do code path para só reportar o que é explorável em produção.",
+    "hint": "Use when auditing config/env handling for fail-open defaults, hardcoded credentials and permissive security."
+  },
+  {
+    "id": "jupyter-notebook",
+    "repo": "openai/skills",
+    "path": "skills/.curated/jupyter-notebook",
+    "ref": "main",
+    "group": "dataframes & notebooks",
+    "depts": [
+      "data"
+    ],
+    "summary": "Notebooks limpos e reproduzíveis a partir de templates .ipynb + script stdlib-only (modos experimento/tutorial) — Apache-2.0 POR SKILL; repo deprecated (pin por sha segura a cópia).",
+    "hint": "Use to create clean, reproducible Jupyter notebooks from bundled templates."
+  },
+  {
+    "id": "k6",
+    "repo": "grafana/skills",
+    "path": "skills/grafana-k6/k6",
+    "ref": "main",
+    "group": "performance & carga",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Load testing oficial da Grafana: gera/valida/revisa scripts k6 (load/stress/spike/soak, HTTP/WS/gRPC/browser, thresholds) com validação real via k6 run.",
+    "hint": "Use to author and validate k6 load-test scripts against SLAs — requires the k6 binary."
+  },
+  {
+    "id": "k8s-security-policies",
+    "repo": "wshobson/agents",
+    "path": "plugins/kubernetes-operations/skills/k8s-security-policies",
+    "ref": "main",
+    "group": "hardening de infra",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Hardening K8s de produção: Pod Security Standards, NetworkPolicy, RBAC (5 padrões de least-privilege), OPA Gatekeeper/Rego e Istio mTLS — só YAML declarativo; peso morto em projeto sem k8s.",
+    "hint": "Use when securing Kubernetes — Pod Security Standards, NetworkPolicy, RBAC least-privilege, Gatekeeper."
+  },
+  {
+    "id": "kafka-streams-programming",
+    "repo": "confluentinc/agent-skills",
+    "path": "skills/kafka-streams-programming",
+    "ref": "main",
+    "group": "streaming (Kafka)",
+    "depts": [
+      "data"
+    ],
+    "summary": "Kafka Streams oficial em 3 modos (architect/build/debug): EOS, windowing e 11 defaults invariantes — serve Apache Kafka OSS além de Confluent; exige JVM 17+.",
+    "hint": "Use to design, build and debug Kafka Streams topologies (works on OSS Kafka)."
+  },
+  {
+    "id": "kpi-dashboard-design",
+    "repo": "wshobson/agents",
+    "path": "plugins/business-analytics/skills/kpi-dashboard-design",
+    "ref": "main",
+    "group": "visualização & BI",
+    "depts": [
+      "data"
+    ],
+    "summary": "Escolha e estrutura de KPIs: framework estratégico/tático/operacional, hierarquia de dashboard e troubleshooting com SQL/Python reais.",
+    "hint": "Use to choose and structure KPIs — dashboard hierarchy and real-time patterns."
+  },
+  {
+    "id": "landing-page-copy",
+    "repo": "rampstackco/claude-skills",
+    "path": "skills/landing-page-copy",
+    "ref": "main",
+    "group": "conversão & landing",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Framework de landing em 7 seções: hierarquia de mensagem, padrões de CTA, tratamento de objeções e lista de falhas clássicas — profundidade de ESTRUTURA de página (a copywriting dá os princípios).",
+    "hint": "Use when structuring/writing a landing page — 7-section framework with objection handling and CTA patterns."
+  },
+  {
+    "id": "launch",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/launch",
+    "ref": "main",
+    "group": "lançamento, PR & collateral",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Lançamentos em 5 fases com o framework ORB de canais e playbook de Product Hunt (~3,5k palavras). A menção ao Introw nas referências é decorativa (link morre fora do repo, metodologia intacta).",
+    "hint": "Use when planning/writing a product launch campaign — ORB channel framework, 5 phases, Product Hunt."
+  },
+  {
+    "id": "llm-app-security",
+    "repo": "GoldenWing-360/claude-security-skills",
+    "path": "llm-app-security",
+    "ref": "main",
+    "group": "segurança de agentes/LLM",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "OWASP LLM Top 10 mapeado a controles OPERACIONAIS: rate limits, cost caps com kill-switch $/dia, PII scrubbing, pinning de modelo e audit logs — o complemento operacional do prompt-injection-defense.",
+    "hint": "Use for operational LLM app controls — OWASP LLM Top 10, rate/cost caps, PII scrubbing, audit logs."
+  },
+  {
+    "id": "llm-evaluation",
+    "repo": "wshobson/agents",
+    "path": "plugins/llm-application-dev/skills/llm-evaluation",
+    "ref": "main",
+    "group": "ML & LLM data",
+    "depts": [
+      "data"
+    ],
+    "summary": "Avaliação de apps LLM: métricas automatizadas, human eval e LLM-as-judge com suite em código.",
+    "hint": "Use to evaluate LLM apps — automated metrics, human eval, LLM-as-judge."
+  },
+  {
+    "id": "logo-design",
+    "repo": "rampstackco/claude-skills",
+    "path": "skills/logo-design",
+    "ref": "main",
+    "group": "identidade & marca",
+    "depts": [
+      "design"
+    ],
+    "summary": "Logo por arquitetura de marca: 6–12 variantes (wordmark/lockup/symbol/monogram), cada uma testada contra favicon, bordado, single-color e reverse, com specs de produção.",
+    "hint": "Use when designing or iterating a logo — architecture variants stress-tested across real usage contexts."
+  },
+  {
+    "id": "long-form-content-frameworks",
+    "repo": "rampstackco/claude-skills",
+    "path": "skills/long-form-content-frameworks",
+    "ref": "main",
+    "group": "conteúdo & SEO",
+    "depts": [
+      "copy"
+    ],
+    "summary": "7 formatos longos × 5 arquétipos estruturais, calibração de peso por seção e padrões de lede/fechamento (8 docs de referência) — nada mais no catálogo cobre long-form.",
+    "hint": "Use when writing long-form content — pick the format × structure archetype, calibrate section weights."
+  },
+  {
+    "id": "market-sizing-analysis",
+    "repo": "wshobson/agents",
+    "path": "plugins/startup-business-analyst/skills/market-sizing-analysis",
+    "ref": "main",
+    "group": "pesquisa & avaliação",
+    "depts": [
+      "research"
+    ],
+    "summary": "TAM/SAM/SOM por três metodologias (top-down, bottom-up, value theory) com processo passo a passo.",
+    "hint": "Use to size a market with triangulated TAM/SAM/SOM methodologies."
+  },
+  {
+    "id": "marketing-psychology",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/marketing-psychology",
+    "ref": "main",
+    "group": "voz & fundamento",
+    "depts": [
+      "copy"
+    ],
+    "summary": "~60 modelos mentais aplicados a marketing (ancoragem, aversão à perda, JTBD, prova social…) — o substrato de persuasão que fundamenta qualquer copy.",
+    "hint": "Use to ground copy in persuasion principles — ~60 mental models mapped to marketing use."
+  },
+  {
+    "id": "mcp-builder",
+    "repo": "anthropics/skills",
+    "path": "skills/mcp-builder",
+    "ref": "main",
+    "group": "api & serviços",
+    "depts": [
+      "back"
+    ],
+    "summary": "Oficial da Anthropic: construir servidores MCP em 4 fases (pesquisa → implementação → review → avaliações), princípios de tool design, guias Node e Python.",
+    "hint": "Use when building or extending an MCP server — official methodology, tool-design principles, Node/Python guides."
+  },
+  {
+    "id": "mcp-security",
+    "repo": "GoldenWing-360/claude-security-skills",
+    "path": "mcp-security",
+    "ref": "main",
+    "group": "segurança de agentes/LLM",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Auditoria de configs MCP: risk-tiering em 5 níveis, detecção de server malicioso (tool-description poisoning, postinstall), least-privilege e rotação — sob medida para um ADE cheio de MCPs.",
+    "hint": "Use to audit MCP server configs — risk tiers, malicious-server indicators, least-privilege scoping."
+  },
+  {
+    "id": "minimalist-ui",
+    "repo": "Leonxlnx/taste-skill",
+    "path": "skills/minimalist-skill",
+    "ref": "main",
+    "group": "direção estética",
+    "depts": [
+      "front",
+      "design"
+    ],
+    "summary": "Linguagem visual minimalista: reduzir até doer, hierarquia por espaço e tipografia.",
+    "hint": "Use when the design language is minimalist/clean — reduction-first rules."
+  },
+  {
+    "id": "ml-pipeline-workflow",
+    "repo": "wshobson/agents",
+    "path": "plugins/machine-learning-ops/skills/ml-pipeline-workflow",
+    "ref": "main",
+    "group": "ML & LLM data",
+    "depts": [
+      "data"
+    ],
+    "summary": "MLOps ponta a ponta: data prep, treino, validação e deploy com DAG YAML de exemplo.",
+    "hint": "End-to-end ML pipeline — data prep, training, validation, deployment."
+  },
+  {
+    "id": "motion-design",
+    "repo": "LottieFiles/motion-design-skill",
+    "path": "skills/motion-design",
+    "ref": "main",
+    "group": "motion design",
+    "depts": [
+      "design"
+    ],
+    "summary": "Motion design OFICIAL da LottieFiles, agnóstico de ferramenta: timing, easing, coreografia, princípios Disney adaptados a UI, 4 arquétipos de personalidade, checklist de 8 passos.",
+    "hint": "Use when directing motion design (personality, choreography, timing) — pure principles from the Lottie vendor."
+  },
+  {
+    "id": "mutation-testing",
+    "repo": "secondsky/claude-skills",
+    "path": "plugins/mutation-testing/skills/mutation-testing",
+    "ref": "main",
+    "group": "saúde da suíte",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Mutation testing no stack web: Stryker (TS/JS com Vitest) + mutmut (Python), runs incrementais, leitura de killed/survived, alvo 80%+.",
+    "hint": "Use to judge test-suite strength with mutation testing (Stryker/mutmut) — surviving mutants = weak tests."
+  },
+  {
+    "id": "naming",
+    "repo": "glacierphonk/naming",
+    "path": "",
+    "ref": "main",
+    "group": "voz & fundamento",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Naming sério em 7 passos guiado por metáfora: gates anti-slop, checagem de disponibilidade bloqueante e guias por idioma (incluindo PT). O whois dos checks não existe no Windows — degrada para WebSearch.",
+    "hint": "Use when naming products/features/companies — 7-step metaphor-driven method with availability checks and anti-slop gates."
+  },
+  {
+    "id": "nestjs-expert",
+    "repo": "Jeffallan/claude-skills",
+    "path": "skills/nestjs-expert",
+    "ref": "main",
+    "group": "api & serviços",
+    "depts": [
+      "back"
+    ],
+    "summary": "NestJS estruturado: módulos/controllers/services/DTOs/guards/interceptors com exemplos completos (TypeORM, DI, validação) e prevenção de dependência circular.",
+    "hint": "Use when the project uses NestJS — module architecture, DI, guards/interceptors, circular-dependency prevention."
+  },
+  {
+    "id": "nextjs-security",
+    "repo": "GoldenWing-360/claude-security-skills",
+    "path": "nextjs-security",
+    "ref": "main",
+    "group": "código & config seguros",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Hardening específico de Next.js — o melhor conteúdo web da varredura: CVE-2025-29927 (middleware bypass), CSP com nonce no App Router, vazamento NEXT_PUBLIC_, RSC over-fetch e SSRF via remotePatterns.",
+    "hint": "Use when hardening a Next.js app — middleware bypass, CSP nonces, NEXT_PUBLIC leaks, image SSRF."
+  },
+  {
+    "id": "node",
+    "repo": "mcollina/skills",
+    "path": "skills/node",
+    "ref": "main",
+    "group": "api & serviços",
+    "depts": [
+      "back"
+    ],
+    "summary": "Best practices de Node.js do Matteo Collina (criador do Fastify, Node TSC): type stripping nativo, graceful shutdown, classificação de erros, streams com backpressure, profiling.",
+    "hint": "Use for Node.js runtime concerns — shutdown, error classes, streams/backpressure, profiling — from a Node TSC member."
+  },
+  {
+    "id": "nodejs-backend-patterns",
+    "repo": "wshobson/agents",
+    "path": "plugins/javascript-typescript/skills/nodejs-backend-patterns",
+    "ref": "main",
+    "group": "api & serviços",
+    "depts": [
+      "back"
+    ],
+    "summary": "O guia Node/TS backend: camadas controller/service/repository, middleware de auth/validação/rate-limit, error classes, pooling e caching — ~2k linhas de código real nas referências.",
+    "hint": "Use when building Node/TypeScript backend services — layering, middleware, error handling, pooling, caching."
+  },
+  {
+    "id": "oauth",
+    "repo": "mcollina/skills",
+    "path": "skills/oauth",
+    "ref": "main",
+    "group": "auth & segurança",
+    "depts": [
+      "back",
+      "cyber"
+    ],
+    "summary": "OAuth 2.0/2.1 na prática: authorization code + PKCE, client credentials, device flow, rotação de refresh token, validação JWT — compliance RFC com checklist de segurança.",
+    "hint": "Use when implementing OAuth/JWT auth flows — PKCE, refresh rotation, token validation per the RFCs."
+  },
+  {
+    "id": "offers",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/offers",
+    "ref": "main",
+    "group": "conversão & landing",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Construção de oferta pela value equation: enquadramento de valor, bonus stacking, desenho de garantia, escassez honesta e naming da oferta — o que a página de vendas DIZ (7 referências; delega a prosa à copywriting).",
+    "hint": "Use to construct/name the offer before writing the page — value equation, guarantees, bonus stack, honest urgency."
+  },
+  {
+    "id": "open-sourcing",
+    "repo": "trailofbits/skills",
+    "path": "plugins/open-sourcing/skills/open-sourcing",
+    "ref": "main",
+    "group": "supply chain & segredos",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Prontidão para abrir um repo: auditoria de secrets como passo 1 IRREVERSÍVEL, licenciamento, docs, CI e empacotamento por linguagem — adicionada upstream em 2026-07-29, fresquíssima.",
+    "hint": "Use before making a repo public — secrets hygiene, licensing, CI and release readiness."
+  },
+  {
+    "id": "openapi-spec-generation",
+    "repo": "wshobson/agents",
+    "path": "plugins/documentation-generation/skills/openapi-spec-generation",
+    "ref": "main",
+    "group": "documentação",
+    "depts": [
+      "research"
+    ],
+    "summary": "OpenAPI 3.1 design-first/code-first/híbrido: reuso via $ref, documentação de erros, template completo de exemplo.",
+    "hint": "Use to generate or restructure an OpenAPI 3.1 spec as API documentation."
+  },
+  {
+    "id": "owasp-security",
+    "repo": "agamm/claude-code-owasp",
+    "path": ".claude/skills/owasp-security",
+    "ref": "main",
+    "group": "auth & segurança",
+    "depts": [
+      "back",
+      "cyber"
+    ],
+    "summary": "OWASP Top 10:2025 + ASVS 5.0 + LLM Top 10: rubrica de triagem de findings e checklists de review com exemplos unsafe/safe em 20+ linguagens.",
+    "hint": "Use for an OWASP-grounded security review of backend code — triage rubric and per-language unsafe/safe pairs."
+  },
+  {
+    "id": "playwright-best-practices",
+    "repo": "currents-dev/playwright-best-practices-skill",
+    "path": "playwright-best-practices",
+    "ref": "main",
+    "group": "teste ao vivo (browser)",
+    "depts": [
+      "qa"
+    ],
+    "summary": "A enciclopédia Playwright (Currents, vendor de CI para Playwright): 57 docs em 8 áreas — flaky, visual, a11y com axe, POM, auth, CI — com decision tree e loop de validação real.",
+    "hint": "Use when writing or fixing Playwright tests — comprehensive best-practice references with a validation loop."
+  },
+  {
+    "id": "playwright-cli",
+    "repo": "microsoft/playwright-cli",
+    "path": "skills/playwright-cli",
+    "ref": "main",
+    "group": "teste ao vivo (browser)",
+    "depts": [
+      "qa"
+    ],
+    "summary": "A skill OFICIAL da Microsoft para dirigir browser via CLI: 40+ comandos (click/type/forms/tabs/snapshot/screenshot, mock de rede, tracing, vídeo) com 9 docs de referência. Exige @playwright/cli global.",
+    "hint": "Use to drive a real browser from the shell (clicks, forms, network mocks, traces) via the official playwright-cli."
+  },
+  {
+    "id": "polars",
+    "repo": "polars-inc/skills",
+    "path": "polars",
+    "ref": "main",
+    "group": "dataframes & notebooks",
+    "depts": [
+      "data"
+    ],
+    "summary": "OFICIAL da Polars Inc: lazy-first, 5 regras de performance, template canônico de 10 passos e 9 GOTCHAS de falha silenciosa verificados na 1.x — o MCP polars-mcp é opcional.",
+    "hint": "Idiomatic lazy Polars — canonical query pattern, context selection, silent-failure traps."
+  },
+  {
+    "id": "postgresql-table-design",
+    "repo": "wshobson/agents",
+    "path": "plugins/database-design/skills/postgresql",
+    "ref": "main",
+    "group": "banco de dados",
+    "depts": [
+      "back",
+      "data"
+    ],
+    "summary": "Design de schema Postgres com opinião: BIGINT IDENTITY > UUID, \"Postgres NÃO auto-indexa FK\", JSONB trade-offs, particionamento >100M linhas, evolução segura de schema.",
+    "hint": "Use when designing or evolving Postgres schemas — types, FK indexing, JSONB, partitioning thresholds."
+  },
+  {
+    "id": "prisma-client-api",
+    "repo": "prisma/skills",
+    "path": "prisma-client-api",
+    "ref": "main",
+    "group": "banco de dados",
+    "depts": [
+      "back"
+    ],
+    "summary": "Referência oficial do Prisma Client: 17 métodos de query, filtros, operadores, transações e raw SQL em 8 categorias com exemplos.",
+    "hint": "Use when the project uses Prisma — correct client API usage for queries, transactions, raw SQL."
+  },
+  {
+    "id": "privacy-engineering",
+    "repo": "briiirussell/cybersecurity-skills",
+    "path": "skills/privacy-engineering",
+    "ref": "main",
+    "group": "testes de segurança & privacidade",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Privacidade de ponta a ponta COM LGPD EXPLÍCITA (+ GDPR/CCPA/PIPEDA): pipeline de DSAR, deleção em cascata (backups/caches/analytics), DPIA, relógio de 72h de breach e greps de auditoria — o top pick de privacidade da varredura.",
+    "hint": "Use for privacy engineering — DSAR pipelines, deletion fan-out, DPIA, breach clocks (LGPD/GDPR/CCPA)."
+  },
+  {
+    "id": "product-marketing",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/product-marketing",
+    "ref": "main",
+    "group": "voz & fundamento",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Cria/atualiza o dossiê de marketing do projeto (.agents/product-marketing.md): posicionamento, ICP, voz e provas — o contexto que as skills irmãs do kit corey leem antes de escrever (changelog versionado).",
+    "hint": "Use FIRST on marketing work — creates the .agents/product-marketing.md context (positioning, ICP, voice, proof) sibling marketing skills read."
+  },
+  {
+    "id": "profiling-tables",
+    "repo": "astronomer/agents",
+    "path": "skills/profiling-tables",
+    "ref": "main",
+    "group": "SQL & warehouse",
+    "depts": [
+      "data"
+    ],
+    "summary": "Perfil profundo de UMA tabela: INFORMATION_SCHEMA → stats por tipo → cardinalidade → amostra → score de qualidade — SQL puro, zero dependências.",
+    "hint": "Use to deep-profile a specific warehouse table: stats, cardinality, freshness, quality score."
+  },
+  {
+    "id": "prompt-injection-defense",
+    "repo": "GoldenWing-360/claude-security-skills",
+    "path": "prompt-injection-defense",
+    "ref": "main",
+    "group": "segurança de agentes/LLM",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Defesa contra injeção direta/indireta em apps LLM: source-of-trust tagging, confirmação de tools após conteúdo não-confiável, bloqueio de exfiltração via imagem markdown e checklist red-team.",
+    "hint": "Use to harden LLM features against direct/indirect prompt injection — trust tagging, tool confirmation, exfiltration blocks."
+  },
+  {
+    "id": "property-based-testing",
+    "repo": "trailofbits/skills",
+    "path": "plugins/property-based-testing/skills/property-based-testing",
+    "ref": "main",
+    "group": "testes avançados",
+    "depts": [
+      "back",
+      "qa",
+      "cyber"
+    ],
+    "summary": "Property-based testing pela Trail of Bits: árvore de decisão de quando aplicar, catálogo de propriedades com hierarquia de força, padrões (serialização/parsing/validação) que pedem PBT. Licença CC-BY-SA.",
+    "hint": "Use when unit tests are not enough — find the properties (round-trips, invariants) and generate the tests."
+  },
+  {
+    "id": "prototype",
+    "repo": "emilkowalski/skills",
+    "path": "skills/prototype",
+    "ref": "main",
+    "group": "mockups & imagem",
+    "depts": [
+      "design"
+    ],
+    "summary": "Divergência estruturada do Emil Kowalski: 3–5 direções GENUINAMENTE diferentes do mesmo componente atrás de um picker visual, tabela de tradeoffs honestos, usuário promove a vencedora.",
+    "hint": "Use when a component/screen needs real design exploration — render 3-5 divergent directions behind a picker."
+  },
+  {
+    "id": "public-relations",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/public-relations",
+    "ref": "main",
+    "group": "lançamento, PR & collateral",
+    "depts": [
+      "copy"
+    ],
+    "summary": "PR de verdade: pitches para jornalistas com barra de qualidade em 6 pontos (≤150 palavras, fit de pauta), 4 modos de PR e medição anti-AVE (4 referências) — venceu o press-release solo do realjaymes.",
+    "hint": "Use for PR work — journalist pitches with a 6-point quality bar, press releases, op-eds."
+  },
+  {
+    "id": "python-project-structure",
+    "repo": "wshobson/agents",
+    "path": "plugins/python-development/skills/python-project-structure",
+    "ref": "main",
+    "group": "typescript & python",
+    "depts": [
+      "back"
+    ],
+    "summary": "Organização de projeto Python: template quick-start, 7 padrões com código, API pública via __all__, convenções de nomes.",
+    "hint": "Use when creating or restructuring a Python project — layout, public API, naming."
+  },
+  {
+    "id": "python-testing-patterns",
+    "repo": "wshobson/agents",
+    "path": "plugins/python-development/skills/python-testing-patterns",
+    "ref": "main",
+    "group": "typescript & python",
+    "depts": [
+      "back",
+      "qa"
+    ],
+    "summary": "pytest a fundo: AAA, fixtures, mocking com side effects, freezegun para tempo, markers.",
+    "hint": "Use when writing or fixing Python tests — pytest fixtures, mocking, time control."
+  },
+  {
+    "id": "query",
+    "repo": "duckdb/duckdb-skills",
+    "path": "skills/query",
+    "ref": "main",
+    "group": "análise local (DuckDB)",
+    "depts": [
+      "data"
+    ],
+    "summary": "DuckDB oficial: sessão/ad-hoc, NL→SQL, guarda de resultado >1M linhas e \"Friendly SQL\" (GROUP BY ALL, PIVOT, COLUMNS(*)) — id genérico de 1 palavra, atenção a colisões futuras.",
+    "hint": "Use to run DuckDB SQL against attached DBs or ad-hoc files."
+  },
+  {
+    "id": "rag-implementation",
+    "repo": "wshobson/agents",
+    "path": "plugins/llm-application-dev/skills/rag-implementation",
+    "ref": "main",
+    "group": "ML & LLM data",
+    "depts": [
+      "data"
+    ],
+    "summary": "RAG com código executável: vector DBs, retrieval híbrido, reranking.",
+    "hint": "Use to build RAG systems — retrieval strategies, reranking, vector stores."
+  },
+  {
+    "id": "read-file",
+    "repo": "duckdb/duckdb-skills",
+    "path": "skills/read-file",
+    "ref": "main",
+    "group": "análise local (DuckDB)",
+    "depts": [
+      "data"
+    ],
+    "summary": "Macro read_any() para CSV/JSON/Parquet/Avro/Excel/spatial/SQLite → schema + amostra em segundos — paths cloud pedem credencial (opcional).",
+    "hint": "Use to preview any data file schema and sample rows via DuckDB."
+  },
+  {
+    "id": "receiving-code-review",
+    "repo": "obra/superpowers",
+    "path": "skills/receiving-code-review",
+    "ref": "main",
+    "group": "metodologia de implementação",
+    "depts": [
+      "front",
+      "back"
+    ],
+    "summary": "Receber feedback de review com rigor: ler tudo, verificar contra o estado real do código, aceitar ou rebater com razão — proíbe concordância performática. Casa com o ciclo reprovação-do-gate → correção.",
+    "hint": "Use when handling gate/review feedback (reprovações) — verify each point against the code before acting on it."
+  },
+  {
+    "id": "redesign-existing-projects",
+    "repo": "Leonxlnx/taste-skill",
+    "path": "skills/redesign-skill",
+    "ref": "main",
+    "group": "direção visual & linguagens",
+    "depts": [
+      "design"
+    ],
+    "summary": "Upgrade visual de projeto EXISTENTE sem quebrar função: audita padrões genéricos por checklist e aplica em ordem de impacto (font swap → cor → estados → spacing → componentes).",
+    "hint": "Use when restyling an existing project — impact-ordered upgrade that never breaks behavior."
+  },
+  {
+    "id": "redis-core",
+    "repo": "redis/agent-skills",
+    "path": "skills/redis-core",
+    "ref": "main",
+    "group": "banco de dados",
+    "depts": [
+      "back"
+    ],
+    "summary": "Redis oficial: escolha da estrutura certa (String/Hash/JSON/Stream/Sorted Set/Vector) e key naming hierárquico — a base de caching e filas.",
+    "hint": "Use when adding caching/queues with Redis — pick the right data structure and key scheme."
+  },
+  {
+    "id": "requirement-writer",
+    "repo": "DivikWu/product-requirement-craft",
+    "path": ".claude/skills/requirement-writer",
+    "ref": "main",
+    "group": "specs & requisitos",
+    "depts": [
+      "research"
+    ],
+    "summary": "Descoberta de requisitos GUIADA em 6 fases gerando três documentos progressivos (Problem Framing → SRD → PRD) com scoring de completude 🟢🟡🔴 e review multi-papel.",
+    "hint": "Use for interactive requirements discovery — progressive documents with completeness scoring."
+  },
+  {
+    "id": "research",
+    "repo": "mattpocock/skills",
+    "path": "skills/engineering/research",
+    "ref": "main",
+    "group": "pesquisa & avaliação",
+    "depts": [
+      "research"
+    ],
+    "summary": "Investigação contra FONTES PRIMÁRIAS (docs oficiais, código-fonte, specs): cada claim rastreado até o dono autoritativo, resultado em markdown único com citações.",
+    "hint": "Use for source-primary technical research — every claim traced to its authoritative owner, written up with citations."
+  },
+  {
+    "id": "resolving-merge-conflicts",
+    "repo": "mattpocock/skills",
+    "path": "skills/engineering/resolving-merge-conflicts",
+    "ref": "main",
+    "group": "metodologia de implementação",
+    "depts": [
+      "back"
+    ],
+    "summary": "Resolver conflito de merge preservando a INTENÇÃO dos dois lados (via mensagens de commit/PRs), fechando com typecheck e testes — o cenário exato dos merges de worktree do app.",
+    "hint": "Use when resolving git merge conflicts (mission/task worktree merges) — intent-preserving resolution, then verify."
+  },
+  {
+    "id": "review-animations",
+    "repo": "emilkowalski/skills",
+    "path": "skills/review-animations",
+    "ref": "main",
+    "group": "motion design",
+    "depts": [
+      "design"
+    ],
+    "summary": "Review de motion contra 10 padrões inegociáveis (sub-300ms, GPU-only, interruptibilidade), triggers de escalada (transition: all, ease-in em UI), hierarquia de remédio (deletar > reduzir).",
+    "hint": "Use to review implemented animations against non-negotiable motion standards."
+  },
+  {
+    "id": "roadmap-planning",
+    "repo": "rampstackco/claude-skills",
+    "path": "skills/roadmap-planning",
+    "ref": "main",
+    "group": "planejamento",
+    "depts": [
+      "research"
+    ],
+    "summary": "Backlog → roadmap defensável em 8 passos com modelagem HONESTA de capacidade (40–70%, nunca 100%) e lista \"Not now\" obrigatória.",
+    "hint": "Use to turn a backlog into a defensible roadmap — honest capacity modeling and an explicit not-now list."
+  },
+  {
+    "id": "running-dbt-commands",
+    "repo": "dbt-labs/dbt-agent-skills",
+    "path": "skills/dbt/skills/running-dbt-commands",
+    "ref": "main",
+    "group": "analytics engineering (dbt)",
+    "depts": [
+      "data"
+    ],
+    "summary": "Referência operacional do dbt CLI: 3 sabores, graph selectors, build>run e análise de run_results.json.",
+    "hint": "Correct dbt CLI usage — selectors, flags, flavors, post-run analysis."
+  },
+  {
+    "id": "rust-review",
+    "repo": "trailofbits/skills",
+    "path": "plugins/rust-review/skills/rust-review",
+    "ref": "main",
+    "group": "auditoria por linguagem",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Idem para Rust: fronteira safe/unsafe, memória em unsafe, concorrência, panic-DoS, FFI, async — mesmas ressalvas de custo do c-review.",
+    "hint": "Use for a comprehensive Rust security audit — unsafe boundary, FFI, concurrency, panic-DoS."
+  },
+  {
+    "id": "sales-enablement",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/sales-enablement",
+    "ref": "main",
+    "group": "lançamento, PR & collateral",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Autoria de collateral de vendas: decks slide-a-slide com speaker notes, one-pagers, talk tracks de objeção e roteiros de demo cronometrados (\"se o vendedor reescreve teu deck, você escreveu o deck errado\").",
+    "hint": "Use when authoring sales collateral — decks with speaker notes, one-pagers, objection talk tracks, demo scripts."
+  },
+  {
+    "id": "sarif-parsing",
+    "repo": "trailofbits/skills",
+    "path": "plugins/static-analysis/skills/sarif-parsing",
+    "ref": "main",
+    "group": "SAST & scanners",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Pós-processamento SARIF de qualquer scanner (CodeQL/Semgrep): filtro, dedupe, conversão e integração CI com 40+ queries jq prontas — não roda scans.",
+    "hint": "Use to parse/aggregate/deduplicate SARIF results from static-analysis tools."
+  },
+  {
+    "id": "scan-secrets",
+    "repo": "GitGuardian/agent-skills",
+    "path": "skills/scan-secrets",
+    "ref": "main",
+    "group": "supply chain & segredos",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Vendor OFICIAL GitGuardian: varre paths, staged, histórico git, imagens Docker e pacotes por 700+ tipos de segredo via ggshield, com gestão de falso positivo — exige ggshield CLI + conta (free tier); NUNCA instalar a irmã install-hooks (mexe em config global).",
+    "hint": "Use to scan paths, git history, Docker images and packages for 700+ secret types via ggshield."
+  },
+  {
+    "id": "schwartz-awareness-mapper",
+    "repo": "realkimbarrett/advertising-skills",
+    "path": "skills/copy-chief/schwartz-awareness-mapper",
+    "ref": "main",
+    "group": "conversão & landing",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Diagnóstico do estágio de consciência do público (cold→most-aware, Schwartz) e a abordagem de mensagem certa para cada estágio — decide COMO a copy fala antes de escrever. (Upstream avatar-extraction é dica soft; roda sozinha.)",
+    "hint": "Use before writing copy to map audience awareness stage and pick the matching messaging approach."
+  },
+  {
+    "id": "screen-reader-testing",
+    "repo": "wshobson/agents",
+    "path": "plugins/accessibility-compliance/skills/screen-reader-testing",
+    "ref": "main",
+    "group": "acessibilidade (gate)",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Teste com leitores de tela DE VERDADE: roteiros NVDA/VoiceOver passo a passo, browse vs focus mode, cenários prontos (modal com focus trap, live regions) — único no gênero.",
+    "hint": "Use to test flows with real screen readers (NVDA/VoiceOver scripts) — the manual half automation cannot cover."
+  },
+  {
+    "id": "secret-hygiene",
+    "repo": "GoldenWing-360/claude-security-skills",
+    "path": "secret-hygiene",
+    "ref": "main",
+    "group": "supply chain & segredos",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Ciclo de vida do segredo SEM exigir conta: ordem de rotação (o vazado primeiro), purge de histórico com git-filter-repo como último recurso, prevenção pre-commit e tabela de prefixos de token — par do scan-secrets.",
+    "hint": "Use to rotate leaked credentials in the right order and prevent recurrence — no vendor account needed."
+  },
+  {
+    "id": "secrets-audit",
+    "repo": "briiirussell/cybersecurity-skills",
+    "path": "skills/secrets-audit",
+    "ref": "main",
+    "group": "supply chain & segredos",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Higiene de segredos agnóstica de ferramenta: detecção de vazamento (histórico git, artefatos, Docker/CI) + postura, greps para 8+ provedores, comparação gitleaks/trufflehog e triage de rotação por blast radius.",
+    "hint": "Use to audit secrets hygiene and leaks across git history, artifacts and CI — detection plus rotation triage."
+  },
+  {
+    "id": "secrets-management",
+    "repo": "wshobson/agents",
+    "path": "plugins/cicd-automation/skills/secrets-management",
+    "ref": "main",
+    "group": "auth & segurança",
+    "depts": [
+      "back",
+      "cyber"
+    ],
+    "summary": "Segredos de ponta a ponta: Vault com comandos reais, GitHub Actions/GitLab CI configs, Terraform para AWS Secrets Manager e rotação automatizada.",
+    "hint": "Use when wiring secrets into CI/CD or infra — Vault, platform secret stores, rotation."
+  },
+  {
+    "id": "secure-code-guardian",
+    "repo": "Jeffallan/claude-skills",
+    "path": "skills/secure-code-guardian",
+    "ref": "main",
+    "group": "código & config seguros",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "O lado BUILD da segurança: implementar authN/authZ/validação direito (bcrypt/argon2, SQL parametrizado, Zod, JWT, CORS/CSP, cookies) com 5 exemplos funcionais e checkpoints — par de implementação do owasp-security.",
+    "hint": "Use when IMPLEMENTING auth, input validation or security headers — working patterns with MUST/MUST-NOT constraints."
+  },
+  {
+    "id": "security-best-practices",
+    "repo": "openai/skills",
+    "path": "skills/.curated/security-best-practices",
+    "ref": "main",
+    "group": "auth & segurança",
+    "depts": [
+      "back",
+      "cyber"
+    ],
+    "summary": "Código secure-by-default + detecção passiva de vulnerabilidade + relatório com severidades, com referências por stack (Python, JS/TS, Go). A skill forte de segurança de API da varredura.",
+    "hint": "Use when writing security-sensitive backend code or reviewing for vulnerabilities — per-stack secure defaults."
+  },
+  {
+    "id": "security-ownership-map",
+    "repo": "openai/skills",
+    "path": "skills/.curated/security-ownership-map",
+    "ref": "main",
+    "group": "review de segurança",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Mapa de DONOS do código sensível via histórico git: bus factor, código órfão, reality-check de CODEOWNERS, export CSV/JSON — nicho único da varredura; exige Python + networkx.",
+    "hint": "Use to map security-relevant code ownership and find orphaned sensitive code from git history."
+  },
+  {
+    "id": "security-requirement-extraction",
+    "repo": "wshobson/agents",
+    "path": "plugins/security-scanning/skills/security-requirement-extraction",
+    "ref": "main",
+    "group": "threat modeling",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Ameaça → requisito de segurança TESTÁVEL (user stories, rastreabilidade, casos de teste) — a ponte do threat model para os cards do orquestrador.",
+    "hint": "Use to derive actionable security requirements/user stories from a threat model."
+  },
+  {
+    "id": "security-reviewer",
+    "repo": "Security-Phoenix-demo/security-skills-claude-code",
+    "path": "skills/Security Assessment/Security-automated-claude-skills/.claude/skills/security-reviewer",
+    "ref": "main",
+    "group": "review de segurança",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "A metodologia de secure code review POR LINGUAGEM mais funda da varredura: 7 guias (py/js-ts/go/rust/java/ruby/dotnet) + OWASP/ASVS L1, 8 categorias de diagnóstico e template por finding — as menções a hooks/subagent externos são decorativas (a pasta é autocontida).",
+    "hint": "Use for a per-language secure code review of new/changed code — 8 diagnostic categories, per-finding output template."
+  },
+  {
+    "id": "security-testing",
+    "repo": "petrkindlmann/qa-skills",
+    "path": "skills/security-testing",
+    "ref": "main",
+    "group": "testes de segurança & privacidade",
+    "depts": [
+      "cyber",
+      "qa"
+    ],
+    "summary": "Verificação de segurança do PRÓPRIO app em CI, 5 camadas (secret scan→deps→SAST→DAST ZAP→testes de auth) + padrões Playwright de XSS/CSRF/SQLi/SSRF/IDOR e JWT alg:none — exige provar que o teste FALHA contra alvo vulnerável.",
+    "hint": "Use to add automated security verification of your own app — CI scanning layers plus negative-path auth/injection tests."
+  },
+  {
+    "id": "security-threat-model",
+    "repo": "openai/skills",
+    "path": "skills/.curated/security-threat-model",
+    "ref": "main",
+    "group": "threat modeling",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Threat modeling ANCORADO NO REPO (OpenAI, Apache-2.0 por skill): 8 passos com evidência do próprio código e gate de validação com o usuário — complementa o trio STRIDE genérico; repo deprecated, o pin por sha segura a cópia.",
+    "hint": "Use to threat-model grounded in the actual code of the current repo — evidence-anchored 8-step methodology."
+  },
+  {
+    "id": "selector-drift-recovery",
+    "repo": "petrkindlmann/qa-skills",
+    "path": "skills/selector-drift-recovery",
+    "ref": "main",
+    "group": "saúde da suíte",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Recuperação EM LOTE de seletores após refactor de UI: aria-snapshots pareados, candidatos rankeados por rubrica 0–5 (aplica só ≥3), validação da suíte inteira, PR revisável com screenshots.",
+    "hint": "Use after a UI refactor breaks many selectors — batch-regenerate with a stability rubric and human-reviewable evidence."
+  },
+  {
+    "id": "semgrep",
+    "repo": "trailofbits/skills",
+    "path": "plugins/static-analysis/skills/semgrep",
+    "ref": "main",
+    "group": "SAST & scanners",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Orquestra scan Semgrep com subagentes paralelos, 2 modos (tudo × alta confiança) e rulesets ToB/0xdea/Decurity — exige o CLI semgrep; o script de merge SARIF do plugin mora FORA da pasta (single-folder degrada o merge; a sarif-parsing cobre a agregação).",
+    "hint": "Use to run a Semgrep security scan of the codebase — parallel workers, curated rulesets, SARIF output."
+  },
+  {
+    "id": "semgrep-rule-creator",
+    "repo": "trailofbits/skills",
+    "path": "plugins/semgrep-rule-creator/skills/semgrep-rule-creator",
+    "ref": "main",
+    "group": "SAST & scanners",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Regra Semgrep custom test-first (análise de AST obrigatória, gates de validação) — transforma bug achado em detecção permanente; consulta docs oficiais do semgrep em runtime (referência, não ruleset executável).",
+    "hint": "Use to write a custom Semgrep rule for a vulnerability or code pattern of your codebase — test-first."
+  },
+  {
+    "id": "semgrep-rule-variant-creator",
+    "repo": "trailofbits/skills",
+    "path": "plugins/semgrep-rule-variant-creator/skills/semgrep-rule-variant-creator",
+    "ref": "main",
+    "group": "SAST & scanners",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Porta uma regra Semgrep existente para outras linguagens com validação test-driven por alvo — o par da rule-creator.",
+    "hint": "Use to port an existing Semgrep rule to more languages with per-language tests."
+  },
+  {
+    "id": "shadcn",
+    "repo": "shadcn-ui/ui",
+    "path": "skills/shadcn",
+    "ref": "main",
+    "group": "design system & componentes",
+    "depts": [
+      "front"
+    ],
+    "summary": "shadcn/ui OFICIAL: operar via CLI (search/docs/add/diff), tokens semânticos (nunca cor crua), forms com Field/InputGroup — compose, don't reinvent.",
+    "hint": "Use when the project uses shadcn/ui — drive the CLI and registry correctly instead of hand-writing components."
+  },
+  {
+    "id": "sharp-edges",
+    "repo": "trailofbits/skills",
+    "path": "plugins/sharp-edges/skills/sharp-edges",
+    "ref": "main",
+    "group": "código & config seguros",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "APIs footgun, configs perigosas e ergonomia criptográfica que induz erro: 6 categorias, 3 perfis de adversário, severidade — read-only e barata, complementa a insecure-defaults.",
+    "hint": "Use when reviewing API/config/crypto ergonomics for misuse-resistance and secure-by-default design."
+  },
+  {
+    "id": "slo-implementation",
+    "repo": "wshobson/agents",
+    "path": "plugins/observability-monitoring/skills/slo-implementation",
+    "ref": "main",
+    "group": "devops · ci/cd · iac",
+    "depts": [
+      "back"
+    ],
+    "summary": "Observabilidade por SLO: PromQL real para SLIs de availability/latência, política de error budget com limiares de decisão e alertas multi-window (fast/slow burn).",
+    "hint": "Use when defining SLOs/alerts or building observability — real PromQL and error-budget policy."
+  },
+  {
+    "id": "social",
+    "repo": "coreyhaines31/marketingskills",
+    "path": "skills/social",
+    "ref": "main",
+    "group": "email & social",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Playbooks por plataforma, hooks, sistema de repurposing, carrosséis e roteiros de vídeo curto (7 arquivos de referência). Os curls de social listening das referências são opcionais em runtime.",
+    "hint": "Use when writing social content — platform playbooks, hooks, repurposing, carousels, short-video scripts."
+  },
+  {
+    "id": "spark-optimization",
+    "repo": "wshobson/agents",
+    "path": "plugins/data-engineering/skills/spark-optimization",
+    "ref": "main",
+    "group": "pipelines & orquestração",
+    "depts": [
+      "data"
+    ],
+    "summary": "Tuning de Spark: partitioning, shuffle, memória e config PySpark real — o único Spark instalável com licença sã (Databricks caiu pela licença própria).",
+    "hint": "Use to tune Spark jobs — partitioning, caching, shuffle, memory."
+  },
+  {
+    "id": "spec-miner",
+    "repo": "Jeffallan/claude-skills",
+    "path": "skills/spec-miner",
+    "ref": "main",
+    "group": "specs & requisitos",
+    "depts": [
+      "research"
+    ],
+    "summary": "Engenharia REVERSA de specs de código legado/sem docs: perspectiva dupla arquitetura+QA, requisitos observados em formato EARS, incertezas explícitas — complementa o /estudar do app.",
+    "hint": "Use to mine the specs OUT of undocumented code — observed EARS requirements with explicit uncertainties."
+  },
+  {
+    "id": "sql-queries",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "data/skills/sql-queries",
+    "ref": "main",
+    "group": "SQL & warehouse",
+    "depts": [
+      "data"
+    ],
+    "summary": "Referência SQL POR DIALETO (Snowflake/BigQuery/Databricks/Postgres/Redshift): 50+ snippets de window functions, cohort/funnel, dedupe e debugging — a base de consulta do dia a dia.",
+    "hint": "Dialect-aware SQL reference — patterns, window functions, cohorts, dedupe, debugging across warehouses."
+  },
+  {
+    "id": "stakeholder-update",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "product-management/skills/stakeholder-update",
+    "ref": "main",
+    "group": "lançamento, PR & collateral",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Updates sob medida por audiência (exec/eng/cross-func/cliente/board): disciplina green-yellow-red, riscos ROAM e \"conclusão primeiro\" — a melhor skill de comms interno do mercado (venceu a internal-comms de templates).",
+    "hint": "Use when writing stakeholder/status updates — audience-tailored, status discipline, lead with the conclusion."
+  },
+  {
+    "id": "statistical-analysis",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "data/skills/statistical-analysis",
+    "ref": "main",
+    "group": "estatística & experimentos",
+    "depts": [
+      "data"
+    ],
+    "summary": "Rigor estatístico aplicado: decisão mean×median, tendência, outliers (Z/IQR), testes de hipótese com EFFECT SIZE acima de p-value, Simpson e survivorship — o chão estatístico do dept.",
+    "hint": "Descriptive stats, trends, outliers and hypothesis tests with effect-size-first rigor."
+  },
+  {
+    "id": "stride-analysis-patterns",
+    "repo": "wshobson/agents",
+    "path": "plugins/security-scanning/skills/stride-analysis-patterns",
+    "ref": "main",
+    "group": "threat modeling",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "STRIDE de verdade: matriz de ameaças + referência de ~5k palavras (template de documento, análise por interação/DFD, matrizes de risco) — o slot de threat modeling que faltava no catálogo.",
+    "hint": "Use when threat-modeling a system or feature — STRIDE methodology, DFD analysis, risk matrices."
+  },
+  {
+    "id": "stripe-best-practices",
+    "repo": "stripe/ai",
+    "path": "skills/stripe-best-practices",
+    "ref": "main",
+    "group": "api & serviços",
+    "depts": [
+      "back"
+    ],
+    "summary": "Stripe oficial: seleção de API (Checkout vs PaymentIntents), billing, webhooks, restricted keys e migração de APIs deprecadas — sincronizada da doc oficial.",
+    "hint": "Use when integrating payments with Stripe — correct API selection, webhooks and key security."
+  },
+  {
+    "id": "supabase-postgres-best-practices",
+    "repo": "supabase/agent-skills",
+    "path": "skills/supabase-postgres-best-practices",
+    "ref": "main",
+    "group": "banco de dados",
+    "depts": [
+      "back",
+      "data"
+    ],
+    "summary": "O canônico de Postgres (a skill de banco mais instalada do mercado): otimização em 8 categorias priorizadas por impacto, cada regra com SQL incorreto vs correto e análise de query plan. Vale fora do Supabase.",
+    "hint": "Use for any Postgres work — impact-ranked optimization rules with wrong/right SQL pairs (works beyond Supabase)."
+  },
+  {
+    "id": "supply-chain-risk-auditor",
+    "repo": "trailofbits/skills",
+    "path": "plugins/supply-chain-risk-auditor/skills/supply-chain-risk-auditor",
+    "ref": "main",
+    "group": "supply chain & segredos",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Auditoria de dependências por risco de takeover: 6 critérios objetivos (mantenedor único, abandono, CVEs, canal de segurança) — exige gh CLI; cria workspace local próprio.",
+    "hint": "Use to assess dependency/supply-chain risk and flag takeover-prone packages."
+  },
+  {
+    "id": "synthesize-research",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "product-management/skills/synthesize-research",
+    "ref": "main",
+    "group": "pesquisa & avaliação",
+    "depts": [
+      "research"
+    ],
+    "summary": "Síntese de user research (entrevistas/surveys/tickets) em 5 estágios: análise temática, 5–8 findings ranqueados por frequência×impacto com nível de confiança, oportunidades e recomendações.",
+    "hint": "Use to synthesize raw user research into ranked, confidence-scored findings and opportunities."
+  },
+  {
+    "id": "systematic-debugging",
+    "repo": "obra/superpowers",
+    "path": "skills/systematic-debugging",
+    "ref": "main",
+    "group": "debugging",
+    "depts": [
+      "front",
+      "back",
+      "qa"
+    ],
+    "summary": "Debugging em 4 fases (reprodução → evidência → hipótese → fix com teste); proíbe guess-and-check e fix de sintoma; inclui root-cause tracing e defense-in-depth.",
+    "hint": "Use when a bug resists quick fixes — forbids guess-and-check; evidence-first root-cause methodology.",
+    "requires": [
+      "test-driven-development",
+      "verification-before-completion"
+    ]
+  },
+  {
+    "id": "tailwind-design-system",
+    "repo": "wshobson/agents",
+    "path": "plugins/frontend-mobile-development/skills/tailwind-design-system",
+    "ref": "main",
+    "group": "design system & componentes",
+    "depts": [
+      "front",
+      "design"
+    ],
+    "summary": "Design system em Tailwind v4 CSS-first: @theme, tokens OKLCH em hierarquia brand→semantic→component, starter code.",
+    "hint": "Use when creating or restructuring a Tailwind v4 token system (CSS-first @theme)."
+  },
+  {
+    "id": "tdd",
+    "repo": "mattpocock/skills",
+    "path": "skills/engineering/tdd",
+    "ref": "main",
+    "group": "metodologia de implementação",
+    "depts": [
+      "back"
+    ],
+    "summary": "TDD enxuto do Matt Pocock: testes pela interface pública (seams), anti-padrões nomeados (testes tautológicos, acoplamento a implementação), fatias verticais com refactor adiado ao review.",
+    "hint": "Use as a lightweight TDD pass on smaller cards — public-interface seams and named anti-patterns, cheaper than the full discipline."
+  },
+  {
+    "id": "temporal-developer",
+    "repo": "temporalio/skill-temporal-developer",
+    "path": "",
+    "ref": "main",
+    "group": "api & serviços",
+    "depts": [
+      "back"
+    ],
+    "summary": "Skill oficial da Temporal (durable execution): workflows, activities, workers, erros de não-determinismo, signals/queries, versioning e saga em 7 SDKs.",
+    "hint": "Use when the project uses Temporal or needs durable workflows/sagas — official guidance across 7 SDKs."
+  },
+  {
+    "id": "terraform-skill",
+    "repo": "antonbabenko/terraform-skill",
+    "path": "skills/terraform-skill",
+    "ref": "master",
+    "group": "devops · ci/cd · iac",
+    "depts": [
+      "back"
+    ],
+    "summary": "Terraform operacional (AWS Hero, mantenedor do terraform-aws-modules): roteamento sintoma→referência (state corruption, blast radius, secrets), contrato com validação e rollback, testing e CI.",
+    "hint": "Use when diagnosing or hardening Terraform operations — symptom-first troubleshooting and safe rollout."
+  },
+  {
+    "id": "terraform-style-guide",
+    "repo": "hashicorp/agent-skills",
+    "path": "terraform/code-generation/skills/terraform-style-guide",
+    "ref": "main",
+    "group": "devops · ci/cd · iac",
+    "depts": [
+      "back"
+    ],
+    "summary": "Convenções OFICIAIS da HashiCorp para HCL: organização de arquivos, naming, formatação, segurança e checklist de review. Licença MPL-2.0.",
+    "hint": "Use when writing Terraform — the official style and review checklist from HashiCorp."
+  },
+  {
+    "id": "test-driven-development",
+    "repo": "obra/superpowers",
+    "path": "skills/test-driven-development",
+    "ref": "main",
+    "group": "metodologia de implementação",
+    "depts": [
+      "front",
+      "back",
+      "qa"
+    ],
+    "summary": "O TDD mais completo do mercado: red-green-refactor mandatório (\"se você não viu o teste falhar, não sabe o que ele testa\"), contra-argumentos às racionalizações comuns e checklist de verificação.",
+    "hint": "Use when implementing any backend feature or fix — enforces the red-green-refactor discipline with failure-first proof."
+  },
+  {
+    "id": "test-reliability",
+    "repo": "petrkindlmann/qa-skills",
+    "path": "skills/test-reliability",
+    "ref": "main",
+    "group": "saúde da suíte",
+    "depts": [
+      "qa"
+    ],
+    "summary": "A melhor skill de flaky da varredura: 7 categorias de flake com decision tree, healing multi-atributo, quarentena e auto-repair com score de confiança.",
+    "hint": "Use when tests are flaky — classify the flake mechanism, heal or quarantine with confidence scoring."
+  },
+  {
+    "id": "testing-dags",
+    "repo": "astronomer/agents",
+    "path": "skills/testing-dags",
+    "ref": "main",
+    "group": "pipelines & orquestração",
+    "depts": [
+      "data"
+    ],
+    "summary": "Ciclo trigger→debug→fix com af runs trigger-wait e 6 cenários — dependência dura do CLI af apontando para um Airflow VIVO.",
+    "hint": "Use for iterative DAG test-debug-fix cycles against a live Airflow."
+  },
+  {
+    "id": "theme-factory",
+    "repo": "anthropics/skills",
+    "path": "skills/theme-factory",
+    "ref": "main",
+    "group": "design system & theming",
+    "depts": [
+      "design"
+    ],
+    "summary": "Theming oficial da Anthropic: 10 temas prontos (paleta + par de fontes) com showcase, aplicáveis a qualquer artefato, e workflow de gerar tema novo no mesmo formato.",
+    "hint": "Use when theming an artifact (slides, docs, landing) — pick from 10 ready themes or spin a new one in the same format."
+  },
+  {
+    "id": "threat-mitigation-mapping",
+    "repo": "wshobson/agents",
+    "path": "plugins/security-scanning/skills/threat-mitigation-mapping",
+    "ref": "main",
+    "group": "threat modeling",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Fecha o ciclo ameaça→controle: biblioteca de 13+ controles, análise de cobertura/lacunas e defense-in-depth com scoring — o trio de threat modeling instala bem junto.",
+    "hint": "Use to map identified threats to security controls and build a prioritized remediation plan."
+  },
+  {
+    "id": "to-tickets",
+    "repo": "mattpocock/skills",
+    "path": "skills/engineering/to-tickets",
+    "ref": "main",
+    "group": "planejamento",
+    "depts": [
+      "research"
+    ],
+    "summary": "Decomposição em tickets \"tracer-bullet\": fatias VERTICAIS (schema→API→UI→testes) dimensionadas para caber numa única janela de contexto fresca, com bloqueios declarados. Modo local grava um .md por ticket.",
+    "hint": "Use to decompose planned work into vertical, context-window-sized slices with declared blocking edges (local .md mode)."
+  },
+  {
+    "id": "typescript-advanced-types",
+    "repo": "wshobson/agents",
+    "path": "plugins/javascript-typescript/skills/typescript-advanced-types",
+    "ref": "main",
+    "group": "typescript & python",
+    "depts": [
+      "back"
+    ],
+    "summary": "Sistema de tipos avançado com código executável: generics com constraints, conditional types com infer, mapped types, template literals, discriminated unions.",
+    "hint": "Use when modeling complex TypeScript types — generics, conditional/mapped types, discriminated unions."
+  },
+  {
+    "id": "typography-audit",
+    "repo": "mblode/agent-skills",
+    "path": "skills/typography-audit",
+    "ref": "main",
+    "group": "tipografia",
+    "depts": [
+      "design"
+    ],
+    "summary": "Auditoria tipográfica contra 78 regras em 10 categorias (medida, pontuação, ritmo, hierarquia, OpenType, pairing) com achados file:line e fix por impacto.",
+    "hint": "Use to audit and fix typography as a design decision — 78 rules with per-finding fixes."
+  },
+  {
+    "id": "using-dbt-for-analytics-engineering",
+    "repo": "dbt-labs/dbt-agent-skills",
+    "path": "skills/dbt/skills/using-dbt-for-analytics-engineering",
+    "ref": "main",
+    "group": "analytics engineering (dbt)",
+    "depts": [
+      "data"
+    ],
+    "summary": "O carro-chefe dbt OFICIAL: DAG DRY com ref()/source(), \"you must look at the data\" (dbt show), gestão de custo (--defer, clone, --limit) e tabela de red flags — CLI local basta, MCP é preferência.",
+    "hint": "Use to build and modify dbt models with engineering discipline — validate with dbt show."
+  },
+  {
+    "id": "using-superpowers",
+    "repo": "obra/superpowers",
+    "path": "skills/using-superpowers",
+    "ref": "main",
+    "group": "meta · uso de skills",
+    "depts": [
+      "research"
+    ],
+    "summary": "Router meta que obriga checar skills antes de agir. Fica sob escolha explícita: o Synkora já possui seu próprio Skill Gate e suas regras de missão têm precedência.",
+    "hint": "Use only when explicitly adopting the Superpowers meta-workflow; Synkora's own Skill Gate and mission rules remain authoritative."
+  },
+  {
+    "id": "ux-writing",
+    "repo": "content-designer/ux-writing-skill",
+    "path": "",
+    "ref": "main",
+    "group": "microcopy & edição",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Microcopy sistemático de UI: 4 padrões de qualidade, patterns de erro/tom/acessibilidade e templates prontos — segunda lente sobre copy de interface ao lado da better-writing. (Pasta upstream ux-writing-skill ≠ name.)",
+    "hint": "Use when writing interface copy with a systematic method — quality standards, error/tone/a11y patterns, templates."
+  },
+  {
+    "id": "validate-data",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "data/skills/validate-data",
+    "ref": "main",
+    "group": "qualidade & validação",
+    "depts": [
+      "data"
+    ],
+    "summary": "O GATE de análise: checklist de 18 itens + catálogo de 7 armadilhas com detecção (join explosion, denominator shifting, average-of-averages, timezone) — o par de dados do verification-before-completion.",
+    "hint": "Use to QA an analysis before sharing — methodology, calculations, bias and sanity checks."
+  },
+  {
+    "id": "variant-analysis",
+    "repo": "trailofbits/skills",
+    "path": "plugins/variant-analysis/skills/variant-analysis",
+    "ref": "main",
+    "group": "review de segurança",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Achou 1 bug → acha os irmãos: generalização iterativa do padrão (rg→semgrep→codeql) com teto de falso positivo e templates de query por linguagem.",
+    "hint": "Use after finding one vulnerability to hunt its variants across the codebase via patterns/queries."
+  },
+  {
+    "id": "vector-index-tuning",
+    "repo": "wshobson/agents",
+    "path": "plugins/llm-application-dev/skills/vector-index-tuning",
+    "ref": "main",
+    "group": "ML & LLM data",
+    "depts": [
+      "data"
+    ],
+    "summary": "Tuning de índice vetorial por volume de dados: HNSW, quantização e trade-off recall×latência — corpo curto com a carne em references.",
+    "hint": "Use to tune vector indexes — HNSW params, quantization, recall-latency tradeoffs."
+  },
+  {
+    "id": "vercel-composition-patterns",
+    "repo": "vercel-labs/agent-skills",
+    "path": "skills/composition-patterns",
+    "ref": "main",
+    "group": "react & performance",
+    "depts": [
+      "front"
+    ],
+    "summary": "Arquitetura de componentes React (oficial Vercel): compound components contra proliferação de boolean props, APIs do React 19.",
+    "hint": "Use when designing component APIs — composition over boolean-prop proliferation, React 19 patterns."
+  },
+  {
+    "id": "vercel-react-best-practices",
+    "repo": "vercel-labs/agent-skills",
+    "path": "skills/react-best-practices",
+    "ref": "main",
+    "group": "react & performance",
+    "depts": [
+      "front"
+    ],
+    "summary": "Performance React/Next oficial da Vercel: 70 regras priorizadas por impacto (waterfalls → bundle → server → re-render), cada uma com exemplo certo/errado.",
+    "hint": "Use when writing or optimizing React/Next code — impact-ranked performance rules."
+  },
+  {
+    "id": "vercel-react-native-skills",
+    "repo": "vercel-labs/agent-skills",
+    "path": "skills/react-native-skills",
+    "ref": "main",
+    "group": "mobile",
+    "depts": [
+      "front"
+    ],
+    "summary": "React Native (oficial Vercel): 32 regras de performance — FlashList, animação GPU-safe, navegação nativa, safe area.",
+    "hint": "Use when writing React Native code — performance and correctness rules with wrong/right pairs."
+  },
+  {
+    "id": "vercel-react-view-transitions",
+    "repo": "vercel-labs/agent-skills",
+    "path": "skills/react-view-transitions",
+    "ref": "main",
+    "group": "animação",
+    "depts": [
+      "front"
+    ],
+    "summary": "View Transitions API no React (oficial Vercel): quando animar, shared elements, addTransitionType e receitas CSS prontas.",
+    "hint": "Use when implementing page/element transitions in React with the View Transitions API."
+  },
+  {
+    "id": "verification-before-completion",
+    "repo": "obra/superpowers",
+    "path": "skills/verification-before-completion",
+    "ref": "main",
+    "group": "metodologia de implementação",
+    "depts": [
+      "front",
+      "back",
+      "qa"
+    ],
+    "summary": "Antes de declarar \"pronto\": identificar o comando de verificação, rodá-lo FRESCO, ler saída e exit code — proíbe \"should work\"/\"probably\". Ataca a falha nº 1 de agente executor.",
+    "hint": "Use before reporting any task done — forces running the real verification command and reading its output first."
+  },
+  {
+    "id": "visual-testing",
+    "repo": "petrkindlmann/qa-skills",
+    "path": "skills/visual-testing",
+    "ref": "main",
+    "group": "autoria de testes",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Regressão visual: toHaveScreenshot vs serviços (Chromatic/Percy/Argos), máscara de conteúdo dinâmico, baselines só em Docker de CI, tuning de thresholds.",
+    "hint": "Use when adding or stabilizing visual-regression tests — baseline discipline and dynamic-content masking."
+  },
+  {
+    "id": "vitest",
+    "repo": "antfu/skills",
+    "path": "skills/vitest",
+    "ref": "main",
+    "group": "autoria de testes",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Referência Vitest 5.x mantida pelo Anthony Fu (lead do Vitest — semi-oficial): mocking, snapshots, coverage, fixtures, benchmarks.",
+    "hint": "Use when authoring or fixing unit tests with Vitest — current API reference from the project lead."
+  },
+  {
+    "id": "vulnerability-triage-brocards",
+    "repo": "trailofbits/skills",
+    "path": "plugins/vulnerability-triage-brocards/skills/vulnerability-triage-brocards",
+    "ref": "main",
+    "group": "review de segurança",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Triage de reports/CVEs/bounty com 7 \"brocards\" falsificáveis (coerência com o threat model, alcançabilidade, proporcionalidade) → aceitar/descartar/pedir mais info.",
+    "hint": "Use to triage incoming vulnerability reports/CVEs/bounty submissions before investing investigation time."
+  },
+  {
+    "id": "wcag-audit-patterns",
+    "repo": "wshobson/agents",
+    "path": "plugins/accessibility-compliance/skills/wcag-audit-patterns",
+    "ref": "main",
+    "group": "acessibilidade (gate)",
+    "depts": [
+      "qa"
+    ],
+    "summary": "Auditoria WCAG 2.2 por POUR e níveis A/AA/AAA, severidade em 3 camadas, honestidade sobre automação (pega 30-50%) e remediação orientada.",
+    "hint": "Use to run a structured WCAG 2.2 audit with severity tiers and a remediation plan."
+  },
+  {
+    "id": "web-search",
+    "repo": "brave/brave-search-skills",
+    "path": "skills/web-search",
+    "ref": "main",
+    "group": "pesquisa & avaliação",
+    "depts": [
+      "research"
+    ],
+    "summary": "Brave Search por REST puro (a integração de vendor mais limpa: só curl + env token): operadores, freshness, Goggles de re-ranking. Tier grátis disponível.",
+    "hint": "Use for API web search via Brave (curl + token, free tier) — operators, freshness filters, custom re-ranking."
+  },
+  {
+    "id": "webapp-testing",
+    "repo": "anthropics/skills",
+    "path": "skills/webapp-testing",
+    "ref": "main",
+    "group": "teste ao vivo (browser)",
+    "depts": [
+      "qa"
+    ],
+    "summary": "O loop de QA ao vivo oficial da Anthropic: Python+Playwright com gestão de ciclo de vida de servidores (with_server.py), descoberta de seletores, captura de console — roda local (exige Python + playwright + Chromium).",
+    "hint": "Use to live-test a local web app end-to-end (start servers, drive the browser, capture console) — requires Python with playwright installed."
+  },
+  {
+    "id": "workers-best-practices",
+    "repo": "cloudflare/skills",
+    "path": "skills/workers-best-practices",
+    "ref": "main",
+    "group": "api & serviços",
+    "depts": [
+      "back"
+    ],
+    "summary": "Cloudflare Workers oficial: 40+ regras e 15+ anti-padrões (streaming, floating promises, secrets, bindings, observability) + wrangler.jsonc.",
+    "hint": "Use when building on Cloudflare Workers/edge — rules and anti-patterns from the vendor."
+  },
+  {
+    "id": "write-content",
+    "repo": "inhouseseo/superseo-skills",
+    "path": "skills/write-content",
+    "ref": "main",
+    "group": "conteúdo & SEO",
+    "depts": [
+      "copy"
+    ],
+    "summary": "Escrita de artigo SEO completa com ruleset anti-slop e auto-pesquisa de SERP, SEM APIs — metodologia Koray Tuğberk/Kyle Roof/Lily Ray (venceu o seo-content-writer solo do Yaroslavle).",
+    "hint": "Use to write full SEO articles — SERP self-research, semantic structure, anti-slop ruleset, no external APIs."
+  },
+  {
+    "id": "write-spec",
+    "repo": "anthropics/knowledge-work-plugins",
+    "path": "product-management/skills/write-spec",
+    "ref": "main",
+    "group": "specs & requisitos",
+    "depts": [
+      "research"
+    ],
+    "summary": "Ideia vaga → PRD estruturado (oficial Anthropic): problema, goals/non-goals, user stories, requisitos P0/P1/P2, métricas, fases — com anti-scope-creep explícito. Refs a CONNECTORS.md são informativas (degrada para WebSearch).",
+    "hint": "Use to turn a vague idea into a structured PRD with prioritized requirements and success metrics."
+  },
+  {
+    "id": "writing-plans",
+    "repo": "obra/superpowers",
+    "path": "skills/writing-plans",
+    "ref": "main",
+    "group": "planejamento",
+    "depts": [
+      "research"
+    ],
+    "summary": "Escrever PLANOS como documento: tarefas bite-sized independentes e testáveis com código real (nunca placeholder), paths exatos e contratos de interface. Reavaliada: como deliverable de card não conflita com o pipeline do app.",
+    "hint": "Use when the deliverable is a written implementation plan — bite-sized verifiable tasks with real code and exact paths."
+  },
+  {
+    "id": "writing-skills",
+    "repo": "obra/superpowers",
+    "path": "skills/writing-skills",
+    "ref": "main",
+    "group": "documentação",
+    "depts": [
+      "research"
+    ],
+    "summary": "TDD aplicado a ESCREVER SKILLS: ver o agente falhar sem o doc, escrever o mínimo que corrige, pressure-tests via subagentes (RED-GREEN-REFACTOR) — a meta-metodologia mais rigorosa (escolhida sobre writing-great-skills e skill-creator).",
+    "hint": "Use when authoring or improving agent skills — test-driven documentation with subagent pressure-tests."
+  },
+  {
+    "id": "wycheproof",
+    "repo": "trailofbits/skills",
+    "path": "plugins/testing-handbook-skills/skills/wycheproof",
+    "ref": "main",
+    "group": "criptografia",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Valida implementações criptográficas contra os vetores Wycheproof (AES-GCM, ECDSA, RSA…) — baixa VETORES DE TESTE (JSON de dados do repo C2SP, não instruções nem executável).",
+    "hint": "Use to test crypto implementations against known-attack test vectors (Wycheproof suite)."
+  },
+  {
+    "id": "zeroize-audit",
+    "repo": "trailofbits/skills",
+    "path": "plugins/zeroize-audit/skills/zeroize-audit",
+    "ref": "main",
+    "group": "criptografia",
+    "depts": [
+      "cyber"
+    ],
+    "summary": "Zeroização de segredos ausente OU eliminada pelo compilador (diff de IR/ASM por nível de otimização) em C/C++/Rust — deps pesadas (clang, cargo nightly, Python); o MCP serena citado é opcional de verdade.",
+    "hint": "Use to audit C/C++/Rust secret handling for missing or compiler-eliminated zeroization."
+  }
+]

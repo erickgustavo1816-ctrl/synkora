@@ -1296,6 +1296,10 @@ const BROWSER_TOOLS = Object.freeze([
   'browser_wait'
 ])
 const LSP_TOOLS = Object.freeze(['lsp_definition', 'lsp_diagnostics', 'lsp_hover', 'lsp_references'])
+// SKILLS 3.0 (2026-09-08 — fatia 5.D): as três `skill_*` seguem a MESMA cerca
+// do browser (dev + ajudante + planejador sim, reviewer não), e por isso elas
+// aparecem em todas as réguas de catálogo deste arquivo.
+const SKILL_TOOLS = Object.freeze(['skill_discard', 'skill_pull', 'skill_search'])
 const PLANNER_TOOLS = Object.freeze(['delete_plan', 'get_plan', 'list_plans', 'propose_plan', 'update_plan'])
 const DELEGATOR_TOOLS = Object.freeze([
   'delegate',
@@ -1429,14 +1433,17 @@ test('CATÁLOGO: o browser chega a quem VERIFICA A PRÓPRIA TELA — dev e ajuda
 
   assert.deepEqual(
     await toolNames(url, 'token-dev', 'cat-dev'),
-    sorted(DELEGATOR_TOOLS, INTEGRATION_TOOLS, LSP_TOOLS, BROWSER_TOOLS)
+    sorted(DELEGATOR_TOOLS, INTEGRATION_TOOLS, LSP_TOOLS, BROWSER_TOOLS, SKILL_TOOLS)
   )
   // O QA DELEGADO é o caso real do design: o dev abre um ajudante só para
   // varrer a tela enquanto ele segue no código.
-  assert.deepEqual(await toolNames(url, 'token-ajudante', 'cat-ajudante'), sorted(LSP_TOOLS, BROWSER_TOOLS))
+  assert.deepEqual(
+    await toolNames(url, 'token-ajudante', 'cat-ajudante'),
+    sorted(LSP_TOOLS, BROWSER_TOOLS, SKILL_TOOLS)
+  )
   // O recibo do catálogo servido (a caixa-preta do boot) conta a mesma história.
   const receipt = served.find((entry) => entry.paneId === 'gui-helper-11111111-2')
-  assert.deepEqual([...receipt.tools].sort(), sorted(LSP_TOOLS, BROWSER_TOOLS))
+  assert.deepEqual([...receipt.tools].sort(), sorted(LSP_TOOLS, BROWSER_TOOLS, SKILL_TOOLS))
 })
 
 test('CATÁLOGO: reviewer, planejador e release NÃO recebem o browser — a cerca é mecânica', async (t) => {
@@ -1471,7 +1478,7 @@ test('CATÁLOGO: reviewer, planejador e release NÃO recebem o browser — a cer
   // propriedade DESTE teste segue de pé: browser continua fora; quem navega na
   // pesquisa dele é o AJUDANTE.
   const planner = await toolNames(url, 'token-planner', 'cat-planner')
-  assert.deepEqual(planner, sorted(PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS))
+  assert.deepEqual(planner, sorted(PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, SKILL_TOOLS))
   const release = await toolNames(url, 'token-release', 'cat-release')
   assert.deepEqual(release, sorted(RELEASE_TOOLS, LSP_TOOLS))
 
@@ -1632,6 +1639,20 @@ test('PRÉ-SANÇÃO (a lição da R14): as onze estão na lista do AJUDANTE e na
     assert.ok(
       GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS.includes(sanctioned),
       `PRÉ-SANÇÃO DO CHAT faltando para ${name} — sem ela cada chamada vira card de permissão para o dono`
+    )
+  }
+  // SKILLS 3.0 (2026-09-08): as três `skill_*` entram nas MESMAS duas listas e
+  // pela MESMA razão — o ajudante que puxa uma skill sem pré-sanção morre no
+  // can_use_tool, e o chat do dono ganharia um card por chamada.
+  for (const name of SKILL_TOOLS) {
+    const sanctioned = `mcp__synkora__${name}`
+    assert.ok(
+      GUI_HELPER_LSP_CLAUDE_ALLOWED_TOOLS.includes(sanctioned),
+      `PRÉ-SANÇÃO DO AJUDANTE faltando para ${name}`
+    )
+    assert.ok(
+      GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS.includes(sanctioned),
+      `PRÉ-SANÇÃO DO CHAT faltando para ${name}`
     )
   }
   // A pré-sanção é NARROW: nada nativo entra de carona pelo kit do browser.

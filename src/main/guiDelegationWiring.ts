@@ -42,6 +42,9 @@ import { getCatalog } from './catalog'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
 import { getSeatUsage, type SeatUsageInfo } from './seatUsage'
 import { guiPermissionProfile, isGuiPermissionMode } from './guiSessions'
+// SKILLS 3.0 (2026-09-08, ADR-0009): o RASTRO da missão viaja no prompt de todo
+// ajudante. Módulo puro (fs + isSkillId): nada de rede e nada de Electron.
+import { missionHarnessBriefing } from './skillsHarness'
 import {
   GUI_HELPER_STORE_VERSION,
   GuiHelperEngine,
@@ -163,16 +166,30 @@ export function GUI_HELPER_PORT_PERSONA_LINE(port: number): string {
 }
 
 /**
- * A persona que ESTE ajudante recebe. Sem kit e sem porta ela é a de sempre,
- * palavra por palavra; cada linha extra só entra quando a coisa que ela promete
- * EXISTE. Uma função porque a resposta muda por PROCESSO, não por build: o mesmo
- * app arma o kit num ajudante e não arma no seguinte se o servidor caiu no meio,
- * e a porta só existe quando o registro do D4 está fiado.
+ * A persona que ESTE ajudante recebe. Sem kit, sem porta e sem harness ela é a
+ * de sempre, palavra por palavra; cada bloco extra só entra quando a coisa que
+ * ele promete EXISTE. Uma função porque a resposta muda por PROCESSO, não por
+ * build: o mesmo app arma o kit num ajudante e não arma no seguinte se o servidor
+ * caiu no meio, a porta só existe quando o registro do D4 está fiado, e o harness
+ * da missão muda a cada `skill_pull` do dev.
+ *
+ * O HARNESS VEM POR ÚLTIMO (Skills 3.0 — ADR-0009: "o `mission-playbook` vai a
+ * cada ajudante"): ele fica entre as ordens permanentes e o BRIEFING do dev, que
+ * viaja depois, no `prompt`. Sem esta linha o ajudante puxaria de novo o que já
+ * está no disco dele — ou, pior, trabalharia sem o playbook que o dev escreveu
+ * para esta missão.
  */
-export function guiHelperPersonaFor(lspArmed: boolean, port?: number): string {
+export function guiHelperPersonaFor(
+  lspArmed: boolean,
+  port?: number,
+  harnessBriefing?: string
+): string {
   const lines = [GUI_HELPER_PERSONA]
   if (lspArmed) lines.push(GUI_HELPER_LSP_PERSONA_LINE)
   if (port !== undefined) lines.push(GUI_HELPER_PORT_PERSONA_LINE(port))
+  // Bloco (várias linhas), não linha: entra separado por parágrafo, como o resto
+  // dos blocos de contrato — colado no rodapé ele leria como parte da porta.
+  if (harnessBriefing) lines.push(`\n${harnessBriefing}`)
   return lines.join('\n')
 }
 
@@ -722,7 +739,7 @@ export function createClaudeHelperAdapter(deps: GuiHelperAdapterDeps) {
     // encaixar ferramenta nem endereço.
     const port = reserveGuiHelperPort(deps, request)
     const kit = armGuiHelperKit(deps, request)
-    const persona = guiHelperPersonaFor(kit !== undefined, port)
+    const persona = guiHelperPersonaFor(kit !== undefined, port, missionHarnessBriefing(request.cwd))
     const file = deps.systemPromptFile(`helper-${request.helperId}.system.md`, persona)
     let session: MaestroSession
     try {
@@ -760,7 +777,7 @@ export function createCodexHelperAdapter(deps: GuiHelperAdapterDeps) {
     try {
       session = new CodexSession(
         codexHelperSessionOptions(request, kit, port),
-        guiHelperPersonaFor(kit !== undefined, port),
+        guiHelperPersonaFor(kit !== undefined, port, missionHarnessBriefing(request.cwd)),
         (evt) => {
           const translated = guiHelperEventFor(evt)
           if (translated) emit(translated)
@@ -956,6 +973,10 @@ export interface GuiHelperOrigins {
   model: GuiDelegationOrigin
   effort: GuiDelegationOrigin
   fast: GuiFastOrigin
+  /** 2026-09-08 — a conta também tem pino (a aba "ajudantes ˄"): explícita na
+   *  tool > carimbada no painel > `herdado` = o motor decide (mesmo CLI, a do
+   *  delegador; cruzado, a primeira logada). */
+  seat: GuiDelegationOrigin
 }
 
 export interface GuiHelperRequestPlan {
@@ -1005,6 +1026,7 @@ export function planGuiHelperRequests(
   helpers: readonly McpHelperRequestInput[],
   defaults: GuiDelegationDefaults | undefined
 ): GuiHelperRequestPlan[] {
+  const pinnedSeat = asked(defaults?.seat)
   const pinnedModel = asked(defaults?.model)
   const pinnedEffort = asked(defaults?.effort)
   const pinnedFast = defaults?.fast === true
@@ -1017,7 +1039,11 @@ export function planGuiHelperRequests(
     // ausência devolve a decisão ao pino do dono.
     const askedFast = typeof helper.fast === 'boolean' ? helper.fast : undefined
     const chosenFast = askedFast ?? pinnedFast
-    const seatId = asked(helper.seat)
+    // A CONTA segue a mesma cadeia. Conta carimbada de OUTRO CLI que o do
+    // modelo escolhido não é recusa: o resolvedor do motor a ignora e cai na
+    // primeira logada daquele CLI, e o recibo diz qual foi.
+    const askedSeat = asked(helper.seat)
+    const seatId = askedSeat ?? pinnedSeat
     const name = asked(helper.name)
     return {
       request: {
@@ -1031,7 +1057,8 @@ export function planGuiHelperRequests(
       origins: {
         model: model ? 'explicito' : pinnedModel ? 'painel' : 'herdado',
         effort: effort ? 'explicito' : pinnedEffort ? 'painel' : 'herdado',
-        fast: askedFast !== undefined ? 'explicito' : chosenFast ? 'painel' : 'desligado'
+        fast: askedFast !== undefined ? 'explicito' : chosenFast ? 'painel' : 'desligado',
+        seat: askedSeat ? 'explicito' : pinnedSeat ? 'painel' : 'herdado'
       }
     }
   })
@@ -1170,10 +1197,14 @@ function receiptLine(receipt: GuiHelperReceipt, origins?: GuiHelperOrigins): str
   // Modelo vazio = o delegador roda no padrão da conta e o card não pode
   // inventar um nome; a linha simplesmente não mostra o campo. Effort que o
   // motor derrubou também não aparece — e o motivo vem logo abaixo.
+  // A conta só ganha carimbo quando alguém a ESCOLHEU (tool ou painel): o
+  // "herdado" dela é a regra silenciosa do motor, e escrevê-lo em todo recibo
+  // seria ruído — e mudaria a linha que os chamadores antigos já leem.
+  const seatOrigin = origins?.seat && origins.seat !== 'herdado' ? origins.seat : undefined
   const parts = [
     stamped(receipt.model, origins?.model),
     stamped(receipt.effort, origins?.effort),
-    receipt.seatName ?? receipt.seatId,
+    stamped(receipt.seatName ?? receipt.seatId, seatOrigin),
     receipt.cli
   ].filter((part): part is string => Boolean(part))
   const head = `✓ ${receipt.name ? `${receipt.name} — ` : ''}${receipt.helperId}`

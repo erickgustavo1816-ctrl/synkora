@@ -1,5 +1,34 @@
 # Synkora — Biblioteca de Skills (arquitetura v4, 2026-08-10)
 
+## ⚡⚡ SKILLS 3.0 — O HARNESS É DO MODELO (obra iniciada em 2026-09-08)
+
+Ordem do dono: "não quero mais algo fixo — a IA decide a melhor opção,
+vai atrás, busca, pega, usa e descarta". Doutrina nova em `docs/adr/0008–0011`
+(+ glossário no `CONTEXT.md`); design vinculante em
+`.synkora/reports/DESIGN_HARNESS_DO_MODELO_2026-09-08.md`. O que muda em
+relação ao Skills 2.0 abaixo:
+
+- **A LEI caiu** (ADR-0008): UI ⇒ impeccable deixa de ser obrigatório;
+  `impeccable` é slot comum da prateleira; a persona diz que interface pede
+  UMA direção de design escolhida pela obra (pular é decisão dita).
+- **Kit vira PRATELEIRA** (ADR-0009): ponto de partida, não cerca. O agente
+  procura na ordem prateleira → biblioteca → catálogo da casa → web, e
+  ESCREVE o `mission-playbook` da missão (skill autoral que vai aos
+  ajudantes). Harness declarado no mini-plano.
+- **Catálogo da casa como DADO**: as ~275 skills curadas desta página (era
+  F6, `git show d43a3b4^:src/main/skillsCatalog.ts`) viram
+  `src/main/skillsCatalogData.json` + `skillsCatalog.ts` (busca offline).
+- **Skill EFÊMERA com rastro** (ADR-0010): `skill_pull` traz para o worktree
+  DESTA conversa (pinada por sha), `skill_discard` remove; morre com o
+  worktree; a biblioteca só cresce por gesto do dono ("guardar na
+  biblioteca", R2); rastro em nota no fio + diário + `.synkora/harness.json`.
+  Interruptor `skillsAgentPull` e vetos permanentes (as seções "Ficou de FORA"
+  desta página continuam sendo a fonte dos vetos).
+- **Planejamento com método** (ADR-0011): simples × abstrato, declarado.
+
+O restante desta página (Skills 2.0 e a curadoria F6) fica como memória de
+curadoria e fonte dos vetos/procedências.
+
 ## ⚡ SKILLS 2.0 — O ESTADO VIVO (build de 2026-08-29)
 
 O sistema F6 descrito abaixo foi DEMOLIDO na LIMPA; esta página fica como

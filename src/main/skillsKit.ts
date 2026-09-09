@@ -1,18 +1,27 @@
 /**
- * KIT DE SKILLS (Skills 2.0 — .synkora/reports/DESIGN_SKILLS_2_0_BUILD_2026-08-29.md).
+ * KIT DE SKILLS (Skills 2.0 — .synkora/reports/DESIGN_SKILLS_2_0_BUILD_2026-08-29.md;
+ * Skills 3.0 — ADR-0008/0009, .synkora/reports/DESIGN_HARNESS_DO_MODELO_2026-09-08.md).
  *
- * O DADO por trás do cardápio: quais skills cada tipo de chat leva no spawn.
+ * O DADO por trás da PRATELEIRA: quais skills cada tipo de chat leva no spawn.
  * A biblioteca (userData/skills/lib) é a MÁQUINA — o kit é a CURADORIA, e mora
  * em `userData/skills-kit.json` para que a tela de gestão (ADR-0006) o edite
  * sem tocar num único byte do disco de skills.
  *
+ * A LEI CAIU (ADR-0008, 2026-09-08). Até aqui `impeccable` era `law: true`:
+ * recusava desligar, recusava sair e voltava sozinho na leitura. O dono mediu o
+ * custo — "impeccable não é a melhor opção pra landing page" — e revogou: não há
+ * mais lei de skill, `impeccable` é slot comum como qualquer outro, e o que fica
+ * é o PADRÃO na persona (interface pede UMA direção de design escolhida pela
+ * obra). Consequência mecânica aqui: `law` não existe mais no tipo, ninguém é
+ * promovido na leitura, e um `skills-kit.json` gravado pela era da lei carrega
+ * igual — o campo `law` do arquivo é simplesmente IGNORADO (a versão segue 1).
+ *
  * REGRAS QUE VALEM COMO CONTRATO:
  * - O kit NUNCA mexe na lib: adicionar um slot não instala nada, remover um
  *   slot não apaga pasta nenhuma (quem apaga é a poda, por gesto explícito).
- * - A LEI (ADR-0005) é DOUTRINA, não clique: o slot `law: true` recusa
- *   desligar e recusa sair, e a recusa NOMEIA a receita (commit com o dono).
- *   Ela também é RE-AFIRMADA na leitura — um JSON editado à mão que perdeu a
- *   lei recebe a lei de volta, porque a lei vive no código, não no arquivo.
+ * - A PRATELEIRA É PONTO DE PARTIDA, NUNCA CERCA (ADR-0009): o que o agente
+ *   puxa por conta dele vive no worktree (skillsSync/skillsAgentSync, com
+ *   `origin: 'agent'`) e não passa por este arquivo.
  * - Toggle vale para o PRÓXIMO spawn (o sync roda no `gui:create`); nada aqui
  *   alcança conversa já aberta.
  * - `release` não passa por aqui: chat sem kit é kit VAZIO por contrato do
@@ -36,10 +45,6 @@ export interface SkillsKitSlot {
   /** a ocasião, em PT-BR, mostrada na tela e no seed ("vai mexer em UI") */
   occasion: string
   enabled: boolean
-  /** LEI da persona (ADR-0005): a tela mostra FIXO, sem toggle;
-   *  setSlotEnabled/removeSlot recusam nomeando a receita (mudar lei é
-   *  doutrina com o dono — commit, nunca clique). v1: só o impeccable. */
-  law?: boolean
 }
 
 export interface SkillsKitState {
@@ -71,21 +76,6 @@ export function isSkillId(value: unknown): value is string {
   return typeof value === 'string' && SKILL_ID_PATTERN.test(value) && !value.includes('--')
 }
 
-/** A LEI v1 (ADR-0005): UI ⇒ impeccable, fixa na persona. */
-export const SKILLS_LAW_ID = 'impeccable'
-
-/** Receita da recusa: quem bate na lei sai daqui sabendo o caminho real. */
-export function skillsLawRefusal(id: string): string {
-  return `"${id}" é a LEI da persona (ADR-0005): mudar a lei é doutrina com o dono — commit no seed de src/main/skillsKit.ts, nunca um clique. Para trocar a direção estética, abra a discussão com o dono e mude o seed.`
-}
-
-const LAW_SLOT: SkillsKitSlot = {
-  id: SKILLS_LAW_ID,
-  occasion: 'mexer em UI (a lei da persona)',
-  enabled: true,
-  law: true
-}
-
 /**
  * O KIT v3 — a lista ORIGINAL fechada com o dono no grill de 2026-08-21,
  * recuperada da memória de longo prazo e RESTAURADA por ordem dele em
@@ -95,13 +85,28 @@ const LAW_SLOT: SkillsKitSlot = {
  * Uma skill por OCASIÃO (ADR-0004): kit curto por lei, e a ocasião é o que a
  * tela mostra ao lado do id. 17 slots, 16 pastas — `writing-plans` serve duas
  * ocasiões (planejar a frota no dev, escrever o plano no planejamento).
+ *
+ * `impeccable` segue PRIMEIRO da ala execução — não por lei (ela caiu na
+ * ADR-0008), mas porque a ocasião dela é a mais frequente da casa; a ocasião
+ * agora DIZ que é uma direção entre várias.
  */
+/** A ocasião do impeccable HOJE (ADR-0008: uma das direções de design). */
+export const IMPECCABLE_OCCASION = 'direção/polish de UI — uma das direções de design'
+/** A ocasião que o seed de 2026-08-29 gravou no userData do dono, na era da
+ *  lei. É EXATAMENTE este texto (e só ele, e só no impeccable) que a leitura
+ *  migra — uma ocasião escrita pelo dono nunca é tocada. */
+export const LAW_ERA_IMPECCABLE_OCCASION = 'mexer em UI (a lei da persona)'
+
 export function seedSkillsKit(): SkillsKitState {
   return {
     version: 1,
     dev: {
       execucao: [
-        { ...LAW_SLOT },
+        {
+          id: 'impeccable',
+          occasion: IMPECCABLE_OCCASION,
+          enabled: true
+        },
         {
           id: 'synkora-design-system-standard',
           occasion: 'criar/evoluir design system',
@@ -157,7 +162,8 @@ function looksLikeKitState(value: unknown): value is SkillsKitState {
 
 interface SanitizeReport {
   dropped: string[]
-  lawRestored: boolean
+  /** ids cuja ocasião da era da lei virou a de hoje (ADR-0008) */
+  migrated: string[]
 }
 
 function sanitizeSlot(value: unknown): SkillsKitSlot | null {
@@ -168,14 +174,14 @@ function sanitizeSlot(value: unknown): SkillsKitSlot | null {
     typeof candidate.occasion === 'string' && candidate.occasion.trim()
       ? candidate.occasion.trim().slice(0, 120)
       : 'sem ocasião registrada'
-  const slot: SkillsKitSlot = {
+  // O slot é montado CAMPO A CAMPO: um `law: true` sobrevivente da era da lei
+  // (ou escrito à mão no userData) não entra por porta nenhuma — a lei caiu na
+  // ADR-0008 e ninguém é promovido a nada na leitura.
+  return {
     id: candidate.id,
     occasion,
     enabled: candidate.enabled !== false
   }
-  // A lei nunca nasce do arquivo: quem carimba `law` é o seed (abaixo, em
-  // `restoreLaw`). Um JSON editado à mão não promove skill nenhuma a lei.
-  return slot
 }
 
 function sanitizeList(list: unknown[], report: SanitizeReport): SkillsKitSlot[] {
@@ -198,37 +204,31 @@ function sanitizeList(list: unknown[], report: SanitizeReport): SkillsKitSlot[] 
   return out
 }
 
-/** A LEI VOLTA SEMPRE. Arquivo que perdeu (ou desligou) o slot da lei recebe
- *  a lei de volta na leitura — ela mora no código, não no JSON. */
-function restoreLaw(execucao: SkillsKitSlot[], report: SanitizeReport): SkillsKitSlot[] {
-  const index = execucao.findIndex((slot) => slot.id === SKILLS_LAW_ID)
-  if (index < 0) {
-    report.lawRestored = true
-    return [{ ...LAW_SLOT }, ...execucao]
-  }
-  const current = execucao[index]
-  // Carimbar `law` é o código RE-AFIRMANDO doutrina — silencioso. O que vira
-  // sinal é a lei ter sumido da lista ou ter sido DESLIGADA à mão.
-  if (current.enabled !== true) report.lawRestored = true
-  const next = [...execucao]
-  next[index] = {
-    ...current,
-    occasion: current.occasion || LAW_SLOT.occasion,
-    enabled: true,
-    law: true
-  }
-  return next
-}
-
+/** NADA VOLTA SOZINHO (ADR-0008). O arquivo do dono é a fotografia: slot que
+ *  ele tirou fica fora, slot que ele desligou fica desligado. */
 function sanitizeState(value: SkillsKitState, report: SanitizeReport): SkillsKitState {
   return {
     version: 1,
     dev: {
-      execucao: restoreLaw(sanitizeList(value.dev.execucao, report), report),
+      execucao: migrateLawEraOccasion(sanitizeList(value.dev.execucao, report), report),
       orquestracao: sanitizeList(value.dev.orquestracao, report)
     },
     planejamento: sanitizeList(value.planejamento, report)
   }
+}
+
+/**
+ * A ÚNICA migração da era da lei (revisão do orquestrador, 2026-09-08): o
+ * userData do dono tem o slot do impeccable com a ocasião "mexer em UI (a lei
+ * da persona)", e a tela contaria uma história revogada até ele editar à mão.
+ * Troca só esse texto, só nesse id — o resto do arquivo é a fotografia dele.
+ */
+function migrateLawEraOccasion(execucao: SkillsKitSlot[], report: SanitizeReport): SkillsKitSlot[] {
+  return execucao.map((slot) => {
+    if (slot.id !== 'impeccable' || slot.occasion !== LAW_ERA_IMPECCABLE_OCCASION) return slot
+    report.migrated.push(slot.id)
+    return { ...slot, occasion: IMPECCABLE_OCCASION }
+  })
 }
 
 /** Cópia defensiva: quem lê o estado nunca segura a referência viva do store. */
@@ -309,7 +309,7 @@ export class SkillsKitStore {
       },
       looksLikeKitState
     )
-    const report: SanitizeReport = { dropped: [], lawRestored: false }
+    const report: SanitizeReport = { dropped: [], migrated: [] }
     const next = sanitizeState(loaded, report)
     if (degraded) {
       signal({
@@ -319,19 +319,24 @@ export class SkillsKitStore {
           : 'primeira leitura: o kit nasceu do seed aprovado',
         detail: { file: this.file, existed }
       })
-    } else if (report.dropped.length > 0 || report.lawRestored) {
+    } else if (report.dropped.length > 0) {
       signal({
         event: 'skills-kit-degraded',
-        reason:
-          report.dropped.length > 0
-            ? 'entradas inválidas no skills-kit.json foram descartadas'
-            : 'a LEI da persona voltou ao kit (ela mora no código, não no arquivo)',
-        detail: { dropped: report.dropped, lawRestored: report.lawRestored }
+        reason: 'entradas inválidas no skills-kit.json foram descartadas',
+        detail: { dropped: report.dropped }
+      })
+    }
+    if (!degraded && report.migrated.length > 0) {
+      signal({
+        event: 'skills-kit-migrated',
+        reason: 'a ocasião da era da lei virou a de hoje (ADR-0008)',
+        detail: { migrated: report.migrated }
       })
     }
     // A primeira leitura SEMEIA o arquivo: o disco passa a ter a fotografia
-    // que a tela mostra, mesmo que ninguém clique em nada.
-    if (degraded || report.dropped.length > 0 || report.lawRestored) {
+    // que a tela mostra, mesmo que ninguém clique em nada. A migração também
+    // pousa — senão o segundo boot a refaria e falaria de novo.
+    if (degraded || report.dropped.length > 0 || report.migrated.length > 0) {
       persistJsonStore(this.file, next)
     }
     this.data = next
@@ -391,9 +396,8 @@ export class SkillsKitStore {
     }
     const list = this.listOf(chat, found.wing)
     const current = list[found.index]
-    if (current.law && !enabled) {
-      return { ok: false, error: skillsLawRefusal(id), state: this.state() }
-    }
+    // Nenhum slot é intocável (ADR-0008): o dono liga e desliga o que quiser,
+    // `impeccable` incluído.
     if (current.enabled === enabled) return { ok: true, state: this.state() }
     const next = [...list]
     next[found.index] = { ...current, enabled }
@@ -451,9 +455,6 @@ export class SkillsKitStore {
       }
     }
     const list = this.listOf(chat, found.wing)
-    if (list[found.index].law) {
-      return { ok: false, error: skillsLawRefusal(id), state: this.state() }
-    }
     const next = list.filter((_, index) => index !== found.index)
     return { ok: true, state: this.commit(this.withList(chat, found.wing, next)) }
   }

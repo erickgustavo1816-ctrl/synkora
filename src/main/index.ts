@@ -132,6 +132,13 @@ import {
 } from './browserPopoutWindow'
 import { registerBrowserIpc } from './ipc/browser'
 import { buildGuiBrowserTools, type GuiBrowserToolkit } from './guiBrowserTools'
+// SKILLS 3.0 (2026-09-08 — design DESIGN_HARNESS_DO_MODELO, fatia 5.D): as três
+// tools com que o agente monta o harness da missão. O motor mora nos módulos
+// `skills*` (catálogo curado, download pinado, materialização, rastro); aqui é só
+// a costura — identidade → pasta, o interruptor do dono, a nota no fio e o diário.
+import { buildGuiSkillTools } from './guiSkillTools'
+import type { GuiSkillToolkit } from './guiSkillKit'
+import { skillsLibraryRoot } from './skillsLibraryScan'
 import { GUI_HELPER_MCP_PANE_PREFIX, guiHelperMcpPaneId } from './guiHelperLspMcp'
 import { guiHelperPorts } from './guiHelperPorts'
 import { guiOwnerReplyDebt, sweepFlags } from './guiOwnerReplyDebt'
@@ -3932,6 +3939,50 @@ app.whenReady().then(async () => {
       })
   })
 
+  // ————— SKILLS 3.0: o kit com que o AGENTE monta o harness da missão —————
+  //
+  // Fatia 5.D do design `DESIGN_HARNESS_DO_MODELO_2026-09-08`. Ordem do dono:
+  // "não quero mais algo fixo. Quero que a IA decida qual é a melhor opção para
+  // ela ali naquele momento, e ela vá atrás, ela busque, ela pegue e ela faça."
+  //
+  // Quatro traduções moram aqui, e só aqui:
+  //  1. IDENTIDADE → PASTA. O `cwd` do bearer JÁ é o lugar certo em todos os
+  //     casos — worktree no chat de missão, raiz do projeto no planejador, e o
+  //     worktree do delegador no ajudante (ele trabalha na mesma árvore, então
+  //     puxa para a MESMA prateleira).
+  //  2. O INTERRUPTOR DO DONO. `skillsAgentPull !== false` (o default é ligado):
+  //     é a única chave que autoriza rede no caminho do agente (ADR-0010), e ela
+  //     é lida A CADA CHAMADA de propósito — desligar na tela tem de valer no
+  //     turno seguinte, sem respawn.
+  //  3. A NOTA E A RECARGA vão pelo REGISTRO das sessões: a nota é a linha que o
+  //     dono lê no fio (`❖ skill puxada…`) e a recarga é o `/reload-skills` pelo
+  //     bastidor (sondado: ele executa ao fim do turno corrente). Registro ainda
+  //     não montado = as duas degradam caladas; o recibo da tool continua
+  //     entregando o caminho do SKILL.md, que é o que vale no turno.
+  //  4. EVENTOS → CAIXA-PRETA, com projeto e missão junto e sem caminho
+  //     absoluto: o worktree do dono não vira linha de log.
+  const guiSkillTools: GuiSkillToolkit = buildGuiSkillTools({
+    cwdOf: (id) => id.cwd || undefined,
+    agentPullEnabled: () => settings.get().skillsAgentPull !== false,
+    libraryRoot: () => skillsLibraryRoot(),
+    note: (paneId, text) => {
+      noteInGuiPane(paneId, text)
+    },
+    reloadSkills: (paneId) =>
+      guiSessions?.reloadSkills(paneId) ??
+      Promise.resolve({ ok: false, detail: 'o registro de conversas ainda não está montado' }),
+    record: (event) =>
+      blackbox.record({
+        cat: 'mcp',
+        event: event.event,
+        actor: 'harness',
+        ids: event.ids,
+        ...(event.reason ? { reason: event.reason } : {}),
+        ...(event.detail ? { detail: event.detail } : {}),
+        ...(event.err ? { err: event.err } : {})
+      })
+  })
+
   // R38 — A SONDA DA CAIXA NUM LUGAR SÓ: `scripts.release` no package.json do
   // produto, a MESMA pergunta ESTRUTURAL que a linha PUBLICAÇÃO do
   // release_status faz (R29). Manifesto ausente ou ilegível = false — produto
@@ -4141,6 +4192,11 @@ app.whenReady().then(async () => {
     // (`gui-delegator` sem ser reviewer, e `ajudante`). Objeto, não função —
     // ver o comentário do `McpApi.browser`.
     browser: guiBrowserTools,
+    // SKILLS (2026-09-08): o kit dos três papéis que PRODUZEM (dev, planejador e
+    // ajudante — o reviewer fica fora pela mesma cerca do browser). Objeto, não
+    // função, pelo mesmo motivo dos dois acima: o proxy de instrumentação abaixo
+    // só enxerga membros-função, e cada método já escreve o próprio diário.
+    skills: guiSkillTools,
     hub
   }
 

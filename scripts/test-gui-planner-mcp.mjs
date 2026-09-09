@@ -76,9 +76,16 @@ const HELPER_TOOLS = Object.freeze([
   'list_seats'
 ])
 
+/** O kit de SKILLS (2026-09-08, Skills 3.0 — fatia 5.D): o planejador MONTA
+ *  harness como o dev, porque o método do planejamento (ADR-0011) sai do mesmo
+ *  cardápio. A lista canônica vive em `test:gui-delegate-mcp`. */
+const SKILL_TOOLS = Object.freeze(['skill_discard', 'skill_pull', 'skill_search'])
+
 /** O que o pane de PLANEJAMENTO enxerga hoje, inteiro: planos + ajudantes +
- *  código — e NADA de integração, release ou browser. */
-const PLANNER_TOOLS = Object.freeze([...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS].sort())
+ *  código + skills — e NADA de integração, release ou browser. */
+const PLANNER_TOOLS = Object.freeze(
+  [...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS, ...SKILL_TOOLS].sort()
+)
 
 /** Hub REAL com as dependências mínimas que ele exige (o registro de
  *  identidade não usa nenhuma delas — é justamente o ponto).
@@ -315,9 +322,12 @@ test('R14: o AJUDANTE recebe o kit de CÓDIGO e nenhuma linha do kit de planos',
   // 2026-08-30, na rodada que deu delegação ao planejador).
   const browserTools = tools.filter((tool) => tool.startsWith('browser_'))
   assert.equal(browserTools.length, 11, 'o ajudante perdeu o kit do browser')
+  // SKILLS 3.0 (2026-09-08): o ajudante também PUXA skill — o briefing dele já
+  // lista o que a missão puxou, e uma fatia que precisa de outro playbook não
+  // pode depender de o delegador adivinhar.
   assert.deepEqual(
     tools.filter((tool) => !tool.startsWith('browser_')),
-    LSP_TOOLS
+    [...LSP_TOOLS, ...SKILL_TOOLS].sort()
   )
   // A cerca do ajudante mudou de NATUREZA (era ausência de token, virou
   // catálogo) mas não de tamanho: plano continua fora do alcance dele.

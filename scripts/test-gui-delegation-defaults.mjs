@@ -19,10 +19,14 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   guiDelegationEffortOptions,
+  guiDelegationModelCli,
   guiDelegationModelGroups,
   guiDelegationModelLabelParts,
   guiDelegationModelOption,
   guiDelegationSummary,
+  guiFleetModelPatch,
+  guiFleetPlan,
+  guiFleetSeatPatch,
   guiPaneDelegates
 } from '../src/renderer/src/guiDelegationDefaults.ts'
 import { guiModelShortName } from '../src/renderer/src/guiComposerPresentation.ts'
@@ -61,53 +65,23 @@ function composerPrettyModel() {
  *  primeiro, embelezador do id quando o catálogo só repete o identificador. */
 function composerNamer() {
   const prettyModel = composerPrettyModel()
-  return ({ id, displayName }) =>
-    guiModelShortName({ value: id, displayName, resolvedModel: id }, prettyModel(id))
-}
-
-/** QUANDO O ⚡ APARECE (R13 §B3), executado a partir do fonte do painel — mesma
- *  técnica do embelezador acima, e pelo mesmo motivo: a régua mora num
- *  componente React, e um teste que a imitasse provaria a imitação. */
-function panelFastChipVisible() {
-  const panel = source('src/renderer/src/components/GuiDelegationDefaults.tsx')
-  const expression = panel.match(/const fastChipVisible = (.+)\r?\n/u)?.[1]
-  assert.ok(expression, 'a régua de visibilidade do ⚡ saiu do painel')
-  return new Function('defaults', 'pinnedOption', `return ${expression}`)
-}
-
-/**
- * O `chooseModel` do painel (R13 §B4), executado a partir do fonte com as
- * dependências injetadas: `apply` vira um coletor, e o teste lê os patches que
- * o painel REALMENTE mandaria ao main.
- */
-function panelChooseModel() {
-  const panel = source('src/renderer/src/components/GuiDelegationDefaults.tsx')
-  const body = panel.match(
-    /const chooseModel = useCallback\(\r?\n\s*\(model: string \| null\): void => \{\r?\n([\s\S]*?)\r?\n {4}\},/u
-  )?.[1]
-  assert.ok(body, 'o chooseModel saiu do painel')
-  const run = new Function(
-    'model',
-    'apply',
-    'defaults',
-    'groups',
-    'guiDelegationEffortOptions',
-    'guiDelegationModelOption',
-    body
-  )
-  return (defaults, groups, model) => {
-    const patches = []
-    run(
-      model,
-      (patch) => patches.push(patch),
-      defaults,
-      groups,
-      guiDelegationEffortOptions,
-      guiDelegationModelOption
+  return ({ id, displayName, resolvedModel }) =>
+    guiModelShortName(
+      { value: id, displayName, resolvedModel: resolvedModel ?? id },
+      prettyModel(id)
     )
-    return patches
-  }
 }
+
+/** O bloco de CSS da aba, entre o comentário de abertura e a regra seguinte. */
+function fleetCssBlock(css) {
+  const start = css.indexOf('A ABA "ajudantes ˄"')
+  const end = css.indexOf('.gui-composer-surface {')
+  assert.ok(start > 0 && end > start, 'o bloco da aba sumiu do CSS de papel')
+  return css.slice(start, end)
+}
+
+/** Escapa um seletor para virar regex. */
+const rx = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** Catálogos como o `catalog.ts` os devolve: o do claude costuma vir SEM
  *  `efforts` por modelo (fallback curado), o do codex traz nível por modelo. O
@@ -236,15 +210,30 @@ test('os marcadores da detecção são os que o main REALMENTE emite', () => {
 
 // ————— 3. A SUPERFÍCIE —————
 
-test('a abinha nasce recolhida, abre no clique e fala PT-BR', () => {
+test('a aba nasce recolhida, abre no clique e fala PT-BR', () => {
   const panel = source('src/renderer/src/components/GuiDelegationDefaults.tsx')
-  assert.match(panel, /useState\(false\)/u, 'painel aberto de fábrica não é discreto')
+  assert.match(
+    panel,
+    /const \[open, setOpen\] = useState\(false\)/u,
+    'aba aberta de fábrica não é discreta'
+  )
   assert.match(panel, /aria-expanded=\{open\}/u)
-  assert.match(panel, /padrão dos ajudantes/u)
-  assert.match(panel, /herdado da conversa|guiDelegationSummary/u)
+  assert.match(panel, /<span className="name">ajudantes<\/span>/u, 'a aba se chama "ajudantes"')
+  // Abaixada, a aba diz a configuração EM USO (pedido do dono: "não sei qual
+  // configuração eu tô usando"): o resumo ao lado do nome, tinta cheia com pino.
+  assert.match(panel, /className=\{pinned \? 'sum pinned' : 'sum'\}/u)
+  assert.match(panel, /pinned \? summary : 'herdam da conversa'/u)
+  assert.doesNotMatch(panel, /className="pin"/u, 'o ponto de pino morreu: o resumo fala por ele')
+  assert.match(
+    panel,
+    /Padrão dos ajudantes: \$\{busy \? 'gravando…' : summary\}/u,
+    'o leitor de tela ouve o resumo na aba recolhida'
+  )
   assert.match(panel, />\s*limpar\s*</u, 'sem a saída, o pino do dono vira armadilha')
-  assert.match(panel, /modelo/u)
-  assert.match(panel, /effort/u)
+  for (const label of ['conta', 'modelo', 'effort']) {
+    assert.match(panel, new RegExp(`label="${label}"`, 'u'), `o select de ${label} sumiu`)
+  }
+  assert.match(panel, />\s*fast\s*</u, 'o interruptor do fast tem rótulo')
   // Diálogo nativo QUEBRA o foco da janela no Windows (regra do CLAUDE.md).
   assert.doesNotMatch(panel, /window\.(confirm|alert)/u)
   // O renderer nunca fala com o main direto: a costura é o guiApi.
@@ -252,18 +241,107 @@ test('a abinha nasce recolhida, abre no clique e fala PT-BR', () => {
   assert.match(panel, /guiApi\.delegationDefaults|delegationDefaults\(/u)
 })
 
-test('o painel usa o catálogo REAL dos dois CLIs, não as caps do pane', () => {
+test('a aba SOBE: a caixa é ancorada no composer e o corpo desdobra por baixo dela', () => {
+  const css = source('src/renderer/src/global.css')
+  const fleet = css.match(/\n\.gui-fleet \{[^}]*\}/u)?.[0] ?? ''
+  assert.match(fleet, /position: absolute/u)
+  assert.match(fleet, /bottom: 0/u, 'ancorada embaixo: quando o corpo cresce é a aba que sobe')
+  assert.match(fleet, /grid-template-rows: auto 0fr/u)
+  assert.match(fleet, /transition: grid-template-rows/u, 'o desdobrar É a animação')
+  // A coluna do grid é a CAIXA: sem o minmax(0, 1fr) a aba com resumo longo
+  // vazava para fora do composer no chat estreito (print do dono, 09/09).
+  assert.match(fleet, /grid-template-columns: minmax\(0, 1fr\)/u)
+  // O chat fecha o próprio contexto de empilhamento: a aba (z 30) e os menus
+  // ficam ATRÁS do painel do workspace que cobre o chat (deck em overlay,
+  // z 20), como todo o resto — a aba vazava para a frente (print de 09/09).
+  assert.match(css, /\n\.gui-pane \{[^}]*isolation: isolate/u)
+  // A aba ESTICA na largura do composer ("eu quero que estique"): o resumo tem
+  // a largura toda, e a tesoura é só o último recurso para nunca sair da caixa.
+  assert.match(css, /\n\.gui-fleet-tab \{[^}]*flex: 1 1 auto/u)
+  assert.match(css, /\n\.gui-fleet-tab \.sum-text \{[^}]*text-overflow: ellipsis/u)
+  assert.match(css, /\.gui-fleet\[data-open='true'\] \{[^}]*grid-template-rows: auto 1fr/u)
+  // o corpo corta enquanto desdobra e libera os menus só depois de assentar
+  assert.match(css, /\n\.gui-fleet-body \{[^}]*overflow: hidden/u)
+  assert.match(
+    css,
+    /\.gui-fleet\[data-open='true'\]\[data-settled='true'\] \.gui-fleet-body \{[^}]*overflow: visible/u
+  )
+  // A aba fechada tem as MESMAS bordas da aberta (7px): a pílula foi reprovada
+  // ("quando ele sobe ele não é full redondo").
+  const tab = css.match(/\n\.gui-fleet-tab \{[^}]*\}/u)?.[0] ?? ''
+  assert.match(tab, /border-radius: 7px/u)
+  assert.doesNotMatch(tab, /999px/u)
+  assert.match(css, /\.gui-fleet\[data-open='true'\] \.gui-fleet-tab \{[^}]*border-radius: 7px 7px 0 0/u)
+  // Os menus dos selects abrem PARA CIMA: o cartão mora no pé do pane e o
+  // palco recorta o que passa da janela — para baixo a lista perdia opções.
+  const menu = css.match(/\n\.gui-fleet-menu \{[^}]*\}/u)?.[0] ?? ''
+  assert.match(menu, /bottom: calc\(100% \+ 4px\)/u)
+  assert.doesNotMatch(menu, /\n\s*top: calc/u)
   const panel = source('src/renderer/src/components/GuiDelegationDefaults.tsx')
-  assert.match(panel, /loadCatalog/u, 'a lista tem de vir do catalog.ts, por CLI')
-  assert.match(panel, /catalogByCli/u)
-  assert.match(panel, /'claude'/u)
-  assert.match(panel, /'codex'/u)
-  assert.match(panel, /guiDelegationEffortOptions/u)
-  // O effort do modelo que NÃO aceita nível não pode virar uma lista vazia muda.
-  assert.match(panel, /—/u)
+  assert.match(panel, /event\.propertyName === 'grid-template-rows'/u, 'assenta no transitionend certo')
+  assert.match(
+    panel,
+    /SETTLE_FALLBACK_MS/u,
+    'com reduced-motion não há transição: sem o teto o corpo cortaria os menus para sempre'
+  )
+  // O "limpar" mora na linha da aba, nunca no cartão (ordem do dono: sem
+  // linha fantasma quando os campos quebram).
+  const head = panel.indexOf('className="gui-fleet-head"')
+  const clear = panel.indexOf('className="gui-fleet-clear"')
+  const card = panel.indexOf('className="gui-fleet-card"')
+  assert.ok(head > 0 && clear > head && clear < card, 'limpar fica na cabeça, antes do cartão')
 })
 
-test('o chat monta a abinha, e só quando ele delega', () => {
+test('os selects nascem um de cada vez: conta › modelo › effort › fast', () => {
+  const groups = guiDelegationModelGroups(CATALOGS)
+  const seats = [
+    { id: 's-claude', name: 'Claude – Pessoal', cli: 'claude' },
+    { id: 's-codex', name: 'Codex – Hotmail', cli: 'codex' }
+  ]
+  const plan = (defaults, reachedModel = false, conversationCli = 'claude') =>
+    guiFleetPlan({ defaults, conversationCli, seats, groups, reachedModel })
+  // Nada carimbado, nada respondido: só a conta.
+  const zero = plan({})
+  assert.equal(zero.showModel, false)
+  assert.equal(zero.showEffort, false)
+  assert.equal(zero.showFast, false)
+  assert.equal(zero.cli, 'claude', 'sem conta carimbada, o catálogo é o da conversa')
+  // Respondeu "a da conversa": o modelo nasce, com "o da conversa" como opção.
+  const answered = plan({}, true)
+  assert.equal(answered.showModel, true)
+  assert.equal(answered.modelInheritAllowed, true)
+  assert.deepEqual(
+    answered.modelOptions.map((option) => option.id),
+    ['fable', 'opus[1m]', 'haiku']
+  )
+  // Conta de OUTRO CLI: os modelos são os DELA, e "o da conversa" não existe.
+  const codex = plan({ seat: 's-codex' })
+  assert.equal(codex.cli, 'codex')
+  assert.equal(codex.showModel, true)
+  assert.equal(codex.modelInheritAllowed, false)
+  assert.deepEqual(
+    codex.modelOptions.map((option) => option.id),
+    ['gpt-5.6-sol']
+  )
+  // Modelo carimbado: o effort nasce com os níveis DELE; o fast só se ele aceita.
+  const opus = plan({ seat: 's-claude', model: 'opus[1m]' })
+  assert.equal(opus.showEffort, true)
+  assert.deepEqual(opus.effortOptions, ['low', 'medium', 'high', 'xhigh', 'max'])
+  assert.equal(opus.showFast, true)
+  assert.equal(plan({ model: 'fable' }).showFast, false, 'fable não tem fast (queixa 3 do dono)')
+  const haiku = plan({ model: 'haiku' })
+  assert.equal(haiku.showEffort, true)
+  assert.deepEqual(haiku.effortOptions, [], 'haiku não aceita effort — e a aba diz isso')
+  // Pino LIGADO nunca fica invisível.
+  assert.equal(plan({ model: 'fable', fast: true }).showFast, true)
+  assert.equal(plan({ fast: true }).showFast, true)
+  // Conta que o app não conhece mais: dita pelo id, ainda valendo.
+  const ghost = plan({ seat: 's-sumida' })
+  assert.equal(ghost.seatOutsideList, true)
+  assert.equal(ghost.cli, 'claude')
+})
+
+test('o chat monta a aba, e só quando ele delega', () => {
   const pane = source('src/renderer/src/components/GuiPane.tsx')
   assert.match(pane, /import GuiDelegationDefaults from '\.\/GuiDelegationDefaults'/u)
   assert.match(pane, /guiPaneDelegates\(mcp\)/u)
@@ -271,17 +349,23 @@ test('o chat monta a abinha, e só quando ele delega', () => {
   const mount = pane.match(/\{[^\n]*delegat[^\n]*&&[\s\S]{0,400}?<GuiDelegationDefaults[\s\S]*?\/>/u)
   assert.ok(mount, 'a montagem precisa ser condicional ao chat que delega')
   assert.match(mount[0], /paneId=\{paneId\}/u)
+  assert.match(mount[0], /cli=\{cli\}/u, 'o CLI da conversa manda no catálogo enquanto a conta é "a da conversa"')
 })
 
-test('a abinha tem casa no CSS de papel do chat', () => {
+test('a aba tem casa no CSS de papel do chat', () => {
   const css = source('src/renderer/src/global.css')
-  assert.match(css, /\.gui-deleg-defaults\s*\{/u)
-  assert.match(css, /\.gui-deleg-tab\s*\{/u)
-  assert.match(css, /\.gui-deleg-panel\s*\{/u)
+  for (const rule of [
+    '.gui-fleet-host',
+    '.gui-fleet-tab',
+    '.gui-fleet-card',
+    '.gui-fleet-select',
+    '.gui-fleet-switch'
+  ]) {
+    assert.match(css, new RegExp(`\\n${rx(rule)} \\{`, 'u'), `${rule} sumiu do CSS`)
+  }
   // Papel, nunca `--panel`: a superfície escura é exclusiva do TerminalPane.
-  const block =
-    css.match(/\.gui-deleg-defaults\s*\{[\s\S]*?\n\}/u)?.[0] ?? ''
-  assert.doesNotMatch(block, /var\(--panel\)/u)
+  assert.doesNotMatch(fleetCssBlock(css), /var\(--panel\)/u)
+  assert.doesNotMatch(css, /\.gui-deleg-/u, 'a abinha antiga morreu inteira')
 })
 
 // ————— 3B. O PAINEL DIGNO (design R7 §B2) —————
@@ -333,12 +417,12 @@ test('R7B2 — o painel escreve o MESMO nome que o seletor do composer', () => {
   const option = (id) => guiDelegationModelOption(groups, id)
 
   // O que o dono viu feio, agora com nome: id cru só como metadado.
-  assert.equal(option('opus[1m]').name, 'opus')
+  assert.equal(option('opus[1m]').name, 'Opus')
   assert.equal(option('opus[1m]').id, 'opus[1m]')
   assert.equal(option('opus[1m]').detail, 'equilíbrio (1M ctx)')
-  assert.equal(option('gpt-5.6-sol').name, 'GPT-5.6-Sol')
+  assert.equal(option('gpt-5.6-sol').name, 'GPT-5.6 Sol')
   assert.equal(option('gpt-5.6-sol').detail, null)
-  assert.equal(option('fable').name, 'fable')
+  assert.equal(option('fable').name, 'Fable')
   // O rótulo CRU do catálogo continua inteiro na ficha (é ele que vira dica).
   assert.equal(option('fable').label, 'fable — o mais capaz')
 
@@ -347,7 +431,7 @@ test('R7B2 — o painel escreve o MESMO nome que o seletor do composer', () => {
     [{ cli: 'claude', models: [{ id: 'opus[1m]', label: 'opus[1m]' }], efforts: ['max'] }],
     namer
   )
-  assert.equal(cru.options[0].name, 'OPUS 1M')
+  assert.equal(cru.options[0].name, 'Opus 1M')
   assert.notEqual(cru.options[0].name, 'opus[1m]')
 
   // Sem embelezador injetado a régua não inventa nada — é o painel que traz a
@@ -358,11 +442,11 @@ test('R7B2 — o painel escreve o MESMO nome que o seletor do composer', () => {
 
 test('R7B2 — a abinha recolhida mostra o nome digno, não o id', () => {
   const groups = guiDelegationModelGroups(CATALOGS, composerNamer())
-  assert.equal(guiDelegationSummary({ model: 'opus[1m]' }, groups), 'opus')
-  assert.equal(guiDelegationSummary({ model: 'opus[1m]', effort: 'max' }, groups), 'opus · max')
+  assert.equal(guiDelegationSummary({ model: 'opus[1m]' }, groups), 'Opus')
+  assert.equal(guiDelegationSummary({ model: 'opus[1m]', effort: 'max' }, groups), 'Opus · max')
   assert.equal(
     guiDelegationSummary({ model: 'gpt-5.6-sol', effort: 'high' }, groups),
-    'GPT-5.6-Sol · high'
+    'GPT-5.6 Sol · high'
   )
   // Pino que o catálogo carregado não conhece continua dito COMO FOI CARIMBADO:
   // trocar por um nome inventado esconderia justamente o pino que precisa de
@@ -375,6 +459,7 @@ test('R7B2 — a abinha recolhida mostra o nome digno, não o id', () => {
 
 test('R7B2 — a superfície busca o nome na fonte única, e o id vira metadado', () => {
   const panel = source('src/renderer/src/components/GuiDelegationDefaults.tsx')
+  const select = source('src/renderer/src/components/GuiFleetSelect.tsx')
 
   // A FONTE ÚNICA: as duas metades da régua do composer, importadas, nunca
   // reescritas aqui.
@@ -382,76 +467,100 @@ test('R7B2 — a superfície busca o nome na fonte única, e o id vira metadado'
   assert.match(panel, /import \{ prettyModel \} from '\.\/PaneChrome'/u)
   assert.match(panel, /guiDelegationModelGroups\(catalogs, MODEL_NAMER\)/u)
 
-  // Título e metadado são elementos DIFERENTES: nome em cima, id embaixo.
-  const nome = panel.indexOf('className="gui-deleg-item-name">{option.name}')
-  const id = panel.indexOf('className="gui-deleg-item-id">{option.id}')
-  assert.ok(nome > 0, 'o título da ficha do modelo tem de ser o NOME')
-  assert.ok(id > 0, 'o id cru precisa de um papel próprio de metadado')
-  assert.ok(id > nome, 'o id nunca vem antes do nome: título em cima, motor embaixo')
-
-  // Escolha ligada é ESTADO, não só cor: o leitor de tela precisa ouvi-la.
-  assert.match(panel, /aria-pressed=/u)
+  // O menu do modelo mostra SÓ O NOME (pedido do dono, 09/09: "não quero ver
+  // essa parte da direita"); o id cru e a descrição moram na dica.
+  assert.match(panel, /label: option\.name/u, 'o rótulo da opção de modelo tem de ser o NOME')
+  assert.doesNotMatch(panel, /detail: option\.id/u, 'o id cru saiu da direita do menu')
+  assert.match(panel, /option\.id !== option\.name \? option\.id : null/u, 'o id continua na dica')
+  assert.match(select, /<b>\{option\.label\}<\/b>/u)
+  assert.match(select, /\{option\.detail && <span>\{option\.detail\}<\/span>\}/u)
+  // E o nome carrega a VERSÃO quando o catálogo publica o id canônico — a mesma
+  // régua do composer ("Opus 5"), nunca o alias cru ("opus[1m]").
+  const versioned = guiDelegationModelGroups(
+    [
+      {
+        cli: 'claude',
+        models: [
+          { id: 'opus[1m]', label: 'Opus — equilíbrio', resolvedModel: 'claude-opus-5' },
+          { id: 'sonnet', label: 'Sonnet', resolvedModel: 'claude-sonnet-5' },
+          { id: 'fable', label: 'Fable 5.1', resolvedModel: 'claude-fable-5-1' }
+        ],
+        efforts: ['max']
+      }
+    ],
+    composerNamer()
+  )
+  assert.deepEqual(
+    versioned[0].options.map((option) => option.name),
+    ['Opus 5', 'Sonnet 5', 'Fable 5.1']
+  )
+  assert.equal(versioned[0].options[0].resolvedModel, 'claude-opus-5')
+  assert.match(panel, /padrão da conta · \$\{short\}/u, 'o default do claude fala como o composer')
+  // Escolha ligada é ESTADO do item (aria-expanded no select, active no item).
+  assert.match(select, /aria-expanded=\{open\}/u)
+  assert.match(select, /option\.id === selectedId \? ' active' : ''/u)
   // A dica é a do app (`data-tip`, via portal); o `title=` nativo é feio, lento
-  // e some no Windows — o Tooltip da casa existe justamente para substituí-lo.
+  // e some no Windows.
   assert.doesNotMatch(panel, /\stitle=\{/u)
+  assert.doesNotMatch(select, /\stitle=\{/u)
   assert.match(panel, /data-tip=/u)
 
-  // ESPERANDO ≠ VAZIO: enquanto os CLIs não respondem o painel diz que está
+  // ESPERANDO ≠ VAZIO: enquanto a conta não responde o menu diz que está
   // consultando; só depois disso o silêncio vira ausência.
   assert.match(panel, /consultando/u)
   assert.match(panel, /nenhum CLI respondeu/u)
-
-  // O pino que o catálogo não conhece continua VISÍVEL como escolha ligada —
-  // um pino invisível é o estado mais enganoso possível deste painel.
+  // O pino que o catálogo não conhece continua VISÍVEL — um pino invisível é o
+  // estado mais enganoso possível da aba.
   assert.match(panel, /fora do catálogo/u)
+  // A aba recolhida lê o resumo JÁ com o catálogo e as contas em mãos — e vai
+  // buscar o catálogo quando há pino, mesmo fechada.
+  assert.match(panel, /guiDelegationSummary\(defaults, groups, fleetSeats\)/u)
+  assert.match(panel, /open \|\| Boolean\(defaults\.model\)/u)
 
-  // A abinha recolhida lê o resumo JÁ com o catálogo em mãos — e vai buscá-lo
-  // quando há pino, mesmo fechada: era a linha recolhida que escrevia
-  // `opus[1m]`, e sem catálogo não existe nome digno para carregar ali.
-  assert.match(panel, /guiDelegationSummary\(defaults, groups\)/u)
-  assert.match(
-    panel,
-    /open \|\| Boolean\(defaults\.model\)/u,
-    'com pino carimbado, a linha recolhida precisa do catálogo para nomeá-lo'
-  )
-
-  // EFFORT: o painel fala a mesma língua do seletor de esforço do composer —
-  // o nível cru e "padrão do modelo" para o default.
+  // EFFORT: a aba fala a mesma língua do seletor de esforço do composer.
   const pane = source('src/renderer/src/components/GuiPane.tsx')
   assert.match(pane, /padrão do modelo/u)
   assert.match(panel, /padrão do modelo/u)
 })
 
-test('R7B2 — o painel passa no AA do papel e diz a escolha por FORMA', () => {
+test('R7B2 — a aba passa no AA do papel e diz a escolha por FORMA', () => {
   const css = source('src/renderer/src/global.css')
-  const start = css.indexOf('ABINHA DO PADRÃO DOS AJUDANTES (D8)')
-  const end = css.indexOf('.gui-composer-surface {')
-  assert.ok(start > 0 && end > start, 'o bloco da abinha sumiu do CSS de papel')
-  const bloco = css.slice(start, end)
+  const bloco = fleetCssBlock(css)
+  assert.ok(bloco.length > 1000, 'o bloco da aba sumiu do CSS de papel')
 
-  assert.match(bloco, /\.gui-deleg-item-name \{/u)
-  assert.match(bloco, /\.gui-deleg-item-id \{/u)
+  // Tinta pequena de TEXTO em --ink-2 (~6,3:1 sobre papel); --ink-3 (~3:1,
+  // reprovado a 10px) só em traço — seta, trilho e botão do interruptor.
+  for (const selector of [
+    '.gui-fleet-label',
+    '.gui-fleet-clear',
+    '.gui-fleet-item span',
+    '.gui-fleet-select .val.ghost'
+  ]) {
+    const rule = bloco.match(new RegExp(`\\n${rx(selector)} \\{[^}]*\\}`, 'u'))?.[0] ?? ''
+    assert.match(rule, /var\(--ink-2\)/u, `${selector} precisa de --ink-2`)
+    assert.doesNotMatch(rule, /var\(--ink-3\)/u, `${selector} em --ink-3 reprova o AA`)
+  }
 
-  // `--ink-3` sobre papel dá ~3:1 — reprovado para texto de 10px, que é
-  // justamente o tamanho de tudo aqui. A tinta pequena do painel é `--ink-2`
-  // (~6,3:1). Não é gosto: é o piso de contraste.
-  assert.doesNotMatch(bloco, /var\(--ink-3\)/u)
-  assert.match(bloco, /var\(--ink-2\)/u)
+  // Diferença dita por FORMA antes de cor: o item escolhido ganha borda, e o
+  // interruptor ligado é o botão que ANDA — a cor vem por cima.
+  assert.match(bloco, /\.gui-fleet-item\.active \{[^}]*border-color: var\(--accent\)/u)
+  assert.match(bloco, /\.gui-fleet-switch\[aria-checked='true'\] \.knob \{[^}]*transform: translateX/u)
 
-  // Diferença dita por FORMA antes de cor (régua da casa): a escolha ligada
-  // ganha um traço interno, não só um fundo tingido.
-  const ativo = bloco.match(/\.gui-deleg-item\[aria-pressed='true'\] \{[\s\S]*?\n\}/u)?.[0] ?? ''
-  assert.ok(ativo, 'a escolha ligada não tem casa própria no CSS')
-  assert.match(ativo, /box-shadow: inset/u)
+  // Alvo clicável de gente.
+  const select = Number(bloco.match(/\n\.gui-fleet-select \{[^}]*height: (\d+)px/u)?.[1] ?? 0)
+  assert.ok(select >= 28, `o select ficou pequeno demais para o dedo (${select}px)`)
+  const item = Number(bloco.match(/\n\.gui-fleet-item \{[^}]*min-height: (\d+)px/u)?.[1] ?? 0)
+  assert.ok(item >= 26, `a opção ficou pequena demais para o dedo (${item}px)`)
 
-  // Alvo clicável de gente: 22px reprovava no mínimo de 24px.
-  const alvo = bloco.match(/\.gui-deleg-item \{[\s\S]*?\n\}/u)?.[0] ?? ''
-  const altura = Number(alvo.match(/min-height: (\d+)px/u)?.[1] ?? 0)
-  assert.ok(altura >= 28, `a ficha do modelo ficou pequena demais para o dedo (${altura}px)`)
-
-  // Papel, sempre — e nada de movimento novo nesta rodada.
+  // Papel, sempre. O movimento é o desdobrar (sinal), e quem pede menos
+  // movimento não recebe nenhum.
   assert.doesNotMatch(bloco, /var\(--panel\)/u)
-  assert.doesNotMatch(bloco, /animation:/u)
+  assert.match(bloco, /@keyframes fleet-in/u)
+  assert.match(bloco, /prefers-reduced-motion: reduce/u)
+  // O bug que o dono apontou no mockup: `both` deixa um stacking context para
+  // sempre, e o campo seguinte pinta por cima do menu do anterior.
+  assert.match(bloco, /animation: fleet-in [^;]*backwards/u)
+  assert.match(bloco, /\.gui-fleet-field:has\(\[aria-expanded='true'\]\) \{[^}]*z-index: 2/u)
 })
 
 // ————— 3C. O ⚡ NO PAINEL (design R12 §B4) —————
@@ -465,10 +574,10 @@ test('R12 — o resumo da abinha carrega o ⚡ carimbado, com ou sem modelo', ()
   // Sem modelo e sem effort a herança continua sendo a verdade — mas ela não
   // pode engolir a escolha que gasta mais limite.
   assert.equal(guiDelegationSummary({ fast: true }), 'herdado da conversa · ⚡ fast')
-  assert.equal(guiDelegationSummary({ model: 'opus[1m]', fast: true }, groups), 'opus · ⚡ fast')
+  assert.equal(guiDelegationSummary({ model: 'opus[1m]', fast: true }, groups), 'Opus · ⚡ fast')
   assert.equal(
     guiDelegationSummary({ model: 'opus[1m]', effort: 'max', fast: true }, groups),
-    'opus · max · ⚡ fast'
+    'Opus · max · ⚡ fast'
   )
   assert.equal(
     guiDelegationSummary({ effort: 'low', fast: true }, groups),
@@ -476,7 +585,7 @@ test('R12 — o resumo da abinha carrega o ⚡ carimbado, com ou sem modelo', ()
   )
   // Desligado é o fundo do mundo: só o que custa aparece.
   assert.equal(guiDelegationSummary({ fast: false }), 'herdado da conversa')
-  assert.equal(guiDelegationSummary({ model: 'opus[1m]' }, groups), 'opus')
+  assert.equal(guiDelegationSummary({ model: 'opus[1m]' }, groups), 'Opus')
 })
 
 // ————— 3D. O ⚡ DO TAMANHO CERTO (design R13 §B) —————
@@ -495,6 +604,7 @@ test('R13 — o catálogo do claude carrega o fast que o handshake publica', () 
     {
       value: 'opus[1m]',
       displayName: 'opus',
+      resolvedModel: 'claude-opus-5',
       description: 'equilíbrio (1M ctx)',
       supportsFastMode: true
     },
@@ -517,6 +627,9 @@ test('R13 — o catálogo do claude carrega o fast que o handshake publica', () 
   assert.equal(models[1].label, 'opus — equilíbrio (1M ctx)')
   assert.equal(models[0].label, 'Padrão')
   assert.deepEqual(models[3].efforts, [])
+  // O id canônico atravessa quando o handshake o publica — é a versão do nome.
+  assert.equal(models[1].resolvedModel, 'claude-opus-5')
+  assert.equal(models[2].resolvedModel, undefined)
 })
 
 test('R13 — o catálogo do codex deriva o fast do service tier `priority`', () => {
@@ -584,95 +697,126 @@ test('R13 — a ficha do modelo carrega a marca de fast do catálogo', () => {
 })
 
 test('R13 — o ⚡ só aparece onde ele pode valer (e o pino ligado, sempre)', () => {
-  const visible = panelFastChipVisible()
-  assert.equal(visible({}, { supportsFastMode: true }), true, 'modelo com o modo oferece o modo')
-  assert.equal(
-    visible({}, { supportsFastMode: false }),
-    false,
-    'fable e haiku não têm fast: prometer ali era a queixa 3 do dono'
-  )
-  assert.equal(visible({}, undefined), false, 'sem pino de modelo não há o que prometer')
+  const groups = guiDelegationModelGroups(CATALOGS)
+  const show = (defaults) =>
+    guiFleetPlan({ defaults, conversationCli: 'claude', seats: [], groups, reachedModel: false })
+      .showFast
+  assert.equal(show({ model: 'opus[1m]' }), true, 'modelo com o modo oferece o modo')
+  assert.equal(show({ model: 'fable' }), false, 'fable não tem fast: prometer ali era a queixa 3')
+  assert.equal(show({ model: 'haiku' }), false)
+  assert.equal(show({}), false, 'sem pino de modelo não há o que prometer')
   // Honestidade, espelho do `pinnedOutsideCatalog`: pino LIGADO nunca fica
   // invisível — o dono não pode gastar mais limite sem ver por quê.
-  assert.equal(visible({ fast: true }, undefined), true)
-  assert.equal(visible({ fast: true }, { supportsFastMode: false }), true)
-  assert.equal(visible({ fast: false }, undefined), false)
+  assert.equal(show({ fast: true }), true)
+  assert.equal(show({ model: 'fable', fast: true }), true)
+  assert.equal(show({ fast: false }), false)
 })
 
 test('R13 — trocar de modelo arrasta o ⚡ junto, como o effort', () => {
-  const choose = panelChooseModel()
   const groups = guiDelegationModelGroups(CATALOGS, composerNamer())
-  const patch = (defaults, model, catalog = groups) => {
-    const patches = choose(defaults, catalog, model)
-    assert.equal(patches.length, 1, 'a escolha do modelo grava UM patch')
-    return patches[0]
-  }
+  const claude = groups.find((group) => group.cli === 'claude').options
+  const codex = groups.find((group) => group.cli === 'codex').options
 
   // Modelo COM fast: o pino atravessa (campo ausente CONSERVA, regra do main).
-  const paraOpus = patch({ model: 'fable', fast: true }, 'opus[1m]')
+  const paraOpus = guiFleetModelPatch({ model: 'fable', fast: true }, claude, true, 'opus[1m]')
   assert.equal(paraOpus.model, 'opus[1m]')
   assert.equal(paraOpus.fast, undefined)
   // Modelo SEM fast: o pino cai no MESMO patch, como o effort não suportado.
-  const paraHaiku = patch({ model: 'opus[1m]', effort: 'max', fast: true }, 'haiku')
+  const paraHaiku = guiFleetModelPatch(
+    { model: 'opus[1m]', effort: 'max', fast: true },
+    claude,
+    true,
+    'haiku'
+  )
   assert.equal(paraHaiku.model, 'haiku')
   assert.equal(paraHaiku.effort, null)
   assert.equal(paraHaiku.fast, null, 'fast valendo para modelo sem fast é promessa falsa')
   // Cross-CLI com fast dos dois lados: nada cai.
-  const paraSol = patch({ model: 'opus[1m]', effort: 'high', fast: true }, 'gpt-5.6-sol')
+  const paraSol = guiFleetModelPatch(
+    { model: 'opus[1m]', effort: 'high', fast: true },
+    codex,
+    true,
+    'gpt-5.6-sol'
+  )
   assert.equal(paraSol.effort, 'high')
   assert.equal(paraSol.fast, undefined)
   // Limpar o modelo limpa os três — sem modelo não existe pino a defender.
-  const limpo = patch({ model: 'opus[1m]', effort: 'max', fast: true }, null)
-  assert.deepEqual(limpo, { model: null, effort: null, fast: null })
+  assert.deepEqual(
+    guiFleetModelPatch({ model: 'opus[1m]', effort: 'max', fast: true }, claude, true, null),
+    { model: null, effort: null, fast: null }
+  )
   // CATÁLOGO VAZIO é ausência de notícia, não notícia de ausência: o pino fica.
-  const semCatalogo = patch({ model: 'opus[1m]', fast: true }, 'modelo-x', [])
+  const semCatalogo = guiFleetModelPatch({ model: 'opus[1m]', fast: true }, [], false, 'modelo-x')
   assert.equal(semCatalogo.model, 'modelo-x')
   assert.equal(semCatalogo.fast, undefined)
   // Re-clicar o modelo já carimbado não grava nada (nem derruba o fast).
-  assert.deepEqual(choose({ model: 'opus[1m]', fast: true }, groups, 'opus[1m]'), [])
+  assert.equal(guiFleetModelPatch({ model: 'opus[1m]', fast: true }, claude, true, 'opus[1m]'), null)
 })
 
-test('R13 — o ⚡ mora na fileira do modelo, e o campo da R12 morreu', () => {
+test('a CONTA é a primeira etapa: trocar de conta arrasta o modelo do outro CLI', () => {
+  const seats = [
+    { id: 's-claude', name: 'Claude – Pessoal', cli: 'claude' },
+    { id: 's-codex', name: 'Codex – Hotmail', cli: 'codex' }
+  ]
+  assert.deepEqual(guiFleetSeatPatch({}, seats, 'claude', 's-claude'), { seat: 's-claude' })
+  assert.equal(guiFleetSeatPatch({ seat: 's-claude' }, seats, 'claude', 's-claude'), null, 'repetir não grava')
+  assert.equal(guiFleetSeatPatch({}, seats, 'claude', null), null, '"a da conversa" sem pino não grava')
+  // Conta de outro CLI: o modelo carimbado (e o effort e o fast, que são dele) caem.
+  assert.deepEqual(
+    guiFleetSeatPatch({ seat: 's-claude', model: 'opus[1m]', effort: 'max', fast: true }, seats, 'claude', 's-codex'),
+    { seat: 's-codex', model: null, effort: null, fast: null }
+  )
+  // Mesmo CLI: o modelo fica.
+  assert.deepEqual(guiFleetSeatPatch({ seat: 's-claude', model: 'opus[1m]' }, seats, 'claude', null), {
+    seat: null
+  })
+  // Voltar para "a da conversa" (claude) derruba um modelo codex.
+  assert.deepEqual(guiFleetSeatPatch({ seat: 's-codex', model: 'gpt-5.6-sol' }, seats, 'claude', null), {
+    seat: null,
+    model: null,
+    effort: null,
+    fast: null
+  })
+  // A régua do CLI pelo nome é a MESMA do motor (resolveHelperCli).
+  assert.equal(guiDelegationModelCli('gpt-5.6-sol'), 'codex')
+  assert.equal(guiDelegationModelCli('opus[1m]'), 'claude')
+})
+
+test('a aba recolhida diz a conta pelo nome (e pelo id quando o app não a conhece mais)', () => {
+  const groups = guiDelegationModelGroups(CATALOGS, composerNamer())
+  const seats = [{ id: 's-claude', name: 'Claude – Pessoal', cli: 'claude' }]
+  assert.equal(guiDelegationSummary({ seat: 's-claude' }, groups, seats), 'Claude – Pessoal')
+  assert.equal(
+    guiDelegationSummary({ seat: 's-claude', model: 'opus[1m]', effort: 'max', fast: true }, groups, seats),
+    'Claude – Pessoal · Opus · max · ⚡ fast'
+  )
+  assert.equal(guiDelegationSummary({ seat: 's-sumida' }, groups, seats), 's-sumida')
+  assert.equal(guiDelegationSummary({}, groups, seats), 'herdado da conversa')
+})
+
+test('R13 — o ⚡ é um interruptor no fim da sequência, e limpar apaga o pino inteiro', () => {
   const panel = source('src/renderer/src/components/GuiDelegationDefaults.tsx')
   const css = source('src/renderer/src/global.css')
 
-  // O campo próprio da R12 (rótulo + duas fichas + nota) era o que estourava o
-  // teto do painel (`max-height: min(320px, 46dvh)`) e criava o scroll.
-  assert.doesNotMatch(panel, />\s*desligado\s*</u, 'a ficha "desligado" era metade dele')
-  assert.doesNotMatch(panel, /\$\{panelId\}-fast/u, 'o rótulo do campo próprio saiu junto')
-
-  // O lugar que o dono apontou: MESMA fileira de "herdar da conversa", antes da
-  // lista de modelos. As âncoras são o TEXTO DA FICHA (`>rótulo<`) porque
-  // "herdar da conversa" também aparece em comentário — e comentário não é tela.
-  const herdar = panel.indexOf('>herdar da conversa<')
-  const chip = panel.indexOf('>⚡ fast<')
-  const lista = panel.indexOf('{groups.map((group) =>')
-  assert.ok(herdar > 0 && chip > herdar, 'o ⚡ vem depois de "herdar da conversa"')
-  assert.ok(chip < lista, 'e antes da lista de modelos: é a primeira fileira do campo')
-  assert.doesNotMatch(
-    panel.slice(herdar, chip),
-    /gui-deleg-chips/u,
-    'fileira nova entre os dois seria outra linha, e o scroll voltaria'
-  )
-
-  // Um clique alterna: ligado apaga, apagado liga.
+  // Um interruptor de verdade: papel de switch, estado audível, um clique alterna.
+  assert.match(panel, /role="switch"/u)
+  assert.match(panel, /aria-checked=\{defaults\.fast === true\}/u)
   assert.match(panel, /apply\(\{ fast: defaults\.fast === true \? null : true \}\)/u)
-  assert.match(panel, /className="gui-deleg-item-name">⚡ fast</u)
-  // Escolha ligada é ESTADO (o leitor de tela precisa ouvi-la), e o ⚡ é desenho.
-  assert.match(panel, /aria-pressed=\{defaults\.fast === true\}/u)
-  assert.match(panel, /aria-label="Modo fast[^"]*"/u)
   // O preço mora na dica do app, não num alarme permanente na tela.
   assert.match(panel, /data-tip="[^"]*gasta mais limite[^"]*"/u)
-  // "limpar" apaga o pino INTEIRO — e o botão morto conhece as três escolhas.
-  assert.match(panel, /apply\(\{ model: null, effort: null, fast: null \}\)/u)
-  assert.match(panel, /!defaults\.model && !defaults\.effort && !defaults\.fast/u)
-
-  // ZERO CSS NOVO: o chip nasce das classes que a abinha já tem.
-  assert.doesNotMatch(css, /\.gui-deleg-fast/u)
-  assert.doesNotMatch(panel, /className="gui-deleg-fast/u)
+  // A ordem das etapas no fonte é a da tela: conta, modelo, effort, fast.
+  const seat = panel.indexOf('label="conta"')
+  const model = panel.indexOf('label="modelo"')
+  const effort = panel.indexOf('label="effort"')
+  const fast = panel.indexOf('className="gui-fleet-field switch"')
+  assert.ok(seat > 0 && model > seat && effort > model && fast > effort, 'a sequência do dono')
+  // "limpar" apaga o pino INTEIRO — e o botão morto conhece as quatro escolhas.
+  assert.match(panel, /apply\(\{ seat: null, model: null, effort: null, fast: null \}\)/u)
+  assert.match(panel, /disabled=\{busy \|\| !pinned\}/u)
+  assert.match(panel, /defaults\.seat \|\| defaults\.model \|\| defaults\.effort \|\| defaults\.fast/u)
+  // ZERO classe de fast: o interruptor nasce das classes da aba.
+  assert.doesNotMatch(css, /\.gui-deleg-fast|\.gui-fleet-fast/u)
 })
-
-// ————— 4. A PERSONA —————
 
 test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão', () => {
   const sections = GUI_MISSION_ROLES.map((role) => {
@@ -734,11 +878,20 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   // nativas inclusive, trava até a resposta) entrou nos três papéis — coube
   // dentro do teto velho, mas deixou só 256 chars de folga, e o teto existe
   // justamente para caber UMA régua do dono. A ordem permanente seguiu intocada
-  // (2922) e o dev mede 14244. Os DOIS tetos andam juntos, sempre.
+  // (2922) e o dev mede 14244. E no HARNESS DO MODELO (2026-09-08, Skills 3.0 —
+  // ADRs 0008-0011) de novo só o do CONTRATO, 15000→16500: o cardápio FECHADO de
+  // 5 linhas virou o bloco em que o AGENTE monta o harness da missão ("não quero
+  // mais algo fixo. Quero que a IA decida qual é a melhor opção pra ela ali
+  // naquele momento, e ela vá atrás, ela busque, ela pegue e ela faça") e a LEI
+  // do impeccable virou UMA linha de padrão — 2309 chars de bloco comum contra
+  // os 886 do cardápio velho. A ordem permanente seguiu intocada (2922), o dev
+  // mede 16316 e o ajudante 14321. Os DOIS tetos andam juntos, sempre — e o
+  // orquestrador subiu 16500→17000 nos dois no review da fatia (184 chars de
+  // folga não são uma régua do dono).
   assert.ok(order.length < 3000, `a ordem permanente virou constituição (${order.length})`)
   for (const role of GUI_MISSION_ROLES) {
     assert.ok(
-      guiMissionSystemPrompt(role).length < 15000,
+      guiMissionSystemPrompt(role).length < 17000,
       `${role}: contrato virou constituição (${guiMissionSystemPrompt(role).length})`
     )
   }
@@ -749,6 +902,13 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   const plannerAt = planning.indexOf('DELEGATION — STANDING ORDER FROM THE OWNER:')
   assert.ok(plannerAt >= 0, 'o planejador ficou sem a ordem permanente')
   assert.equal(planning.slice(plannerAt), sections[0], 'fonte única também no planejador')
+  // O teto DELE também é espelho (a suíte de contratos é a fonte): 10900→13600
+  // no HARNESS DO MODELO (2026-09-08) — o cardápio de 886 virou o bloco comum de
+  // 2309 e o planejador ganhou o MÉTODO por cima (863, ADR-0011: "é um
+  // planejamento simples… é um planejamento mais abstrato"). Mede 13154; o
+  // design pedia 12000, número escrito antes da medição e no qual o texto
+  // vinculante não caberia. Os DOIS tetos andam juntos, sempre.
+  assert.ok(planning.length < 13600, `o planejador virou constituição (${planning.length})`)
 })
 
 // O BROWSER DA CASA (2026-08-29 — DESIGN_BROWSER_EMBUTIDO, fatia H4) entrou em

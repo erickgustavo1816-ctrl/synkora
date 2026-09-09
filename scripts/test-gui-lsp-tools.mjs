@@ -71,6 +71,11 @@ const BROWSER_TOOLS = Object.freeze([
   'browser_wait'
 ])
 
+/** O kit de SKILLS (2026-09-08, Skills 3.0 — fatia 5.D): entrou no catálogo do
+ *  dev, do planejador e do ajudante. O REVIEWER fica fora, pela mesma cerca do
+ *  browser — o contrato dele é ler diff, não montar harness. */
+const SKILL_TOOLS = Object.freeze(['skill_discard', 'skill_pull', 'skill_search'])
+
 const PLANNER_TOOLS = Object.freeze([
   'delete_plan',
   'get_plan',
@@ -558,13 +563,13 @@ test('o AJUDANTE recebe o kit de código E SÓ ELE — frota não abre frota, me
   // de código — o QA delegado é o caso real do design, e nenhuma das duas
   // famílias é autoridade sobre nada. A cerca que este teste existe para
   // provar segue intacta logo abaixo: NADA de delegate/integração/release.
-  assert.deepEqual(tools, [...LSP_TOOLS, ...BROWSER_TOOLS].sort())
+  assert.deepEqual(tools, [...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS].sort())
   for (const forbidden of [...DELEGATOR_TOOLS, ...INTEGRATION_TOOLS, ...RELEASE_TOOLS, ...PLANNER_TOOLS]) {
     assert.equal(tools.includes(forbidden), false, `o ajudante enxergou ${forbidden}`)
   }
   const receipt = served.find((entry) => entry.paneId === 'gui-helper-abcd1234-2')
   assert.equal(receipt?.role, 'ajudante')
-  assert.deepEqual([...receipt.tools].sort(), [...LSP_TOOLS, ...BROWSER_TOOLS].sort())
+  assert.deepEqual([...receipt.tools].sort(), [...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS].sort())
 })
 
 test('os TRÊS chats ganham o kit de código sem perder o que já tinham', async (t) => {
@@ -602,11 +607,11 @@ test('os TRÊS chats ganham o kit de código sem perder o que já tinham', async
     await toolNames(url, 'token-planner', 'kit-planner'),
     // 2026-08-30: o planejador delega — o kit de ajudantes entrou no catálogo
     // dele (a lista canônica por papel é do `test:gui-delegate-mcp`).
-    sorted(PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS)
+    sorted(PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, SKILL_TOOLS)
   )
   assert.deepEqual(
     await toolNames(url, 'token-dev', 'kit-dev'),
-    sorted(DELEGATOR_TOOLS, INTEGRATION_TOOLS, LSP_TOOLS, BROWSER_TOOLS)
+    sorted(DELEGATOR_TOOLS, INTEGRATION_TOOLS, LSP_TOOLS, BROWSER_TOOLS, SKILL_TOOLS)
   )
   // A cerca do integrador (R9) continua sendo o PAPEL DO ENDEREÇO: o kit de
   // código não pode ter carregado nada mais junto. E desde o browser
@@ -743,7 +748,7 @@ test('sem o kit ligado as quatro tools CONTINUAM no catálogo e recusam com a re
   // e recusam com BROWSER_ENGINE_OFF; a suíte delas prova a frase.)
   assert.deepEqual(
     await toolNames(url, 'token-ajudante', 'lista-desligada'),
-    [...LSP_TOOLS, ...BROWSER_TOOLS].sort()
+    [...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS].sort()
   )
   for (const [name, args] of [
     ['lsp_diagnostics', {}],
@@ -770,7 +775,7 @@ test('as descrições ENSINAM a base, o confinamento e os tetos reais', async (t
   const client = await clientFor(t, url, 'token-ajudante', 'descricoes')
   const tools = new Map((await client.listTools()).tools.map((tool) => [tool.name, tool]))
 
-  assert.deepEqual([...tools.keys()].sort(), [...LSP_TOOLS, ...BROWSER_TOOLS].sort())
+  assert.deepEqual([...tools.keys()].sort(), [...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS].sort())
   // Descrição que mente sobre o próprio limite é pior que descrição ausente: os
   // números saem do módulo que os APLICA.
   const diagnostics = tools.get('lsp_diagnostics')
