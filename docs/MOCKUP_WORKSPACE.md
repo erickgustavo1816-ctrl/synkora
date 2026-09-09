@@ -52,8 +52,26 @@ terminal — o chat é PAPEL.
 
 1. **Cabeçalho fino da conversa**: `dev · opus 4.8 · mission/1f3a` em texto apagado
    (`--ink` ~55%), UMA linha, sem barra escura de pane.
+
+   > **Emenda 2026-09-08 (ordem do dono: "muita informação, tudo repetido; a única
+   > coisa que gosto são os botões")**: a linha fina MORREU, e com ela o cabeçalho
+   > próprio do chat. A cabeça do palco é UMA fileira de ~40px:
+   > `[lateral] [pílulas de conversa] ··· [● estado do turno · relógio] [logo do
+   > CLI + conta ▾] │ [⇪ ▷ ⌕ ▭ ⋮]`. Só notícia vira palavra (parado = nada);
+   > modelo e effort moram no composer; a branch mora no trilho de entrega; o ⎇
+   > que copiava o id da missão foi dispensado. Palco estreito (< 640px) guarda
+   > só os sinais; pílulas de sobra quebram para baixo. Mockup aprovado com o CSS
+   > real: `scripts/harness/stage-head.html` (módulos `MissionStageHead`,
+   > `StageRoundStatus`, `StageSeatChip`).
 2. **Injeção/1º prompt**: cartão sutil cinza-tinta `📄 002-auth.md · injetada como 1º
    prompt` (fundo rgba(ink, .05), borda rgba(ink, .12), radius 6).
+   > **Emenda 2026-09-09**: a FALA DO DONO é laranja — fundo `accent 22%` sobre
+   > papel, borda `accent 75%`, texto em ink (branco sobre o acento reprova o
+   > AA em 13px) e o rótulo "VOCÊ" em `accent-deep` — para "destacar bem o que
+   > é meu e o que é da IA". E o "ir para o fim" virou um botão redondo de 30px
+   > só com a seta, no canto do fio: o pill com texto flutuava por cima das
+   > frases.
+
 3. **Mensagem do dev**: texto direto no papel, ink, line-height ~1.5. Perguntas com
    botões inline quando fizer sentido (ex.: mini-plano → [aprovar] [ajustar], borda
    accent, fundo papel).

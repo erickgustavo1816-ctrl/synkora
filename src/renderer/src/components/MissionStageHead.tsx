@@ -1,22 +1,24 @@
 import { useState } from 'react'
 
-// CABEÇA DO PALCO (mockup aprovado, docs/MOCKUP_WORKSPACE.md).
+// CABEÇA DO PALCO — UMA FILEIRA (ordem do dono, 2026-09-08; mockup aprovado com
+// o CSS real em scripts/harness/stage-head.html).
 //
-// Duas exigências literais do contrato, e é só isso que este módulo faz:
+// O contrato original (docs/MOCKUP_WORKSPACE.md) tinha duas linhas — a tira
+// de pílulas e a "linha fina" `dev · opus 4.8 · mission/1f3a` — e por baixo o
+// GuiPane abria um terceiro cabeçalho repetindo papel, conta, modelo, effort e
+// id. O dono reprovou ("muita informação, tudo feio/bagunçado; a única coisa
+// que gosto são os botões"). Ficou o que é AÇÃO ou IDENTIDADE:
 //
-//  1. "Cabeçalho fino da conversa: `dev · opus 4.8 · mission/1f3a` em texto
-//     apagado, UMA linha, SEM BARRA ESCURA DE PANE." — o PaneChrome (titlebar
-//     preto de terminal) fica SÓ nas missões legadas, onde o que roda de fato
-//     é um TUI. No palco 2.0 o chat é PAPEL, e um titlebar escuro em cima dele
-//     era exatamente o "tá parecendo um pane ainda" do dono.
+//   [lateral] [pílulas de conversa]   ···   [estado do turno] [conta] │ [botões]
 //
-//  2. "Seletor de conversas: linha fina no topo do palco, pílulas por conversa
-//     aberta — dev · reviewer · ajudante 1..n · terminal. Pílula ativa = fundo
-//     ink, texto papel; inativas = borda ink. Fechar pelo ✕ na própria pílula
-//     (com confirmação quando viva)."
-//
-// A confirmação é INLINE (a pílula vira "fechar?"): `window.confirm` quebra o
-// foco da janela no Windows — regra antiga do projeto, nunca usar.
+//  - pílulas: `dev · reviewer · ajudante 1..n · terminal`, ativa = fundo ink,
+//    texto papel; inativas = borda ink; ✕ com confirmação INLINE quando viva
+//    (`window.confirm` quebra o foco da janela no Windows — nunca usar).
+//  - estado do turno (StageRoundStatus) e conta (StageSeatChip) são do CHAT em
+//    foco: o Board os monta e passa prontos; terminal no palco não os tem.
+//  - modelo e effort moram no composer; a branch mora no trilho de entrega.
+//  - com pílulas de sobra num palco estreito, elas quebram para baixo e a
+//    primeira fileira (lateral · trail) continua alinhada (align-items: start).
 
 export interface StagePill {
   /** paneId da conversa ou id do pane de terminal — só precisa ser único */
@@ -38,19 +40,26 @@ export interface StagePill {
 
 export default function MissionStageHead({
   pills,
-  meta,
+  leadingAction,
+  status,
+  seat,
   actions
 }: {
   pills: StagePill[]
-  /** a linha fina: papel-e-tinta apagada, uma linha só */
-  meta: React.ReactNode
-  /** alavancas do contexto (estudar/seat/limpar, encerrar planejamento…) */
+  /** o toggle da coluna de missões, na ponta esquerda */
+  leadingAction?: React.ReactNode
+  /** estado do turno da conversa em foco — só quando é notícia */
+  status?: React.ReactNode
+  /** a conta da conversa em foco (chip que troca de seat) */
+  seat?: React.ReactNode
+  /** alavancas da missão (⇪, terminal de teste, revisão, arquivar, painéis) */
   actions?: React.ReactNode
 }): React.JSX.Element {
   const [confirmId, setConfirmId] = useState<string | null>(null)
 
   return (
     <div className="stage-head">
+      {leadingAction}
       <div className="stage-pills" role="tablist" aria-label="Conversas abertas">
         {pills.map((pill) => {
           const confirming = confirmId === pill.id
@@ -105,9 +114,16 @@ export default function MissionStageHead({
         })}
       </div>
 
-      <div className="stage-meta">
-        <span className="stage-meta-line">{meta}</span>
-        {actions && <span className="stage-actions">{actions}</span>}
+      {/* o que fica à direita: leitura do turno · conta │ ações da missão */}
+      <div className="stage-trail">
+        {status}
+        {seat}
+        {actions && (
+          <>
+            {(status || seat) && <span className="stage-sep" aria-hidden="true" />}
+            <span className="stage-actions">{actions}</span>
+          </>
+        )}
       </div>
     </div>
   )

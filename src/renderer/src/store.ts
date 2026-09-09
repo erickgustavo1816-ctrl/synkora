@@ -351,6 +351,9 @@ export interface DocFile {
 export interface CatalogModel {
   id: string
   label: string
+  /** espelho de `src/main/catalog.ts`: o id canônico do alias, de onde a aba
+   *  "ajudantes ˄" tira a versão do nome digno ("Opus 5") */
+  resolvedModel?: string
   efforts?: string[]
   defaultEffort?: string
   /** R13 — espelho de `src/main/catalog.ts` (via preload): a marca que o
@@ -532,6 +535,10 @@ export interface GuiPaneState {
    * interação da frente, para manter os componentes pequenos. */
   interactionQueue: GuiPendingInteraction[]
   interactionSubmitting: string | null
+  /** o composer está no meio de uma troca de executor ou de um anexo (estado
+   *  local do GuiPane, publicado aqui): a cabeça do palco não troca a conta
+   *  enquanto isso — o transplante mataria a operação em voo */
+  composerBusy: boolean
   perm: GuiPendingPerm | null
   /** pergunta com opções esperando o dono (AskUserQuestion) */
   question: { requestId: string; questions: GuiQuestion[]; blocking?: boolean } | null
@@ -621,6 +628,7 @@ export const EMPTY_GUI_PANE: GuiPaneState = {
   thinkingText: '',
   interactionQueue: [],
   interactionSubmitting: null,
+  composerBusy: false,
   perm: null,
   question: null,
   planReview: null,
@@ -1798,6 +1806,8 @@ interface SynkoraState {
   clearPaneAttention: (projectId: string, paneId: string) => void
   /** missões do projeto ATIVO */
   missions: Mission[]
+  /** Keepalive views retain their own last successful mission list. */
+  missionsByProject: Record<string, Mission[]>
   loadMissions: (projectId: string) => Promise<void>
   createMission: (projectId: string, input: NewMissionInput) => Promise<Mission | null>
   archiveMission: (id: string, archived: boolean) => Promise<void>
@@ -1932,6 +1942,9 @@ interface SynkoraState {
   ) => void
   /** carimba que `gui:create` já foi pedido (não spawnar duas vezes) */
   markGuiSpawned: (paneId: string) => void
+  /** o GuiPane publica se o composer está ocupado (troca de executor ou anexo
+   *  em voo) — quem lê é o chip de conta da cabeça do palco */
+  setGuiComposerBusy: (paneId: string, busy: boolean) => void
   /** revelador terminou: a mensagem vira markdown estático sem piscar/remontar */
   finishGuiReveal: (paneId: string, itemId: string, revealedLength: number) => void
   queueGuiMessage: (
@@ -2037,6 +2050,8 @@ function skillsFailure(error: unknown, doing: string): string {
   return detail ? `não deu para ${doing}: ${detail}` : `não deu para ${doing}`
 }
 
+const missionListEpochs = new Map<string, number>()
+
 export const useStore = create<SynkoraState>((set, get) => ({
   projects: [],
   seats: [],
@@ -2064,16 +2079,21 @@ export const useStore = create<SynkoraState>((set, get) => ({
     }),
 
   missions: [],
+  missionsByProject: {},
   // Preload antigo (app rodando sem restart) não tem a API de missões — os
   // guards evitam quebrar o renderer com HMR no meio do caminho.
   loadMissions: async (projectId) => {
     if (!window.synkora.missions) return
+    const epoch = (missionListEpochs.get(projectId) ?? 0) + 1
+    missionListEpochs.set(projectId, epoch)
     const missions = await window.synkora.missions.list(projectId)
-    // Resposta ATRASADA de um projeto que já não é o ativo sobrescrevia o
-    // estado global do universo VISÍVEL (troca rápida no rail deixava o board
-    // com os dados do outro, de forma permanente).
-    if (get().openProjectId !== projectId) return
-    set({ missions })
+    // A → B → A can leave two reads of A in flight. Only its latest request
+    // may publish; a background response updates its own cache, never B.
+    if (missionListEpochs.get(projectId) !== epoch) return
+    set((state) => ({
+      missionsByProject: { ...state.missionsByProject, [projectId]: missions },
+      ...(state.openProjectId === projectId ? { missions } : {})
+    }))
   },
   createMission: async (projectId, input) => {
     if (!window.synkora.missions) return null
@@ -2392,22 +2412,14 @@ export const useStore = create<SynkoraState>((set, get) => ({
 
   // Trocar de projeto NÃO derruba nada (decisão do usuário, estilo Discord):
   // os universos visitados ficam montados; aqui só troca o ativo e recarrega
-  // o estado global por-projeto (missões) para o novo ativo.
+  // sua fotografia salva antes de atualizar as missões em segundo plano.
+  // A aba e a missão já são guardadas por projeto: preservá-las retoma o
+  // último clique. Na primeira visita, Universe/Board usam board e Geral.
   openProject: (id) => {
     set((s) => ({
       openProjectId: id,
       appPage: 'workspace',
-      // Entrar num projeto SEMPRE pousa no board ✦ geral (pedido do usuário,
-      // 2026-07-28) — a última aba/missão visitada não gruda entre visitas.
-      // E o ✦ geral É a landing do universo desde 2026-08-15: o centro dele
-      // convida a criar missão (ProjectGeneral), que é o que o dono quer ver
-      // ao abrir um projeto.
-      ...(id
-        ? {
-            universeTabByProject: { ...s.universeTabByProject, [id]: 'board' as const },
-            missionTabByProject: { ...s.missionTabByProject, [id]: null }
-          }
-        : {}),
+      missions: id ? s.missionsByProject[id] ?? (s.openProjectId === id ? s.missions : []) : [],
       mountedProjects:
         id && !s.mountedProjects.includes(id)
           ? [...s.mountedProjects, id]
@@ -2584,6 +2596,15 @@ export const useStore = create<SynkoraState>((set, get) => ({
         }
       if (prev.spawned) return {}
       return { guiPanes: { ...s.guiPanes, [paneId]: { ...prev, spawned: true } } }
+    }),
+
+  setGuiComposerBusy: (paneId, busy) =>
+    set((s) => {
+      const prev = s.guiPanes[paneId]
+      // sem estado ainda (ou já igual) não há o que publicar — e nunca se
+      // inventa um pane só para carimbar um booleano nele
+      if (!prev || prev.composerBusy === busy) return {}
+      return { guiPanes: { ...s.guiPanes, [paneId]: { ...prev, composerBusy: busy } } }
     }),
 
   finishGuiReveal: (paneId, itemId, revealedLength) =>

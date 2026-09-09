@@ -1,94 +1,122 @@
-import { useCallback, useEffect, useId, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useStore, type Seat, type SeatCli } from '../store'
 import CliMark from './CliMark'
 import { prettyModel } from './PaneChrome'
 import { guiApi } from '../guiApi'
 import { guiModelShortName } from '../guiComposerPresentation'
 import {
-  guiDelegationEffortOptions,
   guiDelegationModelGroups,
-  guiDelegationModelOption,
   guiDelegationSummary,
+  guiFleetModelPatch,
+  guiFleetPlan,
+  guiFleetSeatPatch,
   type GuiDelegationCatalog,
   type GuiDelegationDefaultsValue,
-  type GuiDelegationModelNamer
+  type GuiDelegationModelNamer,
+  type GuiFleetSeat
 } from '../guiDelegationDefaults'
+import GuiFleetSelect, { type GuiFleetSelectOption } from './GuiFleetSelect'
 
-// A ABINHA DO PADRÃO DOS AJUDANTES (D8 do design vinculante
-// `.synkora/reports/DESIGN_SUBAGENTES_SEM_ABA_2026-08-18.md`).
+// A ABA "ajudantes ˄" — o padrão dos ajudantes (D8 do design vinculante
+// `.synkora/reports/DESIGN_SUBAGENTES_SEM_ABA_2026-08-18.md`), redesenhada
+// por ordem do dono em 2026-09-08 depois de três mockups reprovados:
 //
-// Ordem do dono (18/08, tarde): "como padrão vai vir eles; caso eu queira
-// outros, aí eu falo". Aqui ele carimba UM modelo e UM effort para toda
-// delegação DESTE chat; o pedido explícito do agente continua vencendo, e o
-// recibo da tool diz de onde cada valor veio (explícito / painel / herdado).
+//   "eu queria que tivesse um ajudante. Na hora que eu clicasse, fizesse uma
+//    animação subindo essa parte de ajudantes, como se estivesse saindo de
+//    dentro dele, subindo. E aí sim, lá eu teria os selects pra selecionar
+//    um, aparece o outro select, selecionei um, aparece o outro. E no final,
+//    um botãozinho de fast, se eu deixo ativado ou não."
 //
-// Ela nasce RECOLHIDA por decisão: é um pino que se mexe uma vez e se esquece —
-// ocupar uma coluna permanente do chat seria cobrar atenção todo dia por uma
-// escolha de minuto. E o catálogo é o REAL dos DOIS CLIs (catalog.ts), não as
-// caps do pane: cross-CLI é cidadão de primeira classe, então um chat claude
-// carimba `gpt-*` sem cerimônia.
+// A aba é a TAMPA: em repouso é um pequeno tab em cima do input. Clicar faz o
+// cartão desdobrar POR BAIXO dela enquanto ela sobe (a caixa é ancorada no
+// composer e cresce para cima, `grid-template-rows: 0fr → 1fr`). Dentro, os
+// selects nascem UM DE CADA VEZ — conta › modelo (só os daquela conta) ›
+// effort (só os níveis daquele modelo) › fast (interruptor, só se o modelo
+// aceita) —, lado a lado no chat largo e um embaixo do outro no estreito. O
+// "limpar" mora na linha da aba, na ponta direita, para nunca sobrar uma linha
+// fantasma no cartão (ordem dele). Mockup aprovado com o CSS real:
+// scripts/harness/helpers-defaults.html.
 //
-// A montagem é do chat, mas o componente não depende dela: ele só precisa do
-// paneId e das contas. Quando o rail direito existir, ele muda de casa sem
-// mudar de código.
-//
-// R7 §B2 — "Tá muito feio... Opus Rochetes um milhão". O painel mostrava id CRU
-// onde o composer mostra nome digno. Agora o TÍTULO é o nome (mesma régua do
-// seletor do composer) e o id desce para metadado; a superfície inteira passou
-// pelo `polish` da skill impeccable (papel & painel, sem animação nova).
-//
-// R13 §B2-B4 — o campo próprio que a R12 deu ao fast estourou o teto do painel
-// (`max-height: min(320px, 46dvh)`) e criou scroll: "parece um remendo". Ele
-// morre e vira UM chip ⚡ na primeira fileira do modelo, ao lado de "herdar da
-// conversa" — o lugar que o dono apontou —, visível só quando o modelo
-// carimbado aceita o modo.
-
-const CLI_LABEL: Record<SeatCli, string> = {
-  claude: 'claude',
-  codex: 'codex'
-}
+// O que NÃO mudou: o pino é a palavra do dono e o pedido explícito do agente
+// continua vencendo (cadeia explícito > painel > herdado em
+// `guiDelegationWiring`); a fotografia canônica vem do main a cada gravação; e
+// o catálogo é o REAL da conta escolhida (catalog.ts), não as caps do pane.
+// A CONTA entrou no pino nesta rodada: `delegateSeat` em `guiSessions.ts`.
 
 /**
  * A FONTE ÚNICA DO NOME DIGNO — as duas metades da régua do composer, do jeito
- * que o seletor de modelo as usa: o nome que o catálogo escolheu primeiro, o
- * embelezador do identificador quando ele não escolheu nenhum. Nada é
- * reescrito aqui; se o composer mudar de voz, o painel muda junto.
+ * que o seletor de modelo as usa. Nada é reescrito aqui. A VERSÃO vem do id
+ * canônico que o catálogo publica ("claude-opus-5" → "Opus 5"; pedido do dono
+ * de 09/09: "quero ver o nome do modelo formatado, bonitinho"), e o `default`
+ * do claude ganha a mesma voz do composer: "padrão da conta · Fable 5.1".
  */
-const MODEL_NAMER: GuiDelegationModelNamer = ({ id, displayName }) =>
-  guiModelShortName({ value: id, displayName, resolvedModel: id }, prettyModel(id))
+const MODEL_NAMER: GuiDelegationModelNamer = ({ id, displayName, resolvedModel }) => {
+  const short = guiModelShortName(
+    { value: id, displayName, resolvedModel: resolvedModel ?? id },
+    prettyModel(id)
+  )
+  if (!/^default\b/iu.test(displayName || id)) return short
+  return short && !/^default\b/iu.test(short) ? `padrão da conta · ${short}` : 'padrão da conta'
+}
+
+const TAB_TIP =
+  'Com que conta, modelo, effort e fast os ajudantes deste chat abrem quando o agente não pede outros. O pedido dele sempre vence.'
+
+/** Teto de espera pelo `transitionend` do desdobrar (240ms + folga): com
+ *  reduced-motion não há transição, e sem o teto o corpo ficaria cortando os
+ *  menus para sempre. */
+const SETTLE_FALLBACK_MS = 320
+
+type FleetMenu = 'seat' | 'model' | 'effort' | null
+
+function Chevron(): React.JSX.Element {
+  return (
+    <svg
+      className="chev"
+      viewBox="0 0 10 10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M2 6.5 5 3.5l3 3" />
+    </svg>
+  )
+}
 
 export default function GuiDelegationDefaults({
   paneId,
-  seats
+  seats,
+  cli,
+  seatId
 }: {
   paneId: string
-  /** Contas do app: cada CLI consulta o catálogo com o config dir de uma delas
+  /** Contas do app: a lista da etapa da conta, e quem responde pelo catálogo
    *  (a lista de modelos é da CONTA, não do binário solto). */
   seats?: Seat[]
+  /** O CLI da CONVERSA: manda no catálogo enquanto a conta é "a da conversa". */
+  cli: SeatCli
+  /** A conta da conversa — é ela que "a da conversa" nomeia na dica. */
+  seatId?: string
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
+  /** o desdobrar acabou: só então o corpo deixa os menus vazarem dele */
+  const [settled, setSettled] = useState(false)
+  const [menu, setMenu] = useState<FleetMenu>(null)
+  /** o dono respondeu a etapa da conta nesta abertura (mesmo "a da conversa") */
+  const [reachedModel, setReachedModel] = useState(false)
   const [defaults, setDefaults] = useState<GuiDelegationDefaultsValue>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  /** Os dois catálogos já RESPONDERAM (com lista ou com falha) nesta abertura.
-   *  É o que separa "esperando" de "não veio nada" — sem ele, o painel dava a
-   *  mesma frase para os dois, e a espera parecia defeito. */
+  /** o catálogo já RESPONDEU (com lista ou com falha) nesta abertura */
   const [catalogSettled, setCatalogSettled] = useState(false)
   const catalogByCli = useStore((s) => s.catalogByCli)
   const loadCatalog = useStore((s) => s.loadCatalog)
-  const panelId = useId()
-
-  /** A conta que responde pelo catálogo daquele CLI: a logada vem primeiro
-   *  (config dir com sessão é o que devolve a lista real da conta). O id vira
-   *  DEPENDÊNCIA PRIMITIVA dos efeitos — `seats` é um array recriado a cada
-   *  render do pai, e prendê-lo ao efeito re-pediria catálogo sem parar. */
-  const seatIdFor = (cli: SeatCli): string | undefined =>
-    (
-      seats?.find((seat) => seat.cli === cli && seat.status === 'logado') ??
-      seats?.find((seat) => seat.cli === cli)
-    )?.id
-  const claudeSeatId = seatIdFor('claude')
-  const codexSeatId = seatIdFor('codex')
+  const host = useRef<HTMLDivElement>(null)
+  const fleetRef = useRef<HTMLDivElement>(null)
+  const sheetId = useId()
 
   useEffect(() => {
     let alive = true
@@ -100,61 +128,107 @@ export default function GuiDelegationDefaults({
     }
   }, [paneId])
 
-  /** Catálogo quando a abinha ABRE — e também quando há PINO para nomear. A
-   *  linha recolhida é a superfície que o dono mais vê, e era ela que escrevia
-   *  `opus[1m]`: sem o catálogo não existe nome digno para carregar ali. Chat
-   *  sem pino e sem abrir continua não pagando processo nenhum. */
-  const needsCatalog = open || Boolean(defaults.model)
+  const fleetSeats = useMemo<GuiFleetSeat[]>(
+    () => (seats ?? []).map((seat) => ({ id: seat.id, name: seat.name, cli: seat.cli })),
+    [seats]
+  )
+  const pinnedSeat = defaults.seat ? fleetSeats.find((seat) => seat.id === defaults.seat) : undefined
+  const conversationSeat = seatId ? fleetSeats.find((seat) => seat.id === seatId) : undefined
 
-  // O store cacheia por cli+conta e o main cacheia a consulta ao CLI, então
-  // reabrir não repete nada — e `allSettled` é o que deixa a recusa de um CLI
-  // ser uma RESPOSTA, não uma promessa solta virando rejeição sem dono.
+  /** O CLI que manda no catálogo e a conta cujo config dir responde por ele:
+   *  a carimbada; senão a da conversa (se for desse CLI); senão a primeira
+   *  logada do CLI. Ids PRIMITIVOS como dependência dos efeitos — `seats` é um
+   *  array recriado a cada render do pai. */
+  const catalogCli: SeatCli = pinnedSeat?.cli ?? cli
+  const catalogSeatId =
+    pinnedSeat?.id ??
+    (conversationSeat?.cli === catalogCli ? conversationSeat.id : undefined) ??
+    (
+      seats?.find((seat) => seat.cli === catalogCli && seat.status === 'logado') ??
+      seats?.find((seat) => seat.cli === catalogCli)
+    )?.id
+
+  /** Catálogo quando a aba ABRE — e também quando há PINO para nomear (a dica
+   *  da aba recolhida é lida por leitor de tela; sem catálogo o nome digno não
+   *  existe). Chat sem pino e sem abrir não paga processo nenhum. */
+  const needsCatalog = open || Boolean(defaults.model)
   useEffect(() => {
     if (!needsCatalog) return
     let alive = true
     setCatalogSettled(false)
-    void Promise.allSettled([
-      loadCatalog('claude', claudeSeatId),
-      loadCatalog('codex', codexSeatId)
-    ]).then(() => {
+    const done = (): void => {
       if (alive) setCatalogSettled(true)
-    })
+    }
+    void loadCatalog(catalogCli, catalogSeatId).then(done, done)
     return () => {
       alive = false
     }
-  }, [claudeSeatId, codexSeatId, loadCatalog, needsCatalog])
+  }, [catalogCli, catalogSeatId, loadCatalog, needsCatalog])
 
   const groups = useMemo(() => {
-    const catalogs: GuiDelegationCatalog[] = []
-    for (const [cli, seatId] of [
-      ['claude', claudeSeatId],
-      ['codex', codexSeatId]
-    ] as const) {
-      const catalog = catalogByCli[`${cli}:${seatId ?? ''}`]
-      if (catalog) catalogs.push({ cli, models: catalog.models, efforts: catalog.efforts })
-    }
+    const catalog = catalogByCli[`${catalogCli}:${catalogSeatId ?? ''}`]
+    const catalogs: GuiDelegationCatalog[] = catalog
+      ? [{ cli: catalogCli, models: catalog.models, efforts: catalog.efforts }]
+      : []
     return guiDelegationModelGroups(catalogs, MODEL_NAMER)
-  }, [catalogByCli, claudeSeatId, codexSeatId])
+  }, [catalogByCli, catalogCli, catalogSeatId])
 
-  const effortOptions = useMemo(
-    () => guiDelegationEffortOptions(groups, defaults.model),
-    [defaults.model, groups]
-  )
-  const pinnedOption = guiDelegationModelOption(groups, defaults.model)
-  const summary = guiDelegationSummary(defaults, groups)
+  const plan = guiFleetPlan({
+    defaults,
+    conversationCli: cli,
+    seats: fleetSeats,
+    groups,
+    reachedModel
+  })
+  const summary = guiDelegationSummary(defaults, groups, fleetSeats)
+  const pinned = Boolean(defaults.seat || defaults.model || defaults.effort || defaults.fast)
   /** Pino que o catálogo carregado não conhece. Ele CONTINUA valendo no motor,
-   *  então escondê-lo seria o estado mais enganoso deste painel: o dono veria
-   *  "herdar da conversa" ligado enquanto um modelo está carimbado. */
-  const pinnedOutsideCatalog = Boolean(defaults.model) && !pinnedOption && groups.length > 0
-  /** O ⚡ só aparece onde ele PODE valer: com modelo carimbado e o catálogo
-   *  dizendo que aquele modelo aceita o modo (fable e haiku não aceitam —
-   *  oferecer ali seria prometer o que o motor não entrega). A exceção é a
-   *  mesma honestidade do `pinnedOutsideCatalog`: fast JÁ carimbado aparece
-   *  sempre, porque pino ligado e invisível é o pior estado do painel. */
-  const fastChipVisible = defaults.fast === true || pinnedOption?.supportsFastMode === true
+   *  então esconder seria o estado mais enganoso da aba. */
+  const pinnedOutsideCatalog = Boolean(defaults.model) && !plan.pinnedOption && groups.length > 0
+
+  // ————— o desdobrar: a aba sobe, o cartão sai de dentro dela —————
+  useEffect(() => {
+    if (!open) {
+      setSettled(false)
+      return
+    }
+    const node = fleetRef.current
+    const done = (): void => setSettled(true)
+    const onEnd = (event: TransitionEvent): void => {
+      if (event.target === node && event.propertyName === 'grid-template-rows') done()
+    }
+    node?.addEventListener('transitionend', onEnd)
+    const timer = window.setTimeout(done, SETTLE_FALLBACK_MS)
+    return () => {
+      node?.removeEventListener('transitionend', onEnd)
+      window.clearTimeout(timer)
+    }
+  }, [open])
+
+  // Clique fora fecha (menu aberto primeiro, depois a aba); Escape idem.
+  useEffect(() => {
+    if (!open) return
+    const outside = (event: PointerEvent): void => {
+      if (host.current?.contains(event.target as Node)) return
+      setMenu(null)
+      setOpen(false)
+    }
+    const key = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      if (menu) setMenu(null)
+      else setOpen(false)
+    }
+    document.addEventListener('pointerdown', outside, true)
+    document.addEventListener('keydown', key)
+    return () => {
+      document.removeEventListener('pointerdown', outside, true)
+      document.removeEventListener('keydown', key)
+    }
+  }, [menu, open])
 
   const apply = useCallback(
     async (patch: {
+      seat?: string | null
       model?: string | null
       effort?: string | null
       fast?: boolean | null
@@ -167,220 +241,224 @@ export default function GuiDelegationDefaults({
         setError(result.error)
         return
       }
-      // A fotografia CANÔNICA vem do main: o painel nunca fica mostrando uma
+      // A fotografia CANÔNICA vem do main: a aba nunca fica mostrando uma
       // escolha que o disco recusou.
-      setDefaults({ model: result.model, effort: result.effort, fast: result.fast })
+      setDefaults({
+        seat: result.seat,
+        model: result.model,
+        effort: result.effort,
+        fast: result.fast
+      })
     },
     [paneId]
   )
 
-  const chooseModel = useCallback(
-    (model: string | null): void => {
-      // Limpar o modelo limpa o effort junto: sem modelo não existe escala para
-      // filtrar o nível, e um effort órfão seria um pino que a própria abinha
-      // não sabe mais julgar. O ⚡ cai pelo mesmo motivo — ele é propriedade do
-      // modelo carimbado, não do painel.
-      if (model === null) {
-        void apply({ model: null, effort: null, fast: null })
-        return
-      }
-      if (model === defaults.model) return
-      const supported = guiDelegationEffortOptions(groups, model)
-      const keep = defaults.effort && supported.includes(defaults.effort) ? defaults.effort : null
-      // O ⚡ atravessa a troca só quando o modelo NOVO aceita o modo. Catálogo
-      // vazio é ausência de notícia, não notícia de ausência: ali o pino fica de
-      // pé, e o campo ausente CONSERVA (regra do `setDelegationDefaults`).
-      const dropFast =
-        groups.length > 0 && guiDelegationModelOption(groups, model)?.supportsFastMode !== true
-      void apply({ model, effort: keep, fast: dropFast ? null : undefined })
+  // As decisões de cada etapa são régua PURA (guiDelegationDefaults.ts), provada
+  // em node longe do app; aqui só se aplica o patch que ela devolve.
+  const chooseSeat = useCallback(
+    (seat: string | null): void => {
+      // Responder a etapa da conta — mesmo com "a da conversa" — abre a do modelo.
+      setReachedModel(true)
+      const patch = guiFleetSeatPatch(defaults, fleetSeats, cli, seat)
+      if (patch) void apply(patch)
     },
-    [apply, defaults.effort, defaults.model, groups]
+    [apply, cli, defaults, fleetSeats]
   )
 
+  const chooseModel = useCallback(
+    (model: string | null): void => {
+      const patch = guiFleetModelPatch(defaults, plan.modelOptions, groups.length > 0, model)
+      if (patch) void apply(patch)
+    },
+    [apply, defaults, groups.length, plan.modelOptions]
+  )
+
+  // ————— as opções de cada etapa —————
+  const seatOptions: GuiFleetSelectOption[] = [
+    {
+      id: '',
+      label: 'a da conversa',
+      ghost: true,
+      tip: conversationSeat
+        ? `A conta desta conversa (${conversationSeat.name}) — a de sempre.`
+        : 'A conta desta conversa — a de sempre.'
+    },
+    ...fleetSeats.map((seat) => ({
+      id: seat.id,
+      label: seat.name,
+      detail: seat.cli,
+      mark: <CliMark cli={seat.cli} size={11} />
+    }))
+  ]
+  const modelOptions: GuiFleetSelectOption[] = [
+    ...(plan.modelInheritAllowed
+      ? [{ id: '', label: 'o da conversa', ghost: true, tip: 'O modelo desta conversa, seja ele qual for.' }]
+      : []),
+    // Só o NOME no menu (pedido do dono: "não quero ver essa parte da direita");
+    // o id cru e a descrição do catálogo ficam na dica, para quem procura.
+    ...plan.modelOptions.map((option) => {
+      const tip = [option.detail, option.id !== option.name ? option.id : null]
+        .filter((part): part is string => Boolean(part))
+        .join(' · ')
+      return { id: option.id, label: option.name, ...(tip ? { tip } : {}) }
+    })
+  ]
+  const effortOptions: GuiFleetSelectOption[] = [
+    { id: '', label: 'padrão do modelo', ghost: true },
+    ...plan.effortOptions.map((level) => ({ id: level, label: level }))
+  ]
+
+  const modelValue = plan.pinnedOption?.name ?? defaults.model
+  const modelFoot = pinnedOutsideCatalog
+    ? `carimbado ${defaults.model} — fora do catálogo carregado, e ainda valendo`
+    : groups.length === 0
+      ? catalogSettled
+        ? 'nenhum CLI respondeu com uma lista de modelos'
+        : 'consultando os modelos da conta…'
+      : undefined
+  const effortLocked = plan.effortOptions.length === 0
+  const effortValue = effortLocked
+    ? groups.length === 0
+      ? 'os níveis chegam com o catálogo'
+      : plan.pinnedOption
+        ? `${plan.pinnedOption.name} não aceita effort`
+        : 'modelo fora do catálogo'
+    : (defaults.effort ?? 'padrão do modelo')
+
   return (
-    <section className="gui-deleg-defaults" data-open={open ? 'true' : undefined}>
-      <button
-        type="button"
-        className={`gui-deleg-tab${open ? ' open' : ''}`}
-        aria-expanded={open}
-        aria-controls={panelId}
-        aria-label={`Padrão dos ajudantes: ${summary}`}
-        data-tip={
-          'O modelo, o effort e o fast com que os ajudantes deste chat abrem quando o agente não pede outros.'
-        }
-        onClick={() => setOpen((value) => !value)}
+    <div className="gui-fleet-host" ref={host}>
+      <div
+        className="gui-fleet"
+        data-open={open ? 'true' : 'false'}
+        data-settled={settled ? 'true' : 'false'}
+        ref={fleetRef}
       >
-        <span aria-hidden="true">{open ? '▾' : '▸'}</span>
-        <span className="gui-deleg-tab-name">padrão dos ajudantes</span>
-        <span className="gui-deleg-tab-value">{busy ? 'gravando…' : summary}</span>
-      </button>
-
-      {open && (
-        <div
-          className="gui-deleg-panel"
-          id={panelId}
-          role="group"
-          aria-label="Padrão dos ajudantes"
-          aria-busy={busy || undefined}
-        >
-          <p className="gui-deleg-note">
-            vale quando o agente delega sem pedir modelo, effort ou fast — o pedido dele sempre
-            vence
-          </p>
-
-          <div className="gui-deleg-field">
-            <span className="gui-deleg-label" id={`${panelId}-modelo`}>
-              modelo
+        <div className="gui-fleet-head">
+          <button
+            type="button"
+            className="gui-fleet-tab"
+            aria-expanded={open}
+            aria-controls={sheetId}
+            aria-label={`Padrão dos ajudantes: ${busy ? 'gravando…' : summary}`}
+            data-tip={TAB_TIP}
+            onClick={() => {
+              setMenu(null)
+              setOpen((value) => !value)
+            }}
+          >
+            <span className="name">ajudantes</span>
+            {/* A configuração EM USO, visível com a aba abaixada (pedido do
+                dono: "não sei qual configuração eu tô usando"). Com pino, em
+                tinta cheia e com a marca do CLI da conta; herdando, apagada. */}
+            <span className={pinned ? 'sum pinned' : 'sum'}>
+              {pinnedSeat && <CliMark cli={pinnedSeat.cli} size={11} />}
+              <span className="sum-text">
+                {busy ? 'gravando…' : pinned ? summary : 'herdam da conversa'}
+              </span>
             </span>
-            <div className="gui-deleg-list" role="group" aria-labelledby={`${panelId}-modelo`}>
-              <div className="gui-deleg-chips">
-                <button
-                  type="button"
-                  className="gui-deleg-item"
-                  aria-pressed={!defaults.model}
-                  disabled={busy}
-                  onClick={() => chooseModel(null)}
-                >
-                  <span className="gui-deleg-item-name">herdar da conversa</span>
-                </button>
-                {fastChipVisible && (
-                  <button
-                    type="button"
-                    className="gui-deleg-item"
-                    aria-pressed={defaults.fast === true}
-                    disabled={busy}
-                    data-tip="Abre todo ajudante em modo fast: mais rápido e gasta mais limite."
-                    // O ⚡ é desenho: o leitor de tela ouve a escolha e o preço,
-                    // nunca "raio fast".
-                    aria-label="Modo fast — gasta mais limite"
-                    onClick={() => void apply({ fast: defaults.fast === true ? null : true })}
-                  >
-                    <span className="gui-deleg-item-name">⚡ fast</span>
-                  </button>
-                )}
-              </div>
-
-              {groups.map((group) => (
-                <div className="gui-deleg-group" key={group.cli}>
-                  <span className="gui-deleg-group-head">
-                    <CliMark cli={group.cli} size={11} />
-                    <span>{CLI_LABEL[group.cli]}</span>
-                  </span>
-                  <div className="gui-deleg-chips">
-                    {group.options.map((option) => (
-                      <button
-                        key={`${group.cli}:${option.id}`}
-                        type="button"
-                        className="gui-deleg-item"
-                        aria-pressed={option.id === defaults.model}
-                        // A dica é a do app (portal, tema painel): o `title=`
-                        // nativo é lento e some no Windows.
-                        data-tip={option.detail ?? undefined}
-                        // O nome falado é o que está NA TELA: repetir o id
-                        // quando ele é o próprio nome faria o leitor de tela
-                        // dizer "fable (fable)".
-                        aria-label={
-                          [
-                            option.id === option.name ? option.name : `${option.name} (${option.id})`,
-                            option.detail
-                          ]
-                            .filter(Boolean)
-                            .join(' — ')
-                        }
-                        disabled={busy}
-                        onClick={() => chooseModel(option.id)}
-                      >
-                        <span className="gui-deleg-item-name">{option.name}</span>
-                        {option.id !== option.name && (
-                          <span className="gui-deleg-item-id">{option.id}</span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-
-              {/* ESPERANDO ≠ VAZIO: enquanto os dois CLIs não respondem a lista
-                  está a caminho; depois disso, o silêncio é ausência mesmo. */}
-              {groups.length === 0 && (
-                <span className="gui-deleg-empty">
-                  {catalogSettled
-                    ? 'nenhum CLI respondeu com uma lista de modelos'
-                    : 'consultando os modelos dos CLIs…'}
-                </span>
-              )}
-
-              {pinnedOutsideCatalog && (
-                <p className="gui-deleg-hint" role="note">
-                  carimbado <b>{defaults.model}</b> — fora do catálogo carregado, e ainda valendo
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="gui-deleg-field">
-            <span className="gui-deleg-label" id={`${panelId}-effort`}>
-              effort
-            </span>
-            <div className="gui-deleg-list" role="group" aria-labelledby={`${panelId}-effort`}>
-              {!defaults.model ? (
-                <span className="gui-deleg-empty">— escolha o modelo primeiro</span>
-              ) : groups.length === 0 ? (
-                // Catálogo ainda a caminho: dizer "fora do catálogo" aqui seria
-                // acusar de errado um pino que pode estar perfeito.
-                <span className="gui-deleg-empty">— os níveis chegam com o catálogo</span>
-              ) : effortOptions.length === 0 ? (
-                <span className="gui-deleg-empty">
-                  —{' '}
-                  {pinnedOption
-                    ? `${pinnedOption.name} não aceita effort`
-                    : 'modelo fora do catálogo'}
-                </span>
-              ) : (
-                <div className="gui-deleg-chips">
-                  <button
-                    type="button"
-                    className="gui-deleg-item"
-                    aria-pressed={!defaults.effort}
-                    disabled={busy}
-                    onClick={() => void apply({ effort: null })}
-                  >
-                    <span className="gui-deleg-item-name">padrão do modelo</span>
-                  </button>
-                  {effortOptions.map((level) => (
-                    <button
-                      key={level}
-                      type="button"
-                      className="gui-deleg-item"
-                      aria-pressed={level === defaults.effort}
-                      disabled={busy}
-                      onClick={() => void apply({ effort: level })}
-                    >
-                      <span className="gui-deleg-item-name">{level}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="gui-deleg-foot">
+            <Chevron />
+          </button>
+          {/* "limpar" na linha da aba, na ponta: sem ele no cartão não sobra
+              linha fantasma quando os campos quebram (ordem do dono). */}
+          {open && (
             <button
               type="button"
-              className="gui-deleg-clear"
-              disabled={busy || (!defaults.model && !defaults.effort && !defaults.fast)}
-              onClick={() => void apply({ model: null, effort: null, fast: null })}
+              className="gui-fleet-clear"
+              disabled={busy || !pinned}
+              onClick={() => void apply({ seat: null, model: null, effort: null, fast: null })}
             >
               limpar
             </button>
+          )}
+        </div>
+
+        <div
+          className="gui-fleet-body"
+          id={sheetId}
+          role="group"
+          aria-label="Padrão dos ajudantes"
+          aria-busy={busy || undefined}
+          inert={open ? undefined : true}
+        >
+          <div className="gui-fleet-card">
+            <GuiFleetSelect
+              id={`${sheetId}-seat`}
+              label="conta"
+              value={plan.seatOutsideList ? (defaults.seat ?? '') : (pinnedSeat?.name ?? 'a da conversa')}
+              valueMark={pinnedSeat ? <CliMark cli={pinnedSeat.cli} size={11} /> : undefined}
+              ghost={!defaults.seat}
+              disabled={busy}
+              tip={
+                plan.seatOutsideList
+                  ? 'Conta que este app não conhece mais — e ainda valendo no motor. Escolha outra ou limpe.'
+                  : undefined
+              }
+              open={menu === 'seat'}
+              onOpenChange={(next) => setMenu(next ? 'seat' : null)}
+              options={seatOptions}
+              selectedId={defaults.seat ?? ''}
+              onPick={(id) => chooseSeat(id || null)}
+              foot={fleetSeats.length === 0 ? 'nenhuma conta cadastrada' : undefined}
+            />
+            {plan.showModel && (
+              <GuiFleetSelect
+                id={`${sheetId}-model`}
+                label="modelo"
+                value={modelValue ?? (plan.modelInheritAllowed ? 'o da conversa' : 'escolher')}
+                ghost={!defaults.model}
+                disabled={busy}
+                open={menu === 'model'}
+                onOpenChange={(next) => setMenu(next ? 'model' : null)}
+                options={modelOptions}
+                selectedId={defaults.model ?? ''}
+                onPick={(id) => chooseModel(id || null)}
+                foot={modelFoot}
+              />
+            )}
+            {plan.showEffort && (
+              <GuiFleetSelect
+                id={`${sheetId}-effort`}
+                label="effort"
+                value={effortValue}
+                ghost={!defaults.effort}
+                disabled={busy || effortLocked}
+                open={menu === 'effort'}
+                onOpenChange={(next) => setMenu(next ? 'effort' : null)}
+                options={effortOptions}
+                selectedId={defaults.effort ?? ''}
+                onPick={(id) => void apply({ effort: id || null })}
+              />
+            )}
+            {plan.showFast && (
+              <div className="gui-fleet-field switch">
+                <span className="gui-fleet-label" id={`${sheetId}-fast`}>
+                  fast
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  className="gui-fleet-switch"
+                  aria-checked={defaults.fast === true}
+                  aria-labelledby={`${sheetId}-fast`}
+                  disabled={busy}
+                  data-tip="Abre todo ajudante em modo fast: mais rápido e gasta mais limite."
+                  onClick={() => void apply({ fast: defaults.fast === true ? null : true })}
+                >
+                  <span className="track" aria-hidden="true">
+                    <span className="knob" />
+                  </span>
+                  {defaults.fast === true ? 'ligado' : 'desligado'}
+                </button>
+              </div>
+            )}
             {error && (
-              <span className="gui-deleg-error" role="alert">
+              <span className="gui-fleet-error" role="alert">
                 {error}
               </span>
             )}
           </div>
         </div>
-      )}
-    </section>
+      </div>
+    </div>
   )
 }

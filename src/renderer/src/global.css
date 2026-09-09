@@ -7052,6 +7052,15 @@ body.pane-docking .pane-bar.draggable {
   border-radius: 10px;
 }
 
+/* PALCO COBERTO pelo deck do workspace (ordem do dono, 09/09): inerte por
+   atributo (nada aceita clique nem foco — o chat CONTINUA atualizando por
+   trás, `inert` não pausa nada) e só um pouco apagado, para a nesga visível
+   dizer que está atrás sem desbotar o fio ("tá muito claro" a 60%). */
+.maestro-window.stage-window.is-covered {
+  opacity: 0.85;
+  transition: opacity 160ms ease;
+}
+
 /* PALCO VAZIO vence o palco: a caixa do palco agora é SEMPRE `.stage-window`
    (o chrome escuro morreu na purga F6, 2026-08-17), e este par de classes
    empata em especificidade com a regra acima — sem esta repetição o ✦ geral
@@ -7066,17 +7075,35 @@ body.pane-docking .pane-bar.draggable {
   gap: 0;
 }
 
-/* ---------- cabeçalho fino + seletor de conversas ---------- */
+/* ---------- a CABEÇA DO PALCO: uma fileira (2026-09-08) ----------
+   [lateral] [pílulas] ··· [estado do turno] [conta] │ [botões da missão]
+   A linha-meta (papel · conta · modelo · effort · ⎇) e o cabeçalho próprio do
+   chat morreram: repetiam o que o composer e o trilho já dizem. Mockup
+   aprovado com o CSS real em scripts/harness/stage-head.html. */
 .stage-head {
+  /* espelho dos tokens locais do .gui-pane: o menu da conta (mesmas classes
+     do chat) e o chip precisam deles fora do chat */
+  --gui-line: color-mix(in srgb, var(--ink) 12%, transparent);
+  --gui-line-strong: color-mix(in srgb, var(--ink) 28%, transparent);
+  --gui-fill: color-mix(in srgb, var(--ink) 5%, transparent);
+
   flex: none;
   display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 8px 12px 7px;
+  flex-direction: row;
+  /* pílulas de sobra quebram para baixo; a primeira fileira segue alinhada */
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 8px 8px 6px;
   border-bottom: 1px solid var(--line);
+  /* o palco estreito é decidido pela largura da própria cabeça */
+  container-name: stage-head;
+  container-type: inline-size;
 }
 
 .stage-pills {
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 24px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -7175,63 +7202,196 @@ body.pane-docking .pane-bar.draggable {
   text-transform: lowercase;
 }
 
-/* ---------- a linha fina: `dev · opus 4.8 · mission/1f3a` ---------- */
-.stage-meta {
-  display: flex;
+/* ---------- o que fica à direita: turno · conta │ ações ---------- */
+.stage-trail {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
+  gap: 2px;
 }
 
-.stage-meta-line {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
+/* ESTADO DO TURNO — só notícia vira palavra (parado = nada). A cor mora no
+   ponto; o texto fica em --ink-2, que passa o piso AA sobre papel (o acento
+   mede 2,8:1 e reprova). */
+.stage-status {
+  flex: none;
+  display: inline-flex;
   align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  font: 10px/1 var(--mono);
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 10px;
-  letter-spacing: 0.02em;
-  color: color-mix(in srgb, var(--ink) 55%, transparent);
 }
 
-/* separadores por CSS: a linha nunca ganha um "·" órfão quando um fato falta */
-.stage-meta-line > * + *::before {
+.stage-status .ss-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* o ponto pulsa só quando há trabalho vivo do outro lado */
+.stage-status.working .ss-dot,
+.stage-status.starting .ss-dot {
+  animation: stage-dot 1.05s ease-in-out infinite;
+}
+
+.stage-status.waiting-you .ss-dot {
+  animation: stage-dot-ring 1.4s ease-in-out infinite;
+}
+
+.stage-status.dead {
+  color: var(--err);
+}
+
+.stage-status.dead .ss-dot {
+  background: var(--err);
+}
+
+/* o relógio da rodada (R11) colado ao estado: número tabular para não dançar */
+.stage-status .ss-clock {
+  font-variant-numeric: tabular-nums;
+}
+
+.stage-status .ss-clock::before {
   content: '·';
-  margin: 0 6px;
-  opacity: 0.55;
+  margin-right: 6px;
+  color: var(--ink-3);
 }
 
-.stage-meta-line .sm-role {
-  font-weight: 750;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: color-mix(in srgb, var(--ink) 72%, transparent);
+@keyframes stage-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
 }
 
-.stage-meta-line .sm-role.term {
-  color: color-mix(in srgb, var(--accent-deep) 78%, transparent);
+@keyframes stage-dot-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(217, 108, 63, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(217, 108, 63, 0);
+  }
 }
 
-.stage-branch {
-  border: none;
+/* A CONTA DA CONVERSA: marca do CLI + nome + ▾, mesma família dos botões da
+   barra (sem moldura; o hover responde com o mesmo papel-2). */
+.stage-seat {
+  position: relative;
+  flex: none;
+}
+
+.stage-seat-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  max-width: 220px;
+  padding: 0 6px 0 7px;
+  border: 0;
+  border-radius: 4px;
   background: transparent;
-  padding: 0;
-  font: inherit;
-  color: inherit;
+  color: var(--ink-2);
+  font: 10px/1 var(--mono);
+  letter-spacing: 0.03em;
   cursor: pointer;
-  max-width: 26ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
 }
 
-.stage-branch:hover {
+.stage-seat-btn:hover:not(:disabled),
+.stage-seat-btn.open {
+  background: var(--paper-2);
   color: var(--ink);
 }
 
-.stage-branch.copied {
-  color: var(--ok);
+.stage-seat-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* R21.2 — cursor de espera é PROMESSA DE FIM, e desabilitado é ESTADO: a
+   opacidade diz que não aceita clique agora, e o motivo real ("trocando
+   conta…") é RÓTULO no próprio botão. */
+.stage-seat-btn:disabled {
+  opacity: 0.62;
+  cursor: default;
+}
+
+.stage-seat-btn .ss-mark {
+  display: inline-flex;
+  color: var(--ink);
+}
+
+.stage-seat-btn .ss-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-seat-btn .ss-caret {
+  font-size: 8px;
+  color: var(--ink-3);
+}
+
+/* o menu de contas nasce ABAIXO e alinhado pela DIREITA (o chip fica na
+   ponta); `cqw` é a largura da cabeça, que é o container mais próximo */
+.gui-seat-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  bottom: auto;
+  right: 0;
+  left: auto;
+  z-index: 40;
+  width: min(320px, calc(100cqw - 36px));
+  min-width: min(260px, calc(100cqw - 36px));
+  max-height: min(320px, calc(100dvh - 72px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  animation: rise 130ms ease both;
+  white-space: normal;
+}
+
+/* o traço entre a conversa (turno · conta) e a missão (ações) */
+.stage-sep {
+  flex: none;
+  width: 1px;
+  height: 14px;
+  margin: 0 6px 0 5px;
+  background: var(--line-strong);
+  opacity: 0.7;
+}
+
+/* palco estreito: some a palavra, fica o sinal */
+@container stage-head (max-width: 640px) {
+  .stage-status .ss-text,
+  .stage-status .ss-clock,
+  .stage-seat-btn .ss-name {
+    display: none;
+  }
 }
 
 .stage-actions {
@@ -14732,6 +14892,12 @@ body.synvoice-overlay-page #root {
   --gui-column: 780px;
 
   position: relative;
+  /* O chat fecha o PRÓPRIO contexto de empilhamento: aba dos ajudantes, menus
+     do composer e todo z-index daqui dentro ficam contidos, e o painel do
+     workspace que cobre o chat (deck em overlay, z 20) passa por cima de
+     tudo, como o dono espera ("igual acontece com todo chat"). Sem isto a
+     aba "ajudantes ˄" (z 30) vazava para a frente do painel (print de 09/09). */
+  isolation: isolate;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -14740,7 +14906,9 @@ body.synvoice-overlay-page #root {
   color: var(--ink);
 }
 
-/* ---- cabeçalho fino da conversa: UMA linha apagada, sem barra escura ---- */
+/* ---- cabeçalho de FATOS da fotografia (ArchivedMissionChat): UMA linha
+   apagada. No palco vivo a cabeça é do Board (.stage-head, uma fileira desde
+   2026-09-08) e o chat nasce sem este. ---- */
 
 .gui-head {
   flex: none;
@@ -14763,49 +14931,9 @@ body.synvoice-overlay-page #root {
   color: var(--ink);
 }
 
-/* o separador do cabeçalho não vale para a marca do CLI nem para a conta
-   (esta tem moldura própria) */
-.gui-head-cli + *::before,
-.gui-head-seat + *::before {
+/* o separador do cabeçalho não vale para a marca do CLI */
+.gui-head-cli + *::before {
   content: none !important;
-}
-
-.gui-head-seat {
-  margin: 0 8px 0 10px;
-}
-
-.gui-head-seat-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  max-width: 320px;
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--gui-line);
-  border-radius: 7px;
-  background: transparent;
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 11px;
-  cursor: pointer;
-  transition:
-    border-color 120ms ease,
-    background 120ms ease;
-}
-
-.gui-head-seat-btn:hover,
-.gui-head-seat-btn.open {
-  border-color: var(--ink-2);
-  background: var(--gui-fill);
-}
-
-.gui-head-seat-btn:disabled {
-  opacity: 0.62;
-  /* R21.2 — cursor de espera é PROMESSA DE FIM, e desabilitado é ESTADO: a
-     "bolinha rodando eternamente" do print do dono nascia deste `wait`. A
-     opacidade já diz que o botão não aceita clique agora, e o motivo real
-     (trocando conta…) vira RÓTULO no próprio botão. */
-  cursor: default;
 }
 
 .gui-seat-error {
@@ -14820,60 +14948,6 @@ body.synvoice-overlay-page #root {
   line-height: 1.45;
 }
 
-.gui-head-seat-btn .ghs-name {
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.gui-head-seat-btn .ghs-mail,
-.gui-head-seat-btn .ghs-plan {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ink-3);
-  font-size: 10px;
-}
-
-.gui-head-seat-btn .ghs-plan {
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  padding: 1px 5px;
-  border: 1px solid var(--gui-line);
-  border-radius: 4px;
-}
-
-.gui-head-seat-btn .ghs-caret {
-  color: var(--ink-3);
-  font-size: 9px;
-}
-
-/* o menu de contas nasce ABAIXO (o cabeçalho está no topo do chat) */
-.gui-seat-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  bottom: auto;
-  left: 0;
-  z-index: 40;
-  width: min(320px, calc(100cqw - 36px));
-  min-width: min(260px, calc(100cqw - 36px));
-  max-height: min(320px, calc(100dvh - 72px));
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 5px;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--card);
-  box-shadow: var(--shadow);
-  animation: rise 130ms ease both;
-  white-space: normal;
-}
-
 .gui-head-effort {
   flex: none;
   text-transform: lowercase;
@@ -14885,15 +14959,6 @@ body.synvoice-overlay-page #root {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* HARDEN thesis: metadata in the chat header may truncate, but the account
-   menu is an overlay owned by this one child. Letting the generic truncation
-   rule clip it makes a successful click look like it did nothing. */
-.gui-head > .gui-head-seat {
-  overflow: visible;
-  text-overflow: clip;
-  white-space: normal;
 }
 
 .gui-head > * + *::before {
@@ -14915,47 +14980,6 @@ body.synvoice-overlay-page #root {
 
 .gui-head-where {
   color: var(--ink-3);
-}
-
-.gui-head-status {
-  flex: none;
-  margin-left: auto;
-  padding-left: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* o ponto do estado pulsa só quando há trabalho vivo do outro lado */
-.gui-head-status .ghs-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.gui-head-status.working .ghs-dot,
-.gui-head-status.starting .ghs-dot {
-  animation: gui-dot 1.05s ease-in-out infinite;
-}
-
-.gui-head-status.waiting-you .ghs-dot {
-  animation: perm-pulse 1.4s ease-in-out infinite;
-}
-
-/* o estado vem sozinho na ponta direita — separador ali seria ruído */
-.gui-head-status::before {
-  content: none;
-}
-
-.gui-head-status.working,
-.gui-head-status.waiting-you,
-.gui-head-status.starting {
-  color: var(--accent);
-}
-
-.gui-head-status.dead {
-  color: var(--err);
 }
 
 /* ---- o fio da conversa: coluna legível, respirando ---- */
@@ -15235,11 +15259,17 @@ body.synvoice-overlay-page #root {
   max-width: 84%;
 }
 
+/* Owner messages use the brand's dark ink with warm white text. */
 .gui-msg.user .gui-msg-text {
-  background: var(--gui-fill);
-  border: 1px solid var(--gui-line);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  color: var(--paper);
   border-radius: 10px 10px 3px 10px;
   padding: 7px 11px;
+}
+
+.gui-msg.user .gui-msg-tag {
+  color: var(--ink-2);
 }
 
 .gui-msg-tag {
@@ -17184,25 +17214,46 @@ details.gui-error-line {
   background: color-mix(in srgb, var(--err) 8%, transparent);
 }
 
+/* "ir para o fim": um botão redondo só com a seta, no canto do fio. O pill
+   com texto ("▼ ir para o fim") flutuava por cima das frases e o dono o
+   reprovou (09/09: "bem feinho, não sei se faz sentido assim"). Sombra curta
+   só para se descolar do texto que passa por baixo. */
 .gui-to-end {
   position: absolute;
-  right: 20px;
-  bottom: 14px;
+  right: 16px;
+  bottom: 12px;
   z-index: 2;
-  background: var(--card);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   border: 1px solid var(--gui-line-strong);
-  border-radius: 999px;
+  border-radius: 50%;
+  background: var(--card);
   color: var(--ink-2);
-  font-family: var(--mono);
-  font-size: 11px;
-  padding: 4px 12px;
   cursor: pointer;
-  box-shadow: 0 6px 18px rgba(38, 32, 25, 0.14);
+  box-shadow: 0 2px 8px rgba(38, 32, 25, 0.12);
+  animation: rise 160ms ease both;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.gui-to-end svg {
+  width: 12px;
+  height: 12px;
 }
 
 .gui-to-end:hover {
   color: var(--ink);
   border-color: var(--ink-2);
+}
+
+.gui-to-end:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* ---- composer ---- */
@@ -17742,263 +17793,478 @@ details.gui-error-line {
   background: color-mix(in srgb, var(--paper) 92%, var(--card));
 }
 
-/* ---- ABINHA DO PADRÃO DOS AJUDANTES (D8) ----
-   Encostada no composer, na MESMA coluna dele e alinhada à direita — o lado em
-   que a lateral de subagentes mora. Recolhida ela é uma linha apagada de 20px:
-   o pino se mexe uma vez e se esquece, então cobrar uma coluna permanente do
-   chat seria cobrar atenção todo dia. PAPEL, sempre: `--panel` é exclusivo do
-   TerminalPane.
+/* ---- A ABA "ajudantes ˄" — o padrão dos ajudantes (D8, redesenho de 2026-09-08) ----
+   A aba é a TAMPA: em repouso é um pequeno tab em cima do input. Clicar faz o
+   cartão desdobrar POR BAIXO dela enquanto ela sobe (a caixa é ancorada no
+   composer e cresce para cima). Dentro, os selects nascem UM DE CADA VEZ —
+   conta › modelo › effort › fast (interruptor) —, lado a lado no chat largo e
+   um embaixo do outro no estreito. O "limpar" mora na linha da aba (ponta
+   direita) para nunca sobrar linha fantasma no cartão. Mockup aprovado com o
+   CSS real: scripts/harness/helpers-defaults.html. Tinta pequena de TEXTO em
+   --ink-2 (AA sobre papel); --ink-3 só em traço (seta, trilho, botão). */
 
-   R7 §B2 (polish impeccable): a ficha do modelo virou DUAS LINHAS — nome digno
-   em cima, identificador de motor embaixo —, a escolha ligada passou a se
-   anunciar por FORMA (traço interno) antes de cor, e toda a tinta pequena subiu
-   de `--ink-3` (~3:1 sobre papel, reprovado a 10px) para `--ink-2` (~6,3:1). */
-
-.gui-deleg-defaults {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+.gui-fleet-host {
+  position: relative;
   width: 100%;
   max-width: var(--gui-column);
+  height: 22px;
   min-width: 0;
   margin: 0 auto 6px;
 }
 
-.gui-deleg-tab {
+/* ancorada no composer: quando o corpo cresce (0fr → 1fr) é a aba que sobe */
+.gui-fleet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: grid;
+  /* a coluna é a CAIXA, nunca o min-content do resumo: sem o minmax(0, 1fr)
+     a aba com resumo longo vazava para fora do composer no chat estreito */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto 0fr;
+  transition: grid-template-rows 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.gui-fleet[data-open='true'] {
+  grid-template-rows: auto 1fr;
+}
+
+.gui-fleet-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* a aba: em repouso, as MESMAS bordas de 7px da aba aberta (a pílula foi
+   reprovada pelo dono: "quando ele sobe ele não é full redondo"); aberta,
+   vira a orelha do cartão (cantos de cima, encostada nele) */
+.gui-fleet-tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
-  max-width: 100%;
+  /* a aba ESTICA na largura do composer (ordem do dono, 09/09: "eu quero que
+     estique"): o resumo ocupa o meio e a setinha vai para a ponta direita */
+  flex: 1 1 auto;
   min-width: 0;
-  padding: 0 7px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
+  height: 22px;
+  padding: 0 9px 0 10px;
+  border: 1px solid var(--gui-line);
+  border-radius: 7px;
+  background: var(--paper);
   color: var(--ink-2);
-  font: inherit;
-  font-size: 10.5px;
+  font: 10.5px/1 var(--mono);
   letter-spacing: 0.02em;
   cursor: pointer;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    border-radius 200ms ease;
 }
 
-.gui-deleg-tab:hover,
-.gui-deleg-tab.open {
-  border-color: var(--gui-line);
-  background: var(--gui-fill);
+.gui-fleet-tab:hover {
   color: var(--ink);
+  border-color: var(--gui-line-strong);
 }
 
-.gui-deleg-tab:focus-visible {
+.gui-fleet-tab:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
 
-.gui-deleg-tab-name {
+.gui-fleet[data-open='true'] .gui-fleet-tab {
+  position: relative;
+  z-index: 1;
+  margin-bottom: -1px;
+  border-radius: 7px 7px 0 0;
+  border-color: var(--line-strong);
+  border-bottom-color: var(--card);
+  background: var(--card);
+  color: var(--ink);
+}
+
+/* a configuração EM USO, visível com a aba abaixada: com pino, tinta cheia
+   e a marca do CLI da conta; herdando, apagada. A aba estica, então o
+   resumo tem a largura do composer; a tesoura (.sum-text) é só o último
+   recurso, para o texto nunca sair da caixa. */
+.gui-fleet-tab .name {
   flex: none;
 }
 
-/* O VALOR é o que o dono procura de relance: ele fica na tinta cheia enquanto o
-   rótulo recua. */
-.gui-deleg-tab-value {
+.gui-fleet-tab .sum {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink-2);
+}
+
+.gui-fleet-tab .sum-text {
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* a aba tem line-height 1 (10,5px): com overflow hidden a caixa de linha
+     cortava o descendente do "g" de "high" (print do dono, 09/09). Altura de
+     linha folgada devolve o descendente; o flex segue centrando. */
+  line-height: 1.6;
+}
+
+.gui-fleet-tab .sum::before {
+  content: '·';
+  flex: none;
+  color: var(--ink-3);
+}
+
+.gui-fleet-tab .sum.pinned {
   color: var(--ink);
+}
+
+.gui-fleet-tab .sum .cli-mark {
+  flex: none;
+  width: 11px;
+  height: 11px;
+}
+
+.gui-fleet-tab .chev {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.gui-fleet[data-open='true'] .gui-fleet-tab .chev {
+  transform: rotate(180deg);
+}
+
+.gui-fleet-clear {
+  height: 22px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font: 10px var(--mono);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.gui-fleet-clear:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.gui-fleet-clear:disabled {
+  opacity: 0.45;
+  cursor: default;
+  text-decoration: none;
+}
+
+/* o corpo desdobra; só depois de assentar ele deixa os menus vazarem dele */
+.gui-fleet-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gui-fleet[data-open='true'][data-settled='true'] .gui-fleet-body {
+  overflow: visible;
+}
+
+.gui-fleet-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 14px;
+  padding: 10px 12px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 0 8px 8px 8px;
+  background: var(--card);
+}
+
+/* cada decisão é um campo: rótulo em cima, select embaixo; nasce com um
+   respiro. `backwards`, nunca `both`: a animação preenchida para sempre
+   criaria um stacking context e o campo seguinte pintaria por cima do menu
+   do anterior (o bug que o dono apontou no mockup). */
+.gui-fleet-field {
+  display: grid;
+  gap: 4px;
+  flex: 1 1 168px;
+  max-width: 250px;
+  min-width: 0;
+  animation: fleet-in 200ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.gui-fleet-field.switch {
+  flex: 0 0 auto;
+}
+
+/* o campo com select aberto pinta por cima dos vizinhos (o menu cai sobre eles) */
+.gui-fleet-field:has([aria-expanded='true']) {
+  position: relative;
+  z-index: 2;
+}
+
+@keyframes fleet-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.gui-fleet-label {
+  color: var(--ink-2);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.gui-fleet-select-host {
+  position: relative;
+  min-width: 0;
+}
+
+.gui-fleet-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 11px var(--mono);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.gui-fleet-select:hover:not(:disabled),
+.gui-fleet-select[aria-expanded='true'] {
+  border-color: var(--ink-2);
+}
+
+.gui-fleet-select:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.gui-fleet-select:disabled {
+  color: var(--ink-2);
+  border-color: var(--gui-line);
+  cursor: default;
+}
+
+.gui-fleet-select .val {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.gui-deleg-panel {
-  display: grid;
-  gap: 11px;
-  width: 100%;
-  min-width: 0;
-  max-height: min(320px, 46dvh);
-  margin-top: 4px;
-  padding: 9px 11px 10px;
+.gui-fleet-select .val.ghost {
+  color: var(--ink-2);
+}
+
+.gui-fleet-select .cli-mark {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  color: var(--ink);
+}
+
+.gui-fleet-select .caret {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  color: var(--ink-3);
+}
+
+.gui-fleet-select:disabled .caret {
+  opacity: 0.4;
+}
+
+/* o menu do select: a caixa dos menus do composer, abrindo PARA CIMA — o
+   cartão mora no pé do pane e o palco recorta tudo que passa da janela: para
+   baixo, a lista de modelos perdia as últimas opções (print do dono, 09/09).
+   Para cima há o fio inteiro de espaço. */
+.gui-fleet-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 41;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(320px, calc(100cqw - 24px));
+  max-height: 300px;
   overflow-y: auto;
-  overscroll-behavior: contain;
-  border: 1px solid var(--gui-line-strong);
+  scrollbar-width: thin;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
   border-radius: 7px;
   background: var(--card);
-  color: var(--ink-2);
-  font-size: 11px;
+  animation: rise 130ms ease both;
 }
 
-.gui-deleg-note {
-  margin: 0;
-  color: var(--ink-2);
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-/* Dentro do campo, aperto; entre campos, folga (a grade do painel) — é o que
-   faz "modelo" e "effort" se lerem como duas decisões, não como uma lista. */
-.gui-deleg-field {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.gui-deleg-label {
-  color: var(--ink-2);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.gui-deleg-list {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.gui-deleg-group {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.gui-deleg-chips {
+.gui-fleet-item {
   display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
-  gap: 5px;
-  min-width: 0;
-}
-
-.gui-deleg-group-head {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--ink-2);
-  font-size: 10px;
-  letter-spacing: 0.04em;
-}
-
-/* A FICHA DO MODELO: título digno em cima, identificador de motor embaixo. A
-   borda esquerda é 1px como a de todo mundo; quem carrega a escolha é o traço
-   INTERNO, que cabe no respiro já reservado e não empurra o texto ao ligar. */
-.gui-deleg-item {
-  display: inline-flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: flex-start;
-  gap: 1px;
-  min-height: 30px;
-  max-width: min(100%, 15rem);
-  min-width: 0;
-  padding: 4px 9px;
-  border: 1px solid var(--gui-line);
+  align-items: baseline;
+  gap: 10px;
+  min-height: 26px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
   border-radius: 5px;
   background: transparent;
-  color: var(--ink-2);
+  color: var(--ink);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.gui-deleg-item-name {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: 11px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* O id é METADADO: presente para quem procura, discreto para quem só escolhe.
-   `--ink-2` porque 10px de `--ink-3` sobre papel não passa no AA. */
-.gui-deleg-item-id {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--ink-2);
-  font-size: 9.5px;
-  letter-spacing: 0.01em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gui-deleg-item:hover:not(:disabled) {
-  border-color: var(--gui-line-strong);
+.gui-fleet-item:hover,
+.gui-fleet-item:focus-visible {
   background: var(--gui-fill);
 }
 
-.gui-deleg-item[aria-pressed='true'] {
-  border-color: color-mix(in srgb, var(--accent) 54%, var(--gui-line-strong));
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  box-shadow: inset 2px 0 0 var(--accent);
+.gui-fleet-item.active {
+  border-color: var(--accent);
 }
 
-.gui-deleg-item:disabled,
-.gui-deleg-clear:disabled {
+.gui-fleet-item .cli-mark {
+  flex: none;
+  align-self: center;
+  width: 11px;
+  height: 11px;
+}
+
+.gui-fleet-item b {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.gui-fleet-item span {
+  flex: none;
+  color: var(--ink-2);
+  font-size: 9.5px;
+}
+
+.gui-fleet-item.ghost b {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
+/* o interruptor do fast: trilho e botão; ligado fala pelo acento */
+.gui-fleet-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font: 11px var(--mono);
+  cursor: pointer;
+}
+
+.gui-fleet-switch:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+.gui-fleet-switch:disabled {
   opacity: 0.62;
   cursor: default;
 }
 
-.gui-deleg-item:focus-visible,
-.gui-deleg-clear:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.gui-deleg-empty {
-  color: var(--ink-2);
-  font-size: 10px;
-}
-
-/* O pino que o catálogo não conhece: ele CONTINUA valendo, então fala em voz
-   normal — nem alarme vermelho, nem sussurro que some. */
-.gui-deleg-hint {
-  margin: 0;
-  color: var(--ink-2);
-  font-size: 10px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.gui-deleg-hint b {
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.gui-deleg-foot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding-top: 1px;
-}
-
-.gui-deleg-clear {
-  min-height: 26px;
+.gui-fleet-switch .track {
+  position: relative;
   flex: none;
-  padding: 0 10px;
-  border: 1px solid var(--gui-line);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--ink-2);
-  font: inherit;
-  font-size: 10.5px;
-  cursor: pointer;
+  width: 28px;
+  height: 16px;
+  border: 1.5px solid var(--ink-3);
+  border-radius: 999px;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
 }
 
-.gui-deleg-clear:hover:not(:disabled) {
-  border-color: var(--gui-line-strong);
-  background: var(--gui-fill);
-  color: var(--ink);
+.gui-fleet-switch .knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  transition:
+    transform 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    background 160ms ease;
 }
 
-.gui-deleg-error {
+.gui-fleet-switch:hover:not(:disabled) .track {
+  border-color: var(--ink);
+}
+
+.gui-fleet-switch[aria-checked='true'] {
+  color: var(--accent-deep);
+}
+
+.gui-fleet-switch[aria-checked='true'] .track {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.gui-fleet-switch[aria-checked='true'] .knob {
+  transform: translateX(12px);
+  background: var(--accent);
+}
+
+.gui-fleet-error {
+  flex-basis: 100%;
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--err);
   font-size: 10px;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .gui-fleet,
+  .gui-fleet-tab,
+  .gui-fleet-tab .chev,
+  .gui-fleet-switch .track,
+  .gui-fleet-switch .knob {
+    transition: none;
+  }
+
+  .gui-fleet-field,
+  .gui-fleet-menu {
+    animation: none;
+  }
+}
+
 .gui-composer-surface {
+  /* contexto da placa de soltar (.gui-drop-pad), que cobre a superfície */
+  position: relative;
   width: 100%;
   max-width: var(--gui-column);
   margin: 0 auto;
@@ -18012,19 +18278,131 @@ details.gui-error-line {
   border-color: color-mix(in srgb, var(--accent) 54%, var(--gui-line-strong));
 }
 
+/* ---- A ZONA DE SOLTAR (2026-09-04) ----
+   Pedido do dono: "uma animação mostrando onde soltar a pasta ou qualquer
+   coisa que eu arraste". O PANE INTEIRO aceita o drop (alvo grande; ninguém
+   mira numa caixa de 46px com uma pasta na mão) e o composer é o LUGAR ONDE
+   O ANEXO POUSA — a placa aparece nele porque é ali que o chip vai nascer.
+   Duas fases ditas por FORMA antes de cor: `ready` (arrasto em qualquer canto
+   da janela) = moldura tracejada em tinta + "traga até aqui"; `over` (por
+   cima do pane) = a mesma moldura em acento + "solte". O tracejado CORRE
+   devagar enquanto o alvo está aberto — movimento como SINAL de "aqui
+   aceita", nunca enfeite — e para sob prefers-reduced-motion. SVG inline, nem
+   canvas nem WebGL. A placa não intercepta o ponteiro: o drop cai na raiz. */
+.gui-pane[data-drop='over'] {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.gui-drop-pad {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--card) 90%, var(--paper));
+  pointer-events: none;
+  animation: gui-drop-pad-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.gui-drop-pad[data-phase='over'] {
+  background: color-mix(in srgb, var(--accent) 7%, var(--card));
+}
+
+.gui-drop-pad-frame {
+  position: absolute;
+  inset: 3px;
+  width: calc(100% - 6px);
+  height: calc(100% - 6px);
+  overflow: visible;
+}
+
+.gui-drop-pad-frame rect {
+  width: 100%;
+  height: 100%;
+  rx: 4px;
+  fill: none;
+  stroke: color-mix(in srgb, var(--ink) 55%, transparent);
+  stroke-width: 1.5px;
+  stroke-dasharray: 7 5;
+  animation: gui-drop-march 1.1s linear infinite;
+}
+
+.gui-drop-pad[data-phase='over'] .gui-drop-pad-frame rect {
+  stroke: var(--accent);
+}
+
+.gui-drop-pad-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 10px;
+  border: 1px solid var(--gui-line-strong);
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.gui-drop-pad[data-phase='over'] .gui-drop-pad-label {
+  border-color: var(--accent);
+}
+
+.gui-drop-glyph {
+  flex: none;
+  color: var(--ink-2);
+}
+
+.gui-drop-pad[data-phase='over'] .gui-drop-glyph {
+  color: var(--accent-deep);
+}
+
+@keyframes gui-drop-pad-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes gui-drop-march {
+  to {
+    stroke-dashoffset: -12;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gui-drop-pad,
+  .gui-drop-pad-frame rect {
+    animation: none;
+  }
+}
+
 /* Toda peça do rodapé tem célula nomeada: o `spacer` é a sobra, e quem cair
    nele por auto-colocação estica na largura inteira. R13/A1: o ⚡ ganhou a
    coluna `fast` (entre effort e send) justamente por isso — variante que
    redefine colunas ou áreas carrega a coluna a mais, senão a fileira inteira
    escorrega uma casa. */
 .gui-composer-inner {
+  --composer-mode-padding: 8px;
+  --composer-context-padding: 6px;
+  --composer-control-gap: 6px;
+  --composer-label-gap: 6px;
   display: grid;
-  grid-template-columns: auto auto minmax(8px, 1fr) auto auto auto auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto auto auto auto;
   grid-template-areas:
     "input input input input input input input input"
     "attach mode spacer context model effort fast send";
   align-items: center;
-  column-gap: 6px;
+  column-gap: var(--composer-control-gap);
   row-gap: 6px;
   width: 100%;
   padding: 7px;
@@ -18065,15 +18443,17 @@ details.gui-error-line {
 
 .gui-composer-model {
   grid-area: model;
+  min-width: 0;
 }
 
 .gui-composer-effort {
   grid-area: effort;
+  min-width: max-content;
 }
 
 .gui-composer-context {
   grid-area: context;
-  min-width: 0;
+  min-width: max-content;
   color: var(--ink-2);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
@@ -18565,7 +18945,7 @@ details.gui-error-line {
 }
 
 .gui-msg.user .gui-attachment-chip {
-  background: color-mix(in srgb, var(--accent) 7%, var(--card));
+  background: var(--card);
 }
 
 .gui-queued-attachments {
@@ -18676,8 +19056,8 @@ details.gui-error-line {
   height: 30px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 8px;
+  gap: var(--composer-label-gap, 6px);
+  padding: 0 var(--composer-mode-padding, 8px);
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
@@ -18736,8 +19116,45 @@ details.gui-error-line {
 
 .gui-mode-btn.mode-model,
 .gui-mode-btn.mode-effort {
-  text-transform: lowercase;
+  text-transform: none;
 }
+
+.gui-mode-btn.mode-model {
+  max-width: 100%;
+  min-height: 30px;
+  height: auto;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.mode-model .gui-mode-text {
+  white-space: nowrap;
+  text-align: left;
+}
+
+.gui-composer-inner .gui-mode-btn > span,
+.gui-context-trigger > span { flex: none; width: max-content; }
+.gui-context-trigger > .gui-context-trigger-bar { width: 24px; }
+
+/* Hidden variants keep their intrinsic width for the fit measurement. */
+.gui-mode-short, .gui-context-trigger-percent,
+.gui-composer-inner:not([data-fit="0"]) .gui-context-trigger-label,
+.gui-composer-inner:is([data-fit="2"], [data-fit="3"], [data-fit="4"], [data-fit="5"]) .gui-composer-mode .gui-mode-text,
+.gui-composer-inner[data-fit="5"] :is(.mode-model, .mode-effort) > span:first-child {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.gui-composer-inner:is([data-fit="1"], [data-fit="2"]) .gui-context-trigger-percent,
+.gui-composer-inner:is([data-fit="2"], [data-fit="3"]) .gui-mode-short {
+  position: static;
+  visibility: visible;
+}
+.gui-composer-inner[data-fit="5"] { column-gap: 2px; }
+.gui-composer-inner[data-fit="5"] :is(.gui-mode-btn, .gui-context-trigger) { padding-left: 3px; padding-right: 3px; }
 
 .gui-mode-menu {
   position: absolute;
@@ -19229,7 +19646,6 @@ details.gui-error-line {
 
 @container pane (max-width: 560px) {
   .gui-thread,
-  .gui-composer-surface,
   .gui-question,
   .gui-slash-menu,
   .gui-file-mention-menu {
@@ -19240,33 +19656,15 @@ details.gui-error-line {
     width: calc(100% - 28px);
   }
 
-  .gui-head-where,
-  .gui-head-seat-btn .ghs-mail {
+  .gui-head-where {
     display: none;
   }
 
-}
-
-@container pane (max-width: 480px) {
-  /* a frase do composer é contrato ("dirija o dev — ou peça um reviewer"):
-     em pane estreito ela encolhe em vez de quebrar linha e ser cortada */
-  .gui-input::placeholder {
-    font-size: 11px;
-  }
 }
 
 @container pane (max-width: 430px) {
-  /* os três controles viram só o glifo — a família continua legível, mas o
-     que precisa de espaço é a caixa de escrever */
-  .gui-mode-text,
-  .gui-head-effort,
-  .gui-head-seat-btn .ghs-plan {
-    display: none;
-  }
-
   .gui-thread,
-  .gui-head,
-  .gui-composer {
+  .gui-head {
     padding-left: 12px;
     padding-right: 12px;
   }
@@ -19277,57 +19675,9 @@ details.gui-error-line {
   }
 
   .gui-composer-inner {
-    grid-template-columns: auto auto minmax(4px, 1fr) auto auto auto auto auto;
-    column-gap: 4px;
     padding: 7px;
   }
 
-  .gui-composer-context {
-    font-size: 10px;
-  }
-}
-
-@container pane (max-width: 350px) {
-  .gui-mode-btn {
-    padding-right: 7px;
-    padding-left: 7px;
-  }
-
-  .gui-composer-model {
-    display: none;
-  }
-
-  /* Aqui o `model` some da fileira (a regra acima o esconde) — o `fast` FICA:
-     desligar o modo é decisão que não pode sumir com a largura do pane. */
-  .gui-composer-inner {
-    grid-template-columns: auto auto minmax(4px, 1fr) auto auto auto auto;
-    grid-template-areas:
-      "input input input input input input input"
-      "attach mode spacer context effort fast send";
-  }
-
-  .gui-composer-inner:has(.gui-composer-attachments) {
-    grid-template-areas:
-      "input input input input input input input"
-      "attachments attachments attachments attachments attachments attachments attachments"
-      "attach mode spacer context effort fast send";
-  }
-
-  /* R33 — a linha das citações acompanha a fileira estreita. */
-  .gui-composer-inner:has(.gui-composer-quotes) {
-    grid-template-areas:
-      "input input input input input input input"
-      "quotes quotes quotes quotes quotes quotes quotes"
-      "attach mode spacer context effort fast send";
-  }
-
-  .gui-composer-inner:has(.gui-composer-quotes):has(.gui-composer-attachments) {
-    grid-template-areas:
-      "input input input input input input input"
-      "quotes quotes quotes quotes quotes quotes quotes"
-      "attachments attachments attachments attachments attachments attachments attachments"
-      "attach mode spacer context effort fast send";
-  }
 }
 
 /* ---------- PALETA GLOBAL (P16) ----------
@@ -21214,16 +21564,6 @@ details.gui-error-line {
   border-bottom: none;
 }
 /* ————— fim do BLOCO NOVO de abrir arquivo onde o dono quiser ————— */
-
-/* ————— BLOCO NOVO: o timer de rodada no cabeçalho (R11) —————
-   O relógio mora colado no estado ("trabalhando · 4:12") — mesma tinta do
-   status, número tabular para não dançar a cada segundo. Sem animação: o
-   movimento aqui É o número andando. */
-.gui-head-round {
-  font-variant-numeric: tabular-nums;
-  opacity: 0.75;
-}
-/* ————— fim do BLOCO NOVO do timer de rodada ————— */
 
 /* ————— BLOCO NOVO: o toggle ⚡ fast do composer (R11) —————
    Mesma família dos botões de modo; LIGADO fala pelo acento — fast é a única

@@ -57,12 +57,16 @@ export interface FileTreeEntry {
   mtime: number
   /** Links/junctions são visíveis, mas deliberadamente não operáveis. */
   blockedReason?: 'link'
+  /** Metadados são navegáveis, mas continuam fora das ações de escrita. */
+  readOnly?: true
 }
 
 export interface FileTreeSnapshot {
   ok: boolean
   entries: FileTreeEntry[]
   truncated: boolean
+  /** Próxima página de filhos da mesma pasta; ausente quando a lista terminou. */
+  nextOffset?: number
   error?: string
 }
 
@@ -93,10 +97,9 @@ export interface FileActionIo {
   ): Promise<FileArchiveResult>
 }
 
-export const FILE_TREE_MAX_ENTRIES = 5_000
-export const FILE_TREE_MAX_DEPTH = 24
+export const FILE_TREE_PAGE_SIZE = 500
 
-/** Metadados de controle nunca aparecem nem são mutáveis pela árvore. */
+/** Metadados de controle aparecem na árvore, mas não são mutáveis por ela. */
 const PROTECTED_METADATA_NAMES = new Set([
   '.git',
   '.synkora',
@@ -108,10 +111,6 @@ const PROTECTED_METADATA_NAMES = new Set([
   '$recycle.bin',
   'system volume information'
 ])
-
-/** Dependências não são metadados protegidos, mas expandi-las tornaria a
- * árvore inútil e permitiria que um scan comum dominasse o main. */
-const TREE_PRUNED_NAMES = new Set(['node_modules'])
 
 const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
 const WINDOWS_ILLEGAL_NAME = /[<>:"|?*\u0000-\u001f]/u
@@ -231,9 +230,9 @@ function protectedSegments(segments: readonly string[]): boolean {
  * `C:foo` é drive-relative no Windows (e `path.isAbsolute` não o detecta),
  * então recebe uma cerca explícita junto com UNC, `..` e ADS (`:`).
  */
-export function parseFileActionRelativePath(
+function parseRelativePath(
   input: unknown,
-  options: { allowRoot?: boolean } = {}
+  options: { allowRoot?: boolean; allowMetadata?: boolean } = {}
 ): ParsedRelativePath {
   if (typeof input !== 'string' || input.length > 4_096 || input.includes('\0')) {
     throw new FileActionError('invalid-path')
@@ -267,8 +266,15 @@ export function parseFileActionRelativePath(
   ) {
     throw new FileActionError('invalid-path')
   }
-  if (protectedSegments(segments)) throw new FileActionError('protected-path')
+  if (!options.allowMetadata && protectedSegments(segments)) throw new FileActionError('protected-path')
   return { normalized: segments.join('/'), segments }
+}
+
+export function parseFileActionRelativePath(
+  input: unknown,
+  options: { allowRoot?: boolean } = {}
+): ParsedRelativePath {
+  return parseRelativePath(input, { allowRoot: options.allowRoot })
 }
 
 export function parseFileActionName(input: unknown): string {
@@ -349,9 +355,10 @@ interface ExistingTarget {
 async function resolveExistingTarget(
   root: CanonicalRoot,
   input: unknown,
-  expected?: 'file' | 'directory'
+  expected?: 'file' | 'directory',
+  allowMetadata = false
 ): Promise<ExistingTarget> {
-  const parsed = parseFileActionRelativePath(input)
+  const parsed = parseRelativePath(input, { allowMetadata })
   let cursor = root.physical
   let finalStats: Awaited<ReturnType<typeof lstat>> | undefined
 
@@ -475,117 +482,79 @@ export class FileActionService {
     return canonicalRoot(resolveFileActionRoot(scope, this.lookup))
   }
 
-  async listTree(scope: FileActionScope): Promise<FileTreeSnapshot> {
+  /** Lista somente os filhos solicitados. Pastas grandes têm continuação;
+   * dependências e metadados não exigem varrer o projeto inteiro no main. */
+  async listTree(
+    scope: FileActionScope,
+    directoryInput: unknown = '',
+    offsetInput: unknown = 0
+  ): Promise<FileTreeSnapshot> {
     try {
       return await this.serialize(scope, async () => {
+        const directoryPath = parseRelativePath(directoryInput, { allowRoot: true, allowMetadata: true })
+        if (typeof offsetInput !== 'number' || !Number.isSafeInteger(offsetInput) || offsetInput < 0) {
+          throw new FileActionError('invalid-path')
+        }
         const root = await this.rootFor(scope)
+        const directory = directoryPath.normalized === ''
+          ? await this.rootTarget(root)
+          : await resolveExistingTarget(root, directoryPath.normalized, 'directory', true)
+        await assertTargetStable(directory)
+        const children = await readdir(directory.canonicalPath, { withFileTypes: true })
+        children.sort((left, right) =>
+          Number(right.isDirectory()) - Number(left.isDirectory())
+          || left.name.localeCompare(right.name, 'pt-BR', { sensitivity: 'base', numeric: true })
+          || left.name.localeCompare(right.name)
+        )
+        const page = children.slice(offsetInput, offsetInput + FILE_TREE_PAGE_SIZE)
         const entries: FileTreeEntry[] = []
-        let truncated = false
-        const stack: Array<{ absolutePath: string; relativePath: string; depth: number }> = [
-          { absolutePath: root.physical, relativePath: '', depth: 0 }
-        ]
-
-        while (stack.length > 0 && entries.length < FILE_TREE_MAX_ENTRIES) {
-          const directory = stack.pop() as (typeof stack)[number]
-          let directoryTarget: ExistingTarget
+        for (const child of page) {
+          const childRelative = directoryPath.normalized
+            ? `${directoryPath.normalized}/${child.name}`
+            : child.name
+          // Enumeração não concede autoridade: o parser e a validação física
+          // continuam valendo, inclusive em metadados e dependências.
+          let parsed: ParsedRelativePath
           try {
-            directoryTarget = directory.relativePath === ''
-              ? await this.rootTarget(root)
-              : await resolveExistingTarget(root, directory.relativePath, 'directory')
-            await assertTargetStable(directoryTarget)
-          } catch {
-            truncated = true
-            continue
-          }
-          let children
-          try {
-            children = await readdir(directory.absolutePath, { withFileTypes: true })
+            parsed = parseRelativePath(childRelative, { allowMetadata: true })
           } catch {
             continue
           }
-          children.sort((left, right) =>
-            left.name.localeCompare(right.name, 'pt-BR', { sensitivity: 'base', numeric: true })
-          )
-          const directories: Array<(typeof stack)[number]> = []
-
-          for (const child of children) {
-            if (entries.length >= FILE_TREE_MAX_ENTRIES) {
-              truncated = true
-              break
-            }
-            if (isProtectedMetadataName(child.name)) continue
-            if (TREE_PRUNED_NAMES.has(child.name.toLocaleLowerCase('en-US'))) continue
-            const childRelative = directory.relativePath
-              ? `${directory.relativePath}/${child.name}`
-              : child.name
-            // Readdir é só enumeração: cada nome volta pelo mesmo parser antes
-            // de qualquer stat/operação, inclusive nomes ambíguos do Windows.
-            let parsed
-            try {
-              parsed = parseFileActionRelativePath(childRelative)
-            } catch {
-              continue
-            }
-            const absolutePath = resolve(root.physical, ...parsed.segments)
-            if (!isContained(root.physical, absolutePath)) {
-              truncated = true
-              continue
-            }
-            const stats = await lstat(absolutePath).catch(() => undefined)
-            if (!stats) continue
-            const common = {
-              path: parsed.normalized,
-              parentPath: directory.relativePath,
-              name: child.name,
-              depth: directory.depth + 1,
-              size: stats.size,
-              mtime: stats.mtimeMs
-            }
-            if (stats.isSymbolicLink()) {
-              entries.push({ ...common, kind: 'blocked', blockedReason: 'link' })
-              continue
-            }
-            const childPhysical = await realpath(absolutePath).catch(() => undefined)
-            const after = await lstat(absolutePath).catch(() => undefined)
-            if (
-              !childPhysical ||
-              !isContained(root.physical, childPhysical) ||
-              !after ||
-              after.isSymbolicLink() ||
-              !sameIdentity(identityOf(stats), identityOf(after))
-            ) {
-              truncated = true
-              continue
-            }
-            if (after.isDirectory()) {
-              entries.push({ ...common, kind: 'directory' })
-              if (directory.depth + 1 < FILE_TREE_MAX_DEPTH) {
-                directories.push({
-                  absolutePath,
-                  relativePath: parsed.normalized,
-                  depth: directory.depth + 1
-                })
-              } else {
-                truncated = true
-              }
-            } else if (after.isFile()) {
-              entries.push({ ...common, kind: 'file' })
-            }
+          const absolutePath = resolve(root.physical, ...parsed.segments)
+          if (!isContained(root.physical, absolutePath)) throw new FileActionError('outside-root')
+          const stats = await lstat(absolutePath).catch(() => undefined)
+          if (!stats) continue
+          const common = {
+            path: parsed.normalized,
+            parentPath: directoryPath.normalized,
+            name: child.name,
+            depth: parsed.segments.length,
+            size: stats.size,
+            mtime: stats.mtimeMs,
+            ...(protectedSegments(parsed.segments) ? { readOnly: true as const } : {})
           }
-
-          try {
-            await assertTargetStable(directoryTarget)
-          } catch {
-            truncated = true
+          if (stats.isSymbolicLink()) {
+            entries.push({ ...common, kind: 'blocked', blockedReason: 'link' })
+            continue
           }
-
-          // LIFO invertido preserva a ordenação visual ao reconstruir a árvore.
-          for (let index = directories.length - 1; index >= 0; index -= 1) {
-            stack.push(directories[index])
+          const childPhysical = await realpath(absolutePath).catch(() => undefined)
+          const after = await lstat(absolutePath).catch(() => undefined)
+          if (
+            !childPhysical || !isContained(root.physical, childPhysical) || !after
+            || after.isSymbolicLink() || !sameIdentity(identityOf(stats), identityOf(after))
+          ) {
+            throw new FileActionError('race')
+          }
+          if (after.isDirectory()) {
+            entries.push({ ...common, kind: 'directory' })
+          } else if (after.isFile()) {
+            entries.push({ ...common, kind: 'file' })
           }
         }
-        if (stack.length > 0) truncated = true
-        return { ok: true, entries, truncated }
+        await assertTargetStable(directory)
+        const nextOffset = offsetInput + page.length
+        const truncated = nextOffset < children.length
+        return { ok: true, entries, truncated, ...(truncated ? { nextOffset } : {}) }
       })
     } catch (error) {
       return { ok: false, entries: [], truncated: false, error: publicFileActionError(error) }

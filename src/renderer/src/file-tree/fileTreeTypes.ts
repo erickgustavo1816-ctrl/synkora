@@ -20,7 +20,7 @@ export interface FileTreeChange {
 }
 
 export function actionsForFileTreeNode(node: FileTreeNode): FileTreeAction[] {
-  if (node.kind === 'blocked') return []
+  if (node.kind === 'blocked' || node.readOnly) return []
   if (node.root) return ['create-file', 'create-folder']
   if (node.kind === 'directory') {
     return [

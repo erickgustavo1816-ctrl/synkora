@@ -45,6 +45,12 @@ export function focusProgressDelivery(board: HTMLElement, done: () => void): () 
   toggle?.click()
   // React must remove `inert` after expanding the rail before focus can enter.
   const frame = requestAnimationFrame(() => {
+    const action = board.querySelector<HTMLElement>('.workspace-integrate-button')
+    if (action) {
+      action.focus()
+      done()
+      return
+    }
     const section = rail?.querySelector<HTMLButtonElement>('.dock-sec-head')
     if (section?.getAttribute('aria-expanded') === 'false') section.click()
     section?.focus()

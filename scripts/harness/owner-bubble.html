@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>harness · a fala do dono (preto e branco) + ir para o fim</title>
+<link rel="stylesheet" href="/global.css" />
+<style>
+  html, body { height: auto !important; min-height: 100%; overflow: auto !important; }
+  body { margin: 0; padding: 18px 22px 40px; background: var(--paper); color: var(--ink); font-family: var(--mono); display: grid; gap: 22px; justify-content: start; }
+  .h-label { font: 11px var(--mono); color: var(--ink-2); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 7px; max-width: 760px; }
+  .h-label b { color: var(--ink); }
+  .h-stage { width: 620px; display: flex; border: 1.5px solid var(--line-strong); border-radius: 10px; background: var(--paper); overflow: hidden; }
+  .h-stage .gui-pane { width: 100%; }
+  .gui-thread { display: flex; flex-direction: column; gap: 14px; padding: 16px 18px 40px; }
+  .gui-stage { position: relative; }
+</style>
+</head>
+<body>
+<section>
+  <div class="h-label"><b>fio</b> · suas mensagens em preto com texto claro · respostas da IA direto no papel</div>
+  <div class="h-stage">
+    <div class="gui-pane">
+      <div class="gui-stage"><div class="gui-log"><div class="gui-thread">
+        <div class="gui-msg dev"><div class="gui-msg-text">Subi o site deste worktree e vou conferir se ele responde antes de identificar o comando de teste.</div></div>
+        <div class="gui-msg user" role="group" aria-label="Você"><span class="gui-msg-tag">você</span><div class="gui-msg-text">Sobe o site por favor</div></div>
+        <div class="gui-msg dev"><div class="gui-msg-text">Site no ar: abrindo o navegador para conferir a skill.</div></div>
+        <div class="gui-msg user" role="group" aria-label="Você"><span class="gui-msg-tag">você</span><div class="gui-msg-text">Perfeito. Agora aplica a skill e confirma que a página inicial carrega sem erro no console, por favor.</div></div>
+      </div></div><button type="button" class="gui-to-end" aria-label="Ir para o fim da conversa"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></button></div>
+    </div>
+  </div>
+</section>
+</body>
+</html>

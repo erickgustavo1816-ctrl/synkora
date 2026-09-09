@@ -139,10 +139,16 @@ test('modo somente-leitura deixa a conversa inteira inerte, sem inventar estado 
   // recibo de apresentação e sem o estado `abrindo` que o replay deixa.
   assert.match(source, /if \(readOnly\) return\n\s*guiApi\.visibility\(paneId, active\)/u)
   assert.match(source, /if \(readOnly\) return\n\s*const canAcknowledge/u)
-  assert.match(source, /const headStatus = readOnly \? null : STATUS_TEXT\[gui\.status\]/u)
-
-  // troca de conta não existe sem sessão para transplantar
-  assert.match(source, /\{!readOnly && seats\?\.length && onChangeSeat \? \(/u)
+  // (2026-09-08) o cabeçalho do GuiPane virou só FATOS: o estado do turno e a
+  // troca de conta moram na cabeça do palco (Board), que a fotografia não tem.
+  assert.doesNotMatch(source, /gui-head-status|STATUS_TEXT|StageRoundStatus/u)
+  assert.doesNotMatch(source, /onChangeSeat|StageSeatChip/u)
+  const viewer = read('../src/renderer/src/components/ArchivedMissionChat.tsx')
+  assert.doesNotMatch(
+    viewer,
+    /StageRoundStatus|StageSeatChip/u,
+    'a fotografia não inventa estado vivo nem oferece troca de conta'
+  )
 
   // vazio HONESTO: a poda do histórico é real, e chat em branco se lê como
   // defeito novo.

@@ -13,7 +13,8 @@ import {
   realpathSync,
   readFileSync,
   statSync,
-  writeFileSync
+  writeFileSync,
+  type Stats
 } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
@@ -214,6 +215,41 @@ export function resolveGuiExternalFolderReference(rawPath: unknown): GuiFolderRe
   } catch {
     return { ok: false, error: 'a pasta escolhida não está mais disponível' }
   }
+}
+
+export type GuiDroppedTargetResult =
+  | { ok: true; kind: 'folder'; path: string }
+  | { ok: true; kind: 'file'; path: string; size: number }
+  | { ok: false; error: string }
+
+/**
+ * O que o dono SOLTOU no chat (2026-09-04, "não deu para ler Documentos da
+ * Luma": pasta arrastada do Explorer chega ao renderer como File sem bytes, e
+ * o FileReader morria nela). O caminho nasce no PRELOAD, do File que o SO
+ * entregou (webUtils) — nunca de texto do renderer —, e ainda assim passa pela
+ * MESMA régua de qualquer alvo físico: link simbólico/junction recusa; pasta
+ * vira a referência do diálogo nativo; arquivo volta com o tamanho real para o
+ * teto ser cobrado ANTES de ler um byte. Toda recusa nomeia a receita.
+ */
+export function resolveGuiDroppedTarget(rawPath: unknown): GuiDroppedTargetResult {
+  if (typeof rawPath !== 'string' || !rawPath || rawPath.length > 32_767 || !isAbsolute(rawPath)) {
+    return { ok: false, error: 'não deu para localizar o item solto — escolha pelo + do composer' }
+  }
+  let info: Stats
+  try {
+    info = lstatSync(rawPath)
+  } catch {
+    return { ok: false, error: 'o item solto não está mais disponível — solte de novo ou use o +' }
+  }
+  if (info.isSymbolicLink()) {
+    return { ok: false, error: 'o item solto é link simbólico ou junction — solte o alvo real' }
+  }
+  if (info.isDirectory()) {
+    const folder = resolveGuiExternalFolderReference(rawPath)
+    return folder.ok ? { ok: true, kind: 'folder', path: folder.path } : folder
+  }
+  if (!info.isFile()) return { ok: false, error: 'o item solto não é arquivo nem pasta' }
+  return { ok: true, kind: 'file', path: rawPath, size: info.size }
 }
 
 /**

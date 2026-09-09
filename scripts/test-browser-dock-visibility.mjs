@@ -115,7 +115,7 @@ test('real IPC accepts navigation only from app dock and validates the mission w
 
 test('real DockBrowser hides in layout and retired observers cannot publish after mission change or unmount', async () => {
   const source = buildSync({ stdin: { contents: readFileSync(process.env.BROWSER_DOCK_SOURCE ??
-    'src/renderer/src/components/DockBrowser.tsx', 'utf8'), loader: 'tsx', resolveDir: resolve('src/renderer/src/components') },
+    'src/renderer/src/components/DockBrowser.tsx', 'utf8') + '\nexport { WorkspacePanelVisibility as __PanelVisibility } from "../workspace/WorkspacePanelContext"', loader: 'tsx', resolveDir: resolve('src/renderer/src/components') },
     bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', write: false,
     external: ['react', 'react/jsx-runtime', '../store'] }).outputFiles[0].text
   const callbacks = []
@@ -130,13 +130,22 @@ test('real DockBrowser hides in layout and retired observers cannot publish afte
     parentElement = null
     children = []
     style = { setProperty() {} }
-    getBoundingClientRect() { return { x: 300, y: 120, width: 600, height: 300 } }
+    computed = { display: 'block', overflowX: 'visible', overflowY: 'visible', clipPath: 'none' }
+    getBoundingClientRect() { return { x: 300, y: 120, left: 300, top: 120, width: 600, height: 300 } }
     checkVisibility() { return true }
   }
+  // The window grid keeps the old rail as display:contents. It still has
+  // overflow:hidden in computed CSS, but it has no box and cannot clip.
+  const contents = new Element()
+  contents.computed = { display: 'contents', overflowX: 'hidden', overflowY: 'hidden', clipPath: 'none' }
+  contents.getBoundingClientRect = () => ({ x: 0, y: 0, width: 0, height: 0 })
+  const clip = new Element()
+  clip.computed = { display: 'block', overflowX: 'hidden', overflowY: 'hidden', clipPath: 'none' }
+  contents.parentElement = clip
   const document = Object.assign(new EventTarget(), { body: new Element() })
   const window = Object.assign(new EventTarget(), {
     innerWidth: 1200, innerHeight: 900, localStorage: { getItem: () => null, setItem() {} },
-    getComputedStyle: () => ({ overflowX: 'visible', overflowY: 'visible', clipPath: 'none' }),
+    getComputedStyle: node => node.computed,
     setInterval: callback => { callbacks.push(callback); return 1 }, clearInterval() {},
     requestAnimationFrame: callback => { frames.push(callback); return frames.length }, cancelAnimationFrame() {},
     synkora: { browser: { bounds: (...args) => reports.push(args) } }
@@ -149,15 +158,24 @@ test('real DockBrowser hides in layout and retired observers cannot publish afte
   const DockBrowser = module.exports.default
   const state = { alive: true, agentDriving: false, host: 'dock', tabs: [] }
   const layoutReports = []
-  function Parent({ visible, missionId }) {
-    useLayoutEffect(() => { layoutReports.push(reports.at(-1)) }, [visible, missionId])
-    return React.createElement(DockBrowser, { missionId, projectId: 'synthetic-project', state, engine: 'ready', error: null, visible })
+  function Parent({ visible, missionId, panelVisible = true }) {
+    useLayoutEffect(() => { layoutReports.push(reports.at(-1)) }, [visible, missionId, panelVisible])
+    return React.createElement(module.exports.__PanelVisibility.Provider, { value: panelVisible },
+      React.createElement(DockBrowser, { missionId, projectId: 'synthetic-project', state, engine: 'ready', error: null, visible }))
   }
   let tree
   await act(() => { tree = create(React.createElement(Parent, { visible: true, missionId: 'm1' }), {
-    createNodeMock: () => new Element()
+    createNodeMock: () => Object.assign(new Element(), { parentElement: contents })
   }) })
   assert.equal(layoutReports.at(-1)?.[2], true, 'first measurement is already committed before the parent layout effect')
+  assert.deepEqual(reports.at(-1)[1], { x: 300, y: 120, width: 600, height: 300 }, 'display:contents cannot erase the native page rectangle')
+  clip.getBoundingClientRect = () => ({ x: 300, y: 120, left: 300, top: 120, width: 500, height: 220 })
+  await act(() => window.dispatchEvent(new Event(BROWSER_DOCK_CONTEXT_CHANGED)))
+  assert.deepEqual(reports.at(-1)[1], { x: 300, y: 120, width: 500, height: 220 }, 'real clipping boxes still bound the native view')
+  await act(() => tree.update(React.createElement(Parent, { visible: true, missionId: 'm1', panelVisible: false })))
+  assert.equal(layoutReports.at(-1)[2], false, 'closing the window or maximizing another hides the native page before paint')
+  await act(() => tree.update(React.createElement(Parent, { visible: true, missionId: 'm1', panelVisible: true })))
+  assert.equal(layoutReports.at(-1)[2], true, 'restoring the window republishes visible geometry without recreating the browser')
   await act(() => tree.update(React.createElement(Parent, { visible: false, missionId: 'm1' })))
   assert.equal(layoutReports.at(-1)[2], false, 'hidden keepalive pane publishes false during layout, before passive effects')
   const retired = [...callbacks]

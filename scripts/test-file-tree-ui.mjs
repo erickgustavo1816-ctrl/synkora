@@ -23,6 +23,7 @@ test('matriz do menu não oferece mutação da raiz ou de links', () => {
     kind: 'blocked',
     blockedReason: 'link'
   }), [])
+  assert.deepEqual(actionsForFileTreeNode({ ...directory, readOnly: true }), [])
   assert.deepEqual(actionsForFileTreeNode(directory), [
     'create-file',
     'create-folder',

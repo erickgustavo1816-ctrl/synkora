@@ -53,14 +53,15 @@ import {
 } from '../guiAttachments'
 import {
   prepareGuiAttachmentDirectory,
+  resolveGuiDroppedTarget,
   resolveGuiExternalFolderReference,
   validateGuiAttachmentReferences,
   writeGuiAttachmentExclusive
 } from '../guiAttachmentStorage'
 import { GuiAttachmentCapabilityStore } from '../guiAttachmentCapabilities'
 import { renderGuiAttachmentPreview } from '../guiAttachmentMedia'
-import { unlinkSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import { guiMissionRoleOf, planApprovedReceipt } from '../guiMissionContracts'
 import { guiMissionOf, noteSkillsSync, syncSpawnSkills } from '../guiSpawnSkills'
 import { notifyDesktop } from '../desktopNotifications'
@@ -189,16 +190,6 @@ function writeAttachment(
     return { ok: false, error: 'pasta deve ser escolhida pelo diálogo do sistema' }
   }
 
-  // O `.synkora` do worktree tem de ser git-invisível ANTES da primeira
-  // escrita: anexo do dono nunca pode sujar a fotografia da missão.
-  try {
-    ensureSynkoraGitExcludes(cwd)
-  } catch {
-    // Erro bruto de disco pode carregar uma árvore/local de usuário. O detalhe
-    // não entra nem na UI nem no blackbox; o handler já registra só ok/kind.
-    return { ok: false, error: 'não consegui preparar a pasta de anexos' }
-  }
-
   let bytes: Buffer
   let name: string
   if (payload.kind === 'clipboard-image') {
@@ -217,9 +208,31 @@ function writeAttachment(
     bytes = Buffer.from(base64, 'base64')
     name = payload.name
   }
+  return storeAttachmentBytes(cwd, paneId, name, bytes, capabilities)
+}
+
+/** A metade com DISCO de verdade, comum ao print/arquivo do composer e ao
+ *  arquivo SOLTO no chat: teto, pasta física, criação exclusiva, capacidade. */
+function storeAttachmentBytes(
+  cwd: string,
+  paneId: string,
+  name: string,
+  bytes: Buffer,
+  capabilities: GuiAttachmentCapabilityStore
+): GuiAttachResult {
   if (bytes.length === 0) return { ok: false, error: 'anexo sem conteúdo' }
   if (bytes.length > GUI_ATTACHMENT_MAX_BYTES) {
     return { ok: false, error: attachmentTooLargeError(bytes.length) }
+  }
+
+  // O `.synkora` do worktree tem de ser git-invisível ANTES da primeira
+  // escrita: anexo do dono nunca pode sujar a fotografia da missão.
+  try {
+    ensureSynkoraGitExcludes(cwd)
+  } catch {
+    // Erro bruto de disco pode carregar uma árvore/local de usuário. O detalhe
+    // não entra nem na UI nem no blackbox; o handler já registra só ok/kind.
+    return { ok: false, error: 'não consegui preparar a pasta de anexos' }
   }
 
   // A camada de storage devolve o caminho FÍSICO e absoluto depois de recusar
@@ -250,6 +263,38 @@ function writeAttachment(
   } catch {
     return { ok: false, error: 'não consegui gravar o anexo' }
   }
+}
+
+/**
+ * O ITEM SOLTO no chat (2026-09-04, "não deu para ler Documentos da Luma"):
+ * arrastar uma PASTA do Explorer entrega ao renderer um File sem bytes, e o
+ * FileReader morria nela. Aqui o alvo chega como CAMINHO derivado no preload
+ * (`webUtils.getPathForFile` do File que o SO entregou — o renderer só passa o
+ * File, não tem como forjar um caminho) e o main decide o que ele é: pasta
+ * vira a MESMA referência do diálogo nativo; arquivo é copiado para
+ * `.synkora/attachments` como qualquer anexo, com o teto cobrado pelo stat
+ * antes de ler um byte.
+ */
+function writeDroppedAttachment(
+  cwd: string,
+  paneId: string,
+  droppedPath: unknown,
+  capabilities: GuiAttachmentCapabilityStore
+): GuiAttachResult {
+  const target = resolveGuiDroppedTarget(droppedPath)
+  if (!target.ok) return { ok: false, error: target.error }
+  if (target.kind === 'folder') return writeFolderAttachment(paneId, target.path, capabilities)
+  if (target.size === 0) return { ok: false, error: 'anexo sem conteúdo' }
+  if (target.size > GUI_ATTACHMENT_MAX_BYTES) {
+    return { ok: false, error: attachmentTooLargeError(target.size) }
+  }
+  let bytes: Buffer
+  try {
+    bytes = readFileSync(target.path)
+  } catch {
+    return { ok: false, error: 'não consegui ler o arquivo solto — tente pelo + do composer' }
+  }
+  return storeAttachmentBytes(cwd, paneId, basename(target.path), bytes, capabilities)
 }
 
 /**
@@ -1068,6 +1113,30 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     })
     return attachment
   })
+
+  // O ITEM SOLTO no chat: pasta ou arquivo arrastado. O caminho é derivado no
+  // PRELOAD a partir do File que o SO entregou (`gui.attachDropped`), então não
+  // é o renderer escolhendo um alvo — e o main revalida do mesmo jeito
+  // (link/junction recusa; pasta = referência; arquivo = cópia com teto).
+  ipcMain.handle(
+    'gui:attachDropped',
+    (e, paneId: string, droppedPath: unknown): GuiAttachResult => {
+      extras.assertAppRendererSender(e)
+      const cwd = registry.cwdOf(paneId)
+      if (!cwd) return { ok: false, error: 'este pane não tem sessão aberta' }
+
+      const result = writeDroppedAttachment(cwd, paneId, droppedPath, attachmentCapabilities)
+      blackbox.record({
+        cat: 'pane',
+        event: result.ok ? 'gui-attachment-saved' : 'gui-attachment-failed',
+        actor: 'user',
+        ids: { paneId },
+        // Mesma régua do `gui:attach`: nem caminho, nem nome, nem erro bruto.
+        detail: { kind: result.attachment?.kind ?? 'dropped', ok: result.ok }
+      })
+      return result
+    }
+  )
 
   /** Miniatura/lightbox: descriptor opaco entra, PNG limitado sai. O caminho
    * físico nunca cruza o preload e a capacidade é revalidada a cada pedido. */

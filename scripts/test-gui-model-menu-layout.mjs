@@ -3,12 +3,26 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   guiComposerCatalogModels,
+  guiEffortLabel,
   guiModelIsDefault,
   guiModelLabel,
   guiModelShortName
 } from '../src/renderer/src/guiComposerPresentation.ts'
 
 const readWorkspaceFile = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
+
+test('identificadores técnicos ganham um nome legível sem alterar a seleção', () => {
+  const model = { value: 'gpt-6-astra', displayName: 'gpt-6-astra' }
+  assert.equal(guiModelShortName(model), 'GPT-6 Astra')
+  assert.equal(guiModelShortName({ value: 'gpt-5.6-sol', displayName: 'GPT-5.6-Sol' }), 'GPT-5.6 Sol')
+  assert.equal(guiModelShortName(undefined, 'GPT-6 ASTRA'), 'GPT-6 Astra')
+  assert.equal(guiModelShortName({ value: 'gpt-5.4-mini', displayName: 'gpt-5.4-mini' }), 'GPT-5.4 Mini')
+  assert.equal(guiModelShortName({ value: 'claude-opus-4-8', displayName: 'claude-opus-4-8' }), 'Opus 4.8')
+  assert.equal(model.value, 'gpt-6-astra')
+  assert.equal(guiEffortLabel('high'), 'HIGH')
+  assert.equal(guiEffortLabel('xhigh'), 'XHIGH')
+  assert.equal(guiEffortLabel(null), 'PADRÃO')
+})
 
 test('seletor de modelo usa geometria intrínseca e cabe em pane/viewport', () => {
   const pane = readWorkspaceFile('src/renderer/src/components/GuiPane.tsx')

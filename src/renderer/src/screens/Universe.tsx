@@ -34,7 +34,7 @@ export default function Universe({ projectId }: Props): React.JSX.Element {
   // contadores de missão, fila) são CHIPS NA TOPBAR — nunca um cartão ocupando
   // o centro." O centro é da conversa; aqui fica o placar, visível de QUALQUER
   // aba do universo.
-  const missions = useStore((s) => s.missions)
+  const missions = useStore((s) => s.missionsByProject[projectId] ?? s.missions)
   const stats = useStore((s) => s.homeStats[projectId])
   const loadHomeStats = useStore((s) => s.loadHomeStats)
   useEffect(() => {

@@ -54,6 +54,12 @@ import {
   guiAttachmentSizeProblem,
   planGuiAttachmentBatch
 } from '../src/renderer/src/guiComposerAttachments.ts'
+import {
+  GUI_DROP_QUIET_MS,
+  GuiDropTracker,
+  dragTransferHasFiles,
+  guiDropZoneLabel
+} from '../src/renderer/src/guiDropZone.ts'
 import { shouldBlurGuiComposerOnOutsidePointerDown } from '../src/renderer/src/guiComposerFocus.ts'
 import {
   closePendingGuiTools,
@@ -480,6 +486,53 @@ test('anexos entram no rascunho sem enviar e respeitam o teto local', () => {
     appendGuiAttachmentReferences('Confira isto:', ['C:\\work\\foto.png', '']),
     'Confira isto:\nAnexo disponível em: C:\\work\\foto.png'
   )
+})
+
+test('a zona de soltar acende pelo relógio do arrasto e apaga no silêncio', () => {
+  assert.equal(dragTransferHasFiles(['Files']), true)
+  assert.equal(dragTransferHasFiles(['text/plain', 'text/uri-list']), false)
+  assert.equal(dragTransferHasFiles(undefined), false)
+
+  const timers = new Map()
+  let nextHandle = 1
+  const phases = []
+  const tracker = new GuiDropTracker({
+    setTimer: (callback, delayMs) => {
+      const handle = nextHandle++
+      timers.set(handle, {
+        delayMs,
+        fire: () => {
+          timers.delete(handle)
+          callback()
+        }
+      })
+      return handle
+    },
+    clearTimer: (handle) => timers.delete(handle),
+    onChange: (phase) => phases.push(phase)
+  })
+  assert.equal(tracker.current, 'idle')
+  tracker.hover(false)
+  assert.equal(tracker.current, 'ready', 'arrasto em qualquer canto da janela = guia')
+  tracker.hover(true)
+  tracker.hover(true)
+  assert.equal(tracker.current, 'over', 'por cima do pane = solte')
+  assert.deepEqual(phases, ['ready', 'over'], 'fase repetida não re-renderiza')
+  assert.equal(timers.size, 1, 'cada dragover renova UM prazo, nunca acumula')
+  const [pending] = timers.values()
+  assert.equal(pending.delayMs, GUI_DROP_QUIET_MS)
+  assert.ok(GUI_DROP_QUIET_MS > 550, 'o prazo cobre o dragover parado da spec (350 ± 200 ms)')
+  // Chromium sem dragleave (arrasto saiu da janela, Esc): o silêncio apaga.
+  pending.fire()
+  assert.equal(tracker.current, 'idle')
+  tracker.hover(true)
+  tracker.settle()
+  assert.equal(tracker.current, 'idle')
+  assert.equal(timers.size, 0, 'soltar desarma o prazo pendente')
+  tracker.settle()
+  assert.deepEqual(phases, ['ready', 'over', 'idle', 'over', 'idle'])
+  assert.match(guiDropZoneLabel('over'), /solte/u)
+  assert.match(guiDropZoneLabel('ready'), /traga/u)
 })
 
 test('revelação grande avança exatamente uma palavra por passo', () => {
@@ -2085,6 +2138,32 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
   assert.doesNotMatch(pane, /Pasta do projeto/u)
   assert.match(pane, /onPaste=\{/u)
   assert.match(pane, /onDrop=\{/u)
+  // 2026-09-04 — o item SOLTO sobe como File ao preload (o caminho nasce lá,
+  // via webUtils); a pasta arrastada deixou de morrer no FileReader, e a placa
+  // de soltar mora no composer enquanto o pane inteiro aceita o drop.
+  const preloadSource = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8')
+  assert.match(pane, /guiApi\.attachDropped\(paneId, file\)/u)
+  assert.match(pane, /useGuiDropZone\(paneRef, canAcceptDrop\)/u)
+  assert.match(pane, /className="gui-drop-pad"/u)
+  assert.match(pane, /className="gui-pane"[\s\S]{0,900}onDrop=\{/u, 'o drop cai na raiz do pane')
+  assert.doesNotMatch(
+    pane,
+    /className="gui-composer-surface"[\s\S]{0,200}onDrop=/u,
+    'o composer não é mais o único alvo'
+  )
+  assert.match(guiApi, /async attachDropped\(paneId: string, file: File\)/u)
+  assert.match(
+    preloadSource,
+    /attachDropped: \(paneId: string, file: File\)[\s\S]{0,700}webUtils\.getPathForFile\(file\)[\s\S]{0,700}'gui:attachDropped'/u
+  )
+  assert.match(guiIpc, /ipcMain\.handle\(\s*'gui:attachDropped'/u)
+  assert.match(guiIpc, /resolveGuiDroppedTarget/u)
+  assert.match(css, /\.gui-drop-pad-frame rect\s*\{[^}]*animation: gui-drop-march/su)
+  assert.match(
+    css,
+    /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.gui-drop-pad,\s*\.gui-drop-pad-frame rect\s*\{\s*animation: none/su
+  )
+  assert.match(css, /\.gui-drop-pad\s*\{[^}]*pointer-events: none/su)
   assert.match(pane, /<GuiAttachmentChips[\s\S]*onRemove=/u)
   assert.match(attachmentChips, /aria-label="Anexos"/u)
   assert.match(attachmentChips, /aria-label=\{`Remover anexo \$\{attachment\.name\}`\}/u)
@@ -2142,7 +2221,7 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
   }
   assert.match(css, /\.gui-slash-menu::-webkit-scrollbar\s*\{\s*display: none/su)
   assert.match(css, /\.gui-mode-menu::-webkit-scrollbar\s*\{\s*display: none/su)
-  assert.match(css, /@container pane \(max-width: 350px\)/u)
+  assert.match(pane, /useGuiComposerFit\(composerSurfaceRef, !readOnly\)/u)
   assert.match(
     pane,
     /className="gui-mode-btn mode-model"[\s\S]*?aria-label=\{`Modelo desta conversa:/u
@@ -2153,7 +2232,9 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
   )
   assert.match(pane, /guiModelLabel\(modelOptions, selectedModel/u)
   assert.match(pane, /guiModelForSelection\(modelOptions, selectedModel\)/u)
-  assert.match(board, /guiModelLabel\(directGui\?\.caps\?\.models \?\? \[\], stageModel/u)
+  // 2026-09-08: a cabeça do palco não repete o modelo — quem o mostra e troca
+  // é o composer; a linha fina com modelo/effort morreu.
+  assert.doesNotMatch(board, /stageModelLabel|gui-head-model/u)
   assert.match(pane, /<b>\{optionLabel\}<\/b>/u)
   assert.doesNotMatch(pane, /option\.description && <span>/u)
   assert.match(pane, /label: 'acesso completo'/u)
@@ -2222,10 +2303,22 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
   assert.match(slashMenu, /id=\{`\$\{id\}-option-\$\{i\}`\}/u)
   assert.match(slashMenu, /tabIndex=\{-1\}/u)
   // R21.2 — o TURNO SAIU daqui (ver o teste dedicado abaixo): trocar de conta
-  // no meio do turno é a fuga do rate limit. Guarda de voo e anexo ficam.
+  // no meio do turno é a fuga do rate limit. Guarda de voo e anexo ficam — e
+  // desde 2026-09-08 atravessam o store: o chip de conta mora na cabeça do
+  // palco (Board) e não enxerga o composer, então o GuiPane publica o
+  // "ocupado" e o Board o entrega ao chip como `locked`.
+  const seatChip = readFileSync(
+    new URL('../src/renderer/src/components/StageSeatChip.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(
+    pane,
+    /setGuiComposerBusy\(paneId, busyMenu !== null \|\| attaching\)/u,
+    'o GuiPane precisa publicar a troca de executor/anexo em voo'
+  )
+  assert.match(board, /locked=\{directGui\?\.composerBusy \?\? false\}/u)
   assert.ok(
-    (pane.match(/disabled=\{seatChanging \|\| busyMenu !== null \|\| attaching\}/gu) ?? []).length >=
-      2,
+    (seatChip.match(/disabled=\{changing \|\| locked\}/gu) ?? []).length >= 2,
     'seat não pode substituir o pane durante troca de executor/anexo'
   )
   assert.match(
@@ -2297,7 +2390,9 @@ test('modelo e effort usam troca viva, confirmada e sem status no transcript', (
     store,
     /case 'session-restarted':[\s\S]*?executorKnown: quiet \? state\.executorKnown : false/u
   )
-  assert.match(board, /directGui\?\.executorKnown[\s\S]*?directGui\.executorModel/u)
+  // O modelo que o card da coluna mostra é o que o CLI CONFIRMOU (executor
+  // conhecido), nunca só o pedido. (Era a linha fina do palco até 2026-09-08.)
+  assert.match(board, /guiState\?\.executorKnown[\s\S]*?guiState\.executorModel/u)
   // R23.2 — o portão do composer é `canCompose` (o morto escreve e envia); as
   // outras cercas de voo continuam exatamente as mesmas.
   assert.match(
@@ -2345,9 +2440,15 @@ test('todo terminal aberto é pílula do seletor do palco, com missão ou sem', 
   )
   // A cabeça do palco é ÚNICA e em papel: o chrome escuro do PaneChrome saiu
   // com o TUI legado. O ✦ geral com um terminal vivo continua tendo seletor
-  // porque as pílulas dele existem — e a linha fina descreve o que está no ar.
-  assert.match(board, /const stageHead = stageMode \|\| stagePills\.length > 0/u)
-  assert.match(board, /<MissionStageHead pills=\{stagePills\} meta=\{stageMetaParts\} \/>/u)
+  // porque as pílulas dele existem. Desde 2026-09-08 a cabeça é UMA fileira
+  // (pílulas · estado do turno · conta · botões): a linha fina morreu.
+  assert.match(
+    board,
+    /<MissionStageHead pills=\{stagePills\} status=\{stageStatus\} seat=\{stageSeatChip\}/u
+  )
+  assert.doesNotMatch(board, /stageMetaParts|stage-meta/u)
+  assert.match(board, /leadingAction=\{panelsEnabled \? <WorkspaceSidebarToggle/u, 'o controle da coluna pertence à missão')
+  assert.match(board, /actions=\{panelsEnabled \? <WorkspaceToolbar/u, 'o menu de painéis não aparece no Geral')
   assert.match(board, /maestro-window stage-window/u)
   assert.doesNotMatch(board, /term-window/u)
   // As abas do ✦ geral já saíram da barra escura; as de MISSÃO ainda vivem lá
@@ -3664,6 +3765,8 @@ test('o ⚡ tem célula própria: toda variante da grade do composer conta a mes
         ['effort', 'fast', 'send'],
         `${where}: o ⚡ mora entre o effort e o enviar`
       )
+      assert.ok(rows.some(row => row.includes('model')), `${where}: modelo continua acessível`)
+      assert.ok(rows.some(row => row.includes('effort')), `${where}: esforço continua acessível`)
       footerRows += 1
       cellsInEffect = rows[0].length
     }
@@ -3890,43 +3993,45 @@ test('o fio é superfície de texto — e os controles dentro dele ficam fora da
 // renderer.
 
 test('trocar a conta no meio do turno é legítimo — e o :disabled não promete fim', () => {
-  const pane = readFileSync(
-    new URL('../src/renderer/src/components/GuiPane.tsx', import.meta.url),
+  // 2026-09-08: a troca de conta mudou de casa — do cabeçalho do GuiPane para
+  // o StageSeatChip da cabeça do palco (uma fileira). A regra é a mesma.
+  const chip = readFileSync(
+    new URL('../src/renderer/src/components/StageSeatChip.tsx', import.meta.url),
     'utf8'
   )
   const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
 
-  // O botão E cada item do menu de conta continuam clicáveis com turno aberto.
+  // O botão E cada item do menu de conta continuam clicáveis com turno aberto:
+  // só a troca em voo desabilita.
   assert.ok(
-    (pane.match(/disabled=\{seatChanging \|\| busyMenu !== null \|\| attaching\}/gu) ?? []).length >=
-      2,
-    'botão e itens do menu de conta perderam o turno das condições'
+    (chip.match(/disabled=\{changing \|\| locked\}/gu) ?? []).length >= 2,
+    'botão e itens do menu de conta perderam as condições de voo (troca de conta/executor/anexo)'
   )
   assert.doesNotMatch(
-    pane,
-    /disabled=\{seatChanging \|\| busyMenu !== null \|\| attaching \|\| turnOpen\}/u,
+    chip,
+    /disabled=\{[^}]*turnOpen[^}]*\}/u,
     'turno aberto não pode mais desabilitar a troca de conta'
   )
 
   // O tip diz a VERDADE NOVA no meio do turno (o main mata a sessão e retoma a
   // MESMA conversa quando o CLI é o mesmo).
-  assert.match(pane, /const seatTip = turnOpen/u, 'o tip é derivado do turno')
+  assert.match(chip, /turnOpen\s*\?/u, 'o tip é derivado do turno')
   assert.match(
-    pane,
+    chip,
     /Trocar interrompe o turno atual e retoma a MESMA conversa na conta nova \(mesmo CLI\)\./u
   )
-  assert.match(pane, /Conta desta conversa\. Trocar mantém a conversa quando o CLI é o mesmo\./u)
-  assert.match(pane, /data-tip=\{seatTip\}/u)
+  assert.match(chip, /Conta desta conversa\. Trocar mantém a conversa quando o CLI é o mesmo\./u)
+  assert.match(chip, /data-tip=\{tip\}/u)
 
   // Cursor de espera é PROMESSA DE FIM; desabilitado é ESTADO. A opacidade
   // continua dizendo "não aceita clique agora".
-  const disabledRule = css.match(/\.gui-head-seat-btn:disabled\s*\{[^}]*\}/su)?.[0] ?? ''
+  const disabledRule = css.match(/\.stage-seat-btn:disabled\s*\{[^}]*\}/su)?.[0] ?? ''
   assert.match(disabledRule, /opacity: 0\.62/u)
   assert.match(disabledRule, /cursor: default/u)
   assert.doesNotMatch(disabledRule, /cursor: wait/u, 'a bolinha eterna morre no :disabled')
 
   // E o único ocupado REAL da troca continua narrado por rótulo, não por cursor.
-  assert.match(pane, /seatChanging \? 'trocando conta…'/u)
+  assert.match(chip, /changing \? 'trocando conta…'/u)
 })
 
 // ————— R21.3 — UMA VOZ para o limite: a duplicata morre —————
@@ -4357,11 +4462,10 @@ test('R33 — a fiação existe: menu no fio, chips com área nomeada, envio com
   assert.match(menu, /file-context-menu gui-selection-menu/u)
   assert.match(menu, /anexar à resposta/u)
   assert.match(menu, /Escape/u)
-  // Lição R13 como asserção: a linha das citações tem ÁREA no grid, nas DUAS
-  // larguras — filho sem área cai no spacer.
+  // A grade agora é a mesma em todas as larguras; citações seguem nomeadas.
   assert.match(css, /\.gui-composer-quotes \{\r?\n  grid-area: quotes;/u)
   const quoteAreas = css.match(/"quotes(?: quotes){6,7}"/gu) ?? []
-  assert.ok(quoteAreas.length >= 4, 'as variantes do grid (larga/estreita × com/sem anexos) declaram a área quotes')
+  assert.equal(quoteAreas.length, 2, 'a grade compartilhada declara quotes com e sem anexos')
 })
 
 // ————— R34: a seleção NÃO briga com o fio —————

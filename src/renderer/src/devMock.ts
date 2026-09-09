@@ -552,7 +552,7 @@ export function installDevMock(): void {
         ok: false as const,
         error: 'abrir fora do app só dentro do Synkora — o preview de browser não tem shell'
       }),
-      tree: async () => ({
+      tree: async (_scope, directoryPath = '') => ({
         ok: true,
         truncated: false,
         entries: [
@@ -592,7 +592,7 @@ export function installDevMock(): void {
             size: 0,
             mtime: Date.now()
           }
-        ]
+        ].filter((entry) => entry.parentPath === directoryPath)
       }),
       createFile: async (_scope, parentPath, name) => ({
         ok: true,
@@ -868,6 +868,7 @@ export function installDevMock(): void {
       // o mesmo texto de UI do main (nunca um path falso que o prompt citaria).
       attach: async () => ({ ok: false, error: 'anexos só funcionam no app' }),
       attachFolder: async () => ({ ok: false, error: 'anexos só funcionam no app' }),
+      attachDropped: async () => ({ ok: false, error: 'anexos só funcionam no app' }),
       attachmentPreview: async () => ({ ok: false, error: 'prévias só funcionam no app' }),
       attachmentAction: async () => ({ ok: false, error: 'anexos só funcionam no app' })
     },

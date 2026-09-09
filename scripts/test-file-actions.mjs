@@ -151,6 +151,84 @@ test('o dialeto relativo recusa traversal, absoluto, drive-relative, UNC e metad
   })
 })
 
+test('a árvore mostra todos os nomes, inclusive metadados, dependências e arquivos ocultos', async (t) => {
+  const { projectRoot, lookup } = await fixture(t)
+  const service = new FileActionService(lookup, {
+    trashItem: async () => assert.fail('não deve alterar metadados'),
+    writeClipboard: () => assert.fail('não deve copiar metadados'),
+    archiveDirectory: async () => assert.fail('não deve exportar metadados')
+  })
+  const scope = { projectId: 'project-1' }
+  const folders = ['.git', '.synkora', '.claude', 'node_modules', 'assets']
+  const files = ['.env', '.gitignore', 'desktop.ini', 'README.md', 'image.png', 'archive.zip', 'file.custom']
+  for (const name of folders) await mkdir(join(projectRoot, name))
+  for (const name of files) await writeFile(join(projectRoot, name), '')
+  await writeFile(join(projectRoot, '.git', 'config'), 'synthetic metadata')
+  await writeFile(join(projectRoot, 'node_modules', 'dependency.js'), 'synthetic dependency')
+  await writeFile(join(projectRoot, 'assets', 'image.png'), '')
+
+  const tree = await service.listTree(scope)
+  assert.equal(tree.ok, true)
+  assert.deepEqual(tree.entries.map((entry) => entry.path).sort(), [...folders, ...files].sort())
+  assert.equal(tree.entries.find((entry) => entry.path === '.git').readOnly, true)
+  assert.equal(tree.entries.find((entry) => entry.path === 'desktop.ini').readOnly, true)
+  assert.equal(tree.entries.find((entry) => entry.path === 'assets').readOnly, undefined)
+  assert.equal(tree.truncated, false)
+  const metadata = await service.listTree(scope, '.git')
+  assert.equal(metadata.ok, true)
+  assert.deepEqual(metadata.entries.map((entry) => entry.path), ['.git/config'])
+  assert.equal(metadata.entries[0].readOnly, true)
+  const dependencies = await service.listTree(scope, 'node_modules')
+  assert.deepEqual(dependencies.entries.map((entry) => entry.path), ['node_modules/dependency.js'])
+  for (const result of [
+    await service.createFile(scope, '.git', 'new'),
+    await service.rename(scope, '.git/config', 'renamed'),
+    await service.moveToTrash(scope, '.git'),
+    await service.copyPath(scope, '.git/config')
+  ]) assert.equal(result.ok, false, 'listing metadata must not grant file actions')
+})
+
+test('pastas grandes têm continuação para todos os itens, sem corte global da árvore', async (t) => {
+  const { projectRoot, lookup } = await fixture(t)
+  const service = new FileActionService(lookup, {})
+  const names = Array.from({ length: 505 }, (_, index) => `file-${String(index).padStart(4, '0')}.txt`)
+  await Promise.all(names.map((name) => writeFile(join(projectRoot, name), '')))
+  const first = await service.listTree({ projectId: 'project-1' })
+  assert.equal(first.ok, true)
+  assert.equal(first.truncated, true)
+  assert.equal(first.nextOffset, first.entries.length)
+  const second = await service.listTree({ projectId: 'project-1' }, '', first.nextOffset)
+  assert.equal(second.ok, true)
+  assert.equal(second.truncated, false)
+  assert.equal(second.nextOffset, undefined)
+  assert.deepEqual([...first.entries, ...second.entries].map((entry) => entry.name), names)
+})
+
+test('expandir uma pasta profunda lista seus filhos sem percorrer outras pastas', async (t) => {
+  const { projectRoot, lookup } = await fixture(t)
+  const service = new FileActionService(lookup, {})
+  const deep = Array.from({ length: 26 }, () => 'd').join('/')
+  await mkdir(join(projectRoot, deep), { recursive: true })
+  await writeFile(join(projectRoot, deep, 'leaf.txt'), '')
+  const tree = await service.listTree({ projectId: 'project-1' }, deep)
+  assert.equal(tree.ok, true)
+  assert.deepEqual(tree.entries.map((entry) => entry.path), [`${deep}/leaf.txt`])
+  assert.equal(tree.entries[0].depth, 27)
+  assert.equal(tree.truncated, false)
+})
+
+test('a listagem por pasta mantém a cerca de caminho e valida o cursor', async (t) => {
+  const { projectRoot, lookup } = await fixture(t)
+  const service = new FileActionService(lookup, {})
+  const scope = { projectId: 'project-1' }
+  for (const path of ['../outside', projectRoot, 'C:relative', '.git/../../outside', 'file:stream']) {
+    assert.equal((await service.listTree(scope, path)).ok, false, path)
+  }
+  for (const offset of [-1, 1.5, '1', NaN, Infinity, {}]) {
+    assert.equal((await service.listTree(scope, '', offset)).ok, false)
+  }
+})
+
 test('criação e rename nunca sobrescrevem um item existente', async (t) => {
   const { projectRoot, lookup } = await fixture(t)
   let clipboardValue = ''
@@ -246,6 +324,8 @@ test('symlink/junction fica visível como bloqueado e nunca vira autoridade', as
   assert.equal(tree.entries.some((entry) => entry.name === 'segredo.txt'), false)
   assert.equal((await service.copyPath(scope, 'atalho')).ok, false)
   assert.equal((await service.createFile(scope, 'atalho', 'fora.txt')).ok, false)
+  assert.equal((await service.listTree(scope, 'atalho')).ok, false)
+  assert.equal((await service.listTree(scope, 'atalho/nested')).ok, false)
   assert.equal(copied, false)
 })
 

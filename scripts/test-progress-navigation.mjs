@@ -97,7 +97,7 @@ test('delivery focus expands only disclosure controls after React removes inert'
     focus: () => calls.push('focus'), scrollIntoView: () => calls.push('scroll') }
   const rail = { querySelector: (selector) => selector === '.dock-sec-head' ? section :
     (assert.equal(selector, '.right-rail-toggle[aria-expanded="false"]'), { click: () => calls.push('rail') }) }
-  const cancel = focusProgressDelivery({ querySelector: () => rail }, () => calls.push('done'))
+  const cancel = focusProgressDelivery({ querySelector: selector => selector === '.board-content' ? rail : null }, () => calls.push('done'))
   assert.deepEqual(calls, ['rail'])
   frame()
   assert.deepEqual(calls, ['rail', 'section', 'focus', 'scroll', 'done'])

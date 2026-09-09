@@ -132,8 +132,10 @@ test('contrato da UI expõe recolher, separator focável e cleanup do gesto', as
   }
   assert.doesNotMatch(css, /\.right-rail-chrome\s*\{/u)
   assert.doesNotMatch(css, /\.right-rail-toolbar\s*\{/u)
-  assert.match(board, /<ResizableRightRail/u)
-  assert.match(board, /projectKey=\{projectId\}/u)
+  assert.match(board, /<WorkspacePanels/u)
+  const workspace = await source('src/renderer/src/workspace/WorkspacePanels.tsx')
+  assert.match(workspace, /<ResizableRightRail/u, 'geral e release preservam o trilho existente')
+  assert.match(workspace, /projectKey=\{projectId\}/u)
 })
 
 test('a rampa do recolher pertence ao BOTÃO e nunca atravessa o arrasto', async () => {
@@ -768,7 +770,7 @@ test('poll lento do trilho só roda À VISTA — e devolve intervalo e ouvinte a
   assert.match(railCode, /document\.removeEventListener\('visibilitychange'/u)
 
   // O Board é a autoridade do "à vista": só ele sabe o projeto ativo e a aba.
-  assert.match(boardCode, /visible=\{isActive && uniTab === 'board'\}/u)
+  assert.match(boardCode, /visible=\{appPage === 'workspace' && isActive && uniTab === 'board'\}/u)
 
   // O GATILHO VELHO FICA: o clique do dono (⇪, arquivar…) continua re-medindo.
   assert.match(railCode, /reloadToken\?:\s*number/u)
@@ -973,7 +975,7 @@ test('RIGHTDOCK — a moldura: dock-head + três seções com resumo', async () 
     /\{!planning && frota\.length > 0/u,
     'a frota voltou a ser cercada do planejamento'
   )
-  assert.match(rail, /\{frota\.length > 0 && \(/u, 'sem ajudante nenhum a seção nem nasce')
+  assert.match(rail, /\{\(windowed \|\| frota\.length > 0\) && \(/u, 'a janela oferece estado vazio; o trilho legado só nasce com ajudantes')
 
   const css = await source('src/renderer/src/global.css')
   assert.match(css, /\.dock-head \{/u)

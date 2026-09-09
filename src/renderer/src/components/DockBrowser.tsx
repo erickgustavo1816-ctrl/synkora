@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -8,6 +9,7 @@ import {
   type CSSProperties
 } from 'react'
 import { useStore } from '../store'
+import { WorkspacePanelVisibility } from '../workspace/WorkspacePanelContext'
 import BrowserChrome, {
   BrowserPageBands,
   BrowserPageOverlay,
@@ -101,10 +103,10 @@ function clipAncestors(el: HTMLElement): HTMLElement[] {
   let node: HTMLElement | null = el.parentElement
   while (node && node !== document.body) {
     const style = window.getComputedStyle(node)
+    // display:contents keeps inherited overflow rules but has no clipping box.
     if (
-      style.overflowX !== 'visible' ||
-      style.overflowY !== 'visible' ||
-      style.clipPath !== 'none'
+      style.display !== 'contents' &&
+      (style.overflowX !== 'visible' || style.overflowY !== 'visible' || style.clipPath !== 'none')
     ) {
       clips.push(node)
     }
@@ -128,7 +130,7 @@ function railViewportOf(el: HTMLElement): HTMLElement | null {
   while (node && node !== document.body) {
     const style = window.getComputedStyle(node)
     const flow = `${style.overflowY} ${style.overflowX}`
-    if (flow.includes('auto') || flow.includes('scroll')) return node
+    if (style.display !== 'contents' && (flow.includes('auto') || flow.includes('scroll'))) return node
     node = node.parentElement
   }
   return null
@@ -176,6 +178,7 @@ function hostOverlayRects(): BrowserRect[] {
 
 export interface MissionBrowser {
   state: BrowserPanelState
+  loaded: boolean
   engine: BrowserEngineState
   /** falha de leitura do motor — a fotografia anterior FICA na tela */
   error: string | null
@@ -189,7 +192,8 @@ export interface MissionBrowser {
  * "⚡ carregando…", "3 abas", "fechado" — precisa continuar verdadeiro.
  */
 export function useMissionBrowser(missionId: string): MissionBrowser {
-  const state = useStore((s) => s.browserByMission[missionId] ?? EMPTY_BROWSER_PANEL)
+  const cached = useStore((s) => s.browserByMission[missionId])
+  const state = cached ?? EMPTY_BROWSER_PANEL
   const setMissionBrowser = useStore((s) => s.setMissionBrowser)
   const [engine, setEngine] = useState<BrowserEngineState>(() =>
     browserApi() ? 'ready' : 'missing'
@@ -227,7 +231,7 @@ export function useMissionBrowser(missionId: string): MissionBrowser {
   }, [missionId, refresh])
 
   const summary = useMemo(() => browserSectionSummary(state, engine), [state, engine])
-  return { state, engine, error, summary, refresh }
+  return { state, loaded: cached !== undefined, engine, error, summary, refresh }
 }
 
 export default function DockBrowser({
@@ -236,7 +240,7 @@ export default function DockBrowser({
   state,
   engine,
   error,
-  visible
+  visible: boardVisible
 }: {
   missionId: string
   /** A SESSÃO (cookies/logins) é do PROJETO — é o que a linha do pé conta. */
@@ -247,6 +251,8 @@ export default function DockBrowser({
   /** o trilho está à vista? (o Board mantém o dock montado fora da aba) */
   visible: boolean
 }): React.JSX.Element {
+  const panelVisible = useContext(WorkspacePanelVisibility)
+  const visible = boardVisible && panelVisible
   const rootRef = useRef<HTMLDivElement>(null)
   const pageRef = useRef<HTMLDivElement>(null)
   const urlRef = useRef<HTMLInputElement>(null)

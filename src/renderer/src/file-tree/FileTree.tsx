@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
   FileActionResult,
   FileActionScope,
@@ -6,6 +6,7 @@ import type {
 } from '../../../preload/index'
 import FileActionModal from './FileActionModal'
 import FileContextMenu from './FileContextMenu'
+import { useFileTree } from './useFileTree'
 import {
   actionsForFileTreeNode,
   type FileTreeAction,
@@ -178,53 +179,25 @@ export default function FileTree({
   onOpenFile,
   onChanged
 }: Props): React.JSX.Element {
-  const [entries, setEntries] = useState<FileActionTreeEntry[]>([])
+  const { entries, directories, loading, error, loadDirectory, refresh: load } = useFileTree(scope)
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']))
   const [focusPath, setFocusPath] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [truncated, setTruncated] = useState(false)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [modal, setModal] = useState<ModalState | null>(null)
-  const requestRef = useRef(0)
   const itemRefs = useRef(new Map<string, HTMLButtonElement>())
-
-  const load = useCallback(async (): Promise<void> => {
-    const request = ++requestRef.current
-    setLoading(true)
-    setError(null)
-    try {
-      const snapshot = await window.synkora.files.tree(scope)
-      if (request !== requestRef.current) return
-      if (!snapshot.ok) {
-        setEntries([])
-        setTruncated(false)
-        setError(snapshot.error ?? 'Não foi possível carregar a árvore.')
-      } else {
-        setEntries(snapshot.entries)
-        setTruncated(snapshot.truncated)
-      }
-    } catch {
-      if (request === requestRef.current) {
-        setEntries([])
-        setTruncated(false)
-        setError('Não foi possível carregar a árvore.')
-      }
-    } finally {
-      if (request === requestRef.current) setLoading(false)
-    }
-  }, [scope])
 
   useEffect(() => {
     setExpanded(new Set(['']))
     setFocusPath('')
     setMenu(null)
     setModal(null)
-    void load()
-    return () => {
-      requestRef.current += 1
+  }, [scope])
+
+  useEffect(() => {
+    for (const entry of entries) {
+      if (entry.kind === 'directory' && expanded.has(entry.path)) void loadDirectory(entry.path)
     }
-  }, [load])
+  }, [entries, expanded, loadDirectory])
 
   useEffect(
     () => window.synkora.files.onChanged((changedScope) => {
@@ -372,6 +345,30 @@ export default function FileTree({
     return result
   }
 
+  const directoryStatus = (path: string): ReactNode => {
+    const page = directories[path]
+    if (!page || (!page.loading && !page.error && page.nextOffset === undefined)) return null
+    return (
+      <div className="files-nav-message" role="status">
+        {page.loading ? <span>carregando…</span> : page.error ? (
+          <>
+            <span>{page.error}</span>
+            <button type="button" className="btn ghost tiny"
+              onClick={() => void loadDirectory(path, page.nextOffset === undefined ? 'retry' : 'more')}>
+              tentar de novo
+            </button>
+          </>
+        ) : (
+          <button type="button" className="btn ghost tiny"
+            aria-label={`Mostrar mais arquivos de ${path || 'raiz do projeto'}`}
+            onClick={() => void loadDirectory(path, 'more')}>
+            mostrar mais
+          </button>
+        )}
+      </div>
+    )
+  }
+
   return (
     <section className="files-nav" aria-label="Árvore de arquivos">
       <header className="files-nav-header">
@@ -380,7 +377,7 @@ export default function FileTree({
           <span className="files-nav-count">
             {loading
               ? 'lendo…'
-              : `${entries.length} ${entries.length === 1 ? 'item' : 'itens'}${truncated ? ' visíveis' : ''}`}
+              : `${entries.length} ${entries.length === 1 ? 'item' : 'itens'} carregados`}
           </span>
         </div>
         <div className="files-nav-tools">
@@ -409,7 +406,7 @@ export default function FileTree({
       <div className="files-nav-source">{sourceControl}</div>
       {sourceNotice}
 
-      {error && (
+      {error && entries.length === 0 && (
         <div className="files-nav-message error" role="alert">
           <span>{error}</span>
           <button type="button" className="btn ghost tiny" onClick={() => void load()}>
@@ -428,106 +425,109 @@ export default function FileTree({
           const isDirectory = node.kind === 'directory'
           const isExpanded = isDirectory && expanded.has(node.path)
           const blocked = node.kind === 'blocked'
+          const hasActions = actionsForFileTreeNode(node).length > 0
           const isActive = activePath === node.path
           // Dotfolder/dotfile é infraestrutura: fica legível, mas nunca disputa
           // a leitura com o código do produto.
           const dotted = node.name.startsWith('.')
           return (
-            <div
-              key={node.path}
-              className={`files-nav-row${isActive ? ' active' : ''}${blocked ? ' blocked' : ''}${dotted ? ' dotted' : ''}`}
-              data-kind={node.kind}
-              style={{ '--file-depth': node.depth } as React.CSSProperties}
-            >
-              <button
-                ref={(element) => {
-                  if (element) itemRefs.current.set(node.path, element)
-                  else itemRefs.current.delete(node.path)
-                }}
-                type="button"
-                role="treeitem"
-                className="files-nav-item"
-                tabIndex={focusPath === node.path ? 0 : -1}
-                aria-level={node.depth + 1}
-                aria-expanded={isDirectory ? isExpanded : undefined}
-                aria-selected={isActive}
-                aria-disabled={blocked || undefined}
-                aria-label={blocked ? `${node.name}, link indisponível` : node.name}
-                title={blocked ? `${node.path} — link indisponível` : node.path || node.name}
-                onFocus={() => setFocusPath(node.path)}
-                onClick={() => {
-                  if (blocked) return
-                  if (isDirectory) toggle(node)
-                  else onOpenFile?.(node)
-                }}
-                onContextMenu={(event) => {
-                  event.preventDefault()
-                  if (!blocked) openMenu(node, event.currentTarget, { x: event.clientX, y: event.clientY })
-                }}
-                onKeyDown={(event) => {
-                  const currentIndex = visibleNodes.findIndex((candidate) => candidate.path === node.path)
-                  if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
-                    event.preventDefault()
-                    openMenu(node, event.currentTarget)
-                  } else if (event.key === 'ArrowDown') {
-                    event.preventDefault()
-                    focusNode(visibleNodes[Math.min(currentIndex + 1, visibleNodes.length - 1)].path)
-                  } else if (event.key === 'ArrowUp') {
-                    event.preventDefault()
-                    focusNode(visibleNodes[Math.max(currentIndex - 1, 0)].path)
-                  } else if (event.key === 'Home') {
-                    event.preventDefault()
-                    focusNode(visibleNodes[0].path)
-                  } else if (event.key === 'End') {
-                    event.preventDefault()
-                    focusNode(visibleNodes.at(-1)?.path ?? '')
-                  } else if (event.key === 'ArrowRight' && isDirectory) {
-                    event.preventDefault()
-                    if (!isExpanded) toggle(node)
-                    else focusNode(childrenByParent.get(node.path)?.[0]?.path ?? node.path)
-                  } else if (event.key === 'ArrowLeft') {
-                    event.preventDefault()
-                    if (isDirectory && isExpanded) toggle(node)
-                    else if (visibleNodes.some((candidate) => candidate.path === node.parentPath)) {
-                      focusNode(node.parentPath)
-                    }
-                  } else if ((event.key === 'Enter' || event.key === ' ') && !blocked) {
-                    event.preventDefault()
+            <Fragment key={node.path}>
+              <div
+                className={`files-nav-row${isActive ? ' active' : ''}${blocked ? ' blocked' : ''}${dotted ? ' dotted' : ''}`}
+                data-kind={node.kind}
+                style={{ '--file-depth': node.depth } as React.CSSProperties}
+              >
+                <button
+                  ref={(element) => {
+                    if (element) itemRefs.current.set(node.path, element)
+                    else itemRefs.current.delete(node.path)
+                  }}
+                  type="button"
+                  role="treeitem"
+                  className="files-nav-item"
+                  tabIndex={focusPath === node.path ? 0 : -1}
+                  aria-level={node.depth + 1}
+                  aria-expanded={isDirectory ? isExpanded : undefined}
+                  aria-selected={isActive}
+                  aria-disabled={blocked || undefined}
+                  aria-label={blocked ? `${node.name}, link indisponível` : node.name}
+                  title={blocked ? `${node.path} — link indisponível` : `${node.path}${node.readOnly ? ' — somente leitura' : ''}`}
+                  onFocus={() => setFocusPath(node.path)}
+                  onClick={() => {
+                    if (blocked) return
                     if (isDirectory) toggle(node)
                     else onOpenFile?.(node)
-                  } else if (event.key === 'F2' && !node.root && !blocked) {
+                  }}
+                  onContextMenu={(event) => {
                     event.preventDefault()
-                    setModal({ action: 'rename', node, opener: event.currentTarget })
-                  } else if (event.key === 'Delete' && !node.root && !blocked) {
-                    event.preventDefault()
-                    setModal({ action: 'trash', node, opener: event.currentTarget })
-                  }
-                }}
-              >
-                <span className="files-nav-chevron" aria-hidden="true">
-                  {isDirectory ? <Chevron expanded={isExpanded} /> : null}
-                </span>
-                <span className="files-nav-kind" aria-hidden="true">
-                  <TreeGlyph kind={glyphKindFor(node, isExpanded)} />
-                </span>
-                <span className="files-nav-name">{node.name}</span>
-              </button>
-              {!blocked && (
-                <button
-                  type="button"
-                  className="files-nav-actions"
-                  aria-label={`Ações de ${node.name}`}
-                  title={`Ações de ${node.name}`}
-                  tabIndex={-1}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    openMenu(node, event.currentTarget)
+                    if (!blocked) openMenu(node, event.currentTarget, { x: event.clientX, y: event.clientY })
+                  }}
+                  onKeyDown={(event) => {
+                    const currentIndex = visibleNodes.findIndex((candidate) => candidate.path === node.path)
+                    if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+                      event.preventDefault()
+                      openMenu(node, event.currentTarget)
+                    } else if (event.key === 'ArrowDown') {
+                      event.preventDefault()
+                      focusNode(visibleNodes[Math.min(currentIndex + 1, visibleNodes.length - 1)].path)
+                    } else if (event.key === 'ArrowUp') {
+                      event.preventDefault()
+                      focusNode(visibleNodes[Math.max(currentIndex - 1, 0)].path)
+                    } else if (event.key === 'Home') {
+                      event.preventDefault()
+                      focusNode(visibleNodes[0].path)
+                    } else if (event.key === 'End') {
+                      event.preventDefault()
+                      focusNode(visibleNodes.at(-1)?.path ?? '')
+                    } else if (event.key === 'ArrowRight' && isDirectory) {
+                      event.preventDefault()
+                      if (!isExpanded) toggle(node)
+                      else focusNode(childrenByParent.get(node.path)?.[0]?.path ?? node.path)
+                    } else if (event.key === 'ArrowLeft') {
+                      event.preventDefault()
+                      if (isDirectory && isExpanded) toggle(node)
+                      else if (visibleNodes.some((candidate) => candidate.path === node.parentPath)) {
+                        focusNode(node.parentPath)
+                      }
+                    } else if ((event.key === 'Enter' || event.key === ' ') && !blocked) {
+                      event.preventDefault()
+                      if (isDirectory) toggle(node)
+                      else onOpenFile?.(node)
+                    } else if (event.key === 'F2' && !node.root && hasActions) {
+                      event.preventDefault()
+                      setModal({ action: 'rename', node, opener: event.currentTarget })
+                    } else if (event.key === 'Delete' && !node.root && hasActions) {
+                      event.preventDefault()
+                      setModal({ action: 'trash', node, opener: event.currentTarget })
+                    }
                   }}
                 >
-                  <MoreIcon />
+                  <span className="files-nav-chevron" aria-hidden="true">
+                    {isDirectory ? <Chevron expanded={isExpanded} /> : null}
+                  </span>
+                  <span className="files-nav-kind" aria-hidden="true">
+                    <TreeGlyph kind={glyphKindFor(node, isExpanded)} />
+                  </span>
+                  <span className="files-nav-name">{node.name}</span>
                 </button>
-              )}
-            </div>
+                {hasActions && (
+                  <button
+                    type="button"
+                    className="files-nav-actions"
+                    aria-label={`Ações de ${node.name}`}
+                    title={`Ações de ${node.name}`}
+                    tabIndex={-1}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      openMenu(node, event.currentTarget)
+                    }}
+                  >
+                    <MoreIcon />
+                  </button>
+                )}
+              </div>
+              {isExpanded && directoryStatus(node.path)}
+            </Fragment>
           )
         })}
 
@@ -542,12 +542,7 @@ export default function FileTree({
         )}
       </div>
 
-      {loading && <div className="files-nav-loading" role="status">carregando…</div>}
-      {truncated && (
-        <div className="files-nav-message" role="status">
-          A árvore atingiu o limite de exibição. As ações continuam restritas aos itens visíveis.
-        </div>
-      )}
+      {(!error || entries.length > 0) && directoryStatus('')}
 
       {menu && (
         <FileContextMenu

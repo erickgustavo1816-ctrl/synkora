@@ -18,9 +18,29 @@ export type GuiDelegationCli = 'claude' | 'codex'
  *  em `src/main/guiSessions.ts`). Campo ausente = herdar da conversa — menos o
  *  `fast`, que não herda nada: ausente ali é desligado. */
 export interface GuiDelegationDefaultsValue {
+  /** id da conta (seat) com que os ajudantes abrem — a primeira etapa da aba
+   *  "ajudantes ˄" (2026-09-08). Ausente = a conta segue o modelo. */
+  seat?: string
   model?: string
   effort?: string
   fast?: boolean
+}
+
+/** Uma conta como a aba a conhece — espelho estreito de `Seat` (store.ts). */
+export interface GuiFleetSeat {
+  id: string
+  name: string
+  cli: GuiDelegationCli
+}
+
+/**
+ * O CLI de um modelo pelo NOME — espelho declarado de `resolveHelperCli`
+ * (src/main/guiHelperSessions.ts): é a régua que o motor usa para decidir o
+ * binário, e a aba precisa da mesma para saber se o modelo carimbado ainda
+ * cabe na conta escolhida.
+ */
+export function guiDelegationModelCli(model: string): GuiDelegationCli {
+  return /^gpt-/iu.test(model.trim()) ? 'codex' : 'claude'
 }
 
 /** Catálogo REAL de um CLI (`catalog.ts` → `window.synkora.catalog.get`). */
@@ -28,7 +48,14 @@ export interface GuiDelegationCatalog {
   cli: GuiDelegationCli
   /** Espelho estreito de `CatalogModel`, em `src/main/catalog.ts`: campo que
    *  não interessa à régua fica de fora, mas nenhum é renomeado no caminho. */
-  models: { id: string; label: string; efforts?: string[]; supportsFastMode?: boolean }[]
+  models: {
+    id: string
+    label: string
+    /** id canônico do alias ("opus[1m]" → "claude-opus-5"): a versão do nome digno */
+    resolvedModel?: string
+    efforts?: string[]
+    supportsFastMode?: boolean
+  }[]
   /** Níveis do BINÁRIO — o fallback de quem não declara nível por modelo. */
   efforts: string[]
 }
@@ -36,6 +63,8 @@ export interface GuiDelegationCatalog {
 export interface GuiDelegationModelOption {
   cli: GuiDelegationCli
   id: string
+  /** id canônico do alias, quando o catálogo o publica */
+  resolvedModel?: string
   /** Rótulo CRU do catálogo (`${displayName} — ${descrição}`) — o texto inteiro,
    *  preservado para a dica. */
   label: string
@@ -69,6 +98,9 @@ export type GuiDelegationModelNamer = (model: {
   /** Nome humano do catálogo, JÁ sem a descrição. VAZIO = o catálogo só
    *  repetiu o id, e quem nomeia é o embelezador de id do composer. */
   displayName: string
+  /** id canônico do alias ("claude-opus-5"): é dele que sai a versão do nome
+   *  ("Opus 5"), exatamente como no seletor do composer */
+  resolvedModel?: string
 }) => string
 
 /** Sem embelezador injetado a régua não inventa: fica com o que o catálogo
@@ -152,13 +184,18 @@ export function guiDelegationModelGroups(
       if (!id) continue
       const label = typeof model.label === 'string' && model.label.trim() ? model.label.trim() : id
       const { displayName, detail } = guiDelegationModelLabelParts(id, label)
+      const resolvedModel =
+        typeof model.resolvedModel === 'string' && model.resolvedModel.trim()
+          ? model.resolvedModel.trim()
+          : undefined
       options.push({
         cli: catalog.cli,
         id,
+        ...(resolvedModel ? { resolvedModel } : {}),
         label,
         // O nome vem da régua do composer; o id só entra se ela devolver vazio,
         // porque uma ficha sem título nenhum seria pior que o id cru.
-        name: namer({ id, displayName }).trim() || id,
+        name: namer({ id, displayName, ...(resolvedModel ? { resolvedModel } : {}) }).trim() || id,
         detail,
         efforts: model.efforts === undefined ? fallback : cleanList(model.efforts),
         supportsFastMode: model.supportsFastMode === true
@@ -211,14 +248,128 @@ export function guiDelegationEffortOptions(
  */
 export function guiDelegationSummary(
   defaults: GuiDelegationDefaultsValue,
-  groups: readonly GuiDelegationModelGroup[] = []
+  groups: readonly GuiDelegationModelGroup[] = [],
+  seats: readonly GuiFleetSeat[] = []
 ): string {
+  const seatId = defaults.seat?.trim()
+  // Conta que o app não conhece mais é dita PELO ID: esconder o pino seria o
+  // estado mais enganoso da aba, e o id é o que o motor vai tentar usar.
+  const seatName = seatId ? (seats.find((seat) => seat.id === seatId)?.name ?? seatId) : ''
   const model = defaults.model?.trim()
   const effort = defaults.effort?.trim()
   const fast = defaults.fast === true ? '⚡ fast' : ''
-  if (!model && !effort) return ['herdado da conversa', fast].filter(Boolean).join(' · ')
+  if (!seatName && !model && !effort) {
+    return ['herdado da conversa', fast].filter(Boolean).join(' · ')
+  }
   const name = model ? (guiDelegationModelOption(groups, model)?.name ?? model) : ''
-  return [name || 'modelo da conversa', effort, fast].filter(Boolean).join(' · ')
+  return [seatName, name || (effort ? 'modelo da conversa' : ''), effort, fast]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+// ————— A ABA "ajudantes ˄" (2026-09-08): a sequência conta › modelo › effort › fast —————
+
+export interface GuiFleetPlanInput {
+  defaults: GuiDelegationDefaultsValue
+  /** o CLI da conversa (o delegador) — manda quando a conta é "a da conversa" */
+  conversationCli: GuiDelegationCli
+  seats: readonly GuiFleetSeat[]
+  groups: readonly GuiDelegationModelGroup[]
+  /** o dono já respondeu a etapa da conta nesta abertura (mesmo escolhendo
+   *  "a da conversa", que não deixa pino): a etapa do modelo nasce */
+  reachedModel: boolean
+}
+
+export interface GuiFleetPlan {
+  /** o CLI que manda no catálogo: o da conta carimbada, senão o da conversa */
+  cli: GuiDelegationCli
+  /** conta carimbada que o app não conhece mais (apagada) — ainda valendo */
+  seatOutsideList: boolean
+  showModel: boolean
+  /** "o da conversa" só é opção quando a conta é a da conversa (mesmo CLI):
+   *  do outro lado não existe "modelo da conversa" para herdar */
+  modelInheritAllowed: boolean
+  modelOptions: GuiDelegationModelOption[]
+  pinnedOption: GuiDelegationModelOption | undefined
+  showEffort: boolean
+  effortOptions: string[]
+  showFast: boolean
+}
+
+/** O patch que a aba manda ao main: `null` LIMPA, ausente CONSERVA (a mesma
+ *  gramática de `GuiDelegationDefaultsPatch`, em src/main/guiSessions.ts). */
+export interface GuiFleetPatch {
+  seat?: string | null
+  model?: string | null
+  effort?: string | null
+  fast?: boolean | null
+}
+
+/**
+ * A escolha da CONTA. `null` = "a da conversa". Modelo carimbado de OUTRO CLI
+ * que o da conta nova não cabe nela: cai junto, e com ele o effort e o fast,
+ * que são dele. Do mesmo CLI, fica. Re-escolher a mesma conta não grava nada.
+ */
+export function guiFleetSeatPatch(
+  defaults: GuiDelegationDefaultsValue,
+  seats: readonly GuiFleetSeat[],
+  conversationCli: GuiDelegationCli,
+  seat: string | null
+): GuiFleetPatch | null {
+  if ((seat ?? undefined) === (defaults.seat?.trim() || undefined)) return null
+  const nextCli = (seat ? seats.find((candidate) => candidate.id === seat)?.cli : undefined) ?? conversationCli
+  const model = defaults.model?.trim()
+  const dropModel = Boolean(model) && guiDelegationModelCli(model ?? '') !== nextCli
+  return { seat, ...(dropModel ? { model: null, effort: null, fast: null } : {}) }
+}
+
+/**
+ * A escolha do MODELO. `null` = "o da conversa": limpa o effort junto (sem
+ * modelo não existe escala para filtrar o nível) e o ⚡ (propriedade do modelo
+ * carimbado). Trocando de modelo, o effort atravessa só se o novo o aceita, e
+ * o ⚡ só se o novo tem o modo — catálogo VAZIO é ausência de notícia, não
+ * notícia de ausência: ali o pino fica de pé (campo ausente CONSERVA).
+ */
+export function guiFleetModelPatch(
+  defaults: GuiDelegationDefaultsValue,
+  options: readonly GuiDelegationModelOption[],
+  catalogLoaded: boolean,
+  model: string | null
+): GuiFleetPatch | null {
+  if (model === null) return { model: null, effort: null, fast: null }
+  if (model === defaults.model) return null
+  const option = options.find((candidate) => candidate.id === model)
+  const effort = defaults.effort?.trim()
+  const keep = effort && option?.efforts.includes(effort) ? effort : null
+  const dropFast = catalogLoaded && option?.supportsFastMode !== true
+  return { model, effort: keep, ...(dropFast ? { fast: null } : {}) }
+}
+
+/**
+ * O que a aba mostra, etapa a etapa. As etapas nascem UMA DE CADA VEZ — a
+ * conta sempre; o modelo depois que a conta foi respondida (ou já há pino);
+ * o effort só com modelo carimbado (os níveis são dele); o fast só quando o
+ * modelo aceita — ou quando já está ligado, porque pino ligado e invisível é
+ * o pior estado da aba.
+ */
+export function guiFleetPlan(input: GuiFleetPlanInput): GuiFleetPlan {
+  const seatId = input.defaults.seat?.trim()
+  const seat = seatId ? input.seats.find((candidate) => candidate.id === seatId) : undefined
+  const cli = seat?.cli ?? input.conversationCli
+  const modelOptions = input.groups.find((group) => group.cli === cli)?.options ?? []
+  const pinnedOption = guiDelegationModelOption(input.groups, input.defaults.model)
+  const model = Boolean(input.defaults.model?.trim())
+  return {
+    cli,
+    seatOutsideList: Boolean(seatId) && !seat,
+    showModel: Boolean(seatId) || model || input.reachedModel,
+    modelInheritAllowed: !seat || seat.cli === input.conversationCli,
+    modelOptions,
+    pinnedOption,
+    showEffort: model,
+    effortOptions: pinnedOption?.efforts ?? [],
+    showFast: input.defaults.fast === true || pinnedOption?.supportsFastMode === true
+  }
 }
 
 /**

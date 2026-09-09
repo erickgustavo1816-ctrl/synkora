@@ -529,6 +529,7 @@ interface GuiBridge {
   fileImageData: (paneId: string, reference: string) => Promise<GuiFileImageDataResult>
   attach: (paneId: string, payload: GuiAttachPayload) => Promise<GuiAttachResult>
   attachFolder: (paneId: string) => Promise<GuiAttachResult>
+  attachDropped: (paneId: string, file: File) => Promise<GuiAttachResult>
   attachmentPreview: (
     paneId: string,
     attachment: GuiAttachmentDescriptor,
@@ -901,6 +902,26 @@ export const guiApi = {
       return await api.attachFolder(paneId)
     } catch {
       return { ok: false, error: 'não consegui abrir o seletor de pasta' }
+    }
+  },
+
+  /** O item SOLTO no chat sobe como File; o caminho nasce no preload. Preload
+   *  antigo (app sem reiniciar depois desta entrega) responde com a receita,
+   *  nunca com o beco "não deu para ler". */
+  async attachDropped(paneId: string, file: File): Promise<GuiAttachResult> {
+    const api = bridge()
+    if (!api?.attachDropped) {
+      return {
+        ok: false,
+        error: api?.attach
+          ? 'soltar no chat pede o app reiniciado — por enquanto use o + › Pasta'
+          : NO_BRIDGE
+      }
+    }
+    try {
+      return await api.attachDropped(paneId, file)
+    } catch {
+      return { ok: false, error: `não consegui anexar ${file.name || 'o item solto'}` }
     }
   },
 

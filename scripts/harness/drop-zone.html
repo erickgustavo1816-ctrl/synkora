@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>harness · zona de soltar</title>
+<link rel="stylesheet" href="/global.css" />
+<style>
+  /* só o palco do harness: três panes empilhados com altura fixa */
+  body { margin: 0; padding: 18px; background: var(--paper); display: grid; gap: 22px; }
+  .h-label { font: 11px var(--mono); color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+  .h-stage { width: 880px; height: 250px; display: flex; border: 1px solid var(--gui-line-strong); }
+  .h-stage .gui-pane { height: 100%; }
+  .gui-thread { padding-top: 14px; font: 13px/1.55 var(--mono); color: var(--ink); }
+</style>
+</head>
+<body>
+
+<template id="pane">
+  <div class="h-stage">
+    <div class="gui-pane">
+      <div class="gui-stage">
+        <div class="gui-log">
+          <div class="gui-thread">
+            <div>conversa do dev no worktree da missão — última fala do agente aqui.</div>
+          </div>
+        </div>
+      </div>
+      <div class="gui-composer">
+        <div class="gui-composer-surface">
+          <div class="gui-composer-inner">
+            <textarea class="gui-input" rows="1" placeholder="dirija o dev — / abre os comandos"></textarea>
+            <div class="gui-menu-host gui-composer-attach">
+              <button class="gui-sq gui-attach-btn" type="button"><span>+</span></button>
+            </div>
+            <div class="gui-menu-host gui-composer-mode">
+              <button class="gui-btn" type="button">acesso completo</button>
+            </div>
+            <div class="gui-menu-host gui-composer-model">
+              <button class="gui-btn" type="button">◆ fable 5.1</button>
+            </div>
+            <div class="gui-menu-host gui-composer-effort">
+              <button class="gui-btn" type="button">◇ max</button>
+            </div>
+            <button class="gui-send" type="button" aria-label="Enviar">
+              <svg class="gui-send-glyph" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h9"/><path d="m8.5 4.5 3.5 3.5-3.5 3.5"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="pad">
+  <div class="gui-drop-pad" aria-hidden="true">
+    <svg class="gui-drop-pad-frame" aria-hidden="true" focusable="false"><rect /></svg>
+    <span class="gui-drop-pad-label">
+      <svg class="gui-drop-glyph" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <path d="M8 2.5v8" /><path d="m4.5 7 3.5 3.5L11.5 7" /><path d="M3 13.5h10" />
+      </svg>
+      <span class="h-text"></span>
+    </span>
+  </div>
+</template>
+
+<script>
+  const states = [
+    { name: 'idle — sem arrasto', phase: null, text: '' },
+    { name: 'ready — arrasto em qualquer canto da janela', phase: 'ready', text: 'traga até aqui para anexar' },
+    { name: 'over — por cima do pane', phase: 'over', text: 'solte para anexar à conversa' }
+  ]
+  for (const state of states) {
+    const label = document.createElement('div')
+    label.className = 'h-label'
+    label.textContent = state.name
+    const node = document.getElementById('pane').content.cloneNode(true)
+    const pane = node.querySelector('.gui-pane')
+    if (state.phase) {
+      pane.dataset.drop = state.phase
+      const pad = document.getElementById('pad').content.cloneNode(true)
+      pad.querySelector('.gui-drop-pad').dataset.phase = state.phase
+      pad.querySelector('.h-text').textContent = state.text
+      const surface = node.querySelector('.gui-composer-surface')
+      surface.insertBefore(pad, surface.firstChild)
+    }
+    const wrap = document.createElement('div')
+    wrap.appendChild(label)
+    wrap.appendChild(node)
+    document.body.appendChild(wrap)
+  }
+</script>
+</body>
+</html>

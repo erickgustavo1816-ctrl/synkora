@@ -118,9 +118,9 @@ export function registerFilesIpc(ctx: MainContext, extras: FilesIpcExtras): void
   }
 
   // ————— Árvore + ações P26 —————
-  ipcMain.handle('files:tree', (event, scope: FileActionScope) => {
+  ipcMain.handle('files:tree', (event, scope: FileActionScope, directoryPath?: unknown, offset?: unknown) => {
     extras.assertAppRendererSender(event)
-    return fileActions.listTree(scope)
+    return fileActions.listTree(scope, directoryPath, offset)
   })
 
   ipcMain.handle(

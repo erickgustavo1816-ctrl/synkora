@@ -36,19 +36,24 @@ export default function MissionColumn({
   selectedId,
   generalPulse,
   onSelect,
-  onNewMission
+  onNewMission,
+  collapsed = false,
+  id
 }: {
   entries: MissionColumnEntry[]
   selectedId: string | null
   generalPulse?: string
   onSelect: (missionId: string | null) => void
   onNewMission: () => void
+  collapsed?: boolean
+  id?: string
 }): React.JSX.Element {
   // ONDA D: os interruptores BYPASS/SENSÍVEL do universo morreram daqui — a
   // permissão passou a ser POR CONVERSA, no composer do próprio chat (é lá
   // que o dono decide o quanto aquele agente pode agir sozinho).
   return (
-    <div className="mission-col">
+    <div className={`mission-col${collapsed ? ' is-collapsed' : ''}`} id={id} aria-hidden={collapsed} inert={collapsed || undefined}>
+      <div className="mission-col-content">
       <button
         className={`mission-col-general${selectedId ? '' : ' active'}${
           generalPulse ? ' asking' : ''
@@ -103,7 +108,7 @@ export default function MissionColumn({
                   : entry.pulse
                     ? `❓ O AGENTE PERGUNTOU A VOCÊ:\n${entry.pulse}`
                     : mission.pendingIntegrationApproval
-                      ? `⇪ INTEGRAÇÃO AGUARDA SEU AVAL:\no agente pediu para integrar "${mission.title}" — abra a missão e confirme no trilho (nada mergeia sem você)`
+                      ? `⇪ INTEGRAÇÃO AGUARDA SEU AVAL:\no agente pediu para integrar "${mission.title}" — abra a missão e confirme no cabeçalho (nada mergeia sem você)`
                       : [mission.title, entry.queueLabel].filter(Boolean).join('\n')
               }
               onClick={() => onSelect(mission.id)}
@@ -150,6 +155,7 @@ export default function MissionColumn({
       >
         + nova missão
       </button>
+      </div>
     </div>
   )
 }

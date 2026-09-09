@@ -4,6 +4,10 @@ import { freshWindowsPath } from './winPath'
 export interface CatalogModel {
   id: string
   label: string
+  /** O id CANÔNICO que o alias resolve ("opus[1m]" → "claude-opus-5"): é dele
+   *  que o nome digno tira a versão ("Opus 5"), como no seletor do composer.
+   *  Só o handshake do claude o publica; o codex já usa ids canônicos. */
+  resolvedModel?: string
   efforts?: string[]
   defaultEffort?: string
   /** R13: o modelo aceita o modo fast. Os dois CLIs publicam o sinal com nomes
@@ -66,6 +70,7 @@ function baseEnv(configDir?: string, cli?: 'claude' | 'codex'): Record<string, s
 export interface ClaudeHandshakeModel {
   value?: string
   displayName?: string
+  resolvedModel?: string
   description?: string
   supportedEffortLevels?: string[]
   supportsEffort?: boolean
@@ -92,6 +97,9 @@ export function claudeModelsFromHandshake(
       label: m.description
         ? `${m.displayName ?? m.value} — ${m.description.length > 52 ? m.description.slice(0, 52) + '…' : m.description}`
         : (m.displayName ?? (m.value as string)),
+      ...(typeof m.resolvedModel === 'string' && m.resolvedModel.trim()
+        ? { resolvedModel: m.resolvedModel.trim() }
+        : {}),
       efforts: m.supportsEffort === false ? [] : m.supportedEffortLevels,
       supportsFastMode: m.supportsFastMode === true
     }))

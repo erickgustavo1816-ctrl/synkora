@@ -98,7 +98,8 @@ export default function GuiContextPanel({
         <span className="gui-context-trigger-bar" aria-hidden="true">
           <i style={{ width: `${usage.percent}%` }} />
         </span>
-        <span>{label}</span>
+        <span className="gui-context-trigger-label">{label}</span>
+        <span className="gui-context-trigger-percent" aria-hidden="true">{usage.percent}%</span>
       </button>
 
       {open && (

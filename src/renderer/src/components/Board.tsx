@@ -1,6 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { prettyModel } from './PaneChrome'
 import TerminalPane from './TerminalPane'
 import GuiPane from './GuiPane'
 import GuiPanelErrorBoundary from './GuiPanelErrorBoundary'
@@ -10,8 +9,15 @@ import ReleaseRail from './ReleaseRail'
 import NewMissionModal from './NewMissionModal'
 import MissionColumn, { type MissionColumnEntry } from './MissionColumn'
 import MissionDeliveryRail from './MissionDeliveryRail'
-import ResizableRightRail from './ResizableRightRail'
+import WorkspacePanels from '../workspace/WorkspacePanels'
+import WorkspaceToolbar, { WorkspaceSidebarToggle } from '../workspace/WorkspaceToolbar'
+import MissionHeaderActions from '../workspace/MissionHeaderActions'
+import { useWorkspaceLayout } from '../workspace/useWorkspaceLayout'
+import { availableWorkspacePanels } from '../workspacePanels'
+import '../workspace/workspacePanels.css'
 import MissionStageHead, { type StagePill } from './MissionStageHead'
+import StageRoundStatus from './StageRoundStatus'
+import StageSeatChip from './StageSeatChip'
 import { TestServerModal } from './TestServerModal'
 import { ModelSelect } from './ModelSelect'
 import Select from './Select'
@@ -32,7 +38,6 @@ import {
   type Version
 } from '../store'
 import type { GuiPaneSpawn, GuiPermissionMode } from '../guiApi'
-import { guiModelLabel } from '../guiComposerPresentation'
 import { isReleaseMissionRecord } from '../missionCardAccess'
 import { canSendGuiMessage } from '../guiTransport'
 import { guiItemId } from '../guiItemIdentity'
@@ -71,9 +76,10 @@ const MISSION_GUI_ROLE_LABEL: Record<MissionGuiRole, string> = {
 
 // O mapa de papel→chrome (MISSION_GUI_PANE_ROLE) e o LED da sessão
 // (GUI_ACTIVITY) morreram com o titlebar escuro sobre o chat: no palco 2.0 a
-// identidade da conversa é a PÍLULA ativa + a linha fina do MissionStageHead,
-// e o estado do turno é o próprio chat (cursor de streaming). Do PaneChrome
-// só sobrou `prettyModel`, que embeleza o id do modelo na linha fina.
+// identidade da conversa é a PÍLULA ativa do MissionStageHead, e o estado do
+// turno é o StageRoundStatus na mesma fileira (mais o cursor de streaming no
+// próprio chat). A "linha fina" com conta/modelo/effort/⎇ morreu em
+// 2026-09-08 (cabeça em uma fileira): repetia o composer e o trilho.
 
 // O VOCABULÁRIO da fila mudou de casa na rodada 9 (2026-08-19): as frases
 // moram em `integrationQueuePresentation`, junto da régua nova ("cabeça com
@@ -107,7 +113,7 @@ const NO_PANES: never[] = []
 export default function Board({ projectId }: Props): React.JSX.Element {
   const seats = useStore((s) => s.seats)
   const settings = useStore((s) => s.settings)
-  const missions = useStore((s) => s.missions)
+  const missions = useStore((s) => s.missionsByProject[projectId] ?? s.missions)
   // Retrato por versão do painel do projeto (✦ geral com missões). NÃO se
   // busca aqui: o Universe, que hospeda este Board, já faz o load preguiçoso
   // do `homeStats` deste projeto, e os canais *:changed o mantêm fresco.
@@ -182,8 +188,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     null
   )
   const [missionMsg, setMissionMsg] = useState<string | null>(null)
-  const [missionCopied, setMissionCopied] = useState(false)
+  /** o deck do workspace está por cima do chat: o palco fica inerte */
+  const [chatCovered, setChatCovered] = useState(false)
   const boardRef = useRef<HTMLDivElement>(null)
+  const workspace = useWorkspaceLayout(projectId)
   const [progressTarget, setProgressTarget] = useState<ProgressOpenTarget | null>(null)
   const [progressDeliveryMission, setProgressDeliveryMission] = useState<string | null>(null)
   useEffect(() => onProgressOpen(projectId, setProgressTarget), [projectId])
@@ -393,8 +401,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // uma missão concluída/arquivada a aba 🚀 dela desaparecia da fila mas nenhuma
   // aba ficava ativa — a página ✦ geral não renderizava e o terminal do PM
   // continuava montado e ESCONDIDO, deixando o usuário sem terminal nenhum.
-  // TODAS as missões deste universo (o store guarda só o projeto aberto, mas o
-  // filtro por projectId é o contrato do resto do arquivo). É a base do painel
+  // TODAS as missões deste universo, conservadas mesmo fora de vista. É a base do painel
   // do ✦ geral: ele conta integradas e arquivadas, que `liveMissions` descarta.
   const projectMissions = missions.filter((m) => m.projectId === projectId)
   const liveMissions = projectMissions.filter(
@@ -481,8 +488,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
 
   // Missão saiu de viva: as sessões dela morrem no main (gui:kill) e os slots
   // somem. Mesma cautela do efeito dos orquestradores — missão AUSENTE da
-  // lista não conta (`missions` vira a lista de OUTRO projeto ao trocar de
-  // universo, e matar aqui derrubaria conversa boa).
+  // lista não conta: uma fotografia incompleta não autoriza encerrar a conversa.
   useEffect(() => {
     setMissionGuiSlots((prev) => {
       let changed = false
@@ -733,9 +739,8 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // Missão saiu de VIVA (integrada/arquivada) com a aba dela aberta → volta para
   // ✦ geral. Sem isso a aba 🚀 desaparecia da fila e nenhuma aba ficava ativa:
   // board sem conteúdo e sem terminal. Guardas: só no projeto ATIVO e só quando
-  // a missão EXISTE na lista e mudou de status — `missions` é global e vira a
-  // lista de OUTRO projeto ao trocar de universo (resetar nesse instante apagaria
-  // a seleção do usuário, mesmo risco do efeito acima).
+  // a missão EXISTE na lista deste projeto e mudou de status. Ausência durante
+  // uma leitura não apaga a seleção do usuário.
   useEffect(() => {
     if (!isActive || !missionTab) return
     const m = missions.find((x) => x.id === missionTab)
@@ -787,9 +792,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     (total, slot) => total + (guiPanes[slot.spawn.paneId]?.eventRevision ?? 0),
     0
   )
-  const directSeat = directSlot
-    ? seats.find((x) => x.configDir && x.configDir === directSlot.spawn.configDir)
-    : undefined
   // O 🧐 revisar fala com o chat do AGENTE — nunca com o slot que está em foco:
   // é ele o dono dos ajudantes desta missão (quem delega pelo MCP é ele).
   const devSlot = directSlots.find((s) => s.role === 'dev')
@@ -852,23 +854,13 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // `.maestro-body` muda de posição, então nenhum TerminalPane remonta.
   // ——————————————————————————————————————————————————————————————————————
   const stageMode = isDirect
+  const panelsEnabled = isDirect && !!selMission && !selIsRelease
+  const workspaceVisible = appPage === 'workspace' && isActive && uniTab === 'board'
+  const panelOptions = useMemo(() => availableWorkspacePanels(
+    isPlanningMission, selMission?.status === 'ativa' || selMission?.status === 'integrando'
+  ), [isPlanningMission, selMission?.status])
   const stageTermPane = activeTermPane
   const stageEmpty = !selMission && !activeTermPane
-  // Missão de planejamento tem UMA conversa só: chamá-la de "agente" esconderia
-  // justamente a natureza que o dono escolheu ao criá-la.
-  const stageRoleLabel = isPlanningMission
-    ? 'planejamento'
-    : MISSION_GUI_ROLE_LABEL[directSlot?.role ?? 'dev']
-  const stageSeat = directSeat
-  const stageModel = directGui?.executorKnown
-    ? directGui.executorModel ?? directGui.model ?? directSlot?.spawn.model
-    : directSlot?.spawn.model ?? directGui?.model ?? undefined
-  const stageModelLabel = stageModel
-    ? guiModelLabel(directGui?.caps?.models ?? [], stageModel, prettyModel(stageModel))
-    : null
-  const stageEffort = directGui?.executorKnown
-    ? directGui.effort ?? undefined
-    : directSlot?.spawn.effort ?? selMission?.effort
 
   /** As pílulas do seletor de conversas — a linha fina no topo do palco. A
    *  PÍLULA DE PLANEJAMENTO só nasce aqui, e só quando a missão selecionada é
@@ -943,54 +935,29 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     }
   }
 
-  /** A LINHA FINA descreve o que está no palco: uma conversa (missão direta)
-   *  ou o terminal em foco — inclusive o avulso do ✦ geral. */
-  const stageHead = stageMode || stagePills.length > 0
-
-  // A LINHA FINA do mockup: `dev · opus 4.8 · mission/1f3a`, texto apagado,
-  // UMA linha. Os separadores são CSS (`.stage-meta-line > * + *::before`) —
-  // aqui só entram os fatos que existem de verdade.
-  const stageMetaParts: React.ReactNode[] = []
-  if (stageHead) {
-    if (stageTermPane) {
-      stageMetaParts.push(
-        <span key="role" className="sm-role term">
-          terminal
-        </span>
-      )
-      stageMetaParts.push(<span key="title">{stageTermPane.title}</span>)
-    } else if (stageMode) {
-      stageMetaParts.push(
-        <span key="role" className="sm-role">
-          {stageRoleLabel}
-        </span>
-      )
-      if (stageSeat?.name) stageMetaParts.push(<span key="seat">{stageSeat.name}</span>)
-      if (stageModelLabel) stageMetaParts.push(<span key="model">{stageModelLabel}</span>)
-      if (stageEffort) stageMetaParts.push(<span key="effort">{stageEffort}</span>)
-    }
-    // O chip do código da missão virou ESTE ⎇: mesma função de sempre (clicar
-    // copia o id completo), agora dentro da linha fina em vez de um chip solto
-    // no titlebar escuro que morreu. Planejamento não tem branch: mostrar um
-    // ⎇ ali seria anunciar um worktree que não existe.
-    if (isDirect && selMission && !isPlanningMission)
-      stageMetaParts.push(
-        <button
-          key="branch"
-          className={`stage-branch${missionCopied ? ' copied' : ''}`}
-          data-tip={`Worktree desta missão. Clique para copiar o código: ${selMission.id}${
-            selMission.baseBranch ? ` · base ${selMission.baseBranch}` : ''
-          }`}
-          onClick={() => {
-            void navigator.clipboard.writeText(selMission.id)
-            setMissionCopied(true)
-            window.setTimeout(() => setMissionCopied(false), 1500)
-          }}
-        >
-          {missionCopied ? '✓ código copiado' : `⎇ ${selMission.branch ?? selMission.id.slice(0, 8)}`}
-        </button>
-      )
-  }
+  /** O ESTADO DO TURNO e a CONTA da conversa em foco, prontos para a cabeça
+   *  do palco (uma fileira, 2026-09-08). São do CHAT: terminal no palco não
+   *  os tem, e a missão que ainda escolhe a conta não tem o que dizer. O ⎇
+   *  que copiava o código da missão morreu junto com a linha fina (decisão
+   *  do dono): a branch segue visível no trilho de entrega. */
+  const stageChat = stageMode && !stageTermPane ? directSlot : undefined
+  const stageStatus =
+    stageChat && directGui ? (
+      <StageRoundStatus status={directGui.status} startedAt={directGui.startedAt} />
+    ) : undefined
+  const stageSeatChip =
+    stageChat && selMission ? (
+      <StageSeatChip
+        seats={seats}
+        seatId={stageChat.spawn.seatId}
+        cli={stageChat.spawn.cli}
+        account={directGui?.caps?.account}
+        changing={seatBusy !== null}
+        locked={directGui?.composerBusy ?? false}
+        turnOpen={directGui?.status === 'working' || directGui?.status === 'waiting-you'}
+        onChange={(next) => void chooseChatSeat(selMission.id, next)}
+      />
+    ) : undefined
 
   const measuredMaestroBox = maestroTerminalBox.w > 0 ? maestroTerminalBox : undefined
   const maestroTerminalFont = settings?.terminalFontSize ?? TERMINAL_DEFAULT_FONT_SIZE
@@ -1064,7 +1031,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
 
 
   return (
-    <div className="board">
+    <div className={`board${panelsEnabled ? ' workspace-board' : ''}`}>
       {missionMsg && (
         <div className="mission-msg">
           {missionMsg}
@@ -1093,15 +1060,38 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           dentro roda um TUI de verdade. Só a CLASSE muda — trocar a caixa
           remontaria os slots e mataria as sessões. */}
       <div
-        className={`maestro-window stage-window${stageEmpty ? ' stage-empty' : ''}`}
+        className={`maestro-window stage-window${stageEmpty ? ' stage-empty' : ''}${
+          chatCovered ? ' is-covered' : ''
+        }`}
         ref={winRef}
+        // PALCO COBERTO (ordem do dono, 09/09): painel do workspace por cima do
+        // chat = o dono esticou os painéis; nada do palco aceita clique nem
+        // foco enquanto isso, para nenhum menu abrir atrás do painel. O deck
+        // avisa pelo `onCovered` do WorkspacePanels.
+        inert={chatCovered || undefined}
       >
         {/* A CABEÇA DO PALCO é sempre em PAPEL. O chrome escuro de terminal
             (PaneChrome com badges de modelo, effort, contexto e os chips da
             missão legada) morreu na purga F6 (2026-08-17) junto com o TUI que
-            ele vestia. Sem `actions`: as alavancas do universo — estudar,
-            conta, limpar — saíram do app com o papel de Maestro. */}
-        <MissionStageHead pills={stagePills} meta={stageMetaParts} />
+            ele vestia. As ações e os painéis do cabeçalho pertencem apenas
+            à missão selecionada. */}
+        <MissionStageHead pills={stagePills} status={stageStatus} seat={stageSeatChip}
+          leadingAction={panelsEnabled ? <WorkspaceSidebarToggle controller={workspace} sidebarId={`workspace-missions-${projectId}`} /> : undefined}
+          actions={panelsEnabled ? <WorkspaceToolbar controller={workspace} available={panelOptions} enabled={panelsEnabled}
+            visible={workspaceVisible} title={selMission?.title ?? ''} boardRef={boardRef}
+            actions={selMission && <MissionHeaderActions mission={selMission} planning={isPlanningMission}
+              queueLabel={integrationQueueLabel(selMission)} guiAvailable={missionGui.available()} reviewReady={reviewReady}
+              testServerOpen={panes.some((p) => p.testServer && p.missionId === selMission.id)}
+              onIntegrate={() => void onIntegrate()} onReview={() => void nudgeReview()}
+              onTestServer={() => setTestServerOpen(true)}
+              onKillTestServer={() => {
+                const testPane = panes.find((p) => p.testServer && p.missionId === selMission.id)
+                if (testPane) window.synkora.panes.requestClose(projectId, testPane.id)
+              }}
+              onArchive={() => void archiveMission(selMission.id, selMission.status === 'ativa')}
+              onConclude={() => void concludePlanningMission(selMission.id)}
+            />} /> : undefined}
+        />
         <div className="maestro-body maestro-terminal" ref={maestroTerminalRef}>
           {/* O SLOT DO PM (o terminal do Maestro, sempre montado) e os slots
               dos ORQUESTRADORES de missão legada saíram na purga F6
@@ -1157,9 +1147,8 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                     }
                     seats={seats}
                     seatId={slot.spawn.seatId}
-                    onChangeSeat={(next) => void chooseChatSeat(mid, next)}
-                    seatChanging={seatBusy !== null}
                     seatError={missionGuiError[mid]}
+                    showHeader={false}
                   />
                   </GuiPanelErrorBoundary>
                 </div>
@@ -1289,11 +1278,15 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         <div className="maestro-resizer" onPointerDown={onResizeStart} />
       </div>
 
-      <ResizableRightRail
-        className="board-content"
-        enabled={stageMode}
-        projectKey={projectId}
-        label="painel lateral"
+      <WorkspacePanels
+        controller={workspace}
+        available={panelOptions}
+        enabled={panelsEnabled}
+        legacyEnabled={stageMode}
+        visible={workspaceVisible}
+        projectId={projectId}
+        boardRef={boardRef}
+        onCovered={setChatCovered}
       >
       {/* ✦ GERAL VAZIO (2.0): a linha de alavancas do UNIVERSO que morava aqui
           — 📚 estudar · ⇄ conta · 🧹 limpar — foi REMOVIDA por ordem do dono
@@ -1374,7 +1367,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       {isDirect && selMission && !selIsRelease && (
         <GuiPanelErrorBoundary
           paneId={`mission-delivery:${selMission.id}`}
-          label="o trilho de entrega"
+          label="os painéis da missão"
         >
           <MissionDeliveryRail
             mission={selMission}
@@ -1407,7 +1400,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           era 2.0 usa já vivem no MissionDeliveryRail (⇪, ▶ terminal de teste,
           ⊟ arquivar/↩ reativar) e o excluir da missão arquivada mora na
           sub-aba de missões da tela de Versões, com o aviso da conversa. */}
-      </ResizableRightRail>
+      </WorkspacePanels>
 
       {/* COLUNA DE MISSÕES — ÚLTIMO filho de propósito: `.board-main` é
           row-reverse, então o último do DOM é o PRIMEIRO da tela, e
@@ -1415,6 +1408,8 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           (deslocar remontaria os TerminalPane e mataria os PTYs). */}
       <GuiPanelErrorBoundary paneId={`mission-column:${projectId}`} label="a lista de missões">
         <MissionColumn
+          id={`workspace-missions-${projectId}`}
+          collapsed={panelsEnabled && workspace.preference.sidebarCollapsed}
           entries={missionColumnEntries}
           selectedId={missionTab}
           generalPulse={tabPulse['geral']}

@@ -3,11 +3,9 @@ import {
   EMPTY_GUI_PANE,
   useStore,
   type GuiItem,
-  type GuiPaneStatus,
   type GuiPendingPerm,
   type Seat
 } from '../store'
-import { formatGuiElapsed } from '../guiActivity'
 import {
   ownerBubbleLabel,
   ownerDeliveryStamp,
@@ -92,10 +90,14 @@ import {
 } from '../guiApi'
 import { useGuiDraft } from '../useGuiDraft'
 import { useGuiComposerAttachments } from '../useGuiComposerAttachments'
-import type { GuiAttachmentDescriptor, SeatUsage } from '../../../preload'
+import { useGuiDropZone } from '../useGuiDropZone'
+import { useGuiComposerFit } from '../useGuiComposerFit'
+import { dragTransferHasFiles, guiDropZoneLabel } from '../guiDropZone'
+import type { GuiAttachResult, GuiAttachmentDescriptor, SeatUsage } from '../../../preload'
 import {
   guiComposerCatalogModels,
   guiContextUsagePresentation,
+  guiEffortLabel,
   guiModelForSelection,
   guiModelIsDefault,
   guiModelLabel,
@@ -163,13 +165,12 @@ interface Props {
   onFastMode?: (fast: boolean) => void
   /** modelo/effort trocados no composer — mesma razão do modo acima. */
   onExecutorChange?: (patch: { model?: string; effort?: string }) => void
-  /** contas disponíveis + a desta conversa: o cabeçalho troca a conta sem
-   *  sair do chat (ausente = o cabeçalho não oferece troca). */
+  /** contas conhecidas + a desta conversa: só para NOMEAR a conta no
+   *  cabeçalho da fotografia. A troca de conta mora na cabeça do palco
+   *  (StageSeatChip, montado pelo Board), não no chat. */
   seats?: Seat[]
   seatId?: string
-  onChangeSeat?: (seatId: string) => void
-  /** troca de conta em voo: bloqueia duplo clique e mostra falha no próprio chat */
-  seatChanging?: boolean
+  /** falha da troca de conta pedida na cabeça do palco: aparece no próprio chat */
   seatError?: string
   /** Papel desta conversa no cabeçalho fino ("dev", "reviewer", "ajudante 2",
    *  "planejamento"). Ausente = deduzido do paneId. */
@@ -210,16 +211,6 @@ function roleFromPaneId(paneId: string): string | null {
 function tailOf(path: string): string {
   const parts = path.split(/[\\/]+/u).filter(Boolean)
   return parts[parts.length - 1] ?? ''
-}
-
-/** Só o que informa: parado não vira palavra na tela (o mockup mostra a linha
- *  em repouso com três campos e nada mais). */
-const STATUS_TEXT: Record<GuiPaneStatus, string | null> = {
-  starting: 'abrindo',
-  working: 'trabalhando',
-  'waiting-you': 'esperando você',
-  idle: null,
-  dead: 'encerrada'
 }
 
 // ————— injeção do 1º prompt —————
@@ -577,6 +568,31 @@ function StopGlyph(): React.JSX.Element {
   )
 }
 
+/** A seta que POUSA: mesma grade de 16 e o mesmo traço de 2 dos glifos do
+ *  envio — a placa de soltar fala a língua do rodapé, não a de um ícone
+ *  emprestado. */
+function DropGlyph(): React.JSX.Element {
+  return (
+    <svg
+      className="gui-drop-glyph"
+      viewBox="0 0 16 16"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M8 2.5v8" />
+      <path d="m4.5 7 3.5 3.5L11.5 7" />
+      <path d="M3 13.5h10" />
+    </svg>
+  )
+}
+
 function readGuiFileBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -612,8 +628,6 @@ export default function GuiPane({
   onExecutorChange,
   seats,
   seatId,
-  onChangeSeat,
-  seatChanging = false,
   seatError,
   role,
   branchLabel,
@@ -628,6 +642,7 @@ export default function GuiPane({
   const handleGuiLive = useStore((s) => s.handleGuiLive)
   const replayGuiPane = useStore((s) => s.replayGuiPane)
   const markGuiSpawned = useStore((s) => s.markGuiSpawned)
+  const setGuiComposerBusy = useStore((s) => s.setGuiComposerBusy)
   const finishGuiReveal = useStore((s) => s.finishGuiReveal)
   const queueGuiMessage = useStore((s) => s.queueGuiMessage)
   const discardGuiQueuedMessage = useStore((s) => s.discardGuiQueuedMessage)
@@ -669,7 +684,7 @@ export default function GuiPane({
   // dono da spec guarda a escolha via onFastMode.
   const [fastOn, setFastOn] = useState<boolean>(fast ?? false)
   const [openMenu, setOpenMenu] = useState<
-    'attach' | 'mode' | 'model' | 'effort' | 'seat' | 'context' | null
+    'attach' | 'mode' | 'model' | 'effort' | 'context' | null
   >(null)
   const [busyMenu, setBusyMenu] = useState<'mode' | 'model' | 'effort' | 'fast' | null>(null)
   const [liveModel, setLiveModel] = useState<string | undefined>(model)
@@ -785,6 +800,13 @@ export default function GuiPane({
   latestDraftRef.current = draft
   latestAttachmentsRef.current = attachments
   const [attaching, setAttaching] = useState(false)
+  // A CABEÇA DO PALCO troca a conta (StageSeatChip) e não enxerga este
+  // composer: publicar o "ocupado" (troca de executor ou anexo em voo) é o que
+  // a impede de transplantar a conversa no meio da operação.
+  useEffect(() => {
+    if (readOnly) return
+    setGuiComposerBusy(paneId, busyMenu !== null || attaching)
+  }, [attaching, busyMenu, paneId, readOnly, setGuiComposerBusy])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   // R33 — CITAÇÃO DO FIO. Por pane e SÓ em memória (decisão nomeada no
   // design): re-selecionar é barato, e a citação vive segundos entre o gesto
@@ -811,6 +833,7 @@ export default function GuiPane({
   const pendingSlashCursorRef = useRef<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const composerSurfaceRef = useRef<HTMLDivElement>(null)
+  const composerFit = useGuiComposerFit(composerSurfaceRef, !readOnly)
   const paneRef = useRef<HTMLDivElement>(null)
   const {
     visibleItems,
@@ -1095,15 +1118,8 @@ export default function GuiPane({
   const opening = gui.status === 'starting' || !gui.ready
   const working = gui.status === 'working'
   const turnOpen = working || gui.status === 'waiting-you'
-  // A TROCA DE CONTA NUNCA É BECO (R21.2, queixa do dono: "não consigo trocar
-  // a conta; o mouse vira uma bolinha rodando eternamente"). Trocar no meio do
-  // turno é LEGÍTIMO — é a fuga do rate limit —, e o main já aguenta: o
-  // `missions:setChatSeat` não tem guarda de ocupação nenhuma (sondado), ele
-  // transplanta a conversa e MATA as sessões vivas. Só o renderer trancava.
-  // O tip diz a verdade nova em vez de esconder o botão atrás do turno.
-  const seatTip = turnOpen
-    ? 'Trocar interrompe o turno atual e retoma a MESMA conversa na conta nova (mesmo CLI).'
-    : 'Conta desta conversa. Trocar mantém a conversa quando o CLI é o mesmo.'
+  // A TROCA DE CONTA (R21.2: nunca é beco, trocar no meio do turno é legítimo)
+  // mudou de casa em 2026-09-08: mora no StageSeatChip da cabeça do palco.
   const spawnChangeLocked =
     dead || turnOpen || attaching || Boolean(busyMenu) || Boolean(gui.queued)
   const canSend = canSendGuiMessage(gui.status, gui.ready)
@@ -1433,9 +1449,15 @@ export default function GuiPane({
     return null
   }, [attachments, setAttachments])
 
-  const attachFiles = useCallback(
-    async (fileList: FileList | readonly File[] | null): Promise<void> => {
-      const selection = planGuiAttachmentBatch(Array.from(fileList ?? []))
+  /** O lote de anexos, seja qual for a porta de entrada: a régua de
+   *  quantidade/tamanho é cobrada ANTES de ler um byte, cada item sobe por
+   *  `upload`, e o erro de um não derruba os outros. */
+  const attachBatch = useCallback(
+    async (
+      files: readonly File[],
+      upload: (file: File) => Promise<GuiAttachResult>
+    ): Promise<void> => {
+      const selection = planGuiAttachmentBatch(files)
       if (selection.accepted.length === 0 && selection.errors.length === 0) return
       if (attaching || busyMenu || submitPending) return
       setOpenMenu(null)
@@ -1445,12 +1467,7 @@ export default function GuiPane({
       const errors = [...selection.errors]
       for (const file of selection.accepted) {
         try {
-          const bytesBase64 = await readGuiFileBase64(file)
-          const result = await guiApi.attach(paneId, {
-            kind: 'file',
-            name: file.name || 'anexo',
-            bytesBase64
-          })
+          const result = await upload(file)
           if (result.ok && result.attachment) attached.push(result.attachment)
           else errors.push(result.error ?? `não deu para anexar ${file.name}`)
         } catch (error) {
@@ -1462,7 +1479,32 @@ export default function GuiPane({
       setAttachmentError(errors.length > 0 ? errors.join(' · ') : null)
       setAttaching(false)
     },
-    [attaching, busyMenu, finishAttachments, paneId, submitPending]
+    [attaching, busyMenu, finishAttachments, submitPending]
+  )
+
+  /** Arquivo ESCOLHIDO (input) ou COLADO (print): os bytes sobem pelo
+   *  renderer, porque aqui não existe caminho — só o File. */
+  const attachFiles = useCallback(
+    (fileList: FileList | readonly File[] | null): Promise<void> =>
+      attachBatch(Array.from(fileList ?? []), async (file) =>
+        guiApi.attach(paneId, {
+          kind: 'file',
+          name: file.name || 'anexo',
+          bytesBase64: await readGuiFileBase64(file)
+        })
+      ),
+    [attachBatch, paneId]
+  )
+
+  /** Item SOLTO no chat (2026-09-04, "não deu para ler Documentos da Luma"):
+   *  pasta arrastada chega como File sem bytes e o FileReader morria nela. O
+   *  File vai INTEIRO ao preload, que tira dele o caminho real (webUtils) — o
+   *  main decide se é pasta (vira referência, como no diálogo) ou arquivo
+   *  (copiado para .synkora/attachments). Nenhum caminho é digitado aqui. */
+  const attachDropped = useCallback(
+    (files: readonly File[]): Promise<void> =>
+      attachBatch(files, (file) => guiApi.attachDropped(paneId, file)),
+    [attachBatch, paneId]
   )
 
   const attachFolder = useCallback(async (): Promise<void> => {
@@ -1746,22 +1788,8 @@ export default function GuiPane({
     ]
   )
   const activityRunning = gui.status === 'working' && gui.startedAt !== null
-  // O TIMER DE RODADA VIVO (R11): o dono lê há quanto tempo a rodada roda —
-  // inclusive esperando resposta dele (waiting-you preserva o startedAt, e a
-  // espera é parte da rodada). Tique de 1s só enquanto o relógio está armado;
-  // fora disso o intervalo nem existe.
-  const roundArmed = !readOnly && gui.startedAt !== null
-  const [roundNow, setRoundNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (!roundArmed) return
-    setRoundNow(Date.now())
-    const timer = setInterval(() => setRoundNow(Date.now()), 1_000)
-    return () => clearInterval(timer)
-  }, [roundArmed])
-  const roundElapsed =
-    roundArmed && gui.startedAt !== null
-      ? formatGuiElapsed(Math.max(0, roundNow - gui.startedAt))
-      : null
+  // O TIMER DE RODADA VIVO (R11) mudou de casa em 2026-09-08: mora no
+  // StageRoundStatus da cabeça do palco, colado ao estado do turno.
   const thinkingPresentation = useMemo(
     () =>
       guiThinkingPresentation({
@@ -1842,12 +1870,6 @@ export default function GuiPane({
       : 'padrão da conta'
   const headModel = selectedModel
   const headWhere = branchLabel?.trim() || tailOf(cwd)
-  // Na fotografia o estado vivo não existe: o replay de um pane gravado deixa
-  // `starting` (a preparação de respawn que nunca vai acontecer), e escrever
-  // "abrindo" ali seria mentira de tela. Quem diz que é leitura é o cabeçalho
-  // de quem hospeda a fotografia.
-  const headStatus = readOnly ? null : STATUS_TEXT[gui.status]
-  const account = gui.caps?.account
   const seat = seats?.find((s) => s.id === seatId)
   const liveModelLabel = modelUsesDefault
     ? modelDefaultLabel === 'padrão da conta'
@@ -1939,92 +1961,55 @@ export default function GuiPane({
    *  um transcript que morreu no meio de uma decisão renderiza o card vivo. */
   const inert = Boolean(historyTarget) || readOnly
 
+  // A ZONA DE SOLTAR (2026-09-04): o PANE INTEIRO aceita o arrasto de arquivos
+  // e pastas enquanto o composer pode receber anexo — a mesma régua do botão +.
+  // A fase (`ready` = arrasto em qualquer canto da janela, `over` = por cima do
+  // pane) vem do relógio do hook, nunca do dragleave ruidoso do Chromium.
+  const canAcceptDrop =
+    active &&
+    !inert &&
+    !awaitingCard &&
+    !dead &&
+    !opening &&
+    !attaching &&
+    !submitPending &&
+    busyMenu === null
+  const dropPhase = useGuiDropZone(paneRef, canAcceptDrop)
+
   return (
     <div
       className="gui-pane"
       ref={paneRef}
       data-gui-pane-id={paneId}
+      data-drop={dropPhase === 'idle' ? undefined : dropPhase}
       onFocusCapture={() => noteGuiPaneInteraction(paneId)}
       onPointerDownCapture={() => noteGuiPaneInteraction(paneId)}
+      onDragOver={(event) => {
+        if (!canAcceptDrop || !dragTransferHasFiles(event.dataTransfer.types)) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'copy'
+      }}
+      onDrop={(event) => {
+        if (!canAcceptDrop || !dragTransferHasFiles(event.dataTransfer.types)) return
+        event.preventDefault()
+        const files = Array.from(event.dataTransfer.files)
+        if (files.length > 0) void attachDropped(files)
+      }}
     >
+      {/* O CABEÇALHO DE FATOS: só a FOTOGRAFIA o pede (ArchivedMissionChat).
+          No palco vivo a cabeça é do Board (MissionStageHead, uma fileira) e
+          este chat nasce com showHeader=false. Nada aqui é ação: a troca de
+          conta e o estado do turno moram na cabeça do palco desde 2026-09-08. */}
       {showHeader && (
         <div className="gui-head">
           <span className="gui-head-cli" aria-hidden="true">
             <CliMark cli={cli} size={13} />
           </span>
           {headRole && <span className="gui-head-role">{headRole}</span>}
-
-          {/* A CONTA da conversa: clicar troca de seat sem sair do chat — o que
-              não existe na fotografia congelada, onde não há sessão para
-              transplantar; ali sobra o NOME da conta, que é fato gravado. */}
-          {!readOnly && seats?.length && onChangeSeat ? (
-            <span className="gui-menu-host gui-head-seat">
-              <button
-                className={`gui-head-seat-btn${openMenu === 'seat' ? ' open' : ''}`}
-                disabled={seatChanging || busyMenu !== null || attaching}
-                aria-haspopup="menu"
-                aria-expanded={openMenu === 'seat'}
-                data-tip={seatTip}
-                onClick={() => setOpenMenu((v) => (v === 'seat' ? null : 'seat'))}
-              >
-                <span className="ghs-name">
-                  {seatChanging ? 'trocando conta…' : (seat?.name ?? 'escolher conta')}
-                </span>
-                {account?.email && <span className="ghs-mail">{account.email}</span>}
-                {account?.subscriptionType && (
-                  <span className="ghs-plan">{account.subscriptionType}</span>
-                )}
-                <span className="ghs-caret" aria-hidden="true">
-                  ▾
-                </span>
-              </button>
-              {openMenu === 'seat' && (
-                <div className="gui-menu gui-seat-menu" role="menu">
-                  {seats.map((option) => (
-                    <button
-                      key={option.id}
-                      className={`gui-menu-item${option.id === seatId ? ' active' : ''}`}
-                      disabled={seatChanging || busyMenu !== null || attaching}
-                      role="menuitem"
-                      onClick={() => {
-                        setOpenMenu(null)
-                        if (option.id !== seatId) onChangeSeat(option.id)
-                      }}
-                    >
-                      <CliMark cli={option.cli} size={12} />
-                      <b>{option.name}</b>
-                      <span>{option.cli}</span>
-                    </button>
-                  ))}
-                  <span className="gui-menu-foot">
-                    mesma família de CLI: a conversa vai junto para a conta nova · CLI diferente: a
-                    conversa recomeça
-                  </span>
-                </div>
-              )}
-            </span>
-          ) : (
-            seat?.name && <span className="gui-head-where">{seat.name}</span>
-          )}
-
+          {seat?.name && <span className="gui-head-where">{seat.name}</span>}
           {headModel && <span className="gui-head-model">{headModelLabel}</span>}
-          {selectedEffort && <span className="gui-head-effort">{selectedEffort}</span>}
+          {selectedEffort && <span className="gui-head-effort">{guiEffortLabel(selectedEffort)}</span>}
           {headWhere && <span className="gui-head-where">{headWhere}</span>}
-          {headStatus && (
-            <span className={`gui-head-status ${gui.status}`}>
-              <i className="ghs-dot" aria-hidden="true" />
-              {headStatus}
-              {/* R11: o relógio da rodada mora COLADO no estado — "trabalhando
-                  · 4:12" é a resposta de relance a "há quanto tempo?". Fora da
-                  região viva de leitor de tela pelo mesmo motivo do cronômetro
-                  da lateral: narrar o relógio a cada segundo é tortura. */}
-              {roundElapsed && (
-                <span className="gui-head-round" aria-hidden="true">
-                  · {roundElapsed}
-                </span>
-              )}
-            </span>
-          )}
         </div>
       )}
 
@@ -2233,9 +2218,28 @@ export default function GuiPane({
           </div>
         </div>
 
+        {/* "ir para o fim" é um botão redondo só com a seta, no canto do fio:
+            o pill com texto flutuava por cima das frases (queixa do dono,
+            09/09). O nome mora na dica e no rótulo acessível. */}
         {!pinned && (
-          <button className="gui-to-end" onClick={goToEnd}>
-            ▼ ir para o fim
+          <button
+            type="button"
+            className="gui-to-end"
+            aria-label="Ir para o fim da conversa"
+            data-tip="Ir para o fim"
+            onClick={goToEnd}
+          >
+            <svg
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M2.5 4.5 6 8l3.5-3.5" />
+            </svg>
           </button>
         )}
 
@@ -2369,23 +2373,27 @@ export default function GuiPane({
               onHover={fileMentions.setIndex}
             />
           )}
-          {/* O pino do dono para a frota deste chat: encostado no composer,
-              recolhido, do lado em que a lateral de subagentes vai morar. */}
-          {delegatesHelpers && <GuiDelegationDefaults paneId={paneId} seats={seats} />}
-          <div
-            className="gui-composer-surface"
-            ref={composerSurfaceRef}
-            onDragOver={(event) => {
-              if (Array.from(event.dataTransfer.types).includes('Files')) event.preventDefault()
-            }}
-            onDrop={(event) => {
-              const files = event.dataTransfer.files
-              if (files.length === 0) return
-              event.preventDefault()
-              void attachFiles(files)
-            }}
-          >
-            <div className="gui-composer-inner">
+          {/* O pino do dono para a frota deste chat: a aba "ajudantes ˄" em
+              cima do input, que sobe e desdobra os selects (2026-09-08). */}
+          {delegatesHelpers && (
+            <GuiDelegationDefaults paneId={paneId} seats={seats} cli={cli} seatId={seatId} />
+          )}
+          <div className="gui-composer-surface" ref={composerSurfaceRef}>
+            {/* A PLACA DE POUSO: aparece no composer porque é AQUI que o chip
+                vai nascer; o alvo de verdade é o pane inteiro (handlers na
+                raiz) e a placa não intercepta o ponteiro. */}
+            {dropPhase !== 'idle' && (
+              <div className="gui-drop-pad" data-phase={dropPhase} aria-hidden="true">
+                <svg className="gui-drop-pad-frame" aria-hidden="true" focusable="false">
+                  <rect />
+                </svg>
+                <span className="gui-drop-pad-label">
+                  <DropGlyph />
+                  {guiDropZoneLabel(dropPhase)}
+                </span>
+              </div>
+            )}
+            <div className="gui-composer-inner" data-fit={composerFit}>
               {draft && (
                 <GuiMentionOverlay ref={mentionOverlayRef} text={draft} files={fileMentions.files} />
               )}
@@ -2623,6 +2631,9 @@ export default function GuiPane({
                   <span className="gui-mode-text">
                     {busyMenu === 'mode' ? 'trocando…' : PERM_MODE_LABEL[mode]}
                   </span>
+                  <span className="gui-mode-short" aria-hidden="true">
+                    {mode === 'bypass' ? 'completo' : PERM_MODE_LABEL[mode]}
+                  </span>
                 </button>
                 {openMenu === 'mode' && (
                   <div className="gui-menu gui-mode-menu" role="menu">
@@ -2662,7 +2673,7 @@ export default function GuiPane({
                 <button
                   className="gui-mode-btn mode-model"
                   disabled={spawnChangeLocked}
-                  data-tip={'Modelo usado no próximo turno.'}
+                  data-tip={`Modelo usado no próximo turno: ${liveModelLabel}`}
                   aria-haspopup="menu"
                   aria-expanded={openMenu === 'model'}
                   aria-label={`Modelo desta conversa: ${liveModelLabel}`}
@@ -2723,13 +2734,13 @@ export default function GuiPane({
                     aria-haspopup="menu"
                     aria-expanded={openMenu === 'effort'}
                     aria-label={`Esforço de raciocínio desta conversa: ${
-                      selectedEffort ?? 'padrão do modelo'
+                      guiEffortLabel(selectedEffort)
                     }`}
                     onClick={() => setOpenMenu((v) => (v === 'effort' ? null : 'effort'))}
                   >
                     <span aria-hidden="true">◇</span>
                     <span className="gui-mode-text">
-                      {selectedEffort ?? 'effort'}
+                      {guiEffortLabel(selectedEffort)}
                     </span>
                   </button>
                   {openMenu === 'effort' && (
@@ -2752,7 +2763,7 @@ export default function GuiPane({
                           role="menuitem"
                           onClick={() => changeEffort(option)}
                         >
-                          <b>{option}</b>
+                          <b>{guiEffortLabel(option)}</b>
                         </button>
                       ))}
                       {switchNote && (

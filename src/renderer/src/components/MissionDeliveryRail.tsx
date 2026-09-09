@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { WorkspacePanelContext } from '../workspace/WorkspacePanelContext'
+import { useWorkspaceActivity } from '../workspace/useWorkspaceActivity'
 import { missionTypeOf, type GuiItem, type Mission } from '../store'
 import { missionWorkspace, type MissionWorkspaceSummary } from '../missionWorkspace'
 import { guiSubagentSidebarEntries } from '../guiSubagentSidebar'
@@ -210,6 +212,7 @@ export default function MissionDeliveryRail({
   /** planejamento: conclui num clique (missão encerra; plano/ e a aba do mapa ficam) */
   onConclude?: () => void
 }): React.JSX.Element {
+  const windowed = useContext(WorkspacePanelContext) !== null
   const integration = mission.integration
   const live = mission.status === 'ativa'
   // MISSÃO DE PLANEJAMENTO (2.0): sem branch, sem worktree e fora da fila —
@@ -397,6 +400,11 @@ export default function MissionDeliveryRail({
   // A FROTA (fichas dos ajudantes) já morava no trilho; a seção só a veste e
   // conta a verdade no resumo — encerrada inclui entregue, negada e parada.
   const frota = useMemo(() => guiSubagentSidebarEntries(subagentItems), [subagentItems])
+  useWorkspaceActivity(mission.id, {
+    browser: browser.loaded ? browser.state : null,
+    helpers: frota,
+    workspace: fingerprintRef.current?.id === mission.id ? summary : null
+  }, browserAvailable)
   const frotaRunning = frota.filter((entry) => entry.status === 'running').length
   const frotaSummary =
     frota.length === 0
@@ -864,9 +872,11 @@ export default function MissionDeliveryRail({
           frota desde 2026-08-30 (ordem do dono): o planejador delega pesquisa
           pelo mesmo MCP, e a lateral é justamente onde o dono vê modelo,
           effort e conta de cada ajudante. */}
-      {frota.length > 0 && (
+      {(windowed || frota.length > 0) && (
         <DockSection id="frota" title="frota" summary={frotaSummary}>
-          <GuiSubagentSidebar items={subagentItems} />
+          {frota.length > 0 ? <GuiSubagentSidebar items={subagentItems} /> : (
+            <div className="workspace-panel-empty">Nenhum ajudante nesta missão ainda.<span>Quando o agente delegar uma tarefa, você acompanha por aqui.</span></div>
+          )}
         </DockSection>
       )}
 

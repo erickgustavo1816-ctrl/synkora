@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "renderer-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "electron-vite",
+        "dev",
+        "--rendererOnly"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "drop-harness",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/harness-serve.mjs"
+      ],
+      "port": 5199
+    }
+  ]
+}

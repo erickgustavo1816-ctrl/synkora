@@ -78,6 +78,26 @@ function titleFamily(source: string): string {
   return source.charAt(0).toUpperCase() + source.slice(1)
 }
 
+/** Presentation only: the canonical model id still goes to the executor. */
+function readableModelName(source: string): string {
+  const gpt = /^gpt[-_\s]?(\d+(?:\.\d+)*)(.*)$/iu.exec(source)
+  if (gpt) {
+    const variant = gpt[2].split(/[-_\s]+/u).filter(Boolean)
+      .map(part => titleFamily(part.toLowerCase())).join(' ')
+    return `GPT-${gpt[1]}${variant ? ` ${variant}` : ''}`
+  }
+  const claude = /^(?:claude[-_\s])?(opus|sonnet|haiku|fable|mythos)(?:[-_\s]+(.*))?$/iu.exec(source)
+  if (claude) {
+    const version = claude[2]?.replace(/(?<=\d)[-_](?=\d)/gu, '.')
+    return `${titleFamily(claude[1].toLowerCase())}${version ? ` ${version}` : ''}`
+  }
+  return source
+}
+
+export function guiEffortLabel(effort: string | null | undefined): string {
+  return effort?.trim().toUpperCase() || 'PADRÃO'
+}
+
 /**
  * O CLI pode mandar displayName sem geração ("Fable") e reservar a versão
  * exata para resolvedModel ("claude-fable-5"). O composer mostra a versão
@@ -89,7 +109,7 @@ export function guiModelShortName(
   fallback = ''
 ): string {
   const source = model?.displayName?.trim() || fallback.trim() || model?.value.trim() || 'modelo'
-  const label = compactDisplayedVersion(stripModelMetadata(source)) || source
+  const label = readableModelName(compactDisplayedVersion(stripModelMetadata(source)) || source)
   const canonical = model?.resolvedModel?.trim() || model?.value?.trim() || ''
   if (!canonical || hasNumericVersion(label)) return label
 

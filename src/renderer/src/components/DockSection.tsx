@@ -1,4 +1,7 @@
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, useContext, useState, type ReactNode } from 'react'
+import { isWorkspacePanelId } from '../workspacePanels'
+import { WorkspacePanelContext } from '../workspace/WorkspacePanelContext'
+import WorkspacePanel from '../workspace/WorkspacePanel'
 
 // RIGHTDOCK (2026-08-22, mockup aprovado = contrato) — o primitivo de SEÇÃO da
 // moldura do lado direito: título uppercase, resumo à direita (que continua
@@ -36,7 +39,8 @@ export default function DockSection({
   /** o resumo à direita do título — a verdade compacta da seção. */
   summary?: string
   children: ReactNode
-}): React.JSX.Element {
+}): React.JSX.Element | null {
+  const workspace = useContext(WorkspacePanelContext)
   const [collapsed, setCollapsed] = useState(() => readCollapsed(id))
   const toggle = useCallback(() => {
     setCollapsed((current) => {
@@ -44,6 +48,10 @@ export default function DockSection({
       return !current
     })
   }, [id])
+
+  if (workspace) {
+    return isWorkspacePanelId(id) ? <WorkspacePanel id={id} summary={summary}>{children}</WorkspacePanel> : null
+  }
 
   return (
     <section className="dock-sec">
