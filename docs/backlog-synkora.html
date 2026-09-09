@@ -65,12 +65,7 @@
 
   <section>
     <h2>Agora <span class="count">— em curso</span></h2>
-    <div class="item now">
-      <span class="glyph">●</span>
-      <span class="title">O HARNESS É DO MODELO (Skills 3.0) — R1 núcleo: a lei cai, catálogo curado como dado, skill_search/pull/discard efêmeros com rastro, playbook da missão nos ajudantes, método do planejador</span>
-      <span class="desc">Ordem do dono 2026-09-08: &quot;não quero mais algo fixo — a IA decide a melhor opção, vai atrás, busca, pega, usa e descarta&quot;. Plano aprovado (HTML leigo entregue). R1 = Onda 0 (design + ADRs 0008–0011 + sonda de recarga) → Onda 1 (A catálogo ∥ B motor ∥ C personas) → Onda 2 (D tools + costura) → fecho. R2 = tela Ajustes › Skills (interruptor) + painel &quot;harness desta missão&quot; com &quot;guardar na biblioteca&quot;.</span>
-      <span class="refs">refs: <code>.synkora/reports/DESIGN_HARNESS_DO_MODELO_2026-09-08.md</code> · <code>docs/adr/0008-a-lei-caiu-o-padrao-ficou.md</code> · <code>docs/adr/0009-o-harness-da-missao-e-do-agente.md</code> · <code>docs/adr/0010-skill-efemera-por-missao-com-rastro.md</code> · <code>docs/adr/0011-planejamento-com-metodo-escolhido.md</code></span>
-    </div>
+
   </section>
 
   <section>
@@ -88,6 +83,12 @@
       <span class="badge">camadas 1-2 entregues</span>
       <span class="desc">Reprovação do dono 2026-08-28: &quot;eu concluo ele e não acontece nada&quot;. Verificado: concluir só virava status — nenhuma superfície lia. Achado no caminho: mapTabs prometia uma &quot;lista de arquivados&quot; que NÃO EXISTIA, então arquivar era sumiço sem volta pela UI. Camadas 1 e 2 ENTREGUES: a aba sai da fila ao concluir; nasce a seção &quot;guardados&quot; na aba ROTAS (concluídos na frente, arquivados atrás) com abrir para leitura e reabrir com CAS; e o cabeçalho do plano avisa &quot;pronto para concluir&quot; quando todo item integrou (advisory — nunca conclui sozinho). Camada 3 (recibo do fecho da rota em plano/) fica pendente.</span>
       <span class="refs">refs: <code>.synkora/reports/DESIGN_CONCLUSAO_DE_PLANO_2026-08-28.md</code> · <code>src/renderer/src/planBoardPresentation.ts</code> · <code>src/renderer/src/components/UniverseMapView.tsx</code></span>
+    </div>
+    <div class="item queue">
+      <span class="glyph">3</span>
+      <span class="title">Skills 3.0 — R2: Ajustes › Skills com o interruptor do agente + painel &quot;HARNESS DESTA MISSÃO&quot; (rastro repo@sha, &quot;guardar na biblioteca&quot; pinado) + limpar `law?` do preload/renderer/devMock/test-skills-settings-ui</span>
+      <span class="desc">Depende da validação AO VIVO da R1 (restart do app + missão landing/backend/planejamento). Design §6 do DESIGN_HARNESS_DO_MODELO; IPC skills:missionHarness(paneId) lendo readSkillHarness + liveHarnessEntries; &quot;guardar&quot; = skills:installFromUrl com …/tree/&lt;sha&gt;/&lt;path&gt;. Candidatas de carona: chip por file-read no claude; nota do pull dizendo qual AJUDANTE puxou; traduzir system/commands_changed no maestroSession (mata o risco residual do recibo da recarga).</span>
+      <span class="refs">refs: <code>.synkora/reports/DESIGN_HARNESS_DO_MODELO_2026-09-08.md</code> · <code>.synkora/reports/harness-agent-D-report.md</code> · <code>src/renderer/src/components/SkillsSettings.tsx</code> · <code>src/renderer/src/components/GuiContextPanel.tsx</code></span>
     </div>
   </section>
 
@@ -264,6 +265,7 @@
       <div class="done"><span class="glyph">✓</span><span class="title">Cabeça do palco em UMA fileira — some a linha-meta e o cabeçalho próprio do chat; ficam lateral · pílulas · estado do turno · chip da conta · botões (mockup aprovado com CSS real)</span><span class="refs"><code>src/renderer/src/components/MissionStageHead.tsx</code> · <code>src/renderer/src/components/StageRoundStatus.tsx</code> · <code>src/renderer/src/components/StageSeatChip.tsx</code> · <code>scripts/harness/stage-head.html</code> · <code>scripts/test-stage-head.mjs</code> · <code>docs/MOCKUP_WORKSPACE.md</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">A aba &quot;ajudantes ˄&quot; — o padrão dos ajudantes redesenhado: a aba sobe, o cartão sai de dentro dela, selects um por vez (conta › modelo › effort) e interruptor do fast; a CONTA entrou no pino do motor</span><span class="refs"><code>.synkora/reports/DESIGN_ABA_AJUDANTES_2026-09-08.md</code> · <code>src/renderer/src/components/GuiDelegationDefaults.tsx</code> · <code>src/renderer/src/components/GuiFleetSelect.tsx</code> · <code>src/renderer/src/guiDelegationDefaults.ts</code> · <code>src/main/guiSessions.ts</code> · <code>src/main/guiDelegationWiring.ts</code> · <code>scripts/harness/helpers-defaults.html</code></span></div>
       <div class="done"><span class="glyph">✓</span><span class="title">Polish do fio (09/09): chat coberto pelo painel fica inerte mas vivo, fala do dono em laranja, &quot;ir para o fim&quot; redondo no canto, aba dos ajudantes esticada com nomes formatados</span><span class="refs"><code>src/renderer/src/global.css</code> · <code>src/renderer/src/components/GuiPane.tsx</code> · <code>src/renderer/src/components/Board.tsx</code> · <code>src/renderer/src/workspace/WorkspacePanels.tsx</code> · <code>src/main/catalog.ts</code> · <code>scripts/harness/owner-bubble.html</code> · <code>docs/MOCKUP_WORKSPACE.md</code></span></div>
+      <div class="done"><span class="glyph">✓</span><span class="title">O HARNESS É DO MODELO (Skills 3.0) — R1 núcleo: a lei cai, catálogo curado como dado, skill_search/pull/discard efêmeros com rastro, playbook da missão nos ajudantes, método do planejador</span><span class="refs"><code>.synkora/reports/DESIGN_HARNESS_DO_MODELO_2026-09-08.md</code> · <code>docs/adr/0008-a-lei-caiu-o-padrao-ficou.md</code> · <code>docs/adr/0009-o-harness-da-missao-e-do-agente.md</code> · <code>docs/adr/0010-skill-efemera-por-missao-com-rastro.md</code> · <code>docs/adr/0011-planejamento-com-metodo-escolhido.md</code></span></div>
     </div>
   </details>
 </div>
